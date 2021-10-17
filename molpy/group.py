@@ -6,6 +6,7 @@
 from molpy.abc import Item
 from molpy.atom import Atom
 import numpy as np
+from itertools import dropwhile
 
 class Group(Item):
     
@@ -20,6 +21,7 @@ class Group(Item):
         Args:
             item (Item): derived from Item
         """
+        item.parent = self
         self.items.append(item)
         self.status = 'modified'
     
@@ -59,10 +61,14 @@ class Group(Item):
         return len(self.getAtoms())
     
     def getAtomByName(self, atomName):
-        pass
+        for item in self.items:
+            if isinstance(item, Group) and item.name == atomName:
+                return item
     
     def getGroupByName(self, groupName):
-        pass
+        for item in self.items:
+            if isinstance(item, Group) and item.name == groupName:
+                return item
     
     def __getitem__(self, idx):
         if isinstance(idx, str):
@@ -72,4 +78,11 @@ class Group(Item):
                 
         elif isinstance(idx, int):
             return self.getAtoms()[idx]
+        
+    def delete(self, name):
+        
+        dropwhile(lambda item: item.name == name, self.items)
+        
+    def update(self):
+        pass
     
