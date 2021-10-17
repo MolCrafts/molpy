@@ -12,12 +12,23 @@ class Group(Item):
     def __init__(self, name) -> None:
         super().__init__(name)
         self.items = self._container
-        self._atoms
+        self._atoms = []
         
     def add(self, item):
+        """ Add an Atom or Group to this group as an affiliated item.
+
+        Args:
+            item (Item): derived from Item
+        """
         self.items.append(item)
+        self.status = 'modified'
     
     def getAtoms(self):
+        """ get atoms from all the items in this group
+
+        Returns:
+            List: List of atoms
+        """
         if self.status == 'new':
             return self._atoms
         else:
@@ -32,7 +43,12 @@ class Group(Item):
     def getCovalentMap(self):
         pass
     
-    def setTopoByCovalentMap(self, covalentMap):
+    def setTopoByCovalentMap(self, covalentMap: np.ndarray):
+        """ set topology info by a numpy-like covalent map.
+
+        Args:
+            covalentMap (np.ndarray): 2-d ndarray
+        """
         atoms = self.getAtoms()
         for i, nbond in np.ndenumerate(covalentMap):
             if nbond == 1:
@@ -40,11 +56,7 @@ class Group(Item):
         
     @property
     def natoms(self):
-        return len(self.getAtoms)
-    
-    @property
-    def atoms(self):
-        return self.getAtoms()
+        return len(self.getAtoms())
     
     def getAtomByName(self, atomName):
         pass
@@ -54,10 +66,10 @@ class Group(Item):
     
     def __getitem__(self, idx):
         if isinstance(idx, str):
-            for atom in self.atoms:
+            for atom in self.getAtoms():
                 if atom.name == idx:
-                    return idx
+                    return atom
                 
         elif isinstance(idx, int):
-            return self.atoms[idx]
+            return self.getAtoms()[idx]
     

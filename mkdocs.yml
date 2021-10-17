@@ -1,0 +1,29 @@
+site_name: molpy
+theme:
+    name: material
+    icon:
+        repo: fontawesome/brands/git-alt
+    features:
+        - navigation.instant
+        - navigation.tracking
+        - navigation.tabs
+        - navigation.sections
+
+repo_url: https://github.com/Roy-Kid/molpy
+repo_name: Roy-Kid/molpy
+
+nav:
+    - Home: index.md
+    - demo: demo.ipynb
+    - References: 
+        - atom.md
+        - group.md
+
+plugins:
+    - mkdocs-jupyter:
+        execute: True
+    - search
+    - mkdocstrings
+
+markdown_extensions:
+    - codehilite
