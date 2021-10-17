@@ -43,7 +43,9 @@ class Group(Item):
             return self._atoms
     
     def getCovalentMap(self):
-        pass
+        """ calculate covalent map from atoms in this group.
+        """
+        pass       
     
     def setTopoByCovalentMap(self, covalentMap: np.ndarray):
         """ set topology info by a numpy-like covalent map.

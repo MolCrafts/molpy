@@ -5,7 +5,8 @@
 
 from molpy.atom import Atom
 from molpy.group import Group
-
+from molpy.io import pdb
+import numpy as np
 
 def full(groupName, atomNames, **properties):
     """ build up a group with atoms
@@ -26,8 +27,16 @@ def full(groupName, atomNames, **properties):
         
     return group
 
-def fromPDB():
-    pass
+def fromPDB(fpath, index=None):
+    with open(fpath, 'r') as f:
+        frames = pdb(f, index=None)
+    pdbgroup = full(fpath, frames['names'], **frames)
+    covalentMap = np.zeros((pdbgroup.natoms, pdbgroup.natoms), dtype=int)
+    conects = frames['conects']
+    for catom, pairs in conects.items():
+        covalentMap[catom][pairs] = 1
+    pdbgroup.setTopoByCovalentMap(covalentMap)
+    return pdbgroup
 
 def fromLAMMPS():
     pass
