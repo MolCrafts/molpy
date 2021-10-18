@@ -45,8 +45,36 @@ class Group(Item):
     def getCovalentMap(self):
         """ calculate covalent map from atoms in this group.
         """
-        pass       
-    
+        atoms = self.getAtoms()
+        covalentMap = np.zeros((len(atoms), len(atoms)))
+        visited = np.zeros_like(covalentMap)
+        
+        def find(nodes, vis):
+            nextLevelNodes = []
+            for node in nodes:
+                nodeidx = atoms.index(node)
+                if vis[nodeidx] == 1:
+                    continue
+                vis[nodeidx] = 1
+                covalentMap[rootidx, nodeidx] = depth
+                nextLevelNodes.extend(dropwhile(lambda node: vis[atoms.index(node)] == 1, node.bondedAtoms))
+                nextLevelNodes = list(set(nextLevelNodes))
+            return nextLevelNodes
+        
+        for root in atoms:
+            rootidx = atoms.index(root)
+            vis = visited[rootidx]
+            vis[rootidx] = 1
+            depth = 1
+            nodes = find(root.bondedAtoms, vis)
+            depth += 1
+            while True:
+                if nodes == []:
+                    break
+                nodes = find(nodes, vis)
+                depth += 1
+        return covalentMap
+            
     def setTopoByCovalentMap(self, covalentMap: np.ndarray):
         """ set topology info by a numpy-like covalent map.
 
