@@ -57,3 +57,19 @@ class TestGroup:
         assert len(atoms[1].bondedAtoms) == 2
         assert len(atoms[2].bondedAtoms) == 2
         assert len(atoms[3].bondedAtoms) == 2
+        
+    def test_getRingBonds(self, C6):
+        bonds = C6.getBonds()
+        assert len(bonds) == 6
+        
+    def test_getBonds(self, CH4):
+        bonds = CH4.getBonds()
+        assert len(bonds) == 4
+        
+    def test_getRingAngles(self, C6):
+        angles = C6.getAngles()
+        assert len(angles) == 6
+        
+    def test_getAngles(self, CH4):
+        angles = CH4.getAngles()
+        assert len(angles) == 6

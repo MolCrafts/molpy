@@ -27,3 +27,8 @@ class TestAtom:
         assert (O.position == np.array([1,2,3])).all()
         O.moveBy(np.array([1,1,1]))
         assert (O.position == np.array([2,3,4])).all()
+        
+    def test_element(self, H2O):
+        O, H1, H2 = H2O
+        O.element = 'O'
+        assert O.element.mass.magnitude == 15.99943

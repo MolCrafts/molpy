@@ -4,6 +4,7 @@
 # version: 0.0.1
 
 from molpy.abc import Item
+from molpy.element import Element
 import numpy as np
 
 class Atom(Item):
@@ -33,6 +34,14 @@ class Atom(Item):
     @property
     def bondedAtoms(self):
         return self._bondedAtoms
+    
+    @property
+    def element(self):
+        return self._element
+    
+    @element.setter
+    def element(self, symbol):
+        self._element = Element.getBySymbol(symbol)
             
     def moveTo(self, vec: np.ndarray):
         self.check_properties(position=np.ndarray)

@@ -6,7 +6,7 @@
 from molpy.abc import Item
 from molpy.atom import Atom
 import numpy as np
-from itertools import dropwhile
+from itertools import dropwhile, combinations
 
 class Group(Item):
     
@@ -45,6 +45,9 @@ class Group(Item):
     def getCovalentMap(self):
         """ calculate covalent map from atoms in this group.
         """
+        if self.status == 'new' and getattr(self, '_covalentMap', None):
+            return self._covalentMap
+        
         atoms = self.getAtoms()
         covalentMap = np.zeros((len(atoms), len(atoms)))
         visited = np.zeros_like(covalentMap)
@@ -73,7 +76,16 @@ class Group(Item):
                     break
                 nodes = find(nodes, vis)
                 depth += 1
+        self._covalentMap = covalentMap
         return covalentMap
+    
+    @property
+    def covalentMap(self):
+        return self._covalentMap
+    
+    @property
+    def atoms(self):
+        return self.getAtoms()
             
     def setTopoByCovalentMap(self, covalentMap: np.ndarray):
         """ set topology info by a numpy-like covalent map.
@@ -116,3 +128,25 @@ class Group(Item):
     def update(self):
         pass
     
+    def getBonds(self):
+        self.check_properties(covalentMap=np.ndarray)
+        covalentMap = self.covalentMap
+        self._bonds = []
+        for index, nbond in np.ndenumerate(np.triu(covalentMap, 1)):
+            if nbond == 1:
+                self._bonds.append(
+                    (self._atoms[index[0]], self._atoms[index[1]])
+                )
+        return self._bonds
+
+    def getAngles(self):
+        angles = set()
+        for atom in self.getAtoms():
+
+            for edge in combinations(atom.bondedAtoms, 2):
+                angles.add(
+                    (edge[0], atom, edge[1])
+                )
+                
+        self._angles = list(angles)
+        return self._angles
