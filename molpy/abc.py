@@ -36,3 +36,21 @@ class Item:
     
     def serialize(self):
         pass
+    
+    def check_properties(self, **props):
+        """ a method to check if the instances has method required properties before method is execute
+        For example, if move() method need to check item.position, then add this at the first
+        ...: def move(self, x, y, z):
+        ...:     self.check_properties(position='required')
+
+        Raises:
+            AttributeError: WHEN no required properties
+        """
+        for k,v in props.items():
+            if v == 'required':
+                if getattr(self, k, None) is None:
+                    raise AttributeError(f'this method requires {self} has property {k}')
+        
+    def moveTo(self, x, y, z):
+        self.check_properties(position='required')
+        pass
