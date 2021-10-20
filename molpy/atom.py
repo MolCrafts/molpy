@@ -4,6 +4,7 @@
 # version: 0.0.1
 
 from molpy.abc import Item
+import numpy as np
 
 class Atom(Item):
     """ Atom is the class which contains properties bind to the atom.
@@ -33,11 +34,13 @@ class Atom(Item):
     def bondedAtoms(self):
         return self._bondedAtoms
             
-    def moveTo(self, vec):
-        pass
+    def moveTo(self, vec: np.ndarray):
+        self.check_properties(position=np.ndarray)
+        self.position = vec
     
     def moveBy(self, vec):
-        pass
+        self.check_properties(position=np.ndarray)
+        self.position.__iadd__(vec)
     
     def rotateWithEuler(self, ref, alpha, beta, gamma):
         pass

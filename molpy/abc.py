@@ -45,11 +45,17 @@ class Item:
 
         Raises:
             AttributeError: WHEN no required properties
+            TypeError: WHEN required property has wrong type
         """
         for k,v in props.items():
-            if v == 'required':
-                if getattr(self, k, None) is None:
-                    raise AttributeError(f'this method requires {self} has property {k}')
+            kv = getattr(self, k, None)
+            if kv is None:
+                AttributeError(f'this method requires {self} has property {k}')
+            else:
+                if isinstance(kv, v):
+                    continue
+                else:
+                    raise TypeError(f'requires {k} is {v} but {type(kv)}')
         
     def moveTo(self, x, y, z):
         self.check_properties(position='required')
