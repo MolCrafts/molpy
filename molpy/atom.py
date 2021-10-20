@@ -10,9 +10,11 @@ import numpy as np
 class Atom(Item):
     """ Atom is the class which contains properties bind to the atom.
     """
-    def __init__(self, name) -> None:
+    def __init__(self, name, **properties) -> None:
         super().__init__(name)
-        self._bondedAtoms = self._container
+        self._bondedAtoms = {}
+        for k, v in properties.items():
+            self.set(k, v)
 
     def serialize(self):
         pass
@@ -20,16 +22,16 @@ class Atom(Item):
     def deserialize(self, tmp):
         pass
 
-    def bondto(self, atom):
+    def bondto(self, atom, bondType=None):
         """ Form a chemical bond between two atoms.
 
         Args:
             atom (Atom): atom to be bonded
         """
         if atom not in self._bondedAtoms:
-            self._bondedAtoms.append(atom)
+            self._bondedAtoms[atom] = bondType
         if self not in atom._bondedAtoms:
-            atom._bondedAtoms.append(self)
+            atom._bondedAtoms[self] = bondType
             
     @property
     def bondedAtoms(self):

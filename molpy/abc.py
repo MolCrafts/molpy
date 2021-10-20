@@ -60,3 +60,9 @@ class Item:
     def moveTo(self, x, y, z):
         self.check_properties(position='required')
         pass
+    
+    def get(self, property, default):
+        return getattr(self, property, default)
+    
+    def set(self, property, value):
+        setattr(self, property, value)

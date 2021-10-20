@@ -150,3 +150,10 @@ class Group(Item):
                 
         self._angles = list(angles)
         return self._angles
+    
+    def addBondByIndex(self, atomIdx, atomJdx, bondType):
+        pass
+    
+    def getBondByIndex(self, atomIdx, atomJdx):
+        pass
+    
