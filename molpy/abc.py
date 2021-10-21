@@ -28,6 +28,9 @@ class Item:
     def __hash__(self):
         return hash(id(self))
     
+    def __id__(self):
+        return id(self)
+    
     def __repr__(self) -> str:
         return f'< {self.__class__.__name__} {self.name} >'
     
@@ -56,13 +59,15 @@ class Item:
                     continue
                 else:
                     raise TypeError(f'requires {k} is {v} but {type(kv)}')
-        
-    def moveTo(self, x, y, z):
-        self.check_properties(position='required')
-        pass
     
     def get(self, property, default):
         return getattr(self, property, default)
     
     def set(self, property, value):
         setattr(self, property, value)
+        
+    def __eq__(self, o):
+        return self.uuid == o.uuid
+    
+    def __lt__(self, o):
+        return self.uuid < o.uuid

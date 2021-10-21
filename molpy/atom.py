@@ -5,6 +5,7 @@
 
 from molpy.abc import Item
 from molpy.element import Element
+from molpy.bond import Bond
 import numpy as np
 
 class Atom(Item):
@@ -22,20 +23,36 @@ class Atom(Item):
     def deserialize(self, tmp):
         pass
 
-    def bondto(self, atom, bondType=None):
+    def bondto(self, atom, **bondType):
         """ Form a chemical bond between two atoms.
 
         Args:
             atom (Atom): atom to be bonded
         """
+        # check bond
+        bond = self._bondedAtoms.get(atom, Bond(self, atom, *bondType))
+        bond.update(*bondType)
+        
         if atom not in self._bondedAtoms:
-            self._bondedAtoms[atom] = bondType
+            self._bondedAtoms[atom] = bond
         if self not in atom._bondedAtoms:
-            atom._bondedAtoms[self] = bondType
+            atom._bondedAtoms[self] = bond
+            
+        return bond
+            
+    def removeBond(self, atom):
+        if atom in self._bondedAtoms:
+            del self._bondedAtoms[atom]
+        if self in atom._bondedAtoms:
+            del atom._bondedAtoms[self]
             
     @property
     def bondedAtoms(self):
-        return self._bondedAtoms
+        return self._bondedAtoms.keys()
+    
+    @property
+    def bonds(self):
+        return dict(self._bondedAtoms)
     
     @property
     def element(self):

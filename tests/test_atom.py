@@ -32,3 +32,15 @@ class TestAtom:
         O, H1, H2 = H2O
         O.element = 'O'
         assert O.element.mass.magnitude == 15.99943
+        
+    def test_bond(self, H2O):
+        O, H1, H2 = H2O
+        assert O.bonds[H1] == H1.bonds[O]
+        assert O.bonds[H2] == H2.bonds[O]
+        
+    def test_removeBond(self, H2O):
+        O, H1, H2 = H2O
+        O.removeBond(H1)
+        assert len(O.bondedAtoms) == 1
+        with pytest.raises(KeyError):
+            assert O.bonds[H1]

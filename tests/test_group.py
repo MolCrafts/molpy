@@ -39,7 +39,7 @@ class TestGroup:
         covalentMap[0, 1:] = covalentMap[1:, 0] = 1
         CH4.setTopoByCovalentMap(covalentMap)
         assert len(CH4['C'].bondedAtoms) == 4
-        assert CH4['H0'].bondedAtoms[0] == CH4['C']
+        assert CH4['C'] in CH4['H0'].bondedAtoms
         
     def test_getCovalentMap(self, CH4):
         co = CH4.getCovalentMap()

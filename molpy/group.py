@@ -3,6 +3,7 @@
 # date: 2021-10-17
 # version: 0.0.1
 
+from typing import Iterable, Union
 from molpy.abc import Item
 from molpy.atom import Atom
 import numpy as np
@@ -10,20 +11,58 @@ from itertools import dropwhile, combinations
 
 class Group(Item):
     
-    def __init__(self, name) -> None:
+    def __init__(self, name, **attrs) -> None:
         super().__init__(name)
         self.items = self._container
-        self._atoms = []
-        
+        self._atoms = [] # node
+        self._adj = {}
+        for attr in attrs:
+            setattr(self, attr, attrs[attr])
+            
     def add(self, item):
-        """ Add an Atom or Group to this group as an affiliated item.
+        if isinstance(item, Atom):
+            self.addAtom(item)
+        
+    def addAtom(self, item: Atom):
+        """ Add an atom to this group
 
         Args:
-            item (Item): derived from Item
+            atom (Atom): an atom instance
         """
         item.parent = self
-        self.items.append(item)
+        if item not in self.items:
+            self.items.append(item)
+            self.status = 'modified'
+            self._adj[item] = {}
+                
+    def addAtoms(self, atoms: Iterable[Atom]):
+        for atom in atoms:
+            self.addAtom(atom)
+            
+    def removeAtom(self, atom: Atom):
+        """Remove atom from this graph but not destory it
+
+        Removes the atom and all adjacent bonds.
+        Attempting to remove a non-existent node will raise an exception.
+
+        Args:
+            atom (Atom): an atom in this group
+            
+        Returns:
+            NoneType
+            
+        Raises:
+            ValueError: WHEN atom not in this graph
+        """
+        # remove atom from item list
+        del self.items[self.items.index(atom)]
         self.status = 'modified'
+        
+        # remove related bonds
+        nbrs = list(self._adj[atom])
+        for u in nbrs:
+            del self._adj[u][atom]  # remove edges
+        del self._adj[atom]  # remove node
     
     def getAtoms(self):
         """ get atoms from all the items in this group
@@ -151,9 +190,44 @@ class Group(Item):
         self._angles = list(angles)
         return self._angles
     
-    def addBondByIndex(self, atomIdx, atomJdx, bondType):
-        pass
+    def addBondByIndex(self, atomIdx, atomJdx, **bondType):
+        atom1 = self.getAtoms()[atomIdx]
+        atom2 = self.getAtoms()[atomJdx]
+        self.addBond(atom1, atom2, *bondType)
     
     def getBondByIndex(self, atomIdx, atomJdx):
-        pass
+        atom1 = self.getAtoms()[atomIdx]
+        atom2 = self.getAtoms()[atomJdx]
+        return atom1.bonds[atom2]
     
+    def addBond(self, atom1, atom2, **bondProp):
+        
+        # add nodes
+        self.addAtoms([atom1, atom2])
+        bond = atom1.bondto(atom2, *bondProp)
+        
+        # add edges
+        bond = self._adj[atom1].get(atom2, bond)
+        bond.update(bondProp)
+        self._adj[atom1][atom2] = bond
+        self._adj[atom2][atom1] = bond
+        
+        
+    def removeBond(self, atom1, atom2):
+        try:
+            del self._adj[atom1][atom2]
+            if atom1 != atom2:
+                del self._adj[atom2][atom1]
+        except:
+            raise KeyError(f'either {atom1} or {atom2} not in this graph')
+        
+        atom1.removeBond(atom2)
+    
+    def __contains__(self, n):
+        try:
+            return n in self.getAtoms()
+        except TypeError:
+            return False
+        
+    def __len__(self):
+        return len(self.getAtoms())
