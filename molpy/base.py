@@ -15,7 +15,6 @@ class Item:
         self._uuid = id(self)
         self.name = name
         self._container = []
-        self.status = 'new' # 'modified' / 'new'
     
     @property
     def properties(self):
