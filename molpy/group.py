@@ -14,9 +14,10 @@ class Group(Item):
     
     def __init__(self, name, **attrs) -> None:
         super().__init__(name)
-        self.items = self._container
+
         self._atoms = [] # node
         self._bonds = [] # edge
+        self._groups = []
         self._adj = {}
         for attr in attrs:
             setattr(self, attr, attrs[attr])
@@ -32,7 +33,7 @@ class Group(Item):
             atom ([Atom]): an atom instance
         """
         atom.parent = self
-        if atom not in self.items:
+        if atom not in self._atoms:
             self.atoms.append(atom)
             self._adj[atom] = {}
                 
@@ -49,8 +50,8 @@ class Group(Item):
         Args:
             atom (Atom): [description]
         """
-        # remove atom from item list
-        del self.items[self.items.index(atom)]
+        # remove atom from atom list
+        del self._atoms[self._atoms.index(atom)]
         
         # remove related bonds
         nbrs = list(self._adj[atom])
@@ -59,26 +60,19 @@ class Group(Item):
         del self._adj[atom]  # remove node
     
     def getAtoms(self):
-        """ get atoms from all the items in this group
+        """ get atoms from this group
 
         Returns:
             List: List of atoms
         """
-
-        for item in self.items:
-            if isinstance(item, Atom):
-                self._atoms.append(item)
-            elif isinstance(item, Group):
-                self._atoms.extend(item)
-
         return self._atoms
     
     def getCovalentMap(self):
         """ calculate covalent map from atoms in this group.
         """        
         atoms = self.getAtoms()
-        covalentMap = np.zeros((len(atoms), len(atoms)))
-        visited = np.zeros_like(covalentMap)
+        covalentMap = np.zeros((len(atoms), len(atoms)), dtype=int)
+        visited = np.zeros_like(covalentMap, dtype=int)
         
         def find(nodes, vis):
             nextLevelNodes = []
@@ -137,14 +131,14 @@ class Group(Item):
         return len(self.getAtoms())
     
     def getAtomByName(self, atomName):
-        for item in self.items:
-            if isinstance(item, Group) and item.name == atomName:
-                return item
+        for atom in self._atoms:
+            if isinstance(atom, Atom) and atom.name == atomName:
+                return atom
     
     def getGroupByName(self, groupName):
-        for item in self.items:
-            if isinstance(item, Group) and item.name == groupName:
-                return item
+        for group in self._groups:
+            if isinstance(group, Group) and group.name == groupName:
+                return group
     
     def __getitem__(self, idx):
         if isinstance(idx, str):
@@ -155,27 +149,20 @@ class Group(Item):
         elif isinstance(idx, int):
             return self.getAtoms()[idx]
         
-    def delete(self, name):
+    def deleteAtom(self, name):
         
-        dropwhile(lambda item: item.name == name, self.items)
+        dropwhile(lambda atom: atom.name == name, self._atoms)
         
     def update(self):
         pass
     
     def getBonds(self):
-        # self.check_properties(covalentMap=np.ndarray)
-        # covalentMap = self.covalentMap
-        
-        # for index, nbond in np.ndenumerate(np.triu(covalentMap, 1)):
-        #     if nbond == 1:
-        #         self._bonds.append(
-        #             (self._atoms[index[0]], self._atoms[index[1]])
-        #         )
-        # return self._bonds
+
         b = set()
         for u, bonds in self._adj.items():
             for v, bond in bonds.items():
                 b.add(bond)
+        b = list(b)
         self._bonds = b
         return b
 
@@ -205,10 +192,10 @@ class Group(Item):
         
         # add nodes
         self.addAtoms([atom1, atom2])
-        bond = atom1.bondto(atom2, *bondProp)
+        bond = atom1.bondto(atom2, **bondProp)
         
         # add edges
-        bond.update(bondProp)
+        bond.update(**bondProp)
         self._adj[atom1][atom2] = bond
         self._adj[atom2][atom1] = bond
         

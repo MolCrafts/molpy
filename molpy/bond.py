@@ -10,9 +10,12 @@ class Bond(Item):
     def __init__(self, atom1, atom2, **attr) -> None:
         self.atoms = tuple(sorted((atom1, atom2)))
         super().__init__(f'{str(self.atoms[0])}-{str(self.atoms[1])}')
-        self.atomType1 = getattr(atom1, 'type', None)
-        self.atomType2 = getattr(atom2, 'type', None)
-        self.update(*attr)
+        self.atomType1 = getattr(atom1, 'type', atom1.name)
+        self.atomType2 = getattr(atom2, 'type', atom2.name)
+        self.update(**attr)
+        
+        if attr.get('type', None):
+            self.type = '-'.join([self.atomType1, self.atomType2])
         
     def __hash__(self):
         """ Warning: in the base class Item, hash == hash(id(self))
@@ -33,3 +36,8 @@ class Bond(Item):
         
         for at in attr:
             setattr(self, at, attr[at])
+            
+    @property
+    def properties(self):
+        return dict((k, v) for k, v in super().properties.items() if k not in ['atoms', '_uuid'])
+        

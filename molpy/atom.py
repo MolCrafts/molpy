@@ -30,8 +30,8 @@ class Atom(Item):
             atom (Atom): atom to be bonded
         """
         # check bond
-        bond = self._bondedAtoms.get(atom, Bond(self, atom, *bondType))
-        bond.update(*bondType)
+        bond = self._bondedAtoms.get(atom, Bond(self, atom, **bondType))
+        bond.update(**bondType)
         
         if atom not in self._bondedAtoms:
             self._bondedAtoms[atom] = bond
