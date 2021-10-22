@@ -4,8 +4,14 @@
 # version: 0.0.1
 
 class Item:
-    
+    """base class of the molpy
+    """
     def __init__(self, name) -> None:
+        """initialize base class
+
+        Args:
+            name (str): the name of instances
+        """
         self._uuid = id(self)
         self.name = name
         self._container = []
@@ -13,10 +19,20 @@ class Item:
     
     @property
     def properties(self):
+        """return properties
+
+        Returns:
+            dict: key-value format
+        """
         return self.__dict__
     
     @property
     def uuid(self):
+        """uuid is the ID assigned by the system is used to distinguish different instances
+
+        Returns:
+            int: uuid
+        """
         return self._uuid
     
     def __next__(self):
@@ -60,10 +76,25 @@ class Item:
                 else:
                     raise TypeError(f'requires {k} is {v} but {type(kv)}')
     
-    def get(self, property, default):
+    def get(self, property, default=None):
+        """get a property, equivalent to getattr()
+
+        Args:
+            property (str): name of property
+            default (Any): default to None
+
+        Returns:
+            Any: property of this instance
+        """
         return getattr(self, property, default)
     
     def set(self, property, value):
+        """set a property, equivalent to setattr()
+
+        Args:
+            property (str): name of property
+            value (Any): value of property
+        """
         setattr(self, property, value)
         
     def __eq__(self, o):

@@ -3,7 +3,7 @@
 # date: 2021-10-21
 # version: 0.0.1
 
-from molpy.abc import Item
+from molpy.base import Item
 
 class Bond(Item):
     

@@ -4,7 +4,7 @@
 # version: 0.0.1
 
 from typing import Iterable, Union
-from molpy.abc import Item
+from molpy.base import Item
 from molpy.atom import Atom
 import numpy as np
 from itertools import dropwhile, combinations
@@ -23,17 +23,17 @@ class Group(Item):
         if isinstance(item, Atom):
             self.addAtom(item)
         
-    def addAtom(self, item: Atom):
+    def addAtom(self, atom: Atom):
         """ Add an atom to this group
 
         Args:
-            atom (Atom): an atom instance
+            atom ([Atom]): an atom instance
         """
-        item.parent = self
-        if item not in self.items:
-            self.items.append(item)
+        atom.parent = self
+        if atom not in self.items:
+            self.atoms.append(atom)
             self.status = 'modified'
-            self._adj[item] = {}
+            self._adj[atom] = {}
                 
     def addAtoms(self, atoms: Iterable[Atom]):
         for atom in atoms:
@@ -46,13 +46,7 @@ class Group(Item):
         Attempting to remove a non-existent node will raise an exception.
 
         Args:
-            atom (Atom): an atom in this group
-            
-        Returns:
-            NoneType
-            
-        Raises:
-            ValueError: WHEN atom not in this graph
+            atom (Atom): [description]
         """
         # remove atom from item list
         del self.items[self.items.index(atom)]

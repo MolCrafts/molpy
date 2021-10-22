@@ -3,7 +3,7 @@
 # date: 2021-10-17
 # version: 0.0.1
 
-from molpy.abc import Item
+from molpy.base import Item
 from molpy.element import Element
 from molpy.bond import Bond
 import numpy as np

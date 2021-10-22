@@ -15,12 +15,17 @@ setuptools.setup(
     project_urls={
         "Bug Tracker": "https://github.com/Roy-Kid/molpy",
     },
+    install_requires=[
+        'numpy>=1.20',
+    ],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: BSD-3-Clause License",
         "Operating System :: OS Independent",
     ],
-    package_dir={"": "src"},
-    packages=setuptools.find_packages(where="src"),
+    packages=setuptools.find_packages(
+        where='molpy',    
+    ),
+    package_dir={'': 'molpy'},
     python_requires=">=3.8",
 )

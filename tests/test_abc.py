@@ -1,5 +1,5 @@
 from molpy.utils import check_properties
-from molpy.abc import Item
+from molpy.base import Item
 
 import pytest
 
