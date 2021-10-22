@@ -39,7 +39,7 @@ class TestGroup:
         covalentMap[0, 1:] = covalentMap[1:, 0] = 1
         CH4.setTopoByCovalentMap(covalentMap)
         assert len(CH4['C'].bondedAtoms) == 4
-        assert CH4['H0'].bondedAtoms[0] == CH4['C']
+        assert CH4['C'] in CH4['H0'].bondedAtoms
         
     def test_getCovalentMap(self, CH4):
         co = CH4.getCovalentMap()
@@ -73,3 +73,12 @@ class TestGroup:
     def test_getAngles(self, CH4):
         angles = CH4.getAngles()
         assert len(angles) == 6
+        
+    def test_getSubGroup(self, CH4):
+        H4 = CH4.getSubGroup('H4', [CH4[f'H{i}'] for i in range(4)])
+        assert H4.natoms == 4
+        assert H4.nbonds == 0
+        
+        CH = CH4.getSubGroup('CH', [CH4['C'], CH4['H0']])
+        assert CH.natoms == 2
+        assert CH.nbonds == 1

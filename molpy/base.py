@@ -4,19 +4,34 @@
 # version: 0.0.1
 
 class Item:
-    
+    """base class of the molpy
+    """
     def __init__(self, name) -> None:
+        """initialize base class
+
+        Args:
+            name (str): the name of instances
+        """
         self._uuid = id(self)
         self.name = name
         self._container = []
-        self.status = 'new' # 'modified' / 'new'
     
     @property
     def properties(self):
+        """return properties
+
+        Returns:
+            dict: key-value format
+        """
         return self.__dict__
     
     @property
     def uuid(self):
+        """uuid is the ID assigned by the system is used to distinguish different instances
+
+        Returns:
+            int: uuid
+        """
         return self._uuid
     
     def __next__(self):
@@ -27,6 +42,9 @@ class Item:
     
     def __hash__(self):
         return hash(id(self))
+    
+    def __id__(self):
+        return id(self)
     
     def __repr__(self) -> str:
         return f'< {self.__class__.__name__} {self.name} >'
@@ -56,7 +74,30 @@ class Item:
                     continue
                 else:
                     raise TypeError(f'requires {k} is {v} but {type(kv)}')
+    
+    def get(self, property, default=None):
+        """get a property, equivalent to getattr()
+
+        Args:
+            property (str): name of property
+            default (Any): default to None
+
+        Returns:
+            Any: property of this instance
+        """
+        return getattr(self, property, default)
+    
+    def set(self, property, value):
+        """set a property, equivalent to setattr()
+
+        Args:
+            property (str): name of property
+            value (Any): value of property
+        """
+        setattr(self, property, value)
         
-    def moveTo(self, x, y, z):
-        self.check_properties(position='required')
-        pass
+    def __eq__(self, o):
+        return self.uuid == o.uuid
+    
+    def __lt__(self, o):
+        return self.uuid < o.uuid

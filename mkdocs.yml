@@ -16,6 +16,7 @@ nav:
     - Home: index.md
     - demo: demo.ipynb
     - References: 
+        - base.md
         - atom.md
         - group.md
 
