@@ -3,7 +3,7 @@
 # date: 2021-10-22
 # version: 0.0.1
 
-from molpy.base import Item
+from molpy.item import Item
 from molpy.group import Group
 from molpy.bond import Bond
 

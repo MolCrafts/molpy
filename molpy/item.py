@@ -3,18 +3,21 @@
 # date: 2021-10-17
 # version: 0.0.1
 
+import numpy as np
+
 class Item:
     """base class of the molpy
     """
-    def __init__(self, name) -> None:
+    def __init__(self, name='') -> None:
         """initialize base class
 
         Args:
             name (str): the name of instances
         """
         self._uuid = id(self)
-        self.name = name
+        self._name = name
         self._container = []
+        self._itemType = self.__class__.__name__
     
     @property
     def properties(self):
@@ -34,6 +37,14 @@ class Item:
         """
         return self._uuid
     
+    @property
+    def name(self):
+        return self._name
+    
+    @property
+    def itemType(self):
+        return self._itemType
+    
     def __next__(self):
         return next(self._container)
     
@@ -49,11 +60,33 @@ class Item:
     def __repr__(self) -> str:
         return f'< {self.__class__.__name__} {self.name} >'
     
-    def deserialize(self, o):
-        pass
+    def deserialize(self, o, exclude=[]):
+        exclude.append('_format')
+        for k, v in o.items():
+            if k in exclude:
+                continue
+            format = o['_format'].get(k, None)
+            if format is None:
+                setattr(self, k, v)
+            else:
+                if format == 'ndarray':
+                    setattr(self, k, np.array(v))
+        return self
     
-    def serialize(self):
-        pass
+    def serialize(self, exclude=[]):
+        props = {'_format': {}}
+        for k, v in self.properties.items():
+            if k in exclude:
+                continue
+            
+            if isinstance(v, np.ndarray):
+                props[k] = v.tolist()
+                props['_format'][k] = 'ndarray'
+                
+            else:
+                props[k] = v
+        return props
+        
     
     def check_properties(self, **props):
         """ a method to check if the instances has method required properties before method is execute

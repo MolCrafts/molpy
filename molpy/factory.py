@@ -3,10 +3,12 @@
 # date: 2021-10-17
 # version: 0.0.1
 
+from typing import Dict
 from molpy.atom import Atom
 from molpy.group import Group
 from molpy.io import pdb
 import numpy as np
+import importlib
 
 def full(groupName, atomNames, **properties):
     """ build up a group with atoms
@@ -41,3 +43,12 @@ def fromPDB(fpath, index=None):
 def fromLAMMPS():
     pass
 
+def fromDict(d: Dict):
+    itemType = d['_itemType']
+    filename = itemType.lower()
+    anyItem = getattr(importlib.import_module('molpy.'+filename), d['_itemType'], None)('')
+    if anyItem is None:
+        raise ModuleNotFoundError(f'Can not find {d["_itemType"]} from {filename}.py in molpy')
+    anyItem.deserialize(d)
+    return anyItem
+    

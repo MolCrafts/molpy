@@ -19,6 +19,23 @@ class TestAtom:
         O.bondto(H1)
         O.bondto(H2)
         yield O, H1, H2
+        
+    def test_serialize(self, H2O):
+        O, H1, H2 = H2O
+        O.tensorx = np.zeros((3, 3))
+        op = O.serialize()
+        assert op['_name'] == 'O'
+        assert op['_itemType'] == 'Atom'
+        assert op['tensorx'] == np.zeros((3, 3)).tolist()
+                
+    def test_deserialize(self, H2O):
+        O, H1, H2 = H2O
+        op = O.serialize()
+        oprime = Atom('').deserialize(op)
+        assert oprime.name == 'O'
+        assert oprime.itemType == 'Atom'
+        assert (oprime.tensorx == np.zeros((3, 3))).all()
+        
     
     def test_move(self, H2O):
         O, H1, H2 = H2O

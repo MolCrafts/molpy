@@ -7,13 +7,6 @@ import logging
 from molpy.group import Group
 from molpy.atom import Atom
 import warnings
-import networkx as nx
-
-from .smiles_helper import (add_explicit_hydrogens, remove_explicit_hydrogens,
-                            parse_atom, fill_valence, mark_aromatic_edges,
-                            mark_aromatic_atoms)
-
-LOGGER = logging.getLogger(__name__)
 
 @enum.unique
 class TokenType(enum.Enum):
