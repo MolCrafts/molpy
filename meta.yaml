@@ -22,7 +22,7 @@ source:
   #  `openssl sha256 <file name>`.
   # You may need the openssl package, available on conda-forge:
   #  `conda install openssl -c conda-forge``
-  path: ../molpy
+  path: molpy
 
 build:
   # Uncomment the following line if the package is pure Python and the recipe is exactly the same for all platforms.
