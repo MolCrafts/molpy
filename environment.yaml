@@ -98,3 +98,4 @@ dependencies:
   - zeromq=4.3.4=h9c3ff4c_1
   - zipp=3.6.0=pyhd8ed1ab_0
   - zlib=1.2.11=h36c2ea0_1013
+prefix: /home/roy/miniconda3/envs/molpy
