@@ -22,7 +22,7 @@ nav:
 
 plugins:
     - mkdocs-jupyter:
-        execute: True
+        execute: False
     - search
     - mkdocstrings
 
