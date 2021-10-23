@@ -16,13 +16,13 @@ nav:
     - Home: index.md
     - demo: demo.ipynb
     - References: 
-        - base.md
+        - item.md
         - atom.md
         - group.md
 
 plugins:
     - mkdocs-jupyter:
-        execute: True
+        execute: False
     - search
     - mkdocstrings
 

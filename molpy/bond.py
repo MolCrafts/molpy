@@ -3,19 +3,18 @@
 # date: 2021-10-21
 # version: 0.0.1
 
-from molpy.base import Item
+from molpy.item import Item
 
 class Bond(Item):
-    
     def __init__(self, atom1, atom2, **attr) -> None:
-        self.atoms = tuple(sorted((atom1, atom2)))
-        super().__init__(f'{str(self.atoms[0])}-{str(self.atoms[1])}')
-        self.atomType1 = getattr(atom1, 'type', atom1.name)
-        self.atomType2 = getattr(atom2, 'type', atom2.name)
+        self._atoms = tuple(sorted((atom1, atom2)))
+        super().__init__(f'{str(self._atoms[0])}-{str(self._atoms[1])}')
+        self._atomType1 = getattr(atom1, 'type', atom1.name)
+        self._atomType2 = getattr(atom2, 'type', atom2.name)
         self.update(**attr)
         
         if attr.get('type', None):
-            self.type = '-'.join([self.atomType1, self.atomType2])
+            self.type = '-'.join([self._atomType1, self._atomType2])
         
     def __hash__(self):
         """ Warning: in the base class Item, hash == hash(id(self))
@@ -24,7 +23,7 @@ class Bond(Item):
         if self.atomType1 and self.atomType2:
             return hash(self.atomType1+self.atomType2)
         else:
-            return hash(self.atoms)
+            return hash(self._atoms)
         
     def __id__(self):
         return id(self)
@@ -39,5 +38,15 @@ class Bond(Item):
             
     @property
     def properties(self):
-        return dict((k, v) for k, v in super().properties.items() if k not in ['atoms', '_uuid'])
+        return dict((k, v) for k, v in super().properties.items() if k not in ['_atoms', '_uuid'])
         
+    @property
+    def atomType1(self):
+        return self._atomType1
+    
+    @property
+    def atomType2(self):
+        return self._atomType2
+    
+    def serialize(self):
+        props = super().serialize(exclude=[])

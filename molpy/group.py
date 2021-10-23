@@ -4,14 +4,13 @@
 # version: 0.0.1
 
 from typing import Iterable, Union
-from molpy.base import Item
+from molpy.item import Item
 from molpy.atom import Atom
 from molpy.bond import Bond
 import numpy as np
 from itertools import dropwhile, combinations
 
 class Group(Item):
-    
     def __init__(self, name, **attrs) -> None:
         super().__init__(name)
 
@@ -32,7 +31,7 @@ class Group(Item):
         Args:
             atom ([Atom]): an atom instance
         """
-        atom.parent = self
+        # atom.parent = self
         if atom not in self._atoms:
             self.atoms.append(atom)
             self._adj[atom] = {}
@@ -246,3 +245,45 @@ class Group(Item):
                     bond = subgroup._adj.get(atom, {})
                     bond[bondedAtom] = atom.bonds[bondedAtom]
         return subgroup
+
+    def serialize(self):
+                   
+        props = super().serialize(['_atoms', '_bonds', '_adj'])
+        
+        # _atoms
+        atoms = self.getAtoms()
+        tmp = []
+        for atom in atoms:
+            tmp.append(atom.serialize())
+        props['_atoms'] = tmp
+        
+        # _bonds
+        
+        return props
+    
+    def deserialize(self, o):
+        if o['_itemType'] != 'Group':
+            raise TypeError(f'Group class get incompitable infomation')
+        super().deserialize(o, ['_atoms'])
+        atoms = o['_atoms']
+        tmp = []
+        for atom in atoms:
+            tmp.append(Atom('').deserialize(atom))
+        self.set('_atoms', tmp)
+        
+        # adj = o['_adj']
+        # for c, ps in adj.items():
+        #     for p, bond in ps.items():
+        #         cuuid = c['_uuid']
+        #         puuid = p['_uuid']
+        #         for atom in atoms:
+        #             if atom.uuid == cuuid:
+        #                 catom = atom
+        #                 break
+        #         for atom in atoms:
+        #             if atom.uuid == puuid:
+        #                 patom = atom
+        #                 break
+        #         self.addBond(catom, patom)
+        
+        return self
