@@ -6,18 +6,32 @@
 from molpy.item import Item
 from molpy.group import Group
 from molpy.bond import Bond
+from molpy.atomType import AtomType
 
 class ForceField(Item):
     
     def __init__(self, name) -> None:
         super().__init__(name)
-        self.templates = {}
+        self._templates = {}
+        self._atomType = {}
+        
+    def setAtomType(self, name, **attr):
+        atomType = self._atomType.get(name, None)
+        if atomType is not None:
+            raise KeyError(f'atomType {name} has been defined')
+        self._atomType[name] = AtomType(name, **attr)
+    
+    def getAtomType(self, name):
+        atomType = self._atomType.get(name, None)
+        if atomType is None:
+            raise KeyError(f'atomType {name} is not defined yet')
+        return atomType
         
     def registerTemplate(self, group: Group):
-        self.templates[group] = group.properties
+        self._templates[group] = group.properties
         
     def getTemplateByName(self, groupName: str):
-        for t in self.templates:
+        for t in self._templates:
             if t.name == groupName:
                 return t
             
@@ -30,7 +44,7 @@ class ForceField(Item):
         Returns:
             Group: matched template
         """
-        for template in self.templates:
+        for template in self._templates:
             if template.type == group.type:
                 return template
         
