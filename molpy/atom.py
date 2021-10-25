@@ -75,3 +75,9 @@ class Atom(Item):
     
     def rotateWithQuaternion(self, ):
         pass
+    
+    def update(self, **attr):
+        for k, v in attr.items():
+            if k == 'name':
+                continue
+            self.set(k, v)

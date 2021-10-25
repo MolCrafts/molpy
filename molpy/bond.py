@@ -19,11 +19,7 @@ class Bond(Item):
     def __hash__(self):
         """ Warning: in the base class Item, hash == hash(id(self))
         """
-        
-        if self.atomType1 and self.atomType2:
-            return hash(self.atomType1+self.atomType2)
-        else:
-            return hash(self._atoms)
+        return hash(self._atoms)
         
     def __id__(self):
         return id(self)

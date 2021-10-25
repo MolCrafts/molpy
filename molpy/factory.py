@@ -6,7 +6,7 @@
 from typing import Dict
 from molpy.atom import Atom
 from molpy.group import Group
-from molpy.io import pdb
+from molpy.io.pdb import read_pdb
 import numpy as np
 import importlib
 
@@ -31,14 +31,8 @@ def full(groupName, atomNames, **properties):
 
 def fromPDB(fpath, index=None):
     with open(fpath, 'r') as f:
-        frames = pdb(f, index=None)
-    pdbgroup = full(fpath, frames['names'], **frames)
-    covalentMap = np.zeros((pdbgroup.natoms, pdbgroup.natoms), dtype=int)
-    conects = frames['conects']
-    for catom, pairs in conects.items():
-        covalentMap[catom][pairs] = 1
-    pdbgroup.setTopoByCovalentMap(covalentMap)
-    return pdbgroup
+        group = read_pdb(f, index=None)
+    return group
 
 def fromLAMMPS():
     pass

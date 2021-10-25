@@ -45,4 +45,5 @@ class TestBond:
     def test_signature(self, AB, CD):
         A, B = AB
         C, D = CD
-        assert A.bondto(B) == C.bondto(D)
+        assert A.bondto(B) != C.bondto(D)
+        assert A.bondto(B) == B.bondto(A)

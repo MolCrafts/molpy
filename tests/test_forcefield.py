@@ -47,7 +47,7 @@ class TestForceField:
     def test_forcefield(self, forcefield):
         ff = forcefield
         template = ff.getTemplateByName('AB')
-        assert len(template.getBonds()) == 1
+        assert template.nbonds == 1
         assert template.getBonds()[0].k == 1.234
         assert template.getAtomByName('A').type == 'left'
         

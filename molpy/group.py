@@ -187,6 +187,22 @@ class Group(Item):
         atom2 = self.getAtoms()[atomJdx]
         return atom1.bonds[atom2]
     
+    def addBondBy(self, atom1, atom2, by):
+        atoms = self.getAtoms()
+        tmp = {}
+        for atom in atoms:
+            tmp[atom.get(by)] = atom
+        return tmp[atom1].bondto(tmp[atom2])
+    
+    def addBondsByDict(self, dict, ref):
+        atoms = self.getAtoms()
+        tmp = {}
+        for atom in atoms:
+            tmp[atom.get(ref)] = atom
+        for c, ps in dict.items():
+            for p in ps:
+                self.addBond(tmp[c], tmp[p])
+    
     def addBond(self, atom1, atom2, **bondProp):
         
         # add nodes
