@@ -46,3 +46,11 @@ class Bond(Item):
     
     def serialize(self):
         props = super().serialize(exclude=[])
+        
+    @property
+    def atom1(self):
+        return self._atoms[0]
+    
+    @property
+    def atom2(self):
+        return self._atoms[1]

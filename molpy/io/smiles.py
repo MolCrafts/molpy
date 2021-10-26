@@ -161,14 +161,14 @@ def read_smiles(smiles, explicit_hydrogen=False, zero_order_bonds=True,
     # clear what aromaticity information has been provided, and what should be
     # inferred. In addition, to what extend do we want to provide a "sane"
     # molecule, even if this overrides what the SMILES string specifies?
-    cycles = nx.cycle_basis(mol)
-    ring_idxs = set()
+    cycles = mol.getBasisCycles()
+    ring_atoms = set()
     for cycle in cycles:
-        ring_idxs.update(cycle)
-    non_ring_idxs = set(mol.nodes) - ring_idxs
-    for n_idx in non_ring_idxs:
-        # if mol.nodes[n_idx].get('aromatic', False):
-        if getattr(mol[n_idx], False):
+        ring_atoms.update(cycle)
+    non_ring_atoms = set(mol.atoms) - ring_atoms
+    for n_atoms in non_ring_atoms:
+        if n_atoms.get('aromatic', False):
+        # if getattr(mol[n_idx], False):
             raise ValueError("You specified an aromatic atom outside of a"
                              " ring. This is impossible")
     
@@ -177,11 +177,11 @@ def read_smiles(smiles, explicit_hydrogen=False, zero_order_bonds=True,
     if reinterpret_aromatic:
         mark_aromatic_atoms(mol)
         mark_aromatic_edges(mol)
-        for idx, jdx in mol.edges:
-            if ((not mol[idx].get('aromatic', False) or
-                    not mol[jdx].get('aromatic', False))
-                    and mol.getBondByIndex(idx, jdx).get('order', 1) == 1.5):
-                mol.edges[idx, jdx]['order'] = 1
+        for bond in mol.getBonds():
+            if ((not bond.atom1.get('aromatic', False) or
+                    not bond.atom2.get('aromatic', False))
+                    and bond.get('order', 1) == 1.5):
+                bond.order = 1
 
     if explicit_hydrogen:
         add_explicit_hydrogens(mol)
@@ -421,25 +421,24 @@ def remove_explicit_hydrogens(mol):
     """
     to_remove = set()
 #    defaults = parse_atom('[H]')
-    for n_idx in mol.nodes:
-        node = mol.nodes[n_idx]
-        neighbors = list(mol[n_idx])
+    for atom in mol.atoms:
+        neighbors = atom.bondedAtoms
         # TODO: get these defaults from parsing [H]. But do something smart
         #       with the hcount attribute.
-        if (node.get('charge', 0) == 0 and node.get('element', '') == 'H' and
-                'isotope' not in node and node.get('class', 0) == 0 and
+        if (atom.get('charge', 0) == 0 and atom.get('element', '') == 'H' and
+                'isotope' not in atom and atom.get('class', 0) == 0 and
                 len(neighbors) == 1):
             neighbor = neighbors[0]
-            if (mol.nodes[neighbor].get('element', '') == 'H' or
-                    mol.edges[n_idx, neighbor].get('order', 1) != 1):
+            if (neighbor.get('element', '') == 'H' or
+                    atom.bondto(neighbor).get('order', 1) != 1):
                 # The molecule is H2, or the bond order is not 1.
                 continue
-            to_remove.add(n_idx)
-            mol.nodes[neighbor]['hcount'] = mol.nodes[neighbor].get('hcount', 0) + 1
-    mol.remove_nodes_from(to_remove)
-    for n_idx in mol.nodes:
-        if 'hcount' not in mol.nodes[n_idx]:
-            mol.nodes[n_idx]['hcount'] = 0
+            to_remove.add(atom)
+            neighbor['hcount'] = neighbor.get('hcount', 0) + 1
+    mol.deleteAtoms(to_remove)
+    for atom in mol.atoms:
+        if 'hcount' not in atom:
+            atom.hcount = 0
 
 
 def fill_valence(mol, respect_hcount=True, respect_bond_order=True,
@@ -600,21 +599,20 @@ def mark_aromatic_atoms(mol, atoms=None):
         `mol` is modified in-place.
     """
     if atoms is None:
-        atoms = set(mol.nodes)
+        atoms = set(mol.atoms)
     aromatic = set()
     # Only cycles can be aromatic
-    for cycle in nx.cycle_basis(mol):
+    for cycle in mol.getBasisCycles():
         # All atoms should be sp2, so each contributes an electron. We make
         # sure they are later.
         electrons = len(cycle)
         maybe_aromatic = True
 
-        for node_idx in cycle:
-            node = mol.nodes[node_idx]
-            element = node.get('element', '*').capitalize()
-            hcount = node.get('hcount', 0)
-            degree = mol.degree(node_idx) + hcount
-            hcount += _hydrogen_neighbours(mol, node_idx)
+        for atom in cycle:
+            element = atom.get('element', '*').capitalize()
+            hcount = atom.get('hcount', 0)
+            degree = len(atom.bonds) + hcount
+            hcount += _hydrogen_neighbours(mol, atom)
             # Make sure they are possibly aromatic, and are sp2 hybridized
             if element not in AROMATIC_ATOMS or degree not in (2, 3):
                 maybe_aromatic = False
@@ -628,17 +626,16 @@ def mark_aromatic_atoms(mol, atoms=None):
                 electrons += 1
             elif element in 'O S Se'.split():
                 electrons += 1
-            if node.get('charge', 0) == +1 and not (element == 'C' and hcount == 0):
+            if atom.get('charge', 0) == +1 and not (element == 'C' and hcount == 0):
                 electrons -= 1
         if maybe_aromatic and int(electrons) % 2 == 0:
             # definitely (anti) aromatic
             aromatic.update(cycle)
-    for node_idx in atoms:
-        node = mol.nodes[node_idx]
-        if node_idx not in aromatic:
-            node['aromatic'] = False
+    for atom in atoms:
+        if atom not in aromatic:
+            atom.aromatic = False
         else:
-            node['aromatic'] = True
+            atom.aromatic = True
 
 
 def mark_aromatic_edges(mol):
@@ -654,16 +651,16 @@ def mark_aromatic_edges(mol):
     None
         `mol` is modified in-place.
     """
-    for cycle in nx.cycle_basis(mol):
-        for idx, jdx in mol.edges(nbunch=cycle):
+    for cycle in mol.getBasisCycles():
+        for idx, jdx in mol.getSubGroup(cycle):
             if idx not in cycle or jdx not in cycle:
                 continue
-            if (mol.nodes[idx].get('aromatic', False)
-                    and mol.nodes[jdx].get('aromatic', False)):
-                mol.edges[idx, jdx]['order'] = 1.5
-    for idx, jdx in mol.edges:
-        if 'order' not in mol.edges[idx, jdx]:
-            mol.edges[idx, jdx]['order'] = 1
+            if (mol.getAtomByIndex(idx).get('aromatic', False)
+                    and mol.getAtomByIndex(jdx).get('aromatic', False)):
+                mol.getBondByIndex(idx, jdx).order = 1.5
+    for bond in mol.getBonds():
+        if hasattr(bond, 'order'):
+            bond.order = 1
 
 
 def correct_aromatic_rings(mol):

@@ -99,3 +99,7 @@ class TestGroup:
     #     assert CH4new.getAtomByName('C')
     #     assert CH4new.name == 'CH4'
     #     # assert len(CH4new.getBonds()) == 4
+    
+    def test_getBasisCycles(self, C6):
+        
+        assert len(C6.getBasisCycles()) == 1

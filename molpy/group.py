@@ -66,6 +66,9 @@ class Group(Item):
         """
         return self._atoms
     
+    def getDegreeOfAtom(self, atom):
+        return len(atom.bonds)
+    
     def getCovalentMap(self):
         """ calculate covalent map from atoms in this group.
         """        
@@ -109,6 +112,10 @@ class Group(Item):
         return self.getAtoms()
     
     @property
+    def bonds(self):
+        return self.getBonds()
+    
+    @property
     def nbonds(self):
         return len(self.getBonds())
             
@@ -148,9 +155,9 @@ class Group(Item):
         elif isinstance(idx, int):
             return self.getAtoms()[idx]
         
-    def deleteAtom(self, name):
+    def deleteAtoms(self, atoms: Iterable[Atom]):
         
-        dropwhile(lambda atom: atom.name == name, self._atoms)
+        dropwhile(lambda atom: atom in atoms, self._atoms)
         
     def update(self):
         pass
@@ -180,7 +187,7 @@ class Group(Item):
     def addBondByIndex(self, atomIdx, atomJdx, **bondType):
         atom1 = self.getAtoms()[atomIdx]
         atom2 = self.getAtoms()[atomJdx]
-        self.addBond(atom1, atom2, *bondType)
+        self.addBond(atom1, atom2, **bondType)
     
     def getBondByIndex(self, atomIdx, atomJdx):
         atom1 = self.getAtoms()[atomIdx]
@@ -303,3 +310,71 @@ class Group(Item):
         #         self.addBond(catom, patom)
         
         return self
+
+    def getBasisCycles(self, root=None):
+         
+        """Returns a list of cycles which form a basis for cycles of G.
+        A basis for cycles of a network is a minimal collection of
+        cycles such that any cycle in the network can be written
+        as a sum of cycles in the basis.  Here summation of cycles
+        is defined as "exclusive or" of the edges. Cycle bases are
+        useful, e.g. when deriving equations for electric circuits
+        using Kirchhoff's Laws.
+        Parameters
+        
+        Args: 
+            root(Atom): Specify starting node for basis, optional
+            
+        Returns:
+            A list of cycle lists.  Each cycle list is a list of nodes
+            which forms a cycle (loop) in G.
+            
+        Examples:
+            >>> G = nx.Graph()
+            >>> nx.add_cycle(G, [0, 1, 2, 3])
+            >>> nx.add_cycle(G, [0, 3, 4, 5])
+            >>> print(nx.cycle_basis(G, 0))
+            [[3, 4, 5, 0], [1, 2, 3, 0]]
+        Notes:
+            -----
+            This is adapted from algorithm CACM 491 [1]_.
+            References
+            ----------
+            .. [1] Paton, K. An algorithm for finding a fundamental set of
+            cycles of a graph. Comm. ACM 12, 9 (Sept 1969), 514-518.
+            See Also
+            --------
+            simple_cycles
+        """        
+        
+        gnodes = set(self.getAtoms())
+        cycles = []
+        while gnodes:
+            if root is None:
+                root = gnodes.pop()
+            stack = [root]
+            pred = {root: root}
+            used = {root: set()}
+            while stack:  # walk the spanning tree finding cycles
+                z = stack.pop()  # use last-in so cycles easier to find
+                zused = used[z]
+                for nbr in z.bondedAtoms:
+                    if nbr not in used:  # new node
+                        pred[nbr] = z
+                        stack.append(nbr)
+                        used[nbr] = {z}
+                    elif nbr == z:  # self loops
+                        cycles.append([z])
+                    elif nbr not in zused:  # found a cycle
+                        pn = used[nbr]
+                        cycle = [nbr, z]
+                        p = pred[z]
+                        while p not in pn:
+                            cycle.append(p)
+                            p = pred[p]
+                        cycle.append(p)
+                        cycles.append(cycle)
+                        used[nbr].add(z)
+            gnodes -= set(pred)
+            root = None
+        return cycles

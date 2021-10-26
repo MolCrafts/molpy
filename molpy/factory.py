@@ -22,6 +22,7 @@ def full(groupName, atomNames, **properties):
         atom = Atom(name)
         for k, v in properties.items():
             setattr(atom, k, v[i])
+        _atoms.append(atom)
             
     group = Group(groupName)
     for atom in _atoms:
