@@ -27,6 +27,9 @@ class Bond(Item):
     def __eq__(self, o):
         return hash(self) == hash(o)
     
+    def __lt__(self, o):
+        return self.uuid < o.uuid
+    
     def update(self, **attr):
         
         for at in attr:

@@ -230,4 +230,7 @@ cython_debug/
 .history
 .ionide
 
+# test cases
+!tests/samples/*
+
 # End of https://www.toptal.com/developers/gitignore/api/python,c,c++,visualstudiocode

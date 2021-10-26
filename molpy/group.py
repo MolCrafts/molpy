@@ -193,7 +193,7 @@ class Group(Item):
         atom1 = self.getAtoms()[atomIdx]
         atom2 = self.getAtoms()[atomJdx]
         try:
-            atom1.bonds[atom2]
+            return atom1.bonds[atom2]
         except KeyError:
             return None
     
