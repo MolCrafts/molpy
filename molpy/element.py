@@ -176,6 +176,12 @@ class Element(object):
 
     def __repr__(self):
         return '< Element %s >' % self.name
+    
+    def __eq__(self, e):
+        if isinstance(e, Element):
+            return self._symbol == e.symbol
+        elif isinstance(e, str):
+            return self._symbol == e
 
 # This is for backward compatibility.
 def get_by_symbol(symbol):
@@ -193,7 +199,7 @@ copyreg.pickle(Element, _pickle_element)
 # NOTE: getElementByMass assumes all masses are Quantity instances with unit
 # "daltons". All elements need to obey this assumption, or that method will
 # fail. No checking is done in getElementByMass for performance reasons
-particle =       Element(  0, "particle", 'CG', -1*daltons)
+particle =       Element(  0, "particle", '', -1*daltons)
 hydrogen =       Element(  1, "hydrogen", "H", 1.007947*daltons)
 deuterium =      Element(  1, "deuterium", "D", 2.01355321270*daltons)
 helium =         Element(  2, "helium", "He", 4.003*daltons)
@@ -311,7 +317,6 @@ ununtrium =      Element(113, "ununtrium",      "Uut", 284*daltons)
 ununquadium =    Element(114, "ununquadium",    "Uuq", 289*daltons)
 ununpentium =    Element(115, "ununpentium",    "Uup", 288*daltons)
 ununhexium =     Element(116, "ununhexium",     "Uuh", 292*daltons)
-
 # Aliases to recognize common alternative spellings. Both the '==' and 'is'
 # relational operators will work with any chosen name
 sulphur = sulfur

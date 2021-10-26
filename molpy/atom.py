@@ -48,7 +48,7 @@ class Atom(Item):
             
     @property
     def bondedAtoms(self):
-        return self._bondInfo.keys()
+        return list(self._bondInfo.keys())
     
     @property
     def bonds(self):

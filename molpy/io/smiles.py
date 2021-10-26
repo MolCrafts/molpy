@@ -2,6 +2,7 @@
 Exposes functionality needed for parsing SMILES strings.
 """
 
+from collections import defaultdict
 import enum
 import logging
 from molpy.group import Group
@@ -104,7 +105,7 @@ def read_smiles(smiles, explicit_hydrogen=False, zero_order_bonds=True,
     ring_nums = {}
     for tokentype, token in _tokenize(smiles):
         if tokentype == TokenType.ATOM:
-            mol.add(Atom(token+str(idx), **parse_atom(token)))
+            mol.add(Atom('-'.join([token, str(idx)]), **parse_atom(token)))
             if anchor is not None:
                 if next_bond is None:
                     next_bond = default_bond
@@ -153,7 +154,7 @@ def read_smiles(smiles, explicit_hydrogen=False, zero_order_bonds=True,
                 ring_nums[token] = (idx - 1, next_bond)
                 next_bond = None
         elif tokentype == TokenType.EZSTEREO:
-            warnings.warn('E/Z stereochemical information, which is specified by "%s", will be discarded', token)
+            warnings.warn(f'E/Z stereochemical information, which is specified by {token}, will be discarded')
     if ring_nums:
         raise KeyError('Unmatched ring indices {}'.format(list(ring_nums.keys())))
 
@@ -213,7 +214,7 @@ VALENCES = {"B": (3,), "C": (4,), "N": (3, 5), "O": (2,), "P": (3, 5),
 AROMATIC_ATOMS = "B C N O P S Se As *".split()
 
 
-def parse_atom(atom):
+def parse_atom(atom) -> dict:
     """
     Parses a SMILES atom token, and returns a dict with the information.
     Note
@@ -268,7 +269,7 @@ def parse_atom(atom):
         raise ValueError("A hydrogen atom can't have hydrogens")
 
     if 'stereo' in out:
-        warnings.warn('Atom "%s" contains stereochemical information that will be discarded.', atom)
+        warnings.warn(message=f'Atom {atom} contains stereochemical information that will be discarded.')
 
     return out
 
@@ -394,15 +395,18 @@ def add_explicit_hydrogens(mol):
     h_atom = parse_atom('[H]')
     if 'hcount' in h_atom:
         del h_atom['hcount']
-    for n_idx in list(mol.nodes):
-        hcount = mol.nodes[n_idx].get('hcount', 0)
-        idxs = range(max(mol) + 1, max(mol) + hcount + 1)
+    for i, atom in enumerate(mol.atoms):
+        hcount = atom.get('hcount', 0)
+        idxs = range(mol.natoms + 1, mol.natoms + hcount + 1)
         # Get the defaults from parse_atom.
-        mol.add_nodes_from(idxs, **h_atom.copy())
-        mol.add_edges_from([(n_idx, jdx) for jdx in idxs], order=1)
-        if 'hcount' in mol.nodes[n_idx]:
-            del mol.nodes[n_idx]['hcount']
-
+        for idx in idxs:
+            atom = Atom(f'H-{idx}', **h_atom)
+            mol.addAtom(atom)
+            
+        for jdx in idxs:
+            mol.addBondByIndex(i, jdx, order=1)
+        if hasattr(atom, 'hcount'):
+            delattr(atom, 'hcount')
 
 def remove_explicit_hydrogens(mol):
     """
@@ -434,7 +438,7 @@ def remove_explicit_hydrogens(mol):
                 # The molecule is H2, or the bond order is not 1.
                 continue
             to_remove.add(atom)
-            neighbor['hcount'] = neighbor.get('hcount', 0) + 1
+            neighbor.hcount = neighbor.get('hcount', 0) + 1
     mol.deleteAtoms(to_remove)
     for atom in mol.atoms:
         if 'hcount' not in atom:
@@ -573,14 +577,14 @@ def has_default_h_count(mol, node_idx, use_order=True):
     return valence - bonds == hcount
 
 
-def _hydrogen_neighbours(mol, n_idx):
-    neighbours = mol[n_idx]
-    h_neighbours = 0
-    for n_jdx in neighbours:
-        if (mol.nodes[n_jdx].get('element', '*') == 'H' and
-                mol.edges[n_idx, n_jdx].get('order', 1) == 1):
-            h_neighbours += 1
-    return h_neighbours
+def _hydrogen_neighbours(mol, atom):
+    bondedAtoms = atom.bondedAtoms
+    h_bondedAtoms = 0
+    for btom in bondedAtoms:
+        if (btom.get('element', '*') == 'H' and
+                atom.bondto(btom).get('order', 1) == 1):
+            h_bondedAtoms += 1
+    return h_bondedAtoms
 
 
 def mark_aromatic_atoms(mol, atoms=None):
@@ -609,7 +613,7 @@ def mark_aromatic_atoms(mol, atoms=None):
         maybe_aromatic = True
 
         for atom in cycle:
-            element = atom.get('element', '*').capitalize()
+            element = atom.get('element', '*')  #TODO: 
             hcount = atom.get('hcount', 0)
             degree = len(atom.bonds) + hcount
             hcount += _hydrogen_neighbours(mol, atom)
@@ -652,12 +656,12 @@ def mark_aromatic_edges(mol):
         `mol` is modified in-place.
     """
     for cycle in mol.getBasisCycles():
-        for idx, jdx in mol.getSubGroup(cycle):
-            if idx not in cycle or jdx not in cycle:
+        for bond in mol.getSubGroup('', cycle).bonds:
+            if bond.atom1 not in cycle or bond.atom2 not in cycle:
                 continue
-            if (mol.getAtomByIndex(idx).get('aromatic', False)
-                    and mol.getAtomByIndex(jdx).get('aromatic', False)):
-                mol.getBondByIndex(idx, jdx).order = 1.5
+            if (bond.atom1.get('aromatic', False)
+                    and bond.atom2.get('aromatic', False)):
+                bond.order = 1.5
     for bond in mol.getBonds():
         if hasattr(bond, 'order'):
             bond.order = 1
@@ -715,3 +719,163 @@ def increment_bond_orders(molecule, max_bond_order=3):
         molecule.edges[idx, jdx]['order'] = new_order
         missing_bonds[idx] -= edge_missing
         missing_bonds[jdx] -= edge_missing
+
+
+
+def _get_ring_marker(used_markers):
+    """
+    Returns the lowest number larger than 0 that is not in `used_markers`.
+    Parameters
+    ----------
+    used_markers : Container
+        The numbers that can't be used.
+    Returns
+    -------
+    int
+        The lowest number larger than 0 that's not in `used_markers`.
+    """
+    new_marker = 1
+    while new_marker in used_markers:
+        new_marker += 1
+    return new_marker
+
+
+def _write_edge_symbol(mol, n_idx, n_jdx):
+    """
+    Determines whether a symbol should be written for the edge between `n_idx`
+    and `n_jdx` in `mol`. It should not be written if it's a bond of order
+    1 or an aromatic bond between two aromatic atoms; unless it's a single bond
+    between two aromatic atoms.
+    Parameters
+    ----------
+    mol : nx.Graph
+        The mol.
+    n_idx : Hashable
+        The first node key describing the edge.
+    n_jdx : Hashable
+        The second node key describing the edge.
+    Returns
+    -------
+    bool
+        Whether an explicit symbol is needed for this edge.
+    """
+    order = mol.edges[n_idx, n_jdx].get('order', 1)
+    aromatic_atoms = mol.nodes[n_idx].get('element', '*').islower() and\
+                     mol.nodes[n_jdx].get('element', '*').islower()
+    aromatic_bond = aromatic_atoms and order == 1.5
+    cross_aromatic = aromatic_atoms and order == 1
+    single_bond = order == 1
+    return cross_aromatic or not (aromatic_bond or single_bond)
+
+
+def write_smiles(mol, default_element='*', start=None):
+    """
+    Creates a SMILES string describing `molecule` according to the OpenSMILES
+    standard.
+    Parameters
+    ----------
+    molecule : nx.Graph
+        The molecule for which a SMILES string should be generated.
+    default_element : str
+        The element to write if the attribute is missing for a node.
+    start : Hashable
+        The atom at which the depth first traversal of the molecule should
+        start. A sensible one is chosen: preferably a terminal heteroatom.
+    Returns
+    -------
+    str
+        The SMILES string describing `molecule`.
+    """
+    mol = mol.copy()
+    remove_explicit_hydrogens(mol)
+
+    if start is None:
+        # Start at a terminal atom, and if possible, a heteroatom.
+        def keyfunc(atom):
+            """Key function for finding the node at which to start."""
+            return (mol.getDegreeOfAtom(atom),
+                    # True > False
+                    atom.get('element', default_element) == 'C',
+                    atom)
+        start = min(mol.atoms, key=keyfunc)
+
+
+    order_to_symbol = {0: '.', 1: '-', 1.5: ':', 2: '=', 3: '#', 4: '$'}
+
+    dfs_successors = nx.dfs_successors(mol, source=start)
+
+    predecessors = defaultdict(list)
+    for node_key, successors in dfs_successors.items():
+        for successor in successors:
+            predecessors[successor].append(node_key)
+    predecessors = dict(predecessors)
+    # We need to figure out which edges we won't cross when doing the dfs.
+    # These are the edges we'll need to add to the smiles using ring markers.
+    edges = set()
+    for n_idx, n_jdxs in dfs_successors.items():
+        for n_jdx in n_jdxs:
+            edges.add(frozenset((n_idx, n_jdx)))
+    total_edges = set(map(frozenset, mol.edges))
+    ring_edges = total_edges - edges
+
+    atom_to_ring_idx = defaultdict(list)
+    ring_idx_to_bond = {}
+    ring_idx_to_marker = {}
+    for ring_idx, (n_idx, n_jdx) in enumerate(ring_edges, 1):
+        atom_to_ring_idx[n_idx].append(ring_idx)
+        atom_to_ring_idx[n_jdx].append(ring_idx)
+        ring_idx_to_bond[ring_idx] = (n_idx, n_jdx)
+
+    branch_depth = 0
+    branches = set()
+    to_visit = [start]
+    smiles = ''
+
+    while to_visit:
+        current = to_visit.pop()
+        if current in branches:
+            branch_depth += 1
+            smiles += '('
+            branches.remove(current)
+
+        if current in predecessors:
+            # It's not the first atom we're visiting, so we want to see if the
+            # edge we last crossed to get here is interesting.
+            previous = predecessors[current]
+            assert len(previous) == 1
+            previous = previous[0]
+            if _write_edge_symbol(mol, previous, current):
+                order = mol.edges[previous, current].get('order', 1)
+                smiles += order_to_symbol[order]
+        smiles += format_atom(mol, current, default_element)
+        if current in atom_to_ring_idx:
+            # We're going to need to write a ring number
+            ring_idxs = atom_to_ring_idx[current]
+            for ring_idx in ring_idxs:
+                ring_bond = ring_idx_to_bond[ring_idx]
+                if ring_idx not in ring_idx_to_marker:
+                    marker = _get_ring_marker(ring_idx_to_marker.values())
+                    ring_idx_to_marker[ring_idx] = marker
+                    new_marker = True
+                else:
+                    marker = ring_idx_to_marker.pop(ring_idx)
+                    new_marker = False
+
+                if _write_edge_symbol(mol, *ring_bond) and new_marker:
+                    order = mol.edges[ring_bond].get('order', 1)
+                    smiles += order_to_symbol[order]
+                smiles += str(marker) if marker < 10 else '%{}'.format(marker)
+
+        if current in dfs_successors:
+            # Proceed to the next node in this branch
+            next_nodes = dfs_successors[current]
+            # ... and if needed, remember to return here later
+            branches.update(next_nodes[1:])
+            to_visit.extend(next_nodes)
+        elif branch_depth:
+            # We're finished with this branch.
+            smiles += ')'
+            branch_depth -= 1
+
+    smiles += ')' * branch_depth
+    return smiles

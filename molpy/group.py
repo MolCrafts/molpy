@@ -192,7 +192,10 @@ class Group(Item):
     def getBondByIndex(self, atomIdx, atomJdx):
         atom1 = self.getAtoms()[atomIdx]
         atom2 = self.getAtoms()[atomJdx]
-        return atom1.bonds[atom2]
+        try:
+            atom1.bonds[atom2]
+        except KeyError:
+            return None
     
     def addBondBy(self, atom1, atom2, by):
         atoms = self.getAtoms()
