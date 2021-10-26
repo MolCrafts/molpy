@@ -127,7 +127,6 @@ def dfs_tree(G, source=None, depth_limit=None):
     else:
         T.addAtom(source)
     for (atom1, atom2) in dfs_edges(G, source, depth_limit):
-        print(atom1, atom2)
         T.addBond(atom1, atom2)
     return T
 
@@ -255,7 +254,7 @@ def dfs_postorder_nodes(G, source=None, depth_limit=None):
     edge_dfs
     bfs_tree
     """
-    edges = nx.dfs_labeled_edges(G, source=source, depth_limit=depth_limit)
+    edges = dfs_labeled_edges(G, source=source, depth_limit=depth_limit)
     return (v for u, v, d in edges if d == "reverse")
 
 
@@ -297,7 +296,7 @@ def dfs_preorder_nodes(G, source=None, depth_limit=None):
     dfs_labeled_edges
     bfs_edges
     """
-    edges = nx.dfs_labeled_edges(G, source=source, depth_limit=depth_limit)
+    edges = dfs_labeled_edges(G, source=source, depth_limit=depth_limit)
     return (v for u, v, d in edges if d == "forward")
 
 
@@ -357,19 +356,19 @@ def dfs_labeled_edges(G, source=None, depth_limit=None):
     # by D. Eppstein, July 2004.
     if source is None:
         # edges for all components
-        nodes = G
+        nodes = G.atoms
     else:
         # edges for components with source
         nodes = [source]
     visited = set()
     if depth_limit is None:
-        depth_limit = len(G)
+        depth_limit = len(G.atoms)
     for start in nodes:
         if start in visited:
             continue
         yield start, start, "forward"
         visited.add(start)
-        stack = [(start, depth_limit, iter(G[start]))]
+        stack = [(start, depth_limit, iter(start.bondedAtoms))]
         while stack:
             parent, depth_now, children = stack[-1]
             try:
@@ -380,7 +379,7 @@ def dfs_labeled_edges(G, source=None, depth_limit=None):
                     yield parent, child, "forward"
                     visited.add(child)
                     if depth_now > 1:
-                        stack.append((child, depth_now - 1, iter(G[child])))
+                        stack.append((child, depth_now - 1, iter(child.bondedAtoms)))
             except StopIteration:
                 stack.pop()
                 if stack:
