@@ -199,7 +199,10 @@ copyreg.pickle(Element, _pickle_element)
 # NOTE: getElementByMass assumes all masses are Quantity instances with unit
 # "daltons". All elements need to obey this assumption, or that method will
 # fail. No checking is done in getElementByMass for performance reasons
-particle =       Element(  0, "particle", '', -1*daltons)
+
+wildcard =       Element(  0, 'wildcard', '*', 0*daltons)
+
+# particle =       Element(  0, "particle", '', -1*daltons)
 hydrogen =       Element(  1, "hydrogen", "H", 1.007947*daltons)
 deuterium =      Element(  1, "deuterium", "D", 2.01355321270*daltons)
 helium =         Element(  2, "helium", "He", 4.003*daltons)

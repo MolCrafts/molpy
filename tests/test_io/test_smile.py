@@ -5,7 +5,7 @@
 
 import pytest
 
-from molpy.io.smiles import read_smiles
+from molpy.io.smiles import read_smiles, write_smiles
 from molpy.factory import full
 
 testcases = (
@@ -530,8 +530,8 @@ testcases = (
                 "N1[*][*]1",
                 [
                     (0, {"element": "N", "charge": 0, "aromatic": True, "hcount": 1}),
-                    (1, {"element": "", "charge": 0, "aromatic": True, "hcount": 0}),
-                    (2, {"element": "", "charge": 0, "aromatic": True, "hcount": 0}),
+                    (1, {"element": "*", "charge": 0, "aromatic": True, "hcount": 0}),
+                    (2, {"element": "*", "charge": 0, "aromatic": True, "hcount": 0}),
                 ],
                 [
                     (0, 1, {"order": 1.5}),
@@ -551,7 +551,10 @@ def make_mol(node_data, edge_data):
     for d in atomProperty:
         for k, v in d.items():
             atomProperty_nested[k].append(v)
-    return full("smiles", atomName, **atomProperty_nested)    
+    tmp = full("smiles", atomName, **atomProperty_nested)
+    for edge in edge_data:
+        tmp.addBondByIndex(edge[0], edge[1], **edge[2])
+    return tmp
 
 class TestSmiles:
     @pytest.mark.parametrize(
@@ -560,8 +563,6 @@ class TestSmiles:
     def test_read(self, smiles, node_data, edge_data, explicit_h):
         found = read_smiles(smiles, explicit_hydrogen=explicit_h)
         expected = make_mol(node_data, edge_data)
-        for bondidx in edge_data:
-            expected.addBondByIndex(bondidx[0], bondidx[1], **bondidx[2])
             
     # @pytest.mark.parametrize('node_data, edge_data, expl_h', testcases)
     # def test_write(node_data, edge_data, expl_h):
@@ -599,3 +600,11 @@ class TestSmiles:
             read_smiles(smiles, explicit_hydrogen=False)
         
         assert len(records) == n_records
+    
+    @pytest.mark.parametrize(
+        "smiles, node_data, edge_data, explicit_h", testcases
+    )  
+    def test_write_smiles(self, smiles, node_data, edge_data, explicit_h):
+        mol = make_mol(node_data, edge_data)
+        out_smiles = write_smiles(mol)
+        found = read_smiles(out_smiles, explicit_hydrogen=explicit_h, reinterpret_aromatic=False)

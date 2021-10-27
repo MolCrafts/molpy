@@ -10,10 +10,11 @@ Exposes functionality needed for parsing SMILES strings.
 
 from collections import defaultdict
 import enum
-import logging
 from molpy.group import Group
 from molpy.atom import Atom
 import warnings
+import molpy
+from molpy.element import Element
 
 @enum.unique
 class TokenType(enum.Enum):
@@ -197,11 +198,7 @@ def read_smiles(smiles, explicit_hydrogen=False, zero_order_bonds=True,
     return mol
 
 
-import logging
 import re
-import operator
-
-LOGGER = logging.getLogger(__name__)
 
 ISOTOPE_PATTERN = r'(?P<isotope>[\d]+)?'
 ELEMENT_PATTERN = r'(?P<element>b|c|n|o|s|p|\*|[A-Z][a-z]{0,2})'
@@ -280,7 +277,7 @@ def parse_atom(atom) -> dict:
     return out
 
 
-def format_atom(molecule, node_key, default_element='*'):
+def format_atom(molecule, node_key, default_element=Element.getBySymbol('*')):
     """
     Formats a node following SMILES conventions. Uses the attributes `element`,
     `charge`, `hcount`, `stereo`, `isotope` and `class`.
@@ -297,8 +294,8 @@ def format_atom(molecule, node_key, default_element='*'):
     str
         The atom as SMILES string.
     """
-    node = molecule.nodes[node_key]
-    name = node.get('element', default_element)
+    node = node_key
+    name = node.get('element', default_element).symbol
     charge = node.get('charge', 0)
     hcount = node.get('hcount', 0)
     stereo = node.get('stereo', None)
@@ -525,7 +522,7 @@ def _valence(mol, node_idx, minimum=0):
     int
         The smallest valence of node more than `minimum`.
     """
-    element = mol.nodes[node_idx].get('element', '').capitalize()
+    element = node_idx.get('element', Element.getBySymbol('*')).symbol
     if element not in VALENCES:
         return 0
     val = VALENCES.get(element)
@@ -554,8 +551,9 @@ def _bonds(mol, node_idx, use_order=True):
         The number of bonds.
     """
     if use_order:
-        bond_orders = map(operator.itemgetter(2),
-                          mol.edges(nbunch=node_idx, data='order', default=1))
+        # bond_orders = map(operator.itemgetter(2),
+        #                   mol.edges(nbunch=node_idx, data='order', default=1))
+        bond_orders = map(lambda atom: getattr(atom, 'order', 1), node_idx.bondedAtoms)
         bonds = sum(bond_orders)
     else:
         bonds = len(mol[node_idx])
@@ -579,7 +577,7 @@ def has_default_h_count(mol, node_idx, use_order=True):
     """
     bonds = _bonds(mol, node_idx, use_order)
     valence = _valence(mol, node_idx, bonds)
-    hcount = mol.nodes[node_idx].get('hcount', 0)
+    hcount = node_idx.get('hcount', 0)
     return valence - bonds == hcount
 
 
@@ -746,7 +744,7 @@ def _get_ring_marker(used_markers):
     return new_marker
 
 
-def _write_edge_symbol(mol, n_idx, n_jdx):
+def _write_edge_symbol(bond):
     """
     Determines whether a symbol should be written for the edge between `n_idx`
     and `n_jdx` in `mol`. It should not be written if it's a bond of order
@@ -765,16 +763,16 @@ def _write_edge_symbol(mol, n_idx, n_jdx):
     bool
         Whether an explicit symbol is needed for this edge.
     """
-    order = mol.edges[n_idx, n_jdx].get('order', 1)
-    aromatic_atoms = mol.nodes[n_idx].get('element', '*').islower() and\
-                     mol.nodes[n_jdx].get('element', '*').islower()
+    order = bond.get('order', 1)
+    aromatic_atoms = bond.atom1.get('element', Element.getBySymbol('*')).symbol.islower() and\
+                     bond.atom2.get('element', Element.getBySymbol('*')).symbol.islower()
     aromatic_bond = aromatic_atoms and order == 1.5
     cross_aromatic = aromatic_atoms and order == 1
     single_bond = order == 1
     return cross_aromatic or not (aromatic_bond or single_bond)
 
 
-def write_smiles(mol, default_element='*', start=None):
+def write_smiles(mol, default_element=Element.getBySymbol('*'), start=None):
     """
     Creates a SMILES string describing `molecule` according to the OpenSMILES
     standard.
@@ -792,7 +790,6 @@ def write_smiles(mol, default_element='*', start=None):
     str
         The SMILES string describing `molecule`.
     """
-    mol = mol.copy()
     remove_explicit_hydrogens(mol)
 
     if start is None:
@@ -808,7 +805,7 @@ def write_smiles(mol, default_element='*', start=None):
 
     order_to_symbol = {0: '.', 1: '-', 1.5: ':', 2: '=', 3: '#', 4: '$'}
 
-    dfs_successors = nx.dfs_successors(mol, source=start)
+    dfs_successors = molpy.dfs_successors(mol, source=start)
 
     predecessors = defaultdict(list)
     for node_key, successors in dfs_successors.items():
@@ -821,16 +818,16 @@ def write_smiles(mol, default_element='*', start=None):
     for n_idx, n_jdxs in dfs_successors.items():
         for n_jdx in n_jdxs:
             edges.add(frozenset((n_idx, n_jdx)))
-    total_edges = set(map(frozenset, mol.edges))
+    total_edges = frozenset(mol.bonds)
     ring_edges = total_edges - edges
 
     atom_to_ring_idx = defaultdict(list)
     ring_idx_to_bond = {}
     ring_idx_to_marker = {}
-    for ring_idx, (n_idx, n_jdx) in enumerate(ring_edges, 1):
-        atom_to_ring_idx[n_idx].append(ring_idx)
-        atom_to_ring_idx[n_jdx].append(ring_idx)
-        ring_idx_to_bond[ring_idx] = (n_idx, n_jdx)
+    for ring_idx, bond in enumerate(ring_edges, 1):
+        atom_to_ring_idx[bond.atom1].append(ring_idx)
+        atom_to_ring_idx[bond.atom2].append(ring_idx)
+        ring_idx_to_bond[ring_idx] = bond
 
     branch_depth = 0
     branches = set()
@@ -850,15 +847,16 @@ def write_smiles(mol, default_element='*', start=None):
             previous = predecessors[current]
             assert len(previous) == 1
             previous = previous[0]
-            if _write_edge_symbol(mol, previous, current):
-                order = mol.edges[previous, current].get('order', 1)
+            bond = previous.bondto(current)
+            if _write_edge_symbol(bond):
+                order = bond.get('order', 1)
                 smiles += order_to_symbol[order]
         smiles += format_atom(mol, current, default_element)
         if current in atom_to_ring_idx:
             # We're going to need to write a ring number
             ring_idxs = atom_to_ring_idx[current]
             for ring_idx in ring_idxs:
-                ring_bond = ring_idx_to_bond[ring_idx]
+                ring_bond = ring_idx_to_bond[ring_idx]  # bond
                 if ring_idx not in ring_idx_to_marker:
                     marker = _get_ring_marker(ring_idx_to_marker.values())
                     ring_idx_to_marker[ring_idx] = marker
@@ -867,8 +865,8 @@ def write_smiles(mol, default_element='*', start=None):
                     marker = ring_idx_to_marker.pop(ring_idx)
                     new_marker = False
 
-                if _write_edge_symbol(mol, *ring_bond) and new_marker:
-                    order = mol.edges[ring_bond].get('order', 1)
+                if _write_edge_symbol(ring_bond) and new_marker:
+                    order = ring_bond.get('order', 1)
                     smiles += order_to_symbol[order]
                 smiles += str(marker) if marker < 10 else '%{}'.format(marker)
 

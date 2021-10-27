@@ -193,6 +193,7 @@ class Group(Item):
         atom1 = self.getAtoms()[atomIdx]
         atom2 = self.getAtoms()[atomJdx]
         try:
+            assert atom1.bonds[atom2] == atom1.bondto(atom2)
             return atom1.bonds[atom2]
         except KeyError:
             return None

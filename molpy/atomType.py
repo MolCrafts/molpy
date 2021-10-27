@@ -5,8 +5,10 @@
 
 class AtomType:
     
-    def __init__(self, name, **attr) -> None:
-        self.name = name
+    _atomTypes_by_name = {}
+    
+    def __init__(self, typeName, atomClass=None, element=None, mass=None, **attr) -> None:
+        self.name = typeName
         for k, v in attr:
             setattr(self, k, v)
     
