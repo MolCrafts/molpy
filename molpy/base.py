@@ -3,37 +3,26 @@
 # date: 2021-10-17
 # version: 0.0.1
 
-import numpy as np
+import networkx as nx
 
-class Item:
-    """base class of the molpy
-    """
+__all__ = ['Node', 'Graph', 'Edge']
+
+class Node:
+
     def __init__(self, name='') -> None:
-        """initialize base class
 
-        Args:
-            name (str): the name of instances
-        """
         self._uuid = id(self)
         self._name = name
         self._itemType = self.__class__.__name__
     
     @property
     def properties(self):
-        """return properties
 
-        Returns:
-            dict: key-value format
-        """
         return self.__dict__
     
     @property
     def uuid(self):
-        """uuid is the ID assigned by the system is used to distinguish different instances
 
-        Returns:
-            int: uuid
-        """
         return self._uuid
     
     @property
@@ -99,3 +88,18 @@ class Item:
     
     def __lt__(self, o):
         return self.uuid < o.uuid
+    
+class Graph(nx.Graph):
+    
+    def __init__(self, name) -> None:
+        super().__init__(name=name)
+    
+class Edge:
+    
+    def __init__(self, name) -> None:
+        self._name = name
+        self._uuid = id(self)
+        
+    @property
+    def uuid(self):
+        return self._uuid

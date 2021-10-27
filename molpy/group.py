@@ -3,71 +3,129 @@
 # date: 2021-10-17
 # version: 0.0.1
 
-from typing import Iterable, Union
-from molpy.item import Item
+from molpy.base import Graph
 from molpy.atom import Atom
 from molpy.bond import Bond
 import numpy as np
 from itertools import dropwhile, combinations
 
-class Group(Item):
-    def __init__(self, name, **attrs) -> None:
-        super().__init__(name)
-
-        self._atoms = [] # node
-        self._bonds = [] # edge
-        self._groups = []
-        self._adj = {}
-        for attr in attrs:
-            setattr(self, attr, attrs[attr])
+class Group(Graph):
+    
+    def __init__(self, name, **attr) -> None:
+        super().__init__(name=name, **attr)
+        self._atoms = []
+        self._bonds = self._adj
             
     def add(self, item):
         if isinstance(item, Atom):
             self.addAtom(item)
         
     def addAtom(self, atom: Atom):
-        """ Add an atom to this group
-
-        Args:
-            atom ([Atom]): an atom instance
-        """
-        # atom.parent = self
+        super().add_node(atom)
         if atom not in self._atoms:
-            self.atoms.append(atom)
-            self._adj[atom] = {}
+            self._atoms.append(atom)
                 
-    def addAtoms(self, atoms: Iterable[Atom]):
-        for atom in atoms:
-            self.addAtom(atom)
+    def addAtoms(self, atoms):
+        super().add_nodes_from(atoms)
+        self._atoms.extend(atoms)
             
     def removeAtom(self, atom: Atom):
-        """Remove atom from this group but not destory it
-
-        Removes the atom and all adjacent bonds.
-        Attempting to remove a non-existent node will raise an exception.
-
-        Args:
-            atom (Atom): [description]
-        """
-        # remove atom from atom list
-        del self._atoms[self._atoms.index(atom)]
+        super().remove_node(atom)
+        self._atoms.remove(atom)
         
-        # remove related bonds
-        nbrs = list(self._adj[atom])
-        for u in nbrs:
-            del self._adj[u][atom]  # remove edges
-        del self._adj[atom]  # remove node
-    
-    def getAtoms(self):
-        """ get atoms from this group
-
-        Returns:
-            List: List of atoms
-        """
+    def removeAtoms(self, atoms):
+        super().remove_nodes_from(atoms)
+        for atom in atoms:
+            self._atoms.remove(atom)
+        
+    @property
+    def atoms(self):
         return self._atoms
     
-    def getDegreeOfAtom(self, atom):
-        return len(atom.bonds)
+    def getAtoms(self):
+        return list(self._node.keys())
+
+    @property
+    def natoms(self):
+        return len(self.atoms)
+    
+    def hasAtom(self, atom: Atom):
+        return super().has_node(atom)
+        
+    def addBond(self, atom, btom, **attr):
+        super().add_edge(atom, btom, **attr)
+        bond = atom.bondto(btom)
+        self._bonds[atom][btom]['_bond'] = bond
+        self._bonds[atom][btom]['_bond'] = bond
+        
+    def addBonds(self, atomList, **attr):
+        for e in atomList:
+            ne = len(e)
+            if ne == 3:
+                u, v, dd = e
+            elif ne == 2:
+                u, v = e
+                dd = {}  # doesn't need edge_attr_dict_factory
+            else:
+                raise ValueError(f"bond tuple {e} must be a 2-tuple or 3-tuple.")
+            if u not in self._node:
+                self._adj[u] = self.adjlist_inner_dict_factory()
+                self._node[u] = self.node_attr_dict_factory()
+            if v not in self._node:
+                self._adj[v] = self.adjlist_inner_dict_factory()
+                self._node[v] = self.node_attr_dict_factory()
+            datadict = self._adj[u].get(v, self.edge_attr_dict_factory())
+            datadict.update(attr)
+            datadict.update(dd)
+            bond = u.bondto(v, **datadict)
+            datadict['_bond'] = bond
+            self._adj[u][v] = datadict
+            self._adj[v][u] = datadict
+            
+    def addBondsByDict(self, bondDict, ref):
+        tmp = {atom.get(ref, None): atom for atom in self.atoms}
+        for u, nbs in bondDict.items():
+            for nb in nbs:
+                self.addBond(tmp[u], tmp[nb])
+            
+    def removeBond(self, atom, btom):
+        super().remove_edge(atom, btom)
+        
+    def removeBonds(self, atomList):
+        super().remove_edges_from(atomList)
+        
+    def merge(self, atoms, bonds):
+        edges = {}
+        for bond in bonds:
+            u, v = bond
+            if u not in edges:
+                edges[u] = {}
+            if v not in edges:
+                edges[v] = {}
+            edges[u][v] = bond
+            edges[v][u] = bond
+        super().update(edges, atoms)
+
+    def hasBond(self, atom, btom):
+        return super().has_edge(atom, btom)
+        
+    def neighbors(self, atom):
+        return super().neighbors(atom)
+    
+    @property
+    def bonds(self):
+        return self.getBonds()
+    
+    def getBond(self, atom, btom):
+        return super().get_edge_data(atom, btom)
+    
+    def getBonds(self):
+        bonds = set()
+        print(self._bonds)
+        for u, nbs in self._bonds.items():
+            for nb in nbs:
+                bonds.add(self._bonds[u][nb]['_bond'])
+        return list(bonds)
     
     def getCovalentMap(self):
         """ calculate covalent map from atoms in this group.
@@ -101,50 +159,33 @@ class Group(Item):
                 nodes = find(nodes, vis)
                 depth += 1
         self._covalentMap = covalentMap
-        return covalentMap
+        return atoms, covalentMap
     
     @property
     def covalentMap(self):
         return self._covalentMap
     
     @property
-    def atoms(self):
-        return self.getAtoms()
-    
-    @property
-    def bonds(self):
-        return self.getBonds()
-    
-    @property
     def nbonds(self):
         return len(self.getBonds())
             
     def setTopoByCovalentMap(self, covalentMap: np.ndarray):
-        """ set topology info by a numpy-like covalent map.
 
-        Args:
-            covalentMap (np.ndarray): 2-d ndarray
-        """
         atoms = self.getAtoms()
         for i, nbond in np.ndenumerate(covalentMap):
             if nbond == 1:
                 atom1 = atoms[i[0]]
                 atom2 = atoms[i[1]]
-                self._adj[atom1][atom2] = atom1.bondto(atom2)
+                self.addBond(atom1, atom2)
         
     @property
     def natoms(self):
         return len(self.getAtoms())
     
     def getAtomByName(self, atomName):
-        for atom in self._atoms:
+        for atom in self.atoms:
             if isinstance(atom, Atom) and atom.name == atomName:
                 return atom
-    
-    def getGroupByName(self, groupName):
-        for group in self._groups:
-            if isinstance(group, Group) and group.name == groupName:
-                return group
     
     def __getitem__(self, idx):
         if isinstance(idx, str):
@@ -154,23 +195,6 @@ class Group(Item):
                 
         elif isinstance(idx, int):
             return self.getAtoms()[idx]
-        
-    def deleteAtoms(self, atoms: Iterable[Atom]):
-        
-        dropwhile(lambda atom: atom in atoms, self._atoms)
-        
-    def update(self):
-        pass
-    
-    def getBonds(self):
-
-        b = set()
-        for u, bonds in self._adj.items():
-            for v, bond in bonds.items():
-                b.add(bond)
-        b = list(b)
-        self._bonds = b
-        return b
 
     def getAngles(self):
         angles = set()
@@ -185,60 +209,27 @@ class Group(Item):
         return self._angles
     
     def addBondByIndex(self, atomIdx, atomJdx, **bondType):
-        atom1 = self.getAtoms()[atomIdx]
-        atom2 = self.getAtoms()[atomJdx]
+        atoms = self.getAtoms()
+        atom1 = atoms[atomIdx]
+        atom2 = atoms[atomJdx]
         self.addBond(atom1, atom2, **bondType)
     
     def getBondByIndex(self, atomIdx, atomJdx):
-        atom1 = self.getAtoms()[atomIdx]
-        atom2 = self.getAtoms()[atomJdx]
+        atoms = self.getAtoms()
+        atom1 = atoms[atomIdx]
+        atom2 = atoms[atomJdx]
         try:
             assert atom1.bonds[atom2] == atom1.bondto(atom2)
             return atom1.bonds[atom2]
         except KeyError:
             return None
     
-    def addBondBy(self, atom1, atom2, by):
-        atoms = self.getAtoms()
-        tmp = {}
-        for atom in atoms:
-            tmp[atom.get(by)] = atom
-        return tmp[atom1].bondto(tmp[atom2])
-    
-    def addBondsByDict(self, dict, ref):
-        atoms = self.getAtoms()
-        tmp = {}
-        for atom in atoms:
-            tmp[atom.get(ref)] = atom
-        for c, ps in dict.items():
-            for p in ps:
-                self.addBond(tmp[c], tmp[p])
-    
-    def addBond(self, atom1, atom2, **bondProp):
-        
-        # add nodes
-        self.addAtoms([atom1, atom2])
-        bond = atom1.bondto(atom2, **bondProp)
-        
-        # add edges
-        bond.update(**bondProp)
-        self._adj[atom1][atom2] = bond
-        self._adj[atom2][atom1] = bond
-        
-        
-    def removeBond(self, atom1, atom2):
-        try:
-            del self._adj[atom1][atom2]
-            if atom1 != atom2:
-                del self._adj[atom2][atom1]
-        except:
-            raise KeyError(f'either {atom1} or {atom2} not in this graph')
-        
-        atom1.removeBond(atom2)
-    
     def __contains__(self, n):
         try:
-            return n in self.getAtoms()
+            if isinstance(n, Atom):
+                return n in self.getAtoms()
+            elif isinstance(n, Bond):
+                return n in self.getBonds()
         except TypeError:
             return False
         
@@ -256,7 +247,7 @@ class Group(Item):
             Group: new subgroup
         """
         # check
-        atoms = list(set(atoms))
+        atoms = set(atoms)
         for atom in atoms:
             if atom not in self:
                 raise ValueError(f'{atom} not in this group')
@@ -269,8 +260,7 @@ class Group(Item):
         for atom in atoms:
             for bondedAtom in atom.bondedAtoms:
                 if bondedAtom in subgroup:
-                    bond = subgroup._adj.get(atom, {})
-                    bond[bondedAtom] = atom.bonds[bondedAtom]
+                    subgroup.addBond(atom, bondedAtom)
         return subgroup
 
     def getBasisCycles(self, root=None):

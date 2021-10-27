@@ -24,6 +24,7 @@ class TestDFS:
         G.addBondByIndex(2, 4)
         G.addBondByIndex(3, 4)
         cls.G = G
+        assert G.natoms == 5
         
         # simple graph, disconnected
         D = Group('disconnected')

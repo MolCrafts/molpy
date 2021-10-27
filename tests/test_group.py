@@ -35,6 +35,10 @@ class TestGroup:
         C6.setTopoByCovalentMap(covalentMap)
         C6.reference_covalentMap = covalentMap
         yield C6
+        
+    def test_atoms(self, CH4, C6):
+        assert len(CH4.atoms) == 5
+        assert len(C6.atoms) == 6
             
     def test_setTopoByCovalentMap(self, CH4):
         covalentMap = np.zeros((CH4.natoms, CH4.natoms), dtype=int)
@@ -46,12 +50,12 @@ class TestGroup:
     def test_getCovalentMap(self, CH4):
         co = CH4.getCovalentMap()
         print(co)
-        assert co[0, 0] == 0
-        assert all(co[0, 1:] == 1)
-        assert all(co[1:, 0] == 1)
+        assert co[1][0, 0] == 0
+        assert all(co[1][0, 1:] == 1)
+        assert all(co[1][1:, 0] == 1)
         
     def test_getRingCovalentMap(self, C6):
-        assert(C6.reference_covalentMap == C6.getCovalentMap()).all()
+        assert(C6.reference_covalentMap == C6.getCovalentMap()[1]).all()
         
     def test_setRingTopoByCovalentMap(self, C6):
         atoms = C6.getAtoms()

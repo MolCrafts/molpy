@@ -127,6 +127,8 @@ def dfs_tree(G, source=None, depth_limit=None):
     else:
         T.addAtom(source)
     for (atom1, atom2) in dfs_edges(G, source, depth_limit):
+        T.addAtom(atom1)
+        T.addAtom(atom2)
         T.addBond(atom1, atom2)
     return T
 

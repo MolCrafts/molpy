@@ -3,12 +3,12 @@
 # date: 2021-10-17
 # version: 0.0.1
 
-from molpy.item import Item
+from molpy.base import Node
 from molpy.element import Element
 from molpy.bond import Bond
 import numpy as np
 
-class Atom(Item):
+class Atom(Node):
     """ Atom is the class which contains properties bind to the atom.
     """
     def __init__(self, name, **properties) -> None:
@@ -17,21 +17,15 @@ class Atom(Item):
         for k, v in properties.items():
             self.set(k, v)
 
-    def deserialize(self, o):
-        return super().deserialize(o)
-    
-    def serialize(self):
-        return super().serialize()
-
-    def bondto(self, atom, **bondType):
+    def bondto(self, atom, **attr):
         """ Form a chemical bond between two atoms.
 
         Args:
             atom (Atom): atom to be bonded
         """
         # check bond
-        bond = self._bondInfo.get(atom, Bond(self, atom, **bondType))
-        bond.update(**bondType)
+        bond = self._bondInfo.get(atom, Bond(self, atom, **attr))
+        bond.update(attr)
         
         if atom not in self._bondInfo:
             self._bondInfo[atom] = bond
@@ -61,20 +55,6 @@ class Atom(Item):
     @element.setter
     def element(self, symbol):
         self._element = Element.getBySymbol(symbol)
-            
-    def moveTo(self, vec: np.ndarray):
-        self.check_properties(position=np.ndarray)
-        self.position = vec
-    
-    def moveBy(self, vec):
-        self.check_properties(position=np.ndarray)
-        self.position.__iadd__(vec)
-    
-    def rotateWithEuler(self, ref, alpha, beta, gamma):
-        pass
-    
-    def rotateWithQuaternion(self, ):
-        pass
     
     def update(self, **attr):
         for k, v in attr.items():

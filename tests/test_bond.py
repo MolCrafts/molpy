@@ -11,9 +11,7 @@ class TestBond:
     @pytest.fixture(scope='class')
     def AB(self, ):
         A = Atom('A')
-        A.type = 'left'
         B = Atom('B')
-        B.type = 'right'
         yield A, B
     
     @pytest.fixture(scope='class')
@@ -25,10 +23,6 @@ class TestBond:
     def bondBA(self, AB):
         A, B = AB
         yield B.bondto(A)
-    
-    def test_identity(self, bondAB, bondBA):
-        assert bondAB.atomType1 == 'left'
-        assert bondAB == bondBA
         
     def test_sync(self, bondAB, bondBA):
         bondAB.prop = 1
@@ -47,3 +41,16 @@ class TestBond:
         C, D = CD
         assert A.bondto(B) != C.bondto(D)
         assert A.bondto(B) == B.bondto(A)
+        
+    def test_attribute(self, AB):
+        A, B = AB
+        bond = A.bondto(B)
+        bond.update({'attr1': 1})
+        assert bond.attr1 == 1
+        
+    def test_unpack(self, AB):
+        A, B = AB
+        bond = A.bondto(B)
+        a, b = bond
+        assert a == A
+        assert b == B

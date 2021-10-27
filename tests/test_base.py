@@ -4,13 +4,13 @@
 # version: 0.0.1
 
 import pytest
-from molpy.item import Item
+from molpy.base import *
 
 class TestBase:
     
     @pytest.fixture(scope='class')
     def itemA(self):
-        a = Item('a')
+        a = Node('a')
         a.prop1 = 1.234
         yield a
         
