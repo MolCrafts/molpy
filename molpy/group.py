@@ -273,48 +273,6 @@ class Group(Item):
                     bond[bondedAtom] = atom.bonds[bondedAtom]
         return subgroup
 
-    def serialize(self):
-                   
-        props = super().serialize(['_atoms', '_bonds', '_adj'])
-        
-        # _atoms
-        atoms = self.getAtoms()
-        tmp = []
-        for atom in atoms:
-            tmp.append(atom.serialize())
-        props['_atoms'] = tmp
-        
-        # _bonds
-        
-        return props
-    
-    def deserialize(self, o):
-        if o['_itemType'] != 'Group':
-            raise TypeError(f'Group class get incompitable infomation')
-        super().deserialize(o, ['_atoms'])
-        atoms = o['_atoms']
-        tmp = []
-        for atom in atoms:
-            tmp.append(Atom('').deserialize(atom))
-        self.set('_atoms', tmp)
-        
-        # adj = o['_adj']
-        # for c, ps in adj.items():
-        #     for p, bond in ps.items():
-        #         cuuid = c['_uuid']
-        #         puuid = p['_uuid']
-        #         for atom in atoms:
-        #             if atom.uuid == cuuid:
-        #                 catom = atom
-        #                 break
-        #         for atom in atoms:
-        #             if atom.uuid == puuid:
-        #                 patom = atom
-        #                 break
-        #         self.addBond(catom, patom)
-        
-        return self
-
     def getBasisCycles(self, root=None):
          
         """Returns a list of cycles which form a basis for cycles of G.

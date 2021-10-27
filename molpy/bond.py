@@ -36,10 +36,6 @@ class Bond(Item):
             setattr(self, at, attr[at])
             
     @property
-    def properties(self):
-        return dict((k, v) for k, v in super().properties.items() if k not in ['_atoms', '_uuid'])
-        
-    @property
     def atomType1(self):
         return self._atomType1
     
@@ -47,9 +43,6 @@ class Bond(Item):
     def atomType2(self):
         return self._atomType2
     
-    def serialize(self):
-        props = super().serialize(exclude=[])
-        
     @property
     def atom1(self):
         return self._atoms[0]

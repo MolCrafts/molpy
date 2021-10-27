@@ -37,13 +37,3 @@ def fromPDB(fpath, index=None):
 
 def fromLAMMPS():
     pass
-
-def fromDict(d: Dict):
-    itemType = d['_itemType']
-    filename = itemType.lower()
-    anyItem = getattr(importlib.import_module('molpy.'+filename), d['_itemType'], None)('')
-    if anyItem is None:
-        raise ModuleNotFoundError(f'Can not find {d["_itemType"]} from {filename}.py in molpy')
-    anyItem.deserialize(d)
-    return anyItem
-    

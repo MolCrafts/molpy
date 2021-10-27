@@ -84,21 +84,6 @@ class TestGroup:
         CH = CH4.getSubGroup('CH', [CH4['C'], CH4['H0']])
         assert CH.natoms == 2
         assert CH.nbonds == 1
-        
-    # def test_serialize(self, CH4):
-    #     d = CH4.serialize()
-    #     print(d)
-    #     assert len(d['_atoms']) == 5
-    #     assert len(d['_adj']) == 5
-        
-    # def test_deserialize(self, CH4):
-    #     d = CH4.serialize()
-    #     print(d)
-    #     CH4new = Group('').deserialize(d)
-    #     assert CH4new.natoms == 5
-    #     assert CH4new.getAtomByName('C')
-    #     assert CH4new.name == 'CH4'
-    #     # assert len(CH4new.getBonds()) == 4
     
     def test_getBasisCycles(self, C6):
         
