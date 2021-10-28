@@ -11,19 +11,12 @@ import numpy as np
 class Atom(Node):
     """ Atom is the class which contains properties bind to the atom.
     """
-    def __init__(self, name, **properties) -> None:
+    def __init__(self, name) -> None:
         super().__init__(name)
-        self._bondInfo = {}
-        for k, v in properties.items():
-            self.set(k, v)
+        self._bondInfo = {} # bondInfo = {Atom: Bond}
 
     def bondto(self, atom, **attr):
-        """ Form a chemical bond between two atoms.
-
-        Args:
-            atom (Atom): atom to be bonded
-        """
-        # check bond
+        
         bond = self._bondInfo.get(atom, Bond(self, atom, **attr))
         bond.update(attr)
         
@@ -54,10 +47,14 @@ class Atom(Node):
     
     @element.setter
     def element(self, symbol):
+        # TODO:
         self._element = Element.getBySymbol(symbol)
+        
+    @property
+    def atomType(self):
+        return self._atomType
     
-    def update(self, **attr):
-        for k, v in attr.items():
-            if k == 'name':
-                continue
-            self.set(k, v)
+    @atomType.setter
+    def atomType(self, v):
+        # TODO:
+        self._atomType = v 

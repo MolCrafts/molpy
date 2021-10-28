@@ -1,43 +1,31 @@
 # author: Roy Kid
 # contact: lijichen365@126.com
 # date: 2021-10-17
-# version: 0.0.1
-
-import networkx as nx
+# version: 0.0.2
 
 __all__ = ['Node', 'Graph', 'Edge']
 
-class Node:
-
-    def __init__(self, name='') -> None:
-
-        self._uuid = id(self)
+class Item:
+    
+    def __init__(self, name) -> None:
         self._name = name
+        self._uuid = id(self)
         self._itemType = self.__class__.__name__
-    
-    @property
-    def properties(self):
-
-        return self.__dict__
-    
-    @property
-    def uuid(self):
-
-        return self._uuid
-    
+        
     @property
     def name(self):
         return self._name
     
-    @property
-    def itemType(self):
-        return self._itemType
-
-    def __hash__(self):
-        return hash(id(self))
+    @name.setter
+    def name(self, n):
+        self._name = n
     
-    def __id__(self):
-        return id(self)
+    @property
+    def uuid(self):
+        return self._uuid
+    
+    def __hash__(self) -> int:
+        return self._uuid
     
     def __repr__(self) -> str:
         return f'< {self.__class__.__name__} {self.name} >'
@@ -61,27 +49,17 @@ class Node:
                     continue
                 else:
                     raise TypeError(f'requires {k} is {v} but {type(kv)}')
+        return True
     
     def get(self, property, default=None):
-        """get a property, equivalent to getattr()
-
-        Args:
-            property (str): name of property
-            default (Any): default to None
-
-        Returns:
-            Any: property of this instance
-        """
         return getattr(self, property, default)
     
     def set(self, property, value):
-        """set a property, equivalent to setattr()
-
-        Args:
-            property (str): name of property
-            value (Any): value of property
-        """
         setattr(self, property, value)
+        
+    def update(self, attr):
+        for k, v in attr.items():
+            self.set(k, v)
         
     def __eq__(self, o):
         return self.uuid == o.uuid
@@ -89,17 +67,27 @@ class Node:
     def __lt__(self, o):
         return self.uuid < o.uuid
     
-class Graph(nx.Graph):
-    
-    def __init__(self, name) -> None:
-        super().__init__(name=name)
-    
-class Edge:
-    
-    def __init__(self, name) -> None:
-        self._name = name
-        self._uuid = id(self)
-        
     @property
-    def uuid(self):
-        return self._uuid
+    def properties(self):
+        return self.__dict__
+    
+    @property
+    def itemType(self):
+        return self._itemType
+    
+class Node(Item):
+    """A Atom DataView class for a molpy Group
+
+    """
+    def __init__(self, name) -> None:
+        super().__init__(name)
+                
+class Edge(Item):
+    
+    def __init__(self, name) -> None:
+        super().__init__(name)
+        
+class Graph(Item):
+    
+    def __init__(self, name) -> None:
+        super().__init__(name)

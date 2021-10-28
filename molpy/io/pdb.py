@@ -89,7 +89,7 @@ def read_pdb(fileobj, **kwargs):
         if line.startswith("ATOM") or line.startswith("HETATM"):
             line_info = _read_atom_line(line)
             atom = Atom(line_info['name'])
-            atom.update(**line_info)
+            atom.update(line_info)
             atoms.append(atom)
 
         if line.startswith("CONECT"):
@@ -101,7 +101,11 @@ def read_pdb(fileobj, **kwargs):
         if line.startswith("END"):
             group = Group('pdb')
             group.addAtoms(atoms)
-            group.addBondsByDict(conects, ref='serial')
+            for c, nbs in conects.items():
+                u = group.getAtomBy('serial', c)
+                for nb in nbs:
+                    v = group.getAtomBy('serial', nb)
+                    group.addBond(u, v)
             atoms = []
             conects = {}
 

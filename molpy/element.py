@@ -1,46 +1,11 @@
-"""
-element.py: Used for managing elements.
+# author: Roy Kid
+# contact: lijichen365@126.com
+# date: 2021-10-28
+# version: 0.0.1
 
-This is part of the OpenMM molecular simulation toolkit originating from
-Simbios, the NIH National Center for Physics-Based Simulation of
-Biological Structures at Stanford, funded under the NIH Roadmap for
-Medical Research, grant U54 GM072970. See https://simtk.org.
-
-Portions copyright (c) 2012 Stanford University and the Authors.
-Authors: Christopher M. Bruns
-Contributors:
-
-Permission is hereby granted, free of charge, to any person obtaining a
-copy of this software and associated documentation files (the "Software"),
-to deal in the Software without restriction, including without limitation
-the rights to use, copy, modify, merge, publish, distribute, sublicense,
-and/or sell copies of the Software, and to permit persons to whom the
-Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-THE AUTHORS, CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-USE OR OTHER DEALINGS IN THE SOFTWARE.
-"""
-from __future__ import absolute_import
-from functools import partial
-__author__ = "Christopher M. Bruns"
-__version__ = "1.0"
-
-import sys
 from collections import OrderedDict
 from molpy.unit import Unit
 
-if sys.version_info >= (3, 0):
-    import copyreg
-else:
-    import copy_reg as copyreg
 unit = Unit()
 daltons = unit.daltons
 
@@ -142,7 +107,7 @@ class Element(object):
         diff = mass
         best_guess = None
 
-        for elemmass, element in _iteritems(Element._elements_by_mass):
+        for elemmass, element in Element._elements_by_mass.items():
             massdiff = abs(elemmass - mass)
             if massdiff < diff:
                 best_guess = element
@@ -170,12 +135,6 @@ class Element(object):
     @property
     def mass(self):
         return self._mass
-
-    def __str__(self):
-        return '< Element %s >' % self.name
-
-    def __repr__(self):
-        return '< Element %s >' % self.name
     
     def __eq__(self, e):
         if isinstance(e, Element):
@@ -183,26 +142,8 @@ class Element(object):
         elif isinstance(e, str):
             return self._symbol == e
 
-# This is for backward compatibility.
-def get_by_symbol(symbol):
-    """ Get the element with a particular chemical symbol. """
-    if symbol is None:
-        return partial
-    s = symbol.strip().upper()
-    return Element._elements_by_symbol[s]
-
-def _pickle_element(element):
-    return (get_by_symbol, (element.symbol,))
-
-copyreg.pickle(Element, _pickle_element)
-
-# NOTE: getElementByMass assumes all masses are Quantity instances with unit
-# "daltons". All elements need to obey this assumption, or that method will
-# fail. No checking is done in getElementByMass for performance reasons
 
 wildcard =       Element(  0, 'wildcard', '*', 0*daltons)
-
-# particle =       Element(  0, "particle", '', -1*daltons)
 hydrogen =       Element(  1, "hydrogen", "H", 1.007947*daltons)
 deuterium =      Element(  1, "deuterium", "D", 2.01355321270*daltons)
 helium =         Element(  2, "helium", "He", 4.003*daltons)
@@ -324,10 +265,3 @@ ununhexium =     Element(116, "ununhexium",     "Uuh", 292*daltons)
 # relational operators will work with any chosen name
 sulphur = sulfur
 aluminium = aluminum
-
-if sys.version_info >= (3, 0):
-    def _iteritems(dict):
-        return dict.items()
-else:
-    def _iteritems(dict):
-        return dict.iteritems()

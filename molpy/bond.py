@@ -16,13 +16,9 @@ class Bond(Edge):
     @property
     def name(self):
         return f'< Bond {self.atom.name}-{self.btom.name} >'
-        
-    def update(self, attr: dict):
-        for k, v in attr.items():
-            setattr(self, k, v)
 
     def __iter__(self):
         return iter((self.atom, self.btom))
     
-    def __lt__(self, o):
-        return self.uuid < o.uuid
+    def __repr__(self) -> str:
+        return f'< Bond: {self.atom.name}-{self.atom.name}>'
