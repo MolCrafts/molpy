@@ -10,6 +10,8 @@ from molpy.io.pdb import read_pdb
 import numpy as np
 import importlib
 
+__all__ = ['path_group']
+
 def full(groupName, atomNames, **properties):
     """ build up a group with atoms
 

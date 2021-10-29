@@ -36,6 +36,20 @@ class TestGroup:
         C6.reference_covalentMap = covalentMap
         yield C6
         
+    @pytest.fixture(scope='class')
+    def K3(self):
+        
+        
+        k0, k1, k2 = k3nodes = [mp.Atom(f'k{i}') for i in range(3)]
+        
+        K3 = Group('K3')
+        K3.addAtoms(k3nodes)
+        K3.addBond(k0, k1)
+        K3.addBond(k0, k2)
+        K3.addBond(k1, k2)
+
+        yield K3, k3nodes     
+        
     def test_atoms(self, CH4, C6):
         assert len(CH4.atoms) == 5
         assert len(C6.atoms) == 6
@@ -92,3 +106,47 @@ class TestGroup:
     def test_getBasisCycles(self, C6):
         
         assert len(C6.getBasisCycles()) == 1
+        
+    # def test_nbunch_iter(self, K3):
+    #     G, k3nodes = K3
+    #     k0, k1, k2 = k3nodes
+    #     assert G.atomsEqual(k3nodes)
+        
+    #     assert nodes_equal(G.nbunch_iter(), self.k3nodes)  # all nodes
+    #     assert nodes_equal(G.nbunch_iter(0), [0])  # single node
+    #     assert nodes_equal(G.nbunch_iter([0, 1]), [0, 1])  # sequence
+    #     # sequence with none in graph
+    #     assert nodes_equal(G.nbunch_iter([-1]), [])
+    #     # string sequence with none in graph
+    #     assert nodes_equal(G.nbunch_iter("foo"), [])
+    #     # node not in graph doesn't get caught upon creation of iterator
+    #     bunch = G.nbunch_iter(-1)
+    #     # but gets caught when iterator used
+    #     with pytest.raises(nx.NetworkXError, match="is not a node or a sequence"):
+    #         list(bunch)
+    #     # unhashable doesn't get caught upon creation of iterator
+    #     bunch = G.nbunch_iter([0, 1, 2, {}])
+    #     # but gets caught when iterator hits the unhashable
+    #     with pytest.raises(
+    #         nx.NetworkXError, match="in sequence nbunch is not a valid node"
+    #     ):
+    #         list(bunch)
+
+    # def test_nbunch_iter_node_format_raise(self):
+    #     # Tests that a node that would have failed string formatting
+    #     # doesn't cause an error when attempting to raise a
+    #     # :exc:`nx.NetworkXError`.
+
+    #     # For more information, see pull request #1813.
+    #     G = self.Graph()
+    #     nbunch = [("x", set())]
+    #     with pytest.raises(nx.NetworkXError):
+    #         list(G.nbunch_iter(nbunch))
+
+    def test_copy(self, CH4):
+        
+        CH4new = CH4.copy()
+        assert CH4new.natoms == CH4.natoms
+        assert CH4new.nbonds == CH4.nbonds
+        assert CH4new.uuid != CH4.uuid
+        assert CH4new.getAtomByName('C').uuid != CH4.getAtomByName('C').uuid

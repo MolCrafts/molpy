@@ -8,18 +8,16 @@ __all__ = ['Node', 'Graph', 'Edge']
 class Item:
     
     def __init__(self, name) -> None:
-        self._name = name
+        self._attr = {}
         self._uuid = id(self)
-        self._itemType = self.__class__.__name__
+        self.name = name
+        self.itemType = self.__class__.__name__
         
-    @property
-    def name(self):
-        return self._name
-    
-    @name.setter
-    def name(self, n):
-        self._name = n
-    
+    def __setattr__(self, name, value):
+        if not name.startswith('_'):
+            self._attr[name] = value
+        super().__setattr__(name, value)
+
     @property
     def uuid(self):
         return self._uuid
@@ -69,11 +67,10 @@ class Item:
     
     @property
     def properties(self):
-        return self.__dict__
+        return self._attr
     
-    @property
-    def itemType(self):
-        return self._itemType
+    def copy(self):
+        pass
     
 class Node(Item):
     """A Atom DataView class for a molpy Group

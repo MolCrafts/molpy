@@ -3,6 +3,7 @@
 # date: 2021-10-17
 # version: 0.0.1
 
+from copy import deepcopy
 from molpy.base import Node
 from molpy.element import Element
 from molpy.bond import Bond
@@ -58,3 +59,11 @@ class Atom(Node):
     def atomType(self, v):
         # TODO:
         self._atomType = v 
+        
+    def copy(self):
+        
+        atom = Atom(self.name)
+        atom.update(self._attr)
+        
+        return atom
+        

@@ -4,4 +4,23 @@
 # version: 0.0.1
 
 import pytest
-from molpy.atom import Atom
+import networkx as nx
+from molpy.convert import from_networkx_graph
+
+class TestNetworkX:
+
+    def test_from_path_graph(self):
+        
+        G = from_networkx_graph('path_graph', nx.path_graph(10))
+        assert G.natoms == 10
+        assert G.nbonds == 9
+        
+    def test_from_cubical_graph(self):
+        G = from_networkx_graph('cubical_graph', nx.cubical_graph())
+        assert G.natoms == 8
+        assert G.nbonds == 12
+        
+    def test_from_complete_graph(self):
+        G = from_networkx_graph('complete_graph', nx.complete_graph(5))
+        assert G.natoms == 5
+        assert G.nbonds == 10

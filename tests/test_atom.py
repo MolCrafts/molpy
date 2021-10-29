@@ -36,3 +36,14 @@ class TestAtom:
         assert len(O.bondedAtoms) == 1
         with pytest.raises(KeyError):
             assert O.bonds[H1]
+            
+    def test_copy(self, H2O):
+        O, H1, H1 = H2O
+        O.test = 'test'
+        Onew = O.copy()
+        assert Onew != O
+        assert Onew.name == O.name
+        assert Onew.element == O.element
+        assert Onew._bondInfo == {}
+        assert Onew.test == O.test
+        assert Onew.uuid != O.uuid

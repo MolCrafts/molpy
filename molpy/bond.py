@@ -8,17 +8,13 @@ from molpy.base import Edge
 class Bond(Edge):
     
     def __init__(self, atom, btom, **attr) -> None:
-        self.atom = atom
-        self.btom = btom
+        super().__init__(f'< Bond {atom.name}-{btom.name} >')
+        self._atom = atom
+        self._btom = btom
         self.update(attr)
-        super().__init__(self.name)
     
-    @property
-    def name(self):
-        return f'< Bond {self.atom.name}-{self.btom.name} >'
-
     def __iter__(self):
-        return iter((self.atom, self.btom))
+        return iter((self._atom, self._btom))
     
     def __repr__(self) -> str:
-        return f'< Bond: {self.atom.name}-{self.atom.name}>'
+        return self.name

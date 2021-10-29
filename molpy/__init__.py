@@ -12,6 +12,6 @@ __version__ = "0.0.1"
 from molpy.atom import Atom
 from molpy.group import Group
 
-from molpy.utils import *
+from molpy.algorithms import *
 
 from molpy.io import *

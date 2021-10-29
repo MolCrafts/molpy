@@ -3,6 +3,7 @@
 # date: 2021-10-17
 # version: 0.0.1
 
+from pydantic import HashableError
 from molpy.base import Graph
 from molpy.atom import Atom
 from molpy.bond import Bond
@@ -11,22 +12,28 @@ from itertools import dropwhile, combinations
 
 class Group(Graph):
     
-    def __init__(self, name):
+    def __init__(self, name, group=None, **attr):
         super().__init__(name)
         self._atoms = [] # [Atom]
         self._bonds = {} # _bonds: {Atom: {Btom: Bond, Ctom: Bond}}
+        self.update(attr)
+        if isinstance(group, Group):
+            pass
             
-    def add(self, item):
+    def add(self, item, copy=False):
         if isinstance(item, Atom):
-            self.addAtom(item)
+            self.addAtom(item, copy)
         
-    def addAtom(self, atom: Atom):
+    def addAtom(self, atom: Atom, copy=False):
         if atom not in self._atoms:
-            self._atoms.append(atom)
+            if copy:
+                self._atoms.append(atom.copy())
+            else:
+                self._atoms.append(atom)
                 
-    def addAtoms(self, atoms):
+    def addAtoms(self, atoms, copy=False):
         for atom in atoms:
-            self.addAtom(atom)
+            self.addAtom(atom, copy)
             
     def removeAtom(self, atom: Atom):
         
@@ -361,3 +368,65 @@ class Group(Graph):
             gnodes -= set(pred)
             root = None
         return cycles
+
+    @property
+    def degree(self, ):
+        tmp = {}
+        for atom in self.atoms:
+            tmp[atom] = self.neighbors(atom)
+        return tmp
+    
+    def nbunch_iter(self, nbunch=None):
+        """Returns an iterator over nodes contained in nbunch that are
+        also in the graph.
+        The nodes in nbunch are checked for membership in the graph
+        and if not are silently ignored.
+
+        Args:
+            nbunch (Atom, Iterable[Atom], optional): The view will only report edges incident to these nodes. Defaults to None.
+
+        Raises:
+            KeyError: WHEN nbunch is not a node or a sequence of nodes.
+            HashableError: WHEN a node in nbunch is not hashable.
+            
+        Yields:
+            iterator: An iterator over nodes in nbunch that are also in the graph.
+            If nbunch is None, iterate over all nodes in the graph.
+        """
+        
+        if nbunch is None:  # include all nodes via iterator
+            bunch = iter(self._bonds)
+        elif nbunch in self:  # if nbunch is a single node
+            bunch = iter([nbunch])
+        else:  # if nbunch is a sequence of nodes
+
+            def bunch_iter(nlist, adj):
+                try:
+                    for n in nlist:
+                        if n in adj:
+                            yield n
+                except TypeError as err:
+                    exc, message = err, err.args[0]
+                    # capture error for non-sequence/iterator nbunch.
+                    if "iter" in message:
+                        exc = KeyError(
+                            "nbunch is not a node or a sequence of nodes."
+                        )
+                    # capture error for unhashable node.
+                    if "hashable" in message:
+                        exc = HashableError(
+                            f"Node {n} in sequence nbunch is not a valid node."
+                        )
+                    raise exc
+
+            bunch = bunch_iter(nbunch, self._adj)
+        return bunch
+
+    def copy(self):
+        g = Group(self.name)
+        g.update(self._attr)
+        g.addAtoms(self.atoms, copy=True)
+        for bond in self.bonds:
+            g.addBond(*bond, **bond._attr)
+        return g
+        
