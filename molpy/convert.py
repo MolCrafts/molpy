@@ -11,7 +11,7 @@ def from_networkx_graph(name, G):
     adj = dict(G.adj)
     group = Group(name)
     
-    atoms = {i: Atom(f'{i}') for i in adj}
+    atoms = [Atom(f'{i}') for i in adj]
     group.addAtoms(atoms)
         
     for uname, nbs in adj.items():

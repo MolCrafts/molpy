@@ -4,18 +4,27 @@
 # version: 0.0.1
 
 from pydantic import HashableError
+from molpy.angle import Angle
 from molpy.base import Graph
 from molpy.atom import Atom
 from molpy.bond import Bond
 import numpy as np
-from itertools import dropwhile, combinations
+from itertools import dropwhile, combinations, filterfalse
+
+from molpy.dihedral import Dihedral
 
 class Group(Graph):
     
     def __init__(self, name, group=None, **attr):
         super().__init__(name)
-        self._atoms = [] # [Atom]
+        self._atoms = {}
+        self._atomList = [] # [Atom]
         self._bonds = {} # _bonds: {Atom: {Btom: Bond, Ctom: Bond}}
+        self._bondList = []
+        self._angles = {}
+        self._angleList = []
+        self._dihedrals = {}
+        self._dihedralList = []
         self.update(attr)
         if isinstance(group, Group):
             pass
@@ -25,11 +34,13 @@ class Group(Graph):
             self.addAtom(item, copy)
         
     def addAtom(self, atom: Atom, copy=False):
-        if atom not in self._atoms:
+        if atom not in self._atomList:
             if copy:
-                self._atoms.append(atom.copy())
+                self._atomList.append(atom.copy())
+                self._atoms[atom.name] = atom
             else:
-                self._atoms.append(atom)
+                self._atomList.append(atom)
+                self._atoms[atom.name] = atom
                 
     def addAtoms(self, atoms, copy=False):
         for atom in atoms:
@@ -37,7 +48,7 @@ class Group(Graph):
             
     def removeAtom(self, atom: Atom):
         
-        self._atoms.remove(atom)
+        self._atomList.remove(atom)
         
         bonds = self._bonds
         try:
@@ -50,22 +61,22 @@ class Group(Graph):
         
     def removeAtoms(self, atoms):
         for atom in atoms:
-            self._atoms.remove(atom)
+            self._atomList.remove(atom)
             self.removeAtom(atom)
         
     @property
     def atoms(self):
-        return self._atoms
+        return self._atomList
     
     def getAtoms(self):
-        return self._atoms
+        return self._atomList
 
     @property
     def natoms(self):
-        return len(self._atoms)
+        return len(self._atomList)
     
     def hasAtom(self, atom: Atom):
-        return atom in self._atoms
+        return atom in self._atomList
         
     def addBond(self, atom, btom, **attr):
         
@@ -77,7 +88,7 @@ class Group(Graph):
             self._bonds[btom] = {}
         self._bonds[atom][btom] = bond
         self._bonds[btom][atom] = bond
-        
+        self._bondList.append(bond)
         
     def addBonds(self, atomList, **attr):
         for e in atomList:
@@ -92,13 +103,6 @@ class Group(Graph):
 
             dd.update(attr)
             self.addBond(u, v, **dd)
-            
-    def addBondsByDict(self, bondDict, ref):
-        # tmp = {atom.get(ref, None): atom for atom in self.atoms}
-        # for u, nbs in bondDict.items():
-        #     for nb in nbs:
-        #         self.addBond(tmp[u], tmp[nb])
-        pass
             
     def removeBond(self, atom, btom):
         try:
@@ -127,11 +131,7 @@ class Group(Graph):
     #         edges[u][v] = bond
     #         edges[v][u] = bond
     #     super().update(edges, atoms)
-    
-    def splite(self):
-        #TODO: split graph to subgraph
-        pass
-    
+     
     def getSubGroup(self, name, atoms):
         """Specify some atoms in the group and return the subgroup composed of these atoms
 
@@ -158,10 +158,6 @@ class Group(Graph):
                 if bondedAtom in subgroup:
                     subgroup.addBond(atom, bondedAtom)
         return subgroup
-    
-    def merge(self):
-        #TODO: merge subgraph to graph
-        pass    
 
     def hasBond(self, atom, btom):
         if self._bonds[atom].get(btom, False):
@@ -242,12 +238,12 @@ class Group(Graph):
                 self.addBond(atom1, atom2)
         
     def getAtomByName(self, atomName):
-        for atom in self._atoms:
+        for atom in self._atomList:
             if atom.name == atomName:
                 return atom
             
     def getAtomBy(self, by, value):
-        for atom in self._atoms:
+        for atom in self._atomList:
             if atom.get(by) == value:
                 return atom
     
@@ -260,18 +256,87 @@ class Group(Graph):
         elif isinstance(idx, int):
             return self.getAtoms()[idx]
 
-    def getAngles(self):
-        #TODO: 
-        angles = set()
-        for atom in self.getAtoms():
-
-            for edge in combinations(atom.bondedAtoms, 2):
-                angles.add(
-                    (edge[0], atom, edge[1])
-                )
+    def searchAngles(self):
+        
+        # itom-jtom(self)-ktom
+        
+        for jtom in self.getAtoms():
+            if len(jtom.bondedAtoms) < 2:
+                continue
+            for (itom, ktom) in combinations(jtom.bondedAtoms, 2):
+                    try:
+                        angle = self._angles[itom][jtom][ktom]
+                        angle = self._angles[jtom][jtom][itom]
+                    except KeyError:
+                        angle = Angle(itom, jtom, ktom)
+                        self._angles.setdefault(itom, {}).setdefault(jtom, {}).setdefault(ktom, angle)
+                        self._angles.setdefault(ktom, {}).setdefault(jtom, {}).setdefault(itom, angle)
+                        # self._angles[i].setdefault(j, {})
+                        # self._angles[j].setdefault(k, angle)
+                        self._angleList.append(angle)
+                        
+        return self._angleList
+    
+    def searchDihedrals(self):
+        
+        # itom-jtom(self)-ktom-ltom
+        
+        # for jtom in self.getAtoms():
+        #     if len(jtom.bondedAtoms) < 2:
+        #         continue
+        #     for (itom, ktom) in combinations(jtom.bondedAtoms, 2):
                 
-        self._angles = list(angles)
-        return self._angles
+        #         for ltom in filterfalse(lambda atom: atom in (itom, jtom), ktom.bondedAtoms):
+        #             try:
+        #                 dihe = self._dihedrals[itom][jtom][ktom][ltom]
+        #                 dihe = self._dihedrals[ltom][ktom][jtom][itom]
+        #             except KeyError:
+        #                 dihe = Dihedral(itom, jtom, ktom, ltom)
+        #                 self._dihedrals.setdefault(itom, {}).setdefault(jtom, {}).setdefault(ktom, {}).setdefault(ltom, dihe)
+        #                 self._dihedrals.setdefault(ltom, {}).setdefault(ktom, {}).setdefault(jtom, {}).setdefault(itom, dihe)
+        #                 self._dihedralList.append(dihe)
+                        
+        #         for ltom in filterfalse(lambda atom: atom in (ktom, jtom), itom.bondedAtoms):
+                    
+        #             try:
+        #                 dihe = self._dihedrals[ltom][itom][jtom][ktom]
+        #                 dihe = self._dihedrals[ktom][jtom][itom][ltom]
+        #             except KeyError:
+        #                 dihe = Dihedral(ltom, itom, jtom, ktom)
+        #                 self._dihedrals.setdefault(ltom, {}).setdefault(itom, {}).setdefault(jtom, {}).setdefault(ktom, dihe)
+        #                 self._dihedrals.setdefault(ktom, {}).setdefault(jtom, {}).setdefault(itom, {}).setdefault(ltom, dihe)
+        #                 self._dihedralList.append(dihe)
+        
+        # return self._dihedralList
+        
+        for jtom in self.getAtoms():
+            
+            if len(jtom.bondedAtoms) < 2:
+                continue
+            
+            for ktom in jtom.bondedAtoms:
+                
+                for itom in jtom.bondedAtoms:
+                    
+                    if itom == ktom:
+                        continue
+                    
+                    for ltom in ktom.bondedAtoms:
+                        
+                        if ltom == jtom:
+                            continue
+                        
+                        if itom != ltom:
+                            try:
+                                dihe = self._dihedrals[itom][jtom][ktom][ltom]
+                                dihe = self._dihedrals[ltom][ktom][jtom][itom]
+                            except KeyError:
+                                dihe = Dihedral(itom, jtom, ktom, ltom)
+                                self._dihedrals.setdefault(itom, {}).setdefault(jtom, {}).setdefault(ktom, {}).setdefault(ltom, dihe)
+                                self._dihedrals.setdefault(ltom, {}).setdefault(ktom, {}).setdefault(jtom, {}).setdefault(itom, dihe)
+                                self._dihedralList.append(dihe)
+        return self._dihedralList
+                           
     
     def addBondByIndex(self, atomIdx, atomJdx, **bondType):
         atoms = self.getAtoms()
