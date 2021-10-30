@@ -3,7 +3,6 @@
 # date: 2021-10-17
 # version: 0.0.1
 
-from pydantic import HashableError
 from molpy.angle import Angle
 from molpy.base import Graph
 from molpy.atom import Atom
@@ -14,8 +13,14 @@ from itertools import dropwhile, combinations, filterfalse
 from molpy.dihedral import Dihedral
 
 class Group(Graph):
-    
-    def __init__(self, name, group=None, **attr):
+    """Group describes a bunch of atoms which connect with others and represents a molecule or a functional gropu
+    """
+    def __init__(self, name, **attr):
+        """Initialize a group.
+
+        Args:
+            name (str): group's name
+        """
         super().__init__(name)
         self._atoms = {}
         self._atomList = [] # [Atom]
@@ -26,14 +31,24 @@ class Group(Graph):
         self._dihedrals = {}
         self._dihedralList = []
         self.update(attr)
-        if isinstance(group, Group):
-            pass
             
     def add(self, item, copy=False):
+        """(leave for backward compatible)Add an atom or something to this group. Unless the object passed is an atom instance or it not works.
+
+        Args:
+            item ([type]): [description]
+            copy (bool, optional): [description]. Defaults to False.
+        """
         if isinstance(item, Atom):
             self.addAtom(item, copy)
         
     def addAtom(self, atom: Atom, copy=False):
+        """Add an atom to this group.
+
+        Args:
+            atom (Atom): atom to add to this group
+            copy (bool, optional): if call atom.copy(). Defaults to False.
+        """
         if atom not in self._atomList:
             if copy:
                 self._atomList.append(atom.copy())
@@ -43,11 +58,24 @@ class Group(Graph):
                 self._atoms[atom.name] = atom
                 
     def addAtoms(self, atoms, copy=False):
+        """add a sequence of atoms.
+
+        Args:
+            atoms (Iterable[Atom]): a set of atoms
+            copy (bool, optional): if call atom.copy(). Defaults to False.
+        """
         for atom in atoms:
             self.addAtom(atom, copy)
             
     def removeAtom(self, atom: Atom):
-        
+        """remove atom from this group, but not deconstruct it.
+
+        Args:
+            atom (Atom): atom to be removed
+
+        Raises:
+            KeyError: WHEN atom not in this group
+        """
         self._atomList.remove(atom)
         
         bonds = self._bonds
@@ -60,6 +88,11 @@ class Group(Graph):
         del bonds[atom]
         
     def removeAtoms(self, atoms):
+        """remove a set of atoms
+
+        Args:
+            atoms (Iterable[Atom]): [description]
+        """
         for atom in atoms:
             self._atomList.remove(atom)
             self.removeAtom(atom)
@@ -69,6 +102,11 @@ class Group(Graph):
         return self._atomList
     
     def getAtoms(self):
+        """return all the atoms in this group
+
+        Returns:
+            List[Atom]: a list of atom
+        """
         return self._atomList
 
     @property
@@ -76,10 +114,23 @@ class Group(Graph):
         return len(self._atomList)
     
     def hasAtom(self, atom: Atom):
+        """if the atom in this group
+
+        Args:
+            atom (Atom): atom to be checked
+
+        Returns:
+            bool: result of if atom in the group
+        """
         return atom in self._atomList
         
     def addBond(self, atom, btom, **attr):
-        
+        """define bond between two passed atoms, and set bond properties
+
+        Args:
+            atom (Atom): one atom
+            btom (Atom): another atom
+        """
         bond = atom.bondto(btom, **attr)
         if atom not in self._bonds:
             self._bonds[atom] = {}
@@ -91,6 +142,14 @@ class Group(Graph):
         self._bondList.append(bond)
         
     def addBonds(self, atomList, **attr):
+        """Batch add bonds. atomList followed format, [(atom, btom)] without bond's properties, or [(atom, btom, {key: value})]. Dict in the atomList is the special properties for the bond, and attr is the general properties for all bond. Special property will cover properties in attr.
+
+        Args:
+            atomList ([type]): [description]
+
+        Raises:
+            ValueError: [description]
+        """
         for e in atomList:
             ne = len(e)
             if ne == 3:
@@ -101,10 +160,19 @@ class Group(Graph):
             else:
                 raise ValueError(f"bond tuple {e} must be a 2-tuple or 3-tuple.")
 
-            dd.update(attr)
-            self.addBond(u, v, **dd)
+            attr.update(dd)
+            self.addBond(u, v, **attr)
             
     def removeBond(self, atom, btom):
+        """remove bond between two atoms
+
+        Args:
+            atom (Atom): one atom
+            btom (Atom): another atom
+
+        Raises:
+            KeyError: WHEN bond not exists
+        """
         try:
             del self._bonds[atom][btom]
             if atom != btom:  # self-loop needs only one entry removed
@@ -113,6 +181,11 @@ class Group(Graph):
             raise KeyError(f"The bond {atom}-{btom} is not in the graph") from err
         
     def removeBonds(self, atomList):
+        """remove a bunch of bond
+
+        Args:
+            atomList (Iterable): same format with addBonds
+        """
         for atoms in atomList:
             atom, btom = atoms[:2]
             if atom in self._bonds and btom in self._bonds[atom]:
@@ -160,12 +233,29 @@ class Group(Graph):
         return subgroup
 
     def hasBond(self, atom, btom):
+        """if bond between atom and btom in this graph
+
+        Args:
+            atom (Atom): one atom
+            btom (Atom): anther atom
+
+        Returns:
+            bool: result
+        """
         if self._bonds[atom].get(btom, False):
             return True
         else:
             return False
         
     def neighbors(self, atom):
+        """return atom's neighbors. equivalent to atom.bondedAtoms
+
+        Args:
+            atom (Atom): atom
+
+        Returns:
+            List[Atom]: atom's bondedAtom
+        """
         return list(self._bonds[atom].keys())
     
     @property
@@ -177,16 +267,38 @@ class Group(Graph):
         return len(self.getBonds())
     
     def getBond(self, atom, btom):
+        """get a certain bond specified with two atoms
+
+        Args:
+            atom (Atom): one atom
+            btom (Atom): anther atom
+
+        Returns:
+            Bond: bond
+        """
         return self._bonds[atom].get(btom, False)
     
     def getBonds(self):
+        """get all the bonds in this graph
+
+        Returns:
+            List[Bond]: a list of bond
+        """
         bonds = set()
         for u, nbs in self._bonds.items():
             for nb in nbs:
                 bonds.add(self._bonds[u][nb])
         return list(bonds)
     
-    def getCovalentMap(self, max_distance=None): 
+    def getCovalentMap(self, max_distance=None):
+        """return the covalentMap of this graph.
+
+        Args:
+            max_distance (int, optional): depth of search. Defaults to None.
+
+        Returns:
+            np.ndarray: a matrix of topology distance
+        """
         atoms = self.getAtoms()
         covalentMap = np.zeros((len(atoms), len(atoms)), dtype=int)
         visited = np.zeros_like(covalentMap, dtype=int)
@@ -229,7 +341,11 @@ class Group(Graph):
         return self._covalentMap
             
     def setTopoByCovalentMap(self, covalentMap: np.ndarray):
+        """Using a covalentMap to describe topology of the group
 
+        Args:
+            covalentMap (np.ndarray): a square & symmety matrix
+        """
         atoms = self.getAtoms()
         for i, nbond in np.ndenumerate(covalentMap):
             if nbond == 1:
@@ -238,11 +354,28 @@ class Group(Graph):
                 self.addBond(atom1, atom2)
         
     def getAtomByName(self, atomName):
+        """look up an atom by its name
+
+        Args:
+            atomName (str): name of the atom
+
+        Returns:
+            Atom: return the atom if can be find in graph
+        """
         for atom in self._atomList:
             if atom.name == atomName:
                 return atom
             
     def getAtomBy(self, by, value):
+        """look up an atom by its certain property. NOTE only return the first result
+
+        Args:
+            by (str): property
+            value (Any): value 
+
+        Returns:
+            Atom: if found else NoneType
+        """
         for atom in self._atomList:
             if atom.get(by) == value:
                 return atom
@@ -257,7 +390,11 @@ class Group(Graph):
             return self.getAtoms()[idx]
 
     def searchAngles(self):
-        
+        """search all the angles in this group
+
+        Returns:
+            List[Angle]: all angles in this group
+        """
         # itom-jtom(self)-ktom
         
         for jtom in self.getAtoms():
@@ -308,7 +445,11 @@ class Group(Graph):
         #                 self._dihedralList.append(dihe)
         
         # return self._dihedralList
-        
+        """search all the dihedrals in this group
+
+        Returns:
+            List[Angle]: all dihedrals in this group
+        """
         for jtom in self.getAtoms():
             
             if len(jtom.bondedAtoms) < 2:
@@ -339,12 +480,27 @@ class Group(Graph):
                            
     
     def addBondByIndex(self, atomIdx, atomJdx, **bondType):
+        """Add a bond refer to the order of atoms. NOTE that the order of atoms depents on the order they are added. 
+
+        Args:
+            atomIdx (int): index of list
+            atomJdx (int): index of list
+        """
         atoms = self.getAtoms()
         atom1 = atoms[atomIdx]
         atom2 = atoms[atomJdx]
         self.addBond(atom1, atom2, **bondType)
     
     def getBondByIndex(self, atomIdx, atomJdx):
+        """get a bond by its atom'index
+
+        Args:
+            atomIdx (int): atom index
+            atomJdx (int): btom index
+
+        Returns:
+            Bond: result bond
+        """
         atoms = self.getAtoms()
         atom1 = atoms[atomIdx]
         atom2 = atoms[atomJdx]
@@ -441,53 +597,58 @@ class Group(Graph):
             tmp[atom] = self.neighbors(atom)
         return tmp
     
-    def nbunch_iter(self, nbunch=None):
-        """Returns an iterator over nodes contained in nbunch that are
-        also in the graph.
-        The nodes in nbunch are checked for membership in the graph
-        and if not are silently ignored.
+    # def nbunch_iter(self, nbunch=None):
+    #     """Returns an iterator over nodes contained in nbunch that are
+    #     also in the graph.
+    #     The nodes in nbunch are checked for membership in the graph
+    #     and if not are silently ignored.
 
-        Args:
-            nbunch (Atom, Iterable[Atom], optional): The view will only report edges incident to these nodes. Defaults to None.
+    #     Args:
+    #         nbunch (Atom, Iterable[Atom], optional): The view will only report edges incident to these nodes. Defaults to None.
 
-        Raises:
-            KeyError: WHEN nbunch is not a node or a sequence of nodes.
-            HashableError: WHEN a node in nbunch is not hashable.
+    #     Raises:
+    #         KeyError: WHEN nbunch is not a node or a sequence of nodes.
+    #         HashableError: WHEN a node in nbunch is not hashable.
             
-        Yields:
-            iterator: An iterator over nodes in nbunch that are also in the graph.
-            If nbunch is None, iterate over all nodes in the graph.
-        """
+    #     Yields:
+    #         iterator: An iterator over nodes in nbunch that are also in the graph.
+    #         If nbunch is None, iterate over all nodes in the graph.
+    #     """
         
-        if nbunch is None:  # include all nodes via iterator
-            bunch = iter(self._bonds)
-        elif nbunch in self:  # if nbunch is a single node
-            bunch = iter([nbunch])
-        else:  # if nbunch is a sequence of nodes
+    #     if nbunch is None:  # include all nodes via iterator
+    #         bunch = iter(self._bonds)
+    #     elif nbunch in self:  # if nbunch is a single node
+    #         bunch = iter([nbunch])
+    #     else:  # if nbunch is a sequence of nodes
 
-            def bunch_iter(nlist, adj):
-                try:
-                    for n in nlist:
-                        if n in adj:
-                            yield n
-                except TypeError as err:
-                    exc, message = err, err.args[0]
-                    # capture error for non-sequence/iterator nbunch.
-                    if "iter" in message:
-                        exc = KeyError(
-                            "nbunch is not a node or a sequence of nodes."
-                        )
-                    # capture error for unhashable node.
-                    if "hashable" in message:
-                        exc = HashableError(
-                            f"Node {n} in sequence nbunch is not a valid node."
-                        )
-                    raise exc
+    #         def bunch_iter(nlist, adj):
+    #             try:
+    #                 for n in nlist:
+    #                     if n in adj:
+    #                         yield n
+    #             except TypeError as err:
+    #                 exc, message = err, err.args[0]
+    #                 # capture error for non-sequence/iterator nbunch.
+    #                 if "iter" in message:
+    #                     exc = KeyError(
+    #                         "nbunch is not a node or a sequence of nodes."
+    #                     )
+    #                 # capture error for unhashable node.
+    #                 if "hashable" in message:
+    #                     exc = HashableError(
+    #                         f"Node {n} in sequence nbunch is not a valid node."
+    #                     )
+    #                 raise exc
 
-            bunch = bunch_iter(nbunch, self._adj)
-        return bunch
+    #         bunch = bunch_iter(nbunch, self._adj)
+    #     return bunch
 
     def copy(self):
+        """Return a new group. Both its atoms and its properties are copied.
+
+        Returns:
+            [type]: [description]
+        """
         g = Group(self.name)
         g.update(self._attr)
         g.addAtoms(self.atoms, copy=True)

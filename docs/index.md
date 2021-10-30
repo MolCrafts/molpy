@@ -10,46 +10,93 @@
 
 `molpy`  want to build a data structure used to describe molecules in computational chemistry, just like numpy in data science
 
-## 遇到的小问题
+## Quick start
 
-对于任意的大分子, 建模是一个非常困难的工作. 首先需要确定每一个原子的位置, 其次是原子之间链接信息. 在这个基础上需要生成分子中所有的键角, 二面角等拓扑信息. 接下来, 需要根据力场给每一个原子分配合适的原子类型. 然后把多个这样的分子以一种合适的摆放方式放入到模拟盒子中. 最后输出到每种计算软件所需要的格式. 这一套工作并没有成体系的工具可以调用, 现有的工具都是针对某种特定体系或者软件的. 我之前写了一个[心路历程](https://zhuanlan.zhihu.com/p/412019979). 下面给出一个调研结果
+使用这个工具非常容易, 首相像numpy一样导入
 
-- 建模工具
-    - Material Studio
-        - 收费, 臃肿
-        - 不能程序化编程->构建复杂大分子困难
-    - avogadro
-        - 轻量, 容易上手
-        - 几乎停止维护(包括avogadro2)
-    - moltemplate
-        - 模块化构建思路非常漂亮
-        - 仅支持LAMMPS
-        - 源码是个灾难(作者原话)
-        - `.lt`脚本语法不够丰富
+```python
+import numpy as np
+import molpy as mp
+```
 
-- 力场匹配
-    - ligpargen
-        - 仅支持opls
-        - 最多60个原子
-        - 原子类型随机分配, 多个文件难以合并
-    - amber及charmm
-        - 没用过
+`molpy`有两个核心的类用来描述分子, 一个是`Atom`, 另一个是`Group`, 其他的都是为这两个类服务的. 首先你需要理解, 每一个分子都是由很多原子键接而成, 因此整个分子形成一个相互连通的图. 每个原子将储存着与它相邻的原子. 一堆原子不能零散地乱放, `Group`类将是他们的容器. 
 
-- packing
-    - packmol
-        - constraint 功能很强大
-        - 仅支持pdb和xyz
+如果手动地建立一个模型, 应该从底向上地操作
 
+```python
+# 定义一个原子
+H1 = Atom('H1')
+H2 = Atom('H2')
+O = Atom('O')
 
-随着对分子的描述日益精细, 原有的软件的功能将捉襟见肘, 而且很难加以扩展. 原子上需要附加的属性越来越多, 包括极化张量, 多极展开参数, 电子结构等. 需要输出的格式也在不断变化, 需要适应新生代的机器学习的计算化学. 我想在这个方面做一点工作, 因此开发了molpy.
+# 定义键接关系
+O.bondto(H1)
+O.bondto(H2)
 
-## 思路
+# 定义一个容器
+H2O = Group('H2O')
+H2O.addAtom(H1)
+H2O.addAtom(H2)
+H2O.addAtom(O)
+```
+非常麻烦, 我们也不会这么做. 这只是指出了底层的逻辑, 和这两个关键的类之间的联系. 我们将提供一系列的生成函数来帮助你拜托这种繁琐的工作. 例如我们可以直接从各种分子动力学文件中读取模型信息
 
-molpy想成为计算化学方向的numpy. 工作的思路是将一个分子描述成由`Atom`(node)和`Bond`(edge)组成的`Group`(graph). 既然底层是由图实现的, 所以很容易实现拆分子图, 遍历搜索等等算法. 构建分子结构之后, 和自定义的`ForceField`进行匹配就可以将模板上的属性附加到所有的对象上. 有了完全描述的分子结构, 可以输出到任何格式的文件中, 供其他软件调用. 同样, 有了力场描述, 实现梯度下降密铺等方法也很容易. 
+```python
+lactic = mp.fromPDB('lactic.pdb')
+polyester = mp.fromLAMMPS('pe.data')
+benzene = mp.fromSMILS('c1ccccc1')
+```
+针对量化计算, 每个原子都有它的元素. 因此`Atom`的`element`属性是一个非常特别的类, 它提供了标准的元素信息. 当你设置它的元素符号或者名称, 他将自动转化为元素类的实例
+```python
+O.element = 'O'
+>>> O.element
+>>> <Element oxygen>
+```
 
-## 如何阅读源码
+针对分子模拟, 每个原子都有它的原子类型. `atomType`是由`forcefield`设定并全局共享的. 例如一个水分子的两个氢原子应该是类型相同的. 你不会希望修改一个氢的参数而另一个不发生变化. 
+```python
+# 实例化一个力场类
+ff = ForceField('tip3p')
+# 定义原子类, 返回实例并赋给原子
+H1.atomType = ff.defAtomType('H2O', charge=0.3*mp.unit.)
+>>> H1.properties
+>>> {
+    'name': 'H1',
+    'atomType': 'H2O',
+    'element': 'H'
+}
+```
+你可以看到我们这里也内置了单位系统(由pint提供), 实现了单位换算化简等功能. 同样, 这个操作也不会需要手动操作. 我们在`forcefield`中提供了模板匹配机制, 提前定义好一个模板, 就可以直接把全部属性从模板上转移到分子中.
 
-已经实现的功能一定会有相关的测试文件. 所有对象的基类是`Item`. 
+不仅原子上附加这属性, 原子之间的键接, 键角和二面角也由相应的参数. 化学键在定义拓扑结构的时候已经生成
+```python
+>>> H2O.getBond(H1, O)
+>>> < Bond H1-O >
+>>> atom, btom = < Bond H1-O >
+>>> atom
+>>> < Atom H1 >
+>>> assert H1.bondto(O) == O.bondto(H1) == H2O.getBond(H1, O)
+>>> True
+```
+
+通过拓扑搜索, 可以生成键角和二面角
+
+```python
+>>> H2O.searchAngles()
+>>> [< Angle H1-O-H2 >]
+```
+
+对于分子的图神经网络, 我们还可以给出描述分子内拓扑距离的`covalentMap`
+
+```python
+atomlist, covalentMap = H2O.getCovalentMap()
+>>> atomlist
+>>> [< Atom H1 >, < Atom H2 >, < Atom O >]
+>>> covalentMap 
+>>> [[0 2 1]
+     [2 0 1]
+     [1 2 0]]
+```
 
 ## roadmap:
 
