@@ -58,7 +58,7 @@ O.element = 'O'
 # 实例化一个力场类
 ff = ForceField('tip3p')
 # 定义原子类, 返回实例并赋给原子
-H1.atomType = ff.defAtomType('H2O', charge=0.3*mp.unit.)
+H1.atomType = ff.defAtomType('H2O', charge=0.3*mp.unit.coulomb)
 >>> H1.properties
 >>> {
     'name': 'H1',
