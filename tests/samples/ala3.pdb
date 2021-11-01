@@ -1,0 +1,28 @@
+HEADER    1
+COMPND
+SOURCE
+ATOM      1  N   ALA     1       0.000   0.000   0.000
+ATOM      2  CA  ALA     1       0.000   0.000   1.500
+ATOM      3  C   ALA     1       1.413   0.000   2.034
+ATOM      4  O   ALA     1       2.283  -0.728   1.585
+ATOM      5  CB  ALA     1      -0.698  -1.273   2.014
+ATOM      6  N   ALA     2       1.587   0.874   3.034
+ATOM      7  CA  ALA     2       2.886   1.023   3.684
+ATOM      8  C   ALA     2       2.753   1.073   5.188
+ATOM      9  O   ALA     2       1.905   1.747   5.749
+ATOM     10  CB  ALA     2       3.542   2.339   3.226
+ATOM     11  H   ALA     2       0.786   1.432   3.328
+ATOM     12  N   ALA     3       3.656   0.305   5.812
+ATOM     13  CA  ALA     3       3.690   0.218   7.269
+ATOM     14  C   ALA     3       5.100   0.323   7.799
+ATOM     15  O   ALA     3       6.033  -0.288   7.305
+ATOM     16  CB  ALA     3       3.119  -1.140   7.717
+ATOM     17  H   ALA     3       4.319  -0.218   5.239
+ATOM     18  N   ALA     4       5.197   1.147   8.851
+ATOM     19  CA  ALA     4       6.480   1.382   9.507
+ATOM     20  C   ALA     4       6.355   1.327  11.011
+ATOM     21  O   ALA     4       5.388   1.931  11.522
+ATOM     22  CB  ALA     4       7.002   2.781   9.129
+ATOM     23  OXT ALA     4       7.228   0.681  11.630
+ATOM     24  H   ALA     4       4.348   1.606   9.180
+END

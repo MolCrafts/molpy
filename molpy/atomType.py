@@ -8,8 +8,6 @@ from molpy.base import Item
 
 class AtomType(Item):
     
-    _atomTypes_by_name = {}
-    
     def __init__(self, typeName, **attr) -> None:
         super().__init__(typeName)
         self._name = typeName

@@ -11,7 +11,7 @@ import numpy as np
 class Atom(Node):
     """ Atom describes all the properties attached on an atom. 
     """
-    def __init__(self, name) -> None:
+    def __init__(self, name, **attr) -> None:
         """Initialize an atom.
 
         Args:
@@ -19,6 +19,7 @@ class Atom(Node):
         """
         super().__init__(name)
         self._bondInfo = {} # bondInfo = {Atom: Bond}
+        self.update(attr)
 
     def bondto(self, atom, **attr):
         """basic method to set bonded atom. E.g. H1.bondto(O, r0=0.99*mp.unit.angstrom)

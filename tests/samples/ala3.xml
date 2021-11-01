@@ -1,0 +1,47 @@
+<Residues>
+    <Residue name="ALAN">
+        <Atom name="N"/>
+        <Atom name="CA"/>
+        <Atom name="C"/>
+        <Atom name="O"/>
+        <Atom name="CB"/>
+        <Atom name="+N"/>
+        <Bond atom1="N" atom2="CA"/>
+        <Bond atom1="CA" atom2="CB"/>
+        <Bond atom1="CA" atom2="C"/>
+        <Bond atom1="C" atom2="O"/>
+        <Bond atom1="C" atom2="+N"/>
+    </Residue>
+    <Residue name="ALA">
+        <Atom name="N"/>
+        <Atom name="CA"/>
+        <Atom name="C"/>
+        <Atom name="O"/>
+        <Atom name="CB"/>
+        <Atom name="H"/>
+        <Atom name="+N"/>
+        <Atom name="-C"/>
+        <Bond atom1="N" atom2="CA"/>
+        <Bond atom1="CA" atom2="CB"/>
+        <Bond atom1="CA" atom2="C"/>
+        <Bond atom1="C" atom2="O"/>
+        <Bond atom1="-C" atom2="N"/>
+        <Bond atom1="C" atom2="+N"/>
+    </Residue>
+    <Residue name="ALAC">
+        <Atom name="N"/>
+        <Atom name="CA"/>
+        <Atom name="C"/>
+        <Atom name="O"/>
+        <Atom name="CB"/>
+        <Atom name="H"/>
+        <Atom name="OXT"/>
+        <Atom name="-C"/>
+        <Bond atom1="N" atom2="CA"/>
+        <Bond atom1="CA" atom2="CB"/>
+        <Bond atom1="CA" atom2="C"/>
+        <Bond atom1="C" atom2="O"/>
+        <Bond atom1="C" atom2="OXT"/>
+        <Bond atom1="-C" atom2="N"/>
+    </Residue>
+</Residues>

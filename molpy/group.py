@@ -597,52 +597,6 @@ class Group(Graph):
             tmp[atom] = self.neighbors(atom)
         return tmp
     
-    # def nbunch_iter(self, nbunch=None):
-    #     """Returns an iterator over nodes contained in nbunch that are
-    #     also in the graph.
-    #     The nodes in nbunch are checked for membership in the graph
-    #     and if not are silently ignored.
-
-    #     Args:
-    #         nbunch (Atom, Iterable[Atom], optional): The view will only report edges incident to these nodes. Defaults to None.
-
-    #     Raises:
-    #         KeyError: WHEN nbunch is not a node or a sequence of nodes.
-    #         HashableError: WHEN a node in nbunch is not hashable.
-            
-    #     Yields:
-    #         iterator: An iterator over nodes in nbunch that are also in the graph.
-    #         If nbunch is None, iterate over all nodes in the graph.
-    #     """
-        
-    #     if nbunch is None:  # include all nodes via iterator
-    #         bunch = iter(self._bonds)
-    #     elif nbunch in self:  # if nbunch is a single node
-    #         bunch = iter([nbunch])
-    #     else:  # if nbunch is a sequence of nodes
-
-    #         def bunch_iter(nlist, adj):
-    #             try:
-    #                 for n in nlist:
-    #                     if n in adj:
-    #                         yield n
-    #             except TypeError as err:
-    #                 exc, message = err, err.args[0]
-    #                 # capture error for non-sequence/iterator nbunch.
-    #                 if "iter" in message:
-    #                     exc = KeyError(
-    #                         "nbunch is not a node or a sequence of nodes."
-    #                     )
-    #                 # capture error for unhashable node.
-    #                 if "hashable" in message:
-    #                     exc = HashableError(
-    #                         f"Node {n} in sequence nbunch is not a valid node."
-    #                     )
-    #                 raise exc
-
-    #         bunch = bunch_iter(nbunch, self._adj)
-    #     return bunch
-
     def copy(self):
         """Return a new group. Both its atoms and its properties are copied.
 
