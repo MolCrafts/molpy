@@ -14,4 +14,4 @@ from molpy.group import Group
 
 from molpy.algorithms import *
 
-from molpy.io import *
+from molpy.io.xml import read_xml_forcefield

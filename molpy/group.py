@@ -115,7 +115,7 @@ class Group(Graph):
     def natoms(self):
         return len(self._atomList)
     
-    def hasAtom(self, atom: Atom):
+    def hasAtom(self, atom: Atom, ref=None):
         """if the atom in this group
 
         Args:
@@ -124,7 +124,10 @@ class Group(Graph):
         Returns:
             bool: result of if atom in the group
         """
-        return atom in self._atomList
+        if ref is None:
+            return atom in self._atomList
+        elif ref == 'name':
+            return atom.name in self._atoms
         
     def addBond(self, atom, btom, **attr):
         """define bond between two passed atoms, and set bond properties

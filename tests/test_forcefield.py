@@ -10,10 +10,54 @@ from molpy.group import Group
 from molpy.factory import fromPDB
 from pathlib import Path
 
+from molpy.io.xml import read_xml_forcefield
+
 class TestForceField:
     
-    def testReadH2OFromPDB(self):
-        H2Os = fromPDB(Path(__file__)/'samples/D-lactic.pdb')
+    @pytest.fixture(scope='class')
+    def H2Os(self):
+        yield fromPDB(Path(__file__).parent/'samples/waterbox_31ang.pdb')
+    
+    @pytest.fixture(scope='class')
+    def mpidff(self):
+        yield read_xml_forcefield(Path(__file__).parent/'samples/mpidwater.xml')
+    
+    @pytest.fixture(scope='class')
+    def H2Ogt(self, H2Os, mpidff):
+        oneH2O = H2Os[1]
+        yield oneH2O, mpidff.matchTemplate(oneH2O, criterion='medium')
+    
+    def testReadH2OandFF(self, H2Os, mpidff):
+        assert len(H2Os) == 996
+        assert mpidff.natomTypes == 2
+        assert mpidff.nbondTypes == 1
+        
+    def testMatchTemplate(self, H2Os, mpidff):
+        
+        oneH2O = H2Os[1]
+        assert oneH2O.natoms == 3
+        assert mpidff.matchTemplate(oneH2O, criterion='medium')
+        
+    def testPatch(self, H2Ogt, mpidff):
+        oneH2O, H2OT = H2Ogt
+        mpidff.patch(H2OT, oneH2O)
+        
+        assert oneH2O.nbonds == H2OT.nbonds
+        
+    # def testRenderAtom(self, H2Ogt, mpidff):
+    #     oneH2O, H2OT = H2Ogt
+    #     O = oneH2O.atoms[0]
+    #     mpidff.renderAtom(O)
+    #     assert O.name == 'O'
+    #     assert O.type.get('class') == 'OW'
+    #     assert O.type.mass == '15.999'
+        
+    # def testRenderBond(self, H2Ogt, mpidff):
+    #     oneH2O, H2OT = H2Ogt
+    #     HO = oneH2O.bonds[0]
+    #     mpidff.renderBond(HO)
+    #     assert HO.class1 == 'OW'   
+        
     
 #     @pytest.fixture(scope='class')
 #     def AB(self, ):

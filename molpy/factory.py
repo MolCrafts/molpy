@@ -10,6 +10,8 @@ from molpy.io.pdb import read_pdb
 import numpy as np
 import importlib
 
+from molpy.io.xml import read_xml_forcefield
+
 __all__ = ['path_group']
 
 def full(groupName, atomNames, **properties):
@@ -39,3 +41,9 @@ def fromPDB(fpath, index=None):
 
 def fromLAMMPS():
     pass
+
+def fromXML(fpath, type='forcefield'):
+    with open(fpath, 'r') as f:
+        if type == 'forcefield':
+            ff = read_xml_forcefield(f)
+            return ff

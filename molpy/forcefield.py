@@ -10,6 +10,7 @@ from molpy.group import Group
 from molpy.bond import Bond
 from molpy.angle import Angle
 from molpy.dihedral import Dihedral
+import molpy as mp
 
 class Template(Group):
     
@@ -36,6 +37,18 @@ class ForceField:
         self._templates = {}
         self._atomType = {}
         self._bondType = {}
+        
+    @property
+    def natomTypes(self):
+        return len(self._atomType)
+    
+    @property
+    def nbondTypes(self):
+        return len(self._bondType)
+    
+    @property
+    def ntemplates(self):
+        return len(self._templates)
         
     def defAtomType(self, atomName, **attr):
         atomType = self._atomType.get(atomName, None)
@@ -64,7 +77,7 @@ class ForceField:
             if t.name == groupName:
                 return t
             
-    def matchTemplate(self, group: Group, criterion:Literal['low', 'medium', 'high']='low')->Template:
+    def matchTemplate(self, group: Group, criterion:Literal['low', 'medium', 'high']='medium')->Template:
         """find the matching template in the forcefield
 
         Args:
@@ -74,12 +87,12 @@ class ForceField:
             template (Group): template matched
         """
         
-        def validate(group, altTemp: dict)->Template:
+        def validate(altTemp: dict)->Template:
             
-            if len(altTemp) == 2:
+            if len(altTemp) != 1:
                 raise KeyError(f'{len(altTemp)} template matched: {list(altTemp.keys())}')
             
-            return altTemp[group.name]
+            return list(altTemp.values())[0]
         
         altTemp = {}
         
@@ -89,42 +102,46 @@ class ForceField:
             if group.name in self._templates:
                 altTemp[group.name] = self._templates[group.name]
             
-            return validate(group, altTemp)
+            return validate(altTemp)
             
         
         # MEDIUM, find which latent templates which have same atoms and bonds. Can not tell allotrope
-        if criterion == 'medium':
+        if criterion == 'medium' or criterion == 'high':
+            
             for templateName, template in self._templates.items():
-                # for atom in group.atoms:
-                #     if atom not in template.atoms:
-                #         continue
-                if sorted(group.atoms) == sorted(template.atoms):
-                    altTemp[templateName] = template
-            
-            tmp = {}
-            for templateName, template in altTemp.items():
-                # for bond in group.bonds:
-                #     if bond not in template.bonds:
-                #          continue
-                if sorted(group.bonds) == sorted(template.bonds):
-                    tmp[templateName] = template
-            altTemp = tmp
+                if group.natoms == template.natoms:
+                    for i, gatom in enumerate(group.atoms):
+                        if not template.hasAtom(gatom, 'name'):
+                            break
+                    if i == group.natoms-1:
+                        altTemp[templateName] = template
+                    
+            if criterion == 'high':
                 
-            return validate(group, altTemp)
-            
-        # HIGH, may check chiral or something
+                tmp = {}
+                sortedBond = sorted(group.bonds)
+                for templateName, template in altTemp.items():
+                    # for bond in group.bonds:
+                    #     if bond not in template.bonds:
+                    #          continue
+                    if sortedBond == sorted(template.bonds):
+                        tmp[templateName] = template
+                altTemp = tmp
+                
+            return validate(altTemp)
         
-    def patchTopology(self, template: Template, group: Group):
+    def patch(self, template: Template, group: Group):
         """patch topology info from template
 
         Args:
             template (Template): [description]
             group (Group): [description]
         """
+        
         bonds = template.getBonds()
         for bond in bonds:
             atom, btom = bond
-            group.addbondByName(atom.name, btom.name)
+            group.addBondByName(atom.name, btom.name)
             
     def render(self, group:TypeVar('Group-like', Group, Template)):
         """Add information from the forcefield to the group
@@ -150,22 +167,20 @@ class ForceField:
             
     def renderAtom(self, atom):
         
-        if atom.type.name in self._atomType:
-            atom.type = self._atomType[atom.type.name]
+        pass
             
     def renderBond(self, bond):
-        
-        if bond.type.name in self._bondType:
-            bond.type = self._bondType[bond.type.name]
+        pass
+
 
     def renderAngle(self, angle):
         
-        if angle.type.name in self._angleType:
+        if angle.name in self._angleType:
             angle.type = self._angleType[angle.type.name]
             
     def renderDihedral(self, dihedral):
         
-        if dihedral.type.name in self._dihedralType:
+        if dihedral.name in self._dihedralType:
             dihedral.type = self._dihedralType[dihedral.type.name]           
         
     def matchGroupOfBonds(self, group: Group, template: Group):
@@ -181,3 +196,8 @@ class ForceField:
                 bond.update(**tarbond.properties)
         return bond
     
+    def loadXML(self, file):
+        with open(file, 'r') as f:
+            mp.read_xml_forcefield(f, create_using=self)
+        return self
+

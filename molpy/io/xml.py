@@ -4,7 +4,7 @@
 # version: 0.0.1
 
 from molpy.atom import Atom
-from molpy.forcefield import AtomType, ForceField, Template
+from molpy.forcefield import ForceField, Template
 import xml.etree.ElementTree as et
 from typing import TextIO
 
@@ -52,3 +52,4 @@ def read_xml_forcefield(fileobj: TextIO, create_using:ForceField=None):
                     name = 'Bond'
                 ff.defBondType(name, **bond.attrib)
     
+    return ff

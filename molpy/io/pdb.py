@@ -7,6 +7,7 @@ import numpy as np
 import warnings
 from molpy.atom import Atom
 from molpy.group import Group
+from itertools import groupby
 
 def _read_atom_line(line):
     
@@ -69,10 +70,9 @@ def _read_atom_line(line):
 
 
 def read_pdb(fileobj, **kwargs):
-    atoms = {}
-    groupByResName = {}
-    groupByChainID = {}
+    atoms = []
     conects = {}
+    groups = {}
     for line in fileobj.readlines():
 
         if line.startswith("REMARK"):
@@ -92,12 +92,7 @@ def read_pdb(fileobj, **kwargs):
             line_info = _read_atom_line(line)
             atom = Atom(line_info['name'])
             atom.update(line_info)
-            atoms[atom.serial] = atom
-
-            g = groupByResName.setdefault(atom.resName, Group(atom.resName))
-            g.addAtom(atom)
-            g = groupByChainID.setdefault(atom.chainID, Group(atom.chainID))
-            g.addAtom(atom)
+            atoms.append(atom)
 
         if line.startswith("CONECT"):
             l = line.split()
@@ -106,15 +101,22 @@ def read_pdb(fileobj, **kwargs):
             conects[center_atom_serial] = list(bonded_atom_serial)
 
         if line.startswith("END"):
-            group = Group('pdb')
-            group.addAtoms(atoms)
-            for c, nbs in conects.items():
-                u = atoms[c.chainID]
-                for nb in nbs:
-                    v = atoms[nb.chainID]
-                    g = u.parent
-                    g.addBond(u, v)
+            
+            for key, groupAtoms in groupby(atoms, key=lambda atom: atom.get('resSeq')):
+                groupAtoms = list(groupAtoms)
+                g = Group(key)
+                g.addAtoms(groupAtoms)
+                groups[g.name] = g
+                
+                if conects:
+                    for atom in g.atoms:
+                        nbs = conects[atom.serial]
+                        for btom in g.atoms:
+                            if btom.serial in nbs:
+                                g.addBond(atom, btom)
+                
+
             atoms = []
             conects = {}
 
-    return group
+    return groups
