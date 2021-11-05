@@ -3,7 +3,7 @@
 # date: 2021-10-22
 # version: 0.0.1
 
-from typing import Literal
+from typing import Literal, TypeVar
 from molpy.atom import Atom
 from molpy.base import Item
 from molpy.group import Group
@@ -37,17 +37,17 @@ class ForceField:
         self._atomType = {}
         self._bondType = {}
         
-    def defAtomType(self, name, **attr):
-        atomType = self._atomType.get(name, None)
+    def defAtomType(self, atomName, **attr):
+        atomType = self._atomType.get(atomName, None)
         if atomType is not None:
-            raise KeyError(f'atomType {name} has been defined')
-        self._atomType[name] = AtomType(name, **attr)
+            raise KeyError(f'atomType {atomName} has been defined')
+        self._atomType[atomName] = AtomType(atomName, **attr)
         
-    def defBondType(self, name, **attr):
-        BondType = self._atomType.get(name, None)
-        if AtomType is not None:
-            raise KeyError(f'bondType {name} has been defined')
-        self._bondType[name] = BondType(name, **attr)
+    def defBondType(self, bondName, **attr):
+        bondType = self._atomType.get(bondName, None)
+        if bondType is not None:
+            raise KeyError(f'bondType {bondName} has been defined')
+        self._bondType[bondName] = BondType(bondName, **attr)
     
     def getAtomType(self, name):
         atomType = self._atomType.get(name, None)
@@ -114,26 +114,59 @@ class ForceField:
             
         # HIGH, may check chiral or something
         
-    def patchTemplate(self, group: Group, criterion:Literal['low', 'medium', 'high']='low'):
-        template = self.matchTemplate(group, criterion)
-        
-        # It seems we only need to retrieve topology
-        template.patch(group)
+    def patchTopology(self, template: Template, group: Group):
+        """patch topology info from template
 
-        for atom in group.atoms:
-            self.patchAtom(atom)
-        for bond in group.bonds:
-            self.patchBond(bond)
+        Args:
+            template (Template): [description]
+            group (Group): [description]
+        """
+        bonds = template.getBonds()
+        for bond in bonds:
+            atom, btom = bond
+            group.addbondByName(atom.name, btom.name)
             
-    def patchAtom(self, atom):
+    def render(self, group:TypeVar('Group-like', Group, Template)):
+        """Add information from the forcefield to the group
+
+        Args:
+            group (Group): [description]
+        """
+        # render atom from forcefield.atomType
+        for atom in group.atoms:
+            self.renderAtom(atom)
+        
+        # render bond from forcefield.bondType
+        for bond in group.bonds:
+            self.renderBond(bond)
+            
+        # render angle from forcefield.angleType 
+        for angle in group.angles:
+            self.renderAngle(angle)
+
+        # render dihedral from forcefield.dihedralType 
+        for dihedral in group.dihedrals:
+            self.renderDihedral(dihedral)
+            
+    def renderAtom(self, atom):
         
         if atom.type.name in self._atomType:
             atom.type = self._atomType[atom.type.name]
             
-    def patchBond(self, bond):
+    def renderBond(self, bond):
         
         if bond.type.name in self._bondType:
             bond.type = self._bondType[bond.type.name]
+
+    def renderAngle(self, angle):
+        
+        if angle.type.name in self._angleType:
+            angle.type = self._angleType[angle.type.name]
+            
+    def renderDihedral(self, dihedral):
+        
+        if dihedral.type.name in self._dihedralType:
+            dihedral.type = self._dihedralType[dihedral.type.name]           
         
     def matchGroupOfBonds(self, group: Group, template: Group):
         groupBonds = sorted(group.getBonds())

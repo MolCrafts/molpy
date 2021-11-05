@@ -1,14 +1,19 @@
-# # author: Roy Kid
-# # contact: lijichen365@126.com
-# # date: 2021-10-22
-# # version: 0.0.1
+# author: Roy Kid
+# contact: lijichen365@126.com
+# date: 2021-10-22
+# version: 0.0.2
 
-# import pytest
-# from molpy.atom import Atom
-# from molpy.forcefield import ForceField
-# from molpy.group import Group
+import pytest
+from molpy.atom import Atom
+from molpy.forcefield import ForceField
+from molpy.group import Group
+from molpy.factory import fromPDB
+from pathlib import Path
 
-# class TestForceField:
+class TestForceField:
+    
+    def testReadH2OFromPDB(self):
+        H2Os = fromPDB(Path(__file__)/'samples/D-lactic.pdb')
     
 #     @pytest.fixture(scope='class')
 #     def AB(self, ):

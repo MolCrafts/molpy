@@ -3,7 +3,8 @@
 # date: 2021-10-24
 # version: 0.0.1
 
-from molpy.forcefield import AtomTemplate, ForceField, GroupTemplate
+from molpy.atom import Atom
+from molpy.forcefield import AtomType, ForceField, Template
 import xml.etree.ElementTree as et
 from typing import TextIO
 
@@ -28,12 +29,12 @@ def read_xml_forcefield(fileobj: TextIO, create_using:ForceField=None):
         
     residues = tree.find('Residues')
     for residue in residues.iter('Residue'):
-        resT = GroupTemplate(residue.attrib['name'])
+        resT = Template(residue.attrib['name'])
         for atom in residue.iter('Atom'):
             at = atom.attrib
             atName = at['name']
             del at['name']
-            atomT = AtomTemplate(atName, **at)
+            atomT = Atom(atName, **at)
             resT.addAtom(atomT)
             
         for bond in residue.iter('Bond'):
@@ -42,11 +43,12 @@ def read_xml_forcefield(fileobj: TextIO, create_using:ForceField=None):
             resT.addBondByIndex(from_, to_)
         ff.defTemplate(resT)
             
-    # bond section
+    # bond define section
     for element in root:
         if 'BondForce' in element.tag:
             for bond in element.iter('Bond'):
                 if 'name' not in bond.attrib:
+                    # TODO: generate new name
                     name = 'Bond'
                 ff.defBondType(name, **bond.attrib)
     

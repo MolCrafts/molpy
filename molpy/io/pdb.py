@@ -69,7 +69,9 @@ def _read_atom_line(line):
 
 
 def read_pdb(fileobj, **kwargs):
-    atoms = []
+    atoms = {}
+    groupByResName = {}
+    groupByChainID = {}
     conects = {}
     for line in fileobj.readlines():
 
@@ -90,7 +92,12 @@ def read_pdb(fileobj, **kwargs):
             line_info = _read_atom_line(line)
             atom = Atom(line_info['name'])
             atom.update(line_info)
-            atoms.append(atom)
+            atoms[atom.serial] = atom
+
+            g = groupByResName.setdefault(atom.resName, Group(atom.resName))
+            g.addAtom(atom)
+            g = groupByChainID.setdefault(atom.chainID, Group(atom.chainID))
+            g.addAtom(atom)
 
         if line.startswith("CONECT"):
             l = line.split()
@@ -102,10 +109,11 @@ def read_pdb(fileobj, **kwargs):
             group = Group('pdb')
             group.addAtoms(atoms)
             for c, nbs in conects.items():
-                u = group.getAtomBy('serial', c)
+                u = atoms[c.chainID]
                 for nb in nbs:
-                    v = group.getAtomBy('serial', nb)
-                    group.addBond(u, v)
+                    v = atoms[nb.chainID]
+                    g = u.parent
+                    g.addBond(u, v)
             atoms = []
             conects = {}
 

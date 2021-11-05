@@ -3,6 +3,7 @@
 # date: 2021-10-17
 # version: 0.0.1
 
+from typing import Literal
 from molpy.angle import Angle
 from molpy.base import Graph
 from molpy.atom import Atom
@@ -56,6 +57,7 @@ class Group(Graph):
             else:
                 self._atomList.append(atom)
                 self._atoms[atom.name] = atom
+            atom.parent = self
                 
     def addAtoms(self, atoms, copy=False):
         """add a sequence of atoms.
@@ -480,7 +482,7 @@ class Group(Graph):
                            
     
     def addBondByIndex(self, atomIdx, atomJdx, **bondType):
-        """Add a bond refer to the order of atoms. NOTE that the order of atoms depents on the order they are added. 
+        """Add a bond refer to the order of atoms. NOTE that the order of atoms depends on the order they are added. 
 
         Args:
             atomIdx (int): index of list
@@ -490,6 +492,17 @@ class Group(Graph):
         atom1 = atoms[atomIdx]
         atom2 = atoms[atomJdx]
         self.addBond(atom1, atom2, **bondType)
+        
+    def addBondByName(self, name1, name2, **bondType):
+        """Add a bond refer to the name of atoms. NOTE that the name of atoms temporarily must be unique, or can not be retrieved correctly.
+
+        Args:
+            name1 ([type]): [description]
+            name2 ([type]): [description]
+        """
+        atom = self.getAtomByName(name1)
+        btom = self.getAtomByName(name2)
+        self.addBond(atom, btom, **bondType)
     
     def getBondByIndex(self, atomIdx, atomJdx):
         """get a bond by its atom'index
@@ -609,4 +622,8 @@ class Group(Graph):
         for bond in self.bonds:
             g.addBond(*bond, **bond._attr)
         return g
+        
+    def bondto(self, group, atom, btom, mode=Literal['a', 'c']):
+        if not isinstance(group, Group):
+            raise TypeError('')
         
