@@ -20,6 +20,9 @@ class Atom(Node):
         super().__init__(name)
         self._bondInfo = {} # bondInfo = {Atom: Bond}
         self.update(attr)
+        self._position = None
+        self._atomType = None
+        self._element = None
 
     def bondto(self, atom, **attr):
         """basic method to set bonded atom. E.g. H1.bondto(O, r0=0.99*mp.unit.angstrom)
@@ -59,23 +62,15 @@ class Atom(Node):
     def bonds(self):
         return dict(self._bondInfo)
     
-    @property
-    def element(self):
+
+    def getElement(self):
         return self._element
     
-    @element.setter
-    def element(self, symbol):
-        # TODO:
+
+    def setElement(self, symbol):
         self._element = Element.getBySymbol(symbol)
         
-    @property
-    def atomType(self):
-        return self._atomType
-    
-    @atomType.setter
-    def atomType(self, v):
-        # TODO:
-        self._atomType = v 
+    element = property(fget=getElement, fset=setElement)
         
     def copy(self):
         """Return a new atom which has same properties with this one, but It total another instance. We don't recommand you to use deepcopy() to duplicate.
@@ -87,4 +82,28 @@ class Atom(Node):
         atom.update(self._attr)
         
         return atom
+    
+    
+    def getPosition(self):
+        return self._position
+
+    def setPosition(self, position):
+        position = np.asarray(position)
+        if position.shape != (3, ):
+            assert ValueError(f'shape of position is wrong')
+        self._position = position
         
+    position = property(getPosition, setPosition)
+    
+    def setAtomType(self, atomType):
+        ele = getattr(atomType, 'element', None)
+        if ele is None:
+            pass
+        else:
+            self.element = ele
+        self._atomType = atomType
+        
+    def getAtomType(self):
+        return self._atomType
+    
+    atomType = property(getAtomType, setAtomType)

@@ -24,3 +24,4 @@ class TestNetworkX:
         G = from_networkx_graph('complete_graph', nx.complete_graph(5))
         assert G.natoms == 5
         assert G.nbonds == 10
+        

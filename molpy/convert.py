@@ -5,7 +5,7 @@
 
 from molpy.group import Group
 from molpy.atom import Atom
-
+import numpy as np
 def from_networkx_graph(name, G):
     
     adj = dict(G.adj)
@@ -19,3 +19,20 @@ def from_networkx_graph(name, G):
             group.addBond(atoms[uname], atoms[nb], **dd)
             
     return group
+
+def toJAXMD(group: Group):
+    d = {}
+    atoms = group.getAtoms()
+    R = group.getPositions()
+    d['positions'] = R
+    atomTypes = group.getAtomTypes()
+    d['atomTypes'] = atomTypes
+    elements = group.getElements()
+    d['elements'] = elements
+    bonds = group.bonds
+    d['bonds'] = bonds
+    
+    return d
+    
+def fromJAXMD():
+    pass

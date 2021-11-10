@@ -20,9 +20,18 @@ class Template(Group):
         
 class AtomType(Item):
     
+    atomTypeID = 1
+    atomTypes = {}
+    
     def __init__(self, name, **attr) -> None:
-        super().__init__(name)
-        self.update(attr)
+        if name not in AtomType.atomTypes:
+            super().__init__(name)
+            self.update(attr)
+            self.atomTypeID = AtomType.atomTypeID
+            AtomType.atomTypeID += 1
+            AtomType.atomTypes['name'] = self
+        else:
+            return AtomType.atomTypes['name']
         
 class BondType(Item):
     

@@ -15,3 +15,4 @@ from molpy.group import Group
 from molpy.algorithms import *
 
 from molpy.io.xml import read_xml_forcefield
+from molpy.forcefield import AtomType, BondType, Template

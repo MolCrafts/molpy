@@ -3,7 +3,7 @@
 # date: 2021-10-17
 # version: 0.0.1
 
-from typing import Literal
+from typing import Literal, Iterable
 from molpy.angle import Angle
 from molpy.base import Graph
 from molpy.atom import Atom
@@ -339,7 +339,8 @@ class Group(Graph):
                 nodes = find(nodes, vis)
                 depth += 1
         self._covalentMap = covalentMap
-        return atoms, covalentMap
+        # return atoms, covalentMap
+        return covalentMap
     
     @property
     def covalentMap(self):
@@ -630,3 +631,42 @@ class Group(Graph):
         if not isinstance(group, Group):
             raise TypeError('')
         
+    def _set_per_atom(self, values: Iterable, method=None):
+        atoms = self.atoms
+        assert len(atoms) == len(values), ValueError(f'position array must match the number of atoms, but {len(values)} != {len(atoms)}')
+        
+        if method is not None:
+            for atom, value in zip(atoms, values):
+                getattr(atom, method)(value)            
+        
+    def setPositions(self, positions):
+
+        self._set_per_atom(positions, 'setPosition')
+            
+    def getPositions(self):
+        atoms = self.atoms
+        R = np.empty((len(atoms), 3))
+        for i, atom in enumerate(atoms):
+            R[i] = atom.getPosition()
+            
+        return R
+        
+    def setAtomTypes(self, atomTypes: Iterable):
+        
+        self._set_per_atom(atomTypes, 'setAtomType')
+
+            
+    def getAtomTypes(self):
+        atoms = self.atoms
+        at = []
+        for atom in atoms:
+            at.append(atom.getAtomType())
+            
+        return at
+    
+    def getElements(self):
+        atoms = self.atoms
+        eles = []
+        for atom in atoms:
+            eles.append(atom.element)
+        return eles
