@@ -9,7 +9,7 @@ from molpy.base import Graph
 from molpy.atom import Atom
 from molpy.bond import Bond
 import numpy as np
-from itertools import dropwhile, combinations, filterfalse
+from itertools import dropwhile, combinations
 
 from molpy.dihedral import Dihedral
 
@@ -25,6 +25,7 @@ class Group(Graph):
         super().__init__(name)
         self._atoms = {}
         self._atomList = [] # [Atom]
+        self._atomIndices = {}
         self._bonds = {} # _bonds: {Atom: {Btom: Bond, Ctom: Bond}}
         self._bondList = []
         self._angles = {}
@@ -52,11 +53,10 @@ class Group(Graph):
         """
         if atom not in self._atomList:
             if copy:
-                self._atomList.append(atom.copy())
-                self._atoms[atom.name] = atom
-            else:
-                self._atomList.append(atom)
-                self._atoms[atom.name] = atom
+                atom = atom.copy()
+            self._atomIndices[atom] = len(self._atomList)
+            self._atomList.append(atom)
+            self._atoms[atom.name] = atom
             atom.parent = self
                 
     def addAtoms(self, atoms, copy=False):
@@ -198,17 +198,6 @@ class Group(Graph):
                 if atom != btom:
                     del self._bonds[btom][atom]
         
-    # def merge(self, atoms, bonds):
-    #     edges = {}
-    #     for bond in bonds:
-    #         u, v = bond
-    #         if u not in edges:
-    #             edges[u] = {}
-    #         if v not in edges:
-    #             edges[v] = {}
-    #         edges[u][v] = bond
-    #         edges[v][u] = bond
-    #     super().update(edges, atoms)
      
     def getSubGroup(self, name, atoms):
         """Specify some atoms in the group and return the subgroup composed of these atoms
@@ -283,17 +272,28 @@ class Group(Graph):
         """
         return self._bonds[atom].get(btom, False)
     
-    def getBonds(self):
+    def getBonds(self, format='bond'):
         """get all the bonds in this graph
 
         Returns:
             List[Bond]: a list of bond
         """
-        bonds = set()
-        for u, nbs in self._bonds.items():
-            for nb in nbs:
-                bonds.add(self._bonds[u][nb])
-        return list(bonds)
+        if format == 'bond':
+            bonds = set()
+            for u, nbs in self._bonds.items():
+                for nb in nbs:
+                    bonds.add(self._bonds[u][nb])
+            return list(bonds)
+        elif format == 'index':
+            return self.getAdjacencyList()
+    
+    def getAdjacencyList(self):
+        bonds = self.bonds
+        adjlist = []
+        for bond in bonds:
+            atom, btom = bond
+            adjlist.append([self._atomIndices[atom], self._atomIndices[btom]])
+        return adjlist        
     
     def getCovalentMap(self, max_distance=None):
         """return the covalentMap of this graph.
@@ -614,17 +614,20 @@ class Group(Graph):
             tmp[atom] = self.neighbors(atom)
         return tmp
     
-    def copy(self):
+    def copy(self, name: str=None):
         """Return a new group. Both its atoms and its properties are copied.
 
         Returns:
             [type]: [description]
         """
-        g = Group(self.name)
+        if name is None:
+            name = self.name
+        g = Group(name)
         g.update(self._attr)
         g.addAtoms(self.atoms, copy=True)
         for bond in self.bonds:
-            g.addBond(*bond, **bond._attr)
+            atom, btom = bond
+            g.addBondByName(atom.name, btom.name, **bond._attr)
         return g
         
     def bondto(self, group, atom, btom, mode=Literal['a', 'c']):
@@ -670,3 +673,40 @@ class Group(Graph):
         for atom in atoms:
             eles.append(atom.element)
         return eles
+    
+    def reacto(self, group, method:Literal['addition', 'concentration'], atom=None, btom=None, atomName=None, btomName=None, **attr):
+        if atomName is not None:
+            atom = self.getAtomByName(atomName)
+        if atomName is not None:
+            btom = group.getAtomByName(btomName)
+        if method == 'addition':
+            bond = atom.bondto(btom, **attr)    
+        elif method == 'concentration':
+            assert atom.nbondedAtoms == 1, ValueError(f'{atom} has {atom.nbondedAtoms} bondedAtoms leading to confusion about how to establish bondage')
+            assert btom.nbondedAtoms == 1, ValueError(f'{btom} has {btom.nbondedAtoms} bondedAtoms leading to confusion about how to establish bondage')
+            atom1 = atom.bondedAtoms[0]
+            btom1 = btom.bondedAtoms[0]
+            self.removeAtom(atom)
+            group.removeAtom(btom)
+            bond = atom1.bondto(btom1, **attr)
+        if atom not in self._bonds:
+            self._bonds[atom] = {}
+        if btom not in group._bonds:
+            group._bonds[btom] = {}
+        self._bonds[atom][btom] = bond
+        group._bonds[btom][atom] = bond
+        self._bondList.append(bond)
+        group._bondList.append(bond)  
+    
+    def merge(self, name, group, copy=False):
+        """ return a new group that merge multiple groups
+
+        Args:
+            group (Group): groups to be merged
+            copy (bool, optional): Defaults to False.
+        """
+        newGroup = Group(name)
+        newGroup.addAtoms(group.atoms)
+        newGroup.addbonds(*group.bonds)
+        
+        return newGroup

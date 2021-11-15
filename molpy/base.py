@@ -10,7 +10,7 @@ class Item:
     def __init__(self, name) -> None:
         self._attr = {}
         self._uuid = id(self)
-        self.name = name
+        self._name = name
         self.itemType = self.__class__.__name__
         
     def __setattr__(self, name, value):
@@ -68,6 +68,14 @@ class Item:
     @property
     def properties(self):
         return self._attr
+    
+    @property
+    def name(self):
+        return self._name
+    
+    @name.setter
+    def name(self, name):
+        self._name = name
     
     def copy(self):
         pass

@@ -11,6 +11,7 @@ __version__ = "0.0.1"
 # These are import orderwise
 from molpy.atom import Atom
 from molpy.group import Group
+from molpy.molecule import Molecule
 
 from molpy.algorithms import *
 

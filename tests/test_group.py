@@ -88,6 +88,8 @@ class TestGroup:
     def test_copy(self, CH4):
         
         CH4new = CH4.copy()
+        assert CH4new.atoms[0].nbondedAtoms == CH4.atoms[0].nbondedAtoms
+        
         assert CH4new.natoms == CH4.natoms
         assert CH4new.nbonds == CH4.nbonds
         assert CH4new.uuid != CH4.uuid
@@ -118,3 +120,31 @@ class TestGroupTopo:
         assert len(self.ring4.searchDihedrals()) == 4
         # print(self.K5.searchDihedrals())
         assert len(self.K5.searchDihedrals()) == 60
+        
+class TestInterGroup:
+    
+    @pytest.fixture(scope='class')
+    def CH4(self):
+        CH4 = mp.Group('CH4')
+        CH4.addAtoms([mp.Atom(f'H{i}') for i in range(4)])
+        CH4.addAtom(mp.Atom('C'))
+        CH4.addBondByName('C', 'H0')  #       H3
+        CH4.addBondByName('C', 'H1')  #       |
+        CH4.addBondByName('C', 'H2')  #  H0 - C - H2
+        CH4.addBondByName('C', 'H3')  #       |
+        yield CH4                     #       H1
+        
+    def test_addition(self, CH4):
+        
+        ch41 = CH4.copy()
+        ch42 = CH4.copy()
+        ch41.reacto(ch42, method='addition', atomName='H2', btomName='H0', copy=True)
+        assert ch41.nbonds == 5
+        
+    def test_condesation(self, CH4):
+        
+        ch41 = CH4.copy()
+        ch42 = CH4.copy()
+        ch41.reacto(ch42, method='concentration', atomName='H2', btomName='H0', copy=True)
+        assert ch41.nbonds == 4
+        assert ch41.natoms == 4

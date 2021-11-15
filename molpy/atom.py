@@ -59,6 +59,10 @@ class Atom(Node):
         return list(self._bondInfo.keys())
     
     @property
+    def nbondedAtoms(self):
+        return len(self.bondedAtoms)
+    
+    @property
     def bonds(self):
         return dict(self._bondInfo)
     
