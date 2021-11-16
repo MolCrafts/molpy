@@ -148,3 +148,4 @@ class TestInterGroup:
         ch41.reacto(ch42, method='concentration', atomName='H2', btomName='H0', copy=True)
         assert ch41.nbonds == 4
         assert ch41.natoms == 4
+                

@@ -6,8 +6,15 @@
 from molpy.base import Item
 
 class Angle(Item):
-    
+
     def __init__(self, itom, jtom, ktom, **attr) -> None:
+        """Angle class
+
+        Args:
+            itom (Atom): atom at edge
+            jtom (Atom): atom at vertex
+            ktom (Atom): atom at edge
+        """
         super().__init__(f'< Angle {itom.name}-{jtom.name}-{ktom.name} >')
         self._itom = itom
         self._jtom = jtom
@@ -15,7 +22,7 @@ class Angle(Item):
         self.update(attr)
         
     def __iter__(self):
-        return iter(self._itom, self._jtom, self._ktom)
+        return iter([self._itom, self._jtom, self._ktom])
     
     def __repr__(self) -> str:
         return self.name

@@ -17,7 +17,7 @@ class Template(Group):
     def __init__(self, name, group=None, **attr):
         super().__init__(name, group=group, **attr)
         self.patches = {}  # {name: Template}
-        
+ 
 class AtomType(Item):
     
     atomTypeID = 1
@@ -39,13 +39,27 @@ class BondType(Item):
         super().__init__(name)
         self.update(attr)
 
+class AngleType(Item):
+    
+    def __init__(self, name, **attr) -> None:
+        super().__init__(name)
+        self.update(attr)
+        
+class DihedralType(Item):
+    
+    def __init__(self, name, **attr) -> None:
+        super().__init__(name)
+        self.update(attr)
+
 class ForceField:
     
-    def __init__(self, name) -> None:
+    def __init__(self, name, unit='SI') -> None:
         self.name = name
         self._templates = {}
         self._atomType = {}
         self._bondType = {}
+        self._angleType = {}
+        self._dihedralType = {}
         
     @property
     def natomTypes(self):
@@ -66,10 +80,22 @@ class ForceField:
         self._atomType[atomName] = AtomType(atomName, **attr)
         
     def defBondType(self, bondName, **attr):
-        bondType = self._atomType.get(bondName, None)
+        bondType = self._bondType.get(bondName, None)
         if bondType is not None:
             raise KeyError(f'bondType {bondName} has been defined')
         self._bondType[bondName] = BondType(bondName, **attr)
+        
+    def defAngleType(self, angleName, **attr):
+        angleType = self._angleType.get(angleName, None)
+        if angleType is not None:
+            raise KeyError(f'angleType {angleName} has been defined')
+        self._angleType[angleName] = AngleType(angleName, **attr)
+        
+    def defDihedralType(self, dihedralName, **attr):
+        dihedralType = self._dihedralType.get(dihedralName, None)
+        if dihedralType is not None:
+            raise KeyError(f'dihedralType {dihedralName} has been defined')
+        self._dihedralType[dihedralName] = DihedralType(dihedralName, **attr)
     
     def getAtomType(self, name):
         atomType = self._atomType.get(name, None)
@@ -150,7 +176,12 @@ class ForceField:
         bonds = template.getBonds()
         for bond in bonds:
             atom, btom = bond
-            group.addBondByName(atom.name, btom.name)
+            group.addBondByName(atom.name, btom.name, **bond.properties)
+            
+        angleTs = template.getAngles()
+        for T in angleTs:
+            itom, jtom, ktom = T
+            group.addAngleByName(itom.name, jtom.name, ktom.name, **T.properties)
             
     def render(self, group:TypeVar('Group-like', Group, Template)):
         """Add information from the forcefield to the group

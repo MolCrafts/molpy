@@ -115,6 +115,10 @@ class Group(Graph):
     def natoms(self):
         return len(self._atomList)
     
+    @property
+    def nangles(self):
+        return len(self._angleList)
+    
     def hasAtom(self, atom: Atom, ref=None):
         """if the atom in this group
 
@@ -286,6 +290,12 @@ class Group(Graph):
             return list(bonds)
         elif format == 'index':
             return self.getAdjacencyList()
+        
+    def getAngles(self, format='angle'):
+        if format == 'angle':
+            return self._angleList
+        elif format == 'index':
+            pass
     
     def getAdjacencyList(self):
         bonds = self.bonds
@@ -394,6 +404,21 @@ class Group(Graph):
                 
         elif isinstance(idx, int):
             return self.getAtoms()[idx]
+        
+    def addAngle(self, itom, jtom, ktom, **attr):
+        try:
+            angle = self._angles[itom][jtom][ktom]
+            angle = self._angles[ktom][jtom][itom]
+        except KeyError:
+            angle = Angle(itom, jtom, ktom, **attr)
+            self._angles.setdefault(itom, {}).setdefault(jtom, {}).setdefault(ktom, angle)
+            self._angles.setdefault(ktom, {}).setdefault(jtom, {}).setdefault(itom, angle)
+            self._angleList.append(angle)        
+        return angle
+    
+    def addAngleByName(self, name1, name2, name3, **attr):
+        itom, jtom, ktom = map(self.getAtomByName, [name1, name2, name3])
+        return self.addAngle(itom, jtom, ktom, **attr) 
 
     def searchAngles(self):
         """search all the angles in this group
@@ -407,16 +432,7 @@ class Group(Graph):
             if len(jtom.bondedAtoms) < 2:
                 continue
             for (itom, ktom) in combinations(jtom.bondedAtoms, 2):
-                    try:
-                        angle = self._angles[itom][jtom][ktom]
-                        angle = self._angles[jtom][jtom][itom]
-                    except KeyError:
-                        angle = Angle(itom, jtom, ktom)
-                        self._angles.setdefault(itom, {}).setdefault(jtom, {}).setdefault(ktom, angle)
-                        self._angles.setdefault(ktom, {}).setdefault(jtom, {}).setdefault(itom, angle)
-                        # self._angles[i].setdefault(j, {})
-                        # self._angles[j].setdefault(k, angle)
-                        self._angleList.append(angle)
+                self.addAngle(itom, jtom, ktom)
                         
         return self._angleList
     
@@ -454,7 +470,7 @@ class Group(Graph):
         """search all the dihedrals in this group
 
         Returns:
-            List[Angle]: all dihedrals in this group
+            List[Dihedral]: all dihedrals in this group
         """
         for jtom in self.getAtoms():
             
