@@ -5,13 +5,7 @@
 
 def write_lmp(fileobj, system, **kwargs):
     f = fileobj
-    xlo = system.xlo
-    xhi = system.xhi
-    
-    atoms = system.atoms
-    bonds = system.bonds
-    angles = system.angles
-    dihedrals = system.dihedrals
+    system.mapping()
     
     # comment
     f.write(f'{system.name} written by molpy\n\n')
@@ -36,5 +30,23 @@ def write_lmp(fileobj, system, **kwargs):
     
     # mess section
     f.write('Messes\n\n')
-    for 
-        f.write(f'\t')
+    for atomType in system.atomTypes:
+        f.write(f'\t{atomType.id}\t{atomType.mess}\n')
+        
+    f.write('Atoms\n\n')
+    if kwargs['atom_style'] == 'full':
+        for atom in system.atoms:
+            f.write(f'{atom.id} {atom.molid} {atom.typeid} {atom.charge} {atom.x} {atom.y} {atom.z}\n')
+            
+    f.write('Bonds\n\n')
+    for bond in system.bonds:
+        f.write(f'{bond.id} {bond.typeid} {bond.atom.id} {bond.btom.id}\n')
+        
+    f.write('Angles\n\n')
+    for angle in system.angles:
+        f.write(f'{angle.id} {angle.typeid} {angle.itom.id} {angle.jtom.id} {angle.ktom.id}\n')
+        
+    f.write('Dihedrals\n\n')
+    for dihedral in system.dihedrals:
+        f.write(f'{dihedral.id} {dihedral.typeid} {dihedral.itom.id} {dihedral.jtom.id} {dihedral.ktom.id} {dihedral.ltom.id}\n')
+        

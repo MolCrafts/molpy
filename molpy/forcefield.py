@@ -56,49 +56,49 @@ class ForceField:
     def __init__(self, name, unit='SI') -> None:
         self.name = name
         self._templates = {}
-        self._atomType = {}
-        self._bondType = {}
-        self._angleType = {}
-        self._dihedralType = {}
+        self._atomTypes = {}
+        self._bondTypes = {}
+        self._angleTypes = {}
+        self._dihedralTypes = {}
         
     @property
     def natomTypes(self):
-        return len(self._atomType)
+        return len(self._atomTypes)
     
     @property
     def nbondTypes(self):
-        return len(self._bondType)
+        return len(self._bondTypes)
     
     @property
     def ntemplates(self):
         return len(self._templates)
         
     def defAtomType(self, atomName, **attr):
-        atomType = self._atomType.get(atomName, None)
+        atomType = self._atomTypes.get(atomName, None)
         if atomType is not None:
             raise KeyError(f'atomType {atomName} has been defined')
-        self._atomType[atomName] = AtomType(atomName, **attr)
+        self._atomTypes[atomName] = AtomType(atomName, **attr)
         
     def defBondType(self, bondName, **attr):
-        bondType = self._bondType.get(bondName, None)
+        bondType = self._bondTypes.get(bondName, None)
         if bondType is not None:
             raise KeyError(f'bondType {bondName} has been defined')
-        self._bondType[bondName] = BondType(bondName, **attr)
+        self._bondTypes[bondName] = BondType(bondName, **attr)
         
     def defAngleType(self, angleName, **attr):
-        angleType = self._angleType.get(angleName, None)
+        angleType = self._angleTypes.get(angleName, None)
         if angleType is not None:
             raise KeyError(f'angleType {angleName} has been defined')
-        self._angleType[angleName] = AngleType(angleName, **attr)
+        self._angleTypes[angleName] = AngleType(angleName, **attr)
         
     def defDihedralType(self, dihedralName, **attr):
-        dihedralType = self._dihedralType.get(dihedralName, None)
+        dihedralType = self._dihedralTypes.get(dihedralName, None)
         if dihedralType is not None:
             raise KeyError(f'dihedralType {dihedralName} has been defined')
-        self._dihedralType[dihedralName] = DihedralType(dihedralName, **attr)
+        self._dihedralTypes[dihedralName] = DihedralType(dihedralName, **attr)
     
     def getAtomType(self, name):
-        atomType = self._atomType.get(name, None)
+        atomType = self._atomTypes.get(name, None)
         if atomType is None:
             raise KeyError(f'atomType {name} is not defined yet')
         return atomType
@@ -215,13 +215,13 @@ class ForceField:
 
     def renderAngle(self, angle):
         
-        if angle.name in self._angleType:
-            angle.type = self._angleType[angle.type.name]
+        if angle.name in self._angleTypes:
+            angle.type = self._angleTypes[angle.type.name]
             
     def renderDihedral(self, dihedral):
         
-        if dihedral.name in self._dihedralType:
-            dihedral.type = self._dihedralType[dihedral.type.name]           
+        if dihedral.name in self._dihedralTypes:
+            dihedral.type = self._dihedralTypes[dihedral.type.name]           
         
     def matchGroupOfBonds(self, group: Group, template: Group):
         groupBonds = sorted(group.getBonds())
@@ -241,3 +241,19 @@ class ForceField:
             mp.read_xml_forcefield(f, create_using=self)
         return self
 
+    @property
+    def atomTypes(self):
+        return list(self._atomTypes.keys())
+    
+    @property
+    def bondTypes(self):
+        return list(self._bondTypes.keys())
+    
+    @property
+    def angleTypes(self):
+        return list(self._angleTypes.keys())
+    
+    @property
+    def dihedralTypes(self):
+        return list(self._dihedralTypes.keys())
+    
