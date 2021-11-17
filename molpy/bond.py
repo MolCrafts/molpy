@@ -8,7 +8,11 @@ from molpy.base import Edge
 class Bond(Edge):
     
     def __init__(self, atom, btom, **attr) -> None:
-        super().__init__(f'< Bond {atom.name}-{btom.name} >')
+        if 'name' in attr:
+            name = attr['name']
+        else:
+            name = f'< Bond {atom.name}-{btom.name} >'
+        super().__init__(name)
         self._atom = atom
         self._btom = btom
         self.update(attr)

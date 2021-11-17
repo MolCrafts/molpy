@@ -7,6 +7,7 @@ from typing import Dict
 from molpy.atom import Atom
 from molpy.group import Group
 from molpy.io.pdb import read_pdb
+from molpy.io.lmp import write_lmp
 import numpy as np
 import importlib
 
@@ -47,3 +48,7 @@ def fromXML(fpath, type='forcefield'):
         if type == 'forcefield':
             ff = read_xml_forcefield(f)
             return ff
+
+def toLAMMPS(fpath, system):
+    with open(fpath, 'w') as f:
+        write_lmp(f, system)

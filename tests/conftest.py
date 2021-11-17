@@ -59,3 +59,26 @@ def C6():
          HType, HType, HType, HType, HType, HType]
     )
     yield C6
+
+@pytest.fixture()
+def CH4():
+    CH4 = mp.Group('CH4')
+    CH4.addAtoms([mp.Atom(f'H{i}', element='H') for i in range(4)])
+    CH4.addAtom(mp.Atom('C', element='C'))
+    CH4.addBondByName('C', 'H0')  #       H3         y
+    CH4.addBondByName('C', 'H1')  #       |          |
+    CH4.addBondByName('C', 'H2')  #  H0 - C - H2      -> x
+    CH4.addBondByName('C', 'H3')  #       |
+                                  #       H1
+                                    
+    
+    CH4.setPositions(np.array([[0, 0, 0],
+                                [-1, 0, 0],
+                                [0, -1, 0],
+                                [1, 0, 0],
+                                [0, 1, 0]]))
+    CType = mp.AtomType('C')
+    HType = mp.AtomType('H')
+    CH4.setAtomTypes([CType, HType, HType, HType, HType])
+    
+    yield CH4

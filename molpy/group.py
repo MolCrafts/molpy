@@ -726,3 +726,8 @@ class Group(Graph):
         newGroup.addbonds(*group.bonds)
         
         return newGroup
+    
+    def __call__(self, **kwargs):
+        tmp = self.copy()
+        tmp.update(kwargs)
+        return tmp

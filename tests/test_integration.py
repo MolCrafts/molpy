@@ -6,6 +6,7 @@
 import molpy as mp
 import pytest
 import numpy as np
+import profile
 
 class TestMoltemplateCase:
     
@@ -53,3 +54,27 @@ class TestMoltemplateCase:
         ff.patch(template, H2O)
         assert H2O.nbonds == 2
         assert H2O.nangles == 1
+        
+    @pytest.fixture(scope='class')
+    def Monomer(self):
+        g = mp.Group('M')
+        ca = mp.Atom('ca', atomType='CA', charge=0.0)
+        ca.position = np.array([0.0000, 1.0000, 0.0000])
+        r = mp.Atom('r', atomType='R', charge=0.0)
+        r.position = np.array([0.0000, 4.4000, 0.0000])
+        g.addAtoms([ca, r])
+        g.addBond(ca, r, name='Sidechain')
+        
+        yield g
+    
+    
+    def test_PP_case(self, Monomer):
+        pp = mp.Molecule('PP')
+        degreeOfPolymerization = 10
+        for i in range(degreeOfPolymerization):
+            pp.addGroup(Monomer(name=f'mol{i}'))
+            if i != 0:
+                pp.addBondByName(f'ca@mol{i-1}', f'ca@mol{i}', bondType='Backbone')
+            
+        assert pp.natoms == 2 * degreeOfPolymerization
+        assert pp.nbonds == degreeOfPolymerization + (degreeOfPolymerization - 1)
