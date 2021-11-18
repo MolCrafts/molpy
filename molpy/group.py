@@ -26,11 +26,11 @@ class Group(Graph):
         self._atoms = {}
         self._atomList = [] # [Atom]
         self._atomIndices = {}
-        self._bonds = {} # _bonds: {Atom: {Btom: Bond, Ctom: Bond}}
+        # self._bonds = {} # _bonds: {Atom: {Btom: Bond, Ctom: Bond}}
         self._bondList = []
-        self._angles = {}
+        # self._angles = {}
         self._angleList = []
-        self._dihedrals = {}
+        # self._dihedrals = {}
         self._dihedralList = []
         self.update(attr)
             
@@ -119,6 +119,14 @@ class Group(Graph):
     def nangles(self):
         return len(self._angleList)
     
+    @property
+    def dihedrals(self):
+        return self._dihedralList
+    
+    @property
+    def ndihedrals(self):
+        return len(self._dihedralList)
+    
     def hasAtom(self, atom: Atom, ref=None):
         """if the atom in this group
 
@@ -140,15 +148,17 @@ class Group(Graph):
             atom (Atom): one atom
             btom (Atom): another atom
         """
-        bond = atom.bondto(btom, **attr)
-        if atom not in self._bonds:
-            self._bonds[atom] = {}
+        if btom not in atom.bondedAtoms or atom not in btom.bondedAtoms:
 
-        if btom not in self._bonds:
-            self._bonds[btom] = {}
-        self._bonds[atom][btom] = bond
-        self._bonds[btom][atom] = bond
-        self._bondList.append(bond)
+            bond = atom.bondto(btom, **attr)
+            # if atom not in self._bonds:
+            #     self._bonds[atom] = {}
+
+            # if btom not in self._bonds:
+            #     self._bonds[btom] = {}
+            # self._bonds[atom][btom] = bond
+            # self._bonds[btom][atom] = bond
+            self._bondList.append(bond)
         
     def addBonds(self, atomList, **attr):
         """Batch add bonds. atomList followed format, [(atom, btom)] without bond's properties, or [(atom, btom, {key: value})]. Dict in the atomList is the special properties for the bond, and attr is the general properties for all bond. Special property will cover properties in attr.
@@ -731,3 +741,9 @@ class Group(Graph):
         tmp = self.copy()
         tmp.update(kwargs)
         return tmp
+    
+    def move(self, *args):
+        return self
+    
+    def rot(self, *args):
+        return self

@@ -5,17 +5,14 @@
 
 
 from functools import reduce
-from molpy.base import Graph
 from molpy.group import Group
 
-class Molecule(Graph):
+class Molecule(Group):
     
     def __init__(self, name) -> None:
         super().__init__(name)
         self._groups = {}
         self._groupList = []
-        self._bonds = {}
-        self._bondList = []
         
     def addGroup(self, group: Group, copy=False):
         
@@ -26,26 +23,15 @@ class Molecule(Graph):
         
         self._groups[group.name] = group
         self._groupList.append(group)
-        self._bonds.update(group._bonds)
-        self._bondList.extend(group.bonds)
-        
-    def addBond(self, atom, btom, **attr):
-        
-        bond = atom.bondto(btom, **attr)
-        if atom not in self._bonds:
-            self._bonds[atom] = {}
-
-        if btom not in self._bonds:
-            self._bonds[btom] = {}
-        self._bonds[atom][btom] = bond
-        self._bonds[btom][atom] = bond
-        self._bondList.append(bond)
-        
-    def addBondByName(self, atomName, btomName, **attr):
-        
-        atom = self.getAtomByName(atomName)
-        btom = self.getAtomByName(btomName)
-        self.addBond(atom, btom, **attr)
+        self._atomList.extend(group._atomList)
+        # self._bonds.update(group._bonds)
+        print(len(group._bondList))
+        self._bondList.extend(group._bondList)
+        print(len(self._bondList))
+        # self._angles.update(group._angles)
+        self._angleList.extend(group._angleList)
+        # self._dihedrals.update(group._dihedrals)
+        self._dihedralList.extend(group._dihedralList)
 
     def getAtomByName(self, atomName):
         atomName, groupName = atomName.split('@')
@@ -60,3 +46,23 @@ class Molecule(Graph):
     @property
     def nbonds(self):
         return len(self._bondList)
+    
+    @property
+    def groups(self):
+        return self._groupList
+    
+    @property
+    def angles(self):
+        return self._angleList
+    
+    @property
+    def dihedrals(self):
+        return self._dihedralList
+    
+    @property
+    def bonds(self):
+        return self._bondList
+    
+    @property
+    def atoms(self):
+        return self._atomList

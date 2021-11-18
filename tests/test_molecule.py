@@ -21,6 +21,7 @@ class TestMolecule:
         yield CH4                     #       H1
         
     def testMolecule(self, CH4):
+        CH4.searchAngles()
         degreeOfPolymerization = 10
         pe = mp.Molecule('polyethene')
         for unit in range(degreeOfPolymerization):
@@ -28,6 +29,10 @@ class TestMolecule:
             pe.addGroup(ch4)
             if unit != 0:
                 pe.addBondByName(f'H0@CH4-{unit}', f'H2@CH4-{unit-1}')
+        pe.searchAngles()
+        pe.searchDihedrals()
                 
         assert pe.natoms == 5*degreeOfPolymerization
         assert pe.nbonds == 4*degreeOfPolymerization + degreeOfPolymerization - 1
+        assert pe.nangles == 6 * degreeOfPolymerization + (degreeOfPolymerization-1)*2
+        assert pe.ndihedrals == 63

@@ -32,6 +32,7 @@ def C6():
         C6.addBondByIndex(i, -1)
 
     assert C6.nbonds == 12
+    # assert len(C6._bondList) == len(C6._bonds)
     # C6.reference_covalentMap = covalentMap
     C6.setPositions(
         np.array(

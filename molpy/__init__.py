@@ -10,6 +10,9 @@ __version__ = "0.0.1"
 
 # These are import orderwise
 from molpy.atom import Atom
+from molpy.angle import Angle
+from molpy.bond import Bond
+from molpy.dihedral import Dihedral
 from molpy.group import Group
 from molpy.molecule import Molecule
 from molpy.forcefield import ForceField

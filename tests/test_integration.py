@@ -26,7 +26,7 @@ class TestMoltemplateH2Ocase:
         
         ff.defBondType('OH', style='harmonic', k='1000.0', r0='1.0')
         
-        ff.defAngleType('HOH', style='harmonic', k='1000.0', theta0='109.47')
+        ff.defAngleType('HOH', style='harmonic', k='1000.0', theta0='109.47', itomName='h1', jtomName='o', ktomName='h2')
         yield ff
         
     @pytest.fixture(scope='class')
@@ -37,25 +37,25 @@ class TestMoltemplateH2Ocase:
         #  h1  h2
         #   \ /
         #    o
-        o = mp.Atom('o', atomType=ff.atomType['O'], position=np.array([0.0000000, 0.000000, 0.00000]))
-        h1 = mp.Atom('h1', atomType=ff.atomType['H'], position=np.array([0.8164904, 0.5773590, 0.00000]))
-        h2 = mp.Atom('h2', atomType=ff.atomType['H'], position=np.array([-0.8164904, 0.5773590, 0.00000]))
+        o = mp.Atom('o', atomType=ff.atomTypes['O'], position=np.array([0.0000000, 0.000000, 0.00000]))
+        h1 = mp.Atom('h1', atomType=ff.atomTypes['H'], position=np.array([0.8164904, 0.5773590, 0.00000]))
+        h2 = mp.Atom('h2', atomType=ff.atomTypes['H'], position=np.array([-0.8164904, 0.5773590, 0.00000]))
         
         h2o = mp.Group('h2o')
         h2o.addAtoms([o, h1, h2])
         h2o.addBondByName('o', 'h1', bondType=ff.bondTypes['OH'])
-        h2o.addBondByName('o', 'h2', bondType=ff.bondTypes['HOH'])
+        h2o.addBondByName('o', 'h2', bondType=ff.bondTypes['OH'])
         yield h2o
 
-    @pytest.fixture(scope='system')
+    @pytest.fixture(scope='class')
     def system(self, ff, H2O):
         system = System('SPCE H2O')
-        system.setUnitType('SI')
-        system.setAtomStyle('full')
-        system.setBondStyle('harmonic')
-        system.setAngleStyle()
-        system.setDihedralStyle()
-        system.setPairStyle()   
+        # system.setUnitType('SI')
+        # system.setAtomStyle('full')
+        # system.setBondStyle('harmonic')
+        # system.setAngleStyle()
+        # system.setDihedralStyle()
+        # system.setPairStyle()   
         # kspace_style pppm 0.0001 # long-range electrostatics sum method
         # pair_modify mix arithmetic
         
@@ -64,8 +64,9 @@ class TestMoltemplateH2Ocase:
         for i in range(10):
             for j in range(10):
                 for k in range(10):
-                    system.addMolecule(H2O(f'h2o{i+j+k+1}').move(3.10*i, 3.10*j, 3.10*k))
-                    
+                    h2o = H2O(name=f'h2o{i+j+k+1}').move(3.10*i, 3.10*j, 3.10*k)
+                    system.addMolecule(h2o)
+
         system.complete()
         yield system
         
@@ -96,6 +97,8 @@ class TestMoltemplatePolymercase:
         ff.defDihedralType('CCCC', K=-0.5, n=1, d=-180, w=0.0, itom='CA', jtom='CA', ktom='CA', ltom='CA')
         ff.defDihedralType('RCCR', K=-1.5, n=1, d=-180, w=0.0, itom='R', jtom='CA', ktom='CA', ltom='CA')
         
+        yield ff
+        
 
     @pytest.fixture(scope='class')
     def Monomer(self, ff):
@@ -113,7 +116,7 @@ class TestMoltemplatePolymercase:
         r.position = np.array([0.0000, 4.4000, 0.0000])
         
         g.addAtoms([ca, r])
-        g.addBond(ca, r, bondType=ff.bondTypes['OH'])
+        g.addBond(ca, r, bondType=ff.bondTypes['SideChain'])
         
         yield g
         
@@ -126,8 +129,6 @@ class TestMoltemplatePolymercase:
             p.addGroup(Monomer(name=f'mon{i+1}').rot(180*i, 1, 0, 0).move(3.2*i, 0, 0))
             if i!=0:
                 p.addBondByName(f'ca@mon{i-1}', f'ca@mon{i}')
-                
-        # add topology among groups
                 
         yield p
         

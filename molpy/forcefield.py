@@ -45,6 +45,9 @@ class AngleType(Item):
         super().__init__(name)
         self.update(attr)
         
+    def render(self, angle):
+        angle.update(self.properties)
+        
 class DihedralType(Item):
     
     def __init__(self, name, **attr) -> None:
@@ -74,28 +77,33 @@ class ForceField:
         return len(self._templates)
         
     def defAtomType(self, atomName, **attr):
-        atomType = self._atomTypes.get(atomName, None)
-        if atomType is not None:
+
+        if atomName in self._angleTypes:
             raise KeyError(f'atomType {atomName} has been defined')
-        self._atomTypes[atomName] = AtomType(atomName, **attr)
+        
+        atomType = self._atomTypes[atomName] = AtomType(atomName, **attr)
+        return atomType
         
     def defBondType(self, bondName, **attr):
-        bondType = self._bondTypes.get(bondName, None)
-        if bondType is not None:
+
+        if bondName in self._bondTypes:
             raise KeyError(f'bondType {bondName} has been defined')
-        self._bondTypes[bondName] = BondType(bondName, **attr)
+        bondType = self._bondTypes[bondName] = BondType(bondName, **attr)
+        return bondType
         
     def defAngleType(self, angleName, **attr):
-        angleType = self._angleTypes.get(angleName, None)
-        if angleType is not None:
+
+        if angleName in self._angleTypes:
             raise KeyError(f'angleType {angleName} has been defined')
-        self._angleTypes[angleName] = AngleType(angleName, **attr)
+        angleType = self._angleTypes[angleName] = AngleType(angleName, **attr)
+        return angleType
         
     def defDihedralType(self, dihedralName, **attr):
-        dihedralType = self._dihedralTypes.get(dihedralName, None)
-        if dihedralType is not None:
+        
+        if dihedralName in self._dihedralTypes:
             raise KeyError(f'dihedralType {dihedralName} has been defined')
-        self._dihedralTypes[dihedralName] = DihedralType(dihedralName, **attr)
+        dihedralType = self._dihedralTypes[dihedralName] = DihedralType(dihedralName, **attr)
+        return dihedralType
     
     def getAtomType(self, name):
         atomType = self._atomTypes.get(name, None)

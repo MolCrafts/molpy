@@ -15,7 +15,7 @@ class TestLAMMPS:
         system = mp.System('ch4')
         cell = mp.Cell(3, 'ppp', xlo=-2, xhi=2, ylo=-2, yhi=2, zlo=-1, zhi=1)
         system.cell = cell
-        system.addGroup(CH4)
+        system.addMolecule(CH4)
         
-        toLAMMPS('.', system)
+        # toLAMMPS('test.lmp', system)
         

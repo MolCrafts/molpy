@@ -12,16 +12,6 @@ from molpy.convert import from_networkx_graph
 from molpy.group import Group
 
 class TestGroup:
-    
-    @pytest.fixture(scope='class')
-    def CH4(self):
-        CH4 = mp.Group('CH4')
-        C = mp.Atom('C')
-        Hs = [mp.Atom(f'H{i}') for i in range(4)]
-        CH4.add(C)
-        for H in Hs:
-            CH4.add(H)
-        yield CH4
         
     @pytest.fixture(scope='class')
     def K3(self):
@@ -42,11 +32,13 @@ class TestGroup:
         assert len(C6.atoms) == 12
             
     def test_setTopoByCovalentMap(self, CH4):
+        assert CH4.nbonds == len(CH4._bondList) == len(CH4._bonds) == 4
         covalentMap = np.zeros((CH4.natoms, CH4.natoms), dtype=int)
         covalentMap[0, 1:] = covalentMap[1:, 0] = 1
         CH4.setTopoByCovalentMap(covalentMap)
         assert len(CH4['C'].bondedAtoms) == 4
         assert CH4['C'] in CH4['H0'].bondedAtoms
+        assert CH4.nbonds == len(CH4._bondList) == len(CH4._bonds) == 4
         
     def test_getCovalentMap(self, CH4):
         co = CH4.getCovalentMap()
@@ -67,10 +59,14 @@ class TestGroup:
     def test_getRingBonds(self, C6):
         bonds = C6.getBonds()
         assert len(bonds) == 12
+        assert len(C6._bondList) == 12
+        assert len(C6._bonds) == 18
         
     def test_getBonds(self, CH4):
         bonds = CH4.getBonds()
         assert len(bonds) == 4
+        assert len(CH4._bondList) == 4
+        assert len(CH4._bonds) == 4
         
     def test_getSubGroup(self, CH4):
         H4 = CH4.getSubGroup('H4', [CH4[f'H{i}'] for i in range(4)])
