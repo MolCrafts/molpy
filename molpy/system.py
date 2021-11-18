@@ -69,7 +69,11 @@ class System(Item):
     @property
     def nangles(self):
         return len(self._angleList)
-
+    
+    @property
+    def ndihedrals(self):
+        return len(self._dihedralList)
+    
     def promote(self, item):
 
         m = Molecule(item.name)

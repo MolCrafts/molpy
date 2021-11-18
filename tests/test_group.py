@@ -32,13 +32,13 @@ class TestGroup:
         assert len(C6.atoms) == 12
             
     def test_setTopoByCovalentMap(self, CH4):
-        assert CH4.nbonds == len(CH4._bondList) == len(CH4._bonds) == 4
+
         covalentMap = np.zeros((CH4.natoms, CH4.natoms), dtype=int)
         covalentMap[0, 1:] = covalentMap[1:, 0] = 1
         CH4.setTopoByCovalentMap(covalentMap)
         assert len(CH4['C'].bondedAtoms) == 4
         assert CH4['C'] in CH4['H0'].bondedAtoms
-        assert CH4.nbonds == len(CH4._bondList) == len(CH4._bonds) == 4
+        assert CH4.nbonds == 4
         
     def test_getCovalentMap(self, CH4):
         co = CH4.getCovalentMap()
@@ -60,13 +60,13 @@ class TestGroup:
         bonds = C6.getBonds()
         assert len(bonds) == 12
         assert len(C6._bondList) == 12
-        assert len(C6._bonds) == 18
+
         
     def test_getBonds(self, CH4):
         bonds = CH4.getBonds()
         assert len(bonds) == 4
         assert len(CH4._bondList) == 4
-        assert len(CH4._bonds) == 4
+
         
     def test_getSubGroup(self, CH4):
         H4 = CH4.getSubGroup('H4', [CH4[f'H{i}'] for i in range(4)])
@@ -91,6 +91,12 @@ class TestGroup:
         assert CH4new.uuid != CH4.uuid
         assert CH4new.getAtomByName('C').uuid != CH4.getAtomByName('C').uuid
         
+    def test_removeAtom(self, CH4):
+        ch4 = CH4()
+        ch4.removeAtom(ch4.atoms[1])
+        assert ch4.natoms == 4
+        assert ch4.nbonds == 3
+        
 class TestGroupTopo:
     
     @classmethod
@@ -105,7 +111,6 @@ class TestGroupTopo:
     
     def testSerachAngle(self):
         assert len(self.linear5.searchAngles()) == 3
-        # print(self.K5.searchAngles())
         assert len(self.K5.searchAngles()) == 30
         assert len(self.ring3.searchAngles()) == 3
         assert len(self.ring4.searchAngles()) == 4
@@ -114,7 +119,6 @@ class TestGroupTopo:
         assert len(self.linear5.searchDihedrals()) == 2
         assert len(self.ring3.searchDihedrals()) == 0
         assert len(self.ring4.searchDihedrals()) == 4
-        # print(self.K5.searchDihedrals())
         assert len(self.K5.searchDihedrals()) == 60
         
 class TestInterGroup:
@@ -137,11 +141,11 @@ class TestInterGroup:
         ch41.reacto(ch42, method='addition', atomName='H2', btomName='H0', copy=True)
         assert ch41.nbonds == 5
         
-    def test_condesation(self, CH4):
+    def test_condensation(self, CH4):
         
         ch41 = CH4.copy()
         ch42 = CH4.copy()
         ch41.reacto(ch42, method='concentration', atomName='H2', btomName='H0', copy=True)
-        assert ch41.nbonds == 4
         assert ch41.natoms == 4
+        assert ch41.nbonds == 4
                 

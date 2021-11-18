@@ -26,11 +26,11 @@ class Group(Graph):
         self._atoms = {}
         self._atomList = [] # [Atom]
         self._atomIndices = {}
-        # self._bonds = {} # _bonds: {Atom: {Btom: Bond, Ctom: Bond}}
+        self._bonds = {} # _bonds: {atom.uuid: {btom.uuid: Bond, ctom.uuid: Bond}}
         self._bondList = []
-        # self._angles = {}
+        self._angles = {}
         self._angleList = []
-        # self._dihedrals = {}
+        self._dihedrals = {}
         self._dihedralList = []
         self.update(attr)
             
@@ -82,12 +82,15 @@ class Group(Graph):
         
         bonds = self._bonds
         try:
-            nbrs = list(bonds[atom])  # list handles self-loops (allows mutation)
+            nbrs = list(bonds[atom.uuid])  # list handles self-loops (allows mutate)
         except KeyError as err:  # NetworkXError if n not in self
             raise KeyError(f"{atom} is not in the group.") from err
         for u in nbrs:
-            del bonds[u][atom]  # remove all edges atom-u in graph
-        del bonds[atom]
+            bond = bonds[u][atom.uuid]
+            del bonds[u]  # remove all edges atom-u in graph
+            self._bondList.remove(bond)
+        del bonds[atom.uuid]
+
         
     def removeAtoms(self, atoms):
         """remove a set of atoms
@@ -114,6 +117,10 @@ class Group(Graph):
     @property
     def natoms(self):
         return len(self._atomList)
+    
+    @property
+    def angles(self):
+        return self._angleList
     
     @property
     def nangles(self):
@@ -148,16 +155,16 @@ class Group(Graph):
             atom (Atom): one atom
             btom (Atom): another atom
         """
-        if btom not in atom.bondedAtoms or atom not in btom.bondedAtoms:
 
-            bond = atom.bondto(btom, **attr)
-            # if atom not in self._bonds:
-            #     self._bonds[atom] = {}
+        bond = atom.bondto(btom, **attr)
+        if atom.uuid not in self._bonds:
+            self._bonds[atom.uuid] = {}
+        self._bonds[atom.uuid][btom.uuid] = bond
 
-            # if btom not in self._bonds:
-            #     self._bonds[btom] = {}
-            # self._bonds[atom][btom] = bond
-            # self._bonds[btom][atom] = bond
+        if btom.uuid not in self._bonds:
+            self._bonds[btom.uuid] = {}
+        self._bonds[btom.uuid][atom.uuid] = bond
+        if bond not in self._bondList:
             self._bondList.append(bond)
         
     def addBonds(self, atomList, **attr):
@@ -193,9 +200,9 @@ class Group(Graph):
             KeyError: WHEN bond not exists
         """
         try:
-            del self._bonds[atom][btom]
+            del self._bonds[atom.uuid][btom.uuid]
             if atom != btom:  # self-loop needs only one entry removed
-                del self._bonds[btom][atom]
+                del self._bonds[btom.uuid][atom.uuid]
         except KeyError as err:
             raise KeyError(f"The bond {atom}-{btom} is not in the graph") from err
         
@@ -207,10 +214,10 @@ class Group(Graph):
         """
         for atoms in atomList:
             atom, btom = atoms[:2]
-            if atom in self._bonds and btom in self._bonds[atom]:
-                del self._bonds[atom][btom]
+            if atom.uuid in self._bonds and btom.uuid in self._bonds[atom.uuid]:
+                del self._bonds[atom.uuid][btom.uuid]
                 if atom != btom:
-                    del self._bonds[btom][atom]
+                    del self._bonds[btom.uuid][atom.uuid]
         
      
     def getSubGroup(self, name, atoms):
@@ -250,7 +257,7 @@ class Group(Graph):
         Returns:
             bool: result
         """
-        if self._bonds[atom].get(btom, False):
+        if self._bonds[atom.uuid].get(btom.uuid, False):
             return True
         else:
             return False
@@ -264,15 +271,15 @@ class Group(Graph):
         Returns:
             List[Atom]: atom's bondedAtom
         """
-        return list(self._bonds[atom].keys())
+        return atom.bondedAtoms
     
     @property
     def bonds(self):
-        return self.getBonds()
+        return self._bondList
     
     @property
     def nbonds(self):
-        return len(self.getBonds())
+        return len(self._bondList)
     
     def getBond(self, atom, btom):
         """get a certain bond specified with two atoms
@@ -284,7 +291,7 @@ class Group(Graph):
         Returns:
             Bond: bond
         """
-        return self._bonds[atom].get(btom, False)
+        return self._bonds[atom.uuid].get(btom.uuid, False)
     
     def getBonds(self, format='bond'):
         """get all the bonds in this graph
@@ -293,11 +300,7 @@ class Group(Graph):
             List[Bond]: a list of bond
         """
         if format == 'bond':
-            bonds = set()
-            for u, nbs in self._bonds.items():
-                for nb in nbs:
-                    bonds.add(self._bonds[u][nb])
-            return list(bonds)
+            return self._bondList
         elif format == 'index':
             return self.getAdjacencyList()
         
@@ -417,12 +420,12 @@ class Group(Graph):
         
     def addAngle(self, itom, jtom, ktom, **attr):
         try:
-            angle = self._angles[itom][jtom][ktom]
-            angle = self._angles[ktom][jtom][itom]
+            angle = self._angles[itom.uuid][jtom.uuid][ktom.uuid]
+            angle = self._angles[ktom.uuid][jtom.uuid][itom.uuid]
         except KeyError:
             angle = Angle(itom, jtom, ktom, **attr)
-            self._angles.setdefault(itom, {}).setdefault(jtom, {}).setdefault(ktom, angle)
-            self._angles.setdefault(ktom, {}).setdefault(jtom, {}).setdefault(itom, angle)
+            self._angles.setdefault(itom.uuid, {}).setdefault(jtom.uuid, {}).setdefault(ktom.uuid, angle)
+            self._angles.setdefault(ktom.uuid, {}).setdefault(jtom.uuid, {}).setdefault(itom.uuid, angle)
             self._angleList.append(angle)        
         return angle
     
@@ -501,12 +504,12 @@ class Group(Graph):
                         
                         if itom != ltom:
                             try:
-                                dihe = self._dihedrals[itom][jtom][ktom][ltom]
-                                dihe = self._dihedrals[ltom][ktom][jtom][itom]
+                                dihe = self._dihedrals[itom.uuid][jtom.uuid][ktom.uuid][ltom.uuid]
+                                dihe = self._dihedrals[ltom.uuid][ktom.uuid][jtom.uuid][itom.uuid]
                             except KeyError:
                                 dihe = Dihedral(itom, jtom, ktom, ltom)
-                                self._dihedrals.setdefault(itom, {}).setdefault(jtom, {}).setdefault(ktom, {}).setdefault(ltom, dihe)
-                                self._dihedrals.setdefault(ltom, {}).setdefault(ktom, {}).setdefault(jtom, {}).setdefault(itom, dihe)
+                                self._dihedrals.setdefault(itom.uuid, {}).setdefault(jtom.uuid, {}).setdefault(ktom.uuid, {}).setdefault(ltom.uuid, dihe)
+                                self._dihedrals.setdefault(ltom.uuid, {}).setdefault(ktom.uuid, {}).setdefault(jtom.uuid, {}).setdefault(itom.uuid, dihe)
                                 self._dihedralList.append(dihe)
         return self._dihedralList
                            
@@ -715,12 +718,13 @@ class Group(Graph):
             self.removeAtom(atom)
             group.removeAtom(btom)
             bond = atom1.bondto(btom1, **attr)
-        if atom not in self._bonds:
-            self._bonds[atom] = {}
-        if btom not in group._bonds:
-            group._bonds[btom] = {}
-        self._bonds[atom][btom] = bond
-        group._bonds[btom][atom] = bond
+            
+        if atom.uuid not in self._bonds:
+            self._bonds[atom.uuid] = {}
+        if btom.uuid not in group._bonds:
+            group._bonds[btom.uuid] = {}
+        self._bonds[atom.uuid][btom.uuid] = bond
+        group._bonds[btom.uuid][atom.uuid] = bond
         self._bondList.append(bond)
         group._bondList.append(bond)  
     
