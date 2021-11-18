@@ -243,17 +243,17 @@ class ForceField:
 
     @property
     def atomTypes(self):
-        return list(self._atomTypes.keys())
+        return self._atomTypes
     
     @property
     def bondTypes(self):
-        return list(self._bondTypes.keys())
+        return self._bondTypes
     
     @property
     def angleTypes(self):
-        return list(self._angleTypes.keys())
+        return self._angleTypes
     
     @property
     def dihedralTypes(self):
-        return list(self._dihedralTypes.keys())
+        return self._dihedralTypes
     

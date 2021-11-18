@@ -4,6 +4,9 @@
 # version: 0.0.1
 
 from molpy.base import Item
+from molpy.atom import Atom
+from molpy.group import Group
+from molpy.molecule import Molecule
 
 class System(Item):
     
@@ -17,7 +20,9 @@ class System(Item):
         self._bonds = []
         self._angles = []
         self._groups = []
-        self._molecules = []
+        self._molecules = {}
+        self._unitType = None
+        self._units = None
         
     def setCell(self, cell):
         self.cell = cell
@@ -25,6 +30,24 @@ class System(Item):
     def setForcefield(self, forcefield):
         # self.forcefield[forcefield.name] = forcefield
         self.forcefield = forcefield
+        
+    def setUnitType(self, unitTypeName):
+        pass
+    
+    def setAtomStyle(self, style):
+        pass
+    
+    def setBondStyle(self, style):
+        self.bondStyle = style
+        
+    def setAngleStyle(self, style):
+        pass
+    
+    def setDihedralStyle(self, style):
+        pass
+    
+    def setPairStyle(self, style):
+        pass
         
     @property
     def xlo(self):
@@ -50,7 +73,11 @@ class System(Item):
         
         if item.itemType == 'Atom':
              
-            
+            g = Group(item.name)
+            m = Molecule(item.name)
+            g.addAtom(item)
+            m.addGroup(g)
+            return m
     
     def addAtom(self, atom):
         self._atoms.append(atom)
@@ -125,3 +152,4 @@ class System(Item):
         for id, atom in enumerate(atoms, 1):
             atom.id = id
             atom.molid = 
+            
