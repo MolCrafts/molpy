@@ -5,7 +5,6 @@
 
 def write_lmp(fileobj, system, **kwargs):
     f = fileobj
-    system.mapping()
     
     # comment
     f.write(f'{system.name} written by molpy\n\n')
@@ -15,7 +14,7 @@ def write_lmp(fileobj, system, **kwargs):
     f.write(f'\t{system.nbonds}\tbonds\n')
     f.write(f'\t{system.nangles}\tangles\n')
     if system.dihedrals:
-        f.write(f'\t{system.ndihedrals}\dihedrals\n')
+        f.write(f'\t{system.ndihedrals}\tdihedrals\n')
         
     # forcefield
     f.write(f'\t{system.natomTypes}\tatom types\n')
@@ -29,24 +28,32 @@ def write_lmp(fileobj, system, **kwargs):
     f.write(f'\t{system.zlo}  {system.zhi}  zlo  zhi\n\n')
     
     # mess section
-    f.write('Messes\n\n')
-    for atomType in system.atomTypes:
-        f.write(f'\t{atomType.id}\t{atomType.mess}\n')
+    f.write('Masses\n\n')
+    for atomType in system.atomTypes.values():
+        f.write(f'\t{atomType.typeID}\t{atomType.mass}\n')
+        
+    f.write('\n')
         
     f.write('Atoms\n\n')
     if kwargs['atom_style'] == 'full':
         for atom in system.atoms:
-            f.write(f'{atom.id} {atom.molid} {atom.typeid} {atom.charge} {atom.x} {atom.y} {atom.z}\n')
+            f.write(f'\t{atom.id}\t{atom.molid}\t{atom.typeID}\t{atom.charge}\t{atom.x}\t{atom.y}\t {atom.z}\n')
+            
+    f.write('\n')
             
     f.write('Bonds\n\n')
     for bond in system.bonds:
-        f.write(f'{bond.id} {bond.typeid} {bond.atom.id} {bond.btom.id}\n')
+        f.write(f'\t{bond.id}\t{bond.typeID}\t{bond.atom.id}\t{bond.btom.id}\n')
+  
+    f.write('\n')
         
     f.write('Angles\n\n')
     for angle in system.angles:
-        f.write(f'{angle.id} {angle.typeid} {angle.itom.id} {angle.jtom.id} {angle.ktom.id}\n')
+        f.write(f'\t{angle.id}\t{angle.typeID}\t{angle.itom.id}\t{angle.jtom.id}\t{angle.ktom.id}\n')
+        
+    f.write('\n')
         
     f.write('Dihedrals\n\n')
     for dihedral in system.dihedrals:
-        f.write(f'{dihedral.id} {dihedral.typeid} {dihedral.itom.id} {dihedral.jtom.id} {dihedral.ktom.id} {dihedral.ltom.id}\n')
+        f.write(f'\t{dihedral.id}\t{dihedral.typeID}\t{dihedral.itom.id}\t{dihedral.jtom.id}\t{dihedral.ktom.id}\t{dihedral.ltom.id}\n')
         

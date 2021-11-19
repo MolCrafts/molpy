@@ -25,5 +25,5 @@ class TestSystem:
         system.addMolecule(C6)
         assert system.natoms == 12
         assert system.nbonds == 12
-        assert system.nangles
-        assert system.ndihedrals
+        assert system.nangles == 18
+        assert system.ndihedrals == 24

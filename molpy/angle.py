@@ -39,6 +39,9 @@ class Angle(Item):
     def __repr__(self) -> str:
         return self.name
     
+    def __getattr__(self, key):
+        return getattr(self.angleType, key)
+    
     def atomNameEqualTo(self, angle):
         
         if self.jtom.name == angle.jtomName:

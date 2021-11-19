@@ -57,10 +57,30 @@ class System(Item):
     @property
     def xhi(self):
         return self.cell.xhi
+    
+    @property
+    def ylo(self):
+        return self.cell.ylo
+
+    @property
+    def yhi(self):
+        return self.cell.yhi
+    
+    @property
+    def zlo(self):
+        return self.cell.zlo
+
+    @property
+    def zhi(self):
+        return self.cell.zhi
 
     @property
     def natoms(self):
         return len(self._atomList)
+    
+    @property
+    def nmolecules(self):
+        return len(self._molecules)
 
     @property
     def nbonds(self):
@@ -101,7 +121,8 @@ class System(Item):
 
         if molecule.itemType == "Group":
             molecule = self.promote(molecule)
-
+        if molecule.name in self._molecules:
+            raise KeyError(f'molecule {molecule.name} is already defined in the system.')
         self._molecules[molecule.name] = molecule
         self._atomList.extend(molecule.atoms)
         self._groupList.extend(molecule.groups)
@@ -110,33 +131,64 @@ class System(Item):
         self._dihedralList.extend(molecule.dihedrals)
 
     def mapping(self, start=1):
+        
+        # TODO: It is not decide whether to specify the ID during generation or add it uniformly at last
+        
+        # atom id mapping
+        
+        for id, atom in enumerate(self._atomList, start=1):
+            atom.id = id
+            
+        for id, group in enumerate(self._groupList, start=1):
+            group.id = id
+            
+        for id, molecule in enumerate(self.molecules, start=1):
+            molecule.id = id
+            for atom in molecule.atoms:
+                atom.molid = id
 
         # atom type mapping
         atomTypeMap = {}
         atomTypes = self.forcefield.atomTypes
-        for i, atomType in enumerate(atomTypes, start):
+        for i, atomType in enumerate(atomTypes.values(), start):
             atomTypeMap[atomType.name] = i
 
-        for i, molecule in enumerate(self._molecules, start):
+        for i, molecule in enumerate(self._molecules.values(), start):
             molecule.molid = i
 
-        for i, bond in enumerate(self._bonds, start):
+        for i, bond in enumerate(self.bonds, start):
             bond.id = i
 
-        bondTypeMap = {}
-        bondTypes = self.forcefield.bondTypes
-        for i, bondType in enumerate(bondTypes, start):
-            bondTypeMap[bondType.name] = i
+        
 
-        angleTypeMap = {}
-        angleTypes = self.forcefield.angleTypes
-        for i, angleType in enumerate(angleTypes, start):
-            angleTypeMap[angleType.name] = i
+        # for i, bondType in enumerate(self.bondTypes.values(), start):
+        #     bondType.type
 
-        dihedralTypeMap = {}
-        dihedralTypes = self.forcefield.dihedralTypes
-        for i, dihedralType in enumerate(dihedralTypes, start):
-            dihedralTypeMap[dihedralType.name] = i
+        # angleTypeMap = {}
+        # angleTypes = self.forcefield.angleTypes
+        # for i, angleType in enumerate(angleTypes.values(), start):
+        #     angleTypeMap[angleType.name] = i
+
+        # dihedralTypeMap = {}
+        # dihedralTypes = self.forcefield.dihedralTypes
+        # for i, dihedralType in enumerate(dihedralTypes.values(), start):
+        #     dihedralTypeMap[dihedralType.name] = i
+            
+    @property
+    def atomTypes(self):
+        return self.forcefield.atomTypes
+    
+    @property
+    def bondTypes(self):
+        return self.forcefield.bondTypes
+    
+    @property
+    def angleTypes(self):
+        return self.forcefield.angleTypes
+    
+    @property
+    def dihedralTypes(self):
+        return self.forcefield.dihedralTypes
 
     @property
     def natomTypes(self):
@@ -163,12 +215,36 @@ class System(Item):
         return atoms
     
     @property
+    def groups(self):
+        return self._groupList
+    
+    @property
+    def molecules(self):
+        return self._molecules.values()
+    
+    @property
     def bonds(self):
         bonds = self._bondList
         for id, bond in enumerate(bonds, 1):
             bond.id = id
             
         return bonds
+    
+    @property
+    def angles(self):
+        angles = self._angleList
+        for id, angle in enumerate(angles, 1):
+            angle.id = id
+            
+        return angles
+    
+    @property
+    def dihedrals(self):
+        dihes = self._dihedralList
+        for id, dihe in enumerate(dihes, 1):
+            dihe.id = id
+        
+        return dihes
 
     def complete(self):
 
@@ -180,7 +256,6 @@ class System(Item):
         # template matching, set up topology
 
         # find angles, dihedrals etc.
-
         for mol in self._molecules.values():
 
             mol.searchAngles()
@@ -195,9 +270,8 @@ class System(Item):
         # ff::angleTypes -> angles
         # TODO: very dirty
         for angle in self._angleList:
-            for at in angleTypes.values():
-                if angle.atomNameEqualTo(at):
-                    at.render(angle)
+            self.forcefield.matchAngleType(angle)
+            assert angle.angleType
 
         # ff::dihedrals -> dihedrals
 

@@ -17,38 +17,44 @@ class Template(Group):
     def __init__(self, name, group=None, **attr):
         super().__init__(name, group=group, **attr)
         self.patches = {}  # {name: Template}
- 
-class AtomType(Item):
+        
+class TypeBase(Item):
     
-    atomTypeID = 1
-    atomTypes = {}
+    typeID = 1
+    types = {}
+    
+    def __new__(cls, name, **attr):
+        
+        if name in TypeBase.types:
+            return TypeBase.types[name]
+        else:
+            ins = super().__new__(cls)
+            TypeBase.types[name] = ins
+            TypeBase.typeID += 1
+            return ins
+    
+    def __init__(self, name) -> None:
+        super().__init__(name)
+    
+class AtomType(TypeBase):
     
     def __init__(self, name, **attr) -> None:
-        if name not in AtomType.atomTypes:
-            super().__init__(name)
-            self.update(attr)
-            self.atomTypeID = AtomType.atomTypeID
-            AtomType.atomTypeID += 1
-            AtomType.atomTypes['name'] = self
-        else:
-            return AtomType.atomTypes['name']
+        super().__init__(name)
+        self.update(attr)
         
-class BondType(Item):
+class BondType(TypeBase):
     
     def __init__(self, name, **attr) -> None:
         super().__init__(name)
         self.update(attr)
 
-class AngleType(Item):
+class AngleType(TypeBase):
     
     def __init__(self, name, **attr) -> None:
         super().__init__(name)
         self.update(attr)
         
-    def render(self, angle):
-        angle.update(self.properties)
-        
-class DihedralType(Item):
+class DihedralType(TypeBase):
     
     def __init__(self, name, **attr) -> None:
         super().__init__(name)
@@ -71,6 +77,14 @@ class ForceField:
     @property
     def nbondTypes(self):
         return len(self._bondTypes)
+    
+    @property
+    def nangleTypes(self):
+        return len(self._angleTypes)
+    
+    @property
+    def ndihedralTypes(self):
+        return len(self._dihedralTypes)
     
     @property
     def ntemplates(self):
@@ -243,6 +257,13 @@ class ForceField:
             if tarbond.type == bond.type:
                 bond.update(**tarbond.properties)
         return bond
+    
+    def matchAngleType(self, angle, template=None):
+        
+        if template is None:
+            for at in self.angleTypes.values():
+                if angle.atomNameEqualTo(at):
+                    angle.angleType = at
     
     def loadXML(self, file):
         with open(file, 'r') as f:

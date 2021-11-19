@@ -13,7 +13,7 @@ import importlib
 
 from molpy.io.xml import read_xml_forcefield
 
-__all__ = ['path_group']
+__all__ = ['full', 'fromPDB', 'fromLAMMPS', 'fromXML', 'fromNetworkXGraph', 'toLAMMPS']
 
 def full(groupName, atomNames, **properties):
     """ build up a group with atoms
@@ -49,6 +49,41 @@ def fromXML(fpath, type='forcefield'):
             ff = read_xml_forcefield(f)
             return ff
 
-def toLAMMPS(fpath, system):
+def toLAMMPS(fpath, system, **kwargs):
     with open(fpath, 'w') as f:
-        write_lmp(f, system)
+        write_lmp(f, system, **kwargs)
+
+def fromNetworkXGraph(name, G):
+    
+    adj = dict(G.adj)
+    group = Group(name)
+    
+    atoms = [Atom(f'{i}') for i in adj]
+    group.addAtoms(atoms)
+        
+    for uname, nbs in adj.items():
+        for nb, dd in nbs.items():
+            group.addBond(atoms[uname], atoms[nb], **dd)
+            
+    return group
+
+def toJAXMD(group: Group):
+    d = {}
+    R = group.getPositions()
+    d['positions'] = R
+    atomTypes = group.getAtomTypes()
+    d['atomTypes'] = atomTypes
+    elements = group.getElements()
+    d['elements'] = elements
+    bonds = group.getAdjacencyList()
+    d['bonds'] = bonds
+    natoms = group.natoms
+    d['natoms'] = natoms
+    
+    return d
+    
+def fromJAXMD():
+    pass
+
+def toJraph(group, node_features, edge_features, ):
+    pass

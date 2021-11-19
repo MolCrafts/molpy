@@ -29,6 +29,7 @@ class TestMolecule:
             pe.addGroup(ch4)
             if unit != 0:
                 pe.addBondByName(f'H0@CH4-{unit}', f'H2@CH4-{unit-1}')
+                
         pe.searchAngles()
         pe.searchDihedrals()
                 

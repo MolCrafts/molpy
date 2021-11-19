@@ -6,16 +6,23 @@
 import pytest
 import molpy as mp
 import numpy as np
-from molpy.factory import toLAMMPS
+from molpy.ioapi import toLAMMPS
     
 class TestLAMMPS:
     
-    def test_write_ch4(self, CH4):
+    def test_write_ch4(self, H2O, SPCEforcefield):
         
-        system = mp.System('ch4')
-        cell = mp.Cell(3, 'ppp', xlo=-2, xhi=2, ylo=-2, yhi=2, zlo=-1, zhi=1)
-        system.cell = cell
-        system.addMolecule(CH4)
-        
-        # toLAMMPS('test.lmp', system)
+        system = mp.System('h2o')
+        system.cell = mp.Cell(3, 'ppp', xlo=0, xhi=35, ylo=0, yhi=35, zlo=0, zhi=35)
+        system.forcefield = SPCEforcefield
+        l = 1
+        for i in range(10):
+            for j in range(10):
+                for k in range(10):
+                    h2o = H2O(name=f'h2o{l}').move(3.10*i, 3.10*j, 3.10*k)
+                    system.addMolecule(h2o)
+                    l += 1
+        system.mapping()
+        system.complete()        
+        toLAMMPS('lmp.data.test', system, atom_style='full')
         

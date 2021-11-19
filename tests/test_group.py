@@ -7,7 +7,7 @@ import pytest
 import molpy as mp
 import numpy as np
 import networkx as nx
-from molpy.convert import from_networkx_graph
+from molpy import fromNetworkXGraph
 
 from molpy.group import Group
 
@@ -101,10 +101,10 @@ class TestGroupTopo:
     
     @classmethod
     def setup_class(cls):
-        cls.linear5 = from_networkx_graph('linear5', nx.path_graph(5))
-        cls.K5 = from_networkx_graph('K5', nx.complete_graph(5))
-        cls.ring3 = from_networkx_graph('ring3', nx.cycle_graph(3))
-        cls.ring4 = from_networkx_graph('ring4', nx.cycle_graph(4))
+        cls.linear5 = fromNetworkXGraph('linear5', nx.path_graph(5))
+        cls.K5 = fromNetworkXGraph('K5', nx.complete_graph(5))
+        cls.ring3 = fromNetworkXGraph('ring3', nx.cycle_graph(3))
+        cls.ring4 = fromNetworkXGraph('ring4', nx.cycle_graph(4))
         assert cls.K5.natoms == 5
         assert cls.ring3.natoms == 3
         assert cls.ring3.nbonds == 3

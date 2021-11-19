@@ -22,3 +22,14 @@ class Bond(Edge):
     
     def __repr__(self) -> str:
         return self.name
+    
+    def __getattr__(self, key):
+        return getattr(self.bondType, key)
+    
+    @property
+    def atom(self):
+        return self._atom
+    
+    @property
+    def btom(self):
+        return self._btom

@@ -7,7 +7,7 @@ import pytest
 from molpy.atom import Atom
 from molpy.forcefield import ForceField
 from molpy.group import Group
-from molpy.factory import fromPDB
+from molpy import fromPDB
 from pathlib import Path
 
 from molpy.io.xml import read_xml_forcefield

@@ -83,3 +83,34 @@ def CH4():
     CH4.setAtomTypes([CType, HType, HType, HType, HType])
     
     yield CH4
+    
+@pytest.fixture()
+def SPCEforcefield():
+    ff = mp.ForceField('SPCE')
+    
+    ff.defAtomType('O', mass=15.9994, charge=-0.8476, element='O')
+    ff.defAtomType('H', mass=1.008, charge=0.4238, element='H')
+    
+    ff.defBondType('OH', style='harmonic', k='1000.0', r0='1.0')
+    
+    ff.defAngleType('HOH', style='harmonic', k='1000.0', theta0='109.47', itomName='h1', jtomName='o', ktomName='h2')
+    yield ff
+    
+@pytest.fixture()
+def H2O(SPCEforcefield):
+    ff = SPCEforcefield
+    #
+    # file "spce_simple.lt"
+    #
+    #  h1  h2
+    #   \ /
+    #    o
+    o = mp.Atom('o', atomType=ff.atomTypes['O'], position=np.array([0.0000000, 0.000000, 0.00000]))
+    h1 = mp.Atom('h1', atomType=ff.atomTypes['H'], position=np.array([0.8164904, 0.5773590, 0.00000]))
+    h2 = mp.Atom('h2', atomType=ff.atomTypes['H'], position=np.array([-0.8164904, 0.5773590, 0.00000]))
+    
+    h2o = mp.Group('h2o')
+    h2o.addAtoms([o, h1, h2])
+    h2o.addBondByName('o', 'h1', bondType=ff.bondTypes['OH'])
+    h2o.addBondByName('o', 'h2', bondType=ff.bondTypes['OH'])
+    yield h2o

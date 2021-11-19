@@ -15,40 +15,8 @@ from molpy.system import System
 class TestMoltemplateH2Ocase:
     """Those tests is modeled using the moltemplate style: setup basic unit first with atoms and bonds, def forcefield second with atom and bond properties, match all the info at least.
     """
-    
-        
-    @pytest.fixture(scope='class', name='ff')
-    def SPCEforcefield(self):
-        ff = mp.ForceField('SPCE')
-        
-        ff.defAtomType('O', mass=15.9994, charge=-0.8476, element='O')
-        ff.defAtomType('H', mass=1.008, charge=0.4238, element='H')
-        
-        ff.defBondType('OH', style='harmonic', k='1000.0', r0='1.0')
-        
-        ff.defAngleType('HOH', style='harmonic', k='1000.0', theta0='109.47', itomName='h1', jtomName='o', ktomName='h2')
-        yield ff
-        
-    @pytest.fixture(scope='class')
-    def H2O(self, ff):
-        #
-        # file "spce_simple.lt"
-        #
-        #  h1  h2
-        #   \ /
-        #    o
-        o = mp.Atom('o', atomType=ff.atomTypes['O'], position=np.array([0.0000000, 0.000000, 0.00000]))
-        h1 = mp.Atom('h1', atomType=ff.atomTypes['H'], position=np.array([0.8164904, 0.5773590, 0.00000]))
-        h2 = mp.Atom('h2', atomType=ff.atomTypes['H'], position=np.array([-0.8164904, 0.5773590, 0.00000]))
-        
-        h2o = mp.Group('h2o')
-        h2o.addAtoms([o, h1, h2])
-        h2o.addBondByName('o', 'h1', bondType=ff.bondTypes['OH'])
-        h2o.addBondByName('o', 'h2', bondType=ff.bondTypes['OH'])
-        yield h2o
-
-    @pytest.fixture(scope='class')
-    def system(self, ff, H2O):
+    @pytest.fixture()
+    def system(self, SPCEforcefield, H2O):
         system = System('SPCE H2O')
         # system.setUnitType('SI')
         # system.setAtomStyle('full')
@@ -60,12 +28,14 @@ class TestMoltemplateH2Ocase:
         # pair_modify mix arithmetic
         
         system.cell = Cell(3, 'ppp', xlo=0, xhi=35, ylo=0, yhi=35, zlo=0, zhi=35)
-        system.forcefield = ff
+        system.forcefield = SPCEforcefield
+        l = 1
         for i in range(10):
             for j in range(10):
                 for k in range(10):
-                    h2o = H2O(name=f'h2o{i+j+k+1}').move(3.10*i, 3.10*j, 3.10*k)
+                    h2o = H2O(name=f'h2o{l}').move(3.10*i, 3.10*j, 3.10*k)
                     system.addMolecule(h2o)
+                    l += 1
 
         system.complete()
         yield system
@@ -75,6 +45,7 @@ class TestMoltemplateH2Ocase:
         assert system.natoms == 3000
         assert system.nbonds == 2000
         assert system.nangles == 1000
+        
         assert system.natomTypes == 2
         assert system.nbondTypes == 1
         assert system.nangleTypes == 1
@@ -98,7 +69,6 @@ class TestMoltemplatePolymercase:
         ff.defDihedralType('RCCR', K=-1.5, n=1, d=-180, w=0.0, itom='R', jtom='CA', ktom='CA', ltom='CA')
         
         yield ff
-        
 
     @pytest.fixture(scope='class')
     def Monomer(self, ff):

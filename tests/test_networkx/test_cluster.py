@@ -2,7 +2,7 @@ from molpy.algorithms.cluster import triangles
 from molpy.group import Group
 import molpy as mp
 import pytest
-from molpy.convert import from_networkx_graph
+from molpy import fromNetworkXGraph
 import networkx as nx
 
 

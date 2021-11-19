@@ -42,8 +42,32 @@ class Cell:
         return self._xhi
     
     @property
+    def ylo(self):
+        return self._ylo
+    
+    @property
+    def yhi(self):
+        return self._yhi
+    
+    @property
+    def zlo(self):
+        return self._zlo
+    
+    @property
+    def zhi(self):
+        return self._zhi
+    
+    @property
     def lx(self):
         return self._xhi - self._xlo
+    
+    @property
+    def ly(self):
+        return self._yhi - self._ylo
+    
+    @property
+    def lz(self):
+        return self._zhi - self._zlo
         
     @property
     def x_vector(self):
