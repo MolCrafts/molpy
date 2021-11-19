@@ -26,14 +26,13 @@ class TestMoltemplateH2Ocase:
         # system.setPairStyle()   
         # kspace_style pppm 0.0001 # long-range electrostatics sum method
         # pair_modify mix arithmetic
-        
         system.cell = Cell(3, 'ppp', xlo=0, xhi=35, ylo=0, yhi=35, zlo=0, zhi=35)
         system.forcefield = SPCEforcefield
         l = 1
         for i in range(10):
             for j in range(10):
                 for k in range(10):
-                    h2o = H2O(name=f'h2o{l}').move(3.10*i, 3.10*j, 3.10*k)
+                    h2o = H2O(name=f'h2o{l}').move(np.array([3.10*i, 3.10*j, 3.10*k]))
                     system.addMolecule(h2o)
                     l += 1
 

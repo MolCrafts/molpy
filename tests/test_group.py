@@ -96,7 +96,7 @@ class TestGroup:
         ch4.removeAtom(ch4.atoms[1])
         assert ch4.natoms == 4
         assert ch4.nbonds == 3
-        
+
 class TestGroupTopo:
     
     @classmethod
@@ -149,3 +149,11 @@ class TestInterGroup:
         assert ch41.natoms == 4
         assert ch41.nbonds == 4
                 
+class TestGroupGeometry:
+    
+    def test_move(self, H2O):
+        opos = H2O.positions
+        vec = np.array([1, 2, 3])
+        H2O.move(vec)
+        npos = H2O.positions
+        assert np.array_equal(opos+vec, npos)

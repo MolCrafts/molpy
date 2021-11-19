@@ -25,10 +25,10 @@ class TestItem:
         assert item.check_properties(name=str)
         
     def test_set(self, item):
-        item.set('prop2', 'test')
+        setattr(item, 'prop2', 'test')
         
     def test_get(self, item):
-        assert item.get('prop2') == 'test'
+        assert getattr(item, 'prop2') == 'test'
         
 class TestNode:
     

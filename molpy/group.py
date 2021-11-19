@@ -737,7 +737,7 @@ class Group(Graph):
         """
         newGroup = Group(name)
         newGroup.addAtoms(group.atoms)
-        newGroup.addbonds(*group.bonds)
+        newGroup.addBonds(*group.bonds)
         
         return newGroup
     
@@ -746,7 +746,16 @@ class Group(Graph):
         tmp.update(kwargs)
         return tmp
     
-    def move(self, *args):
+    @property
+    def positions(self):
+        tmp = []
+        for atom in self.atoms:
+            tmp.append(atom.position)
+        return np.array(tmp)
+    
+    def move(self, vec):
+        for atom in self.atoms:
+            atom.move(vec)
         return self
     
     def rot(self, *args):

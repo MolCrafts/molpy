@@ -62,6 +62,11 @@ def C6():
     yield C6
 
 @pytest.fixture()
+def particle():
+    p = mp.Atom('particle', key='value', position=np.array([0., 0., 0.]))
+    yield p
+
+@pytest.fixture()
 def CH4():
     CH4 = mp.Group('CH4')
     CH4.addAtom(mp.Atom('C', element='C'))
@@ -105,10 +110,9 @@ def H2O(SPCEforcefield):
     #  h1  h2
     #   \ /
     #    o
-    o = mp.Atom('o', atomType=ff.atomTypes['O'], position=np.array([0.0000000, 0.000000, 0.00000]))
+    o = mp.Atom('o', atomType=ff.atomTypes['O'], position=np.array([0.0000000, 0.000000, 0.00000]), key='value')
     h1 = mp.Atom('h1', atomType=ff.atomTypes['H'], position=np.array([0.8164904, 0.5773590, 0.00000]))
     h2 = mp.Atom('h2', atomType=ff.atomTypes['H'], position=np.array([-0.8164904, 0.5773590, 0.00000]))
-    
     h2o = mp.Group('h2o')
     h2o.addAtoms([o, h1, h2])
     h2o.addBondByName('o', 'h1', bondType=ff.bondTypes['OH'])

@@ -12,13 +12,19 @@ class TestAtom:
     
     @pytest.fixture(scope='class')
     def H2O(self):
-        O = mp.Atom('O')
+        O = mp.Atom('O', key='value')
         H1 = Atom('H1')
         H2 = Atom('H2')
-        
+        assert O.key == 'value'
+        assert O.properties['key'] == 'value'
         O.bondto(H1)
         O.bondto(H2)
         yield O, H1, H2
+        
+    def test_init(self):
+        particle = mp.Atom('particle', key='value', position=np.array([1., 2., 3]))
+        assert particle.key == 'value'
+        assert np.array_equal(particle.position, np.array([1., 2., 3]))
         
     def test_element(self, H2O):
         O, H1, H2 = H2O
@@ -34,8 +40,7 @@ class TestAtom:
         O, H1, H2 = H2O
         O.removeBond(H1)
         assert len(O.bondedAtoms) == 1
-        with pytest.raises(KeyError):
-            assert O.bonds[H1]
+        assert H1 not in O.bonds
             
     def test_copy(self, H2O):
         O, H1, H1 = H2O
@@ -47,3 +52,12 @@ class TestAtom:
         assert Onew._bondInfo == {}
         assert Onew.test == O.test
         assert Onew.uuid != O.uuid
+        
+class TestAtomGeometry:
+    
+    def test_move(self, particle):
+        opos = np.array(particle.position) 
+        vec = np.array([1, 2, 3])
+        particle.move(vec)
+        npos = particle.position
+        assert np.array_equal(opos+vec, npos)

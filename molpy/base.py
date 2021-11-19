@@ -48,16 +48,10 @@ class Item:
                 else:
                     raise TypeError(f'requires {k} is {v} but {type(kv)}')
         return True
-    
-    def get(self, property, default=None):
-        return getattr(self, property, default)
-    
-    def set(self, property, value):
-        setattr(self, property, value)
-        
+      
     def update(self, attr):
         for k, v in attr.items():
-            self.set(k, v)
+            setattr(self, k, v)
         
     def __eq__(self, o):
         return self.uuid == o.uuid

@@ -102,7 +102,7 @@ def read_pdb(fileobj, **kwargs):
 
         if line.startswith("END"):
             
-            for key, groupAtoms in groupby(atoms, key=lambda atom: atom.get('resSeq')):
+            for key, groupAtoms in groupby(atoms, key=lambda atom: getattr(atom, 'resSeq')):
                 groupAtoms = list(groupAtoms)
                 g = Group(key)
                 g.addAtoms(groupAtoms)

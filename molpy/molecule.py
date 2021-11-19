@@ -64,3 +64,8 @@ class Molecule(Group):
     @property
     def atoms(self):
         return self._atomList
+    
+    def move(self, vec):
+        for atom in self.atoms:
+            atom.move(vec)
+        return self

@@ -21,9 +21,6 @@ class Atom(Node):
         super().__init__(name)
         self._bondInfo = {}  # bondInfo = {Atom: Bond}
         self.update(attr)
-        self._position = None
-        self._atomType = None
-        self._element = None
 
     # def __getattribute__(self, key):
     #     """ if key in __dict__:
@@ -143,3 +140,8 @@ class Atom(Node):
         return self._atomType
 
     atomType = property(getAtomType, setAtomType)
+
+    def move(self, vec):
+        
+        self._position.__iadd__(vec)
+        return self

@@ -25,7 +25,7 @@ class TestAngle:
         
     def test_equal(self, angle, angleType):
         assert angle.atomNameEqualTo(angleType)
-        angleType.render(angle)
+        angle.angleType = angleType
         assert angle.style == 'harmonic'
         assert angle.k == 30.0
         assert angle.theta0 == 114
