@@ -20,11 +20,10 @@ class TestLAMMPS:
             for j in range(2):
                 for k in range(2):
                     
-                    h2o = H2O(name=f'h2o{l}').move(np.array([1*i, 1*j, 1*k]))
+                    h2o = H2O(name=f'h2o{l}').move(np.array([3.1*i, 3.1*j, 3.1*k]))
                     system.addMolecule(h2o)
                     l += 1
                     
-        system.mapping()
         system.complete() 
         
         toLAMMPS('lmp.data.test', system, atom_style='full')

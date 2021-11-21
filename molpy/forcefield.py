@@ -20,17 +20,15 @@ class Template(Group):
         
 class TypeBase(Item):
     
-    typeID = 1
-    types = {}
-    
     def __new__(cls, name, **attr):
         
-        if name in TypeBase.types:
-            return TypeBase.types[name]
+        if name in cls.types:
+            return cls.types[name]
         else:
             ins = super().__new__(cls)
-            TypeBase.types[name] = ins
-            TypeBase.typeID += 1
+            cls.types[name] = ins
+            cls.typeID += 1
+            ins.typeID = cls.typeID
             return ins
     
     def __init__(self, name) -> None:
@@ -38,11 +36,17 @@ class TypeBase(Item):
     
 class AtomType(TypeBase):
     
+    typeID = 0
+    types = {}
+    
     def __init__(self, name, **attr) -> None:
         super().__init__(name)
         self.update(attr)
         
 class BondType(TypeBase):
+    
+    typeID = 0
+    types = {}
     
     def __init__(self, name, **attr) -> None:
         super().__init__(name)
@@ -50,11 +54,17 @@ class BondType(TypeBase):
 
 class AngleType(TypeBase):
     
+    typeID = 0
+    types = {}
+    
     def __init__(self, name, **attr) -> None:
         super().__init__(name)
         self.update(attr)
         
 class DihedralType(TypeBase):
+    
+    typeID = 0
+    types = {}
     
     def __init__(self, name, **attr) -> None:
         super().__init__(name)

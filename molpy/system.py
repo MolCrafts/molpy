@@ -129,50 +129,6 @@ class System(Item):
         self._bondList.extend(molecule.bonds)
         self._angleList.extend(molecule.angles)
         self._dihedralList.extend(molecule.dihedrals)
-
-    def mapping(self, start=1):
-        
-        # TODO: It is not decide whether to specify the ID during generation or add it uniformly at last
-        
-        # atom id mapping
-        
-        for id, atom in enumerate(self._atomList, start=1):
-            atom.id = id
-            
-        for id, group in enumerate(self._groupList, start=1):
-            group.id = id
-            
-        for id, molecule in enumerate(self.molecules, start=1):
-            molecule.id = id
-            for atom in molecule.atoms:
-                atom.molid = id
-
-        # atom type mapping
-        atomTypeMap = {}
-        atomTypes = self.forcefield.atomTypes
-        for i, atomType in enumerate(atomTypes.values(), start):
-            atomTypeMap[atomType.name] = i
-
-        for i, molecule in enumerate(self._molecules.values(), start):
-            molecule.molid = i
-
-        for i, bond in enumerate(self.bonds, start):
-            bond.id = i
-
-        
-
-        # for i, bondType in enumerate(self.bondTypes.values(), start):
-        #     bondType.type
-
-        # angleTypeMap = {}
-        # angleTypes = self.forcefield.angleTypes
-        # for i, angleType in enumerate(angleTypes.values(), start):
-        #     angleTypeMap[angleType.name] = i
-
-        # dihedralTypeMap = {}
-        # dihedralTypes = self.forcefield.dihedralTypes
-        # for i, dihedralType in enumerate(dihedralTypes.values(), start):
-        #     dihedralTypeMap[dihedralType.name] = i
             
     @property
     def atomTypes(self):
@@ -211,6 +167,11 @@ class System(Item):
         atoms = self._atomList
         for id, atom in enumerate(atoms, 1):
             atom.id = id
+        if not hasattr(atoms[0], 'molid'):
+            for id, molecule in enumerate(self._molecules.values(), 1):
+                molecule.molid = id
+                for atom in molecule.atoms:
+                    atom.molid = id
             
         return atoms
     
