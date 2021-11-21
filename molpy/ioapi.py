@@ -3,7 +3,6 @@
 # date: 2021-10-17
 # version: 0.0.1
 
-from typing import Dict
 from molpy.atom import Atom
 from molpy.group import Group
 from molpy.io.pdb import read_pdb
@@ -15,7 +14,7 @@ from molpy.io.xml import read_xml_forcefield
 
 __all__ = ['full', 'fromPDB', 'fromLAMMPS', 'fromXML', 'fromNetworkXGraph', 'toLAMMPS']
 
-def full(groupName, atomNames, **properties):
+def full(groupName, atomNames, addBondByIndex=None, **properties):
     """ build up a group with atoms
 
     Args:
@@ -32,6 +31,10 @@ def full(groupName, atomNames, **properties):
     group = Group(groupName)
     for atom in _atoms:
         group.add(atom)
+        
+    if addBondByIndex is not None:
+        for i in addBondByIndex:
+            group.addBondByIndex(*i)
         
     return group
 

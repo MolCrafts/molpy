@@ -37,23 +37,26 @@ def write_lmp(fileobj, system, **kwargs):
     f.write('Atoms\n\n')
     if kwargs['atom_style'] == 'full':
         for atom in system.atoms:
-            f.write(f'\t{atom.id}\t{atom.molid}\t{atom.typeID}\t{atom.charge}\t{atom.x}\t{atom.y}\t {atom.z}\n')
+            f.write(f'\t{atom.id}\t{atom.molid}\t{atom.typeID}\t{atom.charge:.4f}\t{atom.x:.4f}\t{atom.y:.4f}\t {atom.z:.4f}\n')
             
     f.write('\n')
-            
-    f.write('Bonds\n\n')
-    for bond in system.bonds:
-        f.write(f'\t{bond.id}\t{bond.typeID}\t{bond.atom.id}\t{bond.btom.id}\n')
+    
+    if system.bonds:            
+        f.write('Bonds\n\n')
+        for bond in system.bonds:
+            f.write(f'\t{bond.id}\t{bond.typeID}\t{bond.atom.id}\t{bond.btom.id}\n')
   
-    f.write('\n')
+        f.write('\n')
         
-    f.write('Angles\n\n')
-    for angle in system.angles:
-        f.write(f'\t{angle.id}\t{angle.typeID}\t{angle.itom.id}\t{angle.jtom.id}\t{angle.ktom.id}\n')
+    if system.angles:
+        f.write('Angles\n\n')
+        for angle in system.angles:
+            f.write(f'\t{angle.id}\t{angle.typeID}\t{angle.itom.id}\t{angle.jtom.id}\t{angle.ktom.id}\n')
         
-    f.write('\n')
+        f.write('\n')
         
-    f.write('Dihedrals\n\n')
-    for dihedral in system.dihedrals:
-        f.write(f'\t{dihedral.id}\t{dihedral.typeID}\t{dihedral.itom.id}\t{dihedral.jtom.id}\t{dihedral.ktom.id}\t{dihedral.ltom.id}\n')
+    if system.dihedrals:
+        f.write('Dihedrals\n\n')
+        for dihedral in system.dihedrals:
+            f.write(f'\t{dihedral.id}\t{dihedral.typeID}\t{dihedral.itom.id}\t{dihedral.jtom.id}\t{dihedral.ktom.id}\t{dihedral.ltom.id}\n')
         

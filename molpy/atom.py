@@ -3,10 +3,12 @@
 # date: 2021-10-17
 # version: 0.0.1
 
+
 from molpy.base import Node
 from molpy.element import Element
 from molpy.bond import Bond
 import numpy as np
+from copy import deepcopy
 
 
 class Atom(Node):
@@ -18,23 +20,18 @@ class Atom(Node):
         Args:
             name (str): Highly recommand set atom name uniquely, which can help you find any atom in a group or system
         """
-        super().__init__(name)
+        super().__init__(name, **attr)
         self._bondInfo = {}  # bondInfo = {Atom: Bond}
-        self.update(attr)
 
-    # def __getattribute__(self, key):
-    #     """ if key in __dict__:
-    #             return atom.key
-    #         else:
-    #             return __getattr__(key)
-
-    #     Args:
-    #         key (str): attribute
-    #     """
-    #     pass
-
-    def __getattr__(self, key):
-        return getattr(self.atomType, key)
+    def __getattr__(self, name):
+        
+        
+        if 'atomType' in self.__dict__:
+            return getattr(self.atomType, name)
+        elif 'element' in self.__dict__:
+            return getattr(self.element, name)
+        else:
+            raise AttributeError
 
     @property
     def position(self):
@@ -65,8 +62,11 @@ class Atom(Node):
         Returns:
             Bond: bond formed
         """
-        bond = self._bondInfo.get(atom, Bond(self, atom, **attr))
-        bond.update(attr)
+        if atom in self._bondInfo:
+            # TODO: update attr
+            bond = self._bondInfo[atom]
+        else:
+            bond = Bond(self, atom, **attr)
 
         if atom not in self._bondInfo:
             self._bondInfo[atom] = bond
@@ -96,8 +96,16 @@ class Atom(Node):
 
     @property
     def bonds(self):
-        return dict(self._bondInfo)
-
+        return list(self._bondInfo.values())
+    
+    def getBond(self, btom):
+        return self._bondInfo[btom]
+    
+    def getBondByAtomName(self, btomName):
+        for btom in self.bondedAtoms:
+            if btom.name == btomName:
+                return self._bondInfo[btom]
+            
     def getElement(self):
         return self._element
 
@@ -106,40 +114,16 @@ class Atom(Node):
 
     element = property(fget=getElement, fset=setElement)
 
-    def copy(self):
-        """Return a new atom which has same properties with this one, but It total another instance. We don't recommand you to use deepcopy() to duplicate.
-
-        Returns:
-            Atom: new atom instance
-        """
-        atom = Atom(self.name)
-        atom.update(self._attr)
-
-        return atom
-
     def getPosition(self):
         return self._position
 
     def setPosition(self, position):
-        position = np.asarray(position)
+        position = np.array(position)
         if position.shape != (3,):
             assert ValueError(f"shape of position is wrong")
         self._position = position
 
     position = property(getPosition, setPosition)
-
-    def setAtomType(self, atomType):
-        ele = getattr(atomType, "element", None)
-        if ele is None:
-            pass
-        else:
-            self.element = ele
-        self._atomType = atomType
-
-    def getAtomType(self):
-        return self._atomType
-
-    atomType = property(getAtomType, setAtomType)
 
     def move(self, vec):
         

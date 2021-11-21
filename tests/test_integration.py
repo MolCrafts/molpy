@@ -6,9 +6,7 @@
 import molpy as mp
 import pytest
 import numpy as np
-import profile
 
-from molpy import element
 from molpy.cell import Cell
 from molpy.system import System
 

@@ -21,14 +21,15 @@ class TestItem:
     def test_hash(self, item):
         assert hash(item)
         
-    def test_chech(self, item):
-        assert item.check_properties(name=str)
-        
     def test_set(self, item):
         setattr(item, 'prop2', 'test')
         
     def test_get(self, item):
         assert getattr(item, 'prop2') == 'test'
+        
+    def test_copy(self, item):
+        item1 = item()
+        assert item1.uuid != item.uuid
         
 class TestNode:
     

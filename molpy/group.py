@@ -22,7 +22,7 @@ class Group(Graph):
         Args:
             name (str): group's name
         """
-        super().__init__(name)
+        super().__init__(name, **attr)
         self._atoms = {}
         self._atomList = [] # [Atom]
         self._atomIndices = {}
@@ -32,9 +32,8 @@ class Group(Graph):
         self._angleList = []
         self._dihedrals = {}
         self._dihedralList = []
-        self.update(attr)
             
-    def add(self, item, copy=False):
+    def add(self, item):
         """(leave for backward compatible)Add an atom or something to this group. Unless the object passed is an atom instance or it not works.
 
         Args:
@@ -42,9 +41,9 @@ class Group(Graph):
             copy (bool, optional): [description]. Defaults to False.
         """
         if isinstance(item, Atom):
-            self.addAtom(item, copy)
+            self.addAtom(item)
         
-    def addAtom(self, atom: Atom, copy=False):
+    def addAtom(self, atom: Atom):
         """Add an atom to this group.
 
         Args:
@@ -52,14 +51,13 @@ class Group(Graph):
             copy (bool, optional): if call atom.copy(). Defaults to False.
         """
         if atom not in self._atomList:
-            if copy:
-                atom = atom.copy()
+
             self._atomIndices[atom] = len(self._atomList)
             self._atomList.append(atom)
             self._atoms[atom.name] = atom
             atom.parent = self
                 
-    def addAtoms(self, atoms, copy=False):
+    def addAtoms(self, atoms):
         """add a sequence of atoms.
 
         Args:
@@ -67,7 +65,7 @@ class Group(Graph):
             copy (bool, optional): if call atom.copy(). Defaults to False.
         """
         for atom in atoms:
-            self.addAtom(atom, copy)
+            self.addAtom(atom)
             
     def removeAtom(self, atom: Atom):
         """remove atom from this group, but not deconstruct it.
@@ -82,14 +80,14 @@ class Group(Graph):
         
         bonds = self._bonds
         try:
-            nbrs = list(bonds[atom.uuid])  # list handles self-loops (allows mutate)
+            nbrs = list(bonds[atom])  # list handles self-loops (allows mutate)
         except KeyError as err:  # NetworkXError if n not in self
             raise KeyError(f"{atom} is not in the group.") from err
         for u in nbrs:
-            bond = bonds[u][atom.uuid]
+            bond = bonds[u][atom]
             del bonds[u]  # remove all edges atom-u in graph
             self._bondList.remove(bond)
-        del bonds[atom.uuid]
+        del bonds[atom]
 
         
     def removeAtoms(self, atoms):
@@ -157,15 +155,17 @@ class Group(Graph):
         """
 
         bond = atom.bondto(btom, **attr)
-        if atom.uuid not in self._bonds:
-            self._bonds[atom.uuid] = {}
-        self._bonds[atom.uuid][btom.uuid] = bond
+        if atom not in self._bonds:
+            self._bonds[atom] = {}
+        self._bonds[atom][btom] = bond
 
-        if btom.uuid not in self._bonds:
-            self._bonds[btom.uuid] = {}
-        self._bonds[btom.uuid][atom.uuid] = bond
+        if btom not in self._bonds:
+            self._bonds[btom] = {}
+        self._bonds[btom][atom] = bond
         if bond not in self._bondList:
             self._bondList.append(bond)
+            
+        return bond
         
     def addBonds(self, atomList, **attr):
         """Batch add bonds. atomList followed format, [(atom, btom)] without bond's properties, or [(atom, btom, {key: value})]. Dict in the atomList is the special properties for the bond, and attr is the general properties for all bond. Special property will cover properties in attr.
@@ -535,7 +535,7 @@ class Group(Graph):
         """
         atom = self.getAtomByName(name1)
         btom = self.getAtomByName(name2)
-        self.addBond(atom, btom, **bondType)
+        return self.addBond(atom, btom, **bondType)
     
     def getBondByIndex(self, atomIdx, atomJdx):
         """get a bond by its atom'index
@@ -551,8 +551,8 @@ class Group(Graph):
         atom1 = atoms[atomIdx]
         atom2 = atoms[atomJdx]
         try:
-            assert atom1.bonds[atom2] == atom1.bondto(atom2)
-            return atom1.bonds[atom2]
+            assert atom1.getBond(atom2) == atom1.bondto(atom2)
+            return atom1.getBond(atom2)
         except KeyError:
             return None
     
@@ -643,21 +643,22 @@ class Group(Graph):
             tmp[atom] = self.neighbors(atom)
         return tmp
     
-    def copy(self, name: str=None):
-        """Return a new group. Both its atoms and its properties are copied.
+    # def copy(self, **attr):
+    #     """Return a new group. Both its atoms and its properties are copied.
 
-        Returns:
-            [type]: [description]
-        """
-        if name is None:
-            name = self.name
-        g = Group(name)
-        g.update(self._attr)
-        g.addAtoms(self.atoms, copy=True)
-        for bond in self.bonds:
-            atom, btom = bond
-            g.addBondByName(atom.name, btom.name, **bond._attr)
-        return g
+    #     Returns:
+    #         [type]: [description]
+    #     """
+    #     name = attr.get('name', self.name)
+    #     g = Group(name, **self.properties)
+    #     g.update(attr)
+    #     atoms = [atom() for atom in self.atoms]
+    #     g.addAtoms(atoms)
+    #     for bond in self.bonds:
+    #         atom, btom = bond
+    #         print(bond.properties)
+    #         g.addBondByName(atom.name, btom.name, **bond.properties)
+    #     return g
         
     def bondto(self, group, atom, btom, mode=Literal['a', 'c']):
         if not isinstance(group, Group):
@@ -685,9 +686,9 @@ class Group(Graph):
         
     def setAtomTypes(self, atomTypes: Iterable):
         
-        self._set_per_atom(atomTypes, 'setAtomType')
+        for atom, atomType in zip(self.atoms, atomTypes):
+            atom.atomType = atomType
 
-            
     def getAtomTypes(self):
         atoms = self.atoms
         at = []
@@ -719,16 +720,16 @@ class Group(Graph):
             group.removeAtom(btom)
             bond = atom1.bondto(btom1, **attr)
             
-        if atom.uuid not in self._bonds:
-            self._bonds[atom.uuid] = {}
-        if btom.uuid not in group._bonds:
-            group._bonds[btom.uuid] = {}
-        self._bonds[atom.uuid][btom.uuid] = bond
-        group._bonds[btom.uuid][atom.uuid] = bond
+        if atom not in self._bonds:
+            self._bonds[atom] = {}
+        if btom not in group._bonds:
+            group._bonds[btom] = {}
+        self._bonds[atom][btom] = bond
+        group._bonds[btom][atom] = bond
         self._bondList.append(bond)
         group._bondList.append(bond)  
     
-    def merge(self, name, group, copy=False):
+    def merge(self, name, group):
         """ return a new group that merge multiple groups
 
         Args:
@@ -740,11 +741,6 @@ class Group(Graph):
         newGroup.addBonds(*group.bonds)
         
         return newGroup
-    
-    def __call__(self, **kwargs):
-        tmp = self.copy()
-        tmp.update(kwargs)
-        return tmp
     
     @property
     def positions(self):
@@ -760,3 +756,4 @@ class Group(Graph):
     
     def rot(self, *args):
         return self
+    

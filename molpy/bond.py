@@ -12,10 +12,9 @@ class Bond(Edge):
             name = attr['name']
         else:
             name = f'< Bond {atom.name}-{btom.name} >'
-        super().__init__(name)
+        super().__init__(name, **attr)
         self._atom = atom
         self._btom = btom
-        self.update(attr)
     
     def __iter__(self):
         return iter((self._atom, self._btom))
@@ -24,6 +23,8 @@ class Bond(Edge):
         return self.name
     
     def __getattr__(self, key):
+        if 'bondType' not in self.__dict__:
+            raise KeyError(f'{key} not in {self} and its bondType')
         return getattr(self.bondType, key)
     
     @property

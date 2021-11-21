@@ -1,4 +1,5 @@
 import molpy as mp
+from molpy.group import Group
 
 atom = mp.Atom("test")
 group = mp.Group("test")
@@ -102,7 +103,7 @@ def SPCEforcefield():
     yield ff
     
 @pytest.fixture()
-def H2O(SPCEforcefield):
+def H2O(SPCEforcefield) -> Group:
     ff = SPCEforcefield
     #
     # file "spce_simple.lt"

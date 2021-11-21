@@ -14,12 +14,10 @@ class Molecule(Group):
         self._groups = {}
         self._groupList = []
         
-    def addGroup(self, group: Group, copy=False):
+    def addGroup(self, group: Group):
         
         if group.name in self._groups:
             raise KeyError(f'group {group.name} has defined, please change its name')
-        if copy:
-            group = group.copy()
         
         self._groups[group.name] = group
         self._groupList.append(group)
@@ -30,6 +28,7 @@ class Molecule(Group):
         self._angleList.extend(group._angleList)
         # self._dihedrals.update(group._dihedrals)
         self._dihedralList.extend(group._dihedralList)
+        group.parent = self
 
     def getAtomByName(self, atomName):
         atomName, groupName = atomName.split('@')
@@ -37,33 +36,37 @@ class Molecule(Group):
         atom = group.getAtomByName(atomName)
         return atom
     
-    @property
-    def natoms(self):
-        return reduce(lambda ans, g: ans+g.natoms, self._groupList, 0)
+    # @property
+    # def natoms(self):
+    #     return reduce(lambda ans, g: ans+g.natoms, self._groupList, 0)
+    
+    # @property
+    # def nbonds(self):
+    #     return len(self._bondList)
     
     @property
-    def nbonds(self):
-        return len(self._bondList)
+    def ngroups(self):
+        return len(self._groupList)
     
     @property
     def groups(self):
         return self._groupList
     
-    @property
-    def angles(self):
-        return self._angleList
+    # @property
+    # def angles(self):
+    #     return self._angleList
     
-    @property
-    def dihedrals(self):
-        return self._dihedralList
+    # @property
+    # def dihedrals(self):
+    #     return self._dihedralList
     
-    @property
-    def bonds(self):
-        return self._bondList
+    # @property
+    # def bonds(self):
+    #     return self._bondList
     
-    @property
-    def atoms(self):
-        return self._atomList
+    # @property
+    # def atoms(self):
+    #     return self._atomList
     
     def move(self, vec):
         for atom in self.atoms:

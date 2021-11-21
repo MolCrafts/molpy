@@ -1,20 +1,11 @@
-import numpy as np
+from copy import deepcopy
 
 class A:
     
-    def __init__(self):
-        self.position = np.array([1, 2, 3])
-
-class As:
-    
-    def __init__(self):
-        self._positions = []
-        self._as = []
-
-    def add(self, a):
-        self._as.append(a)
-        self._positions.append(a.position)
+    def __init__(self) -> None:
+        self.data = {'key': 'value'}
+        self.stable = 'stable'
+        self.myself = self
         
-    @property
-    def positions(self):
-        return np.asarray(self._positions)
+a = A()
+aa = deepcopy(a)

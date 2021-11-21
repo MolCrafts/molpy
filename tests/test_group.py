@@ -3,6 +3,7 @@
 # date: 2021-10-17
 # version: 0.0.1
 
+from copy import deepcopy
 import pytest
 import molpy as mp
 import numpy as np
@@ -27,6 +28,18 @@ class TestGroup:
 
         yield K3, k3nodes     
         
+    def test_addAtom(self, particle):
+        g = mp.Group('test')
+        g.addAtom(particle)
+        assert np.array_equal(particle.position, g.atoms[-1].position)
+        assert g.atoms[-1].uuid == particle.uuid
+        
+        g.addAtom(particle())
+        assert np.array_equal(particle.position, g.atoms[-1].position)
+        assert g.atoms[-1].uuid != particle.uuid
+        
+    
+    
     def test_atoms(self, CH4, C6):
         assert len(CH4.atoms) == 5
         assert len(C6.atoms) == 12
@@ -83,16 +96,21 @@ class TestGroup:
 
     def test_copy(self, CH4):
         
-        CH4new = CH4.copy()
-        assert CH4new.atoms[0].nbondedAtoms == CH4.atoms[0].nbondedAtoms
+        for bond in CH4.bonds:
+            assert bond.atom in CH4.atoms
         
-        assert CH4new.natoms == CH4.natoms
-        assert CH4new.nbonds == CH4.nbonds
-        assert CH4new.uuid != CH4.uuid
-        assert CH4new.getAtomByName('C').uuid != CH4.getAtomByName('C').uuid
+        ch4 = CH4(name=f'ch4')
+        assert ch4.natoms == CH4.natoms
+        assert ch4.nbonds == CH4.nbonds
+        assert ch4.atoms[-1] != CH4.atoms[-1]
+        assert np.array_equal(ch4.atoms[-1].position, CH4.atoms[-1].position)
+        for bond in ch4.bonds:
+            assert bond.atom in ch4.atoms
         
     def test_removeAtom(self, CH4):
         ch4 = CH4()
+        assert ch4.natoms == 5
+        assert ch4.nbonds == 4
         ch4.removeAtom(ch4.atoms[1])
         assert ch4.natoms == 4
         assert ch4.nbonds == 3
@@ -109,17 +127,31 @@ class TestGroupTopo:
         assert cls.ring3.natoms == 3
         assert cls.ring3.nbonds == 3
     
-    def testSerachAngle(self):
+    def testSerachAngle(self, CH4):
         assert len(self.linear5.searchAngles()) == 3
         assert len(self.K5.searchAngles()) == 30
         assert len(self.ring3.searchAngles()) == 3
         assert len(self.ring4.searchAngles()) == 4
+        assert len(CH4.searchAngles()) == 6
         
     def testSearchDihedral(self):
         assert len(self.linear5.searchDihedrals()) == 2
         assert len(self.ring3.searchDihedrals()) == 0
         assert len(self.ring4.searchDihedrals()) == 4
         assert len(self.K5.searchDihedrals()) == 60
+        
+    def testAddBondByName(self):
+        g = mp.Group('test')
+        a = mp.Atom('a')
+        b = mp.Atom('b')
+        g.addAtoms([a, b])
+        g.addBondByName('a', 'b')
+        for bond in g.bonds:
+            assert bond.atom in g.atoms
+            
+        gg = g()
+        for bond in gg.bonds:
+            assert bond.atom in gg.atoms        
         
 class TestInterGroup:
     
@@ -136,16 +168,16 @@ class TestInterGroup:
         
     def test_addition(self, CH4):
         
-        ch41 = CH4.copy()
-        ch42 = CH4.copy()
-        ch41.reacto(ch42, method='addition', atomName='H2', btomName='H0', copy=True)
+        ch41 = CH4()
+        ch42 = CH4()
+        ch41.reacto(ch42, method='addition', atomName='H2', btomName='H0')
         assert ch41.nbonds == 5
         
     def test_condensation(self, CH4):
         
-        ch41 = CH4.copy()
-        ch42 = CH4.copy()
-        ch41.reacto(ch42, method='concentration', atomName='H2', btomName='H0', copy=True)
+        ch41 = CH4()
+        ch42 = CH4()
+        ch41.reacto(ch42, method='concentration', atomName='H2', btomName='H0')
         assert ch41.natoms == 4
         assert ch41.nbonds == 4
                 
@@ -153,7 +185,63 @@ class TestGroupGeometry:
     
     def test_move(self, H2O):
         opos = H2O.positions
-        vec = np.array([1, 2, 3])
+        vec = np.array([1, 1, 1])
         H2O.move(vec)
         npos = H2O.positions
         assert np.array_equal(opos+vec, npos)
+        for i in range(5):
+            opos = H2O.positions
+            newH2O = H2O(name=f'{i}')
+            assert id(newH2O) != id(H2O)
+            newH2O = newH2O.move(vec)
+            npos = newH2O.positions
+            print('H2O: ', H2O.positions[0])
+            print('new: ', npos[0])
+            assert np.array_equal(opos+vec, npos)
+
+class TestGroupCopy:
+    
+    @pytest.fixture(scope='function')
+    def g(self):
+        
+        g = mp.full('g', [f'a{i}' for i in range(5)], position=np.arange(15).reshape((5, 3)), addBondByIndex=[[0, 1], [1, 2], [2, 3], [3, 4]])
+        
+        
+        yield g
+    
+    def test_group_copy(self, g):
+        
+        gcopy = deepcopy(g)
+        
+        assert g.name == gcopy.name
+        assert g.natoms == gcopy.natoms
+        assert [atom.uuid for atom in g.atoms] != [atom.uuid for atom in gcopy.atoms]
+        g.atoms[0].position == (0, 0, 0)
+        assert np.array_equal(gcopy.atoms[0].position, np.array([0, 1, 2]))
+        
+    def test_bond_copy(self, g):
+        
+        gcopy = deepcopy(g)
+
+        assert g.nbonds == gcopy.nbonds
+        assert gcopy.bonds[0].atom == gcopy.atoms[0]
+        assert gcopy.bonds[0].btom == gcopy.atoms[1]
+        
+        assert g._bonds.keys() != gcopy._bonds.keys()
+        
+    def test_uniformity(self, g):
+        
+        a = g.atoms[0]
+        b = g.atoms[1]
+        
+        a.key = 1
+        b.key = 1
+        assert g.bonds[0].atom.key == 1
+        assert g.bonds[0].btom.key == 1
+        
+        gg = g()
+        assert gg.atoms[0].key == 1
+        assert gg.atoms[0].key == 1
+        assert gg.bonds[0].atom.key == 1
+        assert gg.bonds[0].btom.key == 1
+        assert gg.bonds[0].atom != a or gg.bonds[0].btom != b    
