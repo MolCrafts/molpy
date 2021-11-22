@@ -30,7 +30,7 @@ def write_lmp(fileobj, system, **kwargs):
     # mess section
     f.write('Masses\n\n')
     for atomType in system.atomTypes.values():
-        f.write(f'\t{atomType.typeID}\t{atomType.mass}\n')
+        f.write(f'\t{atomType.typeID}\t{atomType.mass}   # {atomType.name}\n')
         
     f.write('\n')
         
@@ -43,6 +43,12 @@ def write_lmp(fileobj, system, **kwargs):
     
     if system.bonds:            
         f.write('Bonds\n\n')
+        
+        # for bondType in system.bondTypes.values():
+        #     f.write(f'\t# {bondType.typeID} {bondType.name}\n')
+            
+        # f.write('\n')
+        
         for bond in system.bonds:
             f.write(f'\t{bond.id}\t{bond.typeID}\t{bond.atom.id}\t{bond.btom.id}\n')
   

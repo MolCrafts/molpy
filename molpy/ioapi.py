@@ -12,7 +12,7 @@ import importlib
 
 from molpy.io.xml import read_xml_forcefield
 
-__all__ = ['full', 'fromPDB', 'fromLAMMPS', 'fromXML', 'fromNetworkXGraph', 'toLAMMPS']
+# __all__ = ['full', 'fromPDB', 'fromLAMMPS', 'fromXML', 'fromNetworkXGraph', 'toLAMMPS']
 
 def full(groupName, atomNames, addBondByIndex=None, **properties):
     """ build up a group with atoms
@@ -90,3 +90,25 @@ def fromJAXMD():
 
 def toJraph(group, node_features, edge_features, ):
     pass
+
+def trace(item, sites, anchor=None):
+    
+    if anchor is None:
+        if item.itemType == 'Atom':
+            itemPos = item.position
+        elif item.itemType == 'Group' or item.itemType == 'Molecule':
+            itemPos = item.positions[0]
+            
+    else:
+        itemPos = anchor.position
+        
+    # calculate displacement vector
+    disVecs = sites - itemPos
+    
+    tmp = []
+    for i, disVec in enumerate(disVecs):
+        icopy = item(name=f'{item.name}-{i}').move(disVec)
+        tmp.append(icopy)
+        
+    return tmp
+    

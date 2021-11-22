@@ -6,6 +6,8 @@
 import pytest
 import networkx as nx
 from molpy import fromNetworkXGraph
+import molpy as mp
+import numpy as np
 
 class TestNetworkX:
 
@@ -25,3 +27,17 @@ class TestNetworkX:
         assert G.natoms == 5
         assert G.nbonds == 10
         
+class TestAuxiliaryMethod:
+    
+    def test_trace(self, particle):
+        
+        rng = np.random.default_rng()
+        sites = rng.random((5, 3))
+        
+        particleList = mp.trace(particle, sites)
+        
+        tmp = []
+        for atom in particleList:
+            tmp.append(atom.position)
+            
+        assert np.array_equal(sites, np.array(tmp))
