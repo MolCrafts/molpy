@@ -207,33 +207,40 @@ class System(Item):
         
         return dihes
 
-    def complete(self):
+    def complete(self, noAngle=True, noDihedral=True):
+        
+        self.noAngle = noAngle
+        self.noDihedral = noDihedral
 
-        atomTypes = self.forcefield.atomTypes
-        bondTypes = self.forcefield.bondTypes
-        angleTypes = self.forcefield.angleTypes
-        dihedralTypes = self.forcefield.dihedralTypes
+        # atomTypes = self.forcefield.atomTypes
+        # bondTypes = self.forcefield.bondTypes
+        # angleTypes = self.forcefield.angleTypes
+        # dihedralTypes = self.forcefield.dihedralTypes
 
         # template matching, set up topology
 
         # find angles, dihedrals etc.
-        for mol in self._molecules.values():
-
-            mol.searchAngles()
-            self._angleList.extend(mol._angleList)
-            mol.searchDihedrals()
-            self._dihedralList.extend(mol._dihedralList)
+        if not noAngle:
+            for mol in self._molecules.values():
+                self._angleList.extend(mol.searchAngles())
+        if not noDihedral:
+            for mol in self._molecules.values():
+                self._dihedralList.extend(mol.searchDihedrals())
 
         # ff::atomTypes -> atoms
+        # check template first
+        for atom in self.atoms:
+            self.forcefield.renderAtom(atom)
 
         # ff::bondTypes -> bonds
+        for bond in self.bonds:
+            self.forcefield.renderBond(bond)
 
         # ff::angleTypes -> angles
         # TODO: very dirty
-        for angle in self._angleList:
-            self.forcefield.matchAngleType(angle)
-            assert angle.angleType
+        for angle in self.angles:
+            self.forcefield.renderAngle(angle)
 
         # ff::dihedrals -> dihedrals
-
-        #
+        for dihedral in self.dihedrals:
+            self.forcefield.renderDihedral(dihedral)

@@ -7,6 +7,11 @@
 # Temporary files
 *.test
 
+# project files
+
+work*
+test.py
+
 ### C ###
 # Prerequisites
 *.d
