@@ -6,12 +6,10 @@
 from typing import Literal
 import numpy as np
 
-class Cell:
+class Box:
     
     def __init__(self, dimension: Literal[2, 3], boundary_condition: Literal['ppp'], **kwargs) -> None:
-        
-        
-        
+
         if dimension == 2:
             assert len(boundary_condition) == 2
             

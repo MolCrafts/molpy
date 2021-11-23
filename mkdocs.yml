@@ -14,11 +14,8 @@ repo_name: Roy-Kid/molpy
 
 nav:
     - Home: index.md
-    - demo: demo.ipynb
     - References: 
-        - item.md
-        - atom.md
-        - group.md
+        - tutorial.md
 
 plugins:
     - mkdocs-jupyter:

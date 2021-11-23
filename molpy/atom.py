@@ -8,8 +8,6 @@ from molpy.base import Node
 from molpy.element import Element
 from molpy.bond import Bond
 import numpy as np
-from copy import deepcopy
-
 
 class Atom(Node):
     """Atom describes all the properties attached on an atom."""
@@ -24,7 +22,6 @@ class Atom(Node):
         self._bondInfo = {}  # bondInfo = {Atom: Bond}
 
     def __getattr__(self, name):
-        
         
         if 'atomType' in self.__dict__:
             return getattr(self.atomType, name)
@@ -118,7 +115,7 @@ class Atom(Node):
         return self._position
 
     def setPosition(self, position):
-        position = np.array(position)
+        position = np.array(position, dtype=float)
         if position.shape != (3,):
             assert ValueError(f"shape of position is wrong")
         self._position = position
@@ -126,6 +123,9 @@ class Atom(Node):
     position = property(getPosition, setPosition)
 
     def move(self, vec):
-        
-        self._position.__iadd__(vec)
+        self._position += vec
+        return self
+    
+    def moveTo(self, vec):
+        self._position = vec
         return self

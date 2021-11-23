@@ -7,13 +7,14 @@ from molpy.base import Item
 from molpy.atom import Atom
 from molpy.group import Group
 from molpy.molecule import Molecule
+import numpy as np
 
 
 class System(Item):
     def __init__(self, name) -> None:
         super().__init__(name)
 
-        self.cell = None
+        self.box = None
         self.forcefield = None
 
         self._atomList = []
@@ -25,8 +26,8 @@ class System(Item):
         self._unitType = None
         self._units = None
 
-    def setCell(self, cell):
-        self.cell = cell
+    def setbox(self, box):
+        self.box = box
 
     def setForcefield(self, forcefield):
         # self.forcefield[forcefield.name] = forcefield
@@ -52,32 +53,32 @@ class System(Item):
 
     @property
     def xlo(self):
-        return self.cell.xlo
+        return self.box.xlo
 
     @property
     def xhi(self):
-        return self.cell.xhi
-    
+        return self.box.xhi
+
     @property
     def ylo(self):
-        return self.cell.ylo
+        return self.box.ylo
 
     @property
     def yhi(self):
-        return self.cell.yhi
-    
+        return self.box.yhi
+
     @property
     def zlo(self):
-        return self.cell.zlo
+        return self.box.zlo
 
     @property
     def zhi(self):
-        return self.cell.zhi
+        return self.box.zhi
 
     @property
     def natoms(self):
         return len(self._atomList)
-    
+
     @property
     def nmolecules(self):
         return len(self._molecules)
@@ -89,11 +90,11 @@ class System(Item):
     @property
     def nangles(self):
         return len(self._angleList)
-    
+
     @property
     def ndihedrals(self):
         return len(self._dihedralList)
-    
+
     def promote(self, item):
 
         m = Molecule(item.name)
@@ -119,29 +120,34 @@ class System(Item):
 
     def addMolecule(self, molecule):
 
-        if molecule.itemType == "Group":
+        if molecule.itemType == "Group" or molecule.itemType == "Atom":
             molecule = self.promote(molecule)
+        assert molecule.itemType == "Molecule", TypeError(
+            f"{molecule} if not Molecule and it can not be promoted to Molecule"
+        )
         if molecule.name in self._molecules:
-            raise KeyError(f'molecule {molecule.name} is already defined in the system.')
+            raise KeyError(
+                f"molecule {molecule.name} is already defined in the system."
+            )
         self._molecules[molecule.name] = molecule
         self._atomList.extend(molecule.atoms)
         self._groupList.extend(molecule.groups)
         self._bondList.extend(molecule.bonds)
         self._angleList.extend(molecule.angles)
         self._dihedralList.extend(molecule.dihedrals)
-            
+
     @property
     def atomTypes(self):
         return self.forcefield.atomTypes
-    
+
     @property
     def bondTypes(self):
         return self.forcefield.bondTypes
-    
+
     @property
     def angleTypes(self):
         return self.forcefield.angleTypes
-    
+
     @property
     def dihedralTypes(self):
         return self.forcefield.dihedralTypes
@@ -167,48 +173,48 @@ class System(Item):
         atoms = self._atomList
         for id, atom in enumerate(atoms, 1):
             atom.id = id
-        if not hasattr(atoms[0], 'molid'):
+        if not hasattr(atoms[0], "molid"):
             for id, molecule in enumerate(self._molecules.values(), 1):
                 molecule.molid = id
                 for atom in molecule.atoms:
                     atom.molid = id
-            
+
         return atoms
-    
+
     @property
     def groups(self):
         return self._groupList
-    
+
     @property
     def molecules(self):
         return self._molecules.values()
-    
+
     @property
     def bonds(self):
         bonds = self._bondList
         for id, bond in enumerate(bonds, 1):
             bond.id = id
-            
+
         return bonds
-    
+
     @property
     def angles(self):
         angles = self._angleList
         for id, angle in enumerate(angles, 1):
             angle.id = id
-            
+
         return angles
-    
+
     @property
     def dihedrals(self):
         dihes = self._dihedralList
         for id, dihe in enumerate(dihes, 1):
             dihe.id = id
-        
+
         return dihes
 
-    def complete(self, noAngle=True, noDihedral=True):
-        
+    def complete(self, noAngle=False, noDihedral=False):
+
         self.noAngle = noAngle
         self.noDihedral = noDihedral
 
@@ -230,17 +236,57 @@ class System(Item):
         # ff::atomTypes -> atoms
         # check template first
         for atom in self.atoms:
-            self.forcefield.renderAtom(atom)
+            if not hasattr(atom, "atomType"):
+                self.forcefield.renderAtom(atom)
 
         # ff::bondTypes -> bonds
         for bond in self.bonds:
-            self.forcefield.renderBond(bond)
+            if not hasattr(bond, "bondType"):
+                self.forcefield.renderBond(bond)
 
         # ff::angleTypes -> angles
         # TODO: very dirty
         for angle in self.angles:
-            self.forcefield.renderAngle(angle)
+            if not hasattr(angle, "angleType"):
+                self.forcefield.renderAngle(angle)
 
         # ff::dihedrals -> dihedrals
         for dihedral in self.dihedrals:
-            self.forcefield.renderDihedral(dihedral)
+            if not hasattr(dihedral, "dihedralType"):
+                self.forcefield.renderDihedral(dihedral)
+
+    @property
+    def charge(self):
+        charge = 0
+        for atom in self.atoms:
+            charge += getattr(atom, "charge", 0)
+        return charge
+
+    def addSolvent(
+        self,
+        solute,
+        ionicStrength=None,
+        number=None,
+    ):
+
+        if ionicStrength is None and number is None:
+            raise ValueError(f"either specify ionicStrength or number")
+
+        if ionicStrength is not None:
+            number = int((ionicStrength - self.charge) / solute.charge)
+            if number <= 0:
+                raise ValueError()
+
+            # TODO: use packing module instead
+            rng = np.random.default_rng()
+            rng.standard_normal(())
+            vec = np.array(
+                (
+                    rng.uniform(self.xlo, self.xhi, 1),
+                    rng.uniform(self.ylo, self.yhi, 1),
+                    rng.uniform(self.zlo, self.zhi, 1),
+                )
+            )
+
+        for i in range(number):
+            self.addMolecule(solute(name=f"{solute.name}-{i}").moveTo(vec))

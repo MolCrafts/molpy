@@ -266,13 +266,15 @@ class ForceField:
 
     def renderAngle(self, angle):
         
-        if angle.name in self._angleTypes:
-            angle.type = self._angleTypes[angle.type.name]
+        for angleType in self.angleTypes.values():
+            if angleType.match(angle):
+                angleType.render(angle)
             
     def renderDihedral(self, dihedral):
         
-        if dihedral.name in self._dihedralTypes:
-            dihedral.type = self._dihedralTypes[dihedral.type.name]           
+        for dihedralType in self.dihedralTypes.values():
+            if dihedralType.match(dihedral):
+                dihedralType.render(dihedral)        
         
     def matchGroupOfBonds(self, group: Group, template: Group):
         groupBonds = sorted(group.getBonds())

@@ -16,109 +16,72 @@
 
 ## Quick start
 
-使用这个工具非常容易, 首先像numpy一样导入
-
+像numpy一样导入
 ```python
 import numpy as np
 import molpy as mp
 ```
-
-与python的思想一样, `molpy`将所有的信息储存为一个python实例, 其基类为`Item`(下文中`Item`泛指一切`molpy`对象, 其中首字母大写指代类, 小写则是实例). 每一个分子都是由很多原子(`Atom`)键接(`atom.bondto(btom)`)而成, 每个原子将储存着与它相邻的原子(`atom._bondInfo`), 整个分子形成一个相互连通的图(`Group/Molecule`). 为了理解这种层级结构, 我们手动新建一个水分子
-
+像搭建乐高®一样搭建分子
 ```python
 # 定义一个原子
 H1 = Atom('H1')
 H2 = Atom('H2')
 O = Atom('O')
-
-# 定义键接关系
-O.bondto(H1)
-O.bondto(H2)
-
 # 定义一个容器
 H2O = Group('H2O')
-H2O.addAtom(H1)
-H2O.addAtom(H2)
-H2O.addAtom(O)
+H2O.addAtoms([H1, H2, O])
+# 定义键接关系
+H2O.addBondByName('H1', 'O')
+H2O.addBondByName('H2', 'O')
 ```
-`Group`中储存了原子和拓扑信息, 同时也是一级命名空间. `Group`中的`Atom.name`不允许有重复, 否则难以查找. 每一个`atom`可以动态附加各种原子信息, 例如`atom.velocity`等. 有一些属性是特殊的, 例如`atom.atomType`只能接受`atomType`实例, 这个实例全局共享, 具有相同的`atomType`的原子的属性都会同步更改. `Atom`的`element`属性也是一个非常特别的类, 它提供了标准的元素信息. 当你设置它的元素符号或者名称, 他将自动转化为元素类的实例, 只其中提供了原子序数, 相对原子质量等各种参数. 
-
+自动搜索拓扑结构
 ```python
-O.element = 'O'
->>> O.element
->>> <Element oxygen>
+H2O.searchAngles()
+H2O.searchDihedrals()
 ```
-
-为了保持对各种信息的追踪, 我们通常用`forcefield`类来管理各种类型
-
+一次定义参数, 直接应用全局
 ```python
-ff = mp.ForceField('h2o')
+ff = ForceField('SPCE')
 H = ff.defAtomType('H', mass=1.001, charge=0.3, element='H')
 O = ff.defAtomType('O', mass=15.9994, charge=-0.6, element='O)
 OHbond = ff.defBondType('OH', style='harmonic', r0=0.99, k=1.12)
 HOHangle = ff.defAngleType('HOH', style='harmonic', theta0=108, k=0.8)
-```
-> 在以后的版本中我们提供单位模块, 方便单位的转换和换算. 
-我们现在有了水的各个原子信息, 和力场信息. 针对拓扑结构, `molpy`支持两种风格的构建: moltemplate 和 openmm 风格
 
-moltemplate风格指, 我们手动提供原子间的键接信息, `molpy`负责搜索`angle/dihedral/improper`:
-
-```python
-H2O.addBondByName('O', 'H1')
-H2O.addBondByName('O', 'H2')
-# 或者根据加入原子的顺序
-# H2O.addBondByIndex(0, 2)
-# H2O.addBondByIndex(1, 2)
-```
-
-openmm风格指, 我们提供一个分子的模板, `molpy`根据模板补全拓扑信息:
-
-```python
-ff.registTemplate(H2OT)  # H2OT 是一个well-defined的分子, 定义方法和H2O相同;
-template = ff.match(H2O) # 搜索到匹配的模板, 
-ff.patch(H2O, template)  # 通过模板补全分子.
-```
-
-这样, 我们可以将体系中所有分子的拓扑信息补充完整. 接下来是将力场中的信息复制到相对应的对象中, 例如`atomType`, `bondType`等
-
-```python
 ff.render(H2O)
->>> H2O.natoms 
->>> 3
->>> H2O.atoms[0].name
->>> 'H1'
->>> H2O.atoms[2].mass
->>> 1.001
->>> H2O.getBonds()
->>> [<Bond H1-O>, <Bond H2-O>]
->>> H2O.getAngles()
->>> [<Angle H1-O-H2>, ]
 ```
-
-对于分子的图神经网络, 我们还可以给出描述分子内拓扑距离的`covalentMap`
-
+完全基于面向对象编程, 信息立等可取
 ```python
-atomlist, covalentMap = H2O.getCovalentMap()
->>> atomlist
->>> [< Atom H1 >, < Atom H2 >, < Atom O >]
->>> covalentMap 
->>> [[0 2 1]
-     [2 0 1]
-     [1 2 0]]
+>>> H2O.getAtomByName('H1')
+<Atom H1>
+>>> H2O.getAtomByName('H1').position
+array([1, 2, 3])
+>>> H2O.bonds
+[<Bond H1-O>, <Bond H2-O>]
+>>> H2O.bonds[0].length
+1.08
 ```
-
-为了输出到MD软件所需要的格式, 我们需要提供一个`System`类来储存包括模拟盒子, 周期性边界等信息. 同时, 以上的工作也可以通过封装好的命令自动完成
-
+可对任意分子/基团进行空间调整
 ```python
-system = mp.System("PE with Np=120")
-system.cell = mp.Cell(3, "ppp", xlo=0, xhi=100, ylo=0, yhi=100, zlo=0, zhi=100)
-system.forcefield = ff = mp.ForceField("LJ ff", unit="LJ")
-
-system.addMolecule(H2O)  # 如果不是Molecule类, 会自动提升
-system.complete()
-toLAMMPS('H2O.data', system, atom_style="full")
-
+H1.move((1,2,3))       # 平移一个矢量
+H2O.rot(132, 1, 0, 0)  # 欧拉角旋转
 ```
+使用Python构建您的分子就是如此简单!
+
+## Quick Installation 
+
+暂时还没有推送到conda和pip上, 因此需要手动clone仓库
+在自己的代码文件开头添加路径
+```python
+import sys
+sys.path.append("/home/roy/work/molpy")
+import molpy as mp
+```
+
+## 设计理念
+
+**命名空间**: 每一级都是独立命名空间, 因此可以按照层级和名字查找任意一个对象
+
+**面向对象**: 完全面向对象, 所有信息直接附加在python实例上
 
 ## roadmap:
 
@@ -136,11 +99,11 @@ toLAMMPS('H2O.data', system, atom_style="full")
 
 ### 外围工作
 
-* 数据输入输出: 读入输出其他格式的文件
-* 调用其他程序: 直接调用其他QM/MM程序
-* 脚本核心结构: 人类友好的脚本API和存储
-* 脚本输入输出: 生成不同软件需要的脚本
-* 分析模块构建: 预制的分子结构分析工具
+* 数据输入输出: 读入输出其他格式的文件  (逐步完善中)
+* 调用其他程序: 直接调用其他QM/MM程序  (准备封装dpdispatcher)
+* 脚本核心结构: 人类友好的脚本API和存储  (脚本部分独立为ChemRosetta)
+* 脚本输入输出: 生成不同软件需要的脚本  
+* 分析模块构建: 预制的分子结构分析工具  (增加Frame*类处理轨迹)
 * 分析模块扩展: 更容易增加分析功能插件
 
 ### 锦上添花

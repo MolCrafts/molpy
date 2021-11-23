@@ -21,6 +21,7 @@ class TestAngle:
         ff = mp.ForceField('test')
         at = ff.defAngleType('ijk', itomName='i', jtomName='j', ktomName='k', style='harmonic', k=30.0, theta0=114) 
         assert at is not None
+        assert at.typeID
         yield at
         
     def test_equal(self, angle, angleType):

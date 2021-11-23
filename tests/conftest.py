@@ -99,7 +99,13 @@ def SPCEforcefield():
     
     ff.defBondType('OH', style='harmonic', k='1000.0', r0='1.0')
     
-    ff.defAngleType('HOH', style='harmonic', k='1000.0', theta0='109.47', itomName='h1', jtomName='o', ktomName='h2')
+    def angleMatchFunc(angle):
+        if angle.jtom.atomType.name == 'O':
+            if angle.itom.atomType.name == 'H' and angle.ktom.atomType.name == 'H':
+                return True
+        return False
+    
+    ff.defAngleType('HOH', style='harmonic', k='1000.0', theta0='109.47', matchFunc=angleMatchFunc)
     yield ff
     
 @pytest.fixture()

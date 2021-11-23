@@ -244,3 +244,4 @@ cython_debug/
 !tests/samples/*
 
 # End of https://www.toptal.com/developers/gitignore/api/python,c,c++,visualstudiocode
+.vercel

@@ -39,12 +39,17 @@ class Angle(Item):
     def __repr__(self) -> str:
         return self.name
     
-    def __getattr__(self, name):
+    # def __getattr__(self, name):
         
-        if 'angleType' in super().__getattribute__('__dict__'):
-            return getattr(self.angleType, name)
-        else:
-            raise KeyError(f'{self} has no {name}')
+        # if 'angleType' in super().__getattribute__('__dict__'):
+        #     return getattr(self.angleType, name)
+        # else:
+        #     raise KeyError(f'{self} has no {name}')
+        
+    def __getattr__(self, key):
+        if 'angleType' not in self.__dict__:
+            raise AttributeError(f'{key} not in {self} and its angleType')
+        return getattr(self.angleType, key)
     
     def atomNameEqualTo(self, angle):
         
