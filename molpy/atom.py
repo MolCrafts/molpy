@@ -109,6 +109,9 @@ class Atom(Node):
     def getElement(self):
         return self._element
     
+    def getRadii(self):
+        return self._element._radii
+    
     def getSymbol(self):
         return self._element.symbol
     

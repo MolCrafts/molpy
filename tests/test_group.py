@@ -38,8 +38,11 @@ class TestGroup:
         assert np.array_equal(particle.position, g.atoms[-1].position)
         assert g.atoms[-1].uuid != particle.uuid
         
-    
-    
+    def test_radii(self, CH4):
+        radii = CH4.getRadii();
+        assert radii[0] == mp.element.COVALENT_RADII["C"]
+        assert radii[1] == mp.element.COVALENT_RADII["H"]
+
     def test_atoms(self, CH4, C6):
         assert len(CH4.atoms) == 5
         assert len(C6.atoms) == 12
