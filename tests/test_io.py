@@ -6,7 +6,13 @@
 import pytest
 import networkx as nx
 from molpy import fromNetworkXGraph
+from molpy import fromASE
+import numpy as np
 
+try:
+    import ase.build.molecule                     
+except ImportError:
+    pass;
 class TestNetworkX:
 
     def test_from_path_graph(self):
@@ -24,4 +30,16 @@ class TestNetworkX:
         G = fromNetworkXGraph('complete_graph', nx.complete_graph(5))
         assert G.natoms == 5
         assert G.nbonds == 10
+    
+    def test_from_ase(self):
+        mol = ase.build.molecule("bicyclobutane")
+        g   = fromASE(mol)
+        symbols = mol.get_chemical_symbols()
+        g_symbols = g.getSymbols()
+        assert len(symbols) == len(g_symbols)
+        assert all([a == b for a, b in zip(symbols, g_symbols)])    
+        dpos = g.positions - mol.get_positions()
+        assert not np.any(dpos)
+
+    
         

@@ -13,7 +13,9 @@ from copy import deepcopy
 
 class Atom(Node):
     """Atom describes all the properties attached on an atom."""
-
+    # __slots__ = ('_bondInfo', "_element", "_position", "properties"
+    # "key", "parent", "atomType", "type", "serial", "occupancy", "bfactor", "segid",
+    # "RecordName", "altLoc", "charge", "resName", "chainID", "resSeq", "iCode")
     def __init__(self, name, **attr) -> None:
         """Initialize an atom.
 
@@ -24,8 +26,6 @@ class Atom(Node):
         self._bondInfo = {}  # bondInfo = {Atom: Bond}
 
     def __getattr__(self, name):
-        
-        
         if 'atomType' in self.__dict__:
             return getattr(self.atomType, name)
         elif 'element' in self.__dict__:
@@ -105,10 +105,16 @@ class Atom(Node):
         for btom in self.bondedAtoms:
             if btom.name == btomName:
                 return self._bondInfo[btom]
-            
+
+    def getName(self):
+        return self.name
+
     def getElement(self):
         return self._element
-
+    
+    def getSymbol(self):
+        return self._element.symbol
+    
     def setElement(self, symbol):
         self._element = Element.getBySymbol(symbol)
 
