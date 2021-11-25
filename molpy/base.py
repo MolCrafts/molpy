@@ -8,7 +8,7 @@ __all__ = ['Node', 'Graph', 'Edge']
 from copy import deepcopy
 
 class Item:
-    
+    # __slots__ = ("_name", "_itemType", "prop1", "prop2", "__dict__")
     def __init__(self, name, **attr) -> None:
         self.update(attr)
         # self._uuid = id(self)
@@ -84,11 +84,9 @@ class Node(Item):
         super().__init__(name, **attr)
                 
 class Edge(Item):
-    
     def __init__(self, name, **attr) -> None:
         super().__init__(name, **attr)
         
 class Graph(Item):
-    
     def __init__(self, name, **attr) -> None:
         super().__init__(name, **attr)

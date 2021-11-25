@@ -6,8 +6,14 @@
 import pytest
 import networkx as nx
 from molpy import fromNetworkXGraph
-import molpy as mp
+from molpy import fromASE
 import numpy as np
+import molpy as mp
+
+try:
+    import ase.build.molecule                     
+except ImportError:
+    pass
 
 class TestNetworkX:
 
@@ -41,3 +47,14 @@ class TestAuxiliaryMethod:
             tmp.append(atom.position)
             
         assert np.array_equal(sites, np.array(tmp))
+    
+    def test_from_ase(self):
+        mol = ase.build.molecule("bicyclobutane")
+        g   = fromASE(mol)
+        symbols = mol.get_chemical_symbols()
+        g_symbols = g.getSymbols()
+        assert len(symbols) == len(g_symbols)
+        assert all([a == b for a, b in zip(symbols, g_symbols)])    
+        dpos = g.positions - mol.get_positions()
+        assert not np.any(dpos)
+

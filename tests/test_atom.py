@@ -36,6 +36,9 @@ class TestAtom:
         O, H1, H2 = H2O
         O.element = 'O'
         assert O.element.mass.magnitude == 15.99943
+        assert O.getSymbol() == 'O'
+        with pytest.raises(KeyError):
+            O.element = 'UNK_ElEMENT'
         
     def test_bond(self, H2O):
         O, H1, H2 = H2O

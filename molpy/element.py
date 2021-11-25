@@ -142,6 +142,35 @@ class Element(object):
         elif isinstance(e, str):
             return self._symbol == e
 
+# copy from lammps_interface/atomic.py
+METALS = [3, 4, 11, 12, 13, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+          37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 55, 56, 57,
+          58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74,
+          75, 76, 77, 78, 79, 80, 81, 82, 83, 87, 88, 89, 90, 91, 92, 93, 94,
+          95, 96, 97, 98, 99, 100, 101, 102, 103]
+
+# keeping track of some different groups of atoms.
+organic = set(["H", "C", "N", "O", "S"])
+non_metals = set(["H", "He", "C", "N", "O", "F", "Ne",
+                  "P", "S", "Cl", "Ar", "Se", "Br", "Kr",
+                  "I", "Xe", "Rn"])
+noble_gases = set(["He", "Ne", "Ar", "Kr", "Xe", "Rn"])
+metalloids = set(["B", "Si", "Ge", "As", "Sb", "Te", "At"])
+lanthanides = set(["La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu",
+                   "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu"])
+actinides = set(["Ac", "Th", "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk",
+                 "Cf", "Es", "Fm", "Md", "No", "Lr"])
+transition_metals = set(["Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni",
+                         "Cu", "Zn", "Y", "Zr", "Nb", "Mo", "Tc", "Ru",
+                         "Rh", "Pd", "Ag", "Cd", "Hf", "Ta", "W", "Re",
+                         "Os", "Ir", "Pt", "Ir", "Pt", "Au", "Hg", "Rf",
+                         "Db", "Sg", "Bh", "Hs", "Mt", "Ds", "Rg", "Cn"])
+alkali = set(["Li", "Na", "K", "Rb", "Cs", "Fr"])
+alkaline_earth = set(["Be", "Mg", "Ca", "Sr", "Ba", "Ra"])
+main_group = set(["Al", "Ga", "Ge", "In", "Sn", "Sb", "Tl", "Pb", "Bi",
+                  "Po", "At", "Cn", "Uut", "Fl", "Uup", "Lv", "Uus"])
+
+metals = main_group | alkaline_earth | alkali | transition_metals | metalloids
 
 wildcard =       Element(  0, 'wildcard', '*', 0*daltons)
 hydrogen =       Element(  1, "hydrogen", "H", 1.007947*daltons)
@@ -261,6 +290,10 @@ ununtrium =      Element(113, "ununtrium",      "Uut", 284*daltons)
 ununquadium =    Element(114, "ununquadium",    "Uuq", 289*daltons)
 ununpentium =    Element(115, "ununpentium",    "Uup", 288*daltons)
 ununhexium =     Element(116, "ununhexium",     "Uuh", 292*daltons)
+
+# default unsettled element
+unknownium =     Element(1000, "unknown",       "UNK", 0*daltons)
+
 # Aliases to recognize common alternative spellings. Both the '==' and 'is'
 # relational operators will work with any chosen name
 sulphur = sulfur

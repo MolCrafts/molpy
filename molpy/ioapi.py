@@ -7,12 +7,8 @@ from molpy.atom import Atom
 from molpy.group import Group
 from molpy.io.pdb import read_pdb
 from molpy.io.lmp import write_lmp
-import numpy as np
-import importlib
-
+from molpy.io.ase import read_ASE_atoms
 from molpy.io.xml import read_xml_forcefield
-
-# __all__ = ['full', 'fromPDB', 'fromLAMMPS', 'fromXML', 'fromNetworkXGraph', 'toLAMMPS']
 
 def full(groupName, atomNames, addBondByIndex=None, **properties):
     """ build up a group with atoms
@@ -42,6 +38,9 @@ def fromPDB(fpath, index=None):
     with open(fpath, 'r') as f:
         group = read_pdb(f, index=None)
     return group
+
+def fromASE(ase_atoms) -> Group:
+    return read_ASE_atoms(ase_atoms)
 
 def fromLAMMPS():
     pass

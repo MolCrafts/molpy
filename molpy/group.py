@@ -710,7 +710,14 @@ class Group(Graph):
         for atom in atoms:
             eles.append(atom.element)
         return eles
-    
+    def getSymbols(self):
+        atoms = self.atoms
+        symbols = []
+        for atom in atoms:
+            symbols.append(atom.getSymbol())
+        return symbols
+        
+
     def reacto(self, group, method:Literal['addition', 'concentration'], atom=None, btom=None, atomName=None, btomName=None, **attr):
         if atomName is not None:
             atom = self.getAtomByName(atomName)

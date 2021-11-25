@@ -102,10 +102,16 @@ class Atom(Node):
         for btom in self.bondedAtoms:
             if btom.name == btomName:
                 return self._bondInfo[btom]
-            
+
+    def getName(self):
+        return self.name
+
     def getElement(self):
         return self._element
-
+    
+    def getSymbol(self):
+        return self._element.symbol
+    
     def setElement(self, symbol):
         self._element = Element.getBySymbol(symbol)
 
