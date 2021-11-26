@@ -109,8 +109,11 @@ class Atom(Node):
     def getElement(self):
         return self._element
     
-    def getRadii(self):
-        return self._element._radii
+    def getRadii(self) -> float:
+        return self._radii
+    
+    def setRadii(self, value : float):
+        self._radii = value
     
     def getSymbol(self):
         return self._element.symbol
@@ -121,6 +124,7 @@ class Atom(Node):
 
     def setElement(self, symbol):
         self._element = Element.getBySymbol(symbol)
+        self._radii   = self._element._radii
 
     element = property(fget=getElement, fset=setElement)
 

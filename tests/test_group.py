@@ -42,6 +42,15 @@ class TestGroup:
         radii = CH4.getRadii();
         assert radii[0] == mp.element.COVALENT_RADII["C"]
         assert radii[1] == mp.element.COVALENT_RADII["H"]
+        radii[2] = 10
+        CH4.setRadii(radii)
+        radii = CH4.getRadii();
+        assert radii[2] == 10;
+        print(mp.element.COVALENT_RADII["C"])
+        CH4.setRadii_by(mp.element.COVALENT_RADII)
+        radii = CH4.getRadii();
+        assert radii[2] == mp.element.COVALENT_RADII["H"];
+
 
     def test_atoms(self, CH4, C6):
         assert len(CH4.atoms) == 5
