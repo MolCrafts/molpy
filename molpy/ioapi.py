@@ -7,15 +7,17 @@ from molpy.atom import Atom
 from molpy.group import Group
 from molpy.io.pdb import read_pdb
 from molpy.io.lmp import write_lmp
-from molpy.io.ase import read_ASE_atoms
+from molpy.io.ase import read_ASE_atoms, read_CIF, read_ASE_atoms_S, read_CIF_S, toASE_atoms
+from molpy.system import System
+
 import numpy as np
 import importlib
 
 from molpy.io.xml import read_xml_forcefield
 
-__all__ = ['full', 'fromPDB', 'fromLAMMPS', 'fromASE', 'fromXML', 'fromNetworkXGraph', 'toLAMMPS']
+__all__ = ['full', 'fromPDB', 'fromLAMMPS', 'fromASE', 'fromASE_S', 'toASE', 'fromCIF', 'fromCIF_S', 'fromXML', 'fromNetworkXGraph', 'toLAMMPS']
 
-def full(groupName, atomNames, addBondByIndex=None, **properties):
+def full(groupName, atomNames, addBondByIndex=None, **properties) -> Group:
     """ build up a group with atoms
 
     Args:
@@ -39,18 +41,30 @@ def full(groupName, atomNames, addBondByIndex=None, **properties):
         
     return group
 
-def fromPDB(fpath, index=None):
+def fromPDB(fpath : str, index=None) -> Group:
     with open(fpath, 'r') as f:
         group = read_pdb(f, index=None)
     return group
 
-def fromASE(ase_atoms) -> Group:
-    return read_ASE_atoms(ase_atoms)
+def fromASE(aseAtoms) -> Group:
+    return read_ASE_atoms(aseAtoms)
+
+def fromASE_S(aseAtoms) -> System:
+    return read_ASE_atoms_S(aseAtoms)
+
+def fromCIF(fpath : str, fromLabel : bool = True, **kwargs) -> Group:
+    return read_CIF(fpath, fromLabel, **kwargs)
+    
+def fromCIF_S(fpath : str, fromLabel : bool = True, **kwargs) -> System:
+    return read_CIF_S(fpath, fromLabel, **kwargs)
+
+def toASE(mpObj):
+    return toASE_atoms(mpObj)
 
 def fromLAMMPS():
     pass
 
-def fromXML(fpath, type='forcefield'):
+def fromXML(fpath : str, type='forcefield'):
     with open(fpath, 'r') as f:
         if type == 'forcefield':
             ff = read_xml_forcefield(f)

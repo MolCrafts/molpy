@@ -5,6 +5,7 @@
 
 import pytest
 import molpy as mp
+import numpy as np
 
 class TestSystem:
     
@@ -27,3 +28,5 @@ class TestSystem:
         assert system.nbonds == 12
         assert system.nangles == 18
         assert system.ndihedrals == 24
+
+

@@ -17,3 +17,8 @@ class TestCell:
         assert cell3D.xlo == 0
         assert cell3D.x_boundary_condition == 'p'
         assert cell3D.lx == 1
+    
+    def test_cell3D_lxyz(self):
+        cell = mp.Cell(3, 'ppp', lx=1.0, ly=3.0, lz=4.0)
+        assert cell.lx == 1
+        assert cell.volume == pytest.approx(12, 1e-8)
