@@ -2,7 +2,7 @@
 # contact: lijichen365@126.com
 # date: 2021-11-17
 # version: 0.0.1
-from typing import Iterable
+from typing import Iterable, List, Dict
 
 from molpy.base import Item
 from molpy.atom import Atom
@@ -56,6 +56,18 @@ class System(Item):
         assert len(positions) == len(atoms)
         for i, pos in enumerate(positions):
             atoms[i].position = pos
+
+    def setRadii(self, radii : List[float]):
+        atoms = self.atoms
+        assert len(radii) == len(atoms)
+        for iR, iA in zip(radii, atoms):
+            iA.setRadii(iR)
+    
+    def setRadii_by(self, radii : Dict[str, float], attr = "symbol"):
+        atoms = self.atoms
+        for iA in atoms:
+            iAttr = getattr(iA, attr)
+            iA.setRadii(radii[iAttr])
     
     def getPositions(self):
         natoms = self.natoms
@@ -85,6 +97,20 @@ class System(Item):
         atoms = self.atoms
         max_radii = max(iA.getRadii() for iA in atoms)
         return 2.0 * max_radii + bin
+    
+    def getAttr_set(self, attr : str = "symbol"):
+        atoms = self.atoms
+        values_set = set()
+        for iA in atoms:
+            values_set.update(getattr(iA, attr))
+        return values_set
+
+    def getAttr(self, attr : str = "symbol"):
+        atoms = self.atoms
+        values = []
+        for iA in atoms:
+            values.append(getattr(iA, attr))
+        return values
 
     @property
     def xlo(self):

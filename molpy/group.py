@@ -3,7 +3,7 @@
 # date: 2021-10-17
 # version: 0.0.1
 
-from typing import Literal, Iterable, List, Dict, Union
+from typing import Literal, Iterable, List, Dict
 from molpy.angle import Angle
 from molpy.base import Graph
 from molpy.atom import Atom
@@ -143,7 +143,6 @@ class Group(Graph):
         atoms = self.atoms
         for iA in atoms:
             iAttr = getattr(iA, attr)
-            print(iAttr)
             iA.setRadii(radii[iAttr])
 
     @property
@@ -742,6 +741,20 @@ class Group(Graph):
             R[i] = atom.getPosition()
 
         return R
+
+    def getAttr_set(self, attr : str = "symbol"):
+        atoms = self.atoms
+        values_set = set()
+        for iA in atoms:
+            values_set.update(getattr(iA, attr))
+        return values_set
+
+    def getAttr(self, attr : str = "symbol"):
+        atoms = self.atoms
+        values = []
+        for iA in atoms:
+            values.append(getattr(iA, attr))
+        return values
 
     def setAtomTypes(self, atomTypes: Iterable):
 
