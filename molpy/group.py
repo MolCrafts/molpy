@@ -3,7 +3,7 @@
 # date: 2021-10-17
 # version: 0.0.1
 
-from typing import Literal, Iterable, List
+from typing import Literal, Iterable, List, Dict, Union
 from molpy.angle import Angle
 from molpy.base import Graph
 from molpy.atom import Atom
@@ -120,7 +120,7 @@ class Group(Graph):
         """
         return [iA.name for iA in self._atomList]
 
-    def setNames(self, names: List[str]) -> None:
+    def setNames(self, names: List[str]):
         """reset all the name of the atoms in this group
 
         Args:
@@ -132,6 +132,19 @@ class Group(Graph):
             raise IndexError
         for i, iA in enumerate(atomList):
             iA.name = names[i]
+
+    def setRadii(self, radii : List[float]):
+        atoms = self.atoms
+        assert len(radii) == len(atoms)
+        for iR, iA in zip(radii, atoms):
+            iA.setRadii(iR)
+    
+    def setRadii_by(self, radii : Dict[str, float], attr = "symbol"):
+        atoms = self.atoms
+        for iA in atoms:
+            iAttr = getattr(iA, attr)
+            print(iAttr)
+            iA.setRadii(radii[iAttr])
 
     @property
     def natoms(self):
