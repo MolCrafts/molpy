@@ -13,9 +13,10 @@ from itertools import dropwhile, combinations
 
 from molpy.dihedral import Dihedral
 
+
 class Group(Graph):
-    """Group describes a bunch of atoms which connect with others and represents a molecule or a functional gropu
-    """
+    """Group describes a bunch of atoms which connect with others and represents a molecule or a functional gropu"""
+
     def __init__(self, name, **attr):
         """Initialize a group.
 
@@ -24,15 +25,15 @@ class Group(Graph):
         """
         super().__init__(name, **attr)
         self._atoms = {}
-        self._atomList = [] # [Atom]
+        self._atomList = []  # [Atom]
         self._atomIndices = {}
-        self._bonds = {} # _bonds: {atom.uuid: {btom.uuid: Bond, ctom.uuid: Bond}}
+        self._bonds = {}  # _bonds: {atom.uuid: {btom.uuid: Bond, ctom.uuid: Bond}}
         self._bondList = []
         self._angles = {}
         self._angleList = []
         self._dihedrals = {}
         self._dihedralList = []
-            
+
     def add(self, item):
         """(leave for backward compatible)Add an atom or something to this group. Unless the object passed is an atom instance or it not works.
 
@@ -42,7 +43,7 @@ class Group(Graph):
         """
         if isinstance(item, Atom):
             self.addAtom(item)
-        
+
     def addAtom(self, atom: Atom):
         """Add an atom to this group.
 
@@ -56,7 +57,7 @@ class Group(Graph):
             self._atomList.append(atom)
             self._atoms[atom.name] = atom
             atom.parent = self
-                
+
     def addAtoms(self, atoms):
         """add a sequence of atoms.
 
@@ -66,7 +67,7 @@ class Group(Graph):
         """
         for atom in atoms:
             self.addAtom(atom)
-            
+
     def removeAtom(self, atom: Atom):
         """remove atom from this group, but not deconstruct it.
 
@@ -77,7 +78,7 @@ class Group(Graph):
             KeyError: WHEN atom not in this group
         """
         self._atomList.remove(atom)
-        
+
         bonds = self._bonds
         try:
             nbrs = list(bonds[atom])  # list handles self-loops (allows mutate)
@@ -89,7 +90,6 @@ class Group(Graph):
             self._bondList.remove(bond)
         del bonds[atom]
 
-        
     def removeAtoms(self, atoms):
         """remove a set of atoms
 
@@ -99,11 +99,11 @@ class Group(Graph):
         for atom in atoms:
             self._atomList.remove(atom)
             self.removeAtom(atom)
-        
+
     @property
     def atoms(self):
         return self._atomList
-    
+
     def getAtoms(self):
         """return all the atoms in this group
 
@@ -119,10 +119,10 @@ class Group(Graph):
             List[name]: a list of atom name
         """
         return [iA.name for iA in self._atomList]
-    
+
     def setNames(self, names: List[str]) -> None:
         """reset all the name of the atoms in this group
-        
+
         Args:
             List[name]: a list of atom name
         """
@@ -133,23 +133,22 @@ class Group(Graph):
         for i, iA in enumerate(atomList):
             iA.name = names[i]
 
-
     @property
     def natoms(self):
         return len(self._atomList)
-    
+
     @property
     def angles(self):
         return self._angleList
-    
+
     @property
     def nangles(self):
         return len(self._angleList)
-    
+
     @property
     def dihedrals(self):
         return self._dihedralList
-    
+
     @property
     def ndihedrals(self):
         return len(self._dihedralList)
@@ -172,9 +171,9 @@ class Group(Graph):
         """
         if ref is None:
             return atom in self._atomList
-        elif ref == 'name':
+        elif ref == "name":
             return atom.name in self._atoms
-        
+
     def addBond(self, atom, btom, **attr):
         """define bond between two passed atoms, and set bond properties
 
@@ -193,9 +192,9 @@ class Group(Graph):
         self._bonds[btom][atom] = bond
         if bond not in self._bondList:
             self._bondList.append(bond)
-            
+
         return bond
-        
+
     def addBonds(self, atomList, **attr):
         """Batch add bonds. atomList followed format, [(atom, btom)] without bond's properties, or [(atom, btom, {key: value})]. Dict in the atomList is the special properties for the bond, and attr is the general properties for all bond. Special property will cover properties in attr.
 
@@ -217,7 +216,7 @@ class Group(Graph):
 
             attr.update(dd)
             self.addBond(u, v, **attr)
-            
+
     def removeBond(self, atom, btom):
         """remove bond between two atoms
 
@@ -234,7 +233,7 @@ class Group(Graph):
                 del self._bonds[btom.uuid][atom.uuid]
         except KeyError as err:
             raise KeyError(f"The bond {atom}-{btom} is not in the graph") from err
-        
+
     def removeBonds(self, atomList):
         """remove a bunch of bond
 
@@ -249,8 +248,7 @@ class Group(Graph):
                     del self._bonds[btom.uuid][atom.uuid]
 
     def removelAllBonds(self):
-        '''remove all bonds in the group
-        '''
+        """remove all bonds in the group"""
         self._bonds.clear()
         self._bondList.clear()
 
@@ -270,12 +268,12 @@ class Group(Graph):
         atoms = set(atoms)
         for atom in atoms:
             if atom not in self:
-                raise ValueError(f'{atom} not in this group')
-        
+                raise ValueError(f"{atom} not in this group")
+
         # add atoms
         subgroup = Group(name)
         subgroup.addAtoms(atoms)
-        
+
         # add bonds
         for atom in atoms:
             for bondedAtom in atom.bondedAtoms:
@@ -297,7 +295,7 @@ class Group(Graph):
             return True
         else:
             return False
-        
+
     def neighbors(self, atom):
         """return atom's neighbors. equivalent to atom.bondedAtoms
 
@@ -308,15 +306,15 @@ class Group(Graph):
             List[Atom]: atom's bondedAtom
         """
         return atom.bondedAtoms
-    
+
     @property
     def bonds(self):
         return self._bondList
-    
+
     @property
     def nbonds(self):
         return len(self._bondList)
-    
+
     def getBond(self, atom, btom):
         """get a certain bond specified with two atoms
 
@@ -328,32 +326,32 @@ class Group(Graph):
             Bond: bond
         """
         return self._bonds[atom.uuid].get(btom.uuid, False)
-    
-    def getBonds(self, format='bond'):
+
+    def getBonds(self, format="bond"):
         """get all the bonds in this graph
 
         Returns:
             List[Bond]: a list of bond
         """
-        if format == 'bond':
+        if format == "bond":
             return self._bondList
-        elif format == 'index':
+        elif format == "index":
             return self.getAdjacencyList()
-        
-    def getAngles(self, format='angle'):
-        if format == 'angle':
+
+    def getAngles(self, format="angle"):
+        if format == "angle":
             return self._angleList
-        elif format == 'index':
+        elif format == "index":
             pass
-    
+
     def getAdjacencyList(self):
         bonds = self.bonds
         adjlist = []
         for bond in bonds:
             atom, btom = bond
             adjlist.append([self._atomIndices[atom], self._atomIndices[btom]])
-        return adjlist        
-    
+        return adjlist
+
     def getCovalentMap(self, max_distance=None):
         """return the covalentMap of this graph.
 
@@ -366,13 +364,13 @@ class Group(Graph):
         atoms = self.getAtoms()
         covalentMap = np.zeros((len(atoms), len(atoms)), dtype=int)
         visited = np.zeros_like(covalentMap, dtype=int)
-        
+
         def limit():
             if max_distance is None:
                 return True
             else:
                 return depth < max_distance
-        
+
         def find(nodes, vis):
             nextLevelNodes = []
             for node in nodes:
@@ -381,10 +379,14 @@ class Group(Graph):
                     continue
                 vis[nodeidx] = 1
                 covalentMap[rootidx, nodeidx] = depth
-                nextLevelNodes.extend(dropwhile(lambda node: vis[atoms.index(node)] == 1, node.bondedAtoms))
+                nextLevelNodes.extend(
+                    dropwhile(
+                        lambda node: vis[atoms.index(node)] == 1, node.bondedAtoms
+                    )
+                )
                 nextLevelNodes = list(set(nextLevelNodes))
             return nextLevelNodes
-        
+
         for root in atoms:
             rootidx = atoms.index(root)
             vis = visited[rootidx]
@@ -400,11 +402,11 @@ class Group(Graph):
         self._covalentMap = covalentMap
         # return atoms, covalentMap
         return covalentMap
-    
+
     @property
     def covalentMap(self):
         return self._covalentMap
-            
+
     def setTopoByCovalentMap(self, covalentMap: np.ndarray):
         """Using a covalentMap to describe topology of the group
 
@@ -417,7 +419,7 @@ class Group(Graph):
                 atom1 = atoms[i[0]]
                 atom2 = atoms[i[1]]
                 self.addBond(atom1, atom2)
-        
+
     def getAtomByName(self, atomName):
         """look up an atom by its name
 
@@ -430,13 +432,13 @@ class Group(Graph):
         for atom in self._atomList:
             if atom.name == atomName:
                 return atom
-            
+
     def getAtomBy(self, by, value):
         """look up an atom by its certain property. NOTE only return the first result
 
         Args:
             by (str): property
-            value (Any): value 
+            value (Any): value
 
         Returns:
             Atom: if found else NoneType
@@ -444,30 +446,34 @@ class Group(Graph):
         for atom in self._atomList:
             if atom.get(by) == value:
                 return atom
-    
+
     def __getitem__(self, idx):
         if isinstance(idx, str):
             for atom in self.getAtoms():
                 if atom.name == idx:
                     return atom
-                
+
         elif isinstance(idx, int):
             return self.getAtoms()[idx]
-        
+
     def addAngle(self, itom, jtom, ktom, **attr):
         try:
             angle = self._angles[itom.uuid][jtom.uuid][ktom.uuid]
             angle = self._angles[ktom.uuid][jtom.uuid][itom.uuid]
         except KeyError:
             angle = Angle(itom, jtom, ktom, **attr)
-            self._angles.setdefault(itom.uuid, {}).setdefault(jtom.uuid, {}).setdefault(ktom.uuid, angle)
-            self._angles.setdefault(ktom.uuid, {}).setdefault(jtom.uuid, {}).setdefault(itom.uuid, angle)
-            self._angleList.append(angle)        
+            self._angles.setdefault(itom.uuid, {}).setdefault(jtom.uuid, {}).setdefault(
+                ktom.uuid, angle
+            )
+            self._angles.setdefault(ktom.uuid, {}).setdefault(jtom.uuid, {}).setdefault(
+                itom.uuid, angle
+            )
+            self._angleList.append(angle)
         return angle
-    
+
     def addAngleByName(self, name1, name2, name3, **attr):
         itom, jtom, ktom = map(self.getAtomByName, [name1, name2, name3])
-        return self.addAngle(itom, jtom, ktom, **attr) 
+        return self.addAngle(itom, jtom, ktom, **attr)
 
     def searchAngles(self):
         """search all the angles in this group
@@ -476,24 +482,24 @@ class Group(Graph):
             List[Angle]: all angles in this group
         """
         # itom-jtom(self)-ktom
-        
+
         for jtom in self.getAtoms():
             if len(jtom.bondedAtoms) < 2:
                 continue
             for (itom, ktom) in combinations(jtom.bondedAtoms, 2):
                 self.addAngle(itom, jtom, ktom)
-                        
+
         return self._angleList
-    
+
     def searchDihedrals(self):
-        
+
         # itom-jtom(self)-ktom-ltom
-        
+
         # for jtom in self.getAtoms():
         #     if len(jtom.bondedAtoms) < 2:
         #         continue
         #     for (itom, ktom) in combinations(jtom.bondedAtoms, 2):
-                
+
         #         for ltom in filterfalse(lambda atom: atom in (itom, jtom), ktom.bondedAtoms):
         #             try:
         #                 dihe = self._dihedrals[itom][jtom][ktom][ltom]
@@ -503,9 +509,9 @@ class Group(Graph):
         #                 self._dihedrals.setdefault(itom, {}).setdefault(jtom, {}).setdefault(ktom, {}).setdefault(ltom, dihe)
         #                 self._dihedrals.setdefault(ltom, {}).setdefault(ktom, {}).setdefault(jtom, {}).setdefault(itom, dihe)
         #                 self._dihedralList.append(dihe)
-                        
+
         #         for ltom in filterfalse(lambda atom: atom in (ktom, jtom), itom.bondedAtoms):
-                    
+
         #             try:
         #                 dihe = self._dihedrals[ltom][itom][jtom][ktom]
         #                 dihe = self._dihedrals[ktom][jtom][itom][ltom]
@@ -514,7 +520,7 @@ class Group(Graph):
         #                 self._dihedrals.setdefault(ltom, {}).setdefault(itom, {}).setdefault(jtom, {}).setdefault(ktom, dihe)
         #                 self._dihedrals.setdefault(ktom, {}).setdefault(jtom, {}).setdefault(itom, {}).setdefault(ltom, dihe)
         #                 self._dihedralList.append(dihe)
-        
+
         # return self._dihedralList
         """search all the dihedrals in this group
 
@@ -522,36 +528,43 @@ class Group(Graph):
             List[Dihedral]: all dihedrals in this group
         """
         for jtom in self.getAtoms():
-            
+
             if len(jtom.bondedAtoms) < 2:
                 continue
-            
+
             for ktom in jtom.bondedAtoms:
-                
+
                 for itom in jtom.bondedAtoms:
-                    
+
                     if itom == ktom:
                         continue
-                    
+
                     for ltom in ktom.bondedAtoms:
-                        
+
                         if ltom == jtom:
                             continue
-                        
+
                         if itom != ltom:
                             try:
-                                dihe = self._dihedrals[itom.uuid][jtom.uuid][ktom.uuid][ltom.uuid]
-                                dihe = self._dihedrals[ltom.uuid][ktom.uuid][jtom.uuid][itom.uuid]
+                                dihe = self._dihedrals[itom.uuid][jtom.uuid][ktom.uuid][
+                                    ltom.uuid
+                                ]
+                                dihe = self._dihedrals[ltom.uuid][ktom.uuid][jtom.uuid][
+                                    itom.uuid
+                                ]
                             except KeyError:
                                 dihe = Dihedral(itom, jtom, ktom, ltom)
-                                self._dihedrals.setdefault(itom.uuid, {}).setdefault(jtom.uuid, {}).setdefault(ktom.uuid, {}).setdefault(ltom.uuid, dihe)
-                                self._dihedrals.setdefault(ltom.uuid, {}).setdefault(ktom.uuid, {}).setdefault(jtom.uuid, {}).setdefault(itom.uuid, dihe)
+                                self._dihedrals.setdefault(itom.uuid, {}).setdefault(
+                                    jtom.uuid, {}
+                                ).setdefault(ktom.uuid, {}).setdefault(ltom.uuid, dihe)
+                                self._dihedrals.setdefault(ltom.uuid, {}).setdefault(
+                                    ktom.uuid, {}
+                                ).setdefault(jtom.uuid, {}).setdefault(itom.uuid, dihe)
                                 self._dihedralList.append(dihe)
         return self._dihedralList
-                           
-    
+
     def addBondByIndex(self, atomIdx, atomJdx, **bondType):
-        """Add a bond refer to the order of atoms. NOTE that the order of atoms depends on the order they are added. 
+        """Add a bond refer to the order of atoms. NOTE that the order of atoms depends on the order they are added.
 
         Args:
             atomIdx (int): index of list
@@ -561,7 +574,7 @@ class Group(Graph):
         atom1 = atoms[atomIdx]
         atom2 = atoms[atomJdx]
         self.addBond(atom1, atom2, **bondType)
-        
+
     def addBondByName(self, name1, name2, **bondType):
         """Add a bond refer to the name of atoms. NOTE that the name of atoms temporarily must be unique, or can not be retrieved correctly.
 
@@ -572,7 +585,7 @@ class Group(Graph):
         atom = self.getAtomByName(name1)
         btom = self.getAtomByName(name2)
         return self.addBond(atom, btom, **bondType)
-    
+
     def getBondByIndex(self, atomIdx, atomJdx):
         """get a bond by its atom'index
 
@@ -591,7 +604,7 @@ class Group(Graph):
             return atom1.getBond(atom2)
         except KeyError:
             return None
-    
+
     def __contains__(self, n):
         try:
             if isinstance(n, Atom):
@@ -600,12 +613,12 @@ class Group(Graph):
                 return n in self.getBonds()
         except TypeError:
             return False
-        
+
     def __len__(self):
         return len(self.getAtoms())
 
     def getBasisCycles(self, root=None):
-         
+
         """Returns a list of cycles which form a basis for cycles of G.
         A basis for cycles of a network is a minimal collection of
         cycles such that any cycle in the network can be written
@@ -614,14 +627,14 @@ class Group(Graph):
         useful, e.g. when deriving equations for electric circuits
         using Kirchhoff's Laws.
         Parameters
-        
-        Args: 
+
+        Args:
             root(Atom): Specify starting node for basis, optional
-            
+
         Returns:
             A list of cycle lists.  Each cycle list is a list of nodes
             which forms a cycle (loop) in G.
-            
+
         Examples:
             >>> G = nx.Graph()
             >>> nx.add_cycle(G, [0, 1, 2, 3])
@@ -638,8 +651,8 @@ class Group(Graph):
             See Also
             --------
             simple_cycles
-        """        
-        
+        """
+
         gnodes = set(self.getAtoms())
         cycles = []
         while gnodes:
@@ -673,12 +686,14 @@ class Group(Graph):
         return cycles
 
     @property
-    def degree(self, ):
+    def degree(
+        self,
+    ):
         tmp = {}
         for atom in self.atoms:
             tmp[atom] = self.neighbors(atom)
         return tmp
-    
+
     # def copy(self, **attr):
     #     """Return a new group. Both its atoms and its properties are copied.
 
@@ -695,33 +710,35 @@ class Group(Graph):
     #         print(bond.properties)
     #         g.addBondByName(atom.name, btom.name, **bond.properties)
     #     return g
-        
-    def bondto(self, group, atom, btom, mode=Literal['a', 'c']):
+
+    def bondto(self, group, atom, btom, mode=Literal["a", "c"]):
         if not isinstance(group, Group):
-            raise TypeError('')
-        
+            raise TypeError("")
+
     def _set_per_atom(self, values: Iterable, method=None):
         atoms = self.atoms
-        assert len(atoms) == len(values), ValueError(f'position array must match the number of atoms, but {len(values)} != {len(atoms)}')
-        
+        assert len(atoms) == len(values), ValueError(
+            f"position array must match the number of atoms, but {len(values)} != {len(atoms)}"
+        )
+
         if method is not None:
             for atom, value in zip(atoms, values):
-                getattr(atom, method)(value)            
-        
+                getattr(atom, method)(value)
+
     def setPositions(self, positions):
 
-        self._set_per_atom(positions, 'setPosition')
-            
+        self._set_per_atom(positions, "setPosition")
+
     def getPositions(self):
         atoms = self.atoms
         R = np.empty((len(atoms), 3))
         for i, atom in enumerate(atoms):
             R[i] = atom.getPosition()
-            
+
         return R
-        
+
     def setAtomTypes(self, atomTypes: Iterable):
-        
+
         for atom, atomType in zip(self.atoms, atomTypes):
             atom.atomType = atomType
 
@@ -730,46 +747,59 @@ class Group(Graph):
         at = []
         for atom in atoms:
             at.append(atom.getAtomType())
-            
+
         return at
-    
+
     def getElements(self):
         atoms = self.atoms
         eles = []
         for atom in atoms:
             eles.append(atom.element)
         return eles
-    
+
     def getSymbols(self):
         atoms = self.atoms
         symbols = []
         for atom in atoms:
             symbols.append(atom.getSymbol())
         return symbols
-        
+
     def getRadii(self):
         atoms = self.atoms
-        R = np.empty((len(atoms), ))
+        R = np.empty((len(atoms),))
         for i, atom in enumerate(atoms):
             R[i] = atom.getRadii()
-        return R;
+        return R
 
-    def reacto(self, group, method:Literal['addition', 'concentration'], atom=None, btom=None, atomName=None, btomName=None, **attr):
+    def reacto(
+        self,
+        group,
+        method: Literal["addition", "concentration"],
+        atom=None,
+        btom=None,
+        atomName=None,
+        btomName=None,
+        **attr,
+    ):
         if atomName is not None:
             atom = self.getAtomByName(atomName)
         if atomName is not None:
             btom = group.getAtomByName(btomName)
-        if method == 'addition':
-            bond = atom.bondto(btom, **attr)    
-        elif method == 'concentration':
-            assert atom.nbondedAtoms == 1, ValueError(f'{atom} has {atom.nbondedAtoms} bondedAtoms leading to confusion about how to establish bondage')
-            assert btom.nbondedAtoms == 1, ValueError(f'{btom} has {btom.nbondedAtoms} bondedAtoms leading to confusion about how to establish bondage')
+        if method == "addition":
+            bond = atom.bondto(btom, **attr)
+        elif method == "concentration":
+            assert atom.nbondedAtoms == 1, ValueError(
+                f"{atom} has {atom.nbondedAtoms} bondedAtoms leading to confusion about how to establish bondage"
+            )
+            assert btom.nbondedAtoms == 1, ValueError(
+                f"{btom} has {btom.nbondedAtoms} bondedAtoms leading to confusion about how to establish bondage"
+            )
             atom1 = atom.bondedAtoms[0]
             btom1 = btom.bondedAtoms[0]
             self.removeAtom(atom)
             group.removeAtom(btom)
             bond = atom1.bondto(btom1, **attr)
-            
+
         if atom not in self._bonds:
             self._bonds[atom] = {}
         if btom not in group._bonds:
@@ -777,10 +807,10 @@ class Group(Graph):
         self._bonds[atom][btom] = bond
         group._bonds[btom][atom] = bond
         self._bondList.append(bond)
-        group._bondList.append(bond)  
-    
+        group._bondList.append(bond)
+
     def merge(self, name, group):
-        """ return a new group that merge multiple groups
+        """return a new group that merge multiple groups
 
         Args:
             group (Group): groups to be merged
@@ -789,16 +819,16 @@ class Group(Graph):
         newGroup = Group(name)
         newGroup.addAtoms(group.atoms)
         newGroup.addBonds(*group.bonds)
-        
+
         return newGroup
-    
+
     @property
     def positions(self):
         tmp = []
         for atom in self.atoms:
             tmp.append(atom.position)
         return np.array(tmp)
-    
+
     def move(self, vec):
         for atom in self.atoms:
             atom.move(vec)
@@ -815,4 +845,3 @@ class Group(Graph):
     
     def rot(self, *args):
         return self
-    
