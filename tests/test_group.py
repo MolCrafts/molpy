@@ -46,6 +46,15 @@ class TestGroup:
     def test_atoms(self, CH4, C6):
         assert len(CH4.atoms) == 5
         assert len(C6.atoms) == 12
+        symbols = ["C0", "H1", "H2", "H3"]
+        names = CH4.getNames()
+        with pytest.raises(IndexError):
+            CH4.setNames(symbols)
+        symbols.append("H4")
+        CH4.setNames(symbols)
+        assert CH4[0].name == symbols[0]
+        assert CH4[3].name == symbols[3]
+        CH4.setNames(names)
             
     def test_setTopoByCovalentMap(self, CH4):
 

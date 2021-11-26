@@ -20,6 +20,8 @@ from molpy.system import System
 from molpy.box import Box, CellList
 from molpy.ioapi import *
 from molpy.algorithms import *
+from molpy.neigh import *
+from molpy.auto_bonds import *
 
 from molpy.io.xml import read_xml_forcefield
 from molpy.forcefield import AtomType, BondType, Template

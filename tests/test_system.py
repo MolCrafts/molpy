@@ -5,6 +5,7 @@
 
 import pytest
 import molpy as mp
+import numpy as np
 
 class TestSystem:
     

@@ -72,6 +72,11 @@ class TestCellList:
         adj_atoms = []
         adj_atoms.extend(adj_cells)
         
+    def test_cell3D_lxyz(self):
+        cell = mp.Cell(3, 'ppp', lx=1.0, ly=3.0, lz=4.0)
+        assert cell.lx == 1
+        assert cell.volume == pytest.approx(12, 1e-8)
+        
         
 @pytest.fixture(scope='module')
 def orthogonalNBL3D(orthogonalCell3D):

@@ -17,10 +17,11 @@ def write_lmp(fileobj, system, **kwargs):
         f.write(f'\t{system.ndihedrals}\tdihedrals\n')
         
     # forcefield
-    f.write(f'\t{system.natomTypes}\tatom types\n')
-    f.write(f'\t{system.nbondTypes}\tbond types\n')
-    f.write(f'\t{system.nangleTypes}\tangle types\n')
-    f.write(f'\t{system.ndihedralTypes}\tdihedral types\n')
+    if system.forcefield:
+        f.write(f'\t{system.natomTypes}\tatom types\n')
+        f.write(f'\t{system.nbondTypes}\tbond types\n')
+        f.write(f'\t{system.nangleTypes}\tangle types\n')
+        f.write(f'\t{system.ndihedralTypes}\tdihedral types\n')
            
     # box
     f.write(f'\t{system.xlo}  {system.xhi}  xlo  xhi\n')
@@ -32,7 +33,7 @@ def write_lmp(fileobj, system, **kwargs):
     for atomType in system.atomTypes.values():
         f.write(f'\t{atomType.typeID}\t{atomType.mass}   # {atomType.name}\n')
         
-    f.write('\n')
+        f.write('\n')
         
     f.write('Atoms\n\n')
     if kwargs['atom_style'] == 'full':

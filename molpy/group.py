@@ -3,7 +3,7 @@
 # date: 2021-10-17
 # version: 0.0.1
 
-from typing import Literal, Iterable
+from typing import Literal, Iterable, List
 from molpy.angle import Angle
 from molpy.base import Graph
 from molpy.atom import Atom
@@ -111,6 +111,28 @@ class Group(Graph):
             List[Atom]: a list of atom
         """
         return self._atomList
+
+    def getNames(self):
+        """return all the name of the atoms in this group
+
+        Returns:
+            List[name]: a list of atom name
+        """
+        return [iA.name for iA in self._atomList]
+    
+    def setNames(self, names: List[str]) -> None:
+        """reset all the name of the atoms in this group
+        
+        Args:
+            List[name]: a list of atom name
+        """
+
+        atomList = self._atomList
+        if len(names) != len(atomList):
+            raise IndexError
+        for i, iA in enumerate(atomList):
+            iA.name = names[i]
+
 
     @property
     def natoms(self):
@@ -225,8 +247,15 @@ class Group(Graph):
                 del self._bonds[atom.uuid][btom.uuid]
                 if atom != btom:
                     del self._bonds[btom.uuid][atom.uuid]
-        
-     
+
+    def removelAllBonds(self):
+        '''remove all bonds in the group
+        '''
+        self._bonds.clear()
+        self._bondList.clear()
+
+    clearBonds = removelAllBonds
+
     def getSubGroup(self, name, atoms):
         """Specify some atoms in the group and return the subgroup composed of these atoms
 
@@ -717,7 +746,7 @@ class Group(Graph):
         for atom in atoms:
             symbols.append(atom.getSymbol())
         return symbols
-    
+        
     def getRadii(self):
         atoms = self.atoms
         R = np.empty((len(atoms), ))

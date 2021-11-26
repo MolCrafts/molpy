@@ -34,18 +34,30 @@ def full(groupName, atomNames, addBondByIndex=None, **properties):
         
     return group
 
-def fromPDB(fpath, index=None):
+def fromPDB(fpath : str, index=None) -> Group:
     with open(fpath, 'r') as f:
         group = read_pdb(f, index=None)
     return group
 
-def fromASE(ase_atoms) -> Group:
-    return read_ASE_atoms(ase_atoms)
+def fromASE(aseAtoms) -> Group:
+    return read_ASE_atoms(aseAtoms)
+
+def fromASE_S(aseAtoms) -> System:
+    return read_ASE_atoms_S(aseAtoms)
+
+def fromCIF(fpath : str, fromLabel : bool = True, **kwargs) -> Group:
+    return read_CIF(fpath, fromLabel, **kwargs)
+    
+def fromCIF_S(fpath : str, fromLabel : bool = True, **kwargs) -> System:
+    return read_CIF_S(fpath, fromLabel, **kwargs)
+
+def toASE(mpObj):
+    return toASE_atoms(mpObj)
 
 def fromLAMMPS():
     pass
 
-def fromXML(fpath, type='forcefield'):
+def fromXML(fpath : str, type='forcefield'):
     with open(fpath, 'r') as f:
         if type == 'forcefield':
             ff = read_xml_forcefield(f)

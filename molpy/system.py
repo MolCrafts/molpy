@@ -2,13 +2,13 @@
 # contact: lijichen365@126.com
 # date: 2021-11-17
 # version: 0.0.1
+from typing import Iterable
 
 from molpy.base import Item
 from molpy.atom import Atom
 from molpy.group import Group
 from molpy.molecule import Molecule
 import numpy as np
-
 
 class System(Item):
     def __init__(self, name) -> None:
@@ -50,6 +50,41 @@ class System(Item):
 
     def setPairStyle(self, style):
         pass
+
+    def setPositions(self, positions : Iterable):
+        atoms = self.atoms
+        assert len(positions) == len(atoms)
+        for i, pos in enumerate(positions):
+            atoms[i].position = pos
+    
+    def getPositions(self):
+        natoms = self.natoms
+        atoms = self.atoms
+        positions = np.empty((natoms, 3))
+        for i, iA in enumerate(atoms):
+            positions[i] = iA.position
+        return positions
+    
+    def getSymbols(self):
+        natoms = self.natoms
+        atoms = self.atoms
+        symbols = [None] * natoms
+        for i, iA in enumerate(atoms):
+            symbols[i] = iA.symbol
+        return symbols
+    
+    def getRadii(self):
+        natoms = self.natoms
+        atoms = self.atoms
+        radii = np.empty((natoms,))
+        for i, iA in enumerate(atoms):
+            radii[i] = iA.getRadii()
+        return radii
+    
+    def cutoff(self, bin = 0.1):
+        atoms = self.atoms
+        max_radii = max(iA.getRadii() for iA in atoms)
+        return 2.0 * max_radii + bin
 
     @property
     def xlo(self):

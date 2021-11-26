@@ -115,6 +115,10 @@ class Atom(Node):
     def getSymbol(self):
         return self._element.symbol
     
+    @property
+    def symbol(self):
+        return self._element.symbol
+
     def setElement(self, symbol):
         self._element = Element.getBySymbol(symbol)
 
