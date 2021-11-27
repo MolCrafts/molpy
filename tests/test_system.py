@@ -44,7 +44,7 @@ class TestSystem:
     def test_addSolvent(self):
         
         system = mp.System('test')
-        system.box = mp.Box(3, 'ppp', xlo=0, xhi=10,  ylo=0, yhi=10,  zlo=0, zhi=10)
+        system.box = mp.Box('ppp', xlo=0, xhi=10,  ylo=0, yhi=10,  zlo=0, zhi=10)
         for i in range(10):
             system.addMolecule(mp.Atom(i, charge=1))
             

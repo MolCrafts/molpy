@@ -173,11 +173,11 @@ class System(Item):
         atoms = self._atomList
         for id, atom in enumerate(atoms, 1):
             atom.id = id
-        if not hasattr(atoms[0], "molid"):
-            for id, molecule in enumerate(self._molecules.values(), 1):
-                molecule.molid = id
-                for atom in molecule.atoms:
-                    atom.molid = id
+
+        for id, molecule in enumerate(self._molecules.values(), 1):
+            molecule.molid = id
+            for atom in molecule.atoms:
+                atom.molid = id
 
         return atoms
 
@@ -271,6 +271,13 @@ class System(Item):
 
         if ionicStrength is None and number is None:
             raise ValueError(f"either specify ionicStrength or number")
+        
+        # render solute
+        solute = self.promote(solute)
+        #TODO: refactor forcefield
+        for atom in solute.atoms:
+            if not hasattr(atom, "atomType"):
+                self.forcefield.renderAtom(atom)        
 
         if ionicStrength is not None:
             number = int((ionicStrength - self.charge) / solute.charge)
@@ -280,13 +287,13 @@ class System(Item):
             # TODO: use packing module instead
             rng = np.random.default_rng()
             rng.standard_normal(())
-            vec = np.array(
+
+        for i in range(number):
+            vec = np.hstack(
                 (
                     rng.uniform(self.xlo, self.xhi, 1),
                     rng.uniform(self.ylo, self.yhi, 1),
                     rng.uniform(self.zlo, self.zhi, 1),
                 )
             )
-
-        for i in range(number):
             self.addMolecule(solute(name=f"{solute.name}-{i}").moveTo(vec))

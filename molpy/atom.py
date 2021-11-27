@@ -28,7 +28,7 @@ class Atom(Node):
         elif 'element' in self.__dict__:
             return getattr(self.element, name)
         else:
-            raise AttributeError
+            raise AttributeError(f'has not {name} attribute')
 
     @property
     def position(self):
