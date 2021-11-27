@@ -17,7 +17,7 @@ from molpy.group import Group
 from molpy.molecule import Molecule
 from molpy.forcefield import ForceField
 from molpy.system import System
-from molpy.box import Box
+from molpy.box import Box, CellList
 from molpy.ioapi import *
 from molpy.algorithms import *
 
