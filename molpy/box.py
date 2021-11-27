@@ -17,13 +17,13 @@ map_getPos = np.vectorize(getPos, otypes=[np.ndarray])
 class Box:
     
     def __init__(self, boundary_condition: Literal['ppp'], **kwargs) -> None:
-        
-        """[summary]
-        """
-        
+               
         # ref:
         # https://docs.lammps.org/Howto_triclinic.html
         # https://hoomd-blue.readthedocs.io/en/stable/box.html
+        
+        """ Describes the properties of the box
+        """
         
         self.boundary_condition = boundary_condition
 
@@ -35,6 +35,9 @@ class Box:
 
     def defByEdge(self, xlo, xhi, ylo, yhi, zlo, zhi, xy=0, xz=0, yz=0):
         
+        """ define Box via start and end which in LAMMPS and hoomd-blue style
+        """
+                
         self.xlo = xlo
         self.ylo = ylo
         self.zlo = zlo
@@ -56,6 +59,13 @@ class Box:
         self._post_def_()
         
     def defByLatticeVectors(self, a1, a2, a3):
+        """ define Box via lattice vector
+
+        Args:
+            a1 (np.ndarray): Must lie on the x-axis
+            a2 (np.ndarray): Must lie on the xy-plane
+            a3 (np.ndarray)
+        """
         self.lx = np.linalg.norm(a1)
         a2x = a1@a2/np.linalg(a1)
         self.ly = np.sqrt(a2@a2-a2x**2)
@@ -107,13 +117,28 @@ class Box:
         return np.array([self.xlo, self.ylo, self.zlo])
     
     def wrap(self, position):
-        
+        """wrap position(s) array back into box
+
+        Args:
+            position (np.ndarray)
+
+        Returns:
+            np.ndarray: wrapped position(s)
+        """
         edge_length = np.array([self.lx, self.ly, self.lz])
         offset = np.floor_divide(position, edge_length)
         return position - offset*edge_length
     
     def displace(self, pos1, pos2):
-        
+        """find the distance between two positions in minimum image convention(mic)
+
+        Args:
+            pos1 (np.ndarray)
+            pos2 (np.ndarray)
+
+        Returns:
+            np.ndarray
+        """
         return self.wrap(pos1) - self.wrap(pos2)
     
     

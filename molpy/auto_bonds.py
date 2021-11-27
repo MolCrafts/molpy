@@ -10,7 +10,7 @@ def auto_bonds(mpObj: System, auto_style="LAMMPS-INTERFACE"):
         auto_bonds_LAMMPS_INTEFACE(mpObj)
     else:
         raise NotImplementedError(
-            f"The auto bond style of {aut_style} is not implemented!\n"
+            f"The auto bond style of {auto_style} is not implemented!\n"
         )
 
 
