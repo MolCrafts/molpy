@@ -164,7 +164,14 @@ class Group(Graph):
     @property
     def ndihedrals(self):
         return len(self._dihedralList)
-
+    
+    @property
+    def charge(self):
+        charge = 0
+        for atom in self.atoms:
+            charge += getattr(atom, 'charge', 0)
+        return charge
+    
     def hasAtom(self, atom: Atom, ref=None):
         """if the atom in this group
 
@@ -852,6 +859,15 @@ class Group(Graph):
         for atom in self.atoms:
             atom.move(vec)
         return self
-
+    
+    def moveTo(self, vec, anchor=None):
+        if anchor is None:
+            origin = self.positions[0]
+        else:
+            origin = anchor.position
+        disVec = vec - origin
+        self.move(disVec)
+        return self
+    
     def rot(self, *args):
         return self

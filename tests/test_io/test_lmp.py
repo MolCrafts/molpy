@@ -13,7 +13,7 @@ class TestLAMMPS:
     def test_write_h2o(self, H2O, SPCEforcefield):
         
         system = mp.System('h2o')
-        system.cell = mp.Cell(3, 'ppp', xlo=0, xhi=35, ylo=0, yhi=35, zlo=0, zhi=35)
+        system.box = mp.Box('ppp', xlo=0, xhi=35, ylo=0, yhi=35, zlo=0, zhi=35)
         system.forcefield = SPCEforcefield
         l = 1
         for i in range(2):

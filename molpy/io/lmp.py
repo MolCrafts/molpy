@@ -23,7 +23,7 @@ def write_lmp(fileobj, system, **kwargs):
         f.write(f'\t{system.nangleTypes}\tangle types\n')
         f.write(f'\t{system.ndihedralTypes}\tdihedral types\n')
            
-    # cell
+    # box
     f.write(f'\t{system.xlo}  {system.xhi}  xlo  xhi\n')
     f.write(f'\t{system.ylo}  {system.yhi}  ylo  yhi\n')
     f.write(f'\t{system.zlo}  {system.zhi}  zlo  zhi\n\n')
@@ -45,6 +45,12 @@ def write_lmp(fileobj, system, **kwargs):
     
     if system.bonds:            
         f.write('Bonds\n\n')
+        
+        # for bondType in system.bondTypes.values():
+        #     f.write(f'\t# {bondType.typeID} {bondType.name}\n')
+            
+        # f.write('\n')
+        
         for bond in system.bonds:
             f.write(f'\t{bond.id}\t{bond.typeID}\t{bond.atom.id}\t{bond.btom.id}\n')
   

@@ -140,10 +140,27 @@ def toJAXMD(group: Group):
 def fromJAXMD():
     pass
 
-
-def toJraph(
-    group,
-    node_features,
-    edge_features,
-):
+def toJraph(group, node_features, edge_features, ):
     pass
+
+def trace(item, sites, anchor=None):
+    
+    if anchor is None:
+        if item.itemType == 'Atom':
+            itemPos = item.position
+        elif item.itemType == 'Group' or item.itemType == 'Molecule':
+            itemPos = item.positions[0]
+            
+    else:
+        itemPos = anchor.position
+        
+    # calculate displacement vector
+    disVecs = sites - itemPos
+    
+    tmp = []
+    for i, disVec in enumerate(disVecs):
+        icopy = item(name=f'{item.name}-{i}').move(disVec)
+        tmp.append(icopy)
+        
+    return tmp
+    

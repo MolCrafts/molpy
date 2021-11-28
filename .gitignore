@@ -7,6 +7,11 @@
 # Temporary files
 *.test
 
+# project files
+
+work*
+test.py
+
 ### C ###
 # Prerequisites
 *.d
@@ -204,6 +209,7 @@ venv.bak/
 
 # mkdocs documentation
 /site
+.vercel/
 
 # mypy
 .mypy_cache/
@@ -239,3 +245,4 @@ cython_debug/
 !tests/samples/*
 
 # End of https://www.toptal.com/developers/gitignore/api/python,c,c++,visualstudiocode
+.vercel

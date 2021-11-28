@@ -31,45 +31,51 @@ class TypeBase(Item):
             ins.typeID = cls.typeID
             return ins
     
-    def __init__(self, name) -> None:
+    def __init__(self, name, **attr) -> None:
         super().__init__(name)
+
+        if 'matchFunc' in attr:
+            self._match = attr['matchFunc']
+            del attr['matchFunc']
+        self.update(attr)
+            
+    def match(self, item):
+        try:
+            return self._match(item)
+        except AttributeError:
+            raise AttributeError(f'define matchFunc to match this {self.__class__.__name__} with {item}')
+    
+    def render(self, item):
+        # AtomType -> atomType
+        itemType = self.itemType
+        itemType = itemType[0].lower() + itemType[1:]
+        setattr(item, f'{itemType}', self)
     
 class AtomType(TypeBase):
     
     typeID = 0
     types = {}
-    
-    def __init__(self, name, **attr) -> None:
-        super().__init__(name)
-        self.update(attr)
-        
+            
 class BondType(TypeBase):
     
     typeID = 0
     types = {}
     
-    def __init__(self, name, **attr) -> None:
-        super().__init__(name)
-        self.update(attr)
-
 class AngleType(TypeBase):
     
     typeID = 0
     types = {}
-    
-    def __init__(self, name, **attr) -> None:
-        super().__init__(name)
-        self.update(attr)
-        
+            
 class DihedralType(TypeBase):
     
     typeID = 0
     types = {}
-    
-    def __init__(self, name, **attr) -> None:
-        super().__init__(name)
-        self.update(attr)
+            
+class NoneBondType(TypeBase):
 
+    typeID = 0
+    types = {}
+    
 class ForceField:
     
     def __init__(self, name, unit='SI') -> None:
@@ -79,6 +85,7 @@ class ForceField:
         self._bondTypes = {}
         self._angleTypes = {}
         self._dihedralTypes = {}
+        self._noneBondTypes = {}
         
     @property
     def natomTypes(self):
@@ -128,6 +135,13 @@ class ForceField:
             raise KeyError(f'dihedralType {dihedralName} has been defined')
         dihedralType = self._dihedralTypes[dihedralName] = DihedralType(dihedralName, **attr)
         return dihedralType
+    
+    def defNoneBondType(self, noneBondName, **attr):
+        
+        if noneBondName in self._noneBondTypes:
+            raise KeyError(f'noneBondType {noneBondName} has been defined')
+        noneBondType = self._noneBondTypes[noneBondName] = NoneBondType(noneBondName, **attr)
+        return noneBondType        
     
     def getAtomType(self, name):
         atomType = self._atomTypes.get(name, None)
@@ -239,21 +253,28 @@ class ForceField:
             
     def renderAtom(self, atom):
         
-        pass
+        for atomType in self.atomTypes.values():
+            if atomType.match(atom):
+                atomType.render(atom)
+        
             
     def renderBond(self, bond):
-        pass
-
+        
+        for bondType in self.bondTypes.values():
+            if bondType.match(bond):
+                bondType.render(bond)
 
     def renderAngle(self, angle):
         
-        if angle.name in self._angleTypes:
-            angle.type = self._angleTypes[angle.type.name]
+        for angleType in self.angleTypes.values():
+            if angleType.match(angle):
+                angleType.render(angle)
             
     def renderDihedral(self, dihedral):
         
-        if dihedral.name in self._dihedralTypes:
-            dihedral.type = self._dihedralTypes[dihedral.type.name]           
+        for dihedralType in self.dihedralTypes.values():
+            if dihedralType.match(dihedral):
+                dihedralType.render(dihedral)        
         
     def matchGroupOfBonds(self, group: Group, template: Group):
         groupBonds = sorted(group.getBonds())

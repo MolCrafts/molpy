@@ -54,11 +54,24 @@ class TestMolecule:
         assert pe.ngroups == degreeOfPolymerization
         assert pe.natoms == 5*degreeOfPolymerization
         assert pe.nbonds == 4*degreeOfPolymerization + degreeOfPolymerization - 1
-        print(pe._angleList)
         assert pe.nangles == 6 * degreeOfPolymerization + (degreeOfPolymerization-1)*2
         assert pe.ndihedrals == (3+1+3)*(degreeOfPolymerization-1)
         
 class TestMoleculeGeometry:
     
     def test_move(self, H2O):
+        
         m = Molecule('waters')
+        m.addGroup(H2O(name='H2O1'))
+        m.addGroup(H2O(name='H2O2'))
+        assert m.natoms == 6
+        assert m.nbonds == 4
+        
+        opos = m.positions
+        m.move((1, 1, 1))
+        assert np.array_equal(opos+np.array([1,1,1]), m.positions)
+        
+        tmp = []
+        for atom in m.atoms:
+            tmp.append(atom.position)
+        assert np.array_equal(opos+np.array([1,1,1]), np.array(tmp))
