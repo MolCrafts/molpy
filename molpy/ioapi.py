@@ -17,6 +17,7 @@ from molpy.io.ase import (
 from molpy.system import System
 
 from typing import Union
+
 MolpyOBJ = Union[Group, System]
 
 import numpy as np
@@ -87,7 +88,7 @@ def fromCIF_S(fpath: str, fromLabel: bool = True, **kwargs) -> System:
     return read_CIF_S(fpath, fromLabel, **kwargs)
 
 
-def toASE(mpObj : MolpyOBJ):
+def toASE(mpObj: MolpyOBJ):
     return toASE_atoms(mpObj)
 
 
@@ -141,27 +142,32 @@ def toJAXMD(group: Group):
 def fromJAXMD():
     pass
 
-def toJraph(group, node_features, edge_features, ):
+
+def toJraph(
+    group,
+    node_features,
+    edge_features,
+):
     pass
 
+
 def trace(item, sites, anchor=None):
-    
+
     if anchor is None:
-        if item.itemType == 'Atom':
+        if item.itemType == "Atom":
             itemPos = item.position
-        elif item.itemType == 'Group' or item.itemType == 'Molecule':
+        elif item.itemType == "Group" or item.itemType == "Molecule":
             itemPos = item.positions[0]
-            
+
     else:
         itemPos = anchor.position
-        
+
     # calculate displacement vector
     disVecs = sites - itemPos
-    
+
     tmp = []
     for i, disVec in enumerate(disVecs):
-        icopy = item(name=f'{item.name}-{i}').move(disVec)
+        icopy = item(name=f"{item.name}-{i}").move(disVec)
         tmp.append(icopy)
-        
+
     return tmp
-    
