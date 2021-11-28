@@ -6,7 +6,8 @@
 from typing import Literal
 import numpy as np
 from math import pi
-halfPI = 0.5 * pi
+# halfPI = 0.5 * pi
+
 
 def factory_ndarray_dtype_list(shape):
     return np.frompyfunc(list, 0, 1)(np.empty(shape, dtype=list))
@@ -35,6 +36,7 @@ class Box:
             
         elif 'a1' in kwargs:
             self.defByLatticeVectors(**kwargs)
+
         elif "lx" in kwargs:
             self.defByBoxLength(**kwargs)
 
@@ -72,7 +74,7 @@ class Box:
             a3 (np.ndarray)
         """
         self.lx = np.linalg.norm(a1)
-        a2x = a1@a2/np.linalg(a1)
+        a2x = a1@a2/np.linalg.norm(a1)
         self.ly = np.sqrt(a2@a2-a2x**2)
         self.xy = a2x/self.ly
         crossa1a2 = np.cross(a1, a2)
@@ -89,25 +91,33 @@ class Box:
         self.zhi = self.lz
         self._post_def_()
         
-    def defByBoxLength(self, lx, ly, lz, alpha=halfPI, beta=halfPI, gamma=halfPI):        
+    def defByBoxLength(self, lx, ly, lz, alpha=90, beta=90, gamma=90):        
         """ define the Box via edge lengthes and angles between the edges
         """
         self.gamma = gamma
         self.beta  = beta
         self.alpha = alpha
+
+        degree2rad = np.radians(1.0)
+
         self.xlo = 0
         self.ylo = 0
         self.zlo = 0
         self.xhi = lx
-        self.xy = ly * np.cos(gamma)
-        self.xz = lz * np.cos(beta)
-        self.yhi = np.sqrt(ly*ly - self.xy * self.xy)
-        self.yz  = (ly * lz * np.cos(alpha) - self.xy * self.xz) / self.yhi
-        self.zhi = np.sqrt(lz * lz - self.xz ** 2 - self.yz ** 2)
+        xy = ly * np.cos(gamma * degree2rad)
+        xz = lz * np.cos(beta  * degree2rad)
+        self.yhi = np.sqrt(ly*ly - xy**2)
+        yz  = (ly * lz * np.cos(alpha * degree2rad) - xy * xz) / self.yhi
+        self.zhi = np.sqrt(lz * lz - xz ** 2 - yz ** 2)
         
         self.lx = self.xhi - self.xlo
         self.ly = self.yhi - self.ylo
         self.lz = self.zhi - self.zlo
+
+        self.xy = xy / ly
+        self.xz = xy / lz
+        self.yz = yz / lz
+
         self._post_def_()
 
     def _post_def_(self):
@@ -121,7 +131,11 @@ class Box:
 
         self._boundary_condition = self.boundary_condition
         self._x_bc, self._y_bc, self._z_bc = self.boundary_condition
-        
+        if (self.xy != 0 or self.xz != 0 or self.yz != 0):
+            self._orthorhombic = False
+        else:
+            self._orthorhombic = True
+
     @property
     def box_size(self):
         return self._cellpar
@@ -145,6 +159,16 @@ class Box:
     @property
     def volume(self):
         return np.linalg.det(self._cellpar)
+    
+    def angles(self):
+        return np.asarray([self.alpha, self.beta, self.gamma])
+
+    def lengths(self):
+        return np.asarray([self.lx, self.ly, self.lz])
+
+    @property
+    def orthorhombic(self):
+        return self._orthorhombic
     
     @property
     def pbc(self):
