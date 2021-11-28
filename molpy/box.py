@@ -29,9 +29,12 @@ class Box:
         """
         
         self.boundary_condition = boundary_condition
+        self._boundary_condition = self.boundary_condition
+        self._x_bc, self._y_bc, self._z_bc = self.boundary_condition
+
         self._pbc = np.asarray([i == "p" for i in boundary_condition])
 
-        if 'xlo' in kwargs:
+        if 'xhi' in kwargs:
             self.defByEdge(**kwargs)
             
         elif 'a1' in kwargs:
@@ -40,8 +43,7 @@ class Box:
         elif "lx" in kwargs:
             self.defByBoxLength(**kwargs)
 
-    def defByEdge(self, xlo, xhi, ylo, yhi, zlo, zhi, xy=0, xz=0, yz=0):
-        
+    def defByEdge(self, xhi, yhi, zhi, xlo = 0.0, ylo = 0.0, zlo = 0.0, xy=0.0, xz=0.0, yz=0.0):
         """ define Box via start and end which in LAMMPS and hoomd-blue style
         """
                 
@@ -59,10 +61,13 @@ class Box:
         self.xy = xy
         self.xz = xz
         self.yz = yz    
-        
-        self.gamma = np.cosh(xy/np.sqrt(1+xy**2))
-        self.beta = np.cosh(xz/np.sqrt(1+xz**2+yz**2))
-        self.alpha = np.cosh((xy*xz+yz)/np.sqrt(1+xy**2)/np.sqrt(1+xz**2+yz**2))
+        radian2degree = 180/np.pi
+
+        b = np.sqrt(self.ly**2+xy**2)
+        c = np.sqrt(self.lz**2+xz**2+yz**2)
+        self.gamma = np.arccos(xy/b) * radian2degree
+        self.beta = np.arccos(xz/c) * radian2degree
+        self.alpha = np.arccos((xy*xz+self.ly*yz)/(c * b)) * radian2degree
         self._post_def_()
     
     def defByLatticeVectors(self, a1, a2, a3):
@@ -73,24 +78,42 @@ class Box:
             a2 (np.ndarray): Must lie on the xy-plane
             a3 (np.ndarray)
         """
+
+        '''
         self.lx = np.linalg.norm(a1)
         a2x = a1@a2/np.linalg.norm(a1)
         self.ly = np.sqrt(a2@a2-a2x**2)
         self.xy = a2x/self.ly
         crossa1a2 = np.cross(a1, a2)
-        self.lz = a3 * (crossa1a2/np.linalg.norm(crossa1a2))
+        self.lz = np.linalg.norm(a3) * (crossa1a2/np.linalg.norm(crossa1a2))
         a3x = a1@a3/np.linalg.norm(a1)
         self.xz = a3x/self.lz
         self.yz = (a2@a3-a2x*a3x)/self.ly/self.lz
-        
-        self.xlo = 0
-        self.xhi = self.lx
+        '''
+        if a1[0] <= 0 or a1[1] != 0 or a1[2] != 0:
+            raise ValueError("a1 vector must lie on the positive x-axis")
+        else:
+            self.xhi = self.lx = a1[0]
+
+        if a2[1] <= 0 or a2[2] !=0:
+            raise ValueError("a2 vector must lie on the xy plane, with strictly positive y component")
+        else:
+            self.yhi = self.ly = a2[1]
+            self.xy  = a2[0]
+
+        if a3[2] <= 0:
+            raise ValueError("a2 vector must own a strictly positive z component")
+        else:
+            self.zhi = self.lz = a3[2]
+            self.xz  = a3[0]
+            self.yz  = a3[1]
+
+        self.xlo = 0        
         self.ylo = 0
-        self.yhi = self.ly
         self.zlo = 0
-        self.zhi = self.lz
+
         self._post_def_()
-        
+
     def defByBoxLength(self, lx, ly, lz, alpha=90, beta=90, gamma=90):        
         """ define the Box via edge lengthes and angles between the edges
         """
@@ -114,43 +137,36 @@ class Box:
         self.ly = self.yhi - self.ylo
         self.lz = self.zhi - self.zlo
 
-        self.xy = xy / ly
-        self.xz = xy / lz
-        self.yz = yz / lz
+        self.xy = xy
+        self.xz = xy
+        self.yz = yz
 
         self._post_def_()
 
     def _post_def_(self):
-        
-        # box matrix h
-        self._cellpar = np.array([
-            [self.lx, self.xy*self.ly, self.xz*self.lz],
-            [0, self.ly, self.yz*self.lz],
-            [0, 0, self.lz]
+        # box basis
+        self._basis = np.array([
+            [self.lx,       0,       0],
+            [self.xy, self.ly,       0],
+            [self.xz, self.yz, self.lz]
         ])
-
-        self._boundary_condition = self.boundary_condition
-        self._x_bc, self._y_bc, self._z_bc = self.boundary_condition
-        if (self.xy != 0 or self.xz != 0 or self.yz != 0):
-            self._orthorhombic = False
-        else:
-            self._orthorhombic = True
+        self._orthorhombic = not (np.flatnonzero(self._basis) % 4).any()
 
     @property
-    def box_size(self):
-        return self._cellpar
+    def basis(self):
+        return self._basis
         
     @property
     def x_vec(self):
-        return self._cellpar[:, 0]
+        return self._basis[0]
     
     @property
     def y_vec(self):
-        return self._cellpar[:, 1]
+        return self._basis[1]
     
     @property
     def z_vec(self):
-        return self._cellpar[:, 2]
+        return self._basis[2]
     
     @property
     def origin(self):
@@ -158,13 +174,13 @@ class Box:
     
     @property
     def volume(self):
-        return np.linalg.det(self._cellpar)
+        return np.abs(np.linalg.det(self._basis))
     
     def angles(self):
         return np.asarray([self.alpha, self.beta, self.gamma])
 
     def lengths(self):
-        return np.asarray([self.lx, self.ly, self.lz])
+        return np.linalg.norm(self.basis, axis = 1)
 
     @property
     def orthorhombic(self):
@@ -183,7 +199,9 @@ class Box:
         Returns:
             np.ndarray: wrapped position(s)
         """
+        print("wrap")
         edge_length = np.array([self.lx, self.ly, self.lz])
+        print(edge_length)
         offset = np.floor_divide(position, edge_length)
         return position - offset*edge_length
     
@@ -211,7 +229,7 @@ class CellList:
         
     def build(self):
         
-        box = self.box.box_size
+        box = self.box.basis
         rc = self.rcutoff
         
         box_inv = np.linalg.inv(box)

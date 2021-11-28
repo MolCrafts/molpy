@@ -66,6 +66,7 @@ class TestASE:
         assert ASE_atoms[0].symbol == "Zr"
         assert ASE_atoms[100].symbol == "O"
         assert MOF.cell.volume == pytest.approx(ASE_atoms.cell.volume, 1e-8)
+        assert np.allclose(ASE_atoms.cell, MOF.cell.basis)
         ASE_atoms = toASE(MOF.groups[0])
         assert ASE_atoms.cell.volume == 0.0
 

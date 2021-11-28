@@ -115,7 +115,7 @@ def toASE_atoms(mpObj: MolpyOBJ) -> ASE_atoms:
     if isinstance(mpObj, Group):
         return ASE_atoms(symbols, positions)
     elif isinstance(mpObj, System):
-        return ASE_atoms(symbols, positions, cell=mpObj.cell._cellpar, pbc=mpObj.cell.pbc)
+        return ASE_atoms(symbols, positions, cell=mpObj.cell.basis, pbc=mpObj.cell.pbc)
 
 
 def build_ASE_neigh(sysObj: System, cutoff : FloatOpt =None) -> None:
