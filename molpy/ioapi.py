@@ -36,6 +36,7 @@ __all__ = [
     "fromXML",
     "fromNetworkXGraph",
     "toLAMMPS",
+    "trace",
 ]
 
 

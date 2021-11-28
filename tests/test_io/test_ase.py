@@ -15,7 +15,7 @@ try:
 except ImportError:
     pass;
 
-TEST_DIR = Path(__file__).resolve().parent
+SAMPLE_DIR = join(Path(__file__).resolve().parent.parent, "samples")
 class TestASE:
     def test_from_ase(self):
         mol = ase.build.molecule("bicyclobutane")
@@ -38,12 +38,12 @@ class TestASE:
         assert sys.atoms[0].name == "C"
 
     def test_from_CIF(self):
-        fpath = join(TEST_DIR,"UiO-66_vesta.cif")
+        fpath = join(SAMPLE_DIR,"UiO-66_vesta.cif")
         MOF = fromCIF(fpath)
         assert MOF[0].name == "Zr1"
         assert MOF[100].name == "O3"
 
-        MOF = fromCIF(join(TEST_DIR,"UiO-66_all.cif"))
+        MOF = fromCIF(join(SAMPLE_DIR,"UiO-66_all.cif"))
         assert MOF[10].name == "Zr11"
         assert MOF[100].name == "O77"
 
@@ -52,7 +52,7 @@ class TestASE:
         assert MOF[100].name == "O"
 
     def test_from_CIF_S(self):
-        fpath = join(TEST_DIR,"UiO-66_vesta.cif")
+        fpath = join(SAMPLE_DIR,"UiO-66_vesta.cif")
         MOF = fromCIF_S(fpath)
         ASE_atoms = ase.io.read(fpath)
         MOF_atom = MOF.atoms

@@ -1,7 +1,7 @@
 from molpy.atom import Atom
 from molpy.group import Group
 from molpy.system import System
-from molpy.cell import Cell
+from molpy.box import Box
 from ase.io.cif import parse_cif
 from ase.neighborlist import neighbor_list
 from ase import Atoms as ASE_atoms
@@ -31,7 +31,7 @@ def read_ASE_atoms_S(aseAtoms: ASE_atoms, **kwargs) -> System:
     if not cell.orthorhombic:
         raise NotImplementedError("non-othorhombi box is not supported!")
     lxyz = cell.lengths()
-    g_cell = Cell(3, "ppp", lx=lxyz[0], ly=lxyz[1], lz=lxyz[2])
+    g_cell = Box("ppp", lx=lxyz[0], ly=lxyz[1], lz=lxyz[2])
     sys.cell = g_cell
     sys.addMolecule(g)
     return sys
@@ -102,7 +102,7 @@ def read_CIF_S(filecif: str, fromLabel: bool = True, **kwargs) -> System:
     if not cell.orthorhombic:
         raise NotImplementedError("non-othorhombi box is not supported!")
     lxyz = cell.lengths()
-    sys.cell = Cell(3, "ppp", lx=lxyz[0], ly=lxyz[1], lz=lxyz[2])
+    sys.cell = Box("ppp", lx=lxyz[0], ly=lxyz[1], lz=lxyz[2])
     sys.addMolecule(g)
     return sys
 
@@ -115,7 +115,7 @@ def toASE_atoms(mpObj: MolpyOBJ) -> ASE_atoms:
     if isinstance(mpObj, Group):
         return ASE_atoms(symbols, positions)
     elif isinstance(mpObj, System):
-        return ASE_atoms(symbols, positions, cell=mpObj.cell.matrix, pbc=mpObj.cell.pbc)
+        return ASE_atoms(symbols, positions, cell=mpObj.cell._cellpar, pbc=mpObj.cell.pbc)
 
 
 def build_ASE_neigh(sysObj: System, cutoff : FloatOpt =None) -> None:

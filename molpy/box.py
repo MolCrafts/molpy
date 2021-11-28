@@ -5,6 +5,8 @@
 
 from typing import Literal
 import numpy as np
+from math import pi
+halfPI = 0.5 * pi
 
 def factory_ndarray_dtype_list(shape):
     return np.frompyfunc(list, 0, 1)(np.empty(shape, dtype=list))
@@ -26,12 +28,15 @@ class Box:
         """
         
         self.boundary_condition = boundary_condition
+        self._pbc = np.asarray([i == "p" for i in boundary_condition])
 
         if 'xlo' in kwargs:
             self.defByEdge(**kwargs)
             
         elif 'a1' in kwargs:
             self.defByLatticeVectors(**kwargs)
+        elif "lx" in kwargs:
+            self.defByBoxLength(**kwargs)
 
     def defByEdge(self, xlo, xhi, ylo, yhi, zlo, zhi, xy=0, xz=0, yz=0):
         
@@ -57,7 +62,7 @@ class Box:
         self.beta = np.cosh(xz/np.sqrt(1+xz**2+yz**2))
         self.alpha = np.cosh((xy*xz+yz)/np.sqrt(1+xy**2)/np.sqrt(1+xz**2+yz**2))
         self._post_def_()
-        
+    
     def defByLatticeVectors(self, a1, a2, a3):
         """ define Box via lattice vector
 
@@ -84,6 +89,27 @@ class Box:
         self.zhi = self.lz
         self._post_def_()
         
+    def defByBoxLength(self, lx, ly, lz, alpha=halfPI, beta=halfPI, gamma=halfPI):        
+        """ define the Box via edge lengthes and angles between the edges
+        """
+        self.gamma = gamma
+        self.beta  = beta
+        self.alpha = alpha
+        self.xlo = 0
+        self.ylo = 0
+        self.zlo = 0
+        self.xhi = lx
+        self.xy = ly * np.cos(gamma)
+        self.xz = lz * np.cos(beta)
+        self.yhi = np.sqrt(ly*ly - self.xy * self.xy)
+        self.yz  = (ly * lz * np.cos(alpha) - self.xy * self.xz) / self.yhi
+        self.zhi = np.sqrt(lz * lz - self.xz ** 2 - self.yz ** 2)
+        
+        self.lx = self.xhi - self.xlo
+        self.ly = self.yhi - self.ylo
+        self.lz = self.zhi - self.zlo
+        self._post_def_()
+
     def _post_def_(self):
         
         # box matrix h
@@ -115,6 +141,14 @@ class Box:
     @property
     def origin(self):
         return np.array([self.xlo, self.ylo, self.zlo])
+    
+    @property
+    def volume(self):
+        return np.linalg.det(self._cellpar)
+    
+    @property
+    def pbc(self):
+        return self._pbc
     
     def wrap(self, position):
         """wrap position(s) array back into box
