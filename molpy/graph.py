@@ -139,6 +139,15 @@ class AttribHolder:
 
         return s
 
+    def get_slice(self, slice):
+
+        nodes = self.get_node_slice(slice)
+        edges = self.get_edge_slice(slice)
+        ins = self.__class__()
+        ins._nodes = nodes
+        ins._edges = edges
+        return ins
+
     def get_node_attr(self, field):
         return self._nodes[field]
 
@@ -228,10 +237,19 @@ class Graph:
         """
         return self.attribs.nodes[i]
 
+    def get_sub_graph(self, slice)->'Graph':
+
+        sub_graph = self.__class__()
+        # sub_graph.topo = self.topo.subgraph(slice)
+        sub_graph.attribs = self.attribs.get_slice(slice)
+
+        return sub_graph
 
     def __getitem__(self, key):
         if isinstance(key, str):
             return self.attribs.get_node_attr(key)
+        elif isinstance(key, (int, slice)):
+            return self.get_sub_graph(key)
 
     def get_edge_attr(self, i, j):
         """ get an attribute of the edge by the index of two atoms

@@ -15,7 +15,7 @@ class System:
         self.comment = comment
         self.box = None
         self.forcefield = None
-        self.atoms:Atoms = None
+        self.atoms:Atoms = Atoms()
 
         self._traj = None
 
@@ -54,7 +54,9 @@ class System:
     def sample(self, start, stop, interval, method='replace')->int:
 
         frame = np.arange(self._nFrames)[start:stop:interval]
+        print('init')
         for f in frame:
+            print('frame:', f)
             self.select_frame(f)
             yield f        
 
@@ -79,7 +81,7 @@ class System:
 
     def set_box(self, Lx, Ly, Lz=0, xy=0, xz=0, yx=0, is2D=False):
         
-        self._box = Box(Lx, Ly, Lz, xy, xz, yx, is2D)    
+        self.box = Box(Lx, Ly, Lz, xy, xz, yx, is2D)    
 
     # ---= atoms interface =---
     def add_atoms(self):
