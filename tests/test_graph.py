@@ -15,6 +15,7 @@ class TestAttr:
 
         A = AttribHolder()
         ids = A.append_nodes(a=np.arange(5), b=np.arange(15).reshape(5, 3))
+        assert A._n_nodes == 5
         npt.assert_equal(ids, np.arange(5))
         ids = A.append_nodes(a=np.arange(3), b=np.arange(9).reshape(3, 3))
         npt.assert_equal(ids, np.arange(3)+5)
@@ -23,10 +24,25 @@ class TestAttr:
     def test_append_edges(self, attr):
         pass
 
+    def test_check_attrib(self, attr):
 
+        not_aligned = {
+            'b': np.arange(5),
+            'c': np.arange(3)
+        }
 
+        with pytest.raises(ValueError) as e:
+            AttribHolder.check_attr(lambda self, **attr: None)('self', **not_aligned)
+            assert e == 'not aligned'
 
-        
+        improper_type = {
+            'b' : {'a': 1},
+        }
+
+        with pytest.raises(TypeError) as e:
+            AttribHolder.check_attr(lambda self, **attr: None)('self', **improper_type)
+            assert e == 'b can not be convert to numpy.ndarray'
+
 
 class TestTopo:
 
@@ -44,12 +60,14 @@ class TestGraph:
         G = Graph()
         G.add_nodes(charge=np.arange(5), position=np.ones((5,3)), type=[1,2,3,4,5])
         G.add_edges([(0, 1), (1, 2), (2, 3), (3, 4)], r0=np.array([1,2,3,4]))
+        assert G.n_nodes == 5
         yield G
 
     def test_add_fields(self, linear:Graph):
 
         linear.add_nodes(id=np.arange(5))
-        # linear.add_edges([(4, 5), (5, 6), (6, 7)], id=np.arange(4))
+        assert linear.n_nodes == 5
+        assert linear['id'].shape == (5,)
 
     def test_add_nodes_and_edges(self, linear:Graph):
 

@@ -35,3 +35,7 @@ class Atoms(Graph):
 
         pass
 
+    def add_atom(self, field, value):
+
+        self.add_nodes(field=value)
+
