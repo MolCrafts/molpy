@@ -22,26 +22,63 @@ class AttribHolder:
         self._n_nodes = 0
         self._n_edges = 0
 
+    @staticmethod
+    def check_attr(func):
+
+        def wrapper(self, **attr):
+            # 2. check value's type and shape
+            for field, value in attr.items():
+                if not isinstance(value, np.ndarray):
+                    try:
+                        value = np.array(value)
+                        attr[field] = value
+                    except:
+                        raise TypeError(f'{field} can not be convert to numpy.ndarray')
+            
+            # 1. check if aligned
+            if not AttribHolder.is_align(attr.values()):
+                raise ValueError('not aligned')  
+
+            return func(self, **attr)
+
+        return wrapper
+
+
+    @check_attr
     def append_nodes(self, **attr):
 
-        assert AttribHolder.is_align(attr.values()), ValueError()
-        offset = self._n_nodes
+        offset = self._n_nodes  
+
+        for field, value in attr.items():
+            
+            if field in self._nodes:
+            
+                value = np.concatenate([self._nodes[field], value])
+
+                self._nodes[field] = value
+
+        # get the inner node id
+        ids = AttribHolder.get_continuous_id(len(value), offset)
+        self._n_nodes += len(value)  # update counter
+
+        return ids
+
+    @check_attr
+    def register_node_fields(self, **attr):
+
+        self._nodes.update(attr)
+        self._n_nodes = len(list(self._nodes.values())[0])
+
+    @check_attr
+    def append_node_attr(self, **attr):
 
         for field, value in attr.items():
             if field in self._nodes:
-                
-                now = self._nodes[field]
-
-                self._nodes[field] = np.concatenate([now, value])
-
+                raise KeyError(f'{field} already in self._nodes')
             else:
 
-                self._nodes[field] = np.array(value)
-
-        ids = AttribHolder.get_continuous_id(len(value), offset)
-        self._n_nodes += len(value)
-
-        return ids
+                assert len(value) == self._n_nodes, ValueError('length not match')
+                self._nodes[field] = value
 
 
     def append_edges(self, **attr):
@@ -61,16 +98,18 @@ class AttribHolder:
         return ids
 
     @staticmethod
-    def is_align(values)->int:
+    def is_align(values)->bool:
         """ check if input attributes are aligned.
 
         Args:
             values (_type_): _description_
 
         Returns:
-            int: _description_
+            bool: _description_
         """
         lengths = list(map(len, values))
+        if len(lengths) == 0:
+            return True
         maxLen = max(lengths)
         minLen = min(lengths)
         return maxLen == minLen
@@ -123,17 +162,22 @@ class Graph:
         self.topo = Topo()
         self.attribs = AttribHolder()
 
-        self._n_nodes = 0
-        self._n_edges = 0
+    @property
+    def n_nodes(self):
+        return self.attribs._n_nodes
 
     def add_nodes(self, **attr):
         """ add nodes to the graph by providing aligned attributes.
 
         """
+        new_field = {field:attr[field] for field in attr if field not in self.attribs._nodes}
+        exist_field = {field:attr[field] for field in attr if field in self.attribs._nodes}
+        if exist_field:
+            node_ids = self.attribs.append_nodes(**exist_field)
+            self.topo.add_nodes_from(node_ids)
+        else:
+            self.attribs.register_node_fields(**new_field)
 
-        node_ids = self.attribs.append_nodes(**attr)
-
-        self.topo.add_nodes_from(node_ids)
 
 
     def add_edges(self, pairs, **attr):
