@@ -155,6 +155,11 @@ class AttribHolder:
 
         return self.get_edges()
 
+    def update_nodes(self, **attr):
+
+        for field, value in attr.items():
+            self._nodes[field] = value
+
 class Graph:
 
     def __init__(self):
@@ -242,3 +247,6 @@ class Graph:
         edgeId = self.topo.edges[i, j]['weight']
         return self.attribs.get_edge_slice(edgeId)
 
+    def update_nodes(self, **attr):
+
+        self.attribs.update_nodes(**attr)

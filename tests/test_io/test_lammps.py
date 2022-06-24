@@ -17,6 +17,9 @@ class TestLammps:
         assert data['box']['xlo'] == 0
         assert data['box']['yhi'] == 50
         npt.assert_equal(data['atoms']['type'], np.array([1,1,3,3,4,4,4]))
+        atoms = reader.get_atoms()
+        assert atoms.n_atoms == 7
+        npt.assert_equal(atoms['id'], np.arange(7)+1)
 
     def test_read_dump(self):
 
@@ -28,5 +31,4 @@ class TestLammps:
         assert data['box']['yhi'] == 50
         npt.assert_equal(data['atoms']['type'], np.array([1,1,3,3,4,4,4]))
 
-
-        
+        atoms = reader.get_atoms()

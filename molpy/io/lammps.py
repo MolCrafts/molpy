@@ -108,8 +108,7 @@ def data2atoms(data:Dict, out=None):
 
         out = Atoms()
         atomData = data['atoms']
-        for key, value in atomData.items():
-            out.add_atom(key, value)
+        out.add_atoms(**atomData)
 
 
     return out
@@ -198,6 +197,7 @@ class DataReader(DataReader):
         self.filepath = fpath
         self.filehander = FileHandler(fpath)
         self.atom_style = atom_style
+        self.data:Dict = None
         
     def get_data(self):
         data = {}
@@ -206,10 +206,13 @@ class DataReader(DataReader):
         lines = map(lambda line: DataReader.parse_line(line), lines)
         lines = list(filter(lambda line: line != (), lines))
         data.update(DataReader.parse(lines, self.atom_style))
+        self.data = data
         return data
 
     def get_atoms(self):
-        return data2atoms(self.get_data())
+        if self.data is None:
+            self.get_data()
+        return data2atoms(self.data)
         
     @staticmethod
     def parse_line(line:str):

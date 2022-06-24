@@ -20,8 +20,8 @@ class Dihedral:
 
 class Atoms(Graph):
 
-    def __init__(self, n_atoms, n_bonds, ):
-        super().__init__(n_atoms, n_bonds)
+    def __init__(self):
+        super().__init__()
 
     def get_bonds(self)->List[Bond]:
 
@@ -35,7 +35,22 @@ class Atoms(Graph):
 
         pass
 
-    def add_atom(self, field, value):
+    def add_atoms(self, **attr):
 
-        self.add_nodes(field=value)
+        self.add_nodes(**attr)
 
+    def update(self, atoms, isAtom:bool=True, isBond:bool=True, method='replace'):
+
+        if isAtom:
+            self.update_nodes(**atoms.atoms)
+
+        if isBond:
+            pass
+
+    @property
+    def atoms(self):
+        return self.attribs.nodes
+
+    @property
+    def n_atoms(self):
+        return self.attribs._n_nodes
