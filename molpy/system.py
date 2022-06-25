@@ -52,13 +52,31 @@ class System:
         self.set_box(box['Lx'], box['Ly'], box['Lz'], box.get('xy', 0), box.get('xz', 0), box.get('yx', 0), box.get('is2D', False))
 
     def sample(self, start, stop, interval, method='replace')->int:
+        """sample from the trajectory, and inplace update the system. This method is a generator that will return the number of frame.
 
+        Usage:
+            # sample every 10 frames
+            for nframe in system.sample(0, 100, 10):
+                atoms = system.atoms
+                positions = atoms['position']
+
+        Args:
+            start (int): start frame
+            stop (int): stop frame
+            interval (int): sample interval
+            method (str, optional): how to load and update data. Defaults to 'replace'.
+
+        Yields:
+            Iterator[int]: current number of frame
+        """
         frame = np.arange(self._nFrames)[start:stop:interval]
-        print('init')
         for f in frame:
-            print('frame:', f)
             self.select_frame(f)
-            yield f        
+            yield f    
+
+    @property
+    def nframes(self)->int:
+        return self._traj.nframes    
 
     # ---= forcefield interface =---
 

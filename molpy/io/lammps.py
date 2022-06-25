@@ -121,8 +121,20 @@ class TrajReader(TrajReader):
         self.filepath = fpath
         self.filehandler = FileHandler(fpath)
         self.chunks = self.get_chunks('ITEM: TIMESTEP')
-        self.current_nframe = 0
-        self.current_frame = None
+        self.current_nframe:int = 0
+        self.current_frame:Dict = None
+
+    @property
+    def nframes(self):
+        """total frames of the trajectory
+        """
+        return self.chunks.nchunks
+
+    @property
+    def nframe(self):
+        """current frame in the trajectory
+        """
+        return self.current_nframe
 
     def get_chunks(self, seperator:str):
         chunks = self.filehandler.readchunks(seperator)
@@ -146,9 +158,9 @@ class TrajReader(TrajReader):
         box = self.current_frame['box']
 
         return {
-            'Lx': box['xlo'] - box['xhi'],
-            'Ly': box['ylo'] - box['yhi'],
-            'Lz': box['zlo'] - box['zhi'],
+            'Lx': box['xhi'] - box['xlo'],
+            'Ly': box['yhi'] - box['ylo'],
+            'Lz': box['zhi'] - box['zlo'],
             'xy': box.get('xy', 0),
             'xz': box.get('xz', 0),
             'yz': box.get('yz', 0),
@@ -156,9 +168,6 @@ class TrajReader(TrajReader):
         }
 
     
-    @property
-    def nFrames(self):
-        return self.chunks.nchunks
         
     @staticmethod
     def parse(lines:List[str]):
