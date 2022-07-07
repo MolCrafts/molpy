@@ -39,7 +39,6 @@ class System:
 
     def load_traj(self, trajFile:str, format:str):
         self._traj = Readers['TrajReaders'][format](trajFile)
-        self._nFrames = self._traj.nFrames
         return self._traj
 
     def select_frame(self, nFrame:int, method='replace'):
@@ -69,7 +68,7 @@ class System:
         Yields:
             Iterator[int]: current number of frame
         """
-        frame = np.arange(self._nFrames)[start:stop:interval]
+        frame = np.arange(self.nframes)[start:stop:interval]
         for f in frame:
             self.select_frame(f)
             yield f    
