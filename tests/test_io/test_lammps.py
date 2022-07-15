@@ -24,7 +24,7 @@ class TestLammps:
     def test_read_dump(self):
 
         reader = Readers['TrajReaders']['lammps']('tests/test_io/data/lammps.dump')
-        assert reader.nFrames == 3
+        assert reader.n_frames == 3
         data = reader.get_frame(0)
         assert data
         assert data['box']['xlo'] == 0

@@ -12,7 +12,7 @@ class TrajReader:
         raise NotImplementedError()
 
     @property
-    def nFrames(self):
+    def n_frames(self):
         raise NotImplementedError()
     
     @staticmethod

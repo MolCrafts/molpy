@@ -79,6 +79,13 @@ class Atoms:
         self._topo = Topo()
         self._attr = Attrib()
 
+    def __getitem__(self, key):
+
+        if isinstance(key, str):
+            return self._attr.atoms[key]
+        elif isinstance(key, (int, slice)):
+            return self.get_subatoms(key)
+
     def add_atoms(self, **attr):
         """
         Add per-atom attributes. If the attribute already exists, it will be appended. If not, it will be created. You can provide multiple attributes at once, either existing or new. In order to keep the attributes aligned, the existing attributes must be aligned. The length of new attribute must be the same as the length of the existing attributes. That means after adding the new attributes, the length of the existing attributes must be the same as the length of the new attributes.
@@ -91,8 +98,8 @@ class Atoms:
 
         """
 
-        atomids = self._attr.add_atoms(self, **attr)
-        self._topo.add_nodes(atomids)
+        atomids = self._attr.add_atoms(**attr)
+        self._topo.add_atoms(atomids)
 
     def add_bonds(self, connect:List[List[int]], **attr):
         """
@@ -107,7 +114,7 @@ class Atoms:
 
         """
         bondids = self._attr.add_bonds(self, **attr)
-        self._topo.add_edges(connect, bondids)
+        self._topo.add_bonds(connect, bondids)
 
     def add_angles(self, connects:List[List[int]], **attr):
         """
@@ -123,8 +130,6 @@ class Atoms:
         """
         angleids = self._attr.add_angles(self, **attr)
         self._topo.add_edges(connects, angleids)
-        
-    
 
     def get_bonds(self)->List[Bond]:
 
@@ -138,11 +143,7 @@ class Atoms:
 
         pass
 
-    def add_atoms(self, **attr):
-
-        self.add_nodes(**attr)
-
-    def update(self, atoms, isAtom:bool=True, isBond:bool=True, method='replace'):
+    def update(self, atoms:'Atoms', isAtom:bool=True, isBond:bool=True, method='replace'):
 
         if isAtom:
             self.update_nodes(**atoms.atoms)
@@ -152,8 +153,8 @@ class Atoms:
 
     @property
     def atoms(self):
-        return self.attribs.nodes
+        return self._attr.atoms
 
     @property
     def n_atoms(self):
-        return self.attribs._n_nodes
+        return self._attr._n_atoms

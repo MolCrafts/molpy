@@ -34,8 +34,9 @@ class System:
             self.atoms = atoms
 
         if method == 'replace':
-            self.atoms.update(atoms, isBond=False)
-
+            self.replace(atoms)
+        else:
+            raise NotImplementedError()
 
     def load_traj(self, trajFile:str, format:str):
         self._traj = Readers['TrajReaders'][format](trajFile)
@@ -45,10 +46,10 @@ class System:
         frame = self._traj.get_frame(nFrame)
         atoms = self._traj.get_atoms()
         if method == 'replace':
-            self.atoms.update(atoms)
+            self.replace(atoms)
         
         box = self._traj.get_box()
-        self.set_box(box['Lx'], box['Ly'], box['Lz'], box.get('xy', 0), box.get('xz', 0), box.get('yx', 0), box.get('is2D', False))
+        self.box = box
 
     def sample(self, start, stop, interval, method='replace')->int:
         """sample from the trajectory, and inplace update the system. This method is a generator that will return the number of frame.
@@ -68,7 +69,7 @@ class System:
         Yields:
             Iterator[int]: current number of frame
         """
-        frame = np.arange(self.nframes)[start:stop:interval]
+        frame = np.arange(self._traj.n_frames)[start:stop:interval]
         for f in frame:
             self.select_frame(f)
             yield f    
@@ -110,3 +111,5 @@ class System:
     def get_angles(self):
         pass
 
+    def replace(self, atoms:Atoms):
+        self.atoms = atoms

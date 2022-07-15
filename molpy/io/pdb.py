@@ -13,6 +13,8 @@ import sys
 import warnings
 from collections import OrderedDict
 PI = pi
+from molpy.utils.unit import unit
+from molpy.utils.element import Element, get_by_symbol
 
 def _parse_atom_index(index):
     """Parse the string containing an atom index, which might be either decimal or hex."""
@@ -149,14 +151,30 @@ class PdbStructure:
                 self._current_model._current_chain._add_ter_record()
                 self._reset_residue_numbers()
             elif command == "CRYST1":
-                a_length = float(pdb_line[6:15])*0.1
-                b_length = float(pdb_line[15:24])*0.1
-                c_length = float(pdb_line[24:33])*0.1
-                alpha = float(pdb_line[33:40])*PI/180.0
-                beta = float(pdb_line[40:47])*PI/180.0
-                gamma = float(pdb_line[47:54])*PI/180.0
+
+                # h = [
+                    #     [Lx, xyLy, xzLz],
+                    #     [0, Ly, yzLz],
+                    #     [0, 0, Lz]
+                    # ]
+
+                a_length = float(pdb_line[6:15])
+                b_length = float(pdb_line[15:24])
+                c_length = float(pdb_line[24:33])
+                alpha = float(pdb_line[33:40])
+                beta = float(pdb_line[40:47])
+                gamma = float(pdb_line[47:54])
                 if 0 not in (a_length, b_length, c_length):
-                    self._periodic_box_vectors = computePeriodicBoxVectors(a_length, b_length, c_length, alpha, beta, gamma)
+                    # self._periodic_box_vectors = computePeriodicBoxVectors(a_length, b_length, c_length, alpha, beta, gamma)
+                    # NOTE: Here we are not process the box info from pdb file. Instead, we return the dict of raw box info which compatible with freud.Box.
+                    self._periodic_box_vectors = {
+                        'Lx': a_length,
+                        'Ly': b_length,
+                        'Lz': c_length,
+                        'xy': alpha,
+                        'xz': beta,
+                        'yz': gamma,
+                    }
             elif command == "SEQRES":
                 chain_id = pdb_line[11]
                 if len(self.sequences) == 0 or chain_id != self.sequences[-1].chain_id:
@@ -731,7 +749,7 @@ class Atom(object):
         except:
             temperature_factor = unit.Quantity(0.0, unit.angstroms**2)
         self.locations = {}
-        loc = Atom.Location(alternate_location_indicator, unit.Quantity(Vec3(x,y,z), unit.angstroms), occupancy, temperature_factor, self.residue_name_with_spaces)
+        loc = Atom.Location(alternate_location_indicator, np.array([x, y, z]) * unit.angstrom, occupancy, temperature_factor, self.residue_name_with_spaces)
         self.locations[alternate_location_indicator] = loc
         self.default_location_id = alternate_location_indicator
         # segment id, element_symbol, and formal_charge are not always present
@@ -745,7 +763,7 @@ class Atom(object):
         else:
             try:
                 # Try to find a sensible element symbol from columns 76-77
-                self.element = element.get_by_symbol(self.element_symbol)
+                self.element = get_by_symbol(self.element_symbol)
             except KeyError:
                 self.element = None
         if pdbstructure is not None:
@@ -959,109 +977,127 @@ class PDBFile:
             pdb = PdbStructure(inputfile, load_all_models=True, extraParticleIdentifier=extraParticleIdentifier)
             if own_handle:
                 inputfile.close()
-        PDBFile._loadNameReplacementTables()
+        # PDBFile._loadNameReplacementTables()
+
+        # create the raw data dict
+
+        atoms = Atoms()
+        for residue in pdb.iter_residues():
+            if residue.resname in PDBFile._standardResidues:
+                residueName = residue.resname
+            else:
+                residueName = PDBFile._residueNameReplacements.get(residue.resname, residue.resname)
+            for atom in residue.iter_atoms():
+                if atom.element is None:
+                    element = None
+                elif atom.element.symbol in metalElements:
+                    element = None
+                else:
+                    element = atom.element.symbol
+                atomName = PDBFile._atomNameReplacements.get(atom.name, atom.name)
+                atoms.add(Atom(atomName, element, atom.pos, atom.occupancy, atom.bfactor, residueName, atom.segment_id, atom.charge, atom.altloc))
 
 
         # Build the topology
 
-        atomByNumber = {}
-        for chain in pdb.iter_chains():
-            c = top.addChain(chain.chain_id)
-            for residue in chain.iter_residues():
-                resName = residue.get_name()
-                if resName in PDBFile._residueNameReplacements:
-                    resName = PDBFile._residueNameReplacements[resName]
-                r = top.addResidue(resName, c, str(residue.number), residue.insertion_code)
-                if resName in PDBFile._atomNameReplacements:
-                    atomReplacements = PDBFile._atomNameReplacements[resName]
-                else:
-                    atomReplacements = {}
-                processedAtomNames = set()
-                for atom in residue.atoms_by_name.values():
-                    atomName = atom.get_name()
-                    if atomName in processedAtomNames or atom.residue_name != residue.get_name():
-                        continue
-                    processedAtomNames.add(atomName)
-                    if atomName in atomReplacements:
-                        atomName = atomReplacements[atomName]
-                    atomName = atomName.strip()
-                    element = atom.element
-                    if element == 'EP':
-                        element = None
-                    elif element is None:
-                        # Try to guess the element.
+        # atomByNumber = {}
+        # for chain in pdb.iter_chains():
+        #     c = top.addChain(chain.chain_id)
+        #     for residue in chain.iter_residues():
+        #         resName = residue.get_name()
+        #         if resName in PDBFile._residueNameReplacements:
+        #             resName = PDBFile._residueNameReplacements[resName]
+        #         r = top.addResidue(resName, c, str(residue.number), residue.insertion_code)
+        #         if resName in PDBFile._atomNameReplacements:
+        #             atomReplacements = PDBFile._atomNameReplacements[resName]
+        #         else:
+        #             atomReplacements = {}
+        #         processedAtomNames = set()
+        #         for atom in residue.atoms_by_name.values():
+        #             atomName = atom.get_name()
+        #             if atomName in processedAtomNames or atom.residue_name != residue.get_name():
+        #                 continue
+        #             processedAtomNames.add(atomName)
+        #             if atomName in atomReplacements:
+        #                 atomName = atomReplacements[atomName]
+        #             atomName = atomName.strip()
+        #             element = atom.element
+        #             if element == 'EP':
+        #                 element = None
+        #             elif element is None:
+        #                 # Try to guess the element.
 
-                        upper = atomName.upper()
-                        while len(upper) > 1 and upper[0].isdigit():
-                            upper = upper[1:]
-                        if upper.startswith('CL'):
-                            element = elem.chlorine
-                        elif upper.startswith('NA'):
-                            element = elem.sodium
-                        elif upper.startswith('MG'):
-                            element = elem.magnesium
-                        elif upper.startswith('BE'):
-                            element = elem.beryllium
-                        elif upper.startswith('LI'):
-                            element = elem.lithium
-                        elif upper.startswith('K'):
-                            element = elem.potassium
-                        elif upper.startswith('ZN'):
-                            element = elem.zinc
-                        elif len(residue) == 1 and upper.startswith('CA'):
-                            element = elem.calcium
-                        elif upper.startswith('D') and any(a.name == atomName[1:] for a in residue.iter_atoms()):
-                            pass # A Drude particle
-                        else:
-                            try:
-                                element = elem.get_by_symbol(upper[0])
-                            except KeyError:
-                                pass
-                    newAtom = top.addAtom(atomName, element, r, str(atom.serial_number))
-                    atomByNumber[atom.serial_number] = newAtom
-        self._positions = []
-        for model in pdb.iter_models(True):
-            coords = []
-            for chain in model.iter_chains():
-                for residue in chain.iter_residues():
-                    processedAtomNames = set()
-                    for atom in residue.atoms_by_name.values():
-                        if atom.get_name() in processedAtomNames or atom.residue_name != residue.get_name():
-                            continue
-                        processedAtomNames.add(atom.get_name())
-                        pos = atom.get_position().value_in_unit(nanometers)
-                        coords.append(Vec3(pos[0], pos[1], pos[2]))
-            self._positions.append(coords*nanometers)
-        ## The atom positions read from the PDB file.  If the file contains multiple frames, these are the positions in the first frame.
-        self.positions = self._positions[0]
-        self.topology.setPeriodicBoxVectors(pdb.get_periodic_box_vectors())
-        self.topology.createStandardBonds()
-        self.topology.createDisulfideBonds(self.positions)
-        self._numpyPositions = None
+        #                 upper = atomName.upper()
+        #                 while len(upper) > 1 and upper[0].isdigit():
+        #                     upper = upper[1:]
+        #                 if upper.startswith('CL'):
+        #                     element = elem.chlorine
+        #                 elif upper.startswith('NA'):
+        #                     element = elem.sodium
+        #                 elif upper.startswith('MG'):
+        #                     element = elem.magnesium
+        #                 elif upper.startswith('BE'):
+        #                     element = elem.beryllium
+        #                 elif upper.startswith('LI'):
+        #                     element = elem.lithium
+        #                 elif upper.startswith('K'):
+        #                     element = elem.potassium
+        #                 elif upper.startswith('ZN'):
+        #                     element = elem.zinc
+        #                 elif len(residue) == 1 and upper.startswith('CA'):
+        #                     element = elem.calcium
+        #                 elif upper.startswith('D') and any(a.name == atomName[1:] for a in residue.iter_atoms()):
+        #                     pass # A Drude particle
+        #                 else:
+        #                     try:
+        #                         element = elem.get_by_symbol(upper[0])
+        #                     except KeyError:
+        #                         pass
+        #             newAtom = top.addAtom(atomName, element, r, str(atom.serial_number))
+        #             atomByNumber[atom.serial_number] = newAtom
+        # self._positions = []
+        # for model in pdb.iter_models(True):
+        #     coords = []
+        #     for chain in model.iter_chains():
+        #         for residue in chain.iter_residues():
+        #             processedAtomNames = set()
+        #             for atom in residue.atoms_by_name.values():
+        #                 if atom.get_name() in processedAtomNames or atom.residue_name != residue.get_name():
+        #                     continue
+        #                 processedAtomNames.add(atom.get_name())
+        #                 pos = atom.get_position().value_in_unit(nanometers)
+        #                 coords.append(Vec3(pos[0], pos[1], pos[2]))
+        #     self._positions.append(coords*nanometers)
+        # ## The atom positions read from the PDB file.  If the file contains multiple frames, these are the positions in the first frame.
+        # self.positions = self._positions[0]
+        # self.topology.setPeriodicBoxVectors(pdb.get_periodic_box_vectors())
+        # self.topology.createStandardBonds()
+        # self.topology.createDisulfideBonds(self.positions)
+        # self._numpyPositions = None
 
-        # Add bonds based on CONECT records. Bonds between metals of elements specified in metalElements and residues in standardResidues are not added.
+        # # Add bonds based on CONECT records. Bonds between metals of elements specified in metalElements and residues in standardResidues are not added.
 
-        connectBonds = []
-        for connect in pdb.models[-1].connects:
-            i = connect[0]
-            for j in connect[1:]:
-                if i in atomByNumber and j in atomByNumber:    
-                    if atomByNumber[i].element is not None and atomByNumber[j].element is not None:
-                        if atomByNumber[i].element.symbol not in metalElements and atomByNumber[j].element.symbol not in metalElements:
-                            connectBonds.append((atomByNumber[i], atomByNumber[j])) 
-                        elif atomByNumber[i].element.symbol in metalElements and atomByNumber[j].residue.name not in PDBFile._standardResidues:
-                            connectBonds.append((atomByNumber[i], atomByNumber[j])) 
-                        elif atomByNumber[j].element.symbol in metalElements and atomByNumber[i].residue.name not in PDBFile._standardResidues:
-                            connectBonds.append((atomByNumber[i], atomByNumber[j]))     
-                    else:
-                        connectBonds.append((atomByNumber[i], atomByNumber[j]))         
-        if len(connectBonds) > 0:
-            # Only add bonds that don't already exist.
-            existingBonds = set(top.bonds())
-            for bond in connectBonds:
-                if bond not in existingBonds and (bond[1], bond[0]) not in existingBonds:
-                    top.addBond(bond[0], bond[1])
-                    existingBonds.add(bond)
+        # connectBonds = []
+        # for connect in pdb.models[-1].connects:
+        #     i = connect[0]
+        #     for j in connect[1:]:
+        #         if i in atomByNumber and j in atomByNumber:    
+        #             if atomByNumber[i].element is not None and atomByNumber[j].element is not None:
+        #                 if atomByNumber[i].element.symbol not in metalElements and atomByNumber[j].element.symbol not in metalElements:
+        #                     connectBonds.append((atomByNumber[i], atomByNumber[j])) 
+        #                 elif atomByNumber[i].element.symbol in metalElements and atomByNumber[j].residue.name not in PDBFile._standardResidues:
+        #                     connectBonds.append((atomByNumber[i], atomByNumber[j])) 
+        #                 elif atomByNumber[j].element.symbol in metalElements and atomByNumber[i].residue.name not in PDBFile._standardResidues:
+        #                     connectBonds.append((atomByNumber[i], atomByNumber[j]))     
+        #             else:
+        #                 connectBonds.append((atomByNumber[i], atomByNumber[j]))         
+        # if len(connectBonds) > 0:
+        #     # Only add bonds that don't already exist.
+        #     existingBonds = set(top.bonds())
+        #     for bond in connectBonds:
+        #         if bond not in existingBonds and (bond[1], bond[0]) not in existingBonds:
+        #             top.addBond(bond[0], bond[1])
+        #             existingBonds.add(bond)
 
     def getTopology(self):
         """Get the Topology of the model."""
