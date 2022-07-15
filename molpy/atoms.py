@@ -3,7 +3,7 @@
 # date: 2022-06-22
 # version: 0.0.1
 
-from typing import List
+from typing import Iterable, List
 import numpy as np
 from molpy.topo import Topo
 
@@ -32,32 +32,62 @@ class Attrib:
         self.dihedrals = {}
         self._n_dihedrals = 0
 
-    def add_atoms(self, **attr):
+    def add_attr(self, to_, counter, **attr):
 
         length = self.check_aligned(**attr)
-        
         for k, v in attr.items():
-            if k not in self.atoms:
-                self.atoms[k] = v
+            if k not in to_:
+                to_[k] = v
             else:
-                self.atoms[k] = np.concatenate((self.atoms[k], v))
+                to_[k] = np.concatenate((self.atoms[k], v))
+        ids = self.gen_index(counter, length)
+        return ids
 
-        atomids = self.gen_index(self._n_atoms, length)
-        self._n_atoms += length
-        return atomids
+    def add_atoms(self, **attr):
+
+        # length = self.check_aligned(**attr)
+        
+        # for k, v in attr.items():
+        #     if k not in self.atoms:
+        #         self.atoms[k] = v
+        #     else:
+        #         self.atoms[k] = np.concatenate((self.atoms[k], v))
+
+        # atomids = self.gen_index(self._n_atoms, length)
+        # self._n_atoms += length
+        # return atomids
+        ids = self.add_attr(self.atoms, self._n_atoms, **attr)
+        self._n_atoms += len(ids)
+        return ids
 
     def add_bonds(self, **attr):
 
-        length = self.check_aligned(**attr)
-        for k, v in attr.items():
-            if k not in self.bonds:
-                self.bonds[k] = v
-            else:
-                self.bonds[k] = np.concatenate((self.bonds[k], v))
+        # length = self.check_aligned(**attr)
+        # for k, v in attr.items():
+        #     if k not in self.bonds:
+        #         self.bonds[k] = v
+        #     else:
+        #         self.bonds[k] = np.concatenate((self.bonds[k], v))
 
-        bondids = self.gen_index(self._n_bonds, length)
-        self._n_bonds += length
-        return bondids
+        # bondids = self.gen_index(self._n_bonds, length)
+        # self._n_bonds += length
+        # return bondids
+        ids = self.add_attr(self.bonds, self._n_bonds, **attr)
+        self._n_bonds += len(ids)
+        return ids
+
+    def add_angles(self, **attr):
+
+        ids = self.add_attr(self.angles, self._n_angles, **attr)
+        self._n_angles += len(ids)
+        return ids
+
+    def add_dihedrals(self, **attr):
+
+        ids = self.add_attr(self.dihedrals, self._n_dihedrals, **attr)
+        self._n_dihedrals += len(ids)
+        return ids
+        
 
     def check_aligned(self, **attr):
 
@@ -101,22 +131,22 @@ class Atoms:
         atomids = self._attr.add_atoms(**attr)
         self._topo.add_atoms(atomids)
 
-    def add_bonds(self, connect:List[List[int]], **attr):
+    def add_bonds(self, connect:List[Iterable[int]], **attr):
         """
         Add bonds with attributes. The length of the connect list must be the same as the length of the attributes. The attributes must be aligned.
 
         Args:
-            connectList[List[int]]: The bonds to add.
+            connect (List[Iterable[int]]): The bonds to add.
             **attr: The attributes to add.
 
         Examples:
             >>> atoms.add_bonds([[0, 1]], bond_type=['C'])
 
         """
-        bondids = self._attr.add_bonds(self, **attr)
+        bondids = self._attr.add_bonds(**attr)
         self._topo.add_bonds(connect, bondids)
 
-    def add_angles(self, connects:List[List[int]], **attr):
+    def add_angles(self, connects:List[Iterable[int]], **attr):
         """
         Add angles with attributes. The length of the connect list must be the same as the length of the attributes. The attributes must be aligned.
 
@@ -128,8 +158,23 @@ class Atoms:
             >>> atoms.add_angles([[0, 1, 2]], angle_type=['C'])
 
         """
-        angleids = self._attr.add_angles(self, **attr)
-        self._topo.add_edges(connects, angleids)
+        angleids = self._attr.add_angles(**attr)
+        self._topo.add_angles(connects, angleids)
+
+    def add_dihedrals(self, connects:List[Iterable[int]], **attr):
+        """
+        Add dihedrals with attributes. The length of the connect list must be the same as the length of the attributes. The attributes must be aligned.
+
+        Args:
+            connects[List[int]]: The dihedrals to add.
+            **attr: The attributes to add.
+
+        Examples:
+            >>> atoms.add_dihedrals([[0, 1, 2, 3]], dihedral_type=['C'])
+
+        """
+        dihedralids = self._attr.add_dihedrals(**attr)
+        self._topo.add_dihedrals(connects, dihedralids)
 
     def get_bonds(self)->List[Bond]:
 
@@ -158,3 +203,11 @@ class Atoms:
     @property
     def n_atoms(self):
         return self._attr._n_atoms
+
+    @property
+    def bonds(self):
+        return self._attr.bonds
+
+    @property
+    def n_bonds(self):
+        return self._attr._n_bonds

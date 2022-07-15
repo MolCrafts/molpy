@@ -5,9 +5,11 @@
 
 from itertools import combinations
 from typing import Dict, Iterable, List, Optional, Tuple
-import networkx as nx
+from molpy.utils.typing import ArrayLike
 import numpy as np
 from itertools import combinations
+
+N = int # represent number of atoms/bonds/angles etc..
 
 class AdjList:
 
@@ -368,22 +370,34 @@ class Topo:
 
         self._g.add_nodes(ids)
 
-    def add_bonds(self, connects:List[List[int]], ids:Optional[List[int]]=None):
-
-        if ids is None:
+    def add_bonds(self, connects:ArrayLike[N, 2], indices:ArrayLike[N]):
+        
+        if indices is None:
             for i in range(len(connects)):
                 self.add_bond(*connects[i])
         else:
             for i in range(len(connects)):
-                self.add_bond(*connects[i], ids[i])
+                self.add_bond(*connects[i], indices[i])
 
-    def add_angles(self, angles:List[List[int]], ids:Optional[List[int]]=None):
+    def add_angles(self, angles, indices):
 
         for i in range(len(angles)):
-            self.add_angle(*angles[i], ids[i])
+            self.add_angle(*angles[i], indices[i])
 
-    def add_bond(self, i, j, index:Optional[int]=None):
+    def add_dihedrals(self, dihedrals, indices):
 
+        for i in range(len(dihedrals)):
+            self.add_dihedral(*dihedrals[i], indices[i])
+
+    def add_bond(self, i:int, j:int, index:int):
+        """
+        add a bond to the graph. 
+
+        Args:
+            i (int): one atom in a bond
+            j (int): another atom in a bond
+            index (int): bond attribute index match to attrib of atoms
+        """
         self._g.add_bond(i, j)
         
         if i not in self._bonds:

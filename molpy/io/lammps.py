@@ -109,10 +109,22 @@ style_dtypes = {
 def data2atoms(data: Dict, out=None):
 
     if out is None:
-
         out = Atoms()
-        atomData = data["atoms"]
-        out.add_atoms(**atomData)
+
+    atomData = data["atoms"]
+    out.add_atoms(**atomData)
+
+    if "bonds" in data:
+        bondData = data["bonds"]
+        out.add_bonds(bondData["connect"], id=bondData['id'], type=bondData["type"])
+
+    if "angles" in data:
+        angleData = data["angles"]
+        out.add_angles(angleData["connect"], id=angleData['id'], type=angleData["type"])
+    
+    if "dihedrals" in data:
+        diheData = data["dihedrals"]
+        out.add_dihedrals(diheData["connect"], id=diheData['id'], type=diheData["type"])
 
     return out
 
@@ -154,7 +166,7 @@ class DumpReader(TrajReader):
 
         chunk = self.chunks.getchunk(index)
 
-        self.current_frame = TrajReader.parse(chunk)
+        self.current_frame = DumpReader.parse(chunk)
         return self.current_frame
 
     def get_atoms(self)->Atoms:
@@ -237,6 +249,7 @@ class DataReader(DataReader):
         if self.data is None:
             self.get_data()
         box = self.data["box"]
+        return Box(box["xhi"] - box["xlo"], box["yhi"] - box["ylo"], box["zhi"] - box["zlo"], box.get('xy', 0), box.get('xz', 0), box.get('yz', 0), is2D=False)
 
     @staticmethod
     def parse_line(line: str):
@@ -321,7 +334,7 @@ class DataReader(DataReader):
             data["bonds"] = {}
             data["bonds"]["id"] = bondInfo["id"]
             data["bonds"]["type"] = bondInfo["type"]
-            data["connect"] = bondInfo[["itom", "jtom"]]
+            data["bonds"]["connect"] = bondInfo[["itom", "jtom"]]
 
         # #--- parse angles ---
         if "Angles" in section_start_lineno:
@@ -333,7 +346,7 @@ class DataReader(DataReader):
             data["angles"] = {}
             data["angles"]["id"] = angleInfo["id"]
             data["angles"]["type"] = angleInfo["type"]
-            data["connect"] = angleInfo[["itom", "jtom", "ktom"]]
+            data["angles"]["connect"] = angleInfo[["itom", "jtom", "ktom"]]
 
         # #--- parse dihedrals ---
         if "Dihedrals" in section_start_lineno:
@@ -345,7 +358,7 @@ class DataReader(DataReader):
             data["dihedrals"] = {}
             data["dihedrals"]["id"] = dihedralInfo["id"]
             data["dihedrals"]["type"] = dihedralInfo["type"]
-            data["connect"] = dihedralInfo[["itom", "jtom", "ktom", "ltom"]]
+            data["dihedrals"]["connect"] = dihedralInfo[["itom", "jtom", "ktom", "ltom"]]
 
         return data
 
