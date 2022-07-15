@@ -129,7 +129,6 @@ class AdjList:
         for node in nodes:
             self.del_node(node)
 
-    @property
     def nodes(self):
         return self._adj.keys()
 
@@ -137,7 +136,9 @@ class AdjList:
     def n_nodes(self):
         return len(self._adj)
 
-    order = n_nodes
+    @property
+    def order(self):
+        return len(self._adj)
 
     def had_node(self, n):
         return n in self._adj
@@ -229,6 +230,31 @@ class AdjList:
         _adj = self._adj
         return [(u, v) for u in _adj for v in _adj[u]]
 
+    @property
+    def size(self, ):
+        """
+        Return the number of edges.
+
+        Return:
+            int: The number of edges.
+        
+        Examples:
+            >>> G = Graph()
+            >>> G.add_nodes_from([0, 1, 2, 3])
+            >>> G.add_bond(0, 1)
+            >>> G.add_bond(0, 2)
+            >>> G.size()
+            2
+        """
+        return len(self.edges())
+
+    def number_of_edges(self, u=None, v=None):
+        if u is None:
+            return int(self.size())
+        if v in self._adj[u]:
+            return 1
+        return 0
+
     def has_edge(self, u, v):
         """
         Return True if there is an edge between u and v.
@@ -267,6 +293,7 @@ class AdjList:
         """
         return self._adj[n].keys()
 
+    @property
     def degree(self)->Dict[int, int]:
         """
         Return the degree of each node.
@@ -288,7 +315,20 @@ class AdjList:
     def items(self):
 
         return self._adj.items()
-        
+
+    @property
+    def adj(self):
+        return self._adj
+
+    def subgraph(self, nodes):
+
+        induced_nodes = [node for node in nodes if node in self._adj]
+        subgraph = Graph()
+        for induced_node in induced_nodes:
+            for neighbor in self._adj[induced_node]:
+                if neighbor in induced_nodes:
+                    subgraph.add_bond(induced_node, neighbor)
+        return subgraph
 
 class Graph(AdjList):
     """
@@ -297,6 +337,7 @@ class Graph(AdjList):
     def __init__(self):
         super().__init__()
         self.globals = {}
+        self.is_directed = False
 
     @property
     def name(self):
@@ -352,6 +393,10 @@ class Graph(AdjList):
         dihedrals = np.where((dihedrals[:,1]>dihedrals[:,2]).reshape((-1, 1)), dihedrals[:, ::-1], dihedrals)
         dihedrals = np.unique(dihedrals, axis=0)
         return dihedrals
+
+    def from_networkx(self, G):
+
+        self.add_bonds(G.edges)
 
 
 class Topo:
