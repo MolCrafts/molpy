@@ -9,5 +9,7 @@ class _baseType:
         pass
 
 ArrayLike = _baseType()
+Valuable = _baseType()
+N = int
 
     

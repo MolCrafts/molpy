@@ -370,26 +370,26 @@ class Topo:
 
         self._g.add_nodes(ids)
 
-    def add_bonds(self, connects:ArrayLike[N, 2], indices:ArrayLike[N]):
+    def add_bonds(self, connects:ArrayLike[N, 2], indices:Optional[ArrayLike[N]]=None):
         
         if indices is None:
             for i in range(len(connects)):
-                self.add_bond(*connects[i])
+                self.add_bond(*connects[i], None)
         else:
             for i in range(len(connects)):
                 self.add_bond(*connects[i], indices[i])
 
-    def add_angles(self, angles, indices):
+    def add_angles(self, angles, indices=None):
 
         for i in range(len(angles)):
             self.add_angle(*angles[i], indices[i])
 
-    def add_dihedrals(self, dihedrals, indices):
+    def add_dihedrals(self, dihedrals, indices=None):
 
         for i in range(len(dihedrals)):
             self.add_dihedral(*dihedrals[i], indices[i])
 
-    def add_bond(self, i:int, j:int, index:int):
+    def add_bond(self, i:int, j:int, index:Optional[int]=None):
         """
         add a bond to the graph. 
 
