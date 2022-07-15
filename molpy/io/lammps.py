@@ -114,16 +114,16 @@ def data2atoms(data: Dict, out=None):
     atomData = data["atoms"]
     out.add_atoms(**atomData)
 
-    if "bonds" in data:
-        bondData = data["bonds"]
+    if "Bonds" in data:
+        bondData = data["Bonds"]
         out.add_bonds(bondData["connect"], id=bondData['id'], type=bondData["type"])
 
-    if "angles" in data:
-        angleData = data["angles"]
+    if "Angles" in data:
+        angleData = data["Angles"]
         out.add_angles(angleData["connect"], id=angleData['id'], type=angleData["type"])
     
-    if "dihedrals" in data:
-        diheData = data["dihedrals"]
+    if "Dihedrals" in data:
+        diheData = data["Dihedrals"]
         out.add_dihedrals(diheData["connect"], id=diheData['id'], type=diheData["type"])
 
     return out
@@ -331,10 +331,10 @@ class DataReader(DataReader):
             bondInfo = DataReader.parse_bonds(
                 lines[bond_section_starts:bond_section_ends]
             )
-            data["bonds"] = {}
-            data["bonds"]["id"] = bondInfo["id"]
-            data["bonds"]["type"] = bondInfo["type"]
-            data["bonds"]["connect"] = bondInfo[["itom", "jtom"]]
+            data["Bonds"] = {}
+            data["Bonds"]["id"] = bondInfo["id"]
+            data["Bonds"]["type"] = bondInfo["type"]
+            data["Bonds"]["connect"] = bondInfo[["itom", "jtom"]]
 
         # #--- parse angles ---
         if "Angles" in section_start_lineno:
@@ -343,10 +343,10 @@ class DataReader(DataReader):
             angleInfo = DataReader.parse_angles(
                 lines[angles_section_starts:angles_section_ends]
             )
-            data["angles"] = {}
-            data["angles"]["id"] = angleInfo["id"]
-            data["angles"]["type"] = angleInfo["type"]
-            data["angles"]["connect"] = angleInfo[["itom", "jtom", "ktom"]]
+            data["Angles"] = {}
+            data["Angles"]["id"] = angleInfo["id"]
+            data["Angles"]["type"] = angleInfo["type"]
+            data["Angles"]["connect"] = angleInfo[["itom", "jtom", "ktom"]]
 
         # #--- parse dihedrals ---
         if "Dihedrals" in section_start_lineno:
@@ -355,10 +355,10 @@ class DataReader(DataReader):
             dihedralInfo = DataReader.parse_dihedrals(
                 lines[dihedrals_section_starts:dihedrals_section_ends]
             )
-            data["dihedrals"] = {}
-            data["dihedrals"]["id"] = dihedralInfo["id"]
-            data["dihedrals"]["type"] = dihedralInfo["type"]
-            data["dihedrals"]["connect"] = dihedralInfo[["itom", "jtom", "ktom", "ltom"]]
+            data["Dihedrals"] = {}
+            data["Dihedrals"]["id"] = dihedralInfo["id"]
+            data["Dihedrals"]["type"] = dihedralInfo["type"]
+            data["Dihedrals"]["connect"] = dihedralInfo[["itom", "jtom", "ktom", "ltom"]]
 
         return data
 

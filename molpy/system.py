@@ -15,7 +15,7 @@ class System:
         self.comment = comment
         self.box = None
         self.forcefield = None
-        self.atoms:Atoms = Atoms()
+        self.atoms:Atoms = None
 
         self._traj = None
 
@@ -26,15 +26,15 @@ class System:
         Args:
             dataFile (str): path of data file
             format (str): format of data file
-            method (str, optional): how to load the data. Defaults to 'replace'.
+            method (str, optional): how to load the data. Defaults to 'update'.
         """
         data_reader = Readers['DataReaders'][format](dataFile)
         atoms = data_reader.get_atoms()
-        if self.atoms is None:
-            self.atoms = atoms
 
-        if method == 'replace':
-            self.replace(atoms)
+        if self.atoms is None or method == 'replace':
+            self.replace_atoms(atoms)
+        elif method == 'update':
+            self.update_atoms(atoms)
         else:
             raise NotImplementedError()
 
@@ -42,11 +42,13 @@ class System:
         self._traj = Readers['TrajReaders'][format](trajFile)
         return self._traj
 
-    def select_frame(self, nFrame:int, method='replace'):
+    def select_frame(self, nFrame:int, method='update'):
         frame = self._traj.get_frame(nFrame)
         atoms = self._traj.get_atoms()
         if method == 'replace':
-            self.replace(atoms)
+            self.replace_atoms(atoms)
+        elif method == 'update':
+            self.update_atoms(atoms)
         
         box = self._traj.get_box()
         self.box = box
@@ -111,5 +113,8 @@ class System:
     def get_angles(self):
         pass
 
-    def replace(self, atoms:Atoms):
+    def replace_atoms(self, atoms:Atoms):
         self.atoms = atoms
+
+    def update_atoms(self, atoms:Atoms):
+        self.atoms.update(atoms)

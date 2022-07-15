@@ -393,6 +393,13 @@ class ForceField:
 
     def __init__(self, ):
 
-        self.fftree = ForcefieldTree('ForceField')
+        self.root = ForcefieldTree('ForceField')
+        self.root.add_children([
+            ForcefieldTree('AtomTypes'),
+            ForcefieldTree('Forces'),
+            ForcefieldTree('Residues'),
 
-    
+        ])
+
+    def def_bond(self, typeName, type1, type2, **params):
+        pass

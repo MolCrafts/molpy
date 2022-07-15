@@ -24,8 +24,8 @@ setuptools.setup(
         "Operating System :: OS Independent",
     ],
     packages=setuptools.find_packages(
-        where='molpy',    
+        where='.',
+        exclude=('tests*', 'docs*', 'examples*')
     ),
-    package_dir={'': 'molpy'},
     python_requires=">=3.8",
 )

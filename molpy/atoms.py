@@ -45,33 +45,12 @@ class Attrib:
 
     def add_atoms(self, **attr):
 
-        # length = self.check_aligned(**attr)
-        
-        # for k, v in attr.items():
-        #     if k not in self.atoms:
-        #         self.atoms[k] = v
-        #     else:
-        #         self.atoms[k] = np.concatenate((self.atoms[k], v))
-
-        # atomids = self.gen_index(self._n_atoms, length)
-        # self._n_atoms += length
-        # return atomids
         ids = self.add_attr(self.atoms, self._n_atoms, **attr)
         self._n_atoms += len(ids)
         return ids
 
     def add_bonds(self, **attr):
 
-        # length = self.check_aligned(**attr)
-        # for k, v in attr.items():
-        #     if k not in self.bonds:
-        #         self.bonds[k] = v
-        #     else:
-        #         self.bonds[k] = np.concatenate((self.bonds[k], v))
-
-        # bondids = self.gen_index(self._n_bonds, length)
-        # self._n_bonds += length
-        # return bondids
         ids = self.add_attr(self.bonds, self._n_bonds, **attr)
         self._n_bonds += len(ids)
         return ids
@@ -188,13 +167,18 @@ class Atoms:
 
         pass
 
-    def update(self, atoms:'Atoms', isAtom:bool=True, isBond:bool=True, method='replace'):
+    def get_bonds(self, i, j)->Bond:
 
+        pass
+
+    def update(self, atoms:'Atoms', isAtom:bool=True, isBond:bool=True):
+
+        # check if the number of atoms is the same
         if isAtom:
-            self.update_nodes(**atoms.atoms)
-
-        if isBond:
-            pass
+            if atoms.n_atoms != self.n_atoms:
+                raise ValueError("The number of atoms is not the same")
+            else:
+                self._attr.atoms.update(atoms._attr.atoms)
 
     @property
     def atoms(self):
