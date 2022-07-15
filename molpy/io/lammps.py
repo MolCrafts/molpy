@@ -117,7 +117,7 @@ def data2atoms(data: Dict, out=None):
     return out
 
 
-class TrajReader(TrajReader):
+class DumpReader(TrajReader):
     def __init__(self, fpath: str):
 
         self.filepath = fpath
