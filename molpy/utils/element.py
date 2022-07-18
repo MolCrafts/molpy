@@ -5,7 +5,7 @@
 
 import sys
 from collections import OrderedDict
-from molpy.utils.unit import unit, is_quantity
+from molpy.utils.unit import is_quantity, unit
 if sys.version_info >= (3, 0):
     import copyreg
 else:

@@ -3,7 +3,6 @@
 # date: 2022-06-25
 # version: 0.0.1
 
-from typing import Dict, List
 import numpy as np
 from molpy.atoms import Atoms
 from molpy.io.fileHandler import FileHandler
@@ -13,7 +12,6 @@ import sys
 import warnings
 from collections import OrderedDict
 PI = pi
-from molpy.utils.unit import unit
 from molpy.utils.element import Element, get_by_symbol
 
 def _parse_atom_index(index):

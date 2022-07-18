@@ -111,7 +111,7 @@ def data2atoms(data: Dict, out=None):
     if out is None:
         out = Atoms()
 
-    atomData = data["atoms"]
+    atomData = data["Atoms"]
     out.add_atoms(**atomData)
 
     if "Bonds" in data:
@@ -195,7 +195,7 @@ class DumpReader(TrajReader):
         data = {}
 
         data["timestep"] = int(lines[1])
-        data["natoms"] = int(lines[3])
+        data["atoms"] = int(lines[3])
         xlo, xhi = [float(x) for x in lines[5].split()]
         ylo, yhi = [float(x) for x in lines[6].split()]
         zlo, zhi = [float(x) for x in lines[7].split()]
@@ -217,7 +217,7 @@ class DumpReader(TrajReader):
             dtype={"names": header, "formats": [TYPES.get(k, float) for k in header]},
         )
 
-        data["atoms"] = {key: atomArr[key] for key in atomArr.dtype.names}
+        data["Atoms"] = {key: atomArr[key] for key in atomArr.dtype.names}
 
         return data
 
@@ -319,9 +319,9 @@ class DataReader(DataReader):
 
         # TODO: convert unit
 
-        data["atoms"] = {}
+        data["Atoms"] = {}
         for key in atomInfo.dtype.names:
-            data["atoms"][key] = atomInfo[key]
+            data["Atoms"][key] = atomInfo[key]
 
         # --- parse bonds ---
         if "Bonds" in section_start_lineno:

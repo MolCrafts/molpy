@@ -3,13 +3,15 @@
 # date: 2022-07-15
 # version: 0.0.1
 
-class _baseType:
+from typing import NewType, Any
 
-    def __getitem__(self, k):
+class MolpyNewType(NewType):
+
+    def __getitem__(self, any):
         pass
 
-ArrayLike = _baseType()
-Valuable = _baseType()
-N = int
+ArrayLike = MolpyNewType('ArrayLike', Any)
+Number = MolpyNewType('Number', Any)
+N = NewType('N', int)
 
     

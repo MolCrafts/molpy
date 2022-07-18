@@ -4,13 +4,13 @@
 # version: 0.0.1
 
 from ast import literal_eval
-import xml.etree.ElementTree as ET
-import xml.dom.minidom
-from typing import Dict, List, Union
-from itertools import permutations
-from molpy.utils.typing import ArrayLike, Valuable, N
+from functools import cached_property
 
-value = Valuable  # generic type: interpreted as either a number or str
+from typing import Dict, List, Optional, Union
+from itertools import permutations
+from molpy.utils.typing import ArrayLike, Number, N
+
+value = Number  # generic type: interpreted as either a number or str
 digitalize = literal_eval
 
 class SelectError(BaseException):
@@ -41,7 +41,10 @@ class Node:
 
     def __getitem__(self, key):
 
-        return self.attrs[key]
+        return self.children[key]
+
+    def __getattr__(self, __name: str):
+        return self.attrs[__name]
 
     def __repr__(self):
         return f'<{self.tag}: {self.attrs}, with {len(self.children)} subnodes>'
@@ -55,13 +58,7 @@ class Node:
         else:
             return False
 
-
-class ForcefieldTree(Node):
-    def __init__(self, tag, **attrs):
-
-        super().__init__(tag, **attrs)
-
-    def get_nodes(self, path:str)->List[Node]:
+    def get_nodes(self, path:str)->List['Node']:
         """
         get all nodes of a certain path
 
@@ -158,67 +155,8 @@ class ForcefieldTree(Node):
             valdicts = [{attrname: i} for i in values]
         self.set_node(path, valdicts)
 
-
-class XMLParser:
-    def __init__(self, ffTree: ForcefieldTree):
-
-        self.ff = ffTree
-
-    def parse_node(self, root):
-
-        node = ForcefieldTree(tag=root.tag, **root.attrib)
-        children = list(map(self.parse_node, root))
-        if children:
-            node.add_children(children)
-        return node
-
-    def parse(self, *xmls):
-        for xml in xmls:
-            root = ET.parse(xml).getroot()
-            for leaf in root:
-                n = self.parse_node(leaf)
-                ifExist = False
-                for nchild, child in enumerate(self.ff.children):
-                    if child.tag == n.tag:
-                        ifExist = True
-                        break
-                if ifExist:
-                    self.ff.children[nchild].add_children(n.children)
-                else:
-                    self.ff.add_child(n)
-
-    def write_node(self, parent, node):
-        parent = ET.SubElement(parent, node.tag, node.attrs)
-        for sibiling in node:
-            tmp = ET.SubElement(parent, sibiling.tag, sibiling.attrs)
-            for child in sibiling:
-                self.write_node(tmp, child)
-
-    @staticmethod
-    def pretty_print(element):
-        initstr = ET.tostring(element, "unicode")
-        pretxml = xml.dom.minidom.parseString(initstr)
-        pretstr = pretxml.toprettyxml()
-        return pretstr
-
-    def write(self, path):
-
-        root = ET.Element('Forcefield')
-
-        for child in self.ff:
-            if child.tag == 'Residues':
-                Residues = ET.SubElement(root, 'Residues')
-                for residue in child:
-                    self.write_node(Residues, residue)
-            else:
-                self.write_node(root, child)
-        outstr = self.pretty_print(root)
-        with open(path, "w") as f:
-            f.write(outstr)
-
-
 class TypeMatcher:
-    def __init__(self, fftree: ForcefieldTree, parser):
+    def __init__(self, fftree: Node, parser):
         """
         Freeze type matching list.
         """
@@ -393,13 +331,36 @@ class ForceField:
 
     def __init__(self, ):
 
-        self.root = ForcefieldTree('ForceField')
+        self.root = Node('ForceField')
+        self._atomTypes = Node('AtomTypes')
+        self._residues = Node('Residues')
         self.root.add_children([
-            ForcefieldTree('AtomTypes'),
-            ForcefieldTree('Forces'),
-            ForcefieldTree('Residues'),
-
+            self._atomTypes,
+            self._residues,
         ])
 
-    def def_bond(self, typeName, type1, type2, **params):
+    @property
+    def atomTypes(self):
+        return self._atomTypes
+
+    @property
+    def residues(self):
+        return self._residues
+
+    def def_atom(self, typeName:str, typeClass:Optional[str]=None, **attributes):
+
+        self.atomTypes.add_child(Node('Type', typeName, typeClass, **attributes))
+
+    def get_atom_by_name(self, typeName:str):
+
+        for atom in self.atomTypes.children:
+            if atom.name == typeName:
+                return atom
+
+    def def_bond(self, name, type1, type2, **params):
         pass
+
+    def load_xml(self, fpath):
+        from molpy.io.xml import XMLParser
+        self.xmlparser = XMLParser(self.root)
+        self.xmlparser.parse(fpath)
