@@ -17,10 +17,10 @@ class SelectError(BaseException):
     pass
 
 class Node:
-    def __init__(self, tag, **attrs):
+    def __init__(self, tag, parent=None, **attrs):
 
         self.tag = tag
-        #TODO: self.parent = parent
+        self.parent = parent
         self.attrs = attrs
         self.children = []
 
@@ -349,16 +349,53 @@ class ForceField:
 
     def def_atom(self, typeName:str, typeClass:Optional[str]=None, **attributes):
 
-        self.atomTypes.add_child(Node('Type', typeName, typeClass, **attributes))
+        self.atomTypes.add_child(
+            Node('Type', self.atomTypes.tag, **{'name': typeName, 'class': typeClass, **attributes})
+        )
 
-    def get_atom_by_name(self, typeName:str):
+    def get_atom(self, typeName:str):
 
         for atom in self.atomTypes.children:
             if atom.name == typeName:
                 return atom
 
-    def def_bond(self, name, type1, type2, **params):
-        pass
+    def def_force(self, forceName, *types, **params):
+        
+        child = self.root.get_child(forceName)
+        if child is None:
+            child = Node(forceName)
+            self.root.add_child(child)
+        child.add_child(Node('Bond', forceName, **{**{f'type{i}': t for i, t in enumerate(types, 1)}, **params}))
+
+    def get_bond(self, forceName, type1, type2):
+
+        child = self.root.get_child(forceName)
+        if child is None:
+            return None
+        for bond in child.children:
+            if (bond.type1 == type1 and bond.type2 == type2) or (bond.type1 == type2 and bond.type2 == type1):
+                return bond
+        return None
+
+    def get_angle(self, forceName, type1, type2, type3):
+
+        child = self.root.get_child(forceName)
+        if child is None:
+            return None
+        for angle in child.children:
+            if (angle.type1 == type1 and angle.type2 == type2 and angle.type3 == type3) or (angle.type1 == type3 and angle.type2 == type2 and angle.type3 == type1):
+                return angle
+        return None
+
+    def get_dihedral(self, forceName, type1, type2, type3, type4):
+
+        child = self.root.get_child(forceName)
+        if child is None:
+            return None
+        for dihedral in child.children:
+            if (dihedral.type1 == type1 and dihedral.type2 == type2 and dihedral.type3 == type3 and dihedral.type4 == type4) or (dihedral.type1 == type4 and dihedral.type2 == type2 and dihedral.type3 == type3 and dihedral.type4 == type1):
+                return dihedral
+        return None
 
     def load_xml(self, fpath):
         from molpy.io.xml import XMLParser
