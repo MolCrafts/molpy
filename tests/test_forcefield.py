@@ -4,7 +4,8 @@
 # version: 0.0.1
 
 import pytest
-from molpy.forcefield import ForceField
+from molpy.atoms import Residue
+from molpy.forcefield import ForceField, Node
 
 class TestForcefield:
 
@@ -54,3 +55,25 @@ class TestForcefield:
         assert dihedral.type3 == 'c3'
         assert dihedral.type4 == 'c4'
         assert dihedral.angle == 120.0
+
+    def test_add_residue(self):
+
+        ff = ForceField()
+        ff.def_atom('h1', 'H', mass=1.0079, charge=0.0)
+        ff.def_atom('h2', 'H', mass=1.0079, charge=0.0)
+        ff.def_atom('o', 'O', mass=15.9994, charge=-0.834)
+
+        ff.def_force('HarmonicBondForce', 'h1', 'o', length=1.0)
+        ff.def_force('HarmonicBondForce', 'h2', 'o', length=1.0)
+
+        residue = Residue('h2o')
+        residue.add_atoms(type=[381, 381, 380])
+        residue.add_bonds([[0, 2], [1, 2]])
+
+        ff.def_residue(residue)
+
+        re:Node = ff.get_residue('h2o')
+        assert re.tag == 'h2o'
+        assert re.get_attribs('Atom', 'type') == [381, 381, 380]
+        assert re.get_attribs('Bond', 'from') == [0, 1]
+        assert re.get_attribs('Bond', 'to') == [2, 2]

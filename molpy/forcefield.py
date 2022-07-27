@@ -397,6 +397,29 @@ class ForceField:
                 return dihedral
         return None
 
+    def def_residue(self, residue):
+
+        node = Node('Residue', self.residues.tag, **{'name': residue.name})
+        node.add_children(
+            [Node('Atom', residue.name, **{'name': atom.name, 'type': atom.type.name}) for atom in residue.atoms]
+        )
+        node.add_children(
+            [Node('Bond', residue.name, **{'from': bond.itom, 'to': bond.jtom}) for bond in residue.bonds]
+        )
+
+    def get_residue(self, name):
+
+        for residue in self.residues.children:
+            if residue.name == name:
+                return residue
+        return None
+
+    def match_residue(self, atoms):
+
+        residue_topo = [Residue.from_node(residue) for residue in self.residues.children]
+        pass
+
+
     def load_xml(self, fpath):
         from molpy.io.xml import XMLParser
         self.xmlparser = XMLParser(self.root)

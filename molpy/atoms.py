@@ -195,3 +195,12 @@ class Atoms:
     @property
     def n_bonds(self):
         return self._attr._n_bonds
+
+
+class Residue(Atoms):
+
+    def __init__(self, name:str):
+        super().__init__()
+        self.name = name
+
+    
