@@ -3,6 +3,11 @@
 
 #include <vector>
 #include <random>
+#include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
+#include <pybind11/stl.h>
+
+namespace py = pybind11;
 
 using vec3 = std::vector<double>;
 
@@ -14,8 +19,6 @@ class _Modeller {
 
         _Modeller(double lx, double ly, double lz);
         ~_Modeller();
-        vec3 find_start();
-        vec3 walk_once(int length);
 
     protected:
         double lx, ly, lz;

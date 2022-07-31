@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15...3.22)
+cmake_minimum_required(VERSION 3.15)
 
 project(molpy_cpp VERSION "0.0.1")
 
@@ -14,21 +14,74 @@ if(SKBUILD)
   list(APPEND CMAKE_PREFIX_PATH "${_tmp_dir}")
 endif()
 
+# project settings
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11") # 添加c++11标准支持
+
+# set(CMAKE_C_COMPILER "/usr/bin/gcc") # 默认c编译器
+# set(CMAKE_CXX_COMPILER "/usr/bin/g++") # 默认c++编译器
+
+set(CMAKE_BUILD_TYPE "Debug")  # Debug模式 选项: Release Debug MinSizeRel RelWithDebInfo
+
+set(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -Wall -g2 -ggdb")  # debug模式下 gdb相关选项
+# set(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O3 -Wall") # release模式下 gdb相关选项
+
+# set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin") # 可执行文件输出目录 deprecated
+
+set(TEST "FALSE" CACHE STRING "is start to test raw cpp code without python")
+
+include_directories("${PROJECT_SOURCE_DIR}/include") # 包含目录
+
+set(CMAKE_CXX_STANDARD 14)
+
+# 这段代码可以区分操作系统
+MESSAGE(">>> Identifying the OS...")
+if(WIN32)
+  MESSAGE(">>> Windows")
+elseif(APPLE)
+  MESSAGE(">>> MacOS")
+elseif(UNIX)
+  MESSAGE(">>> Linux")
+endif()
+
 # Now we can find pybind11
 find_package(pybind11 CONFIG REQUIRED)
 
-# project settings
-set(IS_TEST "FALSE" CACHE STRING "is start to test raw cpp code without python")
+if(TEST)
+
+    find_package(GTest REQUIRED)
+    if(${GTest_FOUND})
+        message(">>> GTest is found")
+        include_directories(${GTEST_INCLUDE_DIRS})
+
+    else()
+        message(">>> GTest is not found")
+        message(">>> Installing GTest")
+        include(FetchContent)
+        FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG release-1.12.1
+        )
+        # For Windows: Prevent overriding the parent project's compiler/linker settings
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(googletest)
+    endif()
+    include(GoogleTest)
+    enable_testing()
+    add_subdirectory(tests)
+
+endif()
 
 # build molpy_cpp
-add_subdirectory(molpy/cpp)
 
-# if test cpp code
-# function(TEST_CPP)
-#   add_subdirectory(tests/cpp)
-# endfunction()
+aux_source_directory(src/modeller MODELLER)
 
-# if(IS_TEST)
-#   TEST_CPP()
-# endif()
+pybind11_add_module(
+    molpy_cpp
+    src/molpy_cpp.cpp
+    ${MODELLER}
+)
 
+target_compile_definitions(molpy_cpp PRIVATE VERSION_INFO=${PROJECT_VERSION})
+
+install(TARGETS molpy_cpp DESTINATION .)

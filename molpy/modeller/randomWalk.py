@@ -6,18 +6,22 @@
 from typing import Literal
 
 from numpy import ndarray
+from numpy.typing import ArrayLike
 from .base import _Modeller
-
+from molpy import molpy_cpp as cmp
+import numpy as np
 
 class RandomWalk(_Modeller):
 
-    def __init__(self, strategy:Literal['simple', 'avoid', 'gaussian']):
+    def __init__(self, region_style, constrain, strategy:Literal['simple', 'avoid', 'gaussian']):
+
+        super().__init__(region_style, constrain)
 
         self._kernel = None
 
         # initialize random walk kernel
         if strategy == 'simple':
-            self._kernel = self._simple_random_walk()
+            self._kernel = cmp.SimpleRandomWalk(*constrain)
         elif strategy == 'avoid':
             raise NotImplementedError()
         elif strategy == 'gaussian':
@@ -25,17 +29,30 @@ class RandomWalk(_Modeller):
         
         self.strategy = strategy
         
-    def linear(self, length:int, start=None) -> ndarray:
+    def linear(self, length:int, start=None, step_size=1, topo_idx_offset=0) -> ndarray:
         
-        positions = self._kernel.linear(length)
+        if start:
+            positions = self._kernel.walk_once(length, step_size, start)
+        else:
+            positions = self._kernel.walk_once(length, step_size)
+        topo = []
+        for i in range(topo_idx_offset, length+topo_idx_offset):
+            topo.append([i, i+1])
 
-        if self.box is not None:
-            pass  # do wrap
+        return positions, topo
 
-        return positions
+    def graft(self, backbone_length:int, graft_point_idx:ArrayLike, graft_length:ArrayLike, step_size=1):
+        
+        positions, topo = self.linear(backbone_length)
+        for i in range(len(graft_point_idx)):
+            start = positions[graft_point_idx[i]]
+            graft, g_topo = self.linear(graft_length[i]+1, start, step_size)
+            topo.append([i, len(positions)])
+            topo.extend(g_topo)
+            positions.extend(graft)
 
-    def graft(self):
-        pass
+        return positions, topo
+
 
     def __del__(self):
         pass

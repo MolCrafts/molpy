@@ -13,7 +13,11 @@ class SimpleRandomWalk: public _Modeller {
         SimpleRandomWalk(int lx, int ly, int lz);
         ~SimpleRandomWalk();
         std::vector<vec3> walk_once(int length, double stepsize);
+        std::vector<vec3> walk_once(int length, double stepsize, vec3 start);
+        // py::array walk_once(int length, double stepsize);
         vec3 find_start();
+        // py::array find_start();
+
 
     private:
 

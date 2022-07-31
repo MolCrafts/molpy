@@ -40,6 +40,6 @@ setup(
     python_requires=">=3.8",
     # extras_require={"test": ["pytest"]},
     include_package_data=True,
-    # cmake_install_dir="molpy/cpp",
+    cmake_install_dir="molpy",
 )
 
