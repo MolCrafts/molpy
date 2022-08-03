@@ -33,6 +33,22 @@ class Attrib:
         self._n_dihedrals = 0
 
     def add_attr(self, to_, counter, **attr):
+        """
+        a common method to add attributes to a dictionary. This method will append `attr` to the dictionary `to_`, or create a new key-value pair if item in attr not in `to_`. And this method will return a list of index. NOTE: the methos only check if items in `attr` are aligned, and support item in `attr` all or all not in `to_`. If an item in `attr` is not in `to_`, another item already in `to_`, this method will not raise error and the behavior is undefined.
+
+        example:
+            >>> to_ = {'a': [1, 2, 3]},
+            >>> attr = {'a': [7, 8, 9]},
+            >>> add_attr(to_, 3, **attr)
+            >>> [3, 4, 5]
+
+        Args:
+            to_ (dict): a dictionary to add attributes to
+            counter (int): a counter to start indexing from
+
+        Returns:
+            int: indices that were added
+        """
 
         length = self.check_aligned(**attr)
         for k, v in attr.items():
@@ -83,10 +99,13 @@ class Attrib:
 
 class Atoms:
 
-    def __init__(self):
+    def __init__(self, positions, topo):
         
         self._topo = Topo()
         self._attr = Attrib()
+
+        if positions:
+            self._attr.add_attr()
 
     def __getitem__(self, key):
 
@@ -196,6 +215,10 @@ class Atoms:
     def n_bonds(self):
         return self._attr._n_bonds
 
+    def append(self, atoms:'Atoms'):
+
+        pass
+
 
 class Residue(Atoms):
 
@@ -203,4 +226,3 @@ class Residue(Atoms):
         super().__init__()
         self.name = name
 
-    

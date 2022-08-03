@@ -4,7 +4,7 @@
 # version: 0.0.1
 
 from typing import Literal
-
+import molpy as mp
 from numpy import ndarray
 from numpy.typing import ArrayLike
 from .base import _Modeller
@@ -39,7 +39,9 @@ class RandomWalk(_Modeller):
         for i in range(topo_idx_offset, length+topo_idx_offset):
             topo.append([i, i+1])
 
-        return positions, topo
+        atoms = mp.Atoms(positions, topo)
+
+        return atoms
 
     def graft(self, backbone_length:int, graft_point_idx:ArrayLike, graft_length:ArrayLike, step_size=1):
         
@@ -51,7 +53,9 @@ class RandomWalk(_Modeller):
             topo.extend(g_topo)
             positions.extend(graft)
 
-        return positions, topo
+        atoms = mp.Atoms(positions, topo)
+
+        return atoms
 
 
     def __del__(self):
