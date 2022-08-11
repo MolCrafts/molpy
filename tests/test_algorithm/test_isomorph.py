@@ -5,7 +5,7 @@
 
 import networkx as nx
 import molpy.algorithms.isomorphvf2 as iso
-from molpy.topo import Graph, Topo
+from molpy.core.topo import Graph, Topo
 
 import os
 import random
