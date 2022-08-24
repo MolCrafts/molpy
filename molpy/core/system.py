@@ -7,36 +7,9 @@ import mdtraj as md
 
 from .topology import Topology
 from .trajectory import Trajectory
-from .frame import Frame
+from .frame import Frame, ConcreateFrame
 from .box import Box
-
-def convert_mdtraj_to_molpy(traj)->Trajectory:
-
-    trajectory = Trajectory()
-    topology = Topology()
-    # load topology
-    _topo = traj.topology
-    for bond in _topo.bonds:
-        topology.add_bond(bond[0].index, bond[1].index, type=bond.type)
-
-    unitcell_lengths = traj.unitcell_lengths
-    unitcell_angles = traj.unitcell_angles
-
-    # get per-frame data
-    for i in range(traj.n_frames):
-        frame = Frame(topology, traj.time[i])
-        xyz = traj.xyz[i]
-        n_atoms = xyz.shape[0]
-        for n in range(n_atoms):
-            frame.add_atom(xyz=xyz[n], **{header: value[i][n] for header, value in traj.properties.items()})
-
-        trajectory.add_frame(frame)
-
-        box = Box(*unitcell_lengths[i], *unitcell_angles[i])
-
-    
-
-    return trajectory
+from .item import Bond
 
 class System:
 
@@ -48,5 +21,36 @@ class System:
     def load(self, filename, topo=None):
 
         traj = md.load(filename, top=topo)
+        # 
+        mp_topo = Topology()
+        for bond in traj.topology.bonds:
+            bond = Bond(bond[0].index, bond[1].index, type=bond.type)
+            mp_topo.add_bond(bond)
 
-        self._trajectory = convert_mdtraj_to_molpy(traj)
+        _trajectory = Trajectory()
+        for one_traj in traj:
+            # 
+            mp_box = Box(*one_traj.unitcell_lengths[0], 0, 0, 0)  # TODO: convert angle to factor
+            
+            # 
+            mp_frame = ConcreateFrame(mp_box, mp_topo, one_traj.time)
+            mp_frame.add_property('xyz', one_traj.xyz[0])
+            for k, v in one_traj.properties.items():
+                mp_frame.add_property(k, v[0])
+
+            
+            _trajectory.append(mp_frame)
+            self._trajectory = _trajectory
+        return _trajectory
+
+    def __iter__(self):
+        return iter(self._trajectory)
+        
+
+    def iter_load(self, filename, topo=None, chunk=100):
+
+        traj = md.iterload(filename, chunk, topo=topo)
+
+    def sample(self, filename, start, stop, step, topo=None):
+
+        pass

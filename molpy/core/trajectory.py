@@ -3,8 +3,8 @@
 # date: 2022-08-10
 # version: 0.0.1
 
+from .box import Box
 from .frame import Frame
-
 
 class Trajectory:
 
@@ -22,3 +22,11 @@ class Trajectory:
 
     def __getitem__(self, idx:int)->Frame:
         return self._frame[idx]
+
+    def append(self, frame:Frame):
+
+        self._frame.append(frame)
+
+    def extend(self, traj:'Trajectory'):
+
+        self._frame.extend(traj)
