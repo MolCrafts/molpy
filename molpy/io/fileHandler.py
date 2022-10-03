@@ -49,10 +49,9 @@ class FileHandler:
         self.fp = open(self.filepath, 'r')   
         
     def close(self):
-        try:
-            self.fp.close()
-        except:
-            pass           
+
+        if not self.fp.closed:
+              self.fp.close()  
     
     def __del__(self):
         self.close()

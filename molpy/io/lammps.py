@@ -8,10 +8,10 @@ __all__ = ["DataReader", "DataWriter", "DumpReader"]
 from typing import Dict, List
 
 import numpy as np
-from molpy.atoms import Atoms
-from molpy.io.base import DataReader, TrajReader
+from molpy.io.base import DataReader, Trajectory
 from molpy.io.fileHandler import FileHandler
-from molpy.box import Box
+from molpy.core.frame import StaticFrame
+from molpy.core.box import Box
 
 TYPES = {
     "id": int,
@@ -32,7 +32,6 @@ TYPES = {
     "dihedral types": int,
     "improper types": int,
 }
-
 
 sections = [
     "Atoms",
@@ -63,6 +62,7 @@ sections = [
     "BondBond13 Coeffs",
     "AngleAngle Coeffs",
 ]
+
 header_fields = [
     "atoms",
     "bonds",
@@ -88,6 +88,7 @@ header_fields = [
     "zlo zhi",
     "xy xz yz",
 ]
+
 styles = {
     "full": [
         "id",
@@ -105,35 +106,12 @@ style_dtypes = {
     for style, fields in styles.items()
 }
 
+class DumpReader(Trajectory):
 
-def data2atoms(data: Dict, out=None):
-
-    if out is None:
-        out = Atoms()
-
-    atomData = data["Atoms"]
-    out.add_atoms(**atomData)
-
-    if "Bonds" in data:
-        bondData = data["Bonds"]
-        out.add_bonds(bondData["connect"], id=bondData['id'], type=bondData["type"])
-
-    if "Angles" in data:
-        angleData = data["Angles"]
-        out.add_angles(angleData["connect"], id=angleData['id'], type=angleData["type"])
-    
-    if "Dihedrals" in data:
-        diheData = data["Dihedrals"]
-        out.add_dihedrals(diheData["connect"], id=diheData['id'], type=diheData["type"])
-
-    return out
-
-
-class DumpReader(TrajReader):
     def __init__(self, fpath: str):
 
         self.filepath = fpath
-        self.filehandler = FileHandler(fpath)
+        self.filehandler = FileHandler(self.filepath)
         self.chunks = self.get_chunks("ITEM: TIMESTEP")
         self.current_nframe: int = 0
         self.current_frame: Dict = None
@@ -152,7 +130,7 @@ class DumpReader(TrajReader):
         chunks = self.filehandler.readchunks(seperator)
         return chunks
 
-    def get_frame(self, index:int)->Dict:
+    def get_one_frame(self, index:int)->Dict:
         """
         get raw data of a frame
 
@@ -160,7 +138,7 @@ class DumpReader(TrajReader):
             index (int): frame index
 
         Returns:
-            Dict: raw data of a frame
+            StaticFrame
         """
         self.current_nframe = index
 
@@ -169,66 +147,48 @@ class DumpReader(TrajReader):
         self.current_frame = DumpReader.parse(chunk)
         return self.current_frame
 
-    def get_atoms(self)->Atoms:
-
-        return data2atoms(self.current_frame)
-
-    def get_box(self)->Box:
-
-        box = self.current_frame["box"]
-
-        # box: {
-        #     "Lx": box["xhi"] - box["xlo"],
-        #     "Ly": box["yhi"] - box["ylo"],
-        #     "Lz": box["zhi"] - box["zlo"],
-        #     "xy": box.get("xy", 0),
-        #     "xz": box.get("xz", 0),
-        #     "yz": box.get("yz", 0),
-        #     "is2D": False,
-        # }
-
-        return Box(box["xhi"] - box["xlo"], box["yhi"] - box["ylo"], box["zhi"] - box["zlo"], box.get('xy', 0), box.get('xz', 0), box.get('yz', 0), is2D=False)
-
     @staticmethod
     def parse(lines: List[str]):
+        
+        timestep = int(lines[1])
+        # n_atoms = int(lines[3])
+        box_X = [float(x) for x in lines[5].split()]
+        box_Y = [float(y) for y in lines[6].split()]
+        box_Z = [float(z) for z in lines[7].split()]
+        if len(lines[4]) == 9:
+            xlo, xhi, xy = box_X
+            ylo, yhi, xz = box_Y
+            zlo, zhi, yz = box_Z
+        else:
+            xlo, xhi = box_Z
+            ylo, yhi = box_Y
+            zlo, zhi = box_Z
+            xy, xz, yz = 0, 0, 0
 
-        data = {}
-
-        data["timestep"] = int(lines[1])
-        data["atoms"] = int(lines[3])
-        xlo, xhi = [float(x) for x in lines[5].split()]
-        ylo, yhi = [float(x) for x in lines[6].split()]
-        zlo, zhi = [float(x) for x in lines[7].split()]
-        data["box"] = {
-            "xlo": xlo,
-            "xhi": xhi,
-            "ylo": ylo,
-            "yhi": yhi,
-            "zlo": zlo,
-            "zhi": zhi,
-        }
+        box = Box(xhi - xlo, yhi - ylo, zhi - zlo, xy, xz, yz, is2D=False)
 
         header = lines[8].split()[2:]
 
-        m = map(lambda x: tuple(x.split()), lines[9:])
-        lm = list(m)
+        m = list(map(lambda x: tuple(x.split()), lines[9:]))
         atomArr = np.array(
-            lm,
+            m,
             dtype={"names": header, "formats": [TYPES.get(k, float) for k in header]},
         )
 
-        data["Atoms"] = {key: atomArr[key] for key in atomArr.dtype.names}
-
-        return data
+        frame = StaticFrame(atomArr, box, None, timestep)
+        return frame
 
 
 class DataReader(DataReader):
+
     def __init__(self, fpath: str, atom_style: str = "full"):
 
         self.filepath = fpath
-        self.filehander = FileHandler(fpath)
         self.atom_style = atom_style
-        self.data: Dict = None
+
+    def __enter__(self):
+
+        self.filehander = FileHandler(self.filepath)
 
     def get_data(self):
         data = {}
@@ -239,11 +199,6 @@ class DataReader(DataReader):
         data.update(DataReader.parse(lines, self.atom_style))
         self.data = data
         return data
-
-    def get_atoms(self)->Atoms:
-        if self.data is None:
-            self.get_data()
-        return data2atoms(self.data)
 
     def get_box(self)->Box:
         if self.data is None:

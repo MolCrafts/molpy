@@ -30,3 +30,6 @@ class Trajectory:
     def extend(self, traj:'Trajectory'):
 
         self._frame.extend(traj)
+
+    def __len__(self):
+        return len(self._frame)

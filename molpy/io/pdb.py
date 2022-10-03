@@ -4,7 +4,6 @@
 # version: 0.0.1
 
 import numpy as np
-from molpy.atoms import Atoms
 from molpy.io.fileHandler import FileHandler
 from molpy.io.base import TrajReader, DataReader
 from math import pi
