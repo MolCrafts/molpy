@@ -64,13 +64,29 @@ class TestIntegrator:
         assert len(params['epsilon']) == 1
         assert len(params.sigma) == 1
 
+        # run first MD loop
+        integrator = mp.MD.integrator.Verlet(dt=0.001)
+
+        r = system.frame.atoms['xyz']
+        v = np.zeros_like(r)
+        f = np.zeros_like(r)
+        m = system.frame.atoms['mass']
+        
+        # first-half step
+        r, v = integrator.initial_integrate(r, v, f, m)
+
+        # calc force
         ljcut = mp.potential.LJCut(r_cutoff=4.0, is_pbc=True)
-        xyz = system.frame.atoms['xyz']
-        energy = ljcut.energy(xyz, pairs, box, params)
-        force = ljcut.force(xyz, pairs, box, params)
+        energy = ljcut.energy(r, pairs, box, params)
+        force = f = ljcut.force(r, pairs, box, params)
 
         npt.assert_allclose(energy, -0.3203366)
         npt.assert_allclose(force, np.array([[-1.158029, 0.0, 0.0], [1.158029, 0.0, 0.0]]), rtol=1e6)
 
-        integrator = mp.MD.integrator.Verlet(dt=0.001)
-        system = integrator.step(system, force)
+        # second-half step
+        v = integrator.final_integrate(v, f, m)
+        
+        # run next MD loop
+        r, v = integrator.initial_integrate(r, v, f, m)
+        f = ljcut.force(r, pairs, box, params)
+        v = integrator.final_integrate(v, f, m)

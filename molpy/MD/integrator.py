@@ -39,20 +39,39 @@ class Verlet(Integrator):
     def __init__(self, dt):
         self.dt = dt
 
-    def step(self, context, potential):
+    def initial_integrate(self, r, v, f, m):
+        """
+        first half-step
 
-        # update velocity
-        context.v += self.dt * potential.compute_force(context) / context.m
+        Parameters
+        ----------
+        r : coordinates
+        v : velocities
+        f : forces
+        m : masses
 
-        # update position
-        context.r += self.dt * context.v
+        Returns
+        -------
+        v : mid-step velocities
+        r : full-updated coordinates
+        """
+        v += 0.5 * self.dt * f / np.repeat(m, 3).reshape(-1, 3)
+        r += self.dt * v
+        return r, v
 
-        # update velocity
-        context.v += self.dt * potential.compute_force(context) / context.m
-    
-    def _step(self, v, r, f, m):
+    def final_integrate(self, v, f, m):
+        """
+        second half-step
 
-        # half-advancing the velocities
-        v_t_plus_dt = v + self.dt * f / m
+        Parameters
+        ----------
+        v : mid-step velocities
+        f : forces
+        m : masses
 
-        r += 
+        Returns
+        -------
+        v : full-updated velocities
+        """
+        v += 0.5 * self.dt * f / np.repeat(m, 3).reshape(-1, 3)
+        return v
