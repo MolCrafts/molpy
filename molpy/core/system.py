@@ -83,9 +83,16 @@ class System:
         self._traj = Readers['TrajReaders'][format](filename)
         self.n_frames = self._traj.n_frames
 
-    def get_frame(self, index):
+    def load_data(self, filename, format, ):
+        
+        data_reader = Readers['DataReaders'][format](filename)
+        self.frame = data_reader.get_data()
+
+    def get_frame(self, index)->StaticFrame:
         frame = self._traj.get_one_frame(index)
         return frame
+
+    # TODO: convert StaticFrame to DynamicFrame and replace current frame
 
     def sample(self, start, stop, step):
 
@@ -102,5 +109,4 @@ class System:
     def set_atoms(self, **kwargs):
 
         for i in zip(*kwargs.values()):
-            atom = Atom({k: v for k, v in zip(kwargs.keys(), i)})
-            self.frame.add_atom(atom)
+            self.frame.add_atom(**{k: v for k, v in zip(kwargs.keys(), i)})

@@ -9,15 +9,11 @@ class Atom(dict):
 
 class Bond(dict):
 
-    def __init__(self, i:int, j:int, *args, **kwargs):
+    def __init__(self, atom1:Atom, atom2:Atom, *args, **kwargs):
 
         super().__init__(*args, **kwargs)
-        self._atom_idx = [i, j]
-
-    def __getitem__(self, __k):
-        if isinstance(__k, int):
-            return self._atom_idx[__k]
-        return super().__getitem__(__k)
+        self.atom1 = atom1
+        self.atom2 = atom2
 
     def __eq__(self, b: 'Bond') -> bool:
         return (self[0] == b[0] and self[1]) == b[1] or (self[0] == b[1] and self[1] == b[0])

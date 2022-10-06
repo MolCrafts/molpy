@@ -41,9 +41,9 @@ class LJCut:
         return np.sum(V * mask)
 
     def energy(self, xyz: np.array, pairs: np.array, box: mp.Box, params:Params) -> np.array:
-        box_vec = box.to_matrix().astype(float)
-        return self._compute(xyz, pairs, box_vec, params)
+        # box_vec = box.to_matrix().astype(float)
+        return self._compute(xyz, pairs, box, params)
 
     def force(self, xyz: np.array, pairs: np.array, box: mp.Box, params:Params) -> np.array:
-        box_vec = box.to_matrix().astype(float)
-        return jax.grad(self._compute)(xyz, pairs, box_vec, params)
+        # box_vec = box.to_matrix().astype(float)
+        return jax.grad(self._compute)(xyz, pairs, box, params)

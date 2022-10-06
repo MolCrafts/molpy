@@ -29,11 +29,10 @@ class DynamicFrame(Frame):
     @classmethod
     def from_dict(cls, data:dict[str, np.array], box:Optional[Box]=None, topo:Optional[Topology]=None, timestep:Optional[int]=None):
 
-        dframe = (box, topo, timestep)
+        dframe = cls(box, topo, timestep)
 
         for i in zip(*data.values()):
-            atom = Atom({k: v for k, v in zip(data.keys(), i)})
-            dframe.add_atom(atom)
+            dframe.add_atom(**{k: v for k, v in zip(data.keys(), i)})
 
         return dframe
 
@@ -45,22 +44,9 @@ class DynamicFrame(Frame):
     def n_atoms(self):
         return len(self._atoms)
 
-    def add_atom(self, atom):
+    def add_atom(self, **properties):
 
-        self._atoms.append(atom)
-
-    def add_bond(self, bond):
-
-        self._topo.add_bond(bond)
-        return bond
-
-    def add_bond_by_index(self, i:int, j:int, **properties):
-
-        itom = self._atoms[i]
-        jtom = self._atoms[j]
-        bond = Bond(itom, jtom, **properties)
-        self._topo.add_bond(bond)
-        return bond
+        self._atoms.append(Atom(**properties))
 
     @property
     def box(self):
@@ -77,6 +63,13 @@ class DynamicFrame(Frame):
         elif isinstance(key, (int, slice)):
             return self._atoms[key]
 
+    def add_bond_by_index(self, i:int, j:int, **properties):
+
+        itom = self._atoms[i]
+        jtom = self._atoms[j]
+        bond = Bond(itom, jtom, **properties)
+        self._topo.add_bond(bond)
+        return bond
 
 class StaticFrame(Frame):
 

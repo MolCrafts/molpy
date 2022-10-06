@@ -29,8 +29,7 @@ class TestFrame:
         dframe = mp.DynamicFrame()
 
         for i in zip(*data.values()):
-            atom = mp.Atom({k: v for k, v in zip(data.keys(), i)})
-            dframe.add_atom(atom)
+            dframe.add_atom(**{k: v for k, v in zip(data.keys(), i)})
 
         return dframe
 
@@ -42,3 +41,17 @@ class TestFrame:
         assert sframe.n_atoms == 2
         npt.assert_allclose(sframe['xyz'], data['xyz'])
         npt.assert_allclose(sframe['type'], data['type'])
+
+    # def test_topo(self):
+
+    #     idx = np.arange(6)
+    #     dframe = self.init_dynamic_frame({'idx':idx})  # linear
+    #     dframe.add_bond_by_index(0, 1)
+    #     dframe.add_bond_by_index(1, 2)
+    #     dframe.add_bond_by_index(2, 3)
+    #     dframe.add_bond_by_index(3, 4)
+    #     dframe.add_bond_by_index(4, 5)
+
+    #     assert dframe.topo.n_bonds == 5
+    #     assert dframe.topo.n_angles == 4
+    #     assert dframe.topo.n_dihedrals == 3

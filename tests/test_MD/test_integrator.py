@@ -77,8 +77,8 @@ class TestIntegrator:
 
         # calc force
         ljcut = mp.potential.LJCut(r_cutoff=4.0, is_pbc=True)
-        energy = ljcut.energy(r, pairs, box, params)
-        force = f = ljcut.force(r, pairs, box, params)
+        energy = ljcut.energy(r, pairs, box.to_matrix(), params)
+        force = f = ljcut.force(r, pairs, box.to_matrix(), params)
 
         npt.assert_allclose(energy, -0.3203366)
         npt.assert_allclose(force, np.array([[-1.158029, 0.0, 0.0], [1.158029, 0.0, 0.0]]), rtol=1e6)
@@ -88,5 +88,5 @@ class TestIntegrator:
         
         # run next MD loop
         r, v = integrator.initial_integrate(r, v, f, m)
-        f = ljcut.force(r, pairs, box, params)
+        f = ljcut.force(r, pairs, box.to_matrix(), params)
         v = integrator.final_integrate(v, f, m)

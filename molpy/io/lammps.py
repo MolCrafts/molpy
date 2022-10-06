@@ -10,8 +10,9 @@ from typing import Dict, List
 import numpy as np
 from molpy.io.base import DataReader, Trajectory
 from molpy.io.fileHandler import FileHandler
-from molpy.core.frame import StaticFrame
+from molpy.core.frame import StaticFrame, DynamicFrame
 from molpy.core.box import Box
+from molpy.core.topology import Topology
 
 TYPES = {
     "id": int,
@@ -191,14 +192,12 @@ class DataReader(DataReader):
         self.filehander = FileHandler(self.filepath)
 
     def get_data(self):
-        data = {}
+
         lines = self.filehander.readlines()
-        data["comment"] = lines[0]
         lines = map(lambda line: DataReader.parse_line(line), lines)
         lines = list(filter(lambda line: line != (), lines))
-        data.update(DataReader.parse(lines, self.atom_style))
-        self.data = data
-        return data
+        frame = DataReader.parse(lines, self.atom_style)
+        return frame
 
     def get_box(self)->Box:
         if self.data is None:
@@ -214,14 +213,14 @@ class DataReader(DataReader):
     @staticmethod
     def parse(lines: List[str], style: str = "full"):
 
-        data = {}
+        frame_info = {}
 
         for i, line in enumerate(lines):
 
             for field, type in TYPES.items():
 
                 if line[-1] == field:
-                    data[field] = type(line[0])
+                    frame_info[field] = type(line[0])
                     break
 
             if line[-1] == "xhi":
@@ -243,18 +242,8 @@ class DataReader(DataReader):
 
             # elif line[-1] ==
 
-        data["box"] = {
-            "xhi": xhi,
-            "xlo": xlo,
-            "yhi": yhi,
-            "ylo": ylo,
-            "zhi": zhi,
-            "zlo": zlo,
-            "xy": 0,
-            "xz": 0,
-            "yz": 0,
-            "is2D": False,
-        }
+        # TODO: tilt factor
+        box = Box(xhi - xlo, yhi - ylo, zhi - zlo, 0, 0, 0, is2D=False)
 
         section_start_lineno = {}
         # sections_re = "(" + "|".join(sections).replace(" ", "\\s+") + ")"
@@ -266,22 +255,19 @@ class DataReader(DataReader):
 
         # --- parse atoms ---
         atom_section_starts = section_start_lineno["Atoms"] + 1
-        atom_section_ends = atom_section_starts + data["atoms"]
+        atom_section_ends = atom_section_starts + frame_info["atoms"]
 
         atomInfo = DataReader.parse_atoms(
             lines[atom_section_starts:atom_section_ends], atom_style=style
         )
 
-        # TODO: convert unit
-
-        data["Atoms"] = {}
-        for key in atomInfo.dtype.names:
-            data["Atoms"][key] = atomInfo[key]
-
+        frame = DynamicFrame.from_dict(atomInfo, box, None, 0)
+        topo = Topology()
+        
         # --- parse bonds ---
         if "Bonds" in section_start_lineno:
             bond_section_starts = section_start_lineno["Bonds"] + 1
-            bond_section_ends = bond_section_starts + data["bonds"]
+            bond_section_ends = bond_section_starts + frame_info["bonds"]
 
             bondInfo = DataReader.parse_bonds(
                 lines[bond_section_starts:bond_section_ends]
@@ -291,31 +277,32 @@ class DataReader(DataReader):
             data["Bonds"]["type"] = bondInfo["type"]
             data["Bonds"]["connect"] = bondInfo[["itom", "jtom"]]
 
-        # #--- parse angles ---
-        if "Angles" in section_start_lineno:
-            angles_section_starts = section_start_lineno["Angles"] + 1
-            angles_section_ends = angles_section_starts + data["angles"]
-            angleInfo = DataReader.parse_angles(
-                lines[angles_section_starts:angles_section_ends]
-            )
-            data["Angles"] = {}
-            data["Angles"]["id"] = angleInfo["id"]
-            data["Angles"]["type"] = angleInfo["type"]
-            data["Angles"]["connect"] = angleInfo[["itom", "jtom", "ktom"]]
+        # # #--- parse angles ---
+        # if "Angles" in section_start_lineno:
+        #     angles_section_starts = section_start_lineno["Angles"] + 1
+        #     angles_section_ends = angles_section_starts + data["angles"]
+        #     angleInfo = DataReader.parse_angles(
+        #         lines[angles_section_starts:angles_section_ends]
+        #     )
+        #     data["Angles"] = {}
+        #     data["Angles"]["id"] = angleInfo["id"]
+        #     data["Angles"]["type"] = angleInfo["type"]
+        #     data["Angles"]["connect"] = angleInfo[["itom", "jtom", "ktom"]]
 
-        # #--- parse dihedrals ---
-        if "Dihedrals" in section_start_lineno:
-            dihedrals_section_starts = section_start_lineno["Dihedrals"] + 1
-            dihedrals_section_ends = dihedrals_section_starts + data["dihedrals"]
-            dihedralInfo = DataReader.parse_dihedrals(
-                lines[dihedrals_section_starts:dihedrals_section_ends]
-            )
-            data["Dihedrals"] = {}
-            data["Dihedrals"]["id"] = dihedralInfo["id"]
-            data["Dihedrals"]["type"] = dihedralInfo["type"]
-            data["Dihedrals"]["connect"] = dihedralInfo[["itom", "jtom", "ktom", "ltom"]]
+        # # #--- parse dihedrals ---
+        # if "Dihedrals" in section_start_lineno:
+        #     dihedrals_section_starts = section_start_lineno["Dihedrals"] + 1
+        #     dihedrals_section_ends = dihedrals_section_starts + data["dihedrals"]
+        #     dihedralInfo = DataReader.parse_dihedrals(
+        #         lines[dihedrals_section_starts:dihedrals_section_ends]
+        #     )
+        #     data["Dihedrals"] = {}
+        #     data["Dihedrals"]["id"] = dihedralInfo["id"]
+        #     data["Dihedrals"]["type"] = dihedralInfo["type"]
+        #     data["Dihedrals"]["connect"] = dihedralInfo[["itom", "jtom", "ktom", "ltom"]]
 
-        return data
+        # return data
+        return frame
 
     @staticmethod
     def parse_atoms(lines: List[str], atom_style="full"):
