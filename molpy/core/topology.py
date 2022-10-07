@@ -4,7 +4,7 @@
 # version: 0.0.1
 
 from itertools import combinations
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple, Any
 from molpy.utils.typing import ArrayLike
 import numpy as np
 from itertools import combinations
@@ -335,85 +335,144 @@ class Topology:
 
     def __init__(self, ):
 
-        self._graph = PyGraph()
+        # self._graph = PyGraph()
+        self._atom_mapping = []
         self._bonds:Dict[int, Dict[int, int]] = dict()
+        self._bond_mapping = []
         self._angles:Dict[int, Dict[int, Dict[int, int]]] = dict()
         self._dihedrals:Dict[int, Dict[int, Dict[int, Dict[int, int]]]] = dict()
 
-    def add_bond(self, i, j):
+    def add_atom(self, i):
 
-        self._graph.add_edge(i, j)
+        self._atom_mapping.append(i)
 
-    def add_bonds(self, bonds:Iterable[Tuple[int, int]]):
+    def del_atom(self, i):
 
-        self._graph.add_edges(bonds)
+        self._atom_mapping.pop(i)
+
+        bond_ids = []
+        bonds = self._bonds
+        if i in bonds:
+            del bonds[i]
+            for atom in bonds:
+                if i in bonds[atom]:
+                    # asymmetric del bond
+                    bond_idx = self._bond_mapping.index(bonds[atom][i])
+                    self._bond_mapping.pop(bond_idx)
+                    bond_ids.append(bond_idx)
+                    del bonds[atom][i]
+
+        return bond_ids                    
+
+    def node2idx(self, i):
+        return self._atom_mapping.index(i)
+    
+    def idx2node(self, i):
+        return self._atom_mapping[i]
+
+    def add_bond(self, i, j, bond_idx):
+
+        if i not in self._bonds:
+            self._bonds[i] = {}
+        if j not in self._bonds:
+            self._bonds[j] = {}
+
+        if j not in self._bonds[i]:
+            self._bonds[i][j] = bond_idx
+
+        if i not in self._bonds[j]:
+            self._bonds[j][i] = bond_idx
+
+        self._bond_mapping.append(bond_idx)
+        
+        # update graph
+        # self._graph.add_edge(i, j)
+
+    def add_bonds(self, bonds:Iterable[Tuple[int, int]], properties:Dict[str, Any]={}):
+
+        n_bonds = len(bonds)
+        for i in range(n_bonds):
+            self.add_bond(bonds[i][0], bonds[i][1], **{k:v[i] for k, v in properties.items()})
+
+            # update graph
+            # self._graph.add_edges(bonds)
 
     def del_bond(self, i, j):
 
-        self._graph.del_edge(i, j)
+        _bond = self._bonds
+        if i not in _bond or j not in _bond:
+            raise KeyError('Node not in graph.')
+        else:
+            bond_idx = self._bond_mapping.index(_bond[i][j])
+            del _bond[i][j]
+            if i != j:
+                del _bond[j][i]
 
-    def update(self, topology):
+        self._bond_mapping.pop(bond_idx)
+        return bond_idx
 
-        self._graph.update(topology._graph)
-
-    def get_bonds(self):
-
-        return self.calc_bonds()
-
-    def calc_bonds(self):
-        adj = self._graph._adj
-        tmp = []
-        for i, js in adj.items():
-            for j in js:
-                tmp.append([i, j])
-        bonds = np.array(tmp)
-        bonds = np.where((bonds[:, 0]>bonds[:, 1]).reshape((-1, 1)), bonds[:, ::-1], bonds)
-        bonds = np.unique(bonds, axis=0)
-        return bonds
-
-    def calc_angles(self):
-        adj = self._graph._adj
-        tmp = []
-        for c, ps in adj.items():
-            if len(ps) < 2:
-                continue
-            for (i, j) in combinations(ps, 2):
-                tmp.append([i, c, j])
-            
-        angles = np.array(tmp)
-        angles = np.where((angles[:,0]>angles[:,2]).reshape((-1, 1)), angles[:, ::-1], angles)
-        angles = np.unique(angles, axis=0)
-        return angles        
-
-    def calc_dihedrals(self):
-
-        topo = self._graph._adj
-        rawDihes = []
-        for jtom, ps in topo.items():
-            if len(ps) < 2:
-                continue
-            for (itom, ktom) in combinations(ps, 2):
-                
-                for ltom in topo[itom]:
-                    if ltom != jtom:
-                        rawDihes.append([ltom, itom, jtom, ktom])
-                for ltom in topo[ktom]:
-                    if ltom != jtom:
-                        rawDihes.append([itom, jtom, ktom, ltom])
+    def get_bond(self, i, j):
         
-        # remove duplicates
-        dihedrals = np.array(rawDihes)
-        dihedrals = np.where((dihedrals[:,1]>dihedrals[:,2]).reshape((-1, 1)), dihedrals[:, ::-1], dihedrals)
-        dihedrals = np.unique(dihedrals, axis=0)
-        return dihedrals
+        if i not in self._bonds or j not in self._bonds:
+            raise KeyError('bond not exist.')
+        
+        bond_idx = self._bonds[i][j]
+        return self._bond_mapping.index(bond_idx)
+
+    # def calc_bonds(self):
+    #     adj = self._graph._adj
+    #     tmp = []
+    #     for i, js in adj.items():
+    #         for j in js:
+    #             tmp.append([i, j])
+    #     bonds = np.array(tmp)
+    #     bonds = np.where((bonds[:, 0]>bonds[:, 1]).reshape((-1, 1)), bonds[:, ::-1], bonds)
+    #     bonds = np.unique(bonds, axis=0)
+    #     return bonds
+
+    # def calc_angles(self):
+    #     adj = self._graph._adj
+    #     tmp = []
+    #     for c, ps in adj.items():
+    #         if len(ps) < 2:
+    #             continue
+    #         for (i, j) in combinations(ps, 2):
+    #             tmp.append([i, c, j])
+            
+    #     angles = np.array(tmp)
+    #     angles = np.where((angles[:,0]>angles[:,2]).reshape((-1, 1)), angles[:, ::-1], angles)
+    #     angles = np.unique(angles, axis=0)
+    #     return angles        
+
+    # def calc_dihedrals(self):
+
+    #     topo = self._graph._adj
+    #     rawDihes = []
+    #     for jtom, ps in topo.items():
+    #         if len(ps) < 2:
+    #             continue
+    #         for (itom, ktom) in combinations(ps, 2):
+                
+    #             for ltom in topo[itom]:
+    #                 if ltom != jtom:
+    #                     rawDihes.append([ltom, itom, jtom, ktom])
+    #             for ltom in topo[ktom]:
+    #                 if ltom != jtom:
+    #                     rawDihes.append([itom, jtom, ktom, ltom])
+        
+    #     # remove duplicates
+    #     dihedrals = np.array(rawDihes)
+    #     dihedrals = np.where((dihedrals[:,1]>dihedrals[:,2]).reshape((-1, 1)), dihedrals[:, ::-1], dihedrals)
+    #     dihedrals = np.unique(dihedrals, axis=0)
+    #     return dihedrals
 
     @property
     def n_atoms(self):
-        return self._graph.n_nodes
+        return len(self._atom_mapping)
 
     @property
     def n_bonds(self):
-        return self._graph.n_edges
+        return len(self._bond_mapping)
 
 
 # class Topo:

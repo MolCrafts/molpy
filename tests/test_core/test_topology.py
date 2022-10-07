@@ -7,21 +7,33 @@ import pytest
 import molpy as mp
 import numpy as np
 
-# class TestTopology:
+class TestTopology:
 
-#     def test_add_from_frame(self):
+    def test_add_bond(self):
+        topo = mp.Topology()
+        topo.add_bond(0, 1)
+        assert topo.n_bonds == 1
 
-#         dframe = mp.DynamicFrame.from_dict({
-#             'type': np.ones(5),
-#             'id': np.arange(5)
-#         })
+        topo.add_bonds([[1, 2], [2, 3]])
+        assert topo.n_bonds == 3
 
-#         # we better not init Bond class directly
-#         # dframe.add_bond(mp.Bond(dframe[0], dframe[1], type=1,))
-#         dframe.add_bond(1, 2, type=2)
-#         dframe.add_bonds([(2, 3), (3, 4)], type=[3, 4])
+    def test_del_atom(self):
 
-#         assert dframe.n_bonds == 4
-#         dframe.get_bond
+        # before:
+        # AoS: [A, B, C, D, E, F]
+        # idx: [0, 1, 2, 3, 4, 5]
+        # node:[0, 1, 2, 3, 4, 5]
 
+        # after:
+        # AoS: [A, B, D, E, F]  # del C
+        # idx: [0, 1, 2, 3, 4]
+        # node:[0, 1, 3, 4, 5]  # del 2 
 
+        topo = mp.Topology()
+        topo.add_bonds([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]], type=[1, 2, 3, 4, 5])
+        topo.del_atom(2)  # frame passes inx 2 of del atom to topo
+        assert topo.n_bonds == 4
+        assert topo.node2idx(3) == 2
+        assert topo.node2idx(5) == 4
+        assert topo.idx2node(2) == 3
+        assert topo.idx2node(4) == 5

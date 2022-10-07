@@ -42,16 +42,60 @@ class TestFrame:
         npt.assert_allclose(sframe['xyz'], data['xyz'])
         npt.assert_allclose(sframe['type'], data['type'])
 
-    # def test_topo(self):
+    def test_atom(self):
 
-    #     idx = np.arange(6)
-    #     dframe = self.init_dynamic_frame({'idx':idx})  # linear
-    #     dframe.add_bond_by_index(0, 1)
-    #     dframe.add_bond_by_index(1, 2)
-    #     dframe.add_bond_by_index(2, 3)
-    #     dframe.add_bond_by_index(3, 4)
-    #     dframe.add_bond_by_index(4, 5)
+        dframe = mp.DynamicFrame.from_dict(
+            {'id': np.arange(6),
+            'type': np.arange(6),}
+        )
 
-    #     assert dframe.topo.n_bonds == 5
-    #     assert dframe.topo.n_angles == 4
-    #     assert dframe.topo.n_dihedrals == 3
+        assert tuple(dframe._topo._atom_mapping) == (5, 6, 7, 8, 9, 10)
+
+        dframe.del_atom(2)
+        assert dframe.n_atoms == 5
+        assert tuple(dframe._topo._atom_mapping) == (5, 6, 8, 9, 10)
+
+        dframe.del_atom(4)
+        assert dframe.n_atoms == 4
+        assert tuple(dframe._topo._atom_mapping) == (5, 6, 8, 9)
+
+    def test_bond(self):
+
+        dframe = mp.DynamicFrame.from_dict(
+            {'id': np.arange(6),
+            'type': np.arange(6),}
+        )
+
+        dframe.add_bond(0, 1)
+        assert dframe.n_atoms == 6
+        assert dframe.n_bonds == 1
+        assert dframe._topo.n_bonds == 1
+        assert dframe._topo._bonds[0][1] == dframe._topo._bonds[1][0]
+
+        dframe.del_bond(0, 1)
+        assert dframe.n_atoms == 6
+        assert dframe.n_bonds == 0
+        assert dframe._topo.n_bonds == 0
+
+        dframe.add_bonds([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0]], type=[1, 2, 3, 4, 5, 6])
+        assert dframe.n_atoms == 6
+        assert dframe.n_bonds == 6
+        assert dframe._topo.n_bonds == 6
+
+        dframe.del_atom(2)
+        assert dframe.n_atoms == 5
+        assert dframe.n_bonds == 4
+        assert dframe._topo.n_bonds == 4
+
+        bond1 = dframe.get_bond(0, 1)
+        assert bond1['type'] == 1
+        with pytest.raises(KeyError):
+            dframe.get_bond(1, 2)
+            dframe.get_bond(2, 3)
+        bond4 = dframe.get_bond(3, 4)
+        assert bond4['type'] == 4
+        bond5 = dframe.get_bond(4, 5)
+        assert bond5['type'] == 5
+        bond6 = dframe.get_bond(5, 0)
+        assert bond6['type'] == 6
+

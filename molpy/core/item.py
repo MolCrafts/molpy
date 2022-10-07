@@ -4,10 +4,17 @@
 # version: 0.0.1
 
 class Atom(dict):
-
-    pass
+    id = 0
+    def __new__(cls, **properties):
+        cls.id += 1
+        return super().__new__(cls, **properties)
 
 class Bond(dict):
+
+    id = 0
+    def __new__(cls, *args, **kwargs):
+        cls.id += 1
+        return super().__new__(cls, *args, **kwargs)
 
     def __init__(self, atom1:Atom, atom2:Atom, *args, **kwargs):
 
@@ -16,7 +23,7 @@ class Bond(dict):
         self.atom2 = atom2
 
     def __eq__(self, b: 'Bond') -> bool:
-        return (self[0] == b[0] and self[1]) == b[1] or (self[0] == b[1] and self[1] == b[0])
+        return (self.atom1 == b[0] and self.atom2) == b[1] or (self.atom1 == b[1] and self.atom2 == b[0])
 
 class Angle(dict):
 
