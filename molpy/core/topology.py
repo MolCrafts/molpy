@@ -336,19 +336,26 @@ class Topology:
     def __init__(self, ):
 
         # self._graph = PyGraph()
-        self._atom_mapping = []
         self._bonds:Dict[int, Dict[int, int]] = dict()
-        self._bond_mapping = []
         self._angles:Dict[int, Dict[int, Dict[int, int]]] = dict()
         self._dihedrals:Dict[int, Dict[int, Dict[int, Dict[int, int]]]] = dict()
 
+    @property
+    def n_atoms(self):
+        return len(self._bonds)
+
+    @property
+    def n_bonds(self):
+        n_bonds = 0
+        for k, v in self._bonds.items():
+                n_bonds += len(v)
+        return int(n_bonds / 2)
+
     def add_atom(self, i):
 
-        self._atom_mapping.append(i)
+        pass
 
     def del_atom(self, i):
-
-        self._atom_mapping.pop(i)
 
         bond_ids = []
         bonds = self._bonds
@@ -357,20 +364,12 @@ class Topology:
             for atom in bonds:
                 if i in bonds[atom]:
                     # asymmetric del bond
-                    bond_idx = self._bond_mapping.index(bonds[atom][i])
-                    self._bond_mapping.pop(bond_idx)
-                    bond_ids.append(bond_idx)
+                    bond_ids.append(bonds[atom][i])
                     del bonds[atom][i]
 
         return bond_ids                    
 
-    def node2idx(self, i):
-        return self._atom_mapping.index(i)
-    
-    def idx2node(self, i):
-        return self._atom_mapping[i]
-
-    def add_bond(self, i, j, bond_idx):
+    def add_bond(self, i, j, bond_id):
 
         if i not in self._bonds:
             self._bonds[i] = {}
@@ -378,37 +377,35 @@ class Topology:
             self._bonds[j] = {}
 
         if j not in self._bonds[i]:
-            self._bonds[i][j] = bond_idx
+            self._bonds[i][j] = bond_id
 
         if i not in self._bonds[j]:
-            self._bonds[j][i] = bond_idx
-
-        self._bond_mapping.append(bond_idx)
+            self._bonds[j][i] = bond_id
         
         # update graph
         # self._graph.add_edge(i, j)
 
-    def add_bonds(self, bonds:Iterable[Tuple[int, int]], properties:Dict[str, Any]={}):
+    # def add_bonds(self, bonds:Iterable[Tuple[int, int]], properties:Dict[str, Any]={}):
 
-        n_bonds = len(bonds)
-        for i in range(n_bonds):
-            self.add_bond(bonds[i][0], bonds[i][1], **{k:v[i] for k, v in properties.items()})
+    #     n_bonds = len(bonds)
+    #     for i in range(n_bonds):
+    #         self.add_bond(bonds[i][0], bonds[i][1], **{k:v[i] for k, v in properties.items()})
 
-            # update graph
-            # self._graph.add_edges(bonds)
+    #         # update graph
+    #         # self._graph.add_edges(bonds)
 
     def del_bond(self, i, j):
+
+        bond_idx = self.get_bond(i, j)
 
         _bond = self._bonds
         if i not in _bond or j not in _bond:
             raise KeyError('Node not in graph.')
         else:
-            bond_idx = self._bond_mapping.index(_bond[i][j])
             del _bond[i][j]
             if i != j:
                 del _bond[j][i]
 
-        self._bond_mapping.pop(bond_idx)
         return bond_idx
 
     def get_bond(self, i, j):
@@ -416,8 +413,7 @@ class Topology:
         if i not in self._bonds or j not in self._bonds:
             raise KeyError('bond not exist.')
         
-        bond_idx = self._bonds[i][j]
-        return self._bond_mapping.index(bond_idx)
+        return self._bonds[i][j]
 
     # def calc_bonds(self):
     #     adj = self._graph._adj
@@ -465,15 +461,6 @@ class Topology:
     #     dihedrals = np.where((dihedrals[:,1]>dihedrals[:,2]).reshape((-1, 1)), dihedrals[:, ::-1], dihedrals)
     #     dihedrals = np.unique(dihedrals, axis=0)
     #     return dihedrals
-
-    @property
-    def n_atoms(self):
-        return len(self._atom_mapping)
-
-    @property
-    def n_bonds(self):
-        return len(self._bond_mapping)
-
 
 # class Topo:
 #     """

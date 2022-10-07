@@ -54,14 +54,17 @@ class DynamicFrame(Frame):
         atom = Atom(**properties)
 
         self._atoms.append(atom)
-        self._topo.add_atom(atom.id)
+        self._topo.add_atom(id(atom))
 
     def del_atom(self, i):
 
         self._atoms.pop(i)
         bond_idx = self._topo.del_atom(i)
         for b in bond_idx:
-            self._bonds.pop(b)
+            for i in range(len(self._bonds)):
+                if b == id(self._bonds[i]):
+                    del self._bonds[i]
+                    break
 
     def add_bond(self, i:int, j:int, **properties)->Bond:
 
@@ -72,7 +75,7 @@ class DynamicFrame(Frame):
         self._bonds.append(bond)
 
         # update topology
-        self._topo.add_bond(i, j, bond.id)
+        self._topo.add_bond(i, j, id(bond))
 
         return bond
 
@@ -85,7 +88,9 @@ class DynamicFrame(Frame):
     def del_bond(self, i, j):
 
         bond_idx = self._topo.del_bond(i, j)
-        self._bonds.pop(bond_idx)
+        for i in range(len(self._bonds)):
+            if bond_idx == id(self._bonds[i]):
+                del self._bonds[i]
 
     # def get_bond(self, atom1, atom2):
     #     for bond in self._bonds:
@@ -97,7 +102,9 @@ class DynamicFrame(Frame):
     def get_bond(self, i, j):
 
         bond_id = self._topo.get_bond(i, j)
-        return self._bonds[bond_id]
+        for bond in self._bonds:
+            if id(bond) == bond_id:
+                return bond
 
     @property
     def n_bonds(self):

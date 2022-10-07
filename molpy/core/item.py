@@ -3,18 +3,13 @@
 # date: 2022-08-10
 # version: 0.0.1
 
+import itertools
+
+
 class Atom(dict):
-    id = 0
-    def __new__(cls, **properties):
-        cls.id += 1
-        return super().__new__(cls, **properties)
+    pass
 
 class Bond(dict):
-
-    id = 0
-    def __new__(cls, *args, **kwargs):
-        cls.id += 1
-        return super().__new__(cls, *args, **kwargs)
 
     def __init__(self, atom1:Atom, atom2:Atom, *args, **kwargs):
 

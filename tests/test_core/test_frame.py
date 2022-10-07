@@ -49,15 +49,11 @@ class TestFrame:
             'type': np.arange(6),}
         )
 
-        assert tuple(dframe._topo._atom_mapping) == (5, 6, 7, 8, 9, 10)
-
         dframe.del_atom(2)
         assert dframe.n_atoms == 5
-        assert tuple(dframe._topo._atom_mapping) == (5, 6, 8, 9, 10)
 
         dframe.del_atom(4)
         assert dframe.n_atoms == 4
-        assert tuple(dframe._topo._atom_mapping) == (5, 6, 8, 9)
 
     def test_bond(self):
 
