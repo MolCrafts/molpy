@@ -36,11 +36,7 @@ class TestFrame:
     def test_create_static_frame_from_dynamic_frame(self, data):
 
         dframe = self.init_dynamic_frame(data)
-        sframe = dframe.atoms
-        
-        assert sframe.n_atoms == 2
-        npt.assert_allclose(sframe['xyz'], data['xyz'])
-        npt.assert_allclose(sframe['type'], data['type'])
+
 
     def test_atom(self):
 
@@ -66,7 +62,6 @@ class TestFrame:
         assert dframe.n_atoms == 6
         assert dframe.n_bonds == 1
         assert dframe._topo.n_bonds == 1
-        assert dframe._topo._bonds[0][1] == dframe._topo._bonds[1][0]
 
         dframe.del_bond(0, 1)
         assert dframe.n_atoms == 6
@@ -82,16 +77,14 @@ class TestFrame:
         assert dframe.n_atoms == 5
         assert dframe.n_bonds == 4
         assert dframe._topo.n_bonds == 4
-
+        # atom_list = [0, 1, 3, 4, 5]
         bond1 = dframe.get_bond(0, 1)
         assert bond1['type'] == 1
         with pytest.raises(KeyError):
             dframe.get_bond(1, 2)
             dframe.get_bond(2, 3)
         bond4 = dframe.get_bond(3, 4)
-        assert bond4['type'] == 4
-        bond5 = dframe.get_bond(4, 5)
-        assert bond5['type'] == 5
-        bond6 = dframe.get_bond(5, 0)
+        assert bond4['type'] == 5
+        bond6 = dframe.get_bond(4, 0)
         assert bond6['type'] == 6
 

@@ -3,7 +3,6 @@
 # date: 2022-08-10
 # version: 0.0.1
 
-from collections import defaultdict
 from typing import List, Optional
 from .topology import Topology
 from .item import Atom, Bond, Angle, Dihedral
@@ -20,8 +19,8 @@ class DynamicFrame(Frame):
         
         self.timestep = timestep
         self._box = box
-        self._atoms = []
-        self._bonds = []
+        self._atoms = {}
+        self._bonds = {}
         if topo is None:
             self._topo = Topology()
         else:
@@ -39,72 +38,60 @@ class DynamicFrame(Frame):
 
     @property
     def atoms(self):
-        return StaticFrame.from_atoms(self._atoms)
+        return list(self._atoms.values())
 
     @property
     def bonds(self):
-        return self._bonds
+        return list(self._bonds.values())
 
     @property
     def n_atoms(self):
         return len(self._atoms)
 
-    def add_atom(self, **properties):
+    def add_atom(self, **attribs):
 
-        atom = Atom(**properties)
+        atom = Atom(**attribs)
 
-        self._atoms.append(atom)
+        self._atoms[id(atom)] = atom
         self._topo.add_atom(id(atom))
 
     def del_atom(self, i):
-
-        self._atoms.pop(i)
-        bond_idx = self._topo.del_atom(i)
+        atom_id = id(self.atoms[i])
+        self._atoms.pop(atom_id)
+        bond_idx = self._topo.del_atom(atom_id)
         for b in bond_idx:
-            for i in range(len(self._bonds)):
-                if b == id(self._bonds[i]):
-                    del self._bonds[i]
-                    break
+            self._bonds.pop(b)
 
-    def add_bond(self, i:int, j:int, **properties)->Bond:
+    def add_bond(self, i:int, j:int, **attribs)->Bond:
 
-        itom = self._atoms[i]
-        jtom = self._atoms[j]
+        itom = self.atoms[i]
+        jtom = self.atoms[j]
 
-        bond = Bond(itom, jtom, **properties)
-        self._bonds.append(bond)
+        bond = Bond(itom, jtom, **attribs)
+        self._bonds[id(bond)] = bond
 
         # update topology
-        self._topo.add_bond(i, j, id(bond))
+        self._topo.add_bond(id(itom), id(jtom), id(bond))
 
         return bond
 
-    def add_bonds(self, atom_ids, **properties):
+    def add_bonds(self, atom_idxs, **attribs):
 
-        n_bonds = len(atom_ids)
+        n_bonds = len(atom_idxs)
         for i in range(n_bonds):
-            self.add_bond(atom_ids[i][0], atom_ids[i][1], **{k:v[i] for k, v in properties.items()})
+            self.add_bond(atom_idxs[i][0], atom_idxs[i][1], **{k:v[i] for k, v in attribs.items()})
 
     def del_bond(self, i, j):
-
-        bond_idx = self._topo.del_bond(i, j)
-        for i in range(len(self._bonds)):
-            if bond_idx == id(self._bonds[i]):
-                del self._bonds[i]
-
-    # def get_bond(self, atom1, atom2):
-    #     for bond in self._bonds:
-    #         if bond == Bond(atom1, atom2):
-    #             return bond
-    #     else:
-    #         raise ValueError(f'No bond between {atom1} and {atom2}')
+        itom = self.atoms[i]
+        jtom = self.atoms[j]        
+        bond_id = self._topo.del_bond(id(itom), id(jtom))
+        del self._bonds[bond_id]
 
     def get_bond(self, i, j):
-
-        bond_id = self._topo.get_bond(i, j)
-        for bond in self._bonds:
-            if id(bond) == bond_id:
-                return bond
+        itom = self.atoms[i]
+        jtom = self.atoms[j]    
+        bond_id = self._topo.get_bond(id(itom), id(jtom))
+        return self._bonds[bond_id]
 
     @property
     def n_bonds(self):
@@ -124,6 +111,10 @@ class DynamicFrame(Frame):
             return [atom[key] for atom in self._atoms]
         elif isinstance(key, (int, slice)):
             return self._atoms[key]
+
+    def to_static(self):
+
+        return StaticFrame.from_atoms(self.atoms, self.box, self._topo)
 
 
 class StaticFrame(Frame):

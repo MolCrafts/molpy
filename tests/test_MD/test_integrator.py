@@ -34,13 +34,14 @@ class TestIntegrator:
         assert pairType_cc.param['epsilon'] == 1.0
         assert pairType_cc.param['sigma'] == 1.0
 
-        nblist = NeighborList(system.frame.box, system.frame.atoms['xyz'], dict(r_max=2.0, exclude_ii=True))
+        staticFrame = system.frame.to_static()
+        nblist = NeighborList(system.frame.box, staticFrame['xyz'], dict(r_max=2.0, exclude_ii=True))
 
         pairs = nblist.get_pairs()
 
         assert pairs.shape[-1] == 2
 
-        types = system.frame.atoms['type']
+        types = staticFrame['type']
 
         assert len(types) == 2
 
@@ -67,10 +68,10 @@ class TestIntegrator:
         # run first MD loop
         integrator = mp.MD.integrator.Verlet(dt=0.001)
 
-        r = system.frame.atoms['xyz']
+        r = staticFrame['xyz']
         v = np.zeros_like(r)
         f = np.zeros_like(r)
-        m = system.frame.atoms['mass']
+        m = staticFrame['mass']
         
         # first-half step
         r, v = integrator.initial_integrate(r, v, f, m)

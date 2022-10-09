@@ -351,21 +351,19 @@ class Topology:
                 n_bonds += len(v)
         return int(n_bonds / 2)
 
-    def add_atom(self, i):
-
+    def add_atom(self, atom_id):
+        # self._graph.add_node(atom_id)
         pass
 
-    def del_atom(self, i):
+    def del_atom(self, atom_id):
 
         bond_ids = []
         bonds = self._bonds
-        if i in bonds:
-            del bonds[i]
-            for atom in bonds:
-                if i in bonds[atom]:
-                    # asymmetric del bond
-                    bond_ids.append(bonds[atom][i])
-                    del bonds[atom][i]
+        if atom_id in bonds:
+            nbrs = bonds.pop(atom_id)
+            for nbr in nbrs:
+                bond_id = bonds[nbr].pop(atom_id)
+                bond_ids.append(bond_id)
 
         return bond_ids                    
 
@@ -376,37 +374,52 @@ class Topology:
         if j not in self._bonds:
             self._bonds[j] = {}
 
-        if j not in self._bonds[i]:
-            self._bonds[i][j] = bond_id
-
-        if i not in self._bonds[j]:
-            self._bonds[j][i] = bond_id
+        self._bonds[i][j] = bond_id
+        self._bonds[j][i] = bond_id
         
         # update graph
         # self._graph.add_edge(i, j)
 
-    # def add_bonds(self, bonds:Iterable[Tuple[int, int]], properties:Dict[str, Any]={}):
+    def add_bonds(self, bonds:Iterable[Tuple[int, int]], bond_ids:Iterable[int]):
 
-    #     n_bonds = len(bonds)
-    #     for i in range(n_bonds):
-    #         self.add_bond(bonds[i][0], bonds[i][1], **{k:v[i] for k, v in properties.items()})
+        n_bonds = len(bonds)
+        for i in range(n_bonds):
+            self.add_bond(bonds[i][0], bonds[i][1], bond_ids[i])
 
-    #         # update graph
-    #         # self._graph.add_edges(bonds)
+            # update graph
+            # self._graph.add_edges(bonds)
 
     def del_bond(self, i, j):
+        """
+        delete a bond in topology
 
-        bond_idx = self.get_bond(i, j)
+        Parameters
+        ----------
+        i : int
+            _description_
+        j : int
+            _description_
+
+        Returns
+        -------
+        bond index
+            bond index point to bond object in frame's bond list
+
+        Raises
+        ------
+        KeyError
+            _description_
+        """
 
         _bond = self._bonds
+        bond_id = _bond[i][j]
         if i not in _bond or j not in _bond:
             raise KeyError('Node not in graph.')
         else:
             del _bond[i][j]
-            if i != j:
-                del _bond[j][i]
+            del _bond[j][i]
 
-        return bond_idx
+        return bond_id
 
     def get_bond(self, i, j):
         

@@ -9,31 +9,53 @@ import numpy as np
 
 class TestTopology:
 
-    def test_add_bond(self):
-        topo = mp.Topology()
-        topo.add_bond(0, 1)
-        assert topo.n_bonds == 1
-
-        topo.add_bonds([[1, 2], [2, 3]])
-        assert topo.n_bonds == 3
-
-    def test_del_atom(self):
-
-        # before:
-        # AoS: [A, B, C, D, E, F]
-        # idx: [0, 1, 2, 3, 4, 5]
-        # node:[0, 1, 2, 3, 4, 5]
-
-        # after:
-        # AoS: [A, B, D, E, F]  # del C
-        # idx: [0, 1, 2, 3, 4]
-        # node:[0, 1, 3, 4, 5]  # del 2 
+    @pytest.fixture(scope='function', name='ring')
+    def create_ring(self):
 
         topo = mp.Topology()
-        topo.add_bonds([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]], type=[1, 2, 3, 4, 5])
-        topo.del_atom(2)  # frame passes inx 2 of del atom to topo
+
+        # bond list in Frame
+        nbonds = 6
+        atom_dict = {}
+        bond_dict = {}
+        for n in range(nbonds):
+            atom = mp.Atom(id=n)
+            atom_dict[id(atom)] = atom
+
+        atom_list = list(atom_dict)
+        for n in range(nbonds):
+            bond = mp.Bond(atom_list[n-1], atom_list[n], id=n)
+            bond_dict[id(bond)] = bond
+            topo.add_bond(id(atom_list[n-1]), id(atom_list[n]), id(bond))
+
+        yield topo, bond_dict, atom_list
+
+    def test_atom_manage(self, ring):
+
+        topo, bond_dict, atom_list = ring
+
+        # -- Test add atoms --
+
+        # -- Test del atoms --
+        atom_id = topo.del_atom(id(atom_list[0]))
+        assert topo.n_atoms == 5
         assert topo.n_bonds == 4
-        assert topo.node2idx(3) == 2
-        assert topo.node2idx(5) == 4
-        assert topo.idx2node(2) == 3
-        assert topo.idx2node(4) == 5
+
+    def test_bond_manage(self, ring):
+
+        topo, bond_dict, atom_list = ring
+
+        # -- Test add bonds --
+        assert topo.n_atoms == 6
+        assert topo.n_bonds == 6
+        assert bond_dict[topo.get_bond(id(atom_list[-1]), id(atom_list[0]))]['id'] == 0
+        assert bond_dict[topo.get_bond(id(atom_list[0]), id(atom_list[1]))]['id'] == 1
+
+        # -- Test del bonds --
+        delete_bond_idx = topo.del_bond(id(atom_list[0]), id(atom_list[1]))
+        bond_dict.pop(delete_bond_idx)
+        assert topo.n_atoms == 6
+        assert topo.n_bonds == 5
+        assert bond_dict[topo.get_bond(id(atom_list[1]), id(atom_list[2]))]['id'] == 2
+
+
