@@ -112,10 +112,17 @@ class DumpReader(Trajectory):
     def __init__(self, fpath: str):
 
         self.filepath = fpath
-        self.filehandler = FileHandler(self.filepath)
-        self.chunks = self.get_chunks("ITEM: TIMESTEP")
         self.current_nframe: int = 0
         self.current_frame: Dict = None
+
+    def __enter__(self):
+
+        self.filehandler = FileHandler(self.filepath)
+        self.chunks = self.get_chunks("ITEM: TIMESTEP")
+        return self
+
+    def __exit__(self, exc_ty, exc_val, exc_tb):
+        self.filehandler.close()
 
     @property
     def n_frames(self):
@@ -190,6 +197,11 @@ class DataReader(DataReader):
     def __enter__(self):
 
         self.filehander = FileHandler(self.filepath)
+        return self
+
+    def __exit__(self, exc_ty, exc_val, exc_tb):
+
+        self.filehander.close()
 
     def get_data(self):
 
@@ -261,8 +273,7 @@ class DataReader(DataReader):
             lines[atom_section_starts:atom_section_ends], atom_style=style
         )
 
-        frame = DynamicFrame.from_dict(atomInfo, box, None, 0)
-        topo = Topology()
+        frame = DynamicFrame.from_sturcture_array(atomInfo, box)
         
         # --- parse bonds ---
         if "Bonds" in section_start_lineno:
@@ -272,10 +283,10 @@ class DataReader(DataReader):
             bondInfo = DataReader.parse_bonds(
                 lines[bond_section_starts:bond_section_ends]
             )
-            data["Bonds"] = {}
-            data["Bonds"]["id"] = bondInfo["id"]
-            data["Bonds"]["type"] = bondInfo["type"]
-            data["Bonds"]["connect"] = bondInfo[["itom", "jtom"]]
+            bond_ids = bondInfo['id']
+            bond_types = bondInfo['type']
+            atom_id_pair = bondInfo[['itom', 'jtom']]
+            frame.add_bonds_by_atom_id(atom_id_pair, type=bond_types, id=bond_ids)
 
         # # #--- parse angles ---
         # if "Angles" in section_start_lineno:

@@ -4,6 +4,18 @@
 # version: 0.0.1
 
 import mdtraj as md
-import molpy
-from molpy.core.item import Bond
-from molpy.core.system import System
+import molpy as mp
+import numpy as np
+
+class TestSystem:
+
+    def test_load_lammps(self):
+
+        data_path = 'tests/test_io/data/lammps.data'
+        
+        system = mp.System()
+        system.load_data(data_path, 'lammps')
+
+        state = system.state
+
+        

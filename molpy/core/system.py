@@ -22,7 +22,7 @@ class System:
 
         self.forcefield = ForceField()
         self.trajectory = None
-        self.frame:Frame = DynamicFrame()
+        self.frame = DynamicFrame()
         
     def load(self, filename, topo=None, *args, **kwargs):
 
@@ -48,6 +48,10 @@ class System:
             self.trajectory = trajectory
 
         return trajectory
+
+    @property
+    def state(self):
+        return self.frame.to_static()
 
     def iterload(self, filename, topo=None, chunk=100, stride=0, skip=0, *args, **kwargs):
         
@@ -80,13 +84,15 @@ class System:
 
     def load_traj(self, filename, format, ):
 
-        self._traj = Readers['TrajReaders'][format](filename)
+        trajReader = Readers['TrajReaders'][format]
+        self._traj = trajReader(filename)
         self.n_frames = self._traj.n_frames
 
     def load_data(self, filename, format, ):
         
-        data_reader = Readers['DataReaders'][format](filename)
-        self.frame = data_reader.get_data()
+        data_reader = Readers['DataReaders'][format]
+        with data_reader(filename) as f:
+            self.frame = f.get_data()
 
     def get_frame(self, index)->StaticFrame:
         frame = self._traj.get_one_frame(index)

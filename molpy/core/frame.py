@@ -36,6 +36,13 @@ class DynamicFrame(Frame):
 
         return dframe
 
+    @classmethod
+    def from_sturcture_array(cls, sarray, box=None, timestep=None):
+
+        fields = sarray.dtype.names
+        data = {k: sarray[k] for k in fields}
+        return cls.from_dict(data, box)
+
     @property
     def atoms(self):
         return list(self._atoms.values())
@@ -52,26 +59,40 @@ class DynamicFrame(Frame):
 
         atom = Atom(**attribs)
 
-        self._atoms[id(atom)] = atom
-        self._topo.add_atom(id(atom))
+        self._atoms[atom.id] = atom
+        self._topo.add_atom(atom.id)
 
     def del_atom(self, i):
-        atom_id = id(self.atoms[i])
+        atom_id = self.atoms[i].id
         self._atoms.pop(atom_id)
         bond_idx = self._topo.del_atom(atom_id)
         for b in bond_idx:
             self._bonds.pop(b)
 
     def add_bond(self, i:int, j:int, **attribs)->Bond:
+        """
+        add bond by the index of atoms
 
+        Parameters
+        ----------
+        i : int
+            index of atom1
+        j : int
+            index of atom2
+
+        Returns
+        -------
+        Bond
+            bond object
+        """
         itom = self.atoms[i]
         jtom = self.atoms[j]
 
         bond = Bond(itom, jtom, **attribs)
-        self._bonds[id(bond)] = bond
+        self._bonds[bond.id] = bond
 
         # update topology
-        self._topo.add_bond(id(itom), id(jtom), id(bond))
+        self._topo.add_bond(itom.id, jtom.id, bond.id)
 
         return bond
 
@@ -81,16 +102,35 @@ class DynamicFrame(Frame):
         for i in range(n_bonds):
             self.add_bond(atom_idxs[i][0], atom_idxs[i][1], **{k:v[i] for k, v in attribs.items()})
 
+    def add_bond_by_atom_id(self, id1, id2, **attrib):
+
+        atom1 = self._atoms[id1]
+        atom2 = self._atoms[id2]
+
+        bond = Bond(atom1, atom2, **attrib)
+        self._bonds[bond.id] = bond
+
+        # update topology
+        self._topo.add_bond(atom1.id, atom2.id, bond.id)
+
+        return bond
+
+    def add_bonds_by_atom_id(self, atom_ids, **attribs):
+
+        nbonds = len(atom_ids)
+        for i in range(nbonds):
+            self.add_bond_by_atom_id(atom_ids[i][0], atom_ids[i][1], **{k:v[i] for k, v in attribs.items()})
+
     def del_bond(self, i, j):
         itom = self.atoms[i]
         jtom = self.atoms[j]        
-        bond_id = self._topo.del_bond(id(itom), id(jtom))
+        bond_id = self._topo.del_bond(itom.id, jtom.id)
         del self._bonds[bond_id]
 
     def get_bond(self, i, j):
         itom = self.atoms[i]
         jtom = self.atoms[j]    
-        bond_id = self._topo.get_bond(id(itom), id(jtom))
+        bond_id = self._topo.get_bond(itom.id, jtom.id)
         return self._bonds[bond_id]
 
     @property

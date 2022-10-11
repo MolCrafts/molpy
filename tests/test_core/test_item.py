@@ -14,3 +14,8 @@ class TestItem:
         assert bond.atom1['idx'] == 0
         assert bond.atom2['idx'] == 1
         assert bond['type'] == 1
+
+    def test_atom(self):
+
+        atom = mp.Atom(id=0)
+        assert atom.id == 0

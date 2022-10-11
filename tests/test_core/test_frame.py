@@ -37,13 +37,14 @@ class TestFrame:
 
         dframe = self.init_dynamic_frame(data)
 
-
     def test_atom(self):
 
         dframe = mp.DynamicFrame.from_dict(
             {'id': np.arange(6),
             'type': np.arange(6),}
         )
+
+        assert dframe.atoms[0].id == 0
 
         dframe.del_atom(2)
         assert dframe.n_atoms == 5

@@ -5,11 +5,17 @@
 
 import itertools
 
+class Item(dict):
 
-class Atom(dict):
+    @property
+    def id(self):
+        return self.get('id', id(self))
+
+class Atom(Item):
+
     pass
 
-class Bond(dict):
+class Bond(Item):
 
     def __init__(self, atom1:Atom, atom2:Atom, *args, **kwargs):
 
@@ -20,7 +26,7 @@ class Bond(dict):
     def __eq__(self, b: 'Bond') -> bool:
         return (self.atom1 == b[0] and self.atom2) == b[1] or (self.atom1 == b[1] and self.atom2 == b[0])
 
-class Angle(dict):
+class Angle(Item):
 
     def __init__(self, i:int, j:int, k:int, *args, **kwargs):
 
@@ -38,7 +44,7 @@ class Angle(dict):
             return (self[0] == a[0] and self[2] == a[2]) or (self[0] == a[2] and self[2] == a[0])
         return False
 
-class Dihedral(dict):
+class Dihedral(Item):
 
     def __init__(self, i:int, j:int, k:int, l:int, *args, **kwargs):
 
