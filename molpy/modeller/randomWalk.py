@@ -38,4 +38,9 @@ class SimpleRandomWalk(SRW):
         rng = default_rng(seed)
 
         traj = self.walk(nsteps, step_size, start_point, rng.integers(0, 2**10))
-        return traj
+        atom_idx = np.arange(nsteps, dtype=int)
+        topo = np.concatenate([atom_idx, atom_idx+1], dtype=int).T
+        sframe = StaticFrame.from_dict({'x': traj[:, 0], 'y': traj[:, 1], 'z': traj[:, 2]}, box=self.box)
+        for i, j in topo:
+            sframe.add_bond(i, j)
+        return sframe

@@ -127,7 +127,7 @@ setup(
     author_email="lijichen365@gmail.com",
     description="A data structure used to describe molecules in computational",
     long_description="",
-    ext_modules=[CMakeExtension("molpy", sourcedir="molpy")],
+    ext_modules=[CMakeExtension("molpy_kernel", sourcedir="molpy")],
     cmdclass={"build_ext": CMakeBuild},
     zip_safe=False,
 )

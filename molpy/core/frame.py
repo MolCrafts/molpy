@@ -8,6 +8,7 @@ from .topology import Topology
 from .item import Atom, Bond, Angle, Dihedral
 from .box import Box
 import numpy as np
+from numpy.lib import recfunctions as rfn
 
 class Frame:
 
@@ -159,8 +160,8 @@ class DynamicFrame(Frame):
 
 class StaticFrame(Frame):
 
-    def __init__(self, atoms, box:Optional[Box], topo:Optional[Topology], timestep:Optional[int]=None):
-        self._atoms = atoms
+    def __init__(self, atom_array, box:Optional[Box], topo:Optional[Topology], timestep:Optional[int]=None):
+        self._atoms = atom_array
         self.timestep = timestep
         self._box = box
         if topo is None:
@@ -194,8 +195,35 @@ class StaticFrame(Frame):
             atom_data.append(tuple(atom[field] for field in atom_field))
 
         return cls(np.array(atom_data, dtype=structured_dtype), box, topo, timestep)
-        
 
+    @classmethod
+    def from_dict(cls, atom_dict, box=None, topo=None, timestep=None):
+
+        keys = atom_dict.keys()
+        values = atom_dict.values()
+        atom_array = np.rec.fromarrays(list(values), names=','.join(keys))
+
+        return cls(atom_array, box, topo, timestep)
+        
     @property
     def n_atoms(self):
         return len(self._atoms)
+
+    @property
+    def n_bonds(self):
+        return self._topo.n_bonds
+
+    def add_bond(self, i, j):
+        self._topo.add_bond(i, j, None)
+
+    def append(self, another_frame):
+        
+        self._atoms = rfn.stack_arrays(
+            (self._atoms, another_frame._atoms),
+            asrecarray=True
+        )
+
+        if another_frame.n_bonds != 0:
+            
+            for bond in another_frame._topo.bonds+self.n_atoms:
+                self._topo.add_bond(bond[0], bond[1], None)

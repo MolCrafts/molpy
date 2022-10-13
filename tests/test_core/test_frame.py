@@ -7,8 +7,9 @@ import numpy as np
 import pytest
 import molpy as mp
 import numpy.testing as npt
+from numpy.random import default_rng
 
-class TestFrame:
+class TestDynamicFrame:
 
     @pytest.fixture(scope='class', name='data')
     def init_atom(self):
@@ -89,3 +90,51 @@ class TestFrame:
         bond6 = dframe.get_bond(4, 0)
         assert bond6['type'] == 6
 
+class TestStaticFrame:
+
+    @pytest.fixture(scope='function', name='data')
+    def init_frame(self):
+
+        nsteps = 100
+
+        rng = default_rng()
+        xyz = rng.random((nsteps, 3))
+        type = rng.integers(1, 10, size=nsteps)
+
+        atom_idx = np.arange(nsteps-1, dtype=int)
+        topo = np.vstack([atom_idx, atom_idx+1]).T
+
+        return xyz, type, topo
+
+    def test_create_frame(self, data):
+
+        xyz, type, topo = data
+
+        frame = mp.StaticFrame.from_dict({'x': xyz[:, 0], 'y': xyz[:, 1], 'z': xyz[:, 2], 'type': type})
+        assert frame.n_atoms == 100
+
+        for bond in topo:
+            frame.add_bond(*bond)
+
+        assert frame.n_bonds == 99
+
+    def test_append(self, data):
+
+        xyz, type, topo = data
+
+        frame = mp.StaticFrame.from_dict({'x': xyz[:, 0], 'y': xyz[:, 1], 'z': xyz[:, 2], 'type': type})
+        assert frame.n_atoms == 100
+
+        for bond in topo:
+            frame.add_bond(*bond)
+
+        assert frame.n_bonds == 99
+
+        another_frame = mp.StaticFrame.from_dict({'x': xyz[:, 0], 'y': xyz[:, 1], 'z': xyz[:, 2], 'type': type+frame.n_atoms})
+
+        for bond in topo:
+            another_frame.add_bond(*bond)
+
+        frame.append(another_frame)
+        assert frame.n_atoms == 200
+        assert frame.n_bonds == 198

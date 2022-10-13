@@ -350,6 +350,10 @@ class Topology:
                 n_bonds += len(v)
         return int(n_bonds / 2)
 
+    @property
+    def bonds(self):
+        return self.calc_bonds()
+
     def add_atom(self, atom_id):
         # self._graph.add_node(atom_id)
         pass
@@ -427,16 +431,16 @@ class Topology:
         
         return self._bonds[i][j]
 
-    # def calc_bonds(self):
-    #     adj = self._graph._adj
-    #     tmp = []
-    #     for i, js in adj.items():
-    #         for j in js:
-    #             tmp.append([i, j])
-    #     bonds = np.array(tmp)
-    #     bonds = np.where((bonds[:, 0]>bonds[:, 1]).reshape((-1, 1)), bonds[:, ::-1], bonds)
-    #     bonds = np.unique(bonds, axis=0)
-    #     return bonds
+    def calc_bonds(self):
+        adj = self._bonds
+        tmp = []
+        for i, js in adj.items():
+            for j in js:
+                tmp.append([i, j])
+        bonds = np.array(tmp)
+        bonds = np.where((bonds[:, 0]>bonds[:, 1]).reshape((-1, 1)), bonds[:, ::-1], bonds)
+        bonds = np.unique(bonds, axis=0)
+        return bonds
 
     # def calc_angles(self):
     #     adj = self._graph._adj
