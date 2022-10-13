@@ -17,7 +17,7 @@ class TestIntegrator:
 
         assert box.Lx == box.Ly == box.Lz == 10
 
-        system.set_atoms(xyz=np.array([[0., 0., 0.], [1.5, 0., 0.]]),
+        system.add_atoms(xyz=np.array([[0., 0., 0.], [1.5, 0., 0.]]),
             type=['c', 'c'], mass=np.array([1, 1]))
         
         assert system.frame.n_atoms == 2

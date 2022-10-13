@@ -131,6 +131,10 @@ class System:
         self.frame.box = box
         return box
 
+    @property
+    def box(self):
+        return self.frame.box
+
     def add_atoms(self, **kwargs):
         """
         add atoms to current frame of system

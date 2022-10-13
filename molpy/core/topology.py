@@ -5,7 +5,6 @@
 
 from itertools import combinations
 from typing import Dict, Iterable, List, Optional, Tuple, Any
-from molpy.utils.typing import ArrayLike
 import numpy as np
 from itertools import combinations
 

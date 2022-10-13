@@ -1,62 +1,41 @@
 # author: Roy Kid
 # contact: lijichen365@126.com
-# date: 2022-07-26
+# date: 2022-10-12
 # version: 0.0.1
 
-from typing import Literal
-import molpy as mp
-from numpy import ndarray
-from numpy.typing import ArrayLike
-from .base import _Modeller
-from molpy import molpy_cpp as cmp
+from molpy_kernel import SimpleRandomWalk as SRW
 import numpy as np
+from numpy.random import default_rng
 
-class RandomWalk(_Modeller):
+from molpy.core.frame import StaticFrame
 
-    def __init__(self, region_style, constrain, strategy:Literal['simple', 'avoid', 'gaussian']):
+class SimpleRandomWalk(SRW):
 
-        super().__init__(region_style, constrain)
+    def __init__(self, box):
+        super().__init__()
+        self.box = box
 
-        self._kernel = None
+    def find_start(self, seed=None):
 
-        # initialize random walk kernel
-        if strategy == 'simple':
-            self._kernel = cmp.SimpleRandomWalk(*constrain)
-        elif strategy == 'avoid':
-            raise NotImplementedError()
-        elif strategy == 'gaussian':
-            raise NotImplementedError()
-        
-        self.strategy = strategy
-        
-    def linear(self, length:int, start=None, step_size=1, topo_idx_offset=0) -> ndarray:
-        
-        if start:
-            positions = self._kernel.walk_once(length, step_size, start)
-        else:
-            positions = self._kernel.walk_once(length, step_size)
-        topo = []
-        for i in range(topo_idx_offset, length+topo_idx_offset):
-            topo.append([i, i+1])
+        rng = default_rng(seed)
+        start_point = rng.random((3, )) * self.box.lengths
+        return start_point
 
-        atoms = mp.Atoms(positions, topo)
+    def linear(self, nsteps, step_size, start_point=None, seed=None)->StaticFrame:
+        """
+        generate a linear molecule
 
-        return atoms
+        Parameters
+        ----------
+        nsteps : int
+            nsteps of linear molecule
+        start_point : (3, ), optional
+            start coordinate of linear. If none, start at random position. By default None
+        """
+        if start_point is None:
+            start_point = self.find_start()
 
-    def graft(self, backbone_length:int, graft_point_idx:ArrayLike, graft_length:ArrayLike, step_size=1):
-        
-        positions, topo = self.linear(backbone_length)
-        for i in range(len(graft_point_idx)):
-            start = positions[graft_point_idx[i]]
-            graft, g_topo = self.linear(graft_length[i]+1, start, step_size)
-            topo.append([i, len(positions)])
-            topo.extend(g_topo)
-            positions.extend(graft)
+        rng = default_rng(seed)
 
-        atoms = mp.Atoms(positions, topo)
-
-        return atoms
-
-
-    def __del__(self):
-        pass
+        traj = self.walk(nsteps, step_size, start_point, rng.integers(0, 2**10))
+        return traj

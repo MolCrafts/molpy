@@ -1,4 +1,3 @@
 {
-    "python.formatting.provider": "black",
-    "editor.wordWrap": "bounded"
+    "cmake.sourceDirectory": "${workspaceFolder}/molpy"
 }

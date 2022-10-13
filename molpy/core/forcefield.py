@@ -10,11 +10,7 @@ from functools import cached_property
 
 from typing import Dict, Iterable, List, Literal, NamedTuple, Optional, Tuple, Union, Any
 from itertools import permutations
-from molpy.utils.typing import ArrayLike, Number, N
 import numpy as np
-
-value = Number  # generic type: interpreted as either a number or str
-digitalize = literal_eval
 
 # class SelectError(BaseException):
 #     pass
