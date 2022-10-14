@@ -3,6 +3,7 @@
 # date: 2022-10-04
 # version: 0.0.1
 
+pytest.importorskip("jax")
 import jax.numpy as np
 from molpy.potential.lj import LJCut
 from molpy.core.forcefield import Params
@@ -12,8 +13,6 @@ class TestLennardJones:
 
     def test_lj126(self):
         
-        pytest.importorskip("jax")
-
         xyz = np.array([
             [0.000,   1.000,   0.000],
             [1.000,   0.000,   1.000],
