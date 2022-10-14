@@ -36,8 +36,9 @@ class TestLammps:
 
         reader = Readers['TrajReaders']['lammps']
         
-        with reader('tests/test_io/data/lammps.dump') as f:
-            sframe = f.get_one_frame(1)
+        # read traj not a context manager since the filehandle need to keep a long time
+        f = reader('tests/test_io/data/lammps.dump')
+        sframe = f.get_one_frame(1)
 
         # test info
         assert sframe.n_atoms == 7

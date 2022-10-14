@@ -4,7 +4,9 @@
 # version: 0.0.2
 
 from molpy.core.forcefield import ForceField
+import molpy as mp
 import pytest
+import numpy as np
 
 class TestForceField:
 
@@ -55,4 +57,29 @@ class TestForceField:
         Params = ff.get_pair(at1, at1)
         Params = ff.get_pairs([[at1, at1]])
 
-    
+# class TestForceParamMatching:
+
+#     @pytest.fixture(scope='class', name='dframe')
+#     def init_dynamic(self, ):
+
+#         dframe = mp.DynamicFrame()
+
+#         # create a dframe with 10 atoms and 9 bonds
+#         dframe.add_atoms(xyz=np.random.rand(10, 3), type=['c1']*10, mass=np.ones(10))
+#         dframe.add_bonds(bonds=np.array([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9]]))
+
+#         yield dframe
+
+#     @pytest.fixture(scope='class', name='sframe')
+#     def init_static(self, dframe:mp.DynamicFrame):
+
+#         sframe = dframe.to_static()
+#         # create a dframe with 10 atoms and 9 bonds
+
+#         yield sframe
+
+
+#     def test_sframe(self, sframe):
+
+#         assert sframe.n_atoms == 10
+#         assert sframe.n_bonds == 9

@@ -63,6 +63,12 @@ class DynamicFrame(Frame):
         self._atoms[atom.id] = atom
         self._topo.add_atom(atom.id)
 
+    def add_atoms(self, **attribs):
+
+        n_atoms = len(attribs[list(attribs.keys())[0]])
+        for i in range(n_atoms):
+            self.add_atom(**{k:v[i] for k, v in attribs.items()})
+
     def del_atom(self, i):
         atom_id = self.atoms[i].id
         self._atoms.pop(atom_id)
@@ -155,8 +161,14 @@ class DynamicFrame(Frame):
 
     def to_static(self):
 
-        return StaticFrame.from_atoms(self.atoms, self.box, self._topo)
-
+        sframe = StaticFrame.from_atoms(self.atoms, self.box)
+        atom_list = list(self._atoms.values())
+        for bond in self._topo.bonds:
+            atom_id1, atom_id2 = bond
+            atom_idx1 = atom_list.index(self._atoms[atom_id1])
+            atom_idx2 = atom_list.index(self._atoms[atom_id2])
+            sframe.add_bond(atom_idx1, atom_idx2)
+        return sframe
 
 class StaticFrame(Frame):
 
@@ -178,7 +190,7 @@ class StaticFrame(Frame):
         self._box = b
 
     def __getitem__(self, key):
-        if isinstance(key, str):
+        if not isinstance(key, (list, tuple)):
             return self._atoms[key]
         return rfn.structured_to_unstructured(self._atoms[key])
 
@@ -200,9 +212,13 @@ class StaticFrame(Frame):
     @classmethod
     def from_dict(cls, atom_dict, box=None, topo=None, timestep=None):
 
-        keys = atom_dict.keys()
-        values = atom_dict.values()
-        atom_array = np.rec.fromarrays(list(values), names=','.join(keys))
+        atom_field = atom_dict.keys()
+        field_type = {field: np.array(atom_dict[field]).dtype for field in atom_field}
+        field_shape = {field: np.array(atom_dict[field]).shape[1:] for field in atom_field} 
+
+        structured_dtype = np.dtype([(field, field_type[field], field_shape[field]) for field in atom_field])
+
+        atom_array = np.array([x for x in zip(*atom_dict.values())], dtype=structured_dtype)
 
         return cls(atom_array, box, topo, timestep)
         
@@ -214,17 +230,30 @@ class StaticFrame(Frame):
     def n_bonds(self):
         return self._topo.n_bonds
 
+    def add_atoms(self, **attribs):
+
+        pass
+
     def add_bond(self, i, j):
         self._topo.add_bond(i, j, None)
 
     def append(self, another_frame):
         
-        self._atoms = rfn.stack_arrays(
+        # concatenate atoms
+        self._atoms = np.concatenate(
             (self._atoms, another_frame._atoms),
-            asrecarray=True
         )
 
         if another_frame.n_bonds != 0:
             
             for bond in another_frame._topo.bonds+self.n_atoms:
                 self._topo.add_bond(bond[0], bond[1], None)
+
+    def to_dynamic(self):
+
+        fields = self._atoms.dtype.names
+        data = {k: self[k] for k in fields}
+        dframe = DynamicFrame.from_dict(data, self.box, )
+        dframe.add_bonds(self._topo.bonds)  # TODO: cp bond attribs
+        return dframe
+            

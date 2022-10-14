@@ -432,6 +432,8 @@ class Topology:
         return self._bonds[i][j]
 
     def calc_bonds(self):
+        if len(self._bonds) == 0:
+            return np.array([])
         adj = self._bonds
         tmp = []
         for i, js in adj.items():

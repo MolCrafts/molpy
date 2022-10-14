@@ -90,6 +90,21 @@ class TestDynamicFrame:
         bond6 = dframe.get_bond(4, 0)
         assert bond6['type'] == 6
 
+    def test_to_static(self):
+
+        dframe = mp.DynamicFrame.from_dict(
+            {'id': np.arange(6),
+            'type': np.arange(6),
+            'xyz': np.random.random((6, 3)),}
+        )
+        dframe.add_bonds([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0]], type=[1, 2, 3, 4, 5, 6])
+
+        sframe = dframe.to_static()
+
+        assert sframe.n_atoms == 6
+        assert sframe.n_bonds == 6
+        assert sframe._topo.n_bonds == 6
+
 class TestStaticFrame:
 
     @pytest.fixture(scope='function', name='data')
@@ -138,3 +153,19 @@ class TestStaticFrame:
         frame.append(another_frame)
         assert frame.n_atoms == 200
         assert frame.n_bonds == 198
+
+    def test_to_dynamic(self, data):
+
+        xyz, type, topo = data
+
+        frame = mp.StaticFrame.from_dict({'x': xyz[:, 0], 'y': xyz[:, 1], 'z': xyz[:, 2], 'type': type})
+        assert frame.n_atoms == 100
+
+        for bond in topo:
+            frame.add_bond(*bond)
+
+        assert frame.n_bonds == 99
+
+        dframe = frame.to_dynamic()
+        assert dframe.n_atoms == 100
+        assert dframe.n_bonds == 99

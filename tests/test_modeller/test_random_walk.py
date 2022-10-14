@@ -15,6 +15,5 @@ class TestSimpleRandomWalk:
         system.set_box(10, 10, 10)
 
         rw = mp.modeller.SimpleRandomWalk(system.box)
-        linear_chain1 = rw.linear(10, 1, start_point=np.array([0, 0, 0]))
-
-        assert linear_chain1.shape == (10, 3)
+        sframe = rw.linear(10, 1, start_point=np.array([0, 0, 0]))
+        assert sframe.n_atoms == 10
