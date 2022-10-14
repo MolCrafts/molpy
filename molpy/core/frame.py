@@ -178,8 +178,9 @@ class StaticFrame(Frame):
         self._box = b
 
     def __getitem__(self, key):
-
-        return self._atoms[key]
+        if isinstance(key, str):
+            return self._atoms[key]
+        return rfn.structured_to_unstructured(self._atoms[key])
 
     @classmethod
     def from_atoms(cls, atoms:List[Atom], box=None, topo=None, timestep=None):

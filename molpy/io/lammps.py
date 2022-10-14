@@ -115,13 +115,11 @@ class DumpReader(Trajectory):
         self.current_nframe: int = 0
         self.current_frame: Dict = None
 
-    def __enter__(self):
-
         self.filehandler = FileHandler(self.filepath)
         self.chunks = self.get_chunks("ITEM: TIMESTEP")
-        return self
 
-    def __exit__(self, exc_ty, exc_val, exc_tb):
+    def __del__(self):
+
         self.filehandler.close()
 
     @property
