@@ -3,11 +3,11 @@
 # date: 2022-10-04
 # version: 0.0.1
 
+import pytest
 pytest.importorskip("jax")
 import jax.numpy as np
 from molpy.potential.lj import LJCut
 from molpy.core.forcefield import Params
-import pytest
 
 class TestLennardJones:
 
