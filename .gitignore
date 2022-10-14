@@ -210,3 +210,4 @@ _deps
 _skbuild
 
 # End of https://www.toptal.com/developers/gitignore/api/python,visualstudiocode
+.vercel

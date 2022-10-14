@@ -8,24 +8,25 @@ import numpy as np
 
 class NeighborList:
 
-    def __init__(self, box, points, query_args:dict):
+    def __init__(self, query_args:dict):
 
         self.query_args = query_args
-        self.nblist = freud.AABBQuery(box, points).query(points, query_args)
-
-    def get_pairs(self, padding=0, capacity_multiplier=1.2):
-
-        nblist = self.nblist.toNeighborList()
-        nblist = np.vstack((nblist[:, 0], nblist[:, 1])).T
-        nblist = nblist.astype(np.int32)
-        msk = (nblist[:, 0] - nblist[:, 1]) < 0
-        nblist = nblist[msk]
         
-        if padding:
-            if padding < 0 or not isinstance(padding, int):
-                raise ValueError(f'padding must be set as int')
-            else:
-                pd_arr = np.zeros((len(nblist)*capacity_multiplier, nblist.shape[1]), dtype=np.int32)
-                nblist = np.concatenate((nblist, pd_arr), axis=0)
+    def query(self, box, points):
+        
+        self.nblist = freud.AABBQuery(box, points).query(points, self.query_args).toNeighborList()
 
-        return nblist
+    def get_neighbor_index(self, i):
+
+        mask = self.nblist.query_point_indices == i
+        return self.nblist.point_indices[mask]
+
+    def get_neighbor_positions(self, i):
+
+        index = self.get_neighbor_index(i)
+        return self.nblist.points[index]
+
+    def get_neighbor_counts(self, i=None):
+        if i is None:
+            return len(self.get_neighbor_positions(i))
+        return self.nblist.neighbor_counts
