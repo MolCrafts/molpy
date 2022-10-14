@@ -2,9 +2,9 @@
 
 The core of molpy is `Frame` class. It is the data structure that molpy uses to store and manipulate molecular data. The `Frame` stores a variety of information, including atomic, topological, and geometric information. Each frame can completely describe the state of a system at a moment in time like a snapshot. 
 
-::: NOTE:
+!!! note
 
-`System` only hold ONE frame at a time, and switch between frames. If you want to store multiple frames, you need to use `Trajectory` class.
+    `System` only hold ONE frame at a time, and switch between frames. If you want to store multiple frames, you need to use `Trajectory` class.
 
 Here are two types of `Frame`. The first one is called `DynamicFrame`, which is flexible aims to edit the model. The second one is called `StaticFrame`, which is immutable and is used for lookup and indexing. The two types of `Frame` are interchangeable. 
 
@@ -23,9 +23,9 @@ frame._atoms[atom_id] = Atom(
     attribC =  [1, 2, 3] # list or np.array
 )
 ```
-::: NOTE
+!!! note
 
-Those objects such as `Atom`, `Bond` etc. is called `Item`. Again, all those trivial classes don't even need to be created by us manually. 
+    Those objects such as `Atom`, `Bond` etc. is called `Item`. Again, all those trivial classes don't even need to be created by us manually. 
 
 To record topological information, `DynamicFrame` initiaizes a `Topology` object. `Topology` is a graph structure and each node is the atom ID of the `Atom` item. The edge is the bond ID of the `Bond` item. Similarly, we can take the unique three-body or four-body ID from the topology as the angle and dihedral. `DynamicFrame` has dict of `Bond`, `Angle`, and `Dihedral`(maybe `Improper` in the future). The key is the ID of the item and the value is the item itself. So when you add a bond to the frame, following things will happen:
 
