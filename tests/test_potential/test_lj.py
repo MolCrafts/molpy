@@ -4,7 +4,7 @@
 # version: 0.0.1
 
 import jax.numpy as np
-from molpy.potential.lj import LJ126
+from molpy.potential.lj import LJCut
 from molpy.core.forcefield import Params
 import jax
 
@@ -30,7 +30,7 @@ class TestLennardJones:
 
         box = np.array([[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]])
 
-        lj126 = LJ126(r_cutoff=4.0, is_pbc=True)
+        lj126 = LJCut(r_cutoff=4.0, is_pbc=True)
 
-        E = lj126.compute(xyz, pairs, box, params)
-        F = jax.grad(lj126.compute)(xyz, pairs, box, params)
+        E = lj126.energy(xyz, pairs, box, params)
+        F = lj126.force(xyz, pairs, box, params)

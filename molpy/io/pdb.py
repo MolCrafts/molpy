@@ -11,7 +11,6 @@ import sys
 import warnings
 from collections import OrderedDict
 PI = pi
-from molpy.utils.element import Element, get_by_symbol
 
 def _parse_atom_index(index):
     """Parse the string containing an atom index, which might be either decimal or hex."""

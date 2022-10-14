@@ -17,7 +17,7 @@ class TestIntegrator:
 
         assert box.Lx == box.Ly == box.Lz == 10
 
-        system.set_atoms(xyz=np.array([[0., 0., 0.], [1.5, 0., 0.]]),
+        system.add_atoms(xyz=np.array([[0., 0., 0.], [1.5, 0., 0.]]),
             type=['c', 'c'], mass=np.array([1, 1]))
         
         assert system.frame.n_atoms == 2
@@ -34,13 +34,14 @@ class TestIntegrator:
         assert pairType_cc.param['epsilon'] == 1.0
         assert pairType_cc.param['sigma'] == 1.0
 
-        nblist = NeighborList(system.frame.box, system.frame.atoms['xyz'], dict(r_max=2.0, exclude_ii=True))
+        staticFrame = system.frame.to_static()
+        nblist = NeighborList(system.frame.box, staticFrame['xyz'], dict(r_max=2.0, exclude_ii=True))
 
         pairs = nblist.get_pairs()
 
         assert pairs.shape[-1] == 2
 
-        types = system.frame.atoms['type']
+        types = staticFrame['type']
 
         assert len(types) == 2
 
@@ -67,18 +68,18 @@ class TestIntegrator:
         # run first MD loop
         integrator = mp.MD.integrator.Verlet(dt=0.001)
 
-        r = system.frame.atoms['xyz']
+        r = staticFrame['xyz']
         v = np.zeros_like(r)
         f = np.zeros_like(r)
-        m = system.frame.atoms['mass']
+        m = staticFrame['mass']
         
         # first-half step
         r, v = integrator.initial_integrate(r, v, f, m)
 
         # calc force
         ljcut = mp.potential.LJCut(r_cutoff=4.0, is_pbc=True)
-        energy = ljcut.energy(r, pairs, box, params)
-        force = f = ljcut.force(r, pairs, box, params)
+        energy = ljcut.energy(r, pairs, box.to_matrix(), params)
+        force = f = ljcut.force(r, pairs, box.to_matrix(), params)
 
         npt.assert_allclose(energy, -0.3203366)
         npt.assert_allclose(force, np.array([[-1.158029, 0.0, 0.0], [1.158029, 0.0, 0.0]]), rtol=1e6)
@@ -88,5 +89,5 @@ class TestIntegrator:
         
         # run next MD loop
         r, v = integrator.initial_integrate(r, v, f, m)
-        f = ljcut.force(r, pairs, box, params)
+        f = ljcut.force(r, pairs, box.to_matrix(), params)
         v = integrator.final_integrate(v, f, m)

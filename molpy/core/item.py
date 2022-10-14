@@ -3,26 +3,30 @@
 # date: 2022-08-10
 # version: 0.0.1
 
-class Atom(dict):
+import itertools
+
+class Item(dict):
+
+    @property
+    def id(self):
+        return self.get('id', id(self))
+
+class Atom(Item):
 
     pass
 
-class Bond(dict):
+class Bond(Item):
 
-    def __init__(self, i:int, j:int, *args, **kwargs):
+    def __init__(self, atom1:Atom, atom2:Atom, *args, **kwargs):
 
         super().__init__(*args, **kwargs)
-        self._atom_idx = [i, j]
-
-    def __getitem__(self, __k):
-        if isinstance(__k, int):
-            return self._atom_idx[__k]
-        return super().__getitem__(__k)
+        self.atom1 = atom1
+        self.atom2 = atom2
 
     def __eq__(self, b: 'Bond') -> bool:
-        return (self[0] == b[0] and self[1]) == b[1] or (self[0] == b[1] and self[1] == b[0])
+        return (self.atom1 == b[0] and self.atom2) == b[1] or (self.atom1 == b[1] and self.atom2 == b[0])
 
-class Angle(dict):
+class Angle(Item):
 
     def __init__(self, i:int, j:int, k:int, *args, **kwargs):
 
@@ -40,7 +44,7 @@ class Angle(dict):
             return (self[0] == a[0] and self[2] == a[2]) or (self[0] == a[2] and self[2] == a[0])
         return False
 
-class Dihedral(dict):
+class Dihedral(Item):
 
     def __init__(self, i:int, j:int, k:int, l:int, *args, **kwargs):
 

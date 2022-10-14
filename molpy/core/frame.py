@@ -3,12 +3,12 @@
 # date: 2022-08-10
 # version: 0.0.1
 
-from collections import defaultdict
 from typing import List, Optional
 from .topology import Topology
 from .item import Atom, Bond, Angle, Dihedral
 from .box import Box
 import numpy as np
+from numpy.lib import recfunctions as rfn
 
 class Frame:
 
@@ -20,7 +20,8 @@ class DynamicFrame(Frame):
         
         self.timestep = timestep
         self._box = box
-        self._atoms = []
+        self._atoms = {}
+        self._bonds = {}
         if topo is None:
             self._topo = Topology()
         else:
@@ -29,38 +30,119 @@ class DynamicFrame(Frame):
     @classmethod
     def from_dict(cls, data:dict[str, np.array], box:Optional[Box]=None, topo:Optional[Topology]=None, timestep:Optional[int]=None):
 
-        dframe = (box, topo, timestep)
+        dframe = cls(box, topo, timestep)
 
         for i in zip(*data.values()):
-            atom = Atom({k: v for k, v in zip(data.keys(), i)})
-            dframe.add_atom(atom)
+            dframe.add_atom(**{k: v for k, v in zip(data.keys(), i)})
 
         return dframe
 
+    @classmethod
+    def from_sturcture_array(cls, sarray, box=None, timestep=None):
+
+        fields = sarray.dtype.names
+        data = {k: sarray[k] for k in fields}
+        return cls.from_dict(data, box)
+
     @property
     def atoms(self):
-        return StaticFrame.from_atoms(self._atoms)
+        return list(self._atoms.values())
+
+    @property
+    def bonds(self):
+        return list(self._bonds.values())
 
     @property
     def n_atoms(self):
         return len(self._atoms)
 
-    def add_atom(self, atom):
+    def add_atom(self, **attribs):
 
-        self._atoms.append(atom)
+        atom = Atom(**attribs)
 
-    def add_bond(self, bond):
+        self._atoms[atom.id] = atom
+        self._topo.add_atom(atom.id)
 
-        self._topo.add_bond(bond)
+    def add_atoms(self, **attribs):
+
+        n_atoms = len(attribs[list(attribs.keys())[0]])
+        for i in range(n_atoms):
+            self.add_atom(**{k:v[i] for k, v in attribs.items()})
+
+    def del_atom(self, i):
+        atom_id = self.atoms[i].id
+        self._atoms.pop(atom_id)
+        bond_idx = self._topo.del_atom(atom_id)
+        for b in bond_idx:
+            self._bonds.pop(b)
+
+    def add_bond(self, i:int, j:int, **attribs)->Bond:
+        """
+        add bond by the index of atoms
+
+        Parameters
+        ----------
+        i : int
+            index of atom1
+        j : int
+            index of atom2
+
+        Returns
+        -------
+        Bond
+            bond object
+        """
+        itom = self.atoms[i]
+        jtom = self.atoms[j]
+
+        bond = Bond(itom, jtom, **attribs)
+        self._bonds[bond.id] = bond
+
+        # update topology
+        self._topo.add_bond(itom.id, jtom.id, bond.id)
+
         return bond
 
-    def add_bond_by_index(self, i:int, j:int, **properties):
+    def add_bonds(self, atom_idxs, **attribs):
 
-        itom = self._atoms[i]
-        jtom = self._atoms[j]
-        bond = Bond(itom, jtom, **properties)
-        self._topo.add_bond(bond)
+        n_bonds = len(atom_idxs)
+        for i in range(n_bonds):
+            self.add_bond(atom_idxs[i][0], atom_idxs[i][1], **{k:v[i] for k, v in attribs.items()})
+
+    def add_bond_by_atom_id(self, id1, id2, **attrib):
+
+        atom1 = self._atoms[id1]
+        atom2 = self._atoms[id2]
+
+        bond = Bond(atom1, atom2, **attrib)
+        self._bonds[bond.id] = bond
+
+        # update topology
+        self._topo.add_bond(atom1.id, atom2.id, bond.id)
+
         return bond
+
+    def add_bonds_by_atom_id(self, atom_ids, **attribs):
+
+        nbonds = len(atom_ids)
+        for i in range(nbonds):
+            self.add_bond_by_atom_id(atom_ids[i][0], atom_ids[i][1], **{k:v[i] for k, v in attribs.items()})
+
+    def del_bond(self, i, j):
+        itom = self.atoms[i]
+        jtom = self.atoms[j]        
+        bond_id = self._topo.del_bond(itom.id, jtom.id)
+        del self._bonds[bond_id]
+
+    def get_bond(self, i, j):
+        itom = self.atoms[i]
+        jtom = self.atoms[j]    
+        bond_id = self._topo.get_bond(itom.id, jtom.id)
+        return self._bonds[bond_id]
+
+    @property
+    def n_bonds(self):
+        return len(self._bonds)
 
     @property
     def box(self):
@@ -77,11 +159,21 @@ class DynamicFrame(Frame):
         elif isinstance(key, (int, slice)):
             return self._atoms[key]
 
+    def to_static(self):
+
+        sframe = StaticFrame.from_atoms(self.atoms, self.box)
+        atom_list = list(self._atoms.values())
+        for bond in self._topo.bonds:
+            atom_id1, atom_id2 = bond
+            atom_idx1 = atom_list.index(self._atoms[atom_id1])
+            atom_idx2 = atom_list.index(self._atoms[atom_id2])
+            sframe.add_bond(atom_idx1, atom_idx2)
+        return sframe
 
 class StaticFrame(Frame):
 
-    def __init__(self, atoms, box:Optional[Box], topo:Optional[Topology], timestep:Optional[int]=None):
-        self._atoms = atoms
+    def __init__(self, atom_array, box:Optional[Box], topo:Optional[Topology], timestep:Optional[int]=None):
+        self._atoms = atom_array
         self.timestep = timestep
         self._box = box
         if topo is None:
@@ -98,8 +190,9 @@ class StaticFrame(Frame):
         self._box = b
 
     def __getitem__(self, key):
-
-        return self._atoms[key]
+        if not isinstance(key, (list, tuple)):
+            return self._atoms[key]
+        return rfn.structured_to_unstructured(self._atoms[key])
 
     @classmethod
     def from_atoms(cls, atoms:List[Atom], box=None, topo=None, timestep=None):
@@ -115,8 +208,52 @@ class StaticFrame(Frame):
             atom_data.append(tuple(atom[field] for field in atom_field))
 
         return cls(np.array(atom_data, dtype=structured_dtype), box, topo, timestep)
-        
 
+    @classmethod
+    def from_dict(cls, atom_dict, box=None, topo=None, timestep=None):
+
+        atom_field = atom_dict.keys()
+        field_type = {field: np.array(atom_dict[field]).dtype for field in atom_field}
+        field_shape = {field: np.array(atom_dict[field]).shape[1:] for field in atom_field} 
+
+        structured_dtype = np.dtype([(field, field_type[field], field_shape[field]) for field in atom_field])
+
+        atom_array = np.array([x for x in zip(*atom_dict.values())], dtype=structured_dtype)
+
+        return cls(atom_array, box, topo, timestep)
+        
     @property
     def n_atoms(self):
         return len(self._atoms)
+
+    @property
+    def n_bonds(self):
+        return self._topo.n_bonds
+
+    def add_atoms(self, **attribs):
+
+        pass
+
+    def add_bond(self, i, j):
+        self._topo.add_bond(i, j, None)
+
+    def append(self, another_frame):
+        
+        # concatenate atoms
+        self._atoms = np.concatenate(
+            (self._atoms, another_frame._atoms),
+        )
+
+        if another_frame.n_bonds != 0:
+            
+            for bond in another_frame._topo.bonds+self.n_atoms:
+                self._topo.add_bond(bond[0], bond[1], None)
+
+    def to_dynamic(self):
+
+        fields = self._atoms.dtype.names
+        data = {k: self[k] for k in fields}
+        dframe = DynamicFrame.from_dict(data, self.box, )
+        dframe.add_bonds(self._topo.bonds)  # TODO: cp bond attribs
+        return dframe
+            
