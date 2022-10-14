@@ -5,6 +5,11 @@ description = "A data structure used to describe molecules in computational chem
 authors = [{name = "Roy-Kid", email = "lijichen365@126.com"}]
 license = {text = "BSD-3-Clause"}
 
+dependencies = [
+  'numpy',
+  'freud-analysis',
+]
+
 [build-system]
 requires = ["setuptools", "pybind11"]
 build-backend = "setuptools.build_meta"

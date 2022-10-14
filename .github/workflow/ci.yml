@@ -1,15 +1,20 @@
-name: deploy-docs
+name: ci
 on:
   push:
     branches:
-      - master 
+      - master
+  pull_request:
+    branches:
+      - master
+
 jobs:
-  deploy:
+  deploy-docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - uses: actions/setup-python@v2
         with:
-          python-version: 3.x
-      - run: pip install mkdocs-material 
+          python-version: 3.10
+      - run: pip install mkdocs-material
+      - run: pip install mkdocstrings
       - run: mkdocs gh-deploy --force
