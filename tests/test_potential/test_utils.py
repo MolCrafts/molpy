@@ -3,9 +3,12 @@
 # date: 2022-10-04
 # version: 0.0.1
 
+import pytest
+jax = pytest.importorskip("jax")
 import jax.numpy as np
 from molpy.potential.utils import make_pbc
 import numpy.testing as npt
+
 
 class TestUtils:
 
