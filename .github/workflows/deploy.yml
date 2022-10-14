@@ -7,6 +7,7 @@ jobs:
       - uses: actions/checkout@v2
       - name: build the doc
         run: |
+          pip install mkdocs-material mkdocstrings mkdocstrings-python
           mkdocs build
       - uses: amondnet/vercel-action@v20 #deploy
         with:
