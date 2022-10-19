@@ -8,7 +8,6 @@ license = {text = "BSD-3-Clause"}
 dependencies = [
   'numpy',
   'freud-analysis',
-  'pybind11'
 ]
 
 [build-system]
