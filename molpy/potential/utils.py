@@ -3,7 +3,10 @@
 # date: 2022-10-04
 # version: 0.0.1
 
-import jax.numpy as np
+try:
+    import jax.numpy as np
+except:
+    import numpy as np
 
 def make_pbc(xyz: np.array, box: np.array):
     """

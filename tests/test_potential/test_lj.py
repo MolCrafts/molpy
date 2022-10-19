@@ -8,6 +8,7 @@ pytest.importorskip("jax")
 import jax.numpy as np
 from molpy.potential.lj import LJCut
 from molpy.core.forcefield import Params
+import numpy.testing as npt
 
 class TestLennardJones:
 
@@ -34,4 +35,4 @@ class TestLennardJones:
         lj126 = LJCut(r_cutoff=4.0, is_pbc=True)
 
         E = lj126.energy(xyz, pairs, box, params)
-        F = lj126.force(xyz, pairs, box, params)
+        F_jax = lj126.force(xyz, pairs, box, params)

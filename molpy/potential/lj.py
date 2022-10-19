@@ -1,6 +1,9 @@
 from typing import NamedTuple
-import jax.numpy as np
-import jax
+try:
+    import jax.numpy as np
+    import jax
+except:
+    import numpy as np
 from .utils import make_pbc
 import molpy as mp
 
