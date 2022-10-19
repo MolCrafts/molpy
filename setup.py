@@ -120,7 +120,7 @@ class CMakeBuild(build_ext):
         # Since pybind11 is installed by pip or conda, not include molpy as
         # a submodule or install by apt, we need to add "Findpybind11.cmake"
         # to CMAKE_MODULE_PATH
-        cmake_args += [f"-Dpybind_DIR={pybind11.get_cmake_dir()}"]
+        cmake_args += [f"-Dpybind11_DIR={pybind11.get_cmake_dir()}"]
 
         subprocess.run(
             ["cmake", ext.sourcedir] + cmake_args, cwd=build_temp, check=True

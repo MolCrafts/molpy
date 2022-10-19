@@ -4,7 +4,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: build the doc
         run: |
           pip install mkdocs-material mkdocstrings mkdocstrings-python
