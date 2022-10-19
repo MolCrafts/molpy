@@ -3,7 +3,6 @@
 # date: 2022-08-10
 # version: 0.0.1
 
-import mdtraj as md
 import molpy as mp
 import numpy as np
 
