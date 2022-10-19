@@ -9,7 +9,6 @@ jobs:
         run: |
           pip install mkdocs-material mkdocstrings mkdocstrings-python
           mkdocs build
-          ls | grep site
       - uses: amondnet/vercel-action@v20 #deploy
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }} # Required
