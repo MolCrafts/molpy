@@ -7,5 +7,4 @@ from chemfiles import Trajectory
 
 def load_trajectory(fileName)->Trajectory:
 
-    with Trajectory(fileName) as traj:
-        return traj
+    return Trajectory(fileName)

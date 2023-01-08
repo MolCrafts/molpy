@@ -13,6 +13,11 @@ class Trajectory:
         self._file_handler = None
         self.current_frame = None
 
+    def __del__(self):
+
+        if isinstance(self._file_handler, Trajectory):
+            self._file_handler.close()
+
     @classmethod
     def load(cls, fileName):
 
@@ -52,5 +57,7 @@ class Trajectory:
     def nsteps(self):
         return self._file_handler.nsteps
     
-
+    @property
+    def path(self):
+        return self._file_handler.path
     

@@ -3,28 +3,16 @@
 # date: 2023-01-08
 # version: 0.0.1
 
-import pytest
-
 from molpy_refactor.core.trajectory import Trajectory
 
-class TestTrajectory:
+class TestFrame:
 
-    @pytest.fixture()
-    def traj(self):
+    def test_load_from_trajectory(self, ):
 
         data = '/home/roy/work/molpy-refactor/tests/tests-data/lammps/polymer.lammpstrj'
 
         traj = Trajectory.load(data)
 
-        yield traj
-
-
-    def test_load(self, traj):
-
-        assert traj.nsteps == 42
-        assert traj.path
-
-    def test_read(self, traj):
-
         frame = traj.read()
-
+        frame.natoms == 1000
+        frame['positions'].shape == (1000, 3)

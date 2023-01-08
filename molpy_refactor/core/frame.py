@@ -19,5 +19,14 @@ class Frame:
         positions = chemfile_frame.positions
         molpy_frame.atoms['positions'] = positions
 
-
+        
         return molpy_frame
+
+    @property
+    def natoms(self):
+        return self.atoms.size
+
+    def __getitem__(self, key):
+        return self.atoms[key]
+
+    
