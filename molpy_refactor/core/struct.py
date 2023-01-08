@@ -45,3 +45,7 @@ class StructData:
     @property
     def size(self):
         return self.length
+
+    def set_empty(self, key:str, size:int)->None:
+
+        self.set_item(key, np.zeros(size))

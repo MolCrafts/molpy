@@ -14,5 +14,6 @@ class TestFrame:
         traj = Trajectory.load(data)
 
         frame = traj.read()
-        frame.natoms == 1000
-        frame['positions'].shape == (1000, 3)
+        assert frame.natoms == 1714
+        assert frame['positions'].shape == (1714, 3)
+        assert frame['mol'].shape == (1714, )

@@ -19,14 +19,28 @@ class Frame:
         positions = chemfile_frame.positions
         molpy_frame.atoms['positions'] = positions
 
-        
+        an_atom = chemfile_frame.atoms[0]
+
+        natoms = molpy_frame.atoms.size
+        atom_list_properties = an_atom.list_properties()
+
+        for prop in atom_list_properties:
+            molpy_frame.atoms.set_empty(prop, natoms)
+
+        for i, atom in enumerate(chemfile_frame.atoms):
+            for prop in atom_list_properties:
+                molpy_frame.atoms[prop][i] = atom[prop]
+
         return molpy_frame
 
     @property
     def natoms(self):
         return self.atoms.size
 
+    @property
+    def properties(self):
+        return 
+
     def __getitem__(self, key):
         return self.atoms[key]
 
-    
