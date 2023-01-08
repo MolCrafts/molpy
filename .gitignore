@@ -5,6 +5,10 @@ __pycache__/
 
 # vscode
 .vscode/
+
+# tests-data
+tests-data
+
 # C extensions
 *.so
 
