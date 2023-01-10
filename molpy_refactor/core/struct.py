@@ -3,7 +3,8 @@
 # date: 2023-01-08
 # version: 0.0.1
 
-from .typing import Dict, NDArray, ArrayLike, Iterable
+from typing import Callable, Hashable
+from .typing import Dict, NDArray, ArrayLike, Iterable, Any
 import numpy as np
 
 class StructData:
@@ -46,6 +47,20 @@ class StructData:
     def size(self):
         return self.length
 
-    def set_empty(self, key:str, size:int)->None:
+    def set_empty_like(self, key:str, size:int, value:ArrayLike)->None:
+        v = np.array(value)
+        self.set_item(key, np.zeros((size, *v.shape), dtype=v.dtype))
 
-        self.set_item(key, np.zeros(size))
+class AOS:
+
+    def __init__(self,):
+
+        self.data:Dict[Hashable, Any] = {}
+
+    def __setitem__(self, K, V):
+
+        self.data[K] = V
+
+
+class GraphProxy:
+    pass

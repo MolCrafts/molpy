@@ -8,6 +8,7 @@ __pycache__/
 
 # tests-data
 tests-data
+test.py
 
 # C extensions
 *.so

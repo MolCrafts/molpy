@@ -3,5 +3,5 @@
 # date: 2023-01-08
 # version: 0.0.1
 
-from typing import Dict, Iterable
+from typing import Dict, Iterable, Any
 from numpy.typing import ArrayLike, NDArray
