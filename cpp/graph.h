@@ -10,7 +10,7 @@ namespace py = pybind11;
 namespace molpy
 {
 
-    template <class dataType> // Type of data vertex will hold
+    template <class dataType> // Type of idx vertex will hold
     class Graph
     {
         int numOfVertices; // number of vertices.
@@ -31,8 +31,9 @@ namespace molpy
         struct Vertex
         {
             visitedState state; // state of vertex, visited/being visited/done
-            dataType data;      // the template data
+            dataType label;      // the label of vertex 
             Node *list;         // Pointer to all edges (linkedlist)
+            size_t idx;     // index of the vertex
         };
 
         std::vector<Vertex> vertices; // vector of all vertices.
@@ -45,14 +46,16 @@ namespace molpy
 
     public:
         Graph();                             // Default constructor
-        Graph(std::vector<dataType> &);      // Constructor which takes vector of vertex data
-        Graph(py::array_t<dataType, py::array::c_style | py::array::forcecast> &);
-        void set_edge(dataType, dataType);   // For setting a edge of graph
+        Graph(std::vector<dataType> &);      // Constructor which takes vector of vertex idx
+        Graph(py::array_t<dataType, py::array::c_style | py::array::forcecast> &labels); // Constructor which takes numpy array of vertex idx
+        void set_edge(size_t, size_t);   // For setting a edge of graph
+        bool has_edge(size_t, size_t);   // For checking if a edge exists
         void append_vertex(dataType);
         void display() const;                // Print current config of the graph.
         int get_num_of_vertices() const;     // Get number of vertices in the graph
         void breadth_first_search(dataType); // Breadth first traversal of the graph
-        void depth_first_search(dataType);   // Depth first traversal of the graph
+        void depth_first_search(dataType);   // Depth first traversal of the 
+        Vertex create_vertex(dataType);    // Create a vertex
         ~Graph();
     }; // end of class Graph
 
@@ -105,53 +108,55 @@ namespace molpy
     }
 
     template <typename dataType>
-    Graph<dataType>::Graph(std::vector<dataType> &values) // Non default constructor, takes a vector of vertices data
-        : numOfVertices(values.size()),
+    Graph<dataType>::Graph(std::vector<dataType> &labels) // takes a vector of vertices labels
+        : numOfVertices(labels.size()),
           vertices(numOfVertices)
     {
-        for (int i = 0; i < numOfVertices; ++i)
+        for (size_t i = 0; i < numOfVertices; ++i)
         {
-            vertices[i].data = values[i];
+            vertices[i].idx = labels[i];
             vertices[i].list = nullptr;
             vertices[i].state = WHITE;
+            vertices[i].idx = i;
         }
     }
 
-    template<typename dataType>
-    Graph<dataType>::Graph(py::array_t<dataType, py::array::c_style | py::array::forcecast> &values) 
-        : numOfVertices(values.size()), vertices(numOfVertices)
+    template <typename dataType>
+    Graph<dataType>::Graph(py::array_t<dataType, py::array::c_style | py::array::forcecast> &labels) // takes a numpy array of vertices labels
+        : numOfVertices(labels.size()),
+          vertices(numOfVertices)
     {
-
-        for (int i = 0; i < numOfVertices; ++i)
+        for (size_t i = 0; i < numOfVertices; ++i)
         {
-            vertices[i].data = values.at(i);
+            vertices[i].idx = labels.at(i);
             vertices[i].list = nullptr;
             vertices[i].state = WHITE;
+            vertices[i].idx = i;
         }
-    }    
+    }
 
     template <typename dataType>
-    void Graph<dataType>::set_edge(dataType data1, dataType data2) // Setting individual edge of the graph.
+    void Graph<dataType>::set_edge(size_t idx1, size_t idx2) // Setting individual edge of the graph.
     {
 
-        if (data1 > numOfVertices - 1 || data2 > numOfVertices - 1)
+        if (idx1 > numOfVertices - 1 || idx2 > numOfVertices - 1)
         {
-            int vertices_to_add = data1 > data2 ? data1 : data2;
-            for (int i = numOfVertices; i <= vertices_to_add; ++i)
+            size_t vertices_to_add = idx1 > idx2 ? idx1 : idx2;
+            for (size_t i = numOfVertices; i <= vertices_to_add; ++i)
             {
-                append_vertex(i);
+                dataType none_label = std::numeric_limits<dataType>::max();
+                append_vertex(none_label);
             }
         }
 
         for (int i = 0; i < numOfVertices; ++i)
         {
-            if (vertices[i].data == data1)
+            if (vertices[i].idx == idx1)
             {
                 for (int j = 0; j < numOfVertices; ++j)
                 {
-                    if (vertices[j].data == data2)
+                    if (vertices[j].idx == idx2)
                     {
-                        std::cout << "Edge " << vertices[i].data << " -> " << vertices[j].data << " added to the graph" << std::endl;
                         insertAtEnd(vertices[i].list, &vertices[j]);
                         break;
                     }
@@ -162,14 +167,51 @@ namespace molpy
     }
 
     template <typename dataType>
-    void Graph<dataType>::append_vertex(dataType value)  // Append empty vertex to the graph
+    bool Graph<dataType>::has_edge(size_t idx1, size_t idx2) // Setting individual edge of the graph.
     {
-        vertices.push_back(Vertex());
-        vertices[numOfVertices].data = value;
-        vertices[numOfVertices].list = nullptr;
-        vertices[numOfVertices].state = WHITE;
+        for (int i = 0; i < numOfVertices; ++i)
+        {
+            if (vertices[i].idx == idx1)
+            {
+                for (int j = 0; j < numOfVertices; ++j)
+                {
+                    if (vertices[j].idx == idx2)
+                    {
+                        Node *temp = vertices[i].list;
+                        while (temp != nullptr)
+                        {
+                            if (temp->vertexPtr->idx == idx2)
+                            {
+                                return true;
+                            }
+                            temp = temp->next;
+                        }
+                        return false;
+                    }
+                }
+                break;
+            }
+        }
+        return false;
+    }
+
+
+    template <typename dataType>
+    void Graph<dataType>::append_vertex(dataType label)  // Append empty vertex to the graph
+    {
+        vertices.push_back(create_vertex(label));
         ++numOfVertices;
-        std::cout << "Vertex " << value << " added to the graph" << std::endl;
+    }
+
+    template <typename dataType>
+    Vertex Graph<dataType>::create_vertex(dataType label)
+    {
+        Vertex v;
+        v.label = label;
+        v.list = nullptr;
+        v.state = WHITE;
+        v.index = numOfVertices;
+        return v;
     }
 
     template <typename dataType>
@@ -178,12 +220,12 @@ namespace molpy
         Node *node;
         for (int i = 0; i < numOfVertices; ++i)
         {
-            std::cout << "Vertex:" << vertices[i].data << " ";
+            std::cout << "Vertex:" << vertices[i].idx << " ";
             std::cout << "Connections: ";
             node = vertices[i].list;
             while (node != nullptr)
             {
-                std::cout << node->vertexPtr->data << " ";
+                std::cout << node->vertexPtr->idx << " ";
                 node = node->next;
             }
             std::cout << std::endl;
@@ -209,7 +251,7 @@ namespace molpy
         Vertex *startVertex = nullptr;
         for (int i = 0; i < numOfVertices; ++i)
         {
-            if (vertices[i].data == startElem)
+            if (vertices[i].idx == startElem)
             {
                 startVertex = &vertices[i];
                 break;
@@ -236,7 +278,7 @@ namespace molpy
             currVertex = vertexQueue.front();
             vertexQueue.pop();
             currVertex->state = BLACK;
-            std::cout << currVertex->data << " " << std::endl;
+            std::cout << currVertex->idx << " " << std::endl;
             Node *adjVertex = currVertex->list;
             while (adjVertex != nullptr)
             {
@@ -255,7 +297,7 @@ namespace molpy
     void Graph<dataType>::depth_first_traversal_util(Vertex *v) // Depth first search private utility function
     {
         v->state = GRAY;
-        std::cout << v->data << " ";
+        std::cout << v->idx << " ";
         Node *node = v->list;
         while (node != nullptr)
         {
@@ -277,7 +319,7 @@ namespace molpy
         }
         for (int i = 0; i < numOfVertices; ++i)
         {
-            if (vertices[i].data == startElem)
+            if (vertices[i].idx == startElem)
             {
                 depth_first_traversal_util(&vertices[i]);
                 break;

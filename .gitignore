@@ -9,6 +9,7 @@ __pycache__/
 # tests-data
 tests-data
 test.*
+a.out
 
 # C extensions
 *.so
