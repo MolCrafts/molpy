@@ -25,6 +25,7 @@ int main()
     g.setEdge(7, 5);
     g.display();
     g.breadth_first_search(0);
+    // 0 1 2 3 4 6 7 5 
 
     molpy::Graph<int> G = molpy::Graph<int>();
     G.setEdge(0, 1);

@@ -4,6 +4,8 @@
 #include <vector>
 #include <queue>
 #include <iostream>
+#include <pybind11/pybind11.h>
+namespace py = pybind11;
 
 namespace molpy
 {
@@ -42,8 +44,9 @@ namespace molpy
         void depth_first_traversal_util(Vertex *); // Private utility function for DFS
 
     public:
-        Graph();                             // = default;                   // Default constructor
+        Graph();                             // Default constructor
         Graph(std::vector<dataType> &);      // Constructor which takes vector of vertex data
+        Graph(py::array_t<dataType, py::array::c_style | py::array::forcecast> &);
         void set_edge(dataType, dataType);   // For setting a edge of graph
         void append_vertex(dataType);
         void display() const;                // Print current config of the graph.
@@ -113,6 +116,19 @@ namespace molpy
             vertices[i].state = WHITE;
         }
     }
+
+    template<typename dataType>
+    Graph<dataType>::Graph(py::array_t<dataType, py::array::c_style | py::array::forcecast> &values) 
+        : numOfVertices(values.size()), vertices(numOfVertices)
+    {
+
+        for (int i = 0; i < numOfVertices; ++i)
+        {
+            vertices[i].data = values.at(i);
+            vertices[i].list = nullptr;
+            vertices[i].state = WHITE;
+        }
+    }    
 
     template <typename dataType>
     void Graph<dataType>::set_edge(dataType data1, dataType data2) // Setting individual edge of the graph.
