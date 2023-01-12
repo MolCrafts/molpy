@@ -29,7 +29,7 @@ add_library(molpy_cpp SHARED ${SOURCE_FILES})
 target_include_directories(molpy_cpp PRIVATE .)
 
 if(CMAKE_BUILD_TYPE AND (CMAKE_BUILD_TYPE STREQUAL "Debug"))
-    find_package(pybind11 REQUIRED)
+    
     set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -g -Wall -O0")
     message("Debug mode:${CMAKE_C_FLAGS_DEBUG}")
 
@@ -45,7 +45,7 @@ if(CMAKE_BUILD_TYPE AND (CMAKE_BUILD_TYPE STREQUAL "Debug"))
 
     set(TEST_FILES
     tests/test_graph.cpp
-)    
+    )    
     include_directories(.)
     include_directories(/usr/include/python3.8)
     enable_testing()
