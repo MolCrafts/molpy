@@ -13,7 +13,7 @@ namespace molpy
     template <class dataType> // Type of idx vertex will hold
     class Graph
     {
-        struct Vertex;     // forward declaration of vertex structure
+        struct Vertex; // forward declaration of vertex structure
 
         struct Node
         {                      // linkedlist for mapping edges in the graph
@@ -30,33 +30,33 @@ namespace molpy
         struct Vertex
         {
             visitedState state; // state of vertex, visited/being visited/done
-            dataType label;      // the label of vertex 
-            size_t idx;            // the index of vertex
+            dataType label;     // the label of vertex
+            size_t idx;         // the index of vertex
             Node *list;         // Pointer to all edges (linkedlist)
         };
 
         std::map<size_t, Vertex> vertices; // map of all vertices.
 
         // private methods
-        Node *getNode(Vertex *);                   // allocate and initialize a newnode for the adj list.
-        void insertAtEnd(Node *&, Vertex *);       // insert at the end of adjacency list of vertex.
-        void deleteAllAfter(Node *);               // delete the adjacency list of the vertex.
-        void depth_first_traversal_util(Vertex *); // Private utility function for DFS
-        Vertex create_vertex(size_t, dataType);    // Create a vertex
+        Node *getNode(Vertex *);                                          // allocate and initialize a newnode for the adj list.
+        void insertAtEnd(Node *&, Vertex *);                              // insert at the end of adjacency list of vertex.
+        void deleteAllAfter(Node *);                                      // delete the adjacency list of the vertex.
+        void depth_first_traversal_util(Vertex *, std::vector<size_t> &); // Private utility function for DFS
+        Vertex create_vertex(size_t, dataType);                           // Create a vertex
         Vertex get_vertex(size_t);
 
     public:
         Graph(py::array_t<dataType, py::array::c_style | py::array::forcecast> &);
-        Graph() = default;                             // Default constructor
-        void set_edge(size_t, size_t);   // For setting a edge of graph
-        bool has_edge(size_t, size_t);   // For checking if a edge exists
+        Graph() = default;             // Default constructor
+        void set_edge(size_t, size_t); // For setting a edge of graph
+        bool has_edge(size_t, size_t); // For checking if a edge exists
         void set_vertex(size_t, dataType);
         bool has_vertex(size_t);
-        void display() const;                // Print current config of the graph.
-        int get_num_of_vertices() const;     // Get number of vertices in the graph
-        dataType get_vertex_label(size_t);   // Get the label of the vertex
-        void breadth_first_search(size_t); // Breadth first traversal of the graph
-        void depth_first_search(size_t);   // Depth first traversal of the 
+        void display() const;                             // Print current config of the graph.
+        int get_num_of_vertices() const;                  // Get number of vertices in the graph
+        dataType get_vertex_label(size_t);                // Get the label of the vertex
+        std::vector<size_t> breadth_first_search(size_t); // Breadth first traversal of the graph
+        std::vector<size_t> depth_first_search(size_t);   // Depth first traversal of the
         ~Graph();
     }; // end of class Graph
 
@@ -131,18 +131,21 @@ namespace molpy
     void Graph<dataType>::set_edge(size_t idx1, size_t idx2) // Setting individual edge of the graph.
     {
 
-        if (!has_vertex(idx1)) set_vertex(idx1, std::numeric_limits<dataType>::max());
-        if (!has_vertex(idx2)) set_vertex(idx2, std::numeric_limits<dataType>::max());
+        if (!has_vertex(idx1))
+            set_vertex(idx1, std::numeric_limits<dataType>::max());
+        if (!has_vertex(idx2))
+            set_vertex(idx2, std::numeric_limits<dataType>::max());
 
         insertAtEnd(vertices[idx1].list, &vertices[idx2]);
-
+        insertAtEnd(vertices[idx2].list, &vertices[idx1]);
     }
 
     template <typename dataType>
     bool Graph<dataType>::has_edge(size_t idx1, size_t idx2) // Setting individual edge of the graph.
     {
 
-        if (!has_vertex(idx1) || !has_vertex(idx2)) return false;
+        if (!has_vertex(idx1) || !has_vertex(idx2))
+            return false;
 
         Node *temp = vertices[idx1].list;
         while (temp != nullptr)
@@ -154,12 +157,10 @@ namespace molpy
             temp = temp->next;
         }
         return false;
-
     }
 
-
     template <typename dataType>
-    void Graph<dataType>::set_vertex(size_t idx, dataType label)  // Append empty vertex to the graph
+    void Graph<dataType>::set_vertex(size_t idx, dataType label) // Append empty vertex to the graph
     {
         if (!has_vertex(idx))
         {
@@ -202,8 +203,9 @@ namespace molpy
     }
 
     template <typename dataType>
-    void Graph<dataType>::breadth_first_search(size_t start) // Breadth first traversal of the graph
+    std::vector<size_t> Graph<dataType>::breadth_first_search(size_t start) // Breadth first traversal of the graph
     {
+        // check start vertex exists
         if (!has_vertex(start))
         {
             throw "Vertex not found";
@@ -213,7 +215,11 @@ namespace molpy
         {
             it->second.state = WHITE;
         }
- 
+
+        // create a vector to store vertrices
+        std::vector<size_t> bfs_result;
+
+        // create a queue for BFS
         std::queue<Vertex *> q;
         q.push(&vertices[start]);
         vertices[start].state = GRAY;
@@ -221,7 +227,8 @@ namespace molpy
         {
             Vertex *v = q.front();
             q.pop();
-            std::cout << v->label << " ";
+            // std::cout << v->label << " ";
+            bfs_result.push_back(v->idx);
             Node *temp = v->list;
             while (temp != nullptr)
             {
@@ -234,70 +241,24 @@ namespace molpy
             }
             v->state = BLACK;
         }
-        std::cout << std::endl;
-
-
-        // search for the vertex containing start element
-        // Vertex *startVertex = nullptr;
-        // for (int i = 0; i < numOfVertices; ++i)
-        // {
-        //     if (vertices[i].idx == startElem)
-        //     {
-        //         startVertex = &vertices[i];
-        //         break;
-        //     }
-        // }
-
-        // // Return if start vertex not found
-        // if (startVertex == nullptr)
-        // {
-        //     return;
-        // }
-
-        // // Create a queue for traversing breadth wise.
-        // std::queue<Vertex *> vertexQueue;
-
-        // // mark the first vertex as being processed
-        // startVertex->state = GRAY;
-        // // push the first vertex
-        // vertexQueue.push(startVertex);
-        // Vertex *currVertex = nullptr;
-
-        // while (!vertexQueue.empty())
-        // {
-        //     currVertex = vertexQueue.front();
-        //     vertexQueue.pop();
-        //     currVertex->state = BLACK;
-        //     std::cout << currVertex->idx << " " << std::endl;
-        //     Node *adjVertex = currVertex->list;
-        //     while (adjVertex != nullptr)
-        //     {
-        //         if (adjVertex->vertexPtr->state == WHITE)
-        //         {
-        //             adjVertex->vertexPtr->state = GRAY;
-        //             vertexQueue.push(adjVertex->vertexPtr);
-        //         }
-        //         adjVertex = adjVertex->next;
-        //     }
-        // }
-        // std::cout << std::endl;
+        return bfs_result;
     }
 
     template <typename dataType>
-    void Graph<dataType>::depth_first_traversal_util(Vertex *v) // Depth first search private utility function
+    void Graph<dataType>::depth_first_traversal_util(Vertex *v, std::vector<size_t> &result) // Depth first search private utility function
     {
         if (v == nullptr)
         {
             return;
         }
         v->state = GRAY;
-        std::cout << v->label << " ";
+        result.push_back(v->idx);
         Node *temp = v->list;
         while (temp != nullptr)
         {
             if (temp->vertexPtr->state == WHITE)
             {
-                depth_first_traversal_util(temp->vertexPtr);
+                depth_first_traversal_util(temp->vertexPtr, result);
             }
             temp = temp->next;
         }
@@ -305,10 +266,11 @@ namespace molpy
     }
 
     template <typename dataType>
-    void Graph<dataType>::depth_first_search(size_t idx) // Public function for depth first traversal
+    std::vector<size_t> Graph<dataType>::depth_first_search(size_t start) // Public function for depth first traversal
     {
 
-        if (!has_vertex(idx))
+        // check start vertex exists
+        if (!has_vertex(start))
         {
             throw "Vertex not found";
         }
@@ -317,9 +279,11 @@ namespace molpy
         {
             it->second.state = WHITE;
         }
-        depth_first_traversal_util(&vertices[idx]);
-        std::cout << std::endl;
 
+        // create a vector to store vertrices
+        std::vector<size_t> dfs_result;
+        depth_first_traversal_util(&vertices[start], dfs_result);
+        return dfs_result;
     }
 
     template <typename dataType>
@@ -329,7 +293,6 @@ namespace molpy
         {
             deleteAllAfter(it->second.list);
         }
-        
     }
 } // end of namespace molpy
 
