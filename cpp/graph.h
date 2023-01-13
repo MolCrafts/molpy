@@ -9,6 +9,51 @@
 #include <pybind11/numpy.h>
 namespace py = pybind11;
 
+// @brief: the number of combinations in a given container
+// @param: v - the container
+// @param: n - the number of elements in each combination
+// @return: the number of combinations
+std::vector<size_t> combination(std::vector<size_t> &v, size_t n)
+{
+    if (v.size() < n) throw std::invalid_argument("v.size() < n");
+    if (v.size() == n) {
+        std::vector<size_t> result(v);
+        return result;
+    }
+    std::vector<size_t> result;
+    size_t *ka = new size_t[n]; // dynamically allocate an array of UINTs
+    unsigned int ki = n - 1;    // Point ki to the last elemet of the array
+    size_t N = v.size();        // N is the number of elements in the set
+    ka[ki] = N - 1;             // Prime the last elemet of the array.
+
+    while (true)
+    {
+        unsigned int tmp = ka[ki]; // Optimization to prevent reading ka[ki] repeatedly
+
+        while (ki) // Fill to the left with consecutive descending values (blue squares)
+            ka[--ki] = --tmp;
+
+        for (size_t i = 0; i < n; ++i)
+        {
+            result.push_back(v[ka[i]]);
+        }
+
+        while (--ka[ki] == ki)
+        { // Decrement and check if the resulting value equals the index (bright green squares)
+            for (size_t i = 0; i < n; ++i)
+            {
+                result.push_back(v[ka[i]]);
+            }
+            if (++ki == n)
+            { // Exit condition (all of the values in the array are flush to the left)
+                delete[] ka;
+                return result;
+            }
+        }
+    }
+}
+
+
 namespace molpy
 {
     template <class dataType> // Type of idx vertex will hold
@@ -57,6 +102,8 @@ namespace molpy
         dataType get_vertex_label(size_t);                // Get the label of the vertex
         std::vector<size_t> breadth_first_search(size_t); // Breadth first traversal of the graph
         std::vector<size_t> depth_first_search(size_t);   // Depth first traversal of the
+        std::vector<size_t> get_neighbors(size_t);        // Get the neighbors of a vertex
+        std::vector<size_t> infer_angles();  // Infer angles of the graph
         ~Graph();
     }; // end of class Graph
 
@@ -92,7 +139,7 @@ namespace molpy
         }
         else
         {
-            throw py::key_error("Vertex not found");
+            throw "Vertex not found";
         }
     }
 
@@ -284,6 +331,49 @@ namespace molpy
         std::vector<size_t> dfs_result;
         depth_first_traversal_util(&vertices[start], dfs_result);
         return dfs_result;
+    }
+
+    template <typename dataType>
+    std::vector<size_t> Graph<dataType>::get_neighbors(size_t idx) // Returns the neighbors of a vertex
+    {
+        std::vector<size_t> neighbors;
+        if (!has_vertex(idx))
+        {
+            throw "Vertex not found";
+        }
+        Node *temp = vertices[idx].list;
+        while (temp != nullptr)
+        {
+            neighbors.push_back(temp->vertexPtr->idx);
+            temp = temp->next;
+        }
+        return neighbors;
+    }
+
+    template <typename dataType>
+    std::vector<size_t> Graph<dataType>::infer_angles()
+    {
+        // create a vector to store angles
+        std::vector<size_t> angles;
+
+        for (auto it = vertices.begin(); it != vertices.end(); ++it)
+        {
+            Node *temp = it->second.list;
+            if (temp == nullptr) continue;  // not have edge
+
+            std::vector<size_t> neighbors = get_neighbors(it->first);
+
+            // gen combination
+            std::vector<size_t> c2 = combination(neighbors, 2);
+            for (int i = 0; i < c2.size(); i += 2) {
+                angles.push_back(c2[i]);
+                angles.push_back(it->first);
+                angles.push_back(c2[i + 1]);
+            }
+
+        }
+        return angles;
+
     }
 
     template <typename dataType>

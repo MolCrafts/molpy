@@ -64,3 +64,27 @@ TEST(TestGraph, TestDFS)
     EXPECT_THAT(graph.depth_first_search(2), ElementsAreArray({2, 0, 1})) << "dfs startswith idx 2 fails";
     EXPECT_THAT(graph.depth_first_search(3), ElementsAreArray({3})) << "dfs startswith idx 3 fails";
 }
+
+TEST(TestGraph, TestGetNeighbors)
+{
+    molpy::Graph<int> graph;
+    graph.set_edge(0, 1);
+    graph.set_edge(0, 2);
+    graph.set_edge(1, 2);
+    graph.set_vertex(3, 3);
+
+    EXPECT_THAT(graph.get_neighbors(0), ElementsAreArray({1, 2})) << "neighbors of idx 0 fails";
+    EXPECT_THAT(graph.get_neighbors(1), ElementsAreArray({0, 2})) << "neighbors of idx 1 fails";
+    EXPECT_THAT(graph.get_neighbors(2), ElementsAreArray({0, 1})) << "neighbors of idx 2 fails";
+    EXPECT_EQ(graph.get_neighbors(3).size(), 0) << "neighbors of idx 3 fails";
+}
+
+TEST(TestGraph, TestInferAngle)
+{
+    molpy::Graph<int> graph;
+    graph.set_edge(0, 1);
+    graph.set_edge(0, 2);
+    graph.set_edge(1, 2);
+
+    ASSERT_THAT(graph.infer_angles(), ElementsAreArray({1, 0, 2, 0, 1, 2, 0, 2, 1}));
+}
