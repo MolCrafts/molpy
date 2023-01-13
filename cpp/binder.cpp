@@ -41,11 +41,14 @@ namespace py = pybind11;
 template<typename datatype>
 void register_graph(py::module &m) {
     using Graph = molpy::Graph<datatype>;
-    using array = py::array_t<datatype, py::array::c_style | py::array::forcecast>;
     py::class_<Graph>(m, "Graph")
         .def(py::init<>())
-        .def(py::init<array&>())
-        .def("set_edge", &Graph::set_edge)
+        .def("has_edge", &Graph::has_edge, "Check if an edge exists")
+        .def("set_edge", &Graph::set_edge, "Set an edge")
+        .def("has_vertex", &Graph::has_vertex, "Check if a vertex exists")
+        .def("set_vertex", &Graph::set_vertex, "Set a vertex")
+        .def("get_vertex_label", &Graph::get_vertex_label, "Get the label of a vertex")
+        .def("get_num_of_vertices", &Graph::get_num_of_vertices, "Get the number of vertices")
         .def("display", &Graph::display)
         .def("breadth_first_search", &Graph::breadth_first_search)
         .def("depth_first_search", &Graph::depth_first_search);

@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <queue>
+#include <map>
 #include <iostream>
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
@@ -46,7 +47,6 @@ namespace molpy
         Vertex get_vertex(size_t);
 
     public:
-        Graph(py::array_t<dataType, py::array::c_style | py::array::forcecast> &);
         Graph() = default;             // Default constructor
         void set_edge(size_t, size_t); // For setting a edge of graph
         bool has_edge(size_t, size_t); // For checking if a edge exists
@@ -92,7 +92,7 @@ namespace molpy
         }
         else
         {
-            throw "Vertex not found";
+            throw py::key_error("Vertex not found");
         }
     }
 
