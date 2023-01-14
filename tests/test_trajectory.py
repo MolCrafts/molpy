@@ -12,7 +12,7 @@ class TestTrajectory:
     @pytest.fixture()
     def traj(self):
 
-        data = '/home/roy/work/molpy-refactor/tests/tests-data/lammps/polymer.lammpstrj'
+        data = '/home/roy/work/molpy-refactor/tests/tests-data/pdb/hemo.pdb'
 
         traj = Trajectory.load(data)
 

@@ -31,6 +31,11 @@ class Frame:
             for prop in atom_list_properties:
                 molpy_frame.atoms[prop][i] = atom[prop]
 
+        # load topology
+        ## load bond
+        bonds = chemfile_frame.topology.bonds
+        bonds_orders = chemfile_frame.topology.bonds_orders
+
         return molpy_frame
 
     @property
