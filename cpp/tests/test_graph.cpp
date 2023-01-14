@@ -88,3 +88,30 @@ TEST(TestGraph, TestInferAngle)
 
     ASSERT_THAT(graph.infer_angles(), ElementsAreArray({1, 0, 2, 0, 1, 2, 0, 2, 1}));
 }
+
+TEST(TestGraph, TestGetNumOfEdges)
+{
+    molpy::Graph<int> graph;
+    graph.set_edge(0, 1);
+    graph.set_edge(0, 2);
+    graph.set_edge(1, 2);
+
+    ASSERT_EQ(graph.get_num_of_edges(), 3);
+}
+
+TEST(TestGraph, TestDuplicateSetEdge)
+{
+    molpy::Graph<int> graph;
+    graph.set_edge(0, 1);
+    graph.set_edge(0, 1);
+    ASSERT_EQ(graph.get_num_of_vertices(), 2);
+    ASSERT_EQ(graph.get_num_of_edges(), 1);
+}
+
+TEST(TestGraph, TestDuplicateAppendVertex)
+{
+    molpy::Graph<int> graph;
+    graph.set_vertex(0, 0);
+    graph.set_vertex(0, 0);
+    ASSERT_EQ(graph.get_num_of_vertices(), 1);
+}

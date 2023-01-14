@@ -99,6 +99,7 @@ namespace molpy
         bool has_vertex(size_t);
         void display() const;                             // Print current config of the graph.
         int get_num_of_vertices() const;                  // Get number of vertices in the graph
+        int get_num_of_edges() const;
         dataType get_vertex_label(size_t);                // Get the label of the vertex
         std::vector<size_t> breadth_first_search(size_t); // Breadth first traversal of the graph
         std::vector<size_t> depth_first_search(size_t);   // Depth first traversal of the
@@ -177,14 +178,17 @@ namespace molpy
     template <typename dataType>
     void Graph<dataType>::set_edge(size_t idx1, size_t idx2) // Setting individual edge of the graph.
     {
-
-        if (!has_vertex(idx1))
+        bool has_idx1 = has_vertex(idx1);
+        bool has_idx2 = has_vertex(idx2);
+        if (!has_idx1)
             set_vertex(idx1, std::numeric_limits<dataType>::max());
-        if (!has_vertex(idx2))
+        if (!has_idx2)
             set_vertex(idx2, std::numeric_limits<dataType>::max());
-
-        insertAtEnd(vertices[idx1].list, &vertices[idx2]);
-        insertAtEnd(vertices[idx2].list, &vertices[idx1]);
+        if (!has_edge(idx1, idx2))
+        {
+            insertAtEnd(vertices[idx1].list, &vertices[idx2]);
+            insertAtEnd(vertices[idx2].list, &vertices[idx1]);
+        }
     }
 
     template <typename dataType>
@@ -247,6 +251,22 @@ namespace molpy
     int Graph<dataType>::get_num_of_vertices() const // Returns the number of vertices in the graph
     {
         return vertices.size();
+    }
+
+    template <typename dataType>
+    int Graph<dataType>::get_num_of_edges() const // Returns the number of vertices in the graph
+    {
+        int num_of_edges = 0;
+        for (auto it = vertices.begin(); it != vertices.end(); ++it)
+        {
+            Node *temp = it->second.list;
+            while (temp != nullptr)
+            {
+                num_of_edges++;
+                temp = temp->next;
+            }
+        }
+        return num_of_edges / 2;
     }
 
     template <typename dataType>

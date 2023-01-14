@@ -26,7 +26,7 @@ class Topology:
         self.dihedrals = DynamicSOA()
         self.impropers = DynamicSOA()
 
-        self._graph = GraphProxy()
+        self._graph = Graph()
 
     @property
     def nbonds(self):
@@ -50,6 +50,7 @@ class Topology:
             i, j = j, i
 
         self.bond_idx.append((i, j))
+        self._graph.set_edge(i, j)
 
         if properties:
             for key, value in properties.items():
@@ -63,6 +64,8 @@ class Topology:
             i, k = k, i
 
         self.angle_idx.append((i, j, k))
+        self._graph.set_edge(i, j)
+        self._graph.set_edge(j, k)
 
         if properties:
             for key, value in properties.items():
@@ -76,6 +79,9 @@ class Topology:
             i, j, k, l = l, k, j, i
             
         self.dihedral_idx.append((i, j, k, l))
+        self._graph.set_edge(i, j)
+        self._graph.set_edge(j, k)
+        self._graph.set_edge(k, l)
 
         if properties:
             for key, value in properties.items():
@@ -87,6 +93,9 @@ class Topology:
     def add_improper(self, i, j, k, l, **properties):
             
         self.improper_idx.append((i, *sorted([j, k, l])))
+        self._graph.set_edge(i, j)
+        self._graph.set_edge(i, k)
+        self._graph.set_edge(i, l)
 
         if properties:
             for key, value in properties.items():
