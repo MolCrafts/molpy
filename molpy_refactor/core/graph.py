@@ -3,3 +3,8 @@
 # date: 2023-01-10
 # version: 0.0.1
 
+from molpy_cpp import Graph as Graph_cpp
+
+class Graph(Graph_cpp):
+
+    pass

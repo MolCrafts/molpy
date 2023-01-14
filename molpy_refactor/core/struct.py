@@ -3,11 +3,15 @@
 # date: 2023-01-08
 # version: 0.0.1
 
-from typing import Callable, Hashable
+from typing import Callable, Hashable, List, Optional
 from .typing import Dict, NDArray, ArrayLike, Iterable, Any
 import numpy as np
 
-class StructData:
+class SOA:
+
+    pass
+
+class StaticSOA:
 
     def __init__(self, ):
 
@@ -47,9 +51,38 @@ class StructData:
     def size(self):
         return self.length
 
-    def set_empty_like(self, key:str, size:int, value:ArrayLike)->None:
+    def set_empty_like(self, key:str, length:int, value:ArrayLike)->None:
         v = np.array(value)
-        self.set_item(key, np.zeros((size, *v.shape), dtype=v.dtype))
+        self.set_item(key, np.zeros((length, *v.shape), dtype=v.dtype))
+
+
+class DynamicSOA:
+
+    def __init__(self, ):
+
+        self.data:Dict[str, List] = {}
+
+    def append(self, key:str, value:ArrayLike)->None:
+
+        if key not in self.data:
+            self.data['key'] = []
+
+        self.data[key].append(value)
+
+    def extend(self, key:str, value:ArrayLike)->None:
+
+        if key not in self.data:
+            self.data['key'] = []
+
+        self.data[key].extend(value)
+
+    def set_item(self, key:str, value:Optional[List])->None:
+        if value:
+            self.data[key] = value
+        else:
+            self.data[key] = []
+
+
 
 class AOS:
 
@@ -60,7 +93,3 @@ class AOS:
     def __setitem__(self, K, V):
 
         self.data[K] = V
-
-
-class GraphProxy:
-    pass

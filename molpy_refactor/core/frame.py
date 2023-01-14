@@ -3,13 +3,13 @@
 # date: 2023-01-08
 # version: 0.0.1
 
-from .struct import StructData
+from .struct import StaticSOA
 
 class Frame:
 
     def __init__(self, ):
 
-        self.atoms = StructData()
+        self.atoms = StaticSOA()
 
     @classmethod
     def from_chemfile_frame(cls, chemfile_frame):
@@ -25,7 +25,7 @@ class Frame:
         atom_list_properties = an_atom.list_properties()
 
         for prop in atom_list_properties:
-            molpy_frame.atoms.set_empty(prop, natoms)
+            molpy_frame.atoms.set_empty_like(prop, natoms, an_atom[prop])
 
         for i, atom in enumerate(chemfile_frame.atoms):
             for prop in atom_list_properties:

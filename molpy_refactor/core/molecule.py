@@ -4,7 +4,6 @@
 # version: 0.0.1
 
 from fileinput import filename
-from chemfile import Trajectory
 
 class Molecule:
 
