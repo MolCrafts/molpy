@@ -19,11 +19,11 @@ class Trajectory:
             self._file_handler.close()
 
     @classmethod
-    def load(cls, fileName):
+    def load(cls, fileName, mode:str='r', format:str=''):
 
         molpy_traj = cls()
 
-        chemfile_traj = load_trajectory(fileName)
+        chemfile_traj = load_trajectory(fileName, mode, format)
 
         molpy_traj._file_handler = chemfile_traj
 

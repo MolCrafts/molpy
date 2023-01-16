@@ -24,12 +24,12 @@ class Frame:
         natoms = molpy_frame.atoms.size
         atom_list_properties = an_atom.list_properties()
 
-        for prop in atom_list_properties:
-            molpy_frame.atoms.set_empty_like(prop, natoms, an_atom[prop])
+        # load properties
+        some_properties = ['charge', 'mass', 'type',] # 'atomic_number', 'full_name', 'name', '']
+        for prop in some_properties:
+            if hasattr(prop, an_atom):
+                molpy_frame.atoms[prop] = [getattr(atom, prop) for atom in chemfile_frame.atoms]
 
-        for i, atom in enumerate(chemfile_frame.atoms):
-            for prop in atom_list_properties:
-                molpy_frame.atoms[prop][i] = atom[prop]
 
         # load topology
         ## load bond

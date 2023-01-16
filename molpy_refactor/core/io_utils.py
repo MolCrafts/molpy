@@ -5,6 +5,6 @@
 
 from chemfiles import Trajectory
 
-def load_trajectory(fileName)->Trajectory:
+def load_trajectory(fileName, mode:str='r', format:str='')->Trajectory:
 
-    return Trajectory(fileName)
+    return Trajectory(fileName, mode, format)
