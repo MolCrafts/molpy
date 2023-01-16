@@ -376,18 +376,19 @@ namespace molpy
         // create a vector to store angles
         std::vector<size_t> angles;
 
-        for (auto it = vertices.begin(); it != vertices.end(); ++it)
+        // for (auto it = vertices.begin(); it != vertices.end(); ++it)
+        for (auto& [idx, vertex] : vertices)  // structured building
         {
-            Node *temp = it->second.list;
+            Node *temp = vertex.list;
             if (temp == nullptr) continue;  // not have edge
 
-            std::vector<size_t> neighbors = get_neighbors(it->first);
+            std::vector<size_t> neighbors = get_neighbors(idx);
 
             // gen combination
             std::vector<size_t> c2 = combination(neighbors, 2);
             for (int i = 0; i < c2.size(); i += 2) {
                 angles.push_back(c2[i]);
-                angles.push_back(it->first);
+                angles.push_back(idx);
                 angles.push_back(c2[i + 1]);
             }
 

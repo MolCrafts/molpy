@@ -17,6 +17,7 @@ AUX_SOURCE_DIRECTORY(. SRC_FILES)
 set(SOURCE_FILES
     graph.h
     graph.cpp
+    test.cpp
 )
 
 # Set up such that XCode organizes the files correctly

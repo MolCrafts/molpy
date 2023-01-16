@@ -1,6 +1,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <graph.h>
+#include "test.h"
 
 namespace py = pybind11;
 
@@ -23,5 +24,6 @@ void register_graph(py::module &m) {
 
 PYBIND11_MODULE(molpy_cpp, m) {
     m.doc() = "MolPy C++ module"; // optional module docstring
+    m.def("test_convert_1d", &test_convert_1d, "Test convert 1d array");
     register_graph<int>(m);
 }

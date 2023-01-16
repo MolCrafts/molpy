@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from setuptools import Extension, setup
+from setuptools import Extension, setup, find_packages
 from setuptools.command.build_ext import build_ext
 
 # Convert distutils Windows platform specifiers to CMake -A arguments
@@ -133,9 +133,10 @@ setup(
     author_email="lijichen365@gmail.com",
     description="refactor of molpy",
     long_description="",
-    ext_modules=[CMakeExtension("molpy_refactor")],
+    ext_modules=[CMakeExtension("molpy_cpp")],
     cmdclass={"build_ext": CMakeBuild},
     zip_safe=False,
     extras_require={"test": ["pytest>=6.0"]},
     python_requires=">=3.7",
+    packages=find_packages(exclude=["tests", ".github"]),
 )
