@@ -3,41 +3,47 @@
 # date: 2023-01-08
 # version: 0.0.1
 
-from .io_utils import load_trajectory, Trajectory
+from pathlib import Path
+from .io_utils import load_trajectory, ChemfilesTrajectory
 from .frame import Frame
 
 class Trajectory:
 
     def __init__(self):
 
-        self._file_handler = None
+        self._file_handler:ChemfilesTrajectory = None
         self.current_frame = None
 
     def __del__(self):
 
-        if isinstance(self._file_handler, Trajectory):
-            self._file_handler.close()
+        self.close()
+
+    def close(self):
+        self._file_handler.close()
 
     @classmethod
-    def load(cls, fileName, mode:str='r', format:str=''):
+    def load(cls, fileName:str|Path, mode:str='r', format:str=''):
 
         molpy_traj = cls()
 
-        chemfile_traj = load_trajectory(fileName, mode, format)
+        chemfile_traj = load_trajectory(str(fileName), mode, format)
 
         molpy_traj._file_handler = chemfile_traj
 
         return molpy_traj
 
     @property
-    def file_handler(self)->Trajectory:
+    def file_handler(self)->ChemfilesTrajectory:
 
         return self._file_handler
 
     @file_handler.setter
-    def file_handler(self, handler:Trajectory):
-            
-        self._file_handler = handler
+    def file_handler(self, handler:ChemfilesTrajectory):
+        
+        if isinstance(handler, ChemfilesTrajectory):
+            self._file_handler = handler
+        else:
+            raise TypeError('file_handler must be a ChemfilesTrajectory instance')
 
     def read_step(self, step):
 

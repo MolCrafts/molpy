@@ -3,7 +3,7 @@
 # date: 2023-01-10
 # version: 0.0.1
 
-from .struct import DynamicSOA
+from .struct import StaticSOA
 from .graph import Graph
 import numpy as np
 
@@ -13,93 +13,87 @@ class Topology:
 
         self.reset()
 
-
     def reset(self):
 
-        self.bond_idx = []
-        self.angle_idx = []
-        self.dihedral_idx = []
-        self.improper_idx = []
-
-        self.bonds = DynamicSOA()
-        self.angles = DynamicSOA()
-        self.dihedrals = DynamicSOA()
-        self.impropers = DynamicSOA()
+        self.bonds = StaticSOA()
+        self.angles = StaticSOA()
+        self.dihedrals = StaticSOA()
+        self.impropers = StaticSOA()
 
         self._graph = Graph()
 
     @property
     def nbonds(self):
-        return len(self.bond_idx)
+        return len(self.bonds)
 
     @property
     def nangles(self):
-        return len(self.angle_idx)
+        return len(self.angles)
 
     @property
     def ndihedrals(self):
-        return len(self.angle_idx)
+        return len(self.dihedrals)
 
     @property
     def nimpropers(self):
-        return len(self.bond_idx)
+        return len(self.impropers)
 
-    def add_bond(self, i, j, **properties):
+    def add_bonds(self, connect, **properties):
 
-        if i > j:
-            i, j = j, i
+        assert connect.ndim == 2 and connect.shape[-1] == 2
+        connect = np.sort(connect, axis=1)
+        self.bonds['index'] = connect
 
-        self.bond_idx.append((i, j))
-        self._graph.set_edge(i, j)
+        for key, value in properties.items():
+            if len(value) == self.bonds:
+                self.bonds[key] == value
 
-        if properties:
-            for key, value in properties.items():
-                if key not in self.bonds:
-                    self.bonds.set_item(key)
-                self.bonds.append(key, value)
+        for i, j in connect:
+            self._graph.set_edge(i, j)
 
-    def add_angle(self, i, j, k, **properties):
+    def add_angles(self, connect, **properties):
 
-        if i > k:
-            i, k = k, i
+        assert connect.ndim == 2 and connect.shape[-1] == 3
+        edges = np.sort(connect[:, :2], axis=1)  # ijk, i < k
+        connect[:, [0, 1]] = edges
+        self.angles['index'] = connect
 
-        self.angle_idx.append((i, j, k))
-        self._graph.set_edge(i, j)
-        self._graph.set_edge(j, k)
+        for key, value in properties.items():
+            if len(value) == self.angles:
+                self.angles[key] == value
 
-        if properties:
-            for key, value in properties.items():
-                if key not in self.angles:
-                    self.angles.set_item(key)
-                self.angles.append(key, value)
+        # for i, j, k in connect:
+        #     self._graph.set_edge(i, j)
+        #     self._graph.set_edge(j, k)
 
-    def add_dihedral(self, i, j, k, l, **properties):
+    def add_dihedrals(self, connect, **properties):
 
-        if j > k:
-            i, j, k, l = l, k, j, i
-            
-        self.dihedral_idx.append((i, j, k, l))
-        self._graph.set_edge(i, j)
-        self._graph.set_edge(j, k)
-        self._graph.set_edge(k, l)
+        assert connect.ndim == 2 and connect.shape[-1] == 4
+        mask = connect[:, 1] > connect[:, 2]  # ijkl, j > k
+        dihe = np.where(mask.reshape((-1, 1)), connect, connect[:, [3, 2, 1, 0]])  # ijkl->lkji
 
-        if properties:
-            for key, value in properties.items():
-                if key not in self.dihedrals:
-                    self.dihedrals.set_item(key)
-                
-                self.angles.append(key, value)
+        self.dihedrals['index'] = dihe
 
-    def add_improper(self, i, j, k, l, **properties):
-            
-        self.improper_idx.append((i, *sorted([j, k, l])))
-        self._graph.set_edge(i, j)
-        self._graph.set_edge(i, k)
-        self._graph.set_edge(i, l)
+        for key, value in properties.items():
+            if len(value) == self.dihedrals:
+                self.dihedrals[key] == value
 
-        if properties:
-            for key, value in properties.items():
-                if key not in self.impropers:
-                    self.impropers.set_item(key)
-                
-                self.impropers.append(key, value)
+        # for i, j, k, l in connect:
+        #     self._graph.set_edge(i, j)
+        #     self._graph.set_edge(j, k)
+        #     self._graph.set_edge(k, l)
+
+    def add_impropers(self, connect, **properties):
+
+        assert connect.ndim == 2 and connect.shape[-1] == 4
+        connect[:, 1:] = np.sort(connect[:, 1:], axis=1) # ijkl, j < k < l
+        self.impropers['index'] = connect
+
+        for key, value in properties.items():
+            if len(value) == self.impropers:
+                self.impropers[key] == value
+
+        # for i, j, k, l in connect:
+        #     self._graph.set_edge(i, j)
+        #     self._graph.set_edge(j, k)
+        #     self._graph.set_edge(k, l)

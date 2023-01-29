@@ -4,27 +4,18 @@
 # version: 0.0.1
 
 import pytest
-
 from molpy_refactor.core.trajectory import Trajectory
 
 class TestTrajectory:
 
-    @pytest.fixture()
-    def traj(self):
+    @pytest.fixture(name='pdb')
+    def read_pdb(self, test_data_path):
 
-        data = '/home/roy/work/molpy-refactor/tests/tests-data/pdb/hemo.pdb'
-
-        traj = Trajectory.load(data)
-
+        path = test_data_path / 'pdb/hemo.pdb'
+        traj = Trajectory.load(path)
+        print('read once')
         yield traj
 
+    def test_load(self, pdb):
 
-    def test_load(self, traj):
-
-        assert traj.nsteps == 42
-        assert traj.path
-
-    def test_read(self, traj):
-
-        frame = traj.read()
-
+        assert pdb.nsteps == 1

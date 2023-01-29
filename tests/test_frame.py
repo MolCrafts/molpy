@@ -4,16 +4,28 @@
 # version: 0.0.1
 
 from molpy_refactor.core.trajectory import Trajectory
+import pytest
+import numpy.testing as npt
+import numpy as np
 
 class TestFrame:
 
-    def test_load_from_trajectory(self, ):
+    @pytest.fixture(name='pdb')
+    def read_pdb(self, test_data_path):
 
-        data = '/home/roy/work/molpy-refactor/tests/tests-data/lammps/polymer.lammpstrj'
-
-        traj = Trajectory.load(data)
-
+        path = test_data_path / 'pdb/hemo.pdb'
+        traj = Trajectory.load(path)
         frame = traj.read()
-        assert frame.natoms == 1714
-        assert frame['positions'].shape == (1714, 3)
-        assert frame['mol'].shape == (1714, )
+        yield frame
+
+    def test_pdb_frame(self, pdb):
+
+        assert pdb.natoms == 522
+        npt.assert_equal(pdb.box, np.zeros((3, 3)))
+        assert pdb['positions'].shape == (522, 3)
+        assert pdb.topology.nbonds == 482
+        assert pdb.topology.nangles == 823
+        assert pdb.topology.ndihedrals == 1126
+        assert pdb.topology.nimpropers == 433
+
+        # assert pdb.nresidue == 1

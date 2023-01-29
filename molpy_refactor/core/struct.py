@@ -47,6 +47,9 @@ class StaticSOA:
 
         self.set_item(K, V)
 
+    def __len__(self):
+        return self.length
+
     @property
     def size(self):
         return self.length

@@ -4,18 +4,25 @@
 # version: 0.0.1
 
 from .struct import StaticSOA
+from .topology import Topology
+# from .box import Box
 
 class Frame:
 
     def __init__(self, ):
 
         self.atoms = StaticSOA()
+        self.topology = Topology()
+        self.box = None
 
     @classmethod
     def from_chemfile_frame(cls, chemfile_frame):
 
         molpy_frame = cls()
         
+        # load box
+        molpy_frame.box = cell = chemfile_frame.cell.matrix
+
         positions = chemfile_frame.positions
         molpy_frame.atoms['positions'] = positions
 
@@ -25,15 +32,25 @@ class Frame:
         atom_list_properties = an_atom.list_properties()
 
         # load properties
-        some_properties = ['charge', 'mass', 'type',] # 'atomic_number', 'full_name', 'name', '']
-        for prop in some_properties:
-            if hasattr(prop, an_atom):
+        internal_props = ['name', 'atomic_number', 'charge', 'mass', 'type',] 
+        for prop in internal_props:
+            if hasattr(an_atom, prop):
                 molpy_frame.atoms[prop] = [getattr(atom, prop) for atom in chemfile_frame.atoms]
-
 
         # load topology
         ## load bond
         bonds = chemfile_frame.topology.bonds
+        angles = chemfile_frame.topology.angles
+        dihedrals = chemfile_frame.topology.dihedrals
+        impropers = chemfile_frame.topology.impropers
+
+        molpy_frame.topology.add_bonds(bonds)
+        molpy_frame.topology.add_angles(angles)
+        molpy_frame.topology.add_dihedrals(dihedrals)
+        molpy_frame.topology.add_impropers(impropers)
+
+        # TODO: residue
+
         bonds_orders = chemfile_frame.topology.bonds_orders
 
         return molpy_frame
