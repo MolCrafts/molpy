@@ -4,7 +4,7 @@
 # version: 0.0.1
 
 import pytest
-from molpy_refactor.core.trajectory import Trajectory
+from molpy.core.trajectory import Trajectory
 
 class TestTrajectory:
 

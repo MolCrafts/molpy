@@ -3,7 +3,7 @@
 # date: 2023-01-08
 # version: 0.0.1
 
-from molpy_refactor.core.trajectory import Trajectory
+from molpy.core.trajectory import Trajectory
 import pytest
 import numpy.testing as npt
 import numpy as np
