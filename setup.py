@@ -2,8 +2,14 @@ import os
 import re
 import subprocess
 import sys
+<<<<<<< HEAD
 
 from setuptools import Extension, setup
+=======
+from pathlib import Path
+
+from setuptools import Extension, setup, find_packages
+>>>>>>> cbf11e643d6cec0d32adcd29c5fc912790756dd4
 from setuptools.command.build_ext import build_ext
 
 # Convert distutils Windows platform specifiers to CMake -A arguments
@@ -19,6 +25,7 @@ PLAT_TO_CMAKE = {
 # The name must be the _single_ output extension from the CMake build.
 # If you need multiple extensions, see scikit-build.
 class CMakeExtension(Extension):
+<<<<<<< HEAD
     def __init__(self, name, sourcedir=""):
         Extension.__init__(self, name, sources=[])
         self.sourcedir = os.path.abspath(sourcedir)
@@ -31,6 +38,21 @@ class CMakeBuild(build_ext):
         # required for auto-detection & inclusion of auxiliary "native" libs
         if not extdir.endswith(os.path.sep):
             extdir += os.path.sep
+=======
+    def __init__(self, name: str, sourcedir: str = "") -> None:
+        super().__init__(name, sources=[])
+        self.sourcedir = os.fspath(Path(sourcedir).resolve())
+
+
+class CMakeBuild(build_ext):
+    def build_extension(self, ext: CMakeExtension) -> None:
+        # Must be in this form due to bug in .resolve() only fixed in Python 3.10+
+        ext_fullpath = Path.cwd() / self.get_ext_fullpath(ext.name)  # type: ignore[no-untyped-call]
+        extdir = ext_fullpath.parent.resolve()
+
+        # Using this requires trailing slash for auto-detection & inclusion of
+        # auxiliary "native" libs
+>>>>>>> cbf11e643d6cec0d32adcd29c5fc912790756dd4
 
         debug = int(os.environ.get("DEBUG", 0)) if self.debug is None else self.debug
         cfg = "Debug" if debug else "Release"
@@ -43,7 +65,11 @@ class CMakeBuild(build_ext):
         # EXAMPLE_VERSION_INFO shows you how to pass a value into the C++ code
         # from Python.
         cmake_args = [
+<<<<<<< HEAD
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}",
+=======
+            f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}{os.sep}",
+>>>>>>> cbf11e643d6cec0d32adcd29c5fc912790756dd4
             f"-DPYTHON_EXECUTABLE={sys.executable}",
             f"-DCMAKE_BUILD_TYPE={cfg}",  # not used on MSVC, but no harm
         ]
@@ -54,7 +80,11 @@ class CMakeBuild(build_ext):
             cmake_args += [item for item in os.environ["CMAKE_ARGS"].split(" ") if item]
 
         # In this example, we pass in the version to C++. You might not need to.
+<<<<<<< HEAD
         cmake_args += [f"-DEXAMPLE_VERSION_INFO={self.distribution.get_version()}"]
+=======
+        cmake_args += [f"-DEXAMPLE_VERSION_INFO={self.distribution.get_version()}"]  # type: ignore[attr-defined]
+>>>>>>> cbf11e643d6cec0d32adcd29c5fc912790756dd4
 
         if self.compiler.compiler_type != "msvc":
             # Using Ninja-build since it a) is available as a wheel and b)
@@ -66,7 +96,11 @@ class CMakeBuild(build_ext):
                 try:
                     import ninja  # noqa: F401
 
+<<<<<<< HEAD
                     ninja_executable_path = os.path.join(ninja.BIN_DIR, "ninja")
+=======
+                    ninja_executable_path = Path(ninja.BIN_DIR) / "ninja"
+>>>>>>> cbf11e643d6cec0d32adcd29c5fc912790756dd4
                     cmake_args += [
                         "-GNinja",
                         f"-DCMAKE_MAKE_PROGRAM:FILEPATH={ninja_executable_path}",
@@ -110,12 +144,25 @@ class CMakeBuild(build_ext):
                 # CMake 3.12+ only.
                 build_args += [f"-j{self.parallel}"]
 
+<<<<<<< HEAD
         build_temp = os.path.join(self.build_temp, ext.name)
         if not os.path.exists(build_temp):
             os.makedirs(build_temp)
 
         subprocess.check_call(["cmake", ext.sourcedir] + cmake_args, cwd=build_temp)
         subprocess.check_call(["cmake", "--build", "."] + build_args, cwd=build_temp)
+=======
+        build_temp = Path(self.build_temp) / ext.name
+        if not build_temp.exists():
+            build_temp.mkdir(parents=True)
+
+        subprocess.run(
+            ["cmake", ext.sourcedir] + cmake_args, cwd=build_temp, check=True
+        )
+        subprocess.run(
+            ["cmake", "--build", "."] + build_args, cwd=build_temp, check=True
+        )
+>>>>>>> cbf11e643d6cec0d32adcd29c5fc912790756dd4
 
 
 # The information here can also be placed in setup.cfg - better separation of
@@ -123,6 +170,7 @@ class CMakeBuild(build_ext):
 setup(
     name="molpy",
     version="0.0.1",
+<<<<<<< HEAD
     author="Roy Kid",
     author_email="lijichen365@gmail.com",
     description="A data structure used to describe molecules in computational",
@@ -130,4 +178,16 @@ setup(
     ext_modules=[CMakeExtension("molpy_kernel", sourcedir="molpy")],
     cmdclass={"build_ext": CMakeBuild},
     zip_safe=False,
+=======
+    author="Roy-Kid",
+    author_email="lijichen365@gmail.com",
+    description="refactor of molpy",
+    long_description="",
+    ext_modules=[CMakeExtension("molpy_cpp")],
+    cmdclass={"build_ext": CMakeBuild},
+    zip_safe=False,
+    extras_require={"test": ["pytest>=6.0"]},
+    python_requires=">=3.7",
+    packages=find_packages(exclude=["tests", ".github"]),
+>>>>>>> cbf11e643d6cec0d32adcd29c5fc912790756dd4
 )

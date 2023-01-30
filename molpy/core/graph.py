@@ -1,5 +1,6 @@
 # author: Roy Kid
 # contact: lijichen365@126.com
+<<<<<<< HEAD
 # date: 2022-08-13
 # version: 0.0.1
 
@@ -393,3 +394,13 @@ class Graph(AdjList):
     def from_networkx(self, G):
 
         self.add_bonds(G.edges)
+=======
+# date: 2023-01-10
+# version: 0.0.1
+
+from molpy_cpp import Graph as Graph_cpp
+
+class Graph(Graph_cpp):
+
+    pass
+>>>>>>> cbf11e643d6cec0d32adcd29c5fc912790756dd4
