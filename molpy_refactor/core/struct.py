@@ -21,16 +21,17 @@ class StaticSOA:
     def get_item(self, key:str)->NDArray:
         return self.data[key]
 
-    def get_items(self, keys:Iterable[str])->NDArray:
+    def get_struct(self, keys:Optional[Iterable[str]]=None):
 
         data = self.data
-        keys = data.keys()
+        keys = keys or data.keys()
         field_type = {key: np.array(data[key]).dtype for key in keys}
         field_shape = {key: np.array(data[key]).shape[1:] for key in keys} 
 
         structured_dtype = np.dtype([(key, field_type[key], field_shape[key]) for key in keys])
 
         return np.array([x for x in zip(*data.values())], dtype=structured_dtype)
+
 
     def set_item(self, key:str, value:ArrayLike)->None:
 
@@ -40,8 +41,10 @@ class StaticSOA:
     def __getitem__(self, K):
         if isinstance(K, str):
             return self.get_item(K)
-        elif isinstance(K, Iterable):
-            return self.get_items(K)
+        elif isinstance(K, np.ndarray):
+            return self.get_struct()[K]
+        elif all(map(lambda k: type(k)==str, K)):
+            return self.get_struct(K)
 
     def __setitem__(self, K, V):
 
@@ -53,6 +56,10 @@ class StaticSOA:
     @property
     def size(self):
         return self.length
+
+    @property
+    def keys(self):
+        return list(self.data.keys())
 
     def set_empty_like(self, key:str, length:int, value:ArrayLike)->None:
         v = np.array(value)
@@ -85,7 +92,32 @@ class DynamicSOA:
         else:
             self.data[key] = []
 
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return self.data.setdefault(key, [])
+        elif isinstance(key, int):
+            return {k: v[key] for k, v in self.data.items()}
 
+    def index(self, key, value):
+        return self.data[key].index(value)
+
+    def is_aligned(self)->bool:
+
+        lens = list(map(len, self.data.values()))
+        max_len = max(lens)
+        min_len = min(lens)
+        if max_len != min_len:
+            return False
+        else:
+            return True
+
+    def __len__(self):
+        if self.is_aligned():
+            lens = map(len, self.data.values())
+            return max(lens)
+        else:
+            raise ValueError("DynamicSOA is not aligned.")
+        
 
 class AOS:
 

@@ -28,4 +28,9 @@ class TestFrame:
         assert pdb.topology.ndihedrals == 1126
         assert pdb.topology.nimpropers == 433
 
-        # assert pdb.nresidue == 1
+        assert pdb.nresidues == 25
+
+    def test_get_residue(self, pdb):
+
+        residue = pdb.get_residue('HEM')
+        assert residue.natoms == 73

@@ -3,9 +3,10 @@
 # date: 2023-01-10
 # version: 0.0.1
 
-from .struct import StaticSOA
+from .struct import DynamicSOA, StaticSOA
 from .graph import Graph
 import numpy as np
+from .entity import Residue
 
 class Topology:
 
@@ -19,6 +20,7 @@ class Topology:
         self.angles = StaticSOA()
         self.dihedrals = StaticSOA()
         self.impropers = StaticSOA()
+        self.residues = DynamicSOA()
 
         self._graph = Graph()
 
@@ -37,6 +39,10 @@ class Topology:
     @property
     def nimpropers(self):
         return len(self.impropers)
+
+    @property
+    def nresidues(self):
+        return len(self.residues)
 
     def add_bonds(self, connect, **properties):
 
@@ -97,3 +103,21 @@ class Topology:
         #     self._graph.set_edge(i, j)
         #     self._graph.set_edge(j, k)
         #     self._graph.set_edge(k, l)
+
+    def add_residue(self, id, name, mask, **properties):
+
+        self.residues['id'].append(id)
+        self.residues['name'].append(name)
+        self.residues['mask'].append(mask)
+        for key, value in properties.items():
+            self.residues[key].append(value)
+
+    def get_residue(self, name)->dict:
+
+        idx = self.residues.index('name', name)
+        if idx is None:
+            raise KeyError('Residue {} not found'.format(name))
+        else:
+            return self.residues[idx]
+
+    
