@@ -3,9 +3,54 @@
 # date: 2022-06-12
 # version: 0.0.1
 
-import freud
+import numpy as np
+from numpy.typing import ArrayLike
 
-class Box(freud.Box):
-    
-    def __repr__(self)->str:
-        return f'<Box: LX={self.Lx}, Ly={self.Ly}, Lz={self.Lz}, powered by freud>'
+class Box:
+
+    def __init__(self, xhi, yhi, zhi, xlo=0, ylo=0, zlo=0, xy=0, xz=0, yz=0):
+        self.reset(xhi, yhi, zhi, xlo, ylo, zlo, xy, xz, yz)
+
+    def reset(self, xhi, yhi, zhi, xlo=0, ylo=0, zlo=0, xy=0, xz=0, yz=0):
+        self.xhi = xhi
+        self.yhi = yhi
+        self.zhi = zhi
+        self.xlo = xlo
+        self.ylo = ylo
+        self.zlo = zlo
+        lattice_a = np.array([xhi-xlo, 0, 0])
+        lattice_b = np.array([xy, yhi-ylo, 0])
+        lattice_c = np.array([xz, yz, zhi-zlo])
+        self._matrix = np.array([lattice_a, lattice_b, lattice_c]).T
+        self._inv_matrix = np.linalg.inv(self._matrix)
+
+    def wrap(self, r):
+        """
+        shift position vector(s) back to periodic boundary condition box
+
+        Parameters
+        ----------
+        r : ArrayLike
+            (3, ) or (N, 3)
+
+        Returns
+        -------
+        np.ndarray
+            (3, ) or (N, 3)
+        """
+        r = np.array(r)
+        if r.ndim == 2 and r.shape[-1] != 3:
+            raise ValueError("r must be (N, 3)")
+        elif r.ndim == 1 and r.shape[0] != 3:
+            raise ValueError("r must be (3, )")
+        elif r.ndim > 2:
+            raise ValueError("r must be (N, 3) or (3, )")
+
+        reciprocal_r = np.dot(self._inv_matrix, r.T)
+        shifted_reci_r = reciprocal_r - np.floor(reciprocal_r)
+        real_r = np.dot(self._matrix, shifted_reci_r)
+
+        return real_r.T
+
+    def displacement(self, r1, r2):
+        return self.wrap(r2-r1)

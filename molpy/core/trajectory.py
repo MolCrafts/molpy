@@ -1,48 +1,14 @@
 # author: Roy Kid
 # contact: lijichen365@126.com
-<<<<<<< HEAD
-# date: 2022-08-10
-# version: 0.0.1
-
-from .box import Box
-=======
 # date: 2023-01-08
 # version: 0.0.1
 
 from pathlib import Path
 from .io_utils import load_trajectory, ChemfilesTrajectory
->>>>>>> cbf11e643d6cec0d32adcd29c5fc912790756dd4
 from .frame import Frame
 
 class Trajectory:
 
-<<<<<<< HEAD
-    def __init__(self, ):
-
-        self._frame = []
-
-    def add_frame(self, frame:Frame):
-
-        self._frame.append(frame)
-
-    @property
-    def n_frames(self)->int:
-        return len(self._frame)
-
-    def __getitem__(self, idx:int)->Frame:
-        return self._frame[idx]
-
-    def append(self, frame:Frame):
-
-        self._frame.append(frame)
-
-    def extend(self, traj:'Trajectory'):
-
-        self._frame.extend(traj)
-
-    def __len__(self):
-        return len(self._frame)
-=======
     def __init__(self):
 
         self._file_handler:ChemfilesTrajectory = None
@@ -101,4 +67,3 @@ class Trajectory:
     def path(self):
         return self._file_handler.path
     
->>>>>>> cbf11e643d6cec0d32adcd29c5fc912790756dd4

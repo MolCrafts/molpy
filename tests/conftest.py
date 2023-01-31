@@ -5,6 +5,8 @@
 
 from pathlib import Path
 import pytest
+import sys
+sys.path.append('/home/roy/work/molpy/build/lib.linux-x86_64-cpython-310')
 
 @pytest.fixture(name='test_data_path')
 def find_test_data():
