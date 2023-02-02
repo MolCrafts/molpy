@@ -23,6 +23,7 @@ class Box:
         lattice_c = np.array([xz, yz, zhi-zlo])
         self._matrix = np.array([lattice_a, lattice_b, lattice_c]).T
         self._inv_matrix = np.linalg.inv(self._matrix)
+        self.L = self._matrix.diagonal()
 
     def wrap(self, r):
         """
@@ -53,4 +54,8 @@ class Box:
         return real_r.T
 
     def displacement(self, r1, r2):
-        return self.wrap(r2-r1)
+
+        dr = r2 - r1
+        dr = np.mod(dr + self.L/2, self.L) - self.L/2
+
+        return dr

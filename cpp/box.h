@@ -261,29 +261,26 @@ namespace molpy
         {
             if (f.ndim == 1)
                 auto r = f.unchecked<1>();
-                auto result = py::array_t<double>(3);
-                auto result_buf = result.request();
-                auto result_ptr = (double *)result_buf.ptr;
-                result_ptr[0] = m_lo.x + r(0) * m_L.x;
-                result_ptr[1] = m_lo.y + r(1) * m_L.y;
-                result_ptr[2] = m_lo.z + r(2) * m_L.z;
-                return result;
+            auto result = py::array_t<double>(3);
+            auto result_buf = result.request();
+            auto result_ptr = (double *)result_buf.ptr;
+            result_ptr[0] = m_lo.x + r(0) * m_L.x;
+            result_ptr[1] = m_lo.y + r(1) * m_L.y;
+            result_ptr[2] = m_lo.z + r(2) * m_L.z;
+            return result;
 
-            else if (f.ndim == 2)
-                auto r = f.unchecked<2>();
-                auto result = py::array_t<double>(f.shape(0), f.shape(1));
-                auto result_buf = result.request();
-                auto result_ptr = (double *)result_buf.ptr;
-                for (int i = 0; i < f.shape(0); i++)
-                {
-                    result_ptr[i * 3] = m_lo + f(i, 0) * m_L;
-                    result_ptr[i * 3 + 1] = m_lo + f(i, 1) * m_L;
-                    result_ptr[i * 3 + 2] = m_lo + f(i, 2) * m_L;
-                }
-                return result;
-            else
-                throw std::runtime_error("makeAbsolute: array must be 1D or 2D");
-
+            else if (f.ndim == 2) auto r = f.unchecked<2>();
+            auto result = py::array_t<double>(f.shape(0), f.shape(1));
+            auto result_buf = result.request();
+            auto result_ptr = (double *)result_buf.ptr;
+            for (int i = 0; i < f.shape(0); i++)
+            {
+                result_ptr[i * 3] = m_lo + f(i, 0) * m_L;
+                result_ptr[i * 3 + 1] = m_lo + f(i, 1) * m_L;
+                result_ptr[i * 3 + 2] = m_lo + f(i, 2) * m_L;
+            }
+            return result;
+            else throw std::runtime_error("makeAbsolute: array must be 1D or 2D");
         }
 
     private:
