@@ -7,7 +7,7 @@ from .frame import DynamicFrame, Frame, StaticFrame
 from .box import Box
 from molpy.io import Readers
 import numpy as np
-from .forcefield import ForceField
+from .forcefield import Forcefield
 
 class System:
     """
@@ -15,7 +15,7 @@ class System:
     """
     def __init__(self, ):
 
-        self.forcefield = ForceField()
+        self.forcefield = Forcefield()
         self.trajectory = None
         self.frame = DynamicFrame()
 

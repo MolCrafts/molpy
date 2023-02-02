@@ -10,7 +10,7 @@ Redesign core data structure. Prepare to link extern application
 ### 0.0.2
   - [x] refactor core data structure
   - [ ] parse data via [chemfiles](https://chemfiles.org/chemfiles.py/latest/index.html#)
-  - [ ] add utils such as Box, ForceField
+  - [ ] add utils such as Box, Forcefield
 
 ### 0.0.3
   - [ ] parallel dataloader

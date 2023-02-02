@@ -6,7 +6,7 @@
 import numpy as np
 import numpy.testing as npt
 
-class TestForceField:
+class TestForcefield:
 
     def test_bond_match(self):
 

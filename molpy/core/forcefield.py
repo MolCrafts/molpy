@@ -3,8 +3,9 @@
 # date: 2023-01-16
 # version: 0.0.1
 
-from .typing import Dict, Any, Hashable
-Identity = Hashable
+from typing import Iterable, Sequence
+from .typing import Dict, Any, ArrayLike, Tuple, List
+import numpy as np
 
 class ItemType:
 
@@ -41,18 +42,23 @@ class BondType(ItemType):
 
     pass
 
+AtomTypeName = str
+AtomTypes = Tuple[AtomType, ...]
 
 class Template:
 
     def __init__(self, ):
 
-        self.atomTypes:Dict[Identity, AtomType] = {}
-        self.bondTypes:Dict[Identity, BondType] = {}
+        self.atomTypes:Dict[AtomTypeName, AtomType] = {}
+        self.bondTypes:Dict[AtomTypes, BondType] = {}
 
     def def_atomType(self, name:str, **properties):
         at = AtomType(name, **properties)
         self.atomTypes[name] = at
         return at
+
+    def get_atomType(self, name:str)->AtomType:
+        return self.atomTypes[name]
 
     def def_bondType(self, atomtype1:AtomType, atomtype2:AtomType, **properties):
         if atomtype1 > atomtype2:
@@ -62,7 +68,13 @@ class Template:
         self.bondTypes[identity] = bt
         return bt
 
-class ForceField:
+    def get_bondType(self, atomtype1:AtomType, atomtype2:AtomType)->BondType:
+        if atomtype1 > atomtype2:
+            atomtype1, atomtype2 = atomtype2, atomtype1
+        identity = (atomtype1, atomtype2)
+        return self.bondTypes[identity]
+
+class Forcefield:
 
     def __init__(self):
 
@@ -74,12 +86,16 @@ class ForceField:
     def def_bondType(self, atomtype1:AtomType, atomtype2:AtomType, **properties):
         return self._parameters.def_bondType(atomtype1, atomtype2, **properties)
 
-    def match_atomType(self, name:str=None)->AtomType:
-        return self._parameters.atomTypes[name]
+    def get_atomType(self, name:str)->AtomType:
+        return self._parameters.get_atomType(name)
 
-    def match_bondType(self, atomtype1:AtomType, atomtype2:AtomType)->BondType:
-        if atomtype1 > atomtype2:
-            atomtype1, atomtype2 = atomtype2, atomtype1
-        identity = (atomtype1, atomtype2)
-        return self._parameters.bondTypes[identity]
+    def get_bondType(self, atomtype1:AtomType, atomtype2:AtomType)->BondType:
+        return self._parameters.get_bondType(atomtype1, atomtype2)
 
+    def match_atomTypes(self, names:Iterable)->List[AtomType | None]:
+        return list(map(self._parameters.atomTypes.get, names))
+
+    def match_bondTypes(self, atomTypes:Iterable[Tuple[AtomType, AtomType]])->List[BondType | None]:
+
+        sort_fn = lambda x: (x[0], x[1]) if x[0] < x[1] else (x[1], x[0])
+        return list(map(self._parameters.bondTypes.get, map(sort_fn, atomTypes)))
