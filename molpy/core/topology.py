@@ -6,7 +6,6 @@
 from .struct import DynamicSOA, StaticSOA
 from .graph import Graph
 import numpy as np
-from .entity import Residue
 
 class Topology:
 
@@ -120,4 +119,6 @@ class Topology:
         else:
             return self.residues[idx]
 
-    
+    @classmethod
+    def from_xml(cls, path):
+        import xml.etree as et

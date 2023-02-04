@@ -4,38 +4,51 @@
 # version: 0.0.1
 
 import numpy as np
+import molpy as mp
 import numpy.testing as npt
 
 class TestForcefield:
 
-    def test_bond_match(self):
+    def test_load_presets(self):
 
-        # mock a Frame
-        frame = mp.Frame()
-        frame.atoms['type'] = np.array([1, 2, 3, 4])
+        ff = mp.presets.forcefields.tip3p()
+
+        # test atomTypes
+        O = ff.get_atomType('tip3p-O')
+        H = ff.get_atomType('tip3p-H')
+        assert O['class'] == 'OW'
+        assert H['class'] == 'HW'
+        assert O['element'] == 'O'
+        assert H['element'] == 'H'
+
+        # test bondTypes
+        OH = ff.get_bondType(O, H)
+        assert OH['length'] == '0.09572'
+        assert OH['k'] == '462750.4'
+
+        # test residue
+        h2o = ff.get_residue('HOH')
+        assert h2o.get_atomType('O')['type'] == 'tip3p-O'
+        assert h2o.get_atomType('H1')['type'] == 'tip3p-H'
+        assert h2o.get_atomType('H2')['type'] == 'tip3p-H'
         
-        connects = np.array([
-            [0, 1],  # 1-2
-            [0, 2],  # 1-3
-            [0, 3],  # 1-4
-            [1, 2],  # 2-3
-            [1, 3],  # 2-4
-            [2, 3]   # 3-4
-        ])
-        frame.add_connects(connects)
+    def test_match_atomType(self):
 
-        ff = mp.Forcefield()
-        at1 = ff.def_atom('1')
-        at2 = ff.def_atom('2')
-        at3 = ff.def_atom('3')
-        at4 = ff.def_atom('4')
-        bt1 = ff.def_bond(at1, at2)
-        bt2 = ff.def_bond(at1, at3)
-        bt3 = ff.def_bond(at1, at4)
-        bt4 = ff.def_bond(at2, at3)
-        bt5 = ff.def_bond(at2, at4)
-        bt6 = ff.def_bond(at3, at4)
+        ff = mp.presets.forcefields.tip3p()
+        h2o = mp.presets.molecules.tip3p()
 
-        atomtypes = frame.atoms['type'][connects]
-        bondtypes = ff.match_bonds(atomtypes)
-        npt.assert_equal(bondtypes, np.array([bt1, bt2, bt3, bt4, bt5, bt6]))
+        # test match_atomType
+        h2o_residue = ff.get_residue('HOH')
+        literal_h2o_atom_name = h2o.atoms['name']
+        atomTypeName = list(map(h2o_residue.get_atomType, literal_h2o_atom_name))
+        assert atomTypeName[0]['type'] == 'tip3p-O'
+        atomTypes = list(map(ff.get_atomType, map(lambda x: x['type'], atomTypeName)))
+        assert atomTypes[0]['class'] == 'OW'
+        assert atomTypes[1]['class'] == 'HW'
+
+        # test match_bondType
+        connect = h2o.topology.bonds['index']
+        bondTypes = list(map(lambda x: ff.get_bondType(atomTypes[x[0]], atomTypes[x[1]]), connect))
+
+        assert bondTypes[0] == bondTypes[1]
+        
