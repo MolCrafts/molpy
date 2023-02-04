@@ -5,7 +5,7 @@
 
 from .struct import StaticSOA
 from .topology import Topology
-from .entity import Residue
+from .entity import Residue, Atom
 import numpy as np
 # from .box import Box
 
@@ -16,6 +16,10 @@ class Frame:
         self.atoms = StaticSOA()
         self.topology = Topology()
         self.box = None
+        self.residues = StaticSOA()
+
+        self._natoms = 0
+        self._nresidues = 0
 
     @classmethod
     def from_chemfile_frame(cls, chemfile_frame):
@@ -25,8 +29,10 @@ class Frame:
         # load box
         molpy_frame.box = chemfile_frame.cell.matrix
 
-        positions = chemfile_frame.positions
-        molpy_frame.atoms['positions'] = positions
+        xyz = chemfile_frame.positions
+        molpy_frame.atoms['xyz'] = xyz
+        natoms = len(xyz)
+        molpy_frame._natoms = natoms
 
         an_atom = chemfile_frame.atoms[0]
 
@@ -57,9 +63,25 @@ class Frame:
         # load residue
 
         residues = chemfile_frame.topology.residues
-        for residue in residues:
-            molpy_frame.topology.add_residue(residue.id, residue.name, np.array(residue.atoms), **{k:residue[k] for k in residue.list_properties()})
-        
+        nresidues = len(residues)
+        molpy_frame._nresidues = nresidues
+        molpy_frame.residues['index'] = np.zeros((nresidues), dtype=np.ndarray)
+        names = []
+        ids = []
+        index = []
+        props = []
+
+        for i, residue in enumerate(residues):
+            ids.append(residue.id)
+            names.append(residue.name)
+            props.append({k:residue[k] for k in residue.list_properties()})
+            molpy_frame.residues['index'][i] = np.array(residue.atoms)
+            
+        molpy_frame.residues['id'] = np.array(ids)
+        molpy_frame.residues['name'] = np.array(names)
+        keys = props[0].keys()
+        for k in keys:
+            molpy_frame.residues[k] = np.array([p[k] for p in props])
 
         return molpy_frame
 
@@ -85,7 +107,7 @@ class Frame:
 
     @property
     def nresidues(self):
-        return self.topology.nresidues
+        return self._nresidues
 
     @property
     def positions(self):
@@ -99,7 +121,29 @@ class Frame:
         return self.atoms[key]
 
     def get_residue(self, name):
-        residue_dict = self.topology.get_residue(name)
-        mask = residue_dict.pop('mask')
-        residue_dict['atoms'] = self.atoms[mask]
-        return Residue.from_dict(residue_dict)
+        i = list(self.residues['name']).index(name)
+        residue_dict = {}
+        for k in self.residues.keys():
+            residue_dict[k] = self.residues[k][i]
+        
+        residue = Residue(residue_dict['name'], residue_dict['id'])
+        atom_idx = residue_dict['index']
+        atoms = self.atoms[atom_idx]
+        
+        for atom in atoms:
+            atom_props = {k:atom[k] for k in atom.dtype.names}
+            atom_props['residue'] = residue_dict['name']
+            residue.add_atom(Atom(**atom_props))
+
+        # add bond
+        bond_idx = self.topology.bonds['index']
+        bond_mask = np.logical_and(np.isin(bond_idx[:, 1], atom_idx), np.isin(bond_idx[:, 0], atom_idx))
+        residue_bond_idx = bond_idx[bond_mask]
+        atom_idx_accu = np.cumsum(atom_idx.astype(int))
+        remap_residue_bond_idx = np.zeros_like(residue_bond_idx, dtype=int)
+        remap_residue_bond_idx[:, 0] = atom_idx_accu[residue_bond_idx[:,0]]
+        remap_residue_bond_idx[:, 1] = atom_idx_accu[residue_bond_idx[:,1]]
+
+        residue.add_bonds(remap_residue_bond_idx)
+
+        return residue

@@ -57,7 +57,6 @@ class StaticSOA:
     def size(self):
         return self.length
 
-    @property
     def keys(self):
         return list(self.data.keys())
 

@@ -8,7 +8,7 @@ from numpy.typing import ArrayLike
 
 class Box:
 
-    def __init__(self, xhi, yhi, zhi, xlo=0, ylo=0, zlo=0, xy=0, xz=0, yz=0):
+    def __init__(self, xhi=0, yhi=0, zhi=0, xlo=0, ylo=0, zlo=0, xy=0, xz=0, yz=0):
         self.reset(xhi, yhi, zhi, xlo, ylo, zlo, xy, xz, yz)
 
     def reset(self, xhi, yhi, zhi, xlo=0, ylo=0, zlo=0, xy=0, xz=0, yz=0):
@@ -24,6 +24,7 @@ class Box:
         self._matrix = np.array([lattice_a, lattice_b, lattice_c]).T
         self._inv_matrix = np.linalg.inv(self._matrix)
         self.L = self._matrix.diagonal()
+        self.anlges = None
 
     def wrap(self, r):
         """

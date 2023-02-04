@@ -10,7 +10,7 @@ import numpy as np
 
 class TestFrame:
 
-    @pytest.fixture(name='pdb')
+    @pytest.fixture(name='pdb', scope='class')
     def read_pdb(self, test_data_path):
 
         path = test_data_path / 'pdb/hemo.pdb'
@@ -22,7 +22,7 @@ class TestFrame:
 
         assert pdb.natoms == 522
         npt.assert_equal(pdb.box, np.zeros((3, 3)))
-        assert pdb['positions'].shape == (522, 3)
+        assert pdb['xyz'].shape == (522, 3)
         assert pdb.topology.nbonds == 482
         assert pdb.topology.nangles == 823
         assert pdb.topology.ndihedrals == 1126
@@ -34,3 +34,7 @@ class TestFrame:
 
         residue = pdb.get_residue('HEM')
         assert residue.natoms == 73
+        assert residue.name == 'HEM'
+        assert residue.atoms[0]['name'] == 'CAA'
+        assert residue.atoms[0]['residue'] == 'HEM'
+        assert residue.topology.nbonds == 77
