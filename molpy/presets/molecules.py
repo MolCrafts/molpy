@@ -17,11 +17,9 @@ def tip3p():
     residueName = ['HOH', 'HOH', 'HOH']
     element = ['O', 'H', 'H']
     m = Molecule(name='tip3p')
-    m.atoms['xyz'] = xyz
-    m.atoms['id'] = ids
-    m.atoms['name'] = name
-    m.atoms['residue'] = residueName
-    m.atoms['element'] = element
+    natoms = 3
+    for i in range(natoms):
+        m.add_atom(name=name[i], id=ids[i], xyz=xyz[i], element=element[i], residue=residueName[i])
 
     connect = np.array([[0, 1], [0, 2]])
     m.topology.add_bonds(connect)

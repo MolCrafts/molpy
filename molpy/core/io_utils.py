@@ -4,12 +4,23 @@
 # version: 0.0.1
 
 from chemfiles import Trajectory as ChemfilesTrajectory
-from chemfiles import UnitCell
+from chemfiles import UnitCell, Atom
+import numpy as np
 
 def load_trajectory(fileName, mode:str='r', format:str='')->ChemfilesTrajectory:
 
     return ChemfilesTrajectory(fileName, mode, format)
 
 def box2cell(box):
+    angles = np.array([
+            np.rad2deg(np.arccos(box.xy / box.L[1])),
+            np.rad2deg(np.arccos(box.xz / box.L[2])),
+            np.rad2deg(np.arccos(box.yz / box.L[0]))
+        ])
+    return UnitCell(box.L, angles)
 
-    return UnitCell((box.lengths[0], box.lengths[1], box.lengths[2]), (0, 0, 0))
+def atom2atom(atom):
+    _atom = Atom(atom.name, atom.type)
+    _atom.mass = atom.mass
+    _atom.charge = atom.charge
+    return Atom(atom['name'])

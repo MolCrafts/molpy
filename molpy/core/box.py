@@ -11,20 +11,29 @@ class Box:
     def __init__(self, xhi=0, yhi=0, zhi=0, xlo=0, ylo=0, zlo=0, xy=0, xz=0, yz=0):
         self.reset(xhi, yhi, zhi, xlo, ylo, zlo, xy, xz, yz)
 
-    def reset(self, xhi, yhi, zhi, xlo=0, ylo=0, zlo=0, xy=0, xz=0, yz=0):
+    def reset(self, xhi:float, yhi:float, zhi:float, xlo=0., ylo=0., zlo=0., xy=0., xz=0., yz=0.):
         self.xhi = xhi
         self.yhi = yhi
         self.zhi = zhi
         self.xlo = xlo
         self.ylo = ylo
         self.zlo = zlo
+        self.xy = xy
+        self.xz = xz
+        self.yz = yz
         lattice_a = np.array([xhi-xlo, 0, 0])
         lattice_b = np.array([xy, yhi-ylo, 0])
         lattice_c = np.array([xz, yz, zhi-zlo])
         self._matrix = np.array([lattice_a, lattice_b, lattice_c]).T
-        self._inv_matrix = np.linalg.inv(self._matrix)
         self.L = self._matrix.diagonal()
-        self.anlges = None
+
+
+    @property
+    def inv_box(self):
+        try:
+            return np.linalg.inv(self._matrix)
+        except np.linalg.LinAlgError:
+            raise ValueError(f"Box matrix {self._matrix} is singular")
 
     def wrap(self, r):
         """
@@ -48,7 +57,7 @@ class Box:
         elif r.ndim > 2:
             raise ValueError("r must be (N, 3) or (3, )")
 
-        reciprocal_r = np.dot(self._inv_matrix, r.T)
+        reciprocal_r = np.dot(self.inv_box, r.T)
         shifted_reci_r = reciprocal_r - np.floor(reciprocal_r)
         real_r = np.dot(self._matrix, shifted_reci_r)
 
