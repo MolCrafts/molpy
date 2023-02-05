@@ -24,7 +24,7 @@ class System:
 
         self.molecules.append(molecule)
 
-    def write(self, path:str, format:str):
+    def write(self, path:str, format:str, isBonds:bool=True, isAngles:bool=True, isDihedrals:bool=True, isImpropers:bool=True):
 
         from chemfiles import Frame, Trajectory
 
@@ -32,12 +32,15 @@ class System:
 
         cur_natoms = 0
         for molecule in self.molecules:
+
             for atom in molecule.atoms:
                 _atom = atom2atom(atom)
                 # _atom.mass = 20
                 frame.add_atom(_atom, atom.xyz)
-            for bond in molecule.bond_index:
-                frame.add_bond(*(bond+cur_natoms))
+
+            if isBonds:
+                for bond in molecule.bond_index:
+                    frame.add_bond(*(bond+cur_natoms))
 
             cur_natoms += molecule.natoms
 

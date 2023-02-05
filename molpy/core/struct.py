@@ -46,6 +46,9 @@ class StaticSOA:
         elif all(map(lambda k: type(k)==str, K)):
             return self.get_struct(K)
 
+    def get(self, key, default=None):
+        return self.data.get(key, default)
+
     def __setitem__(self, K, V):
 
         self.set_item(K, V)

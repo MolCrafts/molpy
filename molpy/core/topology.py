@@ -21,7 +21,7 @@ class Topology:
         self.impropers = StaticSOA()
         # self.residues = DynamicSOA()
 
-        self._graph = Graph()
+        # self._graph = Graph()
 
     @property
     def nbonds(self):

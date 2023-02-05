@@ -1,1 +1,0 @@
-from .lj import LJCut

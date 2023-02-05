@@ -1,1 +1,1 @@
-from .randomWalk import SimpleRandomWalk
+from .solvent import Solvent
