@@ -3,7 +3,7 @@
 # date: 2023-01-10
 # version: 0.0.1
 
-from .struct import DynamicSOA, StaticSOA
+from .struct import ArrayDict
 from .graph import Graph
 import numpy as np
 
@@ -15,10 +15,10 @@ class Topology:
 
     def reset(self):
 
-        self.bonds = StaticSOA()
-        self.angles = StaticSOA()
-        self.dihedrals = StaticSOA()
-        self.impropers = StaticSOA()
+        self.bonds = ArrayDict()
+        self.angles = ArrayDict()
+        self.dihedrals = ArrayDict()
+        self.impropers = ArrayDict()
 
     @property
     def nbonds(self):

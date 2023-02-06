@@ -5,8 +5,6 @@
 
 from operator import add
 from typing import List, Optional
-
-from molpy.core.struct import DynamicSOA, StaticSOA
 from molpy.core.topology import Topology
 import numpy as np
 from functools import reduce

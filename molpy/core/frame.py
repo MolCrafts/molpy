@@ -3,7 +3,7 @@
 # date: 2023-01-08
 # version: 0.0.1
 
-from .struct import StaticSOA
+from .struct import ArrayDict
 from .topology import Topology
 from .entity import Residue, Atom
 import numpy as np
@@ -13,10 +13,10 @@ class Frame:
 
     def __init__(self, ):
 
-        self.atoms = StaticSOA()
+        self.atoms = ArrayDict()
         self.topology = Topology()
         self.box = None
-        self.residues = StaticSOA()
+        self.residues = ArrayDict()
 
         self._natoms = 0
         self._nresidues = 0
