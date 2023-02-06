@@ -32,7 +32,8 @@ class AtomType(ItemType):
 
 class BondType(ItemType):
 
-    pass
+    def render(self, bond):
+        return bond.update(self)
 
 AtomTypeName = str
 AtomTypes = Tuple[AtomType, ...]
@@ -59,7 +60,7 @@ class Template:
             atomtype1, atomtype2 = atomtype2, atomtype1
         identity = (atomtype1, atomtype2)
         bt = BondType(**properties)
-        bt['index'] = identity
+        # bt['index'] = identity  # should we bind atomType?
         self.bondTypes[identity] = bt
         return bt
 
@@ -125,6 +126,21 @@ class Forcefield:
 
     def get_residue(self, name:str)->Template:
         return self._residues[name]
+
+    def render_residue(self, residue):
+
+        name = residue.name
+        template = self.get_residue(name)
+        for atom in residue.atoms:
+            template.get_atomType(atom['name']).render(atom)  # get type name from residue
+            self.get_atomType(atom['type']).render(atom)  # get props
+
+        for bond in residue.bonds:
+            at1 = self.get_atomType(bond.itom['type'])  # get global atom type
+            at2 = self.get_atomType(bond.jtom['type'])
+            self.get_bondType(at1, at2).render(bond)
+
+        return residue
 
     @classmethod
     def from_xml(cls, path):

@@ -16,6 +16,11 @@ class TestAtom:
         assert atom.name == 'O'
         assert atom.xyz == [0, 0, 0]
 
+    def test_compare(self):
+
+        a = mp.Atom(name='O', xyz=[0, 0, 0])
+        b = mp.Atom(name='H', xyz=[0, 0, 0])
+        assert a > b or a < b
 
 class TestBond:
 
@@ -51,6 +56,10 @@ class TestResidue:
             
         ch2 = mp.presets.molecules.CH2()
         npt.assert_allclose(ch2.translate([1, 1, 1]).xyz, np.array([[1, 1, 1], [1, 2.089, 1], [2.026, 0.455, 1]]))
+
+    def test_rotate(self):
+
+        ch2 = mp.presets.molecules.CH2()
 
 
 class TestMolecule:

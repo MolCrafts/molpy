@@ -52,3 +52,17 @@ class TestForcefield:
 
         assert bondTypes[0] == bondTypes[1]
         
+    def test_render_residue(self):
+
+        ff = mp.presets.forcefields.tip3p()
+        h2o = mp.presets.molecules.tip3p().residues[0]
+
+        ff.render_residue(h2o)
+        assert h2o.atoms[0].mass == "15.99943"
+        assert h2o.atoms[1].mass == "1.007947"
+        assert h2o.atoms[2].mass == "1.007947"
+        
+        assert h2o.bonds[0]['k'] == "462750.4"
+        assert h2o.bonds[1]['k'] == "462750.4"
+        assert h2o.bonds[0]['length'] == "0.09572"
+        assert h2o.bonds[1]['length'] == "0.09572"

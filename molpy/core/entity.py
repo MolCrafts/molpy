@@ -7,12 +7,19 @@ from operator import add
 from typing import List, Optional
 from molpy.core.topology import Topology
 import numpy as np
-from functools import reduce
+from functools import cached_property, reduce
 
 
 class Atom(dict):
+
     def __repr__(self):
         return f"<Atom: {self.name}>"
+
+    def __lt__(self, o):
+        return id(self) < id(o)
+
+    def __hash__(self):
+        return id(self)
 
     @property
     def name(self):
@@ -56,11 +63,11 @@ class Residue:
     def __repr__(self):
         return f'<Residue: {self.name}>'
 
-    @property
+    @cached_property
     def natoms(self):
         return len(self._atoms)
 
-    @property
+    @cached_property
     def nbonds(self):
         return self.topology.nbonds
 
@@ -70,15 +77,15 @@ class Residue:
     def add_bonds(self, bonds):
         self.topology.add_bonds(bonds)
 
-    @property
+    @cached_property
     def atoms(self) -> np.ndarray[Atom]:
         return np.array(self._atoms)
 
-    @property
+    @cached_property
     def connect(self) -> np.ndarray:
         return np.array(self.topology.bonds.get("index", []))
 
-    @property
+    @cached_property
     def bonds(self) -> np.ndarray[Bond]:
         index = self.connect
         atoms = self.atoms
@@ -93,7 +100,7 @@ class Residue:
             atom["xyz"] += vector
         return self
 
-    @property
+    @cached_property
     def xyz(self):
         return np.array([atom["xyz"] for atom in self.atoms])
 
