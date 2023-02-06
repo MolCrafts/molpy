@@ -61,5 +61,16 @@ class TestMolecule:
         assert h2o.natoms == 3
         assert h2o.atoms[0].name == 'O'
 
-        bonds = h2o.topology.bonds['index']
-        assert bonds[0][0] == 0
+        assert h2o.natoms == 3
+        assert h2o.nbonds == 2
+
+    def test_protonated_water(self):
+
+        h2o = mp.presets.molecules.tip3p()
+        h2o.add_atom(mp.Atom(name='H+'))
+        h2o.add_bonds([[0, 3]])
+
+        assert h2o.natoms == 4  
+        assert h2o.nbonds == 3
+        assert h2o.connect.shape == (3, 2)
+        

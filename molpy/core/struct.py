@@ -43,6 +43,8 @@ class ArrayDict(dict):
 
         if isinstance(K, str):
             super().__setitem__(K, V)
+            self._length = len(V)
+        self.sentry()
 
     @property
     def length(self):
@@ -50,4 +52,3 @@ class ArrayDict(dict):
 
     def set(self, k, v):
         self[k] = v
-        self.sentry()

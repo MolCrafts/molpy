@@ -41,7 +41,7 @@ class Topology:
         return np.ndarray(self.bonds.get('index', []))
 
     def add_bonds(self, connect, **properties):
-
+        connect = np.atleast_2d(connect)
         assert connect.ndim == 2 and connect.shape[-1] == 2
         connect = np.sort(connect, axis=1)
         self.bonds['index'] = connect
