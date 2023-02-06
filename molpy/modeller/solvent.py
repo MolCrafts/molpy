@@ -24,7 +24,7 @@ class Solvent:
 
         for dr in target:
             m = clone(template)
-            m.move_to(dr)
+            m.translate(m.xyz[0] - dr)
             moles.append(m)
 
         return moles

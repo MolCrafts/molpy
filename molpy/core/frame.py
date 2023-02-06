@@ -46,7 +46,7 @@ class Frame:
             if hasattr(an_atom, prop):
                 molpy_frame.atoms[prop] = [getattr(atom, prop) for atom in chemfile_frame.atoms]
 
-        assert molpy_frame.atoms.length == molpy_frame.atoms.size
+        assert molpy_frame.atoms.length == molpy_frame.atoms.length
 
         # load topology
         ## load bond
@@ -87,7 +87,7 @@ class Frame:
 
     @property
     def natoms(self):
-        return self.atoms.size
+        return self.atoms.length
 
     @property
     def nbonds(self):
