@@ -19,29 +19,26 @@ class Topology:
         self.angles = StaticSOA()
         self.dihedrals = StaticSOA()
         self.impropers = StaticSOA()
-        # self.residues = DynamicSOA()
-
-        # self._graph = Graph()
 
     @property
     def nbonds(self):
-        return len(self.bonds)
+        return self.bonds.length
 
     @property
     def nangles(self):
-        return len(self.angles)
+        return self.angles.length
 
     @property
     def ndihedrals(self):
-        return len(self.dihedrals)
+        return self.dihedrals.length
 
     @property
     def nimpropers(self):
-        return len(self.impropers)
+        return self.impropers.length
 
-    # @property
-    # def nresidues(self):
-    #     return len(self.residues)
+    @property
+    def connect(self)->np.ndarray:
+        return np.ndarray(self.bonds.get('index', []))
 
     def add_bonds(self, connect, **properties):
 

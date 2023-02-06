@@ -7,65 +7,49 @@ from typing import Callable, Hashable, List, Optional
 from .typing import Dict, NDArray, ArrayLike, Iterable, Any
 import numpy as np
 
-class SOA:
 
-    pass
+class StaticSOA(dict):
 
-class StaticSOA:
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._length = self.sentry()
 
-    def __init__(self, ):
-
-        self.data:Dict[str, NDArray] = {}
-        self.length = 0
-
-    def get_item(self, key:str)->NDArray:
-        return self.data[key]
+    def sentry(self):
+        if len(self) == 0:
+            return 0
+        max_length = max(self.values())
+        min_length = min(self.values())
+        if max_length == min_length:
+            return max_length
+        else:
+            raise ValueError("The length of all arrays must be the same.")
 
     def get_struct(self, keys:Optional[Iterable[str]]=None):
 
-        data = self.data
-        keys = keys or data.keys()
-        field_type = {key: np.array(data[key]).dtype for key in keys}
-        field_shape = {key: np.array(data[key]).shape[1:] for key in keys} 
+        keys = keys or self.keys()
+        field_type = {key: np.array(self[key]).dtype for key in keys}
+        field_shape = {key: np.array(self[key]).shape[1:] for key in keys} 
 
         structured_dtype = np.dtype([(key, field_type[key], field_shape[key]) for key in keys])
 
-        return np.array([x for x in zip(*data.values())], dtype=structured_dtype)
-
-
-    def set_item(self, key:str, value:ArrayLike)->None:
-
-        self.data[key] = np.array(value)
-        self.length = max(self.length, len(value))
+        return np.array([x for x in zip(*self.values())], dtype=structured_dtype)
 
     def __getitem__(self, K):
         if isinstance(K, str):
-            return self.get_item(K)
+            return super().__getitem__(K)
         elif isinstance(K, np.ndarray):
             return self.get_struct()[K]
         elif all(map(lambda k: type(k)==str, K)):
             return self.get_struct(K)
 
-    def get(self, key, default=None):
-        return self.data.get(key, default)
-
     def __setitem__(self, K, V):
 
-        self.set_item(K, V)
-
-    def __len__(self):
-        return self.length
+        if isinstance(K, str):
+            super().__setitem__(K, V)
 
     @property
-    def size(self):
-        return self.length
-
-    def keys(self):
-        return list(self.data.keys())
-
-    def set_empty_like(self, key:str, length:int, value:ArrayLike)->None:
-        v = np.array(value)
-        self.set_item(key, np.zeros((length, *v.shape), dtype=v.dtype))
+    def length(self):
+        return self._length
 
 
 class DynamicSOA:
