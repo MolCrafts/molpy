@@ -53,8 +53,8 @@ class Topology:
             if len(value) == self.bonds:
                 self.bonds[key] == value
 
-        for i, j in connect:
-            self._graph.set_edge(i, j)
+        # for i, j in connect:
+        #     self._graph.set_edge(i, j)
 
     def add_angles(self, connect, **properties):
 

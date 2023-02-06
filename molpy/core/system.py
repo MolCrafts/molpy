@@ -30,19 +30,13 @@ class System:
 
         frame = Frame()
 
-        cur_natoms = 0
-        for molecule in self.molecules:
+        for atom in self.forcefield.render_atoms(self.atoms):
 
-            for atom in molecule.atoms:
-                _atom = atom2atom(atom)
-                # _atom.mass = 20
-                frame.add_atom(_atom, atom.xyz)
+            _atom = atom2atom(atom)
+            frame.add_atom(_atom, atom.xyz)
 
-            if isBonds:
-                for bond in molecule.bond_index:
-                    frame.add_bond(*(bond+cur_natoms))
-
-            cur_natoms += molecule.natoms
+        for bond in self.forcefield.render_bonds(self.bonds):
+            frame.add_bond(*bond, )
 
         frame.cell = box2cell(self.box)
 
@@ -57,6 +51,30 @@ class System:
             _atoms.extend(molecule.atoms)
 
         return _atoms
+
+    @property
+    def bonds(self):
+
+        bonds = []
+        bond_idx = self.bond_idx
+        for molecule in self.molecules:
+            bonds.extend(molecule.bonds)
+
+        for bond, idx in zip(bonds, bond_idx):
+            bond.i, bond.j = idx[0], idx[1]
+
+        return bonds
+
+    @property
+    def bond_idx(self):
+
+        bond_idx = []
+        cur_natoms = 0
+        for molecule in self.molecules:
+            bond_idx.extend(molecule.bond_index+cur_natoms)
+            cur_natoms += molecule.natoms
+
+        return bond_idx
 
     @property
     def natoms(self):

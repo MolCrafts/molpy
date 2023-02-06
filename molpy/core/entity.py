@@ -36,10 +36,13 @@ class Atom(dict):
 
 
 class Bond(dict):
-    def __init__(self, atom1, atom2, *args, **kwargs):
+    def __init__(self, i, j, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.atom1 = atom1
-        self.atom2 = atom2
+        self.i = i
+        self.j = j
+
+    def __iter__(self):
+        return (self.i, self.j)
 
 
 class Residue:
@@ -91,6 +94,17 @@ class Molecule:
     @property
     def bond_index(self):
         return self.topology.bonds.get("index", np.array([]))
+
+    @property
+    def bonds(self)->List[Bond]:
+        index = self.topology.bonds["index"]
+        bonds = []
+        for idx in index:
+            # atom1 = self.atoms[idx[0]]
+            # atom2 = self.atoms[idx[1]]
+            bond = Bond(*idx)
+            bonds.append(bond)
+        return bonds
 
     @property
     def xyz(self):

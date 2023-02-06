@@ -3,7 +3,7 @@
 # date: 2023-02-03
 # version: 0.0.1
 
-from molpy.core.entity import Molecule
+from molpy.core.entity import Molecule, Atom
 import numpy as np
 
 def tip3p():
@@ -19,7 +19,8 @@ def tip3p():
     m = Molecule(name='tip3p')
     natoms = 3
     for i in range(natoms):
-        m.add_atom(name=name[i], id=ids[i], xyz=xyz[i], element=element[i], residue=residueName[i])
+        atom = Atom(name=name[i], id=ids[i], xyz=xyz[i], element=element[i], residue=residueName[i])
+        m.add_atom(atom)
 
     connect = np.array([[0, 1], [0, 2]])
     m.topology.add_bonds(connect)

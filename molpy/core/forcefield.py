@@ -4,41 +4,31 @@
 # version: 0.0.1
 
 from copy import deepcopy
+from functools import partial
 from typing import Iterable, Sequence
 
 from .typing import Dict, Any, ArrayLike, Tuple, List
 import numpy as np
 
-class ItemType:
+class ItemType(dict):
 
-    def __init__(self, identity, **properties):
-
-        self.identity = identity
-        self.data:Dict[str, Any] = {}
-        self.data.update(properties)
-        self._hash = hash(self.identity)
-
-    def __eq__(self, other):
-        return self._hash == hash(other)
-
-    def __lt__(self, other):
-        return self._hash < hash(other)
-
-    def __gt__(self, other):
-        return self._hash > hash(other)
+    def render(self, entity):
+        raise NotImplementedError()
 
     def __hash__(self):
-        return self._hash
+        "unsafe hash"
+        return id(self)
 
-    def __repr__(self):
-        return f"<{self.__class__.__name__}({self.identity})>"
-
-    def __getitem__(self, key:str):
-        return self.data[key]
+    def __lt__(self, o):
+        return id(self) < id(o)
 
 class AtomType(ItemType):
 
-    pass
+    def render(self, atom):
+        return atom.update(self)
+
+    def __lt__(self, o):
+        return 
 
 class BondType(ItemType):
 
@@ -56,7 +46,8 @@ class Template:
         self.bondTypes:Dict[AtomTypes, BondType] = {}
 
     def def_atomType(self, name:str, **properties):
-        at = AtomType(name, **properties)
+        at = AtomType(**properties)
+        at['name'] = name
         self.atomTypes[name] = at
         return at
 
@@ -67,7 +58,8 @@ class Template:
         if atomtype1 > atomtype2:
             atomtype1, atomtype2 = atomtype2, atomtype1
         identity = (atomtype1, atomtype2)
-        bt = BondType(identity, **properties)
+        bt = BondType(**properties)
+        bt['index'] = identity
         self.bondTypes[identity] = bt
         return bt
 
@@ -103,12 +95,28 @@ class Forcefield:
         return self._parameters.get_bondType(atomtype1, atomtype2)
 
     def match_atomTypes(self, names:Iterable)->List[AtomType | None]:
-        return list(map(self._parameters.atomTypes.get, names))
+        return list(map(partial(self._parameters.atomTypes.get, AtomType()), names))
 
     def match_bondTypes(self, atomTypes:Iterable[Tuple[AtomType, AtomType]])->List[BondType | None]:
 
         sort_fn = lambda x: (x[0], x[1]) if x[0] < x[1] else (x[1], x[0])
-        return list(map(self._parameters.bondTypes.get, map(sort_fn, atomTypes)))
+        return list(map(partial(self._parameters.bondTypes.get, BondType()), map(sort_fn, atomTypes)))
+
+    def render_atoms(self, atoms):
+        atomNames = map(lambda atom: atom['name'], atoms)
+        atomTypes = self.match_atomTypes(atomNames)
+        return map(lambda at, atom: at.render(atom), atomTypes, atoms)
+
+    def render_bonds(self, bonds):
+    
+        # bond_index = np.array(self.bond_idx)
+
+        # _atoms = np.array(self.atoms)
+        # bond_atom_type = _atoms[bond_index]
+        # bondTypes = self.forcefield.match_bondTypes(np.stack(bond_atom_type))
+        # map(lambda bond, bondType: bond.render(bondType), self.bonds, bondTypes)
+
+        return bonds
 
     def def_residue(self, name:str, )->Template:
         residue = Template(name)

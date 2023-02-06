@@ -24,6 +24,19 @@ class TestSolvent:
         for m in molecule_list:
             system.add_molecule(m)
 
-        system.render()
         system.write('test.data', 'LAMMPS Data')
 
+    def test_tip3p(self):
+
+        system = mp.System('tip3p')
+        system.box.reset(10, 10, 10)
+        system.forcefield = mp.presets.forcefields.tip3p()
+
+        template = mp.presets.molecules.tip3p()
+
+        solModeller = mp.modeller.Solvent(system.box)
+        molecule_list = solModeller.add_solvent(10, template, seed=0)
+        for m in molecule_list:
+            system.add_molecule(m)
+
+        system.write('tip3p.data', 'LAMMPS Data')
