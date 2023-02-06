@@ -16,6 +16,7 @@ We also provide an interactive visualization package [molvis](https://github.com
   - [x] read and write data via Chemfiles;
   - [x] trilinic box;
   - [x] forcefield;
+  - [x] typification;
   - [ ] modelling;
   - [ ] neighorlist;
   - [ ] interactivate visualization API;
