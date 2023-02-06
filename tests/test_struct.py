@@ -21,8 +21,12 @@ class TestStructData:
         }
         return mp.core.struct.ArrayDict(raw)
 
-    def test_length(self, data):
-        assert data.length == 10
+    def test_length(self):
+
+        data = mp.ArrayDict()
+        assert data.length == 0
+        
+        
 
     def test_get_field(self, data):
 

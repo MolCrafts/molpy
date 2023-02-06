@@ -38,7 +38,7 @@ class Topology:
 
     @property
     def connect(self)->np.ndarray:
-        return np.ndarray(self.bonds.get('index', []))
+        return np.array(self.bonds.get('index', []))
 
     def add_bonds(self, connect, **properties):
         connect = np.atleast_2d(connect)

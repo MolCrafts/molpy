@@ -132,11 +132,12 @@ class Molecule:
 
         connect = np.zeros((self.nbonds, 2), dtype=int)
         cursor = self.topology.nbonds
-        connect[:cursor] = np.array(self.topology.bonds["index"])
+        if cursor:
+            connect[:cursor] = np.array(self.topology.connect)
         for residue in self.residues:
             nbonds = residue.nbonds
             next_cur = cursor + nbonds
-            connect[cursor:next_cur] = residue.connect
+            connect[cursor:next_cur] = residue.connect + len(self._atoms)
             cursor = next_cur
         return connect
 

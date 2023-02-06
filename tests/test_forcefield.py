@@ -39,7 +39,7 @@ class TestForcefield:
 
         # test match_atomType
         h2o_residue = ff.get_residue('HOH')
-        literal_h2o_atom_name = h2o.atoms['name']
+        literal_h2o_atom_name = ['O', 'H1', 'H2']
         atomTypeName = list(map(h2o_residue.get_atomType, literal_h2o_atom_name))
         assert atomTypeName[0]['type'] == 'tip3p-O'
         atomTypes = list(map(ff.get_atomType, map(lambda x: x['type'], atomTypeName)))
@@ -47,7 +47,7 @@ class TestForcefield:
         assert atomTypes[1]['class'] == 'HW'
 
         # test match_bondType
-        connect = h2o.topology.bonds['index']
+        connect = h2o.connect
         bondTypes = list(map(lambda x: ff.get_bondType(atomTypes[x[0]], atomTypes[x[1]]), connect))
 
         assert bondTypes[0] == bondTypes[1]

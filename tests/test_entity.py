@@ -63,6 +63,7 @@ class TestMolecule:
 
         assert h2o.natoms == 3
         assert h2o.nbonds == 2
+        assert h2o.connect.shape == (2, 2)
 
     def test_protonated_water(self):
 
@@ -73,4 +74,5 @@ class TestMolecule:
         assert h2o.natoms == 4  
         assert h2o.nbonds == 3
         assert h2o.connect.shape == (3, 2)
+        npt.assert_equal(h2o.connect, np.array([[0, 3], [1, 2], [1, 3]]))
         
