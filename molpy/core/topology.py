@@ -3,7 +3,7 @@
 # date: 2023-01-10
 # version: 0.0.1
 
-from .struct import ArrayDict
+from .struct import StructArray
 from .graph import Graph
 import numpy as np
 
@@ -15,10 +15,10 @@ class Topology:
 
     def reset(self):
 
-        self.bonds = ArrayDict()
-        self.angles = ArrayDict()
-        self.dihedrals = ArrayDict()
-        self.impropers = ArrayDict()
+        self.bonds = StructArray()
+        self.angles = StructArray()
+        self.dihedrals = StructArray()
+        self.impropers = StructArray()
 
     @property
     def nbonds(self):

@@ -3,7 +3,7 @@
 # date: 2023-01-08
 # version: 0.0.1
 
-from .struct import ArrayDict
+from .struct import StructArray
 from .topology import Topology
 from .entity import Residue, Atom
 import numpy as np
@@ -13,10 +13,10 @@ class Frame:
 
     def __init__(self, ):
 
-        self.atoms = ArrayDict()
+        self.atoms = StructArray()
         self.topology = Topology()
         self.box = None
-        self.residues = ArrayDict()
+        self.residues = StructArray()
 
         self._natoms = 0
         self._nresidues = 0

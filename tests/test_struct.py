@@ -19,11 +19,11 @@ class TestStructData:
             'bool': np.ones(10, dtype=bool),
             'pyObject': np.array([None]* 10)
         }
-        return mp.core.struct.ArrayDict(raw)
+        return mp.core.struct.StructArray(raw)
 
     def test_length(self):
 
-        data = mp.ArrayDict()
+        data = mp.StructArray()
         assert data.length == 0
         
         
@@ -49,4 +49,10 @@ class TestStructData:
     def test_set_field(self, data):
 
         with pytest.raises(ValueError):
-            data.set('int', np.ones(5, dtype=np.int32))
+            # data.set('int', np.ones(5, dtype=np.int32))
+            data['short'] = np.ones(5, dtype=np.int16)
+            
+        with pytest.raises(ValueError):
+            data['long'] = np.ones(5, dtype=bool)
+
+        data['good'] = np.ones(10, dtype=np.int16)
