@@ -10,7 +10,10 @@ We also provide an interactive visualization package [molvis](https://github.com
 
 ## roadmap
 
-### 0.0.1
+### 0.0.1: novice
+
+    In this version, we will complete the core data structure of the project, determine the style of the API, and fully test the correctness of the code. 
+
   - [x] refactor core data structure;
   - [x] static and dynamic data structure;
   - [x] read and write data via Chemfiles;
@@ -24,9 +27,16 @@ We also provide an interactive visualization package [molvis](https://github.com
   - [ ] simple example;
   - [ ] document;
 
-### 0.0.2
+### 0.0.2: assist
+
+    Based on the novice version, we will add some useful tools to assist the user to apply the package to their own research and do what other packages can't do.
+
   - [ ] parallel dataloader;
   - [ ] graph neural network support;
-  - [ ] SMARTS expression;
+  - [ ] SMARTS/SMILES expression;
   - [ ] potential function generator;
   - [ ] MD engine API;
+
+### 0.0.3: ringmaster
+
+    If possible, in this version, we will seamlessly connect with molecular simulation package. For example, we can provide a simple way to submit the simulation to the cluster and monitor the progress of the simulation. Once molpy script build, use it in any simulation package.
