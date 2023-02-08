@@ -7,7 +7,9 @@ from functools import cached_property
 import numpy as np
 
 class StructArray(dict):
-
+    """
+    StructArray is an wrapper of StructuredArray of Numpy.
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._length = self.sentry()

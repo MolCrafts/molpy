@@ -34,7 +34,7 @@ class TestResidue:
 
     def test_init(self):
 
-        ch2 = mp.presets.molecules.CH2()
+        ch2 = mp.preset.molecules.CH2()
         assert ch2.name == 'CH2'
         assert ch2.natoms == 3
         assert ch2.nbonds == 2
@@ -54,19 +54,19 @@ class TestResidue:
 
     def test_translate(self):
             
-        ch2 = mp.presets.molecules.CH2()
+        ch2 = mp.preset.molecules.CH2()
         npt.assert_allclose(ch2.translate([1, 1, 1]).xyz, np.array([[1, 1, 1], [1, 2.089, 1], [2.026, 0.455, 1]]))
 
     def test_rotate(self):
 
-        ch2 = mp.presets.molecules.CH2()
+        ch2 = mp.preset.molecules.CH2()
 
 
 class TestMolecule:
 
     def test_tip3p(self):
 
-        h2o = mp.presets.molecules.tip3p()
+        h2o = mp.preset.molecules.tip3p()
         assert h2o.natoms == 3
         assert h2o.atoms[0].name == 'O'
 
@@ -76,7 +76,7 @@ class TestMolecule:
 
     def test_protonated_water(self):
 
-        h2o = mp.presets.molecules.tip3p()
+        h2o = mp.preset.molecules.tip3p()
         h2o.add_atom(mp.Atom(name='H+'))
         h2o.add_bonds([[0, 3]])
 

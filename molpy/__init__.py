@@ -1,3 +1,4 @@
 from .core import *
-from .presets import *
+from .preset import *
 from .modeller import *
+from .potential import *

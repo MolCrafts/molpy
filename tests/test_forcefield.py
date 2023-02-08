@@ -11,7 +11,7 @@ class TestForcefield:
 
     def test_load_presets(self):
 
-        ff = mp.presets.forcefields.tip3p()
+        ff = mp.preset.forcefields.tip3p()
 
         # test atomTypes
         O = ff.get_atomType('tip3p-O')
@@ -34,8 +34,8 @@ class TestForcefield:
         
     def test_match_atomType(self):
 
-        ff = mp.presets.forcefields.tip3p()
-        h2o = mp.presets.molecules.tip3p()
+        ff = mp.preset.forcefields.tip3p()
+        h2o = mp.preset.molecules.tip3p()
 
         # test match_atomType
         h2o_residue = ff.get_residue('HOH')
@@ -54,8 +54,8 @@ class TestForcefield:
         
     def test_render_residue(self):
 
-        ff = mp.presets.forcefields.tip3p()
-        h2o = mp.presets.molecules.tip3p().residues[0]
+        ff = mp.preset.forcefields.tip3p()
+        h2o = mp.preset.molecules.tip3p().residues[0]
 
         ff.render_residue(h2o)
         assert h2o.atoms[0].mass == "15.99943"

@@ -3,7 +3,10 @@
 # date: 2022-06-12
 # version: 0.0.1
 
-import numpy as np
+try:
+    import jax.numpy as np
+except ImportError:
+    import numpy as np
 from numpy.typing import ArrayLike
 
 class Box:
@@ -27,6 +30,18 @@ class Box:
         self._matrix = np.array([lattice_a, lattice_b, lattice_c]).T
         self.L = self._matrix.diagonal()
 
+    @classmethod
+    def from_matrix(cls, matrix):
+        xhi = matrix[0, 0]
+        yhi = matrix[1, 1]
+        zhi = matrix[2, 2]
+        xlo = 0.
+        ylo = 0.
+        zlo = 0.
+        xy = matrix[0, 1]
+        xz = matrix[0, 2]
+        yz = matrix[1, 2]
+        return cls(xhi, yhi, zhi, xlo, ylo, zlo, xy, xz, yz)
 
     @property
     def inv_box(self):

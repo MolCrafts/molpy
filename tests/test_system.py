@@ -9,8 +9,8 @@ class TestSystem:
 
     def test_write(self):
 
-        h2o = mp.presets.molecules.tip3p()
-        ff = mp.presets.forcefields.tip3p()
+        h2o = mp.preset.molecules.tip3p()
+        ff = mp.preset.forcefields.tip3p()
         system = mp.System('test_write_hip3p')
         system.forcefield = ff
 

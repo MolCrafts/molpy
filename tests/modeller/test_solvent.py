@@ -30,9 +30,9 @@ class TestSolvent:
 
         system = mp.System('tip3p')
         system.box.reset(10, 10, 10)
-        system.forcefield = mp.presets.forcefields.tip3p()
+        system.forcefield = mp.preset.forcefields.tip3p()
 
-        template = mp.presets.molecules.tip3p()
+        template = mp.preset.molecules.tip3p()
 
         solModeller = mp.modeller.Solvent(system.box)
         molecule_list = solModeller.add_solvent(10, template, seed=0)
