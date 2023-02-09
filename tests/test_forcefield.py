@@ -16,8 +16,8 @@ class TestForcefield:
         # test atomTypes
         O = ff.get_atomType('tip3p-O')
         H = ff.get_atomType('tip3p-H')
-        assert O['class'] == 'OW'
-        assert H['class'] == 'HW'
+        assert O['class']['name'] == 'OW'
+        assert H['class']['name'] == 'HW'
         assert O['element'] == 'O'
         assert H['element'] == 'H'
 
@@ -43,8 +43,8 @@ class TestForcefield:
         atomTypeName = list(map(h2o_residue.get_atomType, literal_h2o_atom_name))
         assert atomTypeName[0]['type'] == 'tip3p-O'
         atomTypes = list(map(ff.get_atomType, map(lambda x: x['type'], atomTypeName)))
-        assert atomTypes[0]['class'] == 'OW'
-        assert atomTypes[1]['class'] == 'HW'
+        assert atomTypes[0]['class']['name'] == 'OW'
+        assert atomTypes[1]['class']['name'] == 'HW'
 
         # test match_bondType
         connect = h2o.connect

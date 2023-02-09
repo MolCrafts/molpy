@@ -3,9 +3,10 @@
 # date: 2023-01-16
 # version: 0.0.1
 
+from collections import defaultdict
 from copy import deepcopy
 from functools import partial
-from typing import Iterable, Sequence
+from typing import Iterable, Optional, Sequence
 
 from .typing import Dict, Any, ArrayLike, Tuple, List
 import numpy as np
@@ -28,7 +29,11 @@ class AtomType(ItemType):
         return atom.update(self)
 
     def __lt__(self, o):
-        return 
+        return id(self) < id(o)
+
+class AtomClass(ItemType):
+    pass
+
 
 class BondType(ItemType):
 
@@ -36,6 +41,7 @@ class BondType(ItemType):
         return bond.update(self)
 
 AtomTypeName = str
+AtomClassName = str
 AtomTypes = Tuple[AtomType, ...]
 
 class Template:
@@ -44,31 +50,55 @@ class Template:
 
         self.name = name
         self.atomTypes:Dict[AtomTypeName, AtomType] = {}
+        self.atomClasses:Dict[AtomClassName, AtomClass] = {}
+        self.atomTypeMapToClass:Dict[AtomType, AtomClassName] = {}
+        self.atomClassContainsAtomType:Dict[AtomClass, List[AtomType]] = defaultdict(list)
         self.bondTypes:Dict[AtomTypes, BondType] = {}
 
-    def def_atomType(self, name:str, **properties):
+    def def_atomType(self, name:str, className:Optional[str]=None, **properties):
         at = AtomType(**properties)
+        ac = self.atomClasses.setdefault(className, AtomClass(name=className))
         at['name'] = name
+        at['class'] = ac
         self.atomTypes[name] = at
+        self.atomTypeMapToClass[at] = ac
+        self.atomClassContainsAtomType[ac].append(at)
         return at
 
     def get_atomType(self, name:str)->AtomType:
         return self.atomTypes[name]
 
-    def def_bondType(self, atomtype1:AtomType, atomtype2:AtomType, **properties):
-        if atomtype1 > atomtype2:
-            atomtype1, atomtype2 = atomtype2, atomtype1
-        identity = (atomtype1, atomtype2)
-        bt = BondType(**properties)
-        # bt['index'] = identity  # should we bind atomType?
+    def get_atomTypes_by_class(self, className:str)->List[AtomType]:
+        return self.atomClassContainsAtomType[className]
+
+    def def_bondType(self, atom1:AtomType|AtomClass, atom2:AtomType|AtomClass, style:Optional[str]=None, **properties):
+        if atom1 > atom2:
+            atom1, atom2 = atom2, atom1
+        identity = (atom1, atom2)
+        bt = BondType(name=style, **properties)
         self.bondTypes[identity] = bt
         return bt
 
-    def get_bondType(self, atomtype1:AtomType, atomtype2:AtomType)->BondType:
-        if atomtype1 > atomtype2:
-            atomtype1, atomtype2 = atomtype2, atomtype1
-        identity = (atomtype1, atomtype2)
-        return self.bondTypes[identity]
+    def get_bondType(self, atom1:AtomType|AtomClass, atom2:AtomType|AtomClass)->BondType:
+
+        candidate_atom1 = [atom1, ]
+        candidate_atom2 = [atom2, ]
+        if isinstance(atom1, AtomType):
+            candidate_atom1.append(self.atomTypeMapToClass[atom1])
+        elif isinstance(atom1, AtomClass):
+            candidate_atom1.extend(self.atomClassContainsAtomType[atom1])
+        if isinstance(atom2, AtomType):
+            candidate_atom2.append(self.atomTypeMapToClass[atom2])
+        elif isinstance(atom2, AtomClass):
+            candidate_atom2.extend(self.atomClassContainsAtomType[atom2])
+
+        for c1 in candidate_atom1:
+            for c2 in candidate_atom2:
+                if c1 > c2:
+                    c1, c2 = c2, c1
+                bt = self.bondTypes.get((c1, c2), None)
+                if bt:
+                    return bt
 
     def __repr__(self):
         return f'<Template: {self.name}>'
@@ -80,25 +110,25 @@ class Forcefield:
         self._parameters:Template = Template('_global_')
         self._residues:Dict[str, Template] = {}
 
-    def def_atomType(self, name:str, **properties):
-        return self._parameters.def_atomType(name, **properties)
+    def def_atomType(self, name:str, className:str, **properties):
+        return self._parameters.def_atomType(name, className, **properties)
 
-    def def_bondType(self, atomtype1:AtomType, atomtype2:AtomType, **properties):
-        return self._parameters.def_bondType(atomtype1, atomtype2, **properties)
+    def def_bondType(self, atom1:AtomType|AtomClass, atom12:AtomType|AtomClass, style:Optional[str], **properties):
+        return self._parameters.def_bondType(atom1, atom12, style, **properties)
 
     def get_atomType(self, name:str)->AtomType:
         return self._parameters.get_atomType(name)
 
     def get_atomType_by_class(self, className:str)->List[AtomType]:
-        return [at for at in self._parameters.atomTypes.values() if at['class'] == className]
+        return self._parameters.get_atomTypes_by_class(className)
 
-    def get_bondType(self, atomtype1:AtomType, atomtype2:AtomType)->BondType:
+    def get_bondType(self, atomtype1:AtomType|AtomClass, atomtype2:AtomType|AtomClass)->BondType:
         return self._parameters.get_bondType(atomtype1, atomtype2)
 
     def match_atomTypes(self, names:Iterable)->List[AtomType | None]:
         return list(map(partial(self._parameters.atomTypes.get, AtomType()), names))
 
-    def match_bondTypes(self, atomTypes:Iterable[Tuple[AtomType, AtomType]])->List[BondType | None]:
+    def match_bondTypes(self, atomTypes:Iterable[Tuple[AtomType|AtomClass, AtomType|AtomClass]])->List[BondType | None]:
 
         sort_fn = lambda x: (x[0], x[1]) if x[0] < x[1] else (x[1], x[0])
         return list(map(partial(self._parameters.bondTypes.get, BondType()), map(sort_fn, atomTypes)))
@@ -109,13 +139,6 @@ class Forcefield:
         return map(lambda at, atom: at.render(atom), atomTypes, atoms)
 
     def render_bonds(self, bonds):
-    
-        # bond_index = np.array(self.bond_idx)
-
-        # _atoms = np.array(self.atoms)
-        # bond_atom_type = _atoms[bond_index]
-        # bondTypes = self.forcefield.match_bondTypes(np.stack(bond_atom_type))
-        # map(lambda bond, bondType: bond.render(bondType), self.bonds, bondTypes)
 
         return bonds
 
@@ -155,7 +178,7 @@ class Forcefield:
 
         for at in atomTypes:
             at_dict = at.attrib
-            ff.def_atomType(at_dict.pop('name'), **at_dict)
+            ff.def_atomType(at_dict.pop('name'), className=at_dict.pop('class', None), **at_dict)
 
         # get residues
         residues = root.find("Residues")
@@ -184,29 +207,14 @@ class Forcefield:
         # get force
         for force in root:
             if force.tag.endswith("Force"):
+                force_name = force.tag[:-5]
                 for item in force:
                     if item.tag == "Bond":
-                        
                         bt_dict = deepcopy(item.attrib)
-                        atomTypes1 = []
-                        atomTypes2 = []
-                        if "class1" in bt_dict:
-                            atomClass1 = bt_dict.pop("class1")
-                            atomTypes1 = ff.get_atomType_by_class(atomClass1)
-                        if "class2" in bt_dict:
-                            atomClass2 = bt_dict.pop("class2")
-                            atomTypes2 = ff.get_atomType_by_class(atomClass2)
-                        if "atomName1" in bt_dict:
-                            atomName1 = bt_dict.pop("atomName1")
-                            atomTypes1 = [ff.get_atomType(atomName1)]
-                        if "atomName2" in bt_dict:
-                            atomName2 = bt_dict.pop("atomName2")
-                            atomTypes2 = [ff.get_atomType(atomName2)]
-                        
-                        if atomTypes1 or atomTypes2:
-                            for at1, at2 in zip(atomTypes1, atomTypes2):
-                                ff.def_bondType(at1, at2, **bt_dict)
-                        else:
-                            raise ValueError("Bond must have either class1, class2, atomName1 or atomName2")
+                        atom1 = bt_dict.pop('class1', 'atomName1')
+                        atom2 = bt_dict.pop('class2', 'atomName2')
+                        atomClass1 = ff._parameters.atomClasses[atom1]
+                        atomClass2 = ff._parameters.atomClasses[atom2]
+                        ff.def_bondType(atomClass1, atomClass2, style=force_name[:-4], **bt_dict)
 
         return ff
