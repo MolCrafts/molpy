@@ -9,7 +9,7 @@ import numpy.testing as npt
 
 class TestForcefield:
 
-    def test_load_presets(self):
+    def test_load_tip3p(self):
 
         ff = mp.preset.forcefields.tip3p()
 
@@ -66,3 +66,7 @@ class TestForcefield:
         assert h2o.bonds[1]['k'] == "462750.4"
         assert h2o.bonds[0]['length'] == "0.09572"
         assert h2o.bonds[1]['length'] == "0.09572"
+
+    def test_load_gaff(self):
+        ff = mp.preset.forcefields.gaff()
+        

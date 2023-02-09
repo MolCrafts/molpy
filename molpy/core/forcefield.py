@@ -95,10 +95,14 @@ class Template:
         for c1 in candidate_atom1:
             for c2 in candidate_atom2:
                 if c1 > c2:
-                    c1, c2 = c2, c1
-                bt = self.bondTypes.get((c1, c2), None)
-                if bt:
+                    bt = self.bondTypes.get((c2, c1), None)
+                else:
+                    bt = self.bondTypes.get((c1, c2), None)
+                if bt is not None:
                     return bt
+        else:
+            raise KeyError(f'<Bond:{atom1}-{atom2}> not found in template {self.name}')
+            
 
     def __repr__(self):
         return f'<Template: {self.name}>'
@@ -161,7 +165,8 @@ class Forcefield:
         for bond in residue.bonds:
             at1 = self.get_atomType(bond.itom['type'])  # get global atom type
             at2 = self.get_atomType(bond.jtom['type'])
-            self.get_bondType(at1, at2).render(bond)
+            bondType = self.get_bondType(at1, at2)
+            bondType.render(bond)
 
         return residue
 
