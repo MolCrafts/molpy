@@ -31,15 +31,15 @@ class Atom(dict):
 
     @property
     def type(self):
-        return self.get("type")
+        return self.get("type", '')
 
     @property
     def charge(self):
-        return self.get("charge", None)
+        return float(self.get("charge", 0.0))
 
     @property
     def mass(self):
-        return self.get("mass", None)
+        return float(self.get("mass", 0.0))
 
 
 class Bond(dict):
@@ -49,7 +49,10 @@ class Bond(dict):
         self.jtom = j
 
     def __iter__(self):
-        return (self.i, self.j)
+        return iter((self.itom, self.jtom))
+
+    def __repr__(self):
+        return f'<Bond:{self.itom}-{self.jtom}>'
 
 
 class Residue:
@@ -158,7 +161,7 @@ class Molecule:
     def bonds(self)->np.ndarray[Bond]:
         index = self.connect
         atoms = self.atoms
-        bond_atoms = index[atoms]
+        bond_atoms = atoms[index]
         bonds = np.zeros((len(bond_atoms)), dtype=object)
         for i, b in enumerate(bond_atoms):
             bonds[i] = Bond(*b)

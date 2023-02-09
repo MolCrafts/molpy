@@ -35,8 +35,10 @@ class System:
             _atom = atom2atom(atom)
             frame.add_atom(_atom, atom.xyz)
 
-        for bond in self.forcefield.render_bonds(self.bonds):
-            frame.add_bond(*bond, )
+        self.forcefield.render_bonds(self.bonds)
+
+        for bond in self.bonds:
+            frame.add_bond(bond.i, bond.j)
 
         frame.cell = box2cell(self.box)
 
@@ -71,7 +73,7 @@ class System:
         bond_idx = []
         cur_natoms = 0
         for molecule in self.molecules:
-            bond_idx.extend(molecule.bond_index+cur_natoms)
+            bond_idx.extend(molecule.connect+cur_natoms)
             cur_natoms += molecule.natoms
 
         return bond_idx

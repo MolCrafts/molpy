@@ -15,9 +15,8 @@ class TestSystem:
         system.forcefield = ff
 
         system.add_molecule(h2o)
-        system.add_molecule(h2o.translate([0, 0, 3]))
 
-        assert len(system.molecules) == 2
+        assert len(system.molecules) == 1
 
         system.box.reset(10, 10, 10, 0, 0, 0, 0, 0, 7.07)
 

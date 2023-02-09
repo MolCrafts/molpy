@@ -58,9 +58,9 @@ class TestForcefield:
         h2o = mp.preset.molecules.tip3p().residues[0]
 
         ff.render_residue(h2o)
-        assert h2o.atoms[0].mass == "15.99943"
-        assert h2o.atoms[1].mass == "1.007947"
-        assert h2o.atoms[2].mass == "1.007947"
+        assert h2o.atoms[0].mass == 15.99943
+        assert h2o.atoms[1].mass == 1.007947
+        assert h2o.atoms[2].mass == 1.007947
         
         assert h2o.bonds[0]['k'] == "462750.4"
         assert h2o.bonds[1]['k'] == "462750.4"
@@ -69,4 +69,3 @@ class TestForcefield:
 
     def test_load_gaff(self):
         ff = mp.preset.forcefields.gaff()
-        

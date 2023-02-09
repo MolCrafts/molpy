@@ -114,7 +114,7 @@ class Forcefield:
         self._parameters:Template = Template('_global_')
         self._residues:Dict[str, Template] = {}
 
-    def def_atomType(self, name:str, className:str, **properties):
+    def def_atomType(self, name:str, className:Optional[str]=None, **properties):
         return self._parameters.def_atomType(name, className, **properties)
 
     def def_bondType(self, atom1:AtomType|AtomClass, atom12:AtomType|AtomClass, style:Optional[str], **properties):
@@ -138,9 +138,20 @@ class Forcefield:
         return list(map(partial(self._parameters.bondTypes.get, BondType()), map(sort_fn, atomTypes)))
 
     def render_atoms(self, atoms):
-        atomNames = map(lambda atom: atom['name'], atoms)
-        atomTypes = self.match_atomTypes(atomNames)
-        return map(lambda at, atom: at.render(atom), atomTypes, atoms)
+
+        for atom in atoms:
+
+            if 'residue' in atom:
+                residue = atom['residue']
+                template = self.get_residue(residue)
+                atomType = template.get_atomType(atom['name'])
+                atomType.render(atom)
+
+
+            atomType = self.get_atomType(atom['type'])
+            atomType.render(atom)
+
+        return atoms
 
     def render_bonds(self, bonds):
 
