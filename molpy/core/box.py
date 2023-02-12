@@ -10,7 +10,11 @@ except ImportError:
 from numpy.typing import ArrayLike
 
 class Box:
+    """
+    A class to represent a box.
 
+    ref: https://scicomp.stackexchange.com/questions/20165/periodic-boundary-conditions-for-triclinic-box
+    """
     def __init__(self, xhi=0, yhi=0, zhi=0, xlo=0, ylo=0, zlo=0, xy=0, xz=0, yz=0):
         self.reset(xhi, yhi, zhi, xlo, ylo, zlo, xy, xz, yz)
 
