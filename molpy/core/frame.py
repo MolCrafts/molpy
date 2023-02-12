@@ -63,25 +63,25 @@ class Frame:
         # load residue
 
         residues = chemfile_frame.topology.residues
-        nresidues = len(residues)
-        molpy_frame._nresidues = nresidues
-        names = []
-        ids = []
-        index = np.empty((nresidues), dtype=object)
-        props = []
-
-        for i, residue in enumerate(residues):
-            ids.append(residue.id)
-            names.append(residue.name)
-            props.append({k:residue[k] for k in residue.list_properties()})
-            index[i] = np.array(residue.atoms, copy=True)
-            
-        molpy_frame.residues['id'] = np.array(ids)
-        molpy_frame.residues['name'] = np.array(names)
-        molpy_frame.residues['index'] = index
-        keys = props[0].keys()
-        for k in keys:
-            molpy_frame.residues[k] = np.array([p[k] for p in props])
+        if residues:
+            nresidues = len(residues)
+            molpy_frame._nresidues = nresidues
+            names = []
+            ids = []
+            index = np.empty((nresidues), dtype=object)
+            props = []
+            for i, residue in enumerate(residues):
+                ids.append(residue.id)
+                names.append(residue.name)
+                props.append({k:residue[k] for k in residue.list_properties()})
+                index[i] = np.array(residue.atoms, copy=True)
+                
+            molpy_frame.residues['id'] = np.array(ids)
+            molpy_frame.residues['name'] = np.array(names)
+            molpy_frame.residues['index'] = index
+            keys = props[0].keys()
+            for k in keys:
+                molpy_frame.residues[k] = np.array([p[k] for p in props])
 
         return molpy_frame
 
