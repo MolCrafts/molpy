@@ -29,7 +29,7 @@ def calc_cell_index_by_coord(cell_coords, cells_per_side):
 class CellList:
 
     def __init__(self, xyz, xyz_cell_coord, cells_per_side, cell_lattice):
-        self.cells_per_side = cells_per_side
+        self.cells_per_side = cells_per_side.astype(int)
         self.xyz = xyz
         self.xyz_cell_coord = xyz_cell_coord
         self.cell_lattice = cell_lattice
@@ -50,13 +50,13 @@ class CellList:
             xyz of the atoms in the given cell coordinates.
         """
         xyz_cell_index = self.xyz_cell_index
-        cell_index = np.zeros(coords.shape[:-1], dtype=np.int32)
+        coords = coords.reshape((-1, 3))
+
         # convert coords to cell index
-        for i, coord in enumerate(coords):
-            cell_index[i] = calc_cell_index_by_coord(coord, self.cells_per_side)
+        cell_index = calc_cell_index_by_coord(coords, self.cells_per_side)
         
         # Compute the indices of the atoms in the given cell.
-        indices = np.isin(xyz_cell_index, cell_index.reshape((-1, 3)))
+        indices = np.isin(xyz_cell_index, cell_index)
 
         return self.xyz[indices]
 
@@ -70,27 +70,11 @@ def calc_cell_dimensions(box_matrix:np.ndarray, minimum_cell_size):
 
     return cell_lattice, cells_per_side
 
-def calc_cell_coord(xyz, cell_lattice, cells_per_side):
+def calc_cell_coord(xyz, cell_lattice):
     """Compute the cell coordinate for each atom."""
 
-    # Compute the cell coordinate for each atom.
     inv_cell_lattice = np.linalg.inv(cell_lattice)
     atom_indices = np.floor(np.dot(xyz, inv_cell_lattice.T))
-
-    # Compute the cell index for each atom.
-    # atom_index = atom_indices[:, 0] + atom_indices[:, 1] * cells_per_side[0] + atom_indices[:, 2] * cells_per_side[0] * cells_per_side[1]
-
-    # Sort the atoms by cell index.
-    # sorted_indices = np.argsort(cell_index)
-    # sorted_xyz = xyz[sorted_indices]
-    # sorted_cell_index = cell_index[sorted_indices]
-
-    # Compute the number of atoms in each cell.
-    # cell_counts = np.bincount(atom_index)
-
-    # Compute the index of the first atom in each cell.
-    # cell_offsets = np.zeros(len(cell_counts) + 1, dtype=np.int32)
-    # cell_offsets[1:] = np.cumsum(cell_counts)
 
     return atom_indices
 
@@ -105,7 +89,7 @@ def create_cellList(box, xyz, rCutoff):
     cell_lattice, cells_per_side = calc_cell_dimensions(box._matrix, rCutoff)
 
     # 3. Compute the cell coordinate for each atom.
-    xyz_cell_coord = calc_cell_coord(xyz, cell_lattice, cells_per_side)
+    xyz_cell_coord = calc_cell_coord(xyz, cell_lattice)
 
     return CellList(xyz, xyz_cell_coord, cells_per_side, cell_lattice)
 
@@ -144,9 +128,11 @@ def get_shell_cells(centerCellIndices, cellPerSide, rShell=1, isSymmetricCell:bo
 
 def get_check_cells(cell_per_side, rShell=1, isSymmetricPair:bool=True):
     """Get the cells that are within one shell of the cell containing the given atom."""
-    centerCellCoord = np.array([i for i in product(range(cell_per_side[0]), range(cell_per_side[1]), range(cell_per_side[2]))])
+    centerCellCoord = np.array([i for i in product(range(int(cell_per_side[0])), range(int(cell_per_side[1])), range(int(cell_per_side[2])))])
 
-    shellCells = np.zeros((len(centerCellCoord), (2*rShell+1)**3, 3), dtype=int)
+    nShellCell = int((2*rShell+1)**3 / 2) + 1 if isSymmetricPair else (2*rShell+1)**3
+
+    shellCells = np.zeros((len(centerCellCoord), nShellCell, 3), dtype=int)
     for i, center in enumerate(centerCellCoord):
         shellCells[i] = get_shell_cells(center, cell_per_side, rShell, isSymmetricPair)
 
@@ -159,6 +145,9 @@ def create_neighborList(box, xyz, rCutoff, rSkin=0, isCellList:bool=True, isSymm
     # Assume box is a standard parallelepiped.
     if isinstance(box, np.ndarray):
         box = Box.from_matrix(box)
+
+    if not (isinstance(rCutoff, (int, float)) and isinstance(rSkin, (int, float))):
+        raise ValueError()
 
     # 2. pre-compute arguments
     cutoff = rCutoff + rSkin
@@ -174,8 +163,8 @@ def create_neighborList(box, xyz, rCutoff, rSkin=0, isCellList:bool=True, isSymm
         shellCellXyz = cellList.get_xyz_by_cell_coords(shellCells)
 
         # calculate distance pair-wisely
-        centerCellXyzMat = np.tile(centerCellXyz[:, None, :], (1, shellCellXyz.shape[1], 1))
-        shellCellXyzMat = np.tile(shellCellXyz, (centerCellXyz.shape[0], 1, 1))
+        centerCellXyzMat = np.tile(centerCellXyz[:, None, :], (1, shellCellXyz.shape[0], 1))
+        shellCellXyzMat = np.tile(shellCellXyz[None, :, :], (centerCellXyz.shape[0], 1, 1))
         dr = box.displacement(centerCellXyzMat, shellCellXyzMat)
 
     else:

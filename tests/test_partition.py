@@ -75,29 +75,17 @@ class TestCellList:
 
 class TestNeighborList:
 
-    def test_neighborList_utils(self):
-
-        dr = np.ones((3, 3, 1, 3))
-
-        nblist = mp.core.partition.NeighborList(
-            np.ones([[0, 1, 1], [1, 0, 1], [0, 1, 1]], dtype=int),  # 0-1-2-0
-            dr,  # dr
-            np.ones([[0, 1, 1], [1, 0, 1], [0, 1, 1]], dtype=int),  # dr_cell
-        )
-
-        pass
-
     def test_create_neighborList(self):
 
         box = np.array([[10, 0, 0], [0, 10, 0], [0, 0, 10]])
-        r_cutoff = 3
+        r_cutoff = 1.5
         # create a set of xyz on the site
-        # xyz = np.array([[0,0,0], [1, 0, 0], [2,0,0], [0, 1, 0], [1, 1, 0], [2, 1, 0], [0, 2, 0], [1, 2, 0], [2, 2, 0]])
-        xyz = np.array([[0, 0, 0], [1, 0, 0]])
+        xyz = np.array([[0,0,0], [1, 0, 0], [2,0,0], [0, 1, 0], [1, 1, 0], [2, 1, 0], [0, 2, 0], [1, 2, 0], [2, 2, 0]])
+        # xyz = np.array([[0, 0, 0], [1, 0, 0]])
 
-        debugNblist = mp.core.partition.create_neighborList(box, xyz, r_cutoff, False)
+        debugNblist = mp.core.partition.create_neighborList(box, xyz, r_cutoff, rSkin=0, isCellList=False)
 
-        nblist = mp.core.partition.create_neighborList(box, xyz, r_cutoff, True)
+        nblist = mp.core.partition.create_neighborList(box, xyz, r_cutoff, rSkin=0, isCellList=True)
 
         npt.assert_equal(debugNblist.indices, nblist.indices)
         
