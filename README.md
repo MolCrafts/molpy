@@ -8,6 +8,8 @@ This package depends on few external package except Numpy and [Chemfiles](https:
 
 We also provide an interactive visualization package [molvis](https://github.com/Roy-Kid/molvis). In this work, we use production-level game engine from Microsoft [Babylonjs](https://www.babylonjs.com/) to visualize system. The highlight is you can use Ipython to manipulate the system on-the-fly and see the result immediately. It's very useful for debugging and research. 
 
+In progress: We are try to introduce RDkit to the project. **I** don't want to add more dependencies, but want to write those functions by my own. However, some functions are too complex(or too dirty) to implement. So I want to find a proper way to lazy load RDkit, and convert it between RDkit object and molpy object. 
+
 ## roadmap
 
 ### 0.0.1: novice
@@ -21,7 +23,7 @@ We also provide an interactive visualization package [molvis](https://github.com
   - [x] forcefield;
   - [x] typification;
   - [ ] modelling;
-  - [ ] neighorlist;
+  - [x] celllist & neighorlist;
   - [ ] interactivate visualization API;
   - [ ] minimizer;
   - [ ] simple example;
