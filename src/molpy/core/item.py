@@ -15,57 +15,45 @@ ITEMTYPE = {
 class Item:
 
     def __init__(self):
-
         self._id = hash(self)
         self._properties = dict()
         self._type = None
+
+    def __eq__(self, rhs):
+        return self.id == rhs.id
     
     @property
     def id(self):
         return self._id
-
-    @property
-    def type(self):
-        return self._type
-
-    @type.setter
-    def type(self, value):
-        if isinstance(value, ITEMTYPE[f'{self.__class__.__name__}Type']):
-            raise TypeError(f"type must be an instance of {self.__class__.__name__}, but got {type(value)}")
-        self._type = value
-
-    def get(self, key:str):
-
-        return self._properties.get(key)
-    
-    def set(self, key:str, value:Any):
-
-        self._properties[key] = value
-    
-    def __repr__(self):
-        return f"<Atom: {self._id}>"
-    
-    def __eq__(self, rhs):
-        return self.id == rhs.id
-    
-    def __getitem__(self, key:str):
-            
-        return self.get(key)
-    
-    def __setitem__(self, key:str, value:Any):
-        self.set(key, value)
+        
 
 class Atom(Item):
 
     def __init__(self):
 
         super().__init__()
-    
 
-class Bond:
+    @property
+    def type(self):
+        return self._type
+    
+    @type.setter
+    def type(self, value):
+        if not isinstance(value, AtomType):
+            raise TypeError(f"type must be an instance of AtomType, but got {type(value)}")
+        self._type = value 
+
+    def __getiitem__(self, key:str):
+        return self._properties.get(key, self._type[key] if self._type else None)
+    
+    def __setitem__(self, key, value):
+        self._properties[key] = value
+        
+
+class Bond(Item):
 
     def __init__(self, itom, jtom):
-
+        super().__init__()
         self.itom = itom
         self.jtom = jtom
 
@@ -89,3 +77,19 @@ class Bond:
             raise TypeError(f"jtom must be an instance of Atom, but got {type(value)}")
         self._jtom = value
 
+    @property
+    def type(self):
+        return self._type
+    
+    @type.setter
+    def type(self, value):
+        if not isinstance(value, BondType):
+            raise TypeError(f"type must be an instance of BondType, but got {type(value)}")
+        self._type = value 
+
+    def __getiitem__(self, key:str):
+        return self._properties.get(key, self._type[key] if self._type else None)
+    
+    def __setitem__(self, key, value):
+        self._properties[key] = value
+        
