@@ -1,0 +1,88 @@
+# author: Roy Kid
+# contact: lijichen365@126.com
+# date: 2023-09-29
+# version: 0.0.1
+
+from pathlib import Path
+import chemfiles as chfl
+
+from .frame import Frame
+from .keywords import kw
+
+class DataLoader:
+    def __init__(self, fpath: str | Path, format: str = "", mode: str = "r"):
+        self._fpath = fpath
+        self._format = format
+        self._mode = mode
+        self._fileHandler = chfl.Trajectory(
+            self._fpath, self._mode, self._format
+        )
+
+    def load_frame(self, step: int = 0) -> Frame:
+        """Load a frame from the trajectory file."""
+        chflFrame = self._fileHandler.read_step(step)
+        frame = Frame()
+
+        # get frame properties
+        frame[kw.timestep] = chflFrame.step
+        box_matrix = chflFrame.cell.matrix
+        frame.get_box().set_matrix(box_matrix)
+        frame.atoms[kw.xyz] = chflFrame.positions
+        frame[kw.natoms] = len(chflFrame.atoms)
+
+        # get atom properties
+        INTRINSIC_PROPS = [
+            kw.name,
+            kw.atomic_number,
+            kw.charge,
+            kw.mass,
+            kw.type,
+        ]
+
+        first_atom = chflFrame.atoms[0]
+        extra_properties = first_atom.list_properties()
+        EXTRA_PROPS = [getattr(kw, prop) for prop in extra_properties]
+        for prop in INTRINSIC_PROPS + EXTRA_PROPS:
+            if hasattr(first_atom, prop):
+                frame.atoms[prop] = [getattr(atom, prop) for atom in chflFrame.atoms]
+        
+        # get connectivity
+        bonds = chflFrame.topology.bonds
+        angles = chflFrame.topology.angles
+        dihedrals = chflFrame.topology.dihedrals
+        impropers = chflFrame.topology.impropers
+
+        for bond in bonds:
+            frame._connectivity.add_bond(*bond)
+
+        for angle in angles:
+            frame._connectivity.add_angle(*angle)
+
+        for dihedral in dihedrals:
+            frame._connectivity.add_dihedral(*dihedral)
+
+        for improper in impropers:
+            frame._connectivity.add_improper(*improper)
+
+    #   residues = chemfile_frame.topology.residues
+    #     if residues:
+    #         nresidues = len(residues)
+    #         molpy_frame._nresidues = nresidues
+    #         names = []
+    #         ids = []
+    #         index = np.empty((nresidues), dtype=object)
+    #         props = []
+    #         for i, residue in enumerate(residues):
+    #             ids.append(residue.id)
+    #             names.append(residue.name)
+    #             props.append({k:residue[k] for k in residue.list_properties()})
+    #             index[i] = np.array(residue.atoms, copy=True)
+                
+    #         molpy_frame.residues['id'] = np.array(ids)
+    #         molpy_frame.residues['name'] = np.array(names)
+    #         molpy_frame.residues['index'] = index
+    #         keys = props[0].keys()
+    #         for k in keys:
+    #             molpy_frame.residues[k] = np.array([p[k] for p in props])
+
+        return frame

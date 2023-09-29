@@ -6,6 +6,7 @@
 import numpy as np
 from numpy.typing import ArrayLike
 
+
 class Box:
     """
     A class to represent a box.
@@ -13,6 +14,7 @@ class Box:
     ref: https://scicomp.stackexchange.com/questions/20165/periodic-boundary-conditions-for-triclinic-box
          https://docs.lammps.org/Howto_triclinic.html
     """
+
     def __init__(self):
         pass
 
