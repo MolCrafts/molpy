@@ -6,6 +6,8 @@
 # Molpy not support unit yet
 # so we assume mass is reduced
 
+__all__ = ["Element"]
+
 daltons = 1
 
 class Element:
@@ -69,6 +71,10 @@ class Element:
     @staticmethod
     def get_by_atomic_number(atomic_number):
         return Element._elements_by_atomic_number[atomic_number]
+    
+    @staticmethod
+    def get_atomic_number_by_symbol(symbol: str):
+        return Element.get_by_symbol(symbol).atomicNumber
 
     @property
     def atomicNumber(self):

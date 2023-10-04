@@ -6,6 +6,7 @@
 from collections import namedtuple
 from typing import Optional
 
+__all__ = ["Keywords", "kw", "Keyword"]
 
 Keyword = namedtuple("Alias", ["alias", "keyword", "unit", "comment"])
 
@@ -22,19 +23,19 @@ class Keywords:
         for kw in self._keywords:
             if kw.alias == alias:
                 return kw.keyword
-        raise KeyError(f"Keyword {alias} not found in {self._name}.")
+        raise KeyError(f"Alias `{alias}` not found in {self._name}.")
     
     def get_alias(self, keyword):
         for kw in self._keywords:
             if kw.keyword == keyword:
                 return kw.alias
-        raise KeyError(f"Keyword {keyword} not found in {self._name}.")
+        raise KeyError(f"Keyword `{keyword}` not found in {self._name}.")
     
     def get_unit(self, alias):
         for kw in self._keywords:
             if kw.alias == alias:
                 return kw.unit
-        raise KeyError(f"Keyword {alias} not found in {self._name}.")
+        raise KeyError(f"Alias `{alias}` not found in {self._name}.")
 
     def __getattr__(self, alias: str):
         return self.get_keyword(alias)
@@ -45,6 +46,14 @@ class Keywords:
 
     def __iter__(self):
         return iter(self._keywords)
+    
+    @property
+    def alias(self):
+        return [kw.alias for kw in self._keywords]
+    
+    @property
+    def keyword(self):
+        return [kw.keyword for kw in self._keywords]
 
 
 keywords = kw = Keywords("_mp_global_")
@@ -57,3 +66,7 @@ kw.set("type", "_mp_type_", None, "atom type")
 kw.set("covalent_radius", "_mp_covalent_radius_", None, "covalekw.setradius")
 kw.set("full_name", "_mp_full_name_", None, "full name")
 kw.set("vdw_radius", "_mp_vdw_radius_", None, "van der Waals radius")
+kw.set("natoms", "_mp_natoms_", None, "number of atoms")
+kw.set("xyz", "_mp_xyz_", None, "atomic coordinates")
+kw.set("positions", "_mp_xyz_", None, "atomic coordinates")
+kw.set("R", "_mp_xyz_", None, "atomic coordinates")

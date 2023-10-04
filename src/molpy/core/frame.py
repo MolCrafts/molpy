@@ -8,6 +8,8 @@ import numpy as np
 from .box import Box
 
 
+__all__ = ["Frame", "Connectivity"]
+
 class Frame:
     def __init__(self, **props):
         self._box = Box()
@@ -18,13 +20,13 @@ class Frame:
     def get_box(self):
         return self._box
 
-    @properties
+    @property
     def atoms(self):
         return self._atoms
 
     @property
     def natoms(self):
-        return self.atoms.length
+        return self._props["natoms"]
 
     @property
     def nbonds(self):
@@ -41,6 +43,9 @@ class Frame:
     @property
     def nimpropers(self):
         return self._connectivity.nimpropers
+    
+    def __setitem__(self, key, value):
+        self._props[key] = value
 
 
 class Connectivity:

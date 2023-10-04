@@ -9,14 +9,11 @@ import chemfiles as chfl
 from .frame import Frame
 from .keywords import kw
 
-class DataLoader:
-    def __init__(self, fpath: str | Path, format: str = "", mode: str = "r"):
-        self._fpath = fpath
-        self._format = format
-        self._mode = mode
-        self._fileHandler = chfl.Trajectory(
-            self._fpath, self._mode, self._format
-        )
+__all__ = ["DataLoader", "MemoryLoader"]
+
+class ChflLoader:
+
+    _fileHandler: chfl.Trajectory | chfl.MemoryTrajectory
 
     def load_frame(self, step: int = 0) -> Frame:
         """Load a frame from the trajectory file."""
@@ -86,3 +83,27 @@ class DataLoader:
     #             molpy_frame.residues[k] = np.array([p[k] for p in props])
 
         return frame
+
+
+class DataLoader(ChflLoader):
+
+    def __init__(self, fpath: str | Path, format: str = "", mode: str = "r"):
+        self._fpath = fpath
+        self._format = format
+        self._mode = mode
+        self._fileHandler = chfl.Trajectory(
+            self._fpath, self._mode, self._format
+        )
+
+    
+class MemoryLoader(ChflLoader):
+
+    def __init__(self, data="", format="", mode="r"):
+        self._data = data
+        self._format = format
+        self._mode = mode
+        self._fileHandler = chfl.MemoryTrajectory(
+            self._data, self._mode, self._format
+        )
+
+
