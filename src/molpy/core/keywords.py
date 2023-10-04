@@ -12,22 +12,31 @@ Keyword = namedtuple("Alias", ["alias", "keyword", "unit", "comment"])
 class Keywords:
     def __init__(self, name: str):
         self._name = name
-        self._keywords = []
+        self._keywords: list[Keyword] = []
 
     def set(self, alias, keyword, unit, comment):
         self._keywords.append(Keyword(alias, keyword, unit, comment))
 
-    def get(self, alias):
+    def get_keyword(self, alias):
         for kw in self._keywords:
             if kw.alias == alias:
-                return kw
+                return kw.keyword
         raise KeyError(f"Keyword {alias} not found in {self._name}.")
     
-    def __getattribute__(self, name: str):
-        if name in self.__dict__:
-            return self.__dict__[name]
-        else:
-            return self.get(name).keyword
+    def get_alias(self, keyword):
+        for kw in self._keywords:
+            if kw.keyword == keyword:
+                return kw.alias
+        raise KeyError(f"Keyword {keyword} not found in {self._name}.")
+    
+    def get_unit(self, alias):
+        for kw in self._keywords:
+            if kw.alias == alias:
+                return kw.unit
+        raise KeyError(f"Keyword {alias} not found in {self._name}.")
+
+    def __getattr__(self, alias: str):
+        return self.get_keyword(alias)
 
 
 keywords = kw = Keywords("_mp_global_")
