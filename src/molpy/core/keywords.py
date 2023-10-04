@@ -4,6 +4,7 @@
 # version: 0.0.1
 
 from collections import namedtuple
+from typing import Optional
 
 
 Keyword = namedtuple("Alias", ["alias", "keyword", "unit", "comment"])
@@ -14,7 +15,7 @@ class Keywords:
         self._name = name
         self._keywords: list[Keyword] = []
 
-    def set(self, alias, keyword, unit, comment):
+    def set(self, alias, keyword, unit, comment: Optional[str] = None):
         self._keywords.append(Keyword(alias, keyword, unit, comment))
 
     def get_keyword(self, alias):
@@ -37,6 +38,13 @@ class Keywords:
 
     def __getattr__(self, alias: str):
         return self.get_keyword(alias)
+    
+    def __next__(self):
+        for kw in self._keywords:
+            yield from kw
+
+    def __iter__(self):
+        return iter(self._keywords)
 
 
 keywords = kw = Keywords("_mp_global_")
