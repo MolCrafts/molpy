@@ -6,6 +6,7 @@
 from collections import namedtuple
 import numpy as np
 from .box import Box
+from .keywords import kw
 
 
 __all__ = ["Frame", "Connectivity"]
@@ -26,7 +27,7 @@ class Frame:
 
     @property
     def natoms(self):
-        return self._props["natoms"]
+        return self._props[kw.natoms]
 
     @property
     def nbonds(self):
@@ -46,6 +47,9 @@ class Frame:
     
     def __setitem__(self, key, value):
         self._props[key] = value
+
+    def __getitem__(self, key):
+        return self._props[key]
 
 
 class Connectivity:

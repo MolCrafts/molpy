@@ -3,6 +3,8 @@ name = "molpy"
 version = "0.0.1"
 dependencies = [
     "numpy",
+    "pint",
+    "chemfiles"
 ]
 
 [build-system]
