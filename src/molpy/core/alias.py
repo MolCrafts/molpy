@@ -4,84 +4,72 @@
 # version: 0.0.1
 
 from collections import namedtuple
-from typing import Optional
+from typing import Any, Optional
 
-__all__ = ["Alias"]
+__all__ = ["Aliases"]
+
+Alias = namedtuple("Alias", ["alias", "keyword", "unit", "comment"])
+
 
 class Aliases:
+    # Alias = namedtuple("Alias", ["alias", "keyword", "unit", "comment"])
+    class Alias(namedtuple("Alias", ["alias", "keyword", "unit", "comment"])):
+        pass
 
-    Alias = namedtuple("Alias", ["alias", "keyword", "unit", "comment"])
-
-    _aliases = {
-        "_global": {}
+    __alias_scopes: dict[str, dict[str, Alias]] = {
+        'default': {
+            'timestep': Alias('timestep', '_ts', 'fs', 'time step'),
+            'name': Alias('name', '_name', None, 'atomic name'),
+        }
     }
 
-    def __init__(self, alias:str, keyword:str, unit:Optional[str], comment:Optional[str]):
-        self._alias = alias
-        self._keyword = keyword
-        self._unit = unit
-        self._comment = comment
-        Alias._aliases[alias] = self
+    def __new__(cls, name: Optional[str]=None):
+        if name and name not in cls.__alias_scopes:
+            cls.__alias_scopes[name] = {}
+        return super().__new__(cls)
 
-    # def get_keyword(self, alias):
-    #     return self._aliases[alias].keyword
-    
-    # def get_unit(self, alias):
-    #     return self._aliases[alias].unit
+    def __init__(self, name: Optional[str]=None):
+        self._name = name or 'default'
+        self._scope = self.__class__.__alias_scopes[self._name]
 
-    # def __getattr__(self, alias: str):
-    #     return self.get_keyword(alias)
-    
-    # def __next__(self):
-    #     for alias in self._aliases:
-    #         yield from alias
+    def set(self, alias: str, keyword: str, unit: str, comment: str) -> Alias:
+        self._scope[alias] = self.Alias(alias, keyword, unit, comment)
 
-    # def __iter__(self):
-    #     return iter(self._aliases)
-    
-    def __getstate__(self):
+    def get(self, alias: str) -> Alias:
+        return self._scope[alias]
+
+    def __getattr__(self, alias: str) -> Alias:
+        print(self._scope)
+        return self._scope[alias]
+
+    def __getitem__(self, scope: str) -> "Aliases":
+        self._scope = self.__class__.__alias_scopes[scope]
+        return self
+
+    def __getstate__(self) -> dict[str, Alias]:
         return {
-            "_aliases": self._aliases,
-            "_alias": self._alias,
-            "_keyword": self._keyword,
-            "_unit": self._unit,
-            "_comment": self._comment,
+            # "__alias_scopes": self.__class__.__alias_scopes,
+            "_name": self._name,
+            "_scope": self._scope,
         }
-    
-    def __setstate__(self, state):
-        self._aliases = state["_aliases"]
-        self._alias = state["_alias"]
-        self._keyword = state["_keyword"]
-        self._unit = state["_unit"]
-        self._comment = state["_comment"]
-    
-    @property
-    def alias(self):
-        return self._alias
-    
-    @property
-    def keyword(self):
-        return self._keyword
-    
-    @property
-    def unit(self):
-        return self._unit
-    
-    @property
-    def comment(self):
-        return self._comment
+
+    def __setstate__(self, __value: dict[str, Alias]) -> None:
+        # self.__class__.__alias_scopes = __value["__alias_scopes"]
+        self._name = __value["_name"]
+        self._scope = __value["_scope"]
 
 
-timestep = Alias("timestep", "_mp_ts_", "fs", "time step")
-name = Alias("name", "_mp_name_", None, "atomic name")
-atomic_number = Alias("atomic_number", "_mp_atomic_number_", None, "atomic number")
-charge = Alias("charge", "_mp_charge_", None, "charge")
-mass = Alias("mass", "_mp_mass_", None, "mass")
-type = Alias("type", "_mp_type_", None, "atom type")
-covalent_radius = Alias("covalent_radius", "_mp_covalent_radius_", None, "covalekw.setradius")
-full_name = Alias("full_name", "_mp_full_name_", None, "full name")
-vdw_radius = Alias("vdw_radius", "_mp_vdw_radius_", None, "van der Waals radius")
-natoms = Alias("natoms", "_mp_natoms_", None, "number of atoms")
-xyz = Alias("xyz", "_mp_xyz_", None, "atomic coordinates")
-positions = Alias("positions", "_mp_xyz_", None, "atomic coordinates")
-R = Alias("R", "_mp_xyz_", None, "atomic coordinates")
+# keywords = kw = Keywords("_mp_global_")
+# kw.set("timestep", "timestep", "fs", "time step")
+# kw.set("name", "_mp_name_", None, "atomic name")
+# kw.set("atomic_number", "_mp_atomic_number_", None, "atomic number")
+# kw.set("charge", "_mp_charge_", None, "charge")
+# kw.set("mass", "_mp_mass_", None, "mass")
+# kw.set("type", "_mp_type_", None, "atom type")
+# kw.set("covalent_radius", "_mp_covalent_radius_", None, "covalekw.setradius")
+# kw.set("full_name", "_mp_full_name_", None, "full name")
+# kw.set("vdw_radius", "_mp_vdw_radius_", None, "van der Waals radius")
+# kw.set("natoms", "_mp_natoms_", None, "number of atoms")
+# kw.set("xyz", "_mp_xyz_", None, "atomic coordinates")
+# kw.set("positions", "_mp_xyz_", None, "atomic coordinates")
+# kw.set("R", "_mp_xyz_", None, "atomic coordinates")
