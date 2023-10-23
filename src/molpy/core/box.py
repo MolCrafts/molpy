@@ -6,6 +6,7 @@
 import numpy as np
 from numpy.typing import ArrayLike
 
+__all__ = ["Box"]
 
 class Box:
     """

@@ -68,20 +68,20 @@ class ForceField:
             self._bondTypes.append(_bt)
         return _bt
     
-    def get_bondpot(self, style, **args):
+    # def get_bondpot(self, style, **args):
 
-        bondpot = create_bondPot(style, **args)
-        self._bondPots.append(bondpot)
+    #     bondpot = create_bondPot(style, **args)
+    #     self._bondPots.append(bondpot)
 
-        return 
+    #     return 
     
-    def set_bondpot_param(self, style, bond_ids, value):
+    # def set_bondpot_param(self, style, bond_ids, value):
 
-        self._bondParams.set_param(style, bond_ids, value)
+    #     self._bondParams.set_param(style, bond_ids, value)
 
-    def get_bond_param(self, style):
+    # def get_bond_param(self, style):
 
-        return self._bondParams.get_param(style)
+    #     return self._bondParams.get_param(style)
 
     # @classmethod
     # def from_xml(cls, path):
