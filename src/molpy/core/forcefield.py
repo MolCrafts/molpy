@@ -63,6 +63,23 @@ class ForceField:
             _bt.id = len(self._bondTypes)
             self._bondTypes.append(_bt)
         return _bt
+    
+    def def_bondpot(self, style:str, args: dict, params: dict) -> Potential:
+        """
+        define and return a bond potential, which is stateless functional
+
+        Args:
+            style (str): name of bond potential
+            args (dict): non-grad args
+            params (dict): grad params
+
+        Returns:
+            Potential: Stateless and Callable, and return energy
+        """
+        # TODO: registe params into Keywords
+        # e.g. pot = ff.def_bondpot('harmonic', {'a': 1}, {'k': 1})
+        # pot(x, {ff.kw.k : 2})
+        return create_bondpots(style, args)
 
     # @classmethod
     # def from_xml(cls, path):
