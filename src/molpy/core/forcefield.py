@@ -3,6 +3,7 @@
 # date: 2023-09-29
 # version: 0.0.1
 
+from typing import Any
 import numpy as np
 
 class ItemType:
@@ -42,6 +43,9 @@ class ForceField:
         self._atomTypes = []
         self._bondTypes = []
 
+        self._bondPots = []
+        self._bondParams = ParamSet()
+
     def def_atomtype(self, name:str, **props):
         _at = AtomType(name, **props)
         for i, at in enumerate(self._atomTypes):
@@ -63,6 +67,21 @@ class ForceField:
             _bt.id = len(self._bondTypes)
             self._bondTypes.append(_bt)
         return _bt
+    
+    def get_bondpot(self, style, **args):
+
+        bondpot = create_bondPot(style, **args)
+        self._bondPots.append(bondpot)
+
+        return 
+    
+    def set_bondpot_param(self, style, bond_ids, value):
+
+        self._bondParams.set_param(style, bond_ids, value)
+
+    def get_bond_param(self, style):
+
+        return self._bondParams.get_param(style)
 
     # @classmethod
     # def from_xml(cls, path):
@@ -120,29 +139,90 @@ class ForceField:
 
 class Potential:
 
-    def __init__(self, style:str):
-        self.style = style
+    def __init__(self):
+        pass
 
-    def init_two_body_coeff(self, name:str, ntypes:int):
-        coeff = np.zeros((ntypes, ntypes))
-        if hasattr(self, name):
-            old = getattr(self, name)
-            coeff[:old.shape[0], :old.shape[1]] = old
-        setattr(self, name, coeff)
-        return coeff
+    @property
+    def styly(self):
+        return self.__class__.__name__
+    
 
-    def init_three_body_coeff(self, name:str, ntypes:int):
-        coeff = np.zeros((ntypes, ntypes, ntypes))
-        if hasattr(self, name):
-            old = getattr(self, name)
-            coeff[:old.shape[0], :old.shape[1], :old.shape[2]] = old
-        setattr(self, name, coeff)
-        return coeff
+class Param:
 
-    def init_four_body_coeff(self, name:str, ntypes:int):
-        coeff = np.zeros((ntypes, ntypes, ntypes, ntypes))
-        if hasattr(self, name):
-            old = getattr(self, name)
-            coeff[:old.shape[0], :old.shape[1], :old.shape[2], :old.shape[3]] = old
-        setattr(self, name, coeff)
-        return coeff
+    def __init__(self, name):
+
+        self.name = name
+        self._params:dict[tuple, Any] = {}
+
+    def set_param(self, idx:tuple, value:Any):
+
+        self._params[tuple(idx)] = value
+
+    def get_param(self, idx:tuple):
+
+        return self._params.get(tuple(idx), None)
+    
+class PairParam(Param):
+
+    def __init__(self, name):
+
+        super().__init__(name)
+
+    def set_param(self, idx:tuple, value:Any):
+        assert len(idx) == 2, "pair param must have two index"
+        super().set_param(idx, value)
+
+    def get_param(self, idx:tuple, mix:str='geometry'):
+        assert len(idx) == 2, "pair param must have two index"
+        a = super().get_param(idx)
+        if a:
+            return a
+        else:
+            b = super().get_param(idx[::-1])
+            if b:
+                return b
+            else:
+                if mix:
+                    a = super().get_param((idx[0], idx[0]))
+                    b = super().get_param((idx[1], idx[1]))
+                    if mix == 'geometry':
+                        return np.sqrt(a*b)
+                    elif mix == 'arithmetic':
+                        return 0.5*(a+b)
+                else:
+                    return None
+                
+class AngleParam(Param):
+
+    def __init__(self, name):
+            
+        super().__init__(name)
+
+    def set_param(self, idx:tuple, value:Any):
+        assert len(idx) == 3, "angle param must have three index"
+        super().set_param(idx, value)
+
+    def get_param(self, idx:tuple):
+        assert len(idx) == 3, "angle param must have three index"
+        a = super().get_param(idx)
+        if a:
+            return a
+        else:
+            return super().get_param(idx[::-1])
+
+  
+class ParamSet:
+    """ A sparse matrix for parameters
+    """
+    def __init__(self):
+
+        self._params:dict[str, Param] = {}
+
+    def set_param(self, name, value):
+
+        self._params[name] = value
+
+    def get_param(self, name):
+
+        return self._params.get(name, None)
+              

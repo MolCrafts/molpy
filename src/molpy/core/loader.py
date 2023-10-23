@@ -7,7 +7,7 @@ from pathlib import Path
 import chemfiles as chfl
 
 from .frame import Frame
-from .keywords import kw
+from .alias import Alias
 
 __all__ = ["DataLoader", "MemoryLoader"]
 
@@ -21,24 +21,24 @@ class ChflLoader:
         frame = Frame()
 
         # get frame properties
-        frame[kw.timestep] = chflFrame.step
+        frame[Alias.timestep] = chflFrame.step
         box_matrix = chflFrame.cell.matrix
         frame.get_box().set_matrix(box_matrix)
-        frame.atoms[kw.xyz] = chflFrame.positions
-        frame[kw.natoms] = len(chflFrame.atoms)
+        frame.atoms[Alias.xyz] = chflFrame.positions
+        frame[Alias.natoms] = len(chflFrame.atoms)
 
         # get atom properties
         INTRINSIC_PROPS = [
-            kw.name,
-            kw.atomic_number,
-            kw.charge,
-            kw.mass,
-            kw.type,
+            Alias.name,
+            Alias.atomic_number,
+            Alias.charge,
+            Alias.mass,
+            Alias.type,
         ]
 
         first_atom = chflFrame.atoms[0]
         extra_properties = first_atom.list_properties()
-        EXTRA_PROPS = [getattr(kw, prop) for prop in extra_properties]
+        EXTRA_PROPS = [getattr(Alias, prop) for prop in extra_properties]
         for prop in INTRINSIC_PROPS + EXTRA_PROPS:
             if hasattr(first_atom, prop):
                 frame.atoms[prop] = [getattr(atom, prop) for atom in chflFrame.atoms]

@@ -6,7 +6,7 @@
 from collections import namedtuple
 import numpy as np
 from .box import Box
-from .keywords import kw
+from .alias import Alias
 
 
 __all__ = ["Frame", "Connectivity"]
@@ -27,7 +27,7 @@ class Frame:
 
     @property
     def natoms(self):
-        return self._props[kw.natoms]
+        return self._props[Alias.natoms]
 
     @property
     def nbonds(self):

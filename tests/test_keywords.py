@@ -3,25 +3,28 @@
 # date: 2023-10-04
 # version: 0.0.1
 
-from molpy import Keywords
+import pickle
+from molpy import Alias
 
 class TestKeywords:
 
     def test_define(self):
 
-        kw = Keywords("test")
-        kw.set("timestep", "_mp_ts_", "fs", "time step")
+        ts = Alias("timesteps", "_mp_ts_", "fs", "time step")
 
-        assert kw.timestep == "_mp_ts_"
-        assert kw.get_alias("_mp_ts_") == "timestep"
-        assert kw.get_keyword("timestep") == "_mp_ts_"
-        assert kw.get_unit("timestep") == "fs"
+        assert ts.keyword == "_mp_ts_"
 
-    def test_iter(self):
+    def test_get_alias(self):
 
-        kw = Keywords("test")
-        kw.set("timestep", "_mp_ts_", "fs", "time step")
-        kw.set("name", "_mp_name_", None, "atomic name")
+        ts = Alias.timestep
+        assert ts.keyword == "_mp_ts_"
 
-        for _kw in kw:
-            assert _kw
+    def test_pickle(self):
+
+        timesteps = Alias("timesteps", "_mp_ts_", "fs", "time step")
+        obj = pickle.dumps(timesteps)
+        alias = pickle.loads(obj)
+
+        assert isinstance(alias, Alias)
+        assert isinstance(alias.keyword, str)
+        assert alias.keyword == "_mp_ts_"
