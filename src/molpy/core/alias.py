@@ -8,9 +8,6 @@ from typing import Any, Optional
 
 __all__ = ["Aliases"]
 
-Alias = namedtuple("Alias", ["alias", "keyword", "unit", "comment"])
-
-
 class Aliases:
     # Alias = namedtuple("Alias", ["alias", "keyword", "unit", "comment"])
     class Alias(namedtuple("Alias", ["alias", "keyword", "unit", "comment"])):
