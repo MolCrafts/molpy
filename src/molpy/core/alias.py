@@ -8,25 +8,26 @@ from typing import Any, Optional
 
 __all__ = ["Aliases"]
 
+
 class Aliases:
     # Alias = namedtuple("Alias", ["alias", "keyword", "unit", "comment"])
     class Alias(namedtuple("Alias", ["alias", "keyword", "unit", "comment"])):
         pass
 
     __alias_scopes: dict[str, dict[str, Alias]] = {
-        'default': {
-            'timestep': Alias('timestep', '_ts', 'fs', 'time step'),
-            'name': Alias('name', '_name', None, 'atomic name'),
+        "default": {
+            "timestep": Alias("timestep", "_ts", "fs", "time step"),
+            "name": Alias("name", "_name", None, "atomic name"),
         }
     }
 
-    def __new__(cls, name: Optional[str]=None):
+    def __new__(cls, name: Optional[str] = None):
         if name and name not in cls.__alias_scopes:
             cls.__alias_scopes[name] = {}
         return super().__new__(cls)
 
-    def __init__(self, name: Optional[str]=None):
-        self._name = name or 'default'
+    def __init__(self, name: Optional[str] = None):
+        self._name = name or "default"
         self._scope = self.__class__.__alias_scopes[self._name]
 
     def set(self, alias: str, keyword: str, unit: str, comment: str) -> Alias:

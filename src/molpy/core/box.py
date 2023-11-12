@@ -5,8 +5,10 @@
 
 import numpy as np
 from numpy.typing import ArrayLike
+from typing import Optional
 
 __all__ = ["Box"]
+
 
 class Box:
     """
@@ -16,8 +18,14 @@ class Box:
          https://docs.lammps.org/Howto_triclinic.html
     """
 
-    def __init__(self):
-        pass
+    def __init__(self, matrix: Optional[ArrayLike | 'Box'] = None, origin: Optional[ArrayLike] = None):
+        if isinstance(matrix, Box):
+            self._matrix = matrix.get_matrix()
+        elif matrix is None:
+            self._matrix = np.eye(3)
+        else:
+            self._matrix = np.array(matrix)
+        self._origin = np.array(origin)
 
     def set_lengths_angles(
         self,
@@ -119,3 +127,12 @@ class Box:
     def dist(self, r1: ArrayLike, r2: ArrayLike) -> np.ndarray:
         """distance between two positions"""
         return np.linalg.norm(self.diff(r1, r2), axis=-1)
+
+    def make_fractional(self, r: ArrayLike) -> np.ndarray:
+        """convert position to fractional coordinates"""
+        return np.dot(r, self.get_inverse())
+    
+    def make_absolute(self, r: ArrayLike) -> np.ndarray:
+        """convert position to absolute coordinates"""
+        return np.dot(r, self._matrix)
+    
