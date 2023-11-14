@@ -7,45 +7,51 @@ import matplotlib.pyplot as plt
 import numpy as np
 import molpy as mp
 
-class Backend:
+class System:
     pass
 
-class MatplotlibBackend(Backend):
+class MatplotlibSystem(System):
 
     def __init__(self):
         super().__init__()
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(111, projection='3d')
 
-    def plot_atoms(self, positions, types, colors=None, radius=None, isLabel=False):
+    def plot_atoms(self, positions, types=None, colors=None, radius=None, isLabel=False):
         """plot atom(s) with positions and type"""
         from .palette import default_palette
         ax = self.ax
         if isinstance(positions, np.ndarray):
             positions = positions.reshape(-1, 3)
+            positions = self.box.wrap(positions)
 
-        if types:
+        if types is not None:
             if isinstance(types, np.ndarray):
                 types = types.reshape(-1)
             assert positions.shape[0] == types.shape[0], "positions and atomic type must have same length"
 
             colors = []
-            radii = []
+            radius = []
 
             for i in range(positions.shape[0]):
                 atom_repr = default_palette.atoms[types[i]]
                 colors.append(atom_repr.CPK)
-                radii.append(float(atom_repr.atomic_radius))
+                radius.append(float(atom_repr.atomic_radius))
 
         colors = np.asarray(colors)
-        radius = np.asarray(radii)
+        radius = np.asarray(radius)
 
         assert len(colors) == len(positions), "colors and positions must have same length"
-        assert len(radii) == len(positions), "radii and positions must have same length"
+        assert len(radius) == len(positions), "radii and positions must have same length"
 
-        ax.scatter(*positions[i], c=colors, s=radius)
+        ax.scatter(positions[:,0], positions[:,1], positions[:,2], c=colors, s=radius)
         if isLabel:
-            ax.text(*positions[i], types[i], ha="center", va="center")
+            ax.text(positions[:,0], positions[:,1], positions[:,2], types, ha="center", va="center")
+
+    def plot_molecule(self, positions, connect, types=None, colors=None, radius=None, isLabel=False):
+        self.plot_atoms(positions, types, colors, radius, isLabel)
+        connect_xyz = positions[connect]
+        self.ax.plot(connect_xyz[:,0], connect_xyz[:,1], connect_xyz[:,2], c="black")
 
     def plot_box(self, box: np.ndarray | mp.Box, title=None, image=[0, 0, 0], *args, **kwargs):
         """Helper function to plot a :class:`~.box.Box` object.
@@ -70,6 +76,7 @@ class MatplotlibBackend(Backend):
         ax = self.ax
         is2D = False  # 2d is not supported yet
         box = mp.Box(box)
+        self.box = box
         if is2D:
             # Draw 2D box
             corners = [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]]
