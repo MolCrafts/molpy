@@ -1,7 +1,7 @@
 import io
 import molpy as mp
 import numpy as np
-from . import global_ax
+from . import global_figure
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -27,7 +27,7 @@ def _ax_to_bytes(ax):
     return f.getvalue()
 
 
-def _set_3d_axes_equal(ax, limits=None):
+def _set_3d_axes_equal(ax, ratio):
     """Make axes of 3D plot have equal scale so that spheres appear as spheres,
     cubes as cubes, etc. This is one possible solution to Matplotlib's
     ax.set_aspect('equal') and ax.axis('equal') not working for 3D.
@@ -42,15 +42,16 @@ def _set_3d_axes_equal(ax, limits=None):
     """
     # Adapted from https://stackoverflow.com/a/50664367
 
-    if limits is None:
-        limits = np.array([ax.get_xlim3d(), ax.get_ylim3d(), ax.get_zlim3d()])
-    else:
-        limits = np.asarray(limits)
-    origin = np.mean(limits, axis=1)
-    radius = 0.5 * np.max(limits[:, 1] - limits[:, 0])
-    ax.set_xlim3d([origin[0] - radius, origin[0] + radius])
-    ax.set_ylim3d([origin[1] - radius, origin[1] + radius])
-    ax.set_zlim3d([origin[2] - radius, origin[2] + radius])
+    # if limits is None:
+    #     limits = np.array([ax.get_xlim3d(), ax.get_ylim3d(), ax.get_zlim3d()])
+    # else:
+    #     limits = np.asarray(limits)
+    # origin = np.mean(limits, axis=1)
+    # radius = 0.5 * np.max(limits[:, 1] - limits[:, 0])
+    # ax.set_xlim3d([origin[0] - radius, origin[0] + radius])
+    # ax.set_ylim3d([origin[1] - radius, origin[1] + radius])
+    # ax.set_zlim3d([origin[2] - radius, origin[2] + radius])
+    ax.set_box_aspect(ratio)
     return ax
 
 
@@ -76,7 +77,8 @@ def plot_box(box: np.ndarray | mp.Box, title=None, ax=None, image=[0, 0, 0], *ar
     """
 
     is2D = False  # 2d is not supported yet
-    ax = ax or global_ax
+    ax = ax or global_figure.ax
+    box = mp.Box(box)
     if is2D:
         # Draw 2D box
         corners = [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]]
@@ -120,11 +122,7 @@ def plot_box(box: np.ndarray | mp.Box, title=None, ax=None, image=[0, 0, 0], *ar
         ax.set_xlabel("$x$")
         ax.set_ylabel("$y$")
         ax.set_zlabel("$z$")
-        limits = [
-            [corners[0, 0], corners[-1, 0]],
-            [corners[0, 1], corners[-1, 1]],
-            [corners[0, 2], corners[-1, 2]],
-        ]
+        limits = corners[-1] - corners[0]
         _set_3d_axes_equal(ax, limits)
 
     return ax

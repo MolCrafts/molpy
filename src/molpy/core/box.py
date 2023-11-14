@@ -24,7 +24,9 @@ class Box:
         elif matrix is None:
             self._matrix = np.eye(3)
         else:
-            self._matrix = np.array(matrix)
+            trail = np.array(matrix)
+            assert trail.shape == (3, 3), "matrix must be (3, 3)"
+            self._matrix = trail
         self._origin = np.array(origin)
 
     def set_lengths_angles(

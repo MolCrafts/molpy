@@ -1,12 +1,12 @@
 import numpy as np
-from . import global_ax
+from . import global_figure
 from . import default_palette
 
-__all__ = ["plot_atom"]
+__all__ = ["plot_atoms"]
 
-def plot_atom(position, atype, ax=None, **kwargs):
+def plot_atoms(position, atype, ax=None, **kwargs):
     """plot atom(s) with position and type"""
-    ax = ax or global_ax
+    ax = ax or global_figure.ax
     if isinstance(position, np.ndarray):
         position = position.reshape(-1, 3)
     if isinstance(atype, np.ndarray):
@@ -17,5 +17,5 @@ def plot_atom(position, atype, ax=None, **kwargs):
         color = atom_repr.CPK
         radius = float(atom_repr.atomic_radius)
         ax.scatter(*position[i], c=color, s=radius, **kwargs)
-        ax.text(*position[i], atype[i], ha="center", va="center", **kwargs)
+        # ax.text(*position[i], atype[i], ha="center", va="center", **kwargs)
     return ax
