@@ -7,7 +7,7 @@ from pathlib import Path
 import chemfiles as chfl
 
 from .frame import Frame
-from .alias import Aliases
+from .alias import Alias
 
 __all__ = ["DataLoader", "MemoryLoader"]
 
