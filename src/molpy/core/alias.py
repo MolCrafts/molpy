@@ -4,6 +4,7 @@
 # version: 0.0.1
 
 from collections import namedtuple, defaultdict
+from typing import Any
 import numpy as np
 
 __all__ = ["Alias"]
@@ -14,54 +15,43 @@ class Alias:
     class Item(namedtuple("Item", ["alias", "keyword", "type", "unit", "comment"])):
         pass
 
-    scopes: dict[str, dict[str, Item]] = {'default':{
+    class Scope(dict):
+
+        def __getattr__(self, alias):
+            try:
+                return self[alias]
+            except KeyError:
+                return super().__getattr__(alias)
+        
+        def set(self, alias: str, keyword: str, type: Any, unit: str, comment: str) -> None:
+            self[alias] = Alias.Item(alias, keyword, type, unit, comment)
+
+    _scopes: dict[str, Scope] = {'default':Scope({
             "timestep": Item("timestep", "_ts", int, "fs", "time step"),
             "name": Item("name", "_name", str, None, "atomic name"),
             "natoms": Item("natoms", "_natoms", int, None, "number of atoms"),
             "xyz": Item("xyz", "_xyz", np.ndarray, "angstrom", "atomic coordinates"),
             "energy": Item("energy", "_energy", float, "meV", "energy"),
             "forces": Item("forces", "_forces", np.ndarray, "eV/angstrom", "forces"),
-        }}
-    
-    current = scopes['default']
+        })}
 
-    def __new__(cls, name: str = 'default'):
-        if name not in cls.scopes:
-            cls.scopes[name] = {}
+    def __new__(cls, name: None | str = None):
+        if name and name not in cls._scopes:
+            cls._scopes[name] = Alias.Scope()
         return super().__new__(cls)
 
-    def __init__(self, name: None | str = None):
-        self._scope = self.__class__.scopes[name]
+    def __getattr__(self, alias: str) -> Item | Scope:
+        if alias not in self._scopes:
+            return self._scopes["default"][alias]
+        return self._scopes[alias]
 
-    @classmethod
-    def __getattr__(cls, name: str) -> Item:
-        return cls.current[name]
-
-    def set(self, alias: str, keyword: str, unit: str, comment: str) -> Item:
-        self._scope[alias] = self.Item(alias, keyword, unit, comment)
-
-    def get(self, alias: str) -> Item:
-        return self._scope[alias]
-
-    def __getattr__(self, alias: str) -> Item:
-        print(self._scope)
-        return self._scope[alias]
-
-    def __getitem__(self, scope: str) -> Item:
-        self._scope = self.__class__.scopes[scope]
-        return self
-
-    def __getstate__(self) -> dict[str, Item]:
+    def __getstate__(self) -> dict:
         return {
-            # "scopes": self.__class__.scopes,
-            "_name": self._name,
-            "_scope": self._scope,
+            "_scopes": self._scopes,
         }
 
     def __setstate__(self, __value: dict[str, Item]) -> None:
-        # self.__class__.scopes = __value["scopes"]
-        self._name = __value["_name"]
-        self._scope = __value["_scope"]
+        self._scopes = __value["_scopes"]
 
 
 # keywords = kw = Keywords("_mp_global_")

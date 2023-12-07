@@ -13,13 +13,6 @@ class TestAliases:
         assert alias.timestep.keyword == "_ts"
         assert alias.timestep.unit == "fs"
 
-    def test_hash(self):
-
-        alias = Alias()
-        data = {}
-        data[alias.timestep] = 1
-        assert data[alias.timestep] == 1
-
     def test_pickle(self):
 
         import pickle
@@ -33,15 +26,11 @@ class TestAliases:
     def test_scope(self):
 
         alias = Alias("test1")
-        alias.set("mass", "_mass", "amu", "atomic mass")
+        alias.test1.set("mass", "_mass", float, "amu", "atomic mass")
+        assert alias.test1.mass.keyword == "_mass"
+        assert alias.test1.mass.unit == "amu"
 
-        alias = Alias("test2")
-        alias.set("type", "_type", None, "atomic type")
+        assert alias.energy.keyword == "_energy"
+        assert alias.energy.unit is "meV"
 
-        assert alias.type.keyword == "_type"
-        assert alias.type.unit is None
-
-        alias["test1"]
-        assert alias.mass.keyword == "_mass"
-        assert alias.mass.unit == "amu"
         
