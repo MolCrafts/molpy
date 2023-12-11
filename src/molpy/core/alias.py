@@ -12,8 +12,7 @@ __all__ = ["Alias"]
 
 class Alias:
 
-    class Item(namedtuple("Item", ["alias", "keyword", "type", "unit", "comment"])):
-        pass
+    class Item(namedtuple("Item", ["alias", "keyword", "type", "unit", "comment"])): pass
 
     class Scope(dict):
 
@@ -25,6 +24,12 @@ class Alias:
         
         def set(self, alias: str, keyword: str, type: Any, unit: str, comment: str) -> None:
             self[alias] = Alias.Item(alias, keyword, type, unit, comment)
+
+        def alias(self)->list[str]:
+            return list(self.keys())
+        
+        def get_unit(self, alias: str) -> str:
+            return self[alias].unit
 
     _scopes: dict[str, Scope] = {'default':Scope({
             "timestep": Item("timestep", "_ts", int, "fs", "time step"),
@@ -49,9 +54,26 @@ class Alias:
         return {
             "_scopes": self._scopes,
         }
+    
+    def __call__(self, scope:str) -> Scope:
+        if scope not in self._scopes:
+            self._scopes[scope] = Alias.Scope()
+        return self._scopes[scope]
+    
+    def __iter__(self):
+        pass
 
     def __setstate__(self, __value: dict[str, Item]) -> None:
         self._scopes = __value["_scopes"]
+
+    def set(self, alias: str, keyword: str, type: Any, unit: str, comment: str) -> None:
+        self._scopes["default"].set(alias, keyword, type, unit, comment)
+
+    def alias(self)->list[str]:
+        return list(self._scopes["default"].alias())
+    
+    def get_unit(self, alias: str) -> str:
+        return self._scopes["default"][alias].unit
 
 
 # keywords = kw = Keywords("_mp_global_")
