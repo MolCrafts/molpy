@@ -31,6 +31,6 @@ class TestAliases:
         assert alias.test1.mass.unit == "amu"
 
         assert alias.energy.keyword == "_energy"
-        assert alias.energy.unit is "meV"
+        assert alias.energy.unit == "meV"
 
         

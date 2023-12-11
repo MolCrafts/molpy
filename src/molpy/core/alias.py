@@ -3,7 +3,7 @@
 # date: 2023-09-29
 # version: 0.0.1
 
-from collections import namedtuple, defaultdict
+from collections import namedtuple
 from typing import Any
 import numpy as np
 
@@ -12,69 +12,71 @@ __all__ = ["Alias"]
 
 class Alias:
 
-    class Item(namedtuple("Item", ["alias", "keyword", "type", "unit", "comment"])): pass
+    class Item(namedtuple("Item", ["alias", "key", "type", "unit", "comment"])): pass
 
-    class Scope(dict):
-
-        def __getattr__(self, alias):
-            try:
-                return self[alias]
-            except KeyError:
-                return super().__getattr__(alias)
-        
-        def set(self, alias: str, keyword: str, type: Any, unit: str, comment: str) -> None:
-            self[alias] = Alias.Item(alias, keyword, type, unit, comment)
-
-        def alias(self)->list[str]:
-            return list(self.keys())
-        
-        def get_unit(self, alias: str) -> str:
-            return self[alias].unit
-
-    _scopes: dict[str, Scope] = {'default':Scope({
+    _scopes: dict[str, dict] = {'default': {
             "timestep": Item("timestep", "_ts", int, "fs", "time step"),
             "name": Item("name", "_name", str, None, "atomic name"),
             "natoms": Item("natoms", "_natoms", int, None, "number of atoms"),
             "xyz": Item("xyz", "_xyz", np.ndarray, "angstrom", "atomic coordinates"),
             "energy": Item("energy", "_energy", float, "meV", "energy"),
             "forces": Item("forces", "_forces", np.ndarray, "eV/angstrom", "forces"),
-        })}
+        }}
 
-    def __new__(cls, name: None | str = None):
-        if name and name not in cls._scopes:
-            cls._scopes[name] = Alias.Scope()
-        return super().__new__(cls)
+    def __init__(self, scope_name: str = "default") -> None:
+        if scope_name not in self._scopes:
+            self._scopes[scope_name] = {}
+        self._current = scope_name
 
-    def __getattr__(self, alias: str) -> Item | Scope:
-        if alias not in self._scopes:
-            return self._scopes["default"][alias]
-        return self._scopes[alias]
+    def __getattr__(self, alias: str):
+    
+        if alias in self._scopes:
+            return Alias(alias)
+        elif alias in self._current_scope:
+            return self._current_scope[alias].key
+        else:
+            raise AttributeError(f"alias '{alias}' not found in {self._current} scope")
+        
+    def __getitem__(self, alias: str):
+
+        if alias in self._current_scope:
+            return self._current_scope[alias]
+        else:
+            raise KeyError(f"alias '{alias}' not found in {self._current} scope")
 
     def __getstate__(self) -> dict:
         return {
             "_scopes": self._scopes,
+            "_current": "default"
         }
     
-    def __call__(self, scope:str) -> Scope:
-        if scope not in self._scopes:
-            self._scopes[scope] = Alias.Scope()
-        return self._scopes[scope]
+    def __call__(self, scope_name:str) -> 'Alias':
+        if scope_name not in self._scopes:
+            self._scopes[scope_name] = {}
+        return self
     
     def __iter__(self):
-        pass
+        yield from self._current_scope
+    
+    def __contains__(self, alias: str) -> bool:
+        return alias in self._current_scope
 
-    def __setstate__(self, __value: dict[str, Item]) -> None:
-        self._scopes = __value["_scopes"]
+    def __setstate__(self, value: dict[str, Item]) -> None:
+        self._scopes = value["_scopes"]
+        self._current = value["_current"]
 
     def set(self, alias: str, keyword: str, type: Any, unit: str, comment: str) -> None:
-        self._scopes["default"].set(alias, keyword, type, unit, comment)
+        self._current_scope[alias] = Alias.Item(alias, keyword, type, unit, comment)
 
     def alias(self)->list[str]:
-        return list(self._scopes["default"].alias())
+        return list(self._current_scope.keys())
     
     def get_unit(self, alias: str) -> str:
-        return self._scopes["default"][alias].unit
+        return self._current_scope[alias].unit
 
+    @property
+    def _current_scope(self) -> str:
+        return self._scopes[self._current]
 
 # keywords = kw = Keywords("_mp_global_")
 # kw.set("timestep", "timestep", "fs", "time step")
