@@ -18,7 +18,8 @@ class Frame:
         self._atoms = {}
         self._connectivity = Connectivity()
 
-    def get_box(self):
+    @property
+    def box(self):
         return self._box
 
     @property

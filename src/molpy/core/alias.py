@@ -19,8 +19,12 @@ class Alias:
             "name": Item("name", "_name", str, None, "atomic name"),
             "natoms": Item("natoms", "_natoms", int, None, "number of atoms"),
             "xyz": Item("xyz", "_xyz", np.ndarray, "angstrom", "atomic coordinates"),
+            "R": Item("xyz", "_xyz", np.ndarray, "angstrom", "atomic coordinates"),
             "energy": Item("energy", "_energy", float, "meV", "energy"),
             "forces": Item("forces", "_forces", np.ndarray, "eV/angstrom", "forces"),
+            "charge": Item("charge", "_mp_charge_", float, "C", "charge"),
+            "masses": Item("masses", "masses", float, None, ""),
+            "stress": Item("stress", "_stress", np.ndarray, "GPa", "stress"),
         }}
 
     def __init__(self, scope_name: str = "default") -> None:
@@ -78,17 +82,4 @@ class Alias:
     def _current_scope(self) -> str:
         return self._scopes[self._current]
 
-# keywords = kw = Keywords("_mp_global_")
-# kw.set("timestep", "timestep", "fs", "time step")
-# kw.set("name", "_mp_name_", None, "atomic name")
-# kw.set("atomic_number", "_mp_atomic_number_", None, "atomic number")
-# kw.set("charge", "_mp_charge_", None, "charge")
-# kw.set("mass", "_mp_mass_", None, "mass")
-# kw.set("type", "_mp_type_", None, "atom type")
-# kw.set("covalent_radius", "_mp_covalent_radius_", None, "covalekw.setradius")
-# kw.set("full_name", "_mp_full_name_", None, "full name")
-# kw.set("vdw_radius", "_mp_vdw_radius_", None, "van der Waals radius")
-# kw.set("natoms", "_mp_natoms_", None, "number of atoms")
-# kw.set("xyz", "_mp_xyz_", None, "atomic coordinates")
-# kw.set("positions", "_mp_xyz_", None, "atomic coordinates")
-# kw.set("R", "_mp_xyz_", None, "atomic coordinates")
+

@@ -18,7 +18,7 @@ class Box:
          https://docs.lammps.org/Howto_triclinic.html
     """
 
-    def __init__(self, matrix: Optional[ArrayLike | 'Box'] = None, origin: Optional[ArrayLike] = None):
+    def __init__(self, pbc=np.array([1, 1, 1]), matrix: Optional[ArrayLike | 'Box'] = None, origin: Optional[ArrayLike] = None):
         if isinstance(matrix, Box):
             self._matrix = matrix.get_matrix()
         elif matrix is None:
@@ -28,6 +28,7 @@ class Box:
             assert trail.shape == (3, 3), "matrix must be (3, 3)"
             self._matrix = trail
         self._origin = np.array(origin)
+        self._pbc = np.array(pbc)
 
     def set_lengths_angles(
         self,
@@ -72,6 +73,20 @@ class Box:
     def get_matrix(self) -> np.ndarray:
         """box matrix"""
         return self._matrix
+    
+    @property
+    def matrix(self) -> np.ndarray:
+        """box matrix"""
+        return self.get_matrix()
+    
+    @property
+    def pbc(self) -> np.ndarray:
+        """periodic boundary condition"""
+        return self._pbc
+    
+    @pbc.setter
+    def pbc(self, value):
+        self._pbc = np.array(value)
 
     def get_tilts(self) -> np.ndarray:
         """box tilt"""
