@@ -75,6 +75,9 @@ class Alias:
     def alias(self)->list[str]:
         return list(self._current_scope.keys())
     
+    def items(self)->list[Item]:
+        return list(self._current_scope.values())
+    
     def get_unit(self, alias: str) -> str:
         return self._current_scope[alias].unit
 
