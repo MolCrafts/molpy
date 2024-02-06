@@ -4,50 +4,58 @@
 # version: 0.0.1
 
 from pathlib import Path
+from typing import Iterable
 import chemfiles as chfl
 
-from .frame import Frame
-from .alias import Alias
+from ..core.frame import Frame
+from molpy import alias
+import numpy as np
 
 __all__ = ["DataLoader", "MemoryLoader"]
 
 
 class ChflLoader:
-    _fileHandler: chfl.Trajectory | chfl.MemoryTrajectory
+    pass
 
-    def load_frame(self, step: int = 0) -> Frame:
-        """Load a frame from the trajectory file."""
-        chflFrame = self._fileHandler.read_step(step)
+
+class FrameLoader(ChflLoader):
+
+    def __init__(self, chfl_frame):
+        
+        self._chfl_frame = chfl_frame
+        
+    def load(self) -> Frame:
+        chfl_frame = self._chfl_frame
         frame = Frame()
 
         # get frame properties
-        frame[Alias.timestep] = chflFrame.step
-        box_matrix = chflFrame.cell.matrix
-        frame.get_box().set_matrix(box_matrix)
-        frame.atoms[Alias.xyz] = chflFrame.positions
-        frame[Alias.natoms] = len(chflFrame.atoms)
+        frame[alias.timestep] = chfl_frame.step
+        box_matrix = chfl_frame.cell.matrix.copy()
+        frame.box.set_matrix(box_matrix)
+        frame.atoms[alias.xyz] = chfl_frame.positions.copy()
+        frame[alias.natoms] = len(chfl_frame.atoms)
 
         # get atom properties
         INTRINSIC_PROPS = [
-            Alias.name,
-            Alias.atomic_number,
-            Alias.charge,
-            Alias.mass,
-            Alias.type,
+            alias.name,
+            alias.Z,
+            alias.charge,
+            alias.mass,
+            alias.atype,
         ]
 
-        first_atom = chflFrame.atoms[0]
+        first_atom = chfl_frame.atoms[0]
         extra_properties = first_atom.list_properties()
-        EXTRA_PROPS = [getattr(Alias, prop) for prop in extra_properties]
+        EXTRA_PROPS = [getattr(alias, prop) for prop in extra_properties]
         for prop in INTRINSIC_PROPS + EXTRA_PROPS:
             if hasattr(first_atom, prop):
-                frame.atoms[prop] = [getattr(atom, prop) for atom in chflFrame.atoms]
+                frame.atoms[prop] = [getattr(atom, prop) for atom in chfl_frame.atoms]
 
         # get connectivity
-        bonds = chflFrame.topology.bonds
-        angles = chflFrame.topology.angles
-        dihedrals = chflFrame.topology.dihedrals
-        impropers = chflFrame.topology.impropers
+        bonds = chfl_frame.topology.bonds
+        angles = chfl_frame.topology.angles
+        dihedrals = chfl_frame.topology.dihedrals
+        impropers = chfl_frame.topology.impropers
 
         for bond in bonds:
             frame._connectivity.add_bond(*bond)
@@ -85,12 +93,29 @@ class ChflLoader:
         return frame
 
 
-class DataLoader(ChflLoader):
+class TrajLoader(ChflLoader):
     def __init__(self, fpath: str | Path, format: str = "", mode: str = "r"):
         self._fpath = fpath
         self._format = format
         self._mode = mode
-        self._fileHandler = chfl.Trajectory(self._fpath, self._mode, self._format)
+        self._trajectory = chfl.Trajectory(self._fpath, self._mode, self._format)
+        self._join = {}
+
+    def __iter__(self):
+        keys = list(self._join.keys())
+        values = list(self._join.values())
+        for chflframe, v in zip(self._trajectory, *values):
+            print(chflframe.positions)
+            loader = FrameLoader(chflframe)
+            frame = loader.load()
+            frame._props.update(dict(zip(keys, np.atleast_1d(v))))
+            yield frame
+
+    def join(self, per_frame_data: dict[str, Iterable]):
+        self._join.update(per_frame_data)
+
+    def close(self):
+        self._trajectory.close()
 
 
 class MemoryLoader(ChflLoader):

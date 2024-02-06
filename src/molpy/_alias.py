@@ -7,9 +7,6 @@ from collections import namedtuple
 from typing import Any
 import numpy as np
 
-__all__ = ["Alias"]
-
-
 class Alias:
 
     class Item(namedtuple("Item", ["alias", "key", "type", "unit", "comment"])): pass
@@ -20,11 +17,24 @@ class Alias:
             "natoms": Item("natoms", "_natoms", int, None, "number of atoms"),
             "xyz": Item("xyz", "_xyz", np.ndarray, "angstrom", "atomic coordinates"),
             "R": Item("xyz", "_xyz", np.ndarray, "angstrom", "atomic coordinates"),
+            "cell": Item("cell", "_cell", np.ndarray, "angstrom", "unit cell"),
             "energy": Item("energy", "_energy", float, "meV", "energy"),
             "forces": Item("forces", "_forces", np.ndarray, "eV/angstrom", "forces"),
-            "charge": Item("charge", "_mp_charge_", float, "C", "charge"),
-            "masses": Item("masses", "masses", float, None, ""),
+            "charge": Item("charge", "_charge", float, "C", "charge"),
+            "mass": Item("mass", "_mass", float, None, ""),
             "stress": Item("stress", "_stress", np.ndarray, "GPa", "stress"),
+            "idx": Item("idx", "_idx", int, None, ""),
+            "Z": Item("Z", "_atomic_numbers", int, None, "nuclear charge"),
+            "atype": Item("atype", "_atomic_types", int, None, "atomic type"),
+            "idx_m": Item("idx_m", "_idx_m", int, None, "indices of systems"),
+            "idx_i": Item("idx_i", "_idx_i", int, None, "indices of center atoms"),
+            "idx_j": Item("idx_j", "_idx_j", int, None, "indices of neighboring atoms"),
+            "idx_i_lr": Item("idx_i_lr", "_idx_i_lr", int, None, "indices of center atoms for # long-range"),
+            "idx_j_lr": Item("idx_j_lr", "_idx_j_lr", int, None, "indices of neighboring atoms for # long-range"),
+            "offsets": Item("offsets", "_offsets", int, None, "cell offset vectors"),
+            "Rij": Item("Rij", "_Rij", np.ndarray, "angstrom", "vectors pointing from center atoms to neighboring atoms"),
+            "dist": Item("dist", "_dist", np.ndarray, "angstrom", "distances between center atoms and neighboring atoms"),
+            "pbc": Item("pbc", "_pbc", np.ndarray, None, "periodic boundary conditions")
         }}
 
     def __init__(self, scope_name: str = "default") -> None:
@@ -85,4 +95,4 @@ class Alias:
     def _current_scope(self) -> str:
         return self._scopes[self._current]
 
-
+alias = Alias()

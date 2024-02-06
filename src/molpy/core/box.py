@@ -18,7 +18,7 @@ class Box:
          https://docs.lammps.org/Howto_triclinic.html
     """
 
-    def __init__(self, pbc=np.array([1, 1, 1]), matrix: Optional[ArrayLike | 'Box'] = None, origin: Optional[ArrayLike] = None):
+    def __init__(self, pbc=np.array([True, True, True]), matrix: Optional[ArrayLike | 'Box'] = None, origin: Optional[ArrayLike] = None):
         if isinstance(matrix, Box):
             self._matrix = matrix.get_matrix()
         elif matrix is None:

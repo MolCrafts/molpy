@@ -3,11 +3,20 @@
 # date: 2023-01-10
 # version: 0.0.1
 
-from .struct import StructArray
-from .graph import Graph
 import numpy as np
+
+class Atom:
+    pass
+
+class Bond:
+    pass
+
+class Angle:
+    pass
 
 class Topology:
 
     def __init__(self):
-        pass
+        
+        self._atoms = []
+        self._bonds = []

@@ -4,9 +4,11 @@
 # version: 0.0.1
 
 from collections import namedtuple
+from typing import Any
 import numpy as np
+from pathlib import Path
 from .box import Box
-from .alias import Alias
+from molpy import alias
 
 
 __all__ = ["Frame", "Connectivity"]
@@ -14,9 +16,9 @@ __all__ = ["Frame", "Connectivity"]
 class Frame:
     def __init__(self, **props):
         self._box = Box()
-        self._props = props
-        self._atoms = {}
         self._connectivity = Connectivity()
+        self._props: dict[str, Any] = props.copy()
+        self._atoms: dict[str, Any] = {}
 
     @property
     def box(self):
@@ -28,7 +30,7 @@ class Frame:
 
     @property
     def natoms(self):
-        return self._props[Alias.natoms]
+        return self._props[alias.natoms]
 
     @property
     def nbonds(self):
@@ -51,6 +53,16 @@ class Frame:
 
     def __getitem__(self, key):
         return self._props[key]
+    
+    def as_dict(self):
+        data = dict(self._props)
+        data.update(self._atoms)
+        data.update({
+            alias.cell: self._box.matrix,
+            alias.pbc: self._box.pbc
+        })
+        # TODO: add connectivity
+        return data
 
 
 class Connectivity:
