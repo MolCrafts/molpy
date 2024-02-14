@@ -6,10 +6,23 @@
 from collections import namedtuple
 from typing import Any
 import numpy as np
+from dataclasses import dataclass
 
 class Alias:
 
-    class Item(namedtuple("Item", ["alias", "key", "type", "unit", "comment"])): pass
+    @dataclass
+    class Item:
+        alias: str
+        key: str
+        type: Any
+        unit: str
+        comment: str
+
+        def __hash__(self) -> int:
+            return hash(self.key)
+
+        def __repr__(self) -> str:
+            return f"<{self.alias}>"
 
     _scopes: dict[str, dict] = {'default': {
             "timestep": Item("timestep", "_ts", int, "fs", "time step"),
@@ -94,5 +107,12 @@ class Alias:
     @property
     def _current_scope(self) -> str:
         return self._scopes[self._current]
+
+    def map(self, alias, key):
+        alias.key = key.key
+        alias.alias = key.alias
+        alias.type = key.type
+        alias.unit = key.unit
+        alias.comment = key.comment
 
 alias = Alias()
