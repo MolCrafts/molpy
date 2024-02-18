@@ -1,0 +1,1 @@
+from .lj import LJ126

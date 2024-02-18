@@ -1,36 +1,22 @@
-# author: Roy Kid
-# contact: lijichen365@126.com
-# date: 2023-10-04
-# version: 0.0.1
+import molpy as mp
 
-from molpy import Alias
+class TestAlias:
 
-class TestAliases:
+    def test_get_str_alias(self):
 
-    def test_default(self):
+        assert mp.Alias.timestep == "_ts"
 
-        alias = Alias()
-        assert alias.timestep.keyword == "_ts"
-        assert alias.timestep.unit == "fs"
+    def test_get_alias(self):
 
-    def test_pickle(self):
+        assert mp.Alias["timestep"].alias == "timestep"
 
-        import pickle
+    def test_new_scope(self):
 
-        alias = Alias()
-        data = pickle.dumps(alias)
-        alias = pickle.loads(data)
-        assert alias.timestep.keyword == "_ts"
-        assert alias.timestep.unit == "fs"
+        mp.Alias("test")
+        mp.Alias.test.set("timestep", "timestep", int, "fs", "simulation timestep")
+        assert "test" in mp.Alias._scopes
+        assert mp.Alias.test.timestep == "timestep"
 
-    def test_scope(self):
+    def test_hash_alias(self):
 
-        alias = Alias("test1")
-        alias.test1.set("mass", "_mass", float, "amu", "atomic mass")
-        assert alias.test1.mass.keyword == "_mass"
-        assert alias.test1.mass.unit == "amu"
-
-        assert alias.energy.keyword == "_energy"
-        assert alias.energy.unit == "meV"
-
-        
+        assert hash(mp.Alias.timestep)

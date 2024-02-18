@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 from pathlib import Path
 from .box import Box
-from molpy import alias
+from molpy import Alias
 
 
 __all__ = ["Frame", "Connectivity"]
@@ -23,6 +23,13 @@ class Frame:
     @property
     def box(self):
         return self._box
+    
+    @box.setter
+    def box(self, value):
+        if isinstance(value, Box):
+            self._box = value
+        else:
+            self._box = Box(value)
 
     @property
     def atoms(self):
@@ -30,7 +37,7 @@ class Frame:
 
     @property
     def natoms(self):
-        return self._props[alias.natoms]
+        return self._props[Alias.natoms]
 
     @property
     def nbonds(self):
@@ -48,6 +55,62 @@ class Frame:
     def nimpropers(self):
         return self._connectivity.nimpropers
     
+    @property
+    def positions(self):
+        return self._atoms[Alias.xyz]
+    
+    @positions.setter
+    def positions(self, value):
+        self._atoms[Alias.xyz] = value
+    
+    @property
+    def velocities(self):
+        return self._atoms[Alias.velocity]
+    
+    @velocities.setter  
+    def velocities(self, value):
+        self._atoms[Alias.velocity] = value
+
+    @property
+    def energy(self):
+        return self._atoms[Alias.energy]
+    
+    @energy.setter
+    def energy(self, value):
+        self._atoms[Alias.energy] = value
+    
+    @property
+    def forces(self):
+        return self._atoms[Alias.forces]
+    
+    @forces.setter
+    def forces(self, value):
+        self._atoms[Alias.forces] = value
+    
+    @property
+    def momenta(self):
+        return self._atoms[Alias.momenta]
+    
+    @momenta.setter
+    def momenta(self, value):
+        self._atoms[Alias.momenta] = value
+    
+    @property
+    def charge(self):
+        return self._atoms[Alias.charge]
+    
+    @charge.setter
+    def charge(self, value):
+        self._atoms[Alias.charge] = value
+    
+    @property
+    def mass(self):
+        return self._atoms[Alias.mass]
+    
+    @mass.setter
+    def mass(self, value):
+        self._atoms[Alias.mass] = value
+    
     def __setitem__(self, key, value):
         self._props[key] = value
 
@@ -58,8 +121,8 @@ class Frame:
         data = dict(self._props)
         data.update(self._atoms)
         data.update({
-            alias.cell: self._box.matrix,
-            alias.pbc: self._box.pbc
+            Alias.cell: self._box.matrix,
+            Alias.pbc: self._box.pbc
         })
         # TODO: add connectivity
         return data

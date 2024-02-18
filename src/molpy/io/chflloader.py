@@ -8,7 +8,7 @@ from typing import Iterable
 import chemfiles as chfl
 
 from ..core.frame import Frame
-from molpy import alias
+from molpy import Alias
 import numpy as np
 
 __all__ = ["DataLoader", "MemoryLoader"]
@@ -29,27 +29,28 @@ class FrameLoader(ChflLoader):
         frame = Frame()
 
         # get frame properties
-        frame[alias.timestep] = chfl_frame.step
+        frame[Alias.timestep] = chfl_frame.step
         box_matrix = chfl_frame.cell.matrix.copy()
         frame.box.set_matrix(box_matrix)
-        frame.atoms[alias.xyz] = chfl_frame.positions.copy()
-        frame[alias.natoms] = len(chfl_frame.atoms)
+        frame.atoms[Alias.xyz] = chfl_frame.positions.copy()
+        if chfl_frame.has_velocities():
+            frame.atoms[Alias.velocity] = chfl_frame.velocities.copy()
+        frame[Alias.natoms] = len(chfl_frame.atoms)
 
         # get atom properties
-        INTRINSIC_PROPS = [
-            alias.name,
-            alias.Z,
-            alias.charge,
-            alias.mass,
-            alias.atype,
-        ]
+        PROP_ALIAS_MAP = {
+            "name": Alias['name'],
+            "atomic_number": Alias['Z'],
+            "charge": Alias['charge'],
+            "mass": Alias['mass'],  
+            "type": Alias['atype'],
+            "vdw_radius": Alias['vdw_radius'],
+        }
 
-        first_atom = chfl_frame.atoms[0]
-        extra_properties = first_atom.list_properties()
-        EXTRA_PROPS = [getattr(alias, prop) for prop in extra_properties]
-        for prop in INTRINSIC_PROPS + EXTRA_PROPS:
-            if hasattr(first_atom, prop):
-                frame.atoms[prop] = [getattr(atom, prop) for atom in chfl_frame.atoms]
+        for key, _alias in PROP_ALIAS_MAP.items():
+            frame.atoms[_alias.key] = np.array([getattr(atom, key) for atom in chfl_frame.atoms if hasattr(atom, key)], dtype=_alias.type)
+
+        frame[Alias.natoms] = len(chfl_frame.atoms)
 
         # get connectivity
         bonds = chfl_frame.topology.bonds
@@ -69,26 +70,12 @@ class FrameLoader(ChflLoader):
         for improper in impropers:
             frame._connectivity.add_improper(*improper)
 
-        #   residues = chemfile_frame.topology.residues
-        #     if residues:
-        #         nresidues = len(residues)
-        #         molpy_frame._nresidues = nresidues
-        #         names = []
-        #         ids = []
-        #         index = np.empty((nresidues), dtype=object)
-        #         props = []
-        #         for i, residue in enumerate(residues):
-        #             ids.append(residue.id)
-        #             names.append(residue.name)
-        #             props.append({k:residue[k] for k in residue.list_properties()})
-        #             index[i] = np.array(residue.atoms, copy=True)
-
-        #         molpy_frame.residues['id'] = np.array(ids)
-        #         molpy_frame.residues['name'] = np.array(names)
-        #         molpy_frame.residues['index'] = index
-        #         keys = props[0].keys()
-        #         for k in keys:
-        #             molpy_frame.residues[k] = np.array([p[k] for p in props])
+        residues = chfl_frame.topology.residues
+        molid = np.zeros(len(chfl_frame.atoms), dtype=int)
+        if residues:
+            for residue in residues:
+                molid[residue.atoms] = residue.id
+            frame.atoms[Alias.molid] = molid
 
         return frame
 
@@ -99,23 +86,29 @@ class TrajLoader(ChflLoader):
         self._format = format
         self._mode = mode
         self._trajectory = chfl.Trajectory(self._fpath, self._mode, self._format)
-        self._join = {}
+
+    @property
+    def nsteps(self):
+        return self._trajectory.nsteps
+    
+    @property
+    def path(self):
+        return self._fpath
 
     def __iter__(self):
-        keys = list(self._join.keys())
-        values = list(self._join.values())
-        for chflframe, v in zip(self._trajectory, *values):
-            print(chflframe.positions)
+
+        for chflframe in self._trajectory:
             loader = FrameLoader(chflframe)
             frame = loader.load()
-            frame._props.update(dict(zip(keys, np.atleast_1d(v))))
             yield frame
-
-    def join(self, per_frame_data: dict[str, Iterable]):
-        self._join.update(per_frame_data)
 
     def close(self):
         self._trajectory.close()
+
+    def read(self, step: int = 0) -> Frame:
+        chfl_frame = self._trajectory.read_step(step)
+        loader = FrameLoader(chfl_frame)
+        return loader.load()
 
 
 class MemoryLoader(ChflLoader):

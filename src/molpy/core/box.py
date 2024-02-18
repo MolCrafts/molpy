@@ -18,15 +18,17 @@ class Box:
          https://docs.lammps.org/Howto_triclinic.html
     """
 
-    def __init__(self, pbc=np.array([True, True, True]), matrix: Optional[ArrayLike | 'Box'] = None, origin: Optional[ArrayLike] = None):
+    def __init__(self, matrix: ArrayLike | 'Box' | None = None, pbc=np.array([True, True, True]), origin: Optional[ArrayLike] = None):
         if isinstance(matrix, Box):
             self._matrix = matrix.get_matrix()
         elif matrix is None:
             self._matrix = np.eye(3)
         else:
-            trail = np.array(matrix)
-            assert trail.shape == (3, 3), "matrix must be (3, 3)"
-            self._matrix = trail
+            trial = np.array(matrix)
+            assert trial.shape == (3, 3) or trial.shape == (3, ), f"matrix must be (3, 3) or (3, ), rather than {trial.shape}"
+            if trial.shape == (3, ):
+                trial = np.diag(trial)
+            self._matrix = trial
         self._origin = np.array(origin)
         self._pbc = np.array(pbc)
 
