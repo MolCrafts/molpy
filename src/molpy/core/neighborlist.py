@@ -42,22 +42,26 @@ class NeighborList:
         all_cell_idx = all_cell_coord * cell_offset
         grid_matrix = np.diag(grids)
         idx = np.arange(len(xyz))
-        result = {}
-        for i, crd in enumerate(cell_coord):
-            around_cell = NEIGHBOUR_GRID + crd
+        pairs = []
+        for i, center_cell_coord in enumerate(all_cell_coord):
+            center_xyz_mask = np.all(np.isin(cell_coord, center_cell_coord), axis=-1)
+            center_xyz = xyz[center_xyz_mask]
+            if len(center_xyz) == 0:
+                continue
+            around_cell = NEIGHBOUR_GRID + center_cell_coord
             reci_r = np.einsum('ij,nj->ni', np.linalg.inv(grid_matrix), around_cell)
             shifted_reci_r = reci_r - np.floor(reci_r)
             around_cell = np.einsum('ij,nj->ni', grid_matrix, shifted_reci_r)
             around_cell_idx = (around_cell * cell_offset).sum(axis=-1)
-            around_xyz = xyz[np.isin(cell_idx, around_cell_idx)]
-            rij = (around_xyz[None] - around_xyz[:, None])[0]
+            around_cell_xyz_mask = np.isin(cell_idx, around_cell_idx, )
+            around_xyz = xyz[around_cell_xyz_mask]
+            rij = center_xyz[:, None, :] - around_xyz
             rij = box.wrap(rij)
             dij = np.linalg.norm(rij, axis=-1)
-            cutoff_mask = dij < cutoff
-            idx_j = idx[np.isin(cell_idx, around_cell_idx)][cutoff_mask]
-            result[i] = idx_j
-        pairs = itertools.product(result.keys(), result.keys())
+            cutoff_mask = np.nonzero(dij < cutoff)
+            pairs.extend(list(zip(idx[center_xyz_mask][cutoff_mask[0]], idx[around_cell_xyz_mask][cutoff_mask[1]])))
         pairs = filter(lambda x: x[0] < x[1], pairs)
+        pairs = set(pairs)
         return list(pairs)
     
     def update(self, xyz, box):

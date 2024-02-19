@@ -157,9 +157,9 @@ class Box:
         """
         r = np.atleast_2d(r)
 
-        reciprocal_r = np.einsum('ij,nj->ni', self.get_inverse(), r)
+        reciprocal_r = np.einsum('ij,...j->...i', self.get_inverse(), r)
         shifted_reci_r = reciprocal_r - np.floor(reciprocal_r)
-        real_r = np.einsum('ij,nj->ni', self._matrix, shifted_reci_r)
+        real_r = np.einsum('ij,...j->...i', self._matrix, shifted_reci_r)
         # real_r = real_r[np.logical_not(self.pbc)] = r[np.logical_not(self.pbc)]
         return real_r
     
