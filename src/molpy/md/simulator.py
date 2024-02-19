@@ -71,6 +71,15 @@ class Simulator:
         else:
             self.step = 0
 
+    def __call__(self, n_steps: int):
+        """
+        Run the molecular dynamics simulation for n_steps.
+
+        Args:
+            n_step (int): Number of simulation steps to be performed.
+        """
+        self.run(n_steps)
+
     def run(self, n_steps: int):
         """
         Run the molecular dynamics simulation for n_steps.

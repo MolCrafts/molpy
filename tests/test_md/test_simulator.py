@@ -14,8 +14,6 @@ class TestSimulator:
         frame.forces = np.zeros((natoms, 3))
         frame.energy = np.zeros((natoms, 1))
 
-        print(frame.energy)
-
         simulator = mp.md.Simulator(
             frame,
             potential=mp.potential.pair.LJ126(sigma=1.0, epsilon=1.0, cutoff=2.5),

@@ -1,6 +1,7 @@
 import numpy as np
 from ..simulator import Simulator
 
+
 class Fix:
     """
     Basic class for simulator hooks
@@ -27,8 +28,8 @@ class Fix:
     def on_simulation_end(self, simulator: Simulator):
         pass
 
-class Thermostat(Fix):
 
+class Thermostat(Fix):
     """
     Basic thermostat hook for simulator class. This class is initialized based on the simulator and system
     specifications during the first MD step. Thermostats are applied before and after each MD step.
@@ -128,6 +129,7 @@ class Thermostat(Fix):
         """
         raise NotImplementedError
 
+
 class Langevin(Thermostat):
 
     def __init__(self, T: float, time_constant: float):
@@ -140,9 +142,9 @@ class Langevin(Thermostat):
         self._initilalized = False
 
     @property
-    def initilalized(self): 
+    def initilalized(self):
         return self._initilalized
-    
+
     @initilalized.setter
     def initilalized(self, value: bool):
         self._initilalized = value
@@ -162,8 +164,8 @@ class Langevin(Thermostat):
         gamma = np.array([1]) / self.time_constant
         c1 = np.exp(-0.5 * simulator.integrator.timestep * gamma)
         c2 = np.sqrt(1 - c1**2)
-        self.c1 = c1[:, None, None]
-        self.c2 = c2[:, None, None]
+        self.c1 = c1[:, None]
+        self.c2 = c2[:, None]
         kb = 1
         self.thermostat_factor = np.sqrt(simulator.frame.mass * kb * self.T)
 

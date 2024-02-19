@@ -18,35 +18,95 @@ class Box:
          https://docs.lammps.org/Howto_triclinic.html
     """
 
-    def __init__(self, matrix: ArrayLike | 'Box' | None = None, pbc=np.array([True, True, True]), origin: Optional[ArrayLike] = None):
-        if isinstance(matrix, Box):
-            self._matrix = matrix.get_matrix()
-        elif matrix is None:
-            self._matrix = np.eye(3)
-        else:
-            trial = np.array(matrix)
-            assert trial.shape == (3, 3) or trial.shape == (3, ), f"matrix must be (3, 3) or (3, ), rather than {trial.shape}"
-            if trial.shape == (3, ):
-                trial = np.diag(trial)
-            self._matrix = trial
+    def __init__(self, lx:int, ly:int, lz:int, xy:int=0, xz:int=0, yz:int=0, origin=np.zeros(3), pbc=np.array([True, True, True])):
+        
+        self.set_lengths_tilts(lx, ly, lz, xy, xz, yz)
         self._origin = np.array(origin)
         self._pbc = np.array(pbc)
 
-    def set_lengths_angles(
-        self,
-        lengths: ArrayLike,
-        angles: ArrayLike = (90, 90, 90),
-    ):
-        """init or reset the parallelepiped box with lengths and angles"""
-        a, b, c = np.array(lengths)
-        alpha, beta, gamma = np.radians(angles)
-        lx = a
-        xy = b * np.cos(gamma)
-        xz = c * np.cos(beta)
-        ly = np.sqrt(b**2 - xy**2)
-        yz = (b * c * np.cos(alpha) - xy * xz) / ly
-        lz = np.sqrt(c**2 - xz**2 - yz**2)
+    @classmethod
+    def cube(cls, l):
+        """init box with cube"""
+        return cls.from_lengths(l, l, l)
 
+    @property
+    def length(self) -> np.ndarray:
+        """box length"""
+        return np.diag(self._matrix)
+    
+    @property
+    def tilt(self) -> np.ndarray:
+        """box tilt"""
+        return np.array([self.xy, self.xz, self.yz])
+    
+    @property
+    def lx(self) -> float:
+        """box length in x direction"""
+        return self._matrix[0, 0]
+    
+    @property
+    def ly(self) -> float:
+        """box length in y direction"""
+        return self._matrix[1, 1]
+    
+    @property
+    def lz(self) -> float:
+        """box length in z direction"""
+        return self._matrix[2, 2]
+    
+    @property
+    def xy(self) -> float:
+        """box tilt in xy direction"""
+        return self._matrix[0, 1]
+    
+    @property
+    def xz(self) -> float:
+        """box tilt in xz direction"""
+        return self._matrix[0, 2]
+    
+    @property
+    def yz(self) -> float:
+        """box tilt in yz direction"""
+        return self._matrix[1, 2]
+    
+    @property
+    def matrix(self) -> np.ndarray:
+        """box matrix"""
+        return self._matrix
+
+    @classmethod
+    def from_lengths(cls, lx, ly, lz):
+        """init box with lengths"""
+        box = cls(lx, ly, lz)
+        return box
+    
+    @classmethod
+    def from_lengths_and_angles(cls, lx, ly, lz, alpha, beta, gamma):
+        """init box with lengths and angles"""
+        box = cls()
+        box.set_lengths_angles(lx, ly, lz, alpha, beta, gamma)
+        return box
+    
+    @classmethod
+    def from_box(cls, box: "Box"):
+        """init box with another box"""
+        new_box = cls()
+        new_box.set_matrix(box.get_matrix())
+        new_box.set_origin(box._origin)
+        return new_box
+
+    def get_image(self, r):
+        """get image of position vector"""
+        r = np.atleast_2d(r)
+        reciprocal_r = np.einsum('ij,nj->ni', self.get_inverse(), r)
+        return np.floor(reciprocal_r)
+
+    def set_lengths_tilts(
+        self,
+        lx, ly, lz,
+        xy=0, xz=0, yz=0
+    ):
+        """init or reset the parallelepiped box with lengths and tilts"""
         self._matrix = np.array(
             [
                 [lx, xy, xz],
@@ -54,7 +114,12 @@ class Box:
                 [0, 0, lz],
             ]
         )
+        # assert all(np.array([xy, xz, yz]) < np.array([lx, lx, ly])), "tilts must be less than lengths"
 
+    def get_matrix(self) -> np.ndarray:
+        """box matrix"""
+        return self._matrix
+    
     def set_matrix(self, matrix: ArrayLike):
         """init or reset the parallelepiped box with matrix"""
         self._matrix = np.array(matrix)
@@ -72,10 +137,6 @@ class Box:
         except np.linalg.LinAlgError:
             raise ValueError(f"Box matrix {self._matrix} is singular")
 
-    def get_matrix(self) -> np.ndarray:
-        """box matrix"""
-        return self._matrix
-    
     @property
     def matrix(self) -> np.ndarray:
         """box matrix"""
@@ -90,58 +151,46 @@ class Box:
     def pbc(self, value):
         self._pbc = np.array(value)
 
-    def get_tilts(self) -> np.ndarray:
-        """box tilt"""
-        xy = self._matrix[0, 1]
-        xz = self._matrix[0, 2]
-        yz = self._matrix[1, 2]
-        return np.array([xy, xz, yz])
-
-    def get_angles(self) -> np.ndarray:
-        """box angles"""
-        xy, xz, yz = self.get_tilts()
-        ly = self._matrix[1, 1]
-        lz = self._matrix[2, 2]
-        alpha = self._matrix[0, 0]
-        beta = np.sqrt(ly**2 + xy**2)
-        gamma = np.sqrt(lz**2 + xz**2 + yz**2)
-        return np.array([alpha, beta, gamma])
-
     def wrap(self, r: ArrayLike):
         """
         shift position vector(s) back to periodic boundary condition box
-
-        Parameters
-        ----------
-        r : ArrayLike
-            (3, ) or (N, 3)
-
-        Returns
-        -------
-        np.ndarray
-            (3, ) or (N, 3)
         """
-        r = np.array(r)
-        if r.ndim == 2 and r.shape[-1] != 3:
-            raise ValueError("r must be (N, 3)")
-        elif r.ndim == 1 and r.shape[0] != 3:
-            raise ValueError("r must be (3, )")
-        elif r.ndim > 2:
-            raise ValueError("r must be (N, 3) or (3, )")
+        r = np.atleast_2d(r)
 
-        reciprocal_r = np.dot(self.get_inverse(), r.T)
+        reciprocal_r = np.einsum('ij,nj->ni', self.get_inverse(), r)
         shifted_reci_r = reciprocal_r - np.floor(reciprocal_r)
-        real_r = np.dot(self._matrix, shifted_reci_r)
+        real_r = np.einsum('ij,nj->ni', self._matrix, shifted_reci_r)
+        # real_r = real_r[np.logical_not(self.pbc)] = r[np.logical_not(self.pbc)]
+        return real_r
+    
+    def unwrap(self, r, images):
+        r = np.atleast_2d(r)
+        images = np.atleast_2d(images)
 
-        return real_r.T
+        return r + np.einsum('ij,kj->ik', images, self._matrix)
+    
+    @property
+    def v1(self) -> np.ndarray:
+        """box vector 1"""
+        return self._matrix[:, 0]
+    
+    @property
+    def v2(self) -> np.ndarray:
+        """box vector 2"""
+        return self._matrix[:, 1]
+    
+    @property
+    def v3(self) -> np.ndarray:
+        """box vector 3"""
+        return self._matrix[:, 2]
 
     def get_volume(self) -> float:
         """box volume"""
-        return np.linalg.det(self._matrix)
+        return np.abs(np.dot(np.cross(self.v1, self.v2), self.v3))
 
     def diff(self, r1: ArrayLike, r2: ArrayLike) -> np.ndarray:
         """difference between two positions"""
-        return self.wrap(np.array(r1) - np.array(r2))
+        return self.wrap(np.fmod(r2 - r1 + self.length / 2, self.length)) - self.length / 2
 
     def dist(self, r1: ArrayLike, r2: ArrayLike) -> np.ndarray:
         """distance between two positions"""
