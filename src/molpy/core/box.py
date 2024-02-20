@@ -212,7 +212,7 @@ class Box:
         """difference between two positions"""
         pairs = r[:, None, :] - r
         paris = pairs[np.triu_indices(len(r), k=1)]
-        return self._diff(pairs)
+        return self._diff(paris)
     
     def make_fractional(self, r: ArrayLike) -> np.ndarray:
         """convert position to fractional coordinates"""

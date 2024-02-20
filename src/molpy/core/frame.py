@@ -15,7 +15,7 @@ __all__ = ["Frame", "Connectivity"]
 
 class Frame:
     def __init__(self, **props):
-        self._box = Box()
+        self._box = Box(0,0,0,0,0,0)
         self._connectivity = Connectivity()
         self._props: dict[str, Any] = props.copy()
         self._atoms: dict[str, Any] = {}

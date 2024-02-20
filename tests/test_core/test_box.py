@@ -30,6 +30,12 @@ class TestBox:
         box3d = mp.Box(2, 2, 2, 2, 0, 0)
         npt.assert_allclose(box3d.get_volume(), 8, rtol=1e-6)
 
+    def test_wrap(self):
+
+        cell = np.array([[0, 0, 4]])
+        box = mp.Box(1, 1, 6)
+        npt.assert_allclose(box.wrap(cell), cell, rtol=1e-6)
+
     def test_wrap_single_particle(self):
         box = mp.Box(2, 2, 2, 0, 0, 0)
 

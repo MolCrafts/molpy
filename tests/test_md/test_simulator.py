@@ -7,7 +7,7 @@ class TestSimulator:
 
         n_atoms = 10
         frame = mp.Frame(n_atoms = n_atoms)
-        frame.box = mp.Box([5, 5, 5])
+        frame.box = mp.Box(5, 5, 5)
         frame.positions = np.random.rand(n_atoms, 3)
         frame.mass = np.ones((n_atoms, 1))
         frame.momenta = np.zeros((n_atoms, 3))
