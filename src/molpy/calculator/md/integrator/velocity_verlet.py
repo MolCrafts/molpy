@@ -1,6 +1,5 @@
 from .base import Integrator
-from ...core import Frame
-from ... import Alias
+from molpy import Frame, Alias
 
 class VelocityVerlet(Integrator):
     """

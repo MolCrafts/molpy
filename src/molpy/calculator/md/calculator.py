@@ -2,8 +2,9 @@ import numpy as np
 from tqdm import trange
 from .integrator.base import Integrator
 import molpy as mp
+from ..calculator import BaseCalculator
 
-class Simulator:
+class Calculator(BaseCalculator):
     """
     Main driver of the molecular dynamics simulation. Uses an integrator to
     propagate the molecular frame defined in the frame class according to

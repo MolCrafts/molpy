@@ -1,4 +1,4 @@
-from ...core import Frame
+from molpy import Frame
 
 class Integrator:
     """
