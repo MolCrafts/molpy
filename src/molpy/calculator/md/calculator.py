@@ -53,6 +53,10 @@ class Calculator(BaseCalculator):
         fixes: list = [],
         start_step: int = 0,
         restart: bool = False,
+        dump_config: dict = {
+            "n_dump": None,
+            "file": ""
+        }
     ):
         super().__init__()
 
@@ -64,6 +68,11 @@ class Calculator(BaseCalculator):
         self.restart = restart
         self.neighborlist = neighborlist
         self.integrator = integrator
+        
+        if dump_config:
+            self.n_dump = dump_config["n_dump"]
+            if self.n_dump:
+                self.dump_to(dump_config["file"])
 
         # Keep track of the actual simulation steps performed with simulate calls
         self.effective_steps = 0
@@ -94,7 +103,7 @@ class Calculator(BaseCalculator):
         for hook in self.fixes:
             hook.on_simulation_start(self)
 
-        for _ in trange(n_steps):
+        for nstep in trange(n_steps):
 
             pairs = self.neighborlist.update(self.frame.positions, self.frame.box)
             self.frame[mp.Alias.idx_i] = pairs[:, 0]
@@ -132,6 +141,9 @@ class Calculator(BaseCalculator):
 
             self.step += 1
             self.effective_steps += 1
+            self.frame[mp.Alias.step] = self.effective_steps
+            if self.n_dump and nstep % self.n_dump == 0:
+                self.dump(self.frame)
 
         # Call hooks at the simulation end
         for hook in self.fixes:

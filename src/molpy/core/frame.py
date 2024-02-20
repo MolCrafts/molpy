@@ -34,10 +34,22 @@ class Frame:
     @property
     def atoms(self):
         return self._atoms
+    
+    @property
+    def types(self):
+        return self._atoms[Alias.atype]
+    
+    @types.setter
+    def types(self, value):
+        self._atoms[Alias.atype] = value
 
     @property
     def n_atoms(self):
         return self._props[Alias.n_atoms]
+
+    @property
+    def bonds(self):
+        return self._connectivity._bonds
 
     @property
     def nbonds(self):
@@ -62,6 +74,7 @@ class Frame:
     @positions.setter
     def positions(self, value):
         self._atoms[Alias.xyz] = value
+        self._props[Alias.n_atoms] = len(value)
     
     @property
     def velocities(self):
@@ -110,6 +123,10 @@ class Frame:
     @mass.setter
     def mass(self, value):
         self._atoms[Alias.mass] = value
+
+    @property
+    def step(self):
+        return self._props[Alias.step]
     
     def __setitem__(self, key, value):
         self._props[key] = value
