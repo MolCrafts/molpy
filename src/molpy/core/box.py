@@ -94,6 +94,13 @@ class Box:
         new_box.set_matrix(box.get_matrix())
         new_box.set_origin(box._origin)
         return new_box
+    
+    @classmethod
+    def from_matrix(cls, matrix: ArrayLike):
+        """init box with matrix"""
+        lx, ly, lz = np.diag(matrix)
+        box = cls(lx, ly, lz, matrix[0, 1], matrix[0, 2], matrix[1, 2])
+        return box
 
     def get_image(self, r):
         """get image of position vector"""
@@ -187,15 +194,26 @@ class Box:
     def get_volume(self) -> float:
         """box volume"""
         return np.abs(np.dot(np.cross(self.v1, self.v2), self.v3))
+    
+    def _diff(self, dr: ArrayLike) -> np.ndarray:
+        """difference between two positions"""
+        return self.wrap(np.fmod(dr + self.length / 2, self.length)) - self.length / 2
 
     def diff(self, r1: ArrayLike, r2: ArrayLike) -> np.ndarray:
         """difference between two positions"""
-        return self.wrap(np.fmod(r2 - r1 + self.length / 2, self.length)) - self.length / 2
-
-    def dist(self, r1: ArrayLike, r2: ArrayLike) -> np.ndarray:
-        """distance between two positions"""
-        return np.linalg.norm(self.diff(r1, r2), axis=-1)
-
+        return self._diff(r1 - r2)
+    
+    def all_diff(self, r1: ArrayLike, r2: ArrayLike) -> np.ndarray:
+        """difference between two positions"""
+        pairs = (r1[:, None, :] - r2).reshape((-1, 3))
+        return self._diff(pairs)
+        
+    def self_diff(self, r: ArrayLike) -> np.ndarray:
+        """difference between two positions"""
+        pairs = r[:, None, :] - r
+        paris = pairs[np.triu_indices(len(r), k=1)]
+        return self._diff(pairs)
+    
     def make_fractional(self, r: ArrayLike) -> np.ndarray:
         """convert position to fractional coordinates"""
         return np.dot(r, self.get_inverse())

@@ -3,81 +3,106 @@ import numpy as np
 from itertools import chain
 from operator import itemgetter
 
-NEIGHBOUR_GRID = np.array([
+NEIGHBOUR_GRID = np.array(
+    [
         [0, 0, 0],
-       [-1,  1,  0],
-       [-1, -1,  1],
-       [-1,  0,  1],
-       [-1,  1,  1],
-       [ 0, -1,  1],
-       [ 0,  0,  1],
-       [ 0,  1,  0],
-       [ 0,  1,  1],
-       [ 1, -1,  1],
-       [ 1,  0,  0],
-       [ 1,  0,  1],
-       [ 1,  1,  0],
-       [ 1,  1,  1]], np.int32)
+        [-1, 1, 0],
+        [-1, -1, 1],
+        [-1, 0, 1],
+        [-1, 1, 1],
+        [0, -1, 1],
+        [0, 0, 1],
+        [0, 1, 0],
+        [0, 1, 1],
+        [1, -1, 1],
+        [1, 0, 0],
+        [1, 0, 1],
+        [1, 1, 0],
+        [1, 1, 1],
+    ],
+    np.int32,
+)
+
 
 class NeighborList:
 
     def __init__(self, cutoff):
         self.cutoff = cutoff
 
-    def build(self, xyz, box):
-        cutoff = self.cutoff
-        min_xyz = np.min(xyz, axis=0)
-        max_xyz = np.max(xyz, axis=0)
-        space = max_xyz - min_xyz
-        grids = np.ceil(space / self.cutoff).astype(np.int32)
-        # num_grids = np.prod(grids)
-        buffer = (grids * cutoff - space) / 2
-        start_crd = min_xyz - buffer
-        
-        cell_coord = (xyz // cutoff).astype(int)
-        cell_offset = np.array([1, grids[0], grids[0]*grids[1]], dtype=int)
-        cell_idx = (cell_coord * cell_offset).sum(axis=-1)
-        
-        all_cell_coord = np.array(list(np.ndindex(*grids)))
-        all_cell_idx = all_cell_coord * cell_offset
-        grid_matrix = np.diag(grids)
-        idx = np.arange(len(xyz))
-        pairs = []
-        for i, center_cell_coord in enumerate(all_cell_coord):
-            center_xyz_mask = np.all(np.isin(cell_coord, center_cell_coord), axis=-1)
-            center_xyz = xyz[center_xyz_mask]
-            if len(center_xyz) == 0:
-                continue
-            around_cell = NEIGHBOUR_GRID + center_cell_coord
-            reci_r = np.einsum('ij,nj->ni', np.linalg.inv(grid_matrix), around_cell)
-            shifted_reci_r = reci_r - np.floor(reci_r)
-            around_cell = np.einsum('ij,nj->ni', grid_matrix, shifted_reci_r)
-            around_cell_idx = (around_cell * cell_offset).sum(axis=-1)
-            around_cell_xyz_mask = np.isin(cell_idx, around_cell_idx, )
-            around_xyz = xyz[around_cell_xyz_mask]
-            rij = center_xyz[:, None, :] - around_xyz
-            rij = box.wrap(rij)
-            dij = np.linalg.norm(rij, axis=-1)
-            cutoff_mask = np.nonzero(dij < cutoff)
-            pairs.extend(list(zip(idx[center_xyz_mask][cutoff_mask[0]], idx[around_cell_xyz_mask][cutoff_mask[1]])))
-        pairs = filter(lambda x: x[0] < x[1], pairs)
-        pairs = set(pairs)
-        return list(pairs)
-    
+    def build(self, xyz):
+        self._xyz = xyz
+        self._cell_shape, self._cell_offset, self._all_cell_coords = self._init_cell(
+            xyz, self.cutoff
+        )
+        self._xyz_cell_coords, self._xyz_cell_idx = self._add_to_cell(
+            xyz, self._cell_offset
+        )
+
     def update(self, xyz, box):
+        self._xyz = xyz
         pass
 
-    def _calc_cell_idx(self, xyz, cutoff):
-        cutoff = self.cutoff
+    def find_all_pairs(self, box):
+
+        results = []
+        for cell_coord in self._all_cell_coords:
+            pairs = self._find_pairs_around_center_cell(cell_coord, box)
+            results.append(pairs)
+        results = filter(lambda x: len(x) > 0, results)
+        return np.concatenate(list(results))
+    
+    def _find_pairs_around_center_cell(self, center_cell_coord, box):
+        nbor_cell = self._find_neighbor_cell(self._cell_shape, center_cell_coord)
+        center_xyz, center_id = self._find_atoms_in_cell(
+            self._xyz,
+            self._xyz_cell_idx,
+            self._cell_coord_to_idx(center_cell_coord),
+        )
+        around_xyz, around_id = self._find_atoms_in_cell(
+            self._xyz, self._xyz_cell_idx, self._cell_coord_to_idx(nbor_cell)
+        )
+        distance = np.linalg.norm(
+            box.all_diff(center_xyz, around_xyz), axis=-1
+        )  # (N*M, )
+        pair_id = np.array(list(itertools.product(center_id, around_id)))
+        cutoff_mask = np.logical_and(distance < self.cutoff, distance > 0)
+        pairs = pair_id[cutoff_mask]
+        return pairs
+
+
+    def _init_cell(
+        self,
+        xyz,
+        cutoff,
+    ):
         min_xyz = np.min(xyz, axis=0)
         max_xyz = np.max(xyz, axis=0)
-        space = max_xyz - min_xyz
-        grids = np.ceil(space / self.cutoff).astype(np.int32)
-        # num_grids = np.prod(grids)
-        buffer = (grids * cutoff - space) / 2
-        start_crd = min_xyz - buffer
-        # (N, D)
-        grid_coord = (xyz // cutoff).astype(int)
-        grid_offset = np.array([1, grids[0], grids[0]*grids[1]], dtype=int)
-        grid_id = (grid_coord * grid_offset).sum(axis=-1)
-        return grid_id
+        space = max_xyz - min_xyz + cutoff
+        _cell_shape = np.ceil(space / cutoff).astype(int)
+        _cell_offset = np.array(
+            [1, _cell_shape[0], _cell_shape[0] * _cell_shape[1]], dtype=int
+        )
+        _all_cell_coords = np.array(list(np.ndindex(*_cell_shape)))
+        _cell_offset = _cell_offset
+        return _cell_shape, _cell_offset, _all_cell_coords
+
+    def _add_to_cell(self, xyz, cell_offset):
+        _xyz_cell_coords = (xyz - np.min(xyz, axis=0)) // self.cutoff  # (N, D)
+        _xyz_cell_idx = (_xyz_cell_coords * cell_offset).sum(axis=-1)  # (N,)
+        return _xyz_cell_coords, _xyz_cell_idx
+
+    def _find_atoms_in_cell(self, xyz, xyz_cell_idx, which_cell_idx):
+        mask = np.isin(xyz_cell_idx, which_cell_idx)
+        return xyz[mask], np.where(mask)[0]
+
+    def _find_neighbor_cell(self, cell_shape, center_cell_coord):
+        cell_matrix = np.diag(cell_shape)
+        nbor_cell = NEIGHBOUR_GRID + center_cell_coord
+        reci_r = np.einsum("ij,nj->ni", np.linalg.inv(cell_matrix), nbor_cell)
+        shifted_reci_r = reci_r - np.floor(reci_r)
+        nbor_cell = np.einsum("ij,nj->ni", cell_matrix, shifted_reci_r)
+        return nbor_cell
+
+    def _cell_coord_to_idx(self, cell_coord):
+        cell_idx = (cell_coord * self._cell_offset).sum(axis=-1)
+        return cell_idx

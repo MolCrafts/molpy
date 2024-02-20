@@ -35,7 +35,7 @@ class FrameLoader(ChflLoader):
         frame.atoms[Alias.xyz] = chfl_frame.positions.copy()
         if chfl_frame.has_velocities():
             frame.atoms[Alias.velocity] = chfl_frame.velocities.copy()
-        frame[Alias.natoms] = len(chfl_frame.atoms)
+        frame[Alias.n_atoms] = len(chfl_frame.atoms)
 
         # get atom properties
         PROP_ALIAS_MAP = {
@@ -50,7 +50,7 @@ class FrameLoader(ChflLoader):
         for key, _alias in PROP_ALIAS_MAP.items():
             frame.atoms[_alias.key] = np.array([getattr(atom, key) for atom in chfl_frame.atoms if hasattr(atom, key)], dtype=_alias.type)
 
-        frame[Alias.natoms] = len(chfl_frame.atoms)
+        frame[Alias.n_atoms] = len(chfl_frame.atoms)
 
         # get connectivity
         bonds = chfl_frame.topology.bonds

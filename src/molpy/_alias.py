@@ -27,8 +27,8 @@ class Aliases(metaclass=Singleton):
     _scopes: dict[str, dict] = {'default': {
             "timestep": Alias("timestep", "_ts", int, "fs", "time step"),
             "name": Alias("name", "_name", str, None, "atomic name"),
-            "natoms": Alias("natoms", "_natoms", int, None, "number of atoms"),
-            "nmolecules": Alias("nmolecules", "_nmolecules", int, None, "number of molecules"),
+            "n_atoms": Alias("n_atoms", "_n_atoms", int, None, "number of atoms"),
+            "n_molecules": Alias("n_molecules", "_n_molecules", int, None, "number of molecules"),
             "xyz": Alias("xyz", "_xyz", np.ndarray, "angstrom", "atomic coordinates"),
             "R": Alias("xyz", "_xyz", np.ndarray, "angstrom", "atomic coordinates"),
             "cell": Alias("cell", "_cell", np.ndarray, "angstrom", "unit cell"),

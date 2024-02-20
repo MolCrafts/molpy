@@ -36,8 +36,8 @@ class Frame:
         return self._atoms
 
     @property
-    def natoms(self):
-        return self._props[Alias.natoms]
+    def n_atoms(self):
+        return self._props[Alias.n_atoms]
 
     @property
     def nbonds(self):

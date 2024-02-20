@@ -57,8 +57,8 @@ Although the design pattern tells us that both classes derived from the `Frame` 
 sframe = dframe.to_static()
 # or you can do:
 sframe = mp.StaticFrame.from_dict({
-    'charge': np.ones(natoms), 
-    'xyz': np.random.random((natoms, ndim)), 
+    'charge': np.ones(n_atoms), 
+    'xyz': np.random.random((n_atoms, ndim)), 
 })
 ```
 
