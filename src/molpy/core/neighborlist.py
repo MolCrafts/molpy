@@ -2,6 +2,7 @@ import itertools
 import numpy as np
 from itertools import chain
 from operator import itemgetter
+import molpy as mp
 
 NEIGHBOUR_GRID = np.array(
     [
@@ -43,6 +44,15 @@ class NeighborList:
         if len(xyz) != len(self._xyz):
             self.build(xyz)
         return self.find_all_pairs(box)
+    
+    def __call__(self, input):
+        xyz = input.positions
+        box = input.box
+        pairs = self.update(xyz, box)
+        input[mp.Alias.idx_i] = pairs[:, 0]
+        input[mp.Alias.idx_j] = pairs[:, 1]
+        input[mp.Alias.Rij] = box.diff(xyz[pairs[:, 0]], xyz[pairs[:, 1]])
+        return input
 
     def find_all_pairs(self, box):
 

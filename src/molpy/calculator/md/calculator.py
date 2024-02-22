@@ -90,6 +90,18 @@ class Calculator(BaseCalculator):
         """
         self.run(n_steps)
 
+    def init(self):
+        """
+        Initialize the simulation. This routine is called before the first
+        simulation step and can be used to initialize the simulation hooks.
+        """
+        if mp.Alias.momenta not in self.frame.atoms:
+            self.frame.momenta = np.zeros_like(self.frame.positions, dtype=float)
+        if mp.Alias.forces not in self.frame.atoms:
+            self.frame.forces = np.zeros_like(self.frame.positions, dtype=float)
+        if mp.Alias.energy not in self.frame.atoms:
+            self.frame.energy = np.zeros_like(self.frame.positions, dtype=float)
+
     def run(self, n_steps: int):
         """
         Run the molecular dynamics simulation for n_steps.
@@ -97,6 +109,9 @@ class Calculator(BaseCalculator):
         Args:
             n_step (int): Number of simulation steps to be performed.
         """
+
+        self.init()
+
         self.n_steps = n_steps
 
         # Call hooks at the simulation start
@@ -105,10 +120,7 @@ class Calculator(BaseCalculator):
 
         for nstep in trange(n_steps):
 
-            pairs = self.neighborlist.update(self.frame.positions, self.frame.box)
-            self.frame[mp.Alias.idx_i] = pairs[:, 0]
-            self.frame[mp.Alias.idx_j] = pairs[:, 1]
-
+            self.neighborlist(self.frame)
             # Call hook before first half step
             for hook in self.fixes:
                 hook.on_step_begin(self)
@@ -144,6 +156,7 @@ class Calculator(BaseCalculator):
             self.frame[mp.Alias.step] = self.effective_steps
             if self.n_dump and nstep % self.n_dump == 0:
                 self.dump(self.frame)
+                print(f"{nstep}: {self.frame.positions} \n{self.frame.momenta} \n{self.frame.forces}\n")
 
         # Call hooks at the simulation end
         for hook in self.fixes:

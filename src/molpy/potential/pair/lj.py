@@ -23,42 +23,47 @@ class LJ126(Potential):
 
     def forward(self, input):
 
-        R = input.atoms[mp.Alias.xyz]
+        rij = input[mp.Alias.Rij]
         idx_i = input[mp.Alias.idx_i]
         idx_j = input[mp.Alias.idx_j]
 
-        energy = self.energy(R, idx_i, idx_j)
-        forces = self.forces(R, idx_i, idx_j)
-        input.atoms[mp.Alias.energy] += energy
-        input.atoms[mp.Alias.forces] += forces
+        # energy = self.energy(rij, idx_i, idx_j)
+        # forces = self.forces(rij, idx_i, idx_j)
+        # input[mp.Alias.energy] = energy
+        # input.atoms[mp.Alias.forces] = per_atom_forces
         return input
 
+    def energy(self, rij):
+        """
+        compute energy of pair potential
 
-    def energy(self, R, idx_i, idx_j):
+        Args:
+            rij (np.ndarray (n_pairs, dim)): displacement vectors
 
-        Ri = R[idx_i]
-        Rj = R[idx_j]
-
-        dij = np.linalg.norm(Rj - Ri, axis=-1, keepdims=True)
+        Returns:
+            nd.ndarray (n_pairs, 1): pair energy
+        """
+        dij = np.linalg.norm(rij, axis=-1, keepdims=True)
         power_6 = np.power(self.sigma / dij, 6)
         power_12 = np.square(power_6)
 
-        energy = 4 * self.epsilon * (power_12 - power_6)
-        energy = segment_sum(energy, idx_i, R.shape[0])
-        return energy
+        e = 4 * self.epsilon * (power_12 - power_6)
+        return e
     
-    def forces(self, R, idx_i, idx_j):
+    def forces(self, rij):
+        """
+        compute forces of pair potential
 
-        Ri = R[idx_i]
-        Rj = R[idx_j]
+        Args:
+            rij (np.ndarray (n_paris, dim)): displacement vectors
 
-        rij = Rj - Ri
+        Returns:
+            np.ndarray (n_pairs, dim): pair forces
+        """
         dij = np.linalg.norm(rij, axis=-1, keepdims=True)
 
         power_6 = np.power(self.sigma / dij, 6)
         power_12 = np.square(power_6)
 
         f = 24 * self.epsilon * (2 * power_12 - power_6) / dij**2 * rij
-        f = segment_sum(f, idx_i, R.shape[0])
-
         return f

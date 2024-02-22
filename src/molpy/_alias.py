@@ -108,6 +108,9 @@ class Aliases(metaclass=Singleton):
     
     def get_unit(self, alias: str) -> str:
         return self._current_scope[alias].unit
+    
+    def keys(self):
+        return [key.key for key in self._current_scope.keys()]
 
     @property
     def _current_scope(self) -> str:
