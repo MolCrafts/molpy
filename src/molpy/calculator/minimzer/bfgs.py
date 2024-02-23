@@ -2,8 +2,7 @@
 import numpy as np
 import molpy as mp
 
-class Minimizer:
-    pass
+from .minimizer import Minimizer
 
 class BFGS(Minimizer):
 

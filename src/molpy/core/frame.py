@@ -13,12 +13,71 @@ from molpy import Alias
 
 __all__ = ["Frame", "Connectivity"]
 
-class Frame:
+class Frame(dict):
+
+    class Atoms(dict):
+
+        @property
+        def velocities(self):
+            return self[Alias.velocity]
+        
+        @velocities.setter  
+        def velocities(self, value):
+            self[Alias.velocity] = value
+
+        @property
+        def energy(self):
+            return self[Alias.energy]
+        
+        @energy.setter
+        def energy(self, value):
+            self[Alias.energy] = value
+        
+        @property
+        def forces(self):
+            return self[Alias.forces]
+        
+        @forces.setter
+        def forces(self, value):
+            self[Alias.forces] = value
+        
+        @property
+        def momenta(self):
+            return self[Alias.momenta]
+        
+        @momenta.setter
+        def momenta(self, value):
+            self[Alias.momenta] = value
+        
+        @property
+        def charge(self):
+            return self[Alias.charge]
+        
+        @charge.setter
+        def charge(self, value):
+            self[Alias.charge] = value
+        
+        @property
+        def mass(self):
+            return self[Alias.mass]
+        
+        @mass.setter
+        def mass(self, value):
+            self[Alias.mass] = value
+
+        @property
+        def types(self):
+            return self[Alias.atype]
+        
+        @types.setter
+        def types(self, value):
+            self[Alias.atype] = value
+
     def __init__(self, **props):
+        super().__init__(**props)
         self._box = Box(0,0,0,0,0,0)
         self._connectivity = Connectivity()
-        self._props: dict[str, Any] = props.copy()
-        self._atoms: dict[str, Any] = {}
+        self['atoms'] = Frame.Atoms()
 
     @property
     def box(self):
@@ -33,19 +92,11 @@ class Frame:
 
     @property
     def atoms(self):
-        return self._atoms
-    
-    @property
-    def types(self):
-        return self._atoms[Alias.atype]
-    
-    @types.setter
-    def types(self, value):
-        self._atoms[Alias.atype] = value
+        return self['atoms']
 
     @property
     def n_atoms(self):
-        return self._props[Alias.n_atoms]
+        return self[Alias.n_atoms]
 
     @property
     def bonds(self):
@@ -68,75 +119,18 @@ class Frame:
         return self._connectivity.nimpropers
     
     @property
-    def positions(self):
-        return self._atoms[Alias.xyz]
-    
-    @positions.setter
-    def positions(self, value):
-        self._atoms[Alias.xyz] = value
-        self._props[Alias.n_atoms] = len(value)
-    
-    @property
-    def velocities(self):
-        return self._atoms[Alias.velocity]
-    
-    @velocities.setter  
-    def velocities(self, value):
-        self._atoms[Alias.velocity] = value
-
-    @property
-    def energy(self):
-        return self._atoms[Alias.energy]
-    
-    @energy.setter
-    def energy(self, value):
-        self._atoms[Alias.energy] = value
-    
-    @property
-    def forces(self):
-        return self._atoms[Alias.forces]
-    
-    @forces.setter
-    def forces(self, value):
-        self._atoms[Alias.forces] = value
-    
-    @property
-    def momenta(self):
-        return self._atoms[Alias.momenta]
-    
-    @momenta.setter
-    def momenta(self, value):
-        self._atoms[Alias.momenta] = value
-    
-    @property
-    def charge(self):
-        return self._atoms[Alias.charge]
-    
-    @charge.setter
-    def charge(self, value):
-        self._atoms[Alias.charge] = value
-    
-    @property
-    def mass(self):
-        return self._atoms[Alias.mass]
-    
-    @mass.setter
-    def mass(self, value):
-        self._atoms[Alias.mass] = value
-
-    @property
     def step(self):
-        return self._props[Alias.step]
+        return self[Alias.step]
     
     def __setitem__(self, key, value):
-        self._props[key] = value
+        self[key] = value
 
     def __getitem__(self, key):
-        return self._props[key]
+        return self[key]
     
-    def as_dict(self):
-        data = dict(self._props)
-        data.update(self._atoms)
+    def flatten(self):
+        data = self.copy()
+        data.update(self['atoms'])
         data.update({
             Alias.cell: self._box.matrix,
             Alias.pbc: self._box.pbc

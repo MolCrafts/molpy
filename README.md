@@ -1,44 +1,38 @@
 # molpy
 
-MolPy is a data structure and toolkits for molecular dynamics simulation. It's provide a simple and flexible way to build your own molecular dynamics simulation and access your trajectory. When you use this elegant and well-designed python package, you can fully focus on your own research and leave tedious work to molpy, such as file parsing, data management, visualization etc.
+MolPy is a data structure and toolkits for molecular simulation. It's provide a simple and flexible way to build your own molecular system and access module and trajectory. When you use this elegant and well-designed python package, you can fully focus on your own research and leave tedious work to molpy, such as file parsing, data management, optimize structure etc.
 
-This package depends on few external package except Numpy and [Chemfiles](https://chemfiles.org/chemfiles.py/latest/index.html#), but it may rely on higher version of Python.
+This package depends on few external packages
+* [numpy](https://github.com/numpy/numpy)
+* [chemfiles.py](https://github.com/chemfiles/chemfiles.py)
+* [python-igraph](https://github.com/igraph/python-igraph)
 
-> :laughing: This project is still under active development. If you have any suggestions, please feel free to contact me.
-
-We also provide an interactive visualization package [molvis](https://github.com/Roy-Kid/molvis). In this work, we use production-level game engine from Microsoft [Babylonjs](https://www.babylonjs.com/) to visualize system. The highlight is you can use Ipython to manipulate the system on-the-fly and see the result immediately. It's very useful for debugging and research. 
-
-In progress: We are try to introduce RDkit to the project. **I** don't want to add more dependencies, but want to write those functions by my own. However, some functions are too complex(or too dirty) to implement. So I want to find a proper way to lazy load RDkit, and convert it between RDkit object and molpy object. 
+> :laughing: This project is still under active development. Any suggestions and feature requests are welcome.
 
 ## roadmap
 
-### 0.0.1: novice
-
-    In this version, we will complete the core data structure of the project, determine the style of the API, and fully test the correctness of the code. 
-
-  - [x] refactor core data structure;
   - [x] static and dynamic data structure;
   - [x] read and write data via Chemfiles;
   - [x] trilinic box;
-  - [x] forcefield;
-  - [x] typification;
-  - [ ] modelling;
   - [x] celllist & neighorlist;
+  - [ ] potential function;
+  - [ ] forcefield;
+  - [ ] optimizer(minimizer, MD etc.);
+  - [ ] modelling;
+  - [ ] typification;
   - [ ] interactivate visualization API;
-  - [ ] minimizer;
-  - [ ] simple example;
-  - [ ] document;
-
-### 0.0.2: assist
-
-    Based on the novice version, we will add some useful tools to assist the user to apply the package to their own research and do what other packages can't do.
-
-  - [ ] parallel dataloader;
-  - [ ] graph neural network support;
   - [ ] SMARTS/SMILES expression;
-  - [ ] potential function generator;
-  - [ ] MD engine API;
+  - [ ] plugin system;
+  - [ ] documentation;
 
-### 0.0.3: ringmaster
+  After all functions are implemented and stable, we will abstract the core part of the package to high-performance C++, and compile to other language.
 
-    If possible, in this version, we will seamlessly connect with molecular simulation package. For example, we can provide a simple way to submit the simulation to the cluster and monitor the progress of the simulation. Once molpy script build, use it in any simulation package.
+## ecosystem
+
+### potential training
+
+We are developing a universial potential training platform [https://github.com/MolCrafts/molpot]
+
+### visualization
+
+We **will** also provide an interactive visualization package [molvis](https://github.com/Roy-Kid/molvis). In this work, we use production-level game engine from Microsoft [Babylonjs](https://www.babylonjs.com/) to visualize system. The highlight is you can use Ipython to manipulate the system on-the-fly and see the result immediately. It's very useful for debugging and research. 
