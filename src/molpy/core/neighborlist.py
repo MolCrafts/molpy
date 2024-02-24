@@ -30,7 +30,8 @@ class NeighborList:
         self.cutoff = cutoff
         self._xyz = np.array([])
 
-    def build(self, xyz):
+    def build(self, frame):
+        xyz = frame.atoms.positions
         self._xyz = xyz
         self._cell_shape, self._cell_offset, self._all_cell_coords = self._init_cell(
             xyz, self.cutoff
@@ -39,20 +40,19 @@ class NeighborList:
             xyz, self._cell_offset
         )
 
-    def update(self, xyz, box):
+    def update(self, frame):
+        xyz = frame.atoms.positions
         # TODO: check if xyz and box change a lot
         if len(xyz) != len(self._xyz):
-            self.build(xyz)
-        return self.find_all_pairs(box)
-    
-    def __call__(self, input):
-        xyz = input.positions
-        box = input.box
-        pairs = self.update(xyz, box)
-        input[mp.Alias.idx_i] = pairs[:, 0]
-        input[mp.Alias.idx_j] = pairs[:, 1]
-        input[mp.Alias.Rij] = box.diff(xyz[pairs[:, 0]], xyz[pairs[:, 1]])
-        return input
+            self.build(frame)
+        pairs = self.find_all_pairs(frame.box)
+        frame[mp.Alias.idx_i] = pairs[:, 0]
+        frame[mp.Alias.idx_j] = pairs[:, 1]
+        frame[mp.Alias.Rij] = frame.box.diff(xyz[pairs[:, 0]], xyz[pairs[:, 1]])
+        return frame
+
+    def __call__(self, frame):
+        return self.update(frame)
 
     def find_all_pairs(self, box):
 
@@ -71,7 +71,7 @@ class NeighborList:
         results = np.sort(results, axis=-1)
         results = np.unique(results, axis=0)
         return results
-    
+
     def _find_pairs_in_center_cell(self, center_cell_coord, box):
 
         center_xyz, center_id = self._find_atoms_in_cell(
@@ -79,14 +79,14 @@ class NeighborList:
             self._xyz_cell_idx,
             self._cell_coord_to_idx(center_cell_coord),
         )
-        distance = np.linalg.norm(
-            box.all_diff(center_xyz, center_xyz), axis=-1
-        )
+        distance = np.linalg.norm(box.all_diff(center_xyz, center_xyz), axis=-1)
         pair_id = np.array(list(itertools.product(center_id, center_id)))
         cutoff_mask = np.logical_and(distance < self.cutoff, distance > 0)
         pairs = pair_id[cutoff_mask]
-        return pairs[pairs[:, 0] < pairs[:, 1]]  # halve the pairs to avoid double counting
-    
+        return pairs[
+            pairs[:, 0] < pairs[:, 1]
+        ]  # halve the pairs to avoid double counting
+
     def _find_pairs_around_center_cell(self, center_cell_coord, box):
         nbor_cell = self._find_neighbor_cell(self._cell_shape, center_cell_coord)
         center_xyz, center_id = self._find_atoms_in_cell(
@@ -95,8 +95,7 @@ class NeighborList:
             self._cell_coord_to_idx(center_cell_coord),
         )
         around_xyz, around_id = self._find_atoms_in_cell(
-            self._xyz, self._xyz_cell_idx, 
-            self._cell_coord_to_idx(nbor_cell)
+            self._xyz, self._xyz_cell_idx, self._cell_coord_to_idx(nbor_cell)
         )
         distance = np.linalg.norm(
             box.all_diff(center_xyz, around_xyz), axis=-1
@@ -105,7 +104,6 @@ class NeighborList:
         cutoff_mask = np.logical_and(distance < self.cutoff, distance > 0)
         pairs = pair_id[cutoff_mask]
         return pairs
-
 
     def _init_cell(
         self,

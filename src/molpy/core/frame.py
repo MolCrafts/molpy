@@ -18,6 +18,14 @@ class Frame(dict):
     class Atoms(dict):
 
         @property
+        def positions(self):
+            return self[Alias.R]
+        
+        @positions.setter
+        def positions(self, value):
+            self[Alias.R] = value
+
+        @property
         def velocities(self):
             return self[Alias.velocity]
         
@@ -77,7 +85,7 @@ class Frame(dict):
         super().__init__(**props)
         self._box = Box(0,0,0,0,0,0)
         self._connectivity = Connectivity()
-        self['atoms'] = Frame.Atoms()
+        self._atoms = Frame.Atoms()
 
     @property
     def box(self):
@@ -92,15 +100,15 @@ class Frame(dict):
 
     @property
     def atoms(self):
-        return self['atoms']
-
-    @property
-    def n_atoms(self):
-        return self[Alias.n_atoms]
+        return self._atoms
 
     @property
     def bonds(self):
         return self._connectivity._bonds
+
+    @property
+    def n_atoms(self):
+        return len(self.atoms.positions)
 
     @property
     def nbonds(self):
@@ -122,15 +130,9 @@ class Frame(dict):
     def step(self):
         return self[Alias.step]
     
-    def __setitem__(self, key, value):
-        self[key] = value
-
-    def __getitem__(self, key):
-        return self[key]
-    
     def flatten(self):
         data = self.copy()
-        data.update(self['atoms'])
+        data.update(self._atoms)
         data.update({
             Alias.cell: self._box.matrix,
             Alias.pbc: self._box.pbc

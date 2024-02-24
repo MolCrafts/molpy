@@ -1,7 +1,11 @@
+import numpy as np
+from molpy import Alias
+
 class Potential:
 
-    def __init__(self):
-        pass
+    def __init__(self, name:str, type:str):
+        self.name = name
+        self.type = type
 
     def __call__(self,input):
         return self.forward(input)
@@ -15,14 +19,22 @@ class Potential:
     def forces(self):
         pass
 
-class Potentials(Potential):
+class Potentials:
 
     def __init__(self, *potentials):
-        super().__init__()
-        self.potentials = potentials
+        self._potentials = potentials
 
-    def __call__(self):
-        pass
+    def __call__(self, frame):
+        return self.forward(frame)
 
-    def forward(self):
-        pass
+    def forward(self, frame):
+        frame[Alias.energy] = 0
+        frame.atoms[Alias.forces] = np.zeros((frame.n_atoms, 3))
+        for potential in self._potentials:
+            potential(frame)
+
+        return frame
+
+    @property
+    def pairs(self):
+        return self._potentials['pair']

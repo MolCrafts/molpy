@@ -1,2 +1,2 @@
 from . import md
-from . import minimzer
+from . import minimizer

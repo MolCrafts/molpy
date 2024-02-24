@@ -3,10 +3,14 @@ import molpy as mp
 
 class BaseCalculator:
     
-    def __init__(self):
+    def __init__(self, report_config: dict = None, dump_config: dict = None):
 
         # self.logger = logging.getLogger(__name__)
-        pass
+        self.report_rate = report_config.get('rate')
+        if dump_config:
+            self.dump_rate = dump_config.get('rate')
+            self.dump_path = dump_config.get('path')
+            self.dump_to(self.dump_path)
 
     def dump_to(self, filename: str):
         """

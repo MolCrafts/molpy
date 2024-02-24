@@ -6,6 +6,7 @@ from .core.frame import Frame
 from .core.box import Box
 from .potential import Potential, Potentials
 from .core.neighborlist import NeighborList
+from .calculator import minimizer
 from .calculator import md
 
 from . import core

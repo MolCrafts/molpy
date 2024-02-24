@@ -16,7 +16,7 @@ def segment_sum(data, segment_ids, dim_size):
 class LJ126(Potential):
 
     def __init__(self, epsilon, sigma, cutoff):
-
+        super().__init__('LJ126', 'pair')
         self.epsilon = epsilon
         self.sigma = sigma
         self.cutoff = cutoff
@@ -27,10 +27,11 @@ class LJ126(Potential):
         idx_i = input[mp.Alias.idx_i]
         idx_j = input[mp.Alias.idx_j]
 
-        # energy = self.energy(rij, idx_i, idx_j)
-        # forces = self.forces(rij, idx_i, idx_j)
-        # input[mp.Alias.energy] = energy
-        # input.atoms[mp.Alias.forces] = per_atom_forces
+        energy = self.energy(rij)
+        pairs_forces = self.forces(rij)
+        input[mp.Alias.energy] += np.sum(energy)
+        np.add.at(input.atoms[mp.Alias.forces], idx_i, pairs_forces)
+        np.add.at(input.atoms[mp.Alias.forces], idx_j, -pairs_forces)
         return input
 
     def energy(self, rij):
