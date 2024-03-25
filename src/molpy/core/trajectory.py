@@ -5,7 +5,7 @@
 
 from pathlib import Path
 from typing import Any, Iterable
-from molpy.io.chflloader import TrajLoader
+from molpy.io.loader import TrajLoader
 from .frame import Frame
 
 class Trajectory:
@@ -13,9 +13,5 @@ class Trajectory:
     def __init__(self):
         self._frames = []
 
-    def append(self, frame):
+    def add_frame(self, frame: Frame):
         self._frames.append(frame)
-
-    def join_frame_property(self, key, props):
-        for frame, prop in self._frames, props:
-            frame[key] = prop

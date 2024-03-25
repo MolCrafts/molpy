@@ -10,6 +10,7 @@ import chemfiles as chfl
 from ..core.frame import Frame
 from molpy import Alias
 import numpy as np
+from .formats.lammps_forcefield import LAMMPSForceField
 
 __all__ = ["DataLoader", "MemoryLoader"]
 
@@ -117,3 +118,14 @@ class MemoryLoader(ChflLoader):
         self._format = format
         self._mode = mode
         self._fileHandler = chfl.MemoryTrajectory(self._data, self._mode, self._format)
+
+class ForceFieldLoader:
+
+    def __init__(self, files: Iterable[str], format: str = ""):
+        self._files = files
+        self._format = format
+
+    def load(self):
+
+        if self._format == "LAMMPS":
+            return load_lammps_forcefield(self._files)
