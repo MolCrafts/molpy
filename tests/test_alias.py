@@ -20,3 +20,9 @@ class TestAlias:
     def test_hash_alias(self):
 
         assert hash(mp.Alias.timestep)
+
+    def test_override(self):
+
+        mp.Alias('rmd17')
+        mp.Alias.rmd17.set("energy", "_rmd_energy", float, "kcal/mol", "RMD energy")
+        assert mp.Alias.energy == '_energy'
