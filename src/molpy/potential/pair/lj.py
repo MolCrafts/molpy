@@ -34,7 +34,7 @@ class LJ126(Potential):
         np.add.at(input.atoms[mp.Alias.forces], idx_j, -pairs_forces)
         return input
 
-    def energy(self, rij):
+    def energy(self, R, atomtype, idx_i, idx_j):
         """
         compute energy of pair potential
 
@@ -44,14 +44,18 @@ class LJ126(Potential):
         Returns:
             nd.ndarray (n_pairs, 1): pair energy
         """
-        dij = np.linalg.norm(rij, axis=-1, keepdims=True)
-        power_6 = np.power(self.sigma / dij, 6)
+        rij = R[idx_j] - R[idx_i]
+        pair_eps = self.epsilon[atomtype[idx_i], atomtype[idx_j]]
+        pair_sigma = self.sigma[atomtype[idx_i], atomtype[idx_j]]
+
+        dij = np.linalg.norm(rij, axis=-1)  # TODO : PBC
+        power_6 = np.power(pair_sigma / dij, 6)
         power_12 = np.square(power_6)
 
-        e = 4 * self.epsilon * (power_12 - power_6)
+        e = 4 * pair_eps * (power_12 - power_6)
         return e
     
-    def forces(self, rij):
+    def forces(self, R, atomtype, idx_i, idx_j):
         """
         compute forces of pair potential
 
@@ -61,10 +65,12 @@ class LJ126(Potential):
         Returns:
             np.ndarray (n_pairs, dim): pair forces
         """
-        dij = np.linalg.norm(rij, axis=-1, keepdims=True)
-
-        power_6 = np.power(self.sigma / dij, 6)
+        rij = R[idx_j] - R[idx_i]
+        pair_eps = self.epsilon[atomtype[idx_i], atomtype[idx_j]]
+        pair_sigma = self.sigma[atomtype[idx_i], atomtype[idx_j]]
+        dij = np.linalg.norm(rij, axis=-1)
+        power_6 = np.power(pair_sigma / dij, 6)
         power_12 = np.square(power_6)
 
-        f = 24 * self.epsilon * (2 * power_12 - power_6) / dij**2 * rij
+        f = (24 * pair_eps * (2 * power_12 - power_6) / dij**2)[:, None] * rij
         return f
