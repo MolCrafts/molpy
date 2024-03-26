@@ -1,7 +1,15 @@
+from typing import Callable
 import numpy as np
 from molpy import Alias
 
 class Potential:
+
+    F:Callable|None = None
+
+    def __new__(self, *args, **kwargs):
+        if self.F is None:
+            raise NotImplementedError("F method must be implemented")
+        return super().__new__(self, *args, **kwargs)
 
     def __init__(self, name:str, type:str):
         self.name = name
@@ -14,10 +22,10 @@ class Potential:
         pass
 
     def energy(self):
-        pass
+        raise NotImplementedError("energy method must be implemented")
 
     def forces(self):
-        pass
+        raise NotImplementedError("energy method must be implemented")
 
 class Potentials:
 
