@@ -73,5 +73,8 @@ Alias = _Aliases("default", {
             "offsets": _Alias("offsets", "_offsets", int, None, "cell offset vectors"),
             "Rij": _Alias("Rij", "_Rij", np.ndarray, "angstrom", "vectors pointing from center atoms to neighboring atoms"),
             "dist": _Alias("dist", "_dist", np.ndarray, "angstrom", "distances between center atoms and neighboring atoms"),
-            "pbc": _Alias("pbc", "_pbc", np.ndarray, None, "periodic boundary conditions")
+            "pbc": _Alias("pbc", "_pbc", np.ndarray, None, "periodic boundary conditions"),
+            "dipole_moment": _Alias("dipole_moment", "_dipole_moment", np.ndarray, "e*bohr", "dipole moment"),
+            "partial_charges": _Alias("partial_charges", "_partial_charges", np.ndarray, "e", "partial charges"),
+            "polarizability": _Alias("polarizability", "_polarizability", np.ndarray, "angstrom^3", "polarizability"),
         })
