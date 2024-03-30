@@ -1,11 +1,12 @@
 import numpy as np
+from molpy.io.forcefield import load_forcefield
 from typing import Literal
 
 class Style(dict):
 
-    def __init__(self, style:str, mix=Literal['geometry', 'arithmetic']|None, *args, **kwargs):
+    def __init__(self, name:str, mix=Literal['geometry', 'arithmetic']|None, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.style = style
+        self.name = name
         self.types = []
         self.mix = mix
 
@@ -72,8 +73,6 @@ class BondStyle(Style):
             param_arr[j, i] = param
 
         return param_arr
-
-        
 
 class AngleType(Type):
 
@@ -154,6 +153,10 @@ class ForceField:
         self.bond_styles = []
         self.pair_styles = []
 
+    @classmethod
+    def from_file(cls, filename:str|list[str]):
+        return load_forcefield(filename, forcefield=cls(), format='lammps')
+
     def def_bondstyle(self, style:str, *args, **kwargs):
         bondstyle = BondStyle(style, *args, **kwargs)
         self.bond_styles.append(bondstyle)
@@ -168,3 +171,27 @@ class ForceField:
         atomstyle = AtomStyle(style, *args, **kwargs)
         self.atom_styles.append(atomstyle)
         return atomstyle
+
+    @property
+    def n_atom_styles(self):
+        return len(self.atom_styles)
+    
+    @property
+    def n_bond_styles(self):
+        return len(self.bond_styles)
+    
+    @property
+    def n_pair_styles(self):
+        return len(self.pair_styles)
+    
+    @property
+    def n_angle_styles(self):
+        return len(self.angle_styles)
+    
+    @property
+    def n_dihedral_styles(self):
+        return len(self.dihedral_styles)
+    
+    @property
+    def n_improper_styles(self):
+        return len(self.improper_styles)

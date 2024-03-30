@@ -1,5 +1,4 @@
-
-from molpy.core.forcefield import ForceField
+import molpy as mp
 
 BOND_TYPE_FIELDS = {
     "harmonic": ["k", "r0"],
@@ -21,14 +20,18 @@ PAIR_TYPE_FIELDS = {
 
 class LAMMPSForceField:
 
-    def __init__(self, files):
+    def __init__(self, files:list[str], forcefield:mp.ForceField|None=None):
 
         self.files = files
+        self.forcefield = forcefield
 
     def load(self):
 
         lines:list[str] = []
-        forcefield = ForceField()
+        if self.forcefield:
+            forcefield = self.forcefield
+        else:
+            forcefield = mp.ForceField()
         forcefield.def_atom_style("full")
 
         for file in self.files:

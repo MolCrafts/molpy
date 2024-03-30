@@ -13,13 +13,18 @@ def segment_sum(data, segment_ids, dim_size):
     np.add.at(s, segment_ids, data)
     return s
 
+def lj126(rij, eps, sig, atomtypes):
+
+    pair_eps = eps[atomtypes[:,0], atomtypes[:,1]]
+
+    power_6 = np.power(sig / rij, 6)
+    power_12 = np.square(power_6)
+
+    return 4 * pair_eps * (power_12 - power_6)
+
 class LJ126(Potential):
 
-    @staticmethod
-    def F(dij, eps, sig):
-        power6 = np.power(sig / dij, 6)
-        power12 = np.square(power6)
-        return 4 * eps * (power12 - power6)
+    F = lj126
 
     def __init__(self, epsilon, sigma, cutoff):
         super().__init__('LJ126', 'pair')
