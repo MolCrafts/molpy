@@ -13,18 +13,24 @@ def segment_sum(data, segment_ids, dim_size):
     np.add.at(s, segment_ids, data)
     return s
 
-def lj126(rij, eps, sig, atomtypes):
-
-    pair_eps = eps[atomtypes[:,0], atomtypes[:,1]]
+def e_lj126(rij:np.ndarray, eps:np.ndarray, sig:np.ndarray):
 
     power_6 = np.power(sig / rij, 6)
     power_12 = np.square(power_6)
 
-    return 4 * pair_eps * (power_12 - power_6)
+    return 4 * eps * (power_12 - power_6)
+
+def f_lj126(rij:np.ndarray, eps:np.ndarray, sig:np.ndarray):
+
+    power_6 = np.power(sig / rij, 6)
+    power_12 = np.square(power_6)
+
+    return (24 * eps * (2 * power_12 - power_6) / np.square(rij))[:, None] * rij
 
 class LJ126(Potential):
 
-    F = lj126
+    E = e_lj126
+    F = f_lj126
 
     def __init__(self, epsilon, sigma, cutoff):
         super().__init__('LJ126', 'pair')
@@ -32,20 +38,7 @@ class LJ126(Potential):
         self.sigma = sigma
         self.cutoff = cutoff
 
-    # def forward(self, input):
-
-    #     rij = input[mp.Alias.Rij]
-    #     idx_i = input[mp.Alias.idx_i]
-    #     idx_j = input[mp.Alias.idx_j]
-
-    #     energy = self.energy(rij)
-    #     pairs_forces = self.forces(rij)
-    #     input[mp.Alias.energy] += np.sum(energy)
-    #     np.add.at(input.atoms[mp.Alias.forces], idx_i, pairs_forces)
-    #     np.add.at(input.atoms[mp.Alias.forces], idx_j, -pairs_forces)
-    #     return input
-
-    def energy(self, R, atomtype, idx_i, idx_j):
+    def energy(self, R, atomtype, idx_i, idx_j, offset):
         """
         compute energy of pair potential
 
@@ -55,18 +48,16 @@ class LJ126(Potential):
         Returns:
             nd.ndarray (n_pairs, 1): pair energy
         """
-        rij = R[idx_j] - R[idx_i]
-        pair_eps = self.epsilon[atomtype[idx_i], atomtype[idx_j]]
-        pair_sigma = self.sigma[atomtype[idx_i], atomtype[idx_j]]
+        r_ij = R[idx_j] - R[idx_i] + offset
+        eps = self.epsilon[atomtype[idx_i], atomtype[idx_j]]
+        sigma = self.sigma[atomtype[idx_i], atomtype[idx_j]]
 
-        dij = np.linalg.norm(rij, axis=-1)  # TODO : PBC
-        power_6 = np.power(pair_sigma / dij, 6)
-        power_12 = np.square(power_6)
-        eps = self.epsilon
-        sig = self.sigma
-        return LJ126.F(dij, eps, sig)
+        d_ij = np.linalg.norm(r_ij, axis=-1, keepdims=True)
+        cutoff_mask = d_ij < self.cutoff
+        energy = LJ126.F(d_ij, eps, sigma)
+        return energy * cutoff_mask
     
-    def forces(self, R, atomtype, idx_i, idx_j):
+    def forces(self, R, atomtype, idx_i, idx_j, offset):
         """
         compute forces of pair potential
 
@@ -76,12 +67,11 @@ class LJ126(Potential):
         Returns:
             np.ndarray (n_pairs, dim): pair forces
         """
-        rij = R[idx_j] - R[idx_i]
-        pair_eps = self.epsilon[atomtype[idx_i], atomtype[idx_j]]
-        pair_sigma = self.sigma[atomtype[idx_i], atomtype[idx_j]]
-        dij = np.linalg.norm(rij, axis=-1)
-        power_6 = np.power(pair_sigma / dij, 6)
-        power_12 = np.square(power_6)
+        r_ij = R[idx_j] - R[idx_i] + offset
+        eps = self.epsilon[atomtype[idx_i], atomtype[idx_j]]
+        sigma = self.sigma[atomtype[idx_i], atomtype[idx_j]]
 
-        f = (24 * pair_eps * (2 * power_12 - power_6) / dij**2)[:, None] * rij
-        return f
+        d_ij = np.linalg.norm(r_ij, axis=-1, keepdims=True)
+        cutoff_mask = d_ij < self.cutoff
+
+        return LJ126.F(d_ij, eps, sigma) * cutoff_mask

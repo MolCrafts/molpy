@@ -1,4 +1,4 @@
-from ..io.log.lammps_log import LammpsLog
+from ..io.log.lammps import LammpsLog
 from ..io.script import Script
 from .base import Engine
 

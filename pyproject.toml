@@ -5,6 +5,7 @@ dependencies = [
     "numpy",
     "pint",
     "chemfiles"
+    "igraph"
 ]
 
 [build-system]
