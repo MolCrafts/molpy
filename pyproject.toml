@@ -4,7 +4,7 @@ version = "0.0.1"
 dependencies = [
     "numpy",
     "pint",
-    "chemfiles"
+    "chemfiles",
     "igraph"
 ]
 
