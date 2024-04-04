@@ -1,4 +1,3 @@
-import freud
 import numpy as np
 import molpy as mp
 import numpy.testing as npt

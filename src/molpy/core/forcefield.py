@@ -1,5 +1,4 @@
 import numpy as np
-from molpy.io.forcefield import load_forcefield
 from typing import Literal
 
 class Style(dict):
@@ -152,10 +151,6 @@ class ForceField:
         self.atom_styles = []
         self.bond_styles = []
         self.pair_styles = []
-
-    @classmethod
-    def from_file(cls, filename:str|list[str]):
-        return load_forcefield(filename, forcefield=cls(), format='lammps')
 
     def def_bondstyle(self, style:str, *args, **kwargs):
         bondstyle = BondStyle(style, *args, **kwargs)

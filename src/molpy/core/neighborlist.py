@@ -1,7 +1,5 @@
 import itertools
 import numpy as np
-from itertools import chain
-from operator import itemgetter
 import molpy as mp
 
 NEIGHBOUR_GRID = np.array(

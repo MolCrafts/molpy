@@ -1,7 +1,7 @@
 import logging
 import molpy as mp
 
-class BaseCalculator:
+class Calculator:
     
     def __init__(self, report_config: dict = None, dump_config: dict = None):
 

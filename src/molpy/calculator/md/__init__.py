@@ -1,4 +1,3 @@
-from .calculator import Calculator
-
-from . import fix
-from . import integrator
+from .calculator import *
+from .fix import *
+from .integrator import *

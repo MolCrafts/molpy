@@ -13,18 +13,14 @@ import numpy as np
 @pytest.fixture(name="test_data_path", scope="session")
 def find_test_data():
 
-    data_path = Path(__file__).parent / "tests-data"
+    data_path = Path(__file__).parent / "chemfile-testcases"
     if not data_path.exists():
         print("Downloading test data...")
-        p = subprocess.Popen(
-            f"git clone https://github.com/chemfiles/tests-data.git {data_path.parent}/tests-data",
+        p = subprocess.run(
+            f"git clone https://github.com/molcrafts/chemfile-testcases.git {data_path.parent}/chemfile-testcases",
             shell=True,
+            check=True,
         )
-        p.wait()
-        if p.returncode == 0:
-            print("Download test data successfully.")
-        else:
-            raise RuntimeError("Download test data failed.")
 
     return data_path
 

@@ -1,8 +1,9 @@
 import numpy as np
 import molpy as mp
-from ..calculator import BaseCalculator
 
-class Minimizer(BaseCalculator):
+from ..base import Calculator
+
+class Minimizer(Calculator):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
