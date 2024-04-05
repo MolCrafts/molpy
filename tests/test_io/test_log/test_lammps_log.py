@@ -19,4 +19,4 @@ class TestLAMMPSLog:
 
         # assert log['n_stages'] == 1
         print(log['stages'][0]['Step'])
-        assert log['stages'][0]['Step'].shape == (11, 1)
+        assert log['stages'][0]['Step'].shape == (11, )

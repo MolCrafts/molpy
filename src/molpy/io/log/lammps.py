@@ -40,17 +40,11 @@ class LAMMPSLog:
                 
                 lines = stage.split('\n')
                 fields = lines[0].split()
-                stage_dict = dict.fromkeys(fields, list())
-                for line in lines[2:]:
-                    values = line.split()
-                    for k, v in zip(fields, values):
-                        print(v)
-                        stage_dict[k].append(v)
-                    
-                # for fields in stage_dict:
-                #     stage_dict[fields] = np.array(stage_dict[fields])
-                self['stages'].append(stage_dict)
-            # self['n_stages'] = len(self['stages'])
+                
+                array = np.loadtxt(lines[1:-1], dtype=np.dtype({'names': fields, 'formats': ['f4']*len(fields)}))
+
+                self['stages'].append(array)
+            self['n_stages'] = len(self['stages'])
 
     def __getitem__(self, key):
         return self.info[key]

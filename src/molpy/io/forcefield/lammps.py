@@ -16,142 +16,253 @@ DIHEDRAL_TYPE_FIELDS = {
 PAIR_TYPE_FIELDS = {
     "lj/cut": ["epsilon", "sigma"],
     "lj/cut/coul/long": ["epsilon", "sigma"],
+    "lj/charmm/coul/long": ["epsilon", "sigma", "eps14", "sig14"],
 }
 
-class LAMMPSForceField:
+class LAMMPSForceFieldReader:
 
     def __init__(self, files:list[str], forcefield:mp.ForceField|None=None):
 
         self.files = files
-        self.forcefield = forcefield
+        if forcefield is None:
+            self.forcefield = mp.ForceField()
+        else:
+            self.forcefield = forcefield
 
     def load(self):
 
         lines:list[str] = []
-        if self.forcefield:
-            forcefield = self.forcefield
-        else:
-            forcefield = mp.ForceField()
-        forcefield.def_atom_style("full")
 
         for file in self.files:
             with open(file, 'r') as f:
                 lines += f.readlines()
 
-        for line in map(lines, self.clean_line):
-
-            line = line.split()
-
-            if line[0] == "bond_style":
-                self.read_bond_style(line[1:], forcefield)
-
-            elif line[0] == "pair_style":
-                self.read_pair_style(line[1:], forcefield)
-
-            elif line[0] == "mass":
-                self.read_mass(line[1:], forcefield)
-
-            elif line[0] == "bond_coeff":
-                self.read_bond_coeff(line[1:], forcefield)
-
-            elif line[0] == "angle_coeff":
-                self.read_angle_coeff(line[1:], forcefield)
-
-            elif line[0] == "dihedral_coeff":
-                self.read_dihedral_coeff(line[1:], forcefield)
-
-            elif line[0] == "pair_coeff":
-                self.read_pair_coeff(line[1:], forcefield)
+        for i, line in enumerate(map(self.clean_line, lines)):
             
-            elif line[0] == "pair_modify":
-                self.read_pair_modify(line[1:], forcefield)
+            line = line.split()
+            if not line:
+                continue
+            kw = line[0]
+            if kw == "units":
+                self.forcefield.units = line[1]
+
+            elif kw == "bond_style":
+                self.read_bondstyle(line[1:])
+
+            elif kw == "pair_style":
+                self.read_pairstyle(line[1:])
+
+            elif kw == "angle_style":
+                self.read_anglestyle(line[1:])
+
+            elif kw == "dihedral_style":
+                self.read_dihedralstyle(line[1:])
+
+            elif kw == "improper_style":
+                self.read_improperstyle(line[1:])
+
+            elif kw == "Masses":
+                self.read_mass_section(lines[i+1:])
+
+            elif kw == "mass":
+                self.read_mass_line(line[1:])
+
+            elif kw == "bond_coeff":
+                self.read_bond_coeff(line[1:])
+
+            elif kw == "angle_coeff":
+                self.read_angle_coeff(line[1:])
+
+            elif kw == "dihedral_coeff":
+                self.read_dihedral_coeff(line[1:])
+
+            elif kw == "pair_coeff":
+                self.read_pair_coeff(line[1:])
+            
+            elif kw == "pair_modify":
+                self.read_pair_modify(line[1:])
+
+            elif kw == "atom_style":
+                self.read_atom_style(line[1:])
+
+            elif kw == "Pair Coeffs":
+                self.read_pair_coeff_section(lines[i+1:])
+
+            if line[-1] == "types": 
+
+                if line[-2] == "atom":
+                    n_atomtypes = int(line[0])
+
+                elif line[-2] == "bond":
+                    n_bondtypes = int(line[0])
+
+                elif line[-2] == "angle":
+                    n_angletypes = int(line[0])
+
+                elif line[-2] == "dihedral":
+                    n_dihedraltypes = int(line[0])
+
+                elif line[-2] == "improper":
+                    n_impropertypes = int(line[0])
+
+        assert self.forcefield.n_atomtypes == n_atomtypes
+        assert self.forcefield.n_bondtypes == n_bondtypes
+        assert self.forcefield.n_angletypes == n_angletypes
+        assert self.forcefield.n_dihedraltypes == n_dihedraltypes
+        assert self.forcefield.n_impropertypes == n_impropertypes
+        assert self.forcefield.n_pairtypes == n_atomtypes * n_atomtypes
+
+        return self.forcefield
 
     def clean_line(self, line):
-        return line.split("#")[0].split()
+        return line.partition("#")[0]
+    
+    def read_atom_style(self, line):
+        self.forcefield.def_atomstyle(line[0])
             
-    def read_bond_style(self, line, forcefield):
+    def read_bondstyle(self, line):
         
         if line[0] == "hybrid":
-            self.read_bond_style(line[1:], forcefield)
+            self.read_bondstyle(line[1:])
 
         else:
-            forcefield.def_bond_style(line[0], line[1:])
+            self.forcefield.def_bondstyle(line[0])
 
-    def read_pair_style(self, line, forcefield):
+    def read_anglestyle(self, line):
+
+        if line[0] == "hybrid":
+            self.read_anglestyle(line[1:])
+
+        else:
+            self.forcefield.def_anglestyle(line[0])
+
+    def read_dihedralstyle(self, line):
+
+        if line[0] == "hybrid":
+            self.read_dihedralstyle(line[1:])
+
+        else:
+            self.forcefield.def_dihedralstyle(line[0])
+
+    def read_improperstyle(self, line):
+
+        if line[0] == "hybrid":
+            self.read_improperstyle(line[1:])
+
+        else:
+            self.forcefield.def_improperstyle(line[0])
+
+    def read_pairstyle(self, line):
         
         if line[0] == "hybrid":
-            self.read_pair_style(line[1:], forcefield)
+            self.read_pairstyle(line[1:])
 
         else:
-            forcefield.def_pair_style(line[0], line[1:])
+            self.forcefield.def_pairstyle(line[0])
 
-    def read_mass(self, line, forcefield):
-        atom_style = forcefield.atom_styles[0]
-        atom_type = atom_style.get_atom_type(line[0])
-        if atom_type:
-            atom_type["mass"] = float(line[1])
+    def read_mass_section(self, lines:list[str]):
+
+        for i, line in enumerate(map(self.clean_line, lines)):
+            line = line.split()
+            if line:
+                self.read_mass_line(line)
+                break
+
+        for line in map(self.clean_line, lines[i+1:]):
+            line = line.split()
+            if line:
+                self.read_mass_line(line)
+            else:
+                break
+
+    def read_mass_line(self, line):
+        atomstyle = self.forcefield.atomstyles[0]
+        atomtype = atomstyle.get_atomtype(line[0])
+        mass = float(line[1])
+        if atomtype:
+            atomtype["mass"] = mass
         else:
-            atom_style.def_atom_type(line[0], mass=float(line[1]))
+            atomstyle.def_atomtype(line[0], mass=mass)
 
-    def read_bond_coeff(self, line, forcefield):
+    def read_bond_coeff(self, line):
 
         bond_type_id = int(line[0])
 
-        if len(forcefield.bond_style) > 1:
-            bond_style = forcefield.get_bond_style(line[1])
+        if len(self.forcefield.bondstyle) > 1:
+            bondstyle = self.forcefield.get_bondstyle(line[1])
             coeffs = line[2:]
 
         else:
-            bond_style = forcefield.bond_styles[0]
+            bondstyle = self.forcefield.bondstyles[0]
             coeffs = line[1:]
-        bond_style.def_bond_type(bond_type_id, **{k: float(v) for k, v in zip(BOND_TYPE_FIELDS[bond_style.style], coeffs)})
+        bondstyle.def_bondtype(bond_type_id, **{k: float(v) for k, v in zip(BOND_TYPE_FIELDS[bondstyle.style], coeffs)})
 
-    def read_angle_coeff(self, line, forcefield):
+    def read_bond_ceoff_section(self, lines:list[str]):
+
+        for lin in map(self.clean_line, lines):
+            line = line.split()
+            if line:
+                bond_type_id = line[0]
+                coeff = {k: float(v) for k, v in zip(BOND_TYPE_FIELDS[self.forcefield.bondstyles[0].style], line[1:])}
+                self.forcefield.bondstyles[0].def_bondtype(bond_type_id, **coeff)
+
+    def read_angle_coeff(self, line):
         
         angle_type_id = int(line[0])
 
-        if len(forcefield.angle_style) > 1:
-            angle_style = forcefield.get_angle_style(line[1])
+        if len(self.forcefield.anglestyle) > 1:
+            anglestyle = self.forcefield.get_anglestyle(line[1])
             coeffs = line[2:]
 
         else:
-            angle_style = forcefield.angle_styles[0]
+            anglestyle = self.forcefield.anglestyles[0]
             coeffs = line[1:]
-        angle_style.def_angle_type(angle_type_id, **{k: float(v) for k, v in zip(ANGLE_TYPE_FIELDS[angle_style.style], coeffs)})
+        anglestyle.def_angletype(angle_type_id, **{k: float(v) for k, v in zip(ANGLE_TYPE_FIELDS[anglestyle.style], coeffs)})
 
-    def read_dihedral_coeff(self, line, forcefield):
+    def read_dihedral_coeff(self, line):
         
         dihedral_type_id = int(line[0])
 
-        if len(forcefield.dihedral_style) > 1:
-            dihedral_style = forcefield.get_dihedral_style(line[1])
+        if len(self.forcefield.dihedralstyle) > 1:
+            dihedralstyle = self.forcefield.get_dihedralstyle(line[1])
             coeffs = line[2:]
 
         else:
-            dihedral_style = forcefield.dihedral_styles[0]
+            dihedralstyle = self.forcefield.dihedralstyles[0]
             coeffs = line[1:]
-        dihedral_style.def_dihedral_type(dihedral_type_id, **{k: float(v) for k, v in zip(DIHEDRAL_TYPE_FIELDS[dihedral_style.style], coeffs)})
+        dihedralstyle.def_dihedraltype(dihedral_type_id, **{k: float(v) for k, v in zip(DIHEDRAL_TYPE_FIELDS[dihedralstyle.style], coeffs)})
 
-    def read_pair_coeff(self, line, forcefield):
+    def read_pair_coeff(self, line):
         
-        atom_type_i = int(line[0])
-        atom_type_j = int(line[1])
+        atomtype_i = int(line[0])
+        atomtype_j = int(line[1])
 
-        if len(forcefield.pair_style) > 1:
-            pair_style = forcefield.get_pair_style(line[2])
+        if len(self.forcefield.pairstyle) > 1:
+            pairstyle = self.forcefield.get_pairstyle(line[2])
             coeffs = line[3:]
 
         else:
-            pair_style = forcefield.pair_styles[0]
+            pairstyle = self.forcefield.pairstyles[0]
             coeffs = line[2:]
 
-        pair_style.def_pair_type(len(pair_style.n_types), atom_type_i, atom_type_j, **{k: float(v) for k, v in zip(PAIR_TYPE_FIELDS[pair_style.style], coeffs)})
+        pairstyle.def_pairtype(len(pairstyle.n_types), atomtype_i, atomtype_j, **{k: float(v) for k, v in zip(PAIR_TYPE_FIELDS[pairstyle.style], coeffs)})
+
+    def read_pair_coeff_section(self, lines:list[str]):
+
+        # start from non-empty line
+        for line in map(self.clean_line, lines):
+            line = line.split()
+            if line:
+                atomtype_i = line[0]
+                coeff = {k: float(v) for k, v in zip(PAIR_TYPE_FIELDS[self.forcefield.pairstyles[0].style], line[1:])}
+                self.forcefield.pairstyles[0].def_pairtype(atomtype_i, atomtype_i, atomtype_i, **coeff)
+
         
-    def read_pair_modify(self, line, forcefield):
+    def read_pair_modify(self, line):
         
         modify = {}
         for k, v in line[::2]:
             modify[k] = v
 
-        for pair_style in forcefield.pair_styles:
-            pair_style.update(**modify)
+        for pairstyle in self.forcefield.pairstyles:
+            pairstyle.update(**modify)

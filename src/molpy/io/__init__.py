@@ -19,8 +19,8 @@ def load_txt(fpath: str | Path, delimiter: str = " ", skiprows: int = 0, usecols
 def load_forcefield(fpath: str | Path, format: str="", other_files: list=[]):
     files = [fpath] + other_files
     if format == 'lammps':
-        from .forcefield.lammps import LAMMPSForceField
-        return LAMMPSForceField(files, None)
+        from .forcefield.lammps import LAMMPSForceFieldReader
+        return LAMMPSForceFieldReader(files, None)
 
 def load_log(fpath: str | Path, format: str=""):
     assert format in ['lammps']

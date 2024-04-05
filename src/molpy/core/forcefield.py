@@ -1,11 +1,12 @@
 import numpy as np
 from typing import Literal
+from functools import reduce
 
 class Style(dict):
 
     def __init__(self, name:str, mix=Literal['geometry', 'arithmetic']|None, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.name = name
+        self['name'] = name
         self.types = []
         self.mix = mix
 
@@ -15,30 +16,38 @@ class Style(dict):
 
 class Type(dict):
     
-    def __init__(self, id:int, *args, **kwargs):
+    def __init__(self, name:str, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.id = id
+        self['name'] = name
 
 class AtomType(Type):
 
-    def __init__(self, id:int, *args, **kwargs):
-        super().__init__(id, *args, **kwargs)
+    def __init__(self, name:str, *args, **kwargs):
+        super().__init__(name, *args, **kwargs)
 
 class AtomStyle(Style):
     
-    def def_atom_type(self, id:int, *args, **kwargs):
-        self.types.append(AtomType(id, *args, **kwargs))
+    def def_atomtype(self, name:str, *args, **kwargs):
+        at = AtomType(name, *args, **kwargs)
+        self.types.append(at)
+        return at
+
+    def get_atomtype(self, name:str):
+        for atomtype in self.types:
+            if atomtype['name'] == name:
+                return atomtype
+        return None
 
 class BondType(Type):
 
-    def __init__(self, id:int, idx_i:int|None, idx_j:int|None, *args, **kwargs):
-        super().__init__(id, *args, **kwargs)
+    def __init__(self, name:str, idx_i:int|None, idx_j:int|None, *args, **kwargs):
+        super().__init__(name, *args, **kwargs)
         self.idx_i = idx_i
         self.idx_j = idx_j
 
 class BondStyle(Style):
     
-    def def_bond_type(self, id:int, idx_i:int|None, idx_j:int|None, *args, **kwargs):
+    def def_bondtype(self, name:str, idx_i:int|None, idx_j:int|None, *args, **kwargs):
         """
         define bond type
 
@@ -50,7 +59,7 @@ class BondStyle(Style):
         Returns:
             BondType: defined bond type
         """
-        bondtype = BondType(id, idx_i, idx_j, *args, **kwargs)
+        bondtype = BondType(name, idx_i, idx_j, *args, **kwargs)
         self.types.append(bondtype)
         return bondtype
 
@@ -75,16 +84,16 @@ class BondStyle(Style):
 
 class AngleType(Type):
 
-    def __init__(self, id:int, idx_i:int|None, idx_j:int|None, idx_k:int|None, *args, **kwargs):
-        super().__init__(id, *args, **kwargs)
+    def __init__(self, name:str, idx_i:int|None, idx_j:int|None, idx_k:int|None, *args, **kwargs):
+        super().__init__(name, *args, **kwargs)
         self.idx_i = idx_i
         self.idx_j = idx_j
         self.idx_k = idx_k
 
 class DihedralType(Type):
 
-    def __init__(self, id:int, idx_i:int|None, idx_j:int|None, idx_k:int|None, idx_l:int|None, *args, **kwargs):
-        super().__init__(id, *args, **kwargs)
+    def __init__(self, name:str, idx_i:int|None, idx_j:int|None, idx_k:int|None, idx_l:int|None, *args, **kwargs):
+        super().__init__(name, *args, **kwargs)
         self.idx_i = idx_i
         self.idx_j = idx_j
         self.idx_k = idx_k
@@ -92,13 +101,27 @@ class DihedralType(Type):
 
 class AngleStyle(Style):
     
-    def def_angle_type(self, id:int, idx_i:int|None, idx_j:int|None, idx_k:int|None, *args, **kwargs):
-        self.types.append(AngleType(id, idx_i, idx_j, idx_k, *args, **kwargs))
+    def def_angletype(self, name:str, idx_i:int|None, idx_j:int|None, idx_k:int|None, *args, **kwargs):
+        self.types.append(AngleType(name, idx_i, idx_j, idx_k, *args, **kwargs))
 
 class DihedralStyle(Style):
     
-    def def_dihedral_type(self, id:int, idx_i:int|None, idx_j:int|None, idx_k:int|None, idx_l:int|None, *args, **kwargs):
-        self.types.append(DihedralType(id, idx_i, idx_j, idx_k, idx_l, *args, **kwargs))
+    def def_dihedraltype(self, name:str, idx_i:int|None, idx_j:int|None, idx_k:int|None, idx_l:int|None, *args, **kwargs):
+        self.types.append(DihedralType(name, idx_i, idx_j, idx_k, idx_l, *args, **kwargs))
+
+class ImproperType(Type):
+
+    def __init__(self, name:str, idx_i:int|None, idx_j:int|None, idx_k:int|None, idx_l:int|None, *args, **kwargs):
+        super().__init__(name, *args, **kwargs)
+        self.idx_i = idx_i
+        self.idx_j = idx_j
+        self.idx_k = idx_k
+        self.idx_l = idx_l
+
+class ImproperStyle(Style):
+
+    def def_impropertype(self, name:str, idx_i:int|None, idx_j:int|None, idx_k:int|None, idx_l:int|None, *args, **kwargs):
+        self.types.append(ImproperType(name, idx_i, idx_j, idx_k, idx_l, *args, **kwargs))
 
 class PairType(Type):
     
@@ -109,8 +132,8 @@ class PairType(Type):
 
 class PairStyle(Style):
     
-    def def_pairtype(self, id:int, idx_i, idx_j, *args, **kwargs):
-        self.types.append(PairType(id, idx_i, idx_j, *args, **kwargs))
+    def def_pairtype(self, name:str, idx_i, idx_j, *args, **kwargs):
+        self.types.append(PairType(name, idx_i, idx_j, *args, **kwargs))
 
     def get_pairtype_params(self, key:str):
         idx_i = []
@@ -148,45 +171,88 @@ class ForceField:
 
     def __init__(self):
 
-        self.atom_styles = []
-        self.bond_styles = []
-        self.pair_styles = []
+        self.atomstyles = []
+        self.bondstyles = []
+        self.pairstyles = []
+        self.anglestyles = []
+        self.dihedralstyles = []
+        self.improperstyles = []
 
     def def_bondstyle(self, style:str, *args, **kwargs):
         bondstyle = BondStyle(style, *args, **kwargs)
-        self.bond_styles.append(bondstyle)
+        self.bondstyles.append(bondstyle)
         return bondstyle
 
     def def_pairstyle(self, style:str, *args, **kwargs):
         pairstyle = PairStyle(style, *args, **kwargs)
-        self.pair_styles.append(pairstyle)
+        self.pairstyles.append(pairstyle)
         return pairstyle
 
     def def_atomstyle(self, style:str, *args, **kwargs):
         atomstyle = AtomStyle(style, *args, **kwargs)
-        self.atom_styles.append(atomstyle)
+        self.atomstyles.append(atomstyle)
         return atomstyle
+    
+    def def_anglestyle(self, style:str, *args, **kwargs):
+        anglestyle = AngleStyle(style, *args, **kwargs)
+        self.anglestyles.append(anglestyle)
+        return anglestyle
+    
+    def def_dihedralstyle(self, style:str, *args, **kwargs):
+        dihedralstyle = DihedralStyle(style, *args, **kwargs)
+        self.dihedralstyles.append(dihedralstyle)
+        return dihedralstyle
+    
+    def def_improperstyle(self, style:str, *args, **kwargs):
+        improperstyle = ImproperStyle(style, *args, **kwargs)
+        self.improperstyles.append(improperstyle)
+        return improperstyle
 
     @property
-    def n_atom_styles(self):
-        return len(self.atom_styles)
+    def n_atomstyles(self):
+        return len(self.atomstyles)
     
     @property
-    def n_bond_styles(self):
-        return len(self.bond_styles)
+    def n_bondstyles(self):
+        return len(self.bondstyles)
     
     @property
-    def n_pair_styles(self):
-        return len(self.pair_styles)
+    def n_pairstyles(self):
+        return len(self.pairstyles)
     
     @property
-    def n_angle_styles(self):
-        return len(self.angle_styles)
+    def n_anglestyles(self):
+        return len(self.anglestyles)
     
     @property
-    def n_dihedral_styles(self):
-        return len(self.dihedral_styles)
+    def n_dihedralstyles(self):
+        return len(self.dihedralstyles)
     
     @property
-    def n_improper_styles(self):
-        return len(self.improper_styles)
+    def n_improperstyles(self):
+        return len(self.improperstyles)
+    
+    @property
+    def n_atomtypes(self):
+        return reduce(lambda x, y: x + y.n_types, self.atomstyles, 0)
+    
+    @property
+    def n_bondtypes(self):
+        return reduce(lambda x, y: x + y.n_types, self.bondstyles, 0)
+    
+    @property
+    def n_angletypes(self):
+        return reduce(lambda x, y: x + y.n_types, self.anglestyles, 0)
+    
+    @property
+    def n_dihedraltypes(self):
+        return reduce(lambda x, y: x + y.n_types, self.dihedralstyles, 0)
+    
+    @property
+    def n_impropertypes(self):
+        return reduce(lambda x, y: x + y.n_types, self.improperstyles, 0)
+    
+    @property
+    def n_pairtypes(self):
+        return reduce(lambda x, y: x + y.n_types, self.pairstyles, 0)
+    

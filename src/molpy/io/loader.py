@@ -10,7 +10,6 @@ import chemfiles as chfl
 from ..core.frame import Frame
 from molpy import Alias
 import numpy as np
-from .forcefield.lammps import LAMMPSForceField
 
 __all__ = ["DataLoader", "MemoryLoader"]
 
