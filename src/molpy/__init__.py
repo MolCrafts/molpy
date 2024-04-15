@@ -15,11 +15,12 @@ from .core import (
     Topology,
     Frame,
     Box,
-    neighborlist
+    NeighborList,
 )
 
 from . import io
 from .io import load_log, load_forcefield
-# from . import potential
-# from . import engine
-# from . import calculator
+from . import potential
+from .potential import Potential
+from . import engine
+from . import calculator

@@ -54,12 +54,16 @@ class MDCalculator(Calculator):
         fixes: list = [],
         start_step: int = 0,
         restart: bool = False,
+        report_config: dict = {
+            "rate": 0
+        },
         dump_config: dict = {
-            "n_dump": None,
-            "file": ""
+            "rate": 0,
+            "path": "",
+            "format": ""
         }
     ):
-        super().__init__()
+        super().__init__(report_config, dump_config)
 
         self.frame = frame
         self.potential = potential
@@ -69,14 +73,9 @@ class MDCalculator(Calculator):
         self.restart = restart
         self.neighborlist = neighborlist
         self.integrator = integrator
-        
-        if dump_config:
-            self.n_dump = dump_config["n_dump"]
-            if self.n_dump:
-                self.dump_to(dump_config["file"])
 
         # Keep track of the actual simulation steps performed with simulate calls
-        self.effective_steps = 0
+        self.elapsed = 0
         if restart:
             self.step = start_step
         else:
@@ -97,11 +96,11 @@ class MDCalculator(Calculator):
         simulation step and can be used to initialize the simulation hooks.
         """
         if mp.Alias.momenta not in self.frame.atoms:
-            self.frame.momenta = np.zeros_like(self.frame.positions, dtype=float)
+            self.frame.atoms.momenta = np.zeros_like(self.frame.positions, dtype=float)
         if mp.Alias.forces not in self.frame.atoms:
-            self.frame.forces = np.zeros_like(self.frame.positions, dtype=float)
+            self.frame.atoms.forces = np.zeros_like(self.frame.positions, dtype=float)
         if mp.Alias.energy not in self.frame.atoms:
-            self.frame.energy = np.zeros_like(self.frame.positions, dtype=float)
+            self.frame.atoms.energy = np.zeros_like(self.frame.positions, dtype=float)
 
     def run(self, n_steps: int):
         """
@@ -112,19 +111,19 @@ class MDCalculator(Calculator):
         """
 
         self.init()
-
-        self.n_steps = n_steps
+        frame = self.frame
 
         # Call hooks at the simulation start
-        for hook in self.fixes:
-            hook.on_simulation_start(self)
+        for fix in self.fixes:
+            fix.on_simulation_start(self)
 
-        for nstep in trange(n_steps):
+        for elapsed in trange(n_steps):
 
-            self.neighborlist(self.frame)
+            self.neighborlist(frame)
+
             # Call hook before first half step
-            for hook in self.fixes:
-                hook.on_step_begin(self)
+            for fix in self.fixes:
+                fix.on_step_begin(self)
 
             # Do half step momenta
             self.integrator.half_step(self.frame)
@@ -133,11 +132,11 @@ class MDCalculator(Calculator):
             self.integrator.main_step(self.frame)
 
             # Compute new forces
-            self.potential(self.frame)
+            self.potential(frame)
 
             # Call hook after forces
-            for hook in self.fixes:
-                hook.on_step_middle(self)
+            for fix in self.fixes:
+                fix.on_step_middle(self)
 
             # Do half step momenta
             self.integrator.half_step(self.frame)
@@ -145,23 +144,20 @@ class MDCalculator(Calculator):
             # Call hooks after second half step
             # Hooks are called in reverse order to guarantee symmetry of
             # the propagator when using thermostat and barostats
-            for hook in self.fixes[::-1]:
-                hook.on_step_end(self)
+            for fix in self.fixes[::-1]:
+                fix.on_step_end(self)
 
             # Logging hooks etc
-            for hook in self.fixes:
-                hook.on_step_finalize(self)
+            for fix in self.fixes:
+                fix.on_step_finalize(self)
 
-            self.step += 1
-            self.effective_steps += 1
-            self.frame[mp.Alias.step] = self.effective_steps
-            if self.n_dump and nstep % self.n_dump == 0:
-                self.dump(self.frame)
-                print(f"{nstep}: {self.frame.positions} \n{self.frame.momenta} \n{self.frame.forces}\n")
+            self.dump(elapsed, frame)
+            # self.log(elapsed, frame)
+
 
         # Call hooks at the simulation end
-        for hook in self.fixes:
-            hook.on_simulation_end(self)
+        for fix in self.fixes:
+            fix.on_simulation_end(self)
 
     @property
     def state_dict(self):
