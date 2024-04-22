@@ -9,12 +9,12 @@ from igraph import Graph
 class Topology:
 
     def __init__(
-        self, n_atoms=0, n_bonds=None, graph_attrs={}, vertex_attrs={}, edge_attrs={}
+        self, n_atoms=0, bonds=None, graph_attrs={}, vertex_attrs={}, edge_attrs={}
     ):
 
         self._graph = Graph(
             n=n_atoms,
-            edges=n_bonds,
+            edges=bonds,
             directed=False,
             graph_attrs=graph_attrs,
             vertex_attrs=vertex_attrs,

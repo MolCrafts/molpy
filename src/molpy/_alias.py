@@ -68,6 +68,11 @@ Alias = _Aliases("default", {
             "idx_m": _Alias("idx_m", "_idx_m", int, None, "indices of systems"),
             "idx_i": _Alias("idx_i", "_idx_i", int, None, "indices of center atoms"),
             "idx_j": _Alias("idx_j", "_idx_j", int, None, "indices of neighboring atoms"),
+            "angle_i": _Alias("angle_i", "_angle_i", int, None, "indices of center atoms for angles"),
+            "angle_j": _Alias("angle_j", "_angle_j", int, None, "indices of neighboring atoms for angles"),
+            "angle_k": _Alias("angle_k", "_angle_k", int, None, "indices of neighboring atoms for angles"),
+            "bond_i": _Alias("bond_i", "_bond_i", int, None, "indices of center atoms for bonds"),
+            "bond_j": _Alias("bond_j", "_bond_j", int, None, "indices of neighboring atoms for bonds"),
             "idx_i_lr": _Alias("idx_i_lr", "_idx_i_lr", int, None, "indices of center atoms for # long-range"),
             "idx_j_lr": _Alias("idx_j_lr", "_idx_j_lr", int, None, "indices of neighboring atoms for # long-range"),
             "offsets": _Alias("offsets", "_offsets", int, None, "cell offset vectors"),
@@ -77,4 +82,5 @@ Alias = _Aliases("default", {
             "dipole_moment": _Alias("dipole_moment", "_dipole_moment", np.ndarray, "e*bohr", "dipole moment"),
             "partial_charges": _Alias("partial_charges", "_partial_charges", np.ndarray, "e", "partial charges"),
             "polarizability": _Alias("polarizability", "_polarizability", np.ndarray, "angstrom^3", "polarizability"),
+            "element": _Alias("element", "_element", str, None, "element symbol"),
         })

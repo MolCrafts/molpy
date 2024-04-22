@@ -1,15 +1,24 @@
+import numpy as np
 
-from molpy.potential.base import Potential
+def F(r, k, r0):
+    return -k * (r - r0)
 
+def E(r, k, r0):
+    return 0.5 * k * (r - r0) ** 2
 
-class Harmonic(Potential):
+class Harmonic:
 
-    def __init__(self, k, r0):
-        super().__init__('harmonic', 'bond')
+    F = F
+    E = E
+
+    def __init__(self, k:float, r0:float):
         self.k = k
         self.r0 = r0
 
-    def forward(self, frame):
-        bond_idx = frame.bonds
-        bi = bond_idx[:, 0]
-        bj = bond_idx[:, 1]
+    def energy(self, pos, idx_i, idx_j):
+        r = np.linalg.norm(pos[idx_j] - pos[idx_i])
+        return Harmonic.E(r, self.k, self.r0)
+    
+    def force(self, pos, idx_i, idx_j):
+        r = np.linalg.norm(pos[idx_j] - pos[idx_i])
+        return Harmonic.F(r, self.k, self.r0)

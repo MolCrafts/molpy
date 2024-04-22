@@ -14,6 +14,7 @@ from .core import (
     Atom,
     Topology,
     Frame,
+    Struct,
     Box,
     NeighborList,
 )
@@ -24,3 +25,5 @@ from . import potential
 from .potential import Potential
 from . import engine
 from . import calculator
+
+from . import structure

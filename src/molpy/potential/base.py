@@ -5,12 +5,13 @@ from molpy import Alias
 class Potential:
 
     F:Callable|None = None
+    E:Callable|None = None
 
-    def __new__(self, *args, **kwargs):
-        if self.F is None:
+    def __new__(cls, *args, **kwargs):
+        if cls.F is None:
             raise NotImplementedError("F method must be implemented")
-        return super().__new__(self, *args, **kwargs)
-
+        return super().__new__(cls)
+    
     def __init__(self, name:str, type:str):
         self.name = name
         self.type = type
@@ -27,22 +28,3 @@ class Potential:
     def forces(self):
         raise NotImplementedError("energy method must be implemented")
 
-class Potentials:
-
-    def __init__(self, *potentials):
-        self._potentials = potentials
-
-    def __call__(self, frame):
-        return self.forward(frame)
-
-    def forward(self, frame):
-        frame[Alias.energy] = 0
-        frame.atoms[Alias.forces] = np.zeros((frame.n_atoms, 3))
-        for potential in self._potentials:
-            potential(frame)
-
-        return frame
-
-    @property
-    def pairs(self):
-        return self._potentials['pair']

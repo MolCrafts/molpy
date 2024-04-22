@@ -140,17 +140,27 @@ class _NeighborList:
         cell_idx = (cell_coord * self._cell_offset).sum(axis=-1)
         return cell_idx
 
+
 class NeighborList:
-    """
-    """
-    def __init__(self, ):
-        pass
+    """ """
+
+    def __init__(
+        self,
+        cutoff: float
+    ):
+        self.cutoff = cutoff
+
+    def __call__(self, frame):
+        R = frame.atoms.R
+        return self.compute_neighborlist(
+            self.cutoff, R, frame.box.matrix, frame.box.pbc, np.zeros(R.shape[0], dtype=int)
+        )
 
     @staticmethod
     def compute_distances(
         pos: np.ndarray,
         mapping: np.ndarray,
-        cell_shifts: np.ndarray|None = None,
+        cell_shifts: np.ndarray | None = None,
     ):
         assert mapping.ndim == 2
         assert mapping.shape[0] == 2
@@ -210,10 +220,7 @@ class NeighborList:
         if cell_shifts is None:
             d2 = np.square(pos[mapping[0]] - pos[mapping[1]]).sum(axis=1)
         else:
-            d2 = (
-                np.square(pos[mapping[0]] - pos[mapping[1]] - cell_shifts)
-                .sum(axis=1)
-            )
+            d2 = np.square(pos[mapping[0]] - pos[mapping[1]] - cell_shifts).sum(axis=1)
 
         mask = d2 < cutoff * cutoff
         mapping = mapping[:, mask]
@@ -238,9 +245,7 @@ class NeighborList:
         np.ndarray
             linear indices
         """
-        idx_linear = idx_3d[:, 2] + shape[2] * (
-            idx_3d[:, 1] + shape[1] * idx_3d[:, 0]
-        )
+        idx_linear = idx_3d[:, 2] + shape[2] * (idx_3d[:, 1] + shape[1] * idx_3d[:, 0])
         return idx_linear.astype(int)
 
     @staticmethod
@@ -261,14 +266,9 @@ class NeighborList:
         """
         idx_3d = np.empty((idx_linear.shape[0], 3))
         idx_3d[:, 2] = np.remainder(idx_linear, shape[2])
-        idx_3d[:, 1] = np.remainder(
-            np.floor_divide(idx_linear, shape[2]), shape[1]
-        )
-        idx_3d[:, 0] = np.floor_divide(
-            idx_linear, shape[1] * shape[2]
-        )
+        idx_3d[:, 1] = np.remainder(np.floor_divide(idx_linear, shape[2]), shape[1])
+        idx_3d[:, 0] = np.floor_divide(idx_linear, shape[1] * shape[2])
         return idx_3d
-
 
     @staticmethod
     def get_linear_bin_idx(
@@ -322,12 +322,8 @@ class NeighborList:
         """
         sorted_id = np.argsort(bin_index)
         sorted_bin_index = bin_index[sorted_id]
-        bin_id = np.full(
-            (nbins * max_n_atom_per_bin,), n_images
-        )
-        sorted_bin_id = np.remainder(
-            np.arange(bin_index.shape[0]), max_n_atom_per_bin
-        )
+        bin_id = np.full((nbins * max_n_atom_per_bin,), n_images)
+        sorted_bin_id = np.remainder(np.arange(bin_index.shape[0]), max_n_atom_per_bin)
         sorted_bin_id = sorted_bin_index * max_n_atom_per_bin + sorted_bin_id
         # bin_id.scatter_(axis=0, index=sorted_bin_id, src=sorted_id)
         bin_id[sorted_bin_id] = sorted_id
@@ -351,9 +347,9 @@ class NeighborList:
 
         has_pbc = pbc.prod(axis=1, dtype=bool)
         reciprocal_cell = np.zeros_like(cell)
-        reciprocal_cell[has_pbc, :, :] = np.linalg.inv(
-            cell[has_pbc, :, :]
-        ).transpose(0, 2, 1)
+        reciprocal_cell[has_pbc, :, :] = np.linalg.inv(cell[has_pbc, :, :]).transpose(
+            0, 2, 1
+        )
         # inv_distances = reciprocal_cell.norm(2, axis=-1)
         inv_distances = np.linalg.norm(reciprocal_cell, axis=-1)
         num_repeats = np.ceil(cutoff * inv_distances)
@@ -361,19 +357,16 @@ class NeighborList:
         return num_repeats_
 
     @staticmethod
-    def get_cell_shift_idx(
-        num_repeats: np.ndarray
-    ) -> np.ndarray:
+    def get_cell_shift_idx(num_repeats: np.ndarray) -> np.ndarray:
         reps = []
         for ii in range(3):
-            r1 = np.arange(
-                -num_repeats[ii],
-                num_repeats[ii] + 1
-            )
+            r1 = np.arange(-num_repeats[ii], num_repeats[ii] + 1)
             indices = np.argsort(np.abs(r1))
             reps.append(r1[indices])
         # shifts_idx = np.cartesian_prod(reps[0], reps[1], reps[2])
-        shifts_idx = np.array(list(itertools.product(reps[0], reps[1], reps[2])), dtype=int)
+        shifts_idx = np.array(
+            list(itertools.product(reps[0], reps[1], reps[2])), dtype=int
+        )
         return shifts_idx
 
     @staticmethod
@@ -412,9 +405,7 @@ class NeighborList:
         # find all the integer shifts of the unit cell given the cutoff and periodicity
         shifts_idx = NeighborList.get_cell_shift_idx(num_repeats)
         n_cell_image = shifts_idx.shape[0]
-        shifts_idx = np.repeat(
-            shifts_idx, n_atom, axis=0
-        )
+        shifts_idx = np.repeat(shifts_idx, n_atom, axis=0)
         batch_image = np.zeros((shifts_idx.shape[0]), dtype=int)
         cell_shifts = NeighborList.compute_cell_shifts(
             cell.reshape(-1, 3, 3), shifts_idx, batch_image
@@ -489,13 +480,11 @@ class NeighborList:
             axis=0,
         )
         # the linear neighborlist. make it at large as necessary
-        neigh_atom = np.empty(
-            (2, n_atom * max_neigh_per_atom), dtype=int
-        )
+        neigh_atom = np.empty((2, n_atom * max_neigh_per_atom), dtype=int)
         # fill the i_atom index
-        neigh_atom[0] = (
-            np.tile(np.arange(n_atom).reshape(-1, 1), (1, max_neigh_per_atom)).reshape(-1)
-        )
+        neigh_atom[0] = np.tile(
+            np.arange(n_atom).reshape(-1, 1), (1, max_neigh_per_atom)
+        ).reshape(-1)
         # relate `bin_index` (row) with the `neighbor_atom_index` (stored in the columns). empty entries are set to `n_images`
         bin_id_ij = np.full(
             (nbins * n_neigh_bins, max_n_atom_per_bin),
@@ -522,7 +511,7 @@ class NeighborList:
         neigh_atom[1] = np.remainder(neigh_atom[1], n_atom)
         # print(neigh_atom)
         return neigh_atom, neigh_shift_idx
-    
+
     @staticmethod
     def build_linked_cell_neighborhood(
         positions: np.ndarray,
@@ -567,7 +556,7 @@ class NeighborList:
         num_repeats = NeighborList.get_number_of_cell_repeats(cutoff, cell, pbc)
 
         stride = NeighborList.strides_of(n_atoms)
-        
+
         mapping, batch_mapping, cell_shifts_idx = [], [], []
         for i_structure in range(n_structure):
             # compute the neighborhood with the linked cell algorithm
@@ -579,10 +568,7 @@ class NeighborList:
                 self_interaction,
             )
 
-            batch_mapping.append(
-                i_structure
-                * np.ones(neigh_atom.shape[1])
-            )
+            batch_mapping.append(i_structure * np.ones(neigh_atom.shape[1]))
             # shift the mapping indices so that they can access positions
             mapping.append(neigh_atom + stride[i_structure])
             cell_shifts_idx.append(neigh_shift_idx)
@@ -591,7 +577,7 @@ class NeighborList:
             np.concatenate(batch_mapping, axis=0).astype(int),
             np.concatenate(cell_shifts_idx, axis=0).astype(int),
         )
-    
+
     @staticmethod
     def compute_neighborlist(
         cutoff: float,
@@ -631,15 +617,14 @@ class NeighborList:
                 cell shift indices to be used in reconstructing the neighbor atom positions.
         """
         n_atoms = np.bincount(batch)
-        mapping, batch_mapping, shifts_idx = NeighborList.build_linked_cell_neighborhood(
-            pos, cell, pbc, cutoff, n_atoms, self_interaction
+        mapping, batch_mapping, shifts_idx = (
+            NeighborList.build_linked_cell_neighborhood(
+                pos, cell, pbc, cutoff, n_atoms, self_interaction
+            )
         )
 
         mapping, mapping_batch, shifts_idx = NeighborList.strict_nl(
             cutoff, pos, cell, mapping, batch_mapping, shifts_idx
         )
         return mapping, mapping_batch, shifts_idx
-
-    def __call__(self, frame):
-        pass
 

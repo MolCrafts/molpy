@@ -104,6 +104,28 @@ class AngleStyle(Style):
     def def_angletype(self, name:str, idx_i:int|None, idx_j:int|None, idx_k:int|None, *args, **kwargs):
         self.types.append(AngleType(name, idx_i, idx_j, idx_k, *args, **kwargs))
 
+    def get_angletype_params(self, key:str):
+        idx_i = []
+        idx_j = []
+        idx_k = []
+        params = []
+        for angletype in self.types:
+            idx_i.append(angletype.idx_i)
+            idx_j.append(angletype.idx_j)
+            idx_k.append(angletype.idx_k)
+            params.append(angletype[key])
+
+        n_types_i = np.max(idx_i) + 1
+        n_types_j = np.max(idx_j) + 1
+        n_types_k = np.max(idx_k) + 1
+        n_types = max(n_types_i, n_types_j, n_types_k)
+        param_arr = np.zeros((n_types, n_types, n_types))
+        for i, j, k, param in zip(idx_i, idx_j, idx_k, params):
+            param_arr[i, j, k] = param
+            param_arr[k, j, i] = param
+
+        return param_arr
+
 class DihedralStyle(Style):
     
     def def_dihedraltype(self, name:str, idx_i:int|None, idx_j:int|None, idx_k:int|None, idx_l:int|None, *args, **kwargs):
@@ -207,6 +229,30 @@ class ForceField:
         improperstyle = ImproperStyle(style, *args, **kwargs)
         self.improperstyles.append(improperstyle)
         return improperstyle
+    
+    def get_pairstyle(self, name:str):
+        for pairstyle in self.pairstyles:
+            if pairstyle['name'] == name:
+                return pairstyle
+        return None
+    
+    def get_bondstyle(self, name:str):
+        for bondstyle in self.bondstyles:
+            if bondstyle['name'] == name:
+                return bondstyle
+        return None
+    
+    def get_atomstyle(self, name:str):
+        for atomstyle in self.atomstyles:
+            if atomstyle['name'] == name:
+                return atomstyle
+        return None
+    
+    def get_anglestyle(self, name:str):
+        for anglestyle in self.anglestyles:
+            if anglestyle['name'] == name:
+                return anglestyle
+        return None
 
     @property
     def n_atomstyles(self):
