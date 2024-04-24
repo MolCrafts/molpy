@@ -1,12 +1,27 @@
 [project]
-name = "molpy"
+name = "molcrafts-molpy"
 version = "0.0.1"
+authors = [
+    { name = "Roy Kid", email = "lijichen365@gmail.com" }
+]
+description = "Molecular Potential Training Framework"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: BSD License",
+    "Development Status :: 1 - Planning",
+]
 dependencies = [
     "numpy",
     "pint",
     "chemfiles",
     "igraph"
 ]
+
+[project.urls]
+Homepage = "https://github.com/MolCrafts/molpot"
+Issues = "https://github.com/MolCrafts/molpot/issues"
 
 [build-system]
 requires = [
