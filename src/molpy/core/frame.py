@@ -11,18 +11,34 @@ from .neighborlist import NeighborList
 from copy import deepcopy
 
 class Item(dict):
-    ...
 
-class ItemList(list):
-    
     def __getattribute__(self, alias):
         key = mp.Alias.get(alias)
         if key:
-            return np.array([item[key.key] for item in self])
+            return self[key.key]
+        if alias in self:
+            return self[alias]
+        return super().__getattribute__(alias)
+
+class ItemList(list):
+    
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return np.array([item[key] for item in self])
+        return super().__getitem__(key)
+
+    def __getattribute__(self, alias):
+
+        key = mp.Alias.get(alias)
+        if key:
+            return self[key.key]
         return super().__getattribute__(alias)
     
 class Atom(Item):
-    ...
+    
+    def __repr__(self):
+
+        return f"<Atom: {super().__repr__()}>"
 
 class Bond(Item):
     ...
@@ -55,7 +71,7 @@ class Struct(dict):
         return len(self._atoms)
     
     @property
-    def atoms(self):
+    def atoms(self)->ItemList[Atom]:
         return self._atoms
     
     @property
@@ -74,8 +90,11 @@ class Struct(dict):
     def topology(self, topology):
         self._topology = topology
 
-    def add_atom(self, **props):
-        self._atoms.append(Atom(**props))
+    def add_atom(self, atom=None, **props):
+        if atom:
+            self._atoms.append(atom)
+        else:
+            self._atoms.append(Atom(**props))
 
     def add_bond(self, **props):
         self._bonds.append(Bond(**props))
