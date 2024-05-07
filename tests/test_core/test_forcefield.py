@@ -11,6 +11,11 @@ class TestForceField:
 
         ff = mp.ForceField()
         return ff
+    
+    def test_atom(self, ff):
+
+        ff.def_atomtype("O", 0, mass=15.9994)
+        ff.def_atomtype("H", 1, mass=1.00794)
 
     def test_bond(self, ff):
 

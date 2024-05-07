@@ -1,3 +1,4 @@
+from ._plugin import Plugin, Plugins, register_plugin
 from ._alias import Alias
 from ._elem import Element
 from ._units import Unit
@@ -15,6 +16,8 @@ from .core import (
     Topology,
     Frame,
     Struct,
+    StaticStruct,
+    DynamicStruct,
     Box,
     NeighborList,
 )
