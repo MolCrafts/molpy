@@ -30,20 +30,39 @@ class Item(dict[str, Any]):
 
 class ItemList(list[Item]):
 
-    def __getitem__(self, key):
+    def __getattr__(self, alias: str) -> np.ndarray:
+        return np.array([getattr(item, alias) for item in self])
+    
+    def __setattr__(self, alias: str, value: np.ndarray) -> None:
+        for item, v in zip(self, value):
+            setattr(item, alias, v)
+
+    def __getitem__(self, key: str|slice) -> np.ndarray:
         if isinstance(key, str):
             return np.array([item[key] for item in self])
-        return super().__getitem__(key)
-
-    def __getattribute__(self, alias):
-
-        key = mp.Alias.get(alias)
-        if key:
-            return self[key.key]
-        return super().__getattribute__(alias)
-
+        else:
+            return super().__getitem__(key)
+        
+    def __setitem__(self, key: str|slice, value: np.ndarray|Item) -> None:
+        if isinstance(key, str):
+            for item, v in zip(self, value):
+                item[key] = v
+        else:
+            return super().__setitem__(key, value)
 
 class ItemDict(dict[str, np.ndarray]):
+
+    def __getattr__(self, alias:str) -> np.ndarray:
+        return self[mp.Alias.get(alias).key]
+    
+    def __setattr__(self, alias:str, value:np.ndarray) -> None:
+        self[mp.Alias.get(alias).key] = value
+
+    # def __getitem__(self, key: str) -> np.ndarray:
+    #     return super().__getitem__(mp.Alias.get(key).key)
+    
+    # def __setitem__(self, key: str, value: np.ndarray) -> None:
+    #     super().__setitem__(mp.Alias.get(key).key, value)
 
     def concat(self, other):
         for key, value in other.items():
@@ -291,6 +310,10 @@ class StaticStruct(Struct):
 
     def n_dihedrals(self):
         return self._n_dihedrals
+    
+    @property
+    def props(self):
+        return self._props
 
     @property
     def atoms(self) -> ItemDict[Atom]:
@@ -315,6 +338,14 @@ class StaticStruct(Struct):
 
     def __call__(self) -> "StaticStruct":
         return self.clone()
+    
+    def __getattr__(self, alias: str) -> Any:
+        return self.props[alias]
+    
+    def __setattr__(self, alias:str, value:Any) -> None:
+        if alias.startswith("_"):
+            super().__setattr__(alias, value)
+        self.props[alias] = value
 
 
 class Frame(Struct):
