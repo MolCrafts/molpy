@@ -141,6 +141,9 @@ class DynamicStruct(Struct):
 
         self._topology = Topology(n_atoms, )
 
+        self._struct_mask = []
+        self._n_struct = 0
+
     @classmethod
     def join(cls, structs: Collection['DynamicStruct'])->'DynamicStruct':
         # Type consistency check
@@ -184,9 +187,16 @@ class DynamicStruct(Struct):
             self._atoms.append(atom)
         else:
             self._atoms.append(Atom(**props))
+        self._struct_mask.append(self._n_struct)
 
     def add_bond(self, **props):
         self._bonds.append(Bond(**props))
+
+    def add_struct(self, struct: Struct):
+        
+        self.union(struct)
+        self._n_struct += 1
+        self._struct_mask.extend([self._n_struct]*struct.n_atoms)
 
     def union(self, other:'DynamicStruct')->'DynamicStruct':
         """
