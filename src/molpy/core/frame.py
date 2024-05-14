@@ -4,27 +4,32 @@
 # version: 0.0.1
 
 from abc import ABC, abstractmethod
-from typing import Sequence, Collection, TypeVar
+from typing import Collection, TypeVar, Any
 
 import numpy as np
 import molpy as mp
 from .topology import Topology
 from .box import Box
-from .neighborlist import NeighborList
 from copy import deepcopy
 
-class Item(dict):
 
-    def __getattribute__(self, alias):
-        key = mp.Alias.get(alias)
-        if key:
-            return self[key.key]
-        if alias in self:
-            return self[alias]
-        return super().__getattribute__(alias)
+class Item(dict[str, Any]):
 
-class ItemList(list):
-    
+    def __getattr__(self, alias: str) -> Any:
+        return self[mp.Alias.get(alias).key]
+
+    def __setattr__(self, alias: str, value: Any) -> None:
+        self[mp.Alias.get(alias).key] = value
+
+    # def __getitem__(self, key: str) -> Any:
+    #     return super().__getitem__(key)
+
+    # def __setitem__(self, key: str, value: Any) -> None:
+    #     return super().__setitem__(key, value)
+
+
+class ItemList(list[Item]):
+
     def __getitem__(self, key):
         if isinstance(key, str):
             return np.array([item[key] for item in self])
@@ -36,8 +41,9 @@ class ItemList(list):
         if key:
             return self[key.key]
         return super().__getattribute__(alias)
-    
-class ItemDict(dict):
+
+
+class ItemDict(dict[str, np.ndarray]):
 
     def concat(self, other):
         for key, value in other.items():
@@ -45,42 +51,45 @@ class ItemDict(dict):
                 self[key] = np.concatenate([self[key], value])
             else:
                 raise KeyError(f"Key {key} not found in self dict")
-            
-ItemCollection = TypeVar('ItemCollection', ItemList, ItemDict)
-    
+
+
+ItemCollection = TypeVar("ItemCollection", ItemList, ItemDict)
+
+
 class Atom(Item):
-    
+
     def __repr__(self):
 
         return f"<Atom: {super().__repr__()}>"
 
-class Bond(Item):
-    ...
+
+class Bond(Item): ...
+
 
 class Struct(ABC):
 
-    def __init__(self, ):
-    
+    def __init__(
+        self,
+    ):
         self._props = {}
 
     def __getitem__(self, key):
         return self._props[key]
-            
+
     def __setitem__(self, key, value):
         self._props[key] = value
 
     @classmethod
-    def join(cls, structs: Collection['Struct'])->'Struct':
+    def join(cls, structs: Collection["Struct"]) -> "Struct":
 
         if isinstance(structs[0], DynamicStruct):
             return DynamicStruct.join(structs)
         else:
             return StaticStruct.join(structs)
 
-    
     @property
     @abstractmethod
-    def n_atoms(self)->int:
+    def n_atoms(self) -> int:
         """
         return the number of atoms in the struct
 
@@ -91,7 +100,7 @@ class Struct(ABC):
 
     @property
     @abstractmethod
-    def atoms(self)->ItemCollection:
+    def atoms(self) -> ItemCollection:
         """
         return the atoms in the struct
 
@@ -101,7 +110,7 @@ class Struct(ABC):
         ...
 
     @abstractmethod
-    def clone(self)->'Struct':
+    def clone(self) -> "Struct":
         """
         clone the struct
 
@@ -111,11 +120,11 @@ class Struct(ABC):
         ...
 
     @abstractmethod
-    def __call__(self) -> 'Struct':
+    def __call__(self) -> "Struct":
         return self.clone()
-    
+
     @abstractmethod
-    def union(self, other:'Struct')->'Struct':
+    def union(self, other: "Struct") -> "Struct":
         """
         union two structs and return self
 
@@ -130,24 +139,28 @@ class Struct(ABC):
 
 class DynamicStruct(Struct):
 
-    def __init__(self, n_atoms:int=0, *args, **kwargs):
+    def __init__(self, n_atoms: int = 0, *args, **kwargs):
 
         super().__init__(*args, **kwargs)
-        
+
         self._atoms = ItemList()
         self._bonds = ItemList()
         self._angles = ItemList()
         self._dihedrals = ItemList()
 
-        self._topology = Topology(n_atoms, )
+        self._topology = Topology(
+            n_atoms,
+        )
 
         self._struct_mask = []
         self._n_struct = 0
 
     @classmethod
-    def join(cls, structs: Collection['DynamicStruct'])->'DynamicStruct':
+    def join(cls, structs: Collection["DynamicStruct"]) -> "DynamicStruct":
         # Type consistency check
-        assert all(isinstance(struct, cls) for struct in structs), TypeError("All structs must be of the same type")
+        assert all(isinstance(struct, cls) for struct in structs), TypeError(
+            "All structs must be of the same type"
+        )
         # Create a new struct
         struct = cls()
         for s in structs:
@@ -157,27 +170,27 @@ class DynamicStruct(Struct):
     @property
     def topology(self):
         return self._topology
-    
+
     @property
     def n_atoms(self):
         return len(self._atoms)
-    
+
     @property
-    def atoms(self)->ItemList[Atom]:
+    def atoms(self) -> ItemList[Atom]:
         return self._atoms
-    
+
     @property
     def bonds(self):
         return self._bonds
-    
+
     @property
     def angles(self):
         return self._angles
-    
+
     @property
     def dihedrals(self):
         return self._dihedrals
-    
+
     @topology.setter
     def topology(self, topology):
         self._topology = topology
@@ -193,12 +206,12 @@ class DynamicStruct(Struct):
         self._bonds.append(Bond(**props))
 
     def add_struct(self, struct: Struct):
-        
+
         self.union(struct)
         self._n_struct += 1
-        self._struct_mask.extend([self._n_struct]*struct.n_atoms)
+        self._struct_mask.extend([self._n_struct] * struct.n_atoms)
 
-    def union(self, other:'DynamicStruct')->'DynamicStruct':
+    def union(self, other: "DynamicStruct") -> "DynamicStruct":
         """
         union two structs and return self
 
@@ -220,8 +233,9 @@ class DynamicStruct(Struct):
         struct.union(self)
         return struct
 
+
 class StaticStruct(Struct):
-    
+
     def __init__(self):
 
         self._props = {}
@@ -238,16 +252,18 @@ class StaticStruct(Struct):
         self._topology = Topology()
 
     @classmethod
-    def join(cls, structs: Collection['StaticStruct'])->'StaticStruct':
+    def join(cls, structs: Collection["StaticStruct"]) -> "StaticStruct":
         # Type consistency check
-        assert all(isinstance(struct, cls) for struct in structs), TypeError("All structs must be of the same type")
+        assert all(isinstance(struct, cls) for struct in structs), TypeError(
+            "All structs must be of the same type"
+        )
         # Create a new struct
         struct = cls()
         for s in structs:
             struct.union(s)
         return struct
-    
-    def union(self, other:'StaticStruct')->'StaticStruct':
+
+    def union(self, other: "StaticStruct") -> "StaticStruct":
         """
         union two structs and return self
 
@@ -266,28 +282,28 @@ class StaticStruct(Struct):
 
     def n_atoms(self):
         return self._n_atoms
-    
+
     def n_bonds(self):
         return self._n_bonds
-    
+
     def n_angles(self):
         return self._n_angles
-    
+
     def n_dihedrals(self):
         return self._n_dihedrals
-    
+
     @property
-    def atoms(self)->ItemDict[Atom]:
+    def atoms(self) -> ItemDict[Atom]:
         return self._atoms
-    
+
     @property
     def bonds(self):
         return self._bonds
-    
+
     @property
     def angles(self):
         return self._angles
-    
+
     @property
     def dihedrals(self):
         return self._dihedrals
@@ -297,7 +313,7 @@ class StaticStruct(Struct):
         struct.union(self)
         return struct
 
-    def __call__(self) -> 'StaticStruct':
+    def __call__(self) -> "StaticStruct":
         return self.clone()
 
 
@@ -309,16 +325,26 @@ class Frame(Struct):
 
         self._box = None
         self._forcefield = None
-    
+
     def add_struct(self, struct):
         self._atoms.extend(struct.atoms)
         self._bonds.extend(struct.bonds)
         self._angles.extend(struct.angles)
         self._dihedrals.extend(struct.dihedrals)
-        
-    def set_box(self, lx:int, ly:int, lz:int, xy:int=0, xz:int=0, yz:int=0, origin=np.zeros(3), pbc=np.array([True, True, True])):
+
+    def set_box(
+        self,
+        lx: int,
+        ly: int,
+        lz: int,
+        xy: int = 0,
+        xz: int = 0,
+        yz: int = 0,
+        origin=np.zeros(3),
+        pbc=np.array([True, True, True]),
+    ):
         self._box = Box(lx, ly, lz, xy, xz, yz, origin, pbc)
-        
+
     def calc_connectivity(self):
         pass
 

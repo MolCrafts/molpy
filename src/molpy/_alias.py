@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 from dataclasses import dataclass
 
+
 @dataclass
 class AliasEntry:
     alias: str
@@ -116,76 +117,72 @@ class NameSpace(dict):
 
     def set(self, alias: str, key: str, type: type, unit: str, comment: str) -> None:
         self[alias] = AliasEntry(alias, key, type, unit, comment)
+        return self[alias]
+
+    def get(self, alias: str) -> AliasEntry:
+        return super().__getitem__(alias)
 
     def load(self, definition: dict[str, AliasEntry]):
         self.update(definition)
 
-    def __getattribute__(self, alias:str) -> str:
+    def __getitem__(self, key: str) -> AliasEntry:
+        for entry in self.values():
+            if entry.key == key:
+                return entry
+        raise KeyError(f"Key `{key}` not found in namespace {self.name}")
 
-        try:
-            return super().__getattribute__(alias)
-        except AttributeError:
-            self.set(alias, alias, type, None, "")
-            return alias
+    def __getattr__(self, alias: str) -> str:
+        return self[alias].key
+
 
 class AliasSystem(metaclass=Singleton):
 
-    def __new__(cls, *args, **kwargs):
-        default = NameSpace("default")
-        cls.namespaces = {"default": default}
-        default.load(DEFAULT_ALIASES)
-        return super().__new__(cls)
-    
-    def __call__(self, namespace:str) -> NameSpace:
+    def __init__(self, **namespace: dict[str, dict]):
+
+        self._namespace: dict[str, NameSpace] = {}
+
+        for name, definition in namespace.items():
+            self.new_namespace(name)
+            self.namespaces[name].load(definition)
+
+    @property
+    def namespaces(self) -> dict[str, NameSpace]:
+        return self._namespace
+
+    def __call__(self, namespace: str) -> NameSpace:
         if namespace not in self.namespaces:
             self.new_namespace(namespace)
         return self.namespaces[namespace]
 
-    def __getattribute__(self, alias: str) -> NameSpace | str:
+    def __getattr__(self, alias: str) -> NameSpace | str:
 
-        try:
-            return super().__getattribute__(alias)
-        except AttributeError:
+        namespace = self.namespaces.get(alias)
+        if namespace is not None:
+            return namespace
+        else:
+            if alias in self.namespaces["default"]:
+                alias_entry = self.namespaces["default"].get(alias)
+            else:
+                alias_entry = self.set(alias, alias, type, None, "")
 
-            # namespace_or_alias_entry = self.namespaces.get(
-            #     alias, self.namespaces["default"].get(alias)
-            # )
-            # # if isinstance(namespace_or_alias_entry, NameSpace):
-            # #     return namespace_or_alias_entry
-            # # elif isinstance(namespace_or_alias_entry, AliasEntry):
-            # #     return namespace_or_alias_entry.key
-            # # else:
-            # #     self.set(alias, alias, type, None, "")
-            # #     return alias
-            # if namespace_or_alias_entry is None:  # alias not in system
-            #     self.set(alias, alias, type, None, "")
-            #     return alias
-            # else:  # alias in system
-            #     if isinstance(namespace_or_alias_entry, NameSpace):
-            #         return namespace_or_alias_entry
-            #     return namespace_or_alias_entry.key
+            return alias_entry.key
 
-            namespace = self.namespaces.get(alias)
-            if namespace is not None:
-                return namespace
-            alias_entry = self.namespaces["default"].get(alias)
-            if alias_entry is not None:
-                return alias_entry.key
-            self.set(alias, alias, type, None, "")
-            return alias
-
-
-    def __getitem__(self, alias: str) -> AliasEntry | NameSpace:
-        try:
-            return self.namespaces[alias]
-        except KeyError:
-            return self.namespaces["default"][alias]
+    def __getitem__(self, key: str) -> AliasEntry | NameSpace:
+        if key in self.namespaces:
+            return self.namespaces[key]
+        else:
+            return self.namespaces["default"][key]
 
     def new_namespace(self, name: str) -> None:
         self.namespaces[name] = NameSpace(name)
 
-    def set(self, alias: str, key: str, type: type, unit: str, comment: str) -> None:
-        self.namespaces["default"].set(alias, key, type, unit, comment)
+    def set(
+        self, alias: str, key: str, type: type, unit: str, comment: str
+    ) -> AliasEntry:
+        return self.namespaces["default"].set(alias, key, type, unit, comment)
+
+    def get(self, alias: str, namespace: str = "default") -> AliasEntry:
+        return self.namespaces[namespace].get(alias)
 
     def list(self) -> dict[str, list[str]]:
         """List all keys in all namespaces."""
@@ -205,5 +202,6 @@ class AliasSystem(metaclass=Singleton):
         default = NameSpace("default")
         self.namespaces = {"default": default}
         default.load(DEFAULT_ALIASES)
-        
-Alias = AliasSystem()
+
+
+Alias = AliasSystem(default=DEFAULT_ALIASES)
