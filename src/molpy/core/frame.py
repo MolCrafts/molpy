@@ -318,11 +318,6 @@ class Frame(Struct):
         
     def set_box(self, lx:int, ly:int, lz:int, xy:int=0, xz:int=0, yz:int=0, origin=np.zeros(3), pbc=np.array([True, True, True])):
         self._box = Box(lx, ly, lz, xy, xz, yz, origin, pbc)
-
-    def calc_neighborlist(self, cutoff:float):
-        
-        self._nblist = NeighborList(cutoff,)
-        mapping, mapping_batch, shifts_idx = self._nblist(self)
         
     def calc_connectivity(self):
         pass

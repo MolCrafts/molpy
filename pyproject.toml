@@ -1,6 +1,6 @@
 [project]
 name = "molcrafts-molpy"
-version = "0.0.1"
+version = "0.0.2"
 authors = [
     { name = "Roy Kid", email = "lijichen365@gmail.com" }
 ]
@@ -11,12 +11,6 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: BSD License",
     "Development Status :: 1 - Planning",
-]
-dependencies = [
-    "numpy",
-    "pint",
-    "chemfiles",
-    "igraph"
 ]
 
 [project.urls]
