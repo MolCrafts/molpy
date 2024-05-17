@@ -17,17 +17,28 @@ class Box:
 
     def __init__(
         self,
-        lx: int,
-        ly: int,
-        lz: int,
-        xy: int = 0,
-        xz: int = 0,
-        yz: int = 0,
+        lengths: ArrayLike = [0, 0, 0],
+        tilts: ArrayLike = [0, 0, 0],
         origin=np.zeros(3),
-        pbc=np.array([True, True, True]),
+        pbc=np.array([False, False, False]),
     ):
+        """
+        init box with lengths and tilts.
 
-        self.set_lengths_tilts(lx, ly, lz, xy, xz, yz)
+        Examples:
+        ```python
+        Box()  # free space box
+        Box([10, 10, 10])  # cube box
+        Box([10, 10, 10], [1, 2, 3])  # parallelepiped box
+
+
+        Args:
+            lengths (ArrayLike, optional): _description_. Defaults to [0, 0, 0].
+            tilts (ArrayLike, optional): _description_. Defaults to [0, 0, 0].
+            origin (_type_, optional): _description_. Defaults to np.zeros(3).
+            pbc (_type_, optional): _description_. Defaults to np.array([False, False, False]).
+        """
+        self.set_lengths_tilts(lengths, tilts)
         self._origin = np.array(origin)
         self._pbc = np.array(pbc)
 
@@ -115,8 +126,10 @@ class Box:
         reciprocal_r = np.einsum("ij,nj->ni", self.get_inverse(), r)
         return np.floor(reciprocal_r)
 
-    def set_lengths_tilts(self, lx, ly, lz, xy=0, xz=0, yz=0):
+    def set_lengths_tilts(self, lengths, tilts):
         """init or reset the parallelepiped box with lengths and tilts"""
+        lx, ly, lz = lengths
+        xy, xz, yz = tilts
         self._matrix = np.array(
             [
                 [lx, xy, xz],
@@ -170,7 +183,8 @@ class Box:
         reciprocal_r = np.einsum("ij,...j->...i", self.get_inverse(), r)
         shifted_reci_r = reciprocal_r - np.floor(reciprocal_r)
         real_r = np.einsum("ij,...j->...i", self._matrix, shifted_reci_r)
-        # real_r = real_r[np.logical_not(self.pbc)] = r[np.logical_not(self.pbc)]
+        not_pbc = np.logical_not(self._pbc)
+        real_r[:, not_pbc] = r[:, not_pbc]
         return real_r
 
     def unwrap(self, r, images):
@@ -200,7 +214,12 @@ class Box:
 
     def diff_dr(self, dr: ArrayLike) -> np.ndarray:
         """calculate distance in the box, where `dr` displacement vector between two points"""
-        return self.wrap(np.fmod(dr + self.length / 2, self.length)) - self.length / 2
+        if all(self._pbc==False):
+            return dr
+
+        # apply pbc as mask
+        dr[:, self._pbc] = np.fmod(dr[:, self._pbc] + self.length / 2, self.length)
+        return self.wrap(dr) - self.length / 2
 
     def diff(self, r1: ArrayLike, r2: ArrayLike) -> np.ndarray:
         """calculate distance in the box, where displacement vector dr = r1 - r2"""

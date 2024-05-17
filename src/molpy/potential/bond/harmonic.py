@@ -1,24 +1,36 @@
 import numpy as np
 
+from molpy.potential.base import Potential
+from molpy.core.box import Box
+
+
 def F(r, k, r0):
     return -k * (r - r0)
+
 
 def E(r, k, r0):
     return 0.5 * k * (r - r0) ** 2
 
-class Harmonic:
+
+class Harmonic(Potential):
 
     F = F
     E = E
 
-    def __init__(self, k:float, r0:float):
-        self.k = k
-        self.r0 = r0
+    def __init__(self, box:Box|None = None):
+        super().__init__("harmonic", "bond")
+        self.box = box or Box()
 
-    def energy(self, pos, idx_i, idx_j):
-        r = np.linalg.norm(pos[idx_j] - pos[idx_i])
-        return Harmonic.E(r, self.k, self.r0)
-    
-    def force(self, pos, idx_i, idx_j):
-        r = np.linalg.norm(pos[idx_j] - pos[idx_i])
-        return Harmonic.F(r, self.k, self.r0)
+    def _prepare(self, xyz, idx_i, idx_j, type_i, type_j, k, r0):
+
+        dr = self.box.diff(xyz[idx_j], xyz[idx_i])
+        r = np.linalg.norm(dr, axis=-1)
+        k_ = k[type_i, type_j]
+        r0_ = r0[type_i, type_j]
+        return r, k_, r0_
+
+    def energy(self, xyz, idx_i, idx_j, type_i, type_j, k, r0):
+        return Harmonic.E(*self._prepare(xyz, idx_i, idx_j, type_i, type_j, k, r0))
+
+    def force(self, xyz, idx_i, idx_j, type_i, type_j, k, r0):
+        return Harmonic.F(*self._prepare(xyz, idx_i, idx_j, type_i, type_j, k, r0))
