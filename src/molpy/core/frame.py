@@ -330,6 +330,10 @@ class StaticStruct(Struct):
     @property
     def dihedrals(self):
         return self._dihedrals
+    
+    @property
+    def topology(self):
+        return self._topology
 
     def clone(self):
         struct = StaticStruct()

@@ -1,4 +1,5 @@
 import itertools
+from .box import Box
 import numpy as np
 import molpy as mp
 
@@ -628,3 +629,23 @@ class NeighborList:
         )
         return mapping, mapping_batch, shifts_idx
 
+class NaiveNeighborList:
+
+    def __init__(self):
+        ...
+
+    def build(self, xyz: np.ndarray, box: Box, r_cutoff: float, ):
+        """
+        build from scratch
+        """
+        xyz = np.atleast_2d(xyz)  # (N, ndim)
+        diff = xyz[:, None, :] - xyz[None, :, :]
+        box.wrap(diff)
+        dist = np.linalg.norm(diff, axis=-1)
+        
+
+    def update(self, xyz):
+        ...
+
+    def query(self, centers, around):
+        ...
