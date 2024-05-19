@@ -1,0 +1,194 @@
+from abc import ABC, abstractmethod
+from typing import Collection, TypeVar, Any
+
+import numpy as np
+import molpy as mp
+from .topology import Topology
+from .box import Box
+from copy import deepcopy
+
+
+class ItemDict(dict[str, np.ndarray]):
+
+    def __getattr__(self, alias:str) -> np.ndarray:
+        return self[mp.Alias.get(alias).key]
+    
+    def __setattr__(self, alias:str, value:np.ndarray) -> None:
+        self[mp.Alias.get(alias).key] = value
+
+    # def __getitem__(self, key: str) -> np.ndarray:
+    #     return super().__getitem__(mp.Alias.get(key).key)
+    
+    # def __setitem__(self, key: str, value: np.ndarray) -> None:
+    #     super().__setitem__(mp.Alias.get(key).key, value)
+
+    def concat(self, other):
+        for key, value in other.items():
+            if key in self:
+                self[key] = np.concatenate([self[key], value])
+            else:
+                raise KeyError(f"Key {key} not found in self dict")
+
+class Structure(ABC):
+
+    def __init__(
+        self,
+        name: str = "",
+    ):
+        self.name = name
+        self._props = {}
+
+    def __getitem__(self, key):
+        return self._props[key]
+
+    def __setitem__(self, key, value):
+        self._props[key] = value
+
+    @property
+    @abstractmethod
+    def n_atoms(self) -> int:
+        """
+        return the number of atoms in the struct
+
+        Returns:
+            int: the number of atoms
+        """
+        ...
+
+    @property
+    @abstractmethod
+    def atoms(self):
+        """
+        return the atoms in the struct
+
+        Returns:
+        """
+        ...
+
+    @abstractmethod
+    def clone(self) -> "Structure":
+        """
+        clone the struct
+
+        Returns:
+            Structure: a new struct
+        """
+        ...
+
+    @abstractmethod
+    def __call__(self) -> "Structure":
+        return self.clone()
+
+    @abstractmethod
+    def union(self, other: "Structure") -> "Structure":
+        """
+        union two structs and return self
+
+        Args:
+            other (Structure): the other struct
+
+        Returns:
+            Structure: this struct
+        """
+        ...
+
+
+class Struct(Structure):
+
+    def __init__(self, name: str = ""):
+
+        super().__init__(name)
+
+        self._props = {}
+        self._atoms = ItemDict()
+        self._bonds = ItemDict()
+        self._angles = ItemDict()
+        self._dihedrals = ItemDict()
+
+        self._n_atoms = 0
+        self._n_bonds = 0
+        self._n_angles = 0
+        self._n_dihedrals = 0
+
+        self._topology = Topology()
+
+    @classmethod
+    def join(cls, structs: Collection["Struct"]) -> "Struct":
+        # Type consistency check
+        assert all(isinstance(struct, cls) for struct in structs), TypeError(
+            "All structs must be of the same type"
+        )
+        # Create a new struct
+        struct = cls()
+        for s in structs:
+            struct.union(s)
+        return struct
+
+    def union(self, other: "Struct") -> "Struct":
+        """
+        union two structs and return self
+
+        Args:
+            other (Struct): the other struct
+
+        Returns:
+            Struct: this struct
+        """
+        self._atoms.concat(other.atoms)
+        self._bonds.concat(other.bonds)
+        self._angles.concat(other.angles)
+        self._dihedrals.concat(other.dihedrals)
+        self._topology.union(other.topology)
+        return self
+
+    def n_atoms(self):
+        return self._n_atoms
+
+    def n_bonds(self):
+        return self._n_bonds
+
+    def n_angles(self):
+        return self._n_angles
+
+    def n_dihedrals(self):
+        return self._n_dihedrals
+    
+    @property
+    def props(self):
+        return self._props
+
+    @property
+    def atoms(self) -> ItemDict:
+        return self._atoms
+
+    @property
+    def bonds(self):
+        return self._bonds
+
+    @property
+    def angles(self):
+        return self._angles
+
+    @property
+    def dihedrals(self):
+        return self._dihedrals
+    
+    @property
+    def topology(self):
+        return self._topology
+
+    def clone(self):
+        struct = Struct()
+        struct.union(self)
+        return struct
+
+    def __call__(self) -> "Struct":
+        return self.clone()
+    
+    def __getattr__(self, alias: str) -> Any:
+        return self.props[alias]
+    
+    def __setattr__(self, alias:str, value:Any) -> None:
+        if alias.startswith("_"):
+            super().__setattr__(alias, value)
+        self.props[alias] = value

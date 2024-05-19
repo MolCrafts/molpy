@@ -5,6 +5,7 @@ import molpy as mp
 
 from molpy.core.forcefield import Style, Type
 
+
 class TestStyle:
 
     def test_init_with_str(self):
@@ -17,6 +18,7 @@ class TestStyle:
 
         assert Style(mp.Potential) == {}
 
+
 class TestForceField:
 
     @pytest.fixture(scope="class", name="ff")
@@ -24,8 +26,8 @@ class TestForceField:
 
         ff = mp.ForceField()
         return ff
-    
-    def test_atom(self, ff:mp.ForceField):
+
+    def test_atom(self, ff: mp.ForceField):
 
         atomstyle = ff.def_atomstyle("atomic")
         atomstyle.def_atomtype("O", 0, mass=15.9994)
@@ -33,29 +35,38 @@ class TestForceField:
 
         assert atomstyle.n_types == 2
 
-    def test_bond(self, ff:mp.ForceField):
+    def test_bond(self, ff: mp.ForceField):
 
-        bondstyle = ff.def_bondstyle(mp.potential.bond.Harmonic, )
+        bondstyle = ff.def_bondstyle(
+            mp.potential.bond.Harmonic,
+        )
         bondstyle.def_bondtype("O-H", 0, 1, r0=1.012, k=1059.162)
         params = bondstyle.get_params("r0", format="numpy")
-        npt.assert_allclose(
-            params, 
-            np.array([
-                [0, 1.012],
-                [1.012, 0]
-            ])
-        )
+        npt.assert_allclose(params, np.array([[0, 1.012], [1.012, 0]]))
         assert bondstyle.n_types == 2  # O-H, H-O
 
-
-    def test_customized_bond(self, ff:mp.ForceField):
+    def test_customized_bond(self, ff: mp.ForceField):
 
         bondstyle = ff.def_bondstyle("harmonic")
         bondstyle.def_bondtype("O-H", 0, 1, r0=1.0)
 
+        npt.assert_equal(bondstyle.get_params("r0"), np.array([[0.0, 1.0], [1.0, 0.0]]))
+
+    def test_angle(self, ff: mp.ForceField):
+
+        anglestyle = ff.def_anglestyle(mp.potential.angle.Harmonic)
+        anglestyle.def_angletype("H-O-H", 1, 0, 1, theta0=104.52, k=75.90)
+
         npt.assert_equal(
-            bondstyle.get_params("r0"), np.array([[0.0, 1.0], [1.0, 0.0]])
+            anglestyle.get_params("theta0"),
+            np.array([[0.0, 104.52, 0.0], [104.52, 0.0, 0.0], [0.0, 0.0, 0.0]]),
         )
+
+    def test_get_op(self, ff: mp.ForceField):
+
+        struct = mp.builder.presets.SPEC()
+
+        energy = ff.calc_struct(struct)
 
     # def test_pair(self, ff:mp.ForceField):
 

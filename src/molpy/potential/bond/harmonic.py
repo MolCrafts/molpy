@@ -17,9 +17,8 @@ class Harmonic(Potential):
     F = F
     E = E
 
-    def __init__(self, box:Box|None = None):
+    def __init__(self):
         super().__init__("harmonic", "bond")
-        self.box = box or Box()
 
     def _prepare(self, xyz, idx_i, idx_j, type_i, type_j, k, r0):
 

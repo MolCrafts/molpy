@@ -2,6 +2,8 @@ import numpy as np
 from typing import Literal
 from functools import reduce
 import molpy as mp
+from molpy.core.box import Box
+from molpy.core.struct import Struct
 from molpy.potential.base import Potential
 
 class Style(dict):
@@ -33,6 +35,10 @@ class Style(dict):
             params = 0.5 * (np.add.outer(diag_elements, diag_elements))
 
         return params
+    
+    def calc(self, ):
+
+
 
 
 class Type(dict):
@@ -82,7 +88,7 @@ class BondType(Type):
 class BondStyle(Style):
 
     def def_bondtype(
-        self, name: str, idx_i: int | None, idx_j: int | None, **global_params
+        self, name: str|type[Potential], idx_i: int | None, idx_j: int | None, **global_params
     ) -> BondType:
         """
         define bond type
@@ -105,6 +111,7 @@ class BondStyle(Style):
         if format == "numpy":
             params = self.gen_params_in_numpy(key)
         return params
+
 
 class AngleType(Type):
 
@@ -389,3 +396,27 @@ class ForceField:
     @property
     def n_pairtypes(self):
         return reduce(lambda x, y: x + y.n_types, self.pairstyles, 0)
+
+    def calc_struct(self, struct: Struct):
+
+        box = struct.box or Box()
+        xyz = struct.atoms.xyz
+        bond_idx = struct.topology.bonds
+        angle_idx = struct.topology.angles
+
+        energy = 0.0
+        inputs = {
+            mp.Alias.xyz: xyz,
+            # # mp.Alias.idx_i: 
+            # # mp.Alias.idx_j:
+            mp.Alias.bond_dr: box.diff(
+                xyz[bond_idx[:, 1]], xyz[bond_idx[:, 0]]
+        ),
+            # mp
+        }
+        for bond in self.bondstyles:
+            bond()
+
+
+    def calc_bond(self):
+        ...

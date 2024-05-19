@@ -10,13 +10,9 @@ from .core import (
     PairStyle,
     AngleStyle,
     DihedralStyle,
-    Bond,
-    Atom,
     Topology,
     Frame,
     Struct,
-    StaticStruct,
-    DynamicStruct,
     Box,
     NeighborList,
 )
@@ -26,4 +22,12 @@ from .io import load_log, load_forcefield
 from . import potential
 from .potential import (
     Potential,
+)
+
+from . import builder
+from .builder import (
+    Atom,
+    Bond,
+    Angle,
+    DynamicStruct,
 )

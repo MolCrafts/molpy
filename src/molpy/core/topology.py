@@ -100,9 +100,6 @@ class Topology:
     def add_bonds(self, bond_idx: list[tuple[int, int]], **props):
         self._graph.add_edges(bond_idx, **props)
 
-    def get_bonds(self):
-        return np.array(self._graph.get_edgelist())
-
     def add_angle(self, idx_i: int, idx_j: int, idx_k: int, **props):
 
         self.add_bond(idx_i, idx_j)
