@@ -115,28 +115,14 @@ class BondStyle(Style):
     
     def get_param(self, key:str):
 
-        # type_i = []
-        # type_j = []
-        # params = []
-        # for type_ in self.types:
-        #     type_i.append(type_.idx_i)
-        #     type_j.append(type_.idx_j)
-        #     params.append(type_[key])
-
-        # n_types_i = np.max(type_i) + 1
-        # param_arr = np.zeros([n_types_i, n_types_i])
-        # for i, j, param in zip(type_i, type_j, params):
-        #     param_arr[i, j] = param
-        #     param_arr[j, i] = param
-
         types = []
         params = []
         for type_ in self.types:
             types.append( type_.type_idx )
             params.append(type_[key])
 
-        max_type_id = np.max(types) + 1
-        param_arr = np.zeros([max_type_id, max_type_id], dtype=float)
+        n_types = np.max(types) + 1
+        param_arr = np.zeros([n_types, n_types], dtype=float)
         for type_, param in zip(types, params):
             param_arr[type_[0], type_[1]] = param
             param_arr[type_[1], type_[0]] = param

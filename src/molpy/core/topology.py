@@ -94,18 +94,22 @@ class Topology:
         self._graph.delete_vertrices(index)
 
     def add_bond(self, idx_i: int, idx_j: int, **props):
-        self._graph.add_edge(idx_i, idx_j, **props)
+        if not self._graph.are_adjacent(idx_i, idx_j):
+            self._graph.add_edge(idx_i, idx_j, **props)
 
     def delete_bond(self, index: None | int | list[int] | list[tuple[int]]):
         self._graph.delete_edges(index)
 
     def add_bonds(self, bond_idx: list[tuple[int, int]], **props):
         self._graph.add_edges(bond_idx, **props)
+        self.simplify()
 
     def add_angle(self, idx_i: int, idx_j: int, idx_k: int, **props):
 
-        self.add_bond(idx_i, idx_j)
-        self.add_bond(idx_j, idx_k)
+        if not self._graph.are_adjacent(idx_i, idx_j):
+            self.add_bond(idx_i, idx_j)
+        if not self._graph.are_adjacent(idx_j, idx_k):
+            self.add_bond(idx_j, idx_k)
 
     def add_angles(self, angle_idx: list[tuple[int, int, int]]):
         angle_idx = np.array(angle_idx)

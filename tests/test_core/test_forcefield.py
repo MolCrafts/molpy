@@ -70,7 +70,7 @@ class TestForceField:
     def test_calc_struct(self, ff: mp.ForceField):
 
         struct = mp.builder.SPCE().to_struct()
-        assert struct
+        assert struct.atoms
         output = ff.calc_struct(struct)
         assert output
 
