@@ -56,8 +56,8 @@ class Bond(Item):
 
         super().__init__(**props)
 
-        self.itom = itom
-        self.jtom = jtom
+        super(Item, self).__setattr__("itom", itom)
+        super(Item, self).__setattr__("jtom", jtom)
 
     def __repr__(self):
 
@@ -69,9 +69,9 @@ class Angle(Item):
 
         super().__init__(**props)
 
-        self.itom = itom
-        self.jtom = jtom
-        self.ktom = ktom
+        super(Item, self).__setattr__("itom", itom)
+        super(Item, self).__setattr__("jtom", jtom)
+        super(Item, self).__setattr__("ktom", ktom)
 
     def __repr__(self):
 
@@ -139,7 +139,8 @@ class DynamicStruct(Structure):
         self._topology = topology
 
     def add_atom(self, atom=None, **props):
-        if atom:
+        assert atom or props, ValueError("atom or props must be provided")
+        if isinstance(atom, Atom):
             self._atoms.append(atom)
         else:
             self._atoms.append(Atom(**props))
@@ -147,9 +148,11 @@ class DynamicStruct(Structure):
 
     def add_bond(self, idx_i:int, idx_j:int, **props):
         self._bonds.append(Bond(self.atoms[idx_i], self.atoms[idx_j], **props))
+        self._topology.add_bond(idx_i, idx_j)
 
     def add_angle(self, idx_i:int, idx_j:int, idx_k:int, **props):
         self._angles.append(Angle(self.atoms[idx_i], self.atoms[idx_j], self.atoms[idx_k], **props))
+        self._topology.add_angle(idx_i, idx_j, idx_k)
 
     def add_struct(self, struct: "DynamicStruct"):
 
@@ -211,6 +214,8 @@ class DynamicStruct(Structure):
         angle_keys = list(self.angles[0].keys())
         for key in angle_keys:
             struct.angles[key] = self.angles[key]
+
+        struct._topology = self.topology
 
         return struct
     

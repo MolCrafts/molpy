@@ -6,58 +6,66 @@ from molpy.core.box import Box
 from molpy.core.struct import Struct
 from molpy.potential.base import Potential
 
+
 class Style(dict):
 
     def __init__(
-        self, style: str|type[Potential], mixing=Literal["geometry", "arithmetic"] | None, **global_params
+        self,
+        style: str | type[Potential],
+        mixing=Literal["geometry", "arithmetic"] | None,
+        **global_params,
     ):
         super().__init__(**global_params)
-        self.style = style
-        self.types:list[Type] = []
+        if isinstance(style, str):
+            self.name = style
+            self.calculator = None
+        elif issubclass(style, Potential):
+            self.name = style.name
+            self.calculator = style(**global_params)
+        self.types: list[Type] = []
         self.mixing = mixing
 
     @property
     def n_types(self):
         return len(self.types)
-    
-    def gen_params_in_numpy(self, key: str)->np.ndarray:
-        
-        params = np.zeros(shape=[self.n_types]*self.n_types, dtype=float)
-        for type_ in self.types:
-            type_idx = type_.type_idx
-            params[type_idx] = type_[key]
-            
-        # apply mixing rule for diagonal elements
-        diag_elements = np.diag(params)
-        if self.mixing == "geometry":
-            params = np.sqrt(np.outer(diag_elements, diag_elements))
-        elif self.mixing == "arithmetic":
-            params = 0.5 * (np.add.outer(diag_elements, diag_elements))
 
-        return params
-    
-    def calc(self, ):
+    @property
+    def params(self):
+        return {
+            field: self.get_param(field)
+            for field in self.calculator.registered_params()
+        }
 
+    def calc_struct(self, struct: Struct, output: dict):
 
+        if self.calculator is None:
+            raise ValueError("style must be a subclass of Potential")
+
+        return self.calculator(struct, output, **self.params)
 
 
 class Type(dict):
 
-    def __init__(self, name: str, *type_idx:tuple[int], **props):
+    def __init__(self, name: str, *type_idx: tuple[int], **props):
         super().__init__(**props)
+        assert isinstance(name, str), TypeError("name must be a string")
+        assert all(isinstance(idx, int) for idx in type_idx), TypeError(
+            "type_idx must be a tuple of integers"
+        )
         self.name = name
+        
         self.type_idx = type_idx
 
 
 class AtomType(Type):
 
-    def __init__(self, name: str, idx:int, **props: dict):
+    def __init__(self, name: str, idx: int, **props: dict):
         super().__init__(name, idx, **props)
 
 
 class AtomStyle(Style):
 
-    def def_atomtype(self, name: str, type_idx:int, **props: dict):
+    def def_atomtype(self, name: str, type_idx: int, **props: dict):
         at = AtomType(name, type_idx, **props)
         self.types.append(at)
         return at
@@ -71,15 +79,13 @@ class AtomStyle(Style):
 
 class BondType(Type):
 
-    def __init__(
-        self, name: str, idx_i: int | None, idx_j: int | None, **params
-    ):
+    def __init__(self, name: str, idx_i: int | None, idx_j: int | None, **params):
         super().__init__(name, idx_i, idx_j, **params)
 
     @property
     def idx_i(self):
         return self.type_idx[0]
-    
+
     @property
     def idx_j(self):
         return self.type_idx[1]
@@ -88,7 +94,7 @@ class BondType(Type):
 class BondStyle(Style):
 
     def def_bondtype(
-        self, name: str|type[Potential], idx_i: int | None, idx_j: int | None, **global_params
+        self, idx_i: int | None, idx_j: int | None, /, name: str = "", **params
     ) -> BondType:
         """
         define bond type
@@ -101,17 +107,38 @@ class BondStyle(Style):
         Returns:
             BondType: defined bond type
         """
-        bondtype = BondType(name, idx_i, idx_j, **global_params)
-        self.types.append(bondtype)
-        self.types.append(BondType(name, idx_j, idx_i, **global_params))
-        return bondtype
+        self.types.append(BondType(name, idx_i, idx_j, **params))
+        return self.types[-1]
     
-    def get_params(self, key: str, format: str = "numpy"):
+    def get_param(self, key:str):
 
-        if format == "numpy":
-            params = self.gen_params_in_numpy(key)
-        return params
+        # type_i = []
+        # type_j = []
+        # params = []
+        # for type_ in self.types:
+        #     type_i.append(type_.idx_i)
+        #     type_j.append(type_.idx_j)
+        #     params.append(type_[key])
 
+        # n_types_i = np.max(type_i) + 1
+        # param_arr = np.zeros([n_types_i, n_types_i])
+        # for i, j, param in zip(type_i, type_j, params):
+        #     param_arr[i, j] = param
+        #     param_arr[j, i] = param
+
+        types = []
+        params = []
+        for type_ in self.types:
+            types.append( type_.type_idx )
+            params.append(type_[key])
+
+        max_type_id = np.max(types) + 1
+        param_arr = np.zeros([max_type_id, max_type_id], dtype=float)
+        for type_, param in zip(types, params):
+            param_arr[type_[0], type_[1]] = param
+            param_arr[type_[1], type_[0]] = param
+
+        return param_arr
 
 class AngleType(Type):
 
@@ -121,13 +148,22 @@ class AngleType(Type):
         idx_i: int | None,
         idx_j: int | None,
         idx_k: int | None,
-        *args,
-        **kwargs,
+        **params,
     ):
-        super().__init__(name, **kwargs)
-        self.idx_i = idx_i
-        self.idx_j = idx_j
-        self.idx_k = idx_k
+        super().__init__(name, idx_i, idx_j, idx_k, **params)
+
+    @property
+    def idx_i(self):
+        return self.type_idx[0]
+
+    @property
+    def idx_j(self):
+        return self.type_idx[1]
+    
+    @property
+    def idx_k(self):
+        return self.type_idx[2]
+
 
 
 class DihedralType(Type):
@@ -162,7 +198,7 @@ class AngleStyle(Style):
     ):
         self.types.append(AngleType(name, idx_i, idx_j, idx_k, **kwargs))
 
-    def get_angletype_params(self, key: str):
+    def get_param(self, key: str):
         idx_i = []
         idx_j = []
         idx_k = []
@@ -197,9 +233,7 @@ class DihedralStyle(Style):
         *args,
         **kwargs,
     ):
-        self.types.append(
-            DihedralType(name, idx_i, idx_j, idx_k, idx_l, **kwargs)
-        )
+        self.types.append(DihedralType(name, idx_i, idx_j, idx_k, idx_l, **kwargs))
 
 
 class ImproperType(Type):
@@ -233,9 +267,7 @@ class ImproperStyle(Style):
         *args,
         **kwargs,
     ):
-        self.types.append(
-            ImproperType(name, idx_i, idx_j, idx_k, idx_l, **kwargs)
-        )
+        self.types.append(ImproperType(name, idx_i, idx_j, idx_k, idx_l, **kwargs))
 
 
 class PairType(Type):
@@ -295,7 +327,7 @@ class ForceField:
         self.dihedralstyles = []
         self.improperstyles = []
 
-    def def_bondstyle(self, style: str|type[Potential], **global_params):
+    def def_bondstyle(self, style: str | type[Potential], **global_params):
         bondstyle = BondStyle(style, **global_params)
         self.bondstyles.append(bondstyle)
         return bondstyle
@@ -305,7 +337,7 @@ class ForceField:
         self.pairstyles.append(pairstyle)
         return pairstyle
 
-    def def_atomstyle(self, style: str, **props:dict):
+    def def_atomstyle(self, style: str, **props: dict):
         atomstyle = AtomStyle(style, **props)
         self.atomstyles.append(atomstyle)
         return atomstyle
@@ -399,24 +431,14 @@ class ForceField:
 
     def calc_struct(self, struct: Struct):
 
-        box = struct.box or Box()
-        xyz = struct.atoms.xyz
-        bond_idx = struct.topology.bonds
-        angle_idx = struct.topology.angles
+        output = {}
+        
+        struct, output = self.calc_bond(struct, output)
+        return struct, output
 
-        energy = 0.0
-        inputs = {
-            mp.Alias.xyz: xyz,
-            # # mp.Alias.idx_i: 
-            # # mp.Alias.idx_j:
-            mp.Alias.bond_dr: box.diff(
-                xyz[bond_idx[:, 1]], xyz[bond_idx[:, 0]]
-        ),
-            # mp
-        }
-        for bond in self.bondstyles:
-            bond()
+    def calc_bond(self, struct, output): 
 
+        for bs in self.bondstyles:
+            bs(struct, output)
 
-    def calc_bond(self):
-        ...
+        return struct, output

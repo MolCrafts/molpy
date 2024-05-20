@@ -25,6 +25,7 @@ from .potential import (
 )
 
 from . import builder
+from .builder.presets import SPCE
 from .builder import (
     Atom,
     Bond,

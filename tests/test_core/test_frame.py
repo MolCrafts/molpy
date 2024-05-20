@@ -3,31 +3,6 @@ import molpy as mp
 import numpy as np
 import numpy.testing as npt
 
-Item = mp.core.frame.Item
-ItemList = mp.core.frame.ItemList
-
-
-class TestItem:
-
-    @pytest.fixture(scope="class", name="item")
-    def test_init(self):
-        return Item(**{mp.Alias.name: "O", mp.Alias.atomtype: "o1"})
-
-    def test_getitem(self, item):
-
-        assert item[mp.Alias.name] == "O"
-        assert item[mp.Alias.atomtype] == "o1"
-
-        with pytest.raises(KeyError):
-            item["not_exist_key"]
-
-    def test_getattr(self, item):
-
-        assert item.name == "O"
-        assert item.atomtype == "o1"
-
-        assert item.get(mp.Alias.name) == "O"
-
 
 # class TestItemList:
 

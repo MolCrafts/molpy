@@ -29,20 +29,13 @@ class ItemDict(dict[str, np.ndarray]):
             else:
                 raise KeyError(f"Key {key} not found in self dict")
 
-class Structure(ABC):
+class Structure(ABC, dict):
 
     def __init__(
         self,
         name: str = "",
     ):
         self.name = name
-        self._props = {}
-
-    def __getitem__(self, key):
-        return self._props[key]
-
-    def __setitem__(self, key, value):
-        self._props[key] = value
 
     @property
     @abstractmethod
@@ -155,7 +148,7 @@ class Struct(Structure):
     
     @property
     def props(self):
-        return self._props
+        return super().__getattr__("_props")
 
     @property
     def atoms(self) -> ItemDict:
@@ -185,10 +178,3 @@ class Struct(Structure):
     def __call__(self) -> "Struct":
         return self.clone()
     
-    def __getattr__(self, alias: str) -> Any:
-        return self.props[alias]
-    
-    def __setattr__(self, alias:str, value:Any) -> None:
-        if alias.startswith("_"):
-            super().__setattr__(alias, value)
-        self.props[alias] = value
