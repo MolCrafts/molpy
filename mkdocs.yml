@@ -1,0 +1,10 @@
+site_name: MolPy
+
+site_url: https://github.com/MolCrafts/molpy
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.tabs
