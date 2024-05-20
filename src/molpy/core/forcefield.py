@@ -28,12 +28,15 @@ class Style(dict):
     @property
     def n_types(self):
         return len(self.types)
+    
+    def get_param(self, key: str):
+        raise NotImplementedError("get_param method must be implemented")
 
     @property
     def params(self):
         return {
             field: self.get_param(field)
-            for field in self.calculator.registered_params()
+            for field in self.calculator.registered_params
         }
 
     def calc_struct(self, struct: Struct, output: dict):
@@ -429,16 +432,16 @@ class ForceField:
     def n_pairtypes(self):
         return reduce(lambda x, y: x + y.n_types, self.pairstyles, 0)
 
-    def calc_struct(self, struct: Struct):
+    def calc_struct(self, struct: Struct)->dict:
 
         output = {}
         
         struct, output = self.calc_bond(struct, output)
-        return struct, output
+        return output
 
     def calc_bond(self, struct, output): 
 
         for bs in self.bondstyles:
-            bs(struct, output)
+            struct, output = bs.calc_struct(struct, output)
 
         return struct, output
