@@ -24,8 +24,13 @@ class Potential():
     def __init__(self, **settings):
         ...
 
-    def __call__(self,input):
+
+    @abstractmethod
+    def forward(self, struct, output, **params):
         ...
+
+    def __call__(self, struct, output, **params):
+        return self.forward(struct, output, **params)
 
     def energy(self):
         ...

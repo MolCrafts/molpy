@@ -28,6 +28,11 @@ class ItemDict(dict[str, np.ndarray]):
                 self[key] = np.concatenate([self[key], value])
             else:
                 raise KeyError(f"Key {key} not found in self dict")
+            
+    def __len__(self):
+        # return len of first value
+        return len(next(iter(self.values())))
+
 
 class Structure(ABC, dict):
 
@@ -98,12 +103,10 @@ class Struct(Structure):
         self._angles = ItemDict()
         self._dihedrals = ItemDict()
 
-        self._n_atoms = 0
-        self._n_bonds = 0
-        self._n_angles = 0
-        self._n_dihedrals = 0
-
         self._topology = Topology()
+
+    def __repr__(self) -> str:
+        return f"<Struct {self.name}: {self.n_atoms} atoms>"
 
     @classmethod
     def join(cls, structs: Collection["Struct"]) -> "Struct":
@@ -134,17 +137,21 @@ class Struct(Structure):
         self._topology.union(other.topology)
         return self
 
+    @property
     def n_atoms(self):
-        return self._n_atoms
+        return len(self._atoms)
 
+    @property
     def n_bonds(self):
-        return self._n_bonds
+        return len(self._bonds)
 
+    @property
     def n_angles(self):
-        return self._n_angles
+        return len(self._angles)
 
+    @property
     def n_dihedrals(self):
-        return self._n_dihedrals
+        return len(self._dihedrals)
     
     @property
     def props(self):

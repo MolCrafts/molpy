@@ -13,9 +13,10 @@ from .core import (
     Topology,
     Frame,
     Struct,
-    Box,
-    NeighborList,
+    Box
 )
+
+from .core import neighborlist as nblist
 
 from . import io
 from .io import load_log, load_forcefield

@@ -28,7 +28,7 @@ class Harmonic(Potential):
 
         box = getattr(struct, "box", Box())
         xyz = struct.atoms.xyz
-        bond_idx = struct.topology.bond_idx
+        bond_idx = struct.topology.bonds
         idx_i = bond_idx[:, 0]
         idx_j = bond_idx[:, 1]
         type_i = struct.atoms.atomtype[idx_i]
@@ -39,9 +39,12 @@ class Harmonic(Potential):
 
         k_ = params["k"][type_i, type_j]
         r0_ = params["r0"][type_i, type_j]
-        output["harmonic_bond_energy"] += self.E(r, k_, r0_).sum()
-        output["per_atom_harmonic_bond_energy"][idx_i] += self.E(r, k_, r0_) / 2
-        output["harmonic_bond_force"][idx_i] += self.F(r, k_, r0_)[:, np.newaxis] * dr / r[:, np.newaxis]
+        energy = Harmonic.E(r, k_, r0_)
+        output["harmonic_bond_energy"] = energy.sum()
+        output["per_atom_harmonic_bond_energy"] = np.zeros(struct.n_atoms)
+        output["per_atom_harmonic_bond_energy"][idx_i] = energy / 2
+        output["harmonic_bond_force"] = np.zeros((struct.n_atoms, 3))
+        output["harmonic_bond_force"][idx_i] = Harmonic.F(r, k_, r0_)[:, np.newaxis] * dr / r[:, np.newaxis]
         return struct, output
 
     def energy(self, xyz, idx_i, idx_j, type_i, type_j, k, r0):
