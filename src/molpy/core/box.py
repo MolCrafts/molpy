@@ -20,7 +20,7 @@ class Box:
         lengths: ArrayLike = [0, 0, 0],
         tilts: ArrayLike = [0, 0, 0],
         origin=np.zeros(3),
-        pbc:bool|np.ndarray=np.array([True, True, True]),
+        pbc: bool | np.ndarray = np.array([True, True, True]),
     ):
         """
         init box with lengths and tilts.
@@ -40,7 +40,7 @@ class Box:
         """
         lengths = np.asarray(lengths)
         tilts = np.asarray(tilts)
-        if lengths.shape == (3, ) and tilts.shape == (3, ):
+        if lengths.shape == (3,) and tilts.shape == (3,):
             self.set_lengths_tilts(lengths, tilts)
         else:
             raise ValueError("lengths and tilts must be (3, )")
@@ -125,7 +125,48 @@ class Box:
     def from_matrix(cls, matrix: ArrayLike, pbc: ArrayLike = [True, True, True]):
         """init box with matrix"""
         box = cls()
-        box._matrix = matrix
+        A = matrix[:, 0]
+        B = matrix[:, 1]
+        C = matrix[:, 2]
+        gamma = np.arccos(np.dot(A, C) / np.linalg.norm(A) / np.linalg.norm(C))
+        beta = np.arccos(np.dot(A, B) / np.linalg.norm(A) / np.linalg.norm(B))
+        ax = np.linalg.norm(A)
+        uA = A / ax
+        bx = np.dot(B, uA)
+        import numpy.testing as npt
+
+        npt.assert_allclose(
+            bx,
+            np.linalg.norm(B) * np.cos(gamma),
+            err_msg=f"{bx} != {np.linalg.norm(B) * np.cos(gamma)}",
+        )
+        by = np.linalg.norm(np.cross(uA, B))
+        npt.assert_allclose(
+            by,
+            np.linalg.norm(B) * np.sin(gamma),
+            err_msg=f"{by} != {np.linalg.norm(B) * np.sin(gamma)}",
+        )
+        cx = np.dot(C, uA)
+        npt.assert_allclose(
+            cx,
+            np.linalg.norm(C) * np.cos(beta),
+            err_msg=f"{cx} != {np.linalg.norm(C) * np.cos(beta)}",
+        )
+        AxB = np.cross(A, B)
+        uAxB = AxB / np.linalg.norm(AxB)
+        cy = np.dot(C, np.cross(uAxB, uA))
+        npt.assert_allclose(
+            cy,
+            (np.dot(B, C) - bx * cx) / by,
+            err_msg=f"{cy} != {(np.dot(B, C) - bx * cx) / by}",
+        )
+        cz = np.dot(C, uAxB)
+        npt.assert_allclose(
+            cz,
+            np.sqrt(np.linalg.norm(C) ** 2 - cx**2 - cy**2),
+            err_msg=f"{cz} != {np.sqrt(np.linalg.norm(C) ** 2 - cx ** 2 - cy ** 2)}",
+        )
+        box._matrix = np.array([[ax, bx, cx], [0, by, cy], [0, 0, cz]])
         return box
 
     def get_image(self, r):
@@ -177,15 +218,15 @@ class Box:
         vb = ly * np.array([cos_gamma, sin_gamma, 0])
         cx = cos_beta
         cy = (cos_alpha - cos_beta * cos_gamma) / sin_gamma
-        cz_sqr = 1. - cx * cx - cy * cy
+        cz_sqr = 1.0 - cx * cx - cy * cy
         assert cz_sqr >= 0
         cz = np.sqrt(cz_sqr)
         vc = lz * np.array([cx, cy, cz])
 
         # Convert to the Cartesian x,y,z-system
         abc = np.vstack((va, vb, vc))
-        ad = np.array([0, 0, 1.])
-        ab_normal = np.array([0, 0, 1.])
+        ad = np.array([0, 0, 1.0])
+        ab_normal = np.array([0, 0, 1.0])
         Z = ab_normal
         X = ad - np.dot(ad, Z) * Z
         X /= np.linalg.norm(X)
@@ -194,7 +235,6 @@ class Box:
         cell = np.dot(abc, T)
 
         return cell
-
 
     def get_matrix(self) -> np.ndarray:
         """box matrix"""
@@ -277,7 +317,7 @@ class Box:
 
     def diff_dr(self, dr: ArrayLike) -> np.ndarray:
         """calculate distance in the box, where `dr` displacement vector between two points"""
-        if all(self._pbc==False):
+        if all(self._pbc == False):
             return dr
 
         # apply pbc as mask

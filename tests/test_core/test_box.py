@@ -20,6 +20,13 @@ class TestPeriodicBox:
         box = mp.Box([1, 2, 3], pbc=np.array([0, 0, 0]))
         npt.assert_equal(box.pbc, np.array([False, False, False]))
 
+    def test_from_matrix(self):
+
+        mat = np.array([[0.0, 2.04, 2.04], [2.04, 0.0, 2.04], [2.04, 2.04, 0.0]])
+        box = mp.Box.from_matrix(mat)
+
+        # npt.assert_allclose(box.angles, np.array([60, 60, 60]))
+        npt.assert_allclose(box.length, np.array([2.88499567, 2.88499567 / np.cos(60), 2.88499567/ np.cos(60)]))
 
     def test_get_length(self):
         box = mp.Box([2, 4, 5], [0, 0, 0])
@@ -150,35 +157,44 @@ class TestPeriodicBox:
         )
 
     def test_diff_dr(self):
-        
-        box = mp.Box([10, 10, 10], [0, 0, 0])
-        dr = np.array([
-            [3, 0, 0],
-            [0, 6, 0],
-            [0, 0, 9],
-        ])
-        diff = box.diff_dr(dr)
-        npt.assert_equal(diff, np.array([
-            [3, 0, 0],
-            [0, -4, 0],
-            [0, 0, -1],
-        ]))
 
+        box = mp.Box([10, 10, 10], [0, 0, 0])
+        dr = np.array(
+            [
+                [3, 0, 0],
+                [0, 6, 0],
+                [0, 0, 9],
+            ]
+        )
+        diff = box.diff_dr(dr)
+        npt.assert_equal(
+            diff,
+            np.array(
+                [
+                    [3, 0, 0],
+                    [0, -4, 0],
+                    [0, 0, -1],
+                ]
+            ),
+        )
 
     def test_diff_all(self):
-        
+
         box = mp.Box([10, 10, 10], [0, 0, 0])
-        r1= np.array([[1, 1, 1], [9, 9, 9]])
+        r1 = np.array([[1, 1, 1], [9, 9, 9]])
         r2 = np.array([[1, 1, 1], [2, 2, 2], [9, 9, 9]])
         diff = box.diff_all(r1, r2)
         assert diff.shape == (len(r1), len(r2), 3)
         npt.assert_allclose(
             box.diff_all(r1, r2),
-            np.array([
-                [[0, 0, 0], [-1, -1, -1], [2, 2, 2]],
-                [[-2, -2, -2], [-3, -3, -3], [0, 0, 0]],
-            ])
+            np.array(
+                [
+                    [[0, 0, 0], [-1, -1, -1], [2, 2, 2]],
+                    [[-2, -2, -2], [-3, -3, -3], [0, 0, 0]],
+                ]
+            ),
         )
+
 
 class TestNonPeriodicBox:
 
