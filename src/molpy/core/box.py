@@ -20,7 +20,7 @@ class Box:
         lengths: ArrayLike = [0, 0, 0],
         tilts: ArrayLike = [0, 0, 0],
         origin=np.zeros(3),
-        pbc=np.array([False, False, False]),
+        pbc:bool|np.ndarray=np.array([True, True, True]),
     ):
         """
         init box with lengths and tilts.
@@ -36,11 +36,19 @@ class Box:
             lengths (ArrayLike, optional): _description_. Defaults to [0, 0, 0].
             tilts (ArrayLike, optional): _description_. Defaults to [0, 0, 0].
             origin (_type_, optional): _description_. Defaults to np.zeros(3).
-            pbc (_type_, optional): _description_. Defaults to np.array([False, False, False]).
+            pbc (_type_, optional): _description_. Defaults to np.array([True, True, True]).
         """
-        self.set_lengths_tilts(lengths, tilts)
+        lengths = np.asarray(lengths)
+        tilts = np.asarray(tilts)
+        if lengths.shape == (3, ) and tilts.shape == (3, ):
+            self.set_lengths_tilts(lengths, tilts)
+        else:
+            raise ValueError("lengths and tilts must be (3, )")
         self._origin = np.array(origin)
-        self._pbc = np.array(pbc)
+        if isinstance(pbc, (bool, np.bool_)):
+            self._pbc = np.array([pbc, pbc, pbc])
+        else:
+            self._pbc = np.array(pbc, dtype=bool)
 
     @classmethod
     def cube(cls, l):
@@ -95,7 +103,7 @@ class Box:
     @classmethod
     def from_lengths(cls, lx, ly, lz):
         """init box with lengths"""
-        box = cls(lx, ly, lz)
+        box = cls([lx, ly, lz])
         return box
 
     @classmethod
@@ -114,10 +122,10 @@ class Box:
         return new_box
 
     @classmethod
-    def from_matrix(cls, matrix: ArrayLike):
+    def from_matrix(cls, matrix: ArrayLike, pbc: ArrayLike = [True, True, True]):
         """init box with matrix"""
-        lx, ly, lz = np.diag(matrix)
-        box = cls(lx, ly, lz, matrix[0, 1], matrix[0, 2], matrix[1, 2])
+        box = cls()
+        box._matrix = matrix
         return box
 
     def get_image(self, r):
@@ -138,6 +146,55 @@ class Box:
             ]
         )
         # assert all(np.array([xy, xz, yz]) < np.array([lx, lx, ly])), "tilts must be less than lengths"
+
+    def set_lengths_angles(self, lx, ly, lz, alpha, beta, gamma):
+
+        # Handle orthorhombic cells separately to avoid rounding errors
+        eps = 2 * np.spacing(90.0, dtype=np.float64)  # around 1.4e-14
+        # alpha
+        if abs(abs(alpha) - 90) < eps:
+            cos_alpha = 0.0
+        else:
+            cos_alpha = np.cos(alpha * np.pi / 180.0)
+        # beta
+        if abs(abs(beta) - 90) < eps:
+            cos_beta = 0.0
+        else:
+            cos_beta = np.cos(beta * np.pi / 180.0)
+        # gamma
+        if abs(gamma - 90) < eps:
+            cos_gamma = 0.0
+            sin_gamma = 1.0
+        elif abs(gamma + 90) < eps:
+            cos_gamma = 0.0
+            sin_gamma = -1.0
+        else:
+            cos_gamma = np.cos(gamma * np.pi / 180.0)
+            sin_gamma = np.sin(gamma * np.pi / 180.0)
+
+        # Build the cell vectors
+        va = lx * np.array([1, 0, 0])
+        vb = ly * np.array([cos_gamma, sin_gamma, 0])
+        cx = cos_beta
+        cy = (cos_alpha - cos_beta * cos_gamma) / sin_gamma
+        cz_sqr = 1. - cx * cx - cy * cy
+        assert cz_sqr >= 0
+        cz = np.sqrt(cz_sqr)
+        vc = lz * np.array([cx, cy, cz])
+
+        # Convert to the Cartesian x,y,z-system
+        abc = np.vstack((va, vb, vc))
+        ad = np.array([0, 0, 1.])
+        ab_normal = np.array([0, 0, 1.])
+        Z = ab_normal
+        X = ad - np.dot(ad, Z) * Z
+        X /= np.linalg.norm(X)
+        Y = np.cross(Z, X)
+        T = np.vstack((X, Y, Z))
+        cell = np.dot(abc, T)
+
+        return cell
+
 
     def get_matrix(self) -> np.ndarray:
         """box matrix"""
@@ -177,6 +234,12 @@ class Box:
     def wrap(self, r: ArrayLike):
         """
         shift position vector(s) back to periodic boundary condition box
+
+        Args:
+            r (ArrayLike): position vector(s), shape (n, 3)
+
+        Returns:
+            wrapped_vector: wrapped position vector(s), shape (n, 3)
         """
         r = np.atleast_2d(r)
 
@@ -184,7 +247,7 @@ class Box:
         shifted_reci_r = reciprocal_r - np.floor(reciprocal_r)
         real_r = np.einsum("ij,...j->...i", self._matrix, shifted_reci_r)
         not_pbc = np.logical_not(self._pbc)
-        real_r[:, not_pbc] = r[:, not_pbc]
+        real_r[..., not_pbc] = r[..., not_pbc]
         return real_r
 
     def unwrap(self, r, images):
@@ -218,8 +281,8 @@ class Box:
             return dr
 
         # apply pbc as mask
-        dr[:, self._pbc] = np.fmod(dr[:, self._pbc] + self.length / 2, self.length)
-        return self.wrap(dr) - self.length / 2
+        remainder = np.remainder(dr + self.length / 2, self.length)
+        return self.wrap(remainder) - self.length / 2
 
     def diff(self, r1: ArrayLike, r2: ArrayLike) -> np.ndarray:
         """calculate distance in the box, where displacement vector dr = r1 - r2"""
@@ -231,7 +294,7 @@ class Box:
         return self.diff_dr(pairs)
 
     def diff_self(self, r: ArrayLike) -> np.ndarray:
-        """difference between two positions"""
+        """calculate pair_wise interaction of a set of positions. Say r should have shape (n, 3), and return shape is (n, n, 3)"""
         return self.diff_all(r, r)
 
     def make_fractional(self, r: ArrayLike) -> np.ndarray:

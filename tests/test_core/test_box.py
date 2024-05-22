@@ -4,14 +4,25 @@ import molpy as mp
 import numpy as np
 
 
-class TestBox:
+class TestPeriodicBox:
+
     def test_construct(self):
         """Test correct behavior for various constructor signatures"""
-        box = mp.Box(1, 2, 3)
+        box = mp.Box([1, 2, 3])
         assert box.lx == 1 and box.ly == 2 and box.lz == 3
 
+    def test_pbc_init(self):
+
+        box = mp.Box([1, 2, 3], pbc=False)
+        npt.assert_equal(box.pbc, np.array([False, False, False]))
+        box = mp.Box([1, 2, 3], pbc=np.array([False, False, False]))
+        npt.assert_equal(box.pbc, np.array([False, False, False]))
+        box = mp.Box([1, 2, 3], pbc=np.array([0, 0, 0]))
+        npt.assert_equal(box.pbc, np.array([False, False, False]))
+
+
     def test_get_length(self):
-        box = mp.Box(2, 4, 5, 0, 0, 0)
+        box = mp.Box([2, 4, 5], [0, 0, 0])
 
         npt.assert_allclose(box.lx, 2, rtol=1e-6)
         npt.assert_allclose(box.ly, 4, rtol=1e-6)
@@ -20,14 +31,14 @@ class TestBox:
         npt.assert_allclose(box.get_inverse(), np.diag([0.5, 0.25, 0.2]), rtol=1e-6)
 
     def test_tilt_factor(self):
-        box = mp.Box(2, 2, 2, 0, 1, 2)
+        box = mp.Box([2, 2, 2], [0, 1, 2])
 
         npt.assert_allclose(box.xy, 0, rtol=1e-6)
         npt.assert_allclose(box.xz, 1, rtol=1e-6)
         npt.assert_allclose(box.yz, 2, rtol=1e-6)
 
     def test_box_volume(self):
-        box3d = mp.Box(2, 2, 2, 2, 0, 0)
+        box3d = mp.Box([2, 2, 2], [2, 0, 0])
         npt.assert_allclose(box3d.get_volume(), 8, rtol=1e-6)
 
     def test_wrap(self):
@@ -37,7 +48,7 @@ class TestBox:
         npt.assert_allclose(box.wrap(cell), cell, rtol=1e-6)
 
     def test_wrap_single_particle(self):
-        box = mp.Box(2, 2, 2, 0, 0, 0)
+        box = mp.Box([2, 2, 2], [0, 0, 0])
 
         points = [0.1, 0, 0]
         npt.assert_allclose(box.wrap(points)[0, 0], 0.1, rtol=1e-6)
@@ -46,7 +57,7 @@ class TestBox:
         npt.assert_allclose(box.wrap(points)[0, 0], 1.9, rtol=1e-6)
 
     def test_wrap_multiple_particles(self):
-        box = mp.Box(2, 2, 2, 0, 0, 0)
+        box = mp.Box([2, 2, 2], [0, 0, 0])
 
         points = [[0.1, -1, -1], [0.1, 0.5, 0]]
         expected = [[0.1, 1, 1], [0.1, 0.5, 0]]
@@ -56,7 +67,7 @@ class TestBox:
         npt.assert_allclose(box.wrap(points), expected, rtol=1e-6)
 
     def test_wrap_triclinic_multiple_particles(self):
-        box = mp.Box(2, 2, 2, 2, 0, 0)
+        box = mp.Box([2, 2, 2], [2, 0, 0])
 
         points = [[0, -1, -1], [0, 0.5, 0]]
         expected = [[2, 1, 1], [2, 0.5, 0]]
@@ -66,7 +77,7 @@ class TestBox:
         npt.assert_allclose(box.wrap(points), expected, rtol=1e-6)
 
     def test_wrap_multiple_images(self):
-        box = mp.Box(2, 2, 2, 2, 0, 0)
+        box = mp.Box([2, 2, 2], [2, 0, 0])
 
         points = [[10, -5, -5], [0, 0.5, 0]]
         expected = [[2, 1, 1], [2, 0.5, 0]]
@@ -76,13 +87,13 @@ class TestBox:
         npt.assert_allclose(box.wrap(points), expected, rtol=1e-6)
 
     def test_wrap(self):
-        box = mp.Box(2, 2, 2, 2, 0, 0)
+        box = mp.Box([2, 2, 2], [2, 0, 0])
         points = [[10, -5, -5], [0, 0.5, 0]]
         expected = [[2, 1, 1], [2, 0.5, 0]]
         npt.assert_allclose(box.wrap(points), expected, rtol=1e-6)
 
     def test_unwrap(self):
-        box = mp.Box(2, 2, 2, 2, 0, 0)
+        box = mp.Box([2, 2, 2], [2, 0, 0])
 
         points = [0, -1, -1]
         imgs = [1, 0, 0]
@@ -116,14 +127,14 @@ class TestBox:
         )
 
     def test_images_3d(self):
-        box = mp.Box(2, 2, 2, 0, 0, 0)
+        box = mp.Box([2, 2, 2], [0, 0, 0])
         points = np.array([[50, 40, 30], [-10, 0, 0]])
         images = box.get_image(points)
         npt.assert_equal(images, np.array([[25, 20, 15], [-5, 0, 0]]))
 
     def test_diff_self(self):
 
-        box = mp.Box(10, 10, 10, 0, 0, 0)
+        box = mp.Box([10, 10, 10], [0, 0, 0])
         xyz = np.array([[1, 1, 1], [2, 2, 2], [9, 9, 9]])
         wrapped_diff = box.diff_self(xyz)
         dist = np.linalg.norm(wrapped_diff, axis=-1)
@@ -140,7 +151,7 @@ class TestBox:
 
     def test_diff_dr(self):
         
-        box = mp.Box(10, 10, 10, 0, 0, 0)
+        box = mp.Box([10, 10, 10], [0, 0, 0])
         dr = np.array([
             [3, 0, 0],
             [0, 6, 0],
@@ -156,7 +167,7 @@ class TestBox:
 
     def test_diff_all(self):
         
-        box = mp.Box(10, 10, 10, 0, 0, 0)
+        box = mp.Box([10, 10, 10], [0, 0, 0])
         r1= np.array([[1, 1, 1], [9, 9, 9]])
         r2 = np.array([[1, 1, 1], [2, 2, 2], [9, 9, 9]])
         diff = box.diff_all(r1, r2)
@@ -168,3 +179,11 @@ class TestBox:
                 [[-2, -2, -2], [-3, -3, -3], [0, 0, 0]],
             ])
         )
+
+class TestNonPeriodicBox:
+
+    def test_wrap(self):
+        box = mp.Box([2, 2, 2], [0, 0, 0], pbc=[True, True, False])
+        points = [[10, -5, -5], [0, 0.5, 0]]
+        expected = [[0, 1, -5], [0, 0.5, 0]]
+        npt.assert_allclose(box.wrap(points), expected, rtol=1e-6)
