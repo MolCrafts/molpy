@@ -1,7 +1,5 @@
 # Representation of simulation box
 
-> We will discuss unit cell and periodic boundary conditions.
-
 Simulation box is a fundamental concept in molecular simulations. It is a parallelepiped that contains all the atoms, and also used to define the periodic boundary conditions. Orthogonal box is the most common type, which edges are perpendicular to each other. Triclinic box's edges are not perpendicular to each other. The representation of those two boxes can be unified by one class, `Box`. To make tutorial more clear, we split the discussion into two parts.
 
 The core of `Box` is a matrix represents 3 edges vectors of the box. For orthogonal box, the matrix is a diagonal matrix,
@@ -30,9 +28,9 @@ Let $\mathbf A$, $\mathbf B$, $\mathbf C$ be the right-handed edge vectors of a 
 
 $$
 (\mathbf a, \mathbf b, \mathbf c) = \begin{bmatrix}
-a_x, b_x, c_x \\
-0, b_y, c_y \\
-0, 0, c_z
+a_x & b_x & c_x \\
+0 & b_y & c_y \\
+0 & 0 & c_z
 \end{bmatrix}
 $$
 
@@ -68,12 +66,12 @@ General triclinic crystal structures are often defined using three lattice const
 
 $$
 \begin{align*}
-        a = \text{lx} \\
-        b^2 = \text{ly}^2 + \text{xy}^2 \\
-        c^2 = \text{lz}^2 + \text{xz}^2 + \text{yz}^2 \\
-        \cos \alpha = \frac{\text{xy}*\text{xz}+\text{ly}*\text{yz}}{b*c} \\
-        \cos \beta = \frac{\text{xz}}{c} \\
-        \cos \gamma = \frac{\text{xy}}{b} \\
+        a =& \text{lx} \\
+        b^2 =& \text{ly}^2 + \text{xy}^2 \\
+        c^2 =& \text{lz}^2 + \text{xz}^2 + \text{yz}^2 \\
+        \cos \alpha =& \frac{\text{xy}*\text{xz}+\text{ly}*\text{yz}}{b*c} \\
+        \cos \beta =& \frac{\text{xz}}{c} \\
+        \cos \gamma =& \frac{\text{xy}}{b} \\
 \end{align*}
 $$
 
@@ -81,12 +79,12 @@ The inverse relationship can be written as follows:
 
 $$
 \begin{align*}
-    \text{lx} = a \\
-    \text{xy} = b \cos \gamma \\
-    \text{xz} = c \cos \beta \\
-    \text{ly}^2 = b^2 - \text{xy}^2 \\
-    \text{yz} = \frac{b*c \cos \alpha - \text{xy}*\text{xz}}{\text{ly}} \\
-    \text{lz}^2 = c^2 - \text{xz}^2 - \text{yz}^2
+    \text{lx}   =& a \\
+    \text{xy}   =& b \cos \gamma \\
+    \text{xz}   =& c \cos \beta \\
+    \text{ly}^2 =& b^2 - \text{xy}^2 \\
+    \text{yz}   =& \frac{b*c \cos \alpha - \text{xy}*\text{xz}}{\text{ly}} \\
+    \text{lz}^2 =& c^2 - \text{xz}^2 - \text{yz}^2
 \end{align*}
 $$
 
@@ -96,3 +94,7 @@ $$
 - Orthogonal box is a diagonal matrix, and its diagonal elements are the lengths of the edges.
 - Triclinic box is defined by 3 arbitrary edge vectors, and it has two representations: general and restricted.
 - Lengths and angles, lengths and tilt factors are two ways to define a box.
+
+## References
+
+This docs is copied from LAMMPS manual [Triclinic How-to](https://docs.lammps.org/Howto_triclinic.html#triclinic-non-orthogonal-simulation-boxes)

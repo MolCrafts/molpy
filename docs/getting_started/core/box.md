@@ -1,7 +1,5 @@
 # Box
 
-> We will discuss unit cell and periodic boundary conditions.
-
 Simulation box is a fundamental concept in molecular simulations. It is a parallelepiped that contains all the atoms, and also used to define the periodic boundary conditions. Orthogonal box is the most common type, which edges are perpendicular to each other. Triclinic box's edges are not perpendicular to each other. The representation of those two boxes can be unified by one class, `Box`. To make tutorial more clear, we split the discussion into two parts.
 
 The core of `Box` is a matrix represents 3 edges vectors of the box. For orthogonal box, the matrix is a diagonal matrix,

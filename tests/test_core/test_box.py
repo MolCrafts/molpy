@@ -23,29 +23,29 @@ class TestPeriodicBox:
     def test_from_matrix(self):
 
         mat = np.array([[0.0, 2.04, 2.04], [2.04, 0.0, 2.04], [2.04, 2.04, 0.0]])
-        box = mp.Box.from_matrix(mat)
+        box = mp.Box(mat)
+        npt.assert_allclose(box.angles, np.array([60, 60, 60]))
+        npt.assert_allclose(box.lengths, np.array([2.88499567, 2.88499567, 2.88499567]))
 
-        # npt.assert_allclose(box.angles, np.array([60, 60, 60]))
-        npt.assert_allclose(box.length, np.array([2.88499567, 2.88499567 / np.cos(60), 2.88499567/ np.cos(60)]))
 
-    def test_get_length(self):
+    def test_get_bounds(self):
         box = mp.Box([2, 4, 5], [0, 0, 0])
 
         npt.assert_allclose(box.lx, 2, rtol=1e-6)
         npt.assert_allclose(box.ly, 4, rtol=1e-6)
         npt.assert_allclose(box.lz, 5, rtol=1e-6)
-        npt.assert_allclose(box.length, [2, 4, 5], rtol=1e-6)
+        npt.assert_allclose(box.bounds, [2, 4, 5], rtol=1e-6)
         npt.assert_allclose(box.get_inverse(), np.diag([0.5, 0.25, 0.2]), rtol=1e-6)
 
     def test_tilt_factor(self):
-        box = mp.Box([2, 2, 2], [0, 1, 2])
+        box = mp.Box.from_lengths_tilts(2, 2, 2, 0, 1, 2)
 
         npt.assert_allclose(box.xy, 0, rtol=1e-6)
         npt.assert_allclose(box.xz, 1, rtol=1e-6)
         npt.assert_allclose(box.yz, 2, rtol=1e-6)
 
     def test_box_volume(self):
-        box3d = mp.Box([2, 2, 2], [2, 0, 0])
+        box3d = mp.Box.from_lengths_tilts(2, 2, 2, 2, 0, 0)
         npt.assert_allclose(box3d.get_volume(), 8, rtol=1e-6)
 
     def test_wrap(self):
@@ -55,7 +55,7 @@ class TestPeriodicBox:
         npt.assert_allclose(box.wrap(cell), cell, rtol=1e-6)
 
     def test_wrap_single_particle(self):
-        box = mp.Box([2, 2, 2], [0, 0, 0])
+        box = mp.Box([2, 2, 2])
 
         points = [0.1, 0, 0]
         npt.assert_allclose(box.wrap(points)[0, 0], 0.1, rtol=1e-6)
@@ -64,7 +64,7 @@ class TestPeriodicBox:
         npt.assert_allclose(box.wrap(points)[0, 0], 1.9, rtol=1e-6)
 
     def test_wrap_multiple_particles(self):
-        box = mp.Box([2, 2, 2], [0, 0, 0])
+        box = mp.Box([2, 2, 2])
 
         points = [[0.1, -1, -1], [0.1, 0.5, 0]]
         expected = [[0.1, 1, 1], [0.1, 0.5, 0]]
@@ -74,7 +74,7 @@ class TestPeriodicBox:
         npt.assert_allclose(box.wrap(points), expected, rtol=1e-6)
 
     def test_wrap_triclinic_multiple_particles(self):
-        box = mp.Box([2, 2, 2], [2, 0, 0])
+        box = mp.Box.from_lengths_tilts(2, 2, 2, 2, 0, 0)
 
         points = [[0, -1, -1], [0, 0.5, 0]]
         expected = [[2, 1, 1], [2, 0.5, 0]]
@@ -84,7 +84,7 @@ class TestPeriodicBox:
         npt.assert_allclose(box.wrap(points), expected, rtol=1e-6)
 
     def test_wrap_multiple_images(self):
-        box = mp.Box([2, 2, 2], [2, 0, 0])
+        box = mp.Box.from_lengths_tilts(2, 2, 2, 2, 0, 0)
 
         points = [[10, -5, -5], [0, 0.5, 0]]
         expected = [[2, 1, 1], [2, 0.5, 0]]
@@ -94,13 +94,13 @@ class TestPeriodicBox:
         npt.assert_allclose(box.wrap(points), expected, rtol=1e-6)
 
     def test_wrap(self):
-        box = mp.Box([2, 2, 2], [2, 0, 0])
+        box = mp.Box([2, 2, 2])
         points = [[10, -5, -5], [0, 0.5, 0]]
-        expected = [[2, 1, 1], [2, 0.5, 0]]
+        expected = [[0, 1, 1], [0, 0.5, 0]]
         npt.assert_allclose(box.wrap(points), expected, rtol=1e-6)
 
     def test_unwrap(self):
-        box = mp.Box([2, 2, 2], [2, 0, 0])
+        box = mp.Box([2, 2, 2])
 
         points = [0, -1, -1]
         imgs = [1, 0, 0]
@@ -108,7 +108,7 @@ class TestPeriodicBox:
 
         points = [[0, -1, -1], [0, 0.5, 0]]
         imgs = [[1, 0, 0], [1, 1, 0]]
-        expected = [[2, -1, -1], [4, 2.5, 0]]
+        expected = [[2, -1, -1], [2, 2.5, 0]]
         npt.assert_allclose(box.unwrap(points, imgs), expected, rtol=1e-6)
 
         points = np.array(points)
@@ -134,14 +134,14 @@ class TestPeriodicBox:
         )
 
     def test_images_3d(self):
-        box = mp.Box([2, 2, 2], [0, 0, 0])
+        box = mp.Box([2, 2, 2])
         points = np.array([[50, 40, 30], [-10, 0, 0]])
         images = box.get_image(points)
         npt.assert_equal(images, np.array([[25, 20, 15], [-5, 0, 0]]))
 
     def test_diff_self(self):
 
-        box = mp.Box([10, 10, 10], [0, 0, 0])
+        box = mp.Box([10, 10, 10])
         xyz = np.array([[1, 1, 1], [2, 2, 2], [9, 9, 9]])
         wrapped_diff = box.diff_self(xyz)
         dist = np.linalg.norm(wrapped_diff, axis=-1)
@@ -158,7 +158,7 @@ class TestPeriodicBox:
 
     def test_diff_dr(self):
 
-        box = mp.Box([10, 10, 10], [0, 0, 0])
+        box = mp.Box([10, 10, 10])
         dr = np.array(
             [
                 [3, 0, 0],
@@ -180,7 +180,7 @@ class TestPeriodicBox:
 
     def test_diff_all(self):
 
-        box = mp.Box([10, 10, 10], [0, 0, 0])
+        box = mp.Box([10, 10, 10])
         r1 = np.array([[1, 1, 1], [9, 9, 9]])
         r2 = np.array([[1, 1, 1], [2, 2, 2], [9, 9, 9]])
         diff = box.diff_all(r1, r2)
@@ -199,7 +199,7 @@ class TestPeriodicBox:
 class TestNonPeriodicBox:
 
     def test_wrap(self):
-        box = mp.Box([2, 2, 2], [0, 0, 0], pbc=[True, True, False])
+        box = mp.Box([2, 2, 2], pbc=[True, True, False])
         points = [[10, -5, -5], [0, 0.5, 0]]
         expected = [[0, 1, -5], [0, 0.5, 0]]
         npt.assert_allclose(box.wrap(points), expected, rtol=1e-6)
