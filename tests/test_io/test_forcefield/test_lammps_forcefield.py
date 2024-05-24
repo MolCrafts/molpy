@@ -5,7 +5,7 @@ class TestLammpsForceField:
 
     @pytest.fixture(scope='class')
     def forcefield(self, test_data_path):
-        path = test_data_path / 'forcefields/lammps/'
+        path = test_data_path / 'forcefield/lammps/'
         return mp.load_forcefield(path / 'peptide.in', 'lammps', [path / 'peptide.data']).load()
     
     def test_styles(self, forcefield):

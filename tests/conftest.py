@@ -16,11 +16,14 @@ def find_test_data():
     data_path = Path(__file__).parent / "chemfile-testcases"
     if not data_path.exists():
         print("Downloading test data...")
-        p = subprocess.run(
+        subprocess.run(
             f"git clone https://github.com/molcrafts/chemfile-testcases.git {data_path.parent}/chemfile-testcases",
             shell=True,
             check=True,
         )
+    else:
+        print("Test data already exists; updating...")
+        subprocess.run(f"git pull", shell=True, cwd=data_path, check=True)
 
     return data_path
 

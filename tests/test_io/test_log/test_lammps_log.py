@@ -6,7 +6,7 @@ class TestLAMMPSLog:
 
     @pytest.fixture(scope='class')
     def log(self, test_data_path):
-        path = test_data_path / 'logs/lammps/'
+        path = test_data_path / 'log/lammps/'
         log = load_log(path / 'thermo_style_default.log', 'lammps')
         log.read()
         return log
