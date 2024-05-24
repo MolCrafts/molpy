@@ -25,6 +25,9 @@ class Style(dict):
         self.types: list[Type] = []
         self.mixing = mixing
 
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}: {self.name}>"
+
     @property
     def n_types(self):
         return len(self.types)
@@ -52,12 +55,15 @@ class Type(dict):
     def __init__(self, name: str, *type_idx: tuple[int], **props):
         super().__init__(**props)
         assert isinstance(name, str), TypeError("name must be a string")
-        assert all(isinstance(idx, int) for idx in type_idx), TypeError(
-            "type_idx must be a tuple of integers"
+        assert all(isinstance(idx, (int|None)) for idx in type_idx), TypeError(
+            "type_idx must be a tuple of integers or None(to be defined later)"
         )
         self.name = name
         
         self.type_idx = type_idx
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}: {self.name}>"
 
 
 class AtomType(Type):
@@ -75,7 +81,7 @@ class AtomStyle(Style):
 
     def get_atomtype(self, name: str):
         for atomtype in self.types:
-            if atomtype.style == name:
+            if atomtype.name == name:
                 return atomtype
         return None
 
@@ -97,7 +103,7 @@ class BondType(Type):
 class BondStyle(Style):
 
     def def_bondtype(
-        self, idx_i: int | None, idx_j: int | None, /, name: str = "", **params
+        self, idx_i: int | None=None, idx_j: int | None=None, /, name: str = "", **params
     ) -> BondType:
         """
         define bond type
@@ -178,10 +184,10 @@ class AngleStyle(Style):
 
     def def_angletype(
         self,
-        name: str,
-        idx_i: int | None,
-        idx_j: int | None,
-        idx_k: int | None,
+        idx_i: int | None=None,
+        idx_j: int | None=None,
+        idx_k: int | None=None,
+        name: str = "",
         *args,
         **kwargs,
     ):
@@ -214,11 +220,11 @@ class DihedralStyle(Style):
 
     def def_dihedraltype(
         self,
-        name: str,
-        idx_i: int | None,
-        idx_j: int | None,
-        idx_k: int | None,
-        idx_l: int | None,
+        name: str="",
+        idx_i: int | None = None,
+        idx_j: int | None = None,
+        idx_k: int | None = None,
+        idx_l: int | None = None,
         *args,
         **kwargs,
     ):
@@ -248,11 +254,11 @@ class ImproperStyle(Style):
 
     def def_impropertype(
         self,
-        name: str,
-        idx_i: int | None,
-        idx_j: int | None,
-        idx_k: int | None,
-        idx_l: int | None,
+        name: str="",
+        idx_i: int | None=None,
+        idx_j: int | None=None,
+        idx_k: int | None=None,
+        idx_l: int | None=None,
         *args,
         **kwargs,
     ):
@@ -418,16 +424,23 @@ class ForceField:
     def n_pairtypes(self):
         return reduce(lambda x, y: x + y.n_types, self.pairstyles, 0)
 
-    def calc_struct(self, struct: Struct)->dict:
-
-        output = {}
+    def calc_struct(self, struct: Struct, output:dict={})->dict:
         
         struct, output = self.calc_bond(struct, output)
-        return output
+        return struct, output
 
-    def calc_bond(self, struct, output): 
+    def calc_bond(self, struct, output:dict={}): 
 
         for bs in self.bondstyles:
             struct, output = bs.calc_struct(struct, output)
 
         return struct, output
+    
+    def get_calculator(self):
+
+        pot = []
+        for bs in self.bondstyles:
+            if bs.calculator:
+                pot.append(bs.calculator)
+        return PotentialSeq(*pot, name=self.name)
+                

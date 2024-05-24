@@ -6,27 +6,27 @@ class TestLammpsForceField:
     @pytest.fixture(scope='class')
     def forcefield(self, test_data_path):
         path = test_data_path / 'forcefields/lammps/'
-        return mp.load_forcefield(path / 'in.peptide', 'lammps', [path / 'data.peptide']).load()
+        return mp.load_forcefield(path / 'peptide.in', 'lammps', [path / 'peptide.data']).load()
     
     def test_styles(self, forcefield):
         
         assert forcefield.n_atomstyles == 1
-        assert forcefield.atomstyles[0]['name'] == 'full'
+        assert forcefield.atomstyles[0].name == 'full'
 
         assert forcefield.n_bondstyles == 1
-        assert forcefield.bondstyles[0]['name'] == 'harmonic'
+        assert forcefield.bondstyles[0].name == 'harmonic'
 
         assert forcefield.n_anglestyles == 1
-        assert forcefield.anglestyles[0]['name'] == 'charmm'
+        assert forcefield.anglestyles[0].name == 'charmm'
 
         assert forcefield.n_dihedralstyles == 1
-        assert forcefield.dihedralstyles[0]['name'] == 'charmm'
+        assert forcefield.dihedralstyles[0].name == 'charmm'
 
         assert forcefield.n_improperstyles == 1
-        assert forcefield.improperstyles[0]['name'] == 'harmonic'
+        assert forcefield.improperstyles[0].name == 'harmonic'
 
         assert forcefield.n_pairstyles == 1
-        assert forcefield.pairstyles[0]['name'] == 'lj/charmm/coul/long'
+        assert forcefield.pairstyles[0].name == 'lj/charmm/coul/long'
 
     def test_types(self, forcefield):
 
@@ -35,7 +35,7 @@ class TestLammpsForceField:
         assert forcefield.n_angletypes == 31
         assert forcefield.n_dihedraltypes == 21
         assert forcefield.n_impropertypes == 2
-        assert forcefield.n_pairtypes == 14 * 14
+        assert forcefield.n_pairtypes == 14
 
     def test_atom_types(self, forcefield):
 

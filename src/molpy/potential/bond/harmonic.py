@@ -26,7 +26,7 @@ class Harmonic(Potential):
 
     def forward(self, struct: Struct, output: dict, **params):
 
-        box = getattr(struct, "box", Box())
+        box = getattr(struct, "box", Box.free())
         xyz = struct.atoms.xyz
         bond_idx = struct.topology.bonds
         idx_i = bond_idx[:, 0]

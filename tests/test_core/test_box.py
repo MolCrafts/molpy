@@ -11,6 +11,12 @@ class TestPeriodicBox:
         box = mp.Box([1, 2, 3])
         assert box.lx == 1 and box.ly == 2 and box.lz == 3
 
+    def test_init_dummy_box(self):
+
+        box = mp.Box.free()
+        r = np.array([1,2,3])
+        r = box.wrap(r)
+
     def test_pbc_init(self):
 
         box = mp.Box([1, 2, 3], pbc=False)

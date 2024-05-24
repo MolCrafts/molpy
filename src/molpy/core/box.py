@@ -152,6 +152,10 @@ class Box:
     def cube(cls, l):
         """init box with cube"""
         return cls.from_lengths(l, l, l)
+    
+    @classmethod
+    def free(cls):
+        return cls(np.diag([1, 1, 1]), origin=np.zeros(3,), pbc=False) 
 
     @property
     def bounds(self) -> np.ndarray:
