@@ -8,10 +8,6 @@ import pytest
 
 class TestFree:
 
-    @pytest.fixture(name="ase_free_tests", scope="session")
-    def ase_tests(self, ase_tests):
-        return [atoms for atoms in ase_tests if np.all(atoms.cell.array == 0)]
-
     def test_init_(self):
 
         free = mp.Free()
@@ -68,18 +64,6 @@ class TestFree:
 
 
 class TestOrthorhombicBox:
-
-    @pytest.fixture(scope="session")
-    def ase_orth_tests(self, ase_tests):
-        def is_diag(M):
-            i, j = np.nonzero(M)
-            return np.all(i == j)
-
-        return [
-            atoms
-            for atoms in ase_tests
-            if is_diag(atoms.cell.array) and not np.all(atoms.cell.array == 0)
-        ]
 
     def test_init(self):
 

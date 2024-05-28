@@ -144,3 +144,19 @@ def batch_ase_tests() -> list[Atoms]:
         )
 
     return ase2data(ase_tests())
+
+@pytest.fixture(scope="session")
+def ase_free_tests(ase_tests):
+    return [atoms for atoms in ase_tests if np.all(atoms.cell.array == 0)]
+
+@pytest.fixture(scope="session")
+def ase_orth_tests(ase_tests):
+    def is_diag(M):
+        i, j = np.nonzero(M)
+        return np.all(i == j)
+
+    return [
+        atoms
+        for atoms in ase_tests
+        if is_diag(atoms.cell.array) and not np.all(atoms.cell.array == 0)
+    ]
