@@ -1,5 +1,5 @@
 import numpy as np
-from molpy.core.box import Box
+from molpy.core.space import Box
 from functools import partial
 
 class _NeighborListBase:

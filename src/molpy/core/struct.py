@@ -4,7 +4,7 @@ from typing import Collection, TypeVar, Any
 import numpy as np
 import molpy as mp
 from .topology import Topology
-from .box import Box
+from .space import Box
 from copy import deepcopy
 
 

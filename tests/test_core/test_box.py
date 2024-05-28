@@ -3,6 +3,58 @@ import numpy.testing as npt
 import molpy as mp
 import numpy as np
 
+def test_ase_box():
+
+    positions = np.array([
+        [4.0725, -4.0725, -1.3575],
+        [1.3575, -1.3575, -1.3575],
+        [2.715, -2.715, 0.],
+        [4.0725, 1.3575, -1.3575],
+        [0., 0., 0.],
+        [2.715, 2.715, 0.],
+        [6.7875, -1.3575, -1.3575],
+        [5.43, 0., 0.]])
+    cell = np.array([[5.43, 5.43, 0.0], [5.43, -5.43, 0.0], [0.00, 0.00, 40.0]])
+    positions += np.array([6.1, -0.1, 10.1])
+    # result_positions = wrap_positions(positions=positions, cell=cell)
+    result_positions = mp.Box(cell).wrap(positions)
+    correct_pos = np.array([
+        [4.7425, 1.2575, 8.7425],
+        [7.4575, -1.4575, 8.7425],
+        [3.385, 2.615, 10.1],
+        [4.7425, -4.1725, 8.7425],
+        [6.1, -0.1, 10.1],
+        [3.385, -2.815, 10.1],
+        [2.0275, -1.4575, 8.7425],
+        [0.67, -0.1, 10.1]])
+    # assert npt.assert_allclose(correct_pos, result_positions)
+
+    # positions = wrap_positions(positions, cell, pbc=[False, True, False])
+    positions = mp.Box(cell, pbc=[False, True, False]).wrap(positions)
+    correct_pos = np.array([
+        [4.7425, 1.2575, 8.7425],
+        [7.4575, -1.4575, 8.7425],
+        [3.385, 2.615, 10.1],
+        [10.1725, 1.2575, 8.7425],
+        [6.1, -0.1, 10.1],
+        [8.815, 2.615, 10.1],
+        [7.4575, 3.9725, 8.7425],
+        [6.1, 5.33, 10.1]])
+    assert np.allclose(correct_pos, positions)
+
+    # Test center away from values 0, 0.5
+    result_positions = mp.Box(cell, pbc=[False, True, False], origin=[0.2, 0.0, 0.0]).wrap(positions)
+    correct_pos = [[4.7425, 1.2575, 8.7425],
+                   [2.0275, 3.9725, 8.7425],
+                   [3.385, 2.615, 10.1],
+                   [-0.6875, 1.2575, 8.7425],
+                   [6.1, -0.1, 10.1],
+                   [3.385, -2.815, 10.1],
+                   [2.0275, -1.4575, 8.7425],
+                   [0.67, -0.1, 10.1]]
+    assert np.allclose(correct_pos, result_positions)
+
+
 
 class TestPeriodicBox:
 

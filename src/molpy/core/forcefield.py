@@ -2,7 +2,7 @@ import numpy as np
 from typing import Literal
 from functools import reduce
 import molpy as mp
-from molpy.core.box import Box
+from molpy.core.space import Box
 from molpy.core.struct import Struct
 from molpy.potential.base import Potential
 

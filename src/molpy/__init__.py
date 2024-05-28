@@ -13,7 +13,13 @@ from .core import (
     Topology,
     Frame,
     Struct,
-    Box
+    space,
+    Box,
+    Boundary,
+    Free,
+    OrthorhombicBox,
+    RestrictTriclinicBox,
+    GeneralTriclinicBox,
 )
 
 from .core import neighborlist as nblist

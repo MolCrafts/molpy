@@ -2,7 +2,7 @@ import numpy as np
 
 from molpy.potential.base import Potential
 from molpy.core.struct import Struct
-from molpy.core.box import Box
+from molpy.core.space import Box
 
 
 def F(r, k, r0):
