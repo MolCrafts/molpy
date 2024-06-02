@@ -7,7 +7,7 @@ BOND_TYPE_FIELDS = {
 
 ANGLE_TYPE_FIELDS = {
     "harmonic": ["k", "theta0"],
-    "charmm": ["k", "theta0", "Kub", "rub"]
+    "charmm": ["k", "theta0", "Kub", "rub"],
 }
 
 DIHEDRAL_TYPE_FIELDS = {
@@ -25,6 +25,7 @@ PAIR_TYPE_FIELDS = {
     "lj/charmm/coul/long": ["epsilon", "sigma", "eps14", "sig14"],
 }
 
+
 class LAMMPSForceFieldReader:
 
     def __init__(
@@ -37,7 +38,7 @@ class LAMMPSForceFieldReader:
         else:
             self.forcefield = forcefield
 
-    def load(self):
+    def read(self) -> mp.ForceField:
 
         in_lines: list[str] = []
         data_lines: list[str] = []
@@ -49,12 +50,8 @@ class LAMMPSForceFieldReader:
                     in_lines += f.readlines()
                 elif file_path.name.endswith(".data"):
                     data_lines += f.readlines()
-
-        n_atomtypes = 0
-        n_bondtypes = 0
-        n_angletypes = 0
-        n_dihedraltypes = 0
-        n_impropertypes = 0
+                else:
+                    raise ValueError(f"Unknown file type: {file_path.name}")
 
         for i, (line, comment) in enumerate(map(self.clean_line, in_lines)):
 
@@ -192,7 +189,18 @@ class LAMMPSForceFieldReader:
     def read_dihedralstyle(self, line):
 
         if line[0] == "hybrid":
-            self.read_dihedralstyle(line[1:])
+            results = {}
+            style_ = ""
+            i = 1
+            while i < len(line):
+                if not line[i].isdigit():
+                    style_ = line[i]
+                    results[style_] = []
+                else:
+                    results[style_].append(line[i])
+                i += 1
+            for style, coeffs in results.items():
+                self.forcefield.def_dihedralstyle(style)
 
         else:
             self.forcefield.def_dihedralstyle(line[0])
@@ -246,17 +254,27 @@ class LAMMPSForceFieldReader:
 
         bond_type_id = line[0]
 
-        if len(self.forcefield.bondstyles) > 1:
-            s = self.forcefield.get_bondstyle(line[1])
+        if line[1].isalpha():  # hybrid
+            bondstyle = self.forcefield.get_bondstyle(line[1])
             coeffs = line[2:]
-
         else:
             bondstyle = self.forcefield.bondstyles[0]
             coeffs = line[1:]
-        bondstyle.def_bondtype(
-            name=bond_type_id,
-            **{k: float(v) for k, v in zip(BOND_TYPE_FIELDS[bondstyle.name], coeffs)},
-        )
+
+        if bondstyle.name in BOND_TYPE_FIELDS:
+            named_params = {
+                k: v for k, v in zip(BOND_TYPE_FIELDS[bondstyle.name], coeffs)
+            }
+            bondstyle.def_bondtype(
+                name=bond_type_id,
+                **named_params,
+            )
+        else:
+            params = [v for v in coeffs]
+            bondstyle.def_bondtype(
+                name=bond_type_id,
+                *params,
+            )
 
     def read_bond_coeff_section(self, lines: list[str]):
 
@@ -276,7 +294,6 @@ class LAMMPSForceFieldReader:
                     break
                 self.read_angle_coeff(line)
 
-
     def read_dihedral_coeff_section(self, lines: list[str]):
 
         for line, comment in map(self.clean_line, lines):
@@ -285,7 +302,6 @@ class LAMMPSForceFieldReader:
                 if line[0].isalpha():
                     break
                 self.read_dihedral_coeff(line)
-
 
     def read_improper_coeff_section(self, lines: list[str]):
 
@@ -297,14 +313,13 @@ class LAMMPSForceFieldReader:
                     break
                 self.read_improper_coeff(line)
 
-
     def read_pair_coeff_section(self, lines: list[str]):
 
         for line, comment in map(self.clean_line, lines):
 
             if line and line.isalnum:
-                line = line.split()      # Pair Coeffs syntax:
-                type_id = line[0]        # i ...
+                line = line.split()  # Pair Coeffs syntax:
+                type_id = line[0]  # i ...
                 if type_id.isalpha():
                     break
                 line.insert(0, type_id)  # pair_coeff i j ...
@@ -314,38 +329,51 @@ class LAMMPSForceFieldReader:
 
         angle_type_id = line[0]
 
-        if self.forcefield.n_anglestyles > 1:
+        if line[1].isalpha():  # hybrid
             anglestyle = self.forcefield.get_anglestyle(line[1])
             coeffs = line[2:]
-
         else:
-            anglestyle = self.forcefield.anglestyles[0]
+            anglestyle = self.forcefield.bondstyles[0]
             coeffs = line[1:]
-        anglestyle.def_angletype(
-            name=angle_type_id,
-            **{
-                k: float(v) for k, v in zip(ANGLE_TYPE_FIELDS[anglestyle.name], coeffs)
-            },
-        )
+
+        if anglestyle.name in ANGLE_TYPE_FIELDS:
+
+            anglestyle.def_angletype(
+                name=angle_type_id,
+                **{k: v for k, v in zip(ANGLE_TYPE_FIELDS[anglestyle.name], coeffs)},
+            )
+        else:
+            anglestyle.def_angletype(
+                name=anglestyle.name,
+                *[v for v in coeffs],
+            )
 
     def read_dihedral_coeff(self, line):
 
         dihedral_type_id = line[0]
 
-        if self.forcefield.n_dihedralstyles > 1:
+        if line[1].isdigit():  # hybrid
+            dihedralstyle = self.forcefield.dihedralstyles[0]
+            coeffs = line[1:]
+        else:
             dihedralstyle = self.forcefield.get_dihedralstyle(line[1])
             coeffs = line[2:]
 
+        if dihedralstyle.name in DIHEDRAL_TYPE_FIELDS:
+
+            dihedralstyle.def_dihedraltype(
+                name=dihedral_type_id,
+                **{
+                    k: v
+                    for k, v in zip(DIHEDRAL_TYPE_FIELDS[dihedralstyle.name], coeffs)
+                },
+            )
+
         else:
-            dihedralstyle = self.forcefield.dihedralstyles[0]
-            coeffs = line[1:]
-        dihedralstyle.def_dihedraltype(
-            name=dihedral_type_id,
-            **{
-                k: float(v)
-                for k, v in zip(DIHEDRAL_TYPE_FIELDS[dihedralstyle.name], coeffs)
-            },
-        )
+            dihedralstyle.def_dihedraltype(
+                name=dihedralstyle.name,
+                *[v for v in coeffs],
+            )
 
     def read_improper_coeff(self, line):
 
@@ -358,13 +386,20 @@ class LAMMPSForceFieldReader:
         else:
             improperstyle = self.forcefield.improperstyles[0]
             coeffs = line[1:]
-        improperstyle.def_impropertype(
-            name=improper_type_id,
-            **{
-                k: float(v)
-                for k, v in zip(IMPROPER_TYPE_FIELDS[improperstyle.name], coeffs)
-            },
-        )
+
+        if improperstyle.name in IMPROPER_TYPE_FIELDS:
+            improperstyle.def_impropertype(
+                improper_type_id,
+                **{
+                    k: v
+                    for k, v in zip(IMPROPER_TYPE_FIELDS[improperstyle.name], coeffs)
+                },
+            )
+        else:
+            improperstyle.def_impropertype(
+                name=improperstyle.name,
+                *[v for v in coeffs],
+            )
 
     def read_pair_coeff(self, line):
 
@@ -381,18 +416,132 @@ class LAMMPSForceFieldReader:
 
         name = str(pairstyle.n_types)
 
-        pairstyle.def_pairtype(
-            name,
-            atomtype_i,
-            atomtype_j,
-            **{k: float(v) for k, v in zip(PAIR_TYPE_FIELDS[pairstyle.name], coeffs)},
-        )
+        if pairstyle.name in PAIR_TYPE_FIELDS:
+            pairstyle.def_pairtype(
+                name,
+                atomtype_i,
+                atomtype_j,
+                **{k: v for k, v in zip(PAIR_TYPE_FIELDS[pairstyle.name], coeffs)},
+            )
+        else:
+            pairstyle.def_pairtype(
+                name=name,
+                i=atomtype_i,
+                j=atomtype_j,
+                *[v for v in coeffs],
+            )
 
     def read_pair_modify(self, line):
 
-        modify = {}
-        for k, v in line[::2]:
-            modify[k] = v
+        params = []
+        named_params = {}
+
+        key = ""
+        i = 0
+        while i < len(line):
+            if line[i].isdigit():
+                named_params[key].append(line[i])
+            else:
+                key = line[i]
+                named_params[key] = []
+
+            i += 1
 
         for pairstyle in self.forcefield.pairstyles:
-            pairstyle.update(**modify)
+            pairstyle.named_params.update(named_params)
+
+
+class LAMMPSForceFieldWriter:
+
+    def __init__(self, fpath: str | Path, forcefield: mp.ForceField):
+
+        self.fpath = fpath
+        self.forcefield = forcefield
+
+    @staticmethod
+    def _write_styles(lines: list[str], styles, style_keyword, coeff_keyword):
+        if styles:
+            if len(styles) == 1:
+                style = styles[0]
+                lines.append(
+                    f"{style_keyword} {style.name}, {' '.join(style.params)} {' '.join(style.named_params)}\n"
+                )
+                for typ in style.types:
+                    params = " ".join(typ.params)
+                    named_params = " ".join(typ.named_params.values())
+                    lines.append(
+                        f"{coeff_keyword} {typ.name} {params} {named_params}\n"
+                    )
+            else:
+                style_keywords = " ".join([style.name for style in styles])
+                lines.append(f"{style_keyword} hybrid {style_keywords}\n")
+                for style in styles:
+                    for typ in style.types:
+                        params = " ".join(typ.params)
+                        named_params = " ".join(typ.named_params.values())
+                        lines.append(
+                            f"{coeff_keyword} {typ.name} {style.name} {params} {named_params}\n"
+                        )
+
+        lines.append("\n")
+
+    def write(self):
+
+        ff = self.forcefield
+
+        lines = []
+
+        lines.append(f"units {self.forcefield.units}\n")
+        if ff.atomstyles:
+            if ff.n_anglestyles == 1:
+                lines.append(f"atom_style {ff.atomstyles[0].name}\n")
+            else:
+                atomstyles = " ".join([atomstyle.name for atomstyle in ff.atomstyles])
+                lines.append(f"atom_style hybrid {atomstyles}\n")
+        else:
+            raise ValueError("No atom style defined")
+
+        for atomstyle in ff.atomstyles:
+            for atomtype in atomstyle.types:
+                lines.append(f"mass {atomtype.name} {atomtype.named_params['mass']}\n")
+
+        LAMMPSForceFieldWriter._write_styles(
+            lines, ff.bondstyles, "bond_style", "bond_coeff"
+        )
+        LAMMPSForceFieldWriter._write_styles(
+            lines, ff.anglestyles, "angle_style", "angle_coeff"
+        )
+        LAMMPSForceFieldWriter._write_styles(
+            lines, ff.dihedralstyles, "dihedral_style", "dihedral_coeff"
+        )
+        LAMMPSForceFieldWriter._write_styles(
+            lines, ff.improperstyles, "improper_style", "improper_coeff"
+        )
+        # LAMMPSForceFieldWriter._write_styles(lines, ff.pairstyles, "pair_style", "pair_coeff")
+        if ff.pairstyles:
+            if len(ff.pairstyles) == 1:
+                style = ff.pairstyles[0]
+                lines.append(
+                    f"pair_style {style.name} {' '.join(style.params)} {' '.join(style.named_params)}\n"
+                )
+                for typ in style.types:
+                    params = " ".join(typ.params)
+                    named_params = " ".join(typ.named_params.values())
+                    lines.append(
+                        f"pair_coeff {' '.join(map(str, typ.type_idx))} {params} {named_params}\n"
+                    )
+            else:
+                style_keywords = " ".join([style.name for style in ff.pairstyles])
+                lines.append(f"pair_coeff hybrid {style_keywords}\n")
+                for style in ff.pairstyles:
+                    for typ in style.types:
+                        params = " ".join(typ.params)
+                        named_params = " ".join(typ.named_params.values())
+                        lines.append(
+                            f"pair_coeff {' '.join(map(str, typ.type_idx))} {style.name} {params} {named_params}\n"
+                        )
+            lines.append("\n")
+
+        with open(self.fpath, "w") as f:
+
+            f.writelines(lines)
