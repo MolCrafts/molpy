@@ -17,12 +17,14 @@ from .core import (
     Box,
     Boundary,
     Free,
-    OrthorhombicBox,
+    OrthogonalBox,
     RestrictTriclinicBox,
     GeneralTriclinicBox,
+    Region
 )
 
 from .core import neighborlist as nblist
+from .core import region
 
 from . import io
 from .io import load_log, load_forcefield

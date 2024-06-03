@@ -26,49 +26,50 @@ class FrameLoader(ChflLoader):
         
     def load(self) -> Frame:
         chfl_frame = self._chfl_frame
-        frame = Frame()
+        frame = Frame("", len(chfl_frame.atoms))
 
         # get frame properties
         frame[Alias.timestep] = chfl_frame.step
         box_matrix = chfl_frame.cell.matrix.copy()
-        frame.box.set_matrix(box_matrix)
+        if not np.all(box_matrix == 0):  # default Free
+            i, j = np.nonzero(box_matrix)
+            if np.all(i == j):
+                frame.set_orthogonal_box(np.diag(box_matrix))
+            else:
+                frame.set_triclinic_box(box_matrix)
         frame.atoms[Alias.xyz] = chfl_frame.positions.copy()
         if chfl_frame.has_velocities():
             frame.atoms[Alias.velocity] = chfl_frame.velocities.copy()
-        frame[Alias.n_atoms] = len(chfl_frame.atoms)
 
         # get atom properties
         PROP_ALIAS_MAP = {
-            "name": Alias['name'],
-            "atomic_number": Alias['Z'],
-            "charge": Alias['charge'],
-            "mass": Alias['mass'],  
-            "type": Alias['atype'],
-            "vdw_radius": Alias['vdw_radius'],
+            "name": Alias.get('name'),
+            "atomic_number": Alias.get('Z'),
+            "charge": Alias.get('charge'),
+            "mass": Alias.get('mass'),  
+            "type": Alias.get('type'),
+            "vdw_radius": Alias.get('vdw_radius'),
         }
 
         for key, _alias in PROP_ALIAS_MAP.items():
             frame.atoms[_alias.key] = np.array([getattr(atom, key) for atom in chfl_frame.atoms if hasattr(atom, key)], dtype=_alias.type)
-
-        frame[Alias.n_atoms] = len(chfl_frame.atoms)
 
         # get connectivity
         bonds = chfl_frame.topology.bonds
         angles = chfl_frame.topology.angles
         dihedrals = chfl_frame.topology.dihedrals
         impropers = chfl_frame.topology.impropers
+        
+        frame.topology.add_bonds(bonds)
 
-        for bond in bonds:
-            frame._connectivity.add_bond(*bond)
+        # for angle in angles:
+        #     frame.topology.add_angle(*angle)
 
-        for angle in angles:
-            frame._connectivity.add_angle(*angle)
+        # for dihedral in dihedrals:
+        #     frame.topology.add_dihedral(*dihedral)
 
-        for dihedral in dihedrals:
-            frame._connectivity.add_dihedral(*dihedral)
-
-        for improper in impropers:
-            frame._connectivity.add_improper(*improper)
+        # for improper in impropers:
+        #     frame.topology.add_improper(*improper)
 
         residues = chfl_frame.topology.residues
         molid = np.zeros(len(chfl_frame.atoms), dtype=int)
@@ -81,11 +82,10 @@ class FrameLoader(ChflLoader):
 
 
 class TrajLoader(ChflLoader):
-    def __init__(self, fpath: str | Path, format: str = "", mode: str = "r"):
-        self._fpath = fpath
+    def __init__(self, fpath: str | Path, format: str = ""):
+        self._fpath = str(fpath)
         self._format = format
-        self._mode = mode
-        self._trajectory = chfl.Trajectory(self._fpath, self._mode, self._format)
+        self._trajectory = chfl.Trajectory(self._fpath, "r", self._format)
 
     @property
     def nsteps(self):

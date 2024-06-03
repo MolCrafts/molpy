@@ -93,7 +93,7 @@ class Structure(ABC, dict):
 
 class Struct(Structure):
 
-    def __init__(self, name: str = ""):
+    def __init__(self, name: str = "", n_atoms: int = 0):
 
         super().__init__(name)
 
@@ -103,7 +103,7 @@ class Struct(Structure):
         self._angles = ItemDict()
         self._dihedrals = ItemDict()
 
-        self._topology = Topology()
+        self._topology = Topology(n_atoms, )
 
     def __repr__(self) -> str:
         return f"<Struct {self.name}: {self.n_atoms} atoms>"

@@ -5,9 +5,9 @@
 
 import numpy as np
 from abc import ABC, abstractmethod
+from molpy.core.region import Region
 
-
-class Boundary(ABC):
+class Boundary(Region):
 
     def __init__(self, condition: np.ndarray):
         self.condition = condition
@@ -148,6 +148,13 @@ class RestrictTriclinicBox(Box):
             np.ndarray: bounds of the box
         """
         return np.diag(self._matrix)
+    
+    def isin(self, xyz:np.ndarray) -> np.ndarray:
+
+        reciprocal_r = np.einsum("ij,...j->...i", self.get_inverse(), xyz)
+        result = np.logical_and(np.all(reciprocal_r >= 0, axis=-1), np.all(reciprocal_r <= 1, axis=-1))
+        result = np.logical_or(result, self._pbc)
+        return result
 
     def get_inverse(self) -> np.ndarray:
         """inverse of box matrix"""
@@ -190,7 +197,7 @@ class GeneralTriclinicBox(Box):
         super().__init__(matrix, pbc)
 
 
-class OrthorhombicBox(RestrictTriclinicBox):
+class OrthogonalBox(RestrictTriclinicBox):
 
     def __init__(
         self,
@@ -207,6 +214,9 @@ class Free(Boundary):
     def __init__(self):
         super().__init__(np.array([False, False, False]))
 
+    def isin(self, xyz:np.ndarray) -> np.ndarray:
+        return np.ones(xyz.shape[0], dtype=bool)
+
     def wrap(self, r: np.ndarray) -> np.ndarray:
         return r
 
@@ -221,6 +231,14 @@ class Free(Boundary):
 
     def diff_self(self, r: np.ndarray) -> np.ndarray:
         return r[:, None, :] - r
+    
+    @property
+    def lengths(self):
+        return np.zeros(3)
+    
+    @property
+    def angles(self):
+        return np.array([90, 90, 90])
 
 
 # def get_matrix_from_length_angle(a, b, c, alpha, beta, gamma):

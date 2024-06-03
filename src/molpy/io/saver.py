@@ -11,21 +11,37 @@ from ..core.frame import Frame
 from molpy import Alias
 import numpy as np
 
-class TrajectorySaver:
+class ChflSaver:
+    pass
 
-    def __init__(self, filename: str):
-        self._filename = filename
-        self._file = chfl.Trajectory(filename, mode='w')
+class TrajSaver(ChflSaver):
+
+    def __init__(self, fpath: str | Path, format: str = ""):
+        self._fpath = str(fpath)
+        self._traj = chfl.Trajectory(fpath, mode='w', format=format)
 
     def dump(self, frame: Frame):
+        chfl_frame = FrameSaver(frame).write()
+        self._traj.write(chfl_frame)
+        
+
+class FrameSaver(ChflSaver):
+
+    def __init__(self, frame: Frame):
+        self._frame = frame
+
+    def write(self):
+        frame = self._frame
         chfl_frame = chfl.Frame()
-        chfl_frame.step = frame.step
-        chfl_frame.cell = chfl.UnitCell(frame.box.length)
-        xyz = frame.atoms.positions
-        types = frame.atoms.types
+        if hasattr(frame, 'step'):
+            chfl_frame.step = frame.step
+        if hasattr(frame, 'box'):
+            chfl_frame.cell = chfl.UnitCell(frame.box.lengths, frame.box.angles)
+        xyz = frame.atoms.xyz
+        types = frame.atoms.type
         for i in range(frame.n_atoms):
             chfl_frame.add_atom(chfl.Atom(str(i), str(types[i])), xyz[i])
         # chfl_frame.velocities = frame.velocity
         for bond in frame.bonds:
             chfl_frame.add_bond(*bond)
-        self._file.write(chfl_frame)
+        return chfl_frame

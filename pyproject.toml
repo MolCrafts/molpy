@@ -48,8 +48,8 @@ dev = ["pytest", "ase"]
 test = ["pytest", "coverage"]
 
 [project.urls]
-Homepage = "https://github.com/MolCrafts/molpot"
-Issues = "https://github.com/MolCrafts/molpot/issues"
+Homepage = "https://github.com/MolCrafts/molpy"
+Issues = "https://github.com/MolCrafts/molpy/issues"
 
 [build-system]
 requires = [

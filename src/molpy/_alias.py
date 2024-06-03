@@ -46,7 +46,7 @@ DEFAULT_ALIASES = {
     "idx": AliasEntry("idx", "_idx", int, None, ""),
     "molid": AliasEntry("mol", "_molid", int, None, "molecule index"),
     "Z": AliasEntry("Z", "_atomic_numbers", int, None, "nuclear charge"),
-    "atype": AliasEntry("atype", "_atomic_types", int, None, "atomic type"),
+    "type": AliasEntry("type", "_type", str, None, "general type"),
     "vdw_radius": AliasEntry(
         "vdw_radius", "_vdw_radius", float, "angstrom", "van der Waals radius"
     ),
@@ -104,6 +104,11 @@ DEFAULT_ALIASES = {
         "polarizability", "_polarizability", np.ndarray, "angstrom^3", "polarizability"
     ),
     "element": AliasEntry("element", "_element", str, None, "element symbol"),
+    "atomtype": AliasEntry("atomtype", "_atomtype", str, None, "atom type"),
+    "bondtype": AliasEntry("bondtype", "_bondtype", str, None, "bond type"),
+    "angletype": AliasEntry("angletype", "_angletype", str, None, "angle type"),
+    "dihedraltype": AliasEntry("dihedraltype", "_dihedraltype", str, None, "dihedral type"),
+    "impropertype": AliasEntry("impropertype", "_impropertype", str, None, "improper type"),
 }
 
 

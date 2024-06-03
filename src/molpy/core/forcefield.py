@@ -328,13 +328,13 @@ class ForceField:
         self.dihedralstyles = []
         self.improperstyles = []
 
-    def from_lammps(self, fpaths: list[str | Path]):
-        from molpy.io.forcefield import LAMMPSForceFieldReader
-        LAMMPSForceFieldReader(fpaths, self).read()
+    # def read_lammps(self, fpaths: list[str | Path]):
+    #     from molpy.io.forcefield import LAMMPSForceFieldReader
+    #     LAMMPSForceFieldReader(fpaths, self).read()
 
-    def write_lammps(self, fpath: str | Path):
-        from molpy.io.forcefield import LAMMPSForceFieldWriter
-        LAMMPSForceFieldWriter(fpath, self).write() 
+    # def write_lammps(self, fpath: str | Path):
+    #     from molpy.io.forcefield import LAMMPSForceFieldWriter
+    #     LAMMPSForceFieldWriter(fpath, self).write() 
 
     def __repr__(self) -> str:
         return f"<ForceField: {self.name}>"
