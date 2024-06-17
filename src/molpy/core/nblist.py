@@ -2,7 +2,7 @@ import numpy as np
 from molpy.core.space import Box
 from functools import partial
 
-class _NeighborListBase:
+class NeighborListBase:
 
     def build(self):
         """build neighborlist from scratch, always reset the cache
@@ -63,7 +63,7 @@ class _NeighborListCache:
 
 # class NblistSkin:
 
-#     def __init__(self, nblist: _NeighborListBase, skin: float):
+#     def __init__(self, nblist: NeighborListBase, skin: float):
         
 #         self._nblist = nblist
 #         self._skin = skin
@@ -96,7 +96,7 @@ class _NeighborListCache:
 #         return self._nblist.query(centers, cutoff + self._skin)
         
 
-class NaiveNbList(_NeighborListBase, _NeighborListCache):
+class NaiveNbList(NeighborListBase):
 
     def __init__(self):
         
@@ -145,6 +145,3 @@ class NaiveNbList(_NeighborListBase, _NeighborListCache):
         self._cache.update_cache(xyz, mapping, diff, distances)
 
         return self._cache.mapping, self._cache.diff, self._cache.distances
-
-class CellListNbList(_NeighborListBase, _NeighborListCache):
-    ...

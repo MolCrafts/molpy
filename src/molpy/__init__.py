@@ -22,7 +22,7 @@ from .core import (
     GeneralTriclinicBox,
 )
 
-from .core import neighborlist as nblist
+from .core import nblist as nblist
 
 from . import io
 from .io import load_log, load_forcefield
