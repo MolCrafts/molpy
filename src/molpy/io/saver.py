@@ -18,7 +18,7 @@ class TrajSaver(ChflSaver):
 
     def __init__(self, fpath: str | Path, format: str = ""):
         self._fpath = str(fpath)
-        self._traj = chfl.Trajectory(fpath, mode='w', format=format)
+        self._traj = chfl.Trajectory(self._fpath, mode='w', format=format)
 
     def dump(self, frame: Frame):
         chfl_frame = FrameSaver(frame).write()
@@ -37,11 +37,12 @@ class FrameSaver(ChflSaver):
             chfl_frame.step = frame.step
         if hasattr(frame, 'box'):
             chfl_frame.cell = chfl.UnitCell(frame.box.lengths, frame.box.angles)
-        xyz = frame.atoms.xyz
+        xyz = np.atleast_2d(frame.atoms.xyz)
         types = frame.atoms.type
         for i in range(frame.n_atoms):
             chfl_frame.add_atom(chfl.Atom(str(i), str(types[i])), xyz[i])
-        # chfl_frame.velocities = frame.velocity
-        for bond in frame.bonds:
+        
+        bonds = frame.topology.bonds
+        for bond in bonds:
             chfl_frame.add_bond(*bond)
         return chfl_frame

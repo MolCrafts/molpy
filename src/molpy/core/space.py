@@ -208,6 +208,14 @@ class OrthogonalBox(RestrictTriclinicBox):
     ):
         super().__init__(np.diag(lengths), origin, direction, pbc)
 
+    @property
+    def lengths(self) -> np.ndarray:
+        return np.diag(self._matrix)
+    
+    @property
+    def angles(self) -> np.ndarray:
+        return np.array([90, 90, 90])
+
 
 class Free(Boundary):
 

@@ -6,6 +6,7 @@ from molpy.core.space import Box
 from molpy.core.struct import Struct
 from molpy.potential.base import Potential
 from pathlib import Path
+from typing import Iterable
 
 
 class Style:
@@ -321,6 +322,7 @@ class ForceField:
 
         self.name = name
 
+        self.unit = ""
         self.atomstyles = []
         self.bondstyles = []
         self.pairstyles = []
@@ -355,8 +357,6 @@ class ForceField:
             detail += f"\nn_improperstyles: {self.n_improperstyles}, n_impropertypes: {self.n_impropertypes}"
         return detail + ">"
     
-
-
     def def_bondstyle(self, style: str | type[Potential], *params, **named_params):
         bondstyle = BondStyle(style, *params, **named_params)
         self.bondstyles.append(bondstyle)
@@ -465,17 +465,83 @@ class ForceField:
     def n_pairtypes(self):
         return reduce(lambda x, y: x + y.n_types, self.pairstyles, 0)
     
-    def union(self, *forcefields: tuple["ForceField"]):
+    @property
+    def atomtypes(self):
+        return reduce(lambda x, y: x + y.types, self.atomstyles, [])
+    
+    @property
+    def bondtypes(self):
+        return reduce(lambda x, y: x + y.types, self.bondstyles, [])
+    
+    @property
+    def angletypes(self):
+        return reduce(lambda x, y: x + y.types, self.anglestyles, [])
+    
+    @property
+    def dihedraltypes(self):
+        return reduce(lambda x, y: x + y.types, self.dihedralstyles, [])
+    
+    @property
+    def impropertypes(self):
+        return reduce(lambda x, y: x + y.types, self.improperstyles, [])
+    
+    @property
+    def pairtypes(self):
+        return reduce(lambda x, y: x + y.types, self.pairstyles, [])
 
+    def append(self, forcefield: "ForceField"):
+
+        for pairstyle in forcefield.pairstyles:
+            if self.get_pairstyle(pairstyle.name) is None:
+                self.pairstyles.append(pairstyle)
+            else:
+                self_pairstyle = self.get_pairstyle(pairstyle.name)
+                for pairtype in pairstyle.types:
+                    self_pairstyle.types.append(pairtype)
+
+        for bondstyle in forcefield.bondstyles:
+            if self.get_bondstyle(bondstyle.name) is None:
+                self.bondstyles.append(bondstyle)
+            else:
+                self_bondstyle = self.get_bondstyle(bondstyle.name)
+                for bondtype in bondstyle.types:
+                    self_bondstyle.types.append(bondtype)
+        
+        for atomstyle in forcefield.atomstyles:
+            if self.get_atomstyle(atomstyle.name) is None:
+                self.atomstyles.append(atomstyle)
+            else:
+                self_atomstyle = self.get_atomstyle(atomstyle.name)
+                for atomtype in atomstyle.types:
+                    self_atomstyle.types.append(atomtype)
+
+        for anglestyle in forcefield.anglestyles:
+            if self.get_anglestyle(anglestyle.name) is None:
+                self.anglestyles.append(anglestyle)
+            else:
+                self_anglestyle = self.get_anglestyle(anglestyle.name)
+                for angletype in anglestyle.types:
+                    self_anglestyle.types.append(angletype)
+
+        for dihedralstyle in forcefield.dihedralstyles:
+            if self.get_dihedralstyle(dihedralstyle.name) is None:
+                self.dihedralstyles.append(dihedralstyle)
+            else:
+                self_dihedralstyle = self.get_dihedralstyle(dihedralstyle.name)
+                for dihedraltype in dihedralstyle.types:
+                    self_dihedralstyle.types.append(dihedraltype)
+
+        for improperstyle in forcefield.improperstyles:
+            if self.get_improperstyle(improperstyle.name) is None:
+                self.improperstyles.append(improperstyle)
+            else:
+                self_improperstyle = self.get_improperstyle(improperstyle.name)
+                for impropertype in improperstyle.types:
+                    self_improperstyle.types.append(impropertype)
+
+    def extend(self, forcefields: Iterable["ForceField"]):
         for ff in forcefields:
-
-            for pairstyle in ff.pairstyles:
-                if self.get_pairstyle(pairstyle.name) is None:
-                    self.pairstyles.append(pairstyle)
-                else:
-                    self_pairstyle = self.get_pairstyle(pairstyle.name)
-                    for pairtype in pairstyle.types:
-                        self_pairstyle.types.append(pairtype)
+            self.append(ff)
 
     def calc_struct(self, struct: Struct, output: dict = {}) -> dict:
 

@@ -61,7 +61,7 @@ class LAMMPSForceFieldReader:
             kw = line[0]
 
             if kw == "units":
-                self.forcefield.units = line[1]
+                self.forcefield.unit = line[1]
 
             elif kw == "bond_style":
                 self.read_bondstyle(line[1:])
@@ -433,23 +433,18 @@ class LAMMPSForceFieldReader:
 
     def read_pair_modify(self, line):
 
-        params = []
-        named_params = {}
+        if line[0] == 'pair':
+            raise NotImplementedError("pair_modify hybrid not implemented")
+        else:
+            assert self.forcefield.n_pairstyles == 1, ValueError(
+                "pair_modify command requires one pair style"
+            )
+            pairstyle = self.forcefield.pairstyles[0]
 
-        key = ""
-        i = 0
-        while i < len(line):
-            if line[i].isdigit():
-                named_params[key].append(line[i])
+            if "modified" in pairstyle.named_params:
+                pairstyle.named_params["modified"] = list(set(pairstyle.named_params["modified"]) | set(line))
             else:
-                key = line[i]
-                named_params[key] = []
-
-            i += 1
-
-        for pairstyle in self.forcefield.pairstyles:
-            pairstyle.named_params.update(named_params)
-
+                pairstyle.named_params["modified"] = line
 
 class LAMMPSForceFieldWriter:
 
@@ -459,28 +454,34 @@ class LAMMPSForceFieldWriter:
         self.forcefield = forcefield
 
     @staticmethod
-    def _write_styles(lines: list[str], styles, style_keyword, coeff_keyword):
-        if styles:
-            if len(styles) == 1:
-                style = styles[0]
+    def _write_styles(lines: list[str], styles, style_type):
+        
+        if len(styles) == 1:
+            style = styles[0]
+            lines.append(
+                f"{style_type}_style {style.name} {' '.join(style.params)}\n"
+            )
+            if "modified" in style.named_params:
+                params = " ".join(style.named_params["modified"])
                 lines.append(
-                    f"{style_keyword} {style.name}, {' '.join(style.params)} {' '.join(style.named_params)}\n"
+                    f"{style_type}_modify {params}\n"
                 )
+                
+            for typ in style.types:
+                params = " ".join(typ.params)
+                named_params = " ".join(typ.named_params.values())
+                lines.append(
+                    f"{style_type}_coeff {typ.name} {params} {named_params}\n"
+                )
+        else:
+            style_keywords = " ".join([style.name for style in styles])
+            lines.append(f"{style_type}_style hybrid {style_keywords}\n")
+            for style in styles:
                 for typ in style.types:
                     params = " ".join(typ.params)
                     named_params = " ".join(typ.named_params.values())
                     lines.append(
-                        f"{coeff_keyword} {typ.name} {params} {named_params}\n"
-                    )
-            else:
-                style_keywords = " ".join([style.name for style in styles])
-                lines.append(f"{style_keyword} hybrid {style_keywords}\n")
-                for style in styles:
-                    for typ in style.types:
-                        params = " ".join(typ.params)
-                        named_params = " ".join(typ.named_params.values())
-                        lines.append(
-                            f"{coeff_keyword} {typ.name} {style.name} {params} {named_params}\n"
+                        f"{style_type}_coeff {typ.name} {style.name} {params} {named_params}\n"
                         )
 
         lines.append("\n")
@@ -491,7 +492,7 @@ class LAMMPSForceFieldWriter:
 
         lines = []
 
-        lines.append(f"units {self.forcefield.units}\n")
+        lines.append(f"units {self.forcefield.unit}\n")
         if ff.atomstyles:
             if ff.n_anglestyles == 1:
                 lines.append(f"atom_style {ff.atomstyles[0].name}\n")
@@ -506,41 +507,20 @@ class LAMMPSForceFieldWriter:
                 lines.append(f"mass {atomtype.name} {atomtype.named_params['mass']}\n")
 
         LAMMPSForceFieldWriter._write_styles(
-            lines, ff.bondstyles, "bond_style", "bond_coeff"
+            lines, ff.bondstyles, "bond"
         )
         LAMMPSForceFieldWriter._write_styles(
-            lines, ff.anglestyles, "angle_style", "angle_coeff"
+            lines, ff.anglestyles, "angle"
         )
         LAMMPSForceFieldWriter._write_styles(
-            lines, ff.dihedralstyles, "dihedral_style", "dihedral_coeff"
+            lines, ff.dihedralstyles, "dihedral"
         )
         LAMMPSForceFieldWriter._write_styles(
-            lines, ff.improperstyles, "improper_style", "improper_coeff"
+            lines, ff.improperstyles, "improper"
         )
-        # LAMMPSForceFieldWriter._write_styles(lines, ff.pairstyles, "pair_style", "pair_coeff")
-        if ff.pairstyles:
-            if len(ff.pairstyles) == 1:
-                style = ff.pairstyles[0]
-                lines.append(
-                    f"pair_style {style.name} {' '.join(style.params)} {' '.join(style.named_params)}\n"
-                )
-                for typ in style.types:
-                    params = " ".join(typ.params)
-                    named_params = " ".join(typ.named_params.values())
-                    lines.append(
-                        f"pair_coeff {' '.join(map(str, typ.type_idx))} {params} {named_params}\n"
-                    )
-            else:
-                style_keywords = " ".join([style.name for style in ff.pairstyles])
-                lines.append(f"pair_coeff hybrid {style_keywords}\n")
-                for style in ff.pairstyles:
-                    for typ in style.types:
-                        params = " ".join(typ.params)
-                        named_params = " ".join(typ.named_params.values())
-                        lines.append(
-                            f"pair_coeff {' '.join(map(str, typ.type_idx))} {style.name} {params} {named_params}\n"
-                        )
-            lines.append("\n")
+        LAMMPSForceFieldWriter._write_styles(lines, ff.pairstyles, "pair")
+
+        lines.append("\n")
 
         with open(self.fpath, "w") as f:
 
