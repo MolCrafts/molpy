@@ -491,6 +491,11 @@ class ForceField:
 
     def append(self, forcefield: "ForceField"):
 
+        if self.unit:
+            assert self.unit == forcefield.unit, ValueError("unit must be the same")
+        self.unit = forcefield.unit
+
+
         for pairstyle in forcefield.pairstyles:
             if self.get_pairstyle(pairstyle.name) is None:
                 self.pairstyles.append(pairstyle)

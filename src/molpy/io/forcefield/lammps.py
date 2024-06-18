@@ -11,8 +11,8 @@ ANGLE_TYPE_FIELDS = {
 }
 
 DIHEDRAL_TYPE_FIELDS = {
-    "multi/harmonic": ["k", "n", "delta"],
-    "charmm": ["k1", "k2", "k3", "k4", "n", "delta"],
+    "charmm": ["k", "n", "delta", 'w'],
+    "multi/harmonic": ["k1", "k2", "k3", "k4", "n", "delta"],
 }
 
 IMPROPER_TYPE_FIELDS = {
