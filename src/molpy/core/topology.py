@@ -62,8 +62,6 @@ class Topology:
         duplicated_angles = np.array(
             self._graph.get_subisomorphisms_vf2(Graph(3, [[0, 1], [1, 2]]))
         )
-        print(self.bonds)
-        print(duplicated_angles)
         mask = duplicated_angles[:, 0] < duplicated_angles[:, 2]
         return duplicated_angles[mask]
 

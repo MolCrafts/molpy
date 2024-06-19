@@ -3,14 +3,19 @@
 # date: 2024-03-23
 # version: 0.0.1
 import numpy as np
-from .struct import Struct
+from .struct import Struct, StructList
 from molpy.core.space import Free, OrthogonalBox, RestrictTriclinicBox
 
-class Frame(Struct):
+class Frame:
 
-    def __init__(self, name:str="", n_atoms:int=0):
-        super().__init__(name, n_atoms)
+    def __init__(self, name:str=""):
+        self._name = name
         self._box = Free()
+        self._structs = StructList()
+
+    @property
+    def name(self):
+        return self._name
 
     @property
     def box(self):
@@ -22,3 +27,12 @@ class Frame(Struct):
     def set_triclinic_box(self, matrix: np.ndarray):
         self._box = RestrictTriclinicBox(matrix)
 
+    @property
+    def n_atoms(self):
+        return self._structs.n_atoms
+    
+    def add_struct(self, struct: Struct):
+        self._structs.append(struct)
+
+    def __repr__(self):
+        return f"<Frame: {self.name}>"

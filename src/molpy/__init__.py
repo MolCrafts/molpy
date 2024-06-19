@@ -27,13 +27,13 @@ from .core import neighborlist as nblist
 from .core import region
 
 from . import io
-from .io import load_log, load_forcefield
 from . import potential
 from .potential import (
     Potential,
 )
 
 from . import builder
+from .builder import parameterizer
 from .builder.presets import SPCE
 from .builder import (
     Atom,

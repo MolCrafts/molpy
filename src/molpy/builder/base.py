@@ -2,7 +2,7 @@ import numpy as np
 from molpy import Alias
 from typing import Any, Collection
 import molpy as mp
-from molpy.core.struct import Structure, Struct
+from molpy.core.struct import BaseStructure, Struct
 from molpy.core.topology import Topology
 
 
@@ -78,7 +78,7 @@ class Angle(Item):
         return f"<Angle: {super().__repr__()}>"
 
 
-class DynamicStruct(Structure):
+class DynamicStruct(BaseStructure):
 
     def __init__(self, n_atoms: int = 0, name:str="", *args, **kwargs):
 

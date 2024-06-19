@@ -4,45 +4,61 @@
 # version: 0.0.1
 
 from pathlib import Path
-from typing import Iterable
 import chemfiles as chfl
-
-from ..core.frame import Frame
-from molpy import Alias
 import numpy as np
 
-class ChflSaver:
-    pass
+import molpy as mp
 
-class TrajSaver(ChflSaver):
+class ChflIO:
+    
+    def __init__(self, fpath:str | Path):
+        self._fpath = Path(fpath)
 
-    def __init__(self, fpath: str | Path, format: str = ""):
-        self._fpath = str(fpath)
-        self._traj = chfl.Trajectory(self._fpath, mode='w', format=format)
+    def _get_saver(self, fpath: str | Path, format: str = ""):
+        if not fpath.parent.exists():
+            fpath.parent.mkdir(parents=True)
+        return chfl.Trajectory(str(fpath), 'w', format)
+    
+    def _get_loader(self, fpath: str | Path, format: str = ""):
+        return chfl.Trajectory(str(fpath), 'r', format)
 
-    def dump(self, frame: Frame):
-        chfl_frame = FrameSaver(frame).write()
-        self._traj.write(chfl_frame)
-        
+    def save_struct(self, struct: mp.Struct, format: str = ""):
 
-class FrameSaver(ChflSaver):
-
-    def __init__(self, frame: Frame):
-        self._frame = frame
-
-    def write(self):
-        frame = self._frame
+        chfl_traj_saver = self._get_saver(self._fpath, format=format)
         chfl_frame = chfl.Frame()
-        if hasattr(frame, 'step'):
-            chfl_frame.step = frame.step
-        if hasattr(frame, 'box'):
-            chfl_frame.cell = chfl.UnitCell(frame.box.lengths, frame.box.angles)
-        xyz = np.atleast_2d(frame.atoms.xyz)
-        types = frame.atoms.type
-        for i in range(frame.n_atoms):
+        xyz = np.atleast_2d(struct.atoms.xyz)
+        types = struct.atoms.type
+        for i in range(struct.n_atoms):
             chfl_frame.add_atom(chfl.Atom(str(i), str(types[i])), xyz[i])
         
-        bonds = frame.topology.bonds
+        bonds = struct.topology.bonds
         for bond in bonds:
             chfl_frame.add_bond(*bond)
-        return chfl_frame
+
+        chfl_traj_saver.write(chfl_frame)
+
+    def load_struct(self, format: str = "") -> mp.Struct:
+        name = self._fpath.stem
+        chfl_traj_loader = self._get_loader(self._fpath, format=format)
+        chfl_frame = chfl_traj_loader.read()
+        n_atoms = len(chfl_frame.positions)
+        struct = mp.Struct(name)
+        xyz: np.ndarray = chfl_frame.positions.copy()
+        names = []
+        types = []
+        charges = []
+        for atom in chfl_frame.atoms:
+            names.append(atom.name)
+            types.append(atom.type)
+            charges.append(atom.charge)
+        
+        struct.atoms.xyz = xyz
+        struct.atoms.name = names
+        struct.atoms.type = types
+        struct.atoms.charge = charges
+
+        bonds = chfl_frame.topology.bonds
+        struct.topology.add_atoms(names)
+        struct.topology.add_bonds(bonds)
+
+        return struct

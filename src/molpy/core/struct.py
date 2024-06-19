@@ -5,10 +5,16 @@ import numpy as np
 import molpy as mp
 from .topology import Topology
 from .space import Box
-from copy import deepcopy
+from copy import deepcopy, copy
 
 
 class ItemDict(dict[str, np.ndarray]):
+
+    def __deepcopy__(self, memo):
+        new_dict = ItemDict()
+        for key, value in self.items():
+            new_dict[key] = deepcopy(value)
+        return new_dict
 
     def __getattr__(self, alias:str) -> np.ndarray:
         return self[mp.Alias.get(alias).key]
@@ -29,18 +35,28 @@ class ItemDict(dict[str, np.ndarray]):
             else:
                 raise KeyError(f"Key {key} not found in self dict")
             
-    def __len__(self):
-        # return len of first value
-        return len(next(iter(self.values())))
+    @property
+    def size(self):
+        len_values = [len(value) for value in self.values()]
+        assert all([len_value == len_values[0] for len_value in len_values]), ValueError(f"Values have different lengths")
+        if len_values:
+            return len_values[0]
+        else:
+            return 0
 
-
-class Structure(ABC, dict):
+class BaseStructure(dict):
 
     def __init__(
         self,
         name: str = "",
     ):
-        self.name = name
+        super().__init__(
+            name=name
+        )
+
+    @property
+    def name(self) -> str:
+        return self["name"]
 
     @property
     @abstractmethod
@@ -64,7 +80,7 @@ class Structure(ABC, dict):
         ...
 
     @abstractmethod
-    def clone(self) -> "Structure":
+    def clone(self) -> "BaseStructure":
         """
         clone the struct
 
@@ -74,11 +90,11 @@ class Structure(ABC, dict):
         ...
 
     @abstractmethod
-    def __call__(self) -> "Structure":
+    def __call__(self) -> "BaseStructure":
         return self.clone()
 
     @abstractmethod
-    def union(self, other: "Structure") -> "Structure":
+    def union(self, other: "BaseStructure") -> "BaseStructure":
         """
         union two structs and return self
 
@@ -91,19 +107,28 @@ class Structure(ABC, dict):
         ...
 
 
-class Struct(Structure):
+class StructList(BaseStructure):
 
-    def __init__(self, name: str = "", n_atoms: int = 0):
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._structs = []
+
+    @property
+    def n_atoms(self):
+        return sum(struct.n_atoms for struct in self._structs)
+
+
+class Struct(BaseStructure):
+
+    def __init__(self, name: str = ""):
 
         super().__init__(name)
-
-        self._props = {}
         self._atoms = ItemDict()
         self._bonds = ItemDict()
         self._angles = ItemDict()
         self._dihedrals = ItemDict()
 
-        self._topology = Topology(n_atoms, )
+        self._topology = Topology()
 
     def __repr__(self) -> str:
         return f"<Struct {self.name}: {self.n_atoms} atoms>"
@@ -139,23 +164,19 @@ class Struct(Structure):
 
     @property
     def n_atoms(self):
-        return len(self._atoms)
+        return self._atoms.size
 
     @property
     def n_bonds(self):
-        return len(self._bonds)
+        return self._bonds.size
 
     @property
     def n_angles(self):
-        return len(self._angles)
+        return self._angles.size
 
     @property
     def n_dihedrals(self):
-        return len(self._dihedrals)
-    
-    @property
-    def props(self):
-        return super().__getattr__("_props")
+        return self._dihedrals.size
 
     @property
     def atoms(self) -> ItemDict:
@@ -177,9 +198,12 @@ class Struct(Structure):
     def topology(self):
         return self._topology
 
-    def clone(self):
-        struct = Struct()
-        struct.union(self)
+    def clone(self, deep:bool = True):
+        if deep:
+            copy_fn = deepcopy
+        else:
+            copy_fn = copy
+        struct = copy_fn(self)
         return struct
 
     def __call__(self) -> "Struct":
