@@ -1,6 +1,8 @@
 from pathlib import Path
 import molpy as mp
 
+from functools import partial
+
 BOND_TYPE_FIELDS = {
     "harmonic": ["k", "r0"],
 }
@@ -11,7 +13,7 @@ ANGLE_TYPE_FIELDS = {
 }
 
 DIHEDRAL_TYPE_FIELDS = {
-    "charmm": ["k", "n", "delta", 'w'],
+    "charmm": ["k", "n", "delta", "w"],
     "multi/harmonic": ["k1", "k2", "k3", "k4", "n", "delta"],
 }
 
@@ -319,10 +321,9 @@ class LAMMPSForceFieldReader:
 
             if line and line.isalnum:
                 line = line.split()  # Pair Coeffs syntax:
-                type_id = line[0]  # i ...
+                type_id = line[0]    # i ...
                 if type_id.isalpha():
                     break
-                line.insert(0, type_id)  # pair_coeff i j ...
                 self.read_pair_coeff(line)
 
     def read_angle_coeff(self, line):
@@ -414,7 +415,7 @@ class LAMMPSForceFieldReader:
             pairstyle = self.forcefield.pairstyles[0]
             coeffs = line[2:]
 
-        name = str(pairstyle.n_types)
+        name = f"{atomtype_i} {atomtype_j}"
 
         if pairstyle.name in PAIR_TYPE_FIELDS:
             pairstyle.def_pairtype(
@@ -433,7 +434,7 @@ class LAMMPSForceFieldReader:
 
     def read_pair_modify(self, line):
 
-        if line[0] == 'pair':
+        if line[0] == "pair":
             raise NotImplementedError("pair_modify hybrid not implemented")
         else:
             assert self.forcefield.n_pairstyles == 1, ValueError(
@@ -442,9 +443,10 @@ class LAMMPSForceFieldReader:
             pairstyle = self.forcefield.pairstyles[0]
 
             if "modified" in pairstyle.named_params:
-                pairstyle.named_params["modified"] = list(set(pairstyle.named_params["modified"]) | set(line))
+                pairstyle.named_params["modified"] += line
             else:
                 pairstyle.named_params["modified"] = line
+
 
 class LAMMPSForceFieldWriter:
 
@@ -455,34 +457,57 @@ class LAMMPSForceFieldWriter:
 
     @staticmethod
     def _write_styles(lines: list[str], styles, style_type):
-        
+
         if len(styles) == 1:
             style = styles[0]
-            lines.append(
-                f"{style_type}_style {style.name} {' '.join(style.params)}\n"
-            )
+            if len(style.types) == 0:
+                return
+            lines.append(f"# {style_type}_style {style.name} {' '.join(style.params)}\n")
             if "modified" in style.named_params:
                 params = " ".join(style.named_params["modified"])
-                lines.append(
-                    f"{style_type}_modify {params}\n"
-                )
-                
+                lines.append(f"{style_type}_modify {params}\n")
+
             for typ in style.types:
-                params = " ".join(typ.params)
+                params = " ".join(map(str, typ.params))
                 named_params = " ".join(typ.named_params.values())
-                lines.append(
-                    f"{style_type}_coeff {typ.name} {params} {named_params}\n"
-                )
+                lines.append(f"{style_type}_coeff {typ.name} {params} {named_params}\n")
         else:
             style_keywords = " ".join([style.name for style in styles])
             lines.append(f"{style_type}_style hybrid {style_keywords}\n")
             for style in styles:
                 for typ in style.types:
-                    params = " ".join(typ.params)
+                    params = " ".join(map(str, typ.params))
                     named_params = " ".join(typ.named_params.values())
                     lines.append(
                         f"{style_type}_coeff {typ.name} {style.name} {params} {named_params}\n"
-                        )
+                    )
+
+        lines.append("\n")
+
+    @staticmethod
+    def _write_pair_styles(lines: list[str], styles, style_type:str):
+
+        if len(styles) == 1:
+            style = styles[0]
+            lines.append(f"# {style_type}_style {style.name} {' '.join(style.params)}\n")
+            if "modified" in style.named_params:
+                params = " ".join(style.named_params["modified"])
+                lines.append(f"{style_type}_modify {params}\n")
+
+            for typ in style.types:
+                params = " ".join(map(str, typ.params))
+                named_params = " ".join(typ.named_params.values())
+                lines.append(f"{style_type}_coeff {' '.join(map(str, typ.type_idx))} {params} {named_params}\n")
+        else:
+            style_keywords = " ".join([style.name for style in styles])
+            lines.append(f"{style_type}_style hybrid {style_keywords}\n")
+            for style in styles:
+                for typ in style.types:
+                    params = " ".join(map(str, typ.params))
+                    named_params = " ".join(typ.named_params.values())
+                    lines.append(
+                        f"{style_type}_coeff {' '.join(map(str, typ.type_idx))} {style.name} {params} {named_params}\n"
+                    )
 
         lines.append("\n")
 
@@ -492,10 +517,10 @@ class LAMMPSForceFieldWriter:
 
         lines = []
 
-        lines.append(f"units {self.forcefield.unit}\n")
+        # lines.append(f"units {self.forcefield.unit}\n")
         if ff.atomstyles:
             if ff.n_anglestyles == 1:
-                lines.append(f"atom_style {ff.atomstyles[0].name}\n")
+                lines.append(f"# atom_style {ff.atomstyles[0].name}\n")
             else:
                 atomstyles = " ".join([atomstyle.name for atomstyle in ff.atomstyles])
                 lines.append(f"atom_style hybrid {atomstyles}\n")
@@ -506,19 +531,12 @@ class LAMMPSForceFieldWriter:
             for atomtype in atomstyle.types:
                 lines.append(f"mass {atomtype.name} {atomtype.named_params['mass']}\n")
 
-        LAMMPSForceFieldWriter._write_styles(
-            lines, ff.bondstyles, "bond"
-        )
-        LAMMPSForceFieldWriter._write_styles(
-            lines, ff.anglestyles, "angle"
-        )
-        LAMMPSForceFieldWriter._write_styles(
-            lines, ff.dihedralstyles, "dihedral"
-        )
-        LAMMPSForceFieldWriter._write_styles(
-            lines, ff.improperstyles, "improper"
-        )
-        LAMMPSForceFieldWriter._write_styles(lines, ff.pairstyles, "pair")
+        LAMMPSForceFieldWriter._write_styles(lines, ff.bondstyles, "bond")
+        LAMMPSForceFieldWriter._write_styles(lines, ff.anglestyles, "angle")
+        LAMMPSForceFieldWriter._write_styles(lines, ff.dihedralstyles, "dihedral")
+        if ff.n_impropertypes:
+            LAMMPSForceFieldWriter._write_styles(lines, ff.improperstyles, "improper")
+        LAMMPSForceFieldWriter._write_pair_styles(lines, ff.pairstyles, "pair")
 
         lines.append("\n")
 

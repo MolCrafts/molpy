@@ -12,7 +12,7 @@ class Region(ABC):
     
 class Cube(Region):
 
-    def __init__(self, origin, side, name="Cube"):
+    def __init__(self, origin:np.ndarray, side:float, name="Cube"):
         super().__init__(name)
         self.origin = np.array(origin)
         self.side = side

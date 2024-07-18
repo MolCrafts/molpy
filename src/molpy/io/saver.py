@@ -29,7 +29,12 @@ class ChflIO:
         xyz = np.atleast_2d(struct.atoms.xyz)
         types = struct.atoms.type
         for i in range(struct.n_atoms):
-            chfl_frame.add_atom(chfl.Atom(str(i), str(types[i])), xyz[i])
+            atom = chfl.Atom(str(i), str(types[i]))
+            if 'charge' in struct.atoms:
+                atom.charge = struct.atoms.charge[i]
+            if 'mass' in struct.atoms:
+                atom.mass = struct.atoms.mass[i]
+            chfl_frame.add_atom(atom, xyz[i])
         
         bonds = struct.topology.bonds
         for bond in bonds:
@@ -53,9 +58,9 @@ class ChflIO:
             charges.append(atom.charge)
         
         struct.atoms.xyz = xyz
-        struct.atoms.name = names
-        struct.atoms.type = types
-        struct.atoms.charge = charges
+        struct.atoms.name = np.array(names)
+        struct.atoms.type = np.array(types)
+        struct.atoms.charge = np.array(charges)
 
         bonds = chfl_frame.topology.bonds
         struct.topology.add_atoms(names)

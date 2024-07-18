@@ -25,55 +25,55 @@ class AliasEntry:
 
 
 DEFAULT_ALIASES = {
-    "timestep": AliasEntry("timestep", "_ts", int, "fs", "time step"),
-    "step": AliasEntry("step", "_step", int, None, "simulation step"),
-    "name": AliasEntry("name", "_name", str, None, "atomic name"),
-    "n_atoms": AliasEntry("n_atoms", "_n_atoms", int, None, "number of atoms"),
+    "timestep": AliasEntry("timestep", "ts", int, "fs", "time step"),
+    "step": AliasEntry("step", "step", int, None, "simulation step"),
+    "name": AliasEntry("name", "name", str, None, "atomic name"),
+    "n_atoms": AliasEntry("n_atoms", "n_atoms", int, None, "number of atoms"),
     "n_molecules": AliasEntry(
         "n_molecules", "_n_molecules", int, None, "number of molecules"
     ),
-    "xyz": AliasEntry("xyz", "_xyz", np.ndarray, "angstrom", "atomic coordinates"),
-    "R": AliasEntry("xyz", "_xyz", np.ndarray, "angstrom", "atomic coordinates"),
-    "cell": AliasEntry("cell", "_cell", np.ndarray, "angstrom", "unit cell"),
-    "energy": AliasEntry("energy", "_energy", float, "meV", "energy"),
-    "forces": AliasEntry("forces", "_forces", np.ndarray, "eV/angstrom", "forces"),
+    "xyz": AliasEntry("xyz", "xyz", np.ndarray, "angstrom", "atomic coordinates"),
+    "R": AliasEntry("xyz", "xyz", np.ndarray, "angstrom", "atomic coordinates"),
+    "cell": AliasEntry("cell", "cell", np.ndarray, "angstrom", "unit cell"),
+    "energy": AliasEntry("energy", "energy", float, "meV", "energy"),
+    "forces": AliasEntry("forces", "forces", np.ndarray, "eV/angstrom", "forces"),
     "momenta": AliasEntry(
         "momenta", "_momenta", np.ndarray, "eV*fs/angstrom", "momenta"
     ),
-    "charge": AliasEntry("charge", "_charge", float, "C", "charge"),
-    "mass": AliasEntry("mass", "_mass", float, None, ""),
-    "stress": AliasEntry("stress", "_stress", np.ndarray, "GPa", "stress"),
-    "idx": AliasEntry("idx", "_idx", int, None, ""),
-    "molid": AliasEntry("mol", "_molid", int, None, "molecule index"),
-    "Z": AliasEntry("Z", "_atomic_numbers", int, None, "nuclear charge"),
-    "type": AliasEntry("type", "_type", str, None, "general type"),
+    "charge": AliasEntry("charge", "charge", float, "C", "charge"),
+    "mass": AliasEntry("mass", "mass", float, None, ""),
+    "stress": AliasEntry("stress", "stress", np.ndarray, "GPa", "stress"),
+    "idx": AliasEntry("idx", "idx", int, None, ""),
+    "molid": AliasEntry("mol", "molid", int, None, "molecule index"),
+    "Z": AliasEntry("Z", "atomic_numbers", int, None, "nuclear charge"),
+    "type": AliasEntry("type", "type", str, None, "general type"),
     "vdw_radius": AliasEntry(
-        "vdw_radius", "_vdw_radius", float, "angstrom", "van der Waals radius"
+        "vdw_radius", "vdw_radius", float, "angstrom", "van der Waals radius"
     ),
-    "idx_m": AliasEntry("idx_m", "_idx_m", int, None, "indices of systems"),
-    "idx_i": AliasEntry("idx_i", "_idx_i", int, None, "indices of center atoms"),
-    "idx_j": AliasEntry("idx_j", "_idx_j", int, None, "indices of neighboring atoms"),
+    "idx_m": AliasEntry("idx_m", "idx_m", int, None, "indices of systems"),
+    "idx_i": AliasEntry("idx_i", "idx_i", int, None, "indices of center atoms"),
+    "idx_j": AliasEntry("idx_j", "idx_j", int, None, "indices of neighboring atoms"),
     "angle_i": AliasEntry(
-        "angle_i", "_angle_i", int, None, "indices of center atoms for angles"
+        "angle_i", "angle_i", int, None, "indices of center atoms for angles"
     ),
     "angle_j": AliasEntry(
-        "angle_j", "_angle_j", int, None, "indices of neighboring atoms for angles"
+        "angle_j", "angle_j", int, None, "indices of neighboring atoms for angles"
     ),
     "angle_k": AliasEntry(
-        "angle_k", "_angle_k", int, None, "indices of neighboring atoms for angles"
+        "angle_k", "angle_k", int, None, "indices of neighboring atoms for angles"
     ),
     "bond_i": AliasEntry(
-        "bond_i", "_bond_i", int, None, "indices of center atoms for bonds"
+        "bond_i", "bond_i", int, None, "indices of center atoms for bonds"
     ),
     "bond_j": AliasEntry(
-        "bond_j", "_bond_j", int, None, "indices of neighboring atoms for bonds"
+        "bond_j", "bond_j", int, None, "indices of neighboring atoms for bonds"
     ),
     "idx_i_lr": AliasEntry(
-        "idx_i_lr", "_idx_i_lr", int, None, "indices of center atoms for # long-range"
+        "idx_i_lr", "idx_i_lr", int, None, "indices of center atoms for # long-range"
     ),
     "idx_j_lr": AliasEntry(
         "idx_j_lr",
-        "_idx_j_lr",
+        "idx_j_lr",
         int,
         None,
         "indices of neighboring atoms for # long-range",
@@ -81,7 +81,7 @@ DEFAULT_ALIASES = {
     "offsets": AliasEntry("offsets", "_offsets", int, None, "cell offset vectors"),
     "Rij": AliasEntry(
         "Rij",
-        "_Rij",
+        "Rij",
         np.ndarray,
         "angstrom",
         "vectors pointing from center atoms to neighboring atoms",
@@ -93,22 +93,22 @@ DEFAULT_ALIASES = {
         "angstrom",
         "distances between center atoms and neighboring atoms",
     ),
-    "pbc": AliasEntry("pbc", "_pbc", np.ndarray, None, "periodic boundary conditions"),
+    "pbc": AliasEntry("pbc", "pbc", np.ndarray, None, "periodic boundary conditions"),
     "dipole_moment": AliasEntry(
-        "dipole_moment", "_dipole_moment", np.ndarray, "e*bohr", "dipole moment"
+        "dipole_moment", "dipole_moment", np.ndarray, "e*bohr", "dipole moment"
     ),
     "partial_charges": AliasEntry(
-        "partial_charges", "_partial_charges", np.ndarray, "e", "partial charges"
+        "partial_charges", "partial_charges", np.ndarray, "e", "partial charges"
     ),
     "polarizability": AliasEntry(
-        "polarizability", "_polarizability", np.ndarray, "angstrom^3", "polarizability"
+        "polarizability", "polarizability", np.ndarray, "angstrom^3", "polarizability"
     ),
-    "element": AliasEntry("element", "_element", str, None, "element symbol"),
-    "atomtype": AliasEntry("atomtype", "_atomtype", str, None, "atom type"),
-    "bondtype": AliasEntry("bondtype", "_bondtype", str, None, "bond type"),
-    "angletype": AliasEntry("angletype", "_angletype", str, None, "angle type"),
-    "dihedraltype": AliasEntry("dihedraltype", "_dihedraltype", str, None, "dihedral type"),
-    "impropertype": AliasEntry("impropertype", "_impropertype", str, None, "improper type"),
+    "element": AliasEntry("element", "element", str, None, "element symbol"),
+    "atomtype": AliasEntry("atomtype", "atomtype", str, None, "atom type"),
+    "bondtype": AliasEntry("bondtype", "bondtype", str, None, "bond type"),
+    "angletype": AliasEntry("angletype", "angletype", str, None, "angle type"),
+    "dihedraltype": AliasEntry("dihedraltype", "dihedraltype", str, None, "dihedral type"),
+    "impropertype": AliasEntry("impropertype", "impropertype", str, None, "improper type"),
 }
 
 

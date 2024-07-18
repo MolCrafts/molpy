@@ -59,8 +59,8 @@ class Type:
             "type_idx must be a tuple of integers or None(to be defined later)"
         )
         self.name = name
-
         self.type_idx = type_idx
+        self.style = None
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}: {self.name}>"
@@ -76,6 +76,7 @@ class AtomStyle(Style):
 
     def def_atomtype(self, name: str, type_idx: int, *params, **named_params: dict):
         at = AtomType(name, type_idx, *params, **named_params)
+        at.style = self
         self.types.append(at)
         return at
 
@@ -281,7 +282,9 @@ class PairStyle(Style):
     def def_pairtype(
         self, name: str, idx_i: int | None, idx_j: int | None, *params, **named_params
     ):
-        self.types.append(PairType(name, idx_i, idx_j, *params, **named_params))
+        ptype = PairType(name, idx_i, idx_j, *params, **named_params)
+        ptype.style = self
+        self.types.append(ptype)
 
     def get_pairtype_params(self, key: str):
         idx_i = []
@@ -318,11 +321,11 @@ class PairStyle(Style):
 
 class ForceField:
 
-    def __init__(self, name:str=""):
+    def __init__(self, name:str="", unit:str=""):
 
         self.name = name
 
-        self.unit = ""
+        self.unit = unit
         self.atomstyles = []
         self.bondstyles = []
         self.pairstyles = []
@@ -386,6 +389,13 @@ class ForceField:
         improperstyle = ImproperStyle(style, *params, **named_params)
         self.improperstyles.append(improperstyle)
         return improperstyle
+    
+    def get_atomtype(self, name: str):
+        for atomstyle in self.atomstyles:
+            for atomtype in atomstyle.types:
+                if atomtype.name == name:
+                    return atomtype
+        return None
 
     def get_pairstyle(self, style: str):
         for pairstyle in self.pairstyles:

@@ -41,4 +41,13 @@ class AmberTool(Parameterizer):
         subprocess.run(f"acpype -i {filename} {args}", shell=True, cwd=self.work_dir, check=True)
         subprocess.run(f'intermol-convert --amb_in {name}_AC.prmtop {name}_AC.inpcrd --lammps', shell=True, cwd=self.work_dir/f"{name}.acpype")
 
-        return self.work_dir/f"{name}.acpype"
+        return self.load_struct(name)
+    
+    def load_struct(self, name, format='pdb'):
+
+        return mp.io.load_struct(self.work_dir/f"{name}.acpype"/f"{name}.{format}")
+    
+    def load_forcefield(self, name, format='lammps'):
+        path = [self.work_dir/f"{name}.acpype"/f"{name}_converted.input", self.work_dir/f"{name}.acpype"/f"{name}_converted.lmp"]
+        return mp.io.load_forcefield(path, format=format)
+

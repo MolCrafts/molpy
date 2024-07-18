@@ -38,3 +38,8 @@ def load_struct(fpath: str | Path, format: str = "") -> mp.Struct:
 
     kernel = ChflIO(fpath)
     return kernel.load_struct(format)
+
+def save_forcefield(fpath: str | Path, forcefield: mp.ForceField, format: str = ""):
+
+    from .forcefield.lammps import LAMMPSForceFieldWriter
+    return LAMMPSForceFieldWriter(fpath, forcefield).write()

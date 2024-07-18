@@ -22,11 +22,16 @@ class ItemDict(dict[str, np.ndarray]):
     def __setattr__(self, alias:str, value:np.ndarray) -> None:
         self[mp.Alias.get(alias).key] = value
 
-    # def __getitem__(self, key: str) -> np.ndarray:
-    #     return super().__getitem__(mp.Alias.get(key).key)
+    def __getitem__(self, key: str|int) -> np.ndarray:
+        if isinstance(key, int):
+            return {k: v for k, v in self.items()}
+        return super().__getitem__(mp.Alias.get(key).key)
     
-    # def __setitem__(self, key: str, value: np.ndarray) -> None:
-    #     super().__setitem__(mp.Alias.get(key).key, value)
+    def __setitem__(self, key: str|int, value: np.ndarray|dict) -> None:
+        if isinstance(key, int):
+            for key_, value_ in value.items():
+                self[mp.Alias.get(key_).key] = value_
+        super().__setitem__(mp.Alias.get(key).key, value)
 
     def concat(self, other):
         for key, value in other.items():
