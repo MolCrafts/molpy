@@ -34,7 +34,7 @@ class TestTopology:
 
     def test_get_connect(self, topo):
 
-        bond_idx = topo.get_bonds()
+        bond_idx = topo.bonds
         npt.assert_equal(bond_idx, np.array([[0, 1], [0, 2]]))
 
         # angle_idx = topo.get_angles()

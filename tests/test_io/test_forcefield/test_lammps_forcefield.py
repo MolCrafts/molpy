@@ -6,7 +6,7 @@ class TestLammpsForceField:
     @pytest.fixture(scope='class')
     def forcefield(self, test_data_path):
         path = test_data_path / 'forcefield/lammps/'
-        return mp.load_forcefield(path / 'peptide.in', 'lammps', [path / 'peptide.data']).load()
+        return mp.io.load_forcefield(path / 'peptide.in', path / 'peptide.data', format='lammps')
     
     def test_styles(self, forcefield):
         
@@ -43,7 +43,7 @@ class TestLammpsForceField:
         assert atom_types[0]['mass'] == 12.011
         assert atom_types[1]['mass'] == 12.011
 
-        assert atom_types.mass.shape == (14,)
+        assert len(atom_types) == 14
 
     def test_bond_types(self, forcefield):
 
@@ -59,12 +59,13 @@ class TestLammpsForceField:
     def test_dihedral_types(self, forcefield):
 
         dihedral_types = forcefield.dihedralstyles[0].types
-        assert dihedral_types[0]['k1'] == 0.000000
+        assert dihedral_types[0]['k'] == 0.200000
 
     def test_improper_types(self, forcefield):
 
         improper_types = forcefield.improperstyles[0].types
-        assert improper_types[0]['k'] == 10.500000
+        assert improper_types[0]['k'] == 120.000000
+        assert improper_types[1]['k'] == 20.000000
 
     def test_pair_types(self, forcefield):
 

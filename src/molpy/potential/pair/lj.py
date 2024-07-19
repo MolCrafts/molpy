@@ -6,6 +6,7 @@
 import numpy as np
 import molpy as mp
 from molpy.potential.base import Potential
+from molpy.core.space import Free
 
 def segment_sum(data, segment_ids, dim_size):
     data = np.asarray(data)
@@ -38,40 +39,28 @@ class LJ126(Potential):
         self.sigma = sigma
         self.cutoff = cutoff
 
-    def energy(self, R, atomtype, idx_i, idx_j, offset):
-        """
-        compute energy of pair potential
+    def forward(self, frame, output):
 
-        Args:
-            rij (np.ndarray (n_pairs, dim)): displacement vectors
+        box = getattr(frame, "box", Free())
 
-        Returns:
-            nd.ndarray (n_pairs, 1): pair energy
-        """
-        r_ij = R[idx_j] - R[idx_i] + offset
-        eps = self.epsilon[atomtype[idx_i], atomtype[idx_j]]
-        sigma = self.sigma[atomtype[idx_i], atomtype[idx_j]]
+        xyz = frame.atoms['xyz']
+        pairs = frame.topology.pairs
+        idx_i = pairs[:, 0]
+        idx_j = pairs[:, 1]
+        type_i = frame.atoms['atomtype'][idx_i]
+        type_j = frame.atoms['atomtype'][idx_j]
 
-        d_ij = np.linalg.norm(r_ij, axis=-1, keepdims=True)
-        cutoff_mask = d_ij < self.cutoff
-        energy = LJ126.F(d_ij, eps, sigma)
-        return energy * cutoff_mask
-    
-    def forces(self, R, atomtype, idx_i, idx_j, offset):
-        """
-        compute forces of pair potential
+        dr = box.diff(xyz[idx_j], xyz[idx_i])
+        cutoff_mask = dr < self.cutoff
+        r = np.linalg.norm(dr, axis=-1)[cutoff_mask]
 
-        Args:
-            rij (np.ndarray (n_paris, dim)): displacement vectors
+        eps = self.epsilon[type_i, type_j]
+        sig = self.sigma[type_i, type_j]
 
-        Returns:
-            np.ndarray (n_pairs, dim): pair forces
-        """
-        r_ij = R[idx_j] - R[idx_i] + offset
-        eps = self.epsilon[atomtype[idx_i], atomtype[idx_j]]
-        sigma = self.sigma[atomtype[idx_i], atomtype[idx_j]]
+        energy = LJ126.E(r, eps, sig)
+        output['lj126_energy'] = segment_sum(energy, idx_i, frame.n_atoms)
+        output['per_atom_lj126_energy'] = energy / 2
+        output['lj126_force'] = np.zeros((frame.n_atoms, 3))
+        output['lj126_force'][idx_i] = LJ126.F(r, eps, sig)
 
-        d_ij = np.linalg.norm(r_ij, axis=-1, keepdims=True)
-        cutoff_mask = d_ij < self.cutoff
-
-        return LJ126.F(d_ij, eps, sigma) * cutoff_mask
+        return frame, output

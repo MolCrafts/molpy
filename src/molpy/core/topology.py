@@ -118,5 +118,5 @@ class Topology:
         self._graph.simplify()
 
     def union(self, other: "Topology"):
-        self._graph.union(other.graph)
+        self._graph += other.graph
         return self

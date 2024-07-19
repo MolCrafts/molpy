@@ -19,7 +19,7 @@ class TestStyle:
 
         style = Style(mp.potential.bond.Harmonic)
 
-        assert style.name == ""
+        assert style.name == "harmonic"
 
 
 class TestForceField:
@@ -66,39 +66,3 @@ class TestForceField:
             theta0,
             expected_theta0
         )
-
-    def test_calc_bond(self, ff: mp.ForceField):
-
-        struct = mp.builder.SPCE().to_struct()
-        struct, output = ff.calc_bond(struct)
-        npt.assert_allclose(output["harmonic_bond_energy"], 0.15251310)
-
-    def test_calc_struct(self, ff: mp.ForceField):
-
-        struct = mp.builder.SPCE().to_struct()
-        struct, output = ff.calc_struct(struct)
-        assert output
-
-    def test_get_calculator(self, ff: mp.ForceField):
-
-        struct = mp.builder.SPCE().to_struct()
-        calculator = ff.get_calculator()
-        assert calculator
-        struct, output = calculator(struct)
-        assert output
-
-    # def test_pair(self, ff:mp.ForceField):
-
-    #     pairstyle = ff.def_pairstyle("lj/cut/coul/cut", global_cutoff=10.0, mixing="arithmetic")
-    #     pairstyle.def_pairtype("O-O", 0, 0, epsilon=0.1553, sigma=3.1506)
-    #     pairstyle.def_pairtype("O-H", 0, 1, epsilon=0.0, sigma=1.0)
-    #     pairstyle.def_pairtype("H-H", 1, 1, epsilon=0.0, sigma=1.0)
-
-    #     npt.assert_allclose(
-    #         pairstyle.get_pairtype_params("epsilon"),
-    #         np.array([[0.1553, 0.0], [0.0, 0.0]]),
-    #     )
-    #     npt.assert_allclose(
-    #         pairstyle.get_pairtype_params("sigma"),
-    #         np.array([[3.1506, 1.0], [1.0, 1.0]]),
-    #     )

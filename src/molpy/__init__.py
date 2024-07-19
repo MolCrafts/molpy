@@ -1,6 +1,7 @@
-from ._alias import Alias
-from ._elem import Element
-from ._units import Unit
+from .utils import alias
+from .utils.alias import Alias
+from .utils.elem import Element
+from .utils.unit import Unit
 
 from . import core
 from .core import (
@@ -12,7 +13,6 @@ from .core import (
     DihedralStyle,
     Topology,
     Frame,
-    Struct,
     space,
     Box,
     Boundary,
@@ -20,7 +20,8 @@ from .core import (
     OrthogonalBox,
     RestrictTriclinicBox,
     GeneralTriclinicBox,
-    Region
+    Region,
+    Trajectory
 )
 
 from .core import neighborlist as nblist
@@ -33,11 +34,3 @@ from .potential import (
 )
 
 from . import builder
-from .builder import parameterizer
-from .builder.presets import SPCE
-from .builder import (
-    Atom,
-    Bond,
-    Angle,
-    DynamicStruct,
-)

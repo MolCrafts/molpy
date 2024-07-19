@@ -1,44 +1,18 @@
-from abc import ABC, abstractmethod
-from typing import Collection, TypeVar, Any
+from typing import Collection
 
 import numpy as np
-import molpy as mp
 from .topology import Topology
-from .space import Box
 from copy import deepcopy, copy
 
 
-class ItemDict(dict[str, np.ndarray]):
-
-    def __deepcopy__(self, memo):
-        new_dict = ItemDict()
-        for key, value in self.items():
-            new_dict[key] = deepcopy(value)
-        return new_dict
-
-    def __getattr__(self, alias:str) -> np.ndarray:
-        return self[mp.Alias.get(alias).key]
-    
-    def __setattr__(self, alias:str, value:np.ndarray) -> None:
-        self[mp.Alias.get(alias).key] = value
-
-    def __getitem__(self, key: str|int) -> np.ndarray:
-        if isinstance(key, int):
-            return {k: v for k, v in self.items()}
-        return super().__getitem__(mp.Alias.get(key).key)
-    
-    def __setitem__(self, key: str|int, value: np.ndarray|dict) -> None:
-        if isinstance(key, int):
-            for key_, value_ in value.items():
-                self[mp.Alias.get(key_).key] = value_
-        super().__setitem__(mp.Alias.get(key).key, value)
+class ArrayDict(dict[str, np.ndarray]):
 
     def concat(self, other):
         for key, value in other.items():
             if key in self:
                 self[key] = np.concatenate([self[key], value])
             else:
-                raise KeyError(f"Key {key} not found in self dict")
+                self[key] = value
             
     @property
     def size(self):
@@ -49,89 +23,16 @@ class ItemDict(dict[str, np.ndarray]):
         else:
             return 0
 
-class BaseStructure(dict):
-
-    def __init__(
-        self,
-        name: str = "",
-    ):
-        super().__init__(
-            name=name
-        )
-
-    @property
-    def name(self) -> str:
-        return self["name"]
-
-    @property
-    @abstractmethod
-    def n_atoms(self) -> int:
-        """
-        return the number of atoms in the struct
-
-        Returns:
-            int: the number of atoms
-        """
-        ...
-
-    @property
-    @abstractmethod
-    def atoms(self):
-        """
-        return the atoms in the struct
-
-        Returns:
-        """
-        ...
-
-    @abstractmethod
-    def clone(self) -> "BaseStructure":
-        """
-        clone the struct
-
-        Returns:
-            Structure: a new struct
-        """
-        ...
-
-    @abstractmethod
-    def __call__(self) -> "BaseStructure":
-        return self.clone()
-
-    @abstractmethod
-    def union(self, other: "BaseStructure") -> "BaseStructure":
-        """
-        union two structs and return self
-
-        Args:
-            other (Structure): the other struct
-
-        Returns:
-            Structure: this struct
-        """
-        ...
-
-
-class StructList(BaseStructure):
-
-    def __init__(self, name: str = ""):
-        super().__init__(name)
-        self._structs = []
-
-    @property
-    def n_atoms(self):
-        return sum(struct.n_atoms for struct in self._structs)
-
-
-class Struct(BaseStructure):
+class Struct:
 
     def __init__(self, name: str = ""):
 
-        super().__init__(name)
-        self._atoms = ItemDict()
-        self._bonds = ItemDict()
-        self._angles = ItemDict()
-        self._dihedrals = ItemDict()
+        self.name = name
+
+        self._atoms = ArrayDict()
+        self._bonds = ArrayDict()
+        self._angles = ArrayDict()
+        self._dihedrals = ArrayDict()
 
         self._topology = Topology()
 
@@ -184,7 +85,7 @@ class Struct(BaseStructure):
         return self._dihedrals.size
 
     @property
-    def atoms(self) -> ItemDict:
+    def atoms(self) -> ArrayDict:
         return self._atoms
 
     @property

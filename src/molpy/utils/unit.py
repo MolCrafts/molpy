@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pint import UnitRegistry
-from ._utils import Singleton
+from .singleton import Singleton
 
 class _Constants(metaclass=Singleton):
 

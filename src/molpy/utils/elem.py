@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from ._utils import Singleton
+from .singleton import Singleton
 
 __all__ = ["Element"]
 

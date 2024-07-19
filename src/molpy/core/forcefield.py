@@ -1,11 +1,7 @@
 import numpy as np
 from typing import Literal
 from functools import reduce
-import molpy as mp
-from molpy.core.space import Box
-from molpy.core.struct import Struct
 from molpy.potential.base import Potential
-from pathlib import Path
 from typing import Iterable
 
 
@@ -39,12 +35,12 @@ class Style:
     def get_param(self, key: str):
         raise NotImplementedError("get_param method must be implemented")
 
-    def calc_struct(self, struct: Struct, output: dict):
+    # def calc_struct(self, struct: Struct, output: dict):
 
-        if self.calculator is None:
-            raise ValueError("style must be a subclass of Potential")
+    #     if self.calculator is None:
+    #         raise ValueError("style must be a subclass of Potential")
 
-        return self.calculator(struct, output, **self.params)
+    #     return self.calculator(struct, output, **self.params)
 
 
 class Type:
@@ -64,6 +60,9 @@ class Type:
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}: {self.name}>"
+    
+    def __getitem__(self, key: str):
+        return self.named_params[key]
 
 
 class AtomType(Type):
@@ -190,10 +189,10 @@ class AngleStyle(Style):
 
     def def_angletype(
         self,
+        name: str = "",
         idx_i: int | None = None,
         idx_j: int | None = None,
         idx_k: int | None = None,
-        name: str = "",
         *params,
         **named_params,
     ):
@@ -558,17 +557,17 @@ class ForceField:
         for ff in forcefields:
             self.append(ff)
 
-    def calc_struct(self, struct: Struct, output: dict = {}) -> dict:
+    # def calc_struct(self, struct: Struct, output: dict = {}) -> dict:
 
-        struct, output = self.calc_bond(struct, output)
-        return struct, output
+    #     struct, output = self.calc_bond(struct, output)
+    #     return struct, output
 
-    def calc_bond(self, struct, output: dict = {}):
+    # def calc_bond(self, struct, output: dict = {}):
 
-        for bs in self.bondstyles:
-            struct, output = bs.calc_struct(struct, output)
+    #     for bs in self.bondstyles:
+    #         struct, output = bs.calc_struct(struct, output)
 
-        return struct, output
+    #     return struct, output
 
     # def get_calculator(self):
 

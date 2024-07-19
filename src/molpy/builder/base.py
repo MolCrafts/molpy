@@ -1,24 +1,10 @@
 import numpy as np
-from molpy import Alias
 from typing import Any, Collection
-import molpy as mp
-from molpy.core.struct import BaseStructure, Struct
 from molpy.core.topology import Topology
-
+from molpy.core.struct import Struct
 
 class Item(dict[str, Any]):
-
-    def __getattr__(self, alias: str) -> Any:
-        return self[Alias.get(alias).key]
-
-    def __setattr__(self, alias: str, value: Any) -> None:
-        self[Alias.get(alias).key] = value
-
-    # def __getitem__(self, key: str) -> Any:
-    #     return super().__getitem__(key)
-
-    # def __setitem__(self, key: str, value: Any) -> None:
-    #     return super().__setitem__(key, value)
+    pass
 
 
 class ItemList(list[Item]):
@@ -56,8 +42,8 @@ class Bond(Item):
 
         super().__init__(**props)
 
-        super(Item, self).__setattr__("itom", itom)
-        super(Item, self).__setattr__("jtom", jtom)
+        self.itom = itom
+        self.jtom = jtom
 
     def __repr__(self):
 
@@ -69,20 +55,18 @@ class Angle(Item):
 
         super().__init__(**props)
 
-        super(Item, self).__setattr__("itom", itom)
-        super(Item, self).__setattr__("jtom", jtom)
-        super(Item, self).__setattr__("ktom", ktom)
+        self.itom = itom
+        self.jtom = jtom
+        self.ktom = ktom
 
     def __repr__(self):
 
         return f"<Angle: {super().__repr__()}>"
 
 
-class DynamicStruct(BaseStructure):
+class DynamicStruct:
 
     def __init__(self, n_atoms: int = 0, name:str="", *args, **kwargs):
-
-        super().__init__(name)
 
         self._atoms: ItemList[Atom] = ItemList()
         self._bonds = ItemList()

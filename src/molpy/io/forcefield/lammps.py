@@ -265,14 +265,14 @@ class LAMMPSForceFieldReader:
 
         if bondstyle.name in BOND_TYPE_FIELDS:
             named_params = {
-                k: v for k, v in zip(BOND_TYPE_FIELDS[bondstyle.name], coeffs)
+                k: float(v) for k, v in zip(BOND_TYPE_FIELDS[bondstyle.name], coeffs)
             }
             bondstyle.def_bondtype(
                 name=bond_type_id,
-                **named_params,
+                **{k: float(v) for k, v in named_params.items()},
             )
         else:
-            params = [v for v in coeffs]
+            params = [float(v) for v in coeffs]
             bondstyle.def_bondtype(
                 name=bond_type_id,
                 *params,
@@ -334,14 +334,14 @@ class LAMMPSForceFieldReader:
             anglestyle = self.forcefield.get_anglestyle(line[1])
             coeffs = line[2:]
         else:
-            anglestyle = self.forcefield.bondstyles[0]
+            anglestyle = self.forcefield.anglestyles[0]
             coeffs = line[1:]
 
         if anglestyle.name in ANGLE_TYPE_FIELDS:
 
             anglestyle.def_angletype(
                 name=angle_type_id,
-                **{k: v for k, v in zip(ANGLE_TYPE_FIELDS[anglestyle.name], coeffs)},
+                **{k: float(v) for k, v in zip(ANGLE_TYPE_FIELDS[anglestyle.name], coeffs)},
             )
         else:
             anglestyle.def_angletype(
@@ -354,18 +354,18 @@ class LAMMPSForceFieldReader:
         dihedral_type_id = line[0]
 
         if line[1].isdigit():  # hybrid
-            dihedralstyle = self.forcefield.dihedralstyles[0]
-            coeffs = line[1:]
-        else:
             dihedralstyle = self.forcefield.get_dihedralstyle(line[1])
             coeffs = line[2:]
+        else:
+            dihedralstyle = self.forcefield.dihedralstyles[0]
+            coeffs = line[1:]
 
         if dihedralstyle.name in DIHEDRAL_TYPE_FIELDS:
 
             dihedralstyle.def_dihedraltype(
                 name=dihedral_type_id,
                 **{
-                    k: v
+                    k: float(v)
                     for k, v in zip(DIHEDRAL_TYPE_FIELDS[dihedralstyle.name], coeffs)
                 },
             )
@@ -392,7 +392,7 @@ class LAMMPSForceFieldReader:
             improperstyle.def_impropertype(
                 improper_type_id,
                 **{
-                    k: v
+                    k: float(v)
                     for k, v in zip(IMPROPER_TYPE_FIELDS[improperstyle.name], coeffs)
                 },
             )
@@ -404,8 +404,7 @@ class LAMMPSForceFieldReader:
 
     def read_pair_coeff(self, line):
 
-        atomtype_i = int(line[0])
-        atomtype_j = int(line[1])
+        atomtype_i = atomtype_j = int(line[0])
 
         if len(self.forcefield.pairstyles) > 1:
             pairstyle = self.forcefield.get_pairstyle(line[2])
