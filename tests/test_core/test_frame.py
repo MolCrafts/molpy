@@ -29,5 +29,3 @@ class TestFrame:
         frame.merge(li_ion2)
 
         assert frame.n_atoms == 15 * 2 + 2
-        assert frame.topology.n_bonds == 14 * 2
-        print(frame.topology.bonds)

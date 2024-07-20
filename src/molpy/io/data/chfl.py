@@ -98,8 +98,7 @@ class ChflIO:
             frame.atoms['molid'] = molid
 
         bonds = chfl_frame.topology.bonds
-        frame.topology.add_atoms(names)
-        frame.topology.add_bonds(bonds)
+        frame.bonds['bond_idx'] = bonds
 
         return frame
     

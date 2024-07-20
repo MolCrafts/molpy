@@ -21,8 +21,6 @@ class Frame:
         self._dihedrals = ArrayDict()
         self._paris = ArrayDict()
 
-        self._topology = Topology()
-
         self._box = Free()
 
     def __repr__(self) -> str:
@@ -54,7 +52,6 @@ class Frame:
         self._bonds.concat(other.bonds)
         self._angles.concat(other.angles)
         self._dihedrals.concat(other.dihedrals)
-        self._topology.union(other.topology)
         return self
     
     def merge(self, frame: "Frame") -> "Frame":
@@ -71,7 +68,6 @@ class Frame:
         self._bonds.concat(frame.bonds)
         self._angles.concat(frame.angles)
         self._dihedrals.concat(frame.dihedrals)
-        self._topology.union(frame.topology)
         return self
 
     @property
@@ -105,10 +101,6 @@ class Frame:
     @property
     def dihedrals(self):
         return self._dihedrals
-    
-    @property
-    def topology(self):
-        return self._topology
 
     def copy(self):
         return deepcopy(self)
