@@ -11,7 +11,7 @@ description = "Fundamental package for computational chemistry in Python"
 
 readme = "README.md"
 
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 
 classifiers = [
     "License :: OSI Approved :: BSD License",
@@ -52,7 +52,11 @@ Homepage = "https://github.com/MolCrafts/molpy"
 Issues = "https://github.com/MolCrafts/molpy/issues"
 
 [build-system]
-requires = [
-    "setuptools",
-]
-build-backend = "setuptools.build_meta"
+requires = ["scikit-build-core", "pybind11"]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+logging.level = "DEBUG"
+cmake.verbose = "True"
+cmake.source-dir = "molcpp"
+cmake.args = ["--preset=python"]

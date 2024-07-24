@@ -1,0 +1,3 @@
+[submodule "molcpp"]
+	path = molcpp
+	url = https://github.com/MolCrafts/molcpp
