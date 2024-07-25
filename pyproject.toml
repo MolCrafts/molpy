@@ -52,11 +52,10 @@ Homepage = "https://github.com/MolCrafts/molpy"
 Issues = "https://github.com/MolCrafts/molpy/issues"
 
 [build-system]
-requires = ["scikit-build-core", "pybind11"]
-build-backend = "scikit_build_core.build"
-
-[tool.scikit-build]
-logging.level = "DEBUG"
-cmake.verbose = "True"
-cmake.source-dir = "molcpp"
-cmake.args = ["--preset=python"]
+requires = [
+    "setuptools>=42",
+    "wheel",
+    "ninja",
+    "numpy",
+]
+build-backend = "setuptools.build_meta"
