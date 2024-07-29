@@ -67,25 +67,6 @@ class TestForceField:
             expected_theta0
         )
 
-    def test_calc_bond(self, ff: mp.ForceField):
-
-        struct = mp.builder.SPCE().to_struct()
-        struct, output = ff.calc_bond(struct)
-        npt.assert_allclose(output["harmonic_bond_energy"], 0.15251310)
-
-    def test_calc_struct(self, ff: mp.ForceField):
-
-        struct = mp.builder.SPCE().to_struct()
-        struct, output = ff.calc_struct(struct)
-        assert output
-
-    def test_get_calculator(self, ff: mp.ForceField):
-
-        struct = mp.builder.SPCE().to_struct()
-        calculator = ff.get_calculator()
-        assert calculator
-        struct, output = calculator(struct)
-        assert output
 
     # def test_pair(self, ff:mp.ForceField):
 

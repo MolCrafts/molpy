@@ -1,10 +1,7 @@
 import numpy as np
 from typing import Literal
 from functools import reduce
-import molpy as mp
-from molpy.core.space import Box
 from molpy.core.struct import Struct
-from molpy.potential.base import Potential
 from pathlib import Path
 from typing import Iterable
 
@@ -13,7 +10,7 @@ class Style:
 
     def __init__(
         self,
-        style: str | type[Potential],
+        style: str,
         mixing=Literal["geometry", "arithmetic"] | None,
         *params,
         **named_params,
@@ -23,9 +20,6 @@ class Style:
         if isinstance(style, str):
             self.name = style
             self.calculator = None
-        elif issubclass(style, Potential):
-            self.name = style.name
-            self.calculator = style(**named_params)
         self.types: list[Type] = []
         self.mixing = mixing
 
@@ -36,15 +30,8 @@ class Style:
     def n_types(self):
         return len(self.types)
 
-    def get_param(self, key: str):
-        raise NotImplementedError("get_param method must be implemented")
-
-    def calc_struct(self, struct: Struct, output: dict):
-
-        if self.calculator is None:
-            raise ValueError("style must be a subclass of Potential")
-
-        return self.calculator(struct, output, **self.params)
+    def get_params(self):
+        raise NotImplementedError("get_params method must be implemented")
 
 
 class Type:
@@ -127,21 +114,29 @@ class BondStyle(Style):
         self.types.append(BondType(name, idx_i, idx_j, *params, **named_params))
         return self.types[-1]
 
-    def get_param(self, key: str):
+    def get_params(self):
 
-        types = []
-        params = []
+        index = []
+        params = {}
+
         for type_ in self.types:
-            types.append(type_.type_idx)
-            params.append(type_[key])
+            index.append(type_.type_idx)
+            for k, v in type_.named_params.items():
+                if k not in params:
+                    params[k] = []
+                params[k].append(v)
 
-        n_types = np.max(types) + 1
-        param_arr = np.zeros([n_types, n_types], dtype=float)
-        for type_, param in zip(types, params):
-            param_arr[type_[0], type_[1]] = param
-            param_arr[type_[1], type_[0]] = param
+        index = np.array(index)
+        n_types = index.max() + 1
+        flatten_params = {}
+        for key in params:
+            param_arr = np.zeros((n_types, n_types))
+            param_arr[index[:, 0], index[:, 1]] = params[key]
+            param_arr[index[:, 1], index[:, 0]] = params[key]
+            flatten_params[key] = param_arr
 
-        return param_arr
+        return flatten_params
+            
 
 
 class AngleType(Type):
@@ -275,6 +270,14 @@ class PairType(Type):
     def __init__(self, id, i, j, *params, **named_params):
         super().__init__(id, (i, j), *params, **named_params)
 
+    @property
+    def idx_i(self):
+        return self.type_idx[0]
+    
+    @property
+    def idx_j(self):
+        return self.type_idx[1]
+
 
 class PairStyle(Style):
 
@@ -283,37 +286,38 @@ class PairStyle(Style):
     ):
         self.types.append(PairType(name, idx_i, idx_j, *params, **named_params))
 
-    def get_pairtype_params(self, key: str):
+    def get_params(self):
+
         idx_i = []
         idx_j = []
-        params = []
+        params = {}
         for pairtype in self.types:
-            idx_i.append(pairtype.i)
-            idx_j.append(pairtype.j)
-            params.append(pairtype[key])
+            idx_i.append(pairtype.idx_i)
+            idx_j.append(pairtype.idx_j)
+            for k, v in pairtype.named_params.items():
+                if k not in params:
+                    params[k] = []
+                params[k].append(v)
 
-        n_types_i = np.max(idx_i) + 1
-        n_types_j = np.max(idx_j) + 1
-        n_types = max(n_types_i, n_types_j)
-        param_arr = np.zeros((n_types, n_types))
-        for i, j, param in zip(idx_i, idx_j, params):
-            param_arr[i, j] = param
-            param_arr[j, i] = param
+        idx_i = np.array(idx_i)
+        idx_j = np.array(idx_j)
+        n_types_i = idx_i.max() + 1
+        n_types_j = idx_j.max() + 1
 
-        if self.mix == "geometry":
-            for i in range(n_types):
-                for j in range(n_types):
-                    temp = np.sqrt(param_arr[i, i] * param_arr[j, j])
-                    param_arr[i, j] = temp
-                    param_arr[j, i] = temp
-        elif self.mix == "arithmetic":
-            for i in range(n_types):
-                for j in range(n_types):
-                    temp = 0.5 * (param_arr[i, i] + param_arr[j, j])
-                    param_arr[i, j] = temp
-                    param_arr[j, i] = temp
+        flatten_params = {}
+        for k in params:
+            n_types = max(n_types_i, n_types_j)
+            param_arr = np.zeros((n_types, n_types))
+            param_arr[idx_i, idx_j] = params[k]
+            param_arr[idx_j, idx_i] = params[k]
+            if self.mixing == "arithmetic":
+                param_arr = 0.5 * (param_arr + param_arr.T)
 
-        return param_arr
+            elif self.mixing == "geometric":
+                param_arr = np.sqrt(param_arr * param_arr.T)
+            flatten_params[k] = param_arr
+
+        return flatten_params
 
 
 class ForceField:
@@ -323,20 +327,12 @@ class ForceField:
         self.name = name
 
         self.unit = ""
-        self.atomstyles = []
-        self.bondstyles = []
-        self.pairstyles = []
-        self.anglestyles = []
-        self.dihedralstyles = []
-        self.improperstyles = []
-
-    # def read_lammps(self, fpaths: list[str | Path]):
-    #     from molpy.io.forcefield import LAMMPSForceFieldReader
-    #     LAMMPSForceFieldReader(fpaths, self).read()
-
-    # def write_lammps(self, fpath: str | Path):
-    #     from molpy.io.forcefield import LAMMPSForceFieldWriter
-    #     LAMMPSForceFieldWriter(fpath, self).write() 
+        self.atomstyles: list[AtomStyle] = []
+        self.bondstyles: list[BondStyle] = []
+        self.pairstyles: list[PairStyle] = []
+        self.anglestyles: list[AngleStyle] = []
+        self.dihedralstyles: list[DihedralStyle] = []
+        self.improperstyles: list[ImproperStyle] = []
 
     def __repr__(self) -> str:
         return f"<ForceField: {self.name}>"
@@ -357,7 +353,7 @@ class ForceField:
             detail += f"\nn_improperstyles: {self.n_improperstyles}, n_impropertypes: {self.n_impropertypes}"
         return detail + ">"
     
-    def def_bondstyle(self, style: str | type[Potential], *params, **named_params):
+    def def_bondstyle(self, style: str, *params, **named_params):
         bondstyle = BondStyle(style, *params, **named_params)
         self.bondstyles.append(bondstyle)
         return bondstyle
@@ -548,22 +544,3 @@ class ForceField:
         for ff in forcefields:
             self.append(ff)
 
-    def calc_struct(self, struct: Struct, output: dict = {}) -> dict:
-
-        struct, output = self.calc_bond(struct, output)
-        return struct, output
-
-    def calc_bond(self, struct, output: dict = {}):
-
-        for bs in self.bondstyles:
-            struct, output = bs.calc_struct(struct, output)
-
-        return struct, output
-
-    # def get_calculator(self):
-
-    #     pot = []
-    #     for bs in self.bondstyles:
-    #         if bs.calculator:
-    #             pot.append(bs.calculator)
-    #     return PotentialSeq(*pot, name=self.name)

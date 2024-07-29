@@ -27,10 +27,6 @@ from .core import neighborlist as nblist
 from .core import region
 
 from . import io
-from . import potential
-from .potential import (
-    Potential,
-)
 
 from . import builder
 from .builder import parameterizer
