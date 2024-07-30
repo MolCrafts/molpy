@@ -9,7 +9,7 @@ from molpy.core.space import Box
 
 class Frame:
 
-    def __init__(self):
+    def __init__(self, n_atoms:int=0):
 
         self.atoms = ItemDict()
         self.bonds = ItemDict()
@@ -17,5 +17,5 @@ class Frame:
         self.dihedrals = ItemDict()
         self.impropers = ItemDict()
 
-        self.topology = Topology()
+        self.topology = Topology(n_atoms)
         self.box = Box()

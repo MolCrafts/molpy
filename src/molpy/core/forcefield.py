@@ -4,6 +4,7 @@ from functools import reduce
 from molpy.core.struct import Struct
 from pathlib import Path
 from typing import Iterable
+from ..potential.base import Potential
 
 
 class Style:
@@ -36,12 +37,11 @@ class Style:
 
 class Type:
 
-    def __init__(self, name: str, type_idx: tuple[int], *params, **named_params):
+    def __init__(self, name: str|Potential, type_idx: tuple[int], *params, **named_params):
 
         self.params = list(params)
         self.named_params = named_params
 
-        assert isinstance(name, str), TypeError("name must be a string")
         assert all(isinstance(idx, (int | None)) for idx in type_idx), TypeError(
             "type_idx must be a tuple of integers or None(to be defined later)"
         )
