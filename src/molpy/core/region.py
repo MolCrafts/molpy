@@ -10,6 +10,12 @@ class Region(ABC):
     def isin(self, xyz)->bool:
         raise NotImplementedError
     
+class Boundary(ABC):
+
+    @abstractmethod
+    def wrap(self, xyz)->np.ndarray:
+        raise NotImplementedError
+    
 class Cube(Region):
 
     def __init__(self, origin, side, name="Cube"):

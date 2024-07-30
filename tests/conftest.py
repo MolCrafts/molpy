@@ -6,7 +6,6 @@
 from pathlib import Path
 import pytest
 import subprocess
-from molpy import Alias
 import numpy as np
 from ase.build import bulk, molecule
 from ase import Atoms

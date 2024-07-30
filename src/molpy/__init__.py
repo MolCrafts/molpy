@@ -16,10 +16,6 @@ from .core import (
     space,
     Box,
     Boundary,
-    Free,
-    OrthogonalBox,
-    RestrictTriclinicBox,
-    GeneralTriclinicBox,
     Region
 )
 

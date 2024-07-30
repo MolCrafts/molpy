@@ -3,36 +3,19 @@
 # date: 2024-03-23
 # version: 0.0.1
 import numpy as np
-from .struct import Struct, StructList
-from molpy.core.space import Free, OrthogonalBox, RestrictTriclinicBox
+from .struct import Struct, StructList, ItemDict
+from .topology import Topology
+from molpy.core.space import Box
 
 class Frame:
 
-    def __init__(self, name:str=""):
-        self._name = name
-        self._box = Free()
-        self._structs = StructList()
+    def __init__(self):
 
-    @property
-    def name(self):
-        return self._name
+        self.atoms = ItemDict()
+        self.bonds = ItemDict()
+        self.angles = ItemDict()
+        self.dihedrals = ItemDict()
+        self.impropers = ItemDict()
 
-    @property
-    def box(self):
-        return self._box
-
-    def set_orthogonal_box(self, lengths: np.ndarray):
-        self._box = OrthogonalBox(lengths)
-
-    def set_triclinic_box(self, matrix: np.ndarray):
-        self._box = RestrictTriclinicBox(matrix)
-
-    @property
-    def n_atoms(self):
-        return self._structs.n_atoms
-    
-    def add_struct(self, struct: Struct):
-        self._structs.append(struct)
-
-    def __repr__(self):
-        return f"<Frame: {self.name}>"
+        self.topology = Topology()
+        self.box = Box()
