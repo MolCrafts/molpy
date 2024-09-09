@@ -1,211 +1,72 @@
-from abc import ABC, abstractmethod
-from typing import Collection, TypeVar, Any
-
+from collections.abc import MutableMapping
 import numpy as np
-import molpy as mp
-from .topology import Topology
-from .space import Box
-from copy import deepcopy, copy
+from copy import deepcopy
 
+class ArrayDict(MutableMapping[str, np.ndarray]):
 
-class ItemDict(dict[str, np.ndarray]):
-
-    def __deepcopy__(self, memo):
-        new_dict = ItemDict()
-        for key, value in self.items():
-            new_dict[key] = deepcopy(value)
-        return new_dict
-
-    def __getattr__(self, alias:str) -> np.ndarray:
-        return self[mp.Alias.get(alias).key]
+    def __init__(self, **kwargs):
+        self._data = {k: np.asarray(v) for k, v in kwargs.items()}
     
-    def __setattr__(self, alias:str, value:np.ndarray) -> None:
-        self[mp.Alias.get(alias).key] = value
+    def __delitem__(self, key):
+        del self._data[key]
 
-    # def __getitem__(self, key: str) -> np.ndarray:
-    #     return super().__getitem__(mp.Alias.get(key).key)
+    def __getitem__(self, key: str | int) -> np.ndarray | list:
+        if isinstance(key, int):
+            return [v[key] for v in self._data.values()]
+        
+        elif isinstance(key, str):
+            return self._data[key]
+        
+    def __iter__(self):
+        return iter(self._data)
     
-    # def __setitem__(self, key: str, value: np.ndarray) -> None:
-    #     super().__setitem__(mp.Alias.get(key).key, value)
+    def __len__(self):
+        # assume all arrays have the same length
+        return len(next(iter(self._data.values())))
+    
+    def __setitem__(self, key, value):
+        self._data[key] = np.asarray(value)
 
-    def concat(self, other):
-        for key, value in other.items():
-            if key in self:
-                self[key] = np.concatenate([self[key], value])
-            else:
-                raise KeyError(f"Key {key} not found in self dict")
-            
-    @property
-    def size(self):
-        len_values = [len(value) for value in self.values()]
-        assert all([len_value == len_values[0] for len_value in len_values]), ValueError(f"Values have different lengths")
-        if len_values:
-            return len_values[0]
-        else:
-            return 0
+    def __repr__(self):
+        info = {k: f'shape: {v.shape}, dtype: {v.dtype}' for k, v in self._data.items()}
+        return f"<ArrayDict {info}>"
+    
+    @classmethod
+    def union(cls, *array_dict: "ArrayDict") -> "ArrayDict":
+        ad = ArrayDict()
+        for a in array_dict:
+            for key, value in a._data.items():
+                if key not in ad._data:
+                    ad._data[key] = np.atleast_1d(value.copy())
+                else:
+                    ad._data[key] = np.concatenate([ad._data[key], np.atleast_1d(value)])
+        return ad
 
-class BaseStructure(dict):
+class Struct:
 
-    def __init__(
-        self,
-        name: str = "",
-    ):
-        super().__init__(
-            name=name
-        )
+    def __init__(self):
+        
+        self.props = []
 
-    @property
-    def name(self) -> str:
-        return self["name"]
-
-    @property
-    @abstractmethod
-    def n_atoms(self) -> int:
-        """
-        return the number of atoms in the struct
-
-        Returns:
-            int: the number of atoms
-        """
-        ...
-
-    @property
-    @abstractmethod
-    def atoms(self):
-        """
-        return the atoms in the struct
-
-        Returns:
-        """
-        ...
-
-    @abstractmethod
-    def clone(self) -> "BaseStructure":
-        """
-        clone the struct
-
-        Returns:
-            Structure: a new struct
-        """
-        ...
-
-    @abstractmethod
-    def __call__(self) -> "BaseStructure":
-        return self.clone()
-
-    @abstractmethod
-    def union(self, other: "BaseStructure") -> "BaseStructure":
-        """
-        union two structs and return self
-
-        Args:
-            other (Structure): the other struct
-
-        Returns:
-            Structure: this struct
-        """
-        ...
-
-
-class StructList(BaseStructure):
-
-    def __init__(self, name: str = ""):
-        super().__init__(name)
-        self._structs = []
-
-    @property
-    def n_atoms(self):
-        return sum(struct.n_atoms for struct in self._structs)
-
-
-class Struct(BaseStructure):
-
-    def __init__(self, name: str = ""):
-
-        super().__init__(name)
-        self._atoms = ItemDict()
-        self._bonds = ItemDict()
-        self._angles = ItemDict()
-        self._dihedrals = ItemDict()
-
-        self._topology = Topology()
-
-    def __repr__(self) -> str:
-        return f"<Struct {self.name}: {self.n_atoms} atoms>"
+    def __getitem__(self, key):
+        if not hasattr(self, key):
+            self[key] = ArrayDict()
+        return getattr(self, key)
+    
+    def __setitem__(self, key, value):
+        setattr(self, key, value)
+        self.props.append(key)
+    
+    def copy(self):
+        return deepcopy(self)
 
     @classmethod
-    def join(cls, structs: Collection["Struct"]) -> "Struct":
-        # Type consistency check
-        assert all(isinstance(struct, cls) for struct in structs), TypeError(
-            "All structs must be of the same type"
-        )
-        # Create a new struct
-        struct = cls()
+    def union(self, *structs: 'Struct') -> 'Struct':
+        struct = Struct()
         for s in structs:
-            struct.union(s)
+            for key, value in s._data.items():
+                if key not in struct._data:
+                    struct._data[key] = value.copy()
+                else:
+                    struct._data[key] = np.concatenate([struct._data[key], value])
         return struct
-
-    def union(self, other: "Struct") -> "Struct":
-        """
-        union two structs and return self
-
-        Args:
-            other (Struct): the other struct
-
-        Returns:
-            Struct: this struct
-        """
-        self._atoms.concat(other.atoms)
-        self._bonds.concat(other.bonds)
-        self._angles.concat(other.angles)
-        self._dihedrals.concat(other.dihedrals)
-        self._topology.union(other.topology)
-        return self
-
-    @property
-    def n_atoms(self):
-        return self._atoms.size
-
-    @property
-    def n_bonds(self):
-        return self._bonds.size
-
-    @property
-    def n_angles(self):
-        return self._angles.size
-
-    @property
-    def n_dihedrals(self):
-        return self._dihedrals.size
-
-    @property
-    def atoms(self) -> ItemDict:
-        return self._atoms
-
-    @property
-    def bonds(self):
-        return self._bonds
-
-    @property
-    def angles(self):
-        return self._angles
-
-    @property
-    def dihedrals(self):
-        return self._dihedrals
-    
-    @property
-    def topology(self):
-        return self._topology
-
-    def clone(self, deep:bool = True):
-        if deep:
-            copy_fn = deepcopy
-        else:
-            copy_fn = copy
-        struct = copy_fn(self)
-        return struct
-
-    def __call__(self) -> "Struct":
-        return self.clone()
-    

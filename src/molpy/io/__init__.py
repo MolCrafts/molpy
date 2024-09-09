@@ -28,13 +28,15 @@ def load_log(fpath: str | Path, format: str = ""):
 
         return LAMMPSLog(fpath)
 
+def load_frame(fpath: str | Path, format: str = "") -> mp.Frame:
 
-def save_struct(fpath: str | Path, struct: mp.Struct, format: str = ""):
+    if format == "lammps":
+        from .data.lammps import LammpsDataReader
 
-    kernel = ChflIO(fpath)
-    kernel.save_struct(struct, format)
+        return LammpsDataReader(fpath)
+    
+def save_frame(frame: mp.Frame, fpath: str | Path, format: str = ""):
+    if format == "lammps":
+        from .data.lammps import LammpsDataSaver
 
-def load_struct(fpath: str | Path, format: str = "") -> mp.Struct:
-
-    kernel = ChflIO(fpath)
-    return kernel.load_struct(format)
+        return LammpsDataSaver(frame, fpath)

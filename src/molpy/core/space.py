@@ -36,6 +36,30 @@ class Box(Region, Boundary):
                 return f"<Box: Orthogonal: {self.lengths}>"
             case Box.Style.TRICLINIC:
                 return f"<Box: Triclinic: {self._matrix}>"
+            
+    @property
+    def xlo(self) -> float:
+        return 0
+    
+    @property
+    def xhi(self) -> float:
+        return self._matrix[0, 0]
+    
+    @property
+    def ylo(self) -> float:
+        return 0
+    
+    @property
+    def yhi(self) -> float:
+        return self._matrix[1, 1]
+    
+    @property
+    def zlo(self) -> float:
+        return 0
+    
+    @property
+    def zhi(self) -> float:
+        return self._matrix[2, 2]
 
     @property
     def style(self) -> Style:

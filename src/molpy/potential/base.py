@@ -1,3 +1,2 @@
-
 class Potential:
-    pass
+    ...

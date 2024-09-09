@@ -40,7 +40,6 @@ dependencies = [
   "numpy",  # https://github.com/numpy/numpy
   "igraph",  # https://github.com/igraph/python-igraph
   "pint",  # https://github.com/hgrecco/pint
-  "chemfiles",  # https://github.com/chemfiles/chemfiles.py
 ]
 
 [project.optional-dependencies]
