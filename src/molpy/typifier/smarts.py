@@ -1,0 +1,71 @@
+"""Utility methods/classes for SMARTS grammar."""
+
+import lark
+
+GRAMMAR = r"""
+    start: _string
+
+    // Rules
+    _string: _chain _nonlastbranch* _lastbranch?
+    _chain: atom _chain | atom
+    _nonlastbranch: "(" branch ")"
+    _lastbranch: branch
+    branch: _string
+    atom: ("[" weak_and_expression "]" | atom_symbol) atom_label?
+    atom_label: NUM
+    ?weak_and_expression: (weak_and_expression ";")? or_expression
+    ?or_expression: (or_expression ",")? and_expression
+    ?and_expression: (and_expression "&")? (atom_id | not_expression)
+    not_expression: "!" atom_id
+    atom_id: atom_symbol
+             | "#" atomic_num
+             | "$(" matches_string ")"
+             | has_label
+             | "X" neighbor_count
+             | "r" ring_size
+             | "R" ring_count
+    atom_symbol: SYMBOL | STAR
+    atomic_num: NUM
+    matches_string: _string
+    has_label: LABEL
+    neighbor_count: NUM
+    ring_size: NUM
+    ring_count: NUM
+
+    // Terminals
+    STAR: "*"
+    NUM: /[\d]+/
+    LABEL: /\%[A-Za-z_0-9]+/
+
+    // Tokens for chemical elements
+    // Optional, custom, non-element underscore-prefixed symbols are pre-pended
+    SYMBOL: /{optional}C[laroudsemf]?|Os?|N[eaibdpos]?|S[icernbmg]?|P[drmtboau]?|H[eofgas]?|A[lrsgutcm]|B[eraik]?|Dy|E[urs]|F[erm]?|G[aed]|I[nr]?|Kr?|L[iaur]|M[gnodt]|R[buhenaf]|T[icebmalh]|U|V|W|Xe|Yb?|Z[nr]/
+
+"""
+
+
+class SMARTS(object):
+    """A wrapper class for parsing SMARTS grammar using lark.
+
+    Provides functionality for injecting optional, custom, non-element symbols
+    denoted by an underscore-prefix as additional tokens that the parser can
+    recognize.
+
+    Parameters
+    ----------
+    optional_names: iterable, optional, default ''
+        A list of optional names that expand the grammar's symbols beyond
+        the canonical periodic table elements (the non-element types).
+        The optional_names are relevant for creating grammar that includes
+        custom elements that will belong in SMARTS definitions
+
+    """
+
+    def __init__(self):
+        # TODO: optional symbols
+        self.grammar = GRAMMAR.format(optional="")
+        self.parser = lark.Lark(self.grammar, parser="lalr")
+
+    def parse(self, smarts_string):
+        """Convert SMARTS string to parsed grammar object."""
+        return self.parser.parse(smarts_string)

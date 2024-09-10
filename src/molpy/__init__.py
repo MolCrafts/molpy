@@ -30,3 +30,4 @@ from .core import region
 from . import io
 
 from . import op
+from ._elem import Element
