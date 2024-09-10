@@ -6,3 +6,4 @@ from .topology import *
 from .neighborlist import *
 from .region import *
 from .system import *
+from .struct import *

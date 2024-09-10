@@ -154,14 +154,14 @@ class LammpsDataReader:
         return frame
 
 
-class LammpsDataSaver:
+class LammpsDataWriter:
 
     def __init__(self, frame: mp.Frame, file: str | Path, atom_style: str = "full"):
         self._frame = frame
         self._file = Path(file)
         self._atom_style = atom_style
 
-    def save(self):
+    def write(self):
 
         frame = self._frame
 

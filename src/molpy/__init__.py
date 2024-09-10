@@ -16,7 +16,12 @@ from .core import (
     space,
     Box,
     Boundary,
-    Region
+    Region,
+    Atom,
+    Bond,
+    Angle,
+    Dihedral,
+    Segment,
 )
 
 from .core import neighborlist as nblist
