@@ -2,6 +2,7 @@ from collections.abc import MutableMapping
 import numpy as np
 from copy import deepcopy
 from molpy import op
+from typing import Callable
 
 
 class ArrayDict(MutableMapping[str, np.ndarray]):
@@ -20,7 +21,8 @@ class ArrayDict(MutableMapping[str, np.ndarray]):
             return self._data[key]
 
     def __iter__(self):
-        return iter(self._data)
+        for value in zip(*self._data.values()):
+            yield dict(zip(self._data.keys(), value))
 
     def __len__(self):
         # assume all arrays have the same length
@@ -50,100 +52,129 @@ class ArrayDict(MutableMapping[str, np.ndarray]):
         return ad
 
 
-class Struct:
+class Entity(dict):
 
-    def __init__(self):
-
-        self.props = []
-
-    def __getitem__(self, key):
-        if not hasattr(self, key):
-            self[key] = ArrayDict()
-        return getattr(self, key)
-
-    def __setitem__(self, key, value):
-        setattr(self, key, value)
-        self.props.append(key)
-
-    def copy(self):
-        return deepcopy(self)
-
-    @classmethod
-    def union(self, *structs: "Struct") -> "Struct":
-        struct = Struct()
-        for s in structs:
-            for key, value in s._data.items():
-                if key not in struct._data:
-                    struct._data[key] = value.copy()
-                else:
-                    struct._data[key] = np.concatenate([struct._data[key], value])
-        return struct
-
-
-class Atom(dict):
-
-    def __repr__(self):
-        return f"<Atom {self['id']}: {self['name']}>"
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
     def __eq__(self, other):
-        return int(self["id"]) == int(other["id"])
+        return self.id == other.id
+
+    def clone(self):
+        return deepcopy(self)
 
 
-class Bond(dict):
+class Atom(Entity):
 
-    def __init__(self, itom: Atom, jtom: Atom):
+    def __init__(self, id: int, *args, **kwargs):
+        self.id = id
+        super().__init__(*args, **kwargs)
+
+    def __repr__(self):
+        return f"<Atom {self.id}>"
+
+    def __hash__(self):
+        return id(self)
+
+    def to_dict(self):
+        d = dict(self)
+        d["id"] = self.id
+        return d
+
+
+class Bond(Entity):
+
+    def __init__(self, itom: Atom, jtom: Atom, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.itom = itom
         self.jtom = jtom
 
     def __repr__(self):
-        return f"<Bond {self.itom['id']} {self.jtom['id']}>"
+        return f"<Bond {self.itom} {self.jtom}>"
+
+    def __eq__(self, other):
+        if isinstance(other, Bond):
+            return {self.itom, self.jtom} == {other.itom, other.jtom}
+        return False
+
+    def __hash__(self):
+        return hash((self.itom, self.jtom))
+
+    def to_dict(self):
+        d = dict(self)
+        d["itom"] = self.itom.id
+        d["jtom"] = self.jtom.id
+        return d
 
 
-class Angle(dict): ...
+class Angle(Entity): ...
 
 
-class Dihedral(dict): ...
+class Dihedral(Entity): ...
 
 
-class Segment:
+class MolpyModel:
+    pass
+
+
+class Entities(list):
+
+    def add(self, entity: Entity):
+        self.append(entity)
+
+
+class Struct(MolpyModel):
 
     def __init__(self):
-        self.atoms = []
-        self.bonds = []
-        self.angles = []
-        self.dihedrals = []
+        self.atoms = Entities()
+        self.bonds = Entities()
+        self.angles = Entities()
+        self.dihedrals = Entities()
+
+    def __repr__(self):
+        return f"<Struct {len(self.atoms)} atoms>"
 
     def add_atom(self, atom: Atom):
-        self.atoms.append(atom)
+        self.atoms.add(atom)
 
     def add_bond(self, bond: Bond):
-        self.bonds.append(bond)
+        self.bonds.add(bond)
 
     def add_angle(self, angle: Angle):
-        self.angles.append(angle)
+        self.angles.add(angle)
 
     def add_dihedral(self, dihedral: Dihedral):
-        self.dihedrals.append(dihedral)
+        self.dihedrals.add(dihedral)
 
-    def del_atom(self, id: int):
-        self.atoms = [atom for atom in self.atoms if atom["id"] != id]
-        self.bonds = [
-            bond
-            for bond in self.bonds
-            if bond.itom["id"] != id and bond.jtom["id"] != id
-        ]
+    def del_atom(self, atom: Atom):
 
-    def get_atom(self, key, value):
+        self.atoms.remove(atom)
+
+        for bond in self.bonds:
+            if atom in {bond.itom, bond.jtom}:
+                self.bonds.remove(bond)
+
+    def get_atom_by_id(self, id: str):
         for atom in self.atoms:
-            if atom[key] == value:
+            if atom.id == id:
                 return atom
-        raise ValueError(f"Atom with {key}={value} not found")
 
-    def add_struct(self, struct: Struct):
-        for atom in struct.atoms:
-            self.add_atom(atom)
-        for bond in struct.bonds:
-            self.add_bond(bond)
+    def get_atom(self, condition: Callable[[Atom], bool]) -> Atom:
+        for atom in self.atoms:
+            if condition(atom):
+                return atom
+
+    def union(self, other: "Struct") -> "Struct":
+        struct = self.copy()
+        struct.union_(other)
+        return struct
+
+    def union_(self, other: "Struct") -> "Struct":
+        self.atoms.update(other.atoms)
+        self.bonds.update(other.bonds)
+        self.angles.update(other.angles)
+        self.dihedrals.update(other.dihedrals)
+        return self
 
     def move(self, r):
         for atom in self.atoms:
@@ -154,6 +185,3 @@ class Segment:
         for atom in self.atoms:
             atom["xyz"] = op.rotate(atom["xyz"], axis, theta)
         return self
-
-    def copy(self):
-        return deepcopy(self)

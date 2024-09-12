@@ -48,23 +48,25 @@ def write_frame(frame: mp.Frame, fpath: str | Path, format: str = ""):
 
         return PDBWriter(frame, fpath)
     
-def builder(fpath: str | Path, format: str = "") -> mp.Segment:
-    frame = read_frame(fpath, format).read()
-    seg = mp.Segment()
-    for prop in frame["atoms"]:
-        seg.add_atom(
-            mp.Atom(
-                prop
-            )
-        )
-    atoms = seg.atoms
-    for prop in frame["bonds"]:
-        i = prop['i']
-        j = prop['j']
-        seg.add_bond(
-            mp.Bond(
-                atoms[i-1],
-                atoms[j-1]
-            ))
-        
-    return seg
+def read_struct(fpath: str | Path, format: str = "") -> mp.Struct:
+    if format == "lammps":
+        from .data.lammps import LammpsDataReader
+
+        frame = LammpsDataReader(fpath).read()
+
+    elif format == "pdb":
+        from .data.pdb import PDBReader
+
+        frame = PDBReader(fpath).read()
+
+    struct = mp.Struct()
+    for props in frame['atoms']:
+        atom_id = props.pop('id')
+        struct.add_atom(mp.Atom(atom_id, **props))
+
+    for props in frame['bonds']:
+        i, j = props.pop('i'), props.pop('j')
+        itom = struct.get_atom(lambda atom: atom.id == i)
+        jtom = struct.get_atom(lambda atom: atom.id == j)
+        struct.add_bond(mp.Bond(itom, jtom, **props))
+    return struct

@@ -1,6 +1,4 @@
-from ._alias import Alias
-from ._elem import Element
-from ._units import Unit
+from .element import Element
 
 from . import core
 from .core import (
@@ -21,13 +19,11 @@ from .core import (
     Bond,
     Angle,
     Dihedral,
-    Segment,
 )
 
-from .core import neighborlist as nblist
 from .core import region
 
 from . import io
 
 from . import op
-from ._elem import Element
+from .element import Element
