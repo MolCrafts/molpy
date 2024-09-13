@@ -122,6 +122,9 @@ class Entities(list):
     def add(self, entity: Entity):
         self.append(entity)
 
+    def keys(self):
+        return self[0].keys()
+
 
 class Struct(MolpyModel):
 

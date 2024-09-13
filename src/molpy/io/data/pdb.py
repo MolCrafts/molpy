@@ -35,6 +35,7 @@ class PDBReader:
                 "chainID": [],
                 "resSeq": [],
                 "xyz": [],
+                "element": []
             }
 
             bonds = []
@@ -51,6 +52,7 @@ class PDBReader:
                     atoms["xyz"].append(
                         [float(line[30:38]), float(line[38:46]), float(line[46:54])]
                     )
+                    atoms["element"].append(line[76:78].strip())
 
                 if line.startswith("CONECT"):
 
