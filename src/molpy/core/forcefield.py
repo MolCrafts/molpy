@@ -26,6 +26,12 @@ class Style:
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}: {self.name}>"
+    
+    def __contains__(self, name: str):
+        for type_ in self.types:
+            if type_.name == name:
+                return True
+        return False
 
     @property
     def n_types(self):
@@ -33,6 +39,12 @@ class Style:
 
     def get_params(self):
         raise NotImplementedError("get_params method must be implemented")
+    
+    def get_type(self, name: str):
+        for atomtype in self.types:
+            if atomtype.name == name:
+                return atomtype
+        return None
 
 
 class Type:
@@ -43,7 +55,7 @@ class Type:
         self.named_params = named_params
 
         assert all(isinstance(idx, (int | None)) for idx in type_idx), TypeError(
-            "type_idx must be a tuple of integers or None(to be defined later)"
+            f"type_idx must be a tuple of integers or None(to be defined later), but got {type_idx}"
         )
         self.name = name
 
@@ -51,6 +63,12 @@ class Type:
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}: {self.name}>"
+    
+    def __setitem__(self, key: str, value: float):
+        self.named_params[key] = value
+
+    def __getitem__(self, key: str):
+        return self.named_params[key]
 
 
 class AtomType(Type):
@@ -61,16 +79,10 @@ class AtomType(Type):
 
 class AtomStyle(Style):
 
-    def def_atomtype(self, name: str, type_idx: int, *params, **named_params: dict):
+    def def_type(self, name: str, type_idx: int, *params, **named_params: dict):
         at = AtomType(name, type_idx, *params, **named_params)
         self.types.append(at)
         return at
-
-    def get_atomtype(self, name: str):
-        for atomtype in self.types:
-            if atomtype.name == name:
-                return atomtype
-        return None
 
 
 class BondType(Type):
@@ -91,12 +103,12 @@ class BondType(Type):
 
 class BondStyle(Style):
 
-    def def_bondtype(
+    def def_type(
         self,
+        name: str = "",
         idx_i: int | None = None,
         idx_j: int | None = None,
         /,
-        name: str = "",
         *params,
         **named_params,
     ) -> BondType:
@@ -182,16 +194,17 @@ class DihedralType(Type):
 
 class AngleStyle(Style):
 
-    def def_angletype(
+    def def_type(
         self,
+        name: str = "",
         idx_i: int | None = None,
         idx_j: int | None = None,
         idx_k: int | None = None,
-        name: str = "",
         *params,
         **named_params,
     ):
         self.types.append(AngleType(name, idx_i, idx_j, idx_k, *params, **named_params))
+        return self.types[-1]
 
     def get_param(self, key: str):
         idx_i = []
@@ -218,7 +231,7 @@ class AngleStyle(Style):
 
 class DihedralStyle(Style):
 
-    def def_dihedraltype(
+    def def_type(
         self,
         name: str = "",
         idx_i: int | None = None,
@@ -231,6 +244,7 @@ class DihedralStyle(Style):
         self.types.append(
             DihedralType(name, idx_i, idx_j, idx_k, idx_l, *params, **named_params)
         )
+        return self.types[-1]
 
 
 class ImproperType(Type):
@@ -250,7 +264,7 @@ class ImproperType(Type):
 
 class ImproperStyle(Style):
 
-    def def_impropertype(
+    def def_type(
         self,
         name: str = "",
         idx_i: int | None = None,
@@ -263,6 +277,7 @@ class ImproperStyle(Style):
         self.types.append(
             ImproperType(name, idx_i, idx_j, idx_k, idx_l, *params, **named_params)
         )
+        return self.types[-1]
 
 
 class PairType(Type):
@@ -281,10 +296,11 @@ class PairType(Type):
 
 class PairStyle(Style):
 
-    def def_pairtype(
+    def def_type(
         self, name: str, idx_i: int | None, idx_j: int | None, *params, **named_params
     ):
         self.types.append(PairType(name, idx_i, idx_j, *params, **named_params))
+        return self.types[-1]
 
     def get_params(self):
 

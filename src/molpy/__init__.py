@@ -19,6 +19,8 @@ from .core import (
     Bond,
     Angle,
     Dihedral,
+    Improper,
+    System
 )
 
 from .core import region

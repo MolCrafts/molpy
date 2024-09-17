@@ -26,17 +26,17 @@ def read_log(fpath: str | Path, format: str = ""):
 
         return LAMMPSLog(fpath)
 
-def read_frame(fpath: str | Path, format: str = "") -> mp.Frame:
+def read_data(fpath: str | Path, format: str = "") -> mp.System:
 
     if format == "lammps":
         from .data.lammps import LammpsDataReader
 
-        return LammpsDataReader(fpath)
+        return LammpsDataReader(fpath).read()
     
     elif format == "pdb":
         from .data.pdb import PDBReader
 
-        return PDBReader(fpath)
+        return PDBReader(fpath).read()
     
 def write_frame(frame: mp.Frame, fpath: str | Path, format: str = ""):
     if format == "lammps":

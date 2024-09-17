@@ -1,55 +1,8 @@
-from collections.abc import MutableMapping
-import numpy as np
 from copy import deepcopy
 from molpy import op
 from typing import Callable
-
-
-class ArrayDict(MutableMapping[str, np.ndarray]):
-
-    def __init__(self, **kwargs):
-        self._data = {k: np.asarray(v) for k, v in kwargs.items()}
-
-    def __delitem__(self, key):
-        del self._data[key]
-
-    def __getitem__(self, key: str | int) -> np.ndarray | list:
-        if isinstance(key, int):
-            return [v[key] for v in self._data.values()]
-
-        elif isinstance(key, str):
-            return self._data[key]
-
-    def __iter__(self):
-        for value in zip(*self._data.values()):
-            yield dict(zip(self._data.keys(), value))
-
-    def __len__(self):
-        # assume all arrays have the same length
-        return len(next(iter(self._data.values())))
-
-    def __setitem__(self, key, value):
-        self._data[key] = np.asarray(value)
-
-    def __repr__(self):
-        info = {k: f"shape: {v.shape}, dtype: {v.dtype}" for k, v in self._data.items()}
-        return f"<ArrayDict {info}>"
-
-    def __iter__(self):
-        return iter(dict(zip(self._data.keys(), self[i])) for i in range(len(self)))
-
-    @classmethod
-    def union(cls, *array_dict: "ArrayDict") -> "ArrayDict":
-        ad = ArrayDict()
-        for a in array_dict:
-            for key, value in a._data.items():
-                if key not in ad._data:
-                    ad._data[key] = np.atleast_1d(value.copy())
-                else:
-                    ad._data[key] = np.concatenate(
-                        [ad._data[key], np.atleast_1d(value)]
-                    )
-        return ad
+import numpy as np
+import pyarrow as pa
 
 
 class Entity(dict):
@@ -107,13 +60,33 @@ class Bond(Entity):
         return d
 
 
-class Angle(Entity): ...
+class Angle(Entity):
+    def __init__(self, itom: Atom, jtom: Atom, ktom: Atom, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.itom = itom
+        self.jtom = jtom
+        self.ktom = ktom
 
 
-class Dihedral(Entity): ...
+class Dihedral(Entity):
+    def __init__(self, itom: Atom, jtom: Atom, ktom: Atom, ltom: Atom, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.itom = itom
+        self.jtom = jtom
+        self.ktom = ktom
+        self.ltom = ltom
 
 
-class MolpyModel:
+class Improper(Entity):
+    def __init__(self, itom: Atom, jtom: Atom, ktom: Atom, ltom: Atom, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.itom = itom
+        self.jtom = jtom
+        self.ktom = ktom
+        self.ltom = ltom
+
+
+class MolpyModel(dict):
     pass
 
 
@@ -125,45 +98,55 @@ class Entities(list):
     def keys(self):
         return self[0].keys()
 
+    def get_by_id(self, id: int):
+        for entity in self:
+            if entity.id == id:
+                return entity
+
 
 class Struct(MolpyModel):
 
     def __init__(self):
-        self.atoms = Entities()
-        self.bonds = Entities()
-        self.angles = Entities()
-        self.dihedrals = Entities()
+        super().__init__()
+        self["atoms"] = Entities()
+        self["bonds"] = Entities()
+        self["angles"] = Entities()
+        self["dihedrals"] = Entities()
+        self["impropers"] = Entities()
 
     def __repr__(self):
-        return f"<Struct {len(self.atoms)} atoms>"
+        return f"<Struct {len(self['atoms'])} atoms>"
 
     def add_atom(self, atom: Atom):
-        self.atoms.add(atom)
+        self["atoms"].add(atom)
 
     def add_bond(self, bond: Bond):
-        self.bonds.add(bond)
+        self["bonds"].add(bond)
 
     def add_angle(self, angle: Angle):
-        self.angles.add(angle)
+        self["angles"].add(angle)
 
     def add_dihedral(self, dihedral: Dihedral):
-        self.dihedrals.add(dihedral)
+        self["dihedrals"].add(dihedral)
+
+    def add_improper(self, improper: Improper):
+        self["impropers"].add(improper)
 
     def del_atom(self, atom: Atom):
 
-        self.atoms.remove(atom)
+        self["atoms"].remove(atom)
 
-        for bond in self.bonds:
+        for bond in self["bonds"]:
             if atom in {bond.itom, bond.jtom}:
-                self.bonds.remove(bond)
+                self["bonds"].remove(bond)
 
     def get_atom_by_id(self, id: str):
-        for atom in self.atoms:
+        for atom in self["atoms"]:
             if atom.id == id:
                 return atom
 
     def get_atom(self, condition: Callable[[Atom], bool]) -> Atom:
-        for atom in self.atoms:
+        for atom in self["atoms"]:
             if condition(atom):
                 return atom
 
@@ -173,18 +156,147 @@ class Struct(MolpyModel):
         return struct
 
     def union_(self, other: "Struct") -> "Struct":
-        self.atoms.update(other.atoms)
-        self.bonds.update(other.bonds)
-        self.angles.update(other.angles)
-        self.dihedrals.update(other.dihedrals)
+        self["atoms"].update(other.atoms)
+        self["bonds"].update(other.bonds)
+        self["angles"].update(other.angles)
+        self["dihedrals"].update(other.dihedrals)
         return self
 
     def move(self, r):
-        for atom in self.atoms:
+        for atom in self["atoms"]:
             atom["xyz"] = op.translate(atom["xyz"], r)
         return self
 
     def rotate(self, axis, theta):
-        for atom in self.atoms:
+        for atom in self["atoms"]:
             atom["xyz"] = op.rotate(atom["xyz"], axis, theta)
         return self
+
+    def split(self, mask, key="molid"):
+        unique_id = np.unique(mask)
+        structs = []
+
+        for id_ in unique_id:
+            sub_struct = Struct()
+            for atom in self["atoms"]:
+                if atom[key] == id_:
+                    sub_struct.add_atom(atom)
+
+            for bond in self["bonds"]:
+                if {bond.itom[key], bond.jtom[key]} == {id_}:
+                    sub_struct.add_bond(bond)
+
+            for angle in self["angles"]:
+                if {angle.itom[key], angle.jtom[key], angle.ktom[key]} == {id_}:
+                    sub_struct.add_angle(angle)
+
+            for dihedral in self["dihedrals"]:
+                if {
+                    dihedral.itom[key],
+                    dihedral.jtom[key],
+                    dihedral.ktom[key],
+                    dihedral.ltom[key],
+                } == {id_}:
+                    sub_struct.add_dihedral(dihedral)
+
+            for improper in self["impropers"]:
+                if {
+                    improper.itom[key],
+                    improper.jtom[key],
+                    improper.ktom[key],
+                    improper.ltom[key],
+                } == {id_}:
+                    sub_struct.add_improper(improper)
+
+            structs.append(sub_struct)
+        return structs
+
+    def to_frame(self):
+        from .frame import Frame
+
+        frame = Frame()
+        frame["atoms"] = pa.table(
+            {k: [d[k] for d in self["atoms"]] for k in self["atoms"][0].keys()}
+        )
+
+        if len(self["bonds"]) != 0:
+            bonds = {"i": [], "j": []}
+            for bond in self["bonds"]:
+                i = bond.itom.id
+                j = bond.jtom.id
+                bonds["i"].append(i)
+                bonds["j"].append(j)
+            bonds.update(
+                {k: [d[k] for d in self["bonds"]] for k in self["bonds"][0].keys()}
+            )
+            frame["bonds"] = pa.table(bonds)
+
+        if len(self["angles"]) != 0:
+            angles = {"i": [], "j": [], "k": []}
+            for angle in self["angles"]:
+                i = angle.itom.id
+                j = angle.jtom.id
+                k = angle.ktom.id
+                angles["i"].append(i)
+                angles["j"].append(j)
+                angles["k"].append(k)
+
+            angles.update(
+                {k: [d[k] for d in self["angles"]] for k in self["angles"][0].keys()}
+            )
+            frame["angles"] = pa.table(angles)
+
+        if len(self["dihedrals"]) != 0:
+
+            dihedrals = {"i": [], "j": [], "k": [], "l": []}
+            for dihedral in self["dihedrals"]:
+                i = dihedral.itom.id
+                j = dihedral.jtom.id
+                k = dihedral.ktom.id
+                l = dihedral.ltom.id
+                dihedrals["i"].append(i)
+                dihedrals["j"].append(j)
+                dihedrals["k"].append(k)
+                dihedrals["l"].append(l)
+
+            dihedrals.update(
+                {
+                    k: [d[k] for d in self["dihedrals"]]
+                    for k in self["dihedrals"][0].keys()
+                }
+            )
+            frame["dihedrals"] = pa.table(dihedrals)
+
+        if len(self["impropers"]) != 0:
+
+            impropers = {"i": [], "j": [], "k": [], "l": []}
+            for improper in self["impropers"]:
+                i = improper.itom.id
+                j = improper.jtom.id
+                k = improper.ktom.id
+                l = improper.ltom.id
+                impropers["i"].append(i)
+                impropers["j"].append(j)
+                impropers["k"].append(k)
+                impropers["l"].append(l)
+
+            impropers.update(
+                {
+                    k: [d[k] for d in self["impropers"]]
+                    for k in self["impropers"][0].keys()
+                }
+            )
+            frame["impropers"] = pa.table(impropers)
+
+        frame['props']['n_atoms'] = len(self['atoms'])
+        frame['props']['n_bonds'] = len(self['bonds'])
+        frame['props']['n_angles'] = len(self['angles'])
+        frame['props']['n_dihedrals'] = len(self['dihedrals'])
+        frame['props']['n_impropers'] = len(self['impropers'])
+        frame['props']['n_atomtypes'] = len(np.unique([atom['type'] for atom in self['atoms']]))
+        frame['props']['n_bondtypes'] = len(np.unique([bond['type'] for bond in self['bonds']]))
+        frame['props']['n_angletypes'] = len(np.unique([angle['type'] for angle in self['angles']]))
+        frame['props']['n_dihedraltypes'] = len(np.unique([dihedral['type'] for dihedral in self['dihedrals']]))
+        frame['props']['n_impropertypes'] = len(np.unique([improper['type'] for improper in self['impropers']]))
+
+        return frame
