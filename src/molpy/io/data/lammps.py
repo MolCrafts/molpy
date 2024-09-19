@@ -7,7 +7,7 @@ import io
 from itertools import islice
 from pyarrow import csv
 import pyarrow as pa
-
+import re
 
 class LammpsDataReader:
 
@@ -17,14 +17,15 @@ class LammpsDataReader:
 
     @staticmethod
     def sanitizer(line: str) -> str:
-        return line.strip()
+        return re.sub(r'\s+', ' ', line.strip())
 
     def read(self):
+        
+        ff = mp.io.read_forcefield(self._file, format="lammps")
 
         with open(self._file, "r") as f:
 
             frame = mp.Frame()
-            ff = mp.ForceField()
 
             lines = filter(lambda line: line, map(LammpsDataReader.sanitizer, f))
 

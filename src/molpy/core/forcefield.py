@@ -1,7 +1,6 @@
 import numpy as np
 from typing import Literal
 from functools import reduce
-from molpy.core.struct import Struct
 from pathlib import Path
 from typing import Iterable
 from ..potential.base import Potential
@@ -26,7 +25,7 @@ class Style:
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}: {self.name}>"
-    
+
     def __contains__(self, name: str):
         for type_ in self.types:
             if type_.name == name:
@@ -39,7 +38,7 @@ class Style:
 
     def get_params(self):
         raise NotImplementedError("get_params method must be implemented")
-    
+
     def get_type(self, name: str):
         for atomtype in self.types:
             if atomtype.name == name:
@@ -49,7 +48,9 @@ class Style:
 
 class Type:
 
-    def __init__(self, name: str|Potential, type_idx: tuple[int], *params, **named_params):
+    def __init__(
+        self, name: str | Potential, type_idx: tuple[int], *params, **named_params
+    ):
 
         self.params = list(params)
         self.named_params = named_params
@@ -63,7 +64,7 @@ class Type:
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}: {self.name}>"
-    
+
     def __setitem__(self, key: str, value: float):
         self.named_params[key] = value
 
@@ -148,7 +149,6 @@ class BondStyle(Style):
             flatten_params[key] = param_arr
 
         return flatten_params
-            
 
 
 class AngleType(Type):
@@ -238,6 +238,7 @@ class DihedralStyle(Style):
         idx_j: int | None = None,
         idx_k: int | None = None,
         idx_l: int | None = None,
+        /,
         *params,
         **named_params,
     ):
@@ -288,7 +289,7 @@ class PairType(Type):
     @property
     def idx_i(self):
         return self.type_idx[0]
-    
+
     @property
     def idx_j(self):
         return self.type_idx[1]
@@ -338,7 +339,7 @@ class PairStyle(Style):
 
 class ForceField:
 
-    def __init__(self, name:str=""):
+    def __init__(self, name: str = ""):
 
         self.name = name
 
@@ -352,15 +353,21 @@ class ForceField:
 
     def __repr__(self) -> str:
         return f"<ForceField: {self.name}>"
-    
+
     def __str__(self) -> str:
         detail = f"<ForceField: {self.name}"
         if self.n_atomstyles > 0:
-            detail += f"\nn_atomstyles: {self.n_atomstyles}, n_atomtypes: {self.n_atomtypes}"
+            detail += (
+                f"\nn_atomstyles: {self.n_atomstyles}, n_atomtypes: {self.n_atomtypes}"
+            )
         if self.n_bondstyles > 0:
-            detail += f"\nn_bondstyles: {self.n_bondstyles}, n_bondtypes: {self.n_bondtypes}"
+            detail += (
+                f"\nn_bondstyles: {self.n_bondstyles}, n_bondtypes: {self.n_bondtypes}"
+            )
         if self.n_pairstyles > 0:
-            detail += f"\nn_pairstyles: {self.n_pairstyles}, n_pairtypes: {self.n_pairtypes}"
+            detail += (
+                f"\nn_pairstyles: {self.n_pairstyles}, n_pairtypes: {self.n_pairtypes}"
+            )
         if self.n_anglestyles > 0:
             detail += f"\nn_anglestyles: {self.n_anglestyles}, n_angletypes: {self.n_angletypes}"
         if self.n_dihedralstyles > 0:
@@ -368,7 +375,7 @@ class ForceField:
         if self.n_improperstyles > 0:
             detail += f"\nn_improperstyles: {self.n_improperstyles}, n_impropertypes: {self.n_impropertypes}"
         return detail + ">"
-    
+
     def def_bondstyle(self, style: str, *params, **named_params):
         bondstyle = BondStyle(style, *params, **named_params)
         self.bondstyles.append(bondstyle)
@@ -476,27 +483,27 @@ class ForceField:
     @property
     def n_pairtypes(self):
         return reduce(lambda x, y: x + y.n_types, self.pairstyles, 0)
-    
+
     @property
     def atomtypes(self):
         return reduce(lambda x, y: x + y.types, self.atomstyles, [])
-    
+
     @property
     def bondtypes(self):
         return reduce(lambda x, y: x + y.types, self.bondstyles, [])
-    
+
     @property
     def angletypes(self):
         return reduce(lambda x, y: x + y.types, self.anglestyles, [])
-    
+
     @property
     def dihedraltypes(self):
         return reduce(lambda x, y: x + y.types, self.dihedralstyles, [])
-    
+
     @property
     def impropertypes(self):
         return reduce(lambda x, y: x + y.types, self.improperstyles, [])
-    
+
     @property
     def pairtypes(self):
         return reduce(lambda x, y: x + y.types, self.pairstyles, [])
@@ -506,7 +513,6 @@ class ForceField:
         if self.unit:
             assert self.unit == forcefield.unit, ValueError("unit must be the same")
         self.unit = forcefield.unit
-
 
         for pairstyle in forcefield.pairstyles:
             if self.get_pairstyle(pairstyle.name) is None:
@@ -523,7 +529,7 @@ class ForceField:
                 self_bondstyle = self.get_bondstyle(bondstyle.name)
                 for bondtype in bondstyle.types:
                     self_bondstyle.types.append(bondtype)
-        
+
         for atomstyle in forcefield.atomstyles:
             if self.get_atomstyle(atomstyle.name) is None:
                 self.atomstyles.append(atomstyle)
@@ -560,3 +566,6 @@ class ForceField:
         for ff in forcefields:
             self.append(ff)
 
+    def simplify(self):
+
+        pass

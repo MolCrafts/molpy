@@ -215,9 +215,9 @@ class Struct(MolpyModel):
         from .frame import Frame
 
         frame = Frame()
-        frame["atoms"] = pa.table(
-            {k: [d[k] for d in self["atoms"]] for k in self["atoms"][0].keys()}
-        )
+        atom_info = {k: [d[k] for d in self["atoms"]] for k in self["atoms"][0].keys()}
+        atom_info["id"] = [atom.id for atom in self["atoms"]]
+        frame["atoms"] = pa.table(atom_info)
 
         if len(self["bonds"]) != 0:
             bonds = {"i": [], "j": []}
@@ -288,15 +288,45 @@ class Struct(MolpyModel):
             )
             frame["impropers"] = pa.table(impropers)
 
-        frame['props']['n_atoms'] = len(self['atoms'])
-        frame['props']['n_bonds'] = len(self['bonds'])
-        frame['props']['n_angles'] = len(self['angles'])
-        frame['props']['n_dihedrals'] = len(self['dihedrals'])
-        frame['props']['n_impropers'] = len(self['impropers'])
-        frame['props']['n_atomtypes'] = len(np.unique([atom['type'] for atom in self['atoms']]))
-        frame['props']['n_bondtypes'] = len(np.unique([bond['type'] for bond in self['bonds']]))
-        frame['props']['n_angletypes'] = len(np.unique([angle['type'] for angle in self['angles']]))
-        frame['props']['n_dihedraltypes'] = len(np.unique([dihedral['type'] for dihedral in self['dihedrals']]))
-        frame['props']['n_impropertypes'] = len(np.unique([improper['type'] for improper in self['impropers']]))
+        frame["props"]["n_atoms"] = len(self["atoms"])
+        frame["props"]["n_bonds"] = len(self["bonds"])
+        frame["props"]["n_angles"] = len(self["angles"])
+        frame["props"]["n_dihedrals"] = len(self["dihedrals"])
+        frame["props"]["n_impropers"] = len(self["impropers"])
+        frame["props"]["n_atomtypes"] = len(
+            np.unique([atom["type"] for atom in self["atoms"]])
+        )
+        frame["props"]["n_bondtypes"] = len(
+            np.unique([bond["type"] for bond in self["bonds"]])
+        )
+        frame["props"]["n_angletypes"] = len(
+            np.unique([angle["type"] for angle in self["angles"]])
+        )
+        frame["props"]["n_dihedraltypes"] = len(
+            np.unique([dihedral["type"] for dihedral in self["dihedrals"]])
+        )
+        frame["props"]["n_impropertypes"] = len(
+            np.unique([improper["type"] for improper in self["impropers"]])
+        )
 
         return frame
+
+    def simplify(self):
+
+        bond_i = self['bonds']['i']
+        bond_j = self['bonds']['j']
+
+        # atom idx -> atom type
+        bond_atom_type_i = self['atoms']['type'][bond_i]  # assume id ordered
+        bond_atom_type_j = self['atoms']['type'][bond_j]
+
+        # atom type -> bond type
+        bond_atom_types = np.stack([bond_atom_type_i, bond_atom_type_j], axis=1)
+        bond_atom_types = np.sort(bond_atom_types, axis=1)
+
+        # unique bond types
+        bond_atom_types = np.unique(bond_atom_types, axis=0)
+
+
+        bond_atom_type_i = bond_atom_types[:, 0]
+        bond_atom_type_j = bond_atom_types[:, 1]

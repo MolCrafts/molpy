@@ -40,9 +40,9 @@ def read_data(fpath: str | Path, format: str = "") -> mp.System:
     
 def write_frame(frame: mp.Frame, fpath: str | Path, format: str = ""):
     if format == "lammps":
-        from .data.lammps import LammpsDataSaver
+        from .data.lammps import LammpsDataWriter
 
-        return LammpsDataSaver(frame, fpath)
+        return LammpsDataWriter(frame, fpath)
     elif format == "pdb":
         from .data.pdb import PDBWriter
 
