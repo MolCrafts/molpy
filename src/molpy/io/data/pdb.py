@@ -4,6 +4,7 @@ import numpy as np
 
 import molpy as mp
 from collections import defaultdict
+import pyarrow as pa
 
 
 class PDBReader:
@@ -34,7 +35,9 @@ class PDBReader:
                 "resName": [],
                 "chainID": [],
                 "resSeq": [],
-                "xyz": [],
+                "x": [],
+                "y": [],
+                "z": [],
                 "element": [],
             }
 
@@ -49,12 +52,14 @@ class PDBReader:
                     atoms["resName"].append(line[17:20].strip())
                     atoms["chainID"].append(line[21])
                     atoms["resSeq"].append(int(line[22:26]))
-                    atoms["xyz"].append(
-                        [float(line[30:38]), float(line[38:46]), float(line[46:54])]
+                    atoms["x"].append(
+                        float(line[30:38])
                     )
+                    atoms['y'].append(float(line[38:46]))
+                    atoms['z'].append(float(line[46:54]))
                     atoms["element"].append(line[76:78].strip())
 
-                if line.startswith("CONECT"):
+                elif line.startswith("CONECT"):
 
                     bond_indices = list(map(lambda l: int(l), line.split()[1:]))
                     i = bond_indices[0]
@@ -63,12 +68,21 @@ class PDBReader:
 
             bonds = np.unique(np.array(bonds), axis=0)
 
-            frame["bonds"]["i"] = bonds[:, 0]
-            frame["bonds"]["j"] = bonds[:, 1]
-            for key, value in atoms.items():
-                frame["atoms"][key] = np.array(value)
+            frame["atoms"] = pa.table(
+                atoms
+            )
+            frame["bonds"] = pa.table(
+                {
+                    "i": pa.array(bonds[:, 0]),
+                    "j": pa.array(bonds[:, 1]),
+                }
+            )
 
-            return frame
+            return mp.System(
+                box=mp.Box(),
+                ff=mp.ForceField(),
+                frame=frame,
+            )
 
 
 class PDBWriter:

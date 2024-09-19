@@ -21,8 +21,8 @@ class Box(Region, Boundary):
         matrix: np.ndarray | None = None,
         pbc: np.ndarray = np.zeros(3, dtype=bool),
     ):
-        if matrix is None:
-            self._matrix = np.eye(3)
+        if matrix is None or np.all(matrix == 0):
+            self._matrix = np.zeros((3, 3))
         else:
             self._matrix = Box.check_matrix(matrix)
         self._pbc = pbc

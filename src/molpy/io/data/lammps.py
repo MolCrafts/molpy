@@ -29,7 +29,14 @@ class LammpsDataReader:
 
             lines = filter(lambda line: line, map(LammpsDataReader.sanitizer, f))
 
-            box = {}
+            box = {
+                'xlo': 0.0,
+                'xhi': 0.0,
+                'ylo': 0.0,
+                'yhi': 0.0,
+                'zlo': 0.0,
+                'zhi': 0.0,
+            }
 
             for line in lines:
 
