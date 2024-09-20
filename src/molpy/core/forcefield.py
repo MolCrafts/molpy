@@ -435,6 +435,12 @@ class ForceField:
             if dihedralstyle.name == style:
                 return dihedralstyle
         return None
+    
+    def get_improperstyle(self, style: str):
+        for improperstyle in self.improperstyles:
+            if improperstyle.name == style:
+                return improperstyle
+        return None
 
     @property
     def n_atomstyles(self):

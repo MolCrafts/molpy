@@ -48,6 +48,13 @@ class LAMMPSForceFieldReader:
             with open(file, "r") as f:
                 lines.extend(f.readlines())
         lines = filter(lambda line: line, map(LAMMPSForceFieldReader.sanitizer, lines))
+        # default values
+        bondstyle_name = "unknown"
+        anglestyle_name = "unknown"
+        dihedralstyle_name = "unknown"
+        improperstyle_name = "unknown"
+        pairstyle_name = "unknown"
+        n_pairtypes = 0
         for line in lines:
             kw = line[0]
 
@@ -96,19 +103,39 @@ class LAMMPSForceFieldReader:
             elif "Coeffs" in line:
 
                 if kw == "Bond":
-                    self.read_bond_coeff_section(islice(lines, n_bondtypes))
+                    if "#" in line:
+                        bondstyle_name = line[line.index("#") + 1]
+                    self.read_bond_coeff_section(
+                        bondstyle_name, islice(lines, n_bondtypes)
+                    )
 
                 elif kw == "Angle":
-                    self.read_angle_coeff_section(islice(lines, n_angletypes))
+                    if "#" in line:
+                        anglestyle_name = line[line.index("#") + 1]
+                    self.read_angle_coeff_section(
+                        anglestyle_name, islice(lines, n_angletypes)
+                    )
 
                 elif kw == "Dihedral":
-                    self.read_dihedral_coeff_section(islice(lines, n_dihedraltypes))
+                    if "#" in line:
+                        dihedralstyle_name = line[line.index("#") + 1]
+                    self.read_dihedral_coeff_section(
+                        dihedralstyle_name, islice(lines, n_dihedraltypes)
+                    )
 
                 elif kw == "Improper":
-                    self.read_improper_coeff_section(islice(lines, n_impropertypes))
+                    if "#" in line:
+                        improperstyle_name = line[line.index("#") + 1]
+                    self.read_improper_coeff_section(
+                        improperstyle_name, islice(lines, n_impropertypes)
+                    )
 
                 elif kw == "Pair":
-                    self.read_pair_coeff_section(islice(lines, n_pairtypes))
+                    if "#" in line:
+                        pairstyle_name = line[line.index("#") + 1]
+                    self.read_pair_coeff_section(
+                        pairstyle_name, islice(lines, n_pairtypes)
+                    )
 
             if line[-1] == "types":
 
@@ -225,180 +252,175 @@ class LAMMPSForceFieldReader:
         else:
             atomstyle.def_type(str(atomtype_id), atomtype_id, mass=mass)
 
-    def read_bond_coeff_section(self, lines: Iterator[str]):
-
+    def read_bond_coeff_section(self, stylename: str, lines: Iterator[str]):
+        bondstyle = self.forcefield.get_bondstyle(stylename)
+        if bondstyle is None:
+            bondstyle = self.forcefield.def_bondstyle(stylename)
         for line in lines:
-            self.read_bond_coeff(line)
+            self.read_bond_coeff(bondstyle, line)
 
-    def read_angle_coeff_section(self, lines: Iterator[str]):
-
+    def read_angle_coeff_section(self, stylename: str, lines: Iterator[str]):
+        anglestyle = self.forcefield.get_anglestyle(stylename)
+        if anglestyle is None:
+            anglestyle = self.forcefield.def_anglestyle(stylename)
         for line in lines:
-            self.read_angle_coeff(line)
+            self.read_angle_coeff(anglestyle, line)
 
-    def read_dihedral_coeff_section(self, lines: Iterator[str]):
-
+    def read_dihedral_coeff_section(self, stylename: str, lines: Iterator[str]):
+        dihedralstyle = self.forcefield.get_dihedralstyle(stylename)
+        if dihedralstyle is None:
+            dihedralstyle = self.forcefield.def_dihedralstyle(stylename)
         for line in lines:
-            self.read_dihedral_coeff(line)
+            self.read_dihedral_coeff(dihedralstyle, line)
 
-    def read_improper_coeff_section(self, lines: Iterator[str]):
-
+    def read_improper_coeff_section(self, stylename: str, lines: Iterator[str]):
+        improperstyle = self.forcefield.get_improperstyle(stylename)
+        if improperstyle is None:
+            improperstyle = self.forcefield.def_improperstyle(stylename)
         for line in lines:
             type_id = line[0]
             if type_id.isalpha():
                 break
-            self.read_improper_coeff(line)
+            self.read_improper_coeff(improperstyle, line)
 
-    def read_pair_coeff_section(self, lines: Iterator[str]):
-
+    def read_pair_coeff_section(self, stylename: str, lines: Iterator[str]):
+        pairstyle = self.forcefield.get_pairstyle(stylename)
+        if pairstyle is None:
+            pairstyle = self.forcefield.def_pairstyle(stylename)
         for line in lines:
-            if line.isalnum:  # Pair Coeffs syntax:
-                type_id = line[0]  # i ...
-                if type_id.isalpha():
-                    break
-                line.insert(0, type_id)  # pair_coeff i j ...
-                self.read_pair_coeff(line)
+            if line[0].isalpha():
+                break
+            line.insert(0, line[0])  # pair_coeff i j ...
+            self.read_pair_coeff(pairstyle, line)
 
-
-    def read_bond_coeff(self, line):
+    def read_bond_coeff(self, style, line):
 
         bond_type_id = line[0]
 
         if line[1].isalpha():  # hybrid
-            bondstyle = self.forcefield.get_bondstyle(line[1])
             bondstyle_name = line[1]
+            style = self.forcefield.get_bondstyle(bondstyle_name)
+            if style is None:
+                style = self.forcefield.def_bondstyle(bondstyle_name)
             coeffs = line[2:]
         else:
-            bondstyle = self.forcefield.get_bondstyle(bond_type_id)
-            bondstyle_name = bond_type_id
             coeffs = line[1:]
 
-        if bondstyle is None:
-            bondstyle = self.forcefield.def_bondstyle(bondstyle_name)
-
-        if bondstyle.name in BOND_TYPE_FIELDS:
-            named_params = {
-                k: v for k, v in zip(BOND_TYPE_FIELDS[bondstyle.name], coeffs)
-            }
-            bondstyle.def_type(
+        if style.name in BOND_TYPE_FIELDS:
+            named_params = {k: v for k, v in zip(BOND_TYPE_FIELDS[style.name], coeffs)}
+            style.def_type(
                 bond_type_id,
                 **named_params,
             )
         else:
             params = [v for v in coeffs]
-            bondstyle.def_type(
+            style.def_type(
                 bond_type_id,
+                None, None,
                 *params,
             )
 
-    def read_angle_coeff(self, line):
+    def read_angle_coeff(self, style, line):
 
         angle_type_id = line[0]
 
         if line[1].isalpha():  # hybrid
-            anglestyle = self.forcefield.get_anglestyle(line[1])
             anglestyle_name = line[1]
+            style = self.forcefield.get_anglestyle(anglestyle_name)
+            if style is None:
+                style = self.forcefield.def_anglestyle(anglestyle_name)
             coeffs = line[2:]
         else:
-            anglestyle = self.forcefield.get_anglestyle(angle_type_id)
-            anglestyle_name = angle_type_id
             coeffs = line[1:]
-            
-        if anglestyle is None:
-            anglestyle = self.forcefield.def_anglestyle(anglestyle_name)
 
-        if anglestyle.name in ANGLE_TYPE_FIELDS:
+        if style.name in ANGLE_TYPE_FIELDS:
 
-            anglestyle.def_type(
+            style.def_type(
                 angle_type_id,
-                **{k: v for k, v in zip(ANGLE_TYPE_FIELDS[anglestyle.name], coeffs)},
+                **{k: v for k, v in zip(ANGLE_TYPE_FIELDS[style.name], coeffs)},
             )
         else:
-            anglestyle.def_type(
-                anglestyle.name,
+            style.def_type(
+                angle_type_id,
+                None, None, None,
                 *[v for v in coeffs],
             )
 
-    def read_dihedral_coeff(self, line):
+    def read_dihedral_coeff(self, style, line):
 
         dihedral_type_id = line[0]
 
         if line[1].isalpha():  # hybrid
-            dihedralstyle = self.forcefield.get_dihedralstyle(line[1])
             dihedralsyle_name = line[1]
+            style = self.forcefield.get_dihedralstyle(dihedralsyle_name)
+            if style is None:
+                style = self.forcefield.def_dihedralstyle(dihedralsyle_name)
             coeffs = line[2:]
         else:
-            dihedralstyle = self.forcefield.get_dihedralstyle(dihedral_type_id)
-            dihedralsyle_name = dihedral_type_id
             coeffs = line[1:]
 
-        if dihedralstyle is None:
-            dihedralstyle = self.forcefield.def_dihedralstyle(dihedralsyle_name)
+        if style.name in DIHEDRAL_TYPE_FIELDS:
 
-        if dihedralstyle.name in DIHEDRAL_TYPE_FIELDS:
-
-            dihedralstyle.def_type(
+            style.def_type(
                 dihedral_type_id,
-                **{
-                    k: v
-                    for k, v in zip(DIHEDRAL_TYPE_FIELDS[dihedralstyle.name], coeffs)
-                },
+                **{k: v for k, v in zip(DIHEDRAL_TYPE_FIELDS[style.name], coeffs)},
             )
 
         else:
-            dihedralstyle.def_type(
-                dihedralstyle.name, None, None, None, None, *[v for v in coeffs],
-            )
-
-    def read_improper_coeff(self, line):
-
-        improper_type_id = line[0]
-
-        if self.forcefield.n_improperstyles > 1:
-            improperstyle = self.forcefield.get_improperstyle(line[1])
-            coeffs = line[2:]
-
-        else:
-            improperstyle = self.forcefield.improperstyles[0]
-            coeffs = line[1:]
-
-        if improperstyle.name in IMPROPER_TYPE_FIELDS:
-            improperstyle.def_type(
-                improper_type_id,
-                **{
-                    k: v
-                    for k, v in zip(IMPROPER_TYPE_FIELDS[improperstyle.name], coeffs)
-                },
-            )
-        else:
-            improperstyle.def_type(
-                improperstyle.name,
+            style.def_type(
+                dihedral_type_id,
+                None,
+                None,
+                None,
+                None,
                 *[v for v in coeffs],
             )
 
-    def read_pair_coeff(self, line):
+    def read_improper_coeff(self, style, line):
+
+        improper_type_id = line[0]
+
+        if line[1].isalpha():  # hybrid
+            improperstyle_name = line[1]
+            style = self.forcefield.get_improperstyle(improperstyle_name)
+            if style is None:
+                style = self.forcefield.def_improperstyle(improperstyle_name)
+            coeffs = line[2:]
+        else:
+            coeffs = line[1:]
+
+        if style.name in IMPROPER_TYPE_FIELDS:
+            style.def_type(
+                improper_type_id,
+                **{k: v for k, v in zip(IMPROPER_TYPE_FIELDS[style.name], coeffs)},
+            )
+        else:
+            style.def_type(
+                improper_type_id,
+                None,
+                None,
+                None,
+                None,
+                *[v for v in coeffs],
+            )
+
+    def read_pair_coeff(self, style, line):
 
         atomtype_i = int(line[0])
         atomtype_j = int(line[1])
 
-        if len(self.forcefield.pairstyles) > 1:
-            pairstyle = self.forcefield.get_pairstyle(line[2])
-            coeffs = line[3:]
+        name = line[2]
+        coeffs = line[3:]
 
-        else:
-            pairstyle = self.forcefield.pairstyles[0]
-            coeffs = line[2:]
-
-        name = str(pairstyle.n_types)
-
-        if pairstyle.name in PAIR_TYPE_FIELDS:
-            pairstyle.def_pairtype(
+        if style.name in PAIR_TYPE_FIELDS:
+            style.def_pairtype(
                 name,
                 atomtype_i,
                 atomtype_j,
-                **{k: v for k, v in zip(PAIR_TYPE_FIELDS[pairstyle.name], coeffs)},
+                **{k: v for k, v in zip(PAIR_TYPE_FIELDS[style.name], coeffs)},
             )
         else:
-            pairstyle.def_pairtype(
+            style.def_pairtype(
                 name,
                 i=atomtype_i,
                 j=atomtype_j,

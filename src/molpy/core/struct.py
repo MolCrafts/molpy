@@ -172,8 +172,8 @@ class Struct(MolpyModel):
             atom["xyz"] = op.rotate(atom["xyz"], axis, theta)
         return self
 
-    def split(self, mask, key="molid"):
-        unique_id = np.unique(mask)
+    def split(self, key="molid"):
+        unique_id = np.unique(self['atoms'][key])
         structs = []
 
         for id_ in unique_id:
@@ -311,22 +311,27 @@ class Struct(MolpyModel):
 
         return frame
 
-    def simplify(self):
-
-        bond_i = self['bonds']['i']
-        bond_j = self['bonds']['j']
-
-        # atom idx -> atom type
-        bond_atom_type_i = self['atoms']['type'][bond_i]  # assume id ordered
-        bond_atom_type_j = self['atoms']['type'][bond_j]
-
-        # atom type -> bond type
-        bond_atom_types = np.stack([bond_atom_type_i, bond_atom_type_j], axis=1)
-        bond_atom_types = np.sort(bond_atom_types, axis=1)
-
-        # unique bond types
-        bond_atom_types = np.unique(bond_atom_types, axis=0)
-
-
-        bond_atom_type_i = bond_atom_types[:, 0]
-        bond_atom_type_j = bond_atom_types[:, 1]
+    def get_substruct(self, atom_idx):
+        
+        substruct = Struct()
+        for atom in self["atoms"]:
+            if atom.id in atom_idx:
+                substruct.add_atom(atom)
+        
+        for bond in self["bonds"]:
+            if bond.itom.id in atom_idx and bond.jtom.id in atom_idx:
+                substruct.add_bond(bond)
+        
+        for angle in self["angles"]:
+            if angle.itom.id in atom_idx and angle.jtom.id in atom_idx and angle.ktom.id in atom_idx:
+                substruct.add_angle(angle)
+        
+        for dihedral in self["dihedrals"]:
+            if dihedral.itom.id in atom_idx and dihedral.jtom.id in atom_idx and dihedral.ktom.id in atom_idx and dihedral.ltom.id in atom_idx:
+                substruct.add_dihedral(dihedral)
+        
+        for improper in self["impropers"]:
+            if improper.itom.id in atom_idx and improper.jtom.id in atom_idx and improper.ktom.id in atom_idx and improper.ltom.id in atom_idx:
+                substruct.add_improper(improper)
+        
+        return substruct

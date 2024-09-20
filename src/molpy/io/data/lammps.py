@@ -19,9 +19,9 @@ class LammpsDataReader:
     def sanitizer(line: str) -> str:
         return re.sub(r'\s+', ' ', line.strip())
 
-    def read(self):
+    def read(self, system: mp.System):
         
-        ff = mp.io.read_forcefield(self._file, format="lammps")
+        ff = system.forcefield
 
         with open(self._file, "r") as f:
 
@@ -236,17 +236,15 @@ class LammpsDataReader:
             frame,
         )
 
-
 class LammpsDataWriter:
 
-    def __init__(self, frame: mp.Frame, file: str | Path, atom_style: str = "full"):
-        self._frame = frame
+    def __init__(self, file: str | Path, atom_style: str = "full"):
         self._file = Path(file)
         self._atom_style = atom_style
 
-    def write(self):
+    def write(self, system: mp.System):
 
-        frame = self._frame
+        frame = system.frame
 
         with open(self._file, "w") as f:
 
@@ -318,3 +316,191 @@ class LammpsDataWriter:
                 frame["dihedrals"]["l"],
             ):
                 f.write(f"{id} {type} {i} {j} {k} {l}\n")
+
+class LammpsMoleculeReader:
+
+    def __init__(self, file: str | Path):
+        self._file = Path(file)
+        self.style = "full"
+        with open(self._file, "r") as f:
+            self.lines = filter(lambda line: line, map(LammpsDataReader.sanitizer, f))
+
+    @staticmethod
+    def sanitizer(line: str) -> str:
+        return re.sub(r'\s+', ' ', line.strip())
+
+    def read(self, system: mp.System):
+
+        frame = system.frame
+
+        for line in self.lines:
+
+            if line.endswith("atoms"):
+                frame["props"]["n_atoms"] = int(line.split()[0])
+
+            elif line.endswith("bonds"):
+                frame["props"]["n_bonds"] = int(line.split()[0])
+
+            elif line.endswith("angles"):
+                frame["props"]["n_angles"] = int(line.split()[0])
+
+            elif line.endswith("dihedrals"):
+                frame["props"]["n_dihedrals"] = int(line.split()[0])
+
+            elif line.endswith("impropers"):
+                frame["props"]["n_impropers"] = int(line.split()[0])
+
+            elif line.startswith('Corrds'):
+                header = ["id", 'x', 'y', 'z']
+                atom_lines = list(islice(self.lines, frame["props"]["n_atoms"]))
+                atom_table = csv.read_csv(
+                        io.BytesIO("\n".join(atom_lines).encode()),
+                        read_options=csv.ReadOptions(column_names=header),
+                        parse_options=csv.ParseOptions(delimiter=" "),
+                    )
+                frame["atoms"] = atom_table
+
+            elif line.startswith('Types'):
+                header = ["id", 'type']
+                atomtype_lines = list(islice(self.lines, frame["props"]["n_atoms"]))
+                atomtype_table = csv.read_csv(
+                        io.BytesIO("\n".join(atomtype_lines).encode()),
+                        read_options=csv.ReadOptions(column_names=header),
+                        parse_options=csv.ParseOptions(delimiter=" "),
+                    )
+                # join atom table and type table
+                frame["atoms"] = frame["atoms"].join(atomtype_table, on='id')
+                self._read_line(line, frame)
+
+            elif line.startswith("Charges"):
+                header = ["id", 'charge']
+                charge_lines = list(islice(self.lines, frame["props"]["n_atoms"]))
+                charge_table = csv.read_csv(
+                        io.BytesIO("\n".join(charge_lines).encode()),
+                        read_options=csv.ReadOptions(column_names=header),
+                        parse_options=csv.ParseOptions(delimiter=" "),
+                    )
+                frame["atoms"] = frame["atoms"].join(charge_table, on='id')
+                
+            elif line.startswith("Molecules"):
+                header = ["id", 'molid']
+                molid_lines = list(islice(self.lines, frame["props"]["n_atoms"]))
+                molid_table = csv.read_csv(
+                        io.BytesIO("\n".join(molid_lines).encode()),
+                        read_options=csv.ReadOptions(column_names=header),
+                        parse_options=csv.ParseOptions(delimiter=" "),
+                    )
+                frame["atoms"] = frame["atoms"].join(molid_table, on='id')
+
+            elif line.startswith("Bonds"):
+                bond_lines = list(islice(self.lines, frame["props"]["n_bonds"]))
+                bond_table = csv.read_csv(
+                    io.BytesIO("\n".join(bond_lines).encode()),
+                    read_options=csv.ReadOptions(
+                        column_names=["id", "type", "i", "j"]
+                    ),
+                    parse_options=csv.ParseOptions(delimiter=" "),
+                )
+                frame["bonds"] = bond_table
+
+            elif line.startswith("Angles"):
+                angle_lines = list(islice(self.lines, frame["props"]["n_angles"]))
+                angle_table = csv.read_csv(
+                    io.BytesIO("\n".join(angle_lines).encode()),
+                    read_options=csv.ReadOptions(
+                        column_names=["id", "type", "i", "j", "k"]
+                    ),
+                    parse_options=csv.ParseOptions(delimiter=" "),
+                )
+                frame["angles"] = angle_table
+
+            elif line.startswith("Dihedrals"):
+                dihedral_lines = list(islice(self.lines, frame["props"]["n_dihedrals"]))
+                dihedral_table = csv.read_csv(
+                    io.BytesIO("\n".join(dihedral_lines).encode()),
+                    read_options=csv.ReadOptions(
+                        column_names=["id", "type", "i", "j", "k", "l"]
+                    ),
+                    parse_options=csv.ParseOptions(delimiter=" "),
+                )
+                frame["dihedrals"] = dihedral_table
+
+            elif line.startswith("Impropers"):
+                improper_lines = list(islice(self.lines, frame["props"]["n_impropers"]))
+                improper_table = csv.read_csv(
+                    io.BytesIO("\n".join(improper_lines).encode()),
+                    read_options=csv.ReadOptions(
+                        column_names=["id", "type", "i", "j", "k", "l"]
+                    ),
+                    parse_options=csv.ParseOptions(delimiter=" "),
+                )
+                frame["impropers"] = improper_table
+
+class LammpsMoleculeWriter:
+
+    def __init__(self, file: str | Path, atom_style: str = "full"):
+        self._file = Path(file)
+        self._atom_style = atom_style
+
+    def write(self, system):
+
+        frame = system.frame
+
+        with open(self._file, "w") as f:
+
+            f.write(f"# generated by molpy\n\n")
+
+            if 'n_atoms' in frame['props']:
+                f.write(f"{frame['props']['n_atoms']} atoms\n")
+            if 'n_bonds' in frame['props']:
+                f.write(f"{frame['props']['n_bonds']} bonds\n")
+            if 'n_angles' in frame['props']:
+                f.write(f"{frame['props']['n_angles']} angles\n")
+            if 'n_dihedrals' in frame['props']:
+                f.write(f"{frame['props']['n_dihedrals']} dihedrals\n")
+
+            if 'atoms' in frame:
+                atoms = frame['atoms'].to_pylist()
+                f.write(f"\nCorrds\n\n")
+                for atom in atoms:
+                    f.write(f"{atom['id']} {atom['type']} {atom['x']} {atom['y']} {atom['z']}\n")
+
+                f.write(f"\nTypes\n\n")
+                for atom in atoms:
+                    f.write(f"{atom['id']} {atom['type']}\n")
+
+                if 'charge' in frame["atoms"]:
+                    f.write(f"\nCharges\n\n")
+                    for atom in atoms:
+                        f.write(f"{atom['id']} {atom['charge']}\n")
+
+                if 'molid' in frame["atoms"]:
+                    f.write(f"\nMolecules\n\n")
+                    for atom in atoms:
+                        f.write(f"{atom['id']} {atom['molid']}\n")
+
+            if 'bonds' in frame:
+                bonds = frame['bonds'].to_pylist()
+                f.write(f"\nBonds\n\n")
+                for bond in bonds:
+                    f.write(f"{bond['id']} {bond['type']} {bond['i']} {bond['j']}\n")
+
+            if 'angles' in frame:
+                angles = frame['angles'].to_pylist()
+                f.write(f"\nAngles\n\n")
+                for angle in angles:
+                    f.write(f"{angle['id']} {angle['type']} {angle['i']} {angle['j']} {angle['k']}\n")
+
+            if 'dihedrals' in frame:
+                dihedrals = frame['dihedrals'].to_pylist()
+                f.write(f"\nDihedrals\n\n")
+                for dihedral in dihedrals:
+                    f.write(f"{dihedral['id']} {dihedral['type']} {dihedral['i']} {dihedral['j']} {dihedral['k']} {dihedral['l']}\n")
+
+            if 'impropers' in frame:
+                impropers = frame['impropers'].to_pylist()
+                f.write(f"\nImpropers\n\n")
+                for improper in impropers:
+                    f.write(f"{improper['id']} {improper['type']} {improper['i']} {improper['j']} {improper['k']} {improper['l']}\n")
+
+            
