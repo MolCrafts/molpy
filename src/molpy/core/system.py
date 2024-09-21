@@ -1,15 +1,20 @@
 import numpy as np
-import molpy as mp
+from .space import Box
+from .frame import Frame
+from .forcefield import ForceField
 
 
 class System:
 
     def __init__(
-        self, box: mp.Box | None, ff: mp.ForceField | None, frame: mp.Frame | None
+        self,
+        box: Box = Box(),
+        ff: ForceField = ForceField(),
+        frame: Frame = Frame(),
     ):
-        self.box = box or mp.Box()
-        self.forcefield = ff or mp.ForceField()
-        self.frame = frame or mp.Frame()
+        self.box = box
+        self.forcefield = ff
+        self.frame = frame
 
     def simplify_types(self):
 

@@ -2,7 +2,7 @@ import molpy as mp
 import numpy as np
 from pathlib import Path
 
-read_txt = np.readtxt
+read_txt = np.loadtxt
 
 
 def read_lammps_data(file: Path, system: mp.System = mp.System()) -> mp.System:
@@ -22,12 +22,11 @@ def read_lammps_molecule(file: Path, system: mp.System = mp.System()) -> mp.Syst
 
 
 def read_amber(
-    file: Path, inpcrd: Path | None = None, system: mp.System = mp.System()
+    prmtop: Path, inpcrd: Path | None = None, system: mp.System = mp.System()
 ) -> mp.ForceField:
-    """Read AMBER force field file and return a molpy ForceField object."""
-    from .forcefield.amber import AmberForceFieldReader
-
-    reader = AmberForceFieldReader(file)
+    """Read AMBER force field prmtop and return a molpy ForceField object."""
+    from .forcefield.amber import AmberPrmtopReader
+    reader = AmberPrmtopReader(prmtop)
     system = reader.read(system)
     if inpcrd is not None:
         from .data.amber import AmberInpcrdReader

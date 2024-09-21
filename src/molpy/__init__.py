@@ -1,6 +1,5 @@
 from .element import Element
 
-from . import core
 from .core import (
     ForceField,
     AtomStyle,
