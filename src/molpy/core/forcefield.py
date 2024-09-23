@@ -40,9 +40,9 @@ class Style:
         raise NotImplementedError("get_params method must be implemented")
 
     def get_type(self, name: str):
-        for atomtype in self.types:
-            if atomtype.name == name:
-                return atomtype
+        for type_ in self.types:
+            if type_.name == name:
+                return type_
         return None
 
 
@@ -54,6 +54,7 @@ class Type:
 
         self.params = list(params)
         self.named_params = named_params
+        type_idx = tuple(map(int, type_idx))
 
         assert all(isinstance(idx, (int | None)) for idx in type_idx), TypeError(
             f"type_idx must be a tuple of integers or None(to be defined later), but got {type_idx}"
