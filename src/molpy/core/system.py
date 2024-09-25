@@ -2,19 +2,20 @@ import numpy as np
 from .space import Box
 from .frame import Frame
 from .forcefield import ForceField
+import pyarrow as pa
 
 
 class System:
 
     def __init__(
         self,
-        box: Box = Box(),
-        ff: ForceField = ForceField(),
-        frame: Frame = Frame(),
+        box: Box  | None = None,
+        ff: ForceField | None = None,
+        frame: Frame | None = None,
     ):
-        self.box = box
-        self.forcefield = ff
-        self.frame = frame
+        self.box = box or Box()
+        self.forcefield = ff or ForceField()
+        self.frame = frame or Frame()
 
     def simplify_types(self):
 
@@ -40,13 +41,14 @@ class System:
         )  # shape: (n_inputs, which_unique), kind of one hot
         new_mapping = unique_bond_idx[matches.argmax(axis=1)]
 
-        self.frame["bonds"]["type"] = per_bond_type[new_mapping]
+        self.frame["bonds"] = self.frame["bonds"].set_column(self.frame["bonds"].schema.get_field_index("type"), "type", [per_bond_type[new_mapping]])
 
-        bond_types = self.forcefield.bond_styles[0].types
+        bond_types = self.forcefield.bondstyles[0].types
         new_bond_types = []
         for bondtype in bond_types:
-            new_bond_types.append(bondtype)
-        self.forcefield.bond_styles[0].types = new_bond_types
+            if bondtype.name in new_mapping:
+                new_bond_types.append(bondtype)
+        self.forcefield.bondstyles[0].types = new_bond_types
 
         # simplify angle type
         per_angle_type = self.frame["angles"]["type"].to_numpy()
@@ -79,13 +81,14 @@ class System:
         )
 
         new_mapping = unique_angle_idx[matches.argmax(axis=1)]
-        self.frame["angles"]["type"] = per_angle_type[new_mapping]
+        self.frame["angles"] = self.frame["angles"].set_column(self.frame["angles"].schema.get_field_index("type"), "type", [per_angle_type[new_mapping]])
 
-        angle_types = self.forcefield.angle_styles[0].types
+        angle_types = self.forcefield.anglestyles[0].types
         new_angle_types = []
         for angletype in angle_types:
-            new_angle_types.append(angletype)
-        self.forcefield.angle_styles[0].types = new_angle_types
+            if angletype.name in new_mapping:
+                new_angle_types.append(angletype)
+        self.forcefield.anglestyles[0].types = new_angle_types
 
         # simplify dihedral type
         per_dihedral_type = self.frame["dihedrals"]["type"].to_numpy()
@@ -102,3 +105,19 @@ class System:
         dihedral_atom_types = np.stack(
             [dihedral_i_type, dihedral_j_type, dihedral_k_type, dihedral_l_type], axis=1
         )
+        unique_dihe_atom_types, unique_dihe_idx = np.unique(
+            dihedral_atom_types, axis=0, return_index=True
+        )
+        matches = (
+            np.all(dihedral_atom_types[:, None, :] == unique_dihe_atom_types, axis=-1) & 
+            np.all(dihedral_atom_types[:, None, ::-1] == unique_dihe_atom_types, axis=-1)
+        )
+        new_mapping = unique_dihe_idx[matches.argmax(axis=1)]
+        self.frame["dihedrals"] = self.frame["dihedrals"].set_column(self.frame["dihedrals"].schema.get_field_index("type"), "type", [per_dihedral_type[new_mapping]])
+
+        dihedral_types = self.forcefield.dihedralstyles[0].types
+        new_dihedral_types = []
+        for dihedraltype in dihedral_types:
+            if dihedraltype.name in new_mapping:
+                new_dihedral_types.append(dihedraltype)
+        self.forcefield.dihedralstyles[0].types = new_dihedral_types

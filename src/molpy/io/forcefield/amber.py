@@ -165,13 +165,13 @@ class AmberPrmtopReader:
 
         bonds['id'] = np.arange(1, meta['n_bonds'] + 1, dtype=int)
         bonds['type'] = np.array(bonds['type'], dtype=int)
-        bonds['i'] = np.array(np.abs(np.array(bonds['i'], dtype=int)) / 3 + 1, dtype=int)
+        bonds['i'] = np.array(np.abs(np.array(bonds['i'], dtype=int)) / 3 + 1, dtype=int)  # atom id
         bonds['j'] = np.array(np.abs(np.array(bonds['j'], dtype=int)) / 3 + 1, dtype=int)
         bond_style = system.forcefield.def_bondstyle("harmonic")
 
         unique_type, unique_idx = np.unique(bonds['type'], return_index=True)
         for idx, type_id in zip(unique_idx, unique_type):
-            i = bonds['i'][idx] - 1
+            i = bonds['i'][idx] - 1  # atom index
             j = bonds['j'][idx] - 1
             bond_style.def_type(type_id, atoms["type"][i], atoms["type"][j], force_constant=bond_params['force_constant'][type_id-1], equil_value=bond_params['equil_value'][type_id-1])
 
@@ -191,22 +191,27 @@ class AmberPrmtopReader:
         
         dihedrals['id'] = np.arange(1, meta['n_dihedrals'] + 1, dtype=int)
         dihedrals['type'] = np.array(dihedrals['type'], dtype=int)
+        dihedrals['i'] = np.array(dihedrals['i'], dtype=int)
+        dihedrals['j'] = np.array(dihedrals['j'], dtype=int)
+        dihedrals['k'] = np.array(dihedrals['k'], dtype=int)
+        dihedrals['l'] = np.array(dihedrals['l'], dtype=int)
 
-        mhar = system.forcefield.def_dihedralstyle("multi/harmonic")
-        charmm = system.forcefield.def_dihedralstyle("charmm")
-        for i, j, k, l, type_id in zip(dihedrals['i'], dihedrals['j'], dihedrals['k'], dihedrals['l'], dihedrals['type']):
-
+        dihe_style = system.forcefield.def_dihedralstyle("charmmfsw")
+        improper_style = system.forcefield.def_improperstyle("harmonic")
+        unique_type, unique_idx = np.unique(dihedrals['type'], return_index=True)
+        for idx, type_id in zip(unique_idx, unique_type):
+            i = dihedrals['i'][idx]
+            j = dihedrals['j'][idx]
+            k = dihedrals['k'][idx]
+            l = dihedrals['l'][idx]
             if l < 0:
                 # if the fourth atom is negative, this implies that the dihedral is an improper.
-                pass
+                improper_style.def_type(type_id, atoms["type"][int(abs(i))/3-1], atoms["type"][int(abs(j))/3-1], atoms["type"][int(abs(k))/3-1], atoms["type"][int(abs(l))/3-1], force_constant=dihedral_params['force_constant'][type_id-1], periodicity=dihedral_params['periodicity'][type_id-1], phase=dihedral_params['phase'][type_id-1])
+            else:
+                dihe_style.def_type(type_id, atoms["type"][int(abs(i))/3-1], atoms["type"][int(abs(j))/3-1], atoms["type"][int(abs(k))/3-1], atoms["type"][int(abs(l))/3-1], force_constant=dihedral_params['force_constant'][type_id-1])
             if k < 0:
                 # If the third atom is negative, this implies that the end group interations are to be ignored.
                 pass
-
-
-            if dihedral_style.get_type(type_id):
-                continue
-            dihedral_style.def_type(type_id, atoms["type"][i-1], atoms["type"][j-1], atoms["type"][k-1], atoms["type"][l-1], force_constant=dihedral_params['force_constant'][type_id-1], periodicity=dihedral_params['periodicity'][type_id-1], phase=dihedral_params['phase'][type_id-1])
 
 
         dihedrals['i'] = np.array(np.abs(np.array(dihedrals['i'], dtype=int)) / 3 + 1, dtype=int)
