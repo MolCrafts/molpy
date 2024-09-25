@@ -38,9 +38,9 @@ class AmberInpcrdReader:
 
             table = pa.table({
                 'id': range(1, num_atoms + 1),
-                'X': x_coords,
-                'Y': y_coords,
-                'Z': z_coords
+                'x': x_coords,
+                'y': y_coords,
+                'z': z_coords
             })
 
         frame['atoms'] = frame['atoms'].join(table, keys='id')

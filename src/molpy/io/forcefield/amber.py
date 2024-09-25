@@ -4,6 +4,7 @@ import numpy as np
 from typing import Iterator
 import pyarrow as pa
 from itertools import accumulate
+from math import sqrt
 
 class AmberPrmtopReader:
 
@@ -21,6 +22,11 @@ class AmberPrmtopReader:
     def sanitizer(line: str) -> str:
 
         return line.strip()
+    
+    @staticmethod
+    def read_section(lines: Iterator[str], convert_fn: int) -> list[str]:
+
+        return list(map(convert_fn, ' '.join(lines).split()))
 
     def read(self, system: mp.System) -> mp.ForceField:
 
@@ -28,7 +34,8 @@ class AmberPrmtopReader:
             
             lines = filter(lambda line: line, map(AmberPrmtopReader.sanitizer, f.readlines()))
 
-        raw_data = {        }
+        # read file and split into sections
+        self.raw_data = {}
         data = []
         flag = None
 
@@ -36,10 +43,10 @@ class AmberPrmtopReader:
 
             if line.startswith(f'%FLAG'):
                 if flag:
-                    if flag in raw_data:
-                        raw_data[flag].extend(data)
+                    if flag in self.raw_data:
+                        self.raw_data[flag].extend(data)
                     else:
-                        raw_data[flag] = data
+                        self.raw_data[flag] = data
 
                 flag = line.split()[1]
                 data = []
@@ -51,22 +58,27 @@ class AmberPrmtopReader:
                 data.append(line)
 
         if flag:
-            raw_data[flag] = data
+            self.raw_data[flag] = data
 
+        # parse string and get data
+        self.meta = {}
         atoms = {}
         bonds = {
             'type': [],
+            'type_name': [],
             'i': [],
             'j': [],
         }
         angles = {
             'type': [],
+            'type_name': [],
             'i': [],
             'j': [],
             'k': [],
         }
         dihedrals = {
             'type': [],
+            'type_name': [],
             'i': [],
             'j': [],
             'k': [],
@@ -74,18 +86,14 @@ class AmberPrmtopReader:
         }
         pairs = {}
 
-        bond_params = {}
-        angle_params = {}
-        dihedral_params = {}
-
-        for key, value in raw_data.items():
+        for key, value in self.raw_data.items():
             match key:
 
                 case 'TITLE':
-                    title = value[0]
+                    self.meta['title'] = value[0]
 
                 case 'POINTERS':
-                    meta = self._read_pointers(raw_data[key])
+                    self.meta = meta = self._read_pointers(self.raw_data[key])
 
                 case 'ATOM_NAME':
                     atoms['name'] = self._read_atom_name(value)
@@ -102,128 +110,63 @@ class AmberPrmtopReader:
                 case 'ATOM_TYPE_INDEX':
                     atoms['type'] = self._read_atom_type(value)
 
-                # case 'NUMBER_EXCLUDED_ATOMS':
-                case 'NONBONDED_PARM_INDEX':
-                    nonbonded_index, nonbonded_params, acoeff, bcoeff = self.parse_nonbonded_params(raw_data)
+                case 'AMBER_ATOM_TYPE':
+                    atoms['type_name'] = self.read_section(value, str)
 
-                # case 'RESIDUE_LABEL':
-                case 'BOND_FORCE_CONSTANT':
-                    value = ' '.join(value).split()
-                    bond_params['force_constant'] = list(map(float, value))
+                case 'BOND_FORCE_CONSTANT' | 'BOND_EQUIL_VALUE' | 'ANGLE_FORCE_CONSTANT' | 'ANGLE_EQUIL_VALUE' | 'DIHEDRAL_FORCE_CONSTANT' | 'DIHEDRAL_PERIODICITY' | 'DIHEDRAL_PHASE' | 'LENNARD_JONES_ACOEF' | 'LENNARD_JONES_BCOEF':
 
-                case 'BOND_EQUIL_VALUE':
-                    value = ' '.join(value).split()
-                    bond_params['equil_value'] = list(map(float, value))
+                    self.raw_data[key] = self.read_section(value, float)
 
-                case 'ANGLE_FORCE_CONSTANT':
-                    value = ' '.join(value).split()
-                    angle_params['force_constant'] = list(map(float, value))
-                
-                case 'ANGLE_EQUIL_VALUE':
-                    value = ' '.join(value).split()
-                    angle_params['equil_value'] = list(map(float, value))
+                case 'BONDS_INC_HYDROGEN' | 'BONDS_WITHOUT_HYDROGEN' | 'ANGLES_INC_HYDROGEN' | 'ANGLES_WITHOUT_HYDROGEN' | 'DIHEDRALS_INC_HYDROGEN' | 'DIHEDRALS_WITHOUT_HYDROGEN':
+                    self.raw_data[key] = self.read_section(value, int)
 
-                case 'DIHEDRAL_FORCE_CONSTANT':
-                    value = ' '.join(value).split()
-                    dihedral_params['force_constant'] = list(map(float, value))
+        # def forcefield
+        atoms['id'] = np.arange(meta['n_atoms'], dtype=int) + 1
+        atomstyle = system.forcefield.def_atomstyle('full')
+        for itype, name in zip(atoms['type'], atoms['type_name']):
+            atomstyle.def_type(itype, name=name)
 
-                case 'DIHEDRAL_PERIODICITY':
-                    value = ' '.join(value).split()
-                    dihedral_params['periodicity'] = list(map(float, value))
+        bondstyle = system.forcefield.def_bondstyle("harmonic")
+        for bond_type, i, j, k, r_min in self.get_bond_with_H() + self.get_bond_without_H():
+            if bond_type not in bondstyle:
+                bond_name = f'{atomstyle[atoms['type'][i-1]].name}-{atomstyle[atoms['type'][j-1]].name}'
+                bondstyle.def_type(itype, i, j, name=bond_name, kw_params={'force_constant':k, 'equil_value':r_min})  # if multiply by 2
+            bonds['type'].append(bond_type)
+            bonds['i'].append(i)
+            bonds['j'].append(j)
+            bonds['type_name'].append(bondstyle[itype].name)
+        bonds['id'] = np.arange(meta['n_bonds'], dtype=int) + 1
 
-                case 'DIHEDRAL_PHASE':
-                    value = ' '.join(value).split()
-                    dihedral_params['phase'] = list(map(float, value))
+        anglestyle = system.forcefield.def_anglestyle("harmonic")
+        for angle_type, i, j, k, f, theta_min in self.parse_angle_params():
+            if angle_type not in anglestyle:
+                angle_name = f'{atomstyle[atoms['type'][i-1]].name}-{atomstyle[atoms['type'][j-1]].name}-{atomstyle[atoms['type'][k]].name}'
+                anglestyle.def_type(angle_type, i, j, k, name=angle_name, kw_params={'force_constant':f, 'equil_value':theta_min})
+            
+            angles['type'].append(angle_type)
+            angles['i'].append(i)
+            angles['j'].append(j)
+            angles['k'].append(k)
+            angles['type_name'].append(anglestyle[angle_type].name)
 
-                case 'LENNARD_JONES_ACOEF' | 'LENNARD_JONES_BCOEF':
-                    pairs[key] = list(map(float, ' '.join(value).split()))
+        angles['id'] = np.arange(meta['n_angles'], dtype=int) + 1
 
-                case 'BONDS_INC_HYDROGEN' | 'BONDS_WITHOUT_HYDROGEN':
-                    bond_idx = ' '.join(value).split()
-                    bonds['i'].extend(idx for idx in bond_idx[0::3] )
-                    bonds['j'].extend(idx for idx in bond_idx[1::3] )
-                    bonds['type'].extend(idx for idx in bond_idx[2::3])
+        dihedralstyle = system.forcefield.def_dihedralstyle("charmmfsw")
+        for dihe_type, i, j, k, l, f, phase, periodicity in self.parse_dihedral_params():
+            if dihe_type not in dihedralstyle:
+                dihe_name = f'{atomstyle[atoms['type'][i-1]].name}-{atomstyle[atoms['type'][j-1]].name}-{atomstyle[atoms['type'][k-1]].name}-{atomstyle[atoms['type'][l]].name}'
+                dihedralstyle.def_type(dihe_type, i, j, k, l, name=dihe_name, kw_params={'force_constant':f, 'phase':phase, 'periodicity':periodicity})
+            dihedrals['type'].append(dihe_type)
+            dihedrals['i'].append(i)
+            dihedrals['j'].append(j)
+            dihedrals['k'].append(k)
+            dihedrals['l'].append(l)
+            dihedrals['type_name'].append(dihedralstyle[dihe_type].name)
+        dihedrals['id'] = np.arange(meta['n_dihedrals'], dtype=int) + 1
 
-                case 'ANGLES_INC_HYDROGEN' | 'ANGLES_WITHOUT_HYDROGEN':
-                    angle_idx = ' '.join(value).split()
-                    angles['i'].extend(idx for idx in angle_idx[0::4] )
-                    angles['j'].extend(idx for idx in angle_idx[1::4] )
-                    angles['k'].extend(idx for idx in angle_idx[2::4] )
-                    angles['type'].extend(idx for idx in angle_idx[3::4])
+        atoms, bonds, angles, dihedrals = self._parse_residues(self.raw_data['RESIDUE_POINTER'], meta, atoms, bonds, angles, dihedrals)
 
-                case 'DIHEDRALS_INC_HYDROGEN' | 'DIHEDRALS_WITHOUT_HYDROGEN':
-                    dihe_idx = ' '.join(value).split()
-                    dihedrals['i'].extend(idx for idx in dihe_idx[0::5])
-                    dihedrals['j'].extend(idx for idx in dihe_idx[1::5])
-                    dihedrals['k'].extend(idx for idx in dihe_idx[2::5])
-                    dihedrals['l'].extend(idx for idx in dihe_idx[3::5])
-                    dihedrals['type'].extend(idx for idx in dihe_idx[4::5])
-
-                # case 'SCEE_SCALE_FACTOR':
-                # case 'SCNB_SCALE_FACTOR':
-        atoms['id'] = np.arange(1, meta['n_atoms'] + 1, dtype=int)
-
-        bonds['id'] = np.arange(1, meta['n_bonds'] + 1, dtype=int)
-        bonds['type'] = np.array(bonds['type'], dtype=int)
-        bonds['i'] = np.array(np.abs(np.array(bonds['i'], dtype=int)) / 3 + 1, dtype=int)  # atom id
-        bonds['j'] = np.array(np.abs(np.array(bonds['j'], dtype=int)) / 3 + 1, dtype=int)
-        bond_style = system.forcefield.def_bondstyle("harmonic")
-
-        unique_type, unique_idx = np.unique(bonds['type'], return_index=True)
-        for idx, type_id in zip(unique_idx, unique_type):
-            i = bonds['i'][idx] - 1  # atom index
-            j = bonds['j'][idx] - 1
-            bond_style.def_type(type_id, atoms["type"][i], atoms["type"][j], force_constant=bond_params['force_constant'][type_id-1], equil_value=bond_params['equil_value'][type_id-1])
-
-        angles['id'] = np.arange(1, meta['n_angles'] + 1, dtype=int)
-        angles['type'] = np.array(angles['type'], dtype=int)
-        angles['i'] = np.array(np.abs(np.array(angles['i'], dtype=int)) / 3 + 1, dtype=int)
-        angles['j'] = np.array(np.abs(np.array(angles['j'], dtype=int)) / 3 + 1, dtype=int)
-        angles['k'] = np.array(np.abs(np.array(angles['k'], dtype=int)) / 3 + 1, dtype=int)
-        angle_style = system.forcefield.def_anglestyle("harmonic")
-
-        unique_type, unique_idx = np.unique(angles['type'], return_index=True)
-        for idx, type_id in zip(unique_idx, unique_type):
-            i = angles['i'][idx] - 1
-            j = angles['j'][idx] - 1
-            k = angles['k'][idx] - 1
-            angle_style.def_type(type_id, atoms["type"][i], atoms["type"][j], atoms["type"][k], force_constant=angle_params['force_constant'][type_id-1], equil_value=angle_params['equil_value'][type_id-1])
-        
-        dihedrals['id'] = np.arange(1, meta['n_dihedrals'] + 1, dtype=int)
-        dihedrals['type'] = np.array(dihedrals['type'], dtype=int)
-        dihedrals['i'] = np.array(dihedrals['i'], dtype=int)
-        dihedrals['j'] = np.array(dihedrals['j'], dtype=int)
-        dihedrals['k'] = np.array(dihedrals['k'], dtype=int)
-        dihedrals['l'] = np.array(dihedrals['l'], dtype=int)
-
-        dihe_style = system.forcefield.def_dihedralstyle("charmmfsw")
-        improper_style = system.forcefield.def_improperstyle("harmonic")
-        unique_type, unique_idx = np.unique(dihedrals['type'], return_index=True)
-        for idx, type_id in zip(unique_idx, unique_type):
-            i = dihedrals['i'][idx]
-            j = dihedrals['j'][idx]
-            k = dihedrals['k'][idx]
-            l = dihedrals['l'][idx]
-            if l < 0:
-                # if the fourth atom is negative, this implies that the dihedral is an improper.
-                improper_style.def_type(type_id, atoms["type"][int(abs(i))/3-1], atoms["type"][int(abs(j))/3-1], atoms["type"][int(abs(k))/3-1], atoms["type"][int(abs(l))/3-1], force_constant=dihedral_params['force_constant'][type_id-1], periodicity=dihedral_params['periodicity'][type_id-1], phase=dihedral_params['phase'][type_id-1])
-            else:
-                dihe_style.def_type(type_id, atoms["type"][int(abs(i))/3-1], atoms["type"][int(abs(j))/3-1], atoms["type"][int(abs(k))/3-1], atoms["type"][int(abs(l))/3-1], force_constant=dihedral_params['force_constant'][type_id-1])
-            if k < 0:
-                # If the third atom is negative, this implies that the end group interations are to be ignored.
-                pass
-
-
-        dihedrals['i'] = np.array(np.abs(np.array(dihedrals['i'], dtype=int)) / 3 + 1, dtype=int)
-        dihedrals['j'] = np.array(np.abs(np.array(dihedrals['j'], dtype=int)) / 3 + 1, dtype=int)
-        dihedrals['k'] = np.array(np.abs(np.array(dihedrals['k'], dtype=int)) / 3 + 1, dtype=int)
-        dihedrals['l'] = np.array(np.abs(np.array(dihedrals['l'], dtype=int)) / 3 + 1, dtype=int)
-
-
-
-
-        atoms, bonds, angles, dihedrals = self._parse_residues(raw_data['RESIDUE_POINTER'], meta, atoms, bonds, angles, dihedrals)
-
+        # store in system
         system.frame['props'] = meta
         system.frame['atoms'] = pa.table(atoms)
         system.frame['bonds'] = pa.table(bonds)
@@ -299,12 +242,16 @@ class AmberPrmtopReader:
         n_atoms = meta['n_atoms']
         assert n_atoms == residue_slice[-1], f'Number of atoms does not match residue pointers, {n_atoms} != {residue_slice[-1]}'
         segment_lengths = np.diff(residue_slice)
-        atom_residue_mask = np.repeat(np.arange(len(pointer)), segment_lengths)
+        atom_residue_mask = np.repeat(np.arange(len(pointer))+1, segment_lengths)
 
         # get bond mask: if both i and j in atom_mask, then bond is intra-residue and equal to atom mask in corresponding index, else inter-residue and -1
         bond_i = bonds['i']
         bond_j = bonds['j']
-        bond_residue_mask = np.where(np.isin(bond_i, atom_residue_mask) & np.isin(bond_j, atom_residue_mask), atom_residue_mask[bond_i], -1)
+        bond_residue_mask = np.zeros(len(bond_i), dtype=int)
+        for residue in np.unique(atom_residue_mask):
+            atom_mask = atom_residue_mask == residue  # atoms' id in residue
+            bond_residue_mask[np.where(np.isin(bond_i, atom_mask) & np.isin(bond_j, atom_mask))] = residue
+
 
         atoms['residue'] = atom_residue_mask
         bonds['residue'] = bond_residue_mask
@@ -317,19 +264,189 @@ class AmberPrmtopReader:
         angles['residue'] = angle_residue_mask
 
         return atoms, bonds, angles, dihedrals
+    
+    def _parse_bond_params(self, bondPointers):
+        forceConstant=self.raw_data["BOND_FORCE_CONSTANT"]
+        bondEquil=self.raw_data["BOND_EQUIL_VALUE"]
+        returnList=[]
+        # forceConstConversionFactor = (units.kilocalorie_per_mole/(units.angstrom*units.angstrom)).conversion_factor_to(units.kilojoule_per_mole/(units.nanometer*units.nanometer))
+        # lengthConversionFactor = units.angstrom.conversion_factor_to(units.nanometer)
+        for ii in range(0,len(bondPointers),3):
+            if int(bondPointers[ii])<0 or \
+            int(bondPointers[ii+1])<0:
+                raise Exception("Found negative bonded atom pointers %s"
+                                % ((bondPointers[ii],
+                                    bondPointers[ii+1]),))
+            iType=int(bondPointers[ii+2])
+            i, j = sorted((int(bondPointers[ii])//3+1, int(bondPointers[ii+1])//3+1))
+
+            returnList.append((iType,  # return 1-based idx
+                            i,
+                            j,
+                            float(forceConstant[iType-1]),
+                            float(bondEquil[iType-1])))
+        return returnList
 
 
-    def parse_nonbonded_params(self, raw_data: dict):
-        nonbonded_params = {}
-        nonbonded_index = list(map(int, (' '.join(raw_data['NONBONDED_PARM_INDEX'])).split()))
-        acoef = list(map(float, (' '.join(raw_data['LENNARD_JONES_ACOEF'])).split()))
-        bcoef = list(map(float, (' '.join(raw_data['LENNARD_JONES_BCOEF'])).split()))
-        
-        for i in range(len(nonbonded_index)):
-            index = nonbonded_index[i] - 1 
-            if index >= 0:
-                a_param = acoef[index]
-                b_param = bcoef[index]
-                nonbonded_params[i + 1] = (a_param, b_param)
+    def get_bond_with_H(self):
+        """Return list of bonded atom pairs, K, and Rmin for each bond with a hydrogen"""
+        bondPointers=self.raw_data["BONDS_INC_HYDROGEN"]
+        return self._parse_bond_params(bondPointers)
 
-        return nonbonded_index, nonbonded_params, acoef, bcoef
+
+    def get_bond_without_H(self):
+        """Return list of bonded atom pairs, K, and Rmin for each bond with no hydrogen"""
+        bondPointers=self.raw_data["BONDS_WITHOUT_HYDROGEN"]
+        return self._parse_bond_params(bondPointers)
+
+    
+    def parse_angle_params(self):
+        """Return list of atom triplets, K, and ThetaMin for each bond angle"""
+        try:
+            return self._angleList
+        except AttributeError:
+            pass
+        forceConstant=self.raw_data["ANGLE_FORCE_CONSTANT"]
+        angleEquil=self.raw_data["ANGLE_EQUIL_VALUE"]
+        anglePointers = self.raw_data["ANGLES_INC_HYDROGEN"] \
+                       +self.raw_data["ANGLES_WITHOUT_HYDROGEN"]
+        self._angleList=[]
+        # forceConstConversionFactor = (units.kilocalorie_per_mole/(units.radian*units.radian)).conversion_factor_to(units.kilojoule_per_mole/(units.radian*units.radian))
+        for ii in range(0,len(anglePointers),4):
+             if int(anglePointers[ii])<0 or \
+                int(anglePointers[ii+1])<0 or \
+                int(anglePointers[ii+2])<0:
+                 raise Exception("Found negative angle atom pointers %s"
+                                 % ((anglePointers[ii],
+                                     anglePointers[ii+1],
+                                     anglePointers[ii+2]),))
+             iType=int(anglePointers[ii+3])
+             i, k = sorted((int(anglePointers[ii])//3+1, int(anglePointers[ii+2])//3+1))
+             self._angleList.append((iType, i,
+                                int(anglePointers[ii+1])//3+1,
+                                k,
+                                float(forceConstant[iType-1]),
+                                float(angleEquil[iType-1])))
+        return self._angleList
+
+
+    def parse_dihedral_params(self):
+        """Return list of atom quads, K, phase and periodicity for each dihedral angle"""
+
+        forceConstant=self.raw_data["DIHEDRAL_FORCE_CONSTANT"]
+        phase=self.raw_data["DIHEDRAL_PHASE"]
+        periodicity=self.raw_data["DIHEDRAL_PERIODICITY"]
+        dihedralPointers = self.raw_data["DIHEDRALS_INC_HYDROGEN"] \
+                          +self.raw_data["DIHEDRALS_WITHOUT_HYDROGEN"]
+        self._dihedralList=[]
+        # forceConstConversionFactor = (units.kilocalorie_per_mole).conversion_factor_to(units.kilojoule_per_mole)
+        for ii in range(0,len(dihedralPointers),5):
+             if int(dihedralPointers[ii])<0 or int(dihedralPointers[ii+1])<0:
+                 raise Exception("Found negative dihedral atom pointers %s"
+                                 % ((dihedralPointers[ii],
+                                    dihedralPointers[ii+1],
+                                    dihedralPointers[ii+2],
+                                    dihedralPointers[ii+3]),))
+             iType=int(dihedralPointers[ii+4])
+             i, j, k, l = int(dihedralPointers[ii])//3+1, \
+                                int(dihedralPointers[ii+1])//3+1, \
+                                abs(int(dihedralPointers[ii+2]))//3+1, \
+                                abs(int(dihedralPointers[ii+3]))//3+1
+             if j > k:
+                i, j, k, l = l, k, j, i
+             self._dihedralList.append((iType, i, j, k, l,
+                                float(forceConstant[iType-1]),
+                                float(phase[iType-1]),
+                                int(0.5+float(periodicity[iType-1]))))
+        return self._dihedralList
+
+    # def getImpropers(self):
+    #     """Return list of atom quads, K, and phase for each improper torsion"""
+    #     try:
+    #         return self._improperList
+    #     except AttributeError:
+    #         pass
+    #     self._improperList = []
+    #     if 'CHARMM_IMPROPERS' in self.raw_data:
+    #         forceConstant = self.raw_data["CHARMM_IMPROPER_FORCE_CONSTANT"]
+    #         phase = self.raw_data["CHARMM_IMPROPER_PHASE"]
+    #         improperPointers = self.raw_data["CHARMM_IMPROPERS"]
+    #         # forceConstConversionFactor = (units.kilocalorie_per_mole).conversion_factor_to(units.kilojoule_per_mole)
+    #         for ii in range(0,len(improperPointers),5):
+    #              if int(improperPointers[ii])<0 or int(improperPointers[ii+1])<0:
+    #                  raise Exception("Found negative improper atom pointers %s"
+    #                                  % ((improperPointers[ii],
+    #                                     improperPointers[ii+1],
+    #                                     improperPointers[ii+2],
+    #                                     improperPointers[ii+3]),))
+    #              iType = int(improperPointers[ii+4])-1
+    #              self._improperList.append((int(improperPointers[ii])-1,
+    #                                 int(improperPointers[ii+1])-1,
+    #                                 abs(int(improperPointers[ii+2]))-1,
+    #                                 abs(int(improperPointers[ii+3]))-1,
+    #                                 float(forceConstant[iType]),# *forceConstConversionFactor,
+    #                                 float(phase[iType])))
+    #     return self._improperList
+
+    def parse_nonbond_params(self):
+        """
+        Return list of all rVdw, epsilon pairs for each atom. If off-diagonal
+        elements of the Lennard-Jones A and B coefficient matrices are found,
+        NbfixPresent exception is raised
+        """
+        if self._has_nbfix_terms:
+            raise Exception('Off-diagonal Lennard-Jones elements found. '
+                        'Cannot determine LJ parameters for individual atoms.')
+
+        # Check if there are any non-zero HBOND terms
+        for x, y in zip(self.raw_data['HBOND_ACOEF'], self.raw_data['HBOND_BCOEF']):
+            if float(x) or float(y):
+                raise Exception('10-12 interactions are not supported')
+        self._nonbondTerms=[]
+        # lengthConversionFactor = units.angstrom.conversion_factor_to(units.nanometer)
+        # energyConversionFactor = units.kilocalorie_per_mole.conversion_factor_to(units.kilojoule_per_mole)
+        numTypes = self.meta['NTYPES']
+        atomTypeIndexes=self.atoms['type']
+        type_parameters = [(0, 0) for i in range(numTypes)]
+        for iAtom in range(self.meta['NATOM']):
+            index=(numTypes+1)*(atomTypeIndexes[iAtom]-1)
+            nbIndex=int(self.raw_data['NONBONDED_PARM_INDEX'][index])-1
+            if nbIndex<0:
+                raise Exception("10-12 interactions are not supported")
+            acoef = float(self.raw_data['LENNARD_JONES_ACOEF'][nbIndex])
+            bcoef = float(self.raw_data['LENNARD_JONES_BCOEF'][nbIndex])
+            try:
+                rMin = (2*acoef/bcoef)**(1/6.0)
+                epsilon = 0.25*bcoef*bcoef/acoef
+            except ZeroDivisionError:
+                rMin = 1.0
+                epsilon = 0.0
+            type_parameters[atomTypeIndexes[iAtom]-1] = (rMin/2.0, epsilon)
+            # jichen: unit conversion 
+            # length: angstrom to namometer
+            # epsilon: kcal/mol to kJ/mol
+            rVdw = rMin/2.0
+            self._nonbondTerms.append( (rVdw, epsilon) )
+        # Check if we have any off-diagonal modified LJ terms that would require
+        # an NBFIX-like solution
+        for i in range(numTypes):
+            for j in range(numTypes):
+                index = int(self.raw_data['NONBONDED_PARM_INDEX'][numTypes*i+j]) - 1
+                if index < 0: continue
+                rij = type_parameters[i][0] + type_parameters[j][0]
+                wdij = sqrt(type_parameters[i][1] * type_parameters[j][1])
+                a = float(self.raw_data['LENNARD_JONES_ACOEF'][index])
+                b = float(self.raw_data['LENNARD_JONES_BCOEF'][index])
+                if a == 0 or b == 0:
+                    if a != 0 or b != 0 or (wdij != 0 and rij != 0):
+                        self._has_nbfix_terms = True
+                        raise Exception('Off-diagonal Lennard-Jones elements'
+                                           ' found. Cannot determine LJ '
+                                           'parameters for individual atoms.')
+                elif (abs((a - (wdij * rij ** 12)) / a) > 1e-6 or
+                      abs((b - (2 * wdij * rij**6)) / b) > 1e-6):
+                    self._has_nbfix_terms = True
+                    raise Exception('Off-diagonal Lennard-Jones elements '
+                                       'found. Cannot determine LJ parameters '
+                                       'for individual atoms.')
+        return self._nonbondTerms

@@ -10,9 +10,6 @@ class Entity(dict):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def __eq__(self, other):
-        return self.id == other.id
-
     def clone(self):
         return deepcopy(self)
 
@@ -28,6 +25,9 @@ class Atom(Entity):
 
     def __hash__(self):
         return id(self)
+    
+    def __eq__(self, other):
+        return self.id == other.id
 
     def to_dict(self):
         d = dict(self)
@@ -140,6 +140,18 @@ class Struct(MolpyModel):
             if atom in {bond.itom, bond.jtom}:
                 self["bonds"].remove(bond)
 
+    def del_bond_(self, itom, jtom):
+            
+        for bond in self["bonds"]:
+            if {bond.itom, bond.jtom} == {itom, jtom}:
+                self["bonds"].remove(bond)
+
+    def del_bond(self, itom, jtom):
+
+        new = self.copy()
+        new.del_bond_(itom, jtom)
+        return new
+
     def get_atom_by_id(self, id: str):
         for atom in self["atoms"]:
             if atom.id == id:
@@ -171,6 +183,9 @@ class Struct(MolpyModel):
         for atom in self["atoms"]:
             atom["xyz"] = op.rotate(atom["xyz"], axis, theta)
         return self
+    
+    def link(self, other: "Struct"):
+        pass
 
     def split(self, key="molid"):
         unique_id = np.unique(self['atoms'][key])

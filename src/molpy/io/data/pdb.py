@@ -87,17 +87,18 @@ class PDBReader:
 
 class PDBWriter:
 
-    def __init__(self, frame: mp.Frame, file: str | Path):
-        self._frame = frame
+    def __init__(self, file: str | Path):
         self._file = Path(file)
 
-    def write(self):
+    def write(self, system):
+
+        frame = system.frame
 
         with open(self._file, "w") as f:
 
             atom_name_remap = {}
 
-            for atom in self._frame["atoms"].to_pylist():
+            for atom in frame["atoms"].to_pylist():
                 serial = atom["id"]
                 altLoc = atom.get("altLoc", "")
                 name = atom["name"]
@@ -119,7 +120,7 @@ class PDBWriter:
                 )
 
             bonds = defaultdict(list)
-            for bond in self._frame["bonds"].to_pylist():
+            for bond in frame["bonds"].to_pylist():
                 bonds[bond["i"]].append(bond["j"])
                 bonds[bond["j"]].append(bond["i"])
 

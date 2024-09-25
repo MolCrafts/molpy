@@ -1,341 +1,189 @@
 import numpy as np
-from typing import Literal
 from functools import reduce
-from pathlib import Path
 from typing import Iterable
-from ..potential.base import Potential
+
+class Type(dict):
+
+    def __init__(
+        self, id: int, name: str = "", kw_params: dict = {}, order_params: list = []
+    ):
+        super().__init__(kw_params)
+        self.id = id
+        self.name = name
+        self['order_params'] = order_params
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}: {self.id}>"
 
 
-class Style:
+class Style(dict):
 
     def __init__(
         self,
-        style: str,
-        mixing=Literal["geometry", "arithmetic"] | None,
+        name: str,
         *params,
         **named_params,
     ):
-        self.params = list(params)
-        self.named_params = named_params
-        if isinstance(style, str):
-            self.name = style
-            self.calculator = None
-        self.types: list[Type] = []
-        self.mixing = mixing
+        super().__init__(**named_params)
+        self.name = name
+        self.types: dict[int, Type] = {}
+        self['params'] = params
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}: {self.name}>"
 
-    def __contains__(self, name: str):
-        for type_ in self.types:
-            if type_.name == name:
-                return True
-        return False
 
     @property
     def n_types(self):
         return len(self.types)
 
-    def get_params(self):
-        raise NotImplementedError("get_params method must be implemented")
-
-    def get_type(self, name: str):
+    def get_type(self, name: str) -> Type | None:
         for type_ in self.types:
             if type_.name == name:
                 return type_
         return None
 
+    def __contains__(self, id: int):
+        return id in self.types
+    
+    def __getitem__(self, id: int):
+        return self.types[id]
+    
+    def __eq__(self, other: "Style"):
+        return self.name == other.name
+    
+    def remap_id(self):
+        new_types = {}
+        for i, t in self.types.items():
+            new_types[i] = t
+            t.id = i
+        self.types = new_types
 
-class Type:
+    def get_type_by_name(self, name: str) -> Type | None:
+        for typ in self.types.values():
+            if typ.name == name:
+                return typ
+        return None
 
-    def __init__(
-        self, name: str | Potential, type_idx: tuple[int], *params, **named_params
-    ):
-
-        self.params = list(params)
-        self.named_params = named_params
-
-        assert all(isinstance(idx, (int | None)) for idx in type_idx), TypeError(
-            f"type_idx must be a tuple of integers or None(to be defined later), but got {type_idx}"
-        )
-        self.name = name
-
-        self.type_idx = type_idx
-
-    def __repr__(self) -> str:
-        return f"<{self.__class__.__name__}: {self.name}>"
-
-    def __setitem__(self, key: str, value: float):
-        self.named_params[key] = value
-
-    def __getitem__(self, key: str):
-        return self.named_params[key]
-
+    def merge(self, other: "Style"):
+        self.update(other)
+        max_id = max(self.types.keys())
+        for typ in other.types.values():
+            if self.get_type_by_name(typ.name) is None:
+                typ.id += max_id
+                self.types[typ.id] = typ
 
 class AtomType(Type):
 
-    def __init__(self, name: str, idx: int, *params, **named_params: dict):
-        super().__init__(name, (idx,), params, **named_params)
+    def __init__(self, id:int, name:str = "", kw_params: dict = {}, order_params: list = []):
+        super().__init__(id, name, kw_params, order_params)
 
 
 class AtomStyle(Style):
 
-    def def_type(self, name: str, type_idx: int, *params, **named_params: dict):
-        at = AtomType(name, type_idx, *params, **named_params)
-        self.types.append(at)
+    def def_type(self, id:int, name:str = "", kw_params: dict = {}, order_params: list = []):
+        at = AtomType(id, name, kw_params, order_params)
+        self.types[id] = at
         return at
 
 
 class BondType(Type):
 
     def __init__(
-        self, name: str, idx_i: int | None, idx_j: int | None, *params, **named_params
+        self, id:int, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, name:str = "", kw_params: dict = {}, order_params: list = []
     ):
-        super().__init__(name, (idx_i, idx_j), *params, **named_params)
-
-    @property
-    def idx_i(self):
-        return self.type_idx[0]
-
-    @property
-    def idx_j(self):
-        return self.type_idx[1]
+        super().__init__(id, name, kw_params, order_params)
+        self.itomtype = itomtype
+        self.jtomtype = jtomtype
 
 
 class BondStyle(Style):
 
     def def_type(
         self,
-        name: str = "",
-        idx_i: int | None = None,
-        idx_j: int | None = None,
-        /,
-        *params,
-        **named_params,
+        id:int, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, name:str = "", kw_params: dict = {}, order_params: list = []
     ) -> BondType:
-        """
-        define bond type
-
-        Args:
-            id (int): bond type id
-            idx_i (int | None): atom type index i
-            idx_j (int | None): atom type index j
-
-        Returns:
-            BondType: defined bond type
-        """
-        self.types.append(BondType(name, idx_i, idx_j, *params, **named_params))
-        return self.types[-1]
-
-    def get_params(self):
-
-        index = []
-        params = {}
-
-        for type_ in self.types:
-            index.append(type_.type_idx)
-            for k, v in type_.named_params.items():
-                if k not in params:
-                    params[k] = []
-                params[k].append(v)
-
-        index = np.array(index)
-        n_types = index.max() + 1
-        flatten_params = {}
-        for key in params:
-            param_arr = np.zeros((n_types, n_types))
-            param_arr[index[:, 0], index[:, 1]] = params[key]
-            param_arr[index[:, 1], index[:, 0]] = params[key]
-            flatten_params[key] = param_arr
-
-        return flatten_params
-
+        bt = BondType(id, itomtype, jtomtype, name, kw_params, order_params)
+        self.types[id] = bt
+        return bt
 
 class AngleType(Type):
 
-    def __init__(
-        self,
-        name: str,
-        idx_i: int | None,
-        idx_j: int | None,
-        idx_k: int | None,
-        *params,
-        **named_params,
-    ):
-        super().__init__(name, (idx_i, idx_j, idx_k), *params, **named_params)
-
-    @property
-    def idx_i(self):
-        return self.type_idx[0]
-
-    @property
-    def idx_j(self):
-        return self.type_idx[1]
-
-    @property
-    def idx_k(self):
-        return self.type_idx[2]
+    def __init__(self, id:int, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, name:str = "", kw_params: dict = {}, order_params: list = []):
+        super().__init__(id, name, kw_params, order_params)
+        self.itomtype = itomtype
+        self.jtomtype = jtomtype
+        self.ktomtype = ktomtype
 
 
 class DihedralType(Type):
 
-    def __init__(
-        self,
-        name: str,
-        idx_i: int | None,
-        idx_j: int | None,
-        idx_k: int | None,
-        idx_l: int | None,
-        *params,
-        **named_params,
-    ):
-        super().__init__(name, (idx_i, idx_j, idx_k, idx_l), *params, **named_params)
+    def __init__(self, id:int, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, ltomtype: AtomType|None = None, name:str = "", kw_params: dict = {}, order_params: list = []):
+        super().__init__(id, name, kw_params, order_params)
+        self.itomtype = itomtype
+        self.jtomtype = jtomtype
+        self.ktomtype = ktomtype
+        self.ltomtype = ltomtype
 
 
 class AngleStyle(Style):
 
     def def_type(
         self,
-        name: str = "",
-        idx_i: int | None = None,
-        idx_j: int | None = None,
-        idx_k: int | None = None,
-        *params,
-        **named_params,
-    ):
-        self.types.append(AngleType(name, idx_i, idx_j, idx_k, *params, **named_params))
-        return self.types[-1]
-
-    def get_param(self, key: str):
-        idx_i = []
-        idx_j = []
-        idx_k = []
-        params = []
-        for angletype in self.types:
-            idx_i.append(angletype.idx_i)
-            idx_j.append(angletype.idx_j)
-            idx_k.append(angletype.idx_k)
-            params.append(angletype[key])
-
-        n_types_i = np.max(idx_i) + 1
-        n_types_j = np.max(idx_j) + 1
-        n_types_k = np.max(idx_k) + 1
-        n_types = max(n_types_i, n_types_j, n_types_k)
-        param_arr = np.zeros((n_types, n_types, n_types))
-        for i, j, k, param in zip(idx_i, idx_j, idx_k, params):
-            param_arr[i, j, k] = param
-            param_arr[k, j, i] = param
-
-        return param_arr
-
+        id:int, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, name:str = "", kw_params: dict = {}, order_params: list = []
+    ) -> AngleType:
+        at = AngleType(id, itomtype, jtomtype, ktomtype, name, kw_params, order_params)
+        self.types[id] = at
+        return at
 
 class DihedralStyle(Style):
 
     def def_type(
         self,
-        name: str = "",
-        idx_i: int | None = None,
-        idx_j: int | None = None,
-        idx_k: int | None = None,
-        idx_l: int | None = None,
-        /,
-        *params,
-        **named_params,
-    ):
-        self.types.append(
-            DihedralType(name, idx_i, idx_j, idx_k, idx_l, *params, **named_params)
-        )
-        return self.types[-1]
+        id:int, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, ltomtype: AtomType|None = None, name:str = "", kw_params: dict = {}, order_params: list = []
+    ) -> DihedralType:
+        dt = DihedralType(id, itomtype, jtomtype, ktomtype, ltomtype, name, kw_params, order_params)
+        self.types[id] = dt
+        return dt
 
 
 class ImproperType(Type):
 
-    def __init__(
-        self,
-        name: str,
-        idx_i: int | None,
-        idx_j: int | None,
-        idx_k: int | None,
-        idx_l: int | None,
-        *params,
-        **named_params,
-    ):
-        super().__init__(name, (idx_i, idx_j, idx_k, idx_l), *params, **named_params)
+    def __init__(self, id:int, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, ltomtype: AtomType|None = None, name:str = "", kw_params: dict = {}, order_params: list = []):
+        super().__init__(id, name, kw_params, order_params)
+        self.itomtype = itomtype
+        self.jtomtype = jtomtype
+        self.ktomtype = ktomtype
+        self.ltomtype = ltomtype
 
 
 class ImproperStyle(Style):
 
     def def_type(
         self,
-        name: str = "",
-        idx_i: int | None = None,
-        idx_j: int | None = None,
-        idx_k: int | None = None,
-        idx_l: int | None = None,
-        *params,
-        **named_params,
-    ):
-        self.types.append(
-            ImproperType(name, idx_i, idx_j, idx_k, idx_l, *params, **named_params)
-        )
-        return self.types[-1]
+        id:int, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, ltomtype: AtomType|None = None, name:str = "", kw_params: dict = {}, order_params: list = []
+    ) -> ImproperType:
+        it = ImproperType(id, itomtype, jtomtype, ktomtype, ltomtype, name, kw_params, order_params)
+        self.types[id] = it
+        return it
 
 
 class PairType(Type):
 
-    def __init__(self, id, i, j, *params, **named_params):
-        super().__init__(id, (i, j), *params, **named_params)
-
-    @property
-    def idx_i(self):
-        return self.type_idx[0]
-
-    @property
-    def idx_j(self):
-        return self.type_idx[1]
-
+    def __init__(self, id: int, itomtype: int | None, jtomtype: int | None, name: str = "", kw_params: dict = {}, order_params: list = []):
+        super().__init__(id, name, kw_params, order_params)
+        self.itomtype = itomtype
+        self.jtomtype = jtomtype
 
 class PairStyle(Style):
 
     def def_type(
-        self, name: str, idx_i: int | None, idx_j: int | None, *params, **named_params
-    ):
-        self.types.append(PairType(name, idx_i, idx_j, *params, **named_params))
-        return self.types[-1]
-
-    def get_params(self):
-
-        idx_i = []
-        idx_j = []
-        params = {}
-        for pairtype in self.types:
-            idx_i.append(pairtype.idx_i)
-            idx_j.append(pairtype.idx_j)
-            for k, v in pairtype.named_params.items():
-                if k not in params:
-                    params[k] = []
-                params[k].append(v)
-
-        idx_i = np.array(idx_i)
-        idx_j = np.array(idx_j)
-        n_types_i = idx_i.max() + 1
-        n_types_j = idx_j.max() + 1
-
-        flatten_params = {}
-        for k in params:
-            n_types = max(n_types_i, n_types_j)
-            param_arr = np.zeros((n_types, n_types))
-            param_arr[idx_i, idx_j] = params[k]
-            param_arr[idx_j, idx_i] = params[k]
-            if self.mixing == "arithmetic":
-                param_arr = 0.5 * (param_arr + param_arr.T)
-
-            elif self.mixing == "geometric":
-                param_arr = np.sqrt(param_arr * param_arr.T)
-            flatten_params[k] = param_arr
-
-        return flatten_params
-
+        self,
+        id: int, itomtype: int | None, jtomtype: int | None, name: str = "", kw_params: dict = {}, order_params: list = []
+    ) -> PairType:
+        pt = PairType(id, itomtype, jtomtype, name, kw_params, order_params)
+        self.types[id] = pt
+        return pt
 
 class ForceField:
 
@@ -441,6 +289,21 @@ class ForceField:
             if improperstyle.name == style:
                 return improperstyle
         return None
+    
+    def get_atomtypes(self):
+        return reduce(lambda x, y: x + y.types, self.atomstyles, [])
+    
+    def get_bondtypes(self):
+        return reduce(lambda x, y: x + y.types, self.bondstyles, [])
+    
+    def get_angletypes(self):
+        return reduce(lambda x, y: x + y.types, self.anglestyles, [])
+    
+    def get_dihedraltypes(self):
+        return reduce(lambda x, y: x + y.types, self.dihedralstyles, [])
+    
+    def get_impropertypes(self):
+        return reduce(lambda x, y: x + y.types, self.improperstyles, [])
 
     @property
     def n_atomstyles(self):
@@ -514,59 +377,45 @@ class ForceField:
     def pairtypes(self):
         return reduce(lambda x, y: x + y.types, self.pairstyles, [])
 
-    def append(self, forcefield: "ForceField"):
+    def merge(self, other: "ForceField"):
 
         if self.unit:
-            assert self.unit == forcefield.unit, ValueError("unit must be the same")
-        self.unit = forcefield.unit
+            assert self.unit == other.unit, ValueError("unit must be the same")
+        self.unit = other.unit
 
-        for pairstyle in forcefield.pairstyles:
-            if self.get_pairstyle(pairstyle.name) is None:
-                self.pairstyles.append(pairstyle)
-            else:
-                self_pairstyle = self.get_pairstyle(pairstyle.name)
-                for pairtype in pairstyle.types:
-                    self_pairstyle.types.append(pairtype)
+        def _merge(styles, other_styles):
+            for style in other_styles:
+                this_style = None
+                for s in styles:
+                    if s.name == style.name:
+                        this_style = s
+                        break
+                if this_style:
+                    this_style.merge(style)
+                else:
+                    this_style = style
+                this_style = None
 
-        for bondstyle in forcefield.bondstyles:
-            if self.get_bondstyle(bondstyle.name) is None:
-                self.bondstyles.append(bondstyle)
-            else:
-                self_bondstyle = self.get_bondstyle(bondstyle.name)
-                for bondtype in bondstyle.types:
-                    self_bondstyle.types.append(bondtype)
+        _merge(self.atomstyles, other.atomstyles)
+        _merge(self.bondstyles, other.bondstyles)
+        _merge(self.pairstyles, other.pairstyles)
+        _merge(self.anglestyles, other.anglestyles)
+        _merge(self.dihedralstyles, other.dihedralstyles)
+        _merge(self.improperstyles, other.improperstyles)
 
-        for atomstyle in forcefield.atomstyles:
-            if self.get_atomstyle(atomstyle.name) is None:
-                self.atomstyles.append(atomstyle)
-            else:
-                self_atomstyle = self.get_atomstyle(atomstyle.name)
-                for atomtype in atomstyle.types:
-                    self_atomstyle.types.append(atomtype)
 
-        for anglestyle in forcefield.anglestyles:
-            if self.get_anglestyle(anglestyle.name) is None:
-                self.anglestyles.append(anglestyle)
-            else:
-                self_anglestyle = self.get_anglestyle(anglestyle.name)
-                for angletype in anglestyle.types:
-                    self_anglestyle.types.append(angletype)
+        return self
 
-        for dihedralstyle in forcefield.dihedralstyles:
-            if self.get_dihedralstyle(dihedralstyle.name) is None:
-                self.dihedralstyles.append(dihedralstyle)
-            else:
-                self_dihedralstyle = self.get_dihedralstyle(dihedralstyle.name)
-                for dihedraltype in dihedralstyle.types:
-                    self_dihedralstyle.types.append(dihedraltype)
-
-        for improperstyle in forcefield.improperstyles:
-            if self.get_improperstyle(improperstyle.name) is None:
-                self.improperstyles.append(improperstyle)
-            else:
-                self_improperstyle = self.get_improperstyle(improperstyle.name)
-                for impropertype in improperstyle.types:
-                    self_improperstyle.types.append(impropertype)
+    def __iadd__(self, forcefield: "ForceField"):
+        self.append(forcefield)
+        return self
+    
+    def __add__(self, forcefield: "ForceField"):
+        new_forcefield = ForceField()
+        new_forcefield.merge(self)
+        new_forcefield.merge(forcefield)
+        return new_forcefield
+    
 
     def extend(self, forcefields: Iterable["ForceField"]):
         for ff in forcefields:

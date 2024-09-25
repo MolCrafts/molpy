@@ -91,14 +91,10 @@ class LammpsDataReader:
                     box["zhi"] = zhi
 
                 elif line.startswith("Masses"):
+                    masses = {}
                     for line in range(frame["props"]["n_atomtypes"]):
                         line = next(lines).split()
-                        atom_type = line[0]
-                        if atom_type not in atom_style.types:
-                            atom_style.def_type(atom_type, int(atom_type))
-                        atom_style.get_type(atom_type).named_params["mass"] = (
-                            float(line[1])
-                        )
+                        masses[int(line[0])] = float(line[1])
 
                 elif line.startswith("Atoms"):
 
@@ -174,53 +170,52 @@ class LammpsDataReader:
 
                     for line in range(frame["props"]["n_atomtypes"]):
                         line = next(lines).split()
-                        atom_type = line[0]
+                        atom_type = int(line[0])
                         if atom_type not in atom_style:
-                            at = atom_style.def_type(line[1], int(atom_type))
-                            at['id'] = int(atom_type)
+                            at = atom_style.def_type(atom_type, line[1])
                         else:
-                            atom_style.get_type(atom_type).name = line[1]
+                            atom_style[atom_type].name = line[1]
 
                 elif line.startswith("Bond Type Labels"):
 
                     for line in range(frame["props"]["n_bondtypes"]):
                         line = next(lines).split()
-                        bond_type = line[0]
+                        bond_type = int(line[0])
                         if bond_type not in bond_style:
-                            bt = bond_style.def_type(line[1])
-                            bt['id'] = int(bond_type)
+                            bt = bond_style.def_type(bond_type, line[1])
                         else:
-                            bond_style.get_type(bond_type).name = line[1]
+                            bond_style[bond_type].name = line[1]
 
                 elif line.startswith("Angle Type Labels"):
                     for line in range(frame["props"]["n_angletypes"]):
                         line = next(lines).split()
-                        angle_type = line[0]
+                        angle_type = int(line[0])
                         if angle_type not in angle_style:
-                            at = angle_style.def_type(angle_type)
-                            at['id'] = int(angle_type)
+                            at = angle_style.def_type(atom_type, line[1])
                         else:
-                            angle_style.get_type(angle_type).name = line[1]
+                            angle_style[angle_type].name = line[1]
 
                 elif line.startswith("Dihedral Type Labels"):
                     for line in range(frame["props"]["n_dihedraltypes"]):
                         line = next(lines).split()
-                        dihedral_type = line[0]
+                        dihedral_type = int(line[0])
                         if dihedral_type not in dihedral_style:
-                            dt = dihedral_style.def_type(line[1])
-                            dt['id'] = int(dihedral_type)
+                            dt = dihedral_style.def_type(dihedral_type, line[1])
                         else:
-                            dihedral_style.get_type(dihedral_type).name = line[1]
+                            dihedral_style[dihedral_type].name = line[1]
 
                 elif line.startswith("Improper Type Labels"):
                     for line in range(frame["props"]["n_impropertypes"]):
                         line = next(lines).split()
-                        improper_type = line[0]
+                        improper_type = int(line[0])
                         if improper_type not in improper_style:
-                            it = improper_style.def_type(line[1])
-                            it['id'] = int(improper_type)
+                            it = improper_style.def_type(improper_type, line[1])
                         else:
-                            improper_style.get_type(improper_type).name = line[1]
+                            improper_style[improper_type].name = line[1]
+
+
+        for t, m in masses.items():
+            atom_style[t]['mass'] = m
 
         return mp.System(
             mp.Box(
@@ -248,17 +243,6 @@ class LammpsDataWriter:
 
         with open(self._file, "w") as f:
 
-            if "xyz" in frame["atoms"]:
-                xyz = frame["atoms"]["xyz"]
-            if "charge" in frame["atoms"]:
-                q = frame["atoms"]["charge"]
-            if "molid" in frame["atoms"]:
-                molid = frame["atoms"]["molid"]
-            if "type" in frame["atoms"]:
-                type = frame["atoms"]["type"]
-            if "id" in frame["atoms"]:
-                id = frame["atoms"]["id"]
-
             f.write(f"# generated by molpy\n\n")
             f.write(f"{frame['props']['n_atoms']} atoms\n")
             f.write(f"{frame['props']['n_bonds']} bonds\n")
@@ -269,9 +253,16 @@ class LammpsDataWriter:
             f.write(f"{frame['props']['n_angletypes']} angle types\n")
             f.write(f"{frame['props']['n_dihedraltypes']} dihedral types\n\n")
 
-            f.write(f"{frame.box.xlo} {frame.box.xhi} xlo xhi\n")
-            f.write(f"{frame.box.ylo} {frame.box.yhi} ylo yhi\n")
-            f.write(f"{frame.box.zlo} {frame.box.zhi} zlo zhi\n\n")
+            xlo = system.box.xlo
+            xhi = system.box.xhi
+            ylo = system.box.ylo
+            yhi = system.box.yhi
+            zlo = system.box.zlo
+            zhi = system.box.zhi
+
+            f.write(f"{xlo} {xhi} xlo xhi\n")
+            f.write(f"{ylo} {yhi} ylo yhi\n")
+            f.write(f"{zlo} {zhi} zlo zhi\n\n")
 
             if "mass" in frame["atoms"]:
 
@@ -284,8 +275,16 @@ class LammpsDataWriter:
             f.write(f"Atoms\n\n")
             match self._atom_style:
                 case "full":
-                    for id, molid, type, q, r in zip(id, molid, type, q, xyz):
-                        f.write(f"{id} {molid} {type} {q} {r[0]} {r[1]} {r[2]}\n")
+                    for id, molid, type, q, x, y, z in zip(
+                        frame["atoms"]["id"],
+                        frame["atoms"]["molid"],
+                        frame["atoms"]["type_name"] or frame["atoms"]["type"],
+                        frame["atoms"]["charge"],
+                        frame["atoms"]["x"],
+                        frame["atoms"]["y"],
+                        frame["atoms"]["z"],
+                    ):
+                        f.write(f"{id} {molid} {type} {q} {x} {y} {z}\n")
 
             f.write(f"\nBonds\n\n")
             for id, i, j, type in zip(
@@ -316,6 +315,31 @@ class LammpsDataWriter:
                 frame["dihedrals"]["l"],
             ):
                 f.write(f"{id} {type} {i} {j} {k} {l}\n")
+
+            if "type_name" in frame["atoms"]:
+                f.write(f"\nAtom Type Labels\n\n")
+                for atom_type in system.forcefield.get_atomtypes():
+                    f.write(f"{atom_type.id} {atom_type.name}\n")
+
+            if "bond_type" in frame["bonds"]:
+                f.write(f"\nBond Type Labels\n\n")
+                for bond_type in system.forcefield.get_bondtypes():
+                    f.write(f"{bond_type.id} {bond_type.name}\n")
+
+            if "angle_type" in frame["angles"]:
+                f.write(f"\nAngle Type Labels\n\n")
+                for angle_type in system.forcefield.get_angletypes():
+                    f.write(f"{angle_type.id} {angle_type.name}\n")
+
+            if "dihedral_type" in frame["dihedrals"]:
+                f.write(f"\nDihedral Type Labels\n\n")
+                for dihedral_type in system.forcefield.get_dihedraltypes():
+                    f.write(f"{dihedral_type.id} {dihedral_type.name}\n")
+
+            if "improper_type" in frame["impropers"]:
+                f.write(f"\nImproper Type Labels\n\n")
+                for improper_type in system.forcefield.get_impropertypes():
+                    f.write(f"{improper_type.id} {improper_type.name}\n")
 
 class LammpsMoleculeReader:
 
@@ -461,13 +485,13 @@ class LammpsMoleculeWriter:
 
             if 'atoms' in frame:
                 atoms = frame['atoms'].to_pylist()
-                f.write(f"\nCorrds\n\n")
+                f.write(f"\nCoords\n\n")
                 for atom in atoms:
-                    f.write(f"{atom['id']} {atom['type']} {atom['x']} {atom['y']} {atom['z']}\n")
+                    f.write(f"{atom['id']} {atom['x']} {atom['y']} {atom['z']}\n")
 
                 f.write(f"\nTypes\n\n")
                 for atom in atoms:
-                    f.write(f"{atom['id']} {atom['type']}\n")
+                    f.write(f"{atom['id']} {atom['type_name'] or atom['type']}\n")
 
                 if 'charge' in frame["atoms"]:
                     f.write(f"\nCharges\n\n")
@@ -503,4 +527,10 @@ class LammpsMoleculeWriter:
                 for improper in impropers:
                     f.write(f"{improper['id']} {improper['type']} {improper['i']} {improper['j']} {improper['k']} {improper['l']}\n")
 
-            
+            if "molid" in frame["atoms"]:
+                f.write(f"\nMolecule\n\n")
+                for i, molid in zip(frame["atoms"]["id"], frame["atoms"]["molid"]):
+                    f.write(f"{i} {molid}\n")
+
+            for atom_type in system.forcefield.get_atomtypes():
+                f.write(f"{atom_type.id} {atom_type.name}\n")

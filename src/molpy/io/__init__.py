@@ -31,13 +31,32 @@ def read_lammps_molecule(file: Path, system: mp.System | None = None) -> mp.Syst
         system = mp.System()
     return reader.read(system)
 
-def read_lammps(data: Path, input_: Path, system: mp.System | None = None) -> mp.System:
+def read_lammps(data: Path, input_: Path | None = None, system: mp.System | None = None) -> mp.System:
     """Read LAMMPS data and force field files and return a molpy System object."""
     if system is None:
         system = mp.System()
-    system = read_lammps_forcefield(input_, system)
+    if input_ is not None:
+        system = read_lammps_forcefield(input_, system)
     system = read_lammps_data(data, system)
     return system
+
+def write_lammps_data(system: mp.System, file: Path) -> None:
+    """Write a molpy System object to a LAMMPS data file."""
+    from .data.lammps import LammpsDataWriter
+    writer = LammpsDataWriter(file)
+    writer.write(system)
+
+def write_pdb(system: mp.System, file: Path) -> None:
+    """Write a molpy System object to a PDB file."""
+    from .data.pdb import PDBWriter
+    writer = PDBWriter(file)
+    writer.write(system)
+
+def write_lammps_molecule(data: mp.System, file: Path) -> None:
+
+    from .data.lammps import LammpsMoleculeWriter
+    writer = LammpsMoleculeWriter(file)
+    writer.write(data)
 
 def read_amber(
     prmtop: Path, inpcrd: Path | None = None, system: mp.System | None = None
