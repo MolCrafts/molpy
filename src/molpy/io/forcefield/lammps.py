@@ -282,7 +282,7 @@ class LAMMPSForceFieldReader:
 
     def read_bond_coeff(self, style, line):
 
-        bond_type_id = int(line[0])
+        bond_type_id = line[0]
 
         if line[1].isalpha():  # hybrid
             bondstyle_name = line[1]
@@ -309,7 +309,7 @@ class LAMMPSForceFieldReader:
 
     def read_angle_coeff(self, style, line):
 
-        angle_type_id = int(line[0])
+        angle_type_id = line[0]
 
         if line[1].isalpha():  # hybrid
             anglestyle_name = line[1]
@@ -336,7 +336,7 @@ class LAMMPSForceFieldReader:
 
     def read_dihedral_coeff(self, style, line):
 
-        dihedral_type_id = int(line[0])
+        dihedral_type_id = line[0]
 
         if line[1].isalpha():  # hybrid
             dihedralsyle_name = line[1]
@@ -367,7 +367,7 @@ class LAMMPSForceFieldReader:
 
     def read_improper_coeff(self, style, line):
 
-        improper_type_id = int(line[0])
+        improper_type_id = line[0]
 
         if line[1].isalpha():  # hybrid
             improperstyle_name = line[1]

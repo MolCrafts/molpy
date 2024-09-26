@@ -24,7 +24,10 @@ class Box(Region, Boundary):
         if matrix is None or np.all(matrix == 0):
             self._matrix = np.zeros((3, 3))
         else:
-            self._matrix = Box.check_matrix(matrix)
+            _matrix = np.asarray(matrix)
+            if _matrix.shape == (3, ):
+                _matrix = np.diag(_matrix)
+            self._matrix = Box.check_matrix(_matrix)
         self._pbc = pbc
         self._style = self.calc_style_from_matrix(self._matrix)
 

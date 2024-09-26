@@ -19,7 +19,8 @@ from .core import (
     Angle,
     Dihedral,
     Improper,
-    System
+    System,
+    World
 )
 
 from .core import region

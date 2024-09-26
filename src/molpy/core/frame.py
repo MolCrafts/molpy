@@ -14,17 +14,16 @@ class Frame(dict):
         struct = Struct()
         atoms = self['atoms']
         for atom in atoms.to_pylist():
-            id_ = atom.pop('id')
             struct.add_atom(
-                mp.Atom(id_, **atom)
+                mp.Atom(**atom)
             )
-        struct['atoms'].sort(key=lambda atom: atom.id)
         
         if 'bonds' in self:
             bonds = self['bonds']
             for bond in bonds.to_pylist():
-                itom = struct['atoms'].get_by_id(bond.pop('i'))
-                jtom = struct['atoms'].get_by_id(bond.pop('j'))
+
+                itom = struct['atoms'].get_by(lambda atom: atom['id'] == bond['i'])
+                jtom = struct['atoms'].get_by(lambda atom: atom['id'] == bond['j'])
                 struct.add_bond(
                     mp.Bond(itom, jtom, **bond)
                 )
@@ -32,9 +31,9 @@ class Frame(dict):
         if 'angles' in self:
             angles = self['angles']
             for angle in angles.to_pylist():
-                itom = struct['atoms'].get_by_id(angle.pop('i'))
-                jtom = struct['atoms'].get_by_id(angle.pop('j'))
-                ktom = struct['atoms'].get_by_id(angle.pop('k'))
+                itom = struct['atoms'].get_by(lambda atom: atom['id'] == angle['i'])
+                jtom = struct['atoms'].get_by(lambda atom: atom['id'] == angle['j'])
+                ktom = struct['atoms'].get_by(lambda atom: atom['id'] == angle['k'])
                 struct.add_angle(
                     mp.Angle(itom, jtom, ktom, **angle)
                 )
@@ -42,10 +41,10 @@ class Frame(dict):
         if 'dihedrals' in self:
             dihedrals = self['dihedrals']
             for dihedral in dihedrals.to_pylist():
-                itom = struct['atoms'].get_by_id(dihedral.pop('i'))
-                jtom = struct['atoms'].get_by_id(dihedral.pop('j'))
-                ktom = struct['atoms'].get_by_id(dihedral.pop('k'))
-                ltom = struct['atoms'].get_by_id(dihedral.pop('l'))
+                itom = struct['atoms'].get_by(lambda atom: atom['id'] == dihedral['i'])
+                jtom = struct['atoms'].get_by(lambda atom: atom['id'] == dihedral['j'])
+                ktom = struct['atoms'].get_by(lambda atom: atom['id'] == dihedral['k'])
+                ltom = struct['atoms'].get_by(lambda atom: atom['id'] == dihedral['l'])
                 struct.add_dihedral(
                     mp.Dihedral(itom, jtom, ktom, ltom, **dihedral)
                 )
@@ -53,10 +52,10 @@ class Frame(dict):
         if 'impropers' in self:
             impropers = self['impropers']
             for improper in impropers.to_pylist():
-                itom = struct['atoms'].get_by_id(improper.pop('i'))
-                jtom = struct['atoms'].get_by_id(improper.pop('j'))
-                ktom = struct['atoms'].get_by_id(improper.pop('k'))
-                ltom = struct['atoms'].get_by_id(improper.pop('l'))
+                itom = struct['atoms'].get_by_id(improper['i'])
+                jtom = struct['atoms'].get_by_id(improper['j'])
+                ktom = struct['atoms'].get_by_id(improper['k'])
+                ltom = struct['atoms'].get_by_id(improper['l'])
                 struct.add_improper(
                     mp.Improper(itom, jtom, ktom, ltom, **improper)
                 ) 
@@ -113,7 +112,7 @@ class Frame(dict):
             frame['props']['n_angletypes'] = len(frame['angles']['type'].unique()) if 'angles' in frame else 0
             frame['props']['n_dihedraltypes'] = len(frame['dihedrals']['type'].unique()) if 'dihedrals' in frame else 0
             frame['props']['n_impropertypes'] = len(frame['impropers']['type'].unique()) if 'impropers' in frame else 0
-            
+
 
             frames.append(frame)
 

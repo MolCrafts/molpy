@@ -172,7 +172,7 @@ class LammpsDataReader:
                         line = next(lines).split()
                         atom_type = int(line[0])
                         if atom_type not in atom_style:
-                            at = atom_style.def_type(atom_type, line[1])
+                            at = atom_style.def_type(line[1], kw_params={'id': atom_type})
                         else:
                             atom_style[atom_type].name = line[1]
 
@@ -182,7 +182,7 @@ class LammpsDataReader:
                         line = next(lines).split()
                         bond_type = int(line[0])
                         if bond_type not in bond_style:
-                            bt = bond_style.def_type(bond_type, line[1])
+                            bt = bond_style.def_type(line[1], kw_params={'id': bond_type})
                         else:
                             bond_style[bond_type].name = line[1]
 
@@ -191,7 +191,7 @@ class LammpsDataReader:
                         line = next(lines).split()
                         angle_type = int(line[0])
                         if angle_type not in angle_style:
-                            at = angle_style.def_type(atom_type, line[1])
+                            at = angle_style.def_type(line[1], kw_params={'id': angle_type})
                         else:
                             angle_style[angle_type].name = line[1]
 
@@ -200,7 +200,7 @@ class LammpsDataReader:
                         line = next(lines).split()
                         dihedral_type = int(line[0])
                         if dihedral_type not in dihedral_style:
-                            dt = dihedral_style.def_type(dihedral_type, line[1])
+                            dt = dihedral_style.def_type(line[1], kw_params={'id': dihedral_type})
                         else:
                             dihedral_style[dihedral_type].name = line[1]
 
@@ -209,13 +209,15 @@ class LammpsDataReader:
                         line = next(lines).split()
                         improper_type = int(line[0])
                         if improper_type not in improper_style:
-                            it = improper_style.def_type(improper_type, line[1])
+                            it = improper_style.def_type(line[1], kw_params={'id': improper_type})
                         else:
                             improper_style[improper_type].name = line[1]
 
-
+        per_atom_mass = np.zeros(frame["props"]["n_atoms"])
         for t, m in masses.items():
-            atom_style[t]['mass'] = m
+            atom_style.get_by(lambda atom: atom['id'] == t)['mass'] = m
+            per_atom_mass[frame["atoms"]["type"] == t] = m
+        frame["atoms"] = frame["atoms"].append_column("mass", pa.array(per_atom_mass))
 
         return mp.System(
             mp.Box(
@@ -260,19 +262,39 @@ class LammpsDataWriter:
             zlo = system.box.zlo
             zhi = system.box.zhi
 
-            f.write(f"{xlo} {xhi} xlo xhi\n")
-            f.write(f"{ylo} {yhi} ylo yhi\n")
-            f.write(f"{zlo} {zhi} zlo zhi\n\n")
+            f.write(f"{xlo:.2f} {xhi:.2f} xlo xhi\n")
+            f.write(f"{ylo:.2f} {yhi:.2f} ylo yhi\n")
+            f.write(f"{zlo:.2f} {zhi:.2f} zlo zhi\n\n")
 
-            if "mass" in frame["atoms"]:
+            if "type_name" in frame["atoms"].column_names:
+                f.write(f"\nAtom Type Labels\n\n")
+                for i, at in enumerate(system.forcefield.get_atomtypes(), 1):
+                    f.write(f"{i} {at.name}\n")
 
-                f.write(f"Masses\n\n")
-                unique_types, unique_indices = np.unique(type, return_index=True)
-                unique_masses = frame["atoms"]["mass"][unique_indices]
+            if "type_name" in frame["bonds"].column_names:
+                f.write(f"\nBond Type Labels\n\n")
+                for i, bt in enumerate(system.forcefield.get_bondtypes(), 1):
+                    f.write(f"{i} {bt.name}\n")
+
+            if "type_name" in frame["angles"].column_names:
+                f.write(f"\nAngle Type Labels\n\n")
+                for i, at in enumerate(system.forcefield.get_angletypes(), 1):
+                    f.write(f"{i} {at.name}\n")
+
+            if "type_name" in frame["dihedrals"].column_names:
+                f.write(f"\nDihedral Type Labels\n\n")
+                for i, dt in enumerate(system.forcefield.get_dihedraltypes(), 1):
+                    f.write(f"{i} {dt.name}\n")
+
+            if "mass" in frame["atoms"].column_names:
+
+                f.write(f"\nMasses\n\n")
+                unique_types, unique_indices = np.unique(frame["atoms"]["type_name"], return_index=True)
+                unique_masses = frame["atoms"]["mass"].to_numpy()[unique_indices]
                 for i, mass in zip(unique_types, unique_masses):
                     f.write(f"{i} {mass}\n")
 
-            f.write(f"Atoms\n\n")
+            f.write(f"\nAtoms\n\n")
             match self._atom_style:
                 case "full":
                     for id, molid, type, q, x, y, z in zip(
@@ -284,21 +306,21 @@ class LammpsDataWriter:
                         frame["atoms"]["y"],
                         frame["atoms"]["z"],
                     ):
-                        f.write(f"{id} {molid} {type} {q} {x} {y} {z}\n")
+                        f.write(f"{id} {molid} {type} {q.as_py():.2f} {x.as_py():.2f} {y.as_py():.2f} {z.as_py():.2f}\n")
 
             f.write(f"\nBonds\n\n")
             for id, i, j, type in zip(
                 frame["bonds"]["id"],
                 frame["bonds"]["i"],
                 frame["bonds"]["j"],
-                frame["bonds"]["type"],
+                frame["bonds"]["type_name"],
             ):
                 f.write(f"{id} {type} {i} {j}\n")
 
             f.write(f"\nAngles\n\n")
             for id, type, i, j, k in zip(
                 frame["angles"]["id"],
-                frame["angles"]["type"],
+                frame["angles"]["type_name"],
                 frame["angles"]["i"],
                 frame["angles"]["j"],
                 frame["angles"]["k"],
@@ -308,38 +330,13 @@ class LammpsDataWriter:
             f.write(f"\nDihedrals\n\n")
             for id, type, i, j, k, l in zip(
                 frame["dihedrals"]["id"],
-                frame["dihedrals"]["type"],
+                frame["dihedrals"]["type_name"],
                 frame["dihedrals"]["i"],
                 frame["dihedrals"]["j"],
                 frame["dihedrals"]["k"],
                 frame["dihedrals"]["l"],
             ):
                 f.write(f"{id} {type} {i} {j} {k} {l}\n")
-
-            if "type_name" in frame["atoms"]:
-                f.write(f"\nAtom Type Labels\n\n")
-                for atom_type in system.forcefield.get_atomtypes():
-                    f.write(f"{atom_type.id} {atom_type.name}\n")
-
-            if "bond_type" in frame["bonds"]:
-                f.write(f"\nBond Type Labels\n\n")
-                for bond_type in system.forcefield.get_bondtypes():
-                    f.write(f"{bond_type.id} {bond_type.name}\n")
-
-            if "angle_type" in frame["angles"]:
-                f.write(f"\nAngle Type Labels\n\n")
-                for angle_type in system.forcefield.get_angletypes():
-                    f.write(f"{angle_type.id} {angle_type.name}\n")
-
-            if "dihedral_type" in frame["dihedrals"]:
-                f.write(f"\nDihedral Type Labels\n\n")
-                for dihedral_type in system.forcefield.get_dihedraltypes():
-                    f.write(f"{dihedral_type.id} {dihedral_type.name}\n")
-
-            if "improper_type" in frame["impropers"]:
-                f.write(f"\nImproper Type Labels\n\n")
-                for improper_type in system.forcefield.get_impropertypes():
-                    f.write(f"{improper_type.id} {improper_type.name}\n")
 
 class LammpsMoleculeReader:
 
@@ -507,30 +504,27 @@ class LammpsMoleculeWriter:
                 bonds = frame['bonds'].to_pylist()
                 f.write(f"\nBonds\n\n")
                 for bond in bonds:
-                    f.write(f"{bond['id']} {bond['type']} {bond['i']} {bond['j']}\n")
+                    f.write(f"{bond['id']} {bond['type_name']} {bond['i']} {bond['j']}\n")
 
             if 'angles' in frame:
                 angles = frame['angles'].to_pylist()
                 f.write(f"\nAngles\n\n")
                 for angle in angles:
-                    f.write(f"{angle['id']} {angle['type']} {angle['i']} {angle['j']} {angle['k']}\n")
+                    f.write(f"{angle['id']} {angle['type_name']} {angle['i']} {angle['j']} {angle['k']}\n")
 
             if 'dihedrals' in frame:
                 dihedrals = frame['dihedrals'].to_pylist()
                 f.write(f"\nDihedrals\n\n")
                 for dihedral in dihedrals:
-                    f.write(f"{dihedral['id']} {dihedral['type']} {dihedral['i']} {dihedral['j']} {dihedral['k']} {dihedral['l']}\n")
+                    f.write(f"{dihedral['id']} {dihedral['type_name']} {dihedral['i']} {dihedral['j']} {dihedral['k']} {dihedral['l']}\n")
 
             if 'impropers' in frame:
                 impropers = frame['impropers'].to_pylist()
                 f.write(f"\nImpropers\n\n")
                 for improper in impropers:
-                    f.write(f"{improper['id']} {improper['type']} {improper['i']} {improper['j']} {improper['k']} {improper['l']}\n")
+                    f.write(f"{improper['id']} {improper['type_name']} {improper['i']} {improper['j']} {improper['k']} {improper['l']}\n")
 
             if "molid" in frame["atoms"]:
                 f.write(f"\nMolecule\n\n")
                 for i, molid in zip(frame["atoms"]["id"], frame["atoms"]["molid"]):
                     f.write(f"{i} {molid}\n")
-
-            for atom_type in system.forcefield.get_atomtypes():
-                f.write(f"{atom_type.id} {atom_type.name}\n")
