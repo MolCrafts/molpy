@@ -117,13 +117,15 @@ class AmberPrmtopReader:
 
                     self.raw_data[key] = self.read_section(value, float)
 
-                case 'BONDS_INC_HYDROGEN' | 'BONDS_WITHOUT_HYDROGEN' | 'ANGLES_INC_HYDROGEN' | 'ANGLES_WITHOUT_HYDROGEN' | 'DIHEDRALS_INC_HYDROGEN' | 'DIHEDRALS_WITHOUT_HYDROGEN':
+                case 'BONDS_INC_HYDROGEN' | 'BONDS_WITHOUT_HYDROGEN' | 'ANGLES_INC_HYDROGEN' | 'ANGLES_WITHOUT_HYDROGEN' | 'DIHEDRALS_INC_HYDROGEN' | 'DIHEDRALS_WITHOUT_HYDROGEN' | 'NONBONDED_PARM_INDEX':
                     self.raw_data[key] = self.read_section(value, int)
 
         # def forcefield
         atoms['id'] = np.arange(meta['n_atoms'], dtype=int) + 1
         atoms['charge'] = np.array(atoms['charge']) / 18.2223
+        system.forcefield.units = 'real'
         atomstyle = system.forcefield.def_atomstyle('full')
+        atomtypes = atomstyle.types
         for itype, name in zip(atoms['type'], atoms['type_name']):
             atomstyle.def_type(name, kw_params={"id": itype})
 
@@ -132,8 +134,8 @@ class AmberPrmtopReader:
             atom_i_type_name = atoms['type_name'][i-1]
             atom_j_type_name = atoms['type_name'][j-1]
             bond_name = f'{atom_i_type_name}-{atom_j_type_name}'
-            if bond_name not in bondstyle:
-                bondstyle.def_type(bond_name, atom_i_type_name, atom_j_type_name, kw_params={'force_constant':f, 'equil_value':r_min, 'id': bond_type})  # if multiply by 2
+            if bond_name not in bondstyle.types:
+                bondstyle.def_type(bond_name, atomtypes[atom_i_type_name], atomtypes[atom_j_type_name], kw_params={'force_constant':f, 'equil_value':r_min, 'id': bond_type})  # if multiply by 2
             bonds['type'].append(bond_type)
             bonds['i'].append(i)
             bonds['j'].append(j)
@@ -146,8 +148,8 @@ class AmberPrmtopReader:
             atom_j_type_name = atoms['type_name'][j-1]
             atom_k_type_name = atoms['type_name'][k-1]
             angle_name = f'{atom_i_type_name}-{atom_j_type_name}-{atom_k_type_name}'
-            if angle_name not in anglestyle:
-                anglestyle.def_type(angle_name, atom_i_type_name, atom_j_type_name, atom_k_type_name, kw_params={'force_constant':f, 'equil_value':theta_min, 'id': angle_type})
+            if angle_name not in anglestyle.types:
+                anglestyle.def_type(angle_name, atomtypes[atom_i_type_name], atomtypes[atom_j_type_name], atomtypes[atom_k_type_name], kw_params={'force_constant':f, 'equil_value':theta_min, 'id': angle_type})
             
             angles['type'].append(angle_type)
             angles['i'].append(i)
@@ -164,8 +166,8 @@ class AmberPrmtopReader:
             atom_k_type_name = atoms['type_name'][k-1]
             atom_l_type_name = atoms['type_name'][l-1]
             dihe_name = f'{atom_i_type_name}-{atom_j_type_name}-{atom_k_type_name}-{atom_l_type_name}'
-            if dihe_name not in dihedralstyle:
-                dihedralstyle.def_type(dihe_name, atom_i_type_name, atom_j_type_name, atom_k_type_name, atom_l_type_name, kw_params={'force_constant':f, 'phase':phase, 'periodicity':periodicity, 'id': dihe_type})
+            if dihe_name not in dihedralstyle.types:
+                dihedralstyle.def_type(dihe_name, atomtypes[atom_i_type_name], atomtypes[atom_j_type_name], atom_k_type_name, atomtypes[atom_l_type_name], kw_params={'force_constant':f, 'phase':phase, 'periodicity':periodicity, 'id': dihe_type})
             dihedrals['type'].append(dihe_type)
             dihedrals['i'].append(i)
             dihedrals['j'].append(j)
@@ -175,6 +177,13 @@ class AmberPrmtopReader:
         dihedrals['id'] = np.arange(meta['n_dihedrals'], dtype=int) + 1
 
         atoms, bonds, angles, dihedrals = self._parse_residues(self.raw_data['RESIDUE_POINTER'], meta, atoms, bonds, angles, dihedrals)
+
+        pairstyle = system.forcefield.def_pairstyle("lj/cut/coul/long", order_params=[9.0, 9.0])
+        for itype, rVdw, epsilon in self.parse_nonbond_params(atoms):
+            atom_i_type_name = atoms['type_name'][itype-1]
+            atom_j_type_name = atoms['type_name'][itype-1]
+            pair_name = f'{atom_i_type_name}-{atom_j_type_name}'
+            pairstyle.def_type(pair_name, atom_i_type_name, atom_j_type_name, kw_params={'rVdw': rVdw, 'epsilon': epsilon, 'id': itype})
 
         # store in system
         system.frame['props'] = meta
@@ -366,25 +375,25 @@ class AmberPrmtopReader:
     #                                 float(phase[iType])))
     #     return self._improperList
 
-    def parse_nonbond_params(self):
+    def parse_nonbond_params(self,atoms):
         """
         Return list of all rVdw, epsilon pairs for each atom. If off-diagonal
         elements of the Lennard-Jones A and B coefficient matrices are found,
         NbfixPresent exception is raised
         """
-        if self._has_nbfix_terms:
-            raise Exception('Off-diagonal Lennard-Jones elements found. '
-                        'Cannot determine LJ parameters for individual atoms.')
+        # if self._has_nbfix_terms:
+        #     raise Exception('Off-diagonal Lennard-Jones elements found. '
+        #                 'Cannot determine LJ parameters for individual atoms.')
 
         # Check if there are any non-zero HBOND terms
         for x, y in zip(self.raw_data['HBOND_ACOEF'], self.raw_data['HBOND_BCOEF']):
             if float(x) or float(y):
                 raise Exception('10-12 interactions are not supported')
-        self._nonbondTerms=[]
+        return_list=[]
         # lengthConversionFactor = units.angstrom.conversion_factor_to(units.nanometer)
         # energyConversionFactor = units.kilocalorie_per_mole.conversion_factor_to(units.kilojoule_per_mole)
         numTypes = self.meta['NTYPES']
-        atomTypeIndexes=self.atoms['type']
+        atomTypeIndexes=atoms['type']
         type_parameters = [(0, 0) for i in range(numTypes)]
         for iAtom in range(self.meta['NATOM']):
             index=(numTypes+1)*(atomTypeIndexes[iAtom]-1)
@@ -404,27 +413,27 @@ class AmberPrmtopReader:
             # length: angstrom to namometer
             # epsilon: kcal/mol to kJ/mol
             rVdw = rMin/2.0
-            self._nonbondTerms.append( (rVdw, epsilon) )
+            return_list.append( (iAtom+1, rVdw, epsilon) )
         # Check if we have any off-diagonal modified LJ terms that would require
         # an NBFIX-like solution
-        for i in range(numTypes):
-            for j in range(numTypes):
-                index = int(self.raw_data['NONBONDED_PARM_INDEX'][numTypes*i+j]) - 1
-                if index < 0: continue
-                rij = type_parameters[i][0] + type_parameters[j][0]
-                wdij = sqrt(type_parameters[i][1] * type_parameters[j][1])
-                a = float(self.raw_data['LENNARD_JONES_ACOEF'][index])
-                b = float(self.raw_data['LENNARD_JONES_BCOEF'][index])
-                if a == 0 or b == 0:
-                    if a != 0 or b != 0 or (wdij != 0 and rij != 0):
-                        self._has_nbfix_terms = True
-                        raise Exception('Off-diagonal Lennard-Jones elements'
-                                           ' found. Cannot determine LJ '
-                                           'parameters for individual atoms.')
-                elif (abs((a - (wdij * rij ** 12)) / a) > 1e-6 or
-                      abs((b - (2 * wdij * rij**6)) / b) > 1e-6):
-                    self._has_nbfix_terms = True
-                    raise Exception('Off-diagonal Lennard-Jones elements '
-                                       'found. Cannot determine LJ parameters '
-                                       'for individual atoms.')
-        return self._nonbondTerms
+        # for i in range(numTypes):
+        #     for j in range(numTypes):
+        #         index = int(self.raw_data['NONBONDED_PARM_INDEX'][numTypes*i+j]) - 1
+        #         if index < 0: continue
+        #         rij = type_parameters[i][0] + type_parameters[j][0]
+        #         wdij = sqrt(type_parameters[i][1] * type_parameters[j][1])
+        #         a = float(self.raw_data['LENNARD_JONES_ACOEF'][index])
+        #         b = float(self.raw_data['LENNARD_JONES_BCOEF'][index])
+        #         if a == 0 or b == 0:
+        #             if a != 0 or b != 0 or (wdij != 0 and rij != 0):
+        #                 self._has_nbfix_terms = True
+        #                 raise Exception('Off-diagonal Lennard-Jones elements'
+        #                                    ' found. Cannot determine LJ '
+        #                                    'parameters for individual atoms.')
+        #         elif (abs((a - (wdij * rij ** 12)) / a) > 1e-6 or
+        #               abs((b - (2 * wdij * rij**6)) / b) > 1e-6):
+        #             self._has_nbfix_terms = True
+        #             raise Exception('Off-diagonal Lennard-Jones elements '
+        #                                'found. Cannot determine LJ parameters '
+        #                                'for individual atoms.')
+        return return_list

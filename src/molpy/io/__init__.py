@@ -58,6 +58,10 @@ def write_lammps_molecule(data: mp.System, file: Path) -> None:
     writer = LammpsMoleculeWriter(file)
     writer.write(data)
 
+def write_lammps(system: mp.System, data: Path, input_: Path, template: dict = {}) -> None:
+    """Write a molpy System object to LAMMPS data and force field files."""
+    write_lammps_data(system, data)
+
 def read_amber(
     prmtop: Path, inpcrd: Path | None = None, system: mp.System | None = None
 ) -> mp.ForceField:

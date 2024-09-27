@@ -2,31 +2,7 @@ from pathlib import Path
 import molpy as mp
 from itertools import islice
 from typing import Iterator
-
-BOND_TYPE_FIELDS = {
-    "harmonic": ["k", "r0"],
-}
-
-ANGLE_TYPE_FIELDS = {
-    "harmonic": ["k", "theta0"],
-    "charmm": ["k", "theta0", "Kub", "rub"],
-}
-
-DIHEDRAL_TYPE_FIELDS = {
-    "charmm": ["k", "n", "delta", "w"],
-    "multi/harmonic": ["k1", "k2", "k3", "k4", "n", "delta"],
-}
-
-IMPROPER_TYPE_FIELDS = {
-    "harmonic": ["k", "chi0"],
-}
-
-PAIR_TYPE_FIELDS = {
-    "lj/cut": ["epsilon", "sigma"],
-    "lj/cut/coul/long": ["epsilon", "sigma"],
-    "lj/charmm/coul/long": ["epsilon", "sigma", "eps14", "sig14"],
-}
-
+import string
 
 class LAMMPSForceFieldReader:
 
@@ -293,19 +269,11 @@ class LAMMPSForceFieldReader:
         else:
             coeffs = line[1:]
 
-        if style.name in BOND_TYPE_FIELDS:
-            named_params = {k: v for k, v in zip(BOND_TYPE_FIELDS[style.name], coeffs)}
-            style.def_type(
-                bond_type_id,
-                None, None, 
-                kw_params=named_params,
-            )
-        else:
-            style.def_type(
-                bond_type_id,
-                None, None,
-                order_params=coeffs,
-            )
+        style.def_type(
+            bond_type_id,
+            None, None,
+            order_params=coeffs,
+        )
 
     def read_angle_coeff(self, style, line):
 
@@ -320,15 +288,7 @@ class LAMMPSForceFieldReader:
         else:
             coeffs = line[1:]
 
-        if style.name in ANGLE_TYPE_FIELDS:
-
-            style.def_type(
-                angle_type_id,
-                None, None, None,
-                kw_params={k: v for k, v in zip(ANGLE_TYPE_FIELDS[style.name], coeffs)},
-            )
-        else:
-            style.def_type(
+        style.def_type(
                 angle_type_id,
                 None, None, None,
                 order_params=coeffs,
@@ -347,16 +307,7 @@ class LAMMPSForceFieldReader:
         else:
             coeffs = line[1:]
 
-        if style.name in DIHEDRAL_TYPE_FIELDS:
-
-            style.def_type(
-                dihedral_type_id,
-                None, None, None, None,
-                kw_params={k: v for k, v in zip(DIHEDRAL_TYPE_FIELDS[style.name], coeffs)},
-            )
-
-        else:
-            style.def_type(
+        style.def_type(
                 dihedral_type_id,
                 None,
                 None,
@@ -378,14 +329,7 @@ class LAMMPSForceFieldReader:
         else:
             coeffs = line[1:]
 
-        if style.name in IMPROPER_TYPE_FIELDS:
-            style.def_type(
-                improper_type_id,
-                None, None, None, None,
-                kw_params={k: v for k, v in zip(IMPROPER_TYPE_FIELDS[style.name], coeffs)},
-            )
-        else:
-            style.def_type(
+        style.def_type(
                 improper_type_id,
                 None,
                 None,
@@ -407,14 +351,7 @@ class LAMMPSForceFieldReader:
         else:
             coeffs = line[2:]
 
-        if style.name in PAIR_TYPE_FIELDS:
-            style.def_type(
-                style.n_types+1,
-                None, None,
-                kw_params={k: v for k, v in zip(PAIR_TYPE_FIELDS[style.name], coeffs)},
-            )
-        else:
-            style.def_type(
+        style.def_type(
                 style.n_types+1,
                 None, None,
                 order_params=coeffs,
@@ -438,68 +375,3 @@ class LAMMPSForceFieldReader:
                 pairstyle["modified"] = line
 
 
-class LAMMPSForceFieldWriter:
-
-    def __init__(self, fpath: str | Path, forcefield: mp.ForceField):
-
-        self.fpath = fpath
-        self.forcefield = forcefield
-
-    @staticmethod
-    def _write_styles(lines: list[str], styles, style_type):
-
-        if len(styles) == 1:
-            style = styles[0]
-            lines.append(f"{style_type}_style {style.name} {' '.join(style.params)}\n")
-            if "modified" in style.named_params:
-                params = " ".join(style.named_params["modified"])
-                lines.append(f"{style_type}_modify {params}\n")
-
-            for typ in style.types:
-                params = " ".join(typ.params)
-                named_params = " ".join(typ.named_params.values())
-                lines.append(f"{style_type}_coeff {typ.name} {params} {named_params}\n")
-        else:
-            style_keywords = " ".join([style.name for style in styles])
-            lines.append(f"{style_type}_style hybrid {style_keywords}\n")
-            for style in styles:
-                for typ in style.types:
-                    params = " ".join(typ.params)
-                    named_params = " ".join(typ.named_params.values())
-                    lines.append(
-                        f"{style_type}_coeff {typ.name} {style.name} {params} {named_params}\n"
-                    )
-
-        lines.append("\n")
-
-    def write(self):
-
-        ff = self.forcefield
-
-        lines = []
-
-        lines.append(f"units {self.forcefield.unit}\n")
-        if ff.atomstyles:
-            if ff.n_anglestyles == 1:
-                lines.append(f"atom_style {ff.atomstyles[0].name}\n")
-            else:
-                atomstyles = " ".join([atomstyle.name for atomstyle in ff.atomstyles])
-                lines.append(f"atom_style hybrid {atomstyles}\n")
-        else:
-            raise ValueError("No atom style defined")
-
-        for atomstyle in ff.atomstyles:
-            for atomtype in atomstyle.types:
-                lines.append(f"mass {atomtype.name} {atomtype.named_params['mass']}\n")
-
-        LAMMPSForceFieldWriter._write_styles(lines, ff.bondstyles, "bond")
-        LAMMPSForceFieldWriter._write_styles(lines, ff.anglestyles, "angle")
-        LAMMPSForceFieldWriter._write_styles(lines, ff.dihedralstyles, "dihedral")
-        LAMMPSForceFieldWriter._write_styles(lines, ff.improperstyles, "improper")
-        LAMMPSForceFieldWriter._write_styles(lines, ff.pairstyles, "pair")
-
-        lines.append("\n")
-
-        with open(self.fpath, "w") as f:
-
-            f.writelines(lines)
