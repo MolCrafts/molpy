@@ -96,18 +96,18 @@ class PDBWriter:
 
         with open(self._file, "w") as f:
 
-            atom_name_remap = {}
+            # atom_name_remap = {}
 
             for atom in frame["atoms"].to_pylist():
                 serial = atom["id"]
                 altLoc = atom.get("altLoc", "")
-                name = atom["name"]
-                if name in atom_name_remap:
-                    unique_name = name + str(atom_name_remap[name])
-                    atom_name_remap[name] += 1
-                else:
-                    unique_name = name
-                    atom_name_remap[name] = 1
+                unique_name = atom.get("name", "UNK")
+                # if name in atom_name_remap:
+                #     unique_name = name + str(atom_name_remap[name])
+                #     atom_name_remap[name] += 1
+                # else:
+                #     unique_name = name
+                #     atom_name_remap[name] = 1
                 resName = atom.get("resName", "UNK")
                 chainID = atom.get("chainID", "")
                 resSeq = atom.get("resSeq", atom.get("molid", 1))
@@ -116,16 +116,17 @@ class PDBWriter:
                 y = atom["y"]
                 z = atom["z"]
                 f.write(
-                    f"{'ATOM':6s}{serial:>5d}{' '*1}{unique_name.upper():>4s}{altLoc:1s}{resName:>3s}{' '*1}{chainID:1s}{resSeq:>4d}{iCode:1s}{' '*3}{x:>8.3f}{y:>8.3f}{z:>8.3f}{" "*26}\n"
+                    f"{'ATOM':6s}{serial:>5d}{' '*1}{unique_name.upper():>4s}{altLoc:1s}{resName:>3s}{' '*1}{chainID:1s}{resSeq:>4d}{iCode:1s}{' '*3}{x:>8.3f}{y:>8.3f}{z:>8.3f}{' '*26}\n"
                 )
 
             bonds = defaultdict(list)
-            for bond in frame["bonds"].to_pylist():
-                bonds[bond["i"]].append(bond["j"])
-                bonds[bond["j"]].append(bond["i"])
+            if "bonds" in frame:
+                for bond in frame["bonds"].to_pylist():
+                    bonds[bond["i"]].append(bond["j"])
+                    bonds[bond["j"]].append(bond["i"])
 
-            for i, js in bonds.items():
-                assert len(js) <= 4
-                f.write(f"{'CONECT':6s}{i:>5d}{''.join([f'{j:>5d}' for j in js])}\n")
+                for i, js in bonds.items():
+                    assert len(js) <= 4, ValueError(f"PDB only supports up to 4 bonds, but atom {i} has {len(js)} bonds, which are {js}")
+                    f.write(f"{'CONECT':6s}{i:>5d}{''.join([f'{j:>5d}' for j in js])}\n")
 
             f.write("END\n")

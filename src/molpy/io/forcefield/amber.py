@@ -108,8 +108,8 @@ class AmberPrmtopReader:
                     atoms['mass'] = self.read_section(value, float)
 
                 case 'ATOM_TYPE_INDEX':
-                    atoms['type'] = self.read_section(value, int)
-
+                    self.raw_data[key] = self.read_section(value, int)
+                    
                 case 'AMBER_ATOM_TYPE':
                     atoms['type_name'] = self.read_section(value, str)
 
@@ -126,7 +126,7 @@ class AmberPrmtopReader:
         system.forcefield.units = 'real'
         atomstyle = system.forcefield.def_atomstyle('full')
         atomtypes = atomstyle.types
-        for itype, name in zip(atoms['type'], atoms['type_name']):
+        for itype, name in enumerate(atoms['type_name'], 1):
             atomstyle.def_type(name, kw_params={"id": itype})
 
         bondstyle = system.forcefield.def_bondstyle("harmonic")
@@ -393,7 +393,7 @@ class AmberPrmtopReader:
         # lengthConversionFactor = units.angstrom.conversion_factor_to(units.nanometer)
         # energyConversionFactor = units.kilocalorie_per_mole.conversion_factor_to(units.kilojoule_per_mole)
         numTypes = self.meta['NTYPES']
-        atomTypeIndexes=atoms['type']
+        atomTypeIndexes=self.raw_data['ATOM_TYPE_INDEX']
         type_parameters = [(0, 0) for i in range(numTypes)]
         for iAtom in range(self.meta['NATOM']):
             index=(numTypes+1)*(atomTypeIndexes[iAtom]-1)

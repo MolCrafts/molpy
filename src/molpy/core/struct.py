@@ -112,22 +112,17 @@ class MolpyModel(dict):
 
 class Entities(list):
 
-    def append(self, entity):
-        entity['id'] = len(self) + 1
-        super().append(entity)
-
     def keys(self):
         return self[0].keys()
-            
-    def extend(self, entities):
-        for i, en in enumerate(entities, 1):
-            en['id'] = len(self) + i
-        super().extend(entities)
 
     def get_by(self, condition: Callable[[Entity], bool]) -> Entity:
         for entity in self:
             if condition(entity):
                 return entity
+            
+    def remap_id(self):
+        for i, entity in enumerate(self, 1):
+            entity['id'] = i
 
 
 class Struct(MolpyModel):
@@ -178,7 +173,7 @@ class Struct(MolpyModel):
             itom = self.get_atom_by(lambda atom: atom['id'] == itom)
             jtom = self.get_atom_by(lambda atom: atom['id'] == jtom)
         for bond in self["bonds"]:
-            if {bond.itom, bond.jtom} == {itom, jtom}:
+            if (bond.itom == itom and bond.jtom == jtom) or (bond.itom == jtom and bond.jtom == itom):
                 self["bonds"].remove(bond)
 
     def del_bond(self, itom, jtom):
@@ -191,6 +186,9 @@ class Struct(MolpyModel):
         for atom in self["atoms"]:
             if condition(atom):
                 return atom
+    
+    def get_atom_by_id(self, id_):
+        return self.get_atom_by(lambda atom: atom['id'] == id_)
 
     def union(self, other: "Struct") -> "Struct":
         struct = self.copy()
@@ -204,15 +202,19 @@ class Struct(MolpyModel):
         self["dihedrals"].extend(other['dihedrals'])
         self["impropers"].extend(other['impropers'])
         return self
+    
+    def __add__(self, other: "Struct") -> "Struct":
 
-    def move(self, r):
+        return self.union(other)
+
+    def move_(self, r):
         for atom in self["atoms"]:
             xyz = np.array([[atom["x"], atom["y"], atom["z"]]])
             xyz = op.translate(xyz, r)
             atom["x"], atom["y"], atom["z"] = xyz[0, 0], xyz[0, 1], xyz[0, 2]
         return self
 
-    def rotate(self, axis, theta):
+    def rotate_(self, axis, theta):
         for atom in self["atoms"]:
             xyz = np.array([[atom["x"], atom["y"], atom["z"]]])
             xyz = op.rotate(xyz, axis, theta)
@@ -341,3 +343,10 @@ class Struct(MolpyModel):
                 substruct.add_improper(improper)
         
         return substruct
+    
+
+class Structs(MolpyModel):
+
+    def __init__(self):
+        super().__init__()
+        self.structs = []

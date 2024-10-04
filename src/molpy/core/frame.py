@@ -9,6 +9,28 @@ class Frame(dict):
         super().__init__()
         self['props'] = {}
 
+    @classmethod
+    def from_frames(cls, frames: list["Frame"]) -> "Frame":
+        frame = cls()
+        for key in frames[0].keys():
+            if key == 'props':
+                continue
+            frame[key] = pa.concat_tables([frame[key] for frame in frames if key in frame])
+
+        frame['props']['n_atoms'] = len(frame['atoms'])
+        frame['props']['n_bonds'] = len(frame['bonds']) if 'bonds' in frame else 0
+        frame['props']['n_angles'] = len(frame['angles']) if 'angles' in frame else 0
+        frame['props']['n_dihedrals'] = len(frame['dihedrals']) if 'dihedrals' in frame else 0
+        frame['props']['n_impropers'] = len(frame['impropers']) if 'impropers' in frame else 0
+        frame['props']['n_atomtypes'] = len(frame['atoms']['type'].unique())
+        frame['props']['n_bondtypes'] = len(frame['bonds']['type'].unique()) if 'bonds' in frame else 0
+        frame['props']['n_angletypes'] = len(frame['angles']['type'].unique()) if 'angles' in frame else 0
+        frame['props']['n_dihedraltypes'] = len(frame['dihedrals']['type'].unique()) if 'dihedrals' in frame else 0
+        frame['props']['n_impropertypes'] = len(frame['impropers']['type'].unique()) if 'impropers' in frame else 0
+
+
+        return frame
+
     def to_struct(self):
 
         struct = Struct()
@@ -117,3 +139,4 @@ class Frame(dict):
             frames.append(frame)
 
         return frames
+    

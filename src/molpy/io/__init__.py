@@ -13,10 +13,10 @@ def read_lammps_data(file: Path, system: mp.System | None = None) -> mp.System:
     reader = LammpsDataReader(file)
     return reader.read(system)
 
-def read_lammps_forcefield(file: Path, system: mp.System | None = None) -> mp.System:
+def read_lammps_forcefield(input_: Path, data: Path, system: mp.System | None = None) -> mp.System:
     """Read LAMMPS force field file and return a molpy System object."""
     from .forcefield.lammps import LAMMPSForceFieldReader
-    reader = LAMMPSForceFieldReader(file)
+    reader = LAMMPSForceFieldReader(input_, data)
     if system is None:
         system = mp.System()
     return reader.read(system)
@@ -36,7 +36,7 @@ def read_lammps(data: Path, input_: Path | None = None, system: mp.System | None
     if system is None:
         system = mp.System()
     if input_ is not None:
-        system = read_lammps_forcefield(input_, system)
+        system = read_lammps_forcefield(input_, data, system)
     system = read_lammps_data(data, system)
     return system
 
@@ -52,15 +52,28 @@ def write_pdb(system: mp.System, file: Path) -> None:
     writer = PDBWriter(file)
     writer.write(system)
 
+def read_pdb(file: Path) -> mp.System:
+    """Read a PDB file and return a molpy System object."""
+    from .data.pdb import PDBReader
+    reader = PDBReader(file)
+    return reader.read()
+
 def write_lammps_molecule(data: mp.System, file: Path) -> None:
 
     from .data.lammps import LammpsMoleculeWriter
     writer = LammpsMoleculeWriter(file)
     writer.write(data)
 
-def write_lammps(system: mp.System, data: Path, input_: Path, template: dict = {}) -> None:
+def write_lammps_forcefield(system: mp.System, input_: Path | None = None) -> None:
+    """Write a molpy System object to a LAMMPS force field file."""
+    from .forcefield.lammps import LAMMPSForceFieldWriter
+    writer = LAMMPSForceFieldWriter(input_)
+    writer.write(system)
+
+def write_lammps(system: mp.System, data: Path, input_: Path | None = None) -> None:
     """Write a molpy System object to LAMMPS data and force field files."""
     write_lammps_data(system, data)
+    write_lammps_forcefield(system, input_)
 
 def read_amber(
     prmtop: Path, inpcrd: Path | None = None, system: mp.System | None = None
