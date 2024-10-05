@@ -390,9 +390,9 @@ class LAMMPSForceFieldReader:
             pairstyle = self.forcefield.pairstyles[0]
 
             if "modified" in pairstyle:
-                pairstyle["modified"] = list(
-                    set(pairstyle["modified"]) | set(line)
-                )
+                for l in line:
+                    if l not in pairstyle["modified"]:
+                        pairstyle["modified"].append(l)
             else:
                 pairstyle["modified"] = line
 
