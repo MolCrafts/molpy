@@ -25,7 +25,7 @@ class Style(dict):
     ):
         super().__init__(kw_params)
         self.name = name
-        self.types: dict[str, Type] = {}
+        self.types: list[Type] = []
         self.order_params = order_params
 
     def __repr__(self) -> str:
@@ -39,13 +39,13 @@ class Style(dict):
         return self.name == other.name
     
     def get_by(self, func: Callable) -> Type:
-        for t in self.types.values():
+        for t in self.types:
             if func(t):
                 return t
         return None
 
     def get_all_by(self, func: Callable):
-        return [t for t in self.types.values() if func(t)]
+        return [t for t in self.types if func(t)]
     
     # def remap_id(self):
     #     new_types = {}
@@ -56,9 +56,8 @@ class Style(dict):
 
     def merge(self, other: "Style"):
         self.update(other)  # merge params
-        for name, typ in other.types.items():
-            if name not in self.types:
-                self.types[name] = typ
+        for typ in other.types:
+            self.types.append(typ)
 
     def to_dict(self):
         return dict()
@@ -133,7 +132,7 @@ class AtomStyle(Style):
 
     def def_type(self, name:str, kw_params: dict = {}, order_params: list = []):
         at = AtomType(name, kw_params, order_params)
-        self.types[name] = at
+        self.types.append(at)
         return at
 
 class BondStyle(Style):
@@ -143,7 +142,7 @@ class BondStyle(Style):
         name:str, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, kw_params: dict = {}, order_params: list = []
     ) -> BondType:
         bt = BondType(name, itomtype, jtomtype, kw_params, order_params)
-        self.types[name] = bt
+        self.types.append(bt)
         return bt
 
 
@@ -155,7 +154,7 @@ class AngleStyle(Style):
         itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, kw_params: dict = {}, order_params: list = []
     ) -> AngleType:
         at = AngleType(name, itomtype, jtomtype, ktomtype, kw_params, order_params)
-        self.types[name] = at
+        self.types.append(at)
         return at
 
 class DihedralStyle(Style):
@@ -165,7 +164,7 @@ class DihedralStyle(Style):
         name:str, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, ltomtype: AtomType|None = None, kw_params: dict = {}, order_params: list = []
     ) -> DihedralType:
         dt = DihedralType(name, itomtype, jtomtype, ktomtype, ltomtype, kw_params, order_params)
-        self.types[name] = dt
+        self.types.append(dt)
         return dt
 
 
@@ -178,7 +177,7 @@ class ImproperStyle(Style):
         name:str, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, ltomtype: AtomType|None = None, kw_params: dict = {}, order_params: list = []
     ) -> ImproperType:
         it = ImproperType(name, itomtype, jtomtype, ktomtype, ltomtype, kw_params, order_params)
-        self.types[name] = it
+        self.types.append(it)
         return it
 
 
@@ -197,7 +196,7 @@ class PairStyle(Style):
 
     def def_type(self, name: str, itomtype: AtomType | None = None, jtomtype: AtomType | None = None, kw_params: dict = {}, order_params: list = []):
         pt = PairType(name, itomtype, jtomtype, kw_params, order_params)
-        self.types[name] = pt
+        self.types.append(pt)
         return pt
     
 class ForceField:
@@ -418,27 +417,27 @@ class ForceField:
 
     @property
     def atomtypes(self):
-        return reduce(lambda x, y: x | y.types, self.atomstyles, {})
+        return reduce(lambda x, y: x + y.types, self.atomstyles, [])
 
     @property
     def bondtypes(self):
-        return reduce(lambda x, y: x | y.types, self.bondstyles, {})
+        return reduce(lambda x, y: x + y.types, self.bondstyles, [])
 
     @property
     def angletypes(self):
-        return reduce(lambda x, y: x | y.types, self.anglestyles, {})
+        return reduce(lambda x, y: x + y.types, self.anglestyles, [])
 
     @property
     def dihedraltypes(self):
-        return reduce(lambda x, y: x | y.types, self.dihedralstyles, {})
+        return reduce(lambda x, y: x + y.types, self.dihedralstyles, [])
 
     @property
     def impropertypes(self):
-        return reduce(lambda x, y: x | y.types, self.improperstyles, {})
+        return reduce(lambda x, y: x + y.types, self.improperstyles, [])
 
     @property
     def pairtypes(self):
-        return reduce(lambda x, y: x | y.types, self.pairstyles, {})
+        return reduce(lambda x, y: x + y.types, self.pairstyles, [])
 
     def merge(self, other: "ForceField"):
 

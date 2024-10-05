@@ -408,24 +408,24 @@ class LAMMPSForceFieldWriter:
 
         if len(styles) == 1:
             style = styles[0]
-            if len(style.types.values()) == 0:
+            if len(style.types) == 0:
                 return
             lines.append(f"# {style_type}_style {style.name} {' '.join(style.order_params)}\n")
             if "modified" in style:
                 params = " ".join(style["modified"])
                 lines.append(f"{style_type}_modify {params}\n")
 
-            for typ in style.types.values():
+            for typ in style.types:
                 params = " ".join(map(str, typ.order_params))
-                named_params = " ".join(typ.values())
+                named_params = " ".join(typ)
                 lines.append(f"{style_type}_coeff {typ.name} {params} {named_params}\n")
         else:
             style_keywords = " ".join([style.name for style in styles])
             lines.append(f"{style_type}_style hybrid {style_keywords}\n")
             for style in styles:
-                for typ in style.types.values():
+                for typ in style.types:
                     params = " ".join(map(str, typ.order_params))
-                    named_params = " ".join(typ.values())
+                    named_params = " ".join(typ)
                     lines.append(
                         f"{style_type}_coeff {typ.name} {style.name} {params} {named_params}\n"
                     )
@@ -442,17 +442,17 @@ class LAMMPSForceFieldWriter:
                 params = " ".join(style["modified"])
                 lines.append(f"{style_type}_modify {params}\n")
 
-            for typ in style.types.values():
+            for typ in style.types:
                 params = " ".join(map(str, typ.order_params))
-                named_params = " ".join(typ.values())
+                named_params = " ".join(typ)
                 lines.append(f"{style_type}_coeff {' '.join(map(lambda at: str(at.name), typ.atomtypes))} {params} {named_params}\n")
         else:
             style_keywords = " ".join([style.name for style in styles])
             lines.append(f"{style_type}_style hybrid {style_keywords}\n")
             for style in styles:
-                for typ in style.types.values():
+                for typ in style.types:
                     params = " ".join(map(str, typ.order_params))
-                    named_params = " ".join(typ.values())
+                    named_params = " ".join(typ)
                     lines.append(
                         f"{style_type}_coeff {' '.join(map(lambda at: str(at.name), typ.atomtypes))} {style.name} {params} {named_params}\n"
                     )
@@ -476,7 +476,7 @@ class LAMMPSForceFieldWriter:
             raise ValueError("No atom style defined")
 
         for atomstyle in ff.atomstyles:
-            for atomtype in atomstyle.types.values():
+            for atomtype in atomstyle.types:
                 lines.append(f"mass {atomtype.name} {atomtype['mass']}\n")
 
         LAMMPSForceFieldWriter._write_styles(lines, ff.bondstyles, "bond")

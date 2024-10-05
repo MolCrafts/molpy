@@ -77,7 +77,6 @@ class LammpsDataReader:
 
                 elif line.endswith("atom types"):
                     frame["props"]["n_atomtypes"] = int(line.split()[0])
-                    atom_style = ff.def_atomstyle(self.style)
 
                 elif line.endswith("bond types"):
                     frame["props"]["n_bondtypes"] = int(line.split()[0])
@@ -242,7 +241,7 @@ class LammpsDataReader:
 
         per_atom_mass = np.zeros(frame["props"]["n_atoms"])
         for t, m in masses.items():
-            atomtype = atom_style.get_by(lambda atom: atom['id'] == t)
+            atomtype = atom_style.get_by(lambda atom: atom.name == str(t))
             if not atomtype:
                 atomtype = atom_style.def_type(str(t), kw_params={'id': t})
             atomtype['mass'] = m
@@ -329,7 +328,7 @@ class LammpsDataWriter:
             if "mass" in frame["atoms"].column_names:
 
                 f.write(f"\nMasses\n\n")
-                for atomtype in ff.atomtypes.values():
+                for atomtype in ff.atomtypes:
                     f.write(f"{atomtype.name} {atomtype['mass']:.2f}\n")
 
             f.write(f"\nAtoms\n\n")
