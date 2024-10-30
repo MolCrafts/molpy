@@ -410,24 +410,22 @@ class LAMMPSForceFieldWriter:
             style = styles[0]
             if len(style.types) == 0:
                 return
-            lines.append(f"# {style_type}_style {style.name} {' '.join(style.order_params)}\n")
+            lines.append(f"{style_type}_style {style.name} {' '.join(style.order_params)}\n")
             if "modified" in style:
                 params = " ".join(style["modified"])
                 lines.append(f"{style_type}_modify {params}\n")
 
-            for typ in style.types:
+            for typ in style.types.values():
                 params = " ".join(map(str, typ.order_params))
-                named_params = " ".join(typ)
-                lines.append(f"{style_type}_coeff {typ.name} {params} {named_params}\n")
+                lines.append(f"{style_type}_coeff {typ.name} {params}\n")
         else:
             style_keywords = " ".join([style.name for style in styles])
             lines.append(f"{style_type}_style hybrid {style_keywords}\n")
             for style in styles:
-                for typ in style.types:
+                for typ in style.types.values():
                     params = " ".join(map(str, typ.order_params))
-                    named_params = " ".join(typ)
                     lines.append(
-                        f"{style_type}_coeff {typ.name} {style.name} {params} {named_params}\n"
+                        f"{style_type}_coeff {typ.name} {style.name} {params}\n"
                     )
 
         lines.append("\n")
@@ -437,24 +435,22 @@ class LAMMPSForceFieldWriter:
 
         if len(styles) == 1:
             style = styles[0]
-            lines.append(f"# {style_type}_style {style.name} {' '.join(style.order_params)}\n")
+            lines.append(f"{style_type}_style {style.name} {' '.join(map(str, style.order_params))}\n")
             if "modified" in style:
                 params = " ".join(style["modified"])
                 lines.append(f"{style_type}_modify {params}\n")
 
-            for typ in style.types:
+            for typ in style.types.values():
                 params = " ".join(map(str, typ.order_params))
-                named_params = " ".join(typ)
-                lines.append(f"{style_type}_coeff {' '.join(map(lambda at: str(at.name), typ.atomtypes))} {params} {named_params}\n")
+                lines.append(f"{style_type}_coeff {' '.join(map(lambda at: str(at.name), typ.atomtypes))} {params}\n")
         else:
             style_keywords = " ".join([style.name for style in styles])
             lines.append(f"{style_type}_style hybrid {style_keywords}\n")
             for style in styles:
-                for typ in style.types:
+                for typ in style.types.values():
                     params = " ".join(map(str, typ.order_params))
-                    named_params = " ".join(typ)
                     lines.append(
-                        f"{style_type}_coeff {' '.join(map(lambda at: str(at.name), typ.atomtypes))} {style.name} {params} {named_params}\n"
+                        f"{style_type}_coeff {' '.join(map(lambda at: str(at.name), typ.atomtypes))} {style.name} {params}\n"
                     )
 
         lines.append("\n")
@@ -464,6 +460,54 @@ class LAMMPSForceFieldWriter:
         ff = system.forcefield
 
         lines = []
+
+            # if "type" in frame["atoms"]:
+            #     f.write(f"\nAtom Type Labels\n\n")
+            #     atomtypenames = frame["atoms"]["type"]
+            #     unique_types = np.unique(atomtypenames)
+            #     for i, at in enumerate(unique_types, 1):
+            #         f.write(f"{i} {at}\n")
+
+            # if "type" in frame["bonds"]:
+            #     f.write(f"\nBond Type Labels\n\n")
+            #     bondtypenames = frame["bonds"]["type"]
+            #     unique_types = np.unique(bondtypenames)
+            #     for i, bt in enumerate(unique_types, 1):
+            #         f.write(f"{i} {bt}\n")
+
+            # if "type" in frame["angles"]:
+            #     f.write(f"\nAngle Type Labels\n\n")
+            #     angletypenames = frame["angles"]["type"]
+            #     unique_types = np.unique(angletypenames)
+            #     for i, at in enumerate(unique_types, 1):
+            #         f.write(f"{i} {at}\n")
+
+            # if "type" in frame["dihedrals"]:
+            #     f.write(f"\nDihedral Type Labels\n\n")
+            #     dihedraltypenames = frame["dihedrals"]["type"]
+            #     unique_types = np.unique(dihedraltypenames)
+            #     for i, dt in enumerate(unique_types, 1):
+            #         f.write(f"{i} {dt}\n")
+
+        lines.append(f"Atom Type Labels\n\n")
+        for atomstyle in ff.atomstyles:
+            for i, atomtype in enumerate(atomstyle.types, 1):
+                lines.append(f"{i} {atomtype}\n")
+
+        lines.append(f"\nBond Type Labels\n\n")
+        for bondstyle in ff.bondstyles:
+            for i, bondtype in enumerate(bondstyle.types, 1):
+                lines.append(f"{i} {bondtype}\n")
+
+        lines.append(f"\nAngle Type Labels\n\n")
+        for anglestyle in ff.anglestyles:
+            for i, angletype in enumerate(anglestyle.types, 1):
+                lines.append(f"{i} {angletype}\n")
+
+        lines.append(f"\nDihedral Type Labels\n\n")
+        for dihedralstyle in ff.dihedralstyles:
+            for i, dihedraltype in enumerate(dihedralstyle.types, 1):
+                lines.append(f"{i} {dihedraltype}\n")
 
         # lines.append(f"units {self.forcefield.unit}\n")
         if ff.atomstyles:
@@ -475,9 +519,9 @@ class LAMMPSForceFieldWriter:
         else:
             raise ValueError("No atom style defined")
 
-        for atomstyle in ff.atomstyles:
-            for atomtype in atomstyle.types:
-                lines.append(f"mass {atomtype.name} {atomtype['mass']}\n")
+        # for atomstyle in ff.atomstyles:
+        #     for atomtype in atomstyle.types:
+        #         lines.append(f"mass {atomtype.name} {atomtype['mass']}\n")
 
         LAMMPSForceFieldWriter._write_styles(lines, ff.bondstyles, "bond")
         LAMMPSForceFieldWriter._write_styles(lines, ff.anglestyles, "angle")

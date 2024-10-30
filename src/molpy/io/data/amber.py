@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import molpy as mp
-import pyarrow as pa
+import pandas as pd
 
 class AmberInpcrdReader:
 
@@ -36,14 +36,14 @@ class AmberInpcrdReader:
             y_coords = coordinates[1::3]
             z_coords = coordinates[2::3]
 
-            table = pa.table({
+            table = pd.DataFrame({
                 'id': range(1, num_atoms + 1),
                 'x': x_coords,
                 'y': y_coords,
                 'z': z_coords
             })
 
-        frame['atoms'] = frame['atoms'].join(table, keys='id')
+        frame['atoms'] = frame['atoms'].merge(table, on='id')
 
         frame['props']['name'] = title
         return system

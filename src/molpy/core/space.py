@@ -40,6 +40,10 @@ class Box(Region, Boundary):
             case Box.Style.TRICLINIC:
                 return f"<Box: Triclinic: {self._matrix}>"
             
+    @classmethod
+    def cubic(cls, length: float, pbc: np.ndarray = np.zeros(3, dtype=bool)):
+        return cls(np.diag(np.full(3, length)), pbc)
+            
     @property
     def xlo(self) -> float:
         return 0

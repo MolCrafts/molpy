@@ -98,30 +98,32 @@ class PDBWriter:
 
             # atom_name_remap = {}
 
-            for atom in frame["atoms"].to_pylist():
+            for _, atom in frame["atoms"].iterrows():
                 serial = atom["id"]
                 altLoc = atom.get("altLoc", "")
-                unique_name = atom.get("name", "UNK")
+                unique_name = atom.get("name", atom.get("type", "UNK"))
                 # if name in atom_name_remap:
                 #     unique_name = name + str(atom_name_remap[name])
                 #     atom_name_remap[name] += 1
                 # else:
                 #     unique_name = name
                 #     atom_name_remap[name] = 1
-                resName = atom.get("resName", "UNK")
+                resName = atom.get("resName", "A")
                 chainID = atom.get("chainID", "")
                 resSeq = atom.get("resSeq", atom.get("molid", 1))
                 iCode = atom.get("iCode", "")
+                elem = atom.get('element', "")
                 x = atom["x"]
                 y = atom["y"]
                 z = atom["z"]
+
                 f.write(
-                    f"{'ATOM':6s}{serial:>5d}{' '*1}{unique_name.upper():>4s}{altLoc:1s}{resName:>3s}{' '*1}{chainID:1s}{resSeq:>4d}{iCode:1s}{' '*3}{x:>8.3f}{y:>8.3f}{z:>8.3f}{' '*26}\n"
+                    f"{'ATOM':6s}{serial:>5d}{' '*1}{unique_name.upper():>4s}{altLoc:1s}{resName:>3s}{' '*1}{chainID:1s}{resSeq:>4d}{iCode:1s}{' '*3}{x:>8.3f}{y:>8.3f}{z:>8.3f}{' '*22}{elem:>2s}  \n"
                 )
 
             bonds = defaultdict(list)
             if "bonds" in frame:
-                for bond in frame["bonds"].to_pylist():
+                for _, bond in frame["bonds"].iterrows():
                     bonds[bond["i"]].append(bond["j"])
                     bonds[bond["j"]].append(bond["i"])
 

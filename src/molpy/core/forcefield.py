@@ -3,11 +3,10 @@ from functools import reduce
 from typing import Iterable, Callable
 from .struct import Bond
 
+
 class Type(dict):
 
-    def __init__(
-        self, name: str , kw_params: dict = {}, order_params: list = []
-    ):
+    def __init__(self, name: str, kw_params: dict = {}, order_params: list = []):
         super().__init__(kw_params)
         self.name = name
         self.order_params = order_params
@@ -15,17 +14,15 @@ class Type(dict):
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}: {self.name}>"
 
+    def __eq__(self, other: "Type"):
+        return self.name == other.name
 
 class Style(dict):
 
-    def __init__(
-        self,
-        name: str,
-        kw_params: dict = {}, order_params: list = []
-    ):
+    def __init__(self, name: str, kw_params: dict = {}, order_params: list = []):
         super().__init__(kw_params)
         self.name = name
-        self.types: list[Type] = []
+        self.types: dict[str, Type] = {}
         self.order_params = order_params
 
     def __repr__(self) -> str:
@@ -37,16 +34,16 @@ class Style(dict):
 
     def __eq__(self, other: "Style"):
         return self.name == other.name
-    
-    def get_by(self, func: Callable) -> Type:
-        for t in self.types:
-            if func(t):
-                return t
-        return None
 
-    def get_all_by(self, func: Callable):
-        return [t for t in self.types if func(t)]
-    
+    def get_by(self, condition: Callable, default=None) -> Type:
+        for t in self.types.values():
+            if condition(t):
+                return t
+        return default
+
+    def get_all_by(self, condition: Callable):
+        return [t for t in self.types.values() if condition(t)]
+
     # def remap_id(self):
     #     new_types = {}
     #     for new_id, t in enumerate(self.types.values(), 1):
@@ -56,8 +53,7 @@ class Style(dict):
 
     def merge(self, other: "Style"):
         self.update(other)  # merge params
-        for typ in other.types:
-            self.types.append(typ)
+        self.types.update(other.types)
 
     def to_dict(self):
         return dict()
@@ -73,13 +69,19 @@ class Style(dict):
 
 class AtomType(Type):
 
-    def __init__(self, name:str, kw_params: dict = {}, order_params: list = []):
+    def __init__(self, name: str, kw_params: dict = {}, order_params: list = []):
         super().__init__(name, kw_params, order_params)
+
 
 class BondType(Type):
 
     def __init__(
-        self, name:str, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, kw_params: dict = {}, order_params: list = []
+        self,
+        name: str,
+        itomtype: AtomType | None = None,
+        jtomtype: AtomType | None = None,
+        kw_params: dict = {},
+        order_params: list = [],
     ):
         super().__init__(name, kw_params, order_params)
         self.itomtype = itomtype
@@ -89,9 +91,18 @@ class BondType(Type):
     def atomtypes(self):
         return [self.itomtype, self.jtomtype]
 
+
 class AngleType(Type):
 
-    def __init__(self, name:str, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, kw_params: dict = {}, order_params: list = []):
+    def __init__(
+        self,
+        name: str,
+        itomtype: AtomType | None = None,
+        jtomtype: AtomType | None = None,
+        ktomtype: AtomType | None = None,
+        kw_params: dict = {},
+        order_params: list = [],
+    ):
         super().__init__(name, kw_params, order_params)
         self.itomtype = itomtype
         self.jtomtype = jtomtype
@@ -101,9 +112,19 @@ class AngleType(Type):
     def atomtypes(self):
         return [self.itomtype, self.jtomtype, self.ktomtype]
 
+
 class ImproperType(Type):
 
-    def __init__(self, name:str, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, ltomtype: AtomType|None = None, kw_params: dict = {}, order_params: list = []):
+    def __init__(
+        self,
+        name: str,
+        itomtype: AtomType | None = None,
+        jtomtype: AtomType | None = None,
+        ktomtype: AtomType | None = None,
+        ltomtype: AtomType | None = None,
+        kw_params: dict = {},
+        order_params: list = [],
+    ):
         super().__init__(name, kw_params, order_params)
         self.itomtype = itomtype
         self.jtomtype = jtomtype
@@ -114,9 +135,19 @@ class ImproperType(Type):
     def atomtypes(self):
         return [self.itomtype, self.jtomtype, self.ktomtype, self.ltomtype]
 
+
 class DihedralType(Type):
 
-    def __init__(self, name:str, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, ltomtype: AtomType|None = None, kw_params: dict = {}, order_params: list = []):
+    def __init__(
+        self,
+        name: str,
+        itomtype: AtomType | None = None,
+        jtomtype: AtomType | None = None,
+        ktomtype: AtomType | None = None,
+        ltomtype: AtomType | None = None,
+        kw_params: dict = {},
+        order_params: list = [],
+    ):
         super().__init__(name, kw_params, order_params)
         self.itomtype = itomtype
         self.jtomtype = jtomtype
@@ -130,60 +161,91 @@ class DihedralType(Type):
 
 class AtomStyle(Style):
 
-    def def_type(self, name:str, kw_params: dict = {}, order_params: list = []):
+    def def_type(self, name: str, kw_params: dict = {}, order_params: list = []):
         at = AtomType(name, kw_params, order_params)
-        self.types.append(at)
+        self.types[name] = at
         return at
+
 
 class BondStyle(Style):
 
     def def_type(
         self,
-        name:str, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, kw_params: dict = {}, order_params: list = []
+        name: str,
+        itomtype: AtomType | None = None,
+        jtomtype: AtomType | None = None,
+        kw_params: dict = {},
+        order_params: list = [],
     ) -> BondType:
         bt = BondType(name, itomtype, jtomtype, kw_params, order_params)
-        self.types.append(bt)
+        self.types[name] = bt
         return bt
-
 
 
 class AngleStyle(Style):
 
     def def_type(
-        self, name:str,
-        itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, kw_params: dict = {}, order_params: list = []
+        self,
+        name: str,
+        itomtype: AtomType | None = None,
+        jtomtype: AtomType | None = None,
+        ktomtype: AtomType | None = None,
+        kw_params: dict = {},
+        order_params: list = [],
     ) -> AngleType:
         at = AngleType(name, itomtype, jtomtype, ktomtype, kw_params, order_params)
-        self.types.append(at)
+        self.types[name] = at
         return at
+
 
 class DihedralStyle(Style):
 
     def def_type(
         self,
-        name:str, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, ltomtype: AtomType|None = None, kw_params: dict = {}, order_params: list = []
+        name: str,
+        itomtype: AtomType | None = None,
+        jtomtype: AtomType | None = None,
+        ktomtype: AtomType | None = None,
+        ltomtype: AtomType | None = None,
+        kw_params: dict = {},
+        order_params: list = [],
     ) -> DihedralType:
-        dt = DihedralType(name, itomtype, jtomtype, ktomtype, ltomtype, kw_params, order_params)
-        self.types.append(dt)
+        dt = DihedralType(
+            name, itomtype, jtomtype, ktomtype, ltomtype, kw_params, order_params
+        )
+        self.types[name] = dt
         return dt
-
-
 
 
 class ImproperStyle(Style):
 
     def def_type(
         self,
-        name:str, itomtype: AtomType|None = None, jtomtype: AtomType|None = None, ktomtype: AtomType|None = None, ltomtype: AtomType|None = None, kw_params: dict = {}, order_params: list = []
+        name: str,
+        itomtype: AtomType | None = None,
+        jtomtype: AtomType | None = None,
+        ktomtype: AtomType | None = None,
+        ltomtype: AtomType | None = None,
+        kw_params: dict = {},
+        order_params: list = [],
     ) -> ImproperType:
-        it = ImproperType(name, itomtype, jtomtype, ktomtype, ltomtype, kw_params, order_params)
-        self.types.append(it)
+        it = ImproperType(
+            name, itomtype, jtomtype, ktomtype, ltomtype, kw_params, order_params
+        )
+        self.types[name] = it
         return it
 
 
 class PairType(Type):
 
-    def __init__(self, name: str, itomtype: int | None, jtomtype: int | None, kw_params: dict = {}, order_params: list = []):
+    def __init__(
+        self,
+        name: str,
+        itomtype: int | None,
+        jtomtype: int | None,
+        kw_params: dict = {},
+        order_params: list = [],
+    ):
         super().__init__(name, kw_params, order_params)
         self.itomtype = itomtype
         self.jtomtype = jtomtype
@@ -192,13 +254,22 @@ class PairType(Type):
     def atomtypes(self):
         return [self.itomtype, self.jtomtype]
 
+
 class PairStyle(Style):
 
-    def def_type(self, name: str, itomtype: AtomType | None = None, jtomtype: AtomType | None = None, kw_params: dict = {}, order_params: list = []):
+    def def_type(
+        self,
+        name: str,
+        itomtype: AtomType | None = None,
+        jtomtype: AtomType | None = None,
+        kw_params: dict = {},
+        order_params: list = [],
+    ):
         pt = PairType(name, itomtype, jtomtype, kw_params, order_params)
-        self.types.append(pt)
+        self.types[name] = pt
         return pt
-    
+
+
 class ForceField:
 
     def __init__(self, name: str = ""):
@@ -238,7 +309,7 @@ class ForceField:
             detail += f"\nn_improperstyles: {self.n_improperstyles}, n_impropertypes: {self.n_impropertypes}"
         return detail + ">"
 
-    def def_atomstyle(self, style: str, kw_params:dict={}, order_params:list=[]):
+    def def_atomstyle(self, style: str, kw_params: dict = {}, order_params: list = []):
         atomstyle = self.get_atomstyle(style)
         if atomstyle:
             return atomstyle
@@ -246,8 +317,8 @@ class ForceField:
             atomstyle = AtomStyle(style, kw_params, order_params)
             self.atomstyles.append(atomstyle)
         return atomstyle
-    
-    def def_bondstyle(self, style: str, kw_params:dict={}, order_params:list=[]):
+
+    def def_bondstyle(self, style: str, kw_params: dict = {}, order_params: list = []):
         bondstyle = self.get_bondstyle(style)
         if bondstyle:
             return bondstyle
@@ -256,7 +327,7 @@ class ForceField:
             self.bondstyles.append(bondstyle)
         return bondstyle
 
-    def def_pairstyle(self, style: str, kw_params:dict={}, order_params:list=[]):
+    def def_pairstyle(self, style: str, kw_params: dict = {}, order_params: list = []):
         pairstyle = self.get_pairstyle(style)
         if pairstyle:
             return pairstyle
@@ -277,7 +348,7 @@ class ForceField:
                 return anglestyle
         return None
 
-    def def_anglestyle(self, style: str, kw_params:dict={}, order_params:list=[]):
+    def def_anglestyle(self, style: str, kw_params: dict = {}, order_params: list = []):
         anglestyle = self.get_anglestyle(style)
         if anglestyle:
             return anglestyle
@@ -285,14 +356,16 @@ class ForceField:
             anglestyle = AngleStyle(style, kw_params, order_params)
             self.anglestyles.append(anglestyle)
         return anglestyle
-    
+
     def get_diheralstyle(self, style: str):
         for dihedralstyle in self.dihedralstyles:
             if dihedralstyle.name == style:
                 return dihedralstyle
         return None
 
-    def def_dihedralstyle(self, style: str, kw_params:dict={}, order_params:list=[]):
+    def def_dihedralstyle(
+        self, style: str, kw_params: dict = {}, order_params: list = []
+    ):
         dihe = self.get_diheralstyle(style)
         if dihe:
             return dihe
@@ -300,14 +373,16 @@ class ForceField:
             dihe = DihedralStyle(style, kw_params, order_params)
             self.dihedralstyles.append(dihe)
         return dihe
-    
+
     def get_improperstyle(self, style: str):
         for improperstyle in self.improperstyles:
             if improperstyle.name == style:
                 return improperstyle
         return None
 
-    def def_improperstyle(self, style: str, kw_params:dict={}, order_params:list=[]):
+    def def_improperstyle(
+        self, style: str, kw_params: dict = {}, order_params: list = []
+    ):
         improper = self.get_improperstyle(style)
         if improper:
             return improper
@@ -345,25 +420,25 @@ class ForceField:
             if dihedralstyle.name == style:
                 return dihedralstyle
         return None
-    
+
     def get_improperstyle(self, style: str):
         for improperstyle in self.improperstyles:
             if improperstyle.name == style:
                 return improperstyle
         return None
-    
+
     def get_atomtypes(self):
         return reduce(lambda x, y: x + list(y.types.values()), self.atomstyles, [])
-    
+
     def get_bondtypes(self):
         return reduce(lambda x, y: x + list(y.types.values()), self.bondstyles, [])
-    
+
     def get_angletypes(self):
         return reduce(lambda x, y: x + list(y.types.values()), self.anglestyles, [])
-    
+
     def get_dihedraltypes(self):
         return reduce(lambda x, y: x + list(y.types.values()), self.dihedralstyles, [])
-    
+
     def get_impropertypes(self):
         return reduce(lambda x, y: x + list(y.types.values()), self.improperstyles, [])
 
@@ -465,29 +540,32 @@ class ForceField:
     def __iadd__(self, forcefield: "ForceField"):
         self.merge(forcefield)
         return self
-    
+
     def __add__(self, forcefield: "ForceField"):
         new_forcefield = ForceField()
         new_forcefield.merge(self)
         new_forcefield.merge(forcefield)
         return new_forcefield
-    
+
     # def deduplicate(self):
 
     #     for styles in [self.atomstyles, self.bondstyles, self.pairstyles, self.anglestyles, self.dihedralstyles, self.improperstyles]:
     #         for style in styles:
     #             style.deduplicate()
-                
+
     def assign_bond(self, bond: Bond):
         itom = bond.itom
         jtom = bond.jtom
-        itomtype = itom['type']
-        jtomtype = jtom['type']
+        itomtype = itom["type"]
+        jtomtype = jtom["type"]
         for bondstyle in self.bondstyles:
             for bondtype in bondstyle.types.values():
-                if {itomtype, jtomtype} == {bondtype.itomtype.name, bondtype.jtomtype.name}:
-                    bond['type'] = bondtype
-                    bond['type_name'] = bondtype.name
+                if {itomtype, jtomtype} == {
+                    bondtype.itomtype.name,
+                    bondtype.jtomtype.name,
+                }:
+                    bond["type"] = bondtype
+                    bond["type_name"] = bondtype.name
                     return bond
 
     def simplify(self):
