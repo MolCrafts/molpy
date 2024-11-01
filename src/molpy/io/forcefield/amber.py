@@ -144,10 +144,10 @@ class AmberPrmtopReader:
         system.forcefield.units = "real"
         atomstyle = system.forcefield.def_atomstyle("full")
         atomtype_map = {}  # atomtype id : atomtype
-        for itype, name in zip(self.raw_data["ATOM_TYPE_INDEX"], atoms["type"]):
+        for itype, name, mass in zip(self.raw_data["ATOM_TYPE_INDEX"], atoms["type"], atoms['mass']):
             # amber atom type and type index not 1 to 1 mapping involving different files
             if name not in atomtype_map:
-                atomtype_map[name] = atomstyle.def_type(name, kw_params={"id": itype})
+                atomtype_map[name] = atomstyle.def_type(name, kw_params={"id": itype, 'mass': mass})
 
         bondstyle = system.forcefield.def_bondstyle("harmonic")
         for bond_type, i, j, f, r_min in (

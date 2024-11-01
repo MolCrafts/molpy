@@ -115,7 +115,10 @@ class LammpsDataReader:
                     masses = {}
                     for line in range(props["n_atomtypes"]):
                         line = next(lines).split()
-                        at = atom_style.get_by(lambda atom: atom['id'] == int(line[0]), atom_style.get_by(lambda atom: atom.name == line[0]))
+                        at = atom_style.get_by(
+                            lambda atom: atom["id"] == int(line[0]),
+                            atom_style.get_by(lambda atom: atom.name == line[0]),
+                        )
                         masses[at.name] = float(line[1])
 
                 elif line.startswith("Atoms"):
@@ -254,8 +257,7 @@ class LammpsDataReader:
             per_atom_mass[frame["atoms"]["type"] == t] = m  # todo: type mapping
         frame["atoms"]["mass"] = per_atom_mass
 
-        return mp.System(
-            mp.Box(
+        system.box = mp.Box(
                 np.diag(
                     [
                         box["xhi"] - box["xlo"],
@@ -263,10 +265,12 @@ class LammpsDataReader:
                         box["zhi"] - box["zlo"],
                     ]
                 )
-            ),
-            ff,
-            frame,
-        )
+            )
+
+        system.forcefield = ff
+        system.frame = frame
+
+        return system
 
 
 class LammpsDataWriter:
@@ -287,10 +291,10 @@ class LammpsDataWriter:
             f.write(f"{len(frame['bonds'])} bonds\n")
             f.write(f"{len(frame['angles'])} angles\n")
             f.write(f"{len(frame['dihedrals'])} dihedrals\n\n")
-            f.write(f"{len(np.unique(frame['atoms']['type']))} atom types\n")
-            f.write(f"{len(np.unique(frame['bonds']['type']))} bond types\n")
-            f.write(f"{len(np.unique(frame['angles']['type']))} angle types\n")
-            f.write(f"{len(np.unique(frame['dihedrals']['type']))} dihedral types\n\n")
+            f.write(f"{system.n_atomtypes} atom types\n")
+            f.write(f"{system.n_bondtypes} bond types\n")
+            f.write(f"{system.n_angletypes} angle types\n")
+            f.write(f"{system.n_dihedraltypes} dihedral types\n\n")
 
             xlo = system.box.xlo
             xhi = system.box.xhi
@@ -303,44 +307,63 @@ class LammpsDataWriter:
             f.write(f"{ylo:.2f} {yhi:.2f} ylo yhi\n")
             f.write(f"{zlo:.2f} {zhi:.2f} zlo zhi\n\n")
 
-            # if "type" in frame["atoms"]:
-            #     f.write(f"\nAtom Type Labels\n\n")
-            #     atomtypenames = frame["atoms"]["type"]
-            #     unique_types = np.unique(atomtypenames)
-            #     for i, at in enumerate(unique_types, 1):
-            #         f.write(f"{i} {at}\n")
+            if ff.atomstyles:
+                f.write(f"\nAtom Type Labels\n\n")
+                for i, atomtype in enumerate(ff.get_atomtypes(), 1):
+                    f.write(f"{i} {atomtype.name}\n")
+            else:
+                f.write(f"\nAtom Type Labels\n\n")
+                unique_type = np.unique(frame["atoms"]['type'].to_numpy())
+                for i, t in enumerate(unique_type, 1):
+                    f.write(f"{i} {t}\n")
 
-            # if "type" in frame["bonds"]:
-            #     f.write(f"\nBond Type Labels\n\n")
-            #     bondtypenames = frame["bonds"]["type"]
-            #     unique_types = np.unique(bondtypenames)
-            #     for i, bt in enumerate(unique_types, 1):
-            #         f.write(f"{i} {bt}\n")
+            if ff.bondstyles:
+                f.write(f"\nBond Type Labels\n\n")
+                for i, bondtype in enumerate(ff.get_bondtypes(), 1):
+                    f.write(f"{i} {bondtype.name}\n")
+            else:
+                f.write(f"\nBond Type Labels\n\n")
+                unique_type = np.unique(frame["bonds"]['type'].to_numpy())
+                for i, t in enumerate(unique_type, 1):
+                    f.write(f"{i} {t}\n")
 
-            # if "type" in frame["angles"]:
-            #     f.write(f"\nAngle Type Labels\n\n")
-            #     angletypenames = frame["angles"]["type"]
-            #     unique_types = np.unique(angletypenames)
-            #     for i, at in enumerate(unique_types, 1):
-            #         f.write(f"{i} {at}\n")
+            if ff.anglestyles:
+                f.write(f"\nAngle Type Labels\n\n")
+                for i, angletype in enumerate(ff.get_angletypes(), 1):
+                    f.write(f"{i} {angletype.name}\n")
+            else:
+                f.write(f"\nAngle Type Labels\n\n")
+                unique_type = np.unique(frame["angles"]['type'].to_numpy())
+                for i, t in enumerate(unique_type, 1):
+                    f.write(f"{i} {t}\n")
 
-            # if "type" in frame["dihedrals"]:
-            #     f.write(f"\nDihedral Type Labels\n\n")
-            #     dihedraltypenames = frame["dihedrals"]["type"]
-            #     unique_types = np.unique(dihedraltypenames)
-            #     for i, dt in enumerate(unique_types, 1):
-            #         f.write(f"{i} {dt}\n")
+            if ff.dihedralstyles:
+                f.write(f"\nDihedral Type Labels\n\n")
+                for i, dihedraltype in enumerate(ff.get_dihedraltypes(), 1):
+                    f.write(f"{i} {dihedraltype.name}\n")
+            else:
+                f.write(f"\nDihedral Type Labels\n\n")
+                unique_type = np.unique(frame["dihedrals"]['type'].to_numpy())
+                for i, t in enumerate(unique_type, 1):
+                    f.write(f"{i} {t}\n")
 
-            if "mass" in frame["atoms"]:
+            f.write(f"\nMasses\n\n")
+            masses = {}
+            try:
+                if ff.n_atomtypes:
+                    for atomtype in ff.get_atomtypes():
+                        masses[atomtype.name] = atomtype['mass']
+                else:
+                    raise KeyError('n_atomtypes')
+            except KeyError:
+                masses = {}
+                unique_type, unique_idx = np.unique(frame["atoms"]['type'].to_numpy(), return_index=True)
+                for i, t in zip(unique_idx, unique_type):
+                    # f.write(f"{frame['atoms']['type'][i]} {m:.3f}\n")
+                    masses[t] = frame['atoms']['mass'][i]
 
-                f.write(f"\nMasses\n\n")
-                masses = frame["atoms"]["mass"]
-                types = frame["atoms"]["type"]
-                unique_type, unique_index = np.unique(types, return_index=True)
-                for i, m in sorted(zip(unique_type, masses.iloc[unique_index])):
-                    f.write(f"{i} {m:.2f}\n")
-                # for atomtype in ff.atomtypes:
-                #     f.write(f"{atomtype.name} {atomtype['mass']:.2f}\n")
+            for i, m in masses.items():
+                f.write(f"{i} {m:.3f}\n")
 
             f.write(f"\nAtoms\n\n")
 
@@ -356,7 +379,7 @@ class LammpsDataWriter:
                         frame["atoms"]["z"],
                     ):
                         f.write(
-                            f"{id} {molid} {type} {q:.2f} {x:.2f} {y:.2f} {z:.2f}\n"
+                            f"{id} {molid} {type} {q:.3f} {x:.3f} {y:.3f} {z:.3f}\n"
                         )
 
             f.write(f"\nBonds\n\n")
@@ -529,49 +552,49 @@ class LammpsMoleculeWriter:
 
             if "atoms" in frame:
                 f.write(f"\nCoords\n\n")
-                for _, atom in frame["atoms"].iterrows():
-                    f.write(f"{atom['id']} {atom['x']} {atom['y']} {atom['z']}\n")
+                for i, atom in frame["atoms"].iterrows():
+                    f.write(f"{i+1} {atom['x']} {atom['y']} {atom['z']}\n")
 
                 f.write(f"\nTypes\n\n")
-                for _, atom in frame["atoms"].iterrows():
-                    f.write(f"{atom['id']} {atom['type']}\n")
+                for i, atom in frame["atoms"].iterrows():
+                    f.write(f"{i+1} {atom['type']}\n")
 
                 if "charge" in frame["atoms"]:
                     f.write(f"\nCharges\n\n")
-                    for _, atom in frame["atoms"].iterrows():
-                        f.write(f"{atom['id']} {atom['charge']}\n")
+                    for i, atom in frame["atoms"].iterrows():
+                        f.write(f"{i+1} {atom['charge']:.3f}\n")
 
                 if "molid" in frame["atoms"]:
                     f.write(f"\nMolecules\n\n")
-                    for _, atom in frame["atoms"].iterrows():
-                        f.write(f"{atom['id']} {atom['molid']}\n")
+                    for i, atom in frame["atoms"].iterrows():
+                        f.write(f"{i+1} {atom['molid']}\n")
 
             if "bonds" in frame:
                 bonds = frame["bonds"].iterrows()
                 f.write(f"\nBonds\n\n")
-                for _, bond in bonds:
-                    f.write(f"{bond['id']} {bond['type']} {bond['i']} {bond['j']}\n")
+                for i, bond in bonds:
+                    f.write(f"{i+1} {bond['type']} {bond['i']} {bond['j']}\n")
 
             if "angles" in frame:
                 angles = frame["angles"].iterrows()
                 f.write(f"\nAngles\n\n")
-                for _, angle in angles:
+                for i, angle in angles:
                     f.write(
-                        f"{angle['id']} {angle['type']} {angle['i']} {angle['j']} {angle['k']}\n"
+                        f"{i+1} {angle['type']} {angle['i']} {angle['j']} {angle['k']}\n"
                     )
 
             if "dihedrals" in frame:
                 dihedrals = frame["dihedrals"].iterrows()
                 f.write(f"\nDihedrals\n\n")
-                for _, dihedral in dihedrals:
+                for i, dihedral in dihedrals:
                     f.write(
-                        f"{dihedral['id']} {dihedral['type']} {dihedral['i']} {dihedral['j']} {dihedral['k']} {dihedral['l']}\n"
+                        f"{i+1} {dihedral['type']} {dihedral['i']} {dihedral['j']} {dihedral['k']} {dihedral['l']}\n"
                     )
 
             if "impropers" in frame:
                 impropers = frame["impropers"].iterrows()
                 f.write(f"\nImpropers\n\n")
-                for _, improper in impropers:
+                for i, improper in impropers:
                     f.write(
-                        f"{improper['id']} {improper['type']} {improper['i']} {improper['j']} {improper['k']} {improper['l']}\n"
+                        f"{i+1} {improper['type']} {improper['i']} {improper['j']} {improper['k']} {improper['l']}\n"
                     )

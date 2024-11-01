@@ -461,54 +461,6 @@ class LAMMPSForceFieldWriter:
 
         lines = []
 
-            # if "type" in frame["atoms"]:
-            #     f.write(f"\nAtom Type Labels\n\n")
-            #     atomtypenames = frame["atoms"]["type"]
-            #     unique_types = np.unique(atomtypenames)
-            #     for i, at in enumerate(unique_types, 1):
-            #         f.write(f"{i} {at}\n")
-
-            # if "type" in frame["bonds"]:
-            #     f.write(f"\nBond Type Labels\n\n")
-            #     bondtypenames = frame["bonds"]["type"]
-            #     unique_types = np.unique(bondtypenames)
-            #     for i, bt in enumerate(unique_types, 1):
-            #         f.write(f"{i} {bt}\n")
-
-            # if "type" in frame["angles"]:
-            #     f.write(f"\nAngle Type Labels\n\n")
-            #     angletypenames = frame["angles"]["type"]
-            #     unique_types = np.unique(angletypenames)
-            #     for i, at in enumerate(unique_types, 1):
-            #         f.write(f"{i} {at}\n")
-
-            # if "type" in frame["dihedrals"]:
-            #     f.write(f"\nDihedral Type Labels\n\n")
-            #     dihedraltypenames = frame["dihedrals"]["type"]
-            #     unique_types = np.unique(dihedraltypenames)
-            #     for i, dt in enumerate(unique_types, 1):
-            #         f.write(f"{i} {dt}\n")
-
-        lines.append(f"Atom Type Labels\n\n")
-        for atomstyle in ff.atomstyles:
-            for i, atomtype in enumerate(atomstyle.types, 1):
-                lines.append(f"{i} {atomtype}\n")
-
-        lines.append(f"\nBond Type Labels\n\n")
-        for bondstyle in ff.bondstyles:
-            for i, bondtype in enumerate(bondstyle.types, 1):
-                lines.append(f"{i} {bondtype}\n")
-
-        lines.append(f"\nAngle Type Labels\n\n")
-        for anglestyle in ff.anglestyles:
-            for i, angletype in enumerate(anglestyle.types, 1):
-                lines.append(f"{i} {angletype}\n")
-
-        lines.append(f"\nDihedral Type Labels\n\n")
-        for dihedralstyle in ff.dihedralstyles:
-            for i, dihedraltype in enumerate(dihedralstyle.types, 1):
-                lines.append(f"{i} {dihedraltype}\n")
-
         # lines.append(f"units {self.forcefield.unit}\n")
         if ff.atomstyles:
             if ff.n_anglestyles == 1:

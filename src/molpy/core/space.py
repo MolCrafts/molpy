@@ -312,3 +312,8 @@ class Box(Region, Boundary):
 
     def isin(self, xyz: np.ndarray) -> bool:
         return np.all(np.abs(self.wrap(xyz) - xyz) < 1e-5)
+
+    def merge(self, other: "Box") -> "Box":
+        """ return common space of two boxes """
+        return Box(matrix=other.matrix)
+        

@@ -17,6 +17,7 @@ class Type(dict):
     def __eq__(self, other: "Type"):
         return self.name == other.name
 
+
 class Style(dict):
 
     def __init__(self, name: str, kw_params: dict = {}, order_params: list = []):
@@ -284,6 +285,14 @@ class ForceField:
         self.dihedralstyles: list[DihedralStyle] = []
         self.improperstyles: list[ImproperStyle] = []
 
+    @classmethod
+    def from_forcefields(cls, *forcefields: "ForceField", name:str="") -> "ForceField":
+        forcefield = cls(name)
+        for ff in forcefields:
+            forcefield.merge_(ff)
+
+        return forcefield
+
     def __repr__(self) -> str:
         return f"<ForceField: {self.name}>"
 
@@ -516,10 +525,12 @@ class ForceField:
 
     def merge(self, other: "ForceField"):
 
-        if self.unit:
-            assert self.unit == other.unit, ValueError("unit must be the same")
-        self.unit = other.unit
+        ff = ForceField.from_forcefields(self, other)
 
+        return ff
+    
+    def merge_(self, other: "ForceField") -> "ForceField":
+        
         def _merge(this_styles, other_styles):
             for style in other_styles:
                 matches = [s for s in this_styles if s == style]

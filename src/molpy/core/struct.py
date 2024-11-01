@@ -9,9 +9,6 @@ logger = logging.getLogger("molpy-struct")
 
 class Entity(dict):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     def clone(self):
         return deepcopy(self)
     
@@ -28,13 +25,29 @@ class Atom(Entity):
     
     def __eq__(self, other):
         return self['name'] == other['name']
+    
+    def __lt__(self, other):
+        return self['id'] < other['id']
 
-class Bond(Entity):
+class ManyBody(Entity):
 
-    def __init__(self, itom: Atom, jtom: Atom, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.itom = itom
-        self.jtom = jtom
+    def __init__(self, *_atoms, **kwargs):
+        super().__init__(**kwargs)
+        self._atoms = _atoms
+
+class Bond(ManyBody):
+
+    def __init__(self, itom: Atom, jtom: Atom, **kwargs):
+        itom, jtom = sorted([itom, jtom])
+        super().__init__(itom, jtom, **kwargs)
+
+    @property
+    def itom(self):
+        return self._atoms[0]
+    
+    @property
+    def jtom(self):
+        return self._atoms[1]
 
     def __repr__(self):
         return f"<Bond {self.itom} {self.jtom}>"
@@ -54,34 +67,72 @@ class Bond(Entity):
         return d
 
 
-class Angle(Entity):
-    def __init__(self, itom: Atom, jtom: Atom, ktom: Atom, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.itom = itom
-        self.jtom = jtom
-        self.ktom = ktom
+class Angle(ManyBody):
+    def __init__(self, itom: Atom, jtom: Atom, ktom: Atom, **kwargs):
+        itom, ktom = sorted([itom, ktom])
+        super().__init__(itom, jtom, ktom, **kwargs)
+
+    @property
+    def itom(self):
+        return self._atoms[0]
+    
+    @property
+    def jtom(self):
+        return self._atoms[1]
+    
+    @property
+    def ktom(self):
+        return self._atoms[2]
 
     def to_dict(self):
         return super().to_dict() | dict(i=self.itom['id'], j=self.jtom['id'], k=self.ktom['id'])
 
-class Dihedral(Entity):
-    def __init__(self, itom: Atom, jtom: Atom, ktom: Atom, ltom: Atom, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.itom = itom
-        self.jtom = jtom
-        self.ktom = ktom
-        self.ltom = ltom
+class Dihedral(ManyBody):
+    def __init__(self, itom: Atom, jtom: Atom, ktom: Atom, ltom: Atom, **kwargs):
+        if jtom > ktom:
+            jtom, ktom = ktom, jtom
+            itom, ltom = ltom, itom
+        super().__init__(itom, jtom, ktom, ltom, **kwargs)
+
+    @property
+    def itom(self):
+        return self._atoms[0]
+    
+    @property
+    def jtom(self):
+        return self._atoms[1]
+    
+    @property
+    def ktom(self):
+        return self._atoms[2]
+    
+    @property
+    def ltom(self):
+        return self._atoms[3]
 
     def to_dict(self):
         return super().to_dict() | dict(i=self.itom['id'], j=self.jtom['id'], k=self.ktom['id'], l=self.ltom['id'])
 
-class Improper(Entity):
-    def __init__(self, itom: Atom, jtom: Atom, ktom: Atom, ltom: Atom, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.itom = itom
-        self.jtom = jtom
-        self.ktom = ktom
-        self.ltom = ltom
+class Improper(ManyBody):
+    def __init__(self, itom: Atom, jtom: Atom, ktom: Atom, ltom: Atom, **kwargs):
+        jtom, ktom, ltom = sorted([jtom, ktom, ltom])
+        super().__init__(itom, jtom, ktom, ltom, **kwargs)
+
+    @property
+    def itom(self):
+        return self._atoms[0]
+    
+    @property
+    def jtom(self):
+        return self._atoms[1]
+    
+    @property
+    def ktom(self):
+        return self._atoms[2]
+    
+    @property
+    def ltom(self):
+        return self._atoms[3]
 
     def to_dict(self):
         return super().to_dict() | dict(i=self.itom['id'], j=self.jtom['id'], k=self.ktom['id'], l=self.ltom['id'])
@@ -196,6 +247,7 @@ class Struct(MolpyModel):
         self["angles"].extend(other['angles'])
         self["dihedrals"].extend(other['dihedrals'])
         self["impropers"].extend(other['impropers'])
+
         return self
     
     def __add__(self, other: "Struct") -> "Struct":
@@ -274,6 +326,8 @@ class Struct(MolpyModel):
         from .frame import Frame
         frame = Frame()
 
+        for i, atom in enumerate(self["atoms"], 1):
+            atom['id'] = i
         atom_dict = [atom.to_dict() for atom in self["atoms"]]
         frame["atoms"] = pd.DataFrame(atom_dict).sort_values("id")
         if self["bonds"]:
@@ -292,52 +346,27 @@ class Struct(MolpyModel):
             improper_dict = [improper.to_dict() for improper in self["impropers"]]
             frame["impropers"] = pd.DataFrame(improper_dict).sort_values("id")
 
-        # frame["props"]["n_atoms"] = len(self["atoms"])
-        # frame["props"]["n_bonds"] = len(self["bonds"])
-        # frame["props"]["n_angles"] = len(self["angles"])
-        # frame["props"]["n_dihedrals"] = len(self["dihedrals"])
-        # frame["props"]["n_impropers"] = len(self["impropers"])
-        # frame["props"]["n_atomtypes"] = len(
-        #     np.unique([atom["type"] for atom in self["atoms"]])
-        # )
-        # frame["props"]["n_bondtypes"] = len(
-        #     np.unique([bond["type"] for bond in self["bonds"]])
-        # )
-        # frame["props"]["n_angletypes"] = len(
-        #     np.unique([angle["type"] for angle in self["angles"]])
-        # )
-        # frame["props"]["n_dihedraltypes"] = len(
-        #     np.unique([dihedral["type"] for dihedral in self["dihedrals"]])
-        # )
-        # frame["props"]["n_impropertypes"] = len(
-        #     np.unique([improper["type"] for improper in self["impropers"]])
-        # )
-
         return frame
 
     def get_substruct(self, atom_idx):
-        
+        atom_idx = sorted(atom_idx)
         substruct = Struct()
         for atom in self["atoms"]:
             if atom['id'] in atom_idx:
                 substruct.add_atom_(atom)
-        
+
         for bond in self["bonds"]:
             if bond.itom['id'] in atom_idx and bond.jtom['id'] in atom_idx:
                 substruct.add_bond_(bond)
-        
+
         for angle in self["angles"]:
             if angle.itom['id'] in atom_idx and angle.jtom['id'] in atom_idx and angle.ktom['id'] in atom_idx:
                 substruct.add_angle_(angle)
-        
+
         for dihedral in self["dihedrals"]:
             if dihedral.itom['id'] in atom_idx and dihedral.jtom['id'] in atom_idx and dihedral.ktom['id'] in atom_idx and dihedral.ltom['id'] in atom_idx:
                 substruct.add_dihedral_(dihedral)
-        
-        for improper in self["impropers"]:
-            if improper.itom['id'] in atom_idx and improper.jtom['id'] in atom_idx and improper.ktom['id'] in atom_idx and improper.ltom['id'] in atom_idx:
-                substruct.add_improper_(improper)
-        
+
         return substruct
     
 class Structs(list):
