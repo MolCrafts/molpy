@@ -441,7 +441,7 @@ class LAMMPSForceFieldWriter:
                 lines.append(f"{style_type}_modify {params}\n")
 
             for typ in style.types.values():
-                params = " ".join(map(str, typ.order_params))
+                params = " ".join(map(lambda p: f'{p:.3f}', typ.order_params))
                 lines.append(f"{style_type}_coeff {' '.join(map(lambda at: str(at.name), typ.atomtypes))} {params}\n")
         else:
             style_keywords = " ".join([style.name for style in styles])

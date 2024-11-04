@@ -4,6 +4,7 @@ import numpy as np
 from typing import Iterator
 from itertools import accumulate
 import pandas as pd
+import math
 
 
 class AmberPrmtopReader:
@@ -448,7 +449,7 @@ class AmberPrmtopReader:
                     int(anglePointers[ii + 1]) // 3 + 1,
                     k,
                     float(forceConstant[iType - 1]),
-                    float(angleEquil[iType - 1]),
+                    math.degrees(float(angleEquil[iType - 1])),
                 )
             )
         return self._angleList
@@ -557,17 +558,20 @@ class AmberPrmtopReader:
             acoef = float(self.raw_data["LENNARD_JONES_ACOEF"][nbIndex])
             bcoef = float(self.raw_data["LENNARD_JONES_BCOEF"][nbIndex])
             try:
+                # sigma = (acoef / bcoef) ** (1 / 6.0)
                 rMin = (2 * acoef / bcoef) ** (1 / 6.0)
                 epsilon = 0.25 * bcoef * bcoef / acoef
             except ZeroDivisionError:
+                # sigma = 2.5
                 rMin = 1.0
                 epsilon = 0.0
-            type_parameters[atomTypeIndexes[iAtom] - 1] = (rMin / 2.0, epsilon)
             # jichen: unit conversion
             # length: angstrom to namometer
             # epsilon: kcal/mol to kJ/mol
-            rVdw = rMin / 2.0
-            return_list.append((iAtom + 1, rVdw, epsilon))
+            # rVdw = rMin / 2.0
+            # type_parameters[atomTypeIndexes[iAtom] - 1] = (rVdw, epsilon)
+            sigma = 2 ** (-1 / 6) * rMin
+            return_list.append((iAtom + 1, sigma, epsilon))
         # Check if we have any off-diagonal modified LJ terms that would require
         # an NBFIX-like solution
         # for i in range(numTypes):
