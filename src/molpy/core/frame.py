@@ -6,6 +6,10 @@ from copy import deepcopy
 
 class Frame(dict):
 
+    def __init__(self, *fields):
+        for field in fields:
+            self[field] = pd.DataFrame()
+
     @classmethod
     def from_frames(cls, *frames: "Frame") -> "Frame":
         frame = cls()
