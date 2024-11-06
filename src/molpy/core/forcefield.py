@@ -1,7 +1,6 @@
-import numpy as np
+import molpy as mp
 from functools import reduce
-from typing import Iterable, Callable
-from .struct import Bond
+from typing import Callable
 
 
 class Type(dict):
@@ -45,27 +44,12 @@ class Style(dict):
     def get_all_by(self, condition: Callable):
         return [t for t in self.types.values() if condition(t)]
 
-    # def remap_id(self):
-    #     new_types = {}
-    #     for new_id, t in enumerate(self.types.values(), 1):
-    #         new_types[new_id] = t
-    #         t.id = new_id
-    #     self.types = new_types
-
     def merge(self, other: "Style"):
         self.update(other)  # merge params
         self.types.update(other.types)
 
     def to_dict(self):
         return dict()
-
-    # def deduplicate(self):
-    #     name_style_mapping = {}
-    #     for i, typ in self.types.items():
-    #         # now only deduplicate by name
-    #         name_style_mapping[typ.name] = i
-    #     self.types = {i: self.types[i] for i in name_style_mapping.values()}
-    #     self.remap_id()
 
 
 class AtomType(Type):
@@ -286,7 +270,9 @@ class ForceField:
         self.improperstyles: list[ImproperStyle] = []
 
     @classmethod
-    def from_forcefields(cls, *forcefields: "ForceField", name:str="") -> "ForceField":
+    def from_forcefields(
+        cls, *forcefields: "ForceField", name: str = ""
+    ) -> "ForceField":
         forcefield = cls(name)
         for ff in forcefields:
             forcefield.merge_(ff)
@@ -528,9 +514,9 @@ class ForceField:
         ff = ForceField.from_forcefields(self, other)
 
         return ff
-    
+
     def merge_(self, other: "ForceField") -> "ForceField":
-        
+
         def _merge(this_styles, other_styles):
             for style in other_styles:
                 matches = [s for s in this_styles if s == style]
@@ -558,27 +544,14 @@ class ForceField:
         new_forcefield.merge(forcefield)
         return new_forcefield
 
-    # def deduplicate(self):
-
-    #     for styles in [self.atomstyles, self.bondstyles, self.pairstyles, self.anglestyles, self.dihedralstyles, self.improperstyles]:
-    #         for style in styles:
-    #             style.deduplicate()
-
-    def assign_bond(self, bond: Bond):
-        itom = bond.itom
-        jtom = bond.jtom
-        itomtype = itom["type"]
-        jtomtype = jtom["type"]
+    def get_bond_style(self, name: str):
         for bondstyle in self.bondstyles:
-            for bondtype in bondstyle.types.values():
-                if {itomtype, jtomtype} == {
-                    bondtype.itomtype.name,
-                    bondtype.jtomtype.name,
-                }:
-                    bond["type"] = bondtype
-                    bond["type_name"] = bondtype.name
-                    return bond
+            if bondstyle.name == name:
+                return bondstyle
 
-    def simplify(self):
+    def get_bond_potential(self, name: str):
 
-        pass
+        bondstyle = self.get_bond_style(name)
+        bond_potential = mp.potential.get_bond_potential(bondstyle)
+
+        return bond_potential

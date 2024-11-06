@@ -1,3 +1,4 @@
 from .core import *
-from .core.element import Element
+from .potential import *
+
 from . import io, op
