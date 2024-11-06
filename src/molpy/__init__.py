@@ -1,3 +1,3 @@
 from .core import *
-from .element import Element
+from .core.element import Element
 from . import io, op
