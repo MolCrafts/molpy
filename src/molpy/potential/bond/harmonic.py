@@ -7,8 +7,8 @@ class Harmonic(BondPotential):
     name = "harmonic"
 
     def __init__(self, k: np.ndarray, r0: np.ndarray):
-        self.k = k
-        self.r0 = r0
+        self.k = np.array(k)
+        self.r0 = np.array(r0)
 
     @BondPotential.or_frame
     def calc_energy(

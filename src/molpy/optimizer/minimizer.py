@@ -7,7 +7,9 @@ class BaseOptimizer:
 
         self.potential = potential
 
-        self.status = {}
+        self.status = {
+            'nstep': 0,  # current step
+        }
         self.fixes = {}
 
     def fix(self, event, status):
@@ -17,9 +19,9 @@ class BaseOptimizer:
     def dump(self, frame):
         pass
 
-    def run(self, step:int):
+    def run(self, frame, step:int):
         
-        for _ in self.irun(step):
+        for _ in self.irun(frame, step):
             ...
 
     def irun(self, frame, step):
@@ -60,7 +62,7 @@ class BFGS(BaseOptimizer):
 
     def step(self, frame):
 
-        xyz = frame['atoms']['x', 'y', 'z']
+        xyz = frame['atoms'][['x', 'y', 'z']]
         forces = self.potential.calc_force(frame)
 
         dpos, steplengths = self.prepare_step(xyz, forces)
@@ -120,5 +122,3 @@ class BFGS(BaseOptimizer):
         b = np.dot(dpos, dg)
         self.H -= np.outer(dforces, dforces) / a + np.outer(dg, dg) / b
 
-    def run(self, frame, step: int):
-        pass

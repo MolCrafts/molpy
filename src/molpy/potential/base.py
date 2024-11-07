@@ -11,3 +11,19 @@ class Potential:
 
     def get_energy(self, frame: mp.Frame) -> np.ndarray:
         pass
+
+class PotentialDict(dict, Potential):
+
+    def calc_energy(self, r_or_frame):
+        
+        energy = 0
+        for pot in self.values():
+            energy += pot.calc_energy(r_or_frame)
+
+        return energy
+    
+    def calc_force(self, r):
+        forces = []
+        for pot in self.values():
+            forces.append(pot.calc_force(r))
+        return forces
