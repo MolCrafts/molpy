@@ -23,7 +23,7 @@ class PotentialDict(dict, Potential):
         return energy
     
     def calc_force(self, r):
-        forces = []
+        forces = 0
         for pot in self.values():
-            forces.append(pot.calc_force(r))
+            forces += pot.calc_force(r)
         return forces

@@ -21,19 +21,30 @@ class Harmonic(AnglePotential):
 
     @AnglePotential.or_frame
     def calc_force(self, r: np.ndarray, angle_idx: np.ndarray, angle_types: np.ndarray):
-        a = r[angle_idx[:, 0]] - r[angle_idx[:, 1]]
-        b = r[angle_idx[:, 2]] - r[angle_idx[:, 1]]
+
+        r1 = r[angle_idx[:, 0]]
+        r2 = r[angle_idx[:, 1]]
+        r3 = r[angle_idx[:, 2]]
+        a = r2 - r1
+        b = r2 - r3
+        c = np.cross(a, b)
 
         norm_a = np.linalg.norm(a, axis=-1)
         norm_b = np.linalg.norm(b, axis=-1)
 
-        theta = np.arccos(a * b / norm_a / norm_b)
-        dtheta = theta - self.theta0[angle_types]
+        ua = a / norm_a[:, None]
+        ub = b / norm_b[:, None]
+
+        theta = np.rad2deg(np.arccos(ua @ ub.T))
+        dtheta = - self.k[angle_types] * (theta - self.theta0[angle_types])
     
-        c = np.cross(a, b)
-        f = -dtheta / np.linalg.norm(c)
-        F1 = f * (np.cross(b, c) / norm_a**2)
-        F3 = f * (np.cross(c, a) / norm_b**2)
+        f = dtheta / np.linalg.norm(c)
+        F1 = f * (np.cross(c, a) / norm_a[:, None]**2)
+        F3 = f * (np.cross(b, c) / norm_b[:, None]**2)
         F2 = - (F1 + F3)
 
-        return np.vstack((F1, F2, F3))
+        per_atom_forces = np.zeros((len(r), 3))
+        np.add.at(per_atom_forces, angle_idx[:, 0], F1)
+        np.add.at(per_atom_forces, angle_idx[:, 1], F2)
+        np.add.at(per_atom_forces, angle_idx[:, 2], F3)
+        return per_atom_forces

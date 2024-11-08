@@ -21,12 +21,15 @@ class TestBFGS:
         ff.def_pairstyle("coul/cut")
 
         frame = mp.Frame("atoms", "bonds", "angles", "pairs")
-        frame["atoms"]["x"] = [0.0000, 0.75695, -0.75695]
-        frame["atoms"]["y"] = [-0.06556, 0.52032, 0.52032]
+        frame["atoms"]["x"] = [0.0000, 0.55695, -0.55695]
+        frame["atoms"]["y"] = [-0.04556, 0.52032, 0.52032]
         frame["atoms"]["z"] = [0.000, 0.00000, 0.00000]
+        frame["atoms"]["element"] = ["O", "H", "H"]
         frame["atoms"]["type"] = [0, 1, 1]
-        frame["bonds"]["i"] = [0, 1]
-        frame["bonds"]["j"] = [0, 2]
+        frame["atoms"]["charge"] = [-0.834, 0.417, 0.417]
+        frame["bonds"]["i"] = [0, 0]
+        frame["bonds"]["j"] = [1, 2]
+        frame["bonds"]["type"] = [0, 0]
         frame["angles"]["i"] = [1]
         frame["angles"]["j"] = [0]
         frame["angles"]["k"] = [2]
@@ -37,5 +40,7 @@ class TestBFGS:
 
         potential = mp.potential.get_potentials(ff)
 
-        optimizer = mp.optimizer.BFGS(potential)
+        optimizer = mp.optimizer.BFGS(potential, step_limit=0.1)
+        optimizer.register_fix("before_step", mp.optimizer.minimizer.DumpXYZ("test.xyz"))
         optimizer.run(frame, step=100)
+        assert False

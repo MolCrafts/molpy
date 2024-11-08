@@ -183,7 +183,7 @@ class Frame(dict):
     def __getitem__(self, key):
         if isinstance(key, str):
             return super().__getitem__(key)
-        if isinstance(key, (slice, tuple)):
+        if isinstance(key, slice):
             atoms = self["atoms"].iloc[key]
             atom_ids = atoms["id"]
             bond_i = self["bonds"]["i"]
@@ -218,3 +218,5 @@ class Frame(dict):
                 angles=angles,
                 dihedrals=dihedrals,
             )
+        if isinstance(key, tuple):
+            return self[key[0]][list(key[1:])]

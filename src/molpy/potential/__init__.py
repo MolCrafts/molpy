@@ -39,10 +39,10 @@ def get_potentials(forcefield: mp.ForceField):
     # for style in forcefield.bondstyles:
     #     potentials[style.name] = get_bond_potentials(style)
 
-    # for style in forcefield.anglestyles:
-    #     potentials[style.name] = get_angle_potentials(style)
+    for style in forcefield.anglestyles:
+        potentials[style.name] = get_angle_potentials(style)
 
-    for style in forcefield.pairstyles:
-        potentials[style.name] = get_pair_potentials(style)
+    # for style in forcefield.pairstyles:
+    #     potentials[style.name] = get_pair_potentials(style)
 
     return PotentialDict(potentials)

@@ -29,7 +29,7 @@ class LJ126(PairPotential):
     def calc_force(self, r: np.ndarray, pair_idx: np.ndarray, pair_types: np.ndarray):
         dr = r[pair_idx[:, 1]] - r[pair_idx[:, 0]]
         dr_norm = np.linalg.norm(dr, axis=1, keepdims=True)
-        return (
+        forces = (
             24
             * self.epsilon[pair_types]
             * (
@@ -39,3 +39,7 @@ class LJ126(PairPotential):
             * dr
             / dr_norm**2
         )
+        per_atom_forces = np.zeros((len(r), 3))
+        np.add.at(per_atom_forces, pair_idx[:, 0], -forces)
+        np.add.at(per_atom_forces, pair_idx[:, 1], forces)
+        return per_atom_forces
