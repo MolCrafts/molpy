@@ -368,7 +368,23 @@ class Struct(MolpyModel):
                 substruct.add_dihedral_(dihedral)
 
         return substruct
-    
+
+    def get_topology(self):
+        from .topology import Topology
+        topo = Topology()
+        atoms = {atom: i for i, atom in enumerate(self["atoms"])}
+        atom_attrs = {}
+        if all('number' in atom for atom in self["atoms"]):
+            atom_attrs['number'] = [atom['number'] for atom in self["atoms"]]
+        if all('name' in atom for atom in self["atoms"]):
+            atom_attrs['name'] = [atom['name'] for atom in self["atoms"]]
+
+        # TODO: atom name if no number
+        topo.add_atoms(len(atoms), **atom_attrs)
+        bonds = self["bonds"]
+        topo.add_bonds([(atoms[bond.itom], atoms[bond.jtom]) for bond in bonds])
+        return topo
+
 class Structs(list):
     ...
 

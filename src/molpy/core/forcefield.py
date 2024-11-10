@@ -1,3 +1,4 @@
+from collections import defaultdict
 import numpy as np
 from functools import reduce
 from typing import Iterable, Callable
@@ -162,10 +163,19 @@ class DihedralType(Type):
 
 class AtomStyle(Style):
 
-    def def_type(self, name: str, kw_params: dict = {}, order_params: list = []):
+    def __init__(self, name: str, kw_params: dict = {}, order_params: list = []):
+        super().__init__(name, kw_params, order_params)
+        self.classes = defaultdict(set)
+
+    def def_type(self, name: str, kw_params: dict = {}, order_params: list = [], class_=None) -> AtomType:
         at = AtomType(name, kw_params, order_params)
         self.types[name] = at
+        if class_:
+            self.classes[name].add(class_)
         return at
+    
+    def get_class(self, class_: str) -> Iterable[AtomType]:
+        return self.classes.get(class_, [])
 
 
 class BondStyle(Style):

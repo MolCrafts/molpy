@@ -44,7 +44,7 @@ GRAMMAR = r"""
 """
 
 
-class SMARTS(object):
+class SmartsParser:
     """A wrapper class for parsing SMARTS grammar using lark.
 
     Provides functionality for injecting optional, custom, non-element symbols
@@ -61,11 +61,23 @@ class SMARTS(object):
 
     """
 
-    def __init__(self):
-        # TODO: optional symbols
-        self.grammar = GRAMMAR.format(optional="")
-        self.parser = lark.Lark(self.grammar, parser="lalr")
+    def __init__(self, optional_names:list[str]|None = None):
+        if optional_names:
+            for n in optional_names:
+                if not n.startswith("_"):
+                    raise ValueError(
+                        f"Non-element types must start with an underscore, you passed {','.join(optional_names)}"
+                    )
+
+            optional_names = sorted(optional_names, reverse=True)
+            self.grammar = GRAMMAR.format(
+                optional="{}|".format("|".join(optional_names))
+            )
+
+        else:
+            self.grammar = GRAMMAR.format(optional="")
+        self.PARSER = lark.Lark(self.grammar, parser="lalr")
 
     def parse(self, smarts_string):
         """Convert SMARTS string to parsed grammar object."""
-        return self.parser.parse(smarts_string)
+        return self.PARSER.parse(smarts_string)
