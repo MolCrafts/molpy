@@ -1,4 +1,6 @@
 from .core import *
 from .typifier import *
-from .element import Element
+from .potential import *
+from .optimizer import *
+
 from . import io, op

@@ -6,6 +6,10 @@ from copy import deepcopy
 
 class Frame(dict):
 
+    def __init__(self, *fields):
+        for field in fields:
+            self[field] = pd.DataFrame()
+
     @classmethod
     def from_frames(cls, *frames: "Frame") -> "Frame":
         frame = cls()
@@ -179,7 +183,7 @@ class Frame(dict):
     def __getitem__(self, key):
         if isinstance(key, str):
             return super().__getitem__(key)
-        if isinstance(key, (slice, tuple)):
+        if isinstance(key, slice):
             atoms = self["atoms"].iloc[key]
             atom_ids = atoms["id"]
             bond_i = self["bonds"]["i"]
@@ -214,3 +218,5 @@ class Frame(dict):
                 angles=angles,
                 dihedrals=dihedrals,
             )
+        if isinstance(key, tuple):
+            return self[key[0]][list(key[1:])]

@@ -1,6 +1,7 @@
 import molpy as mp
 import numpy as np
 from pathlib import Path
+from .trajectory import *
 
 read_txt = np.loadtxt
 
