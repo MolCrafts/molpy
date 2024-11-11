@@ -1,12 +1,7 @@
-<<<<<<< HEAD
-from collections import defaultdict
-import numpy as np
-=======
 import molpy as mp
->>>>>>> b887fd21bb37b84dcd285daa38ee0517d63c0bb6
 from functools import reduce
 from typing import Callable
-
+from collections import defaultdict
 
 class Type(dict):
 
@@ -156,7 +151,7 @@ class AtomStyle(Style):
         self.classes = defaultdict(set)
 
     def def_type(self, name: str, class_=None, *order_params, **kw_params) -> AtomType:
-        at = AtomType(name, kw_params, order_params)
+        at = AtomType(name, *order_params, **kw_params)
         self.types[name] = at
         if class_:
             self.classes[name].add(class_)

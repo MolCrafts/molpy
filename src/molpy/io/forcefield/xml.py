@@ -79,7 +79,7 @@ class XMLForceFieldReader:
                     class_ = type.attrib.pop("class")
                     if "overrides" in type.attrib:
                         type.attrib["overrides"] = type.attrib.pop("overrides").split(',')
-                    atomstyle.def_type(name=type.attrib.pop("name"), kw_params=type.attrib, class_=class_)
+                    atomstyle.def_type(name=type.attrib.pop("name"), **type.attrib, class_=class_)
 
 
         # Load force definitions

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from molpy.element import Element
+from molpy import Element
 import numpy as np
 
 import molpy as mp
