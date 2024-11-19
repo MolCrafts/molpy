@@ -37,7 +37,7 @@ class AmberInpcrdReader:
             z_coords = coordinates[2::3]
 
             table = pd.DataFrame({
-                'id': range(1, num_atoms + 1),
+                'id': np.arange(num_atoms),
                 'x': x_coords,
                 'y': y_coords,
                 'z': z_coords

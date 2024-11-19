@@ -67,6 +67,13 @@ class PDBReader:
 
             bonds = np.unique(np.array(bonds), axis=0) - 1
 
+            if len(set(atoms['name'])) != len(atoms['name']):
+                atom_name_counter = defaultdict(int)
+                for i, name in enumerate(atoms['name']):
+                    atom_name_counter[name] += 1
+                    if atom_name_counter[name] > 1:
+                        atoms['name'][i] = f"{name}{atom_name_counter[name]}"
+
             frame["atoms"] = pd.DataFrame(
                 atoms
             )

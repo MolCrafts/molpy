@@ -169,4 +169,8 @@ class Element:
             ununhexium=cls.Element(116, "ununhexium", "Uuh", 292 * daltons),
         )
 
+    @classmethod
+    def get_symbols(cls, maybe_atomic_number: list[str|int]) -> list[str]:
+        return [cls(int(e)).symbol for e in maybe_atomic_number]
+
 Element.initialize()

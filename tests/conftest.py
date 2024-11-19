@@ -6,10 +6,6 @@
 from pathlib import Path
 import pytest
 import subprocess
-import numpy as np
-from ase.build import bulk, molecule
-from ase import Atoms
-
 
 @pytest.fixture(name="test_data_path", scope="session")
 def find_test_data() -> Path:
