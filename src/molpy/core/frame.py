@@ -60,7 +60,7 @@ class Frame(dict):
                 i, j = bond.pop("i"), bond.pop("j")
                 itom = struct["atoms"].get_by(lambda atom: atom["id"] == i)
                 jtom = struct["atoms"].get_by(lambda atom: atom["id"] == j)
-                struct.add_bond_(
+                struct["bonds"].append(
                     mp.Bond(
                         itom,
                         jtom,

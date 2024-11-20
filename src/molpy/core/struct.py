@@ -7,6 +7,11 @@ import logging
 
 logger = logging.getLogger("molpy-struct")
 
+def return_copy(func):
+    def wrapper(self, *args, **kwargs):
+        new = self.copy()
+        return func(new, *args, **kwargs)
+    return wrapper
 
 class Entity(dict):
 
@@ -18,7 +23,7 @@ class Entity(dict):
     
     def copy(self):
         return self.clone()
-
+    
 
 class Atom(Entity):
 
@@ -32,8 +37,11 @@ class Atom(Entity):
         return self["name"] == other["name"]
 
     def __lt__(self, other):
-        return self["id"] < other["id"]
-
+        if "id" in self:
+            return self["id"] < other["id"]
+        else:
+            return self["name"] < other["name"]
+    
 
 class ManyBody(Entity):
 
@@ -61,7 +69,9 @@ class Bond(ManyBody):
 
     def __eq__(self, other):
         if isinstance(other, Bond):
-            return {self.itom, self.jtom} == {other.itom, other.jtom}
+            return (self.itom == other.itom and self.jtom == other.jtom) or (
+                self.itom == other.jtom and self.jtom == other.itom
+            )
         return False
 
     def __hash__(self):
@@ -191,19 +201,45 @@ class Struct(MolpyDynamicModel):
     def from_structs(cls, structs):
         struct = Struct()
         for s in structs:
-            struct.union_(s)
+            struct.union_(s.copy())
         return struct
 
     def __repr__(self):
         return f"<Struct {len(self['atoms'])} atoms>"
+    
+    def __deepcopy__(self, memo):
+
+        atom_map = {id(atom): atom.copy() for atom in self["atoms"]}
+        new = Struct(self.keys())
+        new["atoms"] = Entities(atom_map.values())
+        for key, value in self.items():
+            for v in value:
+                if isinstance(v, ManyBody):
+                    try:
+                        new[key].append(v.__class__(*[atom_map[id(atom)] for atom in v._atoms]))
+                    except KeyError:
+                        raise KeyError(f"Atom not found in atom_map: {v._atoms}")
+                    new[key][-1].update(v)
+        return new
 
     def add_atom_(self, atom: Atom):
         self["atoms"].append(atom)
         return self
 
-    def add_bond_(self, bond: Bond):
+    def add_bond_(self, iname, jname, **kwargs):
+        itom = self.get_atom_by(lambda atom: atom["name"] == iname)
+        jtom = self.get_atom_by(lambda atom: atom["name"] == jname)
+        bond = Bond(itom, jtom, **kwargs)
         self["bonds"].append(bond)
         return self
+    
+    @return_copy
+    def add_atom(copy, atom: Atom):
+        return copy.add_atom_(atom)
+    
+    @return_copy
+    def add_bond(copy, iname, jname, **kwargs):
+        return copy.add_bond_(iname, jname, **kwargs)
 
     def add_angle_(self, angle: Angle):
         self["angles"].append(angle)
@@ -239,31 +275,28 @@ class Struct(MolpyDynamicModel):
 
         return self
 
-    def del_atom(self, atom):
-        new = self.copy()
-        new.del_atom_(atom)
-        return new
+    @return_copy
+    def del_atom(copy, atom):
+        return copy.del_atom_(atom)
     
-    def add_atom(self, atom: Atom):
-        new = self.copy()
-        new.add_atom_(atom)
-        return new
+    @return_copy
+    def add_atom(copy, atom: Atom):
+        return copy.add_atom_(atom)
 
     def del_bond_(self, itom, jtom):
-        if isinstance(itom, int) and isinstance(jtom, int):
-            itom = self.get_atom_by(lambda atom: atom["id"] == itom)
-            jtom = self.get_atom_by(lambda atom: atom["id"] == jtom)
+        if isinstance(itom, str) and isinstance(jtom, str):
+            itom = self.get_atom_by(lambda atom: atom["name"] == itom)
+            jtom = self.get_atom_by(lambda atom: atom["name"] == jtom)
         for bond in self["bonds"]:
             if (bond.itom == itom and bond.jtom == jtom) or (
                 bond.itom == jtom and bond.jtom == itom
             ):
                 self["bonds"].remove(bond)
+        return self
 
-    def del_bond(self, itom, jtom):
-
-        new = self.copy()
-        new.del_bond_(itom, jtom)
-        return new
+    @return_copy
+    def del_bond(copy, itom, jtom):
+        return copy.del_bond_(itom, jtom)
 
     def get_atom_by(self, condition: Callable[[Atom], bool]) -> Atom:
         for atom in self["atoms"]:
@@ -273,11 +306,10 @@ class Struct(MolpyDynamicModel):
     def get_atom_by_id(self, id_):
         return self.get_atom_by(lambda atom: atom["id"] == id_)
 
-    def union(self, other: "Struct") -> "Struct":
-        struct = self.copy()
-        struct.union_(other)
-        return struct
-
+    @return_copy
+    def union(copy, other: "Struct") -> "Struct":
+        return copy.union_(other)
+    
     def union_(self, other: "Struct") -> "Struct":
         natoms = len(self["atoms"])
         new_other = other.copy()

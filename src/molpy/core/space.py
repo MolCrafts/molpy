@@ -20,6 +20,7 @@ class Box(Region, Boundary):
         self,
         matrix: np.ndarray | None = None,
         pbc: np.ndarray = np.zeros(3, dtype=bool),
+        original: np.ndarray = np.zeros(3),
     ):
         if matrix is None or np.all(matrix == 0):
             self._matrix = np.zeros((3, 3))
@@ -30,6 +31,7 @@ class Box(Region, Boundary):
             self._matrix = Box.check_matrix(_matrix)
         self._pbc = pbc
         self._style = self.calc_style_from_matrix(self._matrix)
+        self._original = original
 
     def __repr__(self):
         match self.style:
@@ -41,32 +43,34 @@ class Box(Region, Boundary):
                 return f"<Box: Triclinic: {self._matrix}>"
             
     @classmethod
-    def cubic(cls, length: float, pbc: np.ndarray = np.zeros(3, dtype=bool)):
-        return cls(np.diag(np.full(3, length)), pbc)
+    def cubic(cls, length: float, pbc: np.ndarray = np.zeros(3, dtype=bool), original: np.ndarray = np.zeros(3), central: bool=False) -> "Box":
+        if central:
+            original = np.full(3, length / 2)
+        return cls(np.diag(np.full(3, length)), pbc, original)
             
     @property
     def xlo(self) -> float:
-        return 0
+        return 0 - self._original[0]
     
     @property
     def xhi(self) -> float:
-        return self._matrix[0, 0]
+        return self._matrix[0, 0] - self._original[0]
     
     @property
     def ylo(self) -> float:
-        return 0
+        return 0 - self._original[1]
     
     @property
     def yhi(self) -> float:
-        return self._matrix[1, 1]
+        return self._matrix[1, 1] - self._original[1]
     
     @property
     def zlo(self) -> float:
-        return 0
+        return 0 - self._original[2]
     
     @property
     def zhi(self) -> float:
-        return self._matrix[2, 2]
+        return self._matrix[2, 2] - self._original[2]
 
     @property
     def style(self) -> Style:
