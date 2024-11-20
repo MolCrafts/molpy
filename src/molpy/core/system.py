@@ -38,6 +38,9 @@ class System:
         )
         return system
 
+    def get_struct(self):
+        return self.frame.to_struct()
+    
     @property
     def struct(self):
-        return self.frame.to_struct()
+        return self.get_struct()

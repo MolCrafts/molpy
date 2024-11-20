@@ -4,8 +4,7 @@ import numpy as np
 
 import molpy as mp
 from collections import defaultdict
-import pyarrow as pa
-
+import pandas as pd
 
 class PDBReader:
 
@@ -47,7 +46,7 @@ class PDBReader:
 
                 if line.startswith("ATOM") or line.startswith("HETATM"):
 
-                    atoms["id"].append(int(line[6:11]))
+                    atoms["id"].append(int(line[6:11])-1)
                     atoms["name"].append(line[12:16].strip())
                     atoms["resName"].append(line[17:20].strip())
                     atoms["chainID"].append(line[21])
@@ -66,21 +65,28 @@ class PDBReader:
                     for j in bond_indices[1:]:
                         bonds.append([i, j] if i < j else [j, i])
 
-            bonds = np.unique(np.array(bonds), axis=0)
+            bonds = np.unique(np.array(bonds), axis=0) - 1
 
-            frame["atoms"] = pa.table(
+            if len(set(atoms['name'])) != len(atoms['name']):
+                atom_name_counter = defaultdict(int)
+                for i, name in enumerate(atoms['name']):
+                    atom_name_counter[name] += 1
+                    if atom_name_counter[name] > 1:
+                        atoms['name'][i] = f"{name}{atom_name_counter[name]}"
+
+            frame["atoms"] = pd.DataFrame(
                 atoms
             )
-            frame["bonds"] = pa.table(
+            frame["bonds"] = pd.DataFrame(
                 {
-                    "i": pa.array(bonds[:, 0]),
-                    "j": pa.array(bonds[:, 1]),
+                    "i": bonds[:, 0],
+                    "j": bonds[:, 1],
                 }
             )
 
             return mp.System(
                 box=mp.Box(),
-                ff=mp.ForceField(),
+                forcefield=mp.ForceField(),
                 frame=frame,
             )
 

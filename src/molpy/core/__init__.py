@@ -7,3 +7,4 @@ from .neighborlist import *
 from .region import *
 from .system import *
 from .struct import *
+from .element import Element

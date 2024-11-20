@@ -140,15 +140,17 @@ class AmberPrmtopReader:
                     self.raw_data[key] = self.read_section(value, int)
 
         # def forcefield
-        atoms["id"] = np.arange(meta["n_atoms"], dtype=int) + 1
+        atoms["id"] = np.arange(meta["n_atoms"], dtype=int)
         atoms["charge"] = np.array(atoms["charge"]) / 18.2223
         system.forcefield.units = "real"
         atomstyle = system.forcefield.def_atomstyle("full")
         atomtype_map = {}  # atomtype id : atomtype
-        for itype, name, mass in zip(self.raw_data["ATOM_TYPE_INDEX"], atoms["type"], atoms['mass']):
+        for itype, name, mass in zip(
+            self.raw_data["ATOM_TYPE_INDEX"], atoms["type"], atoms["mass"]
+        ):
             # amber atom type and type index not 1 to 1 mapping involving different files
             if name not in atomtype_map:
-                atomtype_map[name] = atomstyle.def_type(name, kw_params={"id": itype, 'mass': mass})
+                atomtype_map[name] = atomstyle.def_type(name, id=itype, mass=mass)
 
         bondstyle = system.forcefield.def_bondstyle("harmonic")
         for bond_type, i, j, f, r_min in (
@@ -162,15 +164,14 @@ class AmberPrmtopReader:
                     bond_name,
                     atomtype_map[atom_i_type_name],
                     atomtype_map[atom_j_type_name],
-                    kw_params={
-                        "force_constant": f,
-                        "equil_value": r_min,
-                        "id": bond_type,
-                    }, order_params=[f, r_min]
+                    f, r_min,
+                    force_constant=f,
+                    equil_value=r_min,
+                    id=bond_type,
                 )  # if multiply by 2
             bonds["type_id"].append(bond_type)
-            bonds["i"].append(i)
-            bonds["j"].append(j)
+            bonds["i"].append(i - 1)
+            bonds["j"].append(j - 1)
             bonds["type"].append(bond_name)
         bonds["id"] = np.arange(meta["n_bonds"], dtype=int) + 1
 
@@ -189,17 +190,16 @@ class AmberPrmtopReader:
                     atomtype_map[atom_i_type_name],
                     atomtype_map[atom_j_type_name],
                     atomtype_map[atom_k_type_name],
-                    kw_params={
-                        "force_constant": f,
-                        "equil_value": theta_min,
-                        "id": angle_type,
-                    }, order_params=[f, theta_min]
+                    f, theta_min,
+                    force_constant=f,
+                    equil_value=theta_min,
+                    id=angle_type,
                 )
 
             angles["type_id"].append(angle_type)
-            angles["i"].append(i)
-            angles["j"].append(j)
-            angles["k"].append(k)
+            angles["i"].append(i - 1)
+            angles["j"].append(j - 1)
+            angles["k"].append(k - 1)
             angles["type"].append(angle_name)
 
         angles["id"] = np.arange(meta["n_angles"], dtype=int) + 1
@@ -233,18 +233,17 @@ class AmberPrmtopReader:
                     atomtype_map[atom_j_type_name],
                     atomtype_map[atom_k_type_name],
                     atomtype_map[atom_l_type_name],
-                    kw_params={
-                        "force_constant": f,
-                        "phase": phase,
-                        "periodicity": periodicity,
-                        "id": dihe_type,
-                    }, order_params=[f, periodicity, int(phase), 0.5]
+                    f, periodicity, int(phase), 0.5,
+                    force_constant=f,
+                    phase=phase,
+                    periodicity=periodicity,
+                    id=dihe_type,
                 )
             dihedrals["type_id"].append(dihe_type)
-            dihedrals["i"].append(i)
-            dihedrals["j"].append(j)
-            dihedrals["k"].append(k)
-            dihedrals["l"].append(l)
+            dihedrals["i"].append(i - 1)
+            dihedrals["j"].append(j - 1)
+            dihedrals["k"].append(k - 1)
+            dihedrals["l"].append(l - 1)
             dihedrals["type"].append(dihe_name)
         dihedrals["id"] = np.arange(meta["n_dihedrals"], dtype=int) + 1
 
@@ -253,7 +252,7 @@ class AmberPrmtopReader:
         )
 
         pairstyle = system.forcefield.def_pairstyle(
-            "lj/charmmfsw/coul/charmmfsh", order_params=[2.5, 9.0]
+            "lj/charmmfsw/coul/charmmfsh", 2.5, 9.0
         )
         for itype, rVdw, epsilon in self.parse_nonbond_params(atoms):
             atom_i_type_name = atoms["type"][itype - 1]
@@ -263,7 +262,10 @@ class AmberPrmtopReader:
                 pair_name,
                 atomtype_map[atom_i_type_name],
                 atomtype_map[atom_j_type_name],
-                kw_params={"rVdw": rVdw, "epsilon": epsilon, "id": itype}, order_params=[epsilon, rVdw]
+                epsilon, rVdw,
+                rVdw=rVdw,
+                epsilon=epsilon,
+                id=itype,
             )
 
         # store in system
