@@ -383,7 +383,7 @@ class LammpsDataWriter:
                         frame["atoms"]["z"],
                     ):
                         f.write(
-                            f"{id} {int(molid)} {type} {q:.3f} {x:.3f} {y:.3f} {z:.3f}\n"
+                            f"{id+1} {int(molid)} {type} {q:.3f} {x:.3f} {y:.3f} {z:.3f}\n"
                         )
 
             f.write(f"\nBonds\n\n")
@@ -393,7 +393,7 @@ class LammpsDataWriter:
                 frame["bonds"]["j"]+1,
                 frame["bonds"]["type"],
             ):
-                f.write(f"{id} {type} {i} {j}\n")
+                f.write(f"{id+1} {type} {i} {j}\n")
 
             f.write(f"\nAngles\n\n")
             for id, type, i, j, k in zip(
@@ -403,7 +403,7 @@ class LammpsDataWriter:
                 frame["angles"]["j"]+1,
                 frame["angles"]["k"]+1,
             ):
-                f.write(f"{id} {type} {i} {j} {k}\n")
+                f.write(f"{id+1} {type} {i} {j} {k}\n")
 
             f.write(f"\nDihedrals\n\n")
             for id, type, i, j, k, l in zip(
@@ -414,7 +414,7 @@ class LammpsDataWriter:
                 frame["dihedrals"]["k"]+1,
                 frame["dihedrals"]["l"]+1,
             ):
-                f.write(f"{id} {type} {i} {j} {k} {l}\n")
+                f.write(f"{id+1} {type} {i} {j} {k} {l}\n")
 
 
 class LammpsMoleculeReader:

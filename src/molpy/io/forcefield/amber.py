@@ -219,12 +219,9 @@ class AmberPrmtopReader:
             atom_j_type_name = atoms["type"][j - 1]
             atom_k_type_name = atoms["type"][k - 1]
             atom_l_type_name = atoms["type"][l - 1]
-            atom_i_type_name, atom_l_type_name = sorted(
-                [atom_i_type_name, atom_l_type_name]
-            )
-            atom_j_type_name, atom_k_type_name = sorted(
-                [atom_j_type_name, atom_k_type_name]
-            )
+            if atom_j_type_name > atom_k_type_name:
+                atom_j_type_name, atom_k_type_name = atom_k_type_name, atom_j_type_name
+                atom_i_type_name, atom_l_type_name = atom_l_type_name, atom_i_type_name
             dihe_name = f"{atom_i_type_name}-{atom_j_type_name}-{atom_k_type_name}-{atom_l_type_name}"
             if dihe_name not in dihedralstyle.types:
                 dihedralstyle.def_type(

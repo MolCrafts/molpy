@@ -1,5 +1,5 @@
 import molpy as mp
-from .struct import Struct
+from .struct import Entities, Struct
 import numpy as np
 import pandas as pd
 from copy import deepcopy
@@ -19,29 +19,6 @@ class Frame(dict):
                     [frame[key] for frame in frames if key in frame]
                 )
 
-        # frame["props"]["n_atoms"] = len(frame["atoms"])
-        # frame["props"]["n_bonds"] = len(frame["bonds"]) if "bonds" in frame else 0
-        # frame["props"]["n_angles"] = len(frame["angles"]) if "angles" in frame else 0
-        # frame["props"]["n_dihedrals"] = (
-        #     len(frame["dihedrals"]) if "dihedrals" in frame else 0
-        # )
-        # frame["props"]["n_impropers"] = (
-        #     len(frame["impropers"]) if "impropers" in frame else 0
-        # )
-        # frame["props"]["n_atomtypes"] = len(frame["atoms"]["type"].unique())
-        # frame["props"]["n_bondtypes"] = (
-        #     len(frame["bonds"]["type"].unique()) if "bonds" in frame else 0
-        # )
-        # frame["props"]["n_angletypes"] = (
-        #     len(frame["angles"]["type"].unique()) if "angles" in frame else 0
-        # )
-        # frame["props"]["n_dihedraltypes"] = (
-        #     len(frame["dihedrals"]["type"].unique()) if "dihedrals" in frame else 0
-        # )
-        # frame["props"]["n_impropertypes"] = (
-        #     len(frame["impropers"]["type"].unique()) if "impropers" in frame else 0
-        # )
-
         return frame
     
     def merge(self, other: 'Frame') -> 'Frame':
@@ -49,12 +26,15 @@ class Frame(dict):
 
     def to_struct(self):
 
-        struct = Struct()
+        struct = Struct(
+            atoms=Entities(),
+        )
         atoms = self["atoms"]
         for _, atom in atoms.iterrows():
             struct.add_atom_(mp.Atom(**atom))
 
         if "bonds" in self:
+            struct["bonds"] = Entities()
             bonds = self["bonds"]
             for _, bond in bonds.iterrows():
                 i, j = bond.pop("i"), bond.pop("j")
@@ -69,6 +49,7 @@ class Frame(dict):
                 )
 
         if "angles" in self:
+            struct["angles"] = Entities()
             angles = self["angles"]
             for _, angle in angles.iterrows():
                 i, j, k = angle.pop("i"), angle.pop("j"), angle.pop("k")
@@ -88,6 +69,7 @@ class Frame(dict):
                 )
 
         if "dihedrals" in self:
+            struct["dihedrals"] = Entities()
             dihedrals = self["dihedrals"]
             for _, dihedral in dihedrals.iterrows():
                 i, j, k, l = dihedral.pop("i"), dihedral.pop("j"), dihedral.pop("k"), dihedral.pop("l")
@@ -220,3 +202,15 @@ class Frame(dict):
             )
         if isinstance(key, tuple):
             return self[key[0]][list(key[1:])]
+
+
+    def to_h5md(self, path):
+        import h5py
+        if path is None:
+            # for binary obj
+            ...
+        else:
+            # save as file
+            ...
+
+        return 
