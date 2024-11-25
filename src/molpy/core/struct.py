@@ -456,13 +456,13 @@ class Struct(MolpyDynamicModel):
         topo.add_bonds([(atoms[bond.itom], atoms[bond.jtom]) for bond in bonds])
         return topo
 
-    def get_segment(self, mask: list[int]):
-        atoms = Entities([atom for atom in self["atoms"] if atom["id"] in mask])
+    def get_segment(self, mask: list[str]):
+        atoms = Entities([atom for atom in self["atoms"] if atom["name"] in mask])
         bonds = Entities(
             [
                 bond
                 for bond in self["bonds"]
-                if bond.itom["id"] in mask and bond.jtom["id"] in mask
+                if bond.itom["name"] in mask and bond.jtom["name"] in mask
             ]
         )
         return Segment(atoms=atoms, bonds=bonds)
