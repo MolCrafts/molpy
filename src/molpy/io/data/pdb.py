@@ -77,12 +77,14 @@ class PDBReader:
             frame["atoms"] = pd.DataFrame(
                 atoms
             )
-            frame["bonds"] = pd.DataFrame(
-                {
-                    "i": bonds[:, 0],
-                    "j": bonds[:, 1],
-                }
-            )
+            
+            if len(bonds):
+                frame["bonds"] = pd.DataFrame(
+                    {
+                        "i": bonds[:, 0],
+                        "j": bonds[:, 1],
+                    }
+                )
 
             return mp.System(
                 box=mp.Box(),

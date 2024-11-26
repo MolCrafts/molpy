@@ -1,11 +1,20 @@
 from copy import deepcopy
+from itertools import combinations, permutations, product
 from molpy import op
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 import numpy as np
 import pandas as pd
 import logging
 
 logger = logging.getLogger("molpy-struct")
+
+
+def return_copy(func):
+    def wrapper(self, *args, **kwargs):
+        new = self.copy()
+        return func(new, *args, **kwargs)
+
+    return wrapper
 
 
 class Entity(dict):
@@ -15,7 +24,7 @@ class Entity(dict):
 
     def to_dict(self):
         return dict(self)
-    
+
     def copy(self):
         return self.clone()
 
@@ -32,7 +41,11 @@ class Atom(Entity):
         return self["name"] == other["name"]
 
     def __lt__(self, other):
-        return self["id"] < other["id"]
+        return self["name"] < other["name"]
+
+    @property
+    def R(self):
+        return np.array([self["x"], self["y"], self["z"]])
 
 
 class ManyBody(Entity):
@@ -61,7 +74,9 @@ class Bond(ManyBody):
 
     def __eq__(self, other):
         if isinstance(other, Bond):
-            return {self.itom, self.jtom} == {other.itom, other.jtom}
+            return (self.itom == other.itom and self.jtom == other.jtom) or (
+                self.itom == other.jtom and self.jtom == other.itom
+            )
         return False
 
     def __hash__(self):
@@ -182,28 +197,60 @@ class AtomEntities(Entities): ...
 
 class Struct(MolpyDynamicModel):
 
-    def __init__(self, fields: list[str] = ["atoms", "bonds", "angles", "dihedrals"]):
-        super().__init__()
-        for field in fields:
-            self[field] = Entities()
+    def __init__(self, name:str="", **entities):
+        super().__init__(**entities)
+        self.name = name
 
     @classmethod
-    def from_structs(cls, structs):
-        struct = Struct()
+    def from_structs(cls, name:str="", *structs):
+        struct = Struct(name)
         for s in structs:
-            struct.union_(s)
+            for atom in s["atoms"]:
+                atom['name'] = f"{s.name}/{atom['name']}"
+            struct.union_(s) 
         return struct
 
     def __repr__(self):
         return f"<Struct {len(self['atoms'])} atoms>"
 
+    def __deepcopy__(self, memo):
+
+        atom_map = {id(atom): atom.copy() for atom in self["atoms"]}
+        new = Struct(name=self.name)
+        for key, value in self.items():
+            new[key] = Entities()
+        new["atoms"] = Entities(atom_map.values())
+        for key, value in self.items():
+            if key == "atoms":
+                continue
+            for v in value:
+                if isinstance(v, ManyBody):
+                    try:
+                        new[key].append(
+                            v.__class__(*[atom_map[id(atom)] for atom in v._atoms], **v)
+                        )
+                    except KeyError:
+                        raise KeyError(f"Atom not found in atom_map: {v._atoms}")
+        return new
+
     def add_atom_(self, atom: Atom):
         self["atoms"].append(atom)
         return self
 
-    def add_bond_(self, bond: Bond):
+    def add_bond_(self, iname, jname, **kwargs):
+        itom = self.get_atom_by(lambda atom: atom["name"] == iname)
+        jtom = self.get_atom_by(lambda atom: atom["name"] == jname)
+        bond = Bond(itom, jtom, **kwargs)
         self["bonds"].append(bond)
         return self
+
+    @return_copy
+    def add_atom(copy, atom: Atom):
+        return copy.add_atom_(atom)
+
+    @return_copy
+    def add_bond(copy, iname, jname, **kwargs):
+        return copy.add_bond_(iname, jname, **kwargs)
 
     def add_angle_(self, angle: Angle):
         self["angles"].append(angle)
@@ -218,52 +265,80 @@ class Struct(MolpyDynamicModel):
 
         self["atoms"].remove(atom)
 
-        if "bonds" in self:
-            for bond in self["bonds"]:
-                if atom in {bond.itom, bond.jtom}:
-                    self["bonds"].remove(bond)
-
-        if "angles" in self:
-            for angle in self["angles"]:
-                if atom in {angle.itom, angle.jtom, angle.ktom}:
-                    self["angles"].remove(angle)
-
-        if "dihedrals" in self:
-            for dihedral in self["dihedrals"]:
-                if atom in {dihedral.itom, dihedral.jtom, dihedral.ktom, dihedral.ltom}:
-                    self["dihedrals"].remove(dihedral)
-        if "impropers" in self:
-            for improper in self["impropers"]:
-                if atom in {improper.itom, improper.jtom, improper.ktom, improper.ltom}:
-                    self["impropers"].remove(improper)
+        self.unlink_(atom)
 
         return self
 
-    def del_atom(self, atom):
-        new = self.copy()
-        new.del_atom_(atom)
-        return new
-    
-    def add_atom(self, atom: Atom):
-        new = self.copy()
-        new.add_atom_(atom)
-        return new
+    @return_copy
+    def del_atom(copy, atom):
+        return copy.del_atom_(atom)
+
+    def unlink_(self, atom):
+
+        atom = self.get_atom_by_name(atom)
+
+        if "bonds" in self:
+            bo = []
+            for bond in self["bonds"]:
+                if atom not in {bond.itom, bond.jtom}:
+                    bo.append(bond)
+            self["bonds"] = bo
+
+        if "angles" in self:
+            ang = []
+            for angle in self["angles"]:
+                if atom not in {angle.itom, angle.jtom, angle.ktom}:
+                    ang.append(angle)
+            self["angles"] = ang
+
+        if "dihedrals" in self:
+            dihe = []
+            for dihedral in self["dihedrals"]:
+                if atom not in {
+                    dihedral.itom,
+                    dihedral.jtom,
+                    dihedral.ktom,
+                    dihedral.ltom,
+                }:
+                    dihe.append(dihedral)
+            self["dihedrals"] = dihe
+
+        if "impropers" in self:
+            imp = []
+            for improper in self["impropers"]:
+                if atom not in {
+                    improper.itom,
+                    improper.jtom,
+                    improper.ktom,
+                    improper.ltom,
+                }:
+                    imp.append(improper)
+            self["impropers"] = imp
+
+        return self
+
+    @return_copy
+    def unlink(copy, atom):
+        return copy.unlink_(atom)
+
+    @return_copy
+    def add_atom(copy, atom: Atom):
+        return copy.add_atom_(atom)
 
     def del_bond_(self, itom, jtom):
-        if isinstance(itom, int) and isinstance(jtom, int):
-            itom = self.get_atom_by(lambda atom: atom["id"] == itom)
-            jtom = self.get_atom_by(lambda atom: atom["id"] == jtom)
+        if isinstance(itom, str) and isinstance(jtom, str):
+            itom = self.get_atom_by(lambda atom: atom["name"] == itom)
+            jtom = self.get_atom_by(lambda atom: atom["name"] == jtom)
         for bond in self["bonds"]:
             if (bond.itom == itom and bond.jtom == jtom) or (
                 bond.itom == jtom and bond.jtom == itom
             ):
                 self["bonds"].remove(bond)
+        return self
 
-    def del_bond(self, itom, jtom):
-
-        new = self.copy()
-        new.del_bond_(itom, jtom)
-        return new
+    @return_copy
+    def del_bond(copy, itom, jtom):
+        return copy.del_bond_(itom, jtom)
 
     def get_atom_by(self, condition: Callable[[Atom], bool]) -> Atom:
         for atom in self["atoms"]:
@@ -273,31 +348,18 @@ class Struct(MolpyDynamicModel):
     def get_atom_by_id(self, id_):
         return self.get_atom_by(lambda atom: atom["id"] == id_)
 
-    def union(self, other: "Struct") -> "Struct":
-        struct = self.copy()
-        struct.union_(other)
-        return struct
+    def get_atom_by_name(self, name):
+        return self.get_atom_by(lambda atom: atom["name"] == name)
+
+    @return_copy
+    def union(copy, other: "Struct") -> "Struct":
+        return copy.union_(other)
 
     def union_(self, other: "Struct") -> "Struct":
-        natoms = len(self["atoms"])
-        new_other = other.copy()
-        for atom in new_other["atoms"]:
-            atom["id"] += natoms
-        self["atoms"].extend(new_other["atoms"])
-        if "bonds" in self:
-            for bond in new_other["bonds"]:
-                bond['id'] += len(self["bonds"])
-            self["bonds"].extend(new_other["bonds"])
-        if "angles" in self:
-            for angle in new_other["angles"]:
-                angle['id'] += len(self["angles"])
-            self["angles"].extend(new_other["angles"])
-        if "dihedrals" in self:
-            for dihedral in new_other["dihedrals"]:
-                dihedral['id'] += len(self["dihedrals"])
-            self["dihedrals"].extend(new_other["dihedrals"])
-        if "impropers" in self:
-            self["impropers"].extend(new_other["impropers"])
+        for key, value in other.items():
+            if key not in self:
+                self[key] = Entities()
+            self[key] += value
 
         return self
 
@@ -322,13 +384,102 @@ class Struct(MolpyDynamicModel):
             atom["x"], atom["y"], atom["z"] = xyz[0, 0], xyz[0, 1], xyz[0, 2]
         return self
 
-    def link(self, other: "Struct", new_bonds: list[Bond] = []):
+    def link_(self, from_, to_):
 
-        new_struct = Struct.from_structs(self, other)
+        from_atom = self.get_atom_by_name(from_)
+        to_atom = self.get_atom_by_name(to_)
 
-        for bond in new_bonds:
-            new_struct.add_bond_(bond)
-        return new_struct
+        if from_atom is None or to_atom is None:
+            raise ValueError("Atom not found")
+        if from_atom == to_atom:
+            raise ValueError("Cannot link atom to itself")
+        if from_atom > to_atom:  # i-j -> from-to
+            i, j = to_atom, from_atom
+        else:
+            i, j = from_atom, to_atom
+        self["bonds"].append(
+            Bond(
+                i,
+                j,
+                type=f"{"-".join([atom["type"] for atom in [from_atom, to_atom]])}",
+            )
+        )
+        print(f"Linking {i['id']} to {j['id']}")
+
+        # add angle
+        from_atom_bonds = self.get_bonds_by_atom(from_atom)
+        from_atom_neighbors = [
+            bond.itom if bond.jtom == from_atom else bond.jtom
+            for bond in from_atom_bonds
+        ]
+        for neighbor in from_atom_neighbors:  # i-j-k
+            if neighbor == to_atom:
+                continue
+            if neighbor < to_atom:
+                i, j, k = neighbor, from_atom, to_atom
+            else:
+                i, j, k = to_atom, from_atom, neighbor
+            new_angle = Angle(
+                i,
+                j,
+                k,
+                type=f"{"-".join([i["type"], j["type"], k["type"]])}",
+            )
+            print(f"Adding angle {i['id']} {j['id']} {k['id']}")
+            self["angles"].append(new_angle)
+        to_atom_bonds = self.get_bonds_by_atom(to_atom)
+        to_atom_neighbors = [
+            bond.itom if bond.jtom == to_atom else bond.jtom for bond in to_atom_bonds
+        ]
+        for neighbor in to_atom_neighbors:
+            if neighbor == from_atom:
+                continue
+            if neighbor < from_atom:
+                i, j, k = neighbor, to_atom, from_atom
+            else:
+                i, j, k = from_atom, to_atom, neighbor
+            new_angle = Angle(
+                i,
+                j,
+                k,
+                type=f"{"-".join([i["type"], j["type"], k["type"]])}",
+            )
+            print(f"Adding angle {i['id']} {j['id']} {k['id']}")
+            self["angles"].append(new_angle)
+
+        # add dihedral
+        for i, l in product(from_atom_neighbors, to_atom_neighbors):
+            if i == l or i == to_atom or l == from_atom:  # loop
+                continue
+            if from_atom < to_atom:
+                i, j, k, l = i, from_atom, to_atom, l
+            else:
+                i, j, k, l = l, to_atom, from_atom, i
+            new_dihedral = Dihedral(
+                i,
+                j,
+                k,
+                l,
+                type=f"{"-".join([
+                i["type"],
+                j["type"],
+                k["type"],
+                j["type"],
+            ])}",
+            )
+            print(f"Adding dihedral {i['id']} {j['id']} {k['id']} {l['id']}")
+            self["dihedrals"].append(new_dihedral)
+
+        return self
+
+    @return_copy
+    def link(copy, from_, to_):
+        return copy.link_(from_, to_)
+
+    def get_bonds_by_atom(self, atom):
+        return Entities(
+            [bond for bond in self["bonds"] if atom in [bond.itom, bond.jtom]]
+        )
 
     def copy(self):
         return deepcopy(self)
@@ -378,34 +529,29 @@ class Struct(MolpyDynamicModel):
 
         frame = Frame()
 
-        atom_dict = [atom.to_dict() for atom in self["atoms"]]
-        for i, atom in enumerate(atom_dict, 1):
+        struct = self.copy()
+        for i, atom in enumerate(struct["atoms"]):
             atom["id"] = i
-        frame["atoms"] = pd.DataFrame(atom_dict).sort_values("id")
-        if "bonds" in self and len(self["bonds"]) > 0:
-            bond_dict = [bond.to_dict() for bond in self["bonds"]]
-            if bond_dict[0].get("id") is None:
-                for i, bond in enumerate(bond_dict, 1):
-                    bond["id"] = i
-            frame["bonds"] = pd.DataFrame(bond_dict).sort_values("id")
 
-        if "angles" in self and len(self["angles"]) > 0:
-            angle_dict = [angle.to_dict() for angle in self["angles"]]
-            if angle_dict[0].get("id") is None:
-                for i, angle in enumerate(angle_dict, 1):
-                    angle["id"] = i
-            frame["angles"] = pd.DataFrame(angle_dict).sort_values("id")
+        frame["atoms"] = pd.DataFrame([atom.to_dict() for atom in struct["atoms"]])
+        if "bonds" in struct and len(struct["bonds"]) > 0:
+            bond_dict = [bond.to_dict() for bond in struct["bonds"]]
+            frame["bonds"] = pd.DataFrame(bond_dict)
+            frame["bonds"]["id"] = range(len(frame["bonds"]))
 
-        if "dihedrals" in self and len(self["dihedrals"]) > 0:
-            dihedral_dict = [dihedral.to_dict() for dihedral in self["dihedrals"]]
-            if dihedral_dict[0].get("id") is None:
-                for i, dihe in enumerate(dihedral_dict, 1):
-                    dihe["id"] = i
-            frame["dihedrals"] = pd.DataFrame(dihedral_dict).sort_values("id")
+        if "angles" in struct and len(struct["angles"]) > 0:
+            angle_dict = [angle.to_dict() for angle in struct["angles"]]
+            frame["angles"] = pd.DataFrame(angle_dict)
+            frame["angles"]["id"] = range(len(frame["angles"]))
 
-        if "impropers" in self and len(self["impropers"]) > 0:
-            improper_dict = [improper.to_dict() for improper in self["impropers"]]
-            frame["impropers"] = pd.DataFrame(improper_dict).sort_values("id")
+        if "dihedrals" in struct and len(struct["dihedrals"]) > 0:
+            dihedral_dict = [dihedral.to_dict() for dihedral in struct["dihedrals"]]
+            frame["dihedrals"] = pd.DataFrame(dihedral_dict)
+            frame["dihedrals"]["id"] = range(len(frame["dihedrals"]))
+
+        if "impropers" in struct and len(struct["impropers"]) > 0:
+            improper_dict = [improper.to_dict() for improper in struct["impropers"]]
+            frame["impropers"] = pd.DataFrame(improper_dict)
 
         return frame
 
@@ -456,24 +602,41 @@ class Struct(MolpyDynamicModel):
         topo.add_bonds([(atoms[bond.itom], atoms[bond.jtom]) for bond in bonds])
         return topo
 
-    def get_segment(self, mask: list[str]):
-        atoms = Entities([atom for atom in self["atoms"] if atom["name"] in mask])
+    def get_segment_(self, mask: list, key: Literal["name", "id"] = "name", name: str =""):
+        atoms = Entities([atom for atom in self["atoms"] if atom[key] in mask])
         bonds = Entities(
             [
                 bond
                 for bond in self["bonds"]
-                if bond.itom["name"] in mask and bond.jtom["name"] in mask
+                if bond.itom[key] in mask and bond.jtom[key] in mask
             ]
         )
-        return Segment(atoms=atoms, bonds=bonds)
+        angles = Entities(
+            [
+                angle
+                for angle in self["angles"]
+                if angle.itom[key] in mask
+                and angle.jtom[key] in mask
+                and angle.ktom[key] in mask
+            ]
+        )
+        dihedrals = Entities(
+            [
+                dihedral
+                for dihedral in self["dihedrals"]
+                if dihedral.itom[key] in mask
+                and dihedral.jtom[key] in mask
+                and dihedral.ktom[key] in mask
+                and dihedral.ltom[key] in mask
+            ]
+        )
+        return Segment(name=name, atoms=atoms, bonds=bonds, angles=angles, dihedrals=dihedrals)
+    
+    @return_copy
+    def get_segment(copy, mask: list, key: Literal["name", "id"] = "name", name:str=""):
+        return copy.get_segment_(mask, key, name=name)
 
 
-class StructProxy(Struct):
-
-    def __init__(self, **entities):
-        super().__init__()
-        for key, value in entities.items():
-            self[key] = value
-
+class StructProxy(Struct): ...
 
 class Segment(StructProxy): ...

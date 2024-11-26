@@ -280,7 +280,7 @@ class ForceField:
 
     @classmethod
     def from_forcefields(
-        cls, *forcefields: "ForceField", name: str = ""
+        cls, name: str = "", *forcefields: "ForceField"
     ) -> "ForceField":
         forcefield = cls(name)
         for ff in forcefields:

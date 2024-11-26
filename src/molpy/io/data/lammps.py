@@ -362,9 +362,10 @@ class LammpsDataWriter:
             except KeyError:
                 masses = {}
                 unique_type, unique_idx = np.unique(frame["atoms"]['type'].to_numpy(), return_index=True)
+                mass_arr = frame["atoms"]['mass'].to_numpy()
                 for i, t in zip(unique_idx, unique_type):
                     # f.write(f"{frame['atoms']['type'][i]} {m:.3f}\n")
-                    masses[t] = frame['atoms']['mass'][i]
+                    masses[t] = mass_arr[i]
 
             for i, m in masses.items():
                 f.write(f"{i} {m:.3f}\n")
@@ -383,7 +384,7 @@ class LammpsDataWriter:
                         frame["atoms"]["z"],
                     ):
                         f.write(
-                            f"{id} {int(molid)} {type} {q:.3f} {x:.3f} {y:.3f} {z:.3f}\n"
+                            f"{id+1} {int(molid)} {type} {q:.3f} {x:.3f} {y:.3f} {z:.3f}\n"
                         )
 
             f.write(f"\nBonds\n\n")
@@ -393,7 +394,7 @@ class LammpsDataWriter:
                 frame["bonds"]["j"]+1,
                 frame["bonds"]["type"],
             ):
-                f.write(f"{id} {type} {i} {j}\n")
+                f.write(f"{id+1} {type} {i} {j}\n")
 
             f.write(f"\nAngles\n\n")
             for id, type, i, j, k in zip(
@@ -401,9 +402,9 @@ class LammpsDataWriter:
                 frame["angles"]["type"],
                 frame["angles"]["i"]+1,
                 frame["angles"]["j"]+1,
-                frame["angles"]["k"],
+                frame["angles"]["k"]+1,
             ):
-                f.write(f"{id} {type} {i} {j} {k}\n")
+                f.write(f"{id+1} {type} {i} {j} {k}\n")
 
             f.write(f"\nDihedrals\n\n")
             for id, type, i, j, k, l in zip(
@@ -414,7 +415,7 @@ class LammpsDataWriter:
                 frame["dihedrals"]["k"]+1,
                 frame["dihedrals"]["l"]+1,
             ):
-                f.write(f"{id} {type} {i} {j} {k} {l}\n")
+                f.write(f"{id+1} {type} {i} {j} {k} {l}\n")
 
 
 class LammpsMoleculeReader:
@@ -577,14 +578,14 @@ class LammpsMoleculeWriter:
                 bonds = frame["bonds"].iterrows()
                 f.write(f"\nBonds\n\n")
                 for i, bond in bonds:
-                    f.write(f"{i+1} {bond['type']} {bond['i']} {bond['j']}\n")
+                    f.write(f"{i+1} {bond['type']} {bond['i']+1} {bond['j']+1}\n")
 
             if "angles" in frame:
                 angles = frame["angles"].iterrows()
                 f.write(f"\nAngles\n\n")
                 for i, angle in angles:
                     f.write(
-                        f"{i+1} {angle['type']} {angle['i']} {angle['j']} {angle['k']}\n"
+                        f"{i+1} {angle['type']} {angle['i']+1} {angle['j']+1} {angle['k']+1}\n"
                     )
 
             if "dihedrals" in frame:
@@ -592,7 +593,7 @@ class LammpsMoleculeWriter:
                 f.write(f"\nDihedrals\n\n")
                 for i, dihedral in dihedrals:
                     f.write(
-                        f"{i+1} {dihedral['type']} {dihedral['i']} {dihedral['j']} {dihedral['k']} {dihedral['l']}\n"
+                        f"{i+1} {dihedral['type']} {dihedral['i']+1} {dihedral['j']+1} {dihedral['k']+1} {dihedral['l']+1}\n"
                     )
 
             if "impropers" in frame:
@@ -600,5 +601,5 @@ class LammpsMoleculeWriter:
                 f.write(f"\nImpropers\n\n")
                 for i, improper in impropers:
                     f.write(
-                        f"{i+1} {improper['type']} {improper['i']} {improper['j']} {improper['k']} {improper['l']}\n"
+                        f"{i+1} {improper['type']} {improper['i']+1} {improper['j']+1} {improper['k']+1} {improper['l']+1}\n"
                     )
