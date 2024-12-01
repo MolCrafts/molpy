@@ -6,7 +6,9 @@ from copy import deepcopy
 
 class Frame(dict):
 
-    def __init__(self, *fields):
+    def __init__(self, name:str="", *fields):
+        assert isinstance(name, str), TypeError("name must be a string")
+        self.name = name
         for field in fields:
             self[field] = pd.DataFrame()
 
@@ -27,6 +29,7 @@ class Frame(dict):
     def to_struct(self):
 
         struct = Struct(
+            name=self.name,
             atoms=Entities(),
         )
         atoms = self["atoms"]

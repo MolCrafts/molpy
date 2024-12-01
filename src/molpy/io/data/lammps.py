@@ -362,9 +362,10 @@ class LammpsDataWriter:
             except KeyError:
                 masses = {}
                 unique_type, unique_idx = np.unique(frame["atoms"]['type'].to_numpy(), return_index=True)
+                mass_arr = frame["atoms"]['mass'].to_numpy()
                 for i, t in zip(unique_idx, unique_type):
                     # f.write(f"{frame['atoms']['type'][i]} {m:.3f}\n")
-                    masses[t] = frame['atoms']['mass'][i]
+                    masses[t] = mass_arr[i]
 
             for i, m in masses.items():
                 f.write(f"{i} {m:.3f}\n")

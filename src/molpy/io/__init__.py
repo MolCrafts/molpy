@@ -53,9 +53,12 @@ def read_amber(
 ) -> mp.ForceField:
     """Read AMBER force field prmtop and return a molpy ForceField object."""
     from .forcefield.amber import AmberPrmtopReader
+    prmtop = Path(prmtop)
+    inpcrd = Path(inpcrd) if inpcrd is not None else None
     reader = AmberPrmtopReader(prmtop)
     if system is None:
         system = mp.System()
+    system.frame.name = prmtop.stem
     system = reader.read(system)
     if inpcrd is not None:
         from .data.amber import AmberInpcrdReader
