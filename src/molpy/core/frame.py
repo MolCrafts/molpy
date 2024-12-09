@@ -13,7 +13,7 @@ class Frame(dict):
             self[field] = pd.DataFrame()
 
     @classmethod
-    def from_frames(cls, *frames: "Frame") -> "Frame":
+    def from_frames(cls, frames: list["Frame"]) -> "Frame":
         frame = cls()
         for key in frames[0].keys():
             if isinstance(frames[0][key], pd.DataFrame):

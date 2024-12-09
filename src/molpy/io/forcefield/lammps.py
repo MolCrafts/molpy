@@ -216,7 +216,7 @@ class LAMMPSForceFieldReader:
             self.read_pairstyle(line[1:])
 
         else:
-            self.pairstyle = self.forcefield.def_pairstyle(line[0])
+            self.pairstyle = self.forcefield.def_pairstyle(line[0], *line[1:])
 
     def read_mass_section(self, lines):
         
@@ -287,7 +287,7 @@ class LAMMPSForceFieldReader:
         style.def_type(
             bond_type_id,
             None, None,
-            order_params=coeffs,
+            *coeffs,
         )
 
     def read_angle_coeff(self, style, line):
@@ -306,7 +306,7 @@ class LAMMPSForceFieldReader:
         style.def_type(
                 angle_type_id,
                 None, None, None,
-                order_params=coeffs,
+                *coeffs,
             )
 
     def read_dihedral_coeff(self, style, line):
@@ -328,7 +328,7 @@ class LAMMPSForceFieldReader:
                 None,
                 None,
                 None,
-                order_params=coeffs,
+                *coeffs,
             )
 
     def read_improper_coeff(self, style, line):
@@ -350,7 +350,7 @@ class LAMMPSForceFieldReader:
                 None,
                 None,
                 None,
-                order_params=coeffs,
+                *coeffs,
             )
 
     def read_pair_coeff(self, style, line):
@@ -376,7 +376,7 @@ class LAMMPSForceFieldReader:
         style.def_type(
                 style.n_types+1,
                 atomtype_i, atomtype_j,
-                order_params=coeffs,
+                *coeffs,
             )
 
     def read_pair_modify(self, line):
@@ -441,7 +441,7 @@ class LAMMPSForceFieldWriter:
                 lines.append(f"{style_type}_modify {params}\n")
 
             for typ in style.types.values():
-                params = " ".join(map(lambda p: f'{p:.3f}', typ.order_params))
+                params = " ".join(typ.order_params)
                 lines.append(f"{style_type}_coeff {' '.join(map(lambda at: str(at.name), typ.atomtypes))} {params}\n")
         else:
             style_keywords = " ".join([style.name for style in styles])

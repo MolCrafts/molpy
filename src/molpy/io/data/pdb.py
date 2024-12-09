@@ -46,7 +46,7 @@ class PDBReader:
 
                 if line.startswith("ATOM") or line.startswith("HETATM"):
 
-                    atoms["id"].append(int(line[6:11])-1)
+                    atoms["id"].append(int(line[6:11]))
                     atoms["name"].append(line[12:16].strip())
                     atoms["resName"].append(line[17:20].strip())
                     atoms["chainID"].append(line[21])
@@ -106,24 +106,24 @@ class PDBWriter:
 
             # atom_name_remap = {}
 
-            for _, atom in frame["atoms"].iterrows():
-                serial = atom["id"]
-                altLoc = atom.get("altLoc", "")
-                unique_name = atom.get("name", atom.get("type", "UNK"))
+            for atom in frame["atoms"].itertuples(index=False):
+                serial = atom.id
+                altLoc = getattr(atom, "altLoc", "")
+                unique_name = getattr(atom, "unique_name", getattr(atom, "name", "UNK"))
                 # if name in atom_name_remap:
                 #     unique_name = name + str(atom_name_remap[name])
                 #     atom_name_remap[name] += 1
                 # else:
                 #     unique_name = name
                 #     atom_name_remap[name] = 1
-                resName = atom.get("resName", "A")
-                chainID = atom.get("chainID", "")
-                resSeq = atom.get("resSeq", atom.get("molid", 1))
-                iCode = atom.get("iCode", "")
-                elem = atom.get('element', "")
-                x = atom["x"]
-                y = atom["y"]
-                z = atom["z"]
+                resName = getattr(atom, "resName", "UNK")
+                chainID = getattr(atom, "chainID", "A")
+                resSeq = getattr(atom, "resSeq", getattr(atom, "molid", 1))
+                iCode = getattr(atom, "iCode", "")
+                elem = getattr(atom, "element", "X")
+                x = atom.x
+                y = atom.y
+                z = atom.z
 
                 f.write(
                     f"{'ATOM':6s}{serial:>5d}{' '*1}{unique_name.upper():>4s}{altLoc:1s}{resName:>3s}{' '*1}{chainID:1s}{resSeq:>4d}{iCode:1s}{' '*3}{x:>8.3f}{y:>8.3f}{z:>8.3f}{' '*22}{elem:>2s}  \n"
@@ -131,9 +131,9 @@ class PDBWriter:
 
             bonds = defaultdict(list)
             if "bonds" in frame:
-                for _, bond in frame["bonds"].iterrows():
-                    bonds[bond["i"]].append(bond["j"])
-                    bonds[bond["j"]].append(bond["i"])
+                for bond in frame["bonds"].itertuples():
+                    bonds[bond.i].append(bond.j)
+                    bonds[bond.j].append(bond.i)
 
                 for i, js in bonds.items():
                     assert len(js) <= 4, ValueError(f"PDB only supports up to 4 bonds, but atom {i} has {len(js)} bonds, which are {js}")

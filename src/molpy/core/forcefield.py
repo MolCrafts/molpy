@@ -46,7 +46,8 @@ class Style(dict):
 
     def merge(self, other: "Style"):
         self.update(other)  # merge params
-        self.types.update(other.types)
+        other_types = {t.name: t for t in other.types.values()}
+        self.types.update(other_types)
 
     def to_dict(self):
         return dict()
@@ -496,27 +497,27 @@ class ForceField:
 
     @property
     def atomtypes(self):
-        return reduce(lambda x, y: x + y.types, self.atomstyles, [])
+        return reduce(lambda x, y: x + list(y.types.values()), self.atomstyles, list())
 
     @property
     def bondtypes(self):
-        return reduce(lambda x, y: x + y.types, self.bondstyles, [])
+        return reduce(lambda x, y: x + list(y.types.values()), self.bondstyles, list())
 
     @property
     def angletypes(self):
-        return reduce(lambda x, y: x + y.types, self.anglestyles, [])
+        return reduce(lambda x, y: x + list(y.types.values()), self.anglestyles, list())
 
     @property
     def dihedraltypes(self):
-        return reduce(lambda x, y: x + y.types, self.dihedralstyles, [])
+        return reduce(lambda x, y: x + list(y.types.values()), self.dihedralstyles, list())
 
     @property
     def impropertypes(self):
-        return reduce(lambda x, y: x + y.types, self.improperstyles, [])
+        return reduce(lambda x, y: x + list(y.types.values()), self.improperstyles, list())
 
     @property
     def pairtypes(self):
-        return reduce(lambda x, y: x + y.types, self.pairstyles, [])
+        return reduce(lambda x, y: x + list(y.types.values()), self.pairstyles, list())
 
     def merge(self, other: "ForceField"):
 
