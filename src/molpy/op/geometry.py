@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def rotate(xyz, axis, theta):
+def rotate_by_rodrigues(xyz, axis, theta):
     """ Rotate coordinates around an axis by an angle theta. Using the Rodrigues' rotation formula.
 
     Args:
@@ -21,6 +21,26 @@ def rotate(xyz, axis, theta):
     )
 
     return rot
+
+def rotate_by_quaternion(xyz, q):
+    """ Rotate coordinates using a quaternion.
+
+    Args:
+        xyz (np.ndarray): coordinates
+        q (np.ndarray): quaternion
+
+    Returns:
+        np.ndarray: rotated coordinates
+    """
+    q = q / np.linalg.norm(q)
+    w, x, y, z = q
+    rot_mat = np.array([
+        [1-2*y**2-2*z**2, 2*x*y-2*z*w, 2*x*z+2*y*w],
+        [2*x*y+2*z*w, 1-2*x**2-2*z**2, 2*y*z-2*x*w],
+        [2*x*z-2*y*w, 2*y*z+2*x*w, 1-2*x**2-2*y**2]
+    ])
+    return np.dot(xyz, rot_mat)
+
 
 def translate(xyz, vector):
     """ Translate coordinates by a vector.
