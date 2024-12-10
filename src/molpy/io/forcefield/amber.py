@@ -66,20 +66,20 @@ class AmberPrmtopReader:
         atoms = {}
         bonds = {
             "type_id": [],
-            "type": [],
+            "type_label": [],
             "i": [],
             "j": [],
         }
         angles = {
             "type_id": [],
-            "type": [],
+            "type_label": [],
             "i": [],
             "j": [],
             "k": [],
         }
         dihedrals = {
             "type_id": [],
-            "type": [],
+            "type_label": [],
             "i": [],
             "j": [],
             "k": [],
@@ -112,7 +112,7 @@ class AmberPrmtopReader:
                     self.raw_data[key] = self.read_section(value, int)
 
                 case "AMBER_ATOM_TYPE":
-                    atoms["type"] = self.read_section(value, str)
+                    atoms["type_label"] = self.read_section(value, str)
 
                 case (
                     "BOND_FORCE_CONSTANT"
@@ -140,13 +140,13 @@ class AmberPrmtopReader:
                     self.raw_data[key] = self.read_section(value, int)
 
         # def forcefield
-        atoms["id"] = np.arange(meta["n_atoms"], dtype=int)
+        atoms["id"] = np.arange(meta["n_atoms"], dtype=int) + 1
         atoms["charge"] = np.array(atoms["charge"]) / 18.2223
         system.forcefield.units = "real"
         atomstyle = system.forcefield.def_atomstyle("full")
         atomtype_map = {}  # atomtype id : atomtype
         for itype, name, mass in zip(
-            self.raw_data["ATOM_TYPE_INDEX"], atoms["type"], atoms["mass"]
+            self.raw_data["ATOM_TYPE_INDEX"], atoms["type_label"], atoms["mass"]
         ):
             # amber atom type and type index not 1 to 1 mapping involving different files
             if name not in atomtype_map:
@@ -156,8 +156,8 @@ class AmberPrmtopReader:
         for bond_type, i, j, f, r_min in (
             self.get_bond_with_H() + self.get_bond_without_H()
         ):
-            atom_i_type_name = atoms["type"][i - 1]
-            atom_j_type_name = atoms["type"][j - 1]
+            atom_i_type_name = atoms["type_label"][i - 1]
+            atom_j_type_name = atoms["type_label"][j - 1]
             bond_name = "-".join(sorted([atom_i_type_name, atom_j_type_name]))
             if bond_name not in bondstyle.types:
                 bondstyle.def_type(
@@ -170,16 +170,16 @@ class AmberPrmtopReader:
                     id=bond_type,
                 )  # if multiply by 2
             bonds["type_id"].append(bond_type)
-            bonds["i"].append(i - 1)
-            bonds["j"].append(j - 1)
-            bonds["type"].append(bond_name)
+            bonds["i"].append(i)
+            bonds["j"].append(j)
+            bonds["type_label"].append(bond_name)
         bonds["id"] = np.arange(meta["n_bonds"], dtype=int) + 1
 
         anglestyle = system.forcefield.def_anglestyle("harmonic")
         for angle_type, i, j, k, f, theta_min in self.parse_angle_params():
-            atom_i_type_name = atoms["type"][i - 1]
-            atom_j_type_name = atoms["type"][j - 1]
-            atom_k_type_name = atoms["type"][k - 1]
+            atom_i_type_name = atoms["type_label"][i - 1]
+            atom_j_type_name = atoms["type_label"][j - 1]
+            atom_k_type_name = atoms["type_label"][k - 1]
             atom_i_type_name, atom_k_type_name = sorted(
                 [atom_i_type_name, atom_k_type_name]
             )
@@ -197,10 +197,10 @@ class AmberPrmtopReader:
                 )
 
             angles["type_id"].append(angle_type)
-            angles["i"].append(i - 1)
-            angles["j"].append(j - 1)
-            angles["k"].append(k - 1)
-            angles["type"].append(angle_name)
+            angles["i"].append(i)
+            angles["j"].append(j)
+            angles["k"].append(k)
+            angles["type_label"].append(angle_name)
 
         angles["id"] = np.arange(meta["n_angles"], dtype=int) + 1
 
@@ -215,10 +215,10 @@ class AmberPrmtopReader:
             phase,
             periodicity,
         ) in self.parse_dihedral_params():
-            atom_i_type_name = atoms["type"][i - 1]
-            atom_j_type_name = atoms["type"][j - 1]
-            atom_k_type_name = atoms["type"][k - 1]
-            atom_l_type_name = atoms["type"][l - 1]
+            atom_i_type_name = atoms["type_label"][i - 1]
+            atom_j_type_name = atoms["type_label"][j - 1]
+            atom_k_type_name = atoms["type_label"][k - 1]
+            atom_l_type_name = atoms["type_label"][l - 1]
             if atom_j_type_name > atom_k_type_name:
                 atom_j_type_name, atom_k_type_name = atom_k_type_name, atom_j_type_name
                 atom_i_type_name, atom_l_type_name = atom_l_type_name, atom_i_type_name
@@ -237,11 +237,11 @@ class AmberPrmtopReader:
                     id=dihe_type,
                 )
             dihedrals["type_id"].append(dihe_type)
-            dihedrals["i"].append(i - 1)
-            dihedrals["j"].append(j - 1)
-            dihedrals["k"].append(k - 1)
-            dihedrals["l"].append(l - 1)
-            dihedrals["type"].append(dihe_name)
+            dihedrals["i"].append(i)
+            dihedrals["j"].append(j)
+            dihedrals["k"].append(k)
+            dihedrals["l"].append(l)
+            dihedrals["type_label"].append(dihe_name)
         dihedrals["id"] = np.arange(meta["n_dihedrals"], dtype=int) + 1
 
         atoms, bonds, angles, dihedrals = self._parse_residues(
@@ -252,8 +252,8 @@ class AmberPrmtopReader:
             "lj/charmmfsw/coul/charmmfsh", 2.5, 9.0
         )
         for itype, rVdw, epsilon in self.parse_nonbond_params(atoms):
-            atom_i_type_name = atoms["type"][itype - 1]
-            atom_j_type_name = atoms["type"][itype - 1]
+            atom_i_type_name = atoms["type_label"][itype - 1]
+            atom_j_type_name = atoms["type_label"][itype - 1]
             pair_name = f"{atom_i_type_name}-{atom_j_type_name}"
             pairstyle.def_type(
                 pair_name,
@@ -330,16 +330,20 @@ class AmberPrmtopReader:
         return names
 
     def _parse_residues(self, pointer, meta, atoms, bonds, angles, dihedrals):
-
-        residue_slice = list(accumulate(map(lambda x: int(x) - 1, pointer))) + [
-            meta["n_atoms"]
-        ]  # pointer is 1-indexed
-        n_atoms = meta["n_atoms"]
-        assert (
-            n_atoms == residue_slice[-1]
-        ), f"Number of atoms does not match residue pointers, {n_atoms} != {residue_slice[-1]}"
+        pointer = ' '.join(pointer).split()
+        pointer.append(meta["n_atoms"]+1)
+        # residue_slice = list((map(lambda x: int(x) - 1, pointer))) + [
+        #     meta["n_atoms"]
+        # ]  # pointer is 1-indexed
+        # n_atoms = meta["n_atoms"]
+        # assert (
+        #     n_atoms == residue_slice[-1]
+        # ), f"Number of atoms does not match residue pointers, {n_atoms} != {residue_slice[-1]}"
+        # segment_lengths = np.diff(residue_slice)
+        # atom_residue_mask = np.repeat(np.arange(len(pointer)) + 1, segment_lengths)
+        residue_slice = np.array(pointer, dtype=int) - 1
         segment_lengths = np.diff(residue_slice)
-        atom_residue_mask = np.repeat(np.arange(len(pointer)) + 1, segment_lengths)
+        atom_residue_mask = np.repeat(np.arange(len(segment_lengths-1)), segment_lengths)
 
         # get bond mask: if both i and j in atom_mask, then bond is intra-residue and equal to atom mask in corresponding index, else inter-residue and -1
         bond_i = bonds["i"]

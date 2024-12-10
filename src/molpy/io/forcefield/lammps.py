@@ -221,11 +221,11 @@ class LAMMPSForceFieldReader:
     def read_mass_section(self, lines):
         
         for line in lines:
-            i, m = self.read_mass_line(line)
-            self.forcefield.atomstyles[0].get_by(lambda atom: atom.name == str(i))["mass"] = m
+            type_, m = self.read_mass_line(line)
+            self.forcefield.atomstyles[0].get_by(lambda atom: atom.name == str(type_))["mass"] = m
 
     def read_mass_line(self, line: list[str]):
-        return int(line[0]), float(line[1])
+        return line[0], float(line[1])
 
     def read_bond_coeff_section(self, stylename: str, lines: Iterator[str]):
         bondstyle = self.forcefield.get_bondstyle(stylename)
@@ -313,7 +313,7 @@ class LAMMPSForceFieldReader:
 
         dihedral_type_id = line[0]
 
-        if not line[1].isdigit():  # hybrid
+        if line[1].isalpha():  # hybrid
             dihedralsyle_name = line[1]
             style = self.forcefield.get_dihedralstyle(dihedralsyle_name)
             if style is None:
@@ -356,6 +356,9 @@ class LAMMPSForceFieldReader:
     def read_pair_coeff(self, style, line):
 
         i, j = line[0], line[1]
+        assert len(self.forcefield.atomstyles) > 0, ValueError(
+            "No atom style defined"
+        )
         atomstyle = self.forcefield.atomstyles[0]
         atomtype_i = atomstyle.get_by(lambda atom: atom.name == i)
         if atomtype_i is None:
@@ -374,7 +377,7 @@ class LAMMPSForceFieldReader:
             coeffs = line[2:]
 
         style.def_type(
-                style.n_types+1,
+                f"{atomtype_i.name}-{atomtype_j.name}",
                 atomtype_i, atomtype_j,
                 *coeffs,
             )
@@ -441,7 +444,7 @@ class LAMMPSForceFieldWriter:
                 lines.append(f"{style_type}_modify {params}\n")
 
             for typ in style.types.values():
-                params = " ".join(typ.order_params)
+                params = " ".join(map(str, typ.order_params))
                 lines.append(f"{style_type}_coeff {' '.join(map(lambda at: str(at.name), typ.atomtypes))} {params}\n")
         else:
             style_keywords = " ".join([style.name for style in styles])
@@ -464,7 +467,7 @@ class LAMMPSForceFieldWriter:
         # lines.append(f"units {self.forcefield.unit}\n")
         if ff.atomstyles:
             if ff.n_anglestyles == 1:
-                lines.append(f"# atom_style {ff.atomstyles[0].name}\n")
+                lines.append(f"atom_style {ff.atomstyles[0].name}\n")
             else:
                 atomstyles = " ".join([atomstyle.name for atomstyle in ff.atomstyles])
                 lines.append(f"atom_style hybrid {atomstyles}\n")
