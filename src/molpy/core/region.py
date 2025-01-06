@@ -1,4 +1,5 @@
 import numpy as np
+import numpy.typing as npt
 from abc import abstractmethod, ABC
 
 class Region(ABC):
@@ -10,6 +11,10 @@ class Region(ABC):
     def isin(self, xyz)->bool:
         raise NotImplementedError
     
+    @abstractmethod
+    def volumn(self)->float:
+        raise NotImplementedError
+    
 class Boundary(ABC):
 
     @abstractmethod
@@ -18,7 +23,7 @@ class Boundary(ABC):
     
 class Cube(Region):
 
-    def __init__(self, origin, side, name="Cube"):
+    def __init__(self, origin: npt.ArrayLike, side: int|float, name="Cube"):
         super().__init__(name)
         self.origin = np.array(origin)
         self.side = side
@@ -26,9 +31,12 @@ class Cube(Region):
     def isin(self, xyz):
         return np.all(self.origin <= xyz) and np.all(xyz <= self.origin + self.side)
     
+    def volumn(self):
+        return self.side**3
+    
 class Sphere(Region):
 
-    def __init__(self, origin, radius, name="Sphere"):
+    def __init__(self, origin: npt.ArrayLike, radius: int|float, name="Sphere"):
         super().__init__(name)
         self.center = np.array(origin)
         self.radius = radius
@@ -36,13 +44,26 @@ class Sphere(Region):
     def isin(self, xyz):
         return np.linalg.norm(xyz - self.center) <= self.radius
     
+    def volumn(self):
+        return 4/3*np.pi*self.radius**3
+    
 class Cuboid(Region):
 
-    def __init__(self, origin, sides, name="Cuboid"):
+    def __init__(self, origin: npt.ArrayLike, lengths: npt.ArrayLike, name="Cuboid"):
         super().__init__(name)
         self.origin = np.array(origin)
-        self.upper = self.origin + sides
-        self.d = sides
+        self.upper = self.origin + lengths
+        self.lengths = lengths
         
     def isin(self, xyz):
         return np.all(self.origin <= xyz) and np.all(xyz <= self.upper)
+    
+    def volumn(self):
+        return np.prod(self.lengths)
+    
+    def constrain(self, xyz):
+        
+        upper = xyz - self.upper
+        lower = self.origin - xyz
+        tmp = np.max(np.concat([upper, lower]))
+        return tmp

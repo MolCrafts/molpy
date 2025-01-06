@@ -211,7 +211,7 @@ class Struct(MolpyDynamicModel):
         return struct
 
     def __repr__(self):
-        return f"<Struct {len(self['atoms'])} atoms>"
+        return f"<Struct {self.name}: {len(self['atoms'])} atoms>"
 
     def __deepcopy__(self, memo):
 
