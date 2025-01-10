@@ -1,6 +1,10 @@
 import molpy as mp
 import numpy as np
 from pathlib import Path
+from . import data
+from . import forcefield
+from . import log
+from . import trajectory
 
 from .utils import to_system
 
@@ -105,13 +109,13 @@ def write_lammps_molecule(data: mp.System, file: Path) -> None:
     writer = LammpsMoleculeWriter(file)
     writer.write(data)
 
-def write_lammps_forcefield(system: mp.System, input_: Path | None = None) -> None:
+def write_lammps_forcefield(system: mp.System, script: Path | None = None) -> None:
     """Write a molpy System object to a LAMMPS force field file."""
     from .forcefield.lammps import LAMMPSForceFieldWriter
-    writer = LAMMPSForceFieldWriter(input_)
+    writer = LAMMPSForceFieldWriter(script)
     writer.write(system)
 
-def write_lammps(system: mp.System, data: Path, input_: Path | None = None) -> None:
+def write_lammps(system: mp.System, data: Path, script: Path | None = None) -> None:
     """Write a molpy System object to LAMMPS data and force field files."""
     write_lammps_data(system, data)
-    write_lammps_forcefield(system, input_)
+    write_lammps_forcefield(system, script)

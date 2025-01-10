@@ -178,6 +178,8 @@ class Frame(dict):
         if isinstance(key, str):
             return super().__getitem__(key)
         elif isinstance(key, tuple) and all(isinstance(k, str) for k in key):
+            if len(key) == 2:
+                return self[key[0]][key[1]]
             return self[key[0]][list(key[1:])]
         if isinstance(key, slice):
             atoms = self["atoms"].iloc[key]

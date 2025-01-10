@@ -318,17 +318,13 @@ class LammpsDataWriter:
 
             if ff.atomstyles:
 
-                found_type_label_in_atomtype = all(
-                    ["type_label" in atomtype for atomtype in ff.get_atomtypes()]
-                )
                 found_type_label_in_atom = "type_label" in frame["atoms"]
                 type_key = "type_label" if found_type_label_in_atom else "type"
 
                 if type_key == "type_label":
                     f.write(f"\nAtom Type Labels\n\n")
-                    if found_type_label_in_atomtype:
-                        for i, atomtype in enumerate(ff.get_atomtypes(), 1):
-                            f.write(f"{i} {atomtype.name}\n")
+                    for i, atomtype in enumerate(ff.get_atomtypes(), 1):
+                        f.write(f"{i} {atomtype.name}\n")
 
             if ff.bondstyles:
                 if type_key == "type_label":
