@@ -11,9 +11,9 @@ import re
 
 class LammpsDataReader:
 
-    def __init__(self, file: str | Path):
+    def __init__(self, file: str | Path, atom_style="full"):
         self._file = Path(file)
-        self.style = "full"
+        self.atom_style = atom_style
 
     @staticmethod
     def sanitizer(line: str) -> str:
@@ -23,7 +23,7 @@ class LammpsDataReader:
 
         ff = system.forcefield
         if ff.n_atomstyles == 0:
-            atom_style = ff.def_atomstyle("full")
+            atom_style = ff.def_atomstyle(self.atom_style)
         else:
             atom_style = ff.atomstyles[0]
         if ff.n_bondstyles == 0:
@@ -120,7 +120,7 @@ class LammpsDataReader:
                     atom_lines = list(islice(lines, props["n_atoms"]))
                     probe_line_len = len(atom_lines[0].split())
 
-                    match self.style:
+                    match self.atom_style:
 
                         case "full":
                             header = ["id", "molid", type_key, "charge", "x", "y", "z"]
@@ -317,7 +317,7 @@ class LammpsDataWriter:
             type_key = "type"
 
             if ff.atomstyles:
-                
+
                 found_type_label_in_atomtype = all(
                     ["type_label" in atomtype for atomtype in ff.get_atomtypes()]
                 )

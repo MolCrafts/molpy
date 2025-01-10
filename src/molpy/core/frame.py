@@ -1,19 +1,28 @@
 import molpy as mp
-from .struct import Entities, Struct
+
 import numpy as np
 import pandas as pd
 from copy import deepcopy
 
 class Frame(dict):
 
-    def __init__(self, name:str="", *fields):
-        assert isinstance(name, str), TypeError("name must be a string")
-        self.name = name
-        for field in fields:
-            self[field] = pd.DataFrame()
+    def __init__(self, data: dict[str, pd.DataFrame | dict[str, list]] | None = None):
+        """ Static data structure for aligning model. The frame is a dictionary-like, multi-DataFrame object, facilitating access data by keys.
+
+        Args:
+            data (dict): A dictionary of dataframes.
+        """
+        if data is not None:
+            for key, value in data.items():
+                self[key] = pd.DataFrame(data=value)
 
     @classmethod
-    def from_frames(cls, frames: list["Frame"]) -> "Frame":
+    def concat(cls, frames: list["Frame"]) -> "Frame":
+        """ Concatenate a list of frames into a single frame. 
+
+            Args:
+                frames (list[Frame]): A list of frames.
+        """
         frame = cls()
         for key in frames[0].keys():
             if isinstance(frames[0][key], pd.DataFrame):
@@ -27,7 +36,7 @@ class Frame(dict):
         return Frame.from_frames(self, other)
 
     def to_struct(self):
-
+        from .struct import Entities, Struct
         struct = Struct(
             name=self.name,
             atoms=Entities(),
@@ -168,6 +177,8 @@ class Frame(dict):
     def __getitem__(self, key):
         if isinstance(key, str):
             return super().__getitem__(key)
+        elif isinstance(key, tuple) and all(isinstance(k, str) for k in key):
+            return self[key[0]][list(key[1:])]
         if isinstance(key, slice):
             atoms = self["atoms"].iloc[key]
             atom_ids = atoms["id"]

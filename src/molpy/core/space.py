@@ -321,3 +321,5 @@ class Box(Region, Boundary):
         """ return common space of two boxes """
         return Box(matrix=other.matrix)
         
+    def volumn(self):
+        return np.linalg.det(self._matrix)

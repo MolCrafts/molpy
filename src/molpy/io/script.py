@@ -1,42 +1,39 @@
-import string
-import textwrap
+from pathlib import Path
+from string import Template
+from tempfile import NamedTemporaryFile
 
-class Script:
+class Script(Path):
 
-    def __init__(self):
-        self._text:list[str] = []
+    def __init__(self, fpath: Path, temporary: bool = False):
+        self.temporary = temporary
+        if self.temporary:
+            fp = NamedTemporaryFile(prefix=fpath.stem, delete_on_close=True, mode='w+')
+        else:
+            fp = open(fpath, 'w+')
+        self._fp = fp
+        super().__init__(fpath)
 
-    @classmethod
-    def from_text(cls, text:str):
-        script = cls()
-        script.text = text.split("\n")
-        return script
+    def __del__(self):
+        self._fp.close()
+
+    def __repr__(self):
+        return f'<Script: {self.name}>'
     
-    @classmethod
-    def from_file(cls, path:str):
-        with open(path, "r") as f:
-            return cls.from_text(f.read())
-        
+    def __str__(self):
+        return self.text
+    
+    def read(self) -> str:
+        return self._fp.read()
+    
+    def write(self, text: str):
+        self._fp.write(text)
+
+    def substitute(self, mapping: dict):
+        text = self.read()
+        template = Template(text)
+        text = template.substitute(mapping)
+        self.write(text)
+    
     @property
     def text(self):
-        text = "\n".join(self._text)
-        text = Script.format(text)
-        return text
-
-    def append(self, text:str):
-        self._text.append(text)
-
-    def insert(self, index:int, text:str):
-        self._text.insert(index, text)
-
-    def write(self, path:str):
-        with open(path, "w") as f:
-            f.write("\n".join(self.text))
-
-    def substitute(self, mapping:dict[str,str]):
-        for i in range(len(self._text)):
-            self._text[i] = string.Template(self._text[i]).safe_substitute(mapping)
-
-    @staticmethod
-    def format(text:str):
-        return textwrap.dedent(text).strip()
+        return self.read()

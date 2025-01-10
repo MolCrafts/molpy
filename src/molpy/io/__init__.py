@@ -15,10 +15,10 @@ def read_lammps_data(file: Path, system: mp.System | None = None) -> mp.System:
     reader = LammpsDataReader(file)
     return reader.read(system)
 
-def read_lammps_forcefield(input_: Path, data: Path, system: mp.System | None = None) -> mp.System:
+def read_lammps_forcefield(script: Path, data: Path, system: mp.System | None = None) -> mp.System:
     """Read LAMMPS force field file and return a molpy System object."""
     from .forcefield.lammps import LAMMPSForceFieldReader
-    reader = LAMMPSForceFieldReader(input_, data)
+    reader = LAMMPSForceFieldReader(script, data)
     if system is None:
         system = mp.System()
     return reader.read(system)
@@ -33,14 +33,14 @@ def read_lammps_molecule(file: Path, system: mp.System | None = None) -> mp.Syst
         system = mp.System()
     return reader.read(system)
 
-def read_lammps(data: Path, input_: Path | None = None, system: mp.System | None = None) -> mp.System:
+def read_lammps(data: Path, script: Path | None = None, system: mp.System | None = None) -> mp.System:
     """Read LAMMPS data and force field files and return a molpy System object. If data file is provided, only read model;
     If input file is provided, read force field.
     """
     if system is None:
         system = mp.System()
-    if input_ is not None:
-        system = read_lammps_forcefield(input_, data, system)
+    if script is not None:  # read defination first
+        system = read_lammps_forcefield(script, data, system)
     system = read_lammps_data(data, system)
     return system
 

@@ -2,6 +2,7 @@ import molpy as mp
 from functools import reduce
 from typing import Callable
 from collections import defaultdict
+from copy import deepcopy
 
 class Type(dict):
 
@@ -44,8 +45,12 @@ class Style(dict):
     def get_all_by(self, condition: Callable):
         return [t for t in self.types.values() if condition(t)]
 
-    def merge(self, other: "Style"):
+    def merge(self, other: "Style", offset_type: bool = False):
         self.update(other)  # merge params
+        if offset_type:
+            offset = len(self.types)
+            for t in other.types.values():
+                t.name = str(int(t.name) + offset)
         other_types = {t.name: t for t in other.types.values()}
         self.types.update(other_types)
 
@@ -525,13 +530,13 @@ class ForceField:
 
         return ff
 
-    def merge_(self, other: "ForceField") -> "ForceField":
-
-        def _merge(this_styles, other_styles):
+    def merge_(self, other: "ForceField", offset_type: bool = False) -> "ForceField":
+        other = deepcopy(other)
+        def _merge(this_styles: list[Style], other_styles: list[Style]):
             for style in other_styles:
                 matches = [s for s in this_styles if s == style]
                 if len(matches) == 1:
-                    matches[0].merge(style)
+                    matches[0].merge(style, offset_type)
                 elif len(matches) == 0:
                     this_styles.append(style)
 
