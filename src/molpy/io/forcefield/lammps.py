@@ -2,7 +2,6 @@ from pathlib import Path
 import molpy as mp
 from itertools import islice
 from typing import Iterator
-import string
 
 class LAMMPSForceFieldReader:
 
@@ -313,7 +312,7 @@ class LAMMPSForceFieldReader:
 
         dihedral_type_id = line[0]
 
-        if line[1].isalpha():  # hybrid
+        if not line[1].isdigit():  # hybrid
             dihedralsyle_name = line[1]
             style = self.forcefield.get_dihedralstyle(dihedralsyle_name)
             if style is None:
@@ -321,7 +320,6 @@ class LAMMPSForceFieldReader:
             coeffs = line[2:]
         else:
             coeffs = line[1:]
-
         style.def_type(
                 dihedral_type_id,
                 None,
@@ -377,7 +375,7 @@ class LAMMPSForceFieldReader:
             coeffs = line[2:]
 
         style.def_type(
-                f"{atomtype_i.name}-{atomtype_j.name}",
+                f"{atomtype_i.name}",  # NOTE: maybe i != j
                 atomtype_i, atomtype_j,
                 *coeffs,
             )
@@ -467,10 +465,10 @@ class LAMMPSForceFieldWriter:
         # lines.append(f"units {self.forcefield.unit}\n")
         if ff.atomstyles:
             if ff.n_anglestyles == 1:
-                lines.append(f"atom_style {ff.atomstyles[0].name}\n")
+                lines.append(f"# atom_style {ff.atomstyles[0].name}\n")
             else:
                 atomstyles = " ".join([atomstyle.name for atomstyle in ff.atomstyles])
-                lines.append(f"atom_style hybrid {atomstyles}\n")
+                lines.append(f"# atom_style hybrid {atomstyles}\n")
         else:
             raise ValueError("No atom style defined")
 

@@ -58,11 +58,10 @@ class LammpsDataReader:
                 "zhi": 0.0,
             }
 
-            props = {
-                "type_label_enabled": False,
-                "type_field": "type",
-            }
+            props = {}
             masses = {}
+
+            type_key = "type"
 
             for line in lines:
 
@@ -124,7 +123,7 @@ class LammpsDataReader:
                     match self.style:
 
                         case "full":
-                            header = ["id", "molid", props["type_field"], "charge", "x", "y", "z"]
+                            header = ["id", "molid", type_key, "charge", "x", "y", "z"]
                             if probe_line_len > 7:
                                 if probe_line_len >= 10:
                                     header.append("ix")
@@ -141,7 +140,7 @@ class LammpsDataReader:
                         delimiter=" ",
                     )
                     if masses:
-                        atom_table["mass"] = atom_table[props["type_field"]].map(
+                        atom_table["mass"] = atom_table[type_key].map(
                             lambda t: masses[str(t)]
                         )
 
@@ -151,7 +150,7 @@ class LammpsDataReader:
                     bond_lines = list(islice(lines, props["n_bonds"]))
                     bond_table = pd.read_csv(
                         io.BytesIO("\n".join(bond_lines).encode()),
-                        names=["id", props["type_field"], "i", "j"],
+                        names=["id", type_key, "i", "j"],
                         delimiter=" ",
                     )
                     frame["bonds"] = bond_table
@@ -160,7 +159,7 @@ class LammpsDataReader:
                     angle_lines = list(islice(lines, props["n_angles"]))
                     angle_table = pd.read_csv(
                         io.BytesIO("\n".join(angle_lines).encode()),
-                        names=["id", props["type_field"], "i", "j", "k"],
+                        names=["id", type_key, "i", "j", "k"],
                         delimiter=" ",
                     )
                     frame["angles"] = angle_table
@@ -169,7 +168,7 @@ class LammpsDataReader:
                     dihedral_lines = list(islice(lines, props["n_dihedrals"]))
                     dihedral_table = pd.read_csv(
                         io.BytesIO("\n".join(dihedral_lines).encode()),
-                        names=["id", props["type_field"], "i", "j", "k", "l"],
+                        names=["id", type_key, "i", "j", "k", "l"],
                         delimiter=" ",
                     )
                     frame["dihedrals"] = dihedral_table
@@ -178,14 +177,13 @@ class LammpsDataReader:
                     improper_lines = list(islice(lines, props["n_impropers"]))
                     improper_table = pd.read_csv(
                         io.BytesIO("\n".join(improper_lines).encode()),
-                        names=["id", props["type_field"], "i", "j", "k", "l"],
+                        names=["id", type_key, "i", "j", "k", "l"],
                         delimiter=" ",
                     )
                     frame["impropers"] = improper_table
 
                 elif line.startswith("Atom Type Labels"):
-                    props["type_label_enabled"] = True
-                    props["type_field"] = "type_label"
+                    type_key = "type_label"
                     for line in range(props["n_atomtypes"]):
                         line = next(lines).split()
                         atom_type = int(line[0])
@@ -255,7 +253,7 @@ class LammpsDataReader:
                 atomtype = atom_style.def_type(str(t), kw_params={"id": t})
             atomtype["mass"] = m
 
-            per_atom_mass[frame["atoms"][props["type_field"]] == t] = m  # todo: type mapping
+            per_atom_mass[frame["atoms"][type_key] == t] = m  # todo: type mapping
         frame["atoms"]["mass"] = per_atom_mass
 
         system.box = mp.Box(
@@ -316,7 +314,7 @@ class LammpsDataWriter:
             f.write(f"{ylo:.2f} {yhi:.2f} ylo yhi\n")
             f.write(f"{zlo:.2f} {zhi:.2f} zlo zhi\n")
 
-            props = {}
+            type_key = "type"
 
             if ff.atomstyles:
                 
@@ -324,63 +322,31 @@ class LammpsDataWriter:
                     ["type_label" in atomtype for atomtype in ff.get_atomtypes()]
                 )
                 found_type_label_in_atom = "type_label" in frame["atoms"]
-                props["type_label"] = "type_label" if found_type_label_in_atom else "type"
-                props["type_label_enabled"] = True
+                type_key = "type_label" if found_type_label_in_atom else "type"
 
-                if props["type_label_enabled"]:
+                if type_key == "type_label":
                     f.write(f"\nAtom Type Labels\n\n")
                     if found_type_label_in_atomtype:
                         for i, atomtype in enumerate(ff.get_atomtypes(), 1):
                             f.write(f"{i} {atomtype.name}\n")
-                    else:
-                        unique_type = np.unique(frame["atoms"]["type_label"].to_numpy())
-                        for i, t in enumerate(unique_type, 1):
-                            f.write(f"{i} {t}\n")
 
             if ff.bondstyles:
-                found_type_label_in_bondtype = all(
-                    ["type_label" in bondtype for bondtype in ff.get_bondtypes()]
-                )
-                if props["type_label_enabled"]:
+                if type_key == "type_label":
                     f.write(f"\nBond Type Labels\n\n")
-                    if found_type_label_in_bondtype:
-                        for i, bondtype in enumerate(ff.get_bondtypes(), 1):
-                            f.write(f"{i} {bondtype.name}\n")
-                    else:
-                        unique_type = np.unique(frame["bonds"]["type_label"].to_numpy())
-                        for i, t in enumerate(unique_type, 1):
-                            f.write(f"{i} {t}\n")
+                    for i, bondtype in enumerate(ff.get_bondtypes(), 1):
+                        f.write(f"{i} {bondtype.name}\n")
 
             if ff.anglestyles:
-                found_type_label_in_angletype = all(
-                    ["type_label" in angletype for angletype in ff.get_angletypes()]
-                )
-                if props["type_label_enabled"]:
+                if type_key == "type_label":
                     f.write(f"\nAngle Type Labels\n\n")
-                    if found_type_label_in_angletype:
-                        for i, angletype in enumerate(ff.get_angletypes(), 1):
-                            f.write(f"{i} {angletype.name}\n")
-                    else:
-                        unique_type = np.unique(frame["angles"]["type_label"].to_numpy())
-                        for i, t in enumerate(unique_type, 1):
-                            f.write(f"{i} {t}\n")
+                    for i, angletype in enumerate(ff.get_angletypes(), 1):
+                        f.write(f"{i} {angletype.name}\n")
 
             if ff.dihedralstyles:
-                found_type_label_in_dihedraltype = all(
-                    [
-                        "type_label" in dihedraltype
-                        for dihedraltype in ff.get_dihedraltypes()
-                    ]
-                )
-                if props["type_label_enabled"]:
+                if type_key == "type_label":
                     f.write(f"\nDihedral Type Labels\n\n")
-                    if found_type_label_in_dihedraltype:
-                        for i, dihedraltype in enumerate(ff.get_dihedraltypes(), 1):
-                            f.write(f"{i} {dihedraltype.name}\n")
-                    else:
-                        unique_type = np.unique(frame["dihedrals"]["type_label"].to_numpy())
-                        for i, t in enumerate(unique_type, 1):
-                            f.write(f"{i} {t}\n")
+                    for i, dihedraltype in enumerate(ff.get_dihedraltypes(), 1):
+                        f.write(f"{i} {dihedraltype.name}\n")
 
             f.write(f"\nMasses\n\n")
             masses = {}
@@ -419,7 +385,7 @@ class LammpsDataWriter:
                     for id, molid, type, q, x, y, z in zip(
                         frame["atoms"]["id"],
                         frame["atoms"]["molid"],
-                        frame["atoms"][props["type_label"]],
+                        frame["atoms"][type_key],
                         frame["atoms"]["charge"],
                         frame["atoms"]["x"],
                         frame["atoms"]["y"],
@@ -434,14 +400,14 @@ class LammpsDataWriter:
                 frame["bonds"]["id"],
                 frame["bonds"]["i"],
                 frame["bonds"]["j"],
-                frame["bonds"][props["type_label"]],
+                frame["bonds"][type_key],
             ):
                 f.write(f"{id} {type} {i} {j}\n")
 
             f.write(f"\nAngles\n\n")
             for id, type, i, j, k in zip(
                 frame["angles"]["id"],
-                frame["angles"][props["type_label"]],
+                frame["angles"][type_key],
                 frame["angles"]["i"],
                 frame["angles"]["j"],
                 frame["angles"]["k"],
@@ -451,7 +417,7 @@ class LammpsDataWriter:
             f.write(f"\nDihedrals\n\n")
             for id, type, i, j, k, l in zip(
                 frame["dihedrals"]["id"],
-                frame["dihedrals"][props["type_label"]],
+                frame["dihedrals"][type_key],
                 frame["dihedrals"]["i"],
                 frame["dihedrals"]["j"],
                 frame["dihedrals"]["k"],

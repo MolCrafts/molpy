@@ -34,7 +34,9 @@ def read_lammps_molecule(file: Path, system: mp.System | None = None) -> mp.Syst
     return reader.read(system)
 
 def read_lammps(data: Path, input_: Path | None = None, system: mp.System | None = None) -> mp.System:
-    """Read LAMMPS data and force field files and return a molpy System object."""
+    """Read LAMMPS data and force field files and return a molpy System object. If data file is provided, only read model;
+    If input file is provided, read force field.
+    """
     if system is None:
         system = mp.System()
     if input_ is not None:
