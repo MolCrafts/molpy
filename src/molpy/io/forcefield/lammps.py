@@ -379,7 +379,7 @@ class LAMMPSForceFieldReader:
             coeffs = line[2:]
 
         style.def_type(
-            f"{atomtype_i.name}-{atomtype_j}",
+            f"{atomtype_i.name}-{atomtype_j.name}",
             atomtype_i,
             atomtype_j,
             *coeffs,

@@ -268,6 +268,18 @@ class PairStyle(Style):
         pt = PairType(name, itomtype, jtomtype, *order_params, **kw_params)
         self.types[name] = pt
         return pt
+    
+    def merge(self, other: "Style", offset_type: bool = False):
+        self.update(other)  # merge params
+        if offset_type:
+            offset = len(self.types)
+            for t in other.types.values():
+                i, j = t.name.split('-')
+                i = str(int(i) + offset)
+                j = str(int(j) + offset)
+                t.name = f"{i}-{j}"
+        other_types = {t.name: t for t in other.types.values()}
+        self.types.update(other_types) 
 
 
 class ForceField:
