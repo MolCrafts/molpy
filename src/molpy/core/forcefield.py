@@ -45,12 +45,11 @@ class Style(dict):
     def get_all_by(self, condition: Callable):
         return [t for t in self.types.values() if condition(t)]
 
-    def merge(self, other: "Style", offset_type: bool = False):
+    def merge(self, other: "Style", type_offset: int = 0):
         self.update(other)  # merge params
-        if offset_type:
-            offset = len(self.types)
+        if type_offset:
             for t in other.types.values():
-                t.name = str(int(t.name) + offset)
+                t.name = str(int(t.name) + type_offset)
         other_types = {t.name: t for t in other.types.values()}
         self.types.update(other_types)
 
@@ -545,10 +544,13 @@ class ForceField:
     def merge_(self, other: "ForceField", offset_type: bool = False) -> "ForceField":
         other = deepcopy(other)
         def _merge(this_styles: list[Style], other_styles: list[Style]):
+            if offset_type:
+                type_offset = sum([len(style.types) for style in this_styles])
+                print(this_styles, type_offset)
             for style in other_styles:
                 matches = [s for s in this_styles if s == style]
                 if len(matches) == 1:
-                    matches[0].merge(style, offset_type)
+                    matches[0].merge(style, type_offset)
                 elif len(matches) == 0:
                     this_styles.append(style)
 
