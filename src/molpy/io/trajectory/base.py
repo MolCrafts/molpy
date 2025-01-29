@@ -17,15 +17,14 @@ class BaseReader(ABC):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+        ...
 
 
 class TrajectoryReader(BaseReader):
     """Base class for trajectory file readers."""
 
-    def __init__(self, filepath: str | Path, cache_size: int | None = None):
+    def __init__(self, filepath: str | Path):
         super().__init__(filepath)
-        self._frames: deque[mp.Frame] = deque(maxlen=cache_size)  # cache of frames
         self._frames_start: list[int] = []  # start indices of frames in the trajectory
         self._frames_end: list[int] = []  # end indices of frames in the trajectory
         self._parse_trajectory()
@@ -49,6 +48,10 @@ class TrajectoryReader(BaseReader):
     def read_frames(self, indices: List[int]) -> List[dict]:
         """Read multiple frames by their indices."""
         return [self.read_frame(i) for i in indices]
+    
+    @property
+    def n_frames(self):
+        ...
 
     def __iter__(self) -> Iterator[dict]:
         """Iterate over all frames in the trajectory."""
@@ -57,13 +60,11 @@ class TrajectoryReader(BaseReader):
 
     def __next__(self) -> dict:
         """Get the next frame in iteration."""
-        if self._current_frame >= len(
-            self._frames_start
-        ):  # Use the length of frames_start for iteration
+        if self._current_frame >= self.n_frames:  # Use the length of frames_start for iteration
             raise StopIteration
 
         frame = self.read_frame(
-            self._frames_start[self._current_frame]
+            self._current_frame
         )  # Read frame using start indices
         self._current_frame += 1
         return frame
