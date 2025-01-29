@@ -1,4 +1,4 @@
-import molpy as mp
+from .space import Box
 
 import numpy as np
 import pandas as pd
@@ -6,7 +6,7 @@ from copy import deepcopy
 
 class Frame(dict):
 
-    def __init__(self, data: dict[str, pd.DataFrame | dict[str, list]] | None = None):
+    def __init__(self, data: dict[str, pd.DataFrame | dict[str, list]] | None = None, **props):
         """ Static data structure for aligning model. The frame is a dictionary-like, multi-DataFrame object, facilitating access data by keys.
 
         Args:
@@ -15,6 +15,18 @@ class Frame(dict):
         if data is not None:
             for key, value in data.items():
                 self[key] = pd.DataFrame(data=value)
+
+        for k, v in props.items():
+            setattr(self, k, v)
+
+    @property
+    def box(self):
+        return self._box
+
+    @box.setter
+    def box(self, box: Box|None):
+        assert isinstance(box, Box) or box is None, "box must be an instance of Box or None"
+        self._box = box
 
     @classmethod
     def concat(cls, frames: list["Frame"]) -> "Frame":
