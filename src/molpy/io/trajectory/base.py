@@ -1,9 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Any, Iterator, Optional, Union, List
+from typing import Iterator, Union, List
 from pathlib import Path
-import molpy as mp
-from collections import deque
-
+import mmap
 
 class BaseReader(ABC):
     """Base class for all chemical file readers."""
@@ -25,8 +23,7 @@ class TrajectoryReader(BaseReader):
 
     def __init__(self, filepath: str | Path):
         super().__init__(filepath)
-        self._frames_start: list[int] = []  # start indices of frames in the trajectory
-        self._frames_end: list[int] = []  # end indices of frames in the trajectory
+        self._byte_offsets: list[int] = []
         self._parse_trajectory()
 
     @abstractmethod
@@ -51,7 +48,7 @@ class TrajectoryReader(BaseReader):
     
     @property
     def n_frames(self):
-        ...
+        return len(self._byte_offsets)
 
     def __iter__(self) -> Iterator[dict]:
         """Iterate over all frames in the trajectory."""
@@ -71,9 +68,15 @@ class TrajectoryReader(BaseReader):
 
     def __len__(self) -> int:
         """Return the number of frames in the trajectory."""
-        return len(self._frames_start)  # Return the length of frames_start
+        return len(self._byte_offsets)  # Return the length of frames_start
     
     @abstractmethod
     def _parse_trajectory(self):
         """Parse the trajectory file to cache frame start and end lines."""
         pass
+
+    def read(self):
+        fp = open(self.filepath, "r+b")
+        mmapped_file = mmap.mmap(fp.fileno(), 0, access=mmap.ACCESS_READ)
+        mmapped_file.seek(0)
+        self._fp = mmapped_file

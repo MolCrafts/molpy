@@ -10,8 +10,8 @@ from io import StringIO
 class LammpsTrajectoryReader(TrajectoryReader):
     """Reader for LAMMPS trajectory files."""
 
-    def __init__(self, filepath: str | Path, cache_size: int | None = None):
-        super().__init__(filepath, cache_size)
+    def __init__(self, filepath: str | Path):
+        super().__init__(filepath)
 
     def read_frame(self, index: int) -> dict:
         """Read a specific frame from the trajectory."""
@@ -33,19 +33,20 @@ class LammpsTrajectoryReader(TrajectoryReader):
             frame_lines.append(line.decode("utf-8"))
 
         return self._parse_frame(frame_lines)
+    
+    @property
+    def closed(self):
+        return self._fp.closed
 
     def _parse_frame(self, frame_lines: Iterable[str]) -> mp.Frame:
         # Initialize variables
         header = []
         data = []
         box_bounds = []
-        timestep = None
-
         # Iterate over the lines to parse header, box, timestep, and data
+        timestep = int(frame_lines[0].strip())
         for i, line in enumerate(frame_lines):
-            if line.startswith("ITEM: TIMESTEP"):
-                timestep = int(frame_lines[i+1].strip())
-            elif line.startswith("ITEM: BOX BOUNDS"):
+            if line.startswith("ITEM: BOX BOUNDS"):
                 box_line = line.split()
                 # box_header = box_line[3:-3]
                 # if "abc" in box_header and "origin" in box_header:
@@ -107,14 +108,10 @@ class LammpsTrajectoryReader(TrajectoryReader):
 
     def _parse_trajectory(self):
         """Parse the trajectory file to cache frame start byte offsets."""
-        with open(self.filepath, "r+b") as file:
-            mmapped_file = mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ)
-            byte_offset = 0
-            for line in iter(mmapped_file.readline, b""):
-                if self._is_frame_start(line.decode("utf-8")):
-                    self._byte_offsets.append(byte_offset)  # Store byte offset
-                byte_offset += len(line)
-            mmapped_file.close()
+        self.read()
+        for line in iter(self._fp.readline, b""):
+            if self._is_frame_start(line.decode("utf-8")):
+                self._byte_offsets.append(self._fp.tell())
 
     def _is_frame_start(self, line: str) -> bool:
         """Check if a line indicates the start of a frame."""
