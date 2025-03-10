@@ -1,6 +1,6 @@
 from copy import deepcopy
 from itertools import combinations, permutations, product
-from molpy import op
+from molpy.op import rotate_by_rodrigues
 from typing import Any, Callable, Literal
 import numpy as np
 import pandas as pd
@@ -19,6 +19,9 @@ def return_copy(func):
 
 class Entity(dict):
 
+    def __call__(self):
+        return self.copy()
+
     def clone(self):
         return deepcopy(self)
 
@@ -27,9 +30,29 @@ class Entity(dict):
 
     def copy(self):
         return self.clone()
+    
+
+class SpatialEntity(Entity):
+
+    @property
+    def R(self):
+        return self["R"]
+
+    @R.setter
+    def R(self, value):
+        self["R"] = np.asarray(value)
+
+    def distance_to(self, other):
+        return np.linalg.norm(self.R - other.R)
+
+    def translate(self, vector):
+        self.R += vector
+
+    def rotate(self, axis, theta):
+        self.R = rotate_by_rodrigues(self.R.reshape(1, -1), axis, theta).flatten()
 
 
-class Atom(Entity):
+class Atom(SpatialEntity):
 
     def __repr__(self):
         return f"<Atom {self['name']}>"
@@ -168,10 +191,6 @@ class Improper(ManyBody):
         )
 
 
-class MolpyDynamicModel(dict):
-    pass
-
-
 class Entities(list):
 
     def keys(self):
@@ -195,7 +214,7 @@ class Entities(list):
 class AtomEntities(Entities): ...
 
 
-class Struct(MolpyDynamicModel):
+class Struct(SpatialEntity):
 
     def __init__(self, name:str="", **entities):
         super().__init__(**entities)

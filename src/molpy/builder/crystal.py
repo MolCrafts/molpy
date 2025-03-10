@@ -1,5 +1,5 @@
 import numpy as np
-from molpy.core import Region, Atom
+from molpy.core import Region, Struct
 
 class FCC:
 
@@ -35,8 +35,13 @@ class FCC:
         lattice_points[:, 2] += zlo
         return lattice_points[self.region.isin(lattice_points)]
     
-    def fill(self, atom: Atom):
+    def fill(self, struct: Struct) -> Struct:
+        _struct = Struct()
+        _struct_template = struct()
+        _struct_template.move_to_origin()
         lattice = self.create_lattice()
-        for x, y, z in lattice:
-            atom.add_atom(x, y, z)
-        return atom
+        for xyz in lattice:
+            new_struct = _struct_template()
+            new_struct.move([xyz])
+            struct.add_struct_(new_struct)
+        return _struct

@@ -5,6 +5,6 @@ from .potential import *
 from .optimizer import *
 
 from . import io
-
+from . import op
 from .core.region import *
 from .core.units import Unit
