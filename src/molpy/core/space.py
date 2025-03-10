@@ -4,12 +4,11 @@
 # version: 0.0.1
 
 import numpy as np
-from abc import ABC, abstractmethod
-from .region import Region, Boundary
+from .region import Region, PeriodicBoundary
 from enum import Enum
 
 
-class Box(Region, Boundary):
+class Box(Region, PeriodicBoundary):
 
     class Style(Enum):
         FREE = 0

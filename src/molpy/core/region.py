@@ -15,7 +15,38 @@ class Region(ABC):
     def volumn(self)->float:
         raise NotImplementedError
     
-class Boundary(ABC):
+    @property
+    @abstractmethod
+    def xlo(self):
+        raise NotImplementedError
+    
+    @property
+    @abstractmethod
+    def xhi(self):
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def ylo(self):
+        raise NotImplementedError
+    
+    @property
+    @abstractmethod
+    def yhi(self):
+        raise NotImplementedError
+    
+    @property
+    @abstractmethod
+    def zlo(self):
+        raise NotImplementedError
+    
+    @property
+    @abstractmethod
+    def zhi(self):
+        raise NotImplementedError
+
+
+class PeriodicBoundary(ABC):
 
     @abstractmethod
     def wrap(self, xyz)->np.ndarray:
@@ -29,10 +60,34 @@ class Cube(Region):
         self.side = side
 
     def isin(self, xyz):
-        return np.all(self.origin <= xyz) and np.all(xyz <= self.origin + self.side)
+        return np.logical_and(np.all(self.origin <= xyz, axis=1), np.all(xyz <= self.origin + self.side, axis=1))
     
     def volumn(self):
         return self.side**3
+    
+    @property
+    def xlo(self):
+        return self.origin[0]
+    
+    @property
+    def xhi(self):
+        return self.origin[0] + self.side
+    
+    @property
+    def ylo(self):
+        return self.origin[1]
+    
+    @property
+    def yhi(self):
+        return self.origin[1] + self.side
+    
+    @property
+    def zlo(self):
+        return self.origin[2]
+    
+    @property
+    def zhi(self):
+        return self.origin[2] + self.side
     
 class Sphere(Region):
 
