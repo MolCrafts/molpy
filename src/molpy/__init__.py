@@ -7,3 +7,4 @@ from .optimizer import *
 from . import io
 
 from .core.region import *
+from .core.units import Unit
