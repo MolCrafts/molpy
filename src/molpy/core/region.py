@@ -12,7 +12,7 @@ class Region(ABC):
         raise NotImplementedError
     
     @abstractmethod
-    def volumn(self)->float:
+    def volume(self)->float:
         raise NotImplementedError
     
 class Boundary(ABC):
@@ -31,7 +31,7 @@ class Cube(Region):
     def isin(self, xyz):
         return np.all(self.origin <= xyz) and np.all(xyz <= self.origin + self.side)
     
-    def volumn(self):
+    def volume(self):
         return self.side**3
     
 class Sphere(Region):
@@ -44,7 +44,7 @@ class Sphere(Region):
     def isin(self, xyz):
         return np.linalg.norm(xyz - self.center) <= self.radius
     
-    def volumn(self):
+    def volume(self):
         return 4/3*np.pi*self.radius**3
     
 class Cuboid(Region):
@@ -58,7 +58,7 @@ class Cuboid(Region):
     def isin(self, xyz):
         return np.all(self.origin <= xyz) and np.all(xyz <= self.upper)
     
-    def volumn(self):
+    def volume(self):
         return np.prod(self.lengths)
     
     def constrain(self, xyz):

@@ -83,6 +83,12 @@ class Box(Region, Boundary):
     @property
     def matrix(self) -> np.ndarray:
         return self._matrix
+    
+    @property
+    def volume(self) -> float:
+        # general box volume, maybe triclinic
+        # matrix is parallel to the coordinate axis
+        return np.abs(np.linalg.det(self._matrix))
 
     @staticmethod
     def check_matrix(matrix: np.ndarray) -> np.ndarray:
@@ -240,16 +246,6 @@ class Box(Region, Boundary):
 
     def set_lengths_tilts(self, lengths: np.ndarray, tilts: np.ndarray):
         self._matrix = self.calc_matrix_from_size_tilts(lengths, tilts)
-
-    @property
-    def volume(self) -> float:
-        match self.style:
-            case Box.Style.FREE:
-                return 0
-            case Box.Style.ORTHOGONAL:
-                return np.prod(self.lengths)
-            case Box.Style.TRICLINIC:
-                return np.abs(np.linalg.det(self._matrix))
 
     def get_distance_between_faces(self) -> np.ndarray:
         match self.style:
