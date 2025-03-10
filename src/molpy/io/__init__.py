@@ -6,7 +6,7 @@ from . import forcefield
 from . import log
 from . import trajectory
 
-from .utils import to_system
+from .utils import to_system, ZipReader
 
 read_txt = np.loadtxt
 

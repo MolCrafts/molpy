@@ -1,5 +1,5 @@
 from .space import Box
-
+import molpy as mp
 import numpy as np
 import pandas as pd
 from copy import deepcopy
@@ -14,10 +14,24 @@ class Frame(dict):
         """
         if data is not None:
             for key, value in data.items():
+                assert isinstance(value, (pd.DataFrame, pd.Series)) or isinstance(value, dict), TypeError("data must be dataframe-like, otherwise assign them by `Frame(name=object)` and call it by `frame.name`")
                 self[key] = pd.DataFrame(data=value)
 
         for k, v in props.items():
             setattr(self, k, v)
+
+        self._box = props["box"] if "box" in props else None
+
+    @classmethod
+    def From_frames(cls, others):
+        frame = cls()
+        for fkey in set([k for other in others for k in other.keys()]):
+            frame[fkey] = pd.concat((other[fkey] for other in others), axis=0, ignore_index=True, sort=False)
+
+        # TODO: box same
+        frame.box = getattr(others[0], "box")
+        return frame
+
 
     @property
     def box(self):
@@ -43,9 +57,6 @@ class Frame(dict):
                 )
 
         return frame
-    
-    def merge(self, other: 'Frame') -> 'Frame':
-        return Frame.from_frames(self, other)
 
     def to_struct(self):
         from .struct import Entities, Struct
@@ -193,8 +204,9 @@ class Frame(dict):
             if len(key) == 2:
                 return self[key[0]][key[1]]
             return self[key[0]][list(key[1:])]
-        if isinstance(key, slice):
-            atoms = self["atoms"].iloc[key]
+        if isinstance(key, (slice, pd.Series, np.ndarray)):
+            mask = pd.Series(key, index=self["atoms"].index)
+            atoms = self["atoms"][mask]
             atom_ids = atoms["id"]
             bond_i = self["bonds"]["i"]
             bond_j = self["bonds"]["j"]
@@ -223,22 +235,12 @@ class Frame(dict):
             )
             dihedrals = self["dihedrals"][dihedral_mask]
             return Frame(
-                atoms=atoms,
+                dict(atoms=atoms,
                 bonds=bonds,
                 angles=angles,
                 dihedrals=dihedrals,
+                ),
+                box = self.box
             )
         if isinstance(key, tuple):
             return self[key[0]][list(key[1:])]
-
-
-    def to_h5md(self, path):
-        import h5py
-        if path is None:
-            # for binary obj
-            ...
-        else:
-            # save as file
-            ...
-
-        return 

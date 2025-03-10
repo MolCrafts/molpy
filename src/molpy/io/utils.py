@@ -20,3 +20,26 @@ def to_system(func):
         return func(system, *args, **kwargs)
 
     return wrapper
+
+
+class ZipReader:
+
+    def __init__(self, *readers, merge: bool = True):
+
+        self.readers = readers
+        self.merge = merge
+
+    def __enter__(self):
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        for reader in self.readers:
+            reader.__exit__(exc_type, exc_val, exc_tb)
+
+    def __iter__(self):
+        for frames in zip(*self.readers):
+            if self.merge:
+                yield mp.Frame.From_frames(frames)
+            else:
+                yield frames
