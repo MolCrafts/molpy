@@ -7,11 +7,9 @@ class System:
     def __init__(
         self,
         frame: Frame | None = None,
-        box: Box  | None = None,
         forcefield: ForceField | None = None,
     ):
         self.frame = frame or Frame()
-        self.box = box or Box()
         self.forcefield = forcefield or ForceField()
 
     @property

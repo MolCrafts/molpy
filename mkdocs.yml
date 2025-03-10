@@ -1,6 +1,6 @@
 site_name: MolPy
 
-site_url: https://github.com/MolCrafts/molpy
+site_url: https://github.com/molcrafts/molpy
 theme:
   name: material
   features:
@@ -8,12 +8,29 @@ theme:
     - navigation.instant.progress
     - navigation.tracking
     - navigation.tabs
+  palette:
+    - scheme: default
+      primary: "teal"
+      accent: "light blue"
+      background: "#f9f9f9"  # 浅米白
+      text: "#333333"  # 深灰色
+      surface: "#ffffff"  # 纯白色
+    - scheme: slate
+      primary: "teal"
+      accent: "light blue"
+      background: "#f3f3f3"  # 更深一点的浅灰色
+      text: "#444444"  # 较深的文本灰
+      surface: "#fefefe"  # 几乎白色
 
 markdown_extensions:
   - pymdownx.arithmatex:
       generic: true
 
 extra_javascript:
-  - javascripts/mathjax.js
+  - assets/js/mathjax.js
   - https://polyfill.io/v3/polyfill.min.js?features=es6
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+plugins:
+- search
+- mkdocstrings

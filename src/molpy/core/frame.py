@@ -1,19 +1,54 @@
+from .space import Box
 import molpy as mp
-from .struct import Entities, Struct
 import numpy as np
 import pandas as pd
 from copy import deepcopy
 
 class Frame(dict):
 
-    def __init__(self, name:str="", *fields):
-        assert isinstance(name, str), TypeError("name must be a string")
-        self.name = name
-        for field in fields:
-            self[field] = pd.DataFrame()
+    def __init__(self, data: dict[str, pd.DataFrame | dict[str, list]] | None = None, **props):
+        """ Static data structure for aligning model. The frame is a dictionary-like, multi-DataFrame object, facilitating access data by keys.
+
+        Args:
+            data (dict): A dictionary of dataframes.
+        """
+        if data is not None:
+            for key, value in data.items():
+                assert isinstance(value, (pd.DataFrame, pd.Series)) or isinstance(value, dict), TypeError("data must be dataframe-like, otherwise assign them by `Frame(name=object)` and call it by `frame.name`")
+                self[key] = pd.DataFrame(data=value)
+
+        for k, v in props.items():
+            setattr(self, k, v)
+
+        self._box = props["box"] if "box" in props else None
 
     @classmethod
-    def from_frames(cls, frames: list["Frame"]) -> "Frame":
+    def From_frames(cls, others):
+        frame = cls()
+        for fkey in set([k for other in others for k in other.keys()]):
+            frame[fkey] = pd.concat((other[fkey] for other in others), axis=0, ignore_index=True, sort=False)
+
+        # TODO: box same
+        frame.box = getattr(others[0], "box")
+        return frame
+
+
+    @property
+    def box(self):
+        return self._box
+
+    @box.setter
+    def box(self, box: Box|None):
+        assert isinstance(box, Box) or box is None, "box must be an instance of Box or None"
+        self._box = box
+
+    @classmethod
+    def concat(cls, frames: list["Frame"]) -> "Frame":
+        """ Concatenate a list of frames into a single frame. 
+
+            Args:
+                frames (list[Frame]): A list of frames.
+        """
         frame = cls()
         for key in frames[0].keys():
             if isinstance(frames[0][key], pd.DataFrame):
@@ -22,12 +57,9 @@ class Frame(dict):
                 )
 
         return frame
-    
-    def merge(self, other: 'Frame') -> 'Frame':
-        return Frame.from_frames(self, other)
 
     def to_struct(self):
-
+        from .struct import Entities, Struct
         struct = Struct(
             name=self.name,
             atoms=Entities(),
@@ -168,8 +200,13 @@ class Frame(dict):
     def __getitem__(self, key):
         if isinstance(key, str):
             return super().__getitem__(key)
-        if isinstance(key, slice):
-            atoms = self["atoms"].iloc[key]
+        elif isinstance(key, tuple) and all(isinstance(k, str) for k in key):
+            if len(key) == 2:
+                return self[key[0]][key[1]]
+            return self[key[0]][list(key[1:])]
+        if isinstance(key, (slice, pd.Series, np.ndarray)):
+            mask = pd.Series(key, index=self["atoms"].index)
+            atoms = self["atoms"][mask]
             atom_ids = atoms["id"]
             bond_i = self["bonds"]["i"]
             bond_j = self["bonds"]["j"]
@@ -198,22 +235,12 @@ class Frame(dict):
             )
             dihedrals = self["dihedrals"][dihedral_mask]
             return Frame(
-                atoms=atoms,
+                dict(atoms=atoms,
                 bonds=bonds,
                 angles=angles,
                 dihedrals=dihedrals,
+                ),
+                box = self.box
             )
         if isinstance(key, tuple):
             return self[key[0]][list(key[1:])]
-
-
-    def to_h5md(self, path):
-        import h5py
-        if path is None:
-            # for binary obj
-            ...
-        else:
-            # save as file
-            ...
-
-        return 

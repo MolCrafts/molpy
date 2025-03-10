@@ -12,13 +12,13 @@ $$
 \end{bmatrix}
 $$
 
-where $(\text{xlo}, \text{ylo}, \text{zlo})$ is lower bound and "origin" of the box. 
+where $(\text{xlo}, \text{ylo}, \text{zlo})$ is lower bound and "origin" of the box.
 
-A triclinic box is defined with 3 arbitrary edges vectors $\mathbf A$, $\mathbf B$, and $\mathbf C$, so long as they are non-zero, distinct, and not co-planar. In addition, they must define a right-handed system, such that ($\mathbf A$ cross $\mathbf B$) points in the direction of C. Note that a left-handed system can be converted to a right-handed system by simply swapping the order of any pair of the $\mathbf A$, $\mathbf B$, $\mathbf C$ vectors. The box can be done in two ways.
+A _triclinic_ box is defined with 3 arbitrary edges vectors $\mathbf A$, $\mathbf B$, and $\mathbf C$, so long as they are non-zero, distinct, and not co-planar. In addition, they must define a right-handed system, such that ($\mathbf A$ cross $\mathbf B$) points in the direction of C. Note that a left-handed system can be converted to a right-handed system by simply swapping the order of any pair of the $\mathbf A$, $\mathbf B$, $\mathbf C$ vectors. The box can be done in two ways.
 
-A *general* triclinic box is specified by an origin $(\text{xlo}, \text{ylo}, \text{zlo})$ and arbitrary edge vectors $A = (\text{ax},\text{ay},\text{az})$, $B = (\text{bx},\text{by},\text{bz})$, and $C = (\text{cx},\text{cy},\text{cz})$. So there are 12 parameters in total.
+A _general_ triclinic box is specified by an origin $(\text{xlo}, \text{ylo}, \text{zlo})$ and arbitrary edge vectors $A = (\text{ax},\text{ay},\text{az})$, $B = (\text{bx},\text{by},\text{bz})$, and $C = (\text{cx},\text{cy},\text{cz})$. So there are 12 parameters in total.
 
-A *restricted* triclinic box also has an origin $(\text{xlo},\text{ylo},\text{zlo})$, but its edge vectors are of the following restricted form: $A = (\text{xhi}-\text{xlo},0,0)$, $B = (\text{xy},\text{yhi}-\text{ylo},0)$, $C = (\text{xz},\text{yz},\text{zhi}-\text{zlo})$. So there are 9 parameters in total. The *restricted* requires $\mathbf A$ to be along the x-axis, B to be in the xy plane with a y-component in the $+y$ direction, and C to have its z-component in the $+z$ direction. Note that a restricted triclinic box is right-handed by construction since (A cross B) points in the direction of C.
+A _restricted_ triclinic box also has an origin $(\text{xlo},\text{ylo},\text{zlo})$, but its edge vectors are of the following restricted form: $A = (\text{xhi}-\text{xlo},0,0)$, $B = (\text{xy},\text{yhi}-\text{ylo},0)$, $C = (\text{xz},\text{yz},\text{zhi}-\text{zlo})$. So there are 9 parameters in total. The _restricted_ requires $\mathbf A$ to be along the x-axis, B to be in the xy plane with a y-component in the $+y$ direction, and C to have its z-component in the $+z$ direction. Note that a restricted triclinic box is right-handed by construction since (A cross B) points in the direction of C.
 
 The xy,xz,yz values can be zero or positive or negative. They are called “tilt factors” because they are the amount of displacement applied to edges of faces of an orthogonal box to change it into a restricted triclinic parallelepiped.
 
