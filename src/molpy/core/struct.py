@@ -5,6 +5,7 @@ from typing import Any, Callable, Literal
 import numpy as np
 import pandas as pd
 import logging
+from molpy import op
 
 logger = logging.getLogger("molpy-struct")
 
@@ -216,26 +217,23 @@ class AtomEntities(Entities): ...
 
 class Struct(SpatialEntity):
 
-    def __init__(self, name:str="", **entities):
+    def __init__(self, **entities):
         super().__init__(**entities)
-        self.name = name
 
     @classmethod
-    def from_structs(cls, name:str="", *structs):
-        struct = Struct(name)
+    def from_structs(cls, *structs):
+        struct = Struct()
         for s in structs:
-            for atom in s["atoms"]:
-                atom['name'] = f"{s.name}/{atom['name']}"
             struct.union_(s) 
         return struct
 
     def __repr__(self):
-        return f"<Struct {self.name}: {len(self['atoms'])} atoms>"
+        return f"<Struct {len(self['atoms'])} atoms>"
 
     def __deepcopy__(self, memo):
 
         atom_map = {id(atom): atom.copy() for atom in self["atoms"]}
-        new = Struct(name=self.name)
+        new = Struct()
         for key, value in self.items():
             new[key] = Entities()
         new["atoms"] = Entities(atom_map.values())

@@ -298,21 +298,10 @@ public:
         }
 
         auto v_frac = makeFractional(v);
-        // auto m = xt::masked_view(v_frac, xt::broadcast(m_periodic, {v_frac.shape()[0], m_periodic.shape()[0]}));
+        xt::xarray<bool> mask = xt::broadcast(m_periodic, {v_frac.shape()[0], m_periodic.shape()[0]});  // can't auto this...
         auto x = xt::fmod(xt::fmod(v_frac, 1.0) + 1.0, 1.0);
-        // m = x;
-        if (m_periodic[0])
-        {
-            xt::view(v_frac, xt::all(), 0) = xt::view(x, xt::all(), 0);
-        }
-        if (m_periodic[1])
-        {
-            xt::view(v_frac, xt::all(), 1) = xt::view(x, xt::all(), 1);
-        }
-        if (m_periodic[2])
-        {
-            xt::view(v_frac, xt::all(), 2) = xt::view(x, xt::all(), 2);
-        }
+        auto m = xt::masked_view(v_frac, mask);
+        m = x;
         return makeAbsolute(v_frac);
     }
 

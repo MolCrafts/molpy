@@ -61,7 +61,6 @@ class Frame(dict):
     def to_struct(self):
         from .struct import Entities, Struct
         struct = Struct(
-            name=self.name,
             atoms=Entities(),
         )
         atoms = self["atoms"]

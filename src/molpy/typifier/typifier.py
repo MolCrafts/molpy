@@ -8,14 +8,14 @@ class SmartsTypifier:
 
         self.parser = SmartsParser()
         self.forcefield = forcefield
-        self.smarts_graph = self.read_smarts(forcefield)
+        self.smarts_graphs = self.read_smarts(forcefield)
 
     def read_smarts(self, forcefield):
 
         smarts_graphs = {}
         smarts_override = {}
 
-        for atomtype in forcefield.get_atomtypes():
+        for atomtype in (_at for _at in forcefield.get_atomtypes() if 'def' in _at):
             name = atomtype.name
             smarts = atomtype['def']
             graph = SMARTSGraph(smarts, self.parser, name, overrides=None)
@@ -40,7 +40,7 @@ class SmartsTypifier:
         graph = structure.get_topology()
         self.prepare_graph(graph)
 
-        for typename, rule in self.smarts_graph.items():
+        for typename, rule in self.smarts_graphs.items():
             result = rule.find_matches(graph)
             if result:
                 for i, j in enumerate(result):

@@ -65,7 +65,7 @@ class PDBReader:
                     for j in bond_indices[1:]:
                         bonds.append([i, j] if i < j else [j, i])
 
-            bonds = np.unique(np.array(bonds), axis=0) - 1
+            bonds = np.unique(np.array(bonds), axis=0)
 
             if len(set(atoms['name'])) != len(atoms['name']):
                 atom_name_counter = defaultdict(int)
@@ -77,6 +77,7 @@ class PDBReader:
             frame["atoms"] = pd.DataFrame(
                 atoms
             )
+            frame.box = mp.Box()
             
             if len(bonds):
                 frame["bonds"] = pd.DataFrame(
@@ -87,9 +88,8 @@ class PDBReader:
                 )
 
             return mp.System(
-                box=mp.Box(),
-                forcefield=mp.ForceField(),
                 frame=frame,
+                forcefield=mp.ForceField(),
             )
 
 
