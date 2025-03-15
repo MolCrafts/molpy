@@ -1,4 +1,4 @@
-from .space import Box
+from .box import Box
 import molpy as mp
 import numpy as np
 import pandas as pd

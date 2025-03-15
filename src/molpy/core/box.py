@@ -35,11 +35,12 @@ class Box(Region, PeriodicBoundary):
     def __repr__(self):
         match self.style:
             case Box.Style.FREE:
-                return f"<Box: Free>"
+                return "<Box: Free>"
             case Box.Style.ORTHOGONAL:
                 return f"<Box: Orthogonal: {self.lengths}>"
             case Box.Style.TRICLINIC:
                 return f"<Box: Triclinic: {self._matrix}>"
+        return "<Box>"
             
     @classmethod
     def cubic(cls, length: float, pbc: np.ndarray = np.zeros(3, dtype=bool), origin: np.ndarray = np.zeros(3), central: bool=False) -> "Box":

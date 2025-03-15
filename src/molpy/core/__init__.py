@@ -1,5 +1,5 @@
 from .units import *
-from .space import *
+from .box import *
 from .frame import *
 from .forcefield import *
 from .topology import *
