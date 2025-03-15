@@ -168,17 +168,17 @@ SCENARIO( "Test Get Image" ) {
 
 SCENARIO( "Test Wrap" ) {
 
-    // GIVEN(" triclinic ") {
-    //     Box box(2.0, 2.0, 2.0, 1.0, 0, 0);
-    //     xt::xarray<float> points = {{10, -5, -5}, {0, 0.5, 0}, {1.2, 6.4, 8.4}};
-    //     xt::xarray<float> wrapped = {{-2, -1, -1}, {0, 0.5, 0}, {1.2, 0.4, 0.4}};
+    GIVEN(" triclinic ") {
+        Box box(2.0, 2.0, 2.0, 1.0, 0, 0);
+        xt::xarray<float> points = {{10, -5, -5}, {0, 0.5, 0}, {1.2, 6.4, 8.4}};
+        xt::xarray<float> wrapped = {{-2, -1, -1}, {0, 0.5, 0}, {1.2, 0.4, 0.4}};
 
-    //     THEN( "test wrap" ) {
-    //         auto test_wrap = box.wrap(points);
-    //         std::cout << test_wrap << std::endl;
-    //         REQUIRE( xt::allclose(test_wrap, wrapped) );
-    //     }
-    // }
+        THEN( "test wrap" ) {
+            auto test_wrap = box.wrap(points);
+            std::cout << test_wrap << std::endl;
+            REQUIRE( xt::allclose(test_wrap, wrapped) );
+        }
+    }
 
     GIVEN( "partial periodic" ) {
         Box box(2.0, 2.0, 2.0, 1.0, 0, 0);
