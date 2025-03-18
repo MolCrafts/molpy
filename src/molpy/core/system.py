@@ -1,4 +1,4 @@
-from .space import Box
+from .box import Box
 from .frame import Frame
 from .forcefield import ForceField
 

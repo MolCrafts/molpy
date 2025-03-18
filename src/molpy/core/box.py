@@ -35,11 +35,12 @@ class Box(Region, PeriodicBoundary):
     def __repr__(self):
         match self.style:
             case Box.Style.FREE:
-                return f"<Box: Free>"
+                return "<Box: Free>"
             case Box.Style.ORTHOGONAL:
                 return f"<Box: Orthogonal: {self.lengths}>"
             case Box.Style.TRICLINIC:
                 return f"<Box: Triclinic: {self._matrix}>"
+        return "<Box>"
             
     @classmethod
     def cubic(cls, length: float, pbc: np.ndarray = np.zeros(3, dtype=bool), origin: np.ndarray = np.zeros(3), central: bool=False) -> "Box":
@@ -82,6 +83,12 @@ class Box(Region, PeriodicBoundary):
     @property
     def matrix(self) -> np.ndarray:
         return self._matrix
+    
+    @property
+    def volume(self) -> float:
+        # general box volume, maybe triclinic
+        # matrix is parallel to the coordinate axis
+        return np.abs(np.linalg.det(self._matrix))
 
     @staticmethod
     def check_matrix(matrix: np.ndarray) -> np.ndarray:
@@ -239,16 +246,6 @@ class Box(Region, PeriodicBoundary):
 
     def set_lengths_tilts(self, lengths: np.ndarray, tilts: np.ndarray):
         self._matrix = self.calc_matrix_from_size_tilts(lengths, tilts)
-
-    @property
-    def volume(self) -> float:
-        match self.style:
-            case Box.Style.FREE:
-                return 0
-            case Box.Style.ORTHOGONAL:
-                return np.prod(self.lengths)
-            case Box.Style.TRICLINIC:
-                return np.abs(np.linalg.det(self._matrix))
 
     def get_distance_between_faces(self) -> np.ndarray:
         match self.style:
