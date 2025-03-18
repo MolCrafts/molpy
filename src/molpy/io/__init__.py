@@ -86,9 +86,11 @@ def read_xml_forcefield(file: Path, system: mp.System | None = None) -> mp.Syste
     from .forcefield.xml import XMLForceFieldReader
     if system is None:
         system = mp.System()
+        system.forcefield = mp.ForceField()
 
-    if file == 'oplsaa':
-        file = Path(__file__).parent / 'forcefield/xml/oplsaa.xml'
+    builtin = Path(__file__).parent / f'forcefield/xml/{file}.xml'
+    if builtin.exists():
+        file = builtin
 
     reader = XMLForceFieldReader(file)
     return reader.read(system)

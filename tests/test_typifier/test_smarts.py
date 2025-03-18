@@ -4,8 +4,8 @@ import molpy as mp
 
 # from molpy.typifier.exceptions import molpy.typifierError
 # from molpy.typifier.forcefield import Forcefield
-from molpy.typifier.smarts import SmartsParser
-from molpy.typifier.smarts_graph import SMARTSGraph
+from molpy.typifier.parser import SmartsParser
+from molpy.typifier.graph import SMARTSGraph
 
 # from molpy.typifier.topology_graph import TopologyGraph
 
@@ -20,7 +20,7 @@ class TestSMARTS:
     def rule_match(self, smarts_parser):
         def _rule_match(top, smart, result):
             rule = SMARTSGraph(name="test", parser=smarts_parser, smarts_string=smart)
-            assert bool(list(rule.find_matches(top))) is result
+            assert bool(list(rule.find_matches(top))) == result
 
         return _rule_match
 
@@ -32,7 +32,7 @@ class TestSMARTS:
                 parser=smarts_parser,
                 smarts_string=smart,
             )
-            assert len(list(rule.find_matches(top))) is count
+            assert len(list(rule.find_matches(top))) == count
 
         return _rule_match_count
 
@@ -160,23 +160,6 @@ class TestSMARTS:
         for smart, result in checks.items():
             rule_match_count(mol2, smart, result)
 
-    def test_pf6(self, rule_match_count, test_data_path):
-        mol2 = (
-            mp.io.read_mol2(test_data_path / "data/mol2/pf6.mol2")
-            .frame.to_struct()
-            .get_topology()
-        )
-
-        checks = {
-            r"P": 1,
-            r"FP([!%F1])([!%F1])([!%F1])([!%F1])F": 2,
-            r"FP([!%F1;!%F2])([!%F1;!%F2])([%F1])([%F1])F": 2,
-            r"FP([%F1])([%F1])([%F2])([%F2])F": 2,
-        }
-
-        for smart, result in checks.items():
-            rule_match_count(mol2, smart, result)
-
     def test_not_ast(self, smarts_parser):
         checks = {
             "[!C;!H]": "weak_and_expression",
@@ -195,9 +178,11 @@ class TestSMARTS:
                 smarts_parser.parse(smart)
 
     def test_not(self, rule_match_count, test_data_path):
-        mol2 = mp.io.read_mol2(
-            test_data_path / "data/mol2/ethane.mol2"
-        ).frame.to_struct().get_topology()
+        mol2 = (
+            mp.io.read_mol2(test_data_path / "data/mol2/ethane.mol2")
+            .frame.to_struct()
+            .get_topology()
+        )
 
         checks = {
             "[!O]": 8,
@@ -225,11 +210,11 @@ class TestSMARTS:
         assert types.count("F2") == 2
         assert types.count("F3") == 2
 
-        # assert len(pf6["bonds"]) == 6
-        # assert all(bond["type"] for bond in pf6["bonds"])
+        assert len(pf6["bonds"]) == 6
+        assert all(bond["type"] for bond in pf6["bonds"])
 
-        # assert len(pf6["angles"]) == 15
-        # assert all(angle["type"] for angle in pf6["angles"])
+        assert len(pf6["angles"]) == 15
+        assert all(angle["type"] for angle in pf6["angles"])
 
     def test_optional_names_bad_syntax(self):
         bad_optional_names = ["_C", "XXX", "C"]

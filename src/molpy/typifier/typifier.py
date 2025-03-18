@@ -1,6 +1,6 @@
 from collections import OrderedDict
-from molpy.typifier.smarts import SmartsParser
-from molpy.typifier.smarts_graph import SMARTSGraph, _find_chordless_cycles
+from molpy.typifier.parser import SmartsParser
+from molpy.typifier.graph import SMARTSGraph, _find_chordless_cycles
 
 class SmartsTypifier:
 
@@ -15,9 +15,18 @@ class SmartsTypifier:
         smarts_graphs = {}
         smarts_override = {}
 
-        for atomtype in (_at for _at in forcefield.get_atomtypes() if 'def' in _at):
+        probe_atomtype = forcefield.get_atomtypes()[0]
+
+        if 'def' in probe_atomtype:
+            flag = 'def'
+        elif 'smirks' in probe_atomtype:
+            flag = 'smirks'
+        else:
+            raise ValueError('No SMARTS or SMIRKS found in atomtype')
+
+        for atomtype in forcefield.get_atomtypes():
             name = atomtype.name
-            smarts = atomtype['def']
+            smarts = atomtype[flag]
             graph = SMARTSGraph(smarts, self.parser, name, overrides=None)
             smarts_graphs[name] = graph
             override = atomtype.get('override', None)
@@ -39,7 +48,6 @@ class SmartsTypifier:
 
         graph = structure.get_topology()
         self.prepare_graph(graph)
-
         for typename, rule in self.smarts_graphs.items():
             result = rule.find_matches(graph)
             if result:

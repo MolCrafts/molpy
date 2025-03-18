@@ -7,7 +7,7 @@ from igraph import Graph, plot
 
 from molpy import Element
 
-from .smarts import SmartsParser
+from .parser import SmartsParser
 
 
 class SMARTSGraph(Graph):
@@ -47,7 +47,7 @@ class SMARTSGraph(Graph):
         *args,
         **kwargs,
     ):
-        super(SMARTSGraph, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.smarts_string = smarts_string
         self.name = name
@@ -229,7 +229,7 @@ class SMARTSGraph(Graph):
         )
 
         matches = self._graph_matcher.subgraph_isomorphisms()
-        match_index = set([matches[0] for matches in matches])
+        match_index = set([match[0] for match in matches])
         return match_index
     
     def calc_signature(self, graph):

@@ -1,30 +1,17 @@
 from pathlib import Path
-import xml.etree.ElementTree as etree
+import xml.etree.ElementTree as ET
 import os
+import logging
 
+logger = logging.getLogger("molpy")
 
 class XMLForceFieldReader:
 
-    def __init__(self, filepaths: Path | list[Path]):
+    def __init__(self, file: Path, style=""):
 
-        self.filepaths = []
-        if isinstance(filepaths, Path):
-            self.filepaths.append(filepaths)
-        elif isinstance(filepaths, list):
-            self.filepaths.extend(filepaths)
+        self._file = file
 
-        self._atomTypes = {}
-        self._templates = {}
-        self._patches = {}
-        self._templatePatches = {}
-        self._templateSignatures = {None: []}
-        self._atomClasses = {"": set()}
-        self._forces = []
-        self._scripts = []
-        self._templateMatchers = []
-        self._templateGenerators = []
-
-    def read(self, system, resname_prefix: str = ""):
+    def read(self, system):
         """Load an XML file and add the definitions from it to this ForceField.
 
         Parameters
@@ -35,216 +22,97 @@ class XMLForceFieldReader:
             directory, a path relative to this module's data subdirectory (for
             built in force fields), or an open file-like object with a read()
             method from which the forcefield XML data can be loaded.
-        prefix : string
-            An optional string to be prepended to each residue name found in the
-            loaded files.
         """
         ff = system.forcefield
 
-        atomstyle = ff.def_atomstyle("full")  # dont know what's the name is
+        trees = ET.parse(self._file)
+        main = trees.getroot()
 
+        atomstyle = self._read_atomtypes(main, ff)
 
-        files = self.filepaths
+        nonbonded_flag = ['vdW', 'NonbondedForce']
+        for flag in nonbonded_flag:
+            for section in main:
+                if flag in section.tag:
+                    pairstyle = ff.def_pairstyle(flag, section.attrib)
+                    self._read_nonbonded(section, atomstyle, pairstyle)
 
-        trees = []
-
-        i = 0
-        while i < len(files):
-            file = files[i]
-            tree = etree.parse(file)
-            if tree is None:
-                raise ValueError('Could not locate file "%s"' % file)
-            trees.append(tree)
-            i += 1
-
-            # Process includes in this file.
-
-            if isinstance(file, str):
-                parentDir = os.path.dirname(file)
-            else:
-                parentDir = ""
-            for included in tree.getroot().findall("Include"):
-                includeFile = included.attrib["file"]
-                joined = os.path.join(parentDir, includeFile)
-                if os.path.isfile(joined):
-                    includeFile = joined
-                if includeFile not in files:
-                    files.append(includeFile)
-
-        # Load the atom types.
-
-        for tree in trees:
-            if tree.getroot().find("AtomTypes") is not None:
-                for type in tree.getroot().find("AtomTypes").findall("Type"):
-                    class_ = type.attrib.pop("class")
-                    if "overrides" in type.attrib:
-                        type.attrib["overrides"] = type.attrib.pop("overrides").split(',')
-                    atomstyle.def_type(name=type.attrib.pop("name"), **type.attrib, class_=class_)
-
-
-        # Load force definitions
-
-        for tree in trees:
-            for child in tree.getroot():
-                if child.tag.endswith("BondForce"):
-                    bondstyle = ff.get_bondstyle(child.tag)
-                    if ff.get_bondstyle(child.tag) is None:
-                        bondstyle = ff.def_bondstyle(child.tag)
-                    for c in child:
-                        force = c.attrib
-                        class1 = force.pop("class1")
-                        class2 = force.pop("class2")
-                        atomclass1 = atomstyle.get_class(class1)
-                        atomclass2 = atomstyle.get_class(class2)
-                        for atom1 in atomclass1:
-                            for atom2 in atomclass2:
-                                bondstyle.def_type(atom1, atom2, kw_params=force)
-
-                elif child.tag.endswith("AngleForce"):
-                    anglestyle = ff.get_anglestyle(child.tag)
-                    if ff.get_anglestyle(child.tag) is None:
-                        anglestyle = ff.def_anglestyle(child.tag)
-                    for c in child:
-                        force = c.attrib
-                        class1 = force.pop("class1")
-                        class2 = force.pop("class2")
-                        class3 = force.pop("class3")
-                        atomclass1 = atomstyle.get_class(class1)
-                        atomclass2 = atomstyle.get_class(class2)
-                        atomclass3 = atomstyle.get_class(class3)
-                        for atom1 in atomclass1:
-                            for atom2 in atomclass2:
-                                for atom3 in atomclass3:
-                                    anglestyle.def_type(atom1, atom2, atom3, kw_params=force)
+        for section in main:
+            if "Bond" in section.tag:
+                pot_name = section.tag
+                bondstyle = ff.def_bondstyle(pot_name, section.attrib)
+                self._read_bonds(section, atomstyle, bondstyle)
 
         return system
 
-        # Load the residue templates.
 
-        # for tree in trees:
-        #     if tree.getroot().find('Residues') is not None:
-        #         for residue in tree.getroot().find('Residues').findall('Residue'):
-        #             resName = resname_prefix+residue.attrib['name']
-        #             template = ForceField._TemplateData(resName)
-        #             if 'override' in residue.attrib:
-        #                 template.overrideLevel = int(residue.attrib['override'])
-        #             if 'rigidWater' in residue.attrib:
-        #                 template.rigidWater = (residue.attrib['rigidWater'].lower() == 'true')
-        #             for key in residue.attrib:
-        #                 template.attributes[key] = residue.attrib[key]
-        #             atomIndices = template.atomIndices
-        #             for ia, atom in enumerate(residue.findall('Atom')):
-        #                 params = {}
-        #                 for key in atom.attrib:
-        #                     if key not in ('name', 'type'):
-        #                         params[key] = _convertParameterToNumber(atom.attrib[key])
-        #                 atomName = atom.attrib['name']
-        #                 if atomName in atomIndices:
-        #                     raise ValueError('Residue '+resName+' contains multiple atoms named '+atomName)
-        #                 typeName = atom.attrib['type']
-        #                 atomIndices[atomName] = ia
-        #                 template.atoms.append(ForceField._TemplateAtomData(atomName, typeName, self._atomTypes[typeName].element, params))
-        #             for site in residue.findall('VirtualSite'):
-        #                 template.virtualSites.append(ForceField._VirtualSiteData(site, atomIndices))
-        #             for bond in residue.findall('Bond'):
-        #                 if 'atomName1' in bond.attrib:
-        #                     template.addBondByName(bond.attrib['atomName1'], bond.attrib['atomName2'])
-        #                 else:
-        #                     template.addBond(int(bond.attrib['from']), int(bond.attrib['to']))
-        #             for bond in residue.findall('ExternalBond'):
-        #                 if 'atomName' in bond.attrib:
-        #                     template.addExternalBondByName(bond.attrib['atomName'])
-        #                 else:
-        #                     template.addExternalBond(int(bond.attrib['from']))
-        #             for patch in residue.findall('AllowPatch'):
-        #                 patchName = patch.attrib['name']
-        #                 if ':' in patchName:
-        #                     colonIndex = patchName.find(':')
-        #                     self.registerTemplatePatch(resName, patchName[:colonIndex], int(patchName[colonIndex+1:])-1)
-        #                 else:
-        #                     self.registerTemplatePatch(resName, patchName, 0)
-        #             self.registerResidueTemplate(template)
+    def _read_atomtypes(self, main, ff):
+        atomstyle = ff.def_atomstyle(self._file.stem)
+        atomtypes = main.find("AtomTypes")
+        if atomtypes is not None:
+            for atomtype in atomtypes:
+                attrib = atomtype.attrib
+                name = attrib.pop("name")
+                atomstyle.def_type(name, **atomtype.attrib)
+        
+        logger.info(f"Read {len(ff.atomtypes)} atom types")
+        return atomstyle
 
-        # Load the patch definitions.
+    def _read_nonbonded(self, nonbonded, atomstyle, pairstyle):
 
-        # for tree in trees:
-        #     if tree.getroot().find('Patches') is not None:
-        #         for patch in tree.getroot().find('Patches').findall('Patch'):
-        #             patchName = patch.attrib['name']
-        #             if 'residues' in patch.attrib:
-        #                 numResidues = int(patch.attrib['residues'])
-        #             else:
-        #                 numResidues = 1
-        #             patchData = ForceField._PatchData(patchName, numResidues)
-        #             for key in patch.attrib:
-        #                 patchData.attributes[key] = patch.attrib[key]
-        #             for atom in patch.findall('AddAtom'):
-        #                 params = {}
-        #                 for key in atom.attrib:
-        #                     if key not in ('name', 'type'):
-        #                         params[key] = _convertParameterToNumber(atom.attrib[key])
-        #                 atomName = atom.attrib['name']
-        #                 if atomName in patchData.allAtomNames:
-        #                     raise ValueError('Patch '+patchName+' contains multiple atoms named '+atomName)
-        #                 patchData.allAtomNames.add(atomName)
-        #                 atomDescription = ForceField._PatchAtomData(atomName)
-        #                 typeName = atom.attrib['type']
-        #                 patchData.addedAtoms[atomDescription.residue].append(ForceField._TemplateAtomData(atomDescription.name, typeName, self._atomTypes[typeName].element, params))
-        #             for atom in patch.findall('ChangeAtom'):
-        #                 params = {}
-        #                 for key in atom.attrib:
-        #                     if key not in ('name', 'type'):
-        #                         params[key] = _convertParameterToNumber(atom.attrib[key])
-        #                 atomName = atom.attrib['name']
-        #                 if atomName in patchData.allAtomNames:
-        #                     raise ValueError('Patch '+patchName+' contains multiple atoms named '+atomName)
-        #                 patchData.allAtomNames.add(atomName)
-        #                 atomDescription = ForceField._PatchAtomData(atomName)
-        #                 typeName = atom.attrib['type']
-        #                 patchData.changedAtoms[atomDescription.residue].append(ForceField._TemplateAtomData(atomDescription.name, typeName, self._atomTypes[typeName].element, params))
-        #             for atom in patch.findall('RemoveAtom'):
-        #                 atomName = atom.attrib['name']
-        #                 if atomName in patchData.allAtomNames:
-        #                     raise ValueError('Patch '+patchName+' contains multiple atoms named '+atomName)
-        #                 patchData.allAtomNames.add(atomName)
-        #                 atomDescription = ForceField._PatchAtomData(atomName)
-        #                 patchData.deletedAtoms.append(atomDescription)
-        #             for bond in patch.findall('AddBond'):
-        #                 atom1 = ForceField._PatchAtomData(bond.attrib['atomName1'])
-        #                 atom2 = ForceField._PatchAtomData(bond.attrib['atomName2'])
-        #                 patchData.addedBonds.append((atom1, atom2))
-        #             for bond in patch.findall('RemoveBond'):
-        #                 atom1 = ForceField._PatchAtomData(bond.attrib['atomName1'])
-        #                 atom2 = ForceField._PatchAtomData(bond.attrib['atomName2'])
-        #                 patchData.deletedBonds.append((atom1, atom2))
-        #             for bond in patch.findall('AddExternalBond'):
-        #                 atom = ForceField._PatchAtomData(bond.attrib['atomName'])
-        #                 patchData.addedExternalBonds.append(atom)
-        #             for bond in patch.findall('RemoveExternalBond'):
-        #                 atom = ForceField._PatchAtomData(bond.attrib['atomName'])
-        #                 patchData.deletedExternalBonds.append(atom)
-        #             # The following three lines are only correct for single residue patches.  Multi-residue patches with
-        #             # virtual sites currently don't work correctly.  See issue #2848.
-        #             atomIndices = dict((atom.name, i) for i, atom in enumerate(patchData.addedAtoms[0]+patchData.changedAtoms[0]))
-        #             for site in patch.findall('VirtualSite'):
-        #                 patchData.virtualSites[0].append(ForceField._VirtualSiteData(site, atomIndices))
-        #             for residue in patch.findall('ApplyToResidue'):
-        #                 name = residue.attrib['name']
-        #                 if ':' in name:
-        #                     colonIndex = name.find(':')
-        #                     self.registerTemplatePatch(name[colonIndex+1:], patchName, int(name[:colonIndex])-1)
-        #                 else:
-        #                     self.registerTemplatePatch(name, patchName, 0)
-        #             self.registerPatch(patchData)
+        atoms = nonbonded.findall("Atom")
+        probe_atom = atoms[0]
 
-        # Load scripts
+        name_flag = self._guess_item_name(probe_atom)
+        
+        for i, atom in enumerate(atoms):
+            attrib = atom.attrib
+            name = attrib.pop(name_flag, str(i))
+            at = atomstyle.get_type(name)
+            if at is None:
+                at = atomstyle.def_type(name)
+            if "def" in attrib:
+                attrib["smirks"] = attrib.pop("def")
+            if "smirks" in attrib:
+                smirks = attrib.pop("smirks")
+                at["smirks"] = smirks
+            pairstyle.def_type(name, at, at, **attrib)
 
-        # for tree in trees:
-        #     for node in tree.getroot().findall('Script'):
-        #         self.registerScript(node.text)
+        logger.info(f"Read {atomstyle.n_types} pair types")
 
-        # Execute initialization scripts.
+    def _read_bonds(self, bonds, atomstyle, bondstyle):
 
-        # for tree in trees:
-        #     for node in tree.getroot().findall('InitializationScript'):
-        #         exec(node.text, locals())
+       
+        bonds = bonds.findall("Bond")
+        name_flag = self._guess_item_name(bonds[0])
+
+        for bond in bonds:
+            attrib = bond.attrib
+            name = attrib.pop(name_flag, "")
+            type1 = attrib.pop("type1", None)
+            type2 = attrib.pop("type2", None)
+            if type1 is not None and type2 is not None:
+                at1 = atomstyle.get_type(type1)
+                at2 = atomstyle.get_type(type2)
+                bondstyle.def_type(name, at1, at2, **attrib
+            )
+            else:
+                class1 = attrib.pop("class1", None)
+                class2 = attrib.pop("class2", None)
+                if class1 is not None and class2 is not None:
+                    for c1 in atomstyle.get_class(class1):
+                        for c2 in atomstyle.get_class(class2):
+                            bondstyle.def_type(name, c1, c2, **attrib)
+
+        logger.info(f"Read {len(bondstyle.types)} bond types")
+
+    def _guess_item_name(self, item):
+
+        if 'type' in item.attrib:
+            name_flag = 'type'
+        elif 'id' in item.attrib:
+            name_flag = 'id'
+        else:
+            name_flag = 'name'
+
+        return name_flag

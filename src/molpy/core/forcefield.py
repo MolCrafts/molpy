@@ -41,6 +41,12 @@ class Style(dict):
             if condition(t):
                 return t
         return default
+    
+    def get_type(self, name: str):
+        return self.types.get(name, None)
+    
+    def get_class(self, class_: str) -> list[Type]:
+        return [at for at in self.types.values() if at['class'] == class_]
 
     def get_all_by(self, condition: Callable):
         return [t for t in self.types.values() if condition(t)]
