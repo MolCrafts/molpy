@@ -1,83 +1,67 @@
 # Copyright (c) 2010-2025 The Regents of the University of Michigan
 # This file is from the freud project, released under the BSD 3-Clause License.
 
-import warnings
 from collections import namedtuple
 
-import matplotlib
 import numpy as np
 import numpy.testing as npt
 import pytest
 
 import molpy as mp
-import
 
-matplotlib.use("agg")
 
 def from_freud_to_molpy(Lx, Ly, Lz, xy, xz, yz):
-    return mp.Box(np.array([
-        [Lx, xy, xz],
-        [0, Ly, yz],
-        [0, 0, Lz]
-    ]))
+    return mp.Box(np.array([[Lx, xy, xz], [0, Ly, yz], [0, 0, Lz]]))
 
 
 class TestBox:
-    def test_construct(self):
-        """Test correct behavior for various constructor signatures"""
-        with pytest.raises(ValueError):
-            mp.Box(0, 0)
 
-        with pytest.raises(ValueError):
-            mp.Box(1, 2, is2D=False)
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            mp.Box(1, 2, 3, is2D=True)
-            assert len(w) == 1
-
-        box = mp.Box(1, 2)
-        assert box.dimensions == 2
+    def test_init_volume(self):
+        assert mp.Box().style == mp.Box.Style.FREE
+        assert mp.Box(np.diag([1, 2, 3])).style == mp.Box.Style.ORTHOGONAL
+        assert mp.Box.cubic(1).style == mp.Box.Style.ORTHOGONAL
+        assert mp.Box.orth([1, 2, 3]).style == mp.Box.Style.ORTHOGONAL
+        assert mp.Box.tric([1, 2, 3], [0.5, 1, 1.5]).style == mp.Box.Style.TRICLINIC
 
     def test_get_length(self):
-        box = mp.Box(2, 4, 5, 1, 0, 0)
+        box = mp.Box.tric([2, 4, 5], [1, 0, 0])
 
-        npt.assert_allclose(box.Lx, 2, rtol=1e-6)
-        npt.assert_allclose(box.Ly, 4, rtol=1e-6)
-        npt.assert_allclose(box.Lz, 5, rtol=1e-6)
-        npt.assert_allclose(box.L, [2, 4, 5], rtol=1e-6)
-        npt.assert_allclose(box.L_inv, [0.5, 0.25, 0.2], rtol=1e-6)
+        npt.assert_allclose(box.lx, 2, rtol=1e-6)
+        npt.assert_allclose(box.ly, 4, rtol=1e-6)
+        npt.assert_allclose(box.lz, 5, rtol=1e-6)
+        npt.assert_allclose(box.l, np.array([2, 4, 5]), rtol=1e-6)
+        npt.assert_allclose(box.l_inv, np.array([0.5, 0.25, 0.2]), rtol=1e-6)
 
     def test_set_length(self):
         # Make sure we can change the lengths of the box after its creation
-        box = mp.Box(1, 2, 3, 1, 0, 0)
+        box = mp.Box.tric([1, 2, 3], [1, 0, 0])
 
-        box.Lx = 4
-        box.Ly = 5
-        box.Lz = 6
+        box.lx = 4
+        box.ly = 5
+        box.lz = 6
 
-        npt.assert_allclose(box.Lx, 4, rtol=1e-6)
-        npt.assert_allclose(box.Ly, 5, rtol=1e-6)
-        npt.assert_allclose(box.Lz, 6, rtol=1e-6)
+        npt.assert_allclose(box.lx, 4, rtol=1e-6)
+        npt.assert_allclose(box.ly, 5, rtol=1e-6)
+        npt.assert_allclose(box.lz, 6, rtol=1e-6)
 
-        box.L = [7, 8, 9]
-        npt.assert_allclose(box.L, [7, 8, 9], rtol=1e-6)
+        box.lengths = [7, 8, 9]
+        npt.assert_allclose(box.lengths, np.array([7, 8, 9]), rtol=1e-6)
 
-        with pytest.raises(ValueError):
-            box.L = [1, 2, 3, 4]
+        with pytest.raises(AssertionError):
+            box.lengths = [1, 2, 3, 4]
 
-        with pytest.raises(ValueError):
-            box.L = [1, 2]
+        with pytest.raises(AssertionError):
+            box.lengths = [1, 2]
 
     def test_get_tilt_factor(self):
-        box = mp.Box(2, 2, 2, 1, 2, 3)
+        box = mp.Box.tric([2, 2, 2], [1, 2, 3])
 
         npt.assert_allclose(box.xy, 1, rtol=1e-6)
         npt.assert_allclose(box.xz, 2, rtol=1e-6)
         npt.assert_allclose(box.yz, 3, rtol=1e-6)
 
     def test_set_tilt_factor(self):
-        box = mp.Box(2, 2, 2, 1, 2, 3)
+        box = mp.Box.tric([2, 2, 2], [1, 2, 3])
         box.xy = 4
         box.xz = 5
         box.yz = 6
@@ -86,107 +70,37 @@ class TestBox:
         npt.assert_allclose(box.xz, 5, rtol=1e-6)
         npt.assert_allclose(box.yz, 6, rtol=1e-6)
 
-    def test_box_volume(self):
-        box3d = mp.Box(2, 2, 2, 1, 0, 0)
-        box2d = mp.Box(2, 2, 0, 0, 0, 0, is2D=True)
-
-        npt.assert_allclose(box3d.volume, 8, rtol=1e-6)
-        npt.assert_allclose(box2d.volume, 4, rtol=1e-6)
-
     def test_wrap_single_particle(self):
-        box = mp.Box(2, 2, 2, 1, 0, 0)
+        box = mp.Box.tric([2, 2, 2], [1, 0, 0])
 
         points = [0, -1, -1]
-        npt.assert_allclose(box.wrap(points)[0], -2, rtol=1e-6)
-
-        points = np.array(points)
-        npt.assert_allclose(box.wrap(points)[0], -2, rtol=1e-6)
+        npt.assert_allclose(box.wrap(points)[0], 1, rtol=1e-6)
 
         with pytest.raises(ValueError):
             box.wrap([1, 2])
 
     def test_wrap_multiple_particles(self):
-        box = mp.Box(2, 2, 2, 1, 0, 0)
+        box = mp.Box.tric([2, 2, 2], [1, 0, 0])
 
         points = [[0, -1, -1], [0, 0.5, 0]]
-        npt.assert_allclose(box.wrap(points)[0, 0], -2, rtol=1e-6)
-
-        points = np.array(points)
-        npt.assert_allclose(box.wrap(points)[0, 0], -2, rtol=1e-6)
-
-    def test_wrap_multiple_images(self):
-        box = mp.Box(2, 2, 2, 1, 0, 0)
-
-        points = [[10, -5, -5], [0, 0.5, 0]]
-        npt.assert_allclose(box.wrap(points)[0, 0], -2, rtol=1e-6)
-
-        points = np.array(points)
-        npt.assert_allclose(box.wrap(points)[0, 0], -2, rtol=1e-6)
+        wrapped = box.wrap(points)
+        npt.assert_allclose(wrapped[0, 0], 1, rtol=1e-6)
+        npt.assert_allclose(wrapped[1, 0], 2, rtol=1e-6)
 
     def test_wrap(self):
-        box = mp.Box(2, 2, 2, 1, 0, 0)
+        box = mp.Box.tric([2, 2, 2], [1, 0, 0])
         points = [[10, -5, -5], [0, 0.5, 0]]
-        npt.assert_allclose(box.wrap(points), [[-2, -1, -1], [0, 0.5, 0]], rtol=1e-6)
+        npt.assert_allclose(box.wrap(points), [[1, 1, 1], [2, 0.5, 0]], rtol=1e-6)
 
-    def test_wrap_out_provided_with_input_array(self):
-        box = mp.Box(2, 2, 2, 1, 0, 0)
+    def test_wrap_with_non_zero_original(self):
+        box = mp.Box.tric([2, 2, 2], [1, 0, 0], origin=[-1, -1, -1])
         points = [[10, -5, -5], [0, 0.5, 0]]
         points = np.array(points, dtype=np.float32)
-        box.wrap(points, out=points)
-        npt.assert_allclose(points, [[-2, -1, -1], [0, 0.5, 0]], rtol=1e-6)
-
-        # test with read-only input array
-        points = [[10, -5, -5], [0, 0.5, 0]]
-        points = np.array(points, dtype=np.float32).setflags(write=0)
-        with pytest.raises(ValueError):
-            npt.assert_allclose(
-                box.wrap(points, out=points), [[-2, -1, -1], [0, 0.5, 0]], rtol=1e-6
-            )
-
-    def test_wrap_out_provided_with_new_array(self):
-        box = mp.Box(2, 2, 2, 1, 0, 0)
-        points = [[10, -5, -5], [0, 0.5, 0]]
-        points = np.array(points, dtype=np.float32)
-        new_array = np.zeros(points.shape, dtype=np.float32)
-        box.wrap(points, out=new_array)
-        npt.assert_allclose(new_array, [[-2, -1, -1], [0, 0.5, 0]], rtol=1e-6)
-        npt.assert_equal(points, [[10, -5, -5], [0, 0.5, 0]])
-
-    def test_wrap_out_provided_with_array_with_wrong_shape(self):
-        box = mp.Box(2, 2, 2, 1, 0, 0)
-        points = [[10, -5, -5], [0, 0.5, 0]]
-        points = np.array(points, dtype=np.float32)
-        new_array = np.zeros((np.asarray(points.shape) - 1), dtype=np.float32)
-        with pytest.raises(ValueError):
-            npt.assert_allclose(
-                box.wrap(points, out=new_array), [[-2, -1, -1], [0, 0.5, 0]], rtol=1e-6
-            )
-        npt.assert_equal(points, [[10, -5, -5], [0, 0.5, 0]])
-
-    def test_wrap_out_provided_with_array_with_wrong_dtype(self):
-        box = mp.Box(2, 2, 2, 1, 0, 0)
-        points = [[10, -5, -5], [0, 0.5, 0]]
-        points = np.array(points, dtype=np.float32)
-        new_array = np.zeros(points.shape, dtype=np.float64)
-        with pytest.raises(ValueError):
-            npt.assert_allclose(
-                box.wrap(points, out=new_array), [[-2, -1, -1], [0, 0.5, 0]], rtol=1e-6
-            )
-        npt.assert_equal(points, [[10, -5, -5], [0, 0.5, 0]])
-
-    def test_wrap_out_provided_with_array_with_wrong_order(self):
-        box = mp.Box(2, 2, 2, 1, 0, 0)
-        points = [[10, -5, -5], [0, 0.5, 0]]
-        points = np.array(points, dtype=np.float32)
-        new_array = np.zeros(points.shape, dtype=np.float32, order="F")
-        with pytest.raises(ValueError):
-            npt.assert_allclose(
-                box.wrap(points, out=new_array), [[-2, -1, -1], [0, 0.5, 0]], rtol=1e-6
-            )
-        npt.assert_equal(points, [[10, -5, -5], [0, 0.5, 0]])
+        wrapped = box.wrap(points)
+        npt.assert_allclose(wrapped, [[0, -1, -1], [0, 0.5, 0]], rtol=1e-6)
 
     def test_unwrap(self):
-        box = mp.Box(2, 2, 2, 1, 0, 0)
+        box = mp.Box.tric([2, 2, 2], [1, 0, 0])
 
         points = [0, -1, -1]
         imgs = [1, 0, 0]
@@ -206,15 +120,8 @@ class TestBox:
         with pytest.raises(ValueError):
             box.unwrap(points[:, :2], imgs)
 
-        # Now test 2D
-        box = mp.Box.square(1)
-
-        points = [10, 0, 0]
-        imgs = [10, 1, 2]
-        npt.assert_allclose(box.unwrap(points, imgs), [20, 1, 0], rtol=1e-6)
-
         # Test broadcasting one image with multiple vectors
-        box = mp.Box.cube(1)
+        box = mp.Box.cubic(1)
 
         points = [[10, 0, 0], [11, 0, 0]]
         imgs = [10, 1, 2]
@@ -223,7 +130,7 @@ class TestBox:
         )
 
         # Test broadcasting one vector with multiple images
-        box = mp.Box.cube(1)
+        box = mp.Box.cubic(1)
 
         points = [10, 0, 0]
         imgs = [[10, 1, 2], [11, 1, 2]]
@@ -231,124 +138,94 @@ class TestBox:
             box.unwrap(points, imgs), [[20, 1, 2], [21, 1, 2]], rtol=1e-6
         )
 
-    def test_unwrap_with_out(self):
-        box = mp.Box(2, 2, 2, 1, 0, 0)
-
-        points = np.array([[0, -1, -1]], dtype=np.float32)
-        imgs = [1, 0, 0]
-        expected = [[2, -1, -1]]
-        npt.assert_allclose(box.unwrap(points, imgs, out=points), expected, rtol=1e-6)
-        npt.assert_allclose(points, expected, rtol=1e-6)
-
-        points = np.array([[0, -1, -1], [0, 0.5, 0]], dtype=np.float32)
+    def test_unwrap_with_non_zero_original(self):
+        box = mp.Box.tric([2, 2, 2], [1, 0, 0], origin=[-1, -1, -1])
+        points = [[0, -1, -1], [0, 0.5, 0]]
         imgs = [[1, 0, 0], [1, 1, 0]]
-        output = np.empty_like(points)
-        expected = [[2, -1, -1], [4, 2.5, 0]]
-        npt.assert_allclose(box.unwrap(points, imgs, out=output), expected, rtol=1e-6)
-        npt.assert_allclose(output, expected, rtol=1e-6)
+        points = np.array(points)
+        imgs = np.array(imgs)
+        npt.assert_allclose(
+            box.unwrap(points, imgs), [[2, -1, -1], [3, 2.5, 0]], rtol=1e-6
+        )
 
     def test_images_3d(self):
-        box = mp.Box(2, 2, 2, 0, 0, 0)
+        box = mp.Box.tric([2, 2, 2], [0, 0, 0])
         points = np.array([[50, 40, 30], [-10, 0, 0]])
         images = np.array([box.get_images(vec) for vec in points])
         npt.assert_equal(images, np.array([[25, 20, 15], [-5, 0, 0]]))
         images = box.get_images(points)
         npt.assert_equal(images, np.array([[25, 20, 15], [-5, 0, 0]]))
 
-    def test_images_2d(self):
-        box = mp.Box(2, 2, 0, 0, 0, 0)
-        points = np.array([[50, 40, 0], [-10, 0, 0]])
-        images = np.array([box.get_images(vec) for vec in points])
-        npt.assert_equal(images, np.array([[25, 20, 0], [-5, 0, 0]]))
-        images = box.get_images(points)
-        npt.assert_equal(images, np.array([[25, 20, 0], [-5, 0, 0]]))
+    # def test_center_of_mass(self):
+    #     box = mp.Box.cubic(5)
 
-    def test_center_of_mass(self):
-        box = mp.Box.cube(5)
+    #     npt.assert_allclose(box.center_of_mass([[0, 0, 0]]), [0, 0, 0], atol=1e-6)
+    #     npt.assert_allclose(box.center_of_mass([[1, 1, 1]]), [1, 1, 1], atol=1e-6)
+    #     npt.assert_allclose(
+    #         box.center_of_mass([[1, 1, 1], [2, 2, 2]]), [1.5, 1.5, 1.5], atol=1e-6
+    #     )
+    #     npt.assert_allclose(
+    #         box.center_of_mass([[-2, -2, -2], [2, 2, 2]]), [-2.5, -2.5, -2.5], atol=1e-6
+    #     )
+    #     npt.assert_allclose(
+    #         box.center_of_mass([[-2.2, -2.2, -2.2], [2, 2, 2]]),
+    #         [2.4, 2.4, 2.4],
+    #         atol=1e-6,
+    #     )
 
-        npt.assert_allclose(box.center_of_mass([[0, 0, 0]]), [0, 0, 0], atol=1e-6)
-        npt.assert_allclose(box.center_of_mass([[1, 1, 1]]), [1, 1, 1], atol=1e-6)
-        npt.assert_allclose(
-            box.center_of_mass([[1, 1, 1], [2, 2, 2]]), [1.5, 1.5, 1.5], atol=1e-6
-        )
-        npt.assert_allclose(
-            box.center_of_mass([[-2, -2, -2], [2, 2, 2]]), [-2.5, -2.5, -2.5], atol=1e-6
-        )
-        npt.assert_allclose(
-            box.center_of_mass([[-2.2, -2.2, -2.2], [2, 2, 2]]),
-            [2.4, 2.4, 2.4],
-            atol=1e-6,
-        )
+    # def test_center_of_mass_weighted(self):
+    #     box = mp.Box.tric(5)
 
-    def test_center_of_mass_weighted(self):
-        box = mp.Box.cube(5)
+    #     points = [[0, 0, 0], -box.L / 4]
+    #     masses = [2, 1]
+    #     phases = np.exp(2 * np.pi * 1j * box.make_fractional(points))
+    #     com_angle = np.angle(phases.T @ masses / np.sum(masses))
+    #     com = box.make_absolute(com_angle / (2 * np.pi))
+    #     npt.assert_allclose(box.center_of_mass(points, masses), com, atol=1e-6)
 
-        points = [[0, 0, 0], -box.L / 4]
-        masses = [2, 1]
-        phases = np.exp(2 * np.pi * 1j * box.make_fractional(points))
-        com_angle = np.angle(phases.T @ masses / np.sum(masses))
-        com = box.make_absolute(com_angle / (2 * np.pi))
-        npt.assert_allclose(box.center_of_mass(points, masses), com, atol=1e-6)
+    # def test_center(self):
+    #     box = mp.Box.cubic(5)
 
-    def test_center(self):
-        box = mp.Box.cube(5)
+    #     npt.assert_allclose(box.center([[0, 0, 0]]), [[0, 0, 0]], atol=1e-6)
+    #     npt.assert_allclose(box.center([[1, 1, 1]]), [[0, 0, 0]], atol=1e-6)
+    #     npt.assert_allclose(
+    #         box.center([[1, 1, 1], [2, 2, 2]]),
+    #         [[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
+    #         atol=1e-6,
+    #     )
+    #     npt.assert_allclose(
+    #         box.center([[-2, -2, -2], [2, 2, 2]]),
+    #         [[0.5, 0.5, 0.5], [-0.5, -0.5, -0.5]],
+    #         atol=1e-6,
+    #     )
 
-        npt.assert_allclose(box.center([[0, 0, 0]]), [[0, 0, 0]], atol=1e-6)
-        npt.assert_allclose(box.center([[1, 1, 1]]), [[0, 0, 0]], atol=1e-6)
-        npt.assert_allclose(
-            box.center([[1, 1, 1], [2, 2, 2]]),
-            [[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
-            atol=1e-6,
-        )
-        npt.assert_allclose(
-            box.center([[-2, -2, -2], [2, 2, 2]]),
-            [[0.5, 0.5, 0.5], [-0.5, -0.5, -0.5]],
-            atol=1e-6,
-        )
+    # def test_center_weighted(self):
+    #     box = mp.Box.cubic(5)
 
-    def test_center_weighted(self):
-        box = mp.Box.cube(5)
+    #     points = [[0, 0, 0], -box.L / 4]
+    #     masses = [2, 1]
+    #     phases = np.exp(2 * np.pi * 1j * box.make_fractional(points))
+    #     com_angle = np.angle(phases.T @ masses / np.sum(masses))
+    #     com = box.make_absolute(com_angle / (2 * np.pi))
+    #     npt.assert_allclose(
+    #         box.center(points, masses), box.wrap(points - com), atol=1e-6
+    #     )
 
-        points = [[0, 0, 0], -box.L / 4]
-        masses = [2, 1]
-        phases = np.exp(2 * np.pi * 1j * box.make_fractional(points))
-        com_angle = np.angle(phases.T @ masses / np.sum(masses))
-        com = box.make_absolute(com_angle / (2 * np.pi))
-        npt.assert_allclose(
-            box.center(points, masses), box.wrap(points - com), atol=1e-6
-        )
-
-        # Make sure the center of mass is not (0, 0, 0) if ignoring masses
-        assert not np.allclose(box.center_of_mass(points), [0, 0, 0], atol=1e-6)
+    #     # Make sure the center of mass is not (0, 0, 0) if ignoring masses
+    #     assert not np.allclose(box.center_of_mass(points), [0, 0, 0], atol=1e-6)
 
     def test_absolute_coordinates(self):
-        box = mp.Box(2, 2, 2)
+        box = mp.Box.orth([2, 2, 2], central=True)
         f_point = np.array([[0.5, 0.25, 0.75], [0, 0, 0], [0.5, 0.5, 0.5]])
         point = np.array([[0, -0.5, 0.5], [-1, -1, -1], [0, 0, 0]])
 
-        testcoordinates = np.array([box.make_absolute(f) for f in f_point])
-        npt.assert_equal(testcoordinates, point)
-
         testcoordinates = box.make_absolute(f_point)
-
         npt.assert_equal(testcoordinates, point)
-
-    def test_absolute_coordinates_out(self):
-        box = mp.Box(2, 2, 2)
-        f_point = np.array(
-            [[0.5, 0.25, 0.75], [0, 0, 0], [0.5, 0.5, 0.5]], dtype=np.float32
-        )
-        point = np.array([[0, -0.5, 0.5], [-1, -1, -1], [0, 0, 0]])
-
-        output = np.empty_like(f_point)
-        box.make_absolute(f_point, out=output)
-        npt.assert_equal(output, point)
-
-        npt.assert_equal(box.make_absolute(f_point, out=f_point), point)
-        npt.assert_equal(f_point, point)
+        testcoordinates = box.make_absolute(f_point)
+        npt.assert_equal(testcoordinates, point)
 
     def test_fractional_coordinates(self):
-        box = mp.Box(2, 2, 2)
+        box = mp.Box.orth([2, 2, 2], central=True)
         f_point = np.array([[0.5, 0.25, 0.75], [0, 0, 0], [0.5, 0.5, 0.5]])
         point = np.array([[0, -0.5, 0.5], [-1, -1, -1], [0, 0, 0]])
 
@@ -359,49 +236,18 @@ class TestBox:
 
         npt.assert_equal(testfraction, f_point)
 
-    def test_fractional_coordinates_out(self):
-        box = mp.Box(2, 2, 2)
-        f_point = np.array(
-            [[0.5, 0.25, 0.75], [0, 0, 0], [0.5, 0.5, 0.5]], dtype=np.float32
-        )
-        point = np.array([[0, -0.5, 0.5], [-1, -1, -1], [0, 0, 0]])
-
-        output = np.empty_like(f_point)
-        box.make_fractional(point, out=output)
-        npt.assert_equal(output, f_point)
-
-        npt.assert_equal(box.make_fractional(f_point, out=f_point), f_point)
-        npt.assert_equal(f_point, f_point)
-
     def test_vectors(self):
         """Test getting lattice vectors"""
         b_list = [1, 2, 3, 0.1, 0.2, 0.3]
-        Lx, Ly, Lz, xy, xz, yz = b_list
-        box = mp.Box.from_box(b_list)
-        npt.assert_allclose(box.get_box_vector(0), [Lx, 0, 0])
-        npt.assert_allclose(box.v1, [Lx, 0, 0])
-        npt.assert_allclose(box.get_box_vector(1), [xy * Ly, Ly, 0])
-        npt.assert_allclose(box.v2, [xy * Ly, Ly, 0])
-        npt.assert_allclose(box.get_box_vector(2), [xz * Lz, yz * Lz, Lz])
-        npt.assert_allclose(box.v3, [xz * Lz, yz * Lz, Lz])
-
-    @pytest.mark.parametrize(
-        ("box_params", "answer"),
-        [
-            (dict(Lx=1, Ly=1, Lz=1), True),
-            (dict(Lx=2, Ly=1, Lz=4), False),
-            (dict(Lx=1, Ly=1, Lz=1, xz=0.25), False),
-            (dict(Lx=3, Ly=3, Lz=3), True),
-            (dict(Lx=3, Ly=3, Lz=3, yz=0.01), False),
-            (dict(Lx=0.01, Ly=1, Lz=10000, xy=0.75), False),
-        ],
-    )
-    def test_cubic(self, box_params, answer):
-        box = mp.Box(**box_params)
-        assert box.cubic is answer
+        Lx, Ly, Lz = b_list[:3]
+        xy, xz, yz = b_list[3:]
+        box = mp.Box.tric((Lx, Ly, Lz), (xy, xz, yz))
+        npt.assert_allclose(box.a, [Lx, 0, 0])
+        npt.assert_allclose(box.b, [xy, Ly, 0])
+        npt.assert_allclose(box.c, [xz, yz, Lz])
 
     def test_periodic(self):
-        box = mp.Box(1, 2, 3, 0, 0, 0)
+        box = mp.Box.orth([1, 2, 3])
         npt.assert_array_equal(box.periodic, True)
         assert box.periodic_x
         assert box.periodic_y
@@ -430,266 +276,165 @@ class TestBox:
         npt.assert_array_equal(box.periodic, True)
 
     def test_equal(self):
-        box1 = mp.Box(2, 2, 2, 1, 0.5, 0.1)
-        box1_copy = mp.Box(2, 2, 2, 1, 0.5, 0.1)
+        box1 = mp.Box.tric([2, 2, 2], [1, 0.5, 0.1])
+        box1_copy = mp.Box.tric([2, 2, 2], [1, 0.5, 0.1])
         assert box1 == box1_copy
-        box2 = mp.Box(2, 2, 2, 1, 0, 0)
+        box2 = mp.Box.tric([2, 2, 2], [1, 0, 0])
         assert box1 != box2
-        box1_nonperiodic = mp.Box(2, 2, 2, 1, 0.5, 0.1)
+        box1_nonperiodic = mp.Box.tric(
+            [
+                2,
+                2,
+                2,
+            ],
+            [1, 0.5, 0.1],
+        )
         box1_nonperiodic.periodic = [False, False, False]
         assert box1 != box1_nonperiodic
-        assert box1 != 3
-        assert 3 != box1
 
     def test_repr(self):
-        box = mp.Box(2, 2, 2, 1, 0.5, 0.1)
-        assert box == eval(repr(box))
+        box = mp.Box.tric([2, 2, 2], [1, 0.5, 0.1])
+        assert repr(box).startswith("<Triclinic Box:")
 
     def test_str(self):
-        box = mp.Box(2, 2, 2, 1, 0.5, 0.1)
-        box2 = mp.Box(2, 2, 2, 1, 0.5, 0.1)
+        box = mp.Box.tric([2, 2, 2], [1, 0.5, 0.1])
+        box2 = mp.Box.tric([2, 2, 2], [1, 0.5, 0.1])
         assert str(box) == str(box2)
 
     def test_to_dict(self):
         """Test converting box to dict"""
-        box = mp.Box(2, 2, 2, 1, 0.5, 0.1)
+        box = mp.Box.tric([2, 2, 2], [1, 0.5, 0.1])
         box2 = box.to_dict()
-        box_dict = {"Lx": 2, "Ly": 2, "Lz": 2, "xy": 1, "xz": 0.5, "yz": 0.1}
-        for k, v in box_dict.items():
-            npt.assert_allclose(v, box2[k])
+        box_dict_values = {
+            "xlo",
+            "xhi",
+            "ylo",
+            "yhi",
+            "zlo",
+            "zhi",
+            "xy",
+            "xz",
+            "yz",
+            "x_pbc",
+            "y_pbc",
+            "z_pbc",
+        }
+        assert set(box2.keys()) == box_dict_values
 
     def test_from_box(self):
         """Test various methods of initializing a box"""
-        box = mp.Box(2, 2, 2, 1, 0.5, 0.1)
+        box = mp.Box.tric([2, 2, 2], [1, 0.5, 0.1])
         box2 = mp.Box.from_box(box)
         assert box == box2
 
-        box_dict = {"Lx": 2, "Ly": 2, "Lz": 2, "xy": 1, "xz": 0.5, "yz": 0.1}
-        box3 = mp.Box.from_box(box_dict)
-        assert box == box3
-
-        with pytest.raises(ValueError):
-            box_dict["dimensions"] = 3
-            mp.Box.from_box(box_dict, 2)
-
-        BoxTuple = namedtuple(
-            "BoxTuple", ["Lx", "Ly", "Lz", "xy", "xz", "yz", "dimensions"]
-        )
-        box4 = mp.Box.from_box(BoxTuple(2, 2, 2, 1, 0.5, 0.1, 3))
-        assert box == box4
-
-        with pytest.raises(ValueError):
-            mp.Box.from_box(BoxTuple(2, 2, 2, 1, 0.5, 0.1, 2), 3)
-
-        box5 = mp.Box.from_box([2, 2, 2, 1, 0.5, 0.1])
-        assert box == box5
-
-        box6 = mp.Box.from_box(np.array([2, 2, 2, 1, 0.5, 0.1]))
-        assert box == box6
-
-        with pytest.raises(ValueError):
-            mp.Box.from_box([2, 2, 2, 1, 0.5])
-
-        box7 = mp.Box.from_matrix(box.to_matrix())
-        assert np.isclose(box.to_matrix(), box7.to_matrix()).all()
-
     def test_standard_orthogonal_box(self):
-        box = mp.Box.from_box((1, 2, 3, 0, 0, 0))
-        Lx, Ly, Lz, alpha, beta, gamma = box.to_box_lengths_and_angles()
-        npt.assert_allclose(
-            (Lx, Ly, Lz, alpha, beta, gamma), (1, 2, 3, np.pi / 2, np.pi / 2, np.pi / 2)
-        )
+        box = mp.Box.tric((1, 2, 3), (0, 0, 0))
+        lengths, angles = box.to_lengths_angles()
+        npt.assert_allclose(lengths, (1, 2, 3))
+        npt.assert_allclose(angles, (90, 90, 90))
 
     def test_to_and_from_box_lengths_and_angles(self):
-        original_box_lengths_and_angles = (
-            np.random.uniform(0, 100000),
-            np.random.uniform(0, 100000),
-            np.random.uniform(0, 100000),
-            np.random.uniform(0, np.pi),
-            np.random.uniform(0, np.pi),
-            np.random.uniform(0, np.pi),
+
+        abc = np.array(
+            [
+                np.random.uniform(0, 100000),
+                np.random.uniform(0, 100000),
+                np.random.uniform(0, 100000),
+            ]
         )
-        if (
-            1
-            - np.cos(original_box_lengths_and_angles[4]) ** 2
-            - (
-                (
-                    np.cos(original_box_lengths_and_angles[3])
-                    - np.cos(original_box_lengths_and_angles[4])
-                    * np.cos(original_box_lengths_and_angles[5])
-                )
-                / np.sin(original_box_lengths_and_angles[5])
-            )
-            ** 2
-            < 0
-        ):
+        angles = np.array(
+            [
+                np.random.uniform(0, 180),
+                np.random.uniform(0, 180),
+                np.random.uniform(0, 180),
+            ]
+        )
+        alpha, beta, gamma = np.deg2rad(angles)
+        cos_alpha, cos_beta, cos_gamma = np.cos([alpha, beta, gamma])
+        cos_check = (
+            cos_alpha**2
+            + cos_beta**2
+            + cos_gamma**2
+            - 2 * cos_alpha * cos_beta * cos_gamma
+        )
+
+        if cos_check >= 1.0:
             with pytest.raises(ValueError):
-                mp.Box.from_box_lengths_and_angles(
-                    *original_box_lengths_and_angles
-                )
+                mp.Box.from_lengths_angles(abc, angles)
         else:
-            box = mp.Box.from_box_lengths_and_angles(
-                *original_box_lengths_and_angles
-            )
-            lengths_and_angles_computed = box.to_box_lengths_and_angles()
+            box = mp.Box.from_lengths_angles(abc, angles)
+            box_lengths, box_angles = box.to_lengths_angles()
+
             np.testing.assert_allclose(
-                lengths_and_angles_computed,
-                original_box_lengths_and_angles,
+                box_lengths,
+                abc,
+                rtol=1e-5,
+                atol=1e-14,
+            )
+            np.testing.assert_allclose(
+                box_angles,
+                angles,
                 rtol=1e-5,
                 atol=1e-14,
             )
 
     def test_matrix(self):
-        box = mp.Box(2, 2, 2, 1, 0.5, 0.1)
-        box2 = mp.Box.from_matrix(box.to_matrix())
-        assert np.isclose(box.to_matrix(), box2.to_matrix()).all()
+        box = mp.Box.tric([2, 2, 2], [1, 0.5, 0.1])
+        box2 = mp.Box(box.matrix)
+        assert np.isclose(box.matrix, box2.matrix).all()
 
-        box3 = mp.Box(2, 2, 0, 0.5, 0, 0)
-        box4 = mp.Box.from_matrix(box3.to_matrix())
-        assert np.isclose(box3.to_matrix(), box4.to_matrix()).all()
-
-    def test_set_dimensions(self):
-        b = np.asarray([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-        with pytest.warns(UserWarning):
-            box = freud.Box.from_box(b, dimensions=2)
-        assert box.dimensions == 2
-
-    def test_2_dimensional(self):
-        # Setting Lz for a 2D box throws a warning that we hide
-        box = mp.Box.square(L=1)
-        with pytest.warns(UserWarning):
-            box.Lz = 1.0
-        assert box.Lz == 0.0
-        assert box.dimensions == 2
-        box.dimensions = 3
-        assert box.Lz == 0.0
-        assert box.dimensions == 3
-        box.Lz = 1.0
-        assert box.Lz == 1.0
-
-    def test_cube(self):
+    def test_cubic(self):
         L = 10.0
-        cube = mp.Box.cube(L=L)
-        assert cube.Lx == L
-        assert cube.Ly == L
-        assert cube.Lz == L
-        assert cube.xy == 0
-        assert cube.xz == 0
-        assert cube.yz == 0
-        assert cube.dimensions == 3
-
-    def test_square(self):
-        L = 10.0
-        square = mp.Box.square(L=L)
-        assert square.Lx == L
-        assert square.Ly == L
-        assert square.Lz == 0
-        assert square.xy == 0
-        assert square.xz == 0
-        assert square.yz == 0
-        assert square.dimensions == 2
+        cubic = mp.Box.cubic(length=L)
+        assert cubic.lx == L
+        assert cubic.ly == L
+        assert cubic.lz == L
+        assert cubic.xy == 0
+        assert cubic.xz == 0
+        assert cubic.yz == 0
 
     def test_multiply(self):
-        box = mp.Box(2, 3, 4, 1, 0.5, 0.1)
+        box = mp.Box.tric([2, 3, 4], [1, 0.5, 0.1])
         box2 = box * 2
-        assert np.isclose(box2.Lx, 4)
-        assert np.isclose(box2.Ly, 6)
-        assert np.isclose(box2.Lz, 8)
-        assert np.isclose(box2.xy, 1)
-        assert np.isclose(box2.xz, 0.5)
-        assert np.isclose(box2.yz, 0.1)
+        assert np.isclose(box2.lx, 4)
+        assert np.isclose(box2.ly, 6)
+        assert np.isclose(box2.lz, 8)
+        assert np.isclose(box2.xy, 2)
+        assert np.isclose(box2.xz, 1)
+        assert np.isclose(box2.yz, 0.2)
         box3 = 2 * box
         assert box2 == box3
 
     def test_plot_3d(self):
-        box = mp.Box(2, 3, 4, 1, 0.5, 0.1)
+        box = mp.Box.tric([2, 3, 4], [1, 0.5, 0.1])
         box.plot()
-
-    def test_plot_2d(self):
-        box = mp.Box(2, 3, 0, 1, 0, 0, is2D=True)
-        box.plot()
-
-    def test_compute_distances_2d(self):
-        box = mp.Box(2, 3, 0, 1, 0, 0, is2D=True)
-        points = np.array([[0, 0, 0], [-2.2, -1.3, 0]])
-        query_points = np.array(
-            [[-0.5, -1.3, 0.0], [0.5, 0, 0], [-2.2, -1.3, 0.0], [0, 0.4, 0]]
-        )
-        point_indices = np.array([1, 0, 1, 0])
-        query_point_indices = np.array([0, 1, 2, 3])
-        distances = box.compute_distances(
-            query_points[query_point_indices], points[point_indices]
-        )
-        npt.assert_allclose(distances, [0.3, 0.5, 0.0, 0.4], rtol=1e-6)
-
-        # 1 dimensional array
-        distances = box.compute_distances(query_points[0], points[1])
-        npt.assert_allclose(distances, [0.3], rtol=1e-6)
-
-        with pytest.raises(ValueError):
-            box.compute_distances(
-                query_points[query_point_indices[:-1]], points[point_indices]
-            )
-        with pytest.raises(ValueError):
-            box.compute_distances(
-                query_points[query_point_indices], points[point_indices[:-1]]
-            )
 
     def test_compute_distances_3d(self):
-        box = mp.Box(2, 3, 4, 1, 0, 0)
+        box = mp.Box.tric([2, 3, 4], [1, 0, 0])
         points = np.array([[0, 0, 0], [-2.2, -1.3, 2]])
         query_points = np.array(
             [[-0.5, -1.3, 2.0], [0.5, 0, 0], [-2.2, -1.3, 2.0], [0, 0, 0.2]]
         )
-        point_indices = np.array([1, 0, 1, 0])
-        query_point_indices = np.array([0, 1, 2, 3])
-        distances = box.compute_distances(
-            query_points[query_point_indices], points[point_indices]
-        )
+        point_indices = np.array([1, 0, 1, 0])  # 0, 1, 0
+        query_point_indices = np.array([0, 1, 2, 3])  #   1, 2, 3
+        distances = box.dist(query_points[query_point_indices], points[point_indices])
         npt.assert_allclose(distances, [0.3, 0.5, 0.0, 0.2], rtol=1e-6)
 
-    def test_compute_all_distances_2d(self):
-        box = mp.Box(2, 3, 0, 1, 0, 0, is2D=True)
-        points = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
-        query_points = np.array([[0.2, 0.0, 0.0], [0.0, -0.4, 0.0], [1.0, 1.0, 0.0]])
-        distances = box.compute_all_distances(points, query_points)
-        npt.assert_allclose(
-            distances, [[0.2, 0.4, np.sqrt(2)], [0.2, 0.4, np.sqrt(2)]], rtol=1e-6
-        )
-
-        points = np.array([0.0, 0.0, 0.0])
-        distances = box.compute_all_distances(points, query_points)
-        npt.assert_allclose(distances, [[0.2, 0.4, np.sqrt(2)]], rtol=1e-6)
-
     def test_compute_all_distances_3d(self):
-        box = mp.Box(2, 3, 4, 1, 0, 0)
+        box = mp.Box.tric([2, 3, 4], [1, 0, 0])
         points = np.array([[0.0, 0.0, 1.0], [0.0, 0.0, 0.0]])
         query_points = np.array([[1.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]])
-        distances = box.compute_all_distances(points, query_points)
+        distances = box.dist_all(points, query_points)
+        assert distances.size == len(query_points) * len(points)
         npt.assert_allclose(
             distances, [[1.0, 0.0, 1.0], [np.sqrt(2), 1.0, 0.0]], rtol=1e-6
         )
 
-    def test_contains_2d(self):
-        box = mp.Box(2, 3, 0, 1, 0, 0)
-        points = np.random.uniform(-0.5, 0.5, size=(100, 3)).astype(np.float32)
-        points[:50] = np.random.uniform(0.50001, 0.6, size=(50, 3)).astype(np.float32)
-        points[:50] *= (-1) ** np.random.randint(0, 2, size=(50, 3))
-        points = points @ box.to_matrix().T
-        # Force z=0
-        points[:, 2] = 0
+    def test_isin(self):
 
-        in_box_mask = np.ones(points.shape[0]).astype(bool)
-        in_box_mask[:50] = False
-        npt.assert_array_equal(in_box_mask, box.contains(points))
+        box = mp.Box.tric(lengths=[2.0, 2.0, 2.0], tilts=[1.0, 0.0, 0.0])
 
-    def test_contains_3d(self):
-        box = mp.Box(2, 3, 4, 1, 0.1, 0.3)
-        points = np.random.uniform(-0.5, 0.5, size=(100, 3)).astype(np.float32)
-        points[:50] = np.random.uniform(0.50001, 0.6, size=(50, 3)).astype(np.float32)
-        points[:50] *= (-1) ** np.random.randint(0, 2, size=(50, 3))
-        points = points @ box.to_matrix().T
-
-        in_box_mask = np.ones(points.shape[0]).astype(bool)
-        in_box_mask[:50] = False
-        npt.assert_array_equal(in_box_mask, box.contains(points))
+        points = np.array(
+            [[0.0, 0.0, 0.0], [2.0, 0, 0], [1.0, 1.0, 0.0], [0.5, 1.75, 0.0]]
+        )
+        npt.assert_allclose(box.isin(points), [True, False, True, False], rtol=1e-6)

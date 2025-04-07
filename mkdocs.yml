@@ -1,36 +1,75 @@
-site_name: MolPy
+site_name: molpy
+repo_name: molcrafts/molpot
+repo_url: https://github.com/molcrafts/molpy
 
-site_url: https://github.com/molcrafts/molpy
+copyright: Copyright &copy; 2024 - 2025 Jichen Li
+
 theme:
   name: material
-  features:
-    - navigation.instant
-    - navigation.instant.progress
-    - navigation.tracking
-    - navigation.tabs
   palette:
     - scheme: default
       primary: "teal"
       accent: "light blue"
-      background: "#f9f9f9"  # 浅米白
-      text: "#333333"  # 深灰色
-      surface: "#ffffff"  # 纯白色
+      background: "#f9f9f9"
+      text: "#333333"
+      surface: "#ffffff"
+      toggle:
+        icon: material/brightness-7 
+        name: Switch to dark mode
     - scheme: slate
       primary: "teal"
       accent: "light blue"
       background: "#f3f3f3"  # 更深一点的浅灰色
       text: "#444444"  # 较深的文本灰
       surface: "#fefefe"  # 几乎白色
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
 
-markdown_extensions:
-  - pymdownx.arithmatex:
-      generic: true
-
-extra_javascript:
-  - assets/js/mathjax.js
-  - https://polyfill.io/v3/polyfill.min.js?features=es6
-  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.code.annotate
 
 plugins:
-- search
-- mkdocstrings
+  - search
+  - mkdocstrings
+
+nav:
+  - Home: index.md
+  - Getting Started: 
+    - Core:
+      - Box: start/core/box.md
+
+markdown_extensions:
+  - admonition
+  - codehilite
+  - footnotes
+  - md_in_html
+  - meta
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.blocks.caption
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+

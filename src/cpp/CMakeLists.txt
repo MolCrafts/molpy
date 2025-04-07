@@ -10,7 +10,6 @@ project(
 
 option(MOLCPP_BUILD_TESTS "Build the tests" ON)
 
-
 add_library(molcpp)
 
 file(GLOB_RECURSE sources ${PROJECT_SOURCE_DIR}/src/*.cpp)
@@ -30,6 +29,20 @@ target_include_directories(
 
 find_package(xtl REQUIRED)
 find_package(xtensor REQUIRED)
+add_definitions(-DHAVE_CBLAS=1)
+
+if (WIN32)
+    find_package(OpenBLAS REQUIRED)
+    set(BLAS_LIBRARIES ${CMAKE_INSTALL_PREFIX}${OpenBLAS_LIBRARIES})
+else()
+    find_package(BLAS REQUIRED)
+    find_package(LAPACK REQUIRED)
+endif()
+
+message(STATUS "BLAS VENDOR:    " ${BLA_VENDOR})
+message(STATUS "BLAS LIBRARIES: " ${BLAS_LIBRARIES})
+
+target_link_libraries(molcpp PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
 
 target_include_directories(
     molcpp

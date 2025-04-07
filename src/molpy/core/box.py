@@ -18,80 +18,400 @@ class Box(Region, PeriodicBoundary):
     def __init__(
         self,
         matrix: np.ndarray | None = None,
-        pbc: np.ndarray = np.zeros(3, dtype=bool),
+        pbc: np.ndarray = np.ones(3, dtype=bool),
         origin: np.ndarray = np.zeros(3),
     ):
+        """
+        Initialize a Box object.
+
+        Parameters:
+            matrix (np.ndarray | None, optional): A 3x3 matrix representing the box dimensions. 
+                If None or all elements are zero, a zero matrix is used. If a 1D array of shape (3,) 
+                is provided, it is converted to a diagonal matrix. Defaults to None.
+            pbc (np.ndarray, optional): A 1D boolean array of shape (3,) indicating periodic boundary 
+                conditions along each axis. Defaults to an array of ones (True for all axes).
+            origin (np.ndarray, optional): A 1D array of shape (3,) representing the origin of the box. 
+                Defaults to an array of zeros.
+        """
         if matrix is None or np.all(matrix == 0):
             self._matrix = np.zeros((3, 3))
         else:
             _matrix = np.asarray(matrix)
-            if _matrix.shape == (3, ):
+            if _matrix.shape == (3,):
                 _matrix = np.diag(_matrix)
             self._matrix = Box.check_matrix(_matrix)
         self._pbc = pbc
-        self._style = self.calc_style_from_matrix(self._matrix)
         self._origin = origin
 
     def __repr__(self):
         match self.style:
             case Box.Style.FREE:
-                return "<Box: Free>"
+                return "<Free Box>"
             case Box.Style.ORTHOGONAL:
-                return f"<Box: Orthogonal: {self.lengths}>"
+                return f"<Orthogonal Box: {self.lengths}>"
             case Box.Style.TRICLINIC:
-                return f"<Box: Triclinic: {self._matrix}>"
+                return f"<Triclinic Box: {self.lengths}, {self.tilts}>"
         return "<Box>"
-            
+
+    def __mul__(self, other: float):
+        _matrix = self._matrix * other
+        return Box(_matrix, self._pbc, self._origin)
+    
+    def __rmul__(self, other: float):
+        _matrix = self._matrix * other
+        return Box(_matrix, self._pbc, self._origin)
+
+    def __eq__(self, value: "Box"):
+        return np.allclose(self._matrix, value.matrix) and np.allclose(
+            self._origin, value.origin
+        ) and np.allclose(self._pbc, value.pbc)
+
+    def plot(self):
+        """
+        Plot the box representation. This method is a placeholder and should be implemented
+        to visualize the box in 3D space.
+        """
+        ...
+
+    def to_dict(self) -> dict:
+        return {
+            "xlo": self.xlo,
+            "xhi": self.xhi,
+            "ylo": self.ylo,
+            "yhi": self.yhi,
+            "zlo": self.zlo,
+            "zhi": self.zhi,
+            "xy": self.xy,
+            "xz": self.xz,
+            "yz": self.yz,
+            "x_pbc": self._pbc[0],
+            "y_pbc": self._pbc[1],
+            "z_pbc": self._pbc[2],
+        }
+
     @classmethod
-    def cubic(cls, length: float, pbc: np.ndarray = np.zeros(3, dtype=bool), origin: np.ndarray = np.zeros(3), central: bool=False) -> "Box":
+    def cubic(
+        cls,
+        length: float,
+        pbc: np.ndarray = np.ones(3, dtype=bool),
+        origin: np.ndarray = np.zeros(3),
+        central: bool = False,
+    ) -> "Box":
         if central:
-            origin = np.full(3, length / 2)
+            origin = np.full(3, -length / 2)
         return cls(np.diag(np.full(3, length)), pbc, origin)
-            
+
+    @classmethod
+    def orth(
+        cls,
+        lengths: np.ndarray,
+        pbc: np.ndarray = np.ones(3, dtype=bool),
+        origin: np.ndarray = np.zeros(3),
+        central: bool = False,
+    ) -> "Box":
+        if central:
+            origin = np.zeros(3) - np.asarray(lengths) / 2
+        return cls(np.diag(lengths), pbc, origin)
+
+    @classmethod
+    def tric(
+        cls,
+        lengths: np.ndarray,
+        tilts: np.ndarray,
+        pbc: np.ndarray = np.ones(3, dtype=bool),
+        origin: np.ndarray = np.zeros(3),
+        central: bool = False,
+    ) -> "Box":
+        if central:
+            origin = np.asarray(lengths) / 2
+        return cls(cls.calc_matrix_from_size_tilts(lengths, tilts), pbc, origin)
+    
+    @classmethod
+    def from_box(self, box: "Box") -> "Box":
+        """
+        Create a new box from an existing box.
+
+        Args:
+            box (Box): The existing box.
+
+        Returns:
+            Box: A new box with the same properties as the existing box.
+        """
+        return Box(box.matrix, box.pbc, box.origin)
+
     @property
     def xlo(self) -> float:
-        return 0 - self._origin[0]
-    
+        """
+        Calculate the lower bound of the box along the x-axis.
+
+        Returns:
+            float: The x-coordinate of the lower bound, calculated as the 
+            negative of the x-component of the origin.
+        """
+        return self._origin[0]
+
     @property
     def xhi(self) -> float:
+        """
+        Calculate the upper boundary of the box along the x-axis.
+
+        Returns:
+            float: The x-coordinate of the upper boundary of the box, 
+            calculated as the difference between the first element of 
+            the matrix's first row and the x-coordinate of the origin.
+        """
         return self._matrix[0, 0] - self._origin[0]
-    
+
     @property
     def ylo(self) -> float:
-        return 0 - self._origin[1]
-    
+        """
+        Get the lower boundary of the box along the y-axis.
+
+        Returns:
+            float: The negative value of the y-coordinate of the origin.
+        """
+        return self._origin[1]
+
     @property
     def yhi(self) -> float:
+        """
+        Calculate the upper boundary of the box along the y-axis.
+
+        Returns:
+            float: The upper boundary value of the box in the y-dimension,
+            calculated as the difference between the y-component of the
+            matrix and the y-component of the origin.
+        """
         return self._matrix[1, 1] - self._origin[1]
-    
+
     @property
     def zlo(self) -> float:
-        return 0 - self._origin[2]
-    
+        """
+        Calculate the lower boundary of the box along the z-axis.
+
+        Returns:
+            float: The z-coordinate of the lower boundary, calculated as the 
+            negative value of the third component of the origin vector.
+        """
+        return self._origin[2]
+
     @property
     def zhi(self) -> float:
+        """
+        Calculate the z-component of the box's upper boundary.
+
+        Returns:
+            float: The z-coordinate of the upper boundary, calculated as the 
+            difference between the z-component of the matrix and the z-component 
+            of the origin.
+        """
         return self._matrix[2, 2] - self._origin[2]
 
     @property
     def style(self) -> Style:
+        """
+        Determine the style of the box based on its matrix.
+
+        Returns:
+            Style: The style of the box (FREE, ORTHOGONAL, or TRICLINIC).
+        """
         return self.calc_style_from_matrix(self._matrix)
 
     @property
     def pbc(self) -> np.ndarray:
+        """
+        Get the periodic boundary conditions of the box.
+
+        Returns:
+            np.ndarray: A boolean array indicating periodicity along each axis.
+        """
         return self._pbc
-    
+
     @property
     def matrix(self) -> np.ndarray:
+        """
+        Get the matrix representation of the box.
+
+        Returns:
+            np.ndarray: A 3x3 matrix representing the box dimensions.
+        """
         return self._matrix
-    
+
     @property
     def volume(self) -> float:
-        # general box volume, maybe triclinic
-        # matrix is parallel to the coordinate axis
+        """
+        Calculate the volume of the box.
+
+        Returns:
+            float: The volume of the box.
+        """
         return np.abs(np.linalg.det(self._matrix))
+    
+    @property
+    def origin(self) -> np.ndarray:
+        return self._origin
+    
+    @origin.setter
+    def origin(self, value: np.ndarray):
+        value = np.asarray(value)
+        assert value.shape == (3,), "origin must be (3,)"
+        self._origin = value
+
+    @property
+    def lx(self) -> float:
+        """
+        Get the length of the box along the x-axis.
+
+        Returns:
+            float: The length of the box in the x-direction, derived from the 
+            first element of the matrix representing the box dimensions.
+        """
+        return self._matrix[0, 0]
+
+    @lx.setter
+    def lx(self, value: float):
+        self._matrix[0, 0] = value
+
+    @property
+    def ly(self) -> float:
+        """
+        Get the length of the simulation box along the y-axis.
+
+        Returns:
+            float: The length of the box in the y-direction.
+        """
+        return self._matrix[1, 1]
+
+    @ly.setter
+    def ly(self, value: float):
+        self._matrix[1, 1] = value
+
+    @property
+    def lz(self) -> float:
+        """
+        Get the length of the simulation box along the z-axis.
+
+        Returns:
+            float: The length of the box in the z-direction.
+        """
+        return self._matrix[2, 2]
+
+    @lz.setter
+    def lz(self, value: float):
+        self._matrix[2, 2] = value
+
+    @property
+    def l(self) -> np.ndarray:
+        """
+        Get the lengths of the box along each axis.
+
+        Returns:
+            np.ndarray: A 1D array containing the lengths of the box along 
+            the x, y, and z axes.
+        """
+        return self._matrix.diagonal()
+
+    @property
+    def l_inv(self) -> np.ndarray:
+        return 1 / self.l
+
+    @property
+    def xy(self) -> float:
+        """
+        Retrieve the xy component of the matrix.
+
+        Returns:
+            float: The value at the (0, 1) position in the matrix.
+        """
+        return self._matrix[0, 1]
+
+    @xy.setter
+    def xy(self, value: float):
+        self._matrix[0, 1] = value
+
+    @property
+    def xz(self) -> float:
+        return self._matrix[0, 2]
+
+    @xz.setter
+    def xz(self, value: float):
+        self._matrix[0, 2] = value
+
+    @property
+    def yz(self) -> float:
+        return self._matrix[1, 2]
+
+    @yz.setter
+    def yz(self, value: float):
+        self._matrix[1, 2] = value
+
+    @property
+    def a(self) -> np.array:
+        return self._matrix[:, 0]
+
+    @property
+    def b(self) -> np.array:
+        return self._matrix[:, 1]
+
+    @property
+    def c(self) -> np.array:
+        return self._matrix[:, 2]
+
+    @property
+    def periodic(self) -> bool:
+        return self._pbc.all()
+
+    @periodic.setter
+    def periodic(self, value: bool | list[bool]):
+        if isinstance(value, list):
+            assert len(value) == 3, "value must be list of length 3"
+            value = np.array(value)
+        else:
+            value = np.full(3, value)
+        self._pbc = value
+
+    @property
+    def periodic_x(self) -> bool:
+        return self._pbc[0]
+    
+    @periodic_x.setter
+    def periodic_x(self, value: bool):
+        self._pbc[0] = value
+
+    @property
+    def periodic_y(self) -> bool:
+        return self._pbc[1]
+    
+    @periodic_y.setter
+    def periodic_y(self, value: bool):
+        self._pbc[1] = value
+
+    @property
+    def periodic_z(self) -> bool:
+        return self._pbc[2]
+    
+    @periodic_z.setter
+    def periodic_z(self, value: bool):
+        self._pbc[2] = value
+
+    @property
+    def tilts(self) -> np.ndarray:
+        return np.array([self.xy, self.xz, self.yz])
 
     @staticmethod
     def check_matrix(matrix: np.ndarray) -> np.ndarray:
+        """
+        Validate the box matrix.
+
+        Args:
+            matrix (np.ndarray): A 3x3 matrix to validate.
+
+        Returns:
+            np.ndarray: The validated matrix.
+
+        Raises:
+            AssertionError: If the matrix is not valid.
+        """
         assert isinstance(matrix, np.ndarray), "matrix must be np.ndarray"
         assert matrix.shape == (3, 3), "matrix must be (3, 3)"
         assert np.linalg.det(matrix) != 0, "matrix must be non-singular"
@@ -103,12 +423,19 @@ class Box(Region, PeriodicBoundary):
             case Box.Style.FREE:
                 return np.zeros(3)
             case Box.Style.ORTHOGONAL | Box.Style.TRICLINIC:
-                return self.calc_lengths_from_matrix(self._matrix)
+                return self.calc_lengths_angles_from_matrix(self._matrix)[0]
+        raise ValueError("Invalid box style")
 
+    @lengths.setter
+    def lengths(self, value: np.ndarray):
+        value = np.asarray(value)
+        assert value.shape == (3,), ValueError("lengths must be (3,)")
+        matrix = self.calc_matrix_from_lengths_angles(value, self.angles)
+        self._matrix = matrix
 
     @property
     def angles(self) -> np.ndarray:
-        return self.calc_angles_from_matrix(self._matrix)
+        return self.calc_lengths_angles_from_matrix(self._matrix)[1]
 
     @staticmethod
     def general2restrict(matrix: np.ndarray) -> np.ndarray:
@@ -170,27 +497,49 @@ class Box(Region, PeriodicBoundary):
 
     @staticmethod
     def calc_matrix_from_lengths_angles(
-        lengths: np.ndarray, angles: np.ndarray
+        abc: np.ndarray, angles: np.ndarray
     ) -> np.ndarray:
         """
-        Get restricted triclinic box matrix from lengths and angles
+        Compute restricted triclinic box matrix from lengths and angles.
 
         Args:
-            lengths (np.ndarray): lengths of box edges
-            angles (np.ndarray): angles between box edges in degree
+            abc (np.ndarray): [a, b, c] lattice vector lengths
+            angles (np.ndarray): [alpha, beta, gamma] in degrees (angles between (b,c), (a,c), (a,b))
 
         Returns:
-            np.ndarray: restricted triclinic box matrix
+            np.ndarray: 3x3 box matrix with lattice vectors as columns: [a | b | c]
         """
-        a, b, c = lengths
-        alpha, beta, gamma = np.deg2rad(angles)
+        a, b, c = abc
+        angles = alpha, beta, gamma = np.deg2rad(angles)
+        cos_a, cos_b, cos_c = np.cos(angles)
+
+        # Optional: volume sanity check
+        cos_check = cos_a**2 + cos_b**2 + cos_c**2 - 2 * cos_a * cos_b * cos_c
+        if cos_check >= 1.0:
+            raise ValueError(f"Invalid box: angles produce non-physical volume. abc={abc}, angles={angles}")
+
+        if not (0 < alpha < np.pi):
+            raise ValueError("alpha must be in (0, 180)")
+        if not (0 < beta < np.pi):
+            raise ValueError("beta must be in (0, 180)")
+        if not (0 < gamma < np.pi):
+            raise ValueError("gamma must be in (0, 180)")
+
+        # Construct box
         lx = a
-        ly = b * np.sin(gamma)
-        xy = b * np.cos(gamma)
-        xz = c * np.cos(beta)
-        yz = (b * c * np.cos(alpha) - xy * xz) / ly
-        lz = np.sqrt(c**2 - xz**2 - yz**2)
-        return np.array([[lx, xy, xz], [0, ly, yz], [0, 0, lz]])
+        xy = b * cos_c
+        xz = c * cos_b
+        ly = np.sqrt(b**2 - xy**2)
+        yz = (b * c * cos_a - xy * xz) / ly
+        tmp = c**2 - xz**2 - yz**2
+        lz = np.sqrt(tmp)
+
+        return np.array([
+            [lx, xy, xz],
+            [0.0, ly, yz],
+            [0.0, 0.0, lz]
+        ])
+
 
     @staticmethod
     def calc_matrix_from_size_tilts(sizes, tilts) -> np.ndarray:
@@ -209,28 +558,79 @@ class Box(Region, PeriodicBoundary):
         return np.array([[lx, xy, xz], [0, ly, yz], [0, 0, lz]])
 
     @staticmethod
-    def calc_lengths_from_matrix(matrix: np.ndarray) -> np.ndarray:
-        return np.linalg.norm(matrix, axis=1)
+    def calc_lengths_angles_from_matrix(matrix: np.ndarray) -> np.ndarray:
+        """
+        Calculate the lengths of the box edges and angles from its matrix.
 
-    @staticmethod
-    def calc_angles_from_matrix(matrix: np.ndarray) -> np.ndarray:
-        a = np.linalg.norm(matrix[:, 0])
-        b = np.linalg.norm(matrix[:, 1])
-        c = np.linalg.norm(matrix[:, 2])
-        alpha = np.arccos((matrix[:, 1] @ matrix[:, 2]) / b / c)
-        beta = np.arccos((matrix[:, 0] @ matrix[:, 2]) / a / c)
-        gamma = np.arccos((matrix[:, 0] @ matrix[:, 1]) / a / b)
-        return np.rad2deg(np.array([alpha, beta, gamma]))
+        Args:
+            matrix (np.ndarray): A 3x3 matrix representing the box.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: lengths and angles
+        """
+
+        lx = matrix[0, 0]
+        ly = matrix[1, 1]
+        lz = matrix[2, 2]
+        xy = matrix[0, 1]
+        xz = matrix[0, 2]
+        yz = matrix[1, 2]
+
+        a = lx
+        b = (ly**2 + xy**2) ** 0.5
+        c = (lz**2 + xz**2 + yz**2) ** 0.5
+        cos_a = (xy*xz + ly*yz) / (b * c)
+        cos_b = xz / c
+        cos_c = xy / b
+        return np.array([a, b, c]), np.rad2deg(np.arccos([cos_a, cos_b, cos_c]))
 
     @staticmethod
     def calc_style_from_matrix(matrix: np.ndarray) -> Style:
+        """
+        Determine the style of the box based on its matrix.
 
-        if np.allclose(matrix, np.eye(3)):
+        Args:
+            matrix (np.ndarray): A 3x3 matrix representing the box.
+
+        Returns:
+            Style: The style of the box (FREE, ORTHOGONAL, or TRICLINIC).
+
+        Raises:
+            ValueError: If the matrix does not correspond to a valid style.
+        """
+        if np.allclose(matrix, np.zeros(3)):
             return Box.Style.FREE
         elif np.allclose(matrix, np.diag(np.diagonal(matrix))):
             return Box.Style.ORTHOGONAL
-        elif np.tril(matrix, 1).sum() == 0:
+        elif (matrix[np.tril_indices(3, -1)] == 0).all() and (
+            matrix[np.triu_indices(3, 1)] != 0
+        ).any():
             return Box.Style.TRICLINIC
+        else:
+            raise ValueError("Invalid box matrix")
+
+    @classmethod
+    def from_lengths_angles(cls, lengths: np.ndarray, angles: np.ndarray):
+        """
+        Get box matrix from lengths and angles
+
+        Args:
+            lengths (np.ndarray): lengths of box edges
+            angles (np.ndarray): angles between box edges in degree
+
+        Returns:
+            np.ndarray: box matrix
+        """
+        return cls(cls.calc_matrix_from_lengths_angles(lengths, angles))
+
+    def to_lengths_angles(self) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Get lengths and angles from box matrix
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: lengths and angles
+        """
+        return self.calc_lengths_angles_from_matrix(self._matrix)
 
     def set_lengths(self, lengths: np.ndarray):
         self._matrix = self.calc_matrix_from_lengths_angles(lengths, self.angles)
@@ -268,31 +668,102 @@ class Box(Region, PeriodicBoundary):
                 return np.array([np.dot(na, a), np.dot(nb, b), np.dot(nc, c)])
 
     def wrap(self, xyz: np.ndarray) -> np.ndarray:
-
+        xyz = np.asarray(xyz)
         match self.style:
             case Box.Style.FREE:
-                return self.wrap_free(xyz)
+                wrapped = self.wrap_free(xyz)
             case Box.Style.ORTHOGONAL:
-                return self.wrap_orthogonal(xyz)
+                wrapped = self.wrap_orthogonal(xyz)
             case Box.Style.TRICLINIC:
-                return self.wrap_triclinic(xyz)
+                wrapped = self.wrap_triclinic(xyz)
+            case _:
+                raise ValueError(f"Unknown box style: {self.style}")
+        return wrapped
 
     def wrap_free(self, xyz: np.ndarray) -> np.ndarray:
+        """
+        Wrap coordinates for a free box style.
+
+        Args:
+            xyz (np.ndarray): The coordinates to wrap.
+
+        Returns:
+            np.ndarray: The wrapped coordinates.
+        """
         return xyz
 
     def wrap_orthogonal(self, xyz: np.ndarray) -> np.ndarray:
-        lengths = self.lengths
+        """
+        Wrap coordinates for an orthogonal box style.
+
+        Args:
+            xyz (np.ndarray): The coordinates to wrap.
+
+        Returns:
+            np.ndarray: The wrapped coordinates.
+        """
+        lengths = self.lengths  # Should be shape (3,)
         return xyz - np.floor(xyz / lengths) * lengths
 
     def wrap_triclinic(self, xyz: np.ndarray) -> np.ndarray:
-        fractional = np.dot(self.get_inv(), xyz.T)
-        return np.dot(self._matrix, fractional - np.floor(fractional)).T
+        """
+        Wrap coordinates for a triclinic box style.
+
+        Args:
+            xyz (np.ndarray): The coordinates to wrap.
+
+        Returns:
+            np.ndarray: The wrapped coordinates.
+        """
+        xyz = np.atleast_2d(xyz)  # Ensure xyz is a 2D array
+        frac = self.make_fractional(xyz)
+        frac_wrapped = frac - np.floor(frac)
+        return self.make_absolute(frac_wrapped)
+    
+    def unwrap(self, xyz: np.ndarray, image: np.ndarray) -> np.ndarray:
+        """
+        Unwrap the coordinates of a particle based on its image.
+
+        Args:
+            xyz (np.ndarray): The coordinates of the particle.
+            image (np.ndarray): The image of the particle.
+
+        Returns:
+            np.ndarray: The unwrapped coordinates.
+        """
+        return xyz + image @ self._matrix.T
+    
+    def get_images(self, xyz: np.ndarray) -> np.ndarray:
+        """
+        Get the image of a particle based on its coordinates.
+
+        Args:
+            xyz (np.ndarray): The coordinates of the particle.
+
+        Returns:
+            np.ndarray: The image of the particle.
+        """
+        return np.round(self.make_fractional(xyz)).astype(int)
 
     def get_inv(self) -> np.ndarray:
+        """
+        Get the inverse of the box matrix.
+
+        Returns:
+            np.ndarray: The inverse of the box matrix.
+        """
         return np.linalg.inv(self._matrix)
 
     def diff_dr(self, dr: np.ndarray) -> np.ndarray:
+        """
+        Calculate the difference vector considering periodic boundary conditions.
 
+        Args:
+            dr (np.ndarray): The difference vector.
+
+        Returns:
+            np.ndarray: The adjusted difference vector.
+        """
         match self.style:
             case Box.Style.FREE:
                 return dr
@@ -302,20 +773,118 @@ class Box(Region, PeriodicBoundary):
                 return np.dot(self._matrix, fractional.T).T
 
     def diff(self, r1: np.ndarray, r2: np.ndarray) -> np.ndarray:
+        """
+        Calculate the difference between two points considering periodic boundary conditions.
+
+        Args:
+            r1 (np.ndarray): The first point.
+            r2 (np.ndarray): The second point.
+
+        Returns:
+            np.ndarray: The difference vector.
+        """
         return self.diff_dr(r1 - r2)
+    
+    def diff_all(self, r1: np.ndarray, r2: np.ndarray) -> np.ndarray:
+        """
+        Calculate the difference between all pairs of points in two sets.
 
-    def make_fractional(self, r: np.ndarray) -> np.ndarray:
-        return np.dot(r, self.get_inv())
+        Args:
+            r1 (np.ndarray): The first set of points.
+            r2 (np.ndarray): The second set of points.
 
-    def make_absolute(self, r: np.ndarray) -> np.ndarray:
-        return np.dot(r, self._matrix)
+        Returns:
+            np.ndarray: The difference vectors for all pairs.
+        """
+        all_dr = r1[:, np.newaxis, :] - r2[np.newaxis, :, :]
+        original_shape = all_dr.shape
+        all_dr = all_dr.reshape(-1, 3)
+        all_dr = self.diff_dr(all_dr)
+        all_dr = all_dr.reshape(original_shape)
+        return all_dr
 
-    def isin(self, xyz: np.ndarray) -> bool:
-        return np.all(np.abs(self.wrap(xyz) - xyz) < 1e-5)
+    def dist(self, r1: np.ndarray, r2: np.ndarray) -> np.ndarray:
+        """
+        Calculate the distance between two points.
+
+        Args:
+            r1 (np.ndarray): The first point.
+            r2 (np.ndarray): The second point.
+
+        Returns:
+            np.ndarray: The distance between the points.
+        """
+        dr = self.diff(r1, r2)
+        return np.linalg.norm(dr, axis=1)
+    
+    def dist_all(self, r1: np.ndarray, r2: np.ndarray) -> np.ndarray:
+        """
+        Calculate the distances between all pairs of points in two sets.
+
+        Args:
+            r1 (np.ndarray): The first set of points.
+            r2 (np.ndarray): The second set of points.
+
+        Returns:
+            np.ndarray: The distances for all pairs.
+        """
+        dr = self.diff_all(r1, r2)
+        return np.linalg.norm(dr, axis=-1)
+
+    def make_fractional(self, xyz: np.ndarray) -> np.ndarray:
+        """
+        Convert absolute coordinates to fractional coordinates.
+
+        Args:
+            xyz (np.ndarray): The absolute coordinates.
+
+        Returns:
+            np.ndarray: The fractional coordinates.
+        """
+        return (xyz - self._origin) @ self.get_inv().T
+
+    def make_absolute(self, xyz: np.ndarray) -> np.ndarray:
+        """
+        Convert fractional coordinates to absolute coordinates.
+
+        Args:
+            xyz (np.ndarray): The fractional coordinates.
+
+        Returns:
+            np.ndarray: The absolute coordinates.
+        """
+        return xyz @ self._matrix.T + self._origin
+
+    def isin(self, xyz: np.ndarray) -> np.ndarray:
+        """
+        Check if points are inside the box.
+
+        Args:
+            xyz (np.ndarray): The coordinates to check.
+
+        Returns:
+            np.ndarray: A boolean array indicating whether each point is inside the box.
+        """
+        frac = self.make_fractional(xyz)
+        return np.all((frac >= 0) & (frac < 1), axis=1)
 
     def merge(self, other: "Box") -> "Box":
-        """ return common space of two boxes """
+        """
+        Merge two boxes to find their common space.
+
+        Args:
+            other (Box): The other box to merge with.
+
+        Returns:
+            Box: A new box representing the common space.
+        """
         return Box(matrix=other.matrix)
-        
+
     def volumn(self):
+        """
+        Calculate the volume of the box.
+
+        Returns:
+            float: The volume of the box.
+        """
         return np.linalg.det(self._matrix)

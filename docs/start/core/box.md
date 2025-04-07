@@ -1,3 +1,20 @@
+# Simulation Box
+
+`Box` is a class in `molpy` that represents the simulation box. It is used to define the periodic boundary conditions and to store the edge vectors of the box. The box can be orthogonal or triclinic, and the class provides methods to convert between different representations of the box.
+
+``` python
+import molpy as mp
+
+box = Box()  # create a undefined box as placeholder
+box = Box([
+    [10, 0, 0],
+    [0, 10, 0],
+    [0, 0, 10]
+])  # define box with matrix
+box = Box.cubic(10)  # create a cubic box with length 10
+box = Box.orth(10)  # create an orthogonal box with length 10
+```
+
 # Representation of simulation box
 
 Simulation box is a fundamental concept in molecular simulations. It is a parallelepiped that contains all the atoms, and also used to define the periodic boundary conditions. Orthogonal box is the most common type, which edges are perpendicular to each other. Triclinic box's edges are not perpendicular to each other. The representation of those two boxes can be unified by one class, `Box`. To make tutorial more clear, we split the discussion into two parts.
