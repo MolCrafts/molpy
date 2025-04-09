@@ -45,6 +45,21 @@ nav:
   - Getting Started: 
     - Core:
       - Box: start/core/box.md
+      - Forcefield: start/core/forcefield.md
+      - Frame: start/core/frame.md
+      - Trajectory: start/core/trajectory.md
+      - Region: start/core/region.md
+      - Structure: start/core/struct.md
+      - System: start/core/system.md
+  - API Reference:
+    - Core:
+      - Box: reference/core/box.md
+      - Forcefield: reference/core/forcefield.md
+      - Frame: reference/core/frame.md
+      - Trajectory: reference/core/trajectory.md
+      - Region: reference/core/region.md
+      - Structure: reference/core/struct.md
+      - System: reference/core/system.md
 
 markdown_extensions:
   - admonition

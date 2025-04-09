@@ -6,6 +6,43 @@ daltons = 1
 
 
 class Element:
+    """
+    The `Element` class represents chemical elements and provides functionality to retrieve
+    element information by name, symbol, or atomic number. It also includes a method to
+    initialize a predefined set of elements and their properties.
+
+    Attributes:
+        _elements (dict[str, Element]): A dictionary storing predefined elements, where
+            keys are element names and values are `Element` instances.
+
+    Methods:
+        __new__(self, name_or_symbol_or_number: str | int) -> "Element":
+            Retrieves an `Element` instance based on its name, symbol, or atomic number.
+            Raises a `KeyError` if the element is not found.
+
+        initialize(cls):
+            Class method to initialize the `_elements` dictionary with predefined elements
+            and their properties, such as atomic number, name, symbol, and atomic mass.
+
+        get_symbols(cls, maybe_atomic_number: list[str | int]) -> list[str]:
+            Class method that takes a list of element names, symbols, or atomic numbers
+            and returns a list of their corresponding symbols.
+
+    Inner Classes:
+        Element:
+            A dataclass representing the properties of a chemical element.
+
+            Attributes:
+                number (int): The atomic number of the element.
+                name (str): The name of the element.
+                symbol (str): The chemical symbol of the element.
+                mass (float): The atomic mass of the element.
+
+            Methods:
+                __repr__(self) -> str:
+                    Returns a string representation of the element in the format
+                    `<Element {symbol}>`.
+    """
 
     @dataclass
     class Element:
@@ -170,7 +207,8 @@ class Element:
         )
 
     @classmethod
-    def get_symbols(cls, maybe_atomic_number: list[str|int]) -> list[str]:
+    def get_symbols(cls, maybe_atomic_number: list[str | int]) -> list[str]:
         return [cls(int(e)).symbol for e in maybe_atomic_number]
+
 
 Element.initialize()

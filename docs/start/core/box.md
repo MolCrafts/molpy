@@ -3,19 +3,49 @@
 `Box` is a class in `molpy` that represents the simulation box. It is used to define the periodic boundary conditions and to store the edge vectors of the box. The box can be orthogonal or triclinic, and the class provides methods to convert between different representations of the box.
 
 ``` python
-import molpy as mp
-
-box = Box()  # create a undefined box as placeholder
-box = Box([
+box = mp.Box()  # create a undefined box as placeholder
+box = mp.Box([
     [10, 0, 0],
     [0, 10, 0],
     [0, 0, 10]
 ])  # define box with matrix
-box = Box.cubic(10)  # create a cubic box with length 10
-box = Box.orth(10)  # create an orthogonal box with length 10
+box = mp.Box.cubic(10)  # create a cubic box with length 10
+box = mp.Box.orth(10)  # create an orthogonal box with length 10
 ```
 
-# Representation of simulation box
+`Box`'s definition follows the LAMMPS convention. You can find more details in [this section](#representation-of-simulation-box). To access the box parameters, you can use the following attributes:
+
+```python
+box = mp.Box.tric([2, 3, 4], [1, 0, 0])
+
+# Equivalent LAMMPS representation:
+# xlo xhi: 0 2
+# ylo yhi: 0 3
+# zlo zhi: 0 4
+# xy xz yz: 1 0 0
+
+# Accessing box parameters
+print(box.xlo, box.xhi)  # 0 2
+print(box.ylo, box.yhi)  # 0 3
+print(box.zlo, box.zhi)  # 0 4
+print(box.xy, box.xz, box.yz)  # 1 0 0
+print(box.matrix)  # [[2, 1, 0], [0, 3, 0], [0, 0, 4]]
+```
+
+`Box` is a subclass of `Region` and `PeriodicBoundary`, which means it not only represents a parallelepiped region, but also can calculate image of atoms in the box. 
+
+```python
+box = mp.Box.tric([2, 3, 4], [1, 0, 0])
+r1 = np.array([[0, 0, 0], [3, 4, 5], [-1, -2, -3]])
+# wrap the coordinates of atoms in the box
+wrapped = box.wrap(r1)
+# or, calculate distances/vectors between atoms
+r2 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+diff = box.diff(r1, r2)
+dist = box.dist(r1, r2)
+```
+
+## Representation of simulation box
 
 Simulation box is a fundamental concept in molecular simulations. It is a parallelepiped that contains all the atoms, and also used to define the periodic boundary conditions. Orthogonal box is the most common type, which edges are perpendicular to each other. Triclinic box's edges are not perpendicular to each other. The representation of those two boxes can be unified by one class, `Box`. To make tutorial more clear, we split the discussion into two parts.
 

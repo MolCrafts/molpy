@@ -6,5 +6,6 @@ from .optimizer import *
 
 from . import io
 from . import op
+from . import region
 from .core.region import *
 from .core.units import Unit

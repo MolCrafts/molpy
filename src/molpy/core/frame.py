@@ -15,15 +15,16 @@ class Frame(dict):
         if data is not None:
             for key, value in data.items():
                 assert isinstance(value, (pd.DataFrame, pd.Series)) or isinstance(value, dict), TypeError("data must be dataframe-like, otherwise assign them by `Frame(name=object)` and call it by `frame.name`")
-                self[key] = pd.DataFrame(data=value)
+                if isinstance(value, dict):
+                    self[key] = pd.DataFrame(data=value)
+                else:
+                    self[key] = value
 
         for k, v in props.items():
             setattr(self, k, v)
 
-        self._box = props["box"] if "box" in props else None
-
     @classmethod
-    def From_frames(cls, others):
+    def from_frames(cls, others):
         frame = cls()
         for fkey in set([k for other in others for k in other.keys()]):
             frame[fkey] = pd.concat((other[fkey] for other in others), axis=0, ignore_index=True, sort=False)
@@ -35,12 +36,12 @@ class Frame(dict):
 
     @property
     def box(self):
-        return self._box
+        return self["box"]
 
     @box.setter
     def box(self, box: Box|None):
         assert isinstance(box, Box) or box is None, "box must be an instance of Box or None"
-        self._box = box
+        self["box"] = box
 
     @classmethod
     def concat(cls, frames: list["Frame"]) -> "Frame":
@@ -53,7 +54,7 @@ class Frame(dict):
         for key in frames[0].keys():
             if isinstance(frames[0][key], pd.DataFrame):
                 frame[key] = pd.concat(
-                    [frame[key] for frame in frames if key in frame]
+                    [f[key] for f in frames if key in f], ignore_index=True, sort=False
                 )
 
         return frame
@@ -200,10 +201,8 @@ class Frame(dict):
         if isinstance(key, str):
             return super().__getitem__(key)
         elif isinstance(key, tuple) and all(isinstance(k, str) for k in key):
-            if len(key) == 2:
-                return self[key[0]][key[1]]
             return self[key[0]][list(key[1:])]
-        if isinstance(key, (slice, pd.Series, np.ndarray)):
+        elif isinstance(key, (slice, pd.Series, np.ndarray)):
             mask = pd.Series(key, index=self["atoms"].index)
             atoms = self["atoms"][mask]
             atom_ids = atoms["id"]
@@ -241,5 +240,3 @@ class Frame(dict):
                 ),
                 box = self.box
             )
-        if isinstance(key, tuple):
-            return self[key[0]][list(key[1:])]

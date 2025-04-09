@@ -6,17 +6,18 @@ from typing import Iterator
 
 class LAMMPSForceFieldReader:
 
-    def __init__(self, script: Path, data: Path):
+    def __init__(self, scripts: Path | list[Path], data: Path):
 
-        self.script = script
+        self.scripts = scripts if isinstance(scripts, list) else [scripts]
         self.data = data
 
     def read(self, system) -> mp.ForceField:
 
         self.forcefield: mp.ForceField = system.forcefield
         lines = []
-        with open(self.script, "r") as f:
-            lines.extend(f.readlines())
+        for script in self.scripts:
+            with open(script, "r") as f:
+                lines.extend(f.readlines())
         with open(self.data, "r") as f:
             lines.extend(f.readlines())
         lines = filter(lambda line: line, map(LAMMPSForceFieldReader.sanitizer, lines))

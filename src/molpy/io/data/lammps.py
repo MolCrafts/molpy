@@ -12,9 +12,10 @@ from .base import DataReader, DataWriter
 
 class LammpsDataReader(DataReader):
 
-    def __init__(self, path: str | Path, atom_style="full", system: mp.System | None = None):
-        super().__init__(path, system)
+    def __init__(self, path: str | Path, atom_style="full", frame: mp.Frame | None = None):
+        super().__init__(path, frame)
         self.atom_style = atom_style
+        self._file = open(path, "r")
 
     @staticmethod
     def sanitizer(line: str) -> str:
@@ -22,7 +23,7 @@ class LammpsDataReader(DataReader):
 
     def read(self):
 
-        ff = self._system.forcefield
+        ff = mp.ForceField()
         if ff.n_atomstyles == 0:
             atom_style = ff.def_atomstyle(self.atom_style)
         else:
@@ -44,11 +45,9 @@ class LammpsDataReader(DataReader):
         else:
             improper_style = ff.improperstyles[0]
 
-        f = self._file
+        frame = self._frame
 
-        frame = mp.Frame()
-
-        lines = filter(lambda line: line, map(LammpsDataReader.sanitizer, f))
+        lines = filter(lambda line: line, map(LammpsDataReader.sanitizer, self._file))
 
         box = {
             "xlo": 0.0,
@@ -267,10 +266,8 @@ class LammpsDataReader(DataReader):
             )
         )
         frame.box = box
-        self._system.forcefield = ff
-        self._system.frame = frame
 
-        return self._system
+        return frame
 
 
 class LammpsDataWriter(DataWriter):
@@ -447,9 +444,10 @@ class LammpsDataWriter(DataWriter):
             f.write(f"{id} {type} {i} {j} {k} {l}\n")
 
 
-class LammpsMoleculeReader:
+class LammpsMoleculeReader(DataReader):
 
-    def __init__(self, file: str | Path):
+    def __init__(self, file: str | Path, system: mp.System | None = None):
+        super().__init__(file, system)
         self._path = Path(file)
         self.style = "full"
         with open(self._path, "r") as f:

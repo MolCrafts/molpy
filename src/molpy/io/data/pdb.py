@@ -1,14 +1,16 @@
 from pathlib import Path
 
+from .base import DataWriter, DataReader
 import numpy as np
 
 import molpy as mp
 from collections import defaultdict
 import pandas as pd
 
-class PDBReader:
+class PDBReader(DataReader):
 
-    def __init__(self, file: str | Path):
+    def __init__(self, file: str | Path, frame: mp.Frame | None = None):
+        super().__init__(path=file, frame=frame)
         self._file = Path(file)
 
     @staticmethod
@@ -17,9 +19,9 @@ class PDBReader:
 
     def read(self):
 
-        with open(self._file, "r") as f:
+        frame = self._frame
 
-            frame = mp.Frame()
+        with open(self._file, "r") as f:
 
             lines = filter(
                 lambda line: line.startswith("ATOM")
@@ -87,24 +89,18 @@ class PDBReader:
                     }
                 )
 
-            return mp.System(
-                frame=frame,
-                forcefield=mp.ForceField(),
-            )
+            return frame
 
+class PDBWriter(DataWriter):
 
-class PDBWriter:
+    def __init__(self, path: str | Path, frame: mp.Frame | None = None):
+        super().__init__(path=path, frame=frame)
 
-    def __init__(self, file: str | Path):
-        self._file = Path(file)
+    def write(self):
 
-    def write(self, system):
+        frame = self._frame
 
-        frame = system.frame
-
-        with open(self._file, "w") as f:
-
-            # atom_name_remap = {}
+        with open(self._path, "w") as f:
 
             for atom in frame["atoms"].itertuples(index=False):
                 serial = atom.id

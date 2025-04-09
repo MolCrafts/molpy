@@ -3,7 +3,6 @@ from .box import *
 from .frame import *
 from .forcefield import *
 from .topology import *
-from .neighborlist import *
 from .region import *
 from .system import *
 from .struct import *
