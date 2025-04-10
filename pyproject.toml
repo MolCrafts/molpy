@@ -40,13 +40,16 @@ dependencies = [
   "numpy",  # https://github.com/numpy/numpy
   "igraph",  # https://github.com/igraph/python-igraph
   "pint",  # https://github.com/hgrecco/pint
-  "pandas",  # 
+  "pandas",
   "lark"
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "ase"]
-test = ["pytest", "coverage"]
+dev = ["pytest", "coverage"]
+doc = [
+    "mkdocs",
+    "mkdocs-material"
+]
 
 [project.urls]
 Homepage = "https://github.com/MolCrafts/molpy"

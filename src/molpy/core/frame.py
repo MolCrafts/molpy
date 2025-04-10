@@ -4,17 +4,24 @@ import numpy as np
 import pandas as pd
 from copy import deepcopy
 
+
 class Frame(dict):
 
-    def __init__(self, data: dict[str, pd.DataFrame | dict[str, list]] | None = None, **props):
-        """ Static data structure for aligning model. The frame is a dictionary-like, multi-DataFrame object, facilitating access data by keys.
+    def __init__(
+        self, data: dict[str, pd.DataFrame | dict[str, list]] | None = None, **props
+    ):
+        """Static data structure for aligning model. The frame is a dictionary-like, multi-DataFrame object, facilitating access data by keys.
 
         Args:
             data (dict): A dictionary of dataframes.
         """
         if data is not None:
             for key, value in data.items():
-                assert isinstance(value, (pd.DataFrame, pd.Series)) or isinstance(value, dict), TypeError("data must be dataframe-like, otherwise assign them by `Frame(name=object)` and call it by `frame.name`")
+                assert isinstance(value, (pd.DataFrame, pd.Series)) or isinstance(
+                    value, dict
+                ), TypeError(
+                    "data must be dataframe-like, otherwise assign them by `Frame(name=object)` and call it by `frame.name`"
+                )
                 if isinstance(value, dict):
                     self[key] = pd.DataFrame(data=value)
                 else:
@@ -27,7 +34,9 @@ class Frame(dict):
     def from_frames(cls, *others):
         frame = cls()
         for fkey in set([k for other in others for k in other.keys()]):
-            frame[fkey] = pd.concat((other[fkey] for other in others), axis=0, ignore_index=True, sort=False)
+            frame[fkey] = pd.concat(
+                (other[fkey] for other in others), axis=0, ignore_index=True, sort=False
+            )
 
         # if any of the frames have a box, use the first one
         for other in others:
@@ -38,10 +47,10 @@ class Frame(dict):
 
     @classmethod
     def concat(cls, frames: list["Frame"]) -> "Frame":
-        """ Concatenate a list of frames into a single frame. 
+        """Concatenate a list of frames into a single frame.
 
-            Args:
-                frames (list[Frame]): A list of frames.
+        Args:
+            frames (list[Frame]): A list of frames.
         """
         frame = cls()
         for key in frames[0].keys():
@@ -58,6 +67,7 @@ class Frame(dict):
 
     def to_struct(self):
         from .struct import Entities, Struct
+
         struct = Struct()
         atoms = self["atoms"]
         for _, atom in atoms.iterrows():
@@ -91,10 +101,7 @@ class Frame(dict):
                         itom,
                         jtom,
                         ktom,
-                        **{
-                            k: v
-                            for k, v in angle.items()
-                        },
+                        **{k: v for k, v in angle.items()},
                     )
                 )
 
@@ -102,7 +109,12 @@ class Frame(dict):
             struct["dihedrals"] = Entities()
             dihedrals = self["dihedrals"]
             for _, dihedral in dihedrals.iterrows():
-                i, j, k, l = dihedral.pop("i"), dihedral.pop("j"), dihedral.pop("k"), dihedral.pop("l")
+                i, j, k, l = (
+                    dihedral.pop("i"),
+                    dihedral.pop("j"),
+                    dihedral.pop("k"),
+                    dihedral.pop("l"),
+                )
                 itom = struct["atoms"].get_by(lambda atom: atom["id"] == i)
                 jtom = struct["atoms"].get_by(lambda atom: atom["id"] == j)
                 ktom = struct["atoms"].get_by(lambda atom: atom["id"] == k)
@@ -113,10 +125,7 @@ class Frame(dict):
                         jtom,
                         ktom,
                         ltom,
-                        **{
-                            k: v
-                            for k, v in dihedral.items()
-                        },
+                        **{k: v for k, v in dihedral.items()},
                     )
                 )
 
@@ -183,15 +192,15 @@ class Frame(dict):
 
         return frames
 
-    def __add__(self, other: 'Frame') -> 'Frame':
+    def __add__(self, other: "Frame") -> "Frame":
         return Frame.from_frames(self, other)
-    
-    def __mul__(self, n: int) -> list['Frame']:
+
+    def __mul__(self, n: int) -> list["Frame"]:
         return Frame.from_frames(*[self.copy() for _ in range(n)])
-    
-    def copy(self) -> 'Frame':
+
+    def copy(self) -> "Frame":
         return deepcopy(self)
-    
+
     def __getitem__(self, key):
         if isinstance(key, str):
             return super().__getitem__(key)
@@ -228,10 +237,11 @@ class Frame(dict):
             )
             dihedrals = self["dihedrals"][dihedral_mask]
             return Frame(
-                dict(atoms=atoms,
-                bonds=bonds,
-                angles=angles,
-                dihedrals=dihedrals,
+                dict(
+                    atoms=atoms,
+                    bonds=bonds,
+                    angles=angles,
+                    dihedrals=dihedrals,
                 ),
-                box = self.box
+                box=self.box,
             )

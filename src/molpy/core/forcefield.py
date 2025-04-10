@@ -443,7 +443,7 @@ class AtomStyle(Style):
 
     def def_type(self, name: str, class_=None, *params, **kw_params) -> AtomType:
         at = AtomType(name, *params, **kw_params)
-        self.types[name] = at
+        self.types.add(at)
         if class_:
             self.classes[class_].add(name)
         return at

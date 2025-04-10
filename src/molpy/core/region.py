@@ -113,7 +113,9 @@ class SphereRegion(Region):
 
     def __init__(self, radius: int | float, origin: npt.ArrayLike, name="Sphere"):
         super().__init__(name)
+        assert isinstance(radius, (int, float)), "Radius must be a number"
         self.origin = np.array(origin)
+        assert self.origin.size == 3, "Origin must be a 3D vector"
         self.radius = radius
 
     def isin(self, xyz):
