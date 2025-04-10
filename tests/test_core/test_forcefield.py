@@ -1,104 +1,134 @@
 import pytest
-import numpy as np
-import numpy.testing as npt
-import molpy as mp
 
-from molpy.core.forcefield import Style, Type
+from molpy.core.forcefield import (AngleStyle, AngleType, AtomStyle, AtomType,
+                                   BondStyle, BondType, DihedralStyle,
+                                   DihedralType, ForceField, ImproperStyle,
+                                   ImproperType, PairStyle, PairType, Style,
+                                   Type)
+
+
+class TestType:
+    def test_init(self):
+        t = Type(1, 2, param="value")
+        assert t.params == [1, 2]
+        assert t["param"] == "value"
+
+    def test_eq(self):
+        t1 = Type(label="type1")
+        t2 = Type(label="type1")
+        t3 = Type(label="type2")
+        assert t1 == t2
+        assert t1 != t3
 
 
 class TestStyle:
+    def test_init(self):
+        s = Style("style1", 1, 2, param="value")
+        assert s.name == "style1"
+        assert s.params == (1, 2)
+        assert s["param"] == "value"
 
-    def test_init_with_str(self):
+    def test_repr(self):
+        s = Style("style1")
+        assert repr(s) == "<Style: style1>"
 
-        style = Style("lj/cut/coul/cut", mixing="arithmetic")
-        assert style.name == "lj/cut/coul/cut"
-        assert style.calculator is None
-        assert style.mixing == "arithmetic"
+    def test_n_types(self):
+        s = Style("style1")
+        assert s.n_types == 0
+        s.types.add(Type("type1"))
+        assert s.n_types == 1
 
-    def test_init_with_potential(self):
+    def test_get_by(self):
+        s = Style("style1")
+        t = Type("type1", param="value")
+        s.types.add(t)
+        assert s.get_by(lambda x: x["param"] == "value") == t
+        assert s.get_by(lambda x: x["param"] == "nonexistent") is None
 
-        style = Style(mp.potential.bond.Harmonic)
+    def test_merge(self):
+        s1 = Style("style1")
+        s2 = Style("style2")
+        t1 = Type("type1")
+        t2 = Type("type2")
+        s2.types.add(t2)
+        s1.merge(s2)
+        assert t2 in s1.types
 
-        assert style.name == ""
+
+class TestAtomType:
+    def test_init(self):
+        at = AtomType("atom1", param="value")
+        assert at.label == "atom1"
+        assert at["param"] == "value"
+
+
+class TestBondType:
+    def test_init(self):
+        bt = BondType(AtomType("atom1"), AtomType("atom2"))
+        assert bt.label == "atom1-atom2"
+        assert bt.itomtype.label == "atom1"
+        assert bt.jtomtype.label == "atom2"
+
+    def test_atomtypes(self):
+        bt = BondType(AtomType("atom1"), AtomType("atom2"))
+        assert bt.atomtypes == [bt.itomtype, bt.jtomtype]
+
+
+class TestAngleType:
+    def test_init(self):
+        at = AngleType(AtomType("atom1"), AtomType("atom2"), AtomType("atom3"))
+        assert at.label == "atom1-atom2-atom3"
+
+    def test_atomtypes(self):
+        at = AngleType(AtomType("atom1"), AtomType("atom2"), AtomType("atom3"))
+        assert at.atomtypes == [at.itomtype, at.jtomtype, at.ktomtype]
+
+
+class TestDihedralType:
+    def test_init(self):
+        dt = DihedralType(
+            AtomType("atom1"), AtomType("atom2"), AtomType("atom3"), AtomType("atom4")
+        )
+        assert dt.label == "atom1-atom2-atom3-atom4"
+
+
+    def test_atomtypes(self):
+        dt = DihedralType(
+            AtomType("atom1"), AtomType("atom2"), AtomType("atom3"), AtomType("atom4")
+        )
+        assert dt.atomtypes == [dt.itomtype, dt.jtomtype, dt.ktomtype, dt.ltomtype]
+
+
+class TestImproperType:
+    def test_init(self):
+        it = ImproperType(
+            AtomType("atom1"), AtomType("atom2"), AtomType("atom3"), AtomType("atom4")
+        )
+        assert it.label == f"atom1-atom2-atom3-atom4"
+
+    def test_atomtypes(self):
+        it = ImproperType(
+            AtomType("atom1"), AtomType("atom2"), AtomType("atom3"), AtomType("atom4")
+        )
+        assert it.atomtypes == [it.itomtype, it.jtomtype, it.ktomtype, it.ltomtype]
 
 
 class TestForceField:
+    def test_init(self):
+        ff = ForceField("forcefield1")
+        assert ff.name == "forcefield1"
+        assert ff.atomstyles == []
 
-    @pytest.fixture(scope="class", name="ff")
-    def init_forcefield(self):
+    def test_def_atomstyle(self):
+        ff = ForceField()
+        atomstyle = ff.def_atomstyle("style1")
+        assert atomstyle.name == "style1"
+        assert ff.get_atomstyle("style1") == atomstyle
 
-        ff = mp.ForceField()
-        return ff
-
-    def test_atom(self, ff: mp.ForceField):
-
-        atomstyle = ff.def_atomstyle("atomic")
-        atomstyle.def_atomtype("O", 0, mass=15.9994)
-        atomstyle.def_atomtype("H", 1, mass=1.00794)
-
-        assert atomstyle.n_types == 2
-
-    def test_bond(self, ff: mp.ForceField):
-
-        bondstyle = ff.def_bondstyle(
-            mp.potential.bond.Harmonic,
-        )
-        bondstyle.def_bondtype(0, 1, r0=1.012, k=1059.162, name="O-H")
-        params = bondstyle.get_param("r0")
-        npt.assert_allclose(params, np.array([[0, 1.012], [1.012, 0]]))
-        assert bondstyle.n_types == 1  # O-H, H-O
-
-    def test_angle(self, ff: mp.ForceField):
-
-        anglestyle = ff.def_anglestyle(mp.potential.angle.Harmonic)
-        anglestyle.def_angletype("H-O-H", 1, 0, 1, theta0=104.52, k=75.90)
-
-        n_atomtypes = ff.n_atomtypes
-        n_angletype = anglestyle.n_types
-        assert n_angletype == 1, ValueError(f"Expected 2 atom types, got {n_angletype}")
-        theta0 = anglestyle.get_param("theta0")
-        assert theta0.shape == (n_atomtypes, n_atomtypes, n_atomtypes)
-
-        expected_theta0 = np.array([[[0.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 0.0]]])
-        expected_theta0[1, 0, 1] = 104.52
-
-        npt.assert_equal(
-            theta0,
-            expected_theta0
-        )
-
-    def test_calc_bond(self, ff: mp.ForceField):
-
-        struct = mp.builder.SPCE().to_struct()
-        struct, output = ff.calc_bond(struct)
-        npt.assert_allclose(output["harmonic_bond_energy"], 0.15251310)
-
-    def test_calc_struct(self, ff: mp.ForceField):
-
-        struct = mp.builder.SPCE().to_struct()
-        struct, output = ff.calc_struct(struct)
-        assert output
-
-    def test_get_calculator(self, ff: mp.ForceField):
-
-        struct = mp.builder.SPCE().to_struct()
-        calculator = ff.get_calculator()
-        assert calculator
-        struct, output = calculator(struct)
-        assert output
-
-    # def test_pair(self, ff:mp.ForceField):
-
-    #     pairstyle = ff.def_pairstyle("lj/cut/coul/cut", global_cutoff=10.0, mixing="arithmetic")
-    #     pairstyle.def_pairtype("O-O", 0, 0, epsilon=0.1553, sigma=3.1506)
-    #     pairstyle.def_pairtype("O-H", 0, 1, epsilon=0.0, sigma=1.0)
-    #     pairstyle.def_pairtype("H-H", 1, 1, epsilon=0.0, sigma=1.0)
-
-    #     npt.assert_allclose(
-    #         pairstyle.get_pairtype_params("epsilon"),
-    #         np.array([[0.1553, 0.0], [0.0, 0.0]]),
-    #     )
-    #     npt.assert_allclose(
-    #         pairstyle.get_pairtype_params("sigma"),
-    #         np.array([[3.1506, 1.0], [1.0, 1.0]]),
-    #     )
+    def test_merge(self):
+        ff1 = ForceField("ff1")
+        ff2 = ForceField("ff2")
+        ff1.def_atomstyle("style1")
+        ff2.def_atomstyle("style2")
+        ff1.merge(ff2)
+        assert ff1.get_atomstyle("style2") is not None

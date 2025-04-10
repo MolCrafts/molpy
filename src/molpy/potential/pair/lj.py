@@ -1,77 +1,45 @@
-# author: Roy Kid
-# contact: lijichen365@126.com
-# date: 2024-02-18
-# version: 0.0.1
-
+from .base import PairPotential
 import numpy as np
-import molpy as mp
-from molpy.potential.base import Potential
 
-def segment_sum(data, segment_ids, dim_size):
-    data = np.asarray(data)
-    s = np.zeros((dim_size,) + data.shape[1:], dtype=data.dtype)
-    np.add.at(s, segment_ids, data)
-    return s
 
-def e_lj126(rij:np.ndarray, eps:np.ndarray, sig:np.ndarray):
+class LJ126(PairPotential):
 
-    power_6 = np.power(sig / rij, 6)
-    power_12 = np.square(power_6)
+    name = "lj126/cut"
 
-    return 4 * eps * (power_12 - power_6)
+    def __init__(self, epsilon: np.ndarray, sigma: np.ndarray):
+        self.epsilon = np.array(epsilon).reshape(-1, 1)
+        self.sigma = np.array(sigma).reshape(-1, 1)
 
-def f_lj126(rij:np.ndarray, eps:np.ndarray, sig:np.ndarray):
+    @PairPotential.or_frame
+    def calc_energy(
+        self, r: np.ndarray, pair_idx: np.ndarray, pair_types: np.ndarray
+    ) -> np.ndarray:
+        dr = r[pair_idx[:, 1]] - r[pair_idx[:, 0]]
+        dr_norm = np.linalg.norm(dr, axis=1, keepdims=True)
+        return (
+            4
+            * self.epsilon[pair_types]
+            * (
+                (self.sigma[pair_types] / dr_norm) ** 12
+                - (self.sigma[pair_types] / dr_norm) ** 6
+            )
+        )
 
-    power_6 = np.power(sig / rij, 6)
-    power_12 = np.square(power_6)
-
-    return (24 * eps * (2 * power_12 - power_6) / np.square(rij))[:, None] * rij
-
-class LJ126(Potential):
-
-    E = e_lj126
-    F = f_lj126
-
-    def __init__(self, epsilon, sigma, cutoff):
-        super().__init__('LJ126', 'pair')
-        self.epsilon = epsilon
-        self.sigma = sigma
-        self.cutoff = cutoff
-
-    def energy(self, R, atomtype, idx_i, idx_j, offset):
-        """
-        compute energy of pair potential
-
-        Args:
-            rij (np.ndarray (n_pairs, dim)): displacement vectors
-
-        Returns:
-            nd.ndarray (n_pairs, 1): pair energy
-        """
-        r_ij = R[idx_j] - R[idx_i] + offset
-        eps = self.epsilon[atomtype[idx_i], atomtype[idx_j]]
-        sigma = self.sigma[atomtype[idx_i], atomtype[idx_j]]
-
-        d_ij = np.linalg.norm(r_ij, axis=-1, keepdims=True)
-        cutoff_mask = d_ij < self.cutoff
-        energy = LJ126.F(d_ij, eps, sigma)
-        return energy * cutoff_mask
-    
-    def forces(self, R, atomtype, idx_i, idx_j, offset):
-        """
-        compute forces of pair potential
-
-        Args:
-            rij (np.ndarray (n_paris, dim)): displacement vectors
-
-        Returns:
-            np.ndarray (n_pairs, dim): pair forces
-        """
-        r_ij = R[idx_j] - R[idx_i] + offset
-        eps = self.epsilon[atomtype[idx_i], atomtype[idx_j]]
-        sigma = self.sigma[atomtype[idx_i], atomtype[idx_j]]
-
-        d_ij = np.linalg.norm(r_ij, axis=-1, keepdims=True)
-        cutoff_mask = d_ij < self.cutoff
-
-        return LJ126.F(d_ij, eps, sigma) * cutoff_mask
+    @PairPotential.or_frame
+    def calc_force(self, r: np.ndarray, pair_idx: np.ndarray, pair_types: np.ndarray):
+        dr = r[pair_idx[:, 1]] - r[pair_idx[:, 0]]
+        dr_norm = np.linalg.norm(dr, axis=1, keepdims=True)
+        forces = (
+            24
+            * self.epsilon[pair_types]
+            * (
+                2 * (self.sigma[pair_types] / dr_norm) ** 12
+                - (self.sigma[pair_types] / dr_norm) ** 6
+            )
+            * dr
+            / dr_norm**2
+        )
+        per_atom_forces = np.zeros((len(r), 3))
+        np.add.at(per_atom_forces, pair_idx[:, 0], -forces)
+        np.add.at(per_atom_forces, pair_idx[:, 1], forces)
+        return per_atom_forces

@@ -1,75 +1,111 @@
 import pytest
 import molpy as mp
-import numpy as np
-import numpy.testing as npt
+import pandas as pd
 
+class TestFrame:
 
-# class TestItemList:
+    @pytest.fixture()
+    def frame(self):
+        return mp.Frame({
+            'atoms': {
+                'id': [1, 2, 3, 4],
+                'type': [1, 2, 3, 4],
+                'x': [0, 1, 2, 3],
+                'y': [0, 1, 2, 3],
+                'z': [0, 1, 2, 3],
+            }
+        })
+    
+    def test_slice(self, frame):
+        assert isinstance(frame['atoms'], pd.DataFrame)
+        assert frame['atoms'].shape == (4, 5)
+        assert frame['atoms']['id'].tolist() == [1, 2, 3, 4]
+        
+    def test_init_with_dataframe(self):
+        data = {
+            'atoms': pd.DataFrame({
+                'id': [1, 2],
+                'type': [1, 2],
+                'x': [0.0, 1.0],
+                'y': [0.0, 1.0],
+                'z': [0.0, 1.0],
+            })
+        }
+        frame = mp.Frame(data)
+        assert 'atoms' in frame
+        assert isinstance(frame['atoms'], pd.DataFrame)
+        assert frame['atoms'].shape == (2, 5)
 
-#     @pytest.fixture(scope="class", name="item_list")
-#     def test_init(self):
-#         return ItemList([Item(_name="O"), Item(_name="H"), Item(_name="H")])
+    def test_init_with_dict(self):
+        data = {
+            'atoms': {
+                'id': [1, 2],
+                'type': [1, 2],
+                'x': [0.0, 1.0],
+                'y': [0.0, 1.0],
+                'z': [0.0, 1.0],
+            }
+        }
+        frame = mp.Frame(data)
+        assert 'atoms' in frame
+        assert isinstance(frame['atoms'], pd.DataFrame)
+        assert frame['atoms'].shape == (2, 5)
 
-#     def test_getitem(self, item_list):
+    def test_concat(self, frame):
+        frame2 = mp.Frame({
+            'atoms': {
+                'id': [5, 6],
+                'type': [5, 6],
+                'x': [4, 5],
+                'y': [4, 5],
+                'z': [4, 5],
+            }
+        })
+        concatenated = mp.Frame.concat([frame, frame2])
+        assert concatenated['atoms'].shape == (6, 5)
+        assert concatenated['atoms']['id'].tolist() == [1, 2, 3, 4, 5, 6]
 
-#         assert item_list[0][mp.Alias.name] == "O"
-#         npt.assert_equal(item_list[mp.Alias.name], np.array(["O", "H", "H"]))
+    def test_split(self, frame):
+        frame['atoms']['group'] = [1, 1, 2, 2]
+        split_frames = frame.split('group')
+        assert len(split_frames) == 2
+        assert split_frames[0]['atoms']['id'].tolist() == [1, 2]
+        assert split_frames[1]['atoms']['id'].tolist() == [3, 4]
 
-#     def test_getattr(self, item_list):
+    def test_box_property(self):
+        box = mp.Box()
+        frame = mp.Frame(box=box)
+        assert frame.box == box
+        frame.box = None
+        assert frame.box is None
 
-#         npt.assert_equal(item_list.name, np.array(["O", "H", "H"]))
+    def test_to_struct(self, frame):
+        frame['bonds'] = pd.DataFrame({'i': [1], 'j': [2]})
+        struct = frame.to_struct()
+        assert 'atoms' in struct
+        assert 'bonds' in struct
+        assert len(struct['atoms']) == 4
+        assert len(struct['bonds']) == 1
 
+    def test_copy(self, frame):
+        frame_copy = frame.copy()
+        assert frame_copy is not frame
+        assert frame_copy['atoms'].equals(frame['atoms'])
 
-# class TestFrame:
+    def test_add_operator(self, frame):
+        frame2 = mp.Frame({
+            'atoms': {
+                'id': [5, 6],
+                'type': [5, 6],
+                'x': [4, 5],
+                'y': [4, 5],
+                'z': [4, 5],
+            }
+        })
+        combined = frame + frame2
+        assert combined['atoms'].shape == (6, 5)
+        assert combined['atoms']['id'].tolist() == [1, 2, 3, 4, 5, 6]
 
-#     @pytest.fixture(scope="class")
-#     def frame(self):
-#         return mp.Frame()
-
-#     def test_frame_init(self):
-
-#         frame = mp.Frame()
-
-#     def test_frame_props(self, frame):
-
-#         frame["int"] = 1
-#         assert frame["int"] == 1
-
-#         frame["double"] = 1.0
-#         assert frame["double"] == 1.0
-
-#         frame["str"] = "str"
-#         assert frame["str"] == "str"
-
-#         frame["bool"] = True
-#         assert frame["bool"] == True
-
-#         frame["ndarray"] = np.array([1, 2, 3])
-#         npt.assert_equal(frame["ndarray"], np.array([1, 2, 3]))
-
-#     def test_frame_atoms(self, frame):
-
-#         frame.add_atom(**{mp.Alias.name: "O", mp.Alias.R: [0, 0, 0]})
-#         frame.add_atom(name="H", R=[1, 0, 0])
-#         frame.add_atom(name="H", R=[0, 1, 0])
-
-#         assert frame.n_atoms == 3
-#         assert len(frame.atoms) == 3
-
-#         # get Atom and check properties
-#         assert frame.atoms[0][mp.Alias.name] == "O"
-
-#         # get atom properties
-#         npt.assert_equal(frame.atoms["name"], np.array(["O", "H", "H"]))
-#         assert frame.atoms["R"].shape == (3, 3)
-
-# class TestStaticStruct:
-
-#     def test_init(self):
-
-#         struct = mp.StaticStruct()
-
-#     def test_get_set_atoms(self):
-
-#         struct = mp.StaticStruct()
-#         struct.atoms.name = np.array(["O", "H", "H"])
+    def test_mul_operator(self, frame):
+        multiplied = frame * 2
+        assert len(multiplied) == 8

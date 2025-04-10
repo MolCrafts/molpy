@@ -6,71 +6,49 @@ import numpy as np
 from igraph import Graph
 
 
-class Topology:
-
-    def __init__(
-        self, n_atoms=0, bonds=None, graph_attrs={}, vertex_attrs={}, edge_attrs={}
-    ):
-
-        self._graph = Graph(
-            n=n_atoms,
-            edges=bonds,
-            directed=False,
-            graph_attrs=graph_attrs,
-            vertex_attrs=vertex_attrs,
-            edge_attrs=edge_attrs,
-        )
-
-    @property
-    def graph(self):
-        return self._graph
+class Topology(Graph):
 
     @property
     def n_atoms(self):
-        return self._graph.vcount()
+        return self.vcount()
 
     @property
     def n_bonds(self):
-        return self._graph.ecount()
+        return self.ecount()
 
     @property
     def n_angles(self):
         return int(
-            self._graph.count_subisomorphisms_vf2(Graph(3, [[0, 1], [1, 2]])) / 2
+            self.count_subisomorphisms_vf2(Graph(3, [[0, 1], [1, 2]])) / 2
         )
 
     @property
     def n_dihedrals(self):
         return int(
-            self._graph.count_subisomorphisms_vf2(Graph(4, [[0, 1], [1, 2], [2, 3]]))
+            self.count_subisomorphisms_vf2(Graph(4, [[0, 1], [1, 2], [2, 3]]))
             / 2
         )
 
     @property
     def atoms(self):
-        _atom_id = []
-        for edge in self.bonds:
-            _atom_id.extend(edge[0])
-        return np.array(_atom_id)
+        return np.array([v.index for v in self.vs])
 
     @property
     def bonds(self):
-        return np.array(self._graph.get_edgelist())
+        return np.array(self.get_edgelist())
 
     @property
     def angles(self):
         duplicated_angles = np.array(
-            self._graph.get_subisomorphisms_vf2(Graph(3, [[0, 1], [1, 2]]))
+            self.get_subisomorphisms_vf2(Graph(3, [[0, 1], [1, 2]]))
         )
-        print(self.bonds)
-        print(duplicated_angles)
         mask = duplicated_angles[:, 0] < duplicated_angles[:, 2]
         return duplicated_angles[mask]
 
     @property
     def dihedrals(self):
         duplicated_dihedrals = np.array(
-            self._graph.get_subisomorphisms_vf2(Graph(4, [[0, 1], [1, 2], [2, 3]]))
+            self.get_subisomorphisms_vf2(Graph(4, [[0, 1], [1, 2], [2, 3]]))
         )
         mask = duplicated_dihedrals[:, 1] < duplicated_dihedrals[:, 2]
         return duplicated_dihedrals[mask]
@@ -78,37 +56,36 @@ class Topology:
     @property
     def improper(self):
         duplicated_impropers = np.array(
-            self._graph.get_subisomorphisms_vf2(Graph(4, [[0, 1], [0, 2], [0, 3]]))
+            self.get_subisomorphisms_vf2(Graph(4, [[0, 1], [0, 2], [0, 3]]))
         )
         impropers = np.sort(duplicated_impropers[:, 1:])
         return duplicated_impropers[np.unique(impropers, return_index=True, axis=0)[0]]
 
     def add_atom(self, name: str, **props):
 
-        self._graph.add_vertex(name=name, **props)
+        self.add_vertex(name, props)
 
     def add_atoms(self, n_atoms: int, **props):
-        self._graph.add_vertices(n_atoms, **props)
+        self.add_vertices(n_atoms, props)
 
     def delete_atom(self, index: int | list[int]):
-        self._graph.delete_vertrices(index)
+        self.delete_vertrices(index)
 
     def add_bond(self, idx_i: int, idx_j: int, **props):
-        if not self._graph.are_adjacent(idx_i, idx_j):
-            self._graph.add_edge(idx_i, idx_j, **props)
+        if not self.are_adjacent(idx_i, idx_j):
+            self.add_edge(idx_i, idx_j, **props)
 
     def delete_bond(self, index: None | int | list[int] | list[tuple[int]]):
-        self._graph.delete_edges(index)
+        self.delete_edges(index)
 
     def add_bonds(self, bond_idx: list[tuple[int, int]], **props):
-        self._graph.add_edges(bond_idx, **props)
-        self.simplify()
+        self.add_edges(bond_idx, **props)
 
     def add_angle(self, idx_i: int, idx_j: int, idx_k: int, **props):
 
-        if not self._graph.are_adjacent(idx_i, idx_j):
+        if not self.are_adjacent(idx_i, idx_j):
             self.add_bond(idx_i, idx_j)
-        if not self._graph.are_adjacent(idx_j, idx_k):
+        if not self.are_adjacent(idx_j, idx_k):
             self.add_bond(idx_j, idx_k)
 
     def add_angles(self, angle_idx: list[tuple[int, int, int]]):
@@ -116,9 +93,6 @@ class Topology:
         self.add_bonds(angle_idx[:, :2])
         self.add_bonds(angle_idx[:, 1:])
 
-    def simplify(self):
-        self._graph.simplify()
-
     def union(self, other: "Topology"):
-        self._graph.union(other.graph)
+        self.union(other.graph)
         return self
