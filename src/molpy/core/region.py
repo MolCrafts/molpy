@@ -10,7 +10,7 @@ class Region(ABC):
 
     @abstractmethod
     def isin(self, xyz) -> np.ndarray: ...
-    
+
     def __and__(self, other):
         return AndRegion(self, other)
 
@@ -20,6 +20,7 @@ class Region(ABC):
     def __invert__(self):
         return NotRegion(self)
 
+
 class AndRegion(Region):
     def __init__(self, r1: Region, r2: Region):
         self.r1 = r1
@@ -27,9 +28,10 @@ class AndRegion(Region):
 
     def isin(self, point):
         return self.r1.isin(point) & self.r2.isin(point)
-    
+
     def __repr__(self):
         return f"<{self.r1} & {self.r2}>"
+
 
 class OrRegion(Region):
     def __init__(self, r1: Region, r2: Region):
@@ -38,9 +40,10 @@ class OrRegion(Region):
 
     def isin(self, point):
         return self.r1.isin(point) | self.r2.isin(point)
-    
+
     def __repr__(self):
         return f"<{self.r1} | {self.r2}>"
+
 
 class NotRegion(Region):
     def __init__(self, region: Region):
@@ -48,7 +51,7 @@ class NotRegion(Region):
 
     def isin(self, point):
         return ~self.region.isin(point)
-    
+
     def __repr__(self):
         return f"<!{self.region}>"
 
@@ -77,7 +80,7 @@ class CubeRegion(Region):
             np.all(self.origin <= xyz, axis=1),
             np.all(xyz <= self.origin + self.length, axis=1),
         )
-    
+
     def __repr__(self):
         return f"<Cube {self.name}: {self.origin} {self.length}>"
 
@@ -123,7 +126,7 @@ class SphereRegion(Region):
 
     def volumn(self):
         return 4 / 3 * np.pi * self.radius**3
-    
+
     def __repr__(self):
         return f"<Sphere {self.name}: {self.origin} {self.radius}>"
 
@@ -137,7 +140,13 @@ class BoxRegion(Region):
         self.lengths = lengths
 
     def isin(self, xyz):
-        return np.logical_and(np.all(self.origin <= xyz, axis=-1), np.all(xyz <= self.upper, axis=-1))
+        return np.logical_and(
+            np.all(self.origin <= xyz, axis=-1), np.all(xyz <= self.upper, axis=-1)
+        )
 
     def volumn(self):
         return np.prod(self.lengths)
+
+    @property
+    def bounds(self):
+        return np.array([self.origin, self.upper]).T

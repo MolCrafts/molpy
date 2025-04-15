@@ -64,3 +64,9 @@ class SmartsTypifier:
         for i, cycles in zip(graph.vs, all_cycles):
             for cycle in cycles:
                 graph.vs[i.index]["cycles"].add(tuple(cycle))
+
+
+class AmberToolsTypifier:
+
+    def __init__(self, forcefield: str):
+        self.forcefield: str = forcefield

@@ -5,15 +5,14 @@ import molpy as mp
 
 class DataReader:
 
-    def __init__(self, path: Path, frame: mp.Frame | None, *args, **kwargs):
+    def __init__(self, path: Path, *args, **kwargs):
         self._path = Path(path)
-        self._frame = frame if frame is not None else mp.Frame()
 
     def __enter__(self):
-        return self.read()
+        return self
     
     @abstractmethod
-    def read(self) -> mp.Frame:
+    def read(self, frame: mp.Frame) -> mp.Frame:
         ...
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -22,19 +21,15 @@ class DataReader:
 
 class DataWriter:
 
-    def __init__(self, path: Path, frame: mp.Frame | None, *args, **kwargs):
+    def __init__(self, path: Path, *args, **kwargs):
         self._path = Path(path)
-        self._frame = frame if frame is not None else mp.Frame()
 
     def __enter__(self):
-        return self._frame
+        return self
 
     @abstractmethod
-    def write(self):
+    def write(self, frame: mp.Frame):
         ...
 
     def __exit__(self, exc_type, exc_value, traceback):
-
-        self.write()
-
-        return super().__exit__(exc_type, exc_value, traceback)
+        ...

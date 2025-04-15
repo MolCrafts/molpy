@@ -40,7 +40,7 @@ class SpatialMixin:
     @property
     def xyz(self):
         """Get the 3D coordinates of the entity."""
-        return np.array([self["x"], self["y"], self["z"]])
+        return np.array([self["x"], self["y"], self["z"]], dtype=float)
 
     @xyz.setter
     def xyz(self, value):
@@ -89,6 +89,7 @@ class Atom(Entity, SpatialMixin):
     def __lt__(self, other):
         """Compare atoms based on their names."""
         return id(self) < id(other)
+    
 
 
 class ManyBody(Entity):
@@ -279,14 +280,14 @@ class Improper(ManyBody):
 class Entities:
     """Class representing a collection of entities."""
 
-    def __init__(self):
-        self._data = set()
+    def __init__(self, entities: list[Entity] = []):
+        self._data = set(entities)
 
     def add(self, entity):
         """Add an entity to the collection."""
         self._data.add(entity)
         return self
-    
+
     def get_by(self, condition: Callable[[Entity], bool]) -> Entity:
         """
         Get an entity based on a condition.
@@ -302,17 +303,17 @@ class Entities:
     def __len__(self):
         """Return the number of entities in the collection."""
         return len(self._data)
-    
+
     def extend(self, entities):
         """Extend the collection with multiple entities."""
         for entity in entities:
             self.add(entity)
         return self
-    
+
     def __iter__(self):
         """Return an iterator over the entities."""
         return iter(self._data)
-    
+
     def __getitem__(self, key):
         """Get an entity by its index."""
         return list(self._data)[key]
@@ -321,9 +322,36 @@ class Entities:
 class Struct(Entity):
     """Class representing a molecular structure."""
 
-    def __init__(self, name:str|None=None):
+    def __init__(
+        self,
+        name: str | None = None,
+        atoms: Entities | list = [],
+        bonds: Entities | list = [],
+        angles: Entities | list = [],
+        dihedrals: Entities | list = [],
+        impropers: Entities | list = [],
+    ):
         """Initialize a molecular structure with atoms, bonds, angles, etc."""
-        super().__init__({"name": name, "atoms": Entities(), "bonds": Entities()})
+        super().__init__(
+            {
+                "name": name,
+                "atoms": Entities(atoms),
+                "bonds": Entities([Bond(atoms[bond[0]], atoms[bond[1]]) if isinstance(bond, tuple) else bond for bond in bonds]),
+                "angles": Entities(angles),
+                "dihedrals": Entities(dihedrals),
+                "impropers": Entities(impropers),
+            }
+        )
+
+    @property
+    def atoms(self):
+        """Get the atoms in the structure."""
+        return self["atoms"]
+    
+    @property
+    def bonds(self):
+        """Get the bonds in the structure."""
+        return self["bonds"]
 
     def __repr__(self):
         """Return a string representation of the structure."""
@@ -340,7 +368,9 @@ class Struct(Entity):
         - A deep copy of the structure.
         """
         new_atoms = [atom.clone() for atom in self["atoms"]]
-        atom_mapping = {atom: new_atom for atom, new_atom in zip(self["atoms"], new_atoms)}
+        atom_mapping = {
+            atom: new_atom for atom, new_atom in zip(self["atoms"], new_atoms)
+        }
         new = Struct()
         for key, value in self.items():
             new[key] = Entities()
@@ -353,7 +383,9 @@ class Struct(Entity):
                     if isinstance(v, ManyBody):
                         try:
                             new[key].add(
-                                v.__class__(*[atom_mapping[atom] for atom in v._atoms], **v)
+                                v.__class__(
+                                    *[atom_mapping[atom] for atom in v._atoms], **v
+                                )
                             )
                         except KeyError:
                             raise KeyError(f"Atoms {v._atoms} not found in atom_map")
@@ -472,16 +504,16 @@ class Struct(Entity):
         frame = Frame()
 
         atom_name_idx_mapping = {}
-        for i, atom in enumerate(self["atoms"].values()):
+        for i, atom in enumerate(self["atoms"]):
             atom_name_idx_mapping[atom["name"]] = i
             atom["id"] = i
 
         frame["atoms"] = pd.DataFrame(
-            [atom.to_dict() for atom in self["atoms"].values()]
+            [atom.to_dict() for atom in self["atoms"]]
         )
         if "bonds" in self and len(self["bonds"]) > 0:
             bdicts = []
-            for bond in self["bonds"].values():
+            for bond in self["bonds"]:
                 bdict = bond.to_dict()
                 iname = bond.itom["name"]
                 jname = bond.jtom["name"]

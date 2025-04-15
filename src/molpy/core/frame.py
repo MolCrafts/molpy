@@ -44,6 +44,22 @@ class Frame(dict):
                 frame.box = other.box
                 break
         return frame
+    
+    @classmethod
+    def from_structs(cls, structs):
+        frame = cls()
+        
+        atom_list = []
+        for atoms in [atom for struct in structs for atom in struct.atoms]:
+            atom_list.append(atoms)
+        frame["atoms"] = pd.DataFrame([atom.to_dict() for atom in atom_list])
+        for struct in structs:
+            if "bonds" in struct:
+                bond_dicts = []
+                for bonds in struct.bonds:
+                    bond_dicts.append(bonds.to_dict() | {"i": atom_list.index(bonds.itom), "j": atom_list.index(bonds.jtom)})
+        frame["bonds"] = pd.DataFrame(bond_dicts)
+        return frame
 
     @classmethod
     def concat(cls, frames: list["Frame"]) -> "Frame":

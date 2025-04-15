@@ -12,8 +12,8 @@ from .base import DataReader, DataWriter
 
 class LammpsDataReader(DataReader):
 
-    def __init__(self, path: str | Path, atom_style="full", frame: mp.Frame | None = None):
-        super().__init__(path, frame)
+    def __init__(self, path: str | Path, atom_style="full"):
+        super().__init__(path)
         self.atom_style = atom_style
         self._file = open(path, "r")
 
@@ -21,7 +21,7 @@ class LammpsDataReader(DataReader):
     def sanitizer(line: str) -> str:
         return re.sub(r"\s+", " ", line.strip())
 
-    def read(self):
+    def read(self, frame: mp.Frame) -> mp.Frame:
 
         ff = mp.ForceField()
         if ff.n_atomstyles == 0:
@@ -44,8 +44,6 @@ class LammpsDataReader(DataReader):
             improper_style = None
         else:
             improper_style = ff.improperstyles[0]
-
-        frame = self._frame
 
         lines = filter(lambda line: line, map(LammpsDataReader.sanitizer, self._file))
 
@@ -272,12 +270,12 @@ class LammpsDataReader(DataReader):
 
 class LammpsDataWriter(DataWriter):
 
-    def __init__(self, path: str | Path, atom_style: str = "full", system: mp.System|None = None, reindex: bool = True, mode="w"):
-        super().__init__(path, system, mode=mode)
+    def __init__(self, path: str | Path, atom_style: str = "full", reindex: bool = True, mode="w"):
+        super().__init__(path, mode=mode)
         self._atom_style = atom_style
         self.reindex = reindex
 
-    def write(self):
+    def write(self, frame):
 
         system = self._system
         frame = system.frame
