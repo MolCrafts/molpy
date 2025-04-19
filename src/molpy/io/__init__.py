@@ -65,8 +65,8 @@ def read_amber(
 def read_mol2(file: Path, system: mp.System | None = None) -> mp.System:
     """Read a mol2 file and return a molpy System object."""
     from .data.mol2 import Mol2Reader
-    reader = Mol2Reader(file, system)
-    return reader.read()
+    reader = Mol2Reader(file)
+    return reader.read(system)
 
 def read_xml_forcefield(file: Path, system: mp.System | None = None) -> mp.System:
     """Read an XML force field file and return a molpy System object."""
