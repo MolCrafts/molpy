@@ -48,7 +48,8 @@ dependencies = [
 dev = ["pytest", "coverage"]
 doc = [
     "mkdocs",
-    "mkdocs-material"
+    "mkdocs-material",
+    "mkdocstrings-python"
 ]
 
 [project.urls]
