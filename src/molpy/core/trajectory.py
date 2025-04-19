@@ -8,24 +8,24 @@ from .frame import Frame
 class Trajectory:
 
     def __init__(self):
-        self._frames = []
-        self._current_frame: int = 0
+        self._frames = {}
+        self._current_frame: Frame|None = None
 
-    def add_frame(self, frame: Frame):
+    def add_frame(self, timestep: int, frame: Frame):
         """Add a frame to the trajectory."""
-        self._frames.append(frame)
+        self._frames[timestep] = frame
 
-    def get_frame(self, idx) -> Frame:
+    def get_frame(self, timestep: int) -> Frame:
         """Get a frame from the trajectory."""
-        return self._frames[idx]
+        if timestep not in self._frames:
+            raise ValueError(f"Frame at timestep {timestep} not found.")
+        return self._frames[timestep]
     
     @property
     def current_frame(self) -> Frame:
         """Get the current frame."""
-        return self._frames[self._current_frame]
+        return self._current_frame
     
-    def set_current(self, idx: int):
+    def set_current(self, timestep: int):
         """Set the current frame."""
-        if idx < 0 or idx >= len(self._frames):
-            raise IndexError("Frame index out of range.")
-        self._current_frame = idx
+        self._current_frame = self.get_frame(timestep)

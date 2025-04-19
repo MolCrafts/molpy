@@ -18,7 +18,7 @@ class System:
     def frame(self):
         return self._trajectory.current_frame
     
-    def add_frame(self, frame: Frame, timestep: int|None = None):
+    def add_frame(self, timestep: int, frame: Frame):
         """Add a frame to the system."""
-        self._trajectory.add_frame(frame, timestep)
+        self._trajectory.add_frame(timestep, frame)
         
