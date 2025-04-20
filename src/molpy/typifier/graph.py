@@ -260,7 +260,13 @@ class SMARTSMatcher:
     
     def subgraph_isomorphisms(self):
         """Iterate over all subgraph isomorphisms between G1 and G2."""
-        return self.G1.get_subisomorphisms_vf2(self.G2, node_compat_fn=self.node_match_fn)
+        matches = self.G1.get_subisomorphisms_vf2(self.G2, node_compat_fn=self.node_match_fn)
+        results = []
+        for sgi in matches:
+            sg = self.G1.subgraph(sgi)
+            if sg.get_isomorphisms_vf2(self.G2):
+                results.append(sgi)
+        return results
 
     def candidate_pairs_iter(self):
         """Iterate over candidate pairs of nodes in G1 and G2."""

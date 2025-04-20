@@ -62,11 +62,11 @@ def read_amber(
         system = reader.read()
     return system
 
-def read_mol2(file: Path, system: mp.System | None = None) -> mp.System:
+def read_mol2(file: Path, frame: mp.Frame | None = None) -> mp.System:
     """Read a mol2 file and return a molpy System object."""
     from .data.mol2 import Mol2Reader
     reader = Mol2Reader(file)
-    return reader.read(system)
+    return reader.read(frame)
 
 def read_xml_forcefield(file: Path, system: mp.System | None = None) -> mp.System:
     """Read an XML force field file and return a molpy System object."""
@@ -78,8 +78,8 @@ def read_xml_forcefield(file: Path, system: mp.System | None = None) -> mp.Syste
     if builtin.exists():
         file = builtin
 
-    reader = XMLForceFieldReader(file, system)
-    return reader.read()
+    reader = XMLForceFieldReader(file)
+    return reader.read(system)
 
 @to_system
 def write_lammps_data(system: mp.System, file: Path) -> None:

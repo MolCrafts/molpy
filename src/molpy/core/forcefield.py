@@ -560,7 +560,7 @@ class PairStyle(Style):
         **kw_params,
     ):
         pt = PairType(name, itomtype, jtomtype, *params, **kw_params)
-        self.add(pt)
+        self.types.add(pt)
         return pt
 
 
