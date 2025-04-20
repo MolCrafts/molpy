@@ -14,9 +14,9 @@ class TestType:
         assert t["param"] == "value"
 
     def test_eq(self):
-        t1 = Type("type1")
-        t2 = Type("type1")
-        t3 = Type("type2")
+        t1 = Type(label="type1")
+        t2 = Type(label="type1")
+        t3 = Type(label="type2")
         assert t1 == t2
         assert t1 != t3
 
@@ -58,16 +58,16 @@ class TestStyle:
 class TestAtomType:
     def test_init(self):
         at = AtomType("atom1", param="value")
-        assert at.name == "atom1"
+        assert at.label == "atom1"
         assert at["param"] == "value"
 
 
 class TestBondType:
     def test_init(self):
         bt = BondType(AtomType("atom1"), AtomType("atom2"))
-        assert bt.name == "atom1-atom2"
-        assert bt.itomtype.name == "atom1"
-        assert bt.jtomtype.name == "atom2"
+        assert bt.label == "atom1-atom2"
+        assert bt.itomtype.label == "atom1"
+        assert bt.jtomtype.label == "atom2"
 
     def test_atomtypes(self):
         bt = BondType(AtomType("atom1"), AtomType("atom2"))
@@ -77,7 +77,7 @@ class TestBondType:
 class TestAngleType:
     def test_init(self):
         at = AngleType(AtomType("atom1"), AtomType("atom2"), AtomType("atom3"))
-        assert at.name == "atom1-atom2-atom3"
+        assert at.label == "atom1-atom2-atom3"
 
     def test_atomtypes(self):
         at = AngleType(AtomType("atom1"), AtomType("atom2"), AtomType("atom3"))
@@ -89,7 +89,7 @@ class TestDihedralType:
         dt = DihedralType(
             AtomType("atom1"), AtomType("atom2"), AtomType("atom3"), AtomType("atom4")
         )
-        assert dt.name == "atom1-atom2-atom3-atom4"
+        assert dt.label == "atom1-atom2-atom3-atom4"
 
 
     def test_atomtypes(self):
@@ -104,7 +104,7 @@ class TestImproperType:
         it = ImproperType(
             AtomType("atom1"), AtomType("atom2"), AtomType("atom3"), AtomType("atom4")
         )
-        assert it.name == f"atom1-atom2-atom3-atom4"
+        assert it.label == f"atom1-atom2-atom3-atom4"
 
     def test_atomtypes(self):
         it = ImproperType(

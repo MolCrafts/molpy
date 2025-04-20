@@ -1,5 +1,7 @@
+from .base import TrajectoryWriter
+from molpy.core import Frame
 
-class XYZTrajectoryWriter:
+class XYZTrajectoryWriter(TrajectoryWriter):
 
     def __init__(self, fpath: str):
         
@@ -10,12 +12,11 @@ class XYZTrajectoryWriter:
         if not self.fobj.closed:
             self.fobj.close()
 
-    def write_frame(self, system):
-
-        frame = system.frame
-        box = system.box
+    def write_frame(self, frame: Frame):
 
         atoms = frame["atoms"]
+        if frame.box is None:
+            box = frame.box
         n_atoms = len(atoms)
 
         self.fobj.write(f"{n_atoms}\n")
@@ -30,11 +31,9 @@ class XYZTrajectoryWriter:
 
             self.fobj.write(f"{elem} {x} {y} {z}\n")
 
-    def write(self, system):
+    def write_traj(self, trajectory):
 
-        traj = system.trajectory
-
-        for frame in traj:
+        for frame in trajectory:
             self.write_frame(frame)
 
     def close(self):

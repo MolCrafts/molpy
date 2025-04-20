@@ -1,6 +1,8 @@
 import numpy as np
-from abc import ABC, abstractmethod
+
 from molpy.core import Region, Struct
+
+from .base import BaseBuilder
 
 
 class Lattice:
@@ -34,15 +36,6 @@ class Lattice:
 
         self.cell = np.array([shape[c] * self.cell[c] for c in range(3)])
 
-    def fill(self, struct: Struct) -> Struct: ...
-
-
-class BaseBuilder(ABC):
-
-    @abstractmethod
-    def create_sites(self) -> np.ndarray: ...
-
-    @abstractmethod
     def fill(self, struct: Struct) -> Struct: ...
 
 

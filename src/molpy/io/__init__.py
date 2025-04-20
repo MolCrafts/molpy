@@ -41,8 +41,10 @@ def read_lammps(data: Path, scripts: Path | list[Path] | None = None, system: mp
 def read_pdb(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
     """Read a PDB file and return a molpy Frame object."""
     from .data.pdb import PDBReader
-    reader = PDBReader(file, frame=frame)
-    return reader.read()
+    reader = PDBReader(file)
+    if frame is None:
+        frame = mp.Frame()
+    return reader.read(frame)
 
 def read_amber(
     prmtop: Path, inpcrd: Path | None = None, system: mp.System | None = None
@@ -60,11 +62,11 @@ def read_amber(
         system = reader.read()
     return system
 
-def read_mol2(file: Path, system: mp.System | None = None) -> mp.System:
+def read_mol2(file: Path, frame: mp.Frame | None = None) -> mp.System:
     """Read a mol2 file and return a molpy System object."""
     from .data.mol2 import Mol2Reader
-    reader = Mol2Reader(file, system)
-    return reader.read()
+    reader = Mol2Reader(file)
+    return reader.read(frame)
 
 def read_xml_forcefield(file: Path, system: mp.System | None = None) -> mp.System:
     """Read an XML force field file and return a molpy System object."""
@@ -76,8 +78,8 @@ def read_xml_forcefield(file: Path, system: mp.System | None = None) -> mp.Syste
     if builtin.exists():
         file = builtin
 
-    reader = XMLForceFieldReader(file, system)
-    return reader.read()
+    reader = XMLForceFieldReader(file)
+    return reader.read(system)
 
 @to_system
 def write_lammps_data(system: mp.System, file: Path) -> None:
@@ -89,8 +91,8 @@ def write_lammps_data(system: mp.System, file: Path) -> None:
 def write_pdb(file: Path, frame: mp.System, ) -> None:
     """Write a molpy System object to a PDB file."""
     from .data.pdb import PDBWriter
-    writer = PDBWriter(file, frame)
-    writer.write()
+    writer = PDBWriter(file)
+    writer.write(frame)
 
 @to_system
 def write_lammps_molecule(data: mp.System, file: Path) -> None:

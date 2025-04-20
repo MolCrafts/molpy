@@ -14,14 +14,14 @@ This package depends on few external packages
   - [x] static and dynamic data structure;
   - [x] read and write data via Chemfiles;
   - [x] trilinic box;
-  - [x] celllist & neighorlist;
+  - [ ] celllist & neighorlist;
   - [ ] potential function;
-  - [ ] forcefield;
+  - [x] forcefield;
   - [ ] optimizer(minimizer, MD etc.);
   - [ ] modelling;
   - [ ] typification;
-  - [ ] interactivate visualization API;
   - [ ] SMARTS/SMILES expression;
+  - [ ] interactivate visualization API;
   - [ ] plugin system;
   - [ ] documentation;
 

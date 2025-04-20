@@ -11,17 +11,16 @@ class TestReadLammpsData:
     def test_molid(self, lammps_data):
         
         reader = mp.io.data.LammpsDataReader(lammps_data / "molid.lmp")
-        system = reader.read(mp.System())
-        frame = system.frame
+        frame = mp.Frame()
+        frame = reader.read(frame)
         assert frame["atoms"].shape[0] == 12
 
     def test_labelmap(self, lammps_data):
         
         reader = mp.io.data.LammpsDataReader(lammps_data / "labelmap.lmp")
-        system = reader.read(mp.System())
-        frame = system.frame
+        frame = mp.Frame()
+        frame = reader.read(frame)
         assert len(frame["atoms"]) == 16
-        assert all(frame["atoms", "type_label"] == ['f', 'c3', 'f', 'f', 's6', 'o', 'o', 'ne', 'sy', 'o', 'o', 'c3', 'f', 'f', 'f', 'Li+'])
-
-        ff = system.forcefield
-        assert set([t for t in ff.atomstyles[0].types]) == set(frame["atoms", "type_label"])
+        assert "type" in frame["atoms"]
+        print(frame["atoms", "type"])
+        assert (frame["atoms"]["type"] == ['f', 'c3', 'f', 'f', 's6', 'o', 'o', 'ne', 'sy', 'o', 'o', 'c3', 'f', 'f', 'f', 'Li+']).all()

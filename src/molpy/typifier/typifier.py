@@ -25,16 +25,16 @@ class SmartsTypifier:
             raise ValueError('No SMARTS or SMIRKS found in atomtype')
 
         for atomtype in forcefield.get_atomtypes():
-            name = atomtype.name
+            label = atomtype.label
             smarts = atomtype[flag]
-            graph = SMARTSGraph(smarts, self.parser, name, overrides=None)
-            smarts_graphs[name] = graph
+            graph = SMARTSGraph(smarts, self.parser, label, overrides=None)
+            smarts_graphs[label] = graph
             override = atomtype.get('override', None)
             if override is not None:
-                smarts_override[name] = override
+                smarts_override[label] = override
 
-        for name, override in smarts_override.items():
-            graph = smarts_graphs[name]
+        for label, override in smarts_override.items():
+            graph = smarts_graphs[label]
             graph.override([smarts_graphs[atom] for atom in override])
             
         smarts_graphs = OrderedDict(
@@ -64,3 +64,9 @@ class SmartsTypifier:
         for i, cycles in zip(graph.vs, all_cycles):
             for cycle in cycles:
                 graph.vs[i.index]["cycles"].add(tuple(cycle))
+
+
+class AmberToolsTypifier:
+
+    def __init__(self, forcefield: str):
+        self.forcefield: str = forcefield

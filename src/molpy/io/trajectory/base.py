@@ -80,3 +80,25 @@ class TrajectoryReader(BaseReader):
         mmapped_file = mmap.mmap(fp.fileno(), 0, access=mmap.ACCESS_READ)
         mmapped_file.seek(0)
         self._fp = mmapped_file
+
+class TrajectoryWriter(ABC):
+    """Base class for all chemical file writers."""
+
+    def __init__(self, filepath: Union[str, Path]):
+        self.filepath = Path(filepath)
+        self._fp = open(self.filepath, "w+b")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    @abstractmethod
+    def write_frame(self, frame: dict):
+        """Write a single frame to the file."""
+        pass
+
+    def close(self):
+        self._fp.close()
+

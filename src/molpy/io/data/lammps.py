@@ -12,8 +12,8 @@ from .base import DataReader, DataWriter
 
 class LammpsDataReader(DataReader):
 
-    def __init__(self, path: str | Path, atom_style="full", frame: mp.Frame | None = None):
-        super().__init__(path, frame)
+    def __init__(self, path: str | Path, atom_style="full"):
+        super().__init__(path)
         self.atom_style = atom_style
         self._file = open(path, "r")
 
@@ -21,7 +21,7 @@ class LammpsDataReader(DataReader):
     def sanitizer(line: str) -> str:
         return re.sub(r"\s+", " ", line.strip())
 
-    def read(self):
+    def read(self, frame: mp.Frame) -> mp.Frame:
 
         ff = mp.ForceField()
         if ff.n_atomstyles == 0:
@@ -45,8 +45,6 @@ class LammpsDataReader(DataReader):
         else:
             improper_style = ff.improperstyles[0]
 
-        frame = self._frame
-
         lines = filter(lambda line: line, map(LammpsDataReader.sanitizer, self._file))
 
         box = {
@@ -61,7 +59,7 @@ class LammpsDataReader(DataReader):
         props = {}
         masses = {}
 
-        type_key = "type"
+        type_key = "type_id"
 
         for line in lines:
 
@@ -183,7 +181,7 @@ class LammpsDataReader(DataReader):
                 frame["impropers"] = improper_table
 
             elif line.startswith("Atom Type Labels"):
-                type_key = "type_label"
+                type_key = "type"
                 for line in range(props["n_atomtypes"]):
                     line = next(lines).split()
                     atom_type = int(line[0])
@@ -248,7 +246,7 @@ class LammpsDataReader(DataReader):
 
         per_atom_mass = np.zeros(props["n_atoms"])
         for t, m in masses.items():
-            atomtype = atom_style.get_by(lambda atom: atom.name == str(t))
+            atomtype = atom_style.get_by(lambda atom: atom.label == str(t))
             if not atomtype:
                 atomtype = atom_style.def_type(str(t), kw_params={"id": t})
             atomtype["mass"] = m
@@ -272,12 +270,12 @@ class LammpsDataReader(DataReader):
 
 class LammpsDataWriter(DataWriter):
 
-    def __init__(self, path: str | Path, atom_style: str = "full", system: mp.System|None = None, reindex: bool = True, mode="w"):
-        super().__init__(path, system, mode=mode)
+    def __init__(self, path: str | Path, atom_style: str = "full", reindex: bool = True, mode="w"):
+        super().__init__(path, mode=mode)
         self._atom_style = atom_style
         self.reindex = reindex
 
-    def write(self):
+    def write(self, frame):
 
         system = self._system
         frame = system.frame
@@ -319,28 +317,28 @@ class LammpsDataWriter(DataWriter):
 
         if ff.atomstyles:
 
-            found_type_label_in_atom = "type_label" in frame["atoms"]
-            type_key = "type_label" if found_type_label_in_atom else "type"
+            found_type_label_in_atom = "type" in frame["atoms"]
+            type_key = "type" if found_type_label_in_atom else "type"
 
-            if type_key == "type_label":
+            if type_key == "type":
                 f.write(f"\nAtom Type Labels\n\n")
                 for i, atomtype in enumerate(ff.get_atomtypes(), 1):
                     f.write(f"{i} {atomtype.name}\n")
 
-        if ff.bondstyles:
-            if type_key == "type_label":
+            if ff.bondstyles:
+            
                 f.write(f"\nBond Type Labels\n\n")
                 for i, bondtype in enumerate(ff.get_bondtypes(), 1):
                     f.write(f"{i} {bondtype.name}\n")
 
-        if ff.anglestyles:
-            if type_key == "type_label":
+            if ff.anglestyles:
+            
                 f.write(f"\nAngle Type Labels\n\n")
                 for i, angletype in enumerate(ff.get_angletypes(), 1):
                     f.write(f"{i} {angletype.name}\n")
 
-        if ff.dihedralstyles:
-            if type_key == "type_label":
+            if ff.dihedralstyles:
+            
                 f.write(f"\nDihedral Type Labels\n\n")
                 for i, dihedraltype in enumerate(ff.get_dihedraltypes(), 1):
                     f.write(f"{i} {dihedraltype.name}\n")

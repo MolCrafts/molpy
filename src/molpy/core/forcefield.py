@@ -19,8 +19,14 @@ class Type(dict):
         self.params = list(params)
 
     @property
-    def name(self)->str:
-        return str(id(self))
+    def label(self) -> str:
+        """
+        Retrieve the label of the object.
+
+        Returns:
+            str: The value of the `name` attribute.
+        """
+        return self.get("label", None)
 
     def __hash__(self):
         """
@@ -29,7 +35,7 @@ class Type(dict):
         Returns:
             int: A hash value based on the `name` attribute.
         """
-        return hash(self.name)
+        return hash(self.label)
 
     def __repr__(self) -> str:
         """
@@ -39,7 +45,7 @@ class Type(dict):
             str: A string in the format "<ClassName: name>", where `ClassName`
             is the name of the class and `name` is the value of the `name` attribute.
         """
-        return f"<{self.__class__.__name__}: {self.name}>"
+        return f"<{self.__class__.__name__}: {self.label}>"
 
     def __eq__(self, other: "Type"):
         """
@@ -51,7 +57,7 @@ class Type(dict):
         Returns:
             bool: True if the `name` attribute of both objects is equal, False otherwise.
         """
-        return self.name == other.name
+        return self.label == other.label
 
 class TypeContainer:
 
@@ -76,18 +82,18 @@ class TypeContainer:
         """
         return iter(self._types)
 
-    def get(self, name: str, default=None) -> Type:
+    def get(self, label: str, default=None) -> Type:
         """
-        Retrieve a type by its name.
+        Retrieve a type by its label.
 
         Args:
-            name (str): The name of the type to retrieve.
+            label (str): The label of the type to retrieve.
             default: The value to return if the type is not found. Defaults to None.
 
         Returns:
-            Type: The type associated with the given name, or the `default` value if not found.
+            Type: The type associated with the given label, or the `default` value if not found.
         """
-        return next((t for t in self._types if t.name == name), default)
+        return next((t for t in self._types if t.label == label), default)
     
     def get_all_by(self, condition: Callable) -> list[Type]:
         """
@@ -266,19 +272,19 @@ class AtomType(Type):
         Initialize an atom type object.
 
         Args:
-            label (str): The name of the atom type.
+            label (str): The label of the atom type.
             *params: Additional positional parameters.
             **kw_params: Additional keyword parameters.
         """
         super().__init__(*params, **kw_params)
-        self._name = label
+        self._label = label
 
     @property
-    def name(self) -> str:
+    def label(self) -> str:
         """
-        Retrieve the name of the atom type.
+        Retrieve the label of the atom type.
         """
-        return self._name
+        return self._label
 
 
 class BondType(Type):
@@ -305,11 +311,11 @@ class BondType(Type):
         self.jtomtype = jtomtype
 
     @property
-    def name(self) -> str:
+    def label(self) -> str:
         """
-        Retrieve the name of the bond type.
+        Retrieve the label of the bond type.
         """
-        return f"{self.itomtype.name}-{self.jtomtype.name}"
+        return self.get("label", f"{self.itomtype.label}-{self.jtomtype.label}")
 
     @property
     def atomtypes(self):
@@ -349,11 +355,11 @@ class AngleType(Type):
         self.ktomtype = ktomtype
 
     @property
-    def name(self) -> str:
+    def label(self) -> str:
         """
-        Retrieve the name of the angle type.
+        Retrieve the label of the angle type.
         """
-        return f"{self.itomtype.name}-{self.jtomtype.name}-{self.ktomtype.name}"
+        return self.get("label", f"{self.itomtype.label}-{self.jtomtype.label}-{self.ktomtype.label}")
 
     @property
     def atomtypes(self):
@@ -389,11 +395,11 @@ class DihedralType(Type):
         self.ltomtype = ltomtype
 
     @property
-    def name(self) -> str:
+    def label(self) -> str:
         """
-        Retrieve the name of the dihedral type.
+        Retrieve the label of the dihedral type.
         """
-        return f"{self.itomtype.name}-{self.jtomtype.name}-{self.ktomtype.name}-{self.ltomtype.name}"
+        return self.get("label", "-".join([a.label for a in self.atomtypes]))
 
     @property
     def atomtypes(self):
@@ -418,11 +424,11 @@ class ImproperType(Type):
         self.ltomtype = ltomtype
 
     @property
-    def name(self) -> str:
+    def label(self) -> str:
         """
-        Retrieve the name of the improper type.
+        Retrieve the label of the improper type.
         """
-        return f"{self.itomtype.name}-{self.jtomtype.name}-{self.ktomtype.name}-{self.ltomtype.name}"
+        return self.get("label", "-".join([a.label for a in self.atomtypes]))
 
     @property
     def atomtypes(self):
@@ -437,7 +443,7 @@ class AtomStyle(Style):
 
     def def_type(self, name: str, class_=None, *params, **kw_params) -> AtomType:
         at = AtomType(name, *params, **kw_params)
-        self.types[name] = at
+        self.types.add(at)
         if class_:
             self.classes[class_].add(name)
         return at
@@ -554,7 +560,7 @@ class PairStyle(Style):
         **kw_params,
     ):
         pt = PairType(name, itomtype, jtomtype, *params, **kw_params)
-        self.add(pt)
+        self.types.add(pt)
         return pt
 
 

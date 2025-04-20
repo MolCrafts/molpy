@@ -9,19 +9,16 @@ import pandas as pd
 
 class PDBReader(DataReader):
 
-    def __init__(self, file: str | Path, frame: mp.Frame | None = None):
-        super().__init__(path=file, frame=frame)
-        self._file = Path(file)
+    def __init__(self, file: str | Path):
+        super().__init__(path=file)
 
     @staticmethod
     def sanitizer(line: str) -> str:
         return line.strip()
 
-    def read(self):
+    def read(self, frame):
 
-        frame = self._frame
-
-        with open(self._file, "r") as f:
+        with open(self._path, "r") as f:
 
             lines = filter(
                 lambda line: line.startswith("ATOM")
@@ -93,17 +90,15 @@ class PDBReader(DataReader):
 
 class PDBWriter(DataWriter):
 
-    def __init__(self, path: str | Path, frame: mp.Frame | None = None):
-        super().__init__(path=path, frame=frame)
+    def __init__(self, path: str | Path, ):
+        super().__init__(path=path)
 
-    def write(self):
-
-        frame = self._frame
+    def write(self, frame):
 
         with open(self._path, "w") as f:
 
-            for atom in frame["atoms"].itertuples(index=False):
-                serial = atom.id
+            for atom in frame["atoms"].itertuples():
+                serial = getattr(atom, "id", atom.Index)
                 altLoc = getattr(atom, "altLoc", "")
                 unique_name = getattr(atom, "unique_name", getattr(atom, "name", "UNK"))
                 # if name in atom_name_remap:
@@ -120,6 +115,8 @@ class PDBWriter(DataWriter):
                 x = atom.x
                 y = atom.y
                 z = atom.z
+
+                print(serial, altLoc, unique_name, resName, chainID, resSeq, iCode, x, y, z, elem)
 
                 f.write(
                     f"{'ATOM':6s}{serial:>5d}{' '*1}{unique_name.upper():>4s}{altLoc:1s}{resName:>3s}{' '*1}{chainID:1s}{resSeq:>4d}{iCode:1s}{' '*3}{x:>8.3f}{y:>8.3f}{z:>8.3f}{' '*22}{elem:>2s}  \n"
