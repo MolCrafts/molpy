@@ -561,7 +561,7 @@ class Struct(Entity):
                 substruct.add_bond(itom, jtom, **bond)
         return substruct
 
-    def get_topology(self):
+    def get_topology(self, attrs:list[str]):
         """
         Get the topology of the structure.
 
@@ -573,12 +573,8 @@ class Struct(Entity):
         topo = Topology()
         atoms = {atom: i for i, atom in enumerate(self["atoms"])}
         atom_attrs = {}
-        if all("number" in atom for atom in self["atoms"]):
-            atom_attrs["number"] = [atom["number"] for atom in self["atoms"]]
-        if all("name" in atom for atom in self["atoms"]):
-            atom_attrs["name"] = [atom["name"] for atom in self["atoms"]]
-
-        # TODO: atom name if no number
+        for attr in attrs:
+            atom_attrs[attr] = [atom[attr] for atom in self["atoms"]]
         topo.add_atoms(len(atoms), **atom_attrs)
         bonds = self["bonds"]
         topo.add_bonds([(atoms[bond.itom], atoms[bond.jtom]) for bond in bonds])
