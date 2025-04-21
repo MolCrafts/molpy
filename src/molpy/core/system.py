@@ -10,6 +10,14 @@ class System:
         self._trajectory = Trajectory()
         self._forcefield = None
 
+    @property
+    def forcefield(self):
+        return self._forcefield
+    
+    @forcefield.setter
+    def forcefield(self, value):
+        self._forcefield = value
+
     def set_forcefield(self, forcefield: ForceField):
         """Set the forcefield for the system."""
         self.forcefield = forcefield

@@ -68,7 +68,7 @@ class XMLForceFieldReader:
         for i, atom in enumerate(atoms):
             attrib = atom.attrib
             name = attrib.pop(name_flag, str(i))
-            at = atomstyle.get_type(name)
+            at = atomstyle.get(name)
             if at is None:
                 at = atomstyle.def_type(name)
             if "def" in attrib:
