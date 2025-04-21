@@ -46,7 +46,7 @@ class SmartsTypifier:
 
     def typify(self, structure, use_residue_map=False, max_iter=10):
 
-        graph = structure.get_topology()
+        graph = structure.get_topology(attrs=["name", "number"])
         self.prepare_graph(graph)
         for typename, rule in self.smarts_graphs.items():
             result = rule.find_matches(graph)

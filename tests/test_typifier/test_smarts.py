@@ -54,7 +54,7 @@ class TestSMARTS:
         mol2 = (
             mp.io.read_mol2(test_data_path / "data/mol2/uniqueness_test.mol2", frame)
             .to_struct()
-            .get_topology()
+            .get_topology(attrs=["name", "number"])
         )
         rule_match(mol2, "[#6]1[#6][#6][#6][#6][#6]1", False)
         rule_match(mol2, "[#6]1[#6][#6][#6][#6]1", False)
@@ -65,7 +65,7 @@ class TestSMARTS:
         ring_mol2 = (
             mp.io.read_mol2(test_data_path / "data/mol2/ring.mol2", frame)
             .to_struct()
-            .get_topology()
+            .get_topology(attrs=["name", "number"])
         )
 
         rule_match(ring_mol2, "[#6]1[#6][#6][#6][#6][#6]1", True)
@@ -73,7 +73,7 @@ class TestSMARTS:
         not_ring_mol2 = (
             mp.io.read_mol2(test_data_path / "data/mol2/not_ring.mol2", frame)
             .to_struct()
-            .get_topology()
+            .get_topology(attrs=["name", "number"])
         )
 
         rule_match(not_ring_mol2, "[#6]1[#6][#6][#6][#6][#6]1", False)
@@ -83,7 +83,7 @@ class TestSMARTS:
         mol2 = (
             mp.io.read_mol2(test_data_path / "data/mol2/fused.mol2", frame)
             .to_struct()
-            .get_topology()
+            .get_topology(attrs=["name", "number"])
         )
         rule = SMARTSGraph(
             name="test",
@@ -91,10 +91,9 @@ class TestSMARTS:
             smarts_string="[#6]12[#6][#6][#6][#6][#6]1[#6][#6][#6][#6]2",
         )
 
-        match_indices = list(rule.find_matches(mol2))
-        # assert 3 in match_indices
-        # assert 4 in match_indices
-        assert len(match_indices) == 2
+        match_name = [mol2.vs[i]["name"] for i in rule.find_matches(mol2)]
+        assert all(n in match_name for n in ("C4", "C5"))
+        assert len(match_name) == 2
 
     def test_ring_count(self, smarts_parser, test_data_path):
         # Two rings
@@ -102,32 +101,30 @@ class TestSMARTS:
         mol2 = (
             mp.io.read_mol2(test_data_path / "data/mol2/fused.mol2", frame)
             .to_struct()
-            .get_topology()
+            .get_topology(attrs=["name", "number"])
         )
         rule = SMARTSGraph(name="test", parser=smarts_parser, smarts_string="[#6;R2]")
 
-        match_indices = list(rule.find_matches(mol2))
-        for atom_idx in (3, 4):
-            assert atom_idx in match_indices
-        assert len(match_indices) == 2
+        match_name = [mol2.vs[i]["name"] for i in rule.find_matches(mol2)]
+        assert all(n in match_name for n in ("C4", "C5"))
+        assert len(match_name) == 2
 
         rule = SMARTSGraph(name="test", parser=smarts_parser, smarts_string="[#6;R1]")
-        match_indices = list(rule.find_matches(mol2))
-        for atom_idx in (0, 1, 2, 5, 6, 7, 8, 9):
-            assert atom_idx in match_indices
+        match_name = [mol2.vs[i]["name"] for i in rule.find_matches(mol2)]
+        assert all(n in match_name for n in ("C1", "C2", "C3", "C4", "C5"))
         assert len(match_indices) == 8
 
         # One ring
         ring = (
             mp.io.read_mol2(test_data_path / "data/mol2/ring.mol2", frame)
             .to_struct()
-            .get_topology()
+            .get_topology(attrs=["name", "number"])
         )
 
         rule = SMARTSGraph(name="test", parser=smarts_parser, smarts_string="[#6;R1]")
-        match_indices = list(rule.find_matches(ring))
-        for atom_idx in range(6):
-            assert atom_idx in match_indices
+        match_indices = [i for i in rule.find_matches(ring)]
+        match_name = [ring.vs[i]["name"] for i in match_indices]
+        assert all(n in match_name for n in ("C1", "C2", "C3", "C4", "C5"))
         assert len(match_indices) == 6
 
     def test_precedence_ast(self, smarts_parser):
@@ -152,7 +149,7 @@ class TestSMARTS:
         mol2 = (
             mp.io.read_mol2(test_data_path / "data/mol2/ethane.mol2", frame)
             .to_struct()
-            .get_topology()
+            .get_topology(attrs=["name", "number"])
         )
 
         checks = {
@@ -187,7 +184,7 @@ class TestSMARTS:
         mol2 = (
             mp.io.read_mol2(test_data_path / "data/mol2/ethane.mol2", frame)
             .to_struct()
-            .get_topology()
+            .get_topology(attrs=["name", "number"])
         )
 
         checks = {
