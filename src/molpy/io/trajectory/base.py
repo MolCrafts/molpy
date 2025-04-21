@@ -3,13 +3,16 @@ from typing import Iterator, Union, List
 from pathlib import Path
 import mmap
 
-class BaseReader(ABC):
-    """Base class for all chemical file readers."""
+
+class TrajectoryReader:
+    """Base class for trajectory file readers."""
 
     def __init__(self, filepath: Union[str, Path]):
         self.filepath = Path(filepath)
+        self._byte_offsets: list[int] = []
         if not self.filepath.exists():
             raise FileNotFoundError(f"File not found: {self.filepath}")
+        self._parse_trajectory()
 
     def __enter__(self):
         return self
@@ -17,14 +20,8 @@ class BaseReader(ABC):
     def __exit__(self, exc_type, exc_val, exc_tb):
         ...
 
-
-class TrajectoryReader(BaseReader):
-    """Base class for trajectory file readers."""
-
     def __init__(self, filepath: str | Path):
         super().__init__(filepath)
-        self._byte_offsets: list[int] = []
-        self._parse_trajectory()
 
     @abstractmethod
     def read_frame(self, index: int) -> dict:

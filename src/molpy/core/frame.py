@@ -3,32 +3,20 @@ import molpy as mp
 import numpy as np
 import pandas as pd
 from copy import deepcopy
+from nesteddict import NestedDict
+from typing import Any
 
-
-class Frame(dict):
+class Frame(NestedDict):
 
     def __init__(
-        self, data: dict[str, pd.DataFrame | dict[str, list]] | None = None, **props
+        self, data: dict[str, pd.DataFrame | Any] = {}
     ):
         """Static data structure for aligning model. The frame is a dictionary-like, multi-DataFrame object, facilitating access data by keys.
 
         Args:
             data (dict): A dictionary of dataframes.
         """
-        if data is not None:
-            for key, value in data.items():
-                assert isinstance(value, (pd.DataFrame, pd.Series)) or isinstance(
-                    value, dict
-                ), TypeError(
-                    "data must be dataframe-like, otherwise assign them by `Frame(name=object)` and call it by `frame.name`"
-                )
-                if isinstance(value, dict):
-                    self[key] = pd.DataFrame(data=value)
-                else:
-                    self[key] = value
-
-        for k, v in props.items():
-            setattr(self, k, v)
+        super().__init__(data)
 
     @classmethod
     def from_frames(cls, *others):
@@ -37,12 +25,6 @@ class Frame(dict):
             frame[fkey] = pd.concat(
                 (other[fkey] for other in others), axis=0, ignore_index=True, sort=False
             )
-
-        # if any of the frames have a box, use the first one
-        for other in others:
-            if "box" in other:
-                frame.box = other.box
-                break
         return frame
     
     @classmethod
