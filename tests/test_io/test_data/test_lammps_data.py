@@ -11,13 +11,15 @@ class TestReadLammpsData:
     def test_molid(self, lammps_data):
         
         reader = mp.io.data.LammpsDataReader(lammps_data / "molid.lmp")
-        frame = reader.read()
+        frame = mp.Frame()
+        frame = reader.read(frame)
         assert frame["atoms"].shape[0] == 12
 
     def test_labelmap(self, lammps_data):
         
         reader = mp.io.data.LammpsDataReader(lammps_data / "labelmap.lmp")
-        frame = reader.read()
+        frame = mp.Frame()
+        frame = reader.read(frame)
         assert len(frame["atoms"]) == 16
         assert "type" in frame["atoms"]
         print(frame["atoms", "type"])

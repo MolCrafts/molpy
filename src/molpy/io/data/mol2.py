@@ -6,18 +6,20 @@ import numpy as np
 import molpy as mp
 from collections import defaultdict
 import pandas as pd
+from .base import DataReader, DataWriter
 
 
-class Mol2Reader:
+class Mol2Reader(DataReader):
 
     def __init__(self, file: str | Path):
+        super().__init__(file)
         self._file = Path(file)
 
     @staticmethod
     def sanitizer(line: str) -> str:
         return line.strip()
 
-    def read(self, system=None):
+    def read(self, frame=None):
 
         with open(self._file, "r") as f:
             lines = f.readlines()
@@ -42,18 +44,14 @@ class Mol2Reader:
 
         self.assign_atomic_numbers(self.atoms, None)
 
-        if system is None:
-            system = mp.System()
-
-        system.frame = mp.Frame()
-        system.frame["atoms"] = pd.DataFrame.from_records(
+        frame["atoms"] = pd.DataFrame.from_records(
             self.atoms,
         )
-        system.frame["bonds"] = pd.DataFrame.from_records(
+        frame["bonds"] = pd.DataFrame.from_records(
             self.bonds, columns=["id", "i", "j", "type"]
         )
 
-        return system
+        return frame
 
     def assign_atomic_numbers(self, atoms, restemp):
         for atom in atoms:
