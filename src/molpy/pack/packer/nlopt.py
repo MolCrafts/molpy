@@ -32,7 +32,7 @@ class NloptPacker(Packer):
         self.lb = -np.inf
         self.ub = np.inf
         
-    def optimize(self, objective_func, lb, ub, x0, maxeval=100):
+    def optimize(self, lb, ub, x0, maxeval=100):
         opt = self.opt
         obj = ObjectiveFunction(constraints)
         opt.set_min_objective(obj)

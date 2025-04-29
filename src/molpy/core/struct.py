@@ -1,18 +1,11 @@
 from copy import deepcopy
 from molpy.op import rotate_by_rodrigues
-from typing import Callable
+from typing import Callable, Generic, TypeVar
 import numpy as np
 import pandas as pd
 from molpy import op
 
-
-# def return_copy(func):
-#     def wrapper(self, *args, **kwargs):
-#         new = self.copy()
-#         return func(new, *args, **kwargs)
-
-#     return wrapper
-
+T = TypeVar("entity")
 
 class Entity(dict):
     """Base class representing a general entity with dictionary-like behavior."""
@@ -277,10 +270,10 @@ class Improper(ManyBody):
         )
 
 
-class Entities:
+class Entities(Generic[T]):
     """Class representing a collection of entities."""
 
-    def __init__(self, entities: list[Entity] = []):
+    def __init__(self, entities: list[T] = []):
         self._data = set(entities)
 
     def add(self, entity):
@@ -288,7 +281,7 @@ class Entities:
         self._data.add(entity)
         return self
 
-    def get_by(self, condition: Callable[[Entity], bool]) -> Entity:
+    def get_by(self, condition: Callable[[T], bool]) -> T:
         """
         Get an entity based on a condition.
 
@@ -318,8 +311,23 @@ class Entities:
         """Get an entity by its index."""
         return list(self._data)[key]
 
+class HierarchicalMixin(Generic[T]):
+    """Mixin class for hierarchical operations on entities."""
 
-class Struct(Entity):
+    def __new__(self, *args, **kwargs):
+        ins = super().__new__(self)
+        if not hasattr(ins, "_entities"):
+            ins._entities = Entities()
+
+        return ins
+    
+    def add_child(self, entity: T):
+        """Add a sub-entity to the collection."""
+        self._entities.add(entity)
+        return self
+
+
+class Struct(Entity, HierarchicalMixin["Struct"]):
     """Class representing a molecular structure."""
 
     def __init__(
@@ -583,3 +591,13 @@ class Struct(Entity):
         bonds = self["bonds"]
         topo.add_bonds([(atoms[bond.itom], atoms[bond.jtom]) for bond in bonds])
         return topo
+
+    def add_struct(self, struct: "Struct"):
+        """
+        Add another structure to the current structure.
+
+        Parameters:
+        - struct: The structure to add.
+        """
+        self.add_child(struct)
+        return self
