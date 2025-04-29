@@ -279,7 +279,7 @@ class Entities(Generic[T]):
     def add(self, entity):
         """Add an entity to the collection."""
         self._data.add(entity)
-        return self
+        return entity
 
     def get_by(self, condition: Callable[[T], bool]) -> T:
         """
@@ -307,7 +307,7 @@ class Entities(Generic[T]):
         """Return an iterator over the entities."""
         return iter(self._data)
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: int):
         """Get an entity by its index."""
         return list(self._data)[key]
 
@@ -406,8 +406,7 @@ class Struct(Entity, HierarchicalMixin["Struct"]):
         Parameters:
         - props: Properties of the atom.
         """
-        self["atoms"].add(Atom(**props))
-        return self
+        return self["atoms"].add(Atom(**props))
 
     def add_bond(self, itom, jtom, **kwargs):
         """
@@ -418,13 +417,12 @@ class Struct(Entity, HierarchicalMixin["Struct"]):
         - jtom: Second atom in the bond.
         - kwargs: Additional properties.
         """
-        if isinstance(itom, str):
+        if isinstance(itom, int):
             itom = self["atoms"][itom]
-        if isinstance(jtom, str):
+        if isinstance(jtom, int):
             jtom = self["atoms"][jtom]
-        bond = Bond(itom, jtom, **kwargs)
-        self["bonds"][(itom, jtom)] = bond
-        return self
+        
+        return self["bonds"].add(Bond(itom, jtom, **kwargs))
 
     def del_atom(self, atom):
         """

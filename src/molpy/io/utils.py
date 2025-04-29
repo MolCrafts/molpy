@@ -1,6 +1,8 @@
 import molpy as mp
 from functools import wraps
 
+FrameLike = mp.Frame | mp.System | mp.Struct
+
 def to_system(func):
 
     @wraps(func)
@@ -20,6 +22,18 @@ def to_system(func):
         return func(system, *args, **kwargs)
 
     return wrapper
+
+def to_frame(framelike: FrameLike) -> mp.Frame:
+
+    if isinstance(framelike, mp.System):
+        frame = framelike.frame
+    elif isinstance(framelike, mp.Frame):
+        frame = framelike
+    elif isinstance(framelike, mp.Struct):
+        frame = framelike.to_frame()
+
+    return frame
+    
 
 
 class ZipReader:
