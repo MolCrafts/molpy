@@ -66,7 +66,7 @@ class NameSpace(dict):
         if name in NameSpace.namespaces:
             return NameSpace.namespaces[name]
         elif name in self:
-            return self[name].key
+            return self[name]
         return super().__getattribute__(name)
 
     def set(

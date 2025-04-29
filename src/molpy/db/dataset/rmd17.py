@@ -10,12 +10,14 @@ import requests
 import molpy as mp
 from molpy.core import alias
 
+from .base import Dataset, IterDatasetMixin, MapDatasetMixin, FrameLikeDatasetMixin, TrajectoryLikeDatasetMixin
+
 logger = logging.getLogger(__name__)
 
 rng = np.random.default_rng()
 
 
-class rMD17:
+class rMD17(Dataset, IterDatasetMixin, MapDatasetMixin, FrameLikeDatasetMixin, TrajectoryLikeDatasetMixin):
 
     atomrefs = {
         "energy": np.array(
@@ -61,13 +63,8 @@ class rMD17:
             "toluene",
             "uracil",
         ],
-        device: str = "cpu"
     ):
-        super().__init__(
-            name="rmd17",
-            save_dir=save_dir,
-            device=device,
-        )
+        super().__init__(name="rmd17", save_dir=save_dir)
         self.labels.set("energy", "total energy", float, "kcal/mol", (None, 1))
         self.labels.set("forces", "all forces", float, "kcal/mol/A", (None, 3))
 
@@ -79,16 +76,19 @@ class rMD17:
                 f"Invalid molecule. Choose from {molecules}. Got {molecule}"
             )
 
-        self.archive_path = self.save_dir / "rmd17.tar.gz"
-        self.npz_path = (
-            self.save_dir / self.molecule / self.datasets_dict[self.molecule]
-        )  # save_dir/aspirin/rmd17_aspirin.npz
+        if isinstance(self.save_dir, Path):
+            self.archive_path = self.save_dir / "rmd17.tar.gz"
+            self.npz_path = (
+                self.save_dir / self.molecule / self.datasets_dict[self.molecule]
+            )  # save_dir/aspirin/rmd17_aspirin.npz
+        else:
+            raise NotImplementedError("not implemented for streaming mode")
 
         self._frames = []
 
     def __len__(self):
         return len(self._frames)
-    
+
     def get_frame(self, idx):
         return self._frames[idx]
 
@@ -96,25 +96,23 @@ class rMD17:
     def frames(self):
         return self._frames
 
-    def prepare(self, total: int | None = 1000):
+    def parse(self, total: int | None = 1000):
 
-        if self.save_dir is None:
-            data = self._fetch_data()
-        else:
-            data = self.download()
-        frames = self.parse_data(data, total=total)
-        self._frames = frames
+        if self.save_dir:
+            data = np.load(self.npz_path)
+            frames = self.parse_data(data, total=total)
+            self._frames = frames
         return frames
 
-    def _fetch_data(self) -> Sequence[mp.Frame]:
-        logger.info(f"Fetching {self.molecule} data")
-        rmd17_url = "https://figshare.com/ndownloader/files/23950376"
-        rmd17_bytes = requests.get(rmd17_url, allow_redirects=True).content
-        rmd17_fobj = io.BytesIO(rmd17_bytes)
-        rmd17_fobj.seek(0)
-        rmd17_tar = tarfile.open(fileobj=rmd17_fobj, mode="r:bz2")
-        data = np.load(rmd17_tar.extractfile(self.npz_path))
-        return data
+    # def _fetch_data(self) -> Sequence[mp.Frame]:
+    #     logger.info(f"Fetching {self.molecule} data")
+    #     rmd17_url = "https://figshare.com/ndownloader/files/23950376"
+    #     rmd17_bytes = requests.get(rmd17_url, allow_redirects=True).content
+    #     rmd17_fobj = io.BytesIO(rmd17_bytes)
+    #     rmd17_fobj.seek(0)
+    #     rmd17_tar = tarfile.open(fileobj=rmd17_fobj, mode="r:bz2")
+    #     data = np.load(rmd17_tar.extractfile(self.npz_path))
+    #     return data
 
     def download(self) -> Sequence[mp.Frame]:
 
@@ -140,9 +138,7 @@ class rMD17:
                 )
 
         logger.info(f"Parsing molecule {self.molecule}")
-
-        data = np.load(self.npz_path)
-        return data
+        return self
 
     def parse_data(self, data, total: int | None) -> Sequence[mp.Frame]:
         numbers = np.array(data["nuclear_charges"])
@@ -154,24 +150,19 @@ class rMD17:
             frame = mp.Frame()
             frame[alias.Z] = numbers
             frame[alias.R] = np.array(data["coords"][idx], dtype=np.float32)
-            frame["labels", "energy"] = np.array(
-                [
-                    data["energies"][idx]
-                ]
-            )
-            frame["labels", "forces"] = np.array(
-                data["forces"][idx]
-            )
+            frame["labels", "energy"] = np.array([data["energies"][idx]])
+            frame["labels", "forces"] = np.array(data["forces"][idx])
             frame[alias.n_atoms] = np.array([len(numbers)])
             frames.append(frame)
         return frames
 
-    def save(self, *args, **kwargs):
-        frames = mp.Frame.from_frames(self._frames)
-        frames.save(self.save_dir / f"{self.molecule}.pt", *args, **kwargs)
-        return frames
+    def __iter__(self):
+        for frame in self._frames:
+            yield frame
 
-    def load(self, *args, **kwargs):
-        frames = mp.Frame.load(self.save_dir / f"{self.molecule}.pt", *args, **kwargs)
-        self._frames = [mp.Frame(frame) for frame in frames]
-        return self._frames
+    def __getitem__(self, index: int) -> mp.Frame:
+        return self._frames[index]
+
+    def get_trajectory(self):
+        traj = mp.Trajectory(self._frames)
+        return traj

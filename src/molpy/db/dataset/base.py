@@ -1,6 +1,5 @@
-from abc import abstractmethod, ABC
+from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Sequence
 
 import molpy as mp
 from molpy.core.alias import NameSpace
@@ -11,42 +10,53 @@ class Dataset(ABC):
     def __init__(
         self,
         name: str,
-        save_dir: Path | None = None,
-        device: str = "cpu"
+        save_dir: Path | None = None
     ):
         self.labels = NameSpace(name)
-        self.device = device
-
-        if save_dir is not None:
-            self.save_dir = Path(save_dir)
-            if not self.save_dir.exists():  # create save_dir
-                self.save_dir.mkdir(parents=True, exist_ok=True)
-        else:
+        
+        if save_dir is None:
             self.save_dir = None
+        elif isinstance(save_dir, (Path, str)):
+            self.save_dir = Path(save_dir) / name
+            self.save_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            raise ValueError("save_dir must be a Path or None.")
 
-
-    def prepare(self): ...
+    @property
+    def streaming(self) -> bool:
+        """
+        Check if the dataset is in streaming mode.
+        """
+        return self.save_dir is None
 
     def download(self): ...
 
-    def update(self, state): ...
-
-    def get_frame(self, idx: int) -> mp.Frame: ...
-        
-
-class IterStyleDataset(Dataset):
-
-    def __init__(self, frames: Sequence[mp.Frame]):
-        self.frames = frames
-
-    def __len__(self):
-        return len(self.frames)
-
-    def __getitem__(self, i: int) -> Any:
-        return self.frames[i]
+    def parse(self): ...
 
 
-class MapStyleDataset(Dataset):
+class IterDatasetMixin:
+    """
+    Mixin class for iterable datasets.
+    """
 
-    def __getitem__(self, idx):
-        return self.get_frame(idx)
+    def __iter__(self) -> mp.Frame: ...
+
+class MapDatasetMixin:
+    """
+    Mixin class for map datasets.
+    """
+
+    def __getitem__(self, index: int) -> mp.Frame: ...
+
+class TrajectoryLikeDatasetMixin:
+    """
+    Mixin class for trajectory-like datasets.
+    """
+    def get_trajectory(self): ...
+
+
+class FrameLikeDatasetMixin:
+    """
+    Mixin class for frame-like datasets.
+    """
+    def get_frames(self): ...
