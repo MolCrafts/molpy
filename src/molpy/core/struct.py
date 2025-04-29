@@ -4,8 +4,10 @@ from typing import Callable, Generic, TypeVar
 import numpy as np
 import pandas as pd
 from molpy import op
+from nesteddict import ArrayDict
 
 T = TypeVar("entity")
+
 
 class Entity(dict):
     """Base class representing a general entity with dictionary-like behavior."""
@@ -30,29 +32,23 @@ class Entity(dict):
 class SpatialMixin:
     """Mixin class for spatial operations on entities."""
 
-    @property
-    def xyz(self):
-        """Get the 3D coordinates of the entity."""
-        return np.array([self["x"], self["y"], self["z"]], dtype=float)
-
-    @xyz.setter
-    def xyz(self, value):
-        """Set the 3D coordinates of the entity."""
-        if len(value) != 3:
-            raise ValueError("R must be a 3D vector")
-        self["x"], self["y"], self["z"] = value
+    xyz: np.ndarray
 
     def distance_to(self, other):
         """Calculate the Euclidean distance to another entity."""
         return np.linalg.norm(self.xyz - other.xyz)
 
-    def translate(self, vector):
+    def translate(self, vector: np.ndarray):
         """Translate the entity by a given vector."""
-        self.xyz += vector
+        self.xyz = np.add(self.xyz, vector)
 
     def rotate(self, axis, theta):
         """Rotate the entity around a given axis by a specified angle."""
         self.xyz = rotate_by_rodrigues(self.xyz.reshape(1, -1), axis, theta).flatten()
+
+    def reflact(self, axis: np.ndarray):
+        """Reflect the entity across a given axis."""
+        self.xyz = np.dot(self.xyz, np.eye(3) - 2 * np.outer(axis, axis))
 
 
 class Atom(Entity, SpatialMixin):
@@ -83,7 +79,15 @@ class Atom(Entity, SpatialMixin):
         """Compare atoms based on their names."""
         return id(self) < id(other)
     
-
+    @property
+    def xyz(self):
+        return np.array(self["xyz"], dtype=float)
+    
+    @xyz.setter
+    def xyz(self, value):
+        assert len(value) == 3, "xyz must be a 3D vector"
+        self["xyz"] = np.ndarray(value)
+    
 
 class ManyBody(Entity):
     """Base class for entities involving multiple atoms."""
@@ -311,6 +315,7 @@ class Entities(Generic[T]):
         """Get an entity by its index."""
         return list(self._data)[key]
 
+
 class HierarchicalMixin(Generic[T]):
     """Mixin class for hierarchical operations on entities."""
 
@@ -320,14 +325,18 @@ class HierarchicalMixin(Generic[T]):
             ins._entities = Entities()
 
         return ins
-    
+
     def add_child(self, entity: T):
         """Add a sub-entity to the collection."""
         self._entities.add(entity)
         return self
+    
+    def reduce(self, func: Callable[[T], T] = lambda x: x) -> list[T]:
+        """Reduce the collection of entities using a function."""
+        return [func(entity) for entity in self._entities]
 
 
-class Struct(Entity, HierarchicalMixin["Struct"]):
+class Struct(Entity, SpatialMixin, HierarchicalMixin["Struct"]):
     """Class representing a molecular structure."""
 
     def __init__(
@@ -344,7 +353,16 @@ class Struct(Entity, HierarchicalMixin["Struct"]):
             {
                 "name": name,
                 "atoms": Entities(atoms),
-                "bonds": Entities([Bond(atoms[bond[0]], atoms[bond[1]]) if isinstance(bond, tuple) else bond for bond in bonds]),
+                "bonds": Entities(
+                    [
+                        (
+                            Bond(atoms[bond[0]], atoms[bond[1]])
+                            if isinstance(bond, tuple)
+                            else bond
+                        )
+                        for bond in bonds
+                    ]
+                ),
                 "angles": Entities(angles),
                 "dihedrals": Entities(dihedrals),
                 "impropers": Entities(impropers),
@@ -354,12 +372,24 @@ class Struct(Entity, HierarchicalMixin["Struct"]):
     @property
     def atoms(self):
         """Get the atoms in the structure."""
-        return self["atoms"]
-    
+        return self["atoms"] + self.reduce()
+
     @property
     def bonds(self):
         """Get the bonds in the structure."""
         return self["bonds"]
+    
+    @property
+    def xyz(self):
+        """Get the coordinates of the atoms in the structure."""
+        return np.array([atom["xyz"] for atom in self["atoms"]], dtype=float)
+    
+    @xyz.setter
+    def xyz(self, value):
+        """Set the coordinates of the atoms in the structure."""
+        assert len(value) == len(self["atoms"]), "xyz must match the number of atoms"
+        for i, atom in enumerate(self["atoms"]):
+            atom["xyz"] = value[i]
 
     def __repr__(self):
         """Return a string representation of the structure."""
@@ -421,7 +451,7 @@ class Struct(Entity, HierarchicalMixin["Struct"]):
             itom = self["atoms"][itom]
         if isinstance(jtom, int):
             jtom = self["atoms"][jtom]
-        
+
         return self["bonds"].add(Bond(itom, jtom, **kwargs))
 
     def del_atom(self, atom):
@@ -511,23 +541,20 @@ class Struct(Entity, HierarchicalMixin["Struct"]):
 
         atom_name_idx_mapping = {}
         for i, atom in enumerate(self["atoms"]):
-            atom_name_idx_mapping[atom["name"]] = i
-            atom["id"] = i
+            atom_name_idx_mapping[atom] = i
 
-        frame["atoms"] = pd.DataFrame(
+        frame["atoms"] = ArrayDict.from_dicts(
             [atom.to_dict() for atom in self["atoms"]]
         )
         if "bonds" in self and len(self["bonds"]) > 0:
             bdicts = []
-            for bond in self["bonds"]:
+            for i, bond in enumerate(self["bonds"]):
                 bdict = bond.to_dict()
-                iname = bond.itom["name"]
-                jname = bond.jtom["name"]
-                bdict["i"] = atom_name_idx_mapping[iname]
-                bdict["j"] = atom_name_idx_mapping[jname]
+                bdict["id"] = i
+                bdict["i"] = atom_name_idx_mapping[bond.itom]
+                bdict["j"] = atom_name_idx_mapping[bond.jtom]
                 bdicts.append(bdict)
-            frame["bonds"] = pd.DataFrame(bdicts)
-            frame["bonds"]["id"] = range(len(frame["bonds"]))
+            frame["bonds"] = ArrayDict.from_dicts(bdicts)
 
         # if "angles" in self and len(self["angles"]) > 0:
         #     angle_dict = [angle.to_dict() for angle in self["angles"]]
@@ -599,3 +626,42 @@ class Struct(Entity, HierarchicalMixin["Struct"]):
         """
         self.add_child(struct)
         return self
+
+    def calc_angles(self, topology):
+        """
+        Calculate angles in the structure.
+
+        Returns:
+        - list of Angle entities.
+        """
+
+        angle_idx = topology.angles
+        angles = [
+            Angle(
+                self["atoms"][i],
+                self["atoms"][j],
+                self["atoms"][k],
+            )
+            for i, j, k in angle_idx
+        ]
+        return angles
+    
+    def calc_dihedrals(self, topology):
+        """
+        Calculate dihedrals in the structure.
+
+        Returns:
+        - list of Dihedral entities.
+        """
+
+        dihedral_idx = topology.dihedrals
+        dihedrals = [
+            Dihedral(
+                self["atoms"][i],
+                self["atoms"][j],
+                self["atoms"][k],
+                self["atoms"][l],
+            )
+            for i, j, k, l in dihedral_idx
+        ]
+        return dihedrals

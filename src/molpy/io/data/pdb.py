@@ -97,26 +97,22 @@ class PDBWriter(DataWriter):
 
         with open(self._path, "w") as f:
 
-            for atom in frame["atoms"].itertuples():
-                serial = getattr(atom, "id", atom.Index)
-                altLoc = getattr(atom, "altLoc", "")
-                unique_name = getattr(atom, "unique_name", getattr(atom, "name", "UNK"))
+            for i, atom in enumerate(frame["atoms"].iterrows()):
+                serial = atom.get("id", i)
+                altLoc = atom.get("altLoc", "")
+                unique_name = atom.get("unique_name", atom.get("name", "UNK"))
                 # if name in atom_name_remap:
                 #     unique_name = name + str(atom_name_remap[name])
                 #     atom_name_remap[name] += 1
                 # else:
                 #     unique_name = name
                 #     atom_name_remap[name] = 1
-                resName = getattr(atom, "resName", "UNK")
-                chainID = getattr(atom, "chainID", "A")
-                resSeq = getattr(atom, "resSeq", getattr(atom, "molid", 1))
-                iCode = getattr(atom, "iCode", "")
-                elem = getattr(atom, "element", "X")
-                x = atom.x
-                y = atom.y
-                z = atom.z
-
-                print(serial, altLoc, unique_name, resName, chainID, resSeq, iCode, x, y, z, elem)
+                resName = atom.get("resName", "UNK")
+                chainID = atom.get("chainID", "A")
+                resSeq = atom.get("resSeq", atom.get("molid", 1))
+                iCode = atom.get("iCode", "")
+                elem = atom.get("element", "X")
+                x, y, z = atom["xyz"].T
 
                 f.write(
                     f"{'ATOM':6s}{serial:>5d}{' '*1}{unique_name.upper():>4s}{altLoc:1s}{resName:>3s}{' '*1}{chainID:1s}{resSeq:>4d}{iCode:1s}{' '*3}{x:>8.3f}{y:>8.3f}{z:>8.3f}{' '*22}{elem:>2s}  \n"
@@ -124,9 +120,9 @@ class PDBWriter(DataWriter):
 
             bonds = defaultdict(list)
             if "bonds" in frame:
-                for bond in frame["bonds"].itertuples():
-                    bonds[bond.i].append(bond.j)
-                    bonds[bond.j].append(bond.i)
+                for bond in frame["bonds"].iterrows():
+                    bonds[bond["i"]].append(bond["j"])
+                    bonds[bond["j"]].append(bond["i"])
 
                 for i, js in bonds.items():
                     assert len(js) <= 4, ValueError(f"PDB only supports up to 4 bonds, but atom {i} has {len(js)} bonds, which are {js}")

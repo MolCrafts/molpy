@@ -12,8 +12,6 @@ class Frame(NestDict):
             style = kwargs.pop("style")
             if style == "atomic":
                 return super().__new__(AllAtomFrame)
-            elif style == "box":
-                return super().__new__(Box)
         return super().__new__(cls)
 
     def __init__(
