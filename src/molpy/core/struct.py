@@ -7,7 +7,10 @@ from molpy import op
 from nesteddict import ArrayDict
 
 T = TypeVar("entity")
+<<<<<<< HEAD
 
+=======
+>>>>>>> 8ac4d885914e136f420d3239ea3e2fc66b4e5ff5
 
 class Entity(dict):
     """Base class representing a general entity with dictionary-like behavior."""
@@ -315,6 +318,8 @@ class Entities(Generic[T]):
         """Get an entity by its index."""
         return list(self._data)[key]
 
+class HierarchicalMixin(Generic[T]):
+    """Mixin class for hierarchical operations on entities."""
 
 class HierarchicalMixin(Generic[T]):
     """Mixin class for hierarchical operations on entities."""
@@ -325,7 +330,6 @@ class HierarchicalMixin(Generic[T]):
             ins._entities = Entities()
 
         return ins
-
     def add_child(self, entity: T):
         """Add a sub-entity to the collection."""
         self._entities.add(entity)
@@ -451,7 +455,11 @@ class Struct(Entity, SpatialMixin, HierarchicalMixin["Struct"]):
             itom = self["atoms"][itom]
         if isinstance(jtom, int):
             jtom = self["atoms"][jtom]
+<<<<<<< HEAD
 
+=======
+        
+>>>>>>> 8ac4d885914e136f420d3239ea3e2fc66b4e5ff5
         return self["bonds"].add(Bond(itom, jtom, **kwargs))
 
     def del_atom(self, atom):
@@ -625,6 +633,7 @@ class Struct(Entity, SpatialMixin, HierarchicalMixin["Struct"]):
         - struct: The structure to add.
         """
         self.add_child(struct)
+<<<<<<< HEAD
         return self
 
     def calc_angles(self, topology):
@@ -665,3 +674,6 @@ class Struct(Entity, SpatialMixin, HierarchicalMixin["Struct"]):
             for i, j, k, l in dihedral_idx
         ]
         return dihedrals
+=======
+        return self
+>>>>>>> 8ac4d885914e136f420d3239ea3e2fc66b4e5ff5
