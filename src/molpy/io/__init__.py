@@ -62,7 +62,7 @@ def read_amber(
         system = reader.read()
     return system
 
-def read_mol2(file: Path, frame: mp.Frame | None = None) -> mp.System:
+def read_mol2(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
     """Read a mol2 file and return a molpy System object."""
     from .data.mol2 import Mol2Reader
     reader = Mol2Reader(file)
@@ -80,6 +80,18 @@ def read_xml_forcefield(file: Path, system: mp.System | None = None) -> mp.Syste
 
     reader = XMLForceFieldReader(file)
     return reader.read(system)
+
+def read_gro(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
+    """Read a GROMACS gro file and return a molpy System object."""
+    from .data.gro import GroReader
+    reader = GroReader(file)
+    return reader.read(frame)
+
+def read_top(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
+    """Read a GROMACS top file and return a molpy System object."""
+    from .data.top import TopReader
+    reader = TopReader(file)
+    return reader.read(frame)
 
 @to_system
 def write_lammps_data(system: mp.System, file: Path) -> None:
