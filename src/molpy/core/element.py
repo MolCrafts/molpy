@@ -209,6 +209,10 @@ class Element:
     @classmethod
     def get_symbols(cls, maybe_atomic_number: list[str | int]) -> list[str]:
         return [cls(int(e)).symbol for e in maybe_atomic_number]
+    
+    @classmethod
+    def get_atomic_number(cls, symber: str) -> int:
+        return cls._elements[symber].number
 
 
 Element.initialize()

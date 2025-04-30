@@ -174,6 +174,5 @@ class QM9(Dataset, MapDatasetMixin, IterDatasetMixin, FrameLikeDatasetMixin):
         self._frames = frames
         return frames
 
-
     def get_frames(self):
         return self._frames
