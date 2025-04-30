@@ -1,12 +1,10 @@
 import glob
 import itertools as it
 import os
+import molpy as mp
 
-import parmed as pmd
+
 import pytest
-
-
-from foyer.tests.utils import atomtype
 
 
 class TestOPLS:
@@ -67,21 +65,26 @@ class TestOPLS:
         assert oplsaa.version == "0.0.3"
         assert oplsaa.combining_rule == "geometric"
 
-    @pytest.mark.parametrize("mol_name", correctly_implemented)
-    def test_atomtyping(self, mol_name, oplsaa, OPLS_TESTFILES_DIR):
-        files = glob.glob(os.path.join(OPLS_TESTFILES_DIR, mol_name, "*"))
-        for mol_file in files:
-            _, ext = os.path.splitext(mol_file)
-            if ext == ".top":
-                top_filename = "{}.top".format(mol_name)
-                gro_filename = "{}.gro".format(mol_name)
-                top_path = os.path.join(OPLS_TESTFILES_DIR, mol_name, top_filename)
-                gro_path = os.path.join(OPLS_TESTFILES_DIR, mol_name, gro_filename)
-                structure = pmd.load_file(top_path, xyz=gro_path, parametrize=False)
-            elif ext == ".mol2":
-                mol2_path = os.path.join(OPLS_TESTFILES_DIR, mol_name, mol_file)
-                structure = pmd.load_file(mol2_path, structure=True)
-        atomtype(structure, oplsaa)
+    def test_atomtyping(self, mol_name, oplsaa, OPLS_TESTFILES_DIR, correctly_implemented):
+        for mol_name in correctly_implemented:
+            files = glob.glob(os.path.join(OPLS_TESTFILES_DIR, mol_name, "*"))
+            for mol_file in files:
+                _, ext = os.path.splitext(mol_file)
+                if ext == ".top":
+                    top_filename = "{}.top".format(mol_name)
+                    gro_filename = "{}.gro".format(mol_name)
+                    top_path = os.path.join(OPLS_TESTFILES_DIR, mol_name, top_filename)
+                    gro_path = os.path.join(OPLS_TESTFILES_DIR, mol_name, gro_filename)
+                    structure = pmd.load_file(top_path, xyz=gro_path, parametrize=False)
+                elif ext == ".mol2":
+                    frame = mp.Frame()
+                    mol2_path = os.path.join(OPLS_TESTFILES_DIR, mol_name, mol_file)
+                    structure = (
+                        mp.io.read_mol2(mol2_path, frame)
+                        .to_struct()
+                        .get_topology(attrs=["name", "number"])
+                    )
+            atomtype(structure, oplsaa)
 
     def test_full_parametrization(self, oplsaa, OPLS_TESTFILES_DIR):
         top = os.path.join(OPLS_TESTFILES_DIR, "benzene/benzene.top")
