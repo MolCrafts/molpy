@@ -55,6 +55,7 @@ class TestSMARTS:
             mp.io.read_mol2(test_data_path / "data/mol2/uniqueness_test.mol2", frame)
             .to_struct()
             .get_topology(attrs=["name", "number"])
+
         )
         rule_match(mol2, "[#6]1[#6][#6][#6][#6][#6]1", False)
         rule_match(mol2, "[#6]1[#6][#6][#6][#6]1", False)
@@ -90,7 +91,6 @@ class TestSMARTS:
             parser=smarts_parser,
             smarts_string="[#6]12[#6][#6][#6][#6][#6]1[#6][#6][#6][#6]2",
         )
-
         match_name = [mol2.vs[i]["name"] for i in rule.find_matches(mol2)]
         assert all(n in match_name for n in ("C4", "C5"))
         assert len(match_name) == 2
