@@ -181,7 +181,7 @@ class SMARTSGraph(Graph):
                 return atomic_num == Element(str(atom_id.children[0])).number
         elif atom_id.data == "has_label":
             label = atom_id.children[0][1:]  # Strip the % sign from the beginning.
-            return label in graph.vs[atom_idx]["name"]
+            return label in graph.vs[atom_idx]["type"]
         elif atom_id.data == "neighbor_count":
             return len(bond_partners) == int(atom_id.children[0])
         elif atom_id.data == "ring_size":
