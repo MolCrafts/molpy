@@ -7,11 +7,10 @@ from typing import Any, Sequence
 
 class Frame(NestDict):
 
-    def __new__(cls, *args, **kwargs):
-        if "style" in kwargs:
-            style = kwargs.pop("style")
-            if style == "atomic":
-                return super().__new__(AllAtomFrame)
+    def __new__(cls, data: dict[str, Any] = {}, *, style="atomic"):
+
+        if style == "atomic":
+            return super().__new__(AllAtomFrame)
         return super().__new__(cls)
 
     def __init__(
@@ -23,6 +22,9 @@ class Frame(NestDict):
             data (dict): A dictionary of dataframes.
         """
         super().__init__(data)
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__}: {self.keys()}>"
 
     @classmethod
     def from_frames(cls, others: Sequence["Frame"]) -> "Frame":

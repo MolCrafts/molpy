@@ -86,6 +86,31 @@ class Type:
         raise NotImplementedError(
             "The apply method should be implemented in subclasses of Type."
         )
+    
+    def __contains__(self, key):
+        """
+        Check if the given key is present in the type's parameters.
+
+        Args:
+            key (str): The key to check.
+
+        Returns:
+            bool: True if the key is present, False otherwise.
+        """
+        return key in self.param or key in self.oparam
+    
+    def get(self, key, default=None):
+        """
+        Retrieve the value associated with the given key.
+
+        Args:
+            key (str): The key to retrieve.
+            default: The value to return if the key is not found. Defaults to None.
+
+        Returns:
+            Any: The value associated with the key, or the `default` value if not found.
+        """
+        return self.param.get(key, default) or self.oparam[key] if isinstance(key, int) else default
 
 
 class TypeContainer:

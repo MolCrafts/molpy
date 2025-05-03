@@ -5,9 +5,8 @@ import numpy as np
 
 import molpy as mp
 from collections import defaultdict
-import pandas as pd
 from .base import DataReader, DataWriter
-
+from nesteddict import ArrayDict
 
 class Mol2Reader(DataReader):
 
@@ -44,11 +43,11 @@ class Mol2Reader(DataReader):
 
         self.assign_atomic_numbers(self.atoms, None)
 
-        frame["atoms"] = pd.DataFrame.from_records(
+        frame["atoms"] = ArrayDict.from_dicts(
             self.atoms,
         )
-        frame["bonds"] = pd.DataFrame.from_records(
-            self.bonds, columns=["id", "i", "j", "type"]
+        frame["bonds"] = ArrayDict.from_dicts(
+            self.bonds
         )
 
         return frame
@@ -80,7 +79,7 @@ class Mol2Reader(DataReader):
         data = line.split()
         index = int(data[0])
         name = data[1]
-        x, y, z = map(float, data[2:5])
+        xyz = tuple(map(float, data[2:5]))
         atom_type = data[5]
         subst_id = int(data[6]) if len(data) > 6 else 0
         subst_name = data[7] if len(data) > 7 else ""
@@ -89,9 +88,7 @@ class Mol2Reader(DataReader):
             {
                 "id": index,
                 "name": name,
-                "x": x,
-                "y": y,
-                "z": z,
+                "xyz": xyz,
                 "type": atom_type,
                 "subst_id": subst_id,
                 "subst_name": subst_name,
@@ -106,4 +103,9 @@ class Mol2Reader(DataReader):
         atom1 = int(data[1])
         atom2 = int(data[2])
         bond_type = data[3]
-        self.bonds.append((index, atom1, atom2, bond_type))
+        self.bonds.append({
+            "id": index,
+            "i": atom1,
+            "j": atom2,
+            "type": bond_type
+        })
