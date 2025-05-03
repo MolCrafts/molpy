@@ -2,7 +2,6 @@ from pathlib import Path
 import molpy as mp
 import numpy as np
 from typing import Iterator
-from itertools import accumulate
 import pandas as pd
 import math
 

@@ -1,6 +1,6 @@
+from nesteddict import ArrayDict
 from .base import DataReader
 from pathlib import Path
-import pandas as pd
 from molpy import Element
 
 
@@ -11,35 +11,26 @@ class GroReader(DataReader):
 
     @staticmethod
     def sanitizer(line: str) -> str:
-        return line.strip()
+        return line.rstrip()
 
-    def read(self, frame=None):
+    def read(self, frame):
         with open(self._file, "r") as f:
             lines = f.readlines()
 
-        self.atoms = []
-
         lines = list(map(GroReader.sanitizer, lines))
 
+        self._parse_title(lines[0], frame)
         natoms = int(lines[1])
-
-        for line in lines[2:2+natoms]:
-            self._parse_atom_section(line)
-
-        self.assign_atomic_numbers(self.atoms, None)
-
-        frame["atoms"] = pd.DataFrame.from_records(
-            self.atoms,
-        )
+        self._parse_atom_section(lines[2 : 2 + natoms], frame)
 
         return frame
-    
+
     def assign_atomic_numbers(self, atoms, restemp):
         for atom in atoms:
-            atomic_number = self._guess_atomic_number(atom['name'], restemp).number
+            atomic_number = self._guess_atomic_number(atom["name"], restemp).number
             if atomic_number == 0:
-                atomic_number = self._guess_atomic_number(atom['type'], restemp).number
-            atom['number'] = atomic_number
+                atomic_number = self._guess_atomic_number(atom["type"], restemp).number
+            atom["number"] = atomic_number
 
     def _guess_atomic_number(self, name, residue=None):
         """Guesses the atomic number"""
@@ -52,31 +43,27 @@ class GroReader(DataReader):
                 except KeyError:
                     return Element(name)
         return Element(name)
-    
-    def _parse_atom_section(self, line):
-        data = line.split()
-        subst_name = data[0]
-        name = data[1]
-        index = int(data[2])
 
-        x = float(data[3])
-        y = float(data[4])
-        z = float(data[5])
+    def _parse_title(self, line, frame):
+        comment, _, timestep = line.partition("t=")
+        if timestep:
+            frame.timestep = int(timestep.strip())
 
-        vx = vy = vz = None
-        if len(data) >= 9:
-            vx = float(data[6])
-            vy = float(data[7])
-            vz = float(data[8])
+    def _parse_atom_section(self, line, frame):
+        atoms = []
+        for line in line:
+            atom = {
+                "res_number": line[0:5].strip(),
+                "res_name": line[5:10].strip(),
+                "name": line[10:15].strip(),
+                "atomic_number": int(line[15:20].strip()),
+                "xyz": (float(line[20:28]), float(line[28:36]), float(line[36:44])),
+            }
 
-        self.atoms.append({
-            "id": index,
-            "name": name,
-            "subst_name": subst_name,
-            "x": x,
-            "y": y,
-            "z": z,
-            "vx": vx,
-            "vy": vy,
-            "vz": vz
-        })
+            if len(line) > 44:
+                atom["vx"] = float(line[44:53])
+                atom["vy"] = float(line[53:62])
+                atom["vz"] = float(line[62:71])
+
+            atoms.append(atom)
+        frame["atoms"] = ArrayDict.from_dicts(atoms)

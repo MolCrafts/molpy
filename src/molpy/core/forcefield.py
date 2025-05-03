@@ -53,6 +53,14 @@ class Type:
         if isinstance(other, str):
             return self.label == other
         return self.label == other.label
+    
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return self.param.get(key)
+        elif isinstance(key, int):
+            return self.oparam[key]
+        else:
+            raise TypeError(f"Invalid key type: {type(key)}. Expected str or int.")
 
     def match(self, other: Entity) -> bool:
         """
@@ -83,7 +91,7 @@ class Type:
 class TypeContainer:
 
     def __init__(self):
-        self._types = set()
+        self._types = list()
 
     def add(self, t: Type):
         """
@@ -92,7 +100,7 @@ class TypeContainer:
         Args:
             t (Type): The type to be added.
         """
-        self._types.add(t)
+        self._types.append(t)
 
     def __iter__(self):
         """
@@ -184,6 +192,9 @@ class Style:
 
     def __eq__(self, other: "Style"):
         return self.name == other.name
+    
+    def get_types(self):
+        return list(self.types._types)
 
     def get_by(self, condition: Callable[[Type], bool], default=None) -> Type:
         """
@@ -589,9 +600,9 @@ class PairType(Type):
         itype: int | None,
         jtype: int | None,
         oparam=[],
-        param={},
+        **param,
     ):
-        super().__init__(name, oparam, param)
+        super().__init__(name, oparam, **param)
         self.itype = itype
         self.jtype = jtype
 
@@ -607,10 +618,10 @@ class PairStyle(Style):
         name: str,
         itype: AtomType | None = None,
         jtype: AtomType | None = None,
-        *oparam,
+        oparam=[],
         **param,
     ):
-        pt = PairType(name, itype, jtype, oparam, param)
+        pt = PairType(name, itype, jtype, oparam, **param)
         self.types.add(pt)
         return pt
 

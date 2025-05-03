@@ -128,3 +128,9 @@ def write_lammps(system: mp.System, data: Path, script: Path | None = None) -> N
     """Write a molpy System object to LAMMPS data and force field files."""
     write_lammps_data(system, data)
     write_lammps_forcefield(system, script)
+
+def read_top(file: Path, forcefield: mp.ForceField | None = None) -> mp.ForceField:
+    """Read a GROMACS top file and return a molpy ForceField object."""
+    from .forcefield.top import GromacsTopReader
+    reader = GromacsTopReader(file)
+    return reader.read(forcefield)
