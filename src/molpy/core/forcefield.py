@@ -1,32 +1,25 @@
 from collections import defaultdict
 from copy import deepcopy
 from functools import reduce
-from typing import Callable
+from typing import Callable, Union
+
+from molpy.core.struct import Angle, Atom, Bond, Entity
 
 
-class Type(dict):
+class Type:
 
-    def __init__(self, *params, **kw_params):
+    def __init__(self, label, oparam: list, **param):
         """
         Initialize a ForceField object.
 
         Args:
             name (str): The name of the force field.
-            *params: Positional parameters without keys.
-            **kw_params: Keyword parameters with keys.
+            oparam: Positional parameters without keys.
+            param: Keyword parameters with keys.
         """
-        super().__init__(kw_params)
-        self.params = list(params)
-
-    @property
-    def label(self) -> str:
-        """
-        Retrieve the label of the object.
-
-        Returns:
-            str: The value of the `name` attribute.
-        """
-        return self.get("label", None)
+        self.label = label
+        self.param = param
+        self.oparam = oparam
 
     def __hash__(self):
         """
@@ -47,7 +40,7 @@ class Type(dict):
         """
         return f"<{self.__class__.__name__}: {self.label}>"
 
-    def __eq__(self, other: "Type"):
+    def __eq__(self, other: Union["Type", str]):
         """
         Compare this object with another for equality.
 
@@ -57,7 +50,35 @@ class Type(dict):
         Returns:
             bool: True if the `name` attribute of both objects is equal, False otherwise.
         """
+        if isinstance(other, str):
+            return self.label == other
         return self.label == other.label
+
+    def match(self, other: Entity) -> bool:
+        """
+        Check if the current type matches the given entity.
+
+        Args:
+            other (Entity): The entity to compare with.
+
+        Returns:
+            bool: True if the types match, False otherwise.
+        """
+        raise NotImplementedError(
+            "The match method should be implemented in subclasses of Type."
+        )
+
+    def apply(self, other: Entity):
+        """
+        Apply the type to the given entity.
+
+        Args:
+            other (Entity): The entity to apply the type to.
+        """
+        raise NotImplementedError(
+            "The apply method should be implemented in subclasses of Type."
+        )
+
 
 class TypeContainer:
 
@@ -94,7 +115,7 @@ class TypeContainer:
             Type: The type associated with the given label, or the `default` value if not found.
         """
         return next((t for t in self._types if t.label == label), default)
-    
+
     def get_all_by(self, condition: Callable) -> list[Type]:
         """
         Retrieve all types that satisfy a given condition.
@@ -107,7 +128,7 @@ class TypeContainer:
             list[Type]: A list of types that meet the specified condition.
         """
         return [t for t in self._types if condition(t)]
-    
+
     def update(self, other):
         """
         Update the container with types from another container.
@@ -126,25 +147,26 @@ class TypeContainer:
         """
         return len(self._types)
 
-class Style(dict):
 
-    def __init__(self, name: str, *params, **kw_params):
+class Style:
+
+    def __init__(self, name: str, oparam=[], **param):
         """
         Initialize a ForceField instance.
 
         Args:
             name (str): The name of the force field.
-            *params: Positional parameters for global configuration.
-            **kw_params: Keyword parameters for global configuration.
+            *oparam: Positional parameters for global configuration.
+            **param: Keyword parameters for global configuration.
 
         Attributes:
             name (str): The name of the force field.
             types (TypeContainer): A collection of types.
-            params (tuple): Positional parameters passed during initialization.
+            oparam (tuple): Positional parameters passed during initialization.
         """
-        super().__init__(kw_params)
         self.name = name
-        self.params = params
+        self.oparam = oparam
+        self.param = param
         self.types: TypeContainer = TypeContainer()
 
     def __repr__(self) -> str:
@@ -219,9 +241,10 @@ class Style(dict):
         Returns:
             Style: The updated Style object after merging.
         """
-        self.update(other)  # kw_params
+        self.update(other)  # param
         self.types.update(other.types)
         return self
+
 
 class StyleContainer:
 
@@ -259,6 +282,7 @@ class StyleContainer:
         """
         return next((s for s in self._styles if s.name == name), default)
 
+
 class AtomType(Type):
     """
     Represents an atom type in a molecular force field.
@@ -267,55 +291,64 @@ class AtomType(Type):
     within the context of a molecular simulation. It inherits from the `Type` class
     and may include additional attributes or methods specific to atom types.
     """
-    def __init__(self, label: str, *params, **kw_params):
+
+    def __init__(self, label: str, oparam=[], **param):
         """
         Initialize an atom type object.
 
         Args:
             label (str): The label of the atom type.
-            *params: Additional positional parameters.
-            **kw_params: Additional keyword parameters.
+            oparam: Additional positional parameters.
+            param: Additional keyword parameters.
         """
-        super().__init__(*params, **kw_params)
-        self._label = label
+        super().__init__(label, oparam=oparam, **param)
 
-    @property
-    def label(self) -> str:
+    def match(self, other: Atom) -> bool:
         """
-        Retrieve the label of the atom type.
+        Check if the current atom type matches the given atom.
+
+        Args:
+            other (Atom): The atom to compare with.
+
+        Returns:
+            bool: True if the types match, False otherwise.
         """
-        return self._label
+        return self.label == other.type
+
+    def apply(self, other: Atom):
+        """
+        Apply the atom type to the given atom.
+
+        Args:
+            other (Atom): The atom to apply the type to.
+        """
+        other.update(self)
 
 
 class BondType(Type):
 
     def __init__(
         self,
-        itomtype: AtomType | None = None,
-        jtomtype: AtomType | None = None,
-        *params,
-        **kw_params,
+        itype: AtomType | None = None,
+        jtype: AtomType | None = None,
+        label: str = "",
+        oparam: list = [],
+        **param,
     ):
         """
         Initialize a bond type object.
 
         Args:
             name (str): The name of the forcefield.
-            itomtype (AtomType | None, optional): The atom type for the "i" atom. Defaults to None.
-            jtomtype (AtomType | None, optional): The atom type for the "j" atom. Defaults to None.
-            *params: Additional positional parameters.
-            **kw_params: Additional keyword parameters.
+            itype (AtomType | None, optional): The atom type for the "i" atom. Defaults to None.
+            jtype (AtomType | None, optional): The atom type for the "j" atom. Defaults to None.
+            oparam: Additional positional parameters.
+            param: Additional keyword parameters.
         """
-        super().__init__(*params, **kw_params)
-        self.itomtype = itomtype
-        self.jtomtype = jtomtype
-
-    @property
-    def label(self) -> str:
-        """
-        Retrieve the label of the bond type.
-        """
-        return self.get("label", f"{self.itomtype.label}-{self.jtomtype.label}")
+        super().__init__(label, oparam=oparam, **param)
+        self.itype = itype
+        self.jtype = jtype
+        self.label = label or f"{itype.label}-{jtype.label}"
 
     @property
     def atomtypes(self):
@@ -323,59 +356,88 @@ class BondType(Type):
         Retrieve the atom types associated with the object.
 
         Returns:
-            list: A list containing the atom types `itomtype` and `jtomtype`.
+            list: A list containing the atom types `itype` and `jtype`.
         """
-        return [self.itomtype, self.jtomtype]
+        return [self.itype, self.jtype]
 
+    def match(self, other: Bond) -> bool:
+        """
+        Check if the current bond type matches the given bond.
+
+        Args:
+            other (Bond): The bond to compare with.
+
+        Returns:
+            bool: True if the types match, False otherwise.
+        """
+        return {other.itom["type"], other.jtom["type"]} == {self.itype, self.jtype}
+
+    def apply(self, other: Bond):
+        """
+        Apply the bond type to the given bond.
+
+        Args:
+            other (Bond): The bond to apply the type to.
+        """
+        other["type"] = self
 
 class AngleType(Type):
 
     def __init__(
         self,
-        itomtype: AtomType | None = None,
-        jtomtype: AtomType | None = None,
-        ktomtype: AtomType | None = None,
-        *params,
-        **kw_params,
+        itype: AtomType | None = None,
+        jtype: AtomType | None = None,
+        ktype: AtomType | None = None,
+        label: str = "",
+        oparam=[],
+        **param,
     ):
         """
         Initialize an angle type object.
 
         Args:
             name (str): The name of the force field.
-            itomtype (AtomType | None, optional): The atom type for the "i" atom. Defaults to None.
-            jtomtype (AtomType | None, optional): The atom type for the "j" atom. Defaults to None.
-            ktomtype (AtomType | None, optional): The atom type for the "k" atom. Defaults to None.
-            *params: Additional positional parameters for the base class initialization.
-            **kw_params: Additional keyword parameters for the base class initialization.
+            itype (AtomType | None, optional): The atom type for the "i" atom. Defaults to None.
+            jtype (AtomType | None, optional): The atom type for the "j" atom. Defaults to None.
+            ktype (AtomType | None, optional): The atom type for the "k" atom. Defaults to None.
+            *oparam: Additional positional parameters for the base class initialization.
+            **param: Additional keyword parameters for the base class initialization.
         """
-        super().__init__(*params, **kw_params)
-        self.itomtype = itomtype
-        self.jtomtype = jtomtype
-        self.ktomtype = ktomtype
-
-    @property
-    def label(self) -> str:
-        """
-        Retrieve the label of the angle type.
-        """
-        return self.get("label", f"{self.itomtype.label}-{self.jtomtype.label}-{self.ktomtype.label}")
+        super().__init__(label or f"{itype.label}-{jtype.label}-{ktype.label}", oparam, **param)
+        self.itype = itype
+        self.jtype = jtype
+        self.ktype = ktype
 
     @property
     def atomtypes(self):
-        return [self.itomtype, self.jtomtype, self.ktomtype]
+        return [self.itype, self.jtype, self.ktype]
+
+    def match(self, other: Angle) -> bool:
+        """
+        Check if the current angle type matches the given angle.
+
+        Args:
+            other (Angle): The angle to compare with.
+
+        Returns:
+            bool: True if the types match, False otherwise.
+        """
+        return self.jtype == other.jtom.type and set(self.itype, self.ktype) == set(
+            other.itom.type, other.ktom.type
+        )
 
 
 class DihedralType(Type):
 
     def __init__(
         self,
-        itomtype: AtomType | None = None,
-        jtomtype: AtomType | None = None,
-        ktomtype: AtomType | None = None,
-        ltomtype: AtomType | None = None,
-        *params,
-        **kw_params,
+        itype: AtomType | None = None,
+        jtype: AtomType | None = None,
+        ktype: AtomType | None = None,
+        ltype: AtomType | None = None,
+        label: str = "",
+        oparam=[],
+        **param,
     ):
         """
         Represents a dihedral type in a molecular force field, which defines the
@@ -383,45 +445,38 @@ class DihedralType(Type):
 
         Args:
             name (str): The name of the dihedral type.
-            itomtype (AtomType | None): The atom type of the first atom in the dihedral.
-            jtomtype (AtomType | None): The atom type of the second atom in the dihedral.
-            ktomtype (AtomType | None): The atom type of the third atom in the dihedral.
-            ltomtype (AtomType | None): The atom type of the fourth atom in the dihedral.
+            itype (AtomType | None): The atom type of the first atom in the dihedral.
+            jtype (AtomType | None): The atom type of the second atom in the dihedral.
+            ktype (AtomType | None): The atom type of the third atom in the dihedral.
+            ltype (AtomType | None): The atom type of the fourth atom in the dihedral.
         """
-        super().__init__(*params, **kw_params)
-        self.itomtype = itomtype
-        self.jtomtype = jtomtype
-        self.ktomtype = ktomtype
-        self.ltomtype = ltomtype
-
-    @property
-    def label(self) -> str:
-        """
-        Retrieve the label of the dihedral type.
-        """
-        return self.get("label", "-".join([a.label for a in self.atomtypes]))
+        super().__init__(label or "-".join([itype.label, jtype.label, ktype.label, ltype.label]), oparam, **param)
+        self.itype = itype
+        self.jtype = jtype
+        self.ktype = ktype
+        self.ltype = ltype
 
     @property
     def atomtypes(self):
-        return [self.itomtype, self.jtomtype, self.ktomtype, self.ltomtype]
+        return [self.itype, self.jtype, self.ktype, self.ltype]
 
 
 class ImproperType(Type):
 
     def __init__(
         self,
-        itomtype: AtomType | None = None,
-        jtomtype: AtomType | None = None,
-        ktomtype: AtomType | None = None,
-        ltomtype: AtomType | None = None,
-        *params,
-        **kw_params,
+        itype: AtomType | None = None,
+        jtype: AtomType | None = None,
+        ktype: AtomType | None = None,
+        ltype: AtomType | None = None,
+        *oparam,
+        **param,
     ):
-        super().__init__(*params, **kw_params)
-        self.itomtype = itomtype
-        self.jtomtype = jtomtype
-        self.ktomtype = ktomtype
-        self.ltomtype = ltomtype
+        super().__init__(oparam, param)
+        self.itype = itype
+        self.jtype = jtype
+        self.ktype = ktype
+        self.ltype = ltype
 
     @property
     def label(self) -> str:
@@ -432,20 +487,20 @@ class ImproperType(Type):
 
     @property
     def atomtypes(self):
-        return [self.itomtype, self.jtomtype, self.ktomtype, self.ltomtype]
+        return [self.itype, self.jtype, self.ktype, self.ltype]
 
 
 class AtomStyle(Style):
 
-    def __init__(self, name: str, *params, **kw_params):
-        super().__init__(name, *params, **kw_params)
+    def __init__(self, name: str, oparam, **param):
+        super().__init__(name, oparam, **param)
         self.classes = defaultdict(set)
 
-    def def_type(self, name: str, class_=None, *params, **kw_params) -> AtomType:
-        at = AtomType(name, *params, **kw_params)
+    def def_type(self, label: str, class_=None, oparam=[], **param) -> AtomType:
+        at = AtomType(label, oparam, **param)
         self.types.add(at)
         if class_:
-            self.classes[class_].add(name)
+            self.classes[class_].add(label)
         return at
 
     def get_class(self, class_name: str) -> list[AtomType]:
@@ -466,12 +521,12 @@ class BondStyle(Style):
     def def_type(
         self,
         name: str,
-        itomtype: AtomType | None = None,
-        jtomtype: AtomType | None = None,
-        *params,
-        **kw_params,
+        itype: AtomType | None = None,
+        jtype: AtomType | None = None,
+        oparam=[],
+        **param,
     ) -> BondType:
-        bt = BondType(name, itomtype, jtomtype, *params, **kw_params)
+        bt = BondType(name, itype, jtype, oparam, **param)
         self.types.add(bt)
         return bt
 
@@ -481,13 +536,13 @@ class AngleStyle(Style):
     def def_type(
         self,
         name: str,
-        itomtype: AtomType | None = None,
-        jtomtype: AtomType | None = None,
-        ktomtype: AtomType | None = None,
-        *params,
-        **kw_params,
+        itype: AtomType | None = None,
+        jtype: AtomType | None = None,
+        ktype: AtomType | None = None,
+        oparam=[],
+        **param,
     ) -> AngleType:
-        at = AngleType(name, itomtype, jtomtype, ktomtype, *params, **kw_params)
+        at = AngleType(name, itype, jtype, ktype, oparam, **param)
         self.types.add(at)
         return at
 
@@ -497,16 +552,14 @@ class DihedralStyle(Style):
     def def_type(
         self,
         name: str,
-        itomtype: AtomType | None = None,
-        jtomtype: AtomType | None = None,
-        ktomtype: AtomType | None = None,
-        ltomtype: AtomType | None = None,
-        *params,
-        **kw_params,
+        itype: AtomType | None = None,
+        jtype: AtomType | None = None,
+        ktype: AtomType | None = None,
+        ltype: AtomType | None = None,
+        oparam=[],
+        **param,
     ) -> DihedralType:
-        dt = DihedralType(
-            name, itomtype, jtomtype, ktomtype, ltomtype, *params, **kw_params
-        )
+        dt = DihedralType(name, itype, jtype, ktype, ltype, oparam, **param)
         self.types.add(dt)
         return dt
 
@@ -516,16 +569,14 @@ class ImproperStyle(Style):
     def def_type(
         self,
         name: str,
-        itomtype: AtomType | None = None,
-        jtomtype: AtomType | None = None,
-        ktomtype: AtomType | None = None,
-        ltomtype: AtomType | None = None,
-        *params,
-        **kw_params,
+        itype: AtomType | None = None,
+        jtype: AtomType | None = None,
+        ktype: AtomType | None = None,
+        ltype: AtomType | None = None,
+        oparam=[],
+        param={},
     ) -> ImproperType:
-        it = ImproperType(
-            name, itomtype, jtomtype, ktomtype, ltomtype, *params, **kw_params
-        )
+        it = ImproperType(name, itype, jtype, ktype, ltype, oparam, param)
         self.types.add(it)
         return it
 
@@ -535,18 +586,18 @@ class PairType(Type):
     def __init__(
         self,
         name: str,
-        itomtype: int | None,
-        jtomtype: int | None,
-        *params,
-        **kw_params,
+        itype: int | None,
+        jtype: int | None,
+        oparam=[],
+        param={},
     ):
-        super().__init__(name, *params, **kw_params)
-        self.itomtype = itomtype
-        self.jtomtype = jtomtype
+        super().__init__(name, oparam, param)
+        self.itype = itype
+        self.jtype = jtype
 
     @property
     def atomtypes(self):
-        return [self.itomtype, self.jtomtype]
+        return [self.itype, self.jtype]
 
 
 class PairStyle(Style):
@@ -554,12 +605,12 @@ class PairStyle(Style):
     def def_type(
         self,
         name: str,
-        itomtype: AtomType | None = None,
-        jtomtype: AtomType | None = None,
-        *params,
-        **kw_params,
+        itype: AtomType | None = None,
+        jtype: AtomType | None = None,
+        *oparam,
+        **param,
     ):
-        pt = PairType(name, itomtype, jtomtype, *params, **kw_params)
+        pt = PairType(name, itype, jtype, oparam, param)
         self.types.add(pt)
         return pt
 
@@ -616,66 +667,66 @@ class ForceField:
             detail += f"\nn_improperstyles: {self.n_improperstyles}, n_impropertypes: {self.n_impropertypes}"
         return detail + ">"
 
-    def def_atomstyle(self, name: str, *params, **kw_params):
+    def def_atomstyle(self, name: str, oparam=[], **param):
         atomstyle = self.get_atomstyle(name)
         if atomstyle:
             return atomstyle
         else:
-            atomstyle = AtomStyle(name, *params, **kw_params)
+            atomstyle = AtomStyle(name, oparam, **param)
             self.atomstyles.append(atomstyle)
         return atomstyle
 
-    def def_bondstyle(self, style: str, *params, **kw_params):
+    def def_bondstyle(self, style: str, oparam=[], **param):
         bondstyle = self.get_bondstyle(style)
         if bondstyle:
             return bondstyle
         else:
-            bondstyle = BondStyle(style, *params, **kw_params)
+            bondstyle = BondStyle(style, oparam, **param)
             self.bondstyles.append(bondstyle)
         return bondstyle
 
-    def def_anglestyle(self, style: str, *params, **kw_params) -> AngleStyle:
+    def def_anglestyle(self, style: str, oparam=[], **param) -> AngleStyle:
         """
         Define or retrieve an angle style by its name.
 
         Args:
             style (str): The name of the angle style.
-            *params: Positional parameters for the angle style.
-            **kw_params: Keyword parameters for the angle style.
+            *oparam: Positional parameters for the angle style.
+            **param: Keyword parameters for the angle style.
 
         Returns:
             AngleStyle: The defined or retrieved AngleStyle object.
         """
         anglestyle = self.get_anglestyle(style)
         if not anglestyle:
-            anglestyle = AngleStyle(style, *params, **kw_params)
+            anglestyle = AngleStyle(style, oparam, **param)
             self.anglestyles.append(anglestyle)
         return anglestyle
 
-    def def_dihedralstyle(self, style: str, *params, **kw_params):
+    def def_dihedralstyle(self, style: str, oparam=[], **param):
         dihe = self.get_dihedralstyle(style)
         if dihe:
             return dihe
         else:
-            dihe = DihedralStyle(style, *params, **kw_params)
+            dihe = DihedralStyle(style, oparam, **param)
             self.dihedralstyles.append(dihe)
         return dihe
 
-    def def_improperstyle(self, style: str, *params, **kw_params):
+    def def_improperstyle(self, style: str, oparam=[], **param):
         improper = self.get_improperstyle(style)
         if improper:
             return improper
         else:
-            improper = ImproperStyle(style, *params, **kw_params)
+            improper = ImproperStyle(style, oparam, **param)
             self.improperstyles.append(improper)
         return improper
 
-    def def_pairstyle(self, style: str, *params, **kw_params):
+    def def_pairstyle(self, style: str, oparam=[], **param):
         pairstyle = self.get_pairstyle(style)
         if pairstyle:
             return pairstyle
         else:
-            pairstyle = PairStyle(style, *params, **kw_params)
+            pairstyle = PairStyle(style, oparam, **param)
             self.pairstyles.append(pairstyle)
         return pairstyle
 
@@ -952,18 +1003,14 @@ class ForceField:
         """
         Calculate the list of dihedral types.
         """
-        return reduce(
-            lambda x, y: x + list(y.types), self.dihedralstyles, list()
-        )
+        return reduce(lambda x, y: x + list(y.types), self.dihedralstyles, list())
 
     @property
     def impropertypes(self):
         """
         Calculate the list of improper types.
         """
-        return reduce(
-            lambda x, y: x + list(y.types), self.improperstyles, list()
-        )
+        return reduce(lambda x, y: x + list(y.types), self.improperstyles, list())
 
     @property
     def pairtypes(self):

@@ -1,17 +1,29 @@
 import pytest
 
-from molpy.core.forcefield import (AngleStyle, AngleType, AtomStyle, AtomType,
-                                   BondStyle, BondType, DihedralStyle,
-                                   DihedralType, ForceField, ImproperStyle,
-                                   ImproperType, PairStyle, PairType, Style,
-                                   Type)
+from molpy.core.forcefield import (
+    AngleStyle,
+    AngleType,
+    AtomStyle,
+    AtomType,
+    BondStyle,
+    BondType,
+    DihedralStyle,
+    DihedralType,
+    ForceField,
+    ImproperStyle,
+    ImproperType,
+    PairStyle,
+    PairType,
+    Style,
+    Type,
+)
 
 
 class TestType:
     def test_init(self):
-        t = Type(1, 2, param="value")
-        assert t.params == [1, 2]
-        assert t["param"] == "value"
+        t = Type("label", [1, 2], p1="value")
+        assert t.param == [1, 2]
+        assert t["p1"] == "value"
 
     def test_eq(self):
         t1 = Type(label="type1")
@@ -23,10 +35,10 @@ class TestType:
 
 class TestStyle:
     def test_init(self):
-        s = Style("style1", 1, 2, param="value")
+        s = Style("style1", [1, 2], p1="value")
         assert s.name == "style1"
-        assert s.params == (1, 2)
-        assert s["param"] == "value"
+        assert s.oparam == (1, 2)
+        assert s["p1"] == "value"
 
     def test_repr(self):
         s = Style("style1")
@@ -40,10 +52,10 @@ class TestStyle:
 
     def test_get_by(self):
         s = Style("style1")
-        t = Type("type1", param="value")
+        t = Type("type1", p1="value")
         s.types.add(t)
-        assert s.get_by(lambda x: x["param"] == "value") == t
-        assert s.get_by(lambda x: x["param"] == "nonexistent") is None
+        assert s.get_by(lambda x: x["p1"] == "value") == t
+        assert s.get_by(lambda x: x["p1"] == "nonexistent") is None
 
     def test_merge(self):
         s1 = Style("style1")
@@ -57,21 +69,21 @@ class TestStyle:
 
 class TestAtomType:
     def test_init(self):
-        at = AtomType("atom1", param="value")
+        at = AtomType("atom1", p1="value")
         assert at.label == "atom1"
-        assert at["param"] == "value"
+        assert at["p1"] == "value"
 
 
 class TestBondType:
     def test_init(self):
         bt = BondType(AtomType("atom1"), AtomType("atom2"))
         assert bt.label == "atom1-atom2"
-        assert bt.itomtype.label == "atom1"
-        assert bt.jtomtype.label == "atom2"
+        assert bt.itype.label == "atom1"
+        assert bt.jtype.label == "atom2"
 
     def test_atomtypes(self):
         bt = BondType(AtomType("atom1"), AtomType("atom2"))
-        assert bt.atomtypes == [bt.itomtype, bt.jtomtype]
+        assert bt.atomtypes == [bt.itype, bt.jtype]
 
 
 class TestAngleType:
@@ -81,7 +93,7 @@ class TestAngleType:
 
     def test_atomtypes(self):
         at = AngleType(AtomType("atom1"), AtomType("atom2"), AtomType("atom3"))
-        assert at.atomtypes == [at.itomtype, at.jtomtype, at.ktomtype]
+        assert at.atomtypes == [at.itype, at.jtype, at.ktype]
 
 
 class TestDihedralType:
@@ -91,12 +103,11 @@ class TestDihedralType:
         )
         assert dt.label == "atom1-atom2-atom3-atom4"
 
-
     def test_atomtypes(self):
         dt = DihedralType(
             AtomType("atom1"), AtomType("atom2"), AtomType("atom3"), AtomType("atom4")
         )
-        assert dt.atomtypes == [dt.itomtype, dt.jtomtype, dt.ktomtype, dt.ltomtype]
+        assert dt.atomtypes == [dt.itype, dt.jtype, dt.ktype, dt.ltype]
 
 
 class TestImproperType:
@@ -110,7 +121,7 @@ class TestImproperType:
         it = ImproperType(
             AtomType("atom1"), AtomType("atom2"), AtomType("atom3"), AtomType("atom4")
         )
-        assert it.atomtypes == [it.itomtype, it.jtomtype, it.ktomtype, it.ltomtype]
+        assert it.atomtypes == [it.itype, it.jtype, it.ktype, it.ltype]
 
 
 class TestForceField:

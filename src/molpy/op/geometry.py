@@ -1,6 +1,5 @@
 import numpy as np
 
-
 def rotate_by_rodrigues(xyz, axis, theta):
     """ Rotate coordinates around an axis by an angle theta. Using the Rodrigues' rotation formula.
 
@@ -12,12 +11,13 @@ def rotate_by_rodrigues(xyz, axis, theta):
     Returns:
         np.ndarray: rotated coordinates
     """
+    xyz = np.atleast_2d(xyz)
     axis = axis / np.linalg.norm(axis)
 
     rot = (
         xyz * np.cos(theta)
         + np.cross(axis, xyz) * np.sin(theta)
-        + axis * np.dot(xyz, axis) * (1 - np.cos(theta))
+        + axis * np.dot(xyz, axis)[..., None] * (1 - np.cos(theta))
     )
 
     return rot

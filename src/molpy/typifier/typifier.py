@@ -2,12 +2,29 @@ from collections import OrderedDict
 from molpy.typifier.parser import SmartsParser
 from molpy.typifier.graph import SMARTSGraph, _find_chordless_cycles
 
-class SmartsTypifier:
+class Typifier:
+
+    def __init__(self, forcefield):
+        self.forcefield = forcefield
+
+    def typify_bonds(self, structure):
+        bonds = structure.get_bonds()
+        bondtypes = self.forcefield.get_bondtypes()
+        # if bond.itom.type and bond.jtom.type equal to bondtype
+        # match the bondtype to the bond
+        for bond in bonds:
+            for bondtype in bondtypes:
+                if bondtype.match(bond):
+                    bondtype.apply(bond)
+                    break
+        return structure
+
+class SmartsTypifier(Typifier):
 
     def __init__(self, forcefield):
 
+        super().__init__(forcefield)
         self.parser = SmartsParser()
-        self.forcefield = forcefield
         self.smarts_graphs = self.read_smarts(forcefield)
 
     def read_smarts(self, forcefield):
