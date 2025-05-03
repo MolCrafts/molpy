@@ -1,4 +1,3 @@
-from collections import OrderedDict
 from molpy.typifier.parser import SmartsParser
 from molpy.typifier.graph import SMARTSGraph, _find_chordless_cycles
 

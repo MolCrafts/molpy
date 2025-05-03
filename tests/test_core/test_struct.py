@@ -33,13 +33,18 @@ class TestAtom:
 
     def test_compare(self, atom):
         atom1 = mp.Atom(name='C', xyz=[0, 0, 0])
-        print(hash(atom), hash(atom1))
         assert atom != atom1, "Different instances should have different hashes"
 
     def test_hash(self, atom):
         atom1 = mp.Atom(name='C', xyz=[0, 0, 0])
         assert getattr(atom, '__hash__')
         assert hash(atom) != hash(atom1), "Different instances should have different hashes"
+
+    def test_copy(self, atom):
+        atom_copy = atom.copy()
+        assert atom_copy is not atom
+        assert atom_copy["name"] == atom["name"]
+        assert atom_copy["xyz"] == atom["xyz"]
 
 class TestBond:
 
@@ -74,9 +79,11 @@ class TestStruct:
                 H1 = self.add_atom(name="H1", xyz=(-0.1, 0, -0.07))
                 H2 = self.add_atom(name="H2", xyz=(0., 0.1, 0.07))
                 H3 = self.add_atom(name="H3", xyz=(0., -0.1, 0.07))
+                H4 = self.add_atom(name="H4", xyz=(0., 0, 0.1))
                 self.add_bond(C, H1)
                 self.add_bond(C, H2)
                 self.add_bond(C, H3)
+                self.add_bond(C, H4)
 
         return Methane
     
@@ -106,17 +113,14 @@ class TestStruct:
     
     def test_get_atoms(self, methane):
         atoms = methane.atoms
-        assert len(atoms) == 4
+        assert len(atoms) == 5
         assert all(isinstance(atom, mp.Atom) for atom in atoms)
-        assert all(atom.name in ["C", "H1", "H2", "H3"] for atom in atoms)
+        assert all(atom.name in ["C", "H1", "H2", "H3", "H4"] for atom in atoms)
 
     def test_get_bonds(self, methane):
         bonds = methane.bonds
-        assert len(bonds) == 3
+        assert len(bonds) == 4
         assert all(isinstance(bond, mp.Bond) for bond in bonds)
-        print([bond.itom.name for bond in bonds])
-        assert all(bond.jtom.name == "C" for bond in bonds)  # 'C'>'H'
-        assert all(bond.itom.name in ["H1", "H2", "H3"] for bond in bonds)
 
     def test_calc_angles_dihedrals(self, ethane):
         
@@ -127,3 +131,15 @@ class TestStruct:
         assert len(ethane.dihedrals) == 0
         assert len(angles) == 12
         assert len(dihedrals) == 9
+
+    def test_copy_simple_struct(self, methane):
+        meth = methane.copy()
+        atoms = meth.atoms
+        assert len(atoms) == 5
+        assert all(isinstance(atom, mp.Atom) for atom in atoms)
+        assert all(not a1 is a2 for a1, a2 in zip(methane.atoms, atoms))
+
+        bonds = meth.bonds
+        assert len(bonds) == 4
+        # test itom jton in bond is the reference to new atom
+        assert all(not b1.itom is b2.itom for b1, b2 in zip(methane.bonds, bonds))

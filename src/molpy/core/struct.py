@@ -7,10 +7,7 @@ from nesteddict import ArrayDict
 T = TypeVar("entity")
 
 class Entity(dict):
-    """Base class representing a general entity with dictionary-like behavior."""
-
-    def __init__(self, **props):
-        super().__init__(props)
+    """Base class representing a general entity with dictionary-like behavior.""" 
 
     def __call__(self):
         """Return a copy of the entity."""
@@ -23,6 +20,17 @@ class Entity(dict):
     def __hash__(self):
         """Return a unique hash for the atom."""
         return id(self)
+    
+    def __eq__(self, other):
+        return self is other
+    
+    def __ne__(self, other):
+        """Check if two entities are not equal."""
+        return not self.__eq__(other)
+    
+    def __lt__(self, other):
+        """Compare entities based on their IDs."""
+        return id(self) < id(other)
     
     def to_dict(self):
         return dict(self)
@@ -50,7 +58,7 @@ class SpatialMixin:
         self.xyz = np.dot(self.xyz, np.eye(3) - 2 * np.outer(axis, axis))
 
 
-class Atom(SpatialMixin, Entity):
+class Atom(Entity, SpatialMixin):
     """Class representing an atom."""
 
     def __init__(self, **props):
@@ -65,21 +73,6 @@ class Atom(SpatialMixin, Entity):
     def __repr__(self):
         """Return a string representation of the atom."""
         return f"<Atom {self['name']}>"
-
-    def __hash__(self):
-        return id(self)
-
-    def __eq__(self, other):
-        """Check equality based on the atom's name."""
-        return id(self) == id(other)
-    
-    def __ne__(self, other):
-        """Check inequality based on the atom's name."""
-        return id(self) != id(other)
-
-    def __lt__(self, other):
-        """Compare atoms based on their names."""
-        return id(self) < id(other)
     
     @property
     def xyz(self):
@@ -143,7 +136,7 @@ class Bond(ManyBody):
 
     def __repr__(self):
         """Return a string representation of the bond."""
-        return f"<Bond {self.itom} {self.jtom}>"
+        return f"<Bond: {self.itom}-{self.jtom}>"
 
     def __eq__(self, other):
         """Check equality based on the atoms in the bond."""
@@ -331,6 +324,10 @@ class Entities(Generic[T]):
     def __getitem__(self, key: int):
         """Get an entity by its index."""
         return self._data[key]
+    
+    def __repr__(self):
+        """Return a string representation of the collection."""
+        return f"<Entities: {len(self._data)} entities>"
 
 
 class HierarchicalMixin(Generic[T]):
@@ -449,36 +446,40 @@ class Struct(Entity, SpatialMixin, HierarchicalMixin["Struct"]):
 
     def __deepcopy__(self, memo):
         """
-        Create a deep copy of the structure.
-
-        Parameters:
-        - memo: Dictionary of objects already copied during the current copying pass.
-
-        Returns:
-        - A deep copy of the structure.
+        Create a deep copy of the structure, preserving atom references in bonds/angles/etc.
         """
-        new_atoms = [atom.clone() for atom in self["atoms"]]
-        atom_mapping = {
-            atom: new_atom for atom, new_atom in zip(self["atoms"], new_atoms)
-        }
+
+        # Step 1: Deep-copy atoms
         new = Struct()
+        new["atoms"] = Entities()
+        atom_mapping = {}
+
+        for atom in self["atoms"]:
+            new_atom = atom.copy()
+            new["atoms"].add(new_atom)
+            atom_mapping[atom] = new_atom
+
+        # Step 2: Copy all other entities
         for key, value in self.items():
-            new[key] = Entities()
-        atoms = new["atoms"]
-        for atom in new_atoms:
-            atoms.add(atom)
-        for key, value in self.items():
+            if key == "atoms":
+                continue
+
             if isinstance(value, Entities):
+                new[key] = Entities()
+
                 for v in value:
                     if isinstance(v, ManyBody):
-                        try:
-                            new[key].add(
-                                v.__class__(
-                                    *[atom_mapping[atom] for atom in v._atoms], **v
-                                )
-                            )
-                        except KeyError:
-                            raise KeyError(f"Atoms {v._atoms} not found in atom_map")
+                        # Rebuild the new ManyBody object with remapped atoms
+                        new_atoms = [atom_mapping[a] for a in v._atoms]
+                        new_entity = v.__class__(*new_atoms, **v)
+                        new[key].add(new_entity)
+                    else:
+                        # If not a ManyBody (unlikely here), use deepcopy
+                        new[key].add(deepcopy(v, memo))
+            else:
+                # For non-Entities fields, shallow-copy or deepcopy as needed
+                new[key] = deepcopy(value, memo)
+
         return new
 
     def add_atom(self, **props):
