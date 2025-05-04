@@ -1,3 +1,4 @@
+from collections import namedtuple
 from copy import deepcopy
 from molpy.op import rotate_by_rodrigues
 from typing import Callable, Generic, Sequence, TypeVar
@@ -354,8 +355,6 @@ class AllAtomStructMixin:
         self["dihedrals"] = Entities()
         self["impropers"] = Entities()
 
-
-
 class Struct(Entity, SpatialMixin, HierarchicalMixin["Struct"]):
     """Class representing a molecular structure."""
 
@@ -710,3 +709,32 @@ class Struct(Entity, SpatialMixin, HierarchicalMixin["Struct"]):
             for i, j, k, l in dihedral_idx
         ]
         return dihedrals
+
+
+Port = namedtuple("Port", ["head", "tail", "delete"])
+
+class MonomerMixin:
+    """Mixin class for monomer"""
+
+    def __init__(self, **kwargs):
+        """
+        Initialize a monomer with properties.
+        """
+        super().__init__(**kwargs)
+        self["ports"] = []
+
+    def def_link_site(self, head, tail, delete):
+        """
+        Define a link site for the monomer.
+
+        Parameters:
+        - head: Head atom of the link site.
+        - tail: Tail atom of the link site.
+        - delete: Whether to delete the link site.
+        """
+        self["ports"].append(Port(head, tail, delete))
+        return self
+
+class Monomer(Struct, MonomerMixin):
+    """Class representing a monomer."""
+

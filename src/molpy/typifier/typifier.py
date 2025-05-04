@@ -89,3 +89,26 @@ class AmberToolsTypifier:
 
     def __init__(self, forcefield: str):
         self.forcefield: str = forcefield
+        # check antechamber is installed
+        self.check_antechamber()
+
+    def check_antechamber(self):
+        """
+        Check if antechamber is installed.
+        """
+        try:
+            import subprocess
+            result = subprocess.run(['antechamber', '-h'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode != 0:
+                raise RuntimeError("Antechamber is not installed.")
+        except FileNotFoundError:
+            raise RuntimeError("Antechamber is not installed.")
+        except Exception as e:
+            raise RuntimeError(f"An error occurred while checking antechamber: {e}")
+        # check if forcefield is installed
+
+    def typify(self, monomer):
+        """
+        Typify the monomer using the AmberTools forcefield.
+        """
+
