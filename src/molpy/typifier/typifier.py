@@ -2,18 +2,35 @@ from collections import OrderedDict
 from molpy.typifier.parser import SmartsParser
 from molpy.typifier.graph import SMARTSGraph, _find_chordless_cycles
 
-class SmartsTypifier:
+class Typifier:
+
+    def __init__(self, forcefield):
+        self.forcefield = forcefield
+
+    def typify_bonds(self, structure):
+        bonds = structure.get_bonds()
+        bondtypes = self.forcefield.get_bondtypes()
+        # if bond.itom.type and bond.jtom.type equal to bondtype
+        # match the bondtype to the bond
+        for bond in bonds:
+            for bondtype in bondtypes:
+                if bondtype.match(bond):
+                    bondtype.apply(bond)
+                    break
+        return structure
+
+class SmartsTypifier(Typifier):
 
     def __init__(self, forcefield):
 
+        super().__init__(forcefield)
         self.parser = SmartsParser()
-        self.forcefield = forcefield
         self.smarts_graphs = self.read_smarts(forcefield)
 
     def read_smarts(self, forcefield):
 
         smarts_graphs = {}
-        smarts_override = {}
+        smarts_overrides = {}
 
         probe_atomtype = forcefield.get_atomtypes()[0]
 
@@ -29,32 +46,35 @@ class SmartsTypifier:
             smarts = atomtype[flag]
             graph = SMARTSGraph(smarts, self.parser, label, overrides=None)
             smarts_graphs[label] = graph
-            override = atomtype.get('override', None)
-            if override is not None:
-                smarts_override[label] = override
+            overrides = atomtype.get('overrides', None)
+            if overrides is not None:
+                smarts_overrides[label] = overrides.split(',')
 
-        for label, override in smarts_override.items():
+        for label, override in smarts_overrides.items():
+            print(f"Overriding {label} with {override}")
             graph = smarts_graphs[label]
             graph.override([smarts_graphs[atom] for atom in override])
             
-        smarts_graphs = OrderedDict(
-            sorted(smarts_graphs.items(), key=lambda x: x[1].priority, reverse=True)
+        print(sorted(smarts_graphs.items(), key=lambda x: x[1].priority))
+        smarts_graphs = dict(
+            sorted(smarts_graphs.items(), key=lambda x: x[1].priority)
         )
 
         return smarts_graphs
     
-
     def typify(self, structure, use_residue_map=False, max_iter=10):
 
-        graph = structure.get_topology()
+        graph = structure.get_topology(attrs=["name", "number", "type"])
         self.prepare_graph(graph)
         for typename, rule in self.smarts_graphs.items():
             result = rule.find_matches(graph)
             if result:
                 for i, j in enumerate(result):
-                    structure['atoms'][i]['type'] = typename
-                if all([atom['type'] for atom in structure['atoms']]):
-                    break
+                    structure['atoms'][j]['type'] = typename
+                    print("atom", structure['atoms'][j], "type", typename)
+                    print()
+                # if all([atom['type'] for atom in structure['atoms']]):
+                #     break
 
         return structure
 

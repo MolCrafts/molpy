@@ -5,7 +5,7 @@ import numpy as np
 
 import molpy as mp
 from collections import defaultdict
-import pandas as pd
+from nesteddict import ArrayDict
 
 class PDBReader(DataReader):
 
@@ -73,13 +73,13 @@ class PDBReader(DataReader):
                     if atom_name_counter[name] > 1:
                         atoms['name'][i] = f"{name}{atom_name_counter[name]}"
 
-            frame["atoms"] = pd.DataFrame(
+            frame["atoms"] = ArrayDict.from_dicts(
                 atoms
             )
             frame.box = mp.Box()
             
             if len(bonds):
-                frame["bonds"] = pd.DataFrame(
+                frame["bonds"] = ArrayDict.from_dicts(
                     {
                         "i": bonds[:, 0],
                         "j": bonds[:, 1],

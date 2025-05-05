@@ -1,6 +1,6 @@
 import pytest
 import molpy as mp
-from nesteddict import NestDict, ArrayDict
+from nesteddict import ArrayDict
 
 class TestFrame:
 
