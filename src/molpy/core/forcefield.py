@@ -415,7 +415,7 @@ class BondType(Type):
         Args:
             other (Bond): The bond to apply the type to.
         """
-        other["type"] = self
+        other["$type"] = self
 
 class AngleType(Type):
 

@@ -1,9 +1,11 @@
+from molpy.core.utils import TagApplyer
 from .box import Box
 import molpy as mp
 import numpy as np
 from copy import deepcopy
-from nesteddict import NestDict
+from nesteddict import NestDict, ArrayDict
 from typing import Any, Sequence
+
 
 class Frame(NestDict):
 
@@ -13,9 +15,7 @@ class Frame(NestDict):
             return super().__new__(AllAtomFrame)
         return super().__new__(cls)
 
-    def __init__(
-        self, data: dict[str, Any] = {}, *, style="atomic"
-    ):
+    def __init__(self, data: dict[str, Any] = {}, *, style="atomic"):
         """Static data structure for aligning model. The frame is a dictionary-like, multi-DataFrame object, facilitating access data by keys.
 
         Args:
@@ -32,21 +32,36 @@ class Frame(NestDict):
         for other in others[1:]:
             f = f.concat(other)
         return f
-    
+
     @classmethod
     def from_structs(cls, structs):
         frame = cls()
-        
-        atom_list = []
-        for atoms in [atom for struct in structs for atom in struct.atoms]:
-            atom_list.append(atoms.to_dict())
-        frame["atoms"] = NestDict().concat(atom_list)
+
+        atom_dicts = []
+        bond_dicts = []
+        bond_index = []
         for struct in structs:
             if "bonds" in struct:
-                bond_dicts = []
-                for bonds in struct.bonds:
-                    bond_dicts.append(bonds.to_dict() | {"i": atom_list.index(bonds.itom), "j": atom_list.index(bonds.jtom)})
-        frame["bonds"] = NestDict().concat(bond_dicts)
+                topo = struct.get_topology()
+                bond_dicts.extend(
+                    [bond.to_dict() for bond in struct.bonds]
+                )
+                bond_index.append(
+                    topo.bonds + len(atom_dicts)
+                )
+
+            atom_dicts.extend(
+                [atom.to_dict() for atom in struct.atoms]
+            )
+        tager = TagApplyer()
+        tager.apply_tags(atom_dicts)
+        tager.apply_tags(bond_dicts)
+
+        frame["atoms"] = ArrayDict.from_dicts(atom_dicts)
+        frame["bonds"] = ArrayDict.from_dicts(bond_dicts)
+        bond_index = np.concatenate(bond_index)
+        frame["bonds"]["i"] = bond_index[:, 0]
+        frame["bonds"]["j"] = bond_index[:, 1]
         return frame
 
     def __len__(self):
@@ -61,11 +76,11 @@ class Frame(NestDict):
 
     def copy(self) -> "Frame":
         return deepcopy(self)
-    
+
 
 class AllAtomMixin:
 
-    def split(self, masks: list[bool]|list[int]):
+    def split(self, masks: list[bool] | list[int]):
 
         frames = []
         masks = np.array(masks)
@@ -195,6 +210,12 @@ class AllAtomMixin:
         return struct
 
 
-class AllAtomFrame(Frame, AllAtomMixin):
-    """A frame that contains atomistic infomation. It is a subclass of Frame and implements the AllAtomMixin interface.
-    """
+class AllAtomFrame(AllAtomMixin, Frame):
+    """A frame that contains atomistic infomation. It is a subclass of Frame and implements the AllAtomMixin interface."""
+    def __init__(self, data: dict[str, Any] = {}):
+        """Initialize the AllAtomFrame with data.
+
+        Args:
+            data (dict): A dictionary of dataframes.
+        """
+        super().__init__(data)
