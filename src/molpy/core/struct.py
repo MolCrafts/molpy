@@ -1,4 +1,4 @@
-from collections import namedtuple
+from collections import namedtuple, UserDict
 from copy import deepcopy
 from molpy.op import rotate_by_rodrigues
 from typing import Callable, Generic, Sequence, TypeVar
@@ -7,8 +7,11 @@ from nesteddict import ArrayDict
 
 T = TypeVar("entity")
 
-class Entity(dict):
+class Entity(UserDict):
     """Base class representing a general entity with dictionary-like behavior.""" 
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
     def __call__(self):
         """Return a copy of the entity."""
@@ -41,6 +44,9 @@ class SpatialMixin:
     """Mixin class for spatial operations on entities."""
 
     xyz: np.ndarray
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
     def distance_to(self, other):
         """Calculate the Euclidean distance to another entity."""
@@ -334,6 +340,9 @@ class Entities(Generic[T]):
 class HierarchicalMixin(Generic[T]):
     """Mixin class for hierarchical operations on entities."""
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.childern = Entities()
 
     def add_child(self, entity: T):
         """Add a sub-entity to the collection."""
@@ -355,7 +364,7 @@ class AllAtomStructMixin:
         self["dihedrals"] = Entities()
         self["impropers"] = Entities()
 
-class Struct(Entity, SpatialMixin, HierarchicalMixin["Struct"]):
+class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
     """Class representing a molecular structure."""
 
     def __init__(
@@ -366,6 +375,7 @@ class Struct(Entity, SpatialMixin, HierarchicalMixin["Struct"]):
         angles: Entities | list = [],
         dihedrals: Entities | list = [],
         impropers: Entities | list = [],
+        **props,
     ):
         """Initialize a molecular structure with atoms, bonds, angles, etc."""
 
@@ -387,7 +397,7 @@ class Struct(Entity, SpatialMixin, HierarchicalMixin["Struct"]):
                 "angles": Entities(angles),
                 "dihedrals": Entities(dihedrals),
                 "impropers": Entities(impropers),
-            }
+            } | props
         )
         self.childern = Entities()
 
@@ -715,12 +725,8 @@ Port = namedtuple("Port", ["head", "tail", "delete"])
 
 class MonomerMixin:
     """Mixin class for monomer"""
-
-    def __init__(self, **kwargs):
-        """
-        Initialize a monomer with properties.
-        """
-        super().__init__(**kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self["ports"] = []
 
     def def_link_site(self, head, tail, delete):
@@ -735,6 +741,7 @@ class MonomerMixin:
         self["ports"].append(Port(head, tail, delete))
         return self
 
-class Monomer(Struct, MonomerMixin):
+class Monomer(MonomerMixin, Struct):
     """Class representing a monomer."""
-
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)

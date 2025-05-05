@@ -39,7 +39,7 @@ class TagApplyer:
         Apply tags to the items.
         """
         for item in items:
-            for key, value in item.items():
+            for key, value in list(item.items()):
                 if key.startswith("$"):
                     item[key[1:]] = self.resolve_dollar(key[1:], value)
     

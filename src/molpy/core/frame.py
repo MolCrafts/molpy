@@ -210,5 +210,12 @@ class AllAtomMixin:
         return struct
 
 
-class AllAtomFrame(Frame, AllAtomMixin):
+class AllAtomFrame(AllAtomMixin, Frame):
     """A frame that contains atomistic infomation. It is a subclass of Frame and implements the AllAtomMixin interface."""
+    def __init__(self, data: dict[str, Any] = {}):
+        """Initialize the AllAtomFrame with data.
+
+        Args:
+            data (dict): A dictionary of dataframes.
+        """
+        super().__init__(data)
