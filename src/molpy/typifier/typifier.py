@@ -117,20 +117,22 @@ class AmberToolsTypifier:
         from molpy.io import write_pdb  # 假设你已有此函数
 
         net_charge = struct.get("net_charge", 0.0)
+        name = struct.get("name", "struct")
 
         with TemporaryDirectory() if workdir is None else Path(workdir) as tmpdir:
             workdir = Path(tmpdir)
-            input_pdb = workdir / "struct.pdb"
-            output_ac = workdir / "struct.ac"
-            write_pdb(input_pdb, struct.to_frame())
+            workdir.mkdir(parents=True, exist_ok=True)
+            pdb_name = f"{name}.pdb"
+            ac_name = f"{name}.ac"
+            write_pdb(workdir / pdb_name, struct.to_frame())
 
             bash_cmd = f'''
             source $(conda info --base)/etc/profile.d/conda.sh && \
             conda activate {self.conda_env} && \
-            antechamber -i {input_pdb} -fi pdb -o {output_ac} -fo ac -an y -at {self.forcefield} -c {self.charge_type} -nc {net_charge}
+            antechamber -i {pdb_name} -fi pdb -o {ac_name} -fo ac -an y -at {self.forcefield} -c {self.charge_type} -nc {net_charge}
             '''
             result = subprocess.run(["bash", "-c", bash_cmd], cwd=workdir)
             if result.returncode != 0:
                 raise RuntimeError("Antechamber failed.")
 
-            print(f"AC file written to: {output_ac}")
+            print(f"AC file written to: {ac_name}")

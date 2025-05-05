@@ -105,11 +105,11 @@ def write_lammps_data(system: mp.System, file: Path) -> None:
     writer = LammpsDataWriter(file)
     writer.write(system)
 
-def write_pdb(file: Path, framelike: FrameLike, ) -> None:
+def write_pdb(file: Path, frame: mp.Frame) -> None:
     """Write a molpy System object to a PDB file."""
     from .data.pdb import PDBWriter
     writer = PDBWriter(file)
-    writer.write(to_frame(framelike))
+    writer.write(frame)
 
 @to_system
 def write_lammps_molecule(data: mp.System, file: Path) -> None:

@@ -1,41 +1,47 @@
 import molpy as mp
 
 class CH3(mp.Struct):
-
     def __init__(self):
         super().__init__()
-        self.add_atom(
-            id=1,
+
+        c = self.add_atom(
             name="C",
-            type="C",
+            type="CH3",
+            element="C",
             mass=12.01,
             charge=0.0,
             xyz=[0.0, 0.0, 0.0],
         )
-        self.add_atom(
-            id=2,
+
+        h1 = self.add_atom(
             name="H1",
-            type="H",
+            type="HC",
+            element="H",
             mass=1.008,
             charge=0.0,
             xyz=[0.000, 0.000, 1.090],
         )
-        self.add_atom(
-            id=3,
+        h2 = self.add_atom(
             name="H2",
-            type="H",
+            type="HC",
+            element="H",
             mass=1.008,
             charge=0.0,
             xyz=[1.026, 0.000, -0.363],
         )
-        self.add_atom(
-            id=4,
+        h3 = self.add_atom(
             name="H3",
-            type="H",
+            type="HC",
+            element="H",
             mass=1.008,
             charge=0.0,
             xyz=[-0.513, 0.889, -0.363],
         )
-        self.add_bond(0, 1)
-        self.add_bond(0, 2)
-        self.add_bond(0, 3)
+
+        # 添加键
+        self.add_bond(c, h1)
+        self.add_bond(c, h2)
+        self.add_bond(c, h3)
+
+    def carbon(self):
+        return self["atoms"][0]  # 默认第一个为 C 原子

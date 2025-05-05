@@ -102,12 +102,16 @@ class PDBWriter(DataWriter):
                 elif x.shape == (1,):
                     return x[0].item()
             return x
-        with open(self.path, "w") as f:
+
+        with open(self._path, "w") as f:
             atoms = frame["atoms"]
             for i, atom in enumerate(atoms.iterrows()):
-                serial = as_builtin(atom.get("id", i))
+                # serial = as_builtin(atom.get("id", i))
+                serial = i + 1
                 altLoc = as_builtin(atom.get("altLoc", ""))
-                unique_name = as_builtin(atom.get("unique_name", atom.get("name", "UNK")))
+                unique_name = as_builtin(
+                    atom.get("unique_name", atom.get("name", "UNK"))
+                )
                 resName = as_builtin(atom.get("resName", "UNK"))
                 chainID = as_builtin(atom.get("chainID", "A"))
                 resSeq = as_builtin(atom.get("resSeq", atom.get("molid", 1)))
@@ -123,8 +127,8 @@ class PDBWriter(DataWriter):
             bonds = defaultdict(list)
             if "bonds" in frame:
                 for bond in frame["bonds"].iterrows():
-                    i = as_builtin(bond["i"])
-                    j = as_builtin(bond["j"])
+                    i = as_builtin(bond["i"]) + 1
+                    j = as_builtin(bond["j"]) + 1
                     bonds[i].append(j)
                     bonds[j].append(i)
 
@@ -133,6 +137,8 @@ class PDBWriter(DataWriter):
                         raise ValueError(
                             f"PDB only supports up to 4 bonds, but atom {i} has {len(js)} bonds: {js}"
                         )
-                    f.write(f"{'CONECT':6s}{i:>5d}{''.join([f'{j:>5d}' for j in js])}\n")
+                    f.write(
+                        f"{'CONECT':6s}{i:>5d}{''.join([f'{j:>5d}' for j in js])}\n"
+                    )
 
             f.write("END\n")

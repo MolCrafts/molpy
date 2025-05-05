@@ -63,7 +63,7 @@ class LammpsTrajectoryReader(TrajectoryReader):
                 data_start = i + 1
                 break
 
-        df = nd.ArrayDict.from_csv(StringIO("\n".join(frame_lines[data_start:])), header=header)
+        df = nd.ArrayDict.from_csv(frame_lines, header=header)
         box_bounds = np.array(box_bounds)
 
         if box_bounds.shape == (3, 2):

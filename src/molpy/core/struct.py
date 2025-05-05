@@ -369,7 +369,7 @@ class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
 
     def __init__(
         self,
-        name: str | None = None,
+        name: str = "",
         atoms: Entities | list = [],
         bonds: Entities | list = [],
         angles: Entities | list = [],
