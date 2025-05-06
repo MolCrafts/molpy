@@ -7,8 +7,9 @@ from nesteddict import ArrayDict
 
 T = TypeVar("entity")
 
+
 class Entity(UserDict):
-    """Base class representing a general entity with dictionary-like behavior.""" 
+    """Base class representing a general entity with dictionary-like behavior."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -24,21 +25,21 @@ class Entity(UserDict):
     def __hash__(self):
         """Return a unique hash for the atom."""
         return id(self)
-    
+
     def __eq__(self, other):
         return self is other
-    
+
     def __ne__(self, other):
         """Check if two entities are not equal."""
         return not self.__eq__(other)
-    
+
     def __lt__(self, other):
         """Compare entities based on their IDs."""
         return id(self) < id(other)
-    
+
     def to_dict(self):
         return dict(self)
-    
+
 
 class SpatialMixin:
     """Mixin class for spatial operations on entities."""
@@ -55,14 +56,17 @@ class SpatialMixin:
     def translate(self, vector: np.ndarray):
         """Translate the entity by a given vector."""
         self.xyz = np.add(self.xyz, vector)
+        return self
 
     def rotate(self, theta, axis):
         """Rotate the entity around a given axis by a specified angle."""
         self.xyz = rotate_by_rodrigues(self.xyz, axis, theta)
+        return self
 
     def reflact(self, axis: np.ndarray):
         """Reflect the entity across a given axis."""
         self.xyz = np.dot(self.xyz, np.eye(3) - 2 * np.outer(axis, axis))
+        return self
 
 
 class Atom(Entity, SpatialMixin):
@@ -80,11 +84,11 @@ class Atom(Entity, SpatialMixin):
     def __repr__(self):
         """Return a string representation of the atom."""
         return f"<Atom {self['name']}>"
-    
+
     @property
     def xyz(self):
         return np.array(self["xyz"], dtype=float)
-    
+
     @xyz.setter
     def xyz(self, value):
         assert len(value) == 3, "xyz must be a 3D vector"
@@ -94,7 +98,7 @@ class Atom(Entity, SpatialMixin):
     def name(self):
         """Get the name of the atom."""
         return self["name"]
-    
+
 
 class ManyBody(Entity):
     """Base class for entities involving multiple atoms."""
@@ -111,9 +115,7 @@ class ManyBody(Entity):
         self._atoms = _atoms
 
     def __hash__(self):
-        return sum(
-            [hash(atom) for atom in self._atoms]
-        ) + hash(self.__class__.__name__)
+        return sum([hash(atom) for atom in self._atoms]) + hash(self.__class__.__name__)
 
 
 class Bond(ManyBody):
@@ -243,7 +245,7 @@ class Dihedral(ManyBody):
         return super().to_dict() | dict(
             i=self.itom["id"], j=self.jtom["id"], k=self.ktom["id"], l=self.ltom["id"]
         )
-    
+
     def __repr__(self):
         """Return a string representation of the dihedral."""
         return f"<Dihedral: {self.itom.name}-{self.jtom.name}-{self.ktom.name}-{self.ltom.name}>"
@@ -331,10 +333,10 @@ class Entities(Generic[T]):
     def __getitem__(self, key: int):
         """Get an entity by its index."""
         return self._data[key]
-    
+
     def __repr__(self):
         """Return a string representation of the collection."""
-        return f"<Entities: {len(self._data)} entities>"
+        return f"<Entities: {len(self._data)}>"
 
 
 class HierarchicalMixin(Generic[T]):
@@ -348,10 +350,11 @@ class HierarchicalMixin(Generic[T]):
         """Add a sub-entity to the collection."""
         self.childern.add(entity)
         return self
-    
+
     def reduce(self, func: Callable[[T], T] = lambda x: x) -> list[T]:
         """Reduce the collection of entities using a function."""
         return [func(entity) for entity in self.childern]
+
 
 class AllAtomStructMixin:
     """Mixin class for structures containing all atoms."""
@@ -363,6 +366,7 @@ class AllAtomStructMixin:
         self["angles"] = Entities()
         self["dihedrals"] = Entities()
         self["impropers"] = Entities()
+
 
 class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
     """Class representing a molecular structure."""
@@ -397,7 +401,8 @@ class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
                 "angles": Entities(angles),
                 "dihedrals": Entities(dihedrals),
                 "impropers": Entities(impropers),
-            } | props
+            }
+            | props
         )
         self.childern = Entities()
 
@@ -405,7 +410,7 @@ class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
     def atoms(self):
         """Get the atoms in the structure."""
         return self["atoms"]
-    
+
     def get_atoms(self):
         """Get all atoms in the structure."""
         return self["atoms"]
@@ -414,34 +419,34 @@ class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
     def bonds(self):
         """Get the bonds in the structure."""
         return self["bonds"]
-    
+
     def get_bonds(self):
         """Get all bonds in the structure."""
         return self["bonds"]
-    
+
     @property
     def angles(self):
         """Get the angles in the structure."""
         return self["angles"]
-    
+
     def get_angles(self):
         """Get all angles in the structure."""
         return self["angles"]
-    
+
     @property
     def dihedrals(self):
         """Get the dihedrals in the structure."""
         return self["dihedrals"]
-    
+
     def get_dihedrals(self):
         """Get all dihedrals in the structure."""
         return self["dihedrals"]
-    
+
     @property
     def xyz(self):
         """Get the coordinates of the atoms in the structure."""
         return np.array([atom["xyz"] for atom in self["atoms"]], dtype=float)
-    
+
     @xyz.setter
     def xyz(self, value):
         """Set the coordinates of the atoms in the structure."""
@@ -499,7 +504,7 @@ class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
         - props: Properties of the atom.
         """
         return self["atoms"].add(Atom(**props))
-    
+
     def add_atoms(self, atoms: Sequence[Atom]):
         """
         Add multiple atoms to the structure.
@@ -523,9 +528,9 @@ class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
             itom = self["atoms"][itom]
         if isinstance(jtom, int):
             jtom = self["atoms"][jtom]
-        
+
         return self["bonds"].add(Bond(itom, jtom, **kwargs))
-    
+
     def add_bonds(self, bonds: Sequence[Bond]):
         """
         Add multiple bonds to the structure.
@@ -649,7 +654,7 @@ class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
                 substruct.add_bond(itom, jtom, **bond)
         return substruct
 
-    def get_topology(self, attrs:list[str] = []):
+    def get_topology(self, attrs: list[str] = []):
         """
         Get the topology of the structure.
 
@@ -699,7 +704,7 @@ class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
             for i, j, k in angle_idx
         ]
         return angles
-    
+
     def calc_dihedrals(self, topology):
         """
         Calculate dihedrals in the structure.
@@ -721,27 +726,69 @@ class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
         return dihedrals
 
 
-Port = namedtuple("Port", ["head", "tail", "delete"])
+Port = namedtuple("Port", ["this", "that", "delete"])
+
 
 class MonomerMixin:
     """Mixin class for monomer"""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self["ports"] = []
 
-    def def_link_site(self, head, tail, delete):
+    def def_link_site(self, this, that, delete=[]):
         """
         Define a link site for the monomer.
 
         Parameters:
-        - head: Head atom of the link site.
-        - tail: Tail atom of the link site.
+        - this: Head atom of the link site.
+        - that: Tail atom of the link site.
         - delete: Whether to delete the link site.
         """
-        self["ports"].append(Port(head, tail, delete))
+        self["ports"].append(Port(this, that, delete))
         return self
+
 
 class Monomer(MonomerMixin, Struct):
     """Class representing a monomer."""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+class Polymer(Struct):
+    """Class representing a polymer."""
+
+    def __init__(self, structs):
+        super().__init__()
+        self.polymerize(structs)
+
+    def polymerize(self, structs):
+        """
+        Polymerize the given structures.
+
+        Parameters:
+        - structs: List of structures to polymerize.
+        """
+        # Implement polymerization logic
+        # add atom and bond one by one
+        prev = None
+
+        for struct in structs:
+
+            ports = struct["ports"]
+            deletes = [d for p in ports for d in p.delete]
+
+            for atom in struct["atoms"]:
+                if atom not in deletes:
+                    self["atoms"].add(atom)
+
+            for bond in struct["bonds"]:
+                if bond.itom not in deletes and bond.jtom not in deletes:
+                    self.add_bond(bond.itom, bond.jtom, **bond)
+
+            for port in ports:
+                self.add_bond(port.this, port.that)
+
+            prev = struct
+
+        return self
