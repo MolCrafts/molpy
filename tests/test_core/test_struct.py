@@ -75,11 +75,11 @@ class TestStruct:
 
             def __init__(self):
                 super().__init__()
-                C = self.add_atom(name="C", xyz=(0.1, 0, -0.07))
-                H1 = self.add_atom(name="H1", xyz=(-0.1, 0, -0.07))
-                H2 = self.add_atom(name="H2", xyz=(0., 0.1, 0.07))
-                H3 = self.add_atom(name="H3", xyz=(0., -0.1, 0.07))
-                H4 = self.add_atom(name="H4", xyz=(0., 0, 0.1))
+                C = self.def_atom(name="C", xyz=(0.1, 0, -0.07))
+                H1 = self.def_atom(name="H1", xyz=(-0.1, 0, -0.07))
+                H2 = self.def_atom(name="H2", xyz=(0., 0.1, 0.07))
+                H3 = self.def_atom(name="H3", xyz=(0., -0.1, 0.07))
+                H4 = self.def_atom(name="H4", xyz=(0., 0, 0.1))
                 self.add_bond(C, H1)
                 self.add_bond(C, H2)
                 self.add_bond(C, H3)

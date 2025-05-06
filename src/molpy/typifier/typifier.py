@@ -14,8 +14,8 @@ class Typifier:
     def __init__(self, forcefield):
         self.forcefield = forcefield
 
-    def typify_bonds(self, structure):
-        bonds = structure.get_bonds()
+    def typify_bonds(self, struct):
+        bonds = struct.bonds
         bondtypes = self.forcefield.get_bondtypes()
         # if bond.itom.type and bond.jtom.type equal to bondtype
         # match the bondtype to the bond
@@ -25,7 +25,7 @@ class Typifier:
                     # bondtype.apply(bond)
                     bond["$type"] = bondtype
                     break
-        return structure
+        return struct
 
 
 class SmartsTypifier(Typifier):
@@ -69,21 +69,21 @@ class SmartsTypifier(Typifier):
 
         return smarts_graphs
 
-    def typify(self, structure, use_residue_map=False, max_iter=10):
+    def typify(self, struct, use_residue_map=False, max_iter=10):
 
-        graph = structure.get_topology(attrs=["name", "number", "type"])
+        graph = struct.get_topology(attrs=["name", "number", "type"])
         self.prepare_graph(graph)
         for typename, rule in self.smarts_graphs.items():
             result = rule.find_matches(graph)
             if result:
                 for i, j in enumerate(result):
-                    structure["atoms"][j]["type"] = typename
-                    print("atom", structure["atoms"][j], "type", typename)
+                    struct["atoms"][j]["type"] = typename
+                    print("atom", struct["atoms"][j], "type", typename)
                     print()
-                # if all([atom['type'] for atom in structure['atoms']]):
+                # if all([atom['type'] for atom in struct['atoms']]):
                 #     break
 
-        return structure
+        return struct
 
     def prepare_graph(self, graph):
 

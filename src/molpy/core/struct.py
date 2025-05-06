@@ -1,3 +1,4 @@
+from typing import Protocol, runtime_checkable
 from collections import namedtuple, UserDict
 from copy import deepcopy
 from molpy.op import rotate_by_rodrigues
@@ -10,9 +11,6 @@ T = TypeVar("entity")
 
 class Entity(UserDict):
     """Base class representing a general entity with dictionary-like behavior."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
     def __call__(self):
         """Return a copy of the entity."""
@@ -29,10 +27,6 @@ class Entity(UserDict):
     def __eq__(self, other):
         return self is other
 
-    def __ne__(self, other):
-        """Check if two entities are not equal."""
-        return not self.__eq__(other)
-
     def __lt__(self, other):
         """Compare entities based on their IDs."""
         return id(self) < id(other)
@@ -41,7 +35,7 @@ class Entity(UserDict):
         return dict(self)
 
 
-class SpatialMixin:
+class Spatial(Protocol):
     """Mixin class for spatial operations on entities."""
 
     xyz: np.ndarray
@@ -69,17 +63,8 @@ class SpatialMixin:
         return self
 
 
-class Atom(Entity, SpatialMixin):
+class Atom(Entity):
     """Class representing an atom."""
-
-    def __init__(self, **props):
-        """
-        Initialize an atom with a name.
-
-        Parameters:
-        - name: Name of the atom.
-        """
-        super().__init__(**props)
 
     def __repr__(self):
         """Return a string representation of the atom."""
@@ -92,7 +77,7 @@ class Atom(Entity, SpatialMixin):
     @xyz.setter
     def xyz(self, value):
         assert len(value) == 3, "xyz must be a 3D vector"
-        self["xyz"] = np.ndarray(value)
+        self["xyz"] = np.array(value)
 
     @property
     def name(self):
@@ -295,7 +280,8 @@ class Improper(ManyBody):
         )
 
 
-class Entities(Generic[T]):
+@runtime_checkable
+class Entities(Protocol[T]):
     """Class representing a collection of entities."""
 
     def __init__(self, entities: list[T] = []):
@@ -339,7 +325,7 @@ class Entities(Generic[T]):
         return f"<Entities: {len(self._data)}>"
 
 
-class HierarchicalMixin(Generic[T]):
+class Hierarchical(Generic[T]):
     """Mixin class for hierarchical operations on entities."""
 
     def __init__(self, *args, **kwargs):
@@ -356,91 +342,138 @@ class HierarchicalMixin(Generic[T]):
         return [func(entity) for entity in self.childern]
 
 
-class AllAtomStructMixin:
+class Atomistic(Protocol):
     """Mixin class for structures containing all atoms."""
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self["atoms"] = Entities()
-        self["bonds"] = Entities()
-        self["angles"] = Entities()
-        self["dihedrals"] = Entities()
-        self["impropers"] = Entities()
+    @property
+    def atoms(self) -> Entities[Atom]:
+        return self["atoms"]
 
+    @property
+    def bonds(self) -> Entities[Bond]:
+        return self["bonds"]
+    
+    @property
+    def angles(self) -> Entities[Angle]:
+        return self["angles"]
+    
+    @property
+    def dihedrals(self) -> Entities[Dihedral]:
+        return self["dihedrals"]
+    
+    def add_atom(self, atom: Atom):
+        """
+        Add an atom to the structure.
 
-class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
+        Parameters:
+        - props: Properties of the atom.
+        """
+        return self.atoms.add(atom)
+
+    def def_atom(self, **props):
+        """
+        Define an atom with given properties.
+
+        Parameters:
+        - props: Properties of the atom.
+        """
+        atom = Atom(**props)
+        return self.add_atom(atom)
+
+    def add_atoms(self, atoms: Sequence[Atom]):
+        """
+        Add multiple atoms to the structure.
+
+        Parameters:
+        - atoms: List of atoms to add.
+        """
+        self.atoms.extend(atoms)
+
+    def def_bond(self, itom, jtom, **kwargs):
+        """
+        Add a bond to the structure.
+
+        Parameters:
+        - itom: First atom in the bond.
+        - jtom: Second atom in the bond.
+        - kwargs: Additional properties.
+        """
+        if isinstance(itom, int):
+            itom = self["atoms"][itom]
+        if isinstance(jtom, int):
+            jtom = self["atoms"][jtom]
+
+        return self.bonds.add(Bond(itom, jtom, **kwargs))
+
+    def add_bonds(self, bonds: Sequence[Bond]):
+        """
+        Add multiple bonds to the structure.
+
+        Parameters:
+        - bonds: List of bonds to add.
+        """
+        self.bonds.extend(bonds)
+
+    def del_atom(self, atom):
+        """
+        Delete an atom from the structure.
+
+        Parameters:
+        - atom: Atom to delete (can be name, ID, or Atom object).
+        """
+        if isinstance(atom, str):
+            atom = self.get_atom_by(lambda atom: atom["name"] == atom)
+        if isinstance(atom, int):
+            atom = self.get_atom_by_id(atom)
+        if isinstance(atom, Atom):
+            self["atoms"].remove(atom)
+        else:
+            raise ValueError(f"Cannot delete {atom}")
+
+    def del_bond(self, itom, jtom):
+        """
+        Delete a bond from the structure.
+
+        Parameters:
+        - itom: First atom in the bond.
+        - jtom: Second atom in the bond.
+        """
+        if isinstance(itom, str):
+            itom = self.get_atom_by(lambda atom: atom["name"] == itom)
+        if isinstance(jtom, str):
+            jtom = self.get_atom_by(lambda atom: atom["name"] == jtom)
+        to_be_deleted = Bond(itom, jtom)
+        for bond in self["bonds"]:
+            if bond == to_be_deleted:
+                self["bonds"].remove(bond)
+        return self
+
+    def get_atom_by(self, condition: Callable[[Atom], bool]) -> Atom:
+        """
+        Get an atom based on a condition.
+
+        Parameters:
+        - condition: A callable that takes an atom and returns a boolean.
+
+        Returns:
+        - The first atom that satisfies the condition, or None.
+        """
+        return next((atom for atom in self["atoms"] if condition(atom)), None)
+
+class Struct(Entity, Atomistic, Spatial):
     """Class representing a molecular structure."""
 
     def __init__(
         self,
         name: str = "",
-        atoms: Entities | list = [],
-        bonds: Entities | list = [],
-        angles: Entities | list = [],
-        dihedrals: Entities | list = [],
-        impropers: Entities | list = [],
         **props,
     ):
         """Initialize a molecular structure with atoms, bonds, angles, etc."""
-
-        # TODO: move atoms/bonds etc. to a mixin class
-        super().__init__(
-            **{
-                "name": name,
-                "atoms": Entities(atoms),
-                "bonds": Entities(
-                    [
-                        (
-                            Bond(atoms[bond[0]], atoms[bond[1]])
-                            if isinstance(bond, tuple)
-                            else bond
-                        )
-                        for bond in bonds
-                    ]
-                ),
-                "angles": Entities(angles),
-                "dihedrals": Entities(dihedrals),
-                "impropers": Entities(impropers),
-            }
-            | props
-        )
-        self.childern = Entities()
-
-    @property
-    def atoms(self):
-        """Get the atoms in the structure."""
-        return self["atoms"]
-
-    def get_atoms(self):
-        """Get all atoms in the structure."""
-        return self["atoms"]
-
-    @property
-    def bonds(self):
-        """Get the bonds in the structure."""
-        return self["bonds"]
-
-    def get_bonds(self):
-        """Get all bonds in the structure."""
-        return self["bonds"]
-
-    @property
-    def angles(self):
-        """Get the angles in the structure."""
-        return self["angles"]
-
-    def get_angles(self):
-        """Get all angles in the structure."""
-        return self["angles"]
-
-    @property
-    def dihedrals(self):
-        """Get the dihedrals in the structure."""
-        return self["dihedrals"]
-
-    def get_dihedrals(self):
-        """Get all dihedrals in the structure."""
-        return self["dihedrals"]
+        super().__init__(name=name, **props)
+        self["atoms"] = Entities[Atom]()
+        self["bonds"] = Entities[Bond]()
+        self["angles"] = Entities[Angle]()
+        self["dihedrals"] = Entities[Dihedral]()
 
     @property
     def xyz(self):
@@ -495,98 +528,6 @@ class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
                 new[key] = deepcopy(value, memo)
 
         return new
-
-    def add_atom(self, **props):
-        """
-        Add an atom to the structure.
-
-        Parameters:
-        - props: Properties of the atom.
-        """
-        return self["atoms"].add(Atom(**props))
-
-    def add_atoms(self, atoms: Sequence[Atom]):
-        """
-        Add multiple atoms to the structure.
-
-        Parameters:
-        - atoms: List of atoms to add.
-        """
-        self["atoms"].extend(atoms)
-        return self
-
-    def add_bond(self, itom, jtom, **kwargs):
-        """
-        Add a bond to the structure.
-
-        Parameters:
-        - itom: First atom in the bond.
-        - jtom: Second atom in the bond.
-        - kwargs: Additional properties.
-        """
-        if isinstance(itom, int):
-            itom = self["atoms"][itom]
-        if isinstance(jtom, int):
-            jtom = self["atoms"][jtom]
-
-        return self["bonds"].add(Bond(itom, jtom, **kwargs))
-
-    def add_bonds(self, bonds: Sequence[Bond]):
-        """
-        Add multiple bonds to the structure.
-
-        Parameters:
-        - bonds: List of bonds to add.
-        """
-        self["bonds"].extend(bonds)
-        return self
-
-    def del_atom(self, atom):
-        """
-        Delete an atom from the structure.
-
-        Parameters:
-        - atom: Atom to delete (can be name, ID, or Atom object).
-        """
-        if isinstance(atom, str):
-            atom = self.get_atom_by(lambda atom: atom["name"] == atom)
-        if isinstance(atom, int):
-            atom = self.get_atom_by_id(atom)
-        if isinstance(atom, Atom):
-            self["atoms"].remove(atom)
-        else:
-            raise ValueError(f"Cannot delete {atom}")
-        return self
-
-    def del_bond(self, itom, jtom):
-        """
-        Delete a bond from the structure.
-
-        Parameters:
-        - itom: First atom in the bond.
-        - jtom: Second atom in the bond.
-        """
-        if isinstance(itom, str):
-            itom = self.get_atom_by(lambda atom: atom["name"] == itom)
-        if isinstance(jtom, str):
-            jtom = self.get_atom_by(lambda atom: atom["name"] == jtom)
-        to_be_deleted = Bond(itom, jtom)
-        for bond in self["bonds"]:
-            if bond == to_be_deleted:
-                self["bonds"].remove(bond)
-        return self
-
-    def get_atom_by(self, condition: Callable[[Atom], bool]) -> Atom:
-        """
-        Get an atom based on a condition.
-
-        Parameters:
-        - condition: A callable that takes an atom and returns a boolean.
-
-        Returns:
-        - The first atom that satisfies the condition, or None.
-        """
-        return next((atom for atom in self["atoms"] if condition(atom)), None)
 
     def to_frame(self):
         """
@@ -651,7 +592,7 @@ class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
             if bond.itom["name"] in atom_names and bond.jtom["name"] in atom_names:
                 itom = substruct["atoms"][bond.itom["name"]]
                 jtom = substruct["atoms"][bond.jtom["name"]]
-                substruct.add_bond(itom, jtom, **bond)
+                substruct.def_bond(itom, jtom, **bond)
         return substruct
 
     def get_topology(self, attrs: list[str] = []):
@@ -681,7 +622,7 @@ class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
         Parameters:
         - struct: The structure to add.
         """
-        self.add_child(struct)
+        # self.add_child(struct)
         self.add_atoms(struct.atoms)
         self.add_bonds(struct.bonds)
         return self
@@ -729,12 +670,8 @@ class Struct(SpatialMixin, HierarchicalMixin["Struct"], Entity):
 Port = namedtuple("Port", ["this", "that", "delete"])
 
 
-class MonomerMixin:
+class MonomerLike:
     """Mixin class for monomer"""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self["ports"] = []
 
     def def_link_site(self, this, that, delete=[]):
         """
@@ -749,11 +686,17 @@ class MonomerMixin:
         return self
 
 
-class Monomer(MonomerMixin, Struct):
+class Monomer(MonomerLike, Struct):
     """Class representing a monomer."""
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, **props):
+        super().__init__(**props)
+        self["ports"] = []
+
+    def __repr__(self):
+        """Return a string representation of the monomer."""
+        return f"<Monomer: {len(self['atoms'])} atoms>"
+
 
 class Polymer(Struct):
     """Class representing a polymer."""
@@ -784,10 +727,10 @@ class Polymer(Struct):
 
             for bond in struct["bonds"]:
                 if bond.itom not in deletes and bond.jtom not in deletes:
-                    self.add_bond(bond.itom, bond.jtom, **bond)
+                    self.def_bond(bond.itom, bond.jtom, **bond)
 
             for port in ports:
-                self.add_bond(port.this, port.that)
+                self.def_bond(port.this, port.that)
 
             prev = struct
 

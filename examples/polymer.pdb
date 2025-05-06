@@ -1,0 +1,73 @@
+ATOM      1    C UNK A   1       0.000   0.000   0.000                       c  
+ATOM      2   H1 UNK A   1       0.000   0.000   1.090                       h  
+ATOM      3   H2 UNK A   1       1.026   0.000  -0.363                       h  
+ATOM      4   H3 UNK A   1      -0.513   0.889  -0.363                       h  
+ATOM      5    C UNK A   1       2.950   0.000   0.000                       c  
+ATOM      6   H1 UNK A   1       2.950   0.961  -0.718                       h  
+ATOM      7   H2 UNK A   1       2.950  -0.961   0.718                       h  
+ATOM      8    C UNK A   1       5.900   0.000   0.000                       c  
+ATOM      9   H1 UNK A   1       5.900  -1.151  -0.340                       h  
+ATOM     10   H2 UNK A   1       5.900   1.151   0.340                       h  
+ATOM     11    C UNK A   1       8.850   0.000   0.000                       c  
+ATOM     12   H1 UNK A   1       8.850   0.416   1.126                       h  
+ATOM     13   H2 UNK A   1       8.850  -0.416  -1.126                       h  
+ATOM     14    C UNK A   1      11.800   0.000   0.000                       c  
+ATOM     15   H1 UNK A   1      11.800   0.653  -1.007                       h  
+ATOM     16   H2 UNK A   1      11.800  -0.653   1.007                       h  
+ATOM     17    C UNK A   1      14.750   0.000   0.000                       c  
+ATOM     18   H1 UNK A   1      14.750  -1.197   0.079                       h  
+ATOM     19   H2 UNK A   1      14.750   1.197  -0.079                       h  
+ATOM     20    C UNK A   1      17.700   0.000   0.000                       c  
+ATOM     21   H1 UNK A   1      17.700   0.780   0.912                       h  
+ATOM     22   H2 UNK A   1      17.700  -0.780  -0.912                       h  
+ATOM     23    C UNK A   1      20.650   0.000   0.000                       c  
+ATOM     24   H1 UNK A   1      20.650   0.263  -1.171                       h  
+ATOM     25   H2 UNK A   1      20.650  -0.263   1.171                       h  
+ATOM     26    C UNK A   1      23.600   0.000   0.000                       c  
+ATOM     27   H1 UNK A   1      23.600  -1.096   0.490                       h  
+ATOM     28   H2 UNK A   1      23.600   1.096  -0.490                       h  
+ATOM     29    C UNK A   1      26.550   0.000   0.000                       c  
+ATOM     30    O UNK A   1      26.550   1.048   0.585                       o  
+ATOM     31    C UNK A   1      29.500   0.000   0.000                       c  
+ATOM     32    O UNK A   1      29.500  -0.159  -1.189                       o  
+ATOM     33    C UNK A   1      29.500   0.000   0.000                       c  
+ATOM     34   H1 UNK A   1      29.500   0.873  -0.652                       h  
+ATOM     35   H2 UNK A   1      30.526  -0.291   0.217                       h  
+ATOM     36   H3 UNK A   1      28.987  -0.823  -0.495                       h  
+CONECT    2    1
+CONECT    1    2    3    4    5
+CONECT    3    1
+CONECT    4    1
+CONECT    6    5
+CONECT    5    6    7    1    8
+CONECT    7    5
+CONECT    9    8
+CONECT    8    9   10    5   11
+CONECT   10    8
+CONECT   12   11
+CONECT   11   12   13    8   14
+CONECT   13   11
+CONECT   14   15   16   11   17
+CONECT   15   14
+CONECT   16   14
+CONECT   17   18   19   14   20
+CONECT   18   17
+CONECT   19   17
+CONECT   21   20
+CONECT   20   21   22   17   23
+CONECT   22   20
+CONECT   24   23
+CONECT   23   24   25   20   26
+CONECT   25   23
+CONECT   27   26
+CONECT   26   27   28   23   29
+CONECT   28   26
+CONECT   29   30   26   31
+CONECT   30   29
+CONECT   32   31
+CONECT   31   32   29   33
+CONECT   34   33
+CONECT   33   34   35   36   31
+CONECT   35   33
+CONECT   36   33
+END
