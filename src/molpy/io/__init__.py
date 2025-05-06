@@ -63,6 +63,15 @@ def read_amber(
         system = reader.read()
     return system
 
+def read_ac(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
+
+    """Read an AC file and return a molpy System object."""
+    from .data.ac import AcReader
+    reader = AcReader(file)
+    if frame is None:
+        frame = mp.Frame()
+    return reader.read(frame)
+
 
 def read_mol2(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
 

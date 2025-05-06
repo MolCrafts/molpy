@@ -6,7 +6,7 @@ class CH3(mp.Struct):
 
         c = self.add_atom(
             name="C",
-            type="CH3",
+            type="C3",
             element="C",
             mass=12.01,
             charge=0.0,

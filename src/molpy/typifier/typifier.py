@@ -1,9 +1,12 @@
 import subprocess
-from tempfile import TemporaryDirectory, mkdtemp
-from molpy.typifier.parser import SmartsParser
-from molpy.typifier.graph import SMARTSGraph, _find_chordless_cycles
-from molpy.io import write_pdb
 from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import molpy as mp
+from molpy.io import write_pdb
+from molpy.typifier.graph import SMARTSGraph, _find_chordless_cycles
+from molpy.typifier.parser import SmartsParser
+from molpy.core import ForceField
 
 
 class Typifier:
@@ -19,7 +22,8 @@ class Typifier:
         for bond in bonds:
             for bondtype in bondtypes:
                 if bondtype.match(bond):
-                    bondtype.apply(bond)
+                    # bondtype.apply(bond)
+                    bond["$type"] = bondtype
                     break
         return structure
 
@@ -91,7 +95,9 @@ class SmartsTypifier(Typifier):
 
 class AmberToolsTypifier:
 
-    def __init__(self, forcefield: str, charge_type: str = "bcc", conda_env: str = "AmberTools25"):
+    def __init__(
+        self, forcefield: str, charge_type: str = "bcc", conda_env: str = "AmberTools25"
+    ):
         self.forcefield = forcefield
         self.charge_type = charge_type
         self.conda_env = conda_env
@@ -101,12 +107,14 @@ class AmberToolsTypifier:
         """
         Check if antechamber is available in the target conda env.
         """
-        cmd = f'''
+        cmd = f"""
         source $(conda info --base)/etc/profile.d/conda.sh && \
         conda activate {self.conda_env} && \
         antechamber -h
-        '''
-        result = subprocess.run(["bash", "-c", cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        """
+        result = subprocess.run(
+            ["bash", "-c", cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
         if result.returncode != 0:
             raise RuntimeError("Antechamber not found in conda env " + self.conda_env)
 
@@ -114,7 +122,6 @@ class AmberToolsTypifier:
         """
         Typify the struct using AmberTools.
         """
-        from molpy.io import write_pdb  # 假设你已有此函数
 
         net_charge = struct.get("net_charge", 0.0)
         name = struct.get("name", "struct")
@@ -126,13 +133,19 @@ class AmberToolsTypifier:
             ac_name = f"{name}.ac"
             write_pdb(workdir / pdb_name, struct.to_frame())
 
-            bash_cmd = f'''
+            bash_cmd = f"""
             source $(conda info --base)/etc/profile.d/conda.sh && \
             conda activate {self.conda_env} && \
             antechamber -i {pdb_name} -fi pdb -o {ac_name} -fo ac -an y -at {self.forcefield} -c {self.charge_type} -nc {net_charge}
-            '''
+            """
             result = subprocess.run(["bash", "-c", bash_cmd], cwd=workdir)
             if result.returncode != 0:
-                raise RuntimeError("Antechamber failed.")
+                raise RuntimeError("Antechamber failed")
 
-            print(f"AC file written to: {ac_name}")
+            frame = mp.io.read_ac(workdir / ac_name, frame=mp.Frame())
+
+            for satom, fatom in zip(struct["atoms"], frame["atoms"].iterrows()):
+                satom["type"] = fatom["type"]
+                satom["charge"] = fatom["charge"]
+
+        return struct
