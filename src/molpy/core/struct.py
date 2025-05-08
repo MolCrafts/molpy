@@ -714,7 +714,6 @@ class Polymer(Struct):
         """
         # Implement polymerization logic
         # add atom and bond one by one
-        prev = None
 
         for struct in structs:
 
@@ -731,7 +730,5 @@ class Polymer(Struct):
 
             for port in ports:
                 self.def_bond(port.this, port.that)
-
-            prev = struct
 
         return self
