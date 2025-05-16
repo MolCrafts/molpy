@@ -7,7 +7,7 @@ from molpy.io import write_pdb
 from molpy.typifier.graph import SMARTSGraph, _find_chordless_cycles
 from molpy.typifier.parser import SmartsParser
 from molpy.core import ForceField
-
+import h_submitor
 
 class Typifier:
 
@@ -103,21 +103,18 @@ class AmberToolsTypifier:
         self.conda_env = conda_env
         self.check_antechamber()
 
+    @h_submitor.local
     def check_antechamber(self):
         """
         Check if antechamber is available in the target conda env.
         """
-        cmd = f"""
-        source $(conda info --base)/etc/profile.d/conda.sh && \
-        conda activate {self.conda_env} && \
-        antechamber -h
-        """
-        result = subprocess.run(
-            ["bash", "-c", cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        if result.returncode != 0:
-            raise RuntimeError("Antechamber not found in conda env " + self.conda_env)
+        yield {
+            "job_name": "check_antechamber",
+            "cmd": "antechamber -h",
+            "conda_env": self.conda_env,
+        }
 
+    @h_submitor.local
     def typify(self, struct, workdir=None):
         """
         Typify the struct using AmberTools.
@@ -126,26 +123,25 @@ class AmberToolsTypifier:
         net_charge = struct.get("net_charge", 0.0)
         name = struct.get("name", "struct")
 
-        with TemporaryDirectory() if workdir is None else Path(workdir) as tmpdir:
+        with TemporaryDirectory() if workdir is None else Path(workdir)/struct["name"] as tmpdir:
             workdir = Path(tmpdir)
             workdir.mkdir(parents=True, exist_ok=True)
             pdb_name = f"{name}.pdb"
             ac_name = f"{name}.ac"
             write_pdb(workdir / pdb_name, struct.to_frame())
-
-            bash_cmd = f"""
-            source $(conda info --base)/etc/profile.d/conda.sh && \
-            conda activate {self.conda_env} && \
-            antechamber -i {pdb_name} -fi pdb -o {ac_name} -fo ac -an y -at {self.forcefield} -c {self.charge_type} -nc {net_charge}
-            """
-            result = subprocess.run(["bash", "-c", bash_cmd], cwd=workdir)
-            if result.returncode != 0:
-                raise RuntimeError("Antechamber failed")
+            
+            yield {
+                "job_name": "antechamber",
+                "cmd": f"antechamber -i {pdb_name} -fi pdb -o {ac_name} -fo ac -an y -at {self.forcefield} -c {self.charge_type} -nc {net_charge}",
+                "conda_env": self.conda_env,
+                "cwd": workdir,
+                "block": True
+            }
 
             frame = mp.io.read_ac(workdir / ac_name, frame=mp.Frame())
 
             for satom, fatom in zip(struct["atoms"], frame["atoms"].iterrows()):
                 satom["type"] = fatom["type"]
                 satom["charge"] = fatom["charge"]
-
+        struct["ac_path"] = workdir / ac_name
         return struct

@@ -1,10 +1,12 @@
-from typing import Protocol, runtime_checkable
-from collections import namedtuple, UserDict
+from collections import UserDict, namedtuple
 from copy import deepcopy
-from molpy.op import rotate_by_rodrigues
-from typing import Callable, Generic, Sequence, TypeVar
+from typing import (Callable, Generic, Protocol, Sequence, TypeVar,
+                    runtime_checkable)
+
 import numpy as np
 from nesteddict import ArrayDict
+
+from molpy.op import rotate_by_rodrigues
 
 T = TypeVar("entity")
 
@@ -12,13 +14,16 @@ T = TypeVar("entity")
 class Entity(UserDict):
     """Base class representing a general entity with dictionary-like behavior."""
 
-    def __call__(self):
+    def __call__(self, **modify):
         """Return a copy of the entity."""
-        return self.copy()
+        return self.clone(**modify)
 
-    def copy(self):
+    def clone(self, **modify):
         """Create a deep copy of the entity."""
-        return deepcopy(self)
+        ins = deepcopy(self)
+        for k, v in modify.items():
+            ins[k] = v
+        return ins
 
     def __hash__(self):
         """Return a unique hash for the atom."""
@@ -281,7 +286,7 @@ class Improper(ManyBody):
 
 
 @runtime_checkable
-class Entities(Protocol[T]):
+class EntityContainer(Protocol[T]):
     """Class representing a collection of entities."""
 
     def __init__(self, entities: list[T] = []):
@@ -323,6 +328,9 @@ class Entities(Protocol[T]):
     def __repr__(self):
         """Return a string representation of the collection."""
         return f"<Entities: {len(self._data)}>"
+    
+class Entities(EntityContainer[T]):
+    ...
 
 
 class Hierarchical(Generic[T]):
@@ -475,6 +483,73 @@ class Struct(Entity, Atomistic, Spatial):
         self["angles"] = Entities[Angle]()
         self["dihedrals"] = Entities[Dihedral]()
 
+    @classmethod
+    def from_frame(cls, frame, name=""):
+
+        struct = cls(name=name)
+        atoms = frame["atoms"]
+        for atom in atoms.iterrows():
+            struct.def_atom(**atom)
+
+        if "bonds" in frame:
+            struct["bonds"] = Entities()
+            bonds = frame["bonds"]
+            for bond in bonds.iterrows():
+                i, j = bond.pop("i"), bond.pop("j")
+                itom = struct["atoms"].get_by(lambda atom: atom["id"] == i)
+                jtom = struct["atoms"].get_by(lambda atom: atom["id"] == j)
+                struct["bonds"].add(
+                    Bond(
+                        itom,
+                        jtom,
+                        **{k: v for k, v in bond.items()},
+                    )
+                )
+
+        if "angles" in frame:
+            struct["angles"] = Entities()
+            angles = frame["angles"]
+            for _, angle in angles.iterrows():
+                i, j, k = angle.pop("i"), angle.pop("j"), angle.pop("k")
+                itom = struct["atoms"].get_by(lambda atom: atom["id"] == i)
+                jtom = struct["atoms"].get_by(lambda atom: atom["id"] == j)
+                ktom = struct["atoms"].get_by(lambda atom: atom["id"] == k)
+                struct["angles"].add(
+                    Angle(
+                        itom,
+                        jtom,
+                        ktom,
+                        **{k: v for k, v in angle.items()},
+                    )
+                )
+
+        if "dihedrals" in frame:
+            struct["dihedrals"] = Entities()
+            dihedrals = frame["dihedrals"]
+            for _, dihedral in dihedrals.iterrows():
+                i, j, k, l = (
+                    dihedral.pop("i"),
+                    dihedral.pop("j"),
+                    dihedral.pop("k"),
+                    dihedral.pop("l"),
+                )
+                itom = struct["atoms"].get_by(lambda atom: atom["id"] == i)
+                jtom = struct["atoms"].get_by(lambda atom: atom["id"] == j)
+                ktom = struct["atoms"].get_by(lambda atom: atom["id"] == k)
+                ltom = struct["atoms"].get_by(lambda atom: atom["id"] == l)
+                struct["dihedrals"].add(
+                    Dihedral(
+                        itom,
+                        jtom,
+                        ktom,
+                        ltom,
+                        **{k: v for k, v in dihedral.items()},
+                    )
+                )
+
+        return struct
+
+
     @property
     def xyz(self):
         """Get the coordinates of the atoms in the structure."""
@@ -497,7 +572,7 @@ class Struct(Entity, Atomistic, Spatial):
         """
 
         # Step 1: Deep-copy atoms
-        new = Struct()
+        new = self.__class__()
         new["atoms"] = Entities()
         atom_mapping = {}
 
@@ -539,6 +614,7 @@ class Struct(Entity, Atomistic, Spatial):
         from .frame import Frame
 
         frame = Frame()
+        frame["name"] = self["name"]
 
         atom_name_idx_mapping = {}
         for i, atom in enumerate(self["atoms"]):
@@ -696,7 +772,7 @@ class Monomer(MonomerLike, Struct):
     def __repr__(self):
         """Return a string representation of the monomer."""
         return f"<Monomer: {len(self['atoms'])} atoms>"
-
+    
 
 class Polymer(Struct):
     """Class representing a polymer."""
