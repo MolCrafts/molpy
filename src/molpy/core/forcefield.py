@@ -39,6 +39,9 @@ class Type:
             is the name of the class and `name` is the value of the `name` attribute.
         """
         return f"<{self.__class__.__name__}: {self.label}>"
+    
+    def __str__(self) -> str:
+        return self.label
 
     def __eq__(self, other: Union["Type", str]):
         """
@@ -53,7 +56,7 @@ class Type:
         if isinstance(other, str):
             return self.label == other
         return self.label == other.label
-    
+
     def __getitem__(self, key):
         if isinstance(key, str):
             return self.param.get(key)
@@ -86,7 +89,7 @@ class Type:
         raise NotImplementedError(
             "The apply method should be implemented in subclasses of Type."
         )
-    
+
     def __contains__(self, key):
         """
         Check if the given key is present in the type's parameters.
@@ -98,7 +101,7 @@ class Type:
             bool: True if the key is present, False otherwise.
         """
         return key in self.param or key in self.oparam
-    
+
     def get(self, key, default=None):
         """
         Retrieve the value associated with the given key.
@@ -110,7 +113,11 @@ class Type:
         Returns:
             Any: The value associated with the key, or the `default` value if not found.
         """
-        return self.param.get(key, default) or self.oparam[key] if isinstance(key, int) else default
+        return (
+            self.param.get(key, default) or self.oparam[key]
+            if isinstance(key, int)
+            else default
+        )
 
 
 class TypeContainer:
@@ -217,7 +224,7 @@ class Style:
 
     def __eq__(self, other: "Style"):
         return self.name == other.name
-    
+
     def get_types(self):
         return list(self.types._types)
 
@@ -384,7 +391,7 @@ class BondType(Type):
         super().__init__(label, oparam=oparam, **param)
         self.itype = itype
         self.jtype = jtype
-        self.label = label or f"{itype.label}-{jtype.label}"
+        self.label = label or f"{itype["label"]}-{jtype["label"]}"
 
     @property
     def atomtypes(self):
@@ -408,14 +415,6 @@ class BondType(Type):
         """
         return {other.itom["type"], other.jtom["type"]} == {self.itype, self.jtype}
 
-    def apply(self, other: Bond):
-        """
-        Apply the bond type to the given bond.
-
-        Args:
-            other (Bond): The bond to apply the type to.
-        """
-        other["$type"] = self
 
 class AngleType(Type):
 
@@ -439,7 +438,9 @@ class AngleType(Type):
             *oparam: Additional positional parameters for the base class initialization.
             **param: Additional keyword parameters for the base class initialization.
         """
-        super().__init__(label or f"{itype.label}-{jtype.label}-{ktype.label}", oparam, **param)
+        super().__init__(
+            label or f"{itype.label}-{jtype.label}-{ktype.label}", oparam, **param
+        )
         self.itype = itype
         self.jtype = jtype
         self.ktype = ktype
@@ -458,9 +459,13 @@ class AngleType(Type):
         Returns:
             bool: True if the types match, False otherwise.
         """
-        return self.jtype == other.jtom.type and set(self.itype, self.ktype) == set(
-            other.itom.type, other.ktom.type
-        )
+        return self.jtype == other.jtom["type"] and {
+            self.itype,
+            self.ktype,
+        } == {
+            other.itom["type"],
+            other.ktom["type"],
+        }
 
 
 class DihedralType(Type):
@@ -486,7 +491,11 @@ class DihedralType(Type):
             ktype (AtomType | None): The atom type of the third atom in the dihedral.
             ltype (AtomType | None): The atom type of the fourth atom in the dihedral.
         """
-        super().__init__(label or "-".join([itype.label, jtype.label, ktype.label, ltype.label]), oparam, **param)
+        super().__init__(
+            label or "-".join([itype.label, jtype.label, ktype.label, ltype.label]),
+            oparam,
+            **param,
+        )
         self.itype = itype
         self.jtype = jtype
         self.ktype = ktype
@@ -556,13 +565,12 @@ class BondStyle(Style):
 
     def def_type(
         self,
-        name: str,
         itype: AtomType | None = None,
         jtype: AtomType | None = None,
         oparam=[],
         **param,
     ) -> BondType:
-        bt = BondType(name, itype, jtype, oparam, **param)
+        bt = BondType(itype, jtype, oparam, **param)
         self.types.add(bt)
         return bt
 
@@ -571,14 +579,13 @@ class AngleStyle(Style):
 
     def def_type(
         self,
-        name: str,
         itype: AtomType | None = None,
         jtype: AtomType | None = None,
         ktype: AtomType | None = None,
         oparam=[],
         **param,
     ) -> AngleType:
-        at = AngleType(name, itype, jtype, ktype, oparam, **param)
+        at = AngleType(itype, jtype, ktype, oparam, **param)
         self.types.add(at)
         return at
 
@@ -587,7 +594,6 @@ class DihedralStyle(Style):
 
     def def_type(
         self,
-        name: str,
         itype: AtomType | None = None,
         jtype: AtomType | None = None,
         ktype: AtomType | None = None,
@@ -595,7 +601,7 @@ class DihedralStyle(Style):
         oparam=[],
         **param,
     ) -> DihedralType:
-        dt = DihedralType(name, itype, jtype, ktype, ltype, oparam, **param)
+        dt = DihedralType(itype, jtype, ktype, ltype, oparam, **param)
         self.types.add(dt)
         return dt
 
@@ -604,7 +610,6 @@ class ImproperStyle(Style):
 
     def def_type(
         self,
-        name: str,
         itype: AtomType | None = None,
         jtype: AtomType | None = None,
         ktype: AtomType | None = None,
@@ -612,7 +617,7 @@ class ImproperStyle(Style):
         oparam=[],
         param={},
     ) -> ImproperType:
-        it = ImproperType(name, itype, jtype, ktype, ltype, oparam, param)
+        it = ImproperType(itype, jtype, ktype, ltype, oparam, param)
         self.types.add(it)
         return it
 
@@ -621,13 +626,14 @@ class PairType(Type):
 
     def __init__(
         self,
-        name: str,
-        itype: int | None,
-        jtype: int | None,
+        itype: AtomType | None,
+        jtype: AtomType | None,
         oparam=[],
         **param,
     ):
-        super().__init__(name, oparam, **param)
+        super().__init__(
+            param.get("label", f"{itype.label}-{jtype.label}"), oparam, **param
+        )
         self.itype = itype
         self.jtype = jtype
 
@@ -640,13 +646,12 @@ class PairStyle(Style):
 
     def def_type(
         self,
-        name: str,
         itype: AtomType | None = None,
         jtype: AtomType | None = None,
         oparam=[],
         **param,
     ):
-        pt = PairType(name, itype, jtype, oparam, **param)
+        pt = PairType(itype, jtype, oparam, **param)
         self.types.add(pt)
         return pt
 
@@ -657,10 +662,10 @@ class ForceField:
     of interactions between atoms, bonds, angles, dihedrals, and impropers in a molecular system.
     """
 
-    def __init__(self, name: str = ""):
+    def __init__(self, name: str = "", unit: str = "real"):
 
         self.name = name
-        self.unit = None
+        self.unit = unit
         self.atomstyles: list[AtomStyle] = []
         self.bondstyles: list[BondStyle] = []
         self.pairstyles: list[PairStyle] = []

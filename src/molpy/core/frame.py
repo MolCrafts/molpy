@@ -1,5 +1,4 @@
 from molpy.core.utils import TagApplyer
-from .box import Box
 import molpy as mp
 import numpy as np
 from copy import deepcopy
@@ -9,10 +8,10 @@ from typing import Any, Sequence
 
 class Frame(NestDict):
 
-    def __new__(cls, data: dict[str, Any] = {}, *, style="atomic"):
+    def __new__(cls, data: dict[str, Any] = {}, *, style="atomic") -> "Frame":
 
         if style == "atomic":
-            return super().__new__(AllAtomFrame)
+            return super().__new__(AllAtomFrame)  # type: ignore
         return super().__new__(cls)
 
     def __init__(self, data: dict[str, Any] = {}, *, style="atomic"):
@@ -40,6 +39,7 @@ class Frame(NestDict):
         atom_dicts = []
         bond_dicts = []
         bond_index = []
+        tager = TagApplyer()
         for struct in structs:
             if "bonds" in struct:
                 topo = struct.get_topology()
@@ -53,9 +53,9 @@ class Frame(NestDict):
             atom_dicts.extend(
                 [atom.to_dict() for atom in struct.atoms]
             )
-        tager = TagApplyer()
-        tager.apply_tags(atom_dicts)
-        tager.apply_tags(bond_dicts)
+            tager.update_dollar_counter()
+            tager.apply_tags(atom_dicts)
+            tager.apply_tags(bond_dicts)
 
         frame["atoms"] = ArrayDict.from_dicts(atom_dicts)
         frame["bonds"] = ArrayDict.from_dicts(bond_dicts)
@@ -210,7 +210,7 @@ class AllAtomMixin:
         return struct
 
 
-class AllAtomFrame(AllAtomMixin, Frame):
+class AllAtomFrame(Frame, AllAtomMixin):
     """A frame that contains atomistic infomation. It is a subclass of Frame and implements the AllAtomMixin interface."""
     def __init__(self, data: dict[str, Any] = {}):
         """Initialize the AllAtomFrame with data.

@@ -7,6 +7,7 @@ import numpy as np
 from nesteddict import ArrayDict
 
 from molpy.op import rotate_by_rodrigues
+from numpy.typing import ArrayLike
 
 T = TypeVar("entity")
 
@@ -38,7 +39,7 @@ class Entity(UserDict):
 
     def to_dict(self):
         return dict(self)
-
+    
 
 class Spatial(Protocol):
     """Mixin class for spatial operations on entities."""
@@ -52,8 +53,8 @@ class Spatial(Protocol):
         """Calculate the Euclidean distance to another entity."""
         return np.linalg.norm(self.xyz - other.xyz)
 
-    def translate(self, vector: np.ndarray):
-        """Translate the entity by a given vector."""
+    def move(self, vector: ArrayLike):
+        """Move the entity by a given vector."""
         self.xyz = np.add(self.xyz, vector)
         return self
 
@@ -62,7 +63,7 @@ class Spatial(Protocol):
         self.xyz = rotate_by_rodrigues(self.xyz, axis, theta)
         return self
 
-    def reflact(self, axis: np.ndarray):
+    def reflact(self, axis: ArrayLike):
         """Reflect the entity across a given axis."""
         self.xyz = np.dot(self.xyz, np.eye(3) - 2 * np.outer(axis, axis))
         return self
@@ -397,6 +398,15 @@ class Atomistic(Protocol):
         """
         self.atoms.extend(atoms)
 
+    def add_angles(self, angles: Sequence[Angle]):
+        """
+        Add multiple angles to the structure.
+
+        Parameters:
+        - angles: List of angles to add.
+        """
+        self.angles.extend(angles)
+
     def def_bond(self, itom, jtom, **kwargs):
         """
         Add a bond to the structure.
@@ -703,7 +713,7 @@ class Struct(Entity, Atomistic, Spatial):
         self.add_bonds(struct.bonds)
         return self
 
-    def calc_angles(self, topology):
+    def gen_angles(self, topology):
         """
         Calculate angles in the structure.
 
@@ -722,7 +732,7 @@ class Struct(Entity, Atomistic, Spatial):
         ]
         return angles
 
-    def calc_dihedrals(self, topology):
+    def gen_dihedrals(self, topology):
         """
         Calculate dihedrals in the structure.
 

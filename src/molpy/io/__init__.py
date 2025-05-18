@@ -107,12 +107,11 @@ def read_top(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
     return reader.read(frame)
 
 
-@to_system
-def write_lammps_data(system: mp.System, file: Path) -> None:
+def write_lammps_data(file:Path, frame: mp.Frame) -> None:
     """Write a molpy System object to a LAMMPS data file."""
     from .data.lammps import LammpsDataWriter
     writer = LammpsDataWriter(file)
-    writer.write(system)
+    writer.write(frame)
 
 def write_pdb(file: Path, frame: mp.Frame) -> None:
     """Write a molpy System object to a PDB file."""
@@ -120,7 +119,6 @@ def write_pdb(file: Path, frame: mp.Frame) -> None:
     writer = PDBWriter(file)
     writer.write(frame)
 
-@to_system
 def write_lammps_molecule(data: mp.System, file: Path) -> None:
 
     from .data.lammps import LammpsMoleculeWriter

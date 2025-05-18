@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import h_submitor
 
-class AmberToolsReactor:
+class AmberToolsReacter:
     """
     A class to handle the Amber force field in molecular simulations.
     """

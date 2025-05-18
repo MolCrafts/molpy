@@ -1,19 +1,21 @@
+import numpy as np
+
 from .frame import Frame
 from .forcefield import ForceField
-from .trajectory import Trajectory
+from .box import Box
+from .struct import Struct
+
 
 class System:
 
-    def __init__(
-        self
-    ):
-        self._trajectory = Trajectory()
+    def __init__(self):
         self._forcefield = None
+        self._struct = []
 
     @property
     def forcefield(self):
         return self._forcefield
-    
+
     @forcefield.setter
     def forcefield(self, value):
         self._forcefield = value
@@ -22,11 +24,22 @@ class System:
         """Set the forcefield for the system."""
         self.forcefield = forcefield
 
-    @property
-    def frame(self):
-        return self._trajectory.current_frame
-    
-    def add_frame(self, timestep: int, frame: Frame):
-        """Add a frame to the system."""
-        self._trajectory.add_frame(timestep, frame)
-        
+    def get_forcefield(self):
+        """Get the forcefield for the system."""
+        if self._forcefield is None:
+            raise ValueError("Forcefield not set.")
+        return self._forcefield
+
+    def def_box(self, matrix, pbc=np.ones(3, dtype=bool), origin=np.zeros(3)):
+        self._box = Box(matrix=matrix, pbc=pbc, origin=origin)
+
+    def add_struct(self, struct: Struct):
+        self._struct.append(struct)
+
+    def get_frame(self):
+
+        frame = Frame.from_structs(self._struct)
+        frame["box"] = self._box
+        frame["forcefield"] = self._forcefield
+        return frame
+

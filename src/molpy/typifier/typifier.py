@@ -11,22 +11,50 @@ import h_submitor
 
 class Typifier:
 
-    def __init__(self, forcefield):
+    def __init__(self, forcefield: ForceField):
         self.forcefield = forcefield
+
+    def typify_atoms(self, struct):
+        return struct
 
     def typify_bonds(self, struct):
         bonds = struct.bonds
         bondtypes = self.forcefield.get_bondtypes()
-        # if bond.itom.type and bond.jtom.type equal to bondtype
-        # match the bondtype to the bond
         for bond in bonds:
             for bondtype in bondtypes:
                 if bondtype.match(bond):
-                    # bondtype.apply(bond)
-                    bond["$type"] = bondtype
+                    bond["type"] = bondtype
                     break
         return struct
 
+    def typify_angles(self, struct):
+        angles = struct.angles
+        angletype = self.forcefield.get_angletypes()
+        for angle in angles:
+            for angletype in angletype:
+                if angletype.match(angle):
+                    angle["type"] = angletype
+                    break
+            if "type" not in angle:
+                raise ValueError(
+                    f"Angle {angle} type not found in forcefield {self.forcefield}"
+                )
+        return struct
+    
+    def typify(self, struct):
+        """
+        Typify the structure using the forcefield.
+        """
+        # Typify atoms
+        struct = self.typify_atoms(struct)
+
+        # Typify bonds
+        struct = self.typify_bonds(struct)
+
+        # Typify angles
+        struct = self.typify_angles(struct)
+
+        return struct
 
 class SmartsTypifier(Typifier):
 

@@ -25,6 +25,18 @@ class UniqueCounter:
     
     def __contains__(self, item):
         return item in self.unique_items
+    
+class IncrementalCounter:
+
+    def __init__(self):
+        self.value = 0
+
+    def update(self):
+        """
+        Update the counter.
+        """
+        self.value += 1
+        return self.value
 
 class TagApplyer:
     """
@@ -34,25 +46,28 @@ class TagApplyer:
     def __init__(self):
         self.dollar_mapping = {}
 
+    def update_dollar_counter(self):
+        """
+        Update the dollar counter.
+        """
+        for value in self.dollar_mapping.values():
+            value.update()
+
     def apply_tags(self, items: list[dict[str, Any]]):
         """
         Apply tags to the items.
         """
         for item in items:
-            for key, value in list(item.items()):
-                if key.startswith("$"):
-                    item[key[1:]] = self.resolve_dollar(key[1:], value)
+            for key, value in item.items():
+                if isinstance(value, str) and value.startswith("$"):
+                    item[key] = self.resolve_dollar(value[1:])
     
-    def resolve_dollar(self, key, value):
+    def resolve_dollar(self, value):
         """
         Resolve the dollar sign in the value.
         """
-        if key not in self.dollar_mapping:
-            self.dollar_mapping[key] = UniqueCounter()
+        if value not in self.dollar_mapping:
+            self.dollar_mapping[value] = IncrementalCounter()
 
-        if value in self.dollar_mapping[key]:
-            return self.dollar_mapping[key][value]
-        
-        return self.dollar_mapping[key].add(value)
-            
+        return self.dollar_mapping[value].value
 
