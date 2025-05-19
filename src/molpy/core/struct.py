@@ -107,6 +107,11 @@ class ManyBody(Entity):
 
     def __hash__(self):
         return sum([hash(atom) for atom in self._atoms]) + hash(self.__class__.__name__)
+    
+    @property
+    def atoms(self):
+        """Get the atoms involved in the entity."""
+        return self._atoms
 
 
 class Bond(ManyBody):
@@ -752,14 +757,26 @@ class Struct(Entity, Atomistic, Spatial):
         ]
         return dihedrals
 
+    def concat(self, structs: Sequence["Struct"]):
 
-Port = namedtuple("Port", ["this", "that", "delete"])
+        """
+        Concatenate multiple structures into the current structure.
+
+        Parameters:
+        - structs: List of structures to concatenate.
+        """
+        for struct in structs:
+            self.add_struct(struct)
+        return self        
+
+
+Port = namedtuple("Port", ["this", "that", "delete", "label"])
 
 
 class MonomerLike:
     """Mixin class for monomer"""
 
-    def def_link_site(self, this, that, delete=[]):
+    def def_link_site(self, this, that, delete=[], label=""):
         """
         Define a link site for the monomer.
 
@@ -768,9 +785,9 @@ class MonomerLike:
         - that: Tail atom of the link site.
         - delete: Whether to delete the link site.
         """
-        self["ports"].append(Port(this, that, delete))
+        self["ports"].append(Port(this, that, delete, label))
         return self
-
+    
 
 class Monomer(MonomerLike, Struct):
     """Class representing a monomer."""
@@ -787,9 +804,8 @@ class Monomer(MonomerLike, Struct):
 class Polymer(Struct):
     """Class representing a polymer."""
 
-    def __init__(self, structs):
-        super().__init__()
-        self.polymerize(structs)
+    def __init__(self, name, **props):
+        super().__init__(name, **props)
 
     def polymerize(self, structs):
         """

@@ -10,7 +10,7 @@ from nesteddict import ArrayDict
 
 class PDBReader(DataReader):
 
-    def __init__(self, file: str | Path):
+    def __init__(self, file: Path):
         super().__init__(path=file)
 
     @staticmethod
@@ -80,6 +80,7 @@ class PDBReader(DataReader):
                         "j": bonds[:, 1],
                     }
                 )
+
 
             return frame
 

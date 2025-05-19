@@ -9,7 +9,10 @@ from molpy.typifier.parser import SmartsParser
 from molpy.core import ForceField
 import h_submitor
 
-class Typifier:
+class BaseTypifier:
+    ...
+
+class ForceFieldTypifier(BaseTypifier):
 
     def __init__(self, forcefield: ForceField):
         self.forcefield = forcefield
@@ -55,8 +58,13 @@ class Typifier:
         struct = self.typify_angles(struct)
 
         return struct
+    
+class RealMoleculeTypifier(BaseTypifier):
 
-class SmartsTypifier(Typifier):
+    def is_amide(self, bond, struct): ...
+
+
+class SmartsTypifier(ForceFieldTypifier):
 
     def __init__(self, forcefield):
 
@@ -143,33 +151,35 @@ class AmberToolsTypifier:
         }
 
     @h_submitor.local
-    def typify(self, struct, workdir=None):
+    def typify(self, struct: mp.Struct, workdir:Path|None=None, net_charge: float = 0.0):
         """
         Typify the struct using AmberTools.
         """
 
-        net_charge = struct.get("net_charge", 0.0)
-        name = struct.get("name", "struct")
+        net_charge = struct.get("net_charge", net_charge)
+        name = struct.get("name")
 
-        with TemporaryDirectory() if workdir is None else Path(workdir)/struct["name"] as tmpdir:
-            workdir = Path(tmpdir)
-            workdir.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory() if workdir is None else workdir as dir:
+            dir = Path(dir)
+            if not dir.exists():
+                dir.mkdir(parents=True, exist_ok=True)
             pdb_name = f"{name}.pdb"
             ac_name = f"{name}.ac"
-            write_pdb(workdir / pdb_name, struct.to_frame())
+            struct["ac_path"] = dir / ac_name
+            if struct["ac_path"].exists():
+                return struct
+            write_pdb(dir / pdb_name, struct.to_frame())
             
             yield {
                 "job_name": "antechamber",
                 "cmd": f"antechamber -i {pdb_name} -fi pdb -o {ac_name} -fo ac -an y -at {self.forcefield} -c {self.charge_type} -nc {net_charge}",
                 "conda_env": self.conda_env,
-                "cwd": workdir,
+                "cwd": dir,
                 "block": True
             }
-
-            frame = mp.io.read_ac(workdir / ac_name, frame=mp.Frame())
+            frame = mp.io.read_ac(dir / ac_name, frame=mp.Frame())
 
             for satom, fatom in zip(struct["atoms"], frame["atoms"].iterrows()):
                 satom["type"] = fatom["type"]
                 satom["charge"] = fatom["charge"]
-        struct["ac_path"] = workdir / ac_name
         return struct
