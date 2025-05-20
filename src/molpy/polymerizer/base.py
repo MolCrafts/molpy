@@ -5,10 +5,28 @@ import h_submitor
 
 class PolymerizerBase:
 
-    def polymerize(self, seq: str, structs: dict[str, mp.Monomer], name=""):
+    def linear(self, seq: str, structs: dict[str, mp.Monomer], name=""):
 
         poly = mp.Polymer(name, )
-        poly.polymerize([structs[s] for s in seq])
+
+        for struct in structs.values():
+            ports = struct["ports"]
+            deletes = [d for p in ports for d in p.delete]
+            struct.del_atoms(deletes)
+
+        prev = None
+        for mon in (structs[s]() for s in seq):
+            poly.add_struct(mon)
+
+            if prev:
+                for port in prev["ports"]:
+                    this = port.this
+                    that = port.that
+                    prev.def_bond(
+                        prev.atoms[this], mon.atoms[that], 
+                    )
+
+            prev = mon
         return poly
     
 class Polymerizer(PolymerizerBase): ...
@@ -19,7 +37,7 @@ class AmberToolsPolymerizer:
         self.conda_env = conda_env
 
     @h_submitor.local
-    def polymerize(self, seq: list[str], structs: dict[str, mp.Monomer], workdir: Path, name:str):
+    def linear(self, seq: list[str], structs: dict[str, mp.Monomer], workdir: Path, name:str):
         
         workdir = Path(workdir) / name
         if not workdir.exists():

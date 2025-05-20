@@ -1,13 +1,15 @@
 from collections import UserDict, namedtuple
+from collections.abc import Iterable, MutableMapping
 from copy import deepcopy
-from typing import (Callable, Generic, Protocol, Sequence, TypeVar,
-                    runtime_checkable)
+from dataclasses import field
+from typing import Callable, Generic, Protocol, Sequence, TypeVar
 
+from attr import dataclass
 import numpy as np
 from nesteddict import ArrayDict
+from numpy.typing import ArrayLike
 
 from molpy.op import rotate_by_rodrigues
-from numpy.typing import ArrayLike
 
 T = TypeVar("entity")
 
@@ -39,6 +41,10 @@ class Entity(UserDict):
 
     def to_dict(self):
         return dict(self)
+    
+    def keys(self):
+        """Return the keys of the entity."""
+        return self.data.keys()
     
 
 class Spatial(Protocol):
@@ -74,7 +80,7 @@ class Atom(Entity):
 
     def __repr__(self):
         """Return a string representation of the atom."""
-        return f"<Atom {self['name']}>"
+        return f"<Atom {str(self['name'])}>"
 
     @property
     def xyz(self):
@@ -291,8 +297,34 @@ class Improper(ManyBody):
         )
 
 
-@runtime_checkable
-class EntityContainer(Protocol[T]):
+class EntityContainer(Sequence[T]):
+
+    def add(self, entity: T) -> T:
+        """Add an entity to the container."""
+        ...
+
+    def get_by(self, condition: Callable[[T], bool]) -> T:
+        """
+        Get an entity based on a condition.
+
+        Parameters:
+        - condition: A callable that takes an entity and returns a boolean.
+
+        Returns:
+        - The first entity that satisfies the condition, or None.
+        """
+        ...
+
+    def __len__(self) -> int:
+        """Return the number of entities in the container."""
+        ...
+
+    def extend(self, entities: Sequence[T]) -> None:
+        """Extend the container with multiple entities."""
+        ...
+
+    
+class Entities(EntityContainer[T]):
     """Class representing a collection of entities."""
 
     def __init__(self, entities: list[T] = []):
@@ -303,7 +335,7 @@ class EntityContainer(Protocol[T]):
         self._data.append(entity)
         return entity
 
-    def get_by(self, condition: Callable[[T], bool]) -> T:
+    def get_by(self, condition: Callable[[T], bool]) -> T | None:
         """
         Get an entity based on a condition.
 
@@ -327,16 +359,23 @@ class EntityContainer(Protocol[T]):
         """Return an iterator over the entities."""
         return iter(self._data)
 
-    def __getitem__(self, key: int):
+    def __getitem__(self, key: int|Sequence[int]):
         """Get an entity by its index."""
-        return self._data[key]
+        if isinstance(key, (int, slice)):
+            return self._data[key]
+        elif isinstance(key, Iterable):
+            return [self._data[i] for i in key]
+        else:
+            return self._data[key]
+        
 
     def __repr__(self):
         """Return a string representation of the collection."""
         return f"<Entities: {len(self._data)}>"
-    
-class Entities(EntityContainer[T]):
-    ...
+
+    def remove(self, entity):
+        e = self[entity]
+        self._data.remove(e)
 
 
 class Hierarchical(Generic[T]):
@@ -356,7 +395,7 @@ class Hierarchical(Generic[T]):
         return [func(entity) for entity in self.childern]
 
 
-class Atomistic(Protocol):
+class Atomistic(MutableMapping):
     """Mixin class for structures containing all atoms."""
 
     @property
@@ -412,6 +451,15 @@ class Atomistic(Protocol):
         """
         self.angles.extend(angles)
 
+    def add_bond(self, bond: Bond):
+        """
+        Add a bond to the structure.
+
+        Parameters:
+        - bond: Bond to add.
+        """
+        return self.bonds.add(bond)
+
     def def_bond(self, itom, jtom, **kwargs):
         """
         Add a bond to the structure.
@@ -426,7 +474,7 @@ class Atomistic(Protocol):
         if isinstance(jtom, int):
             jtom = self["atoms"][jtom]
 
-        return self.bonds.add(Bond(itom, jtom, **kwargs))
+        return self.add_bond(Bond(itom, jtom, **kwargs))
 
     def add_bonds(self, bonds: Sequence[Bond]):
         """
@@ -444,14 +492,19 @@ class Atomistic(Protocol):
         Parameters:
         - atom: Atom to delete (can be name, ID, or Atom object).
         """
-        if isinstance(atom, str):
-            atom = self.get_atom_by(lambda atom: atom["name"] == atom)
-        if isinstance(atom, int):
-            atom = self.get_atom_by_id(atom)
-        if isinstance(atom, Atom):
-            self["atoms"].remove(atom)
-        else:
-            raise ValueError(f"Cannot delete {atom}")
+        self.atoms.remove(atom)
+
+    def del_atoms(self, atoms: Sequence[Atom]):
+        """
+        Delete multiple atoms from the structure.
+
+        Parameters:
+        - atoms: List of atoms to delete.
+        """
+        for atom in atoms:
+            self.del_atom(atom)
+        return self
+
 
     def del_bond(self, itom, jtom):
         """
@@ -471,7 +524,7 @@ class Atomistic(Protocol):
                 self["bonds"].remove(bond)
         return self
 
-    def get_atom_by(self, condition: Callable[[Atom], bool]) -> Atom:
+    def get_atom_by(self, condition: Callable[[Atom], bool]) -> Atom|None:
         """
         Get an atom based on a condition.
 
@@ -585,7 +638,9 @@ class Struct(Entity, Atomistic, Spatial):
         """
         Create a deep copy of the structure, preserving atom references in bonds/angles/etc.
         """
+        return self._deepcopy(memo)[0]
 
+    def _deepcopy(self, memo):
         # Step 1: Deep-copy atoms
         new = self.__class__()
         new["atoms"] = Entities()
@@ -617,9 +672,9 @@ class Struct(Entity, Atomistic, Spatial):
                 # For non-Entities fields, shallow-copy or deepcopy as needed
                 new[key] = deepcopy(value, memo)
 
-        return new
+        return new, atom_mapping
 
-    def to_frame(self):
+    def to_frame(self, atom_keys: list[str]|None = None, bond_keys: list[str]|None = None):
         """
         Convert the structure to a Frame object.
 
@@ -636,9 +691,9 @@ class Struct(Entity, Atomistic, Spatial):
             atom_name_idx_mapping[atom] = i
 
         frame["atoms"] = ArrayDict.from_dicts(
-            [atom.to_dict() for atom in self["atoms"]]
+            [atom.to_dict() for atom in self["atoms"]], include=atom_keys
         )
-        if "bonds" in self and len(self["bonds"]) > 0:
+        if "bonds" in self:
             bdicts = []
             for i, bond in enumerate(self["bonds"]):
                 bdict = bond.to_dict()
@@ -646,7 +701,7 @@ class Struct(Entity, Atomistic, Spatial):
                 bdict["i"] = atom_name_idx_mapping[bond.itom]
                 bdict["j"] = atom_name_idx_mapping[bond.jtom]
                 bdicts.append(bdict)
-            frame["bonds"] = ArrayDict.from_dicts(bdicts)
+            frame["bonds"] = ArrayDict.from_dicts(bdicts, bond_keys)
 
         # if "angles" in self and len(self["angles"]) > 0:
         #     angle_dict = [angle.to_dict() for angle in self["angles"]]
@@ -664,26 +719,23 @@ class Struct(Entity, Atomistic, Spatial):
 
         return frame
 
-    def get_substruct(self, atom_names):
+    def get_substruct(self, indices: Sequence[int]):
         """
         Get a substructure of the current structure by atom names.
 
         Parameters:
-        - atom_names: List of atom names to include in the substructure.
+        - indices: List of atom names to include in the substructure.
 
         Returns:
         - A new Struct object containing the substructure.
         """
-        substruct = Struct()
-        atom_names = set(atom_names)
-        for atom in self["atoms"]:
-            if atom["name"] in atom_names:
-                substruct.add_atom(**atom)
+        substruct = self.__class__()
+        _indices = set(indices)
+        atoms = self["atoms"][_indices]
+        substruct["atoms"].extend(atoms)
         for bond in self["bonds"]:
-            if bond.itom["name"] in atom_names and bond.jtom["name"] in atom_names:
-                itom = substruct["atoms"][bond.itom["name"]]
-                jtom = substruct["atoms"][bond.jtom["name"]]
-                substruct.def_bond(itom, jtom, **bond)
+            if bond.itom in atoms and bond.jtom in atoms:
+                substruct.add_bond(bond)
         return substruct
 
     def get_topology(self, attrs: list[str] = []):
@@ -757,26 +809,49 @@ class Struct(Entity, Atomistic, Spatial):
         ]
         return dihedrals
 
-    def concat(self, structs: Sequence["Struct"]):
+    def get_topology(self):
+        """
+        Get the topology of the structure.
 
+        Returns:
+        - A Topology object representing the structure's topology.
+        """
+        from .topology import Topology
+
+        topo = Topology()
+        atoms = {atom: i for i, atom in enumerate(self.atoms)}
+        topo.add_atoms(len(atoms))
+        bonds = self["bonds"]
+        topo.add_bonds([(atoms[bond.itom], atoms[bond.jtom]) for bond in bonds])
+        return topo
+
+    @classmethod
+    def concat(cls, name, structs: Sequence["Struct"]):
         """
         Concatenate multiple structures into the current structure.
 
         Parameters:
         - structs: List of structures to concatenate.
         """
+        _struct = cls(name)
         for struct in structs:
-            self.add_struct(struct)
-        return self        
+            _struct.add_struct(struct)
+        return _struct
 
 
-Port = namedtuple("Port", ["this", "that", "delete", "label"])
+@dataclass
+class LinkSite:
+    """Class representing a link site in a monomer."""
 
+    anchor: Atom
+    deletes : list[Atom] = field(default_factory=list)
+    label: str = ""
+    direction: None|ArrayLike = None
 
-class MonomerLike:
+class MonomerLike(MutableMapping):
     """Mixin class for monomer"""
 
-    def def_link_site(self, this, that, delete=[], label=""):
+    def def_link_site(self, this: Atom, deletes=[], label=""):
         """
         Define a link site for the monomer.
 
@@ -785,11 +860,12 @@ class MonomerLike:
         - that: Tail atom of the link site.
         - delete: Whether to delete the link site.
         """
-        self["ports"].append(Port(this, that, delete, label))
-        return self
+        site = LinkSite(this, deletes, label)
+        self["ports"].append(site)
+        return site
     
 
-class Monomer(MonomerLike, Struct):
+class Monomer(Struct, MonomerLike):
     """Class representing a monomer."""
 
     def __init__(self, **props):
@@ -800,6 +876,21 @@ class Monomer(MonomerLike, Struct):
         """Return a string representation of the monomer."""
         return f"<Monomer: {len(self['atoms'])} atoms>"
     
+    def __deepcopy__(self, memo):
+        """
+        Create a deep copy of the monomer, preserving atom references in bonds/angles/etc.
+        """
+        new, atom_mapping = self._deepcopy(memo)
+        new["ports"] = []
+        for port in self["ports"]:
+            new_port = LinkSite(
+                atom_mapping[port.anchor],
+                [atom_mapping[atom] for atom in port.deletes],
+                port.label,
+                port.direction,
+            )
+            new["ports"].append(new_port)
+        return new
 
 class Polymer(Struct):
     """Class representing a polymer."""
@@ -807,30 +898,30 @@ class Polymer(Struct):
     def __init__(self, name, **props):
         super().__init__(name, **props)
 
-    def polymerize(self, structs):
-        """
-        Polymerize the given structures.
+    # def polymerize(self, structs):
+    #     """
+    #     Polymerize the given structures.
 
-        Parameters:
-        - structs: List of structures to polymerize.
-        """
-        # Implement polymerization logic
-        # add atom and bond one by one
+    #     Parameters:
+    #     - structs: List of structures to polymerize.
+    #     """
+    #     # Implement polymerization logic
+    #     # add atom and bond one by one
 
-        for struct in structs:
+    #     for struct in structs:
 
-            ports = struct["ports"]
-            deletes = [d for p in ports for d in p.delete]
+    #         ports = struct["ports"]
+    #         deletes = [d for p in ports for d in p.delete]
 
-            for atom in struct["atoms"]:
-                if atom not in deletes:
-                    self["atoms"].add(atom)
+    #         for atom in struct["atoms"]:
+    #             if atom not in deletes:
+    #                 self["atoms"].add(atom)
 
-            for bond in struct["bonds"]:
-                if bond.itom not in deletes and bond.jtom not in deletes:
-                    self.def_bond(bond.itom, bond.jtom, **bond)
+    #         for bond in struct["bonds"]:
+    #             if bond.itom not in deletes and bond.jtom not in deletes:
+    #                 self.def_bond(bond.itom, bond.jtom, **bond)
 
-            for port in ports:
-                self.def_bond(port.this, port.that)
+    #         for port in ports:
+    #             self.def_bond(port.this, port.that)
 
-        return self
+    #     return self

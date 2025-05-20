@@ -9,8 +9,9 @@ from molpy.typifier.parser import SmartsParser
 from molpy.core import ForceField
 import h_submitor
 
-class BaseTypifier:
-    ...
+
+class BaseTypifier: ...
+
 
 class ForceFieldTypifier(BaseTypifier):
 
@@ -43,7 +44,7 @@ class ForceFieldTypifier(BaseTypifier):
                     f"Angle {angle} type not found in forcefield {self.forcefield}"
                 )
         return struct
-    
+
     def typify(self, struct):
         """
         Typify the structure using the forcefield.
@@ -58,7 +59,8 @@ class ForceFieldTypifier(BaseTypifier):
         struct = self.typify_angles(struct)
 
         return struct
-    
+
+
 class RealMoleculeTypifier(BaseTypifier):
 
     def is_amide(self, bond, struct): ...
@@ -151,7 +153,9 @@ class AmberToolsTypifier:
         }
 
     @h_submitor.local
-    def typify(self, struct: mp.Struct, workdir:Path|None=None, net_charge: float = 0.0):
+    def typify(
+        self, struct: mp.Struct, workdir: Path | None = None, net_charge: float = 0.0
+    ):
         """
         Typify the struct using AmberTools.
         """
@@ -166,20 +170,21 @@ class AmberToolsTypifier:
             pdb_name = f"{name}.pdb"
             ac_name = f"{name}.ac"
             struct["ac_path"] = dir / ac_name
-            if struct["ac_path"].exists():
-                return struct
-            write_pdb(dir / pdb_name, struct.to_frame())
-            
-            yield {
-                "job_name": "antechamber",
-                "cmd": f"antechamber -i {pdb_name} -fi pdb -o {ac_name} -fo ac -an y -at {self.forcefield} -c {self.charge_type} -nc {net_charge}",
-                "conda_env": self.conda_env,
-                "cwd": dir,
-                "block": True
-            }
+            if not struct["ac_path"].exists():
+                write_pdb(dir / pdb_name, struct.to_frame(bond_keys=["i", "j"]))
+
+                yield {
+                    "job_name": "antechamber",
+                    "cmd": f"antechamber -i {pdb_name} -fi pdb -o {ac_name} -fo ac -an y -at {self.forcefield} -c {self.charge_type} -nc {net_charge}",
+                    "conda_env": self.conda_env,
+                    "cwd": dir,
+                    "block": True,
+                }
             frame = mp.io.read_ac(dir / ac_name, frame=mp.Frame())
 
             for satom, fatom in zip(struct["atoms"], frame["atoms"].iterrows()):
                 satom["type"] = fatom["type"]
-                satom["charge"] = fatom["charge"]
+                satom["q"] = fatom["q"]
+            for sbond, fbond in zip(struct["bonds"], frame["bonds"].iterrows()):
+                sbond["type"] = fbond["type"]
         return struct

@@ -119,11 +119,11 @@ def write_pdb(file: Path, frame: mp.Frame) -> None:
     writer = PDBWriter(file)
     writer.write(frame)
 
-def write_lammps_molecule(data: mp.System, file: Path) -> None:
+def write_lammps_molecule(file: Path, frame: mp.Frame) -> None:
 
     from .data.lammps import LammpsMoleculeWriter
     writer = LammpsMoleculeWriter(file)
-    writer.write(data)
+    writer.write(frame)
 
 def write_lammps_forcefield(system: mp.System, script: Path | None = None) -> None:
     """Write a molpy System object to a LAMMPS force field file."""

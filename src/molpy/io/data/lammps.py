@@ -542,9 +542,7 @@ class LammpsMoleculeWriter:
         self._path = Path(file)
         self._atom_style = atom_style
 
-    def write(self, system):
-
-        frame = system.frame
+    def write(self, frame: mp.Frame):
 
         with open(self._path, "w") as f:
 
@@ -560,42 +558,48 @@ class LammpsMoleculeWriter:
             f.write(f"{n_dihedrals} dihedrals\n\n")
 
             if "atoms" in frame:
+                
+                xyz = frame["atoms"]["xyz"]
+                types = frame["atoms"]["type"]
+                q = frame["atoms"]["q"] if "q" in frame["atoms"] else None
+                molid = frame["atoms"]["molid"] if "molid" in frame["atoms"] else None
+
                 f.write(f"\nCoords\n\n")
-                for i, atom in frame["atoms"].iterrows():
-                    f.write(f"{i} {atom['x']} {atom['y']} {atom['z']}\n")
+                for i, xyz in enumerate(xyz):
+                    f.write(f"{i} {xyz[0]} {xyz[1]} {xyz[2]}\n")
 
                 f.write(f"\nTypes\n\n")
-                for i, atom in frame["atoms"].iterrows():
-                    f.write(f"{i} {atom['type']}\n")
+                for i, typ in enumerate(types):
+                    f.write(f"{i} {typ.item()}\n")
 
-                if "charge" in frame["atoms"]:
+                if q is not None:
                     f.write(f"\nCharges\n\n")
-                    for i, atom in frame["atoms"].iterrows():
-                        f.write(f"{i} {atom['charge']:.3f}\n")
+                    for i, charge in enumerate(q):
+                        f.write(f"{i} {float(charge)}\n")
 
-                if "molid" in frame["atoms"]:
+                if molid is not None:
                     f.write(f"\nMolecules\n\n")
-                    for i, atom in frame["atoms"].iterrows():
-                        f.write(f"{i} {atom['molid']}\n")
+                    for i, mol in enumerate(molid):
+                        f.write(f"{i} {int(mol)}\n")
 
             if "bonds" in frame:
                 bonds = frame["bonds"].iterrows()
                 f.write(f"\nBonds\n\n")
-                for i, bond in bonds:
-                    f.write(f"{i} {bond['type']} {bond['i']} {bond['j']}\n")
+                for i, bond in enumerate(bonds):
+                    f.write(f"{i} {int(bond['type'])} {int(bond['i'])} {int(bond['j'])}\n")
 
             if "angles" in frame:
                 angles = frame["angles"].iterrows()
                 f.write(f"\nAngles\n\n")
-                for i, angle in angles:
+                for i, angle in enumerate(angles):
                     f.write(
-                        f"{i} {angle['type']} {angle['i']} {angle['j']} {angle['k']}\n"
+                        f"{i} {int(angle['type'])} {int(angle['i'])} {int(angle['j'])} {int(angle['k'])}\n"
                     )
 
             if "dihedrals" in frame:
                 dihedrals = frame["dihedrals"].iterrows()
                 f.write(f"\nDihedrals\n\n")
-                for i, dihedral in dihedrals:
+                for i, dihedral in enumerate(dihedrals):
                     f.write(
                         f"{i} {dihedral['type']} {dihedral['i']} {dihedral['j']} {dihedral['k']} {dihedral['l']}\n"
                     )
@@ -603,7 +607,7 @@ class LammpsMoleculeWriter:
             if "impropers" in frame:
                 impropers = frame["impropers"].iterrows()
                 f.write(f"\nImpropers\n\n")
-                for i, improper in impropers:
+                for i, improper in enumerate(impropers):
                     f.write(
                         f"{i} {improper['type']} {improper['i']} {improper['j']} {improper['k']} {improper['l']}\n"
                     )

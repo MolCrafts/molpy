@@ -47,7 +47,7 @@ class AcReader(DataReader):
             "resName": resname,
             "resSeq": res_id,
             "xyz": xyz,
-            "charge": charge,
+            "q": charge,
             "type": atom_type
         })
 
@@ -58,7 +58,7 @@ class AcReader(DataReader):
         bond_id = int(tokens[1])
         atom1 = int(tokens[2])
         atom2 = int(tokens[3])
-        bond_type = tokens[4]  # usually just 1 (single)
+        bond_type = int(tokens[4])  # usually just 1 (single)
 
         self.bonds.append({
             "id": bond_id,
