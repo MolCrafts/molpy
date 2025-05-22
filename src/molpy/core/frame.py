@@ -10,11 +10,11 @@ class Frame(NestDict):
 
     def __new__(cls, data: dict[str, Any] = {}, *, style="atomic") -> "Frame":
 
-        if style == "atomic":
-            return super().__new__(AllAtomFrame)  # type: ignore
+        if cls is Frame and style == "atomic":
+            return AllAtomFrame.__new__(AllAtomFrame, data) 
         return super().__new__(cls)
 
-    def __init__(self, data: dict[str, Any] = {}, *, style="atomic"):
+    def __init__(self, data: dict[str, Any] = {}, *args, **kwargs):
         """Static data structure for aligning model. The frame is a dictionary-like, multi-DataFrame object, facilitating access data by keys.
 
         Args:
@@ -212,7 +212,7 @@ class AllAtomMixin:
 
 class AllAtomFrame(Frame, AllAtomMixin):
     """A frame that contains atomistic infomation. It is a subclass of Frame and implements the AllAtomMixin interface."""
-    def __init__(self, data: dict[str, Any] = {}):
+    def __init__(self, data: dict[str, Any] = {}, *args, **kwargs):
         """Initialize the AllAtomFrame with data.
 
         Args:

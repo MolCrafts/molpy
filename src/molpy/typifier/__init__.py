@@ -1,1 +1,1 @@
-from .typifier import SmartsTypifier
+from .typifier import *

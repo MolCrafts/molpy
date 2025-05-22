@@ -54,13 +54,13 @@ def read_amber(
     from .forcefield.amber import AmberPrmtopReader
     prmtop = Path(prmtop)
     inpcrd = Path(inpcrd) if inpcrd is not None else None
-    reader = AmberPrmtopReader(prmtop, system)
-    system = reader.read()
+    reader = AmberPrmtopReader(prmtop)
+    system = reader.read(system)
     if inpcrd is not None:
         from .data.amber import AmberInpcrdReader
 
-        reader = AmberInpcrdReader(inpcrd, system)
-        system = reader.read()
+        reader = AmberInpcrdReader(inpcrd)
+        system = reader.read(system)
     return system
 
 def read_ac(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
@@ -125,16 +125,19 @@ def write_lammps_molecule(file: Path, frame: mp.Frame) -> None:
     writer = LammpsMoleculeWriter(file)
     writer.write(frame)
 
-def write_lammps_forcefield(system: mp.System, script: Path | None = None) -> None:
+def write_lammps_forcefield(file: Path, forcefield: mp.ForceField) -> None:
     """Write a molpy System object to a LAMMPS force field file."""
     from .forcefield.lammps import LAMMPSForceFieldWriter
-    writer = LAMMPSForceFieldWriter(script)
-    writer.write(system)
+    writer = LAMMPSForceFieldWriter(file)
+    writer.write(forcefield)
 
-def write_lammps(system: mp.System, data: Path, script: Path | None = None) -> None:
+def write_lammps(workdir: Path, frame: mp.Frame) -> None:
     """Write a molpy System object to LAMMPS data and force field files."""
-    write_lammps_data(system, data)
-    write_lammps_forcefield(system, script)
+    if not workdir.exists():
+        workdir.mkdir(parents=True, exist_ok=True)
+    file_path = workdir / workdir.stem
+    write_lammps_data(file_path.with_suffix(".data"), frame)
+    write_lammps_forcefield(file_path.with_suffix(".ff"), frame.forcefield)
 
 def read_top(file: Path, forcefield: mp.ForceField | None = None) -> mp.ForceField:
     """Read a GROMACS top file and return a molpy ForceField object."""

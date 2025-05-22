@@ -12,19 +12,17 @@ class AmberToolsReacter:
         self.conda_env = conda_env
 
     @h_submitor.local
-    def react(self, monomer, workdir: Path):
-        name = monomer["name"]
-        workdir = Path(workdir) / name
+    def react(self, workdir: Path, struct, init, deletes):
+        name = workdir.stem
         workdir.mkdir(parents=True, exist_ok=True)
         if not (workdir/f"{name}.ac").exists():
             shutil.copy(monomer["ac_path"], workdir/f"{name}.ac")
         mainchain = workdir/f"{name}.mc"
         with open(mainchain, "w") as f:
-            for port in monomer["ports"]:
-                this = port.this
-                # that = port.that
-                delete = port.delete
-                label = port.label
+            for link in monomer["links"]:
+                this = link.anchor
+                delete = link.deletes
+                label = link.label
                 f.write(f"{label}_NAME {this['name'].item()}\n")
                 # f.write(f"PRE_HEAD_TYPE {this['type'].item()}\n")
                 # f.write(f"POST_TAIL_TYPE {that['type'].item()}\n")

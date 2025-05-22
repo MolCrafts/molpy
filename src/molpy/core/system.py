@@ -9,7 +9,7 @@ from .struct import Struct
 class System:
 
     def __init__(self):
-        self._forcefield = None
+        self._forcefield = ForceField()
         self._struct = []
 
     @property
@@ -36,10 +36,10 @@ class System:
     def add_struct(self, struct: Struct):
         self._struct.append(struct)
 
-    def get_frame(self):
+    def to_frame(self):
 
         frame = Frame.from_structs(self._struct)
-        frame["box"] = self._box
-        frame["forcefield"] = self._forcefield
+        frame.box = self._box
+        frame.forcefield = self._forcefield
         return frame
 

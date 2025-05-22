@@ -1,4 +1,3 @@
-import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -27,7 +26,7 @@ class ForceFieldTypifier(BaseTypifier):
         for bond in bonds:
             for bondtype in bondtypes:
                 if bondtype.match(bond):
-                    bond["type"] = bondtype
+                    bond["type"] = str(bondtype)
                     break
         return struct
 
@@ -37,7 +36,7 @@ class ForceFieldTypifier(BaseTypifier):
         for angle in angles:
             for angletype in angletype:
                 if angletype.match(angle):
-                    angle["type"] = angletype
+                    angle["type"] = str(angletype)
                     break
             if "type" not in angle:
                 raise ValueError(
@@ -161,10 +160,13 @@ class AmberToolsTypifier:
         """
 
         net_charge = struct.get("net_charge", net_charge)
-        name = struct.get("name")
+        name = struct.get("name", None)
+        if name is None:
+            raise ValueError("Struct must have a name attribute")
+        
 
         with TemporaryDirectory() if workdir is None else workdir as dir:
-            dir = Path(dir)
+            dir = Path(dir) / name
             if not dir.exists():
                 dir.mkdir(parents=True, exist_ok=True)
             pdb_name = f"{name}.pdb"
@@ -188,3 +190,75 @@ class AmberToolsTypifier:
             for sbond, fbond in zip(struct["bonds"], frame["bonds"].iterrows()):
                 sbond["type"] = fbond["type"]
         return struct
+
+    @h_submitor.local
+    def get_forcefield(self, struct: mp.Struct, workdir: Path | None = None):
+        """
+        Generate Amber forcefield files (prmtop/inpcrd) for a single molecule using AmberTools.
+        """
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        name = struct.get("name", "mol")
+        with TemporaryDirectory() if workdir is None else workdir as dir:
+            dir = Path(dir)
+            if not dir.exists():
+                dir.mkdir(parents=True, exist_ok=True)
+            ac_path = dir / f"{name}.ac"
+            mol2_path = dir / f"{name}.mol2"
+            frcmod_path = dir / f"{name}.frcmod"
+            prmtop_path = dir / f"{name}.prmtop"
+            inpcrd_path = dir / f"{name}.inpcrd"
+            leapin_path = dir / f"{name}_leap.in"
+
+            # 1. 如果没有ac文件，先生成
+            print(f"ac_path: {ac_path} is exists: {ac_path.exists()}")
+            if not ac_path.exists():
+                write_pdb(dir / f"{name}.pdb", struct.to_frame(bond_keys=["i", "j"]))
+                yield {
+                    "job_name": "antechamber",
+                    "cmd": f"antechamber -i {name}.pdb -fi pdb -o {name}.ac -fo ac -an y -at {self.forcefield} -c {self.charge_type}",
+                    "conda_env": self.conda_env,
+                    "cwd": dir,
+                    "block": True,
+                }
+            # 2. 生成mol2
+            if not mol2_path.exists():
+                yield {
+                    "job_name": "ac2mol2",
+                    "cmd": f"antechamber -i {name}.ac -fi ac -o {name}.mol2 -fo mol2 -an y -at {self.forcefield}",
+                    "conda_env": self.conda_env,
+                    "cwd": dir,
+                    "block": True,
+                }
+            # 3. 生成frcmod
+            if not frcmod_path.exists():
+                yield {
+                    "job_name": "parmchk2",
+                    "cmd": f"parmchk2 -i {name}.mol2 -f mol2 -o {name}.frcmod",
+                    "conda_env": self.conda_env,
+                    "cwd": dir,
+                    "block": True,
+                }
+            # 4. 生成tleap输入文件
+            leaprc = f"source leaprc.gaff\n"
+            leaprc += f"mol = loadmol2 {name}.mol2\n"
+            leaprc += f"loadamberparams {name}.frcmod\n"
+            leaprc += f"saveamberparm mol {name}.prmtop {name}.inpcrd\n"
+            leaprc += f"quit\n"
+            with open(leapin_path, "w") as f:
+                f.write(leaprc)
+            # 5. 调用tleap
+            yield {
+                "job_name": "tleap",
+                "cmd": f"tleap -f {leapin_path.name}",
+                "conda_env": self.conda_env,
+                "cwd": dir,
+                "block": True,
+            }
+            # 6. 返回prmtop/inpcrd路径
+            return mp.io.read_amber(
+                prmtop=prmtop_path,
+                inpcrd=inpcrd_path,
+                system=mp.Frame(),
+            )

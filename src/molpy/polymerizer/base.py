@@ -5,7 +5,7 @@ import h_submitor
 
 class PolymerizerBase:
 
-    def linear(self, seq: str, structs: dict[str, mp.Monomer], name=""):
+    def linear(self, seq: str, structs: dict[str, mp.Struct], name=""):
 
         poly = mp.Polymer(name, )
 
@@ -37,7 +37,7 @@ class AmberToolsPolymerizer:
         self.conda_env = conda_env
 
     @h_submitor.local
-    def linear(self, seq: list[str], structs: dict[str, mp.Monomer], workdir: Path, name:str):
+    def linear(self, name:str, seq: list[str], structs: dict[str, mp.Struct], workdir: Path):
         
         workdir = Path(workdir) / name
         if not workdir.exists():

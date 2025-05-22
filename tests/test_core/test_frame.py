@@ -105,3 +105,8 @@ class TestFrame:
     def test_mul_operator(self, frame):
         multiplied = frame * 2
         assert len(multiplied) == 5
+
+    def test_init_all_atom_frame(self):
+        frame = mp.Frame(style="atomic")
+        assert isinstance(frame, mp.AllAtomFrame)
+        frame["a"] = 0

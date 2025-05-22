@@ -54,7 +54,22 @@ class LammpsReacter:
     def __init__(self, typifier):
         self.typifier = typifier
 
-    def react(self, name: str, a: mp.Monomer, b: mp.Monomer, site_a: mp.LinkSite, site_b: mp.LinkSite, edge_a: mp.Atom, edge_b: mp.Atom, workdir: Path):
+    def react(self, name: str, a: mp.Struct, b: mp.Struct, workdir: Path, label: str = ""):
+        # 只选择label匹配的link site、break、end
+        alinks = [site for site in a["links"] if getattr(site, "label", "") == label]
+        abreaks = [br for br in a["breaks"] if getattr(br, "label", "") == label]
+        aends = [end for end in a["ends"] if getattr(end, "label", "") == label]
+        blinks = [site for site in b["links"] if getattr(site, "label", "") == label]
+        bbreaks = [br for br in b["breaks"] if getattr(br, "label", "") == label]
+        bends = [end for end in b["ends"] if getattr(end, "label", "") == label]
+        if not (alinks and blinks and aends and bends):
+            raise ValueError(f"No matching link/end site with label '{label}' found in one or both fragments.")
+        site_a = alinks[0]
+        break_a = abreaks[0] if abreaks else None
+        edge_a = aends[0].atom
+        site_b = blinks[0]
+        break_b = bbreaks[0] if bbreaks else None
+        edge_b = bends[0].atom
 
         self.typifier.typify(a, workdir=workdir/a["name"])
         self.typifier.typify(b, workdir=workdir/b["name"])
@@ -84,7 +99,12 @@ class LammpsReacter:
         )
         post.del_atoms(site_a.deletes)
         post.del_atoms(site_b.deletes)
-    
+
+        if break_a:
+            post.del_bond(break_a.this, break_a.that)
+        if break_b:
+            post.del_bond(break_b.this, break_b.that)
+
         self.typifier.typify(post, workdir=workdir/name)
 
         mp.io.write_lammps_molecule(workdir/ name / f"{name}_pre.mol", pre.to_frame())

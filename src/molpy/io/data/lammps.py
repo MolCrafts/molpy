@@ -1,14 +1,15 @@
+import io
+import re
+from datetime import datetime
+from itertools import islice
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 import molpy as mp
-import io
-from itertools import islice
-import pandas as pd
-import re
+
 from .base import DataReader, DataWriter
-from datetime import datetime
 
 
 class LammpsDataReader(DataReader):
@@ -247,7 +248,7 @@ class LammpsDataReader(DataReader):
 
         per_atom_mass = np.zeros(props["n_atoms"])
         for t, m in masses.items():
-            atomtype = atom_style.get_by(lambda atom: atom.label == str(t))
+            atomtype = atom_style.get_by(lambda atom: atom.name == str(t))
             if not atomtype:
                 atomtype = atom_style.def_type(str(t), kw_params={"id": t})
             atomtype["mass"] = m
@@ -277,12 +278,12 @@ class LammpsDataWriter(DataWriter):
 
     def write(self, frame):
 
-        ff = frame["forcefield"]
+        ff = frame.forcefield
 
-        n_atoms = frame["atoms"].arraylengths
-        n_bonds = frame["bonds"].arraylengths if "bonds" in frame else 0
-        n_angles = frame["angles"].arraylengths if "angles" in frame else 0
-        n_dihedrals = frame["dihedrals"].arraylengths if "dihedrals" in frame else 0
+        n_atoms = frame["atoms"].array_length
+        n_bonds = frame["bonds"].array_length if "bonds" in frame else 0
+        n_angles = frame["angles"].array_length if "angles" in frame else 0
+        n_dihedrals = frame["dihedrals"].array_length if "dihedrals" in frame else 0
 
         with open(self._path, "w") as f:
 
@@ -299,7 +300,7 @@ class LammpsDataWriter(DataWriter):
                 f.write(f"{n_dihedrals} dihedrals\n")
                 f.write(f"{ff.n_dihedraltypes} dihedral types\n\n")
 
-            box = frame["box"]
+            box = frame.box
             xlo = box.xlo
             xhi = box.xhi
             ylo = box.ylo
@@ -321,32 +322,32 @@ class LammpsDataWriter(DataWriter):
                 if type_key == "type":
                     f.write(f"\nAtom Type Labels\n\n")
                     for i, atomtype in enumerate(ff.get_atomtypes(), 1):
-                        f.write(f"{i} {atomtype.label}\n")
+                        f.write(f"{i} {atomtype.name}\n")
 
                 if ff.bondstyles:
                 
                     f.write(f"\nBond Type Labels\n\n")
                     for i, bondtype in enumerate(ff.get_bondtypes(), 1):
-                        f.write(f"{i} {bondtype.label}\n")
+                        f.write(f"{i} {bondtype.name}\n")
 
                 if ff.anglestyles:
                 
                     f.write(f"\nAngle Type Labels\n\n")
                     for i, angletype in enumerate(ff.get_angletypes(), 1):
-                        f.write(f"{i} {angletype.label}\n")
+                        f.write(f"{i} {angletype.name}\n")
 
                 if ff.dihedralstyles:
                 
                     f.write(f"\nDihedral Type Labels\n\n")
                     for i, dihedraltype in enumerate(ff.get_dihedraltypes(), 1):
-                        f.write(f"{i} {dihedraltype.label}\n")
+                        f.write(f"{i} {dihedraltype.name}\n")
 
             f.write(f"\nMasses\n\n")
             masses = {}
             try:
                 if ff.n_atomtypes:
                     for atomtype in ff.get_atomtypes():
-                        masses[atomtype.label] = atomtype["mass"]
+                        masses[atomtype.name] = atomtype["mass"]
                 else:
                     raise KeyError("n_atomtypes")
             except KeyError:

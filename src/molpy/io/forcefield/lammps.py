@@ -405,98 +405,112 @@ class LAMMPSForceFieldReader:
 
 
 class LAMMPSForceFieldWriter:
-
     def __init__(self, fpath: str | Path):
-
         self.fpath = fpath
 
     @staticmethod
-    def _write_styles(lines: list[str], styles, style_type):
-
+    def _write_styles(lines: list[str], styles, style_type: str):
+        """
+        写出 bond/angle/dihedral/improper style 及其参数
+        兼容 parms 命名和 TypeContainer/list 类型
+        """
+        if not styles:
+            return
         if len(styles) == 1:
             style = styles[0]
-            if len(style.types) == 0:
+            if not list(style.types):
                 return
+            parms = getattr(style, "parms", [])
             lines.append(
-                f"{style_type}_style {style.name} {' '.join(style.order_params)}\n"
+                f"{style_type}_style {style.name} {' '.join(map(str, parms))}\n"
             )
             if "modified" in style:
                 params = " ".join(style["modified"])
                 lines.append(f"{style_type}_modify {params}\n")
-
-            for typ in style.types.values():
-                params = " ".join(map(str, typ.order_params))
-                lines.append(f"{style_type}_coeff {typ.name} {params}\n")
-        else:
-            style_keywords = " ".join([style.name for style in styles])
-            lines.append(f"{style_type}_style hybrid {style_keywords}\n")
-            for style in styles:
-                for typ in style.types.values():
-                    params = " ".join(map(str, typ.order_params))
-                    lines.append(
-                        f"{style_type}_coeff {typ.name} {style.name} {params}\n"
-                    )
-
-        lines.append("\n")
-
-    @staticmethod
-    def _write_pair_styles(lines: list[str], styles, style_type: str):
-
-        if len(styles) == 1:
-            style = styles[0]
-            lines.append(
-                f"{style_type}_style {style.name} {' '.join(map(str, style.order_params))}\n"
-            )
-            if "modified" in style:
-                params = " ".join(style["modified"])
-                lines.append(f"{style_type}_modify {params}\n")
-
-            for typ in style.types.values():
-                params = " ".join(map(str, typ.order_params))
+            for typ in list(style.types):
+                tprms = getattr(typ, "parms", [])
+                params = tprms + list(typ.values())
                 lines.append(
-                    f"{style_type}_coeff {' '.join(map(lambda at: str(at.name), typ.atomtypes))} {params}\n"
+                    f"{style_type}_coeff {typ.name} {' '.join(map(str, params))}\n"
                 )
         else:
             style_keywords = " ".join([style.name for style in styles])
             lines.append(f"{style_type}_style hybrid {style_keywords}\n")
             for style in styles:
-                for typ in style.types.values():
-                    params = " ".join(map(str, typ.order_params))
+                for typ in list(style.types):
+                    tprms = getattr(typ, "parms", [])
+                    params = tprms + list(typ.values())
                     lines.append(
-                        f"{style_type}_coeff {' '.join(map(lambda at: str(at.name), typ.atomtypes))} {style.name} {params}\n"
+                        f"{style_type}_coeff {typ.name} {style.name} {' '.join(map(str, params))}\n"
                     )
-
         lines.append("\n")
 
-    def write(self, system):
+    @staticmethod
+    def _write_pair_styles(lines: list[str], styles, style_type: str):
+        """
+        写出 pair_style 及其参数，兼容 parms 命名和 TypeContainer/list 类型
+        """
+        if not styles:
+            return
+        if len(styles) == 1:
+            style = styles[0]
+            parms = getattr(style, "parms", [])
+            lines.append(
+                f"{style_type}_style {style.name} {' '.join(map(str, parms))}\n"
+            )
+            if "modified" in style:
+                params = " ".join(style["modified"])
+                lines.append(f"{style_type}_modify {params}\n")
+            for typ in list(style.types):
+                tprms = getattr(typ, "parms", [])
+                params = tprms + list(typ.values())
+                ats = typ.atomtypes
+                if ats[0] == ats[1]:
+                    atomnames = ats[0].name
+                else:
+                    atomnames = f"{ats[0].name} {ats[1].name}"
+                lines.append(
+                    f"{style_type}_coeff {atomnames} {' '.join(map(str, params))}\n"
+                )
+        else:
+            style_keywords = " ".join([style.name for style in styles])
+            lines.append(f"{style_type}_style hybrid {style_keywords}\n")
+            for style in styles:
+                for typ in list(style.types):
+                    tprms = getattr(typ, "parms", [])
+                    params = tprms + list(typ.values())
+                    ats = typ.atomtypes
+                    if ats[0] == ats[1]:
+                        atomnames = ats[0].name
+                    else:
+                        atomnames = f"{ats[0].name} {ats[1].name}"
+                    lines.append(
+                        f"{style_type}_coeff {atomnames} {style.name} {' '.join(map(str, params))}\n"
+                    )
+        lines.append("\n")
 
-        ff = system.forcefield
-
+    def write(self, forcefield: mp.ForceField):
+        ff = forcefield
         lines = []
-
-        # lines.append(f"units {self.forcefield.unit}\n")
+        # 写 atom_style
         if ff.atomstyles:
-            if ff.n_anglestyles == 1:
+            if len(ff.atomstyles) == 1:
                 lines.append(f"# atom_style {ff.atomstyles[0].name}\n")
             else:
                 atomstyles = " ".join([atomstyle.name for atomstyle in ff.atomstyles])
                 lines.append(f"# atom_style hybrid {atomstyles}\n")
         else:
             raise ValueError("No atom style defined")
-
+        # 可选 mass 输出（如需）
         # for atomstyle in ff.atomstyles:
         #     for atomtype in atomstyle.types:
-        #         lines.append(f"mass {atomtype.name} {atomtype['mass']}\n")
-
-        LAMMPSForceFieldWriter._write_styles(lines, ff.bondstyles, "bond")
-        LAMMPSForceFieldWriter._write_styles(lines, ff.anglestyles, "angle")
-        LAMMPSForceFieldWriter._write_styles(lines, ff.dihedralstyles, "dihedral")
-        if ff.n_impropertypes:
-            LAMMPSForceFieldWriter._write_styles(lines, ff.improperstyles, "improper")
-        LAMMPSForceFieldWriter._write_pair_styles(lines, ff.pairstyles, "pair")
-
+        #         if 'mass' in atomtype:
+        #             lines.append(f"mass {atomtype.name} {atomtype['mass']}\n")
+        self._write_styles(lines, ff.bondstyles, "bond")
+        self._write_styles(lines, ff.anglestyles, "angle")
+        self._write_styles(lines, ff.dihedralstyles, "dihedral")
+        self._write_styles(lines, ff.improperstyles, "improper")
+        self._write_pair_styles(lines, ff.pairstyles, "pair")
         lines.append("\n")
-
         with open(self.fpath, "w") as f:
-
             f.writelines(lines)
