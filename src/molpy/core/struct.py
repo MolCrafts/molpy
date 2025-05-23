@@ -514,14 +514,25 @@ class Atomistic(MutableMapping):
         - itom: First atom in the bond.
         - jtom: Second atom in the bond.
         """
-        if isinstance(itom, str):
-            itom = self.get_atom_by(lambda atom: atom["name"] == itom)
-        if isinstance(jtom, str):
-            jtom = self.get_atom_by(lambda atom: atom["name"] == jtom)
+        # if isinstance(itom, str):
+        #     itom = self.get_atom_by(lambda atom: atom["name"] == itom)
+        # if isinstance(jtom, str):
+        #     jtom = self.get_atom_by(lambda atom: atom["name"] == jtom)
         to_be_deleted = Bond(itom, jtom)
         for bond in self["bonds"]:
             if bond == to_be_deleted:
                 self["bonds"].remove(bond)
+        return self
+    
+    def del_bonds(self, bonds: Sequence[tuple[Atom, Atom]]):
+        """
+        Delete multiple bonds from the structure.
+
+        Parameters:
+        - bonds: List of bonds to delete.
+        """
+        for i, j in bonds:
+            self.del_bond(i, j)
         return self
 
     def get_atom_by(self, condition: Callable[[Atom], bool]) -> Atom|None:

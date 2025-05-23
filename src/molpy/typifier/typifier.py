@@ -149,6 +149,7 @@ class AmberToolsTypifier:
             "job_name": "check_antechamber",
             "cmd": "antechamber -h",
             "conda_env": self.conda_env,
+            "quiet": True,
         }
 
     @h_submitor.local
@@ -163,7 +164,6 @@ class AmberToolsTypifier:
         name = struct.get("name", None)
         if name is None:
             raise ValueError("Struct must have a name attribute")
-        
 
         with TemporaryDirectory() if workdir is None else workdir as dir:
             dir = Path(dir) / name
@@ -192,7 +192,7 @@ class AmberToolsTypifier:
         return struct
 
     @h_submitor.local
-    def get_forcefield(self, struct: mp.Struct, workdir: Path | None = None):
+    def get_forcefield(self, struct: mp.Struct, workdir: Path | None = None, system = None):
         """
         Generate Amber forcefield files (prmtop/inpcrd) for a single molecule using AmberTools.
         """
@@ -212,7 +212,6 @@ class AmberToolsTypifier:
             leapin_path = dir / f"{name}_leap.in"
 
             # 1. 如果没有ac文件，先生成
-            print(f"ac_path: {ac_path} is exists: {ac_path.exists()}")
             if not ac_path.exists():
                 write_pdb(dir / f"{name}.pdb", struct.to_frame(bond_keys=["i", "j"]))
                 yield {
@@ -257,8 +256,4 @@ class AmberToolsTypifier:
                 "block": True,
             }
             # 6. 返回prmtop/inpcrd路径
-            return mp.io.read_amber(
-                prmtop=prmtop_path,
-                inpcrd=inpcrd_path,
-                system=mp.Frame(),
-            )
+            return mp.io.read_amber(prmtop=prmtop_path, inpcrd=inpcrd_path, system=system)

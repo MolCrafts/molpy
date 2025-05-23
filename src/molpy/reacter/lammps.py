@@ -54,74 +54,33 @@ class LammpsReacter:
     def __init__(self, typifier):
         self.typifier = typifier
 
-    def react(self, name: str, a: mp.Struct, b: mp.Struct, workdir: Path, label: str = ""):
-        # 只选择label匹配的link site、break、end
-        alinks = [site for site in a["links"] if getattr(site, "label", "") == label]
-        abreaks = [br for br in a["breaks"] if getattr(br, "label", "") == label]
-        aends = [end for end in a["ends"] if getattr(end, "label", "") == label]
-        blinks = [site for site in b["links"] if getattr(site, "label", "") == label]
-        bbreaks = [br for br in b["breaks"] if getattr(br, "label", "") == label]
-        bends = [end for end in b["ends"] if getattr(end, "label", "") == label]
-        if not (alinks and blinks and aends and bends):
-            raise ValueError(f"No matching link/end site with label '{label}' found in one or both fragments.")
-        site_a = alinks[0]
-        break_a = abreaks[0] if abreaks else None
-        edge_a = aends[0].atom
-        site_b = blinks[0]
-        break_b = bbreaks[0] if bbreaks else None
-        edge_b = bends[0].atom
+    def react(self, name: str, pre: mp.Struct, init_a, init_b, edge_a, edge_b, deletes=[], workdir: Path=Path.cwd()):
 
-        self.typifier.typify(a, workdir=workdir/a["name"])
-        self.typifier.typify(b, workdir=workdir/b["name"])
+        system = self.typifier.get_forcefield(pre, workdir=workdir/pre["name"])
 
-        graph_a = a.get_topology()
-        graph_b = b.get_topology()
+        init_id_a = pre.atoms.index(init_a)
+        init_id_b = pre.atoms.index(init_b)
+        edge_id_a = pre.atoms.index(edge_a)
+        edge_id_b = pre.atoms.index(edge_b)
+        delete_ids = [pre.atoms.index(atom) for atom in deletes]
 
-        mask_a = _collect_atoms_index_between_to_site(graph_a, a.atoms.index(site_a.anchor), a.atoms.index(edge_a))
-        mask_b = _collect_atoms_index_between_to_site(graph_b, b.atoms.index(site_b.anchor), b.atoms.index(edge_b))
+        mp.io.write_lammps_molecule(workdir / name / f"{name}_pre.mol", pre.to_frame())
 
-        sub_a = a.get_substruct(mask_a)
-        sub_b = b.get_substruct(mask_b)
-        pre = mp.Struct.concat(name, [sub_a, sub_b])
-
-        # Find anchor indices in the new structure
-        ia = pre.atoms.index(site_a.anchor)
-        ib = pre.atoms.index(site_b.anchor)
-        delete_ids = [pre.atoms.index(atom) for atom in site_a.deletes + site_b.deletes]
-
-        post = pre.__class__(name=name)
-        # Copy all data from pre to post (deepcopy or custom logic may be needed)
-        for key in pre:
-            post[key] = pre[key].copy() if hasattr(pre[key], 'copy') else pre[key]
+        post = pre(name=name)
 
         post.def_bond(
-            post.atoms[ia], post.atoms[ib],
+            post.atoms[init_id_a], post.atoms[init_id_b],
         )
-        post.del_atoms(site_a.deletes)
-        post.del_atoms(site_b.deletes)
+        if deletes:
+            post.del_bonds(deletes)
 
-        if break_a:
-            post.del_bond(break_a.this, break_a.that)
-        if break_b:
-            post.del_bond(break_b.this, break_b.that)
+        system = self.typifier.get_forcefield(post, workdir=workdir/name, system=system)
 
-        self.typifier.typify(post, workdir=workdir/name)
-
-        mp.io.write_lammps_molecule(workdir/ name / f"{name}_pre.mol", pre.to_frame())
         mp.io.write_lammps_molecule(workdir/ name / f"{name}_post.mol", post.to_frame())
+        mp.io.write_lammps_forcefield(workdir / name / f"{name}.ff", system)
 
-        # create mapping file
-
-        init_ids = [ia, ib]
-        edge_atoms = [edge_a, edge_b]
-        edge_ids = []
-
-        for n in edge_atoms:
-            try:
-                idx = pre.atoms.index(n)
-                edge_ids.append(idx)
-            except Exception:
-                pass
+        init_ids = [init_id_a, init_id_b]
+        edge_ids = [edge_id_a, edge_id_b]
 
         with open(workdir / name / f'{name}.map', 'w') as f:
             f.write(f'# {name} mapping file\n\n')

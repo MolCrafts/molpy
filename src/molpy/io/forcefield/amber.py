@@ -2,9 +2,8 @@ from pathlib import Path
 import molpy as mp
 import numpy as np
 from typing import Callable, Iterator
-import pandas as pd
 import math
-
+from nesteddict import ArrayDict
 
 class AmberPrmtopReader:
 
@@ -136,7 +135,7 @@ class AmberPrmtopReader:
         # def forcefield
         atoms["id"] = np.arange(meta["n_atoms"], dtype=int) + 1
         atoms["charge"] = np.array(atoms["charge"]) / 18.2223
-        frame["forcefield"] = ff = mp.ForceField()
+        frame.forcefield = ff = mp.ForceField()
         ff.units = "real"
         atomstyle = ff.def_atomstyle("full")
         atomtype_map = {}  # atomtype id : atomtype
@@ -158,8 +157,8 @@ class AmberPrmtopReader:
                 bondstyle.def_type(
                     atomtype_map[atom_i_type_name],
                     atomtype_map[atom_j_type_name],
-                    [f, r_min],
-                    label=bond_name,
+                    params=[f, r_min],
+                    name=bond_name,
                     force_constant=f,
                     equil_value=r_min,
                     id=bond_type,
@@ -184,8 +183,8 @@ class AmberPrmtopReader:
                     atomtype_map[atom_i_type_name],
                     atomtype_map[atom_j_type_name],
                     atomtype_map[atom_k_type_name],
-                    [f, theta_min],
-                    label=angle_name,
+                    params=[f, theta_min],
+                    name=angle_name,
                     force_constant=f,
                     equil_value=theta_min,
                     id=angle_type,
@@ -224,8 +223,8 @@ class AmberPrmtopReader:
                     atomtype_map[atom_j_type_name],
                     atomtype_map[atom_k_type_name],
                     atomtype_map[atom_l_type_name],
-                    [f, periodicity, int(phase), 0.5],
-                    label=dihe_name,
+                    params=[f, periodicity, int(phase), 0.5],
+                    name=dihe_name,
                     force_constant=f,
                     phase=phase,
                     periodicity=periodicity,
@@ -244,7 +243,7 @@ class AmberPrmtopReader:
         )
 
         pairstyle = ff.def_pairstyle(
-            "lj/charmmfsw/coul/charmmfsh", 2.5, 9.0
+            "lj/charmmfsw/coul/charmmfsh", [2.5, 9.0]
         )
         for itype, rVdw, epsilon in self.parse_nonbond_params(atoms):
             atom_i_type_name = atoms["type_label"][itype - 1]
@@ -254,18 +253,18 @@ class AmberPrmtopReader:
                 pair_name,
                 atomtype_map[atom_i_type_name],
                 atomtype_map[atom_j_type_name],
-                epsilon, rVdw,
+                [epsilon, rVdw],
                 rVdw=rVdw,
                 epsilon=epsilon,
                 id=itype,
             )
 
         # store in frame
-        frame.frame["props"] = meta
-        frame.frame["atoms"] = pd.DataFrame(atoms)
-        frame.frame["bonds"] = pd.DataFrame(bonds)
-        frame.frame["angles"] = pd.DataFrame(angles)
-        frame.frame["dihedrals"] = pd.DataFrame(dihedrals)
+        frame["props"] = meta
+        frame["atoms"] = ArrayDict(atoms)
+        frame["bonds"] = ArrayDict(bonds)
+        frame["angles"] = ArrayDict(angles)
+        frame["dihedrals"] = ArrayDict(dihedrals)
 
         return frame
 

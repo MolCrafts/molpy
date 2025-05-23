@@ -55,6 +55,8 @@ def read_amber(
     prmtop = Path(prmtop)
     inpcrd = Path(inpcrd) if inpcrd is not None else None
     reader = AmberPrmtopReader(prmtop)
+    if system is None:
+        system = mp.System()
     system = reader.read(system)
     if inpcrd is not None:
         from .data.amber import AmberInpcrdReader
