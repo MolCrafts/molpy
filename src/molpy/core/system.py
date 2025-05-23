@@ -10,6 +10,7 @@ class System:
 
     def __init__(self):
         self._forcefield = ForceField()
+        self._box = Box()
         self._struct = []
 
     @property
