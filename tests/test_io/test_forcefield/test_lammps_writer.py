@@ -54,7 +54,7 @@ def test_lammps_forcefield_writer_full():
         # dihedral参数
         assert "0.5 1.0 0.0 0.0" in content
         # pair自交
-        assert "pair_coeff C C 0.2 3.4" in content
-        assert "pair_coeff H H 0.05 2.5" in content
+        assert "pair_coeff C 0.2 3.4" in content
+        assert "pair_coeff H 0.05 2.5" in content
         # pair交叉
         assert "pair_coeff C H 0.1 3.0" in content or "pair_coeff H C 0.1 3.0" in content

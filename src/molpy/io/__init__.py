@@ -65,7 +65,7 @@ def read_amber(
         system = reader.read(system)
     return system
 
-def read_ac(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
+def read_amber_ac(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
 
     """Read an AC file and return a molpy System object."""
     from .data.ac import AcReader

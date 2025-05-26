@@ -812,7 +812,7 @@ class ForceField:
 
     def def_bondstyle(self, style: str, parms=[], **data):
         bondstyle = self.get_bondstyle(style)
-        if bondstyle:
+        if bondstyle is not None:
             return bondstyle
         else:
             bondstyle = BondStyle(style, parms, **data)
@@ -832,14 +832,16 @@ class ForceField:
             AngleStyle: The defined or retrieved AngleStyle object.
         """
         anglestyle = self.get_anglestyle(style)
-        if not anglestyle:
+        if anglestyle is not None:
+            return anglestyle
+        else:
             anglestyle = AngleStyle(style, parms, **data)
             self.anglestyles.append(anglestyle)
         return anglestyle
 
     def def_dihedralstyle(self, style: str, parms=[], **data):
         dihe = self.get_dihedralstyle(style)
-        if dihe:
+        if dihe is not None:
             return dihe
         else:
             dihe = DihedralStyle(style, parms, **data)
@@ -848,7 +850,7 @@ class ForceField:
 
     def def_improperstyle(self, style: str, parms=[], **data):
         improper = self.get_improperstyle(style)
-        if improper:
+        if improper is not None:
             return improper
         else:
             improper = ImproperStyle(style, parms, **data)
@@ -857,7 +859,7 @@ class ForceField:
 
     def def_pairstyle(self, style: str, parms=[], **data):
         pairstyle = self.get_pairstyle(style)
-        if pairstyle:
+        if pairstyle is not None:
             return pairstyle
         else:
             pairstyle = PairStyle(style, parms, **data)

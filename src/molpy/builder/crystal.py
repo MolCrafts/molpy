@@ -2,54 +2,19 @@ import numpy as np
 
 from molpy.core import Region, Struct
 
-from .base import BaseBuilder
+from .base import Lattice, LatticeBuilder, StructBuilder
 
-
-class Lattice:
-
-    def __init__(self, sites: np.ndarray, cell: np.ndarray):
-        self.sites = sites
-        self.cell = cell
-
-    def repeat(self, *shape):
-        """
-        repeat sites in different directions
-        """
-        assert len(shape) == 3
-
-        for x, vec in zip(shape, self.cell):
-            if x != 1 and not vec.any():
-                raise ValueError('Cannot repeat along undefined lattice '
-                                'vector')
-
-        M = np.prod(shape)
-        n = len(self)
-
-        positions = np.empty((n * M, 3))
-        i0 = 0
-        for m0 in range(shape[0]):
-            for m1 in range(shape[1]):
-                for m2 in range(shape[2]):
-                    i1 = i0 + n
-                    positions[i0:i1] += np.dot((m0, m1, m2), self.cell)
-                    i0 = i1
-
-        self.cell = np.array([shape[c] * self.cell[c] for c in range(3)])
-
-    def fill(self, struct: Struct) -> Struct: ...
-
-
-class CrystalBuilder(BaseBuilder):
+class CrystalBuilder(LatticeBuilder, StructBuilder):
 
     def __init__(
         self,
-        a: float = None,
-        b: float = None,
-        c: float = None,
+        a: float | None = None,
+        b: float | None = None,
+        c: float | None = None,
         *,
-        alpha: float = None,
-        covera: float = None,
-        u: float = None,
+        alpha: float | None = None,
+        covera: float | None = None,
+        u: float | None = None,
         orthorhombic: bool = False,
         cubic: bool = False,
         basis=None,
@@ -65,9 +30,11 @@ class CrystalBuilder(BaseBuilder):
         self.cubic = cubic
         self.basis = basis
 
-    def create_sites(self, region):
+    def create_sites(self) -> Lattice:
         ...
 
+    def build_struct(self) -> Struct:
+        ...
 
 class FCC(CrystalBuilder):
 
@@ -80,8 +47,8 @@ class FCC(CrystalBuilder):
     ):
         b = 0.5*a
         super().__init__(a=a, b=b, orthorhombic=orthorhombic, cubic=cubic)
-        self.cell = ((0, b, b), (b, 0, b), (b, b, 0))
-        self.basis = ((0, 0, 0), (0.5, 0.5, 0), (0.5, 0, 0.5), (0, 0.5, 0.5))
+        self.cell = np.array([[0, b, b], [b, 0, b], [b, b, 0]])
+        self.basis = np.array([[0, 0, 0], [0.5, 0.5, 0], [0.5, 0, 0.5], [0, 0.5, 0.5]])
 
     def create_lattice(self):
         asites = Lattice(
@@ -89,3 +56,7 @@ class FCC(CrystalBuilder):
             self.cell
         )
         return asites
+    
+    def build_struct(self, struct: Struct) -> Struct:
+        lattice = self.create_lattice()
+        return lattice.fill(struct)

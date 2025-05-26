@@ -1,12 +1,16 @@
 import numpy as np
 import numpy.typing as npt
-from abc import abstractmethod, ABC
+from abc import abstractmethod, ABC, abstractproperty
 
 
 class Region(ABC):
 
     def __init__(self, name):
         self.name = name
+
+    @property
+    @abstractmethod
+    def bounds(self) -> npt.NDArray[np.float64]: ...
 
     @abstractmethod
     def isin(self, xyz) -> np.ndarray: ...
@@ -63,7 +67,7 @@ class PeriodicBoundary(ABC):
         raise NotImplementedError
 
 
-class CubeRegion(Region):
+class Cube(Region):
 
     def __init__(
         self,
@@ -110,6 +114,14 @@ class CubeRegion(Region):
     @property
     def zhi(self):
         return self.origin[2] + self.length
+    
+    @property
+    def bounds(self) -> npt.NDArray[np.float64]:
+        return np.array([
+            [self.xlo, self.xhi],
+            [self.ylo, self.yhi],
+            [self.zlo, self.zhi]
+        ]).T
 
 
 class SphereRegion(Region):
