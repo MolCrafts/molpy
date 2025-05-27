@@ -1,11 +1,8 @@
 import numpy as np
-
-from molpy.core import Region, Struct
-
-from .base import Lattice, LatticeBuilder, StructBuilder
+from molpy.core import Struct
+from .base import LatticeBuilder, StructBuilder, set_struct
 
 class CrystalBuilder(LatticeBuilder, StructBuilder):
-
     def __init__(
         self,
         a: float | None = None,
@@ -17,27 +14,33 @@ class CrystalBuilder(LatticeBuilder, StructBuilder):
         u: float | None = None,
         orthorhombic: bool = False,
         cubic: bool = False,
-        basis=None,
+        basis: np.ndarray | None = None,
+        cell: np.ndarray | None = None,
     ):
-
         self.a = a
-        self.b = b
-        self.c = c
+        self.b = b or a
+        self.c = c or a
         self.alpha = alpha
         self.covera = covera
         self.u = u
         self.orthorhombic = orthorhombic
         self.cubic = cubic
         self.basis = basis
+        self.cell = cell
 
-    def create_sites(self) -> Lattice:
-        ...
+    def create_sites(self) -> np.ndarray:
+        basis = self.basis * np.array([self.a, self.b, self.c])
+        return basis
 
-    def build_struct(self) -> Struct:
-        ...
+    def populate(self, sites: np.ndarray, struct: Struct) -> Struct:
+        result = Struct()
+        for pos in sites:
+            s = struct.copy()
+            set_struct(s, pos)
+            result = Struct.merge([result, s])
+        return result
 
 class FCC(CrystalBuilder):
-
     def __init__(
         self,
         a: float,
@@ -45,18 +48,23 @@ class FCC(CrystalBuilder):
         orthorhombic: bool = False,
         cubic: bool = False,
     ):
-        b = 0.5*a
-        super().__init__(a=a, b=b, orthorhombic=orthorhombic, cubic=cubic)
-        self.cell = np.array([[0, b, b], [b, 0, b], [b, b, 0]])
-        self.basis = np.array([[0, 0, 0], [0.5, 0.5, 0], [0.5, 0, 0.5], [0, 0.5, 0.5]])
-
-    def create_lattice(self):
-        asites = Lattice(
-            self.basis * self.a,
-            self.cell
+        b = 0.5 * a
+        cell = np.array([[0, b, b], [b, 0, b], [b, b, 0]]) * 2
+        basis = np.array([
+            [0, 0, 0],
+            [0.5, 0.5, 0],
+            [0.5, 0, 0.5],
+            [0, 0.5, 0.5],
+        ])
+        super().__init__(
+            a=a,
+            b=b,
+            c=a,
+            orthorhombic=orthorhombic,
+            cubic=cubic,
+            basis=basis,
+            cell=cell,
         )
-        return asites
-    
-    def build_struct(self, struct: Struct) -> Struct:
-        lattice = self.create_lattice()
-        return lattice.fill(struct)
+
+    def create_sites(self) -> np.ndarray:
+        return super().create_sites()

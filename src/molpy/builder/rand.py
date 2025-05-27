@@ -1,74 +1,58 @@
 import numpy as np
 import random
-from molpy.core import Struct
+from molpy.core import Struct, Atom
 from molpy.core.region import Region
-from .base import LatticeBuilder, StructBuilder
-from .base import BaseBuilder, set_struct
-
+from .base import LatticeBuilder, StructBuilder, set_struct
 
 class UniformRandomBuilder(LatticeBuilder, StructBuilder):
-    """
-    A builder that generates random coordinates uniformly in a given range.
-    """
-
     def __init__(self, n: int, region: Region):
         self.n = n
         self.region = region
 
-    def create_sites(self) -> Lattice:
-        """
-        Generate random coordinates uniformly in the given region.
-        """
-        # Get the shape of the region
-        bounds = self.region.bounds
-        xlo, xhi = bounds[0]
-        ylo, yhi = bounds[1]
-        zlo, zhi = bounds[2]
-
+    def create_sites(self) -> np.ndarray:
+        xlo, xhi = self.region.bounds[0]
+        ylo, yhi = self.region.bounds[1]
+        zlo, zhi = self.region.bounds[2]
         sites = np.random.uniform(
             low=[xlo, ylo, zlo],
             high=[xhi, yhi, zhi],
             size=(self.n, 3),
         )
-        site_mask = self.region.isin(sites)
-        return Lattice(sites[site_mask], bounds)
-    
-    def build_structs(self, struct: Struct):
-        """
-        Fill the structure with random coordinates.
-        """
-        structs = []
-        sites = self.create_sites(n)
-        for site in sites:
-            new_struct = struct.clone()
-            set_struct(new_struct, site)
-            structs.append(new_struct)
-        return structs
+        mask = self.region.isin(sites)
+        return sites[mask]
 
+    def populate(self, sites: np.ndarray, monomer: Struct = None) -> Struct:
+        result = Struct()
+        base = monomer or Struct()
+        for site in sites:
+            s = base.copy()
+            set_struct(s, site)
+            result = Struct.merge([result, s])
+        return result
 
 class RandomLatticeBuilder(LatticeBuilder):
-     def create_sites(self,
-                     n_steps: int = 100,
-                     step_size: float = 1.0,
-                     seed: int = None):
-        if seed is not None:
-            random.seed(seed)
+    def __init__(self, n_steps: int = 100, step_size: float = 1.0, seed: int = None):
+        self.n_steps = n_steps
+        self.step_size = step_size
+        self.seed = seed
+
+    def create_sites(self) -> np.ndarray:
+        if self.seed is not None:
+            random.seed(self.seed)
         coords = [(0.0, 0.0, 0.0)]
-        for _ in range(n_steps):
+        for _ in range(self.n_steps):
             x, y, z = coords[-1]
-            dx = random.uniform(-step_size, step_size)
-            dy = random.uniform(-step_size, step_size)
-            dz = random.uniform(-step_size, step_size)
+            dx = random.uniform(-self.step_size, self.step_size)
+            dy = random.uniform(-self.step_size, self.step_size)
+            dz = random.uniform(-self.step_size, self.step_size)
             coords.append((x + dx, y + dy, z + dz))
-        return coords
-     
+        return np.array(coords)
 
 class RandomStructBuilder(StructBuilder):
-    def populate(self, sites, monomer: str = 'M', **params):
-        mols = []
+    def populate(self, sites: np.ndarray, monomer: str = 'M', **params) -> Struct:
+        result = Struct()
         for pos in sites:
-            mols.append({
-                'monomer': monomer,
-                'position': pos
-            })
-        return mols
+            s = Struct(name=monomer)
+            s.add_atom(Atom(monomer, *pos))
+            result = Struct.merge([result, s])
+        return result
