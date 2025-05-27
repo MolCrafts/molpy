@@ -70,7 +70,7 @@ class HCPBuilder(LatticeBuilder):
 
     def create_sites(self) -> np.ndarray:
         nx, ny, nz = self.shape
-        
+        # definicja wierzchołków jednostki HCP
         base = [
             (0, 0, 0),
             (2/3, 1/3, 0.5),
