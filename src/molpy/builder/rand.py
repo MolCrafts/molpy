@@ -1,9 +1,9 @@
 import numpy as np
-
+import random
 from molpy.core import Struct
 from molpy.core.region import Region
-
-from .base import Lattice, LatticeBuilder, StructBuilder
+from .base import LatticeBuilder, StructBuilder
+from .base import BaseBuilder, set_struct
 
 
 class UniformRandomBuilder(LatticeBuilder, StructBuilder):
@@ -37,6 +37,38 @@ class UniformRandomBuilder(LatticeBuilder, StructBuilder):
         """
         Fill the structure with random coordinates.
         """
-        sites = self.create_sites()
+        structs = []
+        sites = self.create_sites(n)
+        for site in sites:
+            new_struct = struct.clone()
+            set_struct(new_struct, site)
+            structs.append(new_struct)
+        return structs
 
-        return sites.fill(struct)
+
+class RandomLatticeBuilder(LatticeBuilder):
+     def create_sites(self,
+                     n_steps: int = 100,
+                     step_size: float = 1.0,
+                     seed: int = None):
+        if seed is not None:
+            random.seed(seed)
+        coords = [(0.0, 0.0, 0.0)]
+        for _ in range(n_steps):
+            x, y, z = coords[-1]
+            dx = random.uniform(-step_size, step_size)
+            dy = random.uniform(-step_size, step_size)
+            dz = random.uniform(-step_size, step_size)
+            coords.append((x + dx, y + dy, z + dz))
+        return coords
+     
+
+class RandomStructBuilder(StructBuilder):
+    def populate(self, sites, monomer: str = 'M', **params):
+        mols = []
+        for pos in sites:
+            mols.append({
+                'monomer': monomer,
+                'position': pos
+            })
+        return mols
