@@ -31,6 +31,39 @@ class StructBuilder(ABC):
         def populate(self, sites, **params):
             ...
 
+
+class FCCBuilder(LatticeBuilder):
+    def __init__(self, a: float, shape: tuple[int,int,int]):
+          self.a = a
+          self.shape = shape
+    def create_sites(self) -> np.ndarray:
+          nx, ny, nz = self.shape
+          base = [(0,0,0), (0.5,0.5,0), (0.5,0,0.5), (0,0.5,0.5)]
+          pts = []
+          for i in range(nx):
+               for j in range(ny):
+                    for k in range(nz):
+                         for x, y, z in base:
+                              pts.append(((i+x)*self.a, (j+y)*self.a, (k+z)*self.a))
+          return np.array(pts)
+
+
+class BCCBuilder(LatticeBuilder):
+    def __init__(self, a: float, shape: tuple[int,int,int]):
+        self.a = a
+        self.shape = shape
+    
+    def create_sites(self) -> np.ndarray:
+        nx, ny, nz = self.shape
+        base = [(0,0,0), (0.5,0.5,0.5)]
+        pts = []
+        for i in range(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    for (x,y,z) in base:
+                        pts.append(((i+x)*self.a, (j+y)*self.a, (k+z)*self.a))
+        return np.array(pts)
+
 class BuildManager:
     def __init__(self, lattice_builder: LatticeBuilder, struct_builder: StructBuilder):
         self.lattice = lattice_builder
