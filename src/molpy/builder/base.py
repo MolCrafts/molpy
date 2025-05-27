@@ -64,6 +64,68 @@ class BCCBuilder(LatticeBuilder):
                         pts.append(((i+x)*self.a, (j+y)*self.a, (k+z)*self.a))
         return np.array(pts)
 
+class HCPBuilder(LatticeBuilder):
+    def __init__(self, a: float, c: float, shape: tuple[int,int,int]):
+        self.a, self.c, self.shape = a, c, shape 
+
+    def create_sites(self) -> np.ndarray:
+        nx, ny, nz = self.shape
+        # definicja wierzchołków jednostki HCP
+        base = [
+            (0, 0, 0),
+            (2/3, 1/3, 0.5),
+            (1/3, 2/3, 0.5),
+            (0, 0, 1),
+            (2/3, 1/3, 1.5),
+            (1/3, 2/3, 1.5)
+        ]
+        pts = []
+        for i in range(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    for (u,v,w) in base:
+                        x = (i + u) * self.a
+                        y = (j + v) * self.a * np.sqrt(3)/2
+                        z = (k + w) * self.c
+                        pts.append((x,y,z))
+        return np.array(pts)
+    
+ 
+class PolymerBuilder(StructBuilder):
+    def __init__(self, monomer: Struct, repeat: int, spacing: float):
+        self.monomer, self.repeat, self.spacing = monomer, repeat, spacing
+
+    def populate(self, sites=None, **params) -> Struct:
+        # Ignorujemy sites – budujemy wzdłuż jednej osi
+        result = Struct()
+        offset = 0.0
+        for i in range(self.repeat):
+            mcopy = self.monomer.copy()
+            mcopy.translate((offset, 0, 0))
+            result = Struct.merge([result, mcopy])
+            offset += self.spacing
+        return result
+
+class ClusterBuilder(StructBuilder):
+    def __init__(self, monomer: Struct, radius: float, count: int):
+        self.monomer, self.radius, self.count = monomer, radius, count
+
+    def populate(self, sites=None, **params) -> Struct:
+        import random
+        result = Struct()
+        for _ in range(self.count):
+            phi = random.random()*2*np.pi
+            cost = random.uniform(-1,1)
+            u = random.random()
+            r = self.radius * u**(1/3)
+            x = r * np.sqrt(1-cost**2) * np.cos(phi)
+            y = r * np.sqrt(1-cost**2) * np.sin(phi)
+            z = r * cost
+            mcopy = self.monomer.copy()
+            mcopy.translate((x,y,z))
+            result = Struct.merge([result, mcopy])
+        return result
+
 class BuildManager:
     def __init__(self, lattice_builder: LatticeBuilder, struct_builder: StructBuilder):
         self.lattice = lattice_builder
