@@ -127,15 +127,25 @@ class ClusterBuilder(StructBuilder):
         return result
 
 class BuildManager:
-    def __init__(self, lattice_builder: LatticeBuilder, struct_builder: StructBuilder):
-        self.lattice = lattice_builder
-        self.struct  = struct_builder
+    def __init__(
+        self,
+        lattice_builder: LatticeBuilder,
+        struct_builder: StructBuilder,
+        base_struct: Struct = None
+    ):
+        
+        self.lattice_builder = lattice_builder
+        self.struct_builder  = struct_builder
+        self.base_struct     = base_struct or Struct()
 
-    def build(self, **params):
-        keys = list(params.keys())
-        n = len(keys) //2
-        lat_kwargs = {k: params[k] for k in keys[:n]}
-        struct_kwargs = {k: params[k] for k in keys[n:]}
-        sites = self.lattice.create_sites(**lat_kwargs)
-        struct = self.struct.populate(sites, **struct_kwargs)
-        return struct
+    def build(
+        self,
+        lat_kwargs: dict | None    = None,
+        struct_kwargs: dict | None = None
+    ) -> Struct:
+        lat_kwargs    = lat_kwargs    or {}
+        struct_kwargs = struct_kwargs or {}
+        sites = self.lattice_builder.create_sites(**lat_kwargs)
+        struct_copy = self.base_struct.copy()
+        result = self.struct_builder.populate(sites, **struct_kwargs)
+        return result
