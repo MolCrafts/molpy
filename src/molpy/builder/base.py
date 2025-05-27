@@ -133,7 +133,7 @@ class BuildManager:
         struct_builder: StructBuilder,
         base_struct: Struct = None
     ):
-       
+        
         self.lattice_builder = lattice_builder
         self.struct_builder  = struct_builder
         self.base_struct     = base_struct or Struct()
@@ -143,16 +143,9 @@ class BuildManager:
         lat_kwargs: dict | None    = None,
         struct_kwargs: dict | None = None
     ) -> Struct:
-       
         lat_kwargs    = lat_kwargs    or {}
         struct_kwargs = struct_kwargs or {}
-
-      
         sites = self.lattice_builder.create_sites(**lat_kwargs)
-
-     
         struct_copy = self.base_struct.copy()
         result = self.struct_builder.populate(sites, **struct_kwargs)
-
-     
         return result
