@@ -1,7 +1,7 @@
 import numpy as np
 
 from molpy.core import Region, Struct
-
+from .base import LatticeBuilder, StructBuilder
 from .base import BaseBuilder
 
 
@@ -89,3 +89,28 @@ class FCC(CrystalBuilder):
             self.cell
         )
         return asites
+
+class CrystalLatticeBuilder(LatticeBuilder):
+    def create_sites(self,
+                     element: str = 'X',   # tylko metadana, nie używana przy samej siatce
+                     nx: int = 1,
+                     ny: int = 1,
+                     nz: int = 1,
+                     a: float = 1.0):
+        coords = []
+        for i in range(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    coords.append((i * a, j * a, k * a))
+        return coords
+
+
+class CrystalStructBuilder(StructBuilder):
+    def populate(self, sites, element: str = 'Cu', **params):
+        atoms = []
+        for pos in sites:
+            atoms.append({
+                'type': element,
+                'position': pos
+            })
+        return atoms
