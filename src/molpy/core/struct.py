@@ -730,7 +730,7 @@ class Struct(Entity, Atomistic, Spatial):
 
         return frame
 
-    def get_substruct(self, indices: Sequence[int]):
+    def get_substruct(self, name: str, indices: set[int]):
         """
         Get a substructure of the current structure by atom names.
 
@@ -740,9 +740,8 @@ class Struct(Entity, Atomistic, Spatial):
         Returns:
         - A new Struct object containing the substructure.
         """
-        substruct = self.__class__()
-        _indices = set(indices)
-        atoms = self["atoms"][_indices]
+        substruct = self.__class__(name=name)
+        atoms = self["atoms"][indices]
         substruct["atoms"].extend(atoms)
         for bond in self["bonds"]:
             if bond.itom in atoms and bond.jtom in atoms:

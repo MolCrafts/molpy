@@ -587,14 +587,14 @@ class LammpsMoleculeWriter:
                 bonds = frame["bonds"].iterrows()
                 f.write(f"\nBonds\n\n")
                 for i, bond in enumerate(bonds):
-                    f.write(f"{i} {int(bond['type'])} {int(bond['i'])} {int(bond['j'])}\n")
+                    f.write(f"{i} {bond['type']} {int(bond['i'])} {int(bond['j'])}\n")
 
             if "angles" in frame:
                 angles = frame["angles"].iterrows()
                 f.write(f"\nAngles\n\n")
                 for i, angle in enumerate(angles):
                     f.write(
-                        f"{i} {int(angle['type'])} {int(angle['i'])} {int(angle['j'])} {int(angle['k'])}\n"
+                        f"{i} {angle['type']} {int(angle['i'])} {int(angle['j'])} {int(angle['k'])}\n"
                     )
 
             if "dihedrals" in frame:

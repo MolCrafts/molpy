@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import molpy as mp
-import pandas as pd
+from nesteddict import ArrayDict
 
 class AmberInpcrdReader:
 
@@ -13,9 +13,8 @@ class AmberInpcrdReader:
     def sanitizer(line: str) -> str:
         return line
     
-    def read(self, system: mp.System):
+    def read(self, frame: mp.Frame):
 
-        frame = system.frame
         with open(self._file, "r") as f:
 
             lines = filter(
@@ -36,14 +35,12 @@ class AmberInpcrdReader:
             y_coords = coordinates[1::3]
             z_coords = coordinates[2::3]
 
-            table = pd.DataFrame({
+            table = ArrayDict({
                 'id': np.arange(num_atoms) + 1,
                 'x': x_coords,
                 'y': y_coords,
                 'z': z_coords
             })
 
-        frame['atoms'] = frame['atoms'].merge(table, on='id')
-
         frame['props']['name'] = title
-        return system
+        return frame

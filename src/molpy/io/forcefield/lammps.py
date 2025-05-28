@@ -422,26 +422,25 @@ class LAMMPSForceFieldWriter:
                 return
             parms = getattr(style, "parms", [])
             lines.append(
-                f"{style_type}_style {style.name} {' '.join(map(str, parms))}\n"
+                f"{style_type}_style {style.name} {' '.join(f"{x:.3f}" for x in parms)}\n"
             )
             if "modified" in style:
-                params = " ".join(style["modified"])
-                lines.append(f"{style_type}_modify {params}\n")
+                parms = " ".join(style["modified"])
+                lines.append(f"{style_type}_modify {parms}\n")
             for typ in list(style.types):
-                tprms = getattr(typ, "parms", [])
-                params = tprms + list(typ.values())
+                parms = getattr(typ, "parms", [])
                 lines.append(
-                    f"{style_type}_coeff {typ.name} {' '.join(map(str, params))}\n"
+                    f"{style_type}_coeff {typ.name} {' '.join(f"{x:.3f}" for x in parms)}\n"
                 )
         else:
             style_keywords = " ".join([style.name for style in styles])
             lines.append(f"{style_type}_style hybrid {style_keywords}\n")
             for style in styles:
                 for typ in list(style.types):
-                    tprms = getattr(typ, "parms", [])
-                    params = tprms + list(typ.values())
+                    parms = getattr(typ, "parms", [])
+    
                     lines.append(
-                        f"{style_type}_coeff {typ.name} {style.name} {' '.join(map(str, params))}\n"
+                        f"{style_type}_coeff {typ.name} {style.name} {' '.join(f"{x:.3f}" for x in parms)}\n"
                     )
         lines.append("\n")
 
@@ -456,36 +455,36 @@ class LAMMPSForceFieldWriter:
             style = styles[0]
             parms = getattr(style, "parms", [])
             lines.append(
-                f"{style_type}_style {style.name} {' '.join(map(str, parms))}\n"
+                f"{style_type}_style {style.name} {' '.join(f"{x:.3f}" for x in parms)}\n"
             )
             if "modified" in style:
-                params = " ".join(style["modified"])
-                lines.append(f"{style_type}_modify {params}\n")
+                parms = " ".join(style["modified"])
+                lines.append(f"{style_type}_modify {parms}\n")
             for typ in list(style.types):
-                tprms = getattr(typ, "parms", [])
-                params = tprms + list(typ.values())
+                parms = getattr(typ, "parms", [])
+
                 ats = typ.atomtypes
                 if ats[0] == ats[1]:
                     atomnames = ats[0].name
                 else:
                     atomnames = f"{ats[0].name} {ats[1].name}"
                 lines.append(
-                    f"{style_type}_coeff {atomnames} {' '.join(map(str, params))}\n"
+                    f"{style_type}_coeff {atomnames} {' '.join(f"{x:.3f}" for x in parms)}\n"
                 )
         else:
             style_keywords = " ".join([style.name for style in styles])
             lines.append(f"{style_type}_style hybrid {style_keywords}\n")
             for style in styles:
                 for typ in list(style.types):
-                    tprms = getattr(typ, "parms", [])
-                    params = tprms + list(typ.values())
+                    parms = getattr(typ, "parms", [])
+    
                     ats = typ.atomtypes
                     if ats[0] == ats[1]:
                         atomnames = ats[0].name
                     else:
                         atomnames = f"{ats[0].name} {ats[1].name}"
                     lines.append(
-                        f"{style_type}_coeff {atomnames} {style.name} {' '.join(map(str, params))}\n"
+                        f"{style_type}_coeff {atomnames} {style.name} {' '.join(f"{x:.3f}" for x in parms)}\n"
                     )
         lines.append("\n")
 

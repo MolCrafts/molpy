@@ -15,29 +15,29 @@ read_txt = np.loadtxt
 def read_lammps_data(file: Path, atom_style: str, frame: mp.Frame | None = None) -> mp.Frame:
     """Read LAMMPS data file and return a molpy System object."""
     from .data.lammps import LammpsDataReader
-    reader = LammpsDataReader(file, atom_style, frame=frame)
-    return reader.read()
+    reader = LammpsDataReader(file, atom_style)
+    return reader.read(frame=frame)
 
-def read_lammps_forcefield(scripts: Path|list[Path], system: mp.ForceField | None = None) -> mp.ForceField:
+def read_lammps_forcefield(scripts: Path|list[Path], frame: mp.ForceField | None = None) -> mp.ForceField:
     """Read LAMMPS force field file and return a molpy ForceField object."""
     from .forcefield.lammps import LAMMPSForceFieldReader
-    reader = LAMMPSForceFieldReader(scripts, system=system)
-    return reader.read()
+    reader = LAMMPSForceFieldReader(scripts)
+    return reader.read(frame=frame)
 
-def read_lammps_molecule(file: Path, system: mp.System | None = None) -> mp.System:
+def read_lammps_molecule(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
     """Read LAMMPS molecule file and return a molpy System object."""
     from .data.lammps import LammpsMoleculeReader
-    reader = LammpsMoleculeReader(file, system=system)
-    return reader.read()
+    reader = LammpsMoleculeReader(file, )
+    return reader.read(frame=frame)
 
-def read_lammps(data: Path, scripts: Path | list[Path] | None = None, system: mp.System | None = None) -> mp.System:
+def read_lammps(data: Path, scripts: Path | list[Path] | None = None, frame: mp.Frame | None = None) -> mp.Frame:
     """Read LAMMPS data and force field files and return a molpy System object. If data file is provided, only read model;
     If input file is provided, read force field.
     """
     if scripts is not None:  # read defination first
-        system = read_lammps_forcefield(scripts, system)
-    system = read_lammps_data(data, system)
-    return system
+        frame = read_lammps_forcefield(scripts, frame)
+    frame = read_lammps_data(data, frame)
+    return frame
 
 def read_pdb(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
     """Read a PDB file and return a molpy Frame object."""
@@ -48,22 +48,22 @@ def read_pdb(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
     return reader.read(frame)
 
 def read_amber(
-    prmtop: Path, inpcrd: Path | None = None, system: mp.System | None = None
-) -> mp.ForceField:
+    prmtop: Path, inpcrd: Path | None = None, frame: mp.Frame | None = None
+) -> mp.Frame:
     """Read AMBER force field prmtop and return a molpy ForceField object."""
     from .forcefield.amber import AmberPrmtopReader
     prmtop = Path(prmtop)
     inpcrd = Path(inpcrd) if inpcrd is not None else None
     reader = AmberPrmtopReader(prmtop)
-    if system is None:
-        system = mp.System()
-    system = reader.read(system)
+    if frame is None:
+        frame = mp.Frame()
+    frame = reader.read(frame)
     if inpcrd is not None:
         from .data.amber import AmberInpcrdReader
 
         reader = AmberInpcrdReader(inpcrd)
-        system = reader.read(system)
-    return system
+        frame = reader.read(frame)
+    return frame
 
 def read_amber_ac(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
 
@@ -82,18 +82,18 @@ def read_mol2(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
     reader = Mol2Reader(file)
     return reader.read(frame)
 
-def read_xml_forcefield(file: Path, system: mp.System | None = None) -> mp.System:
+def read_xml_forcefield(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
     """Read an XML force field file and return a molpy System object."""
     from .forcefield.xml import XMLForceFieldReader
-    if system.forcefield is None:
-        system.forcefield = mp.ForceField()
+    if frame.forcefield is None:
+        frame.forcefield = mp.ForceField()
 
     builtin = Path(__file__).parent / f'forcefield/xml/{file}.xml'
     if builtin.exists():
         file = builtin
 
     reader = XMLForceFieldReader(file)
-    return reader.read(system)
+    return reader.read(frame)
 
 
 def read_gro(file: Path, frame: mp.Frame | None = None) -> mp.Frame:

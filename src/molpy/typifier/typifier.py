@@ -182,7 +182,7 @@ class AmberToolsTypifier:
                     "cwd": dir,
                     "block": True,
                 }
-            frame = mp.io.read_ac(dir / ac_name, frame=mp.Frame())
+            frame = mp.io.read_amber_ac(dir / ac_name, frame=mp.Frame())
 
             for satom, fatom in zip(struct["atoms"], frame["atoms"].iterrows()):
                 satom["type"] = fatom["type"]
@@ -192,7 +192,7 @@ class AmberToolsTypifier:
         return struct
 
     @h_submitor.local
-    def get_forcefield(self, struct: mp.Struct, workdir: Path | None = None, system = None):
+    def get_forcefield(self, struct: mp.Struct, workdir: Path | None = None, frame = None):
         """
         Generate Amber forcefield files (prmtop/inpcrd) for a single molecule using AmberTools.
         """
@@ -255,5 +255,13 @@ class AmberToolsTypifier:
                 "cwd": dir,
                 "block": True,
             }
-            # 6. 返回prmtop/inpcrd路径
-            return mp.io.read_amber(prmtop=prmtop_path, inpcrd=inpcrd_path, system=system)
+
+            frame = mp.io.read_amber(prmtop=prmtop_path, inpcrd=inpcrd_path, frame=frame)
+
+            for satom, fatom in zip(struct["atoms"], frame["atoms"].iterrows()):
+                satom["type"] = fatom["type"]
+                satom["q"] = fatom["q"]
+            for sbond, fbond in zip(struct["bonds"], frame["bonds"].iterrows()):
+                sbond["type"] = fbond["type"]
+
+            return frame

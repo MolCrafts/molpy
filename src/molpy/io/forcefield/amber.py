@@ -59,20 +59,20 @@ class AmberPrmtopReader:
         atoms = {}
         bonds = {
             "type_id": [],
-            "type_label": [],
+            "type": [],
             "i": [],
             "j": [],
         }
         angles = {
             "type_id": [],
-            "type_label": [],
+            "type": [],
             "i": [],
             "j": [],
             "k": [],
         }
         dihedrals = {
             "type_id": [],
-            "type_label": [],
+            "type": [],
             "i": [],
             "j": [],
             "k": [],
@@ -93,7 +93,7 @@ class AmberPrmtopReader:
                     atoms["name"] = self._read_atom_name(value)
 
                 case "CHARGE":
-                    atoms["charge"] = self.read_section(value, float)
+                    atoms["q"] = self.read_section(value, float)
 
                 case "ATOMIC_NUMBER":
                     atoms["atomic_number"] = self.read_section(value, int)
@@ -105,7 +105,7 @@ class AmberPrmtopReader:
                     self.raw_data[key] = self.read_section(value, int)
 
                 case "AMBER_ATOM_TYPE":
-                    atoms["type_label"] = self.read_section(value, str)
+                    atoms["type"] = self.read_section(value, str)
 
                 case (
                     "BOND_FORCE_CONSTANT"
@@ -134,13 +134,13 @@ class AmberPrmtopReader:
 
         # def forcefield
         atoms["id"] = np.arange(meta["n_atoms"], dtype=int) + 1
-        atoms["charge"] = np.array(atoms["charge"]) / 18.2223
+        atoms["q"] = np.array(atoms["q"]) / 18.2223
         frame.forcefield = ff = mp.ForceField()
         ff.units = "real"
         atomstyle = ff.def_atomstyle("full")
         atomtype_map = {}  # atomtype id : atomtype
         for itype, name, mass in zip(
-            self.raw_data["ATOM_TYPE_INDEX"], atoms["type_label"], atoms["mass"]
+            self.raw_data["ATOM_TYPE_INDEX"], atoms["type"], atoms["mass"]
         ):
             # amber atom type and type index not 1 to 1 mapping involving different files
             if name not in atomtype_map:
@@ -150,8 +150,8 @@ class AmberPrmtopReader:
         for bond_type, i, j, f, r_min in (
             self.get_bond_with_H() + self.get_bond_without_H()
         ):
-            atom_i_type_name = atoms["type_label"][i - 1]
-            atom_j_type_name = atoms["type_label"][j - 1]
+            atom_i_type_name = atoms["type"][i - 1]
+            atom_j_type_name = atoms["type"][j - 1]
             bond_name = "-".join(sorted([atom_i_type_name, atom_j_type_name]))
             if bond_name not in bondstyle.types:
                 bondstyle.def_type(
@@ -166,14 +166,14 @@ class AmberPrmtopReader:
             bonds["type_id"].append(bond_type)
             bonds["i"].append(i)
             bonds["j"].append(j)
-            bonds["type_label"].append(bond_name)
+            bonds["type"].append(bond_name)
         bonds["id"] = np.arange(meta["n_bonds"], dtype=int) + 1
 
         anglestyle = ff.def_anglestyle("harmonic")
         for angle_type, i, j, k, f, theta_min in self.parse_angle_params():
-            atom_i_type_name = atoms["type_label"][i - 1]
-            atom_j_type_name = atoms["type_label"][j - 1]
-            atom_k_type_name = atoms["type_label"][k - 1]
+            atom_i_type_name = atoms["type"][i - 1]
+            atom_j_type_name = atoms["type"][j - 1]
+            atom_k_type_name = atoms["type"][k - 1]
             atom_i_type_name, atom_k_type_name = sorted(
                 [atom_i_type_name, atom_k_type_name]
             )
@@ -194,7 +194,7 @@ class AmberPrmtopReader:
             angles["i"].append(i)
             angles["j"].append(j)
             angles["k"].append(k)
-            angles["type_label"].append(angle_name)
+            angles["type"].append(angle_name)
 
         angles["id"] = np.arange(meta["n_angles"], dtype=int) + 1
 
@@ -209,10 +209,10 @@ class AmberPrmtopReader:
             phase,
             periodicity,
         ) in self.parse_dihedral_params():
-            atom_i_type_name = atoms["type_label"][i - 1]
-            atom_j_type_name = atoms["type_label"][j - 1]
-            atom_k_type_name = atoms["type_label"][k - 1]
-            atom_l_type_name = atoms["type_label"][l - 1]
+            atom_i_type_name = atoms["type"][i - 1]
+            atom_j_type_name = atoms["type"][j - 1]
+            atom_k_type_name = atoms["type"][k - 1]
+            atom_l_type_name = atoms["type"][l - 1]
             if atom_j_type_name > atom_k_type_name:
                 atom_j_type_name, atom_k_type_name = atom_k_type_name, atom_j_type_name
                 atom_i_type_name, atom_l_type_name = atom_l_type_name, atom_i_type_name
@@ -235,7 +235,7 @@ class AmberPrmtopReader:
             dihedrals["j"].append(j)
             dihedrals["k"].append(k)
             dihedrals["l"].append(l)
-            dihedrals["type_label"].append(dihe_name)
+            dihedrals["type"].append(dihe_name)
         dihedrals["id"] = np.arange(meta["n_dihedrals"], dtype=int) + 1
 
         atoms, bonds, angles, dihedrals = self._parse_residues(
@@ -246,14 +246,14 @@ class AmberPrmtopReader:
             "lj/charmmfsw/coul/charmmfsh", [2.5, 9.0]
         )
         for itype, rVdw, epsilon in self.parse_nonbond_params(atoms):
-            atom_i_type_name = atoms["type_label"][itype - 1]
-            atom_j_type_name = atoms["type_label"][itype - 1]
+            atom_i_type_name = atoms["type"][itype - 1]
+            atom_j_type_name = atoms["type"][itype - 1]
             pair_name = f"{atom_i_type_name}-{atom_j_type_name}"
             pairstyle.def_type(
-                pair_name,
                 atomtype_map[atom_i_type_name],
                 atomtype_map[atom_j_type_name],
-                [epsilon, rVdw],
+                name=pair_name,
+                parms=[epsilon, rVdw],
                 rVdw=rVdw,
                 epsilon=epsilon,
                 id=itype,
