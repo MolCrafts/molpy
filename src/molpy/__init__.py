@@ -7,5 +7,6 @@ from . import reacter
 from . import polymerizer
 from . import typifier
 from . import builder
-from .core.region import *
+from . import pack
+from .core import *
 from .core.units import Unit

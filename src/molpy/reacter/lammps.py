@@ -70,7 +70,7 @@ class LammpsReacter:
         edge_b,
         deletes=[],
         workdir: Path = Path.cwd(),
-    ):
+    )->mp.Struct:
 
         (workdir / name).mkdir(parents=True, exist_ok=True)
         init_id_a = pre.atoms.index(init_a)
