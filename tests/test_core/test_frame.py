@@ -1,5 +1,6 @@
 import pytest
 import molpy as mp
+import numpy.testing as npt
 from nesteddict import ArrayDict
 
 class TestFrame:
@@ -60,13 +61,13 @@ class TestFrame:
             })
         })
         concatenated = mp.Frame.from_frames([frame, frame2])
-        assert concatenated['atoms']['id'].tolist() == [1, 2, 3, 4, 5, 6]
+        npt.assert_equal(concatenated['atoms']['id'],  [1, 2, 3, 4, 5, 6])
 
     def test_split(self, frame):
         split_frames = frame.split([1, 1, 2, 2])
         assert len(split_frames) == 2
-        assert split_frames[0]['atoms']['id'].tolist() == [1, 2]
-        assert split_frames[1]['atoms']['id'].tolist() == [3, 4]
+        npt.assert_equal(split_frames[0]['atoms']['id'],  [1, 2])
+        npt.assert_equal(split_frames[1]['atoms']['id'], [3, 4])
 
     def test_box_property(self):
         box = mp.Box()
@@ -105,3 +106,8 @@ class TestFrame:
     def test_mul_operator(self, frame):
         multiplied = frame * 2
         assert len(multiplied) == 5
+
+    def test_init_all_atom_frame(self):
+        frame = mp.Frame(style="atomic")
+        assert isinstance(frame, mp.AllAtomFrame)
+        frame["a"] = 0

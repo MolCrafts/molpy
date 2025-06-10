@@ -1,12 +1,12 @@
 from .core import *
-from .typifier import *
-from .potential import *
-from .optimizer import *
 
 from . import io
 from . import op
 from . import region
-from .core.region import *
-from .core.units import Unit
-
+from . import reacter
+from . import polymerizer
+from . import typifier
 from . import builder
+from . import packer
+from .core import *
+from .core.units import Unit

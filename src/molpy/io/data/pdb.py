@@ -10,7 +10,7 @@ from nesteddict import ArrayDict
 
 class PDBReader(DataReader):
 
-    def __init__(self, file: str | Path):
+    def __init__(self, file: Path):
         super().__init__(path=file)
 
     @staticmethod
@@ -34,9 +34,7 @@ class PDBReader(DataReader):
                 "resName": [],
                 "chainID": [],
                 "resSeq": [],
-                "x": [],
-                "y": [],
-                "z": [],
+                "xyz": [],
                 "element": [],
             }
 
@@ -51,9 +49,9 @@ class PDBReader(DataReader):
                     atoms["resName"].append(line[17:20].strip())
                     atoms["chainID"].append(line[21])
                     atoms["resSeq"].append(int(line[22:26]))
-                    atoms["x"].append(float(line[30:38]))
-                    atoms["y"].append(float(line[38:46]))
-                    atoms["z"].append(float(line[46:54]))
+                    atoms["xyz"].append(
+                        (float(line[30:38]), float(line[38:46]), float(line[46:54]))
+                    )
                     atoms["element"].append(line[76:78].strip())
 
                 elif line.startswith("CONECT"):
@@ -72,16 +70,17 @@ class PDBReader(DataReader):
                     if atom_name_counter[name] > 1:
                         atoms["name"][i] = f"{name}{atom_name_counter[name]}"
 
-            frame["atoms"] = ArrayDict.from_dicts(atoms)
-            frame.box = mp.Box()
+            frame["atoms"] = ArrayDict(atoms)
+            frame["box"] = mp.Box()
 
             if len(bonds):
-                frame["bonds"] = ArrayDict.from_dicts(
+                frame["bonds"] = ArrayDict(
                     {
                         "i": bonds[:, 0],
                         "j": bonds[:, 1],
                     }
                 )
+
 
             return frame
 
@@ -90,41 +89,39 @@ class PDBWriter(DataWriter):
 
     def __init__(
         self,
-        path: str | Path,
+        path: Path,
     ):
         super().__init__(path=path)
 
     def write(self, frame):
-        def as_builtin(x):
-            if isinstance(x, np.ndarray):
-                if x.shape == ():  # 0-d
-                    return x.item()
-                elif x.shape == (1,):
-                    return x[0].item()
-            return x
-        with open(self.path, "w") as f:
+
+        with open(self._path, "w") as f:
             atoms = frame["atoms"]
+            name = frame.get("name", "MOL")
+            f.write(f"REMARK  {name}\n")
             for i, atom in enumerate(atoms.iterrows()):
-                serial = as_builtin(atom.get("id", i))
-                altLoc = as_builtin(atom.get("altLoc", ""))
-                unique_name = as_builtin(atom.get("unique_name", atom.get("name", "UNK")))
-                resName = as_builtin(atom.get("resName", "UNK"))
-                chainID = as_builtin(atom.get("chainID", "A"))
-                resSeq = as_builtin(atom.get("resSeq", atom.get("molid", 1)))
-                iCode = as_builtin(atom.get("iCode", ""))
-                elem = as_builtin(atom.get("element", "X"))
-                x, y, z = map(as_builtin, atom["xyz"])
+                # serial = as_builtin(atom.get("id", i))
+                serial = i + 1
+                altLoc = atom.get("altLoc", np.array("")).item()
+                unique_name = atom.get("unique_name", atom.get("name", np.array("UNK"))).item()
+
+                resName = atom.get("resName", np.array("UNK")).item()
+                chainID = atom.get("chainID", np.array("A")).item()
+                resSeq = atom.get("resSeq", atom.get("molid", np.array(1))).item()
+                iCode = atom.get("iCode", np.array("")).item()
+                elem = atom.get("element", np.array("X")).item()
+                x, y, z = atom["xyz"]
 
                 f.write(
-                    f"{'ATOM':6s}{serial:>5d} {unique_name.upper():>4s}{altLoc:1s}{resName:>3s} {chainID:1s}{resSeq:>4d}{iCode:1s}   "
+                    f"{'HETATM':6s}{serial:>5d} {unique_name.upper():>4s}{altLoc:1s}{resName:>3s} {chainID:1s}{resSeq:>4d}{iCode:1s}   "
                     f"{x:>8.3f}{y:>8.3f}{z:>8.3f}{' '*22}{elem:>2s}  \n"
                 )
 
             bonds = defaultdict(list)
             if "bonds" in frame:
                 for bond in frame["bonds"].iterrows():
-                    i = as_builtin(bond["i"])
-                    j = as_builtin(bond["j"])
+                    i = int(bond["i"] + 1)
+                    j = int(bond["j"] + 1)
                     bonds[i].append(j)
                     bonds[j].append(i)
 
@@ -133,6 +130,8 @@ class PDBWriter(DataWriter):
                         raise ValueError(
                             f"PDB only supports up to 4 bonds, but atom {i} has {len(js)} bonds: {js}"
                         )
-                    f.write(f"{'CONECT':6s}{i:>5d}{''.join([f'{j:>5d}' for j in js])}\n")
+                    f.write(
+                        f"{'CONECT':6s}{i:>5d}{''.join([f'{j:>5d}' for j in js])}\n"
+                    )
 
             f.write("END\n")

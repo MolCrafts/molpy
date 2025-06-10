@@ -1,9 +1,9 @@
 from io import StringIO
 from pathlib import Path
-from typing import Iterable, List, Union
+from typing import List, Sequence, Union
 
 import numpy as np
-import nesteddict as nd
+from molpy.core.arraydict import ArrayDict
 import molpy as mp
 
 from .base import TrajectoryReader
@@ -59,7 +59,7 @@ class LammpsTrajectoryReader(TrajectoryReader):
                 if line.strip().startswith(b"ITEM: TIMESTEP"):
                     self._byte_offsets.append((file_idx, pos))
 
-    def _parse_frame(self, frame_lines: Iterable[str]) -> mp.Frame:
+    def _parse_frame(self, frame_lines: Sequence[str]) -> mp.Frame:
         header = []
         box_bounds = []
         timestep = int(frame_lines[1].strip())
@@ -76,7 +76,7 @@ class LammpsTrajectoryReader(TrajectoryReader):
                 data_start = i + 1
                 break
 
-        df = nd.ArrayDict.from_csv(
+        df = ArrayDict.from_csv(
             StringIO("\n".join(frame_lines[data_start:])), header=header, seq=" "
         )
         box_bounds = np.array(box_bounds)

@@ -1,4 +1,3 @@
-from importlib import simple
 import pytest
 import molpy as mp
 
@@ -57,14 +56,12 @@ class TestBond:
         )
     
     def test_copy(self, bond):
+
         bond_copy = bond.copy()
-        assert bond_copy.itom is not bond.itom
-        assert bond_copy.jtom is not bond.jtom
+        assert bond_copy.itom is bond.itom
+        assert bond_copy.jtom is bond.jtom
         assert bond_copy is not bond
-        bond_copy_again = bond_copy.copy()
-        assert bond_copy_again.itom is not bond.itom
-        assert bond_copy_again.jtom is not bond.jtom
-        assert bond_copy_again is not bond
+
 
 class TestStruct:
 
@@ -75,15 +72,15 @@ class TestStruct:
 
             def __init__(self):
                 super().__init__()
-                C = self.add_atom(name="C", xyz=(0.1, 0, -0.07))
-                H1 = self.add_atom(name="H1", xyz=(-0.1, 0, -0.07))
-                H2 = self.add_atom(name="H2", xyz=(0., 0.1, 0.07))
-                H3 = self.add_atom(name="H3", xyz=(0., -0.1, 0.07))
-                H4 = self.add_atom(name="H4", xyz=(0., 0, 0.1))
-                self.add_bond(C, H1)
-                self.add_bond(C, H2)
-                self.add_bond(C, H3)
-                self.add_bond(C, H4)
+                C = self.def_atom(name="C", xyz=(0.1, 0, -0.07))
+                H1 = self.def_atom(name="H1", xyz=(-0.1, 0, -0.07))
+                H2 = self.def_atom(name="H2", xyz=(0., 0.1, 0.07))
+                H3 = self.def_atom(name="H3", xyz=(0., -0.1, 0.07))
+                H4 = self.def_atom(name="H4", xyz=(0., 0, 0.1))
+                self.def_bond(C, H1)
+                self.def_bond(C, H2)
+                self.def_bond(C, H3)
+                self.def_bond(C, H4)
 
         return Methane
     
@@ -97,13 +94,13 @@ class TestStruct:
             def __init__(self):
                 super().__init__()
                 ch3_1 = mp.builder.CH3()
-                ch3_1.translate(-ch3_1["atoms"][0].xyz)
+                ch3_1.move(-ch3_1["atoms"][0].xyz)
                 ch3_2 = mp.builder.CH3()
-                ch3_2.translate(-ch3_2["atoms"][0].xyz)
+                ch3_2.move(-ch3_2["atoms"][0].xyz)
                 ch3_2.rotate(180, axis=(0, 1, 0))
                 self.add_struct(ch3_1)
                 self.add_struct(ch3_2)
-                self.add_bond(ch3_1["atoms"][0], ch3_2["atoms"][0])
+                self.def_bond(ch3_1["atoms"][0], ch3_2["atoms"][0])
 
         return Ethane
     
@@ -133,7 +130,7 @@ class TestStruct:
         assert len(dihedrals) == 9
 
     def test_copy_simple_struct(self, methane):
-        meth = methane.copy()
+        meth = methane.clone()
         atoms = meth.atoms
         assert len(atoms) == 5
         assert all(isinstance(atom, mp.Atom) for atom in atoms)

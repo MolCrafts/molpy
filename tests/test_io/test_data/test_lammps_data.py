@@ -22,5 +22,5 @@ class TestReadLammpsData:
         frame = reader.read(frame)
         assert len(frame["atoms"]) == 16
         assert "type" in frame["atoms"]
-        print(frame["atoms", "type"])
+        print(frame[["atoms", "type"]])
         assert (frame["atoms"]["type"] == ['f', 'c3', 'f', 'f', 's6', 'o', 'o', 'ne', 'sy', 'o', 'o', 'c3', 'f', 'f', 'f', 'Li+']).all()

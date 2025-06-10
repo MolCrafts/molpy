@@ -206,6 +206,20 @@ class Box(Region, PeriodicBoundary):
             of the origin.
         """
         return self._matrix[2, 2] - self._origin[2]
+    
+    @property
+    def bounds(self) -> np.ndarray:
+        """
+        Get the bounds of the box.
+
+        Returns:
+            np.ndarray: A 2D array with shape (3, 2) representing the bounds of the box.
+        """
+        return np.array([
+            [self.xlo, self.xhi],
+            [self.ylo, self.yhi],
+            [self.zlo, self.zhi]
+        ]).T
 
     @property
     def style(self) -> Style:

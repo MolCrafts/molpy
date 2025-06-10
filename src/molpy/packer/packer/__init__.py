@@ -1,4 +1,3 @@
-
 from .packmol import Packmol
 from .nlopt import NloptPacker
 

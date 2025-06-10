@@ -1,4 +1,3 @@
-from itertools import zip_longest
 from pathlib import Path
 import re
 import molpy as mp
@@ -187,14 +186,14 @@ class GromacsTopReader:
         atomstyle = ff.def_atomstyle("full")
 
         header = [
-    "nr", "label", "resnr", "residu", "atom", "cgnr",
+    "nr", "name", "resnr", "residu", "atom", "cgnr",
     "charge", "mass", "typeB", "chargeB", "massB"
 ]
         atomtypes = []
         for line in map(lambda l: l.split(), lines):
             data = dict(zip(header, line))
             at = atomstyle.def_type(
-                data.pop("label"),
+                data.pop("name"),
                 **data
             )
             atomtypes.append(at)
@@ -238,13 +237,13 @@ class GromacsTopReader:
             jtype = self.atomtypes[int(j) - 1]
 
             # Use a canonical order for the style name (e.g., CA-CB)
-            name = f"{itype.label}-{jtype.label}"
+            name = f"{itype.name}-{jtype.name}"
 
             param_names = param_specs[style_name]
             param_dict = {n: v for n, v in zip(param_names, params)}
 
             # Register the bond type in the force‑field object
-            bondstyle.def_type(name, itype=itype, jtype=jtype, **param_dict)
+            bondstyle.def_type(itype=itype, jtype=jtype, name=name, **param_dict)
 
 
     def _parse_angle_section(self, lines: list[str], ff: mp.ForceField) -> None:
@@ -283,11 +282,11 @@ class GromacsTopReader:
             jtype = self.atomtypes[int(j) - 1]
             ktype = self.atomtypes[int(k) - 1]
 
-            name = f"{itype.label}-{jtype.label}-{ktype.label}"
+            name = f"{itype.name}-{jtype.name}-{ktype.name}"
             param_names = param_specs[style_name]
             param_dict = {n: v for n, v in zip(param_names, params)}
 
-            anglestyle.def_type(name, itype=itype, jtype=jtype, ktype=ktype, **param_dict)
+            anglestyle.def_type(name=name, itype=itype, jtype=jtype, ktype=ktype, **param_dict)
 
 
     def _parse_dihedral_section(self, lines: list[str], ff: mp.ForceField) -> None:
@@ -325,11 +324,11 @@ class GromacsTopReader:
             ktype = self.atomtypes[int(k) - 1]
             ltype = self.atomtypes[int(l) - 1]
 
-            name = f"{itype.label}-{jtype.label}-{ktype.label}-{ltype.label}"
+            name = f"{itype.name}-{jtype.name}-{ktype.name}-{ltype.name}"
             param_names = param_specs[style_name]
             param_dict = {n: v for n, v in zip(param_names, params)}
 
-            dihstyle.def_type(name, itype=itype, jtype=jtype, ktype=ktype, ltype=ltype, **param_dict)
+            dihstyle.def_type(name=name, itype=itype, jtype=jtype, ktype=ktype, ltype=ltype, **param_dict)
 
     def _parse_pair_section(self, lines: list[str], ff: mp.ForceField) -> None:
         """Parse the [pairtypes] or [nonbond_params] section."""
@@ -361,7 +360,7 @@ class GromacsTopReader:
             jtype = self.atomtypes[int(j) - 1]
 
             pairstyle.def_type(
-                f"{itype.label}-{jtype.label}",
+                name=f"{itype.name}-{jtype.name}",
                 itype=itype,
                 jtype=jtype,
                 **{n: v for n, v in zip(param_names, params)},

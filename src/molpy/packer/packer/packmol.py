@@ -1,11 +1,11 @@
 from pathlib import Path
 import shutil
 import molpy as mp
-import molpy.pack as mpk
+from molpy.core.arraydict import ArrayDict
+import molpy.packer as mpk
 import subprocess
 import tempfile
 import numpy as np
-import pandas as pd
 from .base import Packer
 
 
@@ -42,9 +42,10 @@ def map_region_to_packmol_definition(constraint):
 
 class Packmol(Packer):
 
-    def __init__(self):
+    def __init__(self, workdir: Path = Path.cwd(), executable: str = "packmol"):
         super().__init__()
-        self.cmd = "packmol"
+        self.workdir = workdir
+        self.cmd = executable
         self.optimizer = shutil.which(self.cmd)
         if self.optimizer is None:
             raise FileNotFoundError("Packmol not found in PATH")
@@ -69,7 +70,7 @@ class Packmol(Packer):
 
             tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".pdb")
 
-            mp.io.write_pdb(tmpfile.name, frame)
+            mp.io.write_pdb(Path(tmpfile.name), frame)
 
             lines.append(f"structure {tmpfile.name}")
             lines.append(f"  number {number}")
@@ -85,13 +86,14 @@ class Packmol(Packer):
         for file in self.intermediate_files:
             Path(file).unlink()
 
-    def pack(self, targets, max_steps, seed) -> mp.System:
+    def pack(self, max_steps: int = 1000, seed: int = 4628) -> mp.Frame:
+        targets = self.targets
         self.generate_input(targets, max_steps, seed)
         subprocess.run(
             f"{self.cmd} < .packmol.inp > .packmol.out",
             shell=True
         )
-        optimized_frame = mp.io.read_pdb(".optimized.pdb")
+        optimized_frame = mp.io.read_pdb(Path(".optimized.pdb"))
         self.remove_input()
         atoms = []
         bonds = []
@@ -140,19 +142,18 @@ class Packmol(Packer):
                         d[["i", "j", "k", "l"]] + n_atoms[n_struct_added + i]
                     )
                     dihedrals.append(d)
-
             if "type" in a:
                 n_atom_types += a["type"].max()  # assume start with 1 always
 
             n_struct_added += target.number
-        _atoms = pd.concat(atoms, ignore_index=True)
+        _atoms = ArrayDict.concat(atoms)
         _atoms[["x", "y", "z"]] = optimized_frame["atoms"][["x", "y", "z"]]
         frame["atoms"] = _atoms
         ## WARNING: assume all targets has/dont have bonds, angles, dihedrals
         if "bonds" in target.frame:
-            frame["bonds"] = pd.concat(bonds, ignore_index=True)
+            frame["bonds"] = ArrayDict.concat(bonds)
         if "angles" in target.frame:
-            frame["angles"] = pd.concat(angles, ignore_index=True)
+            frame["angles"] = ArrayDict.concat(angles)
         if "dihedrals" in target.frame:
-            frame["dihedrals"] = pd.concat(dihedrals, ignore_index=True)
+            frame["dihedrals"] = ArrayDict.concat(dihedrals)
         return frame

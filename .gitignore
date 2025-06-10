@@ -11,6 +11,7 @@ tests-data
 test.*
 a.out
 chemfile-testcases/
+examples/data/
 
 # C extensions
 *.so

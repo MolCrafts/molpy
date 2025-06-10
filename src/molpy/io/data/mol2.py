@@ -1,12 +1,7 @@
 from pathlib import Path
 
 from molpy import Element
-import numpy as np
-
-import molpy as mp
-from collections import defaultdict
-from .base import DataReader, DataWriter
-from nesteddict import ArrayDict
+from molpy.core.arraydict import ArrayDict
 
 class Mol2Reader(DataReader):
 

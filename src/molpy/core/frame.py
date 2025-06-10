@@ -1,21 +1,30 @@
-from molpy.core.utils import TagApplyer
-from .box import Box
-import molpy as mp
-import numpy as np
+from collections.abc import MutableMapping
 from copy import deepcopy
-from nesteddict import NestDict, ArrayDict
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Sequence
+
+import numpy as np
+from . import ArrayDict, NestDict
+
+import molpy as mp
+from molpy.core.utils import TagApplyer
+
+from .box import Box
+
+if TYPE_CHECKING:
+    from .struct import Struct
 
 
 class Frame(NestDict):
 
-    def __new__(cls, data: dict[str, Any] = {}, *, style="atomic"):
+    box: Box | None = None
 
-        if style == "atomic":
-            return super().__new__(AllAtomFrame)
+    def __new__(cls, data: dict[str, Any] = {}, *, style="atomic") -> "Frame":
+
+        if cls is Frame and style == "atomic":
+            return AllAtomFrame.__new__(AllAtomFrame, data) 
         return super().__new__(cls)
 
-    def __init__(self, data: dict[str, Any] = {}, *, style="atomic"):
+    def __init__(self, data: dict[str, Any] = {}, *args, **kwargs):
         """Static data structure for aligning model. The frame is a dictionary-like, multi-DataFrame object, facilitating access data by keys.
 
         Args:
@@ -40,6 +49,7 @@ class Frame(NestDict):
         atom_dicts = []
         bond_dicts = []
         bond_index = []
+        tager = TagApplyer()
         for struct in structs:
             if "bonds" in struct:
                 topo = struct.get_topology()
@@ -53,9 +63,9 @@ class Frame(NestDict):
             atom_dicts.extend(
                 [atom.to_dict() for atom in struct.atoms]
             )
-        tager = TagApplyer()
-        tager.apply_tags(atom_dicts)
-        tager.apply_tags(bond_dicts)
+            tager.update_dollar_counter()
+            tager.apply_tags(atom_dicts)
+            tager.apply_tags(bond_dicts)
 
         frame["atoms"] = ArrayDict.from_dicts(atom_dicts)
         frame["bonds"] = ArrayDict.from_dicts(bond_dicts)
@@ -78,9 +88,9 @@ class Frame(NestDict):
         return deepcopy(self)
 
 
-class AllAtomMixin:
+class AllAtomMixin(MutableMapping[Literal["atoms", "bonds", "angles", "dihedrals", "impropers"], ArrayDict]):
 
-    def split(self, masks: list[bool] | list[int]):
+    def split(self, masks: list[bool] | list[int] | np.ndarray) -> list["Frame"]:
 
         frames = []
         masks = np.array(masks)
@@ -90,10 +100,10 @@ class AllAtomMixin:
             unique_mask = [masks == i for i in np.unique(masks)]
 
         for mask in unique_mask:
-            frame = Frame()
+            frame = self.__class__()
             frame["atoms"] = self["atoms"][mask]
             atom_id_of_this_frame = frame["atoms"]["id"]
-            if "bonds" in self:
+            if self["bonds"]:
                 bond_i = self["bonds"]["i"]
                 bond_j = self["bonds"]["j"]
                 bond_mask = np.logical_and(
@@ -102,7 +112,7 @@ class AllAtomMixin:
                 )
                 frame["bonds"] = self["bonds"][bond_mask]
 
-            if "angles" in self:
+            if self["angles"]:
                 angle_i = self["angles"]["i"]
                 angle_j = self["angles"]["j"]
                 angle_k = self["angles"]["k"]
@@ -113,7 +123,7 @@ class AllAtomMixin:
                 )
                 frame["angles"] = self["angles"][angle_mask]
 
-            if "dihedrals" in self:
+            if self["dihedrals"]:
                 dihedral_i = self["dihedrals"]["i"]
                 dihedral_j = self["dihedrals"]["j"]
                 dihedral_k = self["dihedrals"]["k"]
@@ -126,7 +136,7 @@ class AllAtomMixin:
                 )
                 frame["dihedrals"] = self["dihedrals"][dihedral_mask]
 
-            if "impropers" in self:
+            if self["impropers"]:
                 improper_i = self["impropers"]["i"]
                 improper_j = self["impropers"]["j"]
                 improper_k = self["impropers"]["k"]
@@ -149,7 +159,7 @@ class AllAtomMixin:
         struct = Struct()
         atoms = self["atoms"]
         for atom in atoms.iterrows():
-            struct.add_atom(**atom)
+            struct.def_atom(**atom)
 
         if "bonds" in self:
             struct["bonds"] = Entities()
@@ -210,12 +220,15 @@ class AllAtomMixin:
         return struct
 
 
-class AllAtomFrame(AllAtomMixin, Frame):
+class AllAtomFrame(Frame, AllAtomMixin):
     """A frame that contains atomistic infomation. It is a subclass of Frame and implements the AllAtomMixin interface."""
-    def __init__(self, data: dict[str, Any] = {}):
+    def __init__(self, data: dict[str, Any] = {}, *args, **kwargs):
         """Initialize the AllAtomFrame with data.
 
         Args:
             data (dict): A dictionary of dataframes.
         """
+        for key in ["atoms", "bonds", "angles", "dihedrals", "impropers"]:
+            if key not in data:
+                data[key] = ArrayDict()
         super().__init__(data)
