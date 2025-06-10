@@ -1,9 +1,18 @@
 import molpy as mp
 import molpack as mpk
 
+
 class Target:
 
-    def __init__(self, frame:mp.Frame, number: int, constraint: mpk.Constraint, is_fixed:bool=False, optimizer=None, name: str=""):
+    def __init__(
+        self,
+        frame: mp.Frame,
+        number: int,
+        constraint: mpk.Constraint,
+        is_fixed: bool = False,
+        optimizer=None,
+        name: str = "",
+    ):
         self.frame = frame
         self.number = number
         self.constraint = constraint
@@ -16,12 +25,8 @@ class Target:
 
     @property
     def n_points(self):
-        return len(self.frame['atoms']) * self.number
-    
-    @property
-    def density(self):
-        return self.n_points / self.constraint.volumn()
-    
+        return len(self.frame["atoms"]) * self.number
+
     @property
     def points(self):
-        return self.frame['atoms'][['x', 'y', 'z']].to_numpy()
+        return self.frame["atoms"][["x", "y", "z"]]

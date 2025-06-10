@@ -1,4 +1,4 @@
-from nesteddict import ArrayDict
+from molpy.core.arraydict import ArrayDict
 from .base import DataReader
 from pathlib import Path
 from molpy import Element

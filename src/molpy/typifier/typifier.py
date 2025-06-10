@@ -154,8 +154,12 @@ class AmberToolsTypifier:
 
     @h_submitor.local
     def typify(
-        self, struct: mp.Struct, workdir: Path | None = None, net_charge: float = 0.0
-    ):
+        self,
+        workdir: Path,
+        struct: mp.Struct,
+        net_charge: float = 0.0,
+        is_frcmod: bool = False,
+    ) -> mp.Struct:
         """
         Typify the struct using AmberTools.
         """
@@ -171,10 +175,10 @@ class AmberToolsTypifier:
                 dir.mkdir(parents=True, exist_ok=True)
             pdb_name = f"{name}.pdb"
             ac_name = f"{name}.ac"
-            struct["ac_path"] = dir / ac_name
-            if not struct["ac_path"].exists():
+            ac_path = dir / ac_name
+            if not ac_path.exists():
                 write_pdb(dir / pdb_name, struct.to_frame(bond_keys=["i", "j"]))
-
+                print(f"antechambering...")
                 yield {
                     "job_name": "antechamber",
                     "cmd": f"antechamber -i {pdb_name} -fi pdb -o {ac_name} -fo ac -an y -at {self.forcefield} -c {self.charge_type} -nc {net_charge}",
@@ -182,6 +186,25 @@ class AmberToolsTypifier:
                     "cwd": dir,
                     "block": True,
                 }
+
+                print(f"prepgening...")
+                yield {
+                    "job_name": "prepgen",
+                    "cmd": f"prepgen -i {name}.ac -o {name}.prepi -f prepi -rn {name} -rf {name}.res",
+                    "conda_env": self.conda_env,
+                    "cwd": dir,
+                    "block": True,
+                }
+
+            if is_frcmod:
+                yield {
+                    "job_name": "parmchk2",
+                    "cmd": f"parmchk2 -i {name}.ac -f ac -o {name}.frcmod",
+                    "conda_env": self.conda_env,
+                    "cwd": dir,
+                    "block": True,
+                }
+
             frame = mp.io.read_amber_ac(dir / ac_name, frame=mp.Frame())
 
             for satom, fatom in zip(struct["atoms"], frame["atoms"].iterrows()):
@@ -190,78 +213,3 @@ class AmberToolsTypifier:
             for sbond, fbond in zip(struct["bonds"], frame["bonds"].iterrows()):
                 sbond["type"] = fbond["type"]
         return struct
-
-    @h_submitor.local
-    def get_forcefield(self, struct: mp.Struct, workdir: Path | None = None, frame = None):
-        """
-        Generate Amber forcefield files (prmtop/inpcrd) for a single molecule using AmberTools.
-        """
-        from pathlib import Path
-        from tempfile import TemporaryDirectory
-
-        name = struct.get("name", "mol")
-        with TemporaryDirectory() if workdir is None else workdir as dir:
-            dir = Path(dir)
-            if not dir.exists():
-                dir.mkdir(parents=True, exist_ok=True)
-            ac_path = dir / f"{name}.ac"
-            mol2_path = dir / f"{name}.mol2"
-            frcmod_path = dir / f"{name}.frcmod"
-            prmtop_path = dir / f"{name}.prmtop"
-            inpcrd_path = dir / f"{name}.inpcrd"
-            leapin_path = dir / f"{name}_leap.in"
-
-            # 1. 如果没有ac文件，先生成
-            if not ac_path.exists():
-                write_pdb(dir / f"{name}.pdb", struct.to_frame(bond_keys=["i", "j"]))
-                yield {
-                    "job_name": "antechamber",
-                    "cmd": f"antechamber -i {name}.pdb -fi pdb -o {name}.ac -fo ac -an y -at {self.forcefield} -c {self.charge_type}",
-                    "conda_env": self.conda_env,
-                    "cwd": dir,
-                    "block": True,
-                }
-            # 2. 生成mol2
-            if not mol2_path.exists():
-                yield {
-                    "job_name": "ac2mol2",
-                    "cmd": f"antechamber -i {name}.ac -fi ac -o {name}.mol2 -fo mol2 -an y -at {self.forcefield}",
-                    "conda_env": self.conda_env,
-                    "cwd": dir,
-                    "block": True,
-                }
-            # 3. 生成frcmod
-            if not frcmod_path.exists():
-                yield {
-                    "job_name": "parmchk2",
-                    "cmd": f"parmchk2 -i {name}.mol2 -f mol2 -o {name}.frcmod",
-                    "conda_env": self.conda_env,
-                    "cwd": dir,
-                    "block": True,
-                }
-            # 4. 生成tleap输入文件
-            leaprc = f"source leaprc.gaff\n"
-            leaprc += f"mol = loadmol2 {name}.mol2\n"
-            leaprc += f"loadamberparams {name}.frcmod\n"
-            leaprc += f"saveamberparm mol {name}.prmtop {name}.inpcrd\n"
-            leaprc += f"quit\n"
-            with open(leapin_path, "w") as f:
-                f.write(leaprc)
-            # 5. 调用tleap
-            yield {
-                "job_name": "tleap",
-                "cmd": f"tleap -f {leapin_path.name}",
-                "conda_env": self.conda_env,
-                "cwd": dir,
-                "block": True,
-            }
-
-            frame = mp.io.read_amber(prmtop=prmtop_path, inpcrd=inpcrd_path, frame=frame)
-
-            for satom, fatom in zip(struct["atoms"], frame["atoms"].iterrows()):
-                satom["type"] = fatom["type"]
-                satom["q"] = fatom["q"]
-            for sbond, fbond in zip(struct["bonds"], frame["bonds"].iterrows()):
-                sbond["type"] = fbond["type"]
-
-            return frame

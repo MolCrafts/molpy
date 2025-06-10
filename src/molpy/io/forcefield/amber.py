@@ -3,7 +3,7 @@ import molpy as mp
 import numpy as np
 from typing import Callable, Iterator
 import math
-from nesteddict import ArrayDict
+from molpy.core.arraydict import ArrayDict
 
 class AmberPrmtopReader:
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 from molpy import Element
 from .base import DataReader
-from nesteddict import ArrayDict
+from molpy.core.arraydict import ArrayDict
 
 class AcReader(DataReader):
 

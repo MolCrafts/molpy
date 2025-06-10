@@ -45,7 +45,7 @@ class OrConstraint(Constraint):
             return self.b.dpenalty(points)
     
 class InsideBoxConstraint(Constraint):
-    def __init__(self, length, origin):
+    def __init__(self, length, origin=np.array([0, 0, 0])):
         self.region = mp.BoxRegion(length, origin)
         self.lengths = np.array(length)
         self.origin = np.array(origin)

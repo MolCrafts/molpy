@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import molpy as mp
-from nesteddict import ArrayDict
+from molpy.core.arraydict import ArrayDict
 
 class AmberInpcrdReader:
 

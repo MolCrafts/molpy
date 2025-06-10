@@ -1,12 +1,10 @@
-from collections import UserDict, namedtuple
-from collections.abc import Iterable, MutableMapping
+from collections import UserDict
+from collections.abc import MutableMapping
 from copy import deepcopy
-from dataclasses import field
 from typing import Callable, Generic, Protocol, Sequence, TypeVar
 
-from attr import dataclass
 import numpy as np
-from nesteddict import ArrayDict
+from . import ArrayDict
 from numpy.typing import ArrayLike
 
 from molpy.op import rotate_by_rodrigues
@@ -41,11 +39,11 @@ class Entity(UserDict):
 
     def to_dict(self):
         return dict(self)
-    
+
     def keys(self):
         """Return the keys of the entity."""
         return self.data.keys()
-    
+
 
 class Spatial(Protocol):
     """Mixin class for spatial operations on entities."""
@@ -113,7 +111,7 @@ class ManyBody(Entity):
 
     def __hash__(self):
         return sum([hash(atom) for atom in self._atoms]) + hash(self.__class__.__name__)
-    
+
     @property
     def atoms(self):
         """Get the atoms involved in the entity."""
@@ -323,7 +321,7 @@ class EntityContainer(Sequence[T]):
         """Extend the container with multiple entities."""
         ...
 
-    
+
 class Entities(EntityContainer[T]):
     """Class representing a collection of entities."""
 
@@ -335,7 +333,7 @@ class Entities(EntityContainer[T]):
         self._data.append(entity)
         return entity
 
-    def get_by(self, condition: Callable[[T], bool]) -> T | None:
+    def get_by(self, condition: Callable[[Entity], bool]) -> Entity | None:
         """
         Get an entity based on a condition.
 
@@ -359,15 +357,19 @@ class Entities(EntityContainer[T]):
         """Return an iterator over the entities."""
         return iter(self._data)
 
-    def __getitem__(self, key: int|Sequence[int]):
+    def __getitem__(self, key: int | Sequence[int]):
         """Get an entity by its index."""
         if isinstance(key, (int, slice)):
             return self._data[key]
-        elif isinstance(key, Iterable):
-            return [self._data[i] for i in key]
+        elif isinstance(key, str):
+            return self.get_by(lambda entity: entity["name"] == key)
+        elif isinstance(key, Sequence):
+            if all(isinstance(i, int) for i in key):
+                return [self._data[i] for i in key]
+            elif all(isinstance(i, str) for i in key):
+                return [self.get_by(lambda entity: entity["name"] == i) for i in key]
         else:
             return self._data[key]
-        
 
     def __repr__(self):
         """Return a string representation of the collection."""
@@ -405,15 +407,15 @@ class Atomistic(MutableMapping):
     @property
     def bonds(self) -> Entities[Bond]:
         return self["bonds"]
-    
+
     @property
     def angles(self) -> Entities[Angle]:
         return self["angles"]
-    
+
     @property
     def dihedrals(self) -> Entities[Dihedral]:
         return self["dihedrals"]
-    
+
     def add_atom(self, atom: Atom):
         """
         Add an atom to the structure.
@@ -505,7 +507,6 @@ class Atomistic(MutableMapping):
             self.del_atom(atom)
         return self
 
-
     def del_bond(self, itom, jtom):
         """
         Delete a bond from the structure.
@@ -523,7 +524,7 @@ class Atomistic(MutableMapping):
             if bond == to_be_deleted:
                 self["bonds"].remove(bond)
         return self
-    
+
     def del_bonds(self, bonds: Sequence[tuple[Atom, Atom]]):
         """
         Delete multiple bonds from the structure.
@@ -535,7 +536,7 @@ class Atomistic(MutableMapping):
             self.del_bond(i, j)
         return self
 
-    def get_atom_by(self, condition: Callable[[Atom], bool]) -> Atom|None:
+    def get_atom_by(self, condition: Callable[[Atom], bool]) -> Atom | None:
         """
         Get an atom based on a condition.
 
@@ -546,6 +547,7 @@ class Atomistic(MutableMapping):
         - The first atom that satisfies the condition, or None.
         """
         return next((atom for atom in self["atoms"] if condition(atom)), None)
+
 
 class Struct(Entity, Atomistic, Spatial):
     """Class representing a molecular structure."""
@@ -628,7 +630,6 @@ class Struct(Entity, Atomistic, Spatial):
 
         return struct
 
-
     @property
     def xyz(self):
         """Get the coordinates of the atoms in the structure."""
@@ -685,7 +686,9 @@ class Struct(Entity, Atomistic, Spatial):
 
         return new, atom_mapping
 
-    def to_frame(self, atom_keys: list[str]|None = None, bond_keys: list[str]|None = None):
+    def to_frame(
+        self, atom_keys: list[str] | None = None, bond_keys: list[str] | None = None
+    ):
         """
         Convert the structure to a Frame object.
 

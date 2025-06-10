@@ -1,13 +1,14 @@
 from collections.abc import MutableMapping
 from copy import deepcopy
-from typing import Any, Literal, Sequence, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 import numpy as np
-from nesteddict import ArrayDict, NestDict
+from . import ArrayDict, NestDict
 
 import molpy as mp
-from .box import Box
 from molpy.core.utils import TagApplyer
+
+from .box import Box
 
 if TYPE_CHECKING:
     from .struct import Struct

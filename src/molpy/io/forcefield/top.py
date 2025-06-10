@@ -1,4 +1,3 @@
-from itertools import zip_longest
 from pathlib import Path
 import re
 import molpy as mp

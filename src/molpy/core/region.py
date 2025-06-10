@@ -1,6 +1,6 @@
 import numpy as np
 import numpy.typing as npt
-from abc import abstractmethod, ABC, abstractproperty
+from abc import abstractmethod, ABC
 
 
 class Region(ABC):
@@ -162,3 +162,4 @@ class BoxRegion(Region):
     @property
     def bounds(self):
         return np.array([self.origin, self.upper]).T
+
