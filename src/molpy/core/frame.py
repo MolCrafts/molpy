@@ -126,22 +126,38 @@ class Frame(MutableMapping):
             frames.append(f)
         return frames
 
+    def to_dict(self) -> dict[str, dict[str, np.ndarray]]:
+        """Return a nested ``dict`` representation of the frame."""
+        data: dict[str, Any] = {k: {n: v.values for n, v in self[k].data_vars.items()} for k in self._tree.keys()}
+        data.update(self._scalars)
+        if self.box is not None:
+            data["box"] = self.box.to_dict()
+        return data
+
     def to_struct(self):
         from .struct import Entities, Struct
         import molpy as mp
 
+        data = self.to_dict()
         struct = Struct()
-        atoms_df = self["atoms"].to_dataframe()
-        for _, atom in atoms_df.iterrows():
-            struct.def_atom(**atom.to_dict())
 
-        if "bonds" in self._tree:
+        if "atoms" in data:
+            atoms = data["atoms"]
+            n_atoms = len(next(iter(atoms.values()), []))
+            for i in range(n_atoms):
+                struct.def_atom(**{k: np.asarray(v)[i] for k, v in atoms.items()})
+
+        if "bonds" in data:
             struct["bonds"] = Entities()
-            for _, bond in self["bonds"].to_dataframe().iterrows():
-                i, j = int(bond.pop("i")), int(bond.pop("j"))
-                itom = struct["atoms"].get_by(lambda a: a["id"] == i)
-                jtom = struct["atoms"].get_by(lambda a: a["id"] == j)
-                struct["bonds"].add(mp.Bond(itom, jtom, **bond.to_dict()))
+            bonds = data["bonds"]
+            n_bonds = len(next(iter(bonds.values()), []))
+            for i in range(n_bonds):
+                bond = {k: np.asarray(v)[i] for k, v in bonds.items()}
+                i_id = int(bond.pop("i"))
+                j_id = int(bond.pop("j"))
+                itom = struct["atoms"].get_by(lambda a: a["id"] == i_id)
+                jtom = struct["atoms"].get_by(lambda a: a["id"] == j_id)
+                struct["bonds"].add(mp.Bond(itom, jtom, **bond))
         return struct
 
     def __add__(self, other: "Frame") -> "Frame":
