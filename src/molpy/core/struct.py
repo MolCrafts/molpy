@@ -705,8 +705,13 @@ class Struct(Entity, Atomistic, Spatial):
         for i, atom in enumerate(self["atoms"]):
             atom_name_idx_mapping[atom] = i
 
+        if atom_keys is None:
+            atom_keys = self["atoms"][0].keys()
+        if bond_keys is None:
+            bond_keys = self["bonds"][0].keys() if len(self["bonds"]) > 0 else []
+
         frame["atoms"] = _dict_to_dataset(
-            {k: [getattr(a, k) for a in self["atoms"]] for k in atom_keys}
+            {k: [a[k] for a in self["atoms"]] for k in atom_keys}
         )
         if "bonds" in self:
             bdicts = []
