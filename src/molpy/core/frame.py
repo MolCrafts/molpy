@@ -1,263 +1,159 @@
-from .box import Box
-import molpy as mp
 import numpy as np
-import pandas as pd
-from copy import deepcopy
+import xarray as xr
+from datatree import DataTree
+from collections.abc import MutableMapping
+from typing import Any, Sequence
+
+from .box import Box
 
 
-class Frame(dict):
+def _dict_to_dataset(data: dict) -> xr.Dataset:
+    """Convert a mapping of arrays to an ``xarray.Dataset`` with a common
+    ``index`` dimension."""
+    variables = {}
+    for name, value in data.items():
+        arr = np.asarray(value)
+        dims = ["index"] + [f"dim_{i}" for i in range(1, arr.ndim)]
+        variables[name] = (dims, arr)
+    return xr.Dataset(variables)
 
-    def __init__(
-        self, data: dict[str, pd.DataFrame | dict[str, list]] | None = None, **props
-    ):
-        """Static data structure for aligning model. The frame is a dictionary-like, multi-DataFrame object, facilitating access data by keys.
 
-        Args:
-            data (dict): A dictionary of dataframes.
-        """
-        if data is not None:
+class Frame(MutableMapping):
+    """Container of simulation data based on :class:`xarray.Dataset` and
+    :class:`datatree.DataTree`.``"""
+
+    box: Box | None = None
+
+    def __new__(cls, data: dict[str, Any] | None = None, *, style: str = "atomic"):
+        if cls is Frame and style == "atomic":
+            return super().__new__(AllAtomFrame)
+        return super().__new__(cls)
+
+    def __init__(self, data: dict[str, Any] | None = None, *_, **__):
+        self._tree = DataTree(name="root")
+        self.box = None
+        self._scalars: dict[str, Any] = {}
+        if data:
             for key, value in data.items():
-                assert isinstance(value, (pd.DataFrame, pd.Series)) or isinstance(
-                    value, dict
-                ), TypeError(
-                    "data must be dataframe-like, otherwise assign them by `Frame(name=object)` and call it by `frame.name`"
-                )
-                if isinstance(value, dict):
-                    self[key] = pd.DataFrame(data=value)
+                self[key] = value
+
+    # mapping protocol -----------------------------------------------------
+    def __getitem__(self, key: str):
+        if key == "box":
+            return self.box
+        if key in self._tree:
+            return self._tree[key].ds
+        return self._scalars[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        if key == "box":
+            self.box = value
+            return
+        if isinstance(value, xr.Dataset):
+            ds = value
+        elif isinstance(value, dict):
+            ds = _dict_to_dataset(value)
+        elif np.isscalar(value):
+            self._scalars[key] = value
+            return
+        else:
+            raise TypeError("Frame values must be xarray.Dataset or mapping")
+        self._tree[key] = DataTree(ds, name=key)
+
+    def __delitem__(self, key: str) -> None:
+        if key == "box":
+            self.box = None
+        elif key in self._tree:
+            del self._tree[key]
+        else:
+            del self._scalars[key]
+
+    def __iter__(self):
+        for k in self._tree.keys():
+            yield k
+        for k in self._scalars.keys():
+            yield k
+        if self.box is not None:
+            yield "box"
+
+    def __len__(self) -> int:  # number of datasets + box if present
+        n = len(self._tree) + len(self._scalars)
+        if self.box is not None:
+            n += 1
+        return n
+
+    def __repr__(self) -> str:
+        return f"<Frame: {list(self._tree.keys())}>"
+
+    # convenience methods -------------------------------------------------
+    def copy(self) -> "Frame":
+        data = {k: self[k].copy() for k in self._tree.keys()}
+        if self.box is not None:
+            data["box"] = self.box
+        return self.__class__(data)
+
+    @classmethod
+    def from_frames(cls, others: Sequence["Frame"]) -> "Frame":
+        frame = cls()
+        keys = set().union(*(f._tree.keys() for f in others))
+        for key in keys:
+            datasets = [f[key] for f in others if key in f._tree]
+            frame[key] = xr.concat(datasets, dim="index")
+        if any(f.box is not None for f in others):
+            frame.box = others[0].box
+        return frame
+
+    def concat(self, other: "Frame") -> "Frame":
+        return self.from_frames([self, other])
+
+    def split(self, masks: Sequence[int] | Sequence[bool] | np.ndarray) -> list["Frame"]:
+        masks = np.asarray(masks)
+        if masks.dtype == bool:
+            groups = [masks]
+        else:
+            groups = [masks == i for i in np.unique(masks)]
+        frames = []
+        for mask in groups:
+            f = self.__class__()
+            for key in self._tree.keys():
+                ds = self[key]
+                if "index" in ds.dims:
+                    f[key] = ds.sel(index=mask)
                 else:
-                    self[key] = value
-
-        for k, v in props.items():
-            setattr(self, k, v)
-
-    @classmethod
-    def from_frames(cls, *others):
-        frame = cls()
-        for fkey in set([k for other in others for k in other.keys()]):
-            frame[fkey] = pd.concat(
-                (other[fkey] for other in others), axis=0, ignore_index=True, sort=False
-            )
-
-        # if any of the frames have a box, use the first one
-        for other in others:
-            if "box" in other:
-                frame.box = other.box
-                break
-        return frame
-    
-    @classmethod
-    def from_structs(cls, structs):
-        frame = cls()
-        
-        atom_list = []
-        for atoms in [atom for struct in structs for atom in struct.atoms]:
-            atom_list.append(atoms)
-        frame["atoms"] = pd.DataFrame([atom.to_dict() for atom in atom_list])
-        for struct in structs:
-            if "bonds" in struct:
-                bond_dicts = []
-                for bonds in struct.bonds:
-                    bond_dicts.append(bonds.to_dict() | {"i": atom_list.index(bonds.itom), "j": atom_list.index(bonds.jtom)})
-        frame["bonds"] = pd.DataFrame(bond_dicts)
-        return frame
-
-    @classmethod
-    def concat(cls, frames: list["Frame"]) -> "Frame":
-        """Concatenate a list of frames into a single frame.
-
-        Args:
-            frames (list[Frame]): A list of frames.
-        """
-        frame = cls()
-        for key in frames[0].keys():
-            if isinstance(frames[0][key], pd.DataFrame):
-                frame[key] = pd.concat(
-                    [f[key] for f in frames if key in f], ignore_index=True, sort=False
-                )
-
-        return frame
-
-    def __len__(self):
-        """Return the number of atoms in the frame."""
-        return len(self["atoms"])
+                    f[key] = ds.copy()
+            if self.box is not None:
+                f.box = self.box
+            frames.append(f)
+        return frames
 
     def to_struct(self):
         from .struct import Entities, Struct
+        import molpy as mp
 
         struct = Struct()
-        atoms = self["atoms"]
-        for _, atom in atoms.iterrows():
-            struct.add_atom(**atom)
+        atoms_df = self["atoms"].to_dataframe()
+        for _, atom in atoms_df.iterrows():
+            struct.def_atom(**atom.to_dict())
 
-        if "bonds" in self:
+        if "bonds" in self._tree:
             struct["bonds"] = Entities()
-            bonds = self["bonds"]
-            for _, bond in bonds.iterrows():
-                i, j = bond.pop("i"), bond.pop("j")
-                itom = struct["atoms"].get_by(lambda atom: atom["id"] == i)
-                jtom = struct["atoms"].get_by(lambda atom: atom["id"] == j)
-                struct["bonds"].add(
-                    mp.Bond(
-                        itom,
-                        jtom,
-                        **{k: v for k, v in bond.items()},
-                    )
-                )
-
-        if "angles" in self:
-            struct["angles"] = Entities()
-            angles = self["angles"]
-            for _, angle in angles.iterrows():
-                i, j, k = angle.pop("i"), angle.pop("j"), angle.pop("k")
-                itom = struct["atoms"].get_by(lambda atom: atom["id"] == i)
-                jtom = struct["atoms"].get_by(lambda atom: atom["id"] == j)
-                ktom = struct["atoms"].get_by(lambda atom: atom["id"] == k)
-                struct["angles"].add(
-                    mp.Angle(
-                        itom,
-                        jtom,
-                        ktom,
-                        **{k: v for k, v in angle.items()},
-                    )
-                )
-
-        if "dihedrals" in self:
-            struct["dihedrals"] = Entities()
-            dihedrals = self["dihedrals"]
-            for _, dihedral in dihedrals.iterrows():
-                i, j, k, l = (
-                    dihedral.pop("i"),
-                    dihedral.pop("j"),
-                    dihedral.pop("k"),
-                    dihedral.pop("l"),
-                )
-                itom = struct["atoms"].get_by(lambda atom: atom["id"] == i)
-                jtom = struct["atoms"].get_by(lambda atom: atom["id"] == j)
-                ktom = struct["atoms"].get_by(lambda atom: atom["id"] == k)
-                ltom = struct["atoms"].get_by(lambda atom: atom["id"] == l)
-                struct["dihedrals"].add(
-                    mp.Dihedral(
-                        itom,
-                        jtom,
-                        ktom,
-                        ltom,
-                        **{k: v for k, v in dihedral.items()},
-                    )
-                )
-
+            for _, bond in self["bonds"].to_dataframe().iterrows():
+                i, j = int(bond.pop("i")), int(bond.pop("j"))
+                itom = struct["atoms"].get_by(lambda a: a["id"] == i)
+                jtom = struct["atoms"].get_by(lambda a: a["id"] == j)
+                struct["bonds"].add(mp.Bond(itom, jtom, **bond.to_dict()))
         return struct
 
-    def split(self, key):
-
-        frames = []
-        masks = self["atoms"][key]
-        unique_mask = masks.unique()
-
-        for mask in unique_mask:
-            frame = Frame()
-            atom_mask = masks == mask
-            frame["atoms"] = self["atoms"][atom_mask]
-            atom_id_of_this_frame = frame["atoms"]["id"]
-            if "bonds" in self:
-                bond_i = self["bonds"]["i"]
-                bond_j = self["bonds"]["j"]
-                bond_mask = np.logical_and(
-                    np.isin(bond_i, atom_id_of_this_frame),
-                    np.isin(bond_j, atom_id_of_this_frame),
-                )
-                frame["bonds"] = self["bonds"][bond_mask]
-
-            if "angles" in self:
-                angle_i = self["angles"]["i"]
-                angle_j = self["angles"]["j"]
-                angle_k = self["angles"]["k"]
-                angle_mask = (
-                    np.isin(angle_i, atom_id_of_this_frame)
-                    & np.isin(angle_j, atom_id_of_this_frame)
-                    & np.isin(angle_k, atom_id_of_this_frame)
-                )
-                frame["angles"] = self["angles"][angle_mask]
-
-            if "dihedrals" in self:
-                dihedral_i = self["dihedrals"]["i"]
-                dihedral_j = self["dihedrals"]["j"]
-                dihedral_k = self["dihedrals"]["k"]
-                dihedral_l = self["dihedrals"]["l"]
-                dihedral_mask = (
-                    np.isin(dihedral_i, atom_id_of_this_frame)
-                    & np.isin(dihedral_j, atom_id_of_this_frame)
-                    & np.isin(dihedral_k, atom_id_of_this_frame)
-                    & np.isin(dihedral_l, atom_id_of_this_frame)
-                )
-                frame["dihedrals"] = self["dihedrals"][dihedral_mask]
-
-            if "impropers" in self:
-                improper_i = self["impropers"]["i"]
-                improper_j = self["impropers"]["j"]
-                improper_k = self["impropers"]["k"]
-                improper_l = self["impropers"]["l"]
-                improper_mask = (
-                    np.isin(improper_i, atom_id_of_this_frame)
-                    & np.isin(improper_j, atom_id_of_this_frame)
-                    & np.isin(improper_k, atom_id_of_this_frame)
-                    & np.isin(improper_l, atom_id_of_this_frame)
-                )
-                frame["impropers"] = self["impropers"][improper_mask]
-
-            frames.append(frame)
-
-        return frames
-
     def __add__(self, other: "Frame") -> "Frame":
-        return Frame.from_frames(self, other)
+        return self.concat(other)
 
-    def __mul__(self, n: int) -> list["Frame"]:
-        return Frame.from_frames(*[self.copy() for _ in range(n)])
+    def __mul__(self, n: int) -> "Frame":
+        return self.from_frames([self.copy() for _ in range(n)])
 
-    def copy(self) -> "Frame":
-        return deepcopy(self)
 
-    def __getitem__(self, key):
-        if isinstance(key, str):
-            return super().__getitem__(key)
-        elif isinstance(key, tuple) and all(isinstance(k, str) for k in key):
-            return self[key[0]][list(key[1:])]
-        elif isinstance(key, (slice, pd.Series, np.ndarray)):
-            mask = pd.Series(key, index=self["atoms"].index)
-            atoms = self["atoms"][mask]
-            atom_ids = atoms["id"]
-            bond_i = self["bonds"]["i"]
-            bond_j = self["bonds"]["j"]
-            bond_mask = np.logical_and(
-                np.isin(bond_i, atom_ids), np.isin(bond_j, atom_ids)
-            )
-            bonds = self["bonds"][bond_mask]
-            angle_i = self["angles"]["i"]
-            angle_j = self["angles"]["j"]
-            angle_k = self["angles"]["k"]
-            angle_mask = (
-                np.isin(angle_i, atom_ids)
-                & np.isin(angle_j, atom_ids)
-                & np.isin(angle_k, atom_ids)
-            )
-            angles = self["angles"][angle_mask]
-            dihedral_i = self["dihedrals"]["i"]
-            dihedral_j = self["dihedrals"]["j"]
-            dihedral_k = self["dihedrals"]["k"]
-            dihedral_l = self["dihedrals"]["l"]
-            dihedral_mask = (
-                np.isin(dihedral_i, atom_ids)
-                & np.isin(dihedral_j, atom_ids)
-                & np.isin(dihedral_k, atom_ids)
-                & np.isin(dihedral_l, atom_ids)
-            )
-            dihedrals = self["dihedrals"][dihedral_mask]
-            return Frame(
-                dict(
-                    atoms=atoms,
-                    bonds=bonds,
-                    angles=angles,
-                    dihedrals=dihedrals,
-                ),
-                box=self.box,
-            )
+class AllAtomFrame(Frame):
+    def __init__(self, data: dict[str, Any] | None = None, *_, **__):
+        data = data or {}
+        for key in ["atoms", "bonds", "angles", "dihedrals", "impropers"]:
+            data.setdefault(key, {})
+        super().__init__(data)

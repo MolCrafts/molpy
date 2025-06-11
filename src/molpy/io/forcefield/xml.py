@@ -1,7 +1,6 @@
-from pathlib import Path
-import xml.etree.ElementTree as ET
-import os
 import logging
+import xml.etree.ElementTree as ET
+from pathlib import Path
 
 logger = logging.getLogger("molpy")
 

@@ -1,81 +1,91 @@
-from .base import TrajectoryReader
-from pathlib import Path
-import mmap
-import molpy as mp
-import pandas as pd
-import numpy as np
-from typing import Iterable
 from io import StringIO
+from pathlib import Path
+from typing import List, Sequence, Union
+
+import numpy as np
+from molpy.core.frame import _dict_to_dataset
+import pandas as pd
+import molpy as mp
+
+from .base import TrajectoryReader
+
 
 class LammpsTrajectoryReader(TrajectoryReader):
-    """Reader for LAMMPS trajectory files."""
+    """Reader for LAMMPS trajectory files, supporting multiple files."""
 
-    def __init__(self, filepath: str | Path):
-        super().__init__(filepath)
+    def __init__(self, fpaths: Union[str, Path, List[Union[str, Path]]]):
+        super().__init__(fpaths)
+        self._open_all_files()
 
     def read_frame(self, index: int) -> dict:
-        """Read a specific frame from the trajectory."""
-        assert index < len(self._byte_offsets), f"required {index} frame out of range {len(self._byte_offsets)}"
-        if self.closed:
-            self.read()
+        assert index < len(
+            self._byte_offsets
+        ), f"Frame index {index} out of range ({len(self._byte_offsets)})"
 
-        # Seek to the byte offset of the start of the frame
-        self._fp.seek(self._byte_offsets[index])
-        frame_lines = []
+        mm, offset = self.get_file_and_offset(index)
+        mm.seek(offset)
 
-        # Determine the end byte offset
-        end_byte_offset = self._byte_offsets[index + 1] if index + 1 < len(self._byte_offsets) else None
+        file_idx, start_offset = self._byte_offsets[index]
 
-        for line in iter(self._fp.readline, b""):
-            current_byte_offset = self._fp.tell()
-            if end_byte_offset is not None and current_byte_offset >= end_byte_offset:
-                break
-            frame_lines.append(line.decode("utf-8"))
+        # 如果有下一个 offset，就用它作为 end
+        if (
+            index + 1 < len(self._byte_offsets)
+            and self._byte_offsets[index + 1][0] == file_idx
+        ):
+            end_offset = self._byte_offsets[index + 1][1]
+        else:
+            end_offset = None  # 读到文件尾
+
+        mm = self._fp_list[file_idx]
+
+        if end_offset is None:
+            mm.seek(start_offset)
+            frame_bytes = mm.read()  # 读到结尾
+        else:
+            frame_bytes = mm[start_offset:end_offset]  # 一次性读取所需段
+
+        frame_lines = frame_bytes.decode("utf-8").splitlines()
 
         return self._parse_frame(frame_lines)
-    
-    @property
-    def closed(self):
-        return self._fp.closed
 
-    def _parse_frame(self, frame_lines: Iterable[str]) -> mp.Frame:
-        # Initialize variables
+    def _parse_trajectories(self):
+        self._open_all_files()
+        for file_idx, mm in enumerate(self._fp_list):
+            mm.seek(0)
+            while True:
+                pos = mm.tell()
+                line = mm.readline()
+                if not line:
+                    break
+                if line.strip().startswith(b"ITEM: TIMESTEP"):
+                    self._byte_offsets.append((file_idx, pos))
+
+    def _parse_frame(self, frame_lines: Sequence[str]) -> mp.Frame:
         header = []
-        data = []
         box_bounds = []
-        # Iterate over the lines to parse header, box, timestep, and data
-        timestep = int(frame_lines[0].strip())
+        timestep = int(frame_lines[1].strip())
+
         for i, line in enumerate(frame_lines):
             if line.startswith("ITEM: BOX BOUNDS"):
-                box_line = line.split()
-                # box_header = box_line[3:-3]
-                # if "abc" in box_header and "origin" in box_header:
-                #     box_type = "general"
-                # elif ""
-                periodic = box_line[-3:]
+                periodic = line.split()[-3:]
                 for j in range(3):
                     box_bounds.append(
-                        list(map(float, frame_lines[i+j+1].strip().split()))
+                        list(map(float, frame_lines[i + j + 1].strip().split()))
                     )
             elif line.startswith("ITEM: ATOMS"):
-                # Extract column names from the header
                 header = line.split()[2:]
+                data_start = i + 1
                 break
 
-        # Use pandas to read the remaining lines as a DataFrame
-        data = pd.read_csv(
-            StringIO('\n'.join(frame_lines[i+1:])),
-            sep=r'\s+',
+        df = pd.read_csv(
+            StringIO("\n".join(frame_lines[data_start:])),
+            delim_whitespace=True,
             names=header,
         )
-
-        # Create the box using mp.Box
+        df = _dict_to_dataset({k: df[k].to_numpy() for k in header})
         box_bounds = np.array(box_bounds)
 
         if box_bounds.shape == (3, 2):
-            # xlo xhi
-            # ylo yhi
-            # zlo zhi
             box_matrix = np.array(
                 [
                     [box_bounds[0, 1] - box_bounds[0, 0], 0, 0],
@@ -85,12 +95,7 @@ class LammpsTrajectoryReader(TrajectoryReader):
             )
             origin = np.array([box_bounds[0, 0], box_bounds[1, 0], box_bounds[2, 0]])
         elif box_bounds.shape == (3, 3):
-            # xlo xhi xy
-            # ylo yhi xz
-            # zlo zhi yz
-            xy = box_bounds[0, 2]
-            xz = box_bounds[1, 2]
-            yz = box_bounds[2, 2]
+            xy, xz, yz = box_bounds[:, 2]
             box_matrix = np.array(
                 [
                     [box_bounds[0, 1] - box_bounds[0, 0], xy, xz],
@@ -100,19 +105,9 @@ class LammpsTrajectoryReader(TrajectoryReader):
             )
             origin = np.array([box_bounds[0, 0], box_bounds[1, 0], box_bounds[2, 0]])
         else:
-            raise ValueError(f"Invalid box bounds shape {box_bounds.shape} {box_bounds}")
+            raise ValueError(f"Invalid box bounds shape {box_bounds.shape}")
 
         box = mp.Box(matrix=box_matrix, origin=origin)
-        # Create and return an mp.Frame
-        return mp.Frame({"atoms": data}, box=box, timestep=timestep)
-
-    def _parse_trajectory(self):
-        """Parse the trajectory file to cache frame start byte offsets."""
-        self.read()
-        for line in iter(self._fp.readline, b""):
-            if self._is_frame_start(line.decode("utf-8")):
-                self._byte_offsets.append(self._fp.tell())
-
-    def _is_frame_start(self, line: str) -> bool:
-        """Check if a line indicates the start of a frame."""
-        return line.strip().startswith("ITEM: TIMESTEP")
+        return mp.Frame(
+            {"atoms": df, "box": box, "timestep": timestep},
+        )

@@ -5,11 +5,12 @@ import numpy as np
 
 import molpy as mp
 from collections import defaultdict
-import pandas as pd
+from molpy.core.frame import _dict_to_dataset
+
 
 class PDBReader(DataReader):
 
-    def __init__(self, file: str | Path):
+    def __init__(self, file: Path):
         super().__init__(path=file)
 
     @staticmethod
@@ -33,9 +34,7 @@ class PDBReader(DataReader):
                 "resName": [],
                 "chainID": [],
                 "resSeq": [],
-                "x": [],
-                "y": [],
-                "z": [],
+                "xyz": [],
                 "element": [],
             }
 
@@ -50,11 +49,9 @@ class PDBReader(DataReader):
                     atoms["resName"].append(line[17:20].strip())
                     atoms["chainID"].append(line[21])
                     atoms["resSeq"].append(int(line[22:26]))
-                    atoms["x"].append(
-                        float(line[30:38])
+                    atoms["xyz"].append(
+                        (float(line[30:38]), float(line[38:46]), float(line[46:54]))
                     )
-                    atoms['y'].append(float(line[38:46]))
-                    atoms['z'].append(float(line[46:54]))
                     atoms["element"].append(line[76:78].strip())
 
                 elif line.startswith("CONECT"):
@@ -66,70 +63,75 @@ class PDBReader(DataReader):
 
             bonds = np.unique(np.array(bonds), axis=0)
 
-            if len(set(atoms['name'])) != len(atoms['name']):
+            if len(set(atoms["name"])) != len(atoms["name"]):
                 atom_name_counter = defaultdict(int)
-                for i, name in enumerate(atoms['name']):
+                for i, name in enumerate(atoms["name"]):
                     atom_name_counter[name] += 1
                     if atom_name_counter[name] > 1:
-                        atoms['name'][i] = f"{name}{atom_name_counter[name]}"
+                        atoms["name"][i] = f"{name}{atom_name_counter[name]}"
 
-            frame["atoms"] = pd.DataFrame(
-                atoms
-            )
-            frame.box = mp.Box()
-            
+            frame["atoms"] = _dict_to_dataset(atoms)
+            frame["box"] = mp.Box()
+
             if len(bonds):
-                frame["bonds"] = pd.DataFrame(
+                frame["bonds"] = _dict_to_dataset(
                     {
                         "i": bonds[:, 0],
                         "j": bonds[:, 1],
                     }
                 )
 
+
             return frame
+
 
 class PDBWriter(DataWriter):
 
-    def __init__(self, path: str | Path, ):
+    def __init__(
+        self,
+        path: Path,
+    ):
         super().__init__(path=path)
 
     def write(self, frame):
 
         with open(self._path, "w") as f:
+            atoms = frame["atoms"]
+            name = frame.get("name", "MOL")
+            f.write(f"REMARK  {name}\n")
+            for i, atom in enumerate(atoms.iterrows()):
+                # serial = as_builtin(atom.get("id", i))
+                serial = i + 1
+                altLoc = atom.get("altLoc", np.array("")).item()
+                unique_name = atom.get("unique_name", atom.get("name", np.array("UNK"))).item()
 
-            for atom in frame["atoms"].itertuples():
-                serial = getattr(atom, "id", atom.Index)
-                altLoc = getattr(atom, "altLoc", "")
-                unique_name = getattr(atom, "unique_name", getattr(atom, "name", "UNK"))
-                # if name in atom_name_remap:
-                #     unique_name = name + str(atom_name_remap[name])
-                #     atom_name_remap[name] += 1
-                # else:
-                #     unique_name = name
-                #     atom_name_remap[name] = 1
-                resName = getattr(atom, "resName", "UNK")
-                chainID = getattr(atom, "chainID", "A")
-                resSeq = getattr(atom, "resSeq", getattr(atom, "molid", 1))
-                iCode = getattr(atom, "iCode", "")
-                elem = getattr(atom, "element", "X")
-                x = atom.x
-                y = atom.y
-                z = atom.z
-
-                print(serial, altLoc, unique_name, resName, chainID, resSeq, iCode, x, y, z, elem)
+                resName = atom.get("resName", np.array("UNK")).item()
+                chainID = atom.get("chainID", np.array("A")).item()
+                resSeq = atom.get("resSeq", atom.get("molid", np.array(1))).item()
+                iCode = atom.get("iCode", np.array("")).item()
+                elem = atom.get("element", np.array("X")).item()
+                x, y, z = atom["xyz"]
 
                 f.write(
-                    f"{'ATOM':6s}{serial:>5d}{' '*1}{unique_name.upper():>4s}{altLoc:1s}{resName:>3s}{' '*1}{chainID:1s}{resSeq:>4d}{iCode:1s}{' '*3}{x:>8.3f}{y:>8.3f}{z:>8.3f}{' '*22}{elem:>2s}  \n"
+                    f"{'HETATM':6s}{serial:>5d} {unique_name.upper():>4s}{altLoc:1s}{resName:>3s} {chainID:1s}{resSeq:>4d}{iCode:1s}   "
+                    f"{x:>8.3f}{y:>8.3f}{z:>8.3f}{' '*22}{elem:>2s}  \n"
                 )
 
             bonds = defaultdict(list)
             if "bonds" in frame:
-                for bond in frame["bonds"].itertuples():
-                    bonds[bond.i].append(bond.j)
-                    bonds[bond.j].append(bond.i)
+                for bond in frame["bonds"].iterrows():
+                    i = int(bond["i"] + 1)
+                    j = int(bond["j"] + 1)
+                    bonds[i].append(j)
+                    bonds[j].append(i)
 
                 for i, js in bonds.items():
-                    assert len(js) <= 4, ValueError(f"PDB only supports up to 4 bonds, but atom {i} has {len(js)} bonds, which are {js}")
-                    f.write(f"{'CONECT':6s}{i:>5d}{''.join([f'{j:>5d}' for j in js])}\n")
+                    if len(js) > 4:
+                        raise ValueError(
+                            f"PDB only supports up to 4 bonds, but atom {i} has {len(js)} bonds: {js}"
+                        )
+                    f.write(
+                        f"{'CONECT':6s}{i:>5d}{''.join([f'{j:>5d}' for j in js])}\n"
+                    )
 
             f.write("END\n")
