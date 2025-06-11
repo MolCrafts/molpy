@@ -3,10 +3,9 @@ import re
 from datetime import datetime
 from itertools import islice
 from pathlib import Path
+from molpy.core.arraydict import ArrayDict
 
 import numpy as np
-import pandas as pd
-
 import molpy as mp
 
 from .base import DataReader, DataWriter
@@ -61,7 +60,7 @@ class LammpsDataReader(DataReader):
         props = {}
         masses = {}
 
-        type_key = "type_id"
+        type_key = "type"
 
         for line in lines:
 
@@ -134,50 +133,48 @@ class LammpsDataReader(DataReader):
                                 if comment:
                                     header.append("seq")
                                     header.append("name")
-                atom_table = pd.read_csv(
-                    io.BytesIO("\n".join(atom_lines).encode()),
-                    names=header,
+                atom_table = ArrayDict.from_csv(
+                    io.StringIO("\n".join(atom_lines)),
+                    header=header,
                     delimiter=" ",
                 )
                 if masses:
-                    atom_table["mass"] = atom_table[type_key].map(
-                        lambda t: masses[str(t)]
-                    )
+                    atom_table["mass"] = np.array(list(map(lambda t: masses[str(t)], atom_table[type_key])))
 
                 frame["atoms"] = atom_table
 
             elif line.startswith("Bonds"):
                 bond_lines = list(islice(lines, props["n_bonds"]))
-                bond_table = pd.read_csv(
-                    io.BytesIO("\n".join(bond_lines).encode()),
-                    names=["id", type_key, "i", "j"],
+                bond_table = ArrayDict.from_csv(
+                    io.StringIO("\n".join(bond_lines)),
+                    header=["id", type_key, "i", "j"],
                     delimiter=" ",
                 )
                 frame["bonds"] = bond_table
 
             elif line.startswith("Angles"):
                 angle_lines = list(islice(lines, props["n_angles"]))
-                angle_table = pd.read_csv(
-                    io.BytesIO("\n".join(angle_lines).encode()),
-                    names=["id", type_key, "i", "j", "k"],
+                angle_table = ArrayDict.from_csv(
+                    io.StringIO("\n".join(angle_lines)),
+                    header=["id", type_key, "i", "j", "k"],
                     delimiter=" ",
                 )
                 frame["angles"] = angle_table
 
             elif line.startswith("Dihedrals"):
                 dihedral_lines = list(islice(lines, props["n_dihedrals"]))
-                dihedral_table = pd.read_csv(
-                    io.BytesIO("\n".join(dihedral_lines).encode()),
-                    names=["id", type_key, "i", "j", "k", "l"],
+                dihedral_table = ArrayDict.from_csv(
+                    io.StringIO("\n".join(dihedral_lines)),
+                    header=["id", type_key, "i", "j", "k", "l"],
                     delimiter=" ",
                 )
                 frame["dihedrals"] = dihedral_table
 
             elif line.startswith("Impropers"):
                 improper_lines = list(islice(lines, props["n_impropers"]))
-                improper_table = pd.read_csv(
-                    io.BytesIO("\n".join(improper_lines).encode()),
-                    names=["id", type_key, "i", "j", "k", "l"],
+                improper_table = ArrayDict.from_csv(
+                    io.StringIO("\n".join(improper_lines)),
+                    header=["id", type_key, "i", "j", "k", "l"],
                     delimiter=" ",
                 )
                 frame["impropers"] = improper_table
@@ -461,9 +458,9 @@ class LammpsMoleculeReader(DataReader):
             elif line.startswith("Corrds"):
                 header = ["id", "x", "y", "z"]
                 atom_lines = list(islice(self.lines, props["n_atoms"]))
-                atom_table = pd.read_csv(
-                    io.BytesIO("\n".join(atom_lines).encode()),
-                    names=header,
+                atom_table = ArrayDict.from_csv(
+                    io.StringIO("\n".join(atom_lines)),
+                    header=header,
                     delimiter=" ",
                 )
                 frame["atoms"] = atom_table
@@ -471,9 +468,9 @@ class LammpsMoleculeReader(DataReader):
             elif line.startswith("Types"):
                 header = ["id", "type"]
                 atomtype_lines = list(islice(self.lines, props["n_atoms"]))
-                atomtype_table = pd.read_csv(
-                    io.BytesIO("\n".join(atomtype_lines).encode()),
-                    names=header,
+                atomtype_table = ArrayDict.from_csv(
+                    io.StringIO("\n".join(atomtype_lines)),
+                    header=header,
                     delimiter=" ",
                 )
                 # join atom table and type table
@@ -483,9 +480,9 @@ class LammpsMoleculeReader(DataReader):
             elif line.startswith("Charges"):
                 header = ["id", "charge"]
                 charge_lines = list(islice(self.lines, props["n_atoms"]))
-                charge_table = pd.read_csv(
-                    io.BytesIO("\n".join(charge_lines).encode()),
-                    names=header,
+                charge_table = ArrayDict.from_csv(
+                    io.StringIO("\n".join(charge_lines)),
+                    header=header,
                     delimiter=" ",
                 )
                 frame["atoms"] = frame["atoms"].join(charge_table, on="id")
@@ -493,45 +490,45 @@ class LammpsMoleculeReader(DataReader):
             elif line.startswith("Molecules"):
                 header = ["id", "molid"]
                 molid_lines = list(islice(self.lines, props["n_atoms"]))
-                molid_table = pd.read_csv(
-                    io.BytesIO("\n".join(molid_lines).encode()),
-                    names=header,
+                molid_table = ArrayDict.from_csv(
+                    io.StringIO("\n".join(molid_lines)),
+                    header=header,
                     delimiter=" ",
                 )
                 frame["atoms"] = frame["atoms"].join(molid_table, on="id")
 
             elif line.startswith("Bonds"):
                 bond_lines = list(islice(self.lines, props["n_bonds"]))
-                bond_table = pd.read_csv(
-                    io.BytesIO("\n".join(bond_lines).encode()),
-                    names=["id", "type", "i", "j"],
+                bond_table = ArrayDict.from_csv(
+                    io.StringIO("\n".join(bond_lines)),
+                    header=["id", "type", "i", "j"],
                     delimiter=" ",
                 )
                 frame["bonds"] = bond_table
 
             elif line.startswith("Angles"):
                 angle_lines = list(islice(self.lines, props["n_angles"]))
-                angle_table = pd.read_csv(
-                    io.BytesIO("\n".join(angle_lines).encode()),
-                    names=["id", "type", "i", "j", "k"],
+                angle_table = ArrayDict.from_csv(
+                    io.StringIO("\n".join(angle_lines)),
+                    header=["id", "type", "i", "j", "k"],
                     delimiter=" ",
                 )
                 frame["angles"] = angle_table
 
             elif line.startswith("Dihedrals"):
                 dihedral_lines = list(islice(self.lines, props["n_dihedrals"]))
-                dihedral_table = pd.read_csv(
-                    io.BytesIO("\n".join(dihedral_lines).encode()),
-                    names=["id", "type", "i", "j", "k", "l"],
+                dihedral_table = ArrayDict.from_csv(
+                    io.StringIO("\n".join(dihedral_lines)),
+                    header=["id", "type", "i", "j", "k", "l"],
                     delimiter=" ",
                 )
                 frame["dihedrals"] = dihedral_table
 
             elif line.startswith("Impropers"):
                 improper_lines = list(islice(self.lines, props["n_impropers"]))
-                improper_table = pd.read_csv(
-                    io.BytesIO("\n".join(improper_lines).encode()),
-                    names=["id", "type", "i", "j", "k", "l"],
+                improper_table = ArrayDict.from_csv(
+                    io.StringIO("\n".join(improper_lines)),
+                    header=["id", "type", "i", "j", "k", "l"],
                     delimiter=" ",
                 )
                 frame["impropers"] = improper_table

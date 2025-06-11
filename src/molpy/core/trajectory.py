@@ -4,40 +4,35 @@
 # version: 0.0.1
 
 from .frame import Frame
+import numpy as np
 
 class Trajectory:
 
-    def __init__(self, frames: list[Frame]|dict[int, Frame] = {}):
-        if isinstance(frames, list):
-            frames = {i: frame for i, frame in enumerate(frames)}
+    def __init__(self, frames: list[Frame] = []):
         self._frames = frames
-        self._current_frame: Frame|None = None
 
-    def add_frame(self, timestep: int, frame: Frame):
+    def append(self, frame: Frame):
         """Add a frame to the trajectory."""
-        self._frames[timestep] = frame
+        self._frames.append(frame)
 
-    def get_frame(self, timestep: int) -> Frame:
+    def get_frame(self, timestep: int) -> Frame|None:
         """Get a frame from the trajectory."""
-        if timestep not in self._frames:
-            raise ValueError(f"Frame at timestep {timestep} not found.")
-        return self._frames[timestep]
+        return next((frame for frame in self._frames if frame['timestep'] == timestep), None)
     
-    @property
-    def current_frame(self) -> Frame:
-        """Get the current frame."""
-        return self._current_frame
-    
-    def set_current(self, timestep: int):
-        """Set the current frame."""
-        self._current_frame = self.get_frame(timestep)
-
     @property
     def timesteps(self) -> list[int]:
         """Get the list of timesteps."""
-        return list(self._frames.keys())
+        return [self['timestep'] for frame in self.frames]
     
     @property
     def frames(self) -> list[Frame]:
         """Get the frames in the trajectory."""
-        return list(self._frames.values())
+        return self._frames
+
+    def __getitem__(self, key: int|str) -> Frame|np.ndarray:
+        """Get a frame by timestep or index."""
+        if isinstance(key, int):
+            return self._frames[key]
+        # TODO: traj["atoms"][["x", "y", "z"]] -> ArrayDict?
+        # elif isinstance(key, str):
+        #     return (frame[key] for frame in self._frames)

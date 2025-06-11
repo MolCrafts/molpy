@@ -50,7 +50,8 @@ class ArrayDict(MutableMapping):
         cls,
         source: Path | io.StringIO,
         header: list[str] | None = None,
-        seq: str = ",",
+        delimiter: str = ",",
+        skipinitialspace: bool = False,
         **kwargs
     ) -> "ArrayDict":
         """Create an ArrayDict from a CSV file or CSV data with optional custom header and delimiter.
@@ -58,7 +59,7 @@ class ArrayDict(MutableMapping):
         Args:
             source (str|list[str]|io.StringIO): If str, path to the CSV file; if list of strings, CSV lines; if StringIO, CSV data.
             header (list[str]|None): Optional list of header fields.
-            seq (str): Delimiter for CSV data.
+            delimiter (str): Delimiter for CSV data.
 
         Returns:
             ArrayDict: An ArrayDict where keys are headers and values are arrays of the corresponding values.
@@ -75,7 +76,7 @@ class ArrayDict(MutableMapping):
             raise TypeError("Unsupported source type.")
 
         try:
-            reader = csv.DictReader(f, fieldnames=header, delimiter=seq, **kwargs)
+            reader = csv.DictReader(f, fieldnames=header, delimiter=delimiter, skipinitialspace=skipinitialspace, **kwargs)
             rows = list(reader)
         finally:
             if close_f:
@@ -138,6 +139,26 @@ class ArrayDict(MutableMapping):
 
     def items(self):
         return self._data.items()
+    
+    def sort(self, key: str, reverse: bool = False) -> "ArrayDict":
+        """Sort the ArrayDict by a specific key.
+
+        Args:
+            key (str): The key to sort by.
+            reverse (bool): Whether to sort in descending order.
+
+        Returns:
+            ArrayDict: A new ArrayDict sorted by the specified key.
+        """
+        if key not in self._data:
+            raise KeyError(f"Key '{key}' not found in ArrayDict.")
+        
+        indices = np.argsort(self._data[key])
+        if reverse:
+            indices = indices[::-1]
+        
+        sorted_data = {k: self._data[k][indices] for k in self._data}
+        return ArrayDict(sorted_data)
 
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, ArrayDict):
@@ -246,10 +267,13 @@ class ArrayDict(MutableMapping):
         data = self.to_dict(include=include, exclude=exclude)
         return pa.Table.from_pydict(data) 
 
-    def to_numpy(self) -> np.ndarray:
+    def to_numpy(self, dtype=None) -> np.ndarray:
         """Convert the ArrayDict to a NumPy array.
 
         Returns:
             np.ndarray: A concatenated NumPy array of the values.
         """
-        return np.column_stack(list(self.values()))
+        result = np.column_stack(list(self.values()))
+        if dtype is not None:
+            result = result.astype(dtype)
+        return result

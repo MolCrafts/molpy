@@ -1,5 +1,10 @@
 from .packmol import Packmol
-from .nlopt import NloptPacker
+try:
+    import nlopt
+    from .nlopt import NloptPacker
+except ImportError:
+    nlopt = None
+    NloptPacker = ImportError
 
 def get_packer(name, *args, **kwargs):
 

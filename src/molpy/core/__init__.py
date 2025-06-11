@@ -6,6 +6,7 @@ from .box import *
 from .forcefield import *
 from .frame import *
 from .topology import *
+from .trajectory import *
 from .region import *
 from .system import *
 from .struct import *

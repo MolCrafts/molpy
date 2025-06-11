@@ -1,6 +1,5 @@
 import molpy as mp
-import molpack as mpk
-
+from .constraint import Constraint
 
 class Target:
 
@@ -8,7 +7,7 @@ class Target:
         self,
         frame: mp.Frame,
         number: int,
-        constraint: mpk.Constraint,
+        constraint: Constraint,
         is_fixed: bool = False,
         optimizer=None,
         name: str = "",

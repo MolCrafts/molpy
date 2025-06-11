@@ -26,22 +26,21 @@ class LammpsTrajectoryReader(TrajectoryReader):
 
         file_idx, start_offset = self._byte_offsets[index]
 
-        # 如果有下一个 offset，就用它作为 end
         if (
             index + 1 < len(self._byte_offsets)
             and self._byte_offsets[index + 1][0] == file_idx
         ):
             end_offset = self._byte_offsets[index + 1][1]
         else:
-            end_offset = None  # 读到文件尾
+            end_offset = None
 
         mm = self._fp_list[file_idx]
 
         if end_offset is None:
             mm.seek(start_offset)
-            frame_bytes = mm.read()  # 读到结尾
+            frame_bytes = mm.read()
         else:
-            frame_bytes = mm[start_offset:end_offset]  # 一次性读取所需段
+            frame_bytes = mm[start_offset:end_offset]
 
         frame_lines = frame_bytes.decode("utf-8").splitlines()
 
@@ -77,7 +76,7 @@ class LammpsTrajectoryReader(TrajectoryReader):
                 break
 
         df = ArrayDict.from_csv(
-            StringIO("\n".join(frame_lines[data_start:])), header=header, seq=" "
+            StringIO("\n".join(frame_lines[data_start:])), header=header, delimiter=" "
         )
         box_bounds = np.array(box_bounds)
 

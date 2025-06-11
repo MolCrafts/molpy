@@ -6,7 +6,7 @@ try:
 except ImportError:
     h5py = None
 
-class TestNumpy:
+class TestArrayDict:
     """
     Test class for Numpy operations.
     """
