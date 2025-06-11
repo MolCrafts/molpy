@@ -3,6 +3,9 @@ import xarray as xr
 from xarray import DataTree
 from collections.abc import MutableMapping
 from typing import Any, Sequence
+from pathlib import Path
+from io import BytesIO
+import h5py
 
 from .box import Box
 
@@ -133,6 +136,44 @@ class Frame(MutableMapping):
         if self.box is not None:
             data["box"] = self.box.to_dict()
         return data
+
+    def to_h5df(self, path: Path | None = None) -> bytes:
+        """Serialize the frame to a HDF5 formatted bytes object or file.
+
+        Parameters
+        ----------
+        path : Path, optional
+            Destination of the HDF5 file. If ``None`` the serialized bytes are
+            returned instead of writing to disk.
+
+        Returns
+        -------
+        bytes
+            The serialized bytes when ``path`` is ``None``. Otherwise an empty
+            bytes object is returned after writing the file.
+        """
+        data = self.to_dict()
+
+        bio = BytesIO()
+        fname: str | BytesIO | Path
+        if path is None:
+            fname = bio
+        else:
+            fname = path
+
+        with h5py.File(fname, "w") as h5:
+            for key, value in data.items():
+                if isinstance(value, dict):
+                    grp = h5.create_group(key)
+                    for n, arr in value.items():
+                        grp.create_dataset(n, data=np.asarray(arr))
+                else:
+                    h5.attrs[key] = value
+
+        if path is None:
+            bio.seek(0)
+            return bio.getvalue()
+        return b""
 
     def to_struct(self):
         from .struct import Entities, Struct

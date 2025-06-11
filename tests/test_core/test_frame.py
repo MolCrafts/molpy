@@ -1,6 +1,9 @@
 import pytest
 import numpy.testing as npt
+import numpy as np
 import xarray as xr
+import h5py
+import io
 import molpy as mp
 
 class TestFrame:
@@ -77,4 +80,23 @@ class TestFrame:
     def test_init_all_atom_frame(self):
         frame = mp.Frame(style='atomic')
         assert isinstance(frame, mp.AllAtomFrame)
+
+    def test_to_h5df_bytes(self, frame):
+        frame.box = mp.Box.cubic(1.0)
+        data = frame.to_h5df()
+        assert isinstance(data, (bytes, bytearray))
+        with h5py.File(io.BytesIO(data), "r") as h5:
+            assert "atoms" in h5
+            assert "box" in h5
+            assert np.array_equal(h5["atoms"]["id"][:], [1, 2, 3, 4])
+
+    def test_to_h5df_path(self, tmp_path, frame):
+        frame.box = mp.Box.cubic(1.0)
+        path = tmp_path / "frame.h5"
+        ret = frame.to_h5df(path)
+        assert path.exists()
+        assert ret == b""
+        with h5py.File(path, "r") as h5:
+            assert "atoms" in h5
+            assert "box" in h5
 
