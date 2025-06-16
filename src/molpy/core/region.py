@@ -27,8 +27,24 @@ class Region(ABC):
 
 class AndRegion(Region):
     def __init__(self, r1: Region, r2: Region):
+        super().__init__(f"({r1.name} & {r2.name})")
         self.r1 = r1
         self.r2 = r2
+
+    @property
+    def bounds(self) -> npt.NDArray[np.float64]:
+        """
+        Get the bounds of the intersection region.
+        
+        Returns:
+            npt.NDArray[np.float64]: The overlapping bounds of both regions.
+        """
+        bounds1 = self.r1.bounds
+        bounds2 = self.r2.bounds
+        # Take the intersection (max of lower bounds, min of upper bounds)
+        lower = np.maximum(bounds1[0], bounds2[0])
+        upper = np.minimum(bounds1[1], bounds2[1])
+        return np.array([lower, upper])
 
     def isin(self, point):
         return self.r1.isin(point) & self.r2.isin(point)
@@ -39,11 +55,27 @@ class AndRegion(Region):
 
 class OrRegion(Region):
     def __init__(self, r1: Region, r2: Region):
+        super().__init__(f"({r1.name} | {r2.name})")
         self.r1 = r1
         self.r2 = r2
 
-    def isin(self, point):
-        return self.r1.isin(point) | self.r2.isin(point)
+    @property
+    def bounds(self) -> npt.NDArray[np.float64]:
+        """
+        Get the bounds of the union region.
+        
+        Returns:
+            npt.NDArray[np.float64]: The combined bounds of both regions.
+        """
+        bounds1 = self.r1.bounds
+        bounds2 = self.r2.bounds
+        # Take the union (min of lower bounds, max of upper bounds)
+        lower = np.minimum(bounds1[0], bounds2[0])
+        upper = np.maximum(bounds1[1], bounds2[1])
+        return np.array([lower, upper])
+
+    def isin(self, xyz):
+        return self.r1.isin(xyz) | self.r2.isin(xyz)
 
     def __repr__(self):
         return f"<{self.r1} | {self.r2}>"
@@ -51,10 +83,25 @@ class OrRegion(Region):
 
 class NotRegion(Region):
     def __init__(self, region: Region):
+        super().__init__(f"(!{region.name})")
         self.region = region
 
-    def isin(self, point):
-        return ~self.region.isin(point)
+    @property
+    def bounds(self) -> npt.NDArray[np.float64]:
+        """
+        Get the bounds of the inverted region.
+        
+        For inverted regions, we return infinite bounds since the complement
+        of a finite region is generally infinite.
+        
+        Returns:
+            npt.NDArray[np.float64]: Infinite bounds array.
+        """
+        inf = np.inf
+        return np.array([[-inf, -inf, -inf], [inf, inf, inf]])
+
+    def isin(self, xyz):
+        return ~self.region.isin(xyz)
 
     def __repr__(self):
         return f"<!{self.region}>"
@@ -88,7 +135,7 @@ class Cube(Region):
     def __repr__(self):
         return f"<Cube {self.name}: {self.origin} {self.length}>"
 
-    def volumn(self):
+    def volume(self):
         return self.length**3
 
     @property
@@ -136,8 +183,21 @@ class SphereRegion(Region):
     def isin(self, xyz):
         return np.linalg.norm(xyz - self.origin, axis=-1) <= self.radius
 
-    def volumn(self):
+    def volume(self):
         return 4 / 3 * np.pi * self.radius**3
+
+    @property
+    def bounds(self) -> npt.NDArray[np.float64]:
+        """
+        Get the bounds of the sphere.
+        
+        Returns:
+            npt.NDArray[np.float64]: The bounding box of the sphere.
+        """
+        return np.array([
+            self.origin - self.radius,
+            self.origin + self.radius
+        ])
 
     def __repr__(self):
         return f"<Sphere {self.name}: {self.origin} {self.radius}>"
@@ -147,19 +207,25 @@ class BoxRegion(Region):
 
     def __init__(self, lengths: npt.ArrayLike, origin: npt.ArrayLike, name="Box"):
         super().__init__(name)
-        self.origin = np.array(origin)
-        self.upper = self.origin + lengths
-        self.lengths = lengths
+        self.origin = np.array(origin, dtype=np.float64)
+        self.lengths = np.array(lengths, dtype=np.float64)
+        self.upper = self.origin + self.lengths
 
     def isin(self, xyz):
         return np.logical_and(
             np.all(self.origin <= xyz, axis=-1), np.all(xyz <= self.upper, axis=-1)
         )
 
-    def volumn(self):
+    def volume(self):
         return np.prod(self.lengths)
 
     @property
-    def bounds(self):
-        return np.array([self.origin, self.upper]).T
+    def bounds(self) -> npt.NDArray[np.float64]:
+        """
+        Get the bounds of the box region.
+        
+        Returns:
+            npt.NDArray[np.float64]: The bounds of the box.
+        """
+        return np.array([self.origin, self.upper])
 

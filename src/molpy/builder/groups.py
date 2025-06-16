@@ -1,6 +1,6 @@
 import molpy as mp
 
-class CH3(mp.Struct):
+class CH3(mp.AtomicStructure):
     def __init__(self):
         super().__init__()
 

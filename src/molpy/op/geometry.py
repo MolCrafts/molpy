@@ -11,6 +11,10 @@ def rotate_by_rodrigues(xyz, axis, theta):
     Returns:
         np.ndarray: rotated coordinates
     """
+    xyz = np.asarray(xyz)
+    original_shape = xyz.shape
+    was_1d = xyz.ndim == 1
+    
     xyz = np.atleast_2d(xyz)
     axis = axis / np.linalg.norm(axis)
 
@@ -20,6 +24,10 @@ def rotate_by_rodrigues(xyz, axis, theta):
         + axis * np.dot(xyz, axis)[..., None] * (1 - np.cos(theta))
     )
 
+    # If input was 1D, squeeze the result back to 1D
+    if was_1d and rot.shape[0] == 1:
+        rot = rot.squeeze(0)
+    
     return rot
 
 def rotate_by_quaternion(xyz, q):

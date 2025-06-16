@@ -1,6 +1,5 @@
 from pathlib import Path
 import molpy as mp
-import h_submitor
 
 
 class AmberToolsReacter:
@@ -11,7 +10,6 @@ class AmberToolsReacter:
     def __init__(self, conda_env: str = "AmberTools25"):
         self.conda_env = conda_env
 
-    @h_submitor.local
     def react(
         self,
         workdir: Path,

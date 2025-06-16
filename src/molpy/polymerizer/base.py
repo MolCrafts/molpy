@@ -1,7 +1,7 @@
 import shutil
 import molpy as mp
 from pathlib import Path
-import h_submitor
+import molq
 
 class PolymerizerBase:
 
@@ -36,7 +36,7 @@ class AmberToolsPolymerizer:
     def __init__(self, conda_env: str = "AmberTools25"):
         self.conda_env = conda_env
 
-    @h_submitor.local
+    @molq.local
     def linear(self, name:str, seq: list[str], structs: dict[str, mp.Struct], workdir: Path):
         
         if not (workdir/name).exists():
@@ -66,7 +66,7 @@ class AmberToolsPolymerizer:
 
         return mp.Struct.from_frame(mp.io.read_pdb(workdir/ name / f"{name}.pdb"), name=name)
     
-    @h_submitor.local
+    @molq.local
     def unit(self, name:str, struct: mp.Struct, workdir: Path, ion: str = ""):
         
         output_dir = Path(workdir) / name

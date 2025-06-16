@@ -73,19 +73,21 @@ class Type(DictWithList):
         """
         self._name = value
 
-    def __eq__(self, other: Union["Type", str]):
+    def __eq__(self, other: object) -> bool:
         """
         Compare this object with another for equality.
 
         Args:
-            other (Type): The object to compare with.
+            other: The object to compare with.
 
         Returns:
             bool: True if the `name` attribute of both objects is equal, False otherwise.
         """
         if isinstance(other, str):
             return self.name == other
-        return self.name == other.name
+        if isinstance(other, Type):
+            return self.name == other.name
+        return False
 
     def match(self, other: Entity) -> bool:
         """
@@ -126,7 +128,7 @@ class TypeContainer:
         """
         return iter(self._types)
 
-    def get(self, name: str, default=None) -> Type:
+    def get(self, name: str, default=None) -> Type | None:
         """
         Retrieve a type by its name.
 
@@ -135,7 +137,7 @@ class TypeContainer:
             default: The value to return if the type is not found. Defaults to None.
 
         Returns:
-            Type: The type associated with the given name, or the `default` value if not found.
+            Type | None: The type associated with the given name, or the `default` value if not found.
         """
         return next((t for t in self._types if t.name == name), default)
 
@@ -206,13 +208,22 @@ class Style(DictWithList):
         """
         return len(self.types)
 
-    def __eq__(self, other: "Style"):
-        return self.name == other.name
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Style) and self.name == other.name
+
+    def __hash__(self) -> int:
+        """
+        Compute a hash value for the object.
+
+        Returns:
+            int: A hash value based on the `name` attribute.
+        """
+        return hash(self.name)
 
     def get_types(self):
         return list(self.types._types)
 
-    def get_by(self, condition: Callable[[Type], bool], default=None) -> Type:
+    def get_by(self, condition: Callable[[Type], bool], default=None) -> Type | None:
         """
         Retrieve the first element from `self.types` that satisfies the given condition.
 
@@ -223,11 +234,11 @@ class Style(DictWithList):
                                      Defaults to None.
 
         Returns:
-            Type: The first element that satisfies the condition, or the `default` value if none is found.
+            Type | None: The first element that satisfies the condition, or the `default` value if none is found.
         """
         return next((t for t in self.types if condition(t)), default)
 
-    def get(self, name: str, default=None) -> Type:
+    def get(self, name: str, default=None) -> Type | None:
         """
         Retrieve the type associated with the given name from the forcefield.
 
@@ -236,7 +247,7 @@ class Style(DictWithList):
             default (optional): The value to return if the name is not found. Defaults to None.
 
         Returns:
-            Type: The type associated with the given name, or the default value if the name is not found.
+            Type | None: The type associated with the given name, or the default value if the name is not found.
         """
         return self.types.get(name, default)
 
@@ -296,7 +307,7 @@ class StyleContainer:
         """
         return iter(self._styles)
 
-    def get(self, name: str, default=None) -> Style:
+    def get(self, name: str, default=None) -> Style | None:
         """
         Retrieve a style by its name.
 
@@ -305,7 +316,7 @@ class StyleContainer:
             default: The value to return if the style is not found. Defaults to None.
 
         Returns:
-            Style: The style associated with the given name, or the `default` value if not found.
+            Style | None: The style associated with the given name, or the `default` value if not found.
         """
         return next((s for s in self._styles if s.name == name), default)
 
@@ -330,17 +341,19 @@ class AtomType(Type):
         """
         super().__init__(name, parms, **kwparms)
 
-    def match(self, other: Atom) -> bool:
+    def match(self, other: Entity) -> bool:
         """
         Check if the current atom type matches the given atom.
 
         Args:
-            other (Atom): The atom to compare with.
+            other (Entity): The entity to compare with (should be an Atom).
 
         Returns:
             bool: True if the types match, False otherwise.
         """
-        return self.name == other["type"]
+        if hasattr(other, '__getitem__') and 'type' in other:
+            return self.name == other["type"]
+        return False
 
     def apply(self, other: Atom):
         """
@@ -387,17 +400,26 @@ class BondType(Type):
         """
         return [self.itype, self.jtype]
 
-    def match(self, other: Bond) -> bool:
+    def match(self, other: Entity) -> bool:
         """
         Check if the current bond type matches the given bond.
 
         Args:
-            other (Bond): The bond to compare with.
+            other (Entity): The entity to compare with (should be a Bond).
 
         Returns:
             bool: True if the types match, False otherwise.
         """
-        return {other.itom["type"], other.jtom["type"]} == {self.itype, self.jtype}
+        try:
+            if hasattr(other, 'itom') and hasattr(other, 'jtom'):
+                itom = getattr(other, 'itom')
+                jtom = getattr(other, 'jtom')
+                if hasattr(itom, '__getitem__') and hasattr(jtom, '__getitem__'):
+                    if 'type' in itom and 'type' in jtom:
+                        return {itom["type"], jtom["type"]} == {self.itype.name, self.jtype.name}
+        except (AttributeError, KeyError, TypeError):
+            pass
+        return False
 
 
 class AngleType(Type):
@@ -434,23 +456,28 @@ class AngleType(Type):
     def atomtypes(self):
         return [self.itype, self.jtype, self.ktype]
 
-    def match(self, other: Angle) -> bool:
+    def match(self, other: Entity) -> bool:
         """
         Check if the current angle type matches the given angle.
 
         Args:
-            other (Angle): The angle to compare with.
+            other (Entity): The entity to compare with (should be an Angle).
 
         Returns:
             bool: True if the types match, False otherwise.
         """
-        return self.jtype == other.jtom["type"] and {
-            self.itype,
-            self.ktype,
-        } == {
-            other.itom["type"],
-            other.ktom["type"],
-        }
+        try:
+            if hasattr(other, 'jtom') and hasattr(other, 'itom') and hasattr(other, 'ktom'):
+                jtom = getattr(other, 'jtom')
+                itom = getattr(other, 'itom')
+                ktom = getattr(other, 'ktom')
+                if all(hasattr(atom, '__getitem__') for atom in [jtom, itom, ktom]):
+                    if all('type' in atom for atom in [jtom, itom, ktom]):
+                        return (jtom["type"] == self.jtype.name and 
+                               {itom["type"], ktom["type"]} == {self.itype.name, self.ktype.name})
+        except (AttributeError, KeyError, TypeError):
+            pass
+        return False
 
 
 class DihedralType(Type):
@@ -479,6 +506,27 @@ class DihedralType(Type):
     def atomtypes(self):
         return [self.itype, self.jtype, self.ktype, self.ltype]
 
+    def match(self, other: Entity) -> bool:
+        """
+        Check if the current dihedral type matches the given dihedral.
+
+        Args:
+            other (Entity): The entity to compare with (should be a Dihedral).
+
+        Returns:
+            bool: True if the types match, False otherwise.
+        """
+        try:
+            if all(hasattr(other, attr) for attr in ['itom', 'jtom', 'ktom', 'ltom']):
+                atoms = [getattr(other, attr) for attr in ['itom', 'jtom', 'ktom', 'ltom']]
+                if all(hasattr(atom, '__getitem__') and 'type' in atom for atom in atoms):
+                    atom_types = [atom["type"] for atom in atoms]
+                    self_types = [self.itype.name, self.jtype.name, self.ktype.name, self.ltype.name]
+                    return atom_types == self_types or atom_types == self_types[::-1]
+        except (AttributeError, KeyError, TypeError):
+            pass
+        return False
+
 
 class ImproperType(Type):
 
@@ -503,6 +551,28 @@ class ImproperType(Type):
     def atomtypes(self):
         return [self.itype, self.jtype, self.ktype, self.ltype]
 
+    def match(self, other: Entity) -> bool:
+        """
+        Check if the current improper type matches the given improper.
+
+        Args:
+            other (Entity): The entity to compare with (should be an Improper).
+
+        Returns:
+            bool: True if the types match, False otherwise.
+        """
+        try:
+            if all(hasattr(other, attr) for attr in ['itom', 'jtom', 'ktom', 'ltom']):
+                atoms = [getattr(other, attr) for attr in ['itom', 'jtom', 'ktom', 'ltom']]
+                if all(hasattr(atom, '__getitem__') and 'type' in atom for atom in atoms):
+                    atom_types = [atom["type"] for atom in atoms]
+                    self_types = [self.itype.name, self.jtype.name, self.ktype.name, self.ltype.name]
+                    # For impropers, order might be less strict, so check permutations
+                    return atom_types == self_types
+        except (AttributeError, KeyError, TypeError):
+            pass
+        return False
+
 
 class PairType(Type):
 
@@ -523,6 +593,27 @@ class PairType(Type):
     @property
     def atomtypes(self):
         return [self.itype, self.jtype]
+
+    def match(self, other: Entity) -> bool:
+        """
+        Check if the current pair type matches the given pair interaction.
+
+        Args:
+            other (Entity): The entity to compare with (should be a pair interaction).
+
+        Returns:
+            bool: True if the types match, False otherwise.
+        """
+        try:
+            if hasattr(other, 'itom') and hasattr(other, 'jtom'):
+                itom = getattr(other, 'itom')
+                jtom = getattr(other, 'jtom')
+                if hasattr(itom, '__getitem__') and hasattr(jtom, '__getitem__'):
+                    if 'type' in itom and 'type' in jtom:
+                        return {itom["type"], jtom["type"]} == {self.itype.name, self.jtype.name}
+        except (AttributeError, KeyError, TypeError):
+            pass
+        return False
 
 class AtomStyle(Style):
 
@@ -671,7 +762,7 @@ class ForceField:
             )
         if len(self.pairstyles) > 0:
             detail += (
-                f"\nn_pairstyles: {len(self.pairstyles)}, n_pairtypes: {len(self.get_bondtypes())}"
+                f"\nn_pairstyles: {len(self.pairstyles)}, n_pairtypes: {len(self.get_pairtypes())}"
             )
         if len(self.anglestyles) > 0:
             detail += f"\nn_anglestyles: {len(self.anglestyles)}, n_angletypes: {len(self.get_angletypes())}"
@@ -1013,6 +1104,17 @@ class ForceField:
         for imp in self.improperstyles:
             impropertypes.extend(imp.get_types())
         return impropertypes
+
+    def get_pairtypes(self) -> list[PairType]:
+        """
+        Get all pair types from all pairstyles.
+        Returns:
+            list[PairType]: All pair types in the forcefield.
+        """
+        pairtypes = []
+        for pairstyle in self.pairstyles:
+            pairtypes.extend(pairstyle.get_types())
+        return pairtypes
 
     def __contains__(self, name: str) -> bool:
         """Check if a style or type exists by name."""

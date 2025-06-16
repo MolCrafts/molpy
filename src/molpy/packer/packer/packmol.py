@@ -2,7 +2,6 @@ from pathlib import Path
 import shutil
 import molpy as mp
 import xarray as xr
-from molpy.core.frame import _dict_to_dataset
 import molpy.packer as mpk
 import subprocess
 import tempfile

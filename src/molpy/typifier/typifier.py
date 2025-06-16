@@ -6,7 +6,7 @@ from molpy.io import write_pdb
 from molpy.typifier.graph import SMARTSGraph, _find_chordless_cycles
 from molpy.typifier.parser import SmartsParser
 from molpy.core import ForceField
-import h_submitor
+import molq
 
 
 class BaseTypifier: ...
@@ -140,7 +140,7 @@ class AmberToolsTypifier:
         self.conda_env = conda_env
         self.check_antechamber()
 
-    @h_submitor.local
+    @molq.local
     def check_antechamber(self):
         """
         Check if antechamber is available in the target conda env.
@@ -152,7 +152,7 @@ class AmberToolsTypifier:
             "quiet": True,
         }
 
-    @h_submitor.local
+    @molq.local
     def typify(
         self,
         workdir: Path,

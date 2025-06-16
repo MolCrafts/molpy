@@ -40,7 +40,7 @@ class Box(Region, PeriodicBoundary):
             if _matrix.shape == (3,):
                 _matrix = np.diag(_matrix)
             self._matrix = Box.check_matrix(_matrix)
-        self._pbc = pbc
+        self._pbc = np.array(pbc, dtype=bool)
         self._origin = origin
 
     def __repr__(self):
@@ -127,7 +127,7 @@ class Box(Region, PeriodicBoundary):
         return cls(cls.calc_matrix_from_size_tilts(lengths, tilts), pbc, origin)
     
     @classmethod
-    def from_box(self, box: "Box") -> "Box":
+    def from_box(cls, box: "Box") -> "Box":
         """
         Create a new box from an existing box.
 
@@ -137,7 +137,7 @@ class Box(Region, PeriodicBoundary):
         Returns:
             Box: A new box with the same properties as the existing box.
         """
-        return Box(box.matrix, box.pbc, box.origin)
+        return cls(box.matrix.copy(), box.pbc.copy(), box.origin.copy())
 
     @property
     def xlo(self) -> float:
@@ -360,29 +360,28 @@ class Box(Region, PeriodicBoundary):
         self._matrix[1, 2] = value
 
     @property
-    def a(self) -> np.array:
+    def a(self) -> np.ndarray:
         return self._matrix[:, 0]
 
     @property
-    def b(self) -> np.array:
+    def b(self) -> np.ndarray:
         return self._matrix[:, 1]
 
     @property
-    def c(self) -> np.array:
+    def c(self) -> np.ndarray:
         return self._matrix[:, 2]
 
     @property
     def periodic(self) -> bool:
-        return self._pbc.all()
+        return bool(self._pbc.all())
 
     @periodic.setter
     def periodic(self, value: bool | list[bool]):
         if isinstance(value, list):
             assert len(value) == 3, "value must be list of length 3"
-            value = np.array(value)
+            self._pbc = np.array(value, dtype=bool)
         else:
-            value = np.full(3, value)
-        self._pbc = value
+            self._pbc = np.full(3, value, dtype=bool)
 
     @property
     def periodic_x(self) -> bool:
@@ -572,7 +571,7 @@ class Box(Region, PeriodicBoundary):
         return np.array([[lx, xy, xz], [0, ly, yz], [0, 0, lz]])
 
     @staticmethod
-    def calc_lengths_angles_from_matrix(matrix: np.ndarray) -> np.ndarray:
+    def calc_lengths_angles_from_matrix(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         Calculate the lengths of the box edges and angles from its matrix.
 
@@ -894,7 +893,7 @@ class Box(Region, PeriodicBoundary):
         """
         return Box(matrix=other.matrix)
 
-    def volumn(self):
+    def volume(self):
         """
         Calculate the volume of the box.
 
