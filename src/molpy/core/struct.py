@@ -9,16 +9,13 @@ This module provides the fundamental building blocks for molecular modeling:
 - Collections and containers
 """
 
-from collections import UserDict
-from collections.abc import Sequence
-from copy import deepcopy
-from typing import Callable, Union, Optional, Any
-from abc import ABC, abstractmethod
+from typing import Callable, Optional
 
 import numpy as np
 from numpy.typing import ArrayLike
 
 from .protocol import Entity, SpatialMixin, HierarchyMixin, Entities, Struct
+import xarray as xr
 
 class Atom(Entity, SpatialMixin):
     """
@@ -157,6 +154,16 @@ class Bond(ManyBody):
     def length(self) -> float:
         """Calculate the bond length."""
         return float(np.linalg.norm(self.atom1.xyz - self.atom2.xyz))
+
+    def to_dict(self) -> dict:
+        """Convert the bond to a dictionary."""
+        result = super().to_dict()
+        # Add atom indices if atoms have ids
+        if hasattr(self.atom1, 'get') and 'id' in self.atom1:
+            result['i'] = self.atom1['id']
+        if hasattr(self.atom2, 'get') and 'id' in self.atom2:
+            result['j'] = self.atom2['id']
+        return result
 
 
 class Angle(ManyBody):
@@ -585,7 +592,7 @@ class AtomicStructure(Struct, SpatialMixin, HierarchyMixin):
             atom1, atom2 = bond
             target_bond = self.bonds.get_by(
                 lambda b: (b.atom1 is atom1 and b.atom2 is atom2) or
-                         (b.atom1 is atom2 and b.atom2 is other.atom1)
+                         (b.atom1 is atom2 and b.atom2 is atom1)
             )
             if target_bond:
                 self.bonds.remove(target_bond)
@@ -672,67 +679,163 @@ class AtomicStructure(Struct, SpatialMixin, HierarchyMixin):
 
     def to_frame(self):
         """
-        Convert the AtomicStructure to a Frame object.
-        
-        This method extracts atomic information from the structure and creates
-        a Frame with the atomic coordinates and properties as xarray Datasets.
-        
+        Convert the structure to a Frame object.
+
         Returns:
-            Frame: A Frame object containing the atomic data
+        - A Frame object containing the structure's data.
         """
         from .frame import Frame
+
+        frame = Frame()
+
+        # Handle empty structure case
+        if "atoms" not in self or len(self["atoms"]) == 0:
+            # Create empty dict for atoms
+            frame["atoms"] = {}
+            return frame
+
+        # Set atom IDs and create name-to-index mapping
+        atom_name_idx_mapping = {}
+        atom_dicts = []
+        for i, atom in enumerate(self["atoms"]):
+            atom["id"] = i
+            atom_name_idx_mapping[atom["name"]] = i
+            atom_dicts.append(atom.to_dict())
+
+        # Create atoms data directly as dict for xarray
+        atoms_data = {}
+        if atom_dicts:
+            # Collect all keys from atom dictionaries
+            all_keys = set()
+            for atom_dict in atom_dicts:
+                all_keys.update(atom_dict.keys())
+            
+            # Build arrays for each property
+            for key in all_keys:
+                values = [atom_dict.get(key) for atom_dict in atom_dicts]
+                atoms_data[key] = values
+
+        frame["atoms"] = atoms_data
         
-        if not self.atoms:
-            # Return empty frame if no atoms
-            return Frame()
-        
-        # Extract atomic data into dictionaries
-        frame_data = {}
-        
-        # Get coordinates
-        xyz_data = []
-        for atom in self.atoms:
-            if hasattr(atom, 'xyz') and atom.xyz is not None:
-                xyz_data.append(atom.xyz)
-            else:
-                xyz_data.append([0.0, 0.0, 0.0])  # Default coordinates
-        
-        if xyz_data:
-            frame_data['atoms'] = {'xyz': np.array(xyz_data)}
-        
-        # Get other atomic properties
-        atom_properties = {}
-        for atom in self.atoms:
-            for key, value in atom.items():
-                if key != 'xyz':  # xyz is handled separately
-                    if key not in atom_properties:
-                        atom_properties[key] = []
-                    atom_properties[key].append(value)
-        
-        # Add atomic properties to frame data
-        if atom_properties:
-            if 'atoms' not in frame_data:
-                frame_data['atoms'] = {}
-            frame_data['atoms'].update(atom_properties)
-        
-        # Create and return the frame
-        frame = Frame(frame_data)
-        
+        # Create bonds data if bonds exist
+        if "bonds" in self and len(self["bonds"]) > 0:
+            bdicts = []
+            for bond in self["bonds"]:
+                bdict = bond.to_dict()
+                # Get atom indices by name
+                iname = bond.itom["name"] if "name" in bond.itom else bond.itom.get("name", "")
+                jname = bond.jtom["name"] if "name" in bond.jtom else bond.jtom.get("name", "")
+                if iname in atom_name_idx_mapping and jname in atom_name_idx_mapping:
+                    bdict["i"] = atom_name_idx_mapping[iname]
+                    bdict["j"] = atom_name_idx_mapping[jname]
+                bdicts.append(bdict)
+            
+            if bdicts:
+                # Create bonds data directly as dict
+                bonds_data = {}
+                all_bond_keys = set()
+                for bdict in bdicts:
+                    all_bond_keys.update(bdict.keys())
+                
+                for key in all_bond_keys:
+                    bonds_data[key] = [bdict.get(key) for bdict in bdicts]
+                
+                # Add sequential ids
+                bonds_data["id"] = list(range(len(bdicts)))
+                frame["bonds"] = bonds_data
+
+        # Create angles data if angles exist
+        if "angles" in self and len(self["angles"]) > 0:
+            adicts = []
+            for angle in self["angles"]:
+                adict = angle.to_dict()
+                # Get atom indices by name
+                iname = angle.itom["name"] if "name" in angle.itom else angle.itom.get("name", "")
+                jname = angle.jtom["name"] if "name" in angle.jtom else angle.jtom.get("name", "")
+                kname = angle.ktom["name"] if "name" in angle.ktom else angle.ktom.get("name", "")
+                if all(name in atom_name_idx_mapping for name in [iname, jname, kname]):
+                    adict["i"] = atom_name_idx_mapping[iname]
+                    adict["j"] = atom_name_idx_mapping[jname]
+                    adict["k"] = atom_name_idx_mapping[kname]
+                adicts.append(adict)
+            
+            if adicts:
+                angles_data = {}
+                all_angle_keys = set()
+                for adict in adicts:
+                    all_angle_keys.update(adict.keys())
+                
+                for key in all_angle_keys:
+                    angles_data[key] = [adict.get(key) for adict in adicts]
+                
+                angles_data["id"] = list(range(len(adicts)))
+                frame["angles"] = angles_data
+
+        # Create dihedrals data if dihedrals exist
+        if "dihedrals" in self and len(self["dihedrals"]) > 0:
+            ddicts = []
+            for dihedral in self["dihedrals"]:
+                ddict = dihedral.to_dict()
+                # Get atom indices by name
+                iname = dihedral.itom["name"] if "name" in dihedral.itom else dihedral.itom.get("name", "")
+                jname = dihedral.jtom["name"] if "name" in dihedral.jtom else dihedral.jtom.get("name", "")
+                kname = dihedral.ktom["name"] if "name" in dihedral.ktom else dihedral.ktom.get("name", "")
+                lname = dihedral.ltom["name"] if "name" in dihedral.ltom else dihedral.ltom.get("name", "")
+                if all(name in atom_name_idx_mapping for name in [iname, jname, kname, lname]):
+                    ddict["i"] = atom_name_idx_mapping[iname]
+                    ddict["j"] = atom_name_idx_mapping[jname]
+                    ddict["k"] = atom_name_idx_mapping[kname]
+                    ddict["l"] = atom_name_idx_mapping[lname]
+                ddicts.append(ddict)
+            
+            if ddicts:
+                dihedrals_data = {}
+                all_dihedral_keys = set()
+                for ddict in ddicts:
+                    all_dihedral_keys.update(ddict.keys())
+                
+                for key in all_dihedral_keys:
+                    dihedrals_data[key] = [ddict.get(key) for ddict in ddicts]
+                
+                dihedrals_data["id"] = list(range(len(ddicts)))
+                frame["dihedrals"] = dihedrals_data
+
+        # Create impropers data if impropers exist
+        if "impropers" in self and len(self["impropers"]) > 0:
+            idicts = []
+            for improper in self["impropers"]:
+                idict = improper.to_dict()
+                # Get atom indices by name (impropers use same structure as dihedrals)
+                iname = improper.itom["name"] if "name" in improper.itom else improper.itom.get("name", "")
+                jname = improper.jtom["name"] if "name" in improper.jtom else improper.jtom.get("name", "")
+                kname = improper.ktom["name"] if "name" in improper.ktom else improper.ktom.get("name", "")
+                lname = improper.ltom["name"] if "name" in improper.ltom else improper.ltom.get("name", "")
+                if all(name in atom_name_idx_mapping for name in [iname, jname, kname, lname]):
+                    idict["i"] = atom_name_idx_mapping[iname]
+                    idict["j"] = atom_name_idx_mapping[jname]
+                    idict["k"] = atom_name_idx_mapping[kname]
+                    idict["l"] = atom_name_idx_mapping[lname]
+                idicts.append(idict)
+            
+            if idicts:
+                impropers_data = {}
+                all_improper_keys = set()
+                for idict in idicts:
+                    all_improper_keys.update(idict.keys())
+                
+                for key in all_improper_keys:
+                    impropers_data[key] = [idict.get(key) for idict in idicts]
+                
+                impropers_data["id"] = list(range(len(idicts)))
+                frame["impropers"] = impropers_data
+
         # Add structure metadata
-        if self.get('name'):
-            frame._meta['structure_name'] = self.get('name')
-        
+        frame._meta["structure_name"] = self.get("name", "")
+        frame._meta["n_atoms"] = len(self["atoms"])
+        frame._meta["n_bonds"] = len(self.get("bonds", []))
+        frame._meta["n_angles"] = len(self.get("angles", []))
+        frame._meta["n_dihedrals"] = len(self.get("dihedrals", []))
+        frame._meta["n_impropers"] = len(self.get("impropers", []))
+
         return frame
 
-
-class MolecularStructure(AtomicStructure):
-    """
-    Complete molecular structure implementation.
-    
-    This is the main class for representing complete molecular systems
-    with atoms, bonds, angles, and dihedrals.
-    """
-
-    def __repr__(self) -> str:
-        """Return a string representation of the molecular structure."""
-        return f"<MolecularStructure: {len(self.atoms)} atoms, {len(self.bonds)} bonds>"
