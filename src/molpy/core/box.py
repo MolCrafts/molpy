@@ -20,6 +20,7 @@ class Box(Region, PeriodicBoundary):
         matrix: np.ndarray | None = None,
         pbc: np.ndarray = np.ones(3, dtype=bool),
         origin: np.ndarray = np.zeros(3),
+        name: str = "Box"
     ):
         """
         Initialize a Box object.
@@ -33,6 +34,7 @@ class Box(Region, PeriodicBoundary):
             origin (np.ndarray, optional): A 1D array of shape (3,) representing the origin of the box. 
                 Defaults to an array of zeros.
         """
+        super().__init__(name)
         if matrix is None or np.all(matrix == 0):
             self._matrix = np.zeros((3, 3))
         else:
@@ -61,7 +63,9 @@ class Box(Region, PeriodicBoundary):
         _matrix = self._matrix * other
         return Box(_matrix, self._pbc, self._origin)
 
-    def __eq__(self, value: "Box"):
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, Box):
+            return False
         return np.allclose(self._matrix, value.matrix) and np.allclose(
             self._origin, value.origin
         ) and np.allclose(self._pbc, value.pbc)
@@ -427,7 +431,7 @@ class Box(Region, PeriodicBoundary):
         """
         assert isinstance(matrix, np.ndarray), "matrix must be np.ndarray"
         assert matrix.shape == (3, 3), "matrix must be (3, 3)"
-        assert np.linalg.det(matrix) != 0, "matrix must be non-singular"
+        assert not np.isclose(np.linalg.det(matrix), 0), "matrix must be non-singular"
         return matrix
 
     @property
@@ -748,15 +752,11 @@ class Box(Region, PeriodicBoundary):
     
     def get_images(self, xyz: np.ndarray) -> np.ndarray:
         """
-        Get the image of a particle based on its coordinates.
-
-        Args:
-            xyz (np.ndarray): The coordinates of the particle.
-
-        Returns:
-            np.ndarray: The image of the particle.
+        Get the image flags of particles, accounting for box origin and triclinic shape.
         """
-        return np.round(self.make_fractional(xyz)).astype(int)
+        fractional = self.make_fractional(xyz)
+        # Add small epsilon to avoid numerical floor error at box edges
+        return np.floor(fractional + 1e-8).astype(int)
 
     def get_inv(self) -> np.ndarray:
         """
@@ -868,18 +868,19 @@ class Box(Region, PeriodicBoundary):
         """
         return xyz @ self._matrix.T + self._origin
 
-    def isin(self, xyz: np.ndarray) -> np.ndarray:
+    def isin(self, xyz: np.ndarray):
         """
-        Check if points are inside the box.
-
+        Check if point(s) xyz are inside the box.
         Args:
-            xyz (np.ndarray): The coordinates to check.
-
+            xyz (np.ndarray): shape (..., 3)
         Returns:
-            np.ndarray: A boolean array indicating whether each point is inside the box.
+            np.ndarray: boolean array, True if inside
         """
-        frac = self.make_fractional(xyz)
-        return np.all((frac >= 0) & (frac < 1), axis=1)
+        xyz = np.asarray(xyz)
+        fractional = self.make_fractional(xyz)
+        return  np.all(
+            (fractional >= 0) & (fractional < 1), axis=-1
+        )
 
     def merge(self, other: "Box") -> "Box":
         """
@@ -892,12 +893,3 @@ class Box(Region, PeriodicBoundary):
             Box: A new box representing the common space.
         """
         return Box(matrix=other.matrix)
-
-    def volume(self):
-        """
-        Calculate the volume of the box.
-
-        Returns:
-            float: The volume of the box.
-        """
-        return np.linalg.det(self._matrix)

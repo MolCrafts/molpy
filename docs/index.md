@@ -1,21 +1,78 @@
-# Welcome to molpy
+# MolPy Documentation
 
-`molpy` aims to provide a unified and coherent representation of molecular systems, encompassing particles, topological information, force field parameters, simulation cell definitions, and related components. The framework is designed to facilitate systematic modeling, analysis, and interoperability across molecular simulation workflows.
+Welcome to MolPy - a comprehensive Python framework for molecular modeling and analysis.
 
-As a core component of the `MolCrafts` project, `molpy` provides the foundational data structures and abstractions upon which higher-level functionalities are built. Performance-critical and well-validated modules are progressively reimplemented in C++ to ensure high efficiency and cross-platform compatibility. Designed with extensibility in mind, MolPy allows researchers to customize and extend its functionality to accommodate diverse modeling requirements.
+## Overview
 
-## Installation
+MolPy provides two complementary paradigms for molecular data handling:
 
-Use `pip` to install `molpy`:
+- **Struct Module**: Object-oriented molecular building and manipulation
+- **Frame Module**: High-performance tabular data processing
+
+## Quick Start
+
+### Installation
 
 ```bash
 pip install molpy
 ```
 
-## Getting Started
+### Basic Usage
 
-`molpy` manual is organized into several sections, each focusing on a specific aspect of the library. The following sections will guide you through the key features and functionalities of `molpy`:
+```python
+import molpy as mp
+import numpy as np
 
-- [Getting Started](https://molpy.molcrafts.org/getting-started/): An introduction to the core data structures and functionalities of `molpy`.
-- [Reference](https://molpy.molcrafts.org/reference/): Detailed documentation with theoretical background and api reference.
+# Create a molecular structure
+water = mp.AtomicStructure(name="water")
+o = water.def_atom(name="O", element="O", xyz=[0.0, 0.0, 0.0])
+h1 = water.def_atom(name="H", element="H", xyz=[0.757, 0.586, 0.0])
+h2 = water.def_atom(name="H", element="H", xyz=[-0.757, 0.586, 0.0])
+
+# Add bonds
+water.def_bond(o, h1)
+water.def_bond(o, h2)
+
+# Convert to Frame for analysis
+frame = water.to_frame()
+print(f"Molecular data: {frame._data['atoms']['name'].values}")
+```
+
+## Documentation Structure
+
+### Tutorials
+- [Struct Module Tutorial](tutorials/struct.md) - Object-oriented molecular structures
+- [Frame Module Tutorial](tutorials/frame.md) - High-performance data processing
+- [Force Field Guide](tutorials/forcefield_guide.md) - Force field management
+
+### API Reference
+- [Core API](api/core.md) - Core classes and functions
+- [Force Field API](api/forcefield_reference.md) - Force field utilities
+
+### Examples
+- [Basic Examples](examples/) - Practical usage examples
+
+## Key Features
+
+### Struct Module
+- **Flexible Entity System**: Dictionary-like property storage
+- **Spatial Operations**: 3D transformations and geometry calculations
+- **Hierarchical Design**: From atoms to complex molecular systems
+- **Seamless Integration**: Convert to Frame for data analysis
+
+### Frame Module
+- **Dataset-Based Storage**: xarray.Dataset for each data field
+- **Mixed Data Types**: Support for different dtypes in the same frame
+- **Efficient Operations**: Vectorized computations and filtering
+- **Robust Concatenation**: Automatic dtype consistency checks
+
+## Getting Help
+
+- Check the [Struct Tutorial](tutorials/struct.md) for structure manipulation
+- Read the [Frame Tutorial](tutorials/frame.md) for data processing
+- Browse the [API Reference](api/index.md) for detailed documentation
+
+## Contributing
+
+MolPy is an open-source project. Contributions are welcome!
 

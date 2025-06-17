@@ -12,11 +12,12 @@ def rotate_by_rodrigues(xyz, axis, theta):
         np.ndarray: rotated coordinates
     """
     xyz = np.asarray(xyz)
+    axis = np.asarray(axis, dtype=float)
+    axis = axis / np.linalg.norm(axis)
     original_shape = xyz.shape
     was_1d = xyz.ndim == 1
     
     xyz = np.atleast_2d(xyz)
-    axis = axis / np.linalg.norm(axis)
 
     rot = (
         xyz * np.cos(theta)

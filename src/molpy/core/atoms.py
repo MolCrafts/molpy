@@ -1,24 +1,16 @@
 """
-Core molecular structure classes for the molpy framework.
+Atomic structures and molecular entities for the molpy framework.
 
-This module provides the fundamental building blocks for molecular modeling:
-- Entity: Base class with dictionary-like behavior
-- Spatial operations for atoms and structures
-- Topological entities: bonds, angles, dihedrals
-- Hierarchical structure management
-- Collections and containers
+This module provides classes for atoms, bonds, angles, dihedrals, and
+atomic structures that form the building blocks of molecular systems.
 """
-
-from collections import UserDict
-from collections.abc import Sequence
-from copy import deepcopy
-from typing import Callable, Union, Optional, Any
-from abc import ABC, abstractmethod
 
 import numpy as np
 from numpy.typing import ArrayLike
+from typing import Optional, Callable, Sequence
 
-from .protocol import Entity, SpatialMixin, HierarchyMixin, Entities, Struct
+from .protocol import Entity, SpatialMixin, HierarchyMixin
+
 
 class Atom(Entity, SpatialMixin):
     """
@@ -368,12 +360,40 @@ class Improper(Dihedral):
             **kwargs: Additional properties
         """
         # Sort the three bonded atoms for consistent ordering
-        bonded_atoms = sorted([atom1, atom2, atom3], key=lambda a: id(a))
-        super().__init__(center, bonded_atoms[0], bonded_atoms[1], bonded_atoms[2], **kwargs)
+        bonded = sorted([atom1, atom2, atom3], key=lambda a: id(a))
+        super().__init__(bonded[0], center, bonded[1], bonded[2], **kwargs)
+
+    @property
+    def center(self):
+        """Get the central atom."""
+        return self._atoms[1]
 
     def __repr__(self) -> str:
-        """Return a string representation of the improper dihedral."""
-        return f"<Improper: {self.atom1.name}({self.atom2.name},{self.atom3.name},{self.atom4.name})>"
+        """Return a string representation of the improper."""
+        return f"<Improper: {self.center.name} center>"
+
+
+class Struct(Entity):
+    """
+    Base class for molecular structures.
+    
+    Provides fundamental structure functionality without requiring
+    spatial or atomic properties.
+    """
+
+    def __init__(self, name: str = "", **props):
+        """
+        Initialize a molecular structure.
+        
+        Args:
+            name: Structure name
+            **props: Additional properties
+        """
+        super().__init__(name=name, **props)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the structure."""
+        return f"<Struct: {self.get('name', '')}>"
 
 
 class AtomicStructure(Struct, SpatialMixin, HierarchyMixin):
@@ -392,50 +412,52 @@ class AtomicStructure(Struct, SpatialMixin, HierarchyMixin):
             name: Structure name
             **props: Additional properties
         """
+        # Initialize hierarchy first
+        if not hasattr(self, '_parent'):
+            self._parent = None
+        if not hasattr(self, '_children'):
+            self._children = []
+            
         super().__init__(name=name, **props)
         self["atoms"] = Entities()
         self["bonds"] = Entities()
         self["angles"] = Entities()
         self["dihedrals"] = Entities()
 
-    def __repr__(self) -> str:
-        """Return a string representation of the structure."""
-        return f"<AtomicStructure: {len(self.atoms)} atoms>"
-
     @property
     def atoms(self):
-        """Get the atoms in the structure."""
+        """Get the atoms collection."""
         return self["atoms"]
 
     @property
     def bonds(self):
-        """Get the bonds in the structure."""
+        """Get the bonds collection."""
         return self["bonds"]
 
     @property
     def angles(self):
-        """Get the angles in the structure."""
+        """Get the angles collection."""
         return self["angles"]
 
     @property
     def dihedrals(self):
-        """Get the dihedrals in the structure."""
+        """Get the dihedrals collection."""
         return self["dihedrals"]
 
     @property
     def xyz(self) -> np.ndarray:
-        """Get the coordinates of all atoms in the structure."""
+        """Get the coordinates of all atoms as a numpy array."""
         if len(self.atoms) == 0:
             return np.array([]).reshape(0, 3)
-        return np.array([atom.xyz for atom in self.atoms], dtype=float)
+        return np.array([atom.xyz for atom in self.atoms])
 
     @xyz.setter
     def xyz(self, value: ArrayLike) -> None:
         """
-        Set the coordinates of all atoms in the structure.
+        Set the coordinates of all atoms.
         
         Args:
-            value: Array of shape (n_atoms, 3) with new coordinates
+            value: Array of coordinates with shape (n_atoms, 3)
         """
         value = np.asarray(value)
         if value.shape != (len(self.atoms), 3):
@@ -585,7 +607,7 @@ class AtomicStructure(Struct, SpatialMixin, HierarchyMixin):
             atom1, atom2 = bond
             target_bond = self.bonds.get_by(
                 lambda b: (b.atom1 is atom1 and b.atom2 is atom2) or
-                         (b.atom1 is atom2 and b.atom2 is other.atom1)
+                         (b.atom1 is atom2 and b.atom2 is atom1)
             )
             if target_bond:
                 self.bonds.remove(target_bond)

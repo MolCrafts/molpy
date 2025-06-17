@@ -210,10 +210,26 @@ class TestBoxTransformations:
 
     def test_image_calculation(self):
         """Test image calculation."""
-        box = mp.Box.orth([2, 2, 2])
-        points = np.array([[3, 4, 5], [-1, -2, -3]])
+        box = mp.Box.orth([2, 2, 2], origin=(-1, -1, -1))
+        points = np.array([
+            [ 3.0,  4.0,  5.0],  # far positive → image = [2, 2, 3]
+            [-1.1, -2.2, -3.3],  # on negative edge → image = [-1, -1, -2] if floor(x - eps)
+            [-0.9, -0.8, -0.7],  # inside central box → image = [0, 0, 0]
+            [-2.1, -2.1, -2.1],  # well outside negative → image = [-1, -1, -1] if inside [-3,-1)
+            [ 1.0,  1.0,  1.0],  # on the boundary of central box → image = [1, 1, 1] or [0,0,0] depending on convention
+            [ 0.9999, 0.9999, 0.9999],  # just inside box → image = [0, 0, 0]
+            [-1.0001, -1.0001, -1.0001], # just outside box → image = [-1, -1, -1]
+        ])
         images = box.get_images(points)
-        expected = np.array([[2, 2, 2], [-1, -1, -2]])
+        expected = np.array([
+            [ 2,  2,  3],
+            [-1, -1, -2],
+            [ 0,  0,  0],
+            [-1, -1, -1],
+            [ 1,  1,  1],     # depending on how you define boundary inclusion
+            [ 0,  0,  0],
+            [-1, -1, -1],
+        ])
         npt.assert_allclose(images, expected)
 
 

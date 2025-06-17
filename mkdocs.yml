@@ -1,5 +1,5 @@
 site_name: molpy
-repo_name: molcrafts/molpot
+repo_name: molcrafts/molpy
 repo_url: https://github.com/molcrafts/molpy
 
 copyright: Copyright &copy; 2024 - 2025 Jichen Li
@@ -10,18 +10,12 @@ theme:
     - scheme: default
       primary: "teal"
       accent: "light blue"
-      background: "#f9f9f9"
-      text: "#333333"
-      surface: "#ffffff"
       toggle:
         icon: material/brightness-7 
         name: Switch to dark mode
     - scheme: slate
       primary: "teal"
       accent: "light blue"
-      background: "#f3f3f3"  # 更深一点的浅灰色
-      text: "#444444"  # 较深的文本灰
-      surface: "#fefefe"  # 几乎白色
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -38,28 +32,29 @@ theme:
 
 plugins:
   - search
-  - mkdocstrings
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: numpy
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            heading_level: 2
 
-nav:
+nav: 
   - Home: index.md
-  - Getting Started: 
-    - Core:
-      - Box: start/core/box.md
-      - Forcefield: start/core/forcefield.md
-      - Frame: start/core/frame.md
-      - Trajectory: start/core/trajectory.md
-      - Region: start/core/region.md
-      - Structure: start/core/struct.md
-      - System: start/core/system.md
+  - Tutorials:
+    - Structure: tutorials/struct.md
+    - Frame & Trajectory: tutorials/frame.md
   - API Reference:
+    - Overview: api/index.md
     - Core:
-      - Box: reference/core/box.md
-      - Forcefield: reference/core/forcefield.md
-      - Frame: reference/core/frame.md
-      - Trajectory: reference/core/trajectory.md
-      - Region: reference/core/region.md
-      - Structure: reference/core/struct.md
-      - System: reference/core/system.md
+      - Structure: api/struct.md
+      - Frame: api/frame.md
+      - Trajectory: api/trajectory.md
+      - Forcefield: api/forcefield.md
 
 markdown_extensions:
   - admonition
