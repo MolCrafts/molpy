@@ -1,7 +1,7 @@
 from collections import UserDict, defaultdict
 from typing import Callable, Union
 from functools import reduce
-from molpy.core.struct import Angle, Atom, Bond, Entity
+from molpy.core.atomistic import Angle, Atom, Bond, Entity
 
 class DictWithList(UserDict):
 

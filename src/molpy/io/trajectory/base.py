@@ -3,6 +3,8 @@ from typing import Iterator, Union, List
 from pathlib import Path
 import mmap
 
+import molpy as mp
+
 PathLike = Union[str, bytes]  # type_check_only
 
 class TrajectoryReader(ABC):
@@ -33,20 +35,20 @@ class TrajectoryReader(ABC):
             mm.close()
 
     @abstractmethod
-    def read_frame(self, index: int) -> dict:
+    def read_frame(self, index: int) -> mp.Frame:
         pass
 
-    def read_frames(self, indices: List[int]) -> List[dict]:
+    def read_frames(self, indices: List[int]) -> List[mp.Frame]:
         return [self.read_frame(i) for i in indices]
 
     def __len__(self) -> int:
         return len(self._byte_offsets)
 
-    def __iter__(self) -> Iterator[dict]:
+    def __iter__(self) -> Iterator[mp.Frame]:
         self._current_frame = 0
         return self
 
-    def __next__(self) -> dict:
+    def __next__(self) -> mp.Frame:
         if self._current_frame >= len(self):
             raise StopIteration
         frame = self.read_frame(self._current_frame)
@@ -83,7 +85,7 @@ class TrajectoryWriter(ABC):
         self.close()
 
     @abstractmethod
-    def write_frame(self, frame: dict):
+    def write_frame(self, frame: mp.Frame):
         """Write a single frame to the file."""
         pass
 

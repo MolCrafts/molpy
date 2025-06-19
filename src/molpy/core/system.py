@@ -3,7 +3,7 @@ import numpy as np
 from .frame import Frame
 from .forcefield import ForceField
 from .box import Box
-from .struct import Struct
+from .atomistic import Struct, AtomicStructure
 
 
 class System:
@@ -37,9 +37,56 @@ class System:
     def add_struct(self, struct: Struct):
         self._struct.append(struct)
 
-    def to_frame(self):
+    def to_dict(self):
+        """Convert system to a dictionary representation."""
+        # Convert structures to list of dicts
+        struct_dicts = []
+        for struct in self._struct:
+            if hasattr(struct, 'to_dict'):
+                struct_dicts.append(struct.to_dict())
+            else:
+                # Fallback for basic Struct objects
+                struct_dict = dict(struct) if hasattr(struct, 'keys') else {'name': getattr(struct, 'name', 'unknown')}
+                struct_dict['__class__'] = struct.__class__.__name__
+                struct_dicts.append(struct_dict)
+        
+        # Handle forcefield
+        if hasattr(self._forcefield, 'to_dict'):
+            ff_dict = self._forcefield.to_dict()
+        else:
+            ff_dict = {'name': getattr(self._forcefield, 'name', 'unknown')}
+        
+        # Handle box
+        if hasattr(self._box, 'to_dict'):
+            box_dict = self._box.to_dict()
+        else:
+            box_dict = {
+                'matrix': self._box.matrix.tolist() if hasattr(self._box, 'matrix') else [[1,0,0],[0,1,0],[0,0,1]],
+                'pbc': self._box.pbc.tolist() if hasattr(self._box, 'pbc') else [True, True, True],
+                'origin': self._box.origin.tolist() if hasattr(self._box, 'origin') else [0.0, 0.0, 0.0]
+            }
+        
+        return {
+            'forcefield': ff_dict,
+            'box': box_dict,
+            'structures': struct_dicts,
+            'n_structures': len(self._struct)
+        }
 
-        frame = Frame.from_structs(self._struct)
+    def to_frame(self, factory=None):
+        """Convert system to a Frame."""
+        if not self._struct:
+            # Empty system case
+            frame = Frame()
+        else:
+            # Combine all structures into one AtomicStructure
+            combined_struct = AtomicStructure("combined_system")
+            for struct in self._struct:
+                combined_struct.add_struct(struct)
+            
+            # Convert to frame
+            frame = combined_struct.to_frame()
+        
         frame.box = self._box
         frame.forcefield = self._forcefield
         return frame

@@ -1,6 +1,7 @@
 import molpy as mp
 import numpy as np
 from pathlib import Path
+from typing import List
 from . import data
 from . import forcefield
 from . import log
@@ -146,3 +147,17 @@ def read_top(file: Path, forcefield: mp.ForceField | None = None) -> mp.ForceFie
     from .forcefield.top import GromacsTopReader
     reader = GromacsTopReader(file)
     return reader.read(forcefield)
+
+# Trajectory functions
+def read_lammps_trajectory(file: Path) -> 'trajectory.lammps.LammpsTrajectoryReader':
+    """Read LAMMPS trajectory file and return a trajectory reader."""
+    from .trajectory.lammps import LammpsTrajectoryReader
+    return LammpsTrajectoryReader(file)
+
+def write_lammps_trajectory(file: Path, frames: List[mp.Frame], atom_style: str = "full") -> None:
+    """Write frames to a LAMMPS trajectory file."""
+    from .trajectory.lammps import LammpsTrajectoryWriter
+    with LammpsTrajectoryWriter(file, atom_style) as writer:
+        for i, frame in enumerate(frames):
+            timestep = getattr(frame, 'timestep', i)
+            writer.write_frame(frame, timestep)

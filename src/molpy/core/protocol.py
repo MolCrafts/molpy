@@ -6,15 +6,8 @@ used throughout the molecular modeling framework.
 """
 
 from collections import UserDict
-from collections.abc import Sequence
 from copy import deepcopy
-from typing import Callable, Union, Optional, Any
-from abc import ABC, abstractmethod
-
-import numpy as np
-from numpy.typing import ArrayLike
-
-from ..op import rotate_by_rodrigues
+from typing import Callable
 
 class Entity(UserDict):
     """
@@ -36,10 +29,6 @@ class Entity(UserDict):
             **kwargs: Keyword arguments for UserDict and mixins
         """
         super().__init__(*args, **kwargs)
-        if not hasattr(self, '_parent'):
-            self._parent = None
-        if not hasattr(self, '_children'):
-            self._children = []
 
     def __call__(self, **modify):
         """
@@ -219,252 +208,6 @@ class Entities:
         """Return a string representation of the collection."""
         return f"<Entities: {len(self._data)} items>"
 
-
-
-
-class SpatialMixin(ABC):
-    """
-    Abstract mixin class providing spatial operations for entities.
-    
-    Defines the interface for entities that have spatial coordinates
-    and can perform geometric transformations.
-    """
-    
-    @property
-    @abstractmethod
-    def xyz(self) -> np.ndarray:
-        """Get the xyz coordinates as a numpy array."""
-        pass
-    
-    @xyz.setter
-    @abstractmethod
-    def xyz(self, value: ArrayLike) -> None:
-        """Set the xyz coordinates from an array-like object."""
-        pass
-
-    def distance_to(self, other: "SpatialMixin") -> float:
-        """
-        Calculate the distance to another spatial entity.
-        
-        Args:
-            other: Another spatial entity
-            
-        Returns:
-            The Euclidean distance between the two entities
-        """
-        return float(np.linalg.norm(self.xyz - other.xyz))
-
-    def move(self, vector: ArrayLike) -> None:
-        """
-        Translate the entity by a given vector.
-        
-        Args:
-            vector: Translation vector
-        """
-        self.xyz = self.xyz + np.array(vector)
-
-    def scale(self, factor: Union[float, ArrayLike], origin: Optional[ArrayLike] = None) -> None:
-        """
-        Scale the entity by a given factor around an origin.
-        
-        Args:
-            factor: Scaling factor (scalar or per-axis)
-            origin: Origin point for scaling (defaults to current position)
-        """
-        if origin is None:
-            origin = self.xyz
-        else:
-            origin = np.array(origin)
-        
-        factor = np.array(factor)
-        self.xyz = origin + factor * (self.xyz - origin)
-
-    def rotate(self, axis: ArrayLike, angle: float, origin: Optional[ArrayLike] = None) -> None:
-        """
-        Rotate the entity around an axis by a given angle.
-        
-        Args:
-            axis: Rotation axis vector
-            angle: Rotation angle in radians
-            origin: Origin point for rotation (defaults to [0,0,0])
-        """
-        if origin is None:
-            origin = np.zeros(3)
-        else:
-            origin = np.array(origin)
-        axis = np.array(axis, dtype=float)
-        translated = self.xyz - origin
-        rotated = rotate_by_rodrigues(translated, axis, angle)
-        if isinstance(rotated, np.ndarray) and rotated.shape == (1, 3):
-            rotated = rotated[0]
-        rotated = np.where(np.abs(rotated) < 1e-12, 0.0, rotated)
-        self.xyz = rotated + origin
-
-
-class HierarchyMixin:
-    """
-    Mixin class providing hierarchical structure functionality.
-    
-    Allows entities to have parent-child relationships and provides
-    methods for navigating and manipulating the hierarchy.
-    """
-    
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        if not hasattr(self, '_parent'):
-            self._parent = None
-        if not hasattr(self, '_children'):
-            self._children = []
-    
-    @property
-    def parent(self):
-        """Get the parent entity."""
-        return self._parent
-    
-    @property
-    def children(self):
-        """Get the list of child entities."""
-        return self._children.copy()  # Return a copy to prevent external modification
-    
-    @property
-    def is_root(self) -> bool:
-        """Check if this entity is a root (has no parent)."""
-        return self._parent is None
-    
-    @property
-    def is_leaf(self) -> bool:
-        """Check if this entity is a leaf (has no children)."""
-        return len(self._children) == 0
-    
-    @property
-    def depth(self) -> int:
-        """Get the depth of this entity in the hierarchy (root = 0)."""
-        if self.is_root or self.parent is None:
-            return 0
-        return self.parent.depth + 1
-    
-    def add_child(self, child: "HierarchyMixin") -> None:
-        """
-        Add a child entity to this entity.
-        
-        Args:
-            child: The child entity to add
-        """
-        if child not in self._children:
-            self._children.append(child)
-            child._parent = self
-    
-    def remove_child(self, child: "HierarchyMixin") -> None:
-        """
-        Remove a child entity from this entity.
-        
-        Args:
-            child: The child entity to remove
-        """
-        if child in self._children:
-            self._children.remove(child)
-            child._parent = None
-    
-    def get_root(self) -> "HierarchyMixin":
-        """
-        Get the root entity of the hierarchy.
-        
-        Returns:
-            The root entity
-        """
-        if self.is_root or self.parent is None:
-            return self
-        return self.parent.get_root()
-    
-    def get_ancestors(self) -> list["HierarchyMixin"]:
-        """
-        Get all ancestors of this entity (from parent to root).
-        
-        Returns:
-            List of ancestor entities
-        """
-        ancestors = []
-        current = self.parent
-        while current is not None:
-            ancestors.append(current)
-            current = current.parent
-        return ancestors
-    
-    def get_descendants(self) -> list["HierarchyMixin"]:
-        """
-        Get all descendants of this entity.
-        
-        Returns:
-            List of descendant entities
-        """
-        descendants = []
-        for child in self._children:
-            descendants.append(child)
-            descendants.extend(child.get_descendants())
-        return descendants
-    
-    def find_by_condition(self, condition: Callable[["HierarchyMixin"], bool]):
-        """
-        Find the first descendant (including self) that satisfies a condition.
-        
-        Args:
-            condition: A function that takes an entity and returns True if it matches
-            
-        Returns:
-            The first matching entity, or None
-        """
-        if condition(self):
-            return self
-        for child in self._children:
-            found = child.find_by_condition(condition)
-            if found:
-                return found
-        return None
-
-
-class IdentifierMixin:
-    """
-    Mixin class providing identifier functionality for entities.
-    
-    Provides consistent identifier management with optional auto-generation.
-    """
-    
-    _id_counter = 0
-    
-    def __init__(self, id: Optional[Union[int, str]] = None, *args, **kwargs):
-        """
-        Initialize with an identifier.
-        
-        Args:
-            id: Optional identifier (auto-generated if None)
-            *args: Additional positional arguments
-            **kwargs: Additional keyword arguments
-        """
-        super().__init__(*args, **kwargs)
-        if id is None:
-            IdentifierMixin._id_counter += 1
-            self._id = IdentifierMixin._id_counter
-        else:
-            self._id = id
-    
-    @property
-    def id(self) -> Union[int, str]:
-        """Get the entity identifier."""
-        return self._id
-    
-    @id.setter
-    def id(self, value: Union[int, str]) -> None:
-        """Set the entity identifier."""
-        self._id = value
-    
-    def __str__(self) -> str:
-        """Return string representation using identifier."""
-        return f"{self.__class__.__name__}({self.id})"
-    
-    def __repr__(self) -> str:
-        """Return detailed string representation."""
-        return f"{self.__class__.__name__}(id={self.id})"
-
 class Struct(Entity):
     """
     Base class for molecular structures.
@@ -483,6 +226,147 @@ class Struct(Entity):
         """
         super().__init__(name=name, **props)
 
-    def __repr__(self) -> str:
-        """Return a string representation of the structure."""
-        return f"<Struct: {self.get('name', 'unnamed')}>"
+    def __call__(self, **kwargs):
+        """
+        Create a new instance of this structure with optional modifications.
+        
+        This method enables structures to be used as factory functions,
+        creating copies of themselves with potentially modified properties.
+        
+        For AtomicStructure, this creates a new instance and deep copies all
+        atoms, bonds, angles, etc. with new parameters applied.
+        
+        Args:
+            **kwargs: Properties to pass to the constructor and/or override in the instance
+            
+        Returns:
+            A new instance of the same class with copied data
+        """
+        import copy
+        import inspect
+        
+        # For AtomicStructure and subclasses, we need special handling
+        # to avoid double-initialization
+        if hasattr(self, 'atoms') and hasattr(self.__class__, '__init__'):
+            # Get the __init__ signature of the class
+            init_signature = inspect.signature(self.__class__.__init__)
+            constructor_kwargs = {}
+            modification_kwargs = {}
+            
+            # Separate constructor arguments from modification arguments
+            for key, value in kwargs.items():
+                if key in init_signature.parameters:
+                    constructor_kwargs[key] = value
+                else:
+                    modification_kwargs[key] = value
+            
+            # Use existing name if not specified in kwargs  
+            if 'name' not in constructor_kwargs:
+                constructor_kwargs['name'] = self.get('name', '')
+                
+            # Create a new instance with constructor arguments
+            new_instance = self.__class__(**constructor_kwargs)
+            
+            # Deep copy atoms with modifications
+            if hasattr(self, 'atoms') and len(self.atoms) > 0:
+                # Clear the auto-created atoms/bonds/angles from constructor
+                new_instance['atoms'].clear()
+                new_instance['bonds'].clear() 
+                new_instance['angles'].clear()
+                if hasattr(new_instance, 'dihedrals'):
+                    new_instance['dihedrals'].clear()
+                
+                # Deep copy atoms with modifications applied
+                for atom in self.atoms:
+                    new_atom_data = copy.deepcopy(atom.to_dict())
+                    # Apply modifications to atom data
+                    for key, value in modification_kwargs.items():
+                        new_atom_data[key] = value
+                    new_atom = type(atom)(**new_atom_data)
+                    new_instance.add_atom(new_atom)
+                
+                # Deep copy bonds
+                if hasattr(self, 'bonds') and len(self.bonds) > 0:
+                    atom_mapping = {}  # Map old atoms to new atoms
+                    for old_atom, new_atom in zip(self.atoms, new_instance.atoms):
+                        atom_mapping[old_atom] = new_atom
+                    
+                    for bond in self.bonds:
+                        new_atom1 = atom_mapping.get(bond.atom1)
+                        new_atom2 = atom_mapping.get(bond.atom2)
+                        if new_atom1 and new_atom2:
+                            bond_data = copy.deepcopy(bond.to_dict())
+                            # Remove atom references from bond data
+                            bond_data.pop('atoms', None)
+                            new_bond = type(bond)(new_atom1, new_atom2, **bond_data)
+                            new_instance.add_bond(new_bond)
+                
+                # Deep copy angles
+                if hasattr(self, 'angles') and len(self.angles) > 0:
+                    atom_mapping = {}
+                    for old_atom, new_atom in zip(self.atoms, new_instance.atoms):
+                        atom_mapping[old_atom] = new_atom
+                    
+                    for angle in self.angles:
+                        new_atom1 = atom_mapping.get(angle.itom)
+                        new_atom2 = atom_mapping.get(angle.jtom) 
+                        new_atom3 = atom_mapping.get(angle.ktom)
+                        if new_atom1 and new_atom2 and new_atom3:
+                            angle_data = copy.deepcopy(angle.to_dict())
+                            # Remove atom references from angle data
+                            angle_data.pop('atoms', None)
+                            new_angle = type(angle)(new_atom1, new_atom2, new_atom3, **angle_data)
+                            new_instance.add_angle(new_angle)
+            
+            # Copy other non-structural properties
+            for key, value in self.items():
+                if key not in ['atoms', 'bonds', 'angles', 'dihedrals'] and key not in modification_kwargs:
+                    if hasattr(value, 'copy'):
+                        new_instance[key] = value.copy()
+                    else:
+                        new_instance[key] = value
+            
+            return new_instance
+        
+        # Original fallback implementation for other classes
+        try:
+            # Get the __init__ signature of the class
+            init_signature = inspect.signature(self.__class__.__init__)
+            constructor_kwargs = {}
+            remaining_kwargs = {}
+            
+            # Separate constructor arguments from other properties
+            for key, value in kwargs.items():
+                if key in init_signature.parameters:
+                    constructor_kwargs[key] = value
+                else:
+                    remaining_kwargs[key] = value
+            
+            # Create a new instance with constructor arguments
+            # Use existing name if not specified in kwargs  
+            if 'name' not in constructor_kwargs:
+                constructor_kwargs['name'] = self.get('name', '')
+                
+            new_instance = self.__class__(**constructor_kwargs)
+            
+        except Exception:
+            # Final fallback: create with just name if introspection fails
+            new_instance = self.__class__(name=self.get('name', ''))
+            remaining_kwargs = kwargs.copy()
+        
+        # Copy all data from the current instance (deep copy for collections)
+        for key, value in self.items():
+            if key not in remaining_kwargs:  # Don't override specified kwargs
+                if hasattr(value, 'copy'):
+                    # For collections/containers, create a shallow copy
+                    new_instance[key] = value.copy()
+                else:
+                    # For simple values, just assign
+                    new_instance[key] = value
+        
+        # Apply any remaining overrides from kwargs
+        for key, value in remaining_kwargs.items():
+            new_instance[key] = value
+            
+        return new_instance
+

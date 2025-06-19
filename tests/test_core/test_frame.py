@@ -110,14 +110,6 @@ class TestFrame:
         frame1['custom_time'] = 5.0
         
         frame2 = frame1.copy()
-    def test_frame_copy(self):
-        atoms_data = {"position": np.array([[0,0,0]], dtype=float), "name": np.array(["C"], dtype="U1")}
-        box = create_dummy_box()
-        frame1 = Frame(data={"atoms": atoms_data}, box=box)
-        frame1.timestep = 50
-        frame1['custom_time'] = 5.0
-        
-        frame2 = frame1.copy()
         
         # 检查数据是否正确复制
         assert "position" in frame2['atoms'].data_vars
@@ -167,11 +159,17 @@ class TestFrame:
         assert "atomic_number" in data_vars
 
         metadata = frame_dict["metadata"]
-        assert "box" in metadata
-        expected_box_dict = box.to_dict()
-        assert metadata["box"] == expected_box_dict
         assert metadata["timestep"] == 1
         assert metadata["custom_scalar"] == "test"
+        
+        # Box is stored at top level, not in metadata
+        assert "box" in frame_dict
+        expected_box_dict = {
+            'matrix': box.matrix.tolist(),
+            'pbc': box.pbc.tolist(),
+            'origin': box.origin.tolist()
+        }
+        assert frame_dict["box"] == expected_box_dict
 
     def test_frame_concat_dataset(self):
         atoms1 = {"position": np.array([[0,0,0]], dtype=float), "name": np.array(["C"], dtype="U1")}
@@ -258,3 +256,153 @@ class TestFrame:
         assert isinstance(frame["atoms"], xr.Dataset)
         assert len(frame["atoms"].data_vars) == 0
         assert len(frame["atoms"].coords) == 0
+
+    def test_frame_lammps_data_compatibility(self):
+        """Test Frame compatibility with LAMMPS data format."""
+        # Test with 'q' field instead of 'charge'
+        atoms_data = {
+            'id': [0, 1, 2],
+            'molid': [1, 1, 1],
+            'type': ['O', 'H', 'H'],
+            'q': [-0.8476, 0.4238, 0.4238],  # Using 'q' not 'charge'
+            'xyz': [[0.0, 0.0, 0.0], [0.816, 0.577, 0.0], [-0.816, 0.577, 0.0]]
+        }
+        frame = Frame()
+        frame["atoms"] = atoms_data
+        frame.box = Box(np.eye(3) * 10.0)
+        
+        # Verify frame structure
+        assert "atoms" in frame
+        atoms = frame["atoms"]
+        assert "q" in atoms.data_vars
+        assert "xyz" in atoms.data_vars
+        
+        # Check dimensions and values
+        assert atoms.sizes[list(atoms.sizes.keys())[0]] == 3  # 3 atoms
+        charges = atoms["q"].values if hasattr(atoms["q"], 'values') else atoms["q"]
+        assert np.isclose(charges[0], -0.8476)
+        assert np.isclose(charges[1], 0.4238)
+
+    def test_frame_bond_angle_data(self):
+        """Test Frame with bonds and angles data."""
+        frame = Frame()
+        
+        # Water molecule with bonds and angles
+        atoms_data = {
+            'id': [0, 1, 2],
+            'molid': [1, 1, 1],
+            'type': ['O', 'H', 'H'],
+            'q': [-0.8476, 0.4238, 0.4238],
+            'xyz': [[0.0, 0.0, 0.0], [0.816, 0.577, 0.0], [-0.816, 0.577, 0.0]]
+        }
+        
+        bonds_data = {
+            'id': [0, 1],
+            'i': [0, 0],  # O-H bonds
+            'j': [1, 2]
+        }
+        
+        angles_data = {
+            'id': [0],
+            'i': [1],  # H-O-H angle
+            'j': [0],
+            'k': [2]
+        }
+        
+        frame["atoms"] = atoms_data
+        frame["bonds"] = bonds_data
+        frame["angles"] = angles_data
+        frame.box = Box(np.eye(3) * 10.0)
+        
+        # Verify all sections exist
+        assert "atoms" in frame
+        assert "bonds" in frame
+        assert "angles" in frame
+        
+        # Check data structure
+        bonds = frame["bonds"]
+        assert "i" in bonds.data_vars
+        assert "j" in bonds.data_vars
+        assert bonds.sizes[list(bonds.sizes.keys())[0]] == 2  # 2 bonds
+        
+        angles = frame["angles"]
+        assert "i" in angles.data_vars
+        assert "j" in angles.data_vars
+        assert "k" in angles.data_vars
+        assert angles.sizes[list(angles.sizes.keys())[0]] == 1  # 1 angle
+
+    def test_frame_coordinate_formats(self):
+        """Test Frame handling of different coordinate formats."""
+        frame1 = Frame()
+        
+        # Test with xyz array format
+        atoms_data_xyz = {
+            'id': [0, 1, 2],
+            'type': ['A', 'A', 'A'],
+            'xyz': [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]]
+        }
+        frame1["atoms"] = atoms_data_xyz
+        
+        # Test with separate x,y,z fields
+        frame2 = Frame()
+        atoms_data_separate = {
+            'id': [0, 1, 2],
+            'type': ['A', 'A', 'A'],
+            'x': [0.0, 1.0, 2.0],
+            'y': [0.0, 1.0, 2.0],
+            'z': [0.0, 1.0, 2.0]
+        }
+        frame2["atoms"] = atoms_data_separate
+        
+        # Both should work
+        assert "xyz" in frame1["atoms"].data_vars
+        assert "x" in frame2["atoms"].data_vars
+        assert "y" in frame2["atoms"].data_vars
+        assert "z" in frame2["atoms"].data_vars
+        
+        # Check values
+        xyz_coords = frame1["atoms"]["xyz"].values if hasattr(frame1["atoms"]["xyz"], 'values') else frame1["atoms"]["xyz"]
+        assert np.allclose(xyz_coords[0], [0.0, 0.0, 0.0])
+        assert np.allclose(xyz_coords[2], [2.0, 2.0, 2.0])
+
+    def test_frame_timestep_handling(self):
+        """Test Frame timestep handling for trajectory data."""
+        frame = Frame()
+        
+        atoms_data = {
+            'id': [0, 1],
+            'type': [1, 2],
+            'x': [0.0, 1.0],
+            'y': [0.0, 0.0],
+            'z': [0.0, 0.0]
+        }
+        frame["atoms"] = atoms_data
+        frame["timestep"] = 1000
+        frame.box = Box(np.eye(3) * 5.0)
+        
+        # Check timestep access
+        assert frame.get("timestep") == 1000
+        assert frame["timestep"] == 1000
+        
+        # Test timestep modification
+        frame["timestep"] = 2000
+        assert frame["timestep"] == 2000
+
+    def test_frame_empty_handling(self):
+        """Test Frame graceful handling of empty data."""
+        frame = Frame()
+        
+        # Empty atoms data
+        empty_atoms = {}
+        frame["atoms"] = empty_atoms
+        
+        # Should create empty dataset
+        assert "atoms" in frame
+        atoms = frame["atoms"]
+        assert isinstance(atoms, xr.Dataset)
+        assert len(atoms.data_vars) == 0
+        
+        # Test with minimal data
+        minimal_atoms = {'id': [0]}
+        frame["atoms"] = minimal_atoms
+        assert "id" in frame["atoms"].data_vars

@@ -1,2 +1,2 @@
 from .xyz import *
-from .lammps import LammpsTrajectoryReader
+from .lammps import LammpsTrajectoryReader, LammpsTrajectoryWriter

@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 import xarray as xr
-from molpy.core.struct import AtomicStructure, Atom
+from molpy.core.atomistic import AtomicStructure, Atom
 from molpy.core.trajectory import Frame, Trajectory
 
 def make_frame_dataset(x=0, time=0.0, label=None):
@@ -21,7 +21,11 @@ def test_frame_basic():
     assert f.get_meta("label") == "start"
     f2 = f.copy()
     assert f2 is not f
-    assert f2["atoms"].sizes["index"] == f["atoms"].sizes["index"]
+    # Check that both frames have atoms data
+    assert "atoms" in f2
+    assert "atoms" in f
+    # Compare the structure
+    assert f2["atoms"]["position"].values.shape == f["atoms"]["position"].values.shape
     assert (f2["atoms"]["position"].values == f["atoms"]["position"].values).all()
 
 def test_trajectory_append_and_slice():
@@ -59,7 +63,9 @@ def test_trajectory_concat():
     assert len(concat_traj) == 2
     assert isinstance(concat_traj[0], Frame)
     # 检查合并后的原子数
-    assert concat_traj[0]["atoms"].sizes["index"] == 2
+    frame0 = concat_traj[0]
+    atoms0 = frame0["atoms"]  # This returns xr.Dataset
+    assert atoms0["position"].values.shape[0] == 2  # 2 atoms
     assert concat_traj[1].get_meta("label") == "b"
     assert concat_traj.get_meta("foo") == 1
 
@@ -68,7 +74,10 @@ def test_trajectory_to_dict():
     d = traj.to_dict()
     assert "frames" in d and isinstance(d["frames"], list)
     assert d["meta"]["foo"] == "meta"
-    assert d["frames"][0]["label"] == "x"
+    # 检查frames中的metadata
+    frame_dict = d["frames"][0]
+    assert "metadata" in frame_dict
+    assert frame_dict["metadata"]["label"] == "x"
 
 def test_trajectory_meta_methods():
     traj = Trajectory()

@@ -14,14 +14,14 @@ from typing import Callable, Optional
 import numpy as np
 from numpy.typing import ArrayLike
 
-from .protocol import Entity, SpatialMixin, HierarchyMixin, Entities, Struct
-import xarray as xr
+from .protocol import Entity, Entities, Struct
+from .topology import Topology
 
-class Atom(Entity, SpatialMixin):
+class Atom(Entity):
     """
     Class representing an atom with spatial coordinates.
     
-    Combines Entity's dictionary behavior with spatial operations.
+    Combines Entity's dictionary behavior with spatial operations through wrappers.
     """
 
     def __init__(self, name: str = "", xyz: Optional[ArrayLike] = None, **kwargs):
@@ -383,12 +383,12 @@ class Improper(Dihedral):
         return f"<Improper: {self.atom1.name}({self.atom2.name},{self.atom3.name},{self.atom4.name})>"
 
 
-class AtomicStructure(Struct, SpatialMixin, HierarchyMixin):
+class AtomicStructure(Struct):
     """
     Structure containing atoms, bonds, angles, and dihedrals.
     
-    Combines basic structure functionality with spatial operations
-    and hierarchical management.
+    Basic structure functionality that can be enhanced with wrappers
+    for spatial operations and hierarchical management.
     """
 
     def __init__(self, name: str = "", **props):
@@ -635,13 +635,45 @@ class AtomicStructure(Struct, SpatialMixin, HierarchyMixin):
         bonds = self["bonds"]
         topo.add_bonds([(atoms[bond.itom], atoms[bond.jtom]) for bond in bonds])
         return topo
+    
+    def gen_topo_items(self, topo: Topology | None = None, is_angle: bool = False, is_dihedral: bool = False):
+        """
+        Generate topology items for angles or dihedrals and add them to the structure.
+
+        Args:
+            topo: Topology object to use. If None, creates from current structure.
+            is_angle: Whether to generate angle items
+            is_dihedral: Whether to generate dihedral items
+
+        Returns:
+            List of generated topology items (Angle or Dihedral objects)
+        """
+        if topo is None:
+            topo = self.get_topology()
+        
+        generated_items = []
+        
+        if is_angle:
+            # Generate angles using the dedicated method
+            angles = self.gen_angles(topo)
+            for angle in angles:
+                self.angles.add(angle)
+            generated_items.extend(angles)
+        
+        if is_dihedral:
+            # Generate dihedrals using the dedicated method
+            dihedrals = self.gen_dihedrals(topo)
+            for dihedral in dihedrals:
+                self.dihedrals.add(dihedral)
+            generated_items.extend(dihedrals)
+        
+        return generated_items
 
     def add_struct(self, struct):
         """
         Add another structure to the current structure.
         
         This merges the atoms and bonds from the other structure.
-        Also establishes a parent-child hierarchy relationship.
 
         Args:
             struct: The structure to add
@@ -649,9 +681,6 @@ class AtomicStructure(Struct, SpatialMixin, HierarchyMixin):
         Returns:
             Self for method chaining
         """
-        # Add hierarchical relationship
-        self.add_child(struct)
-        
         # Merge atoms and topological entities
         self.add_atoms(struct.atoms)
         self.add_bonds(struct.bonds)
@@ -838,4 +867,192 @@ class AtomicStructure(Struct, SpatialMixin, HierarchyMixin):
         frame._meta["n_impropers"] = len(self.get("impropers", []))
 
         return frame
+
+    def gen_angles(self, topo=None):
+        """
+        Generate angle objects from bond connectivity.
+        
+        Args:
+            topo: Optional topology object to use. If None, creates from current structure.
+            
+        Returns:
+            List of Angle objects
+        """
+        if topo is None:
+            topo = self.get_topology()
+        
+        # Check if we have enough atoms for angles
+        if len(self.atoms) < 3:
+            return []
+        
+        # The Topology class automatically finds angles using graph isomorphism
+        # Convert topology angles to Angle objects
+        angles = []
+        try:
+            angle_indices_array = topo.angles
+            atom_list = list(self.atoms)  # Convert to list for proper indexing
+            
+            if angle_indices_array is not None and len(angle_indices_array) > 0:
+                # Handle both 1D and 2D arrays
+                if angle_indices_array.ndim == 1:
+                    if len(angle_indices_array) >= 3:
+                        angle_indices_array = [angle_indices_array]
+                    else:
+                        return []
+                
+                for angle_indices in angle_indices_array:
+                    if len(angle_indices) >= 3:
+                        i, j, k = angle_indices[:3]
+                        if i < len(atom_list) and j < len(atom_list) and k < len(atom_list):
+                            atom1 = atom_list[i]
+                            vertex = atom_list[j]
+                            atom3 = atom_list[k]
+                            # Check that all atoms are different
+                            if len({id(atom1), id(vertex), id(atom3)}) == 3:
+                                angle = Angle(atom1, vertex, atom3)
+                                angles.append(angle)
+        except (IndexError, AttributeError) as e:
+            # Handle cases where topology properties fail
+            pass
+        
+        return angles
+
+    def gen_dihedrals(self, topo=None):
+        """
+        Generate dihedral objects from bond connectivity.
+        
+        Args:
+            topo: Optional topology object to use. If None, creates from current structure.
+            
+        Returns:
+            List of Dihedral objects
+        """
+        if topo is None:
+            topo = self.get_topology()
+        
+        # Check if we have enough atoms for dihedrals
+        if len(self.atoms) < 4:
+            return []
+        
+        # The Topology class automatically finds dihedrals using graph isomorphism
+        # Convert topology dihedrals to Dihedral objects
+        dihedrals = []
+        try:
+            dihedral_indices_array = topo.dihedrals
+            atom_list = list(self.atoms)  # Convert to list for proper indexing
+            
+            if dihedral_indices_array is not None and len(dihedral_indices_array) > 0:
+                # Handle both 1D and 2D arrays
+                if dihedral_indices_array.ndim == 1:
+                    if len(dihedral_indices_array) >= 4:
+                        dihedral_indices_array = [dihedral_indices_array]
+                    else:
+                        return []
+                
+                for dihedral_indices in dihedral_indices_array:
+                    if len(dihedral_indices) >= 4:
+                        i, j, k, l = dihedral_indices[:4]
+                        if all(idx < len(atom_list) for idx in [i, j, k, l]):
+                            atom1 = atom_list[i]
+                            atom2 = atom_list[j]
+                            atom3 = atom_list[k]
+                            atom4 = atom_list[l]
+                            # Check that all atoms are different
+                            if len({id(atom1), id(atom2), id(atom3), id(atom4)}) == 4:
+                                dihedral = Dihedral(atom1, atom2, atom3, atom4)
+                                dihedrals.append(dihedral)
+        except (IndexError, AttributeError) as e:
+            # Handle cases where topology properties fail
+            pass
+        
+        return dihedrals
+    
+    def __call__(self, **kwargs):
+        """
+        Create a new instance of this AtomicStructure with optional modifications.
+        
+        This method creates a proper deep copy of the structure, avoiding
+        the double-initialization problem in the base Struct class.
+        
+        Args:
+            **kwargs: Properties to modify in the copy
+            
+        Returns:
+            A new AtomicStructure instance with copied atoms, bonds, and angles
+        """
+        import copy
+        import inspect
+        
+        # Get constructor parameters
+        init_signature = inspect.signature(self.__class__.__init__)
+        constructor_kwargs = {}
+        modification_kwargs = {}
+        
+        # Separate constructor arguments from modification arguments
+        for key, value in kwargs.items():
+            if key in init_signature.parameters:
+                constructor_kwargs[key] = value
+            else:
+                modification_kwargs[key] = value
+        
+        # Use existing name if not specified
+        if 'name' not in constructor_kwargs:
+            constructor_kwargs['name'] = self.get('name', '')
+            
+        # Create a new empty instance
+        new_instance = self.__class__(**constructor_kwargs)
+        
+        # Clear any auto-created collections
+        new_instance['atoms'].clear()
+        new_instance['bonds'].clear()
+        new_instance['angles'].clear()
+        new_instance['dihedrals'].clear()
+        
+        # Deep copy atoms with modifications
+        atom_mapping = {}  # Map old atoms to new atoms
+        for atom in self.atoms:
+            new_atom_data = copy.deepcopy(atom.to_dict())
+            # Apply modifications to atom data
+            for key, value in modification_kwargs.items():
+                new_atom_data[key] = value
+            new_atom = Atom(**new_atom_data)
+            new_instance.add_atom(new_atom)
+            atom_mapping[atom] = new_atom
+        
+        # Deep copy bonds
+        for bond in self.bonds:
+            new_atom1 = atom_mapping.get(bond.atom1)
+            new_atom2 = atom_mapping.get(bond.atom2)
+            if new_atom1 and new_atom2:
+                bond_data = copy.deepcopy(bond.to_dict())
+                # Remove atom references from bond data
+                bond_data.pop('atoms', None)
+                bond_data.pop('_atoms', None)
+                new_bond = Bond(new_atom1, new_atom2, **bond_data)
+                new_instance.add_bond(new_bond)
+        
+        # Deep copy angles
+        for angle in self.angles:  
+            new_atom1 = atom_mapping.get(angle.itom)
+            new_atom2 = atom_mapping.get(angle.jtom)
+            new_atom3 = atom_mapping.get(angle.ktom)
+            if new_atom1 and new_atom2 and new_atom3:
+                angle_data = copy.deepcopy(angle.to_dict())
+                # Remove atom references from angle data
+                angle_data.pop('atoms', None)
+                angle_data.pop('_atoms', None)
+                new_angle = Angle(new_atom1, new_atom2, new_atom3, **angle_data)
+                new_instance.add_angle(new_angle)
+        
+        # Copy other non-structural properties
+        for key, value in self.items():
+            if key not in ['atoms', 'bonds', 'angles', 'dihedrals'] and key not in modification_kwargs:
+                if hasattr(value, 'copy'):
+                    new_instance[key] = value.copy()
+                else:
+                    new_instance[key] = value
+        
+        return new_instance
+
+    # ...existing code...
 

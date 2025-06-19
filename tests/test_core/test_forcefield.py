@@ -20,7 +20,7 @@ from molpy.core.forcefield import (
     Type,
     TypeContainer,
 )
-from molpy.core.struct import Atom, Bond, Angle
+from molpy.core.atomistic import Atom, Bond, Angle
 
 
 class TestDictWithList:

@@ -2,7 +2,7 @@ import numpy as np
 from itertools import product
 from typing import Sequence, Iterable
 
-from molpy.core.struct import AtomicStructure
+from molpy.core.atomistic import AtomicStructure
 from molpy.core.region import Region
 
 class CrystalLattice:
@@ -75,7 +75,10 @@ class CrystalBuilder:
     def __init__(self, lattice: CrystalLattice):
         self.lattice = lattice
 
-    def build(self, region: Region, template: AtomicStructure) -> AtomicStructure:
+    def fill_basis(self, region: Region, template: AtomicStructure) -> AtomicStructure:
+        """
+        Fill the region by placing the template at each lattice site (including basis offsets).
+        """
         positions = self.lattice.generate_positions(region)
         replicas = []
         for pos in positions:
@@ -83,6 +86,33 @@ class CrystalBuilder:
             inst.xyz = inst.xyz + pos
             replicas.append(inst)
         return AtomicStructure.concat("crystal", replicas)
+
+    def fill_lattice(self, region: Region, template: AtomicStructure) -> AtomicStructure:
+        """
+        Fill the region by placing the entire template at each unit cell origin (without basis offsets).
+        """
+        lo, hi = self.lattice._get_bounds(region)
+        corners = np.array(list(product(*zip(lo, hi))))
+        inv_cell = np.linalg.inv(self.lattice.cell)
+        frac_corners = corners @ inv_cell
+        fmin = frac_corners.min(axis=0)
+        fmax = frac_corners.max(axis=0)
+        n_min = np.ceil(fmin - 1e-8).astype(int)
+        n_max = np.floor(fmax + 1e-8).astype(int)
+        positions = []
+        for nx in range(n_min[0], n_max[0] + 1):
+            for ny in range(n_min[1], n_max[1] + 1):
+                for nz in range(n_min[2], n_max[2] + 1):
+                    frac = np.array([nx, ny, nz], dtype=float)
+                    xyz = frac @ self.lattice.cell
+                    if region.isin(np.array([xyz]))[0]:
+                        positions.append(xyz)
+        replicas = []
+        for pos in positions:
+            inst = template.clone()
+            inst.xyz = inst.xyz + pos
+            replicas.append(inst)
+        return AtomicStructure.concat("crystal_cell", replicas)
 
 class FCCBuilder(CrystalBuilder):
     """Face-centered cubic lattice builder."""
@@ -145,4 +175,4 @@ def bulk(symbol: str, crystalstructure: str, a: float | None = None, c: float | 
 
     template = AtomicStructure(symbol)
     template.def_atom(name=symbol, element=symbol, xyz=[0.0, 0.0, 0.0])
-    return builder.build(region, template)
+    return builder.fill_basis(region, template)

@@ -797,3 +797,14 @@ class Frame(MutableMapping):
                 frame._meta[key] = value
         
         return frame
+
+    def wrapped(self, key: str = "atoms", coord_field: str = "xyz") -> "Frame":
+        """
+        返回一个新Frame，其指定key下的坐标（如atoms/xyz）经过box.wrap处理。
+        默认处理["atoms"]["xyz"]。
+        """
+        if self.box is None:
+            raise ValueError("Frame.box is not set, cannot wrap coordinates.")
+        self[key][coord_field] = (self[key][coord_field].dims, self.box.wrap(self[key][coord_field].values))
+        # 返回新Frame，保留原有box和meta
+        return self

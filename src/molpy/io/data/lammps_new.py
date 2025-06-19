@@ -92,24 +92,7 @@ class LammpsDataReader(DataReader):
                 zlo, zhi = map(float, line.split()[:2])
                 box.update({"zlo": zlo, "zhi": zhi})
             elif line.startswith("Masses"):
-                next_section = self._read_masses(line_iter, props, masses)
-                # 如果遇到了下一个section，需要处理它
-                if next_section:
-                    line = next_section
-                    # 重新处理这个section标题
-                    if line.startswith("Atoms"):
-                        self._read_atoms(line_iter, props, frame, type_key, masses)
-                    elif line.startswith("Bonds"):
-                        self._read_bonds(line_iter, props, frame, type_key)
-                    elif line.startswith("Angles"):
-                        self._read_angles(line_iter, props, frame, type_key)
-                    elif line.startswith("Dihedrals"):
-                        self._read_dihedrals(line_iter, props, frame, type_key)
-                    elif line.startswith("Impropers"):
-                        self._read_impropers(line_iter, props, frame, type_key)
-                    elif line.startswith("Atom Type Labels"):
-                        type_key = "type"
-                        self._read_atom_type_labels(line_iter, props, atom_style)
+                self._read_masses(line_iter, props, masses)
             elif line.startswith("Atoms"):
                 self._read_atoms(line_iter, props, frame, type_key, masses)
             elif line.startswith("Bonds"):
@@ -140,36 +123,11 @@ class LammpsDataReader(DataReader):
 
     def _read_masses(self, line_iter: Iterator[str], props: Dict[str, Any], masses: Dict[str, float]):
         """Read masses section."""
-        n_atomtypes = props.get("n_atomtypes", 0)
-        # 如果没有atom types，直接返回
-        if n_atomtypes == 0:
-            return
-        
-        # 逐行读取，但要检查是否遇到下一个section
-        for _ in range(n_atomtypes):
-            try:
-                mass_line = next(line_iter)
-                # 检查是否是下一个section的开始
-                if (mass_line.startswith("Atoms") or mass_line.startswith("Bonds") or 
-                    mass_line.startswith("Angles") or mass_line.startswith("Dihedrals") or
-                    mass_line.startswith("Impropers") or mass_line.startswith("Atom Type Labels")):
-                    # 遇到了下一个section，需要将这行放回iterator
-                    # 这里采用一个简单的方法：抛出特殊异常来标记这种情况
-                    raise StopIteration(mass_line)
-                
-                # 解析质量数据
-                if mass_line.strip():
-                    parts = mass_line.split()
-                    if len(parts) >= 2:
-                        masses[parts[0]] = float(parts[1])
-            except StopIteration as e:
-                # 如果有参数，说明遇到了下一个section
-                if e.args:
-                    # 将section标题重新加入到处理队列中
-                    # 这里需要修改调用方式
-                    return e.args[0]
-                break
-        return None
+        mass_lines = list(islice(line_iter, props.get("n_atomtypes", 0)))
+        for mass_line in mass_lines:
+            parts = mass_line.split()
+            if len(parts) >= 2:
+                masses[parts[0]] = float(parts[1])
 
     def _read_atoms(self, line_iter: Iterator[str], props: Dict[str, Any], frame: mp.Frame, 
                    type_key: str, masses: Dict[str, float]):
@@ -371,86 +329,17 @@ class LammpsDataReader(DataReader):
 
 class LammpsDataWriter(DataWriter):
 
-    def __init__(self, path: str | Path, atom_style: str = "full"):
-        super().__init__(Path(path))
+    def __init__(self, path: Path, atom_style: str = "full"):
+        super().__init__(path)
         self._atom_style = atom_style
 
     def write(self, frame: mp.Frame):
         ff = getattr(frame, 'forcefield', None)
 
-        # Get counts more robustly
-        n_atoms = 0
-        n_bonds = 0
-        n_angles = 0
-        n_dihedrals = 0
-        
-        if "atoms" in frame:
-            atoms_data = frame["atoms"]
-            if hasattr(atoms_data, 'sizes'):
-                # xarray Dataset - find the main dimension
-                sizes = atoms_data.sizes
-                # Try common dimension names
-                for dim_name in ['index', 'dim_id_0', 'dim_q_0', 'dim_xyz_0']:
-                    if dim_name in sizes:
-                        n_atoms = sizes[dim_name]
-                        break
-                else:
-                    # Fallback: use the first dimension size
-                    if sizes:
-                        n_atoms = max(sizes.values())
-            else:
-                # Dict-like - count entries in first field
-                if atoms_data and isinstance(atoms_data, dict):
-                    first_key = next(iter(atoms_data))
-                    n_atoms = len(atoms_data[first_key])
-        
-        if "bonds" in frame:
-            bonds_data = frame["bonds"]
-            if hasattr(bonds_data, 'sizes'):
-                sizes = bonds_data.sizes
-                for dim_name in ['index', 'dim_id_0', 'dim_i_0']:
-                    if dim_name in sizes:
-                        n_bonds = sizes[dim_name]
-                        break
-                else:
-                    if sizes:
-                        n_bonds = max(sizes.values())
-            else:
-                if bonds_data and isinstance(bonds_data, dict):
-                    first_key = next(iter(bonds_data))
-                    n_bonds = len(bonds_data[first_key])
-        
-        if "angles" in frame:
-            angles_data = frame["angles"]
-            if hasattr(angles_data, 'sizes'):
-                sizes = angles_data.sizes
-                for dim_name in ['index', 'dim_id_0', 'dim_i_0']:
-                    if dim_name in sizes:
-                        n_angles = sizes[dim_name]
-                        break
-                else:
-                    if sizes:
-                        n_angles = max(sizes.values())
-            else:
-                if angles_data and isinstance(angles_data, dict):
-                    first_key = next(iter(angles_data))
-                    n_angles = len(angles_data[first_key])
-        
-        if "dihedrals" in frame:
-            dihedrals_data = frame["dihedrals"]
-            if hasattr(dihedrals_data, 'sizes'):
-                sizes = dihedrals_data.sizes
-                for dim_name in ['index', 'dim_id_0', 'dim_i_0']:
-                    if dim_name in sizes:
-                        n_dihedrals = sizes[dim_name]
-                        break
-                else:
-                    if sizes:
-                        n_dihedrals = max(sizes.values())
-            else:
-                if dihedrals_data and isinstance(dihedrals_data, dict):
-                    first_key = next(iter(dihedrals_data))
-                    n_dihedrals = len(dihedrals_data[first_key])
+        n_atoms = frame["atoms"].sizes.get("index", 0)
+        n_bonds = frame["bonds"].sizes.get("index", 0) if "bonds" in frame else 0
+        n_angles = frame["angles"].sizes.get("index", 0) if "angles" in frame else 0
+        n_dihedrals = frame["dihedrals"].sizes.get("index", 0) if "dihedrals" in frame else 0
 
         with open(self._path, "w") as f:
             # Header
@@ -458,7 +347,7 @@ class LammpsDataWriter(DataWriter):
             
             # Counts
             f.write(f"{n_atoms} atoms\n")
-            self._write_type_counts(f, ff, frame, n_bonds, n_angles, n_dihedrals)
+            self._write_type_counts(f, ff, frame)
             
             # Box dimensions
             self._write_box(f, frame)
@@ -467,7 +356,7 @@ class LammpsDataWriter(DataWriter):
             self._write_type_labels(f, ff, frame)
             
             # Masses
-            self._write_masses(f, frame)
+            self._write_masses(f, ff, frame)
             
             # Atoms
             self._write_atoms(f, frame)
@@ -478,93 +367,39 @@ class LammpsDataWriter(DataWriter):
             self._write_dihedrals(f, frame)
             self._write_impropers(f, frame)
 
-    def _write_type_counts(self, f, ff, frame, n_bonds=None, n_angles=None, n_dihedrals=None):
+    def _write_type_counts(self, f, ff, frame):
         """Write atom/bond/angle/dihedral type counts."""
         if ff and hasattr(ff, 'n_atomtypes'):
             f.write(f"{ff.n_atomtypes} atom types\n")
         else:
             n_atom_types = len(np.unique(frame["atoms"]["type"].values)) if "atoms" in frame and "type" in frame["atoms"] else 1
             f.write(f"{n_atom_types} atom types\n")
-        
-        # Use passed counts or try to get from frame
-        if n_bonds is None:
-            n_bonds = 0
-            if "bonds" in frame:
-                bonds_data = frame["bonds"]
-                if hasattr(bonds_data, 'sizes'):
-                    sizes = bonds_data.sizes
-                    for dim_name in ['index', 'dim_id_0', 'dim_i_0']:
-                        if dim_name in sizes:
-                            n_bonds = sizes[dim_name]
-                            break
-                    else:
-                        if sizes:
-                            n_bonds = max(sizes.values())
-                else:
-                    if bonds_data and isinstance(bonds_data, dict):
-                        first_key = next(iter(bonds_data))
-                        n_bonds = len(bonds_data[first_key])
             
-        if n_bonds > 0:
+        if "bonds" in frame:
+            n_bonds = frame["bonds"].sizes.get("index", 0)
             f.write(f"{n_bonds} bonds\n")
             if ff and hasattr(ff, 'n_bondtypes'):
                 f.write(f"{ff.n_bondtypes} bond types\n")
             else:
-                n_bond_types = len(np.unique(frame["bonds"]["type"].values)) if "bonds" in frame and "type" in frame["bonds"] else 1
+                n_bond_types = len(np.unique(frame["bonds"]["type"].values)) if "type" in frame["bonds"] else 1
                 f.write(f"{n_bond_types} bond types\n")
-        
-        # Use passed counts or try to get from frame        
-        if n_angles is None:
-            n_angles = 0
-            if "angles" in frame:
-                angles_data = frame["angles"]
-                if hasattr(angles_data, 'sizes'):
-                    sizes = angles_data.sizes
-                    for dim_name in ['index', 'dim_id_0', 'dim_i_0']:
-                        if dim_name in sizes:
-                            n_angles = sizes[dim_name]
-                            break
-                    else:
-                        if sizes:
-                            n_angles = max(sizes.values())
-                else:
-                    if angles_data and isinstance(angles_data, dict):
-                        first_key = next(iter(angles_data))
-                        n_angles = len(angles_data[first_key])
                 
-        if n_angles > 0:
+        if "angles" in frame:
+            n_angles = frame["angles"].sizes.get("index", 0)
             f.write(f"{n_angles} angles\n")
             if ff and hasattr(ff, 'n_angletypes'):
                 f.write(f"{ff.n_angletypes} angle types\n")
             else:
-                n_angle_types = len(np.unique(frame["angles"]["type"].values)) if "angles" in frame and "type" in frame["angles"] else 1
+                n_angle_types = len(np.unique(frame["angles"]["type"].values)) if "type" in frame["angles"] else 1
                 f.write(f"{n_angle_types} angle types\n")
-        
-        # Use passed counts or try to get from frame        
-        if n_dihedrals is None:
-            n_dihedrals = 0
-            if "dihedrals" in frame:
-                dihedrals_data = frame["dihedrals"]
-                if hasattr(dihedrals_data, 'sizes'):
-                    sizes = dihedrals_data.sizes
-                    for dim_name in ['index', 'dim_id_0', 'dim_i_0']:
-                        if dim_name in sizes:
-                            n_dihedrals = sizes[dim_name]
-                            break
-                    else:
-                        if sizes:
-                            n_dihedrals = max(sizes.values())
-                else:
-                    if dihedrals_data and isinstance(dihedrals_data, dict):
-                        first_key = next(iter(dihedrals_data))
-                        n_dihedrals = len(dihedrals_data[first_key])
                 
-        if n_dihedrals > 0:
+        if "dihedrals" in frame:
+            n_dihedrals = frame["dihedrals"].sizes.get("index", 0)
             f.write(f"{n_dihedrals} dihedrals\n")
             if ff and hasattr(ff, 'n_dihedraltypes'):
                 f.write(f"{ff.n_dihedraltypes} dihedral types\n")
             else:
-                n_dihedral_types = len(np.unique(frame["dihedrals"]["type"].values)) if "dihedrals" in frame and "type" in frame["dihedrals"] else 1
+                n_dihedral_types = len(np.unique(frame["dihedrals"]["type"].values)) if "type" in frame["dihedrals"] else 1
                 f.write(f"{n_dihedral_types} dihedral types\n")
 
     def _write_box(self, f, frame):
@@ -604,14 +439,7 @@ class LammpsDataWriter(DataWriter):
 
     def _write_type_labels(self, f, ff, frame):
         """Write type labels if available."""
-        if "atoms" in frame and "type" in frame["atoms"]:
-            type_values = frame["atoms"]["type"].values
-            if len(type_values) > 0 and isinstance(type_values[0], str):
-                f.write(f"\nAtom Type Labels\n\n")
-                unique_types = np.unique(type_values)
-                for i, type_name in enumerate(unique_types, 1):
-                    f.write(f"{i} {type_name}\n")
-        elif ff and hasattr(ff, 'atomstyles') and ff.atomstyles:
+        if ff and hasattr(ff, 'atomstyles') and ff.atomstyles:
             if "type" in frame["atoms"]:
                 f.write(f"\nAtom Type Labels\n\n")
                 try:
@@ -667,9 +495,6 @@ class LammpsDataWriter(DataWriter):
         for col in required_cols:
             if col in atoms:
                 atom_data[col] = atoms[col].values
-            elif col == "charge" and "q" in atoms:
-                # Map 'q' field to 'charge'
-                atom_data[col] = atoms["q"].values
             else:
                 n_atoms = len(coords)
                 if col == "id":
@@ -680,14 +505,6 @@ class LammpsDataWriter(DataWriter):
                     atom_data[col] = np.ones(n_atoms, dtype=int)
                 elif col == "charge":
                     atom_data[col] = np.zeros(n_atoms)
-        
-        # Handle string types by creating a mapping to integers
-        type_values = atom_data['type']
-        if len(type_values) > 0 and isinstance(type_values[0], str):
-            unique_types = np.unique(type_values)
-            type_mapping = {type_name: i+1 for i, type_name in enumerate(unique_types)}
-            type_values = np.array([type_mapping[t] for t in type_values])
-            atom_data['type'] = type_values
         
         # Write atom lines
         for i in range(len(coords)):
@@ -703,27 +520,11 @@ class LammpsDataWriter(DataWriter):
         f.write(f"\nBonds\n\n")
         bonds = frame["bonds"]
         
-        # Get the number of bonds more robustly
-        n_bonds = 0
-        if hasattr(bonds, 'sizes'):
-            sizes = bonds.sizes
-            for dim_name in ['index', 'dim_id_0', 'dim_i_0']:
-                if dim_name in sizes:
-                    n_bonds = sizes[dim_name]
-                    break
-            else:
-                if sizes:
-                    n_bonds = max(sizes.values())
-        else:
-            if bonds and isinstance(bonds, dict):
-                first_key = next(iter(bonds))
-                n_bonds = len(bonds[first_key])
-        
-        for i in range(n_bonds):
+        for i in range(bonds.sizes.get("index", 0)):
             bond_id = bonds["id"].values[i] if "id" in bonds else i + 1
             bond_type = bonds["type"].values[i] if "type" in bonds else 1
-            atom_i = bonds["i"].values[i] + 1  # LAMMPS uses 1-based indexing
-            atom_j = bonds["j"].values[i] + 1  # LAMMPS uses 1-based indexing
+            atom_i = bonds["i"].values[i]
+            atom_j = bonds["j"].values[i]
             f.write(f"{int(bond_id)} {int(bond_type)} {int(atom_i)} {int(atom_j)}\n")
 
     def _write_angles(self, f, frame):
@@ -734,28 +535,12 @@ class LammpsDataWriter(DataWriter):
         f.write(f"\nAngles\n\n")
         angles = frame["angles"]
         
-        # Get the number of angles more robustly
-        n_angles = 0
-        if hasattr(angles, 'sizes'):
-            sizes = angles.sizes
-            for dim_name in ['index', 'dim_id_0', 'dim_i_0']:
-                if dim_name in sizes:
-                    n_angles = sizes[dim_name]
-                    break
-            else:
-                if sizes:
-                    n_angles = max(sizes.values())
-        else:
-            if angles and isinstance(angles, dict):
-                first_key = next(iter(angles))
-                n_angles = len(angles[first_key])
-        
-        for i in range(n_angles):
+        for i in range(angles.sizes.get("index", 0)):
             angle_id = angles["id"].values[i] if "id" in angles else i + 1
             angle_type = angles["type"].values[i] if "type" in angles else 1
-            atom_i = angles["i"].values[i] + 1  # LAMMPS uses 1-based indexing
-            atom_j = angles["j"].values[i] + 1  # LAMMPS uses 1-based indexing
-            atom_k = angles["k"].values[i] + 1  # LAMMPS uses 1-based indexing
+            atom_i = angles["i"].values[i]
+            atom_j = angles["j"].values[i]
+            atom_k = angles["k"].values[i]
             f.write(f"{int(angle_id)} {int(angle_type)} {int(atom_i)} {int(atom_j)} {int(atom_k)}\n")
 
     def _write_dihedrals(self, f, frame):
