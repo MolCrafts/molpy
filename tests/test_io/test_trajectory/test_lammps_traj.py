@@ -343,3 +343,161 @@ class TestTrajectoryIntegration:
             # Box dimensions should be similar
             assert np.allclose(frame_traj.box.matrix.diagonal(), 
                              frame_original.box.matrix.diagonal())
+
+# ===== Merged tests from test_lammps_trajectory_fixes.py =====
+
+class TestLammpsTrajectoryFixes:
+    """Test LAMMPS trajectory functionality with fixes."""
+
+    def test_basic_trajectory_write_read(self):
+        """Test basic trajectory writing and reading."""
+        # Create frames
+        frames = []
+        for timestep in [0, 100, 200]:
+            frame = mp.Frame()
+            
+            atoms_data = {
+                'id': [0, 1],
+                'type': [1, 2],  # Use numeric types for trajectory
+                'x': [0.0 + timestep*0.01, 1.0 + timestep*0.01],
+                'y': [0.0, 0.0],
+                'z': [0.0, 0.0],
+                'q': [0.5, -0.5]
+            }
+            frame["atoms"] = atoms_data
+            frame["timestep"] = timestep
+            frame.box = mp.Box(np.eye(3) * 10.0)
+            frames.append(frame)
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.dump', delete=False) as tmp:
+            # Write trajectory
+            writer = mp.io.trajectory.LammpsTrajectoryWriter(tmp.name)
+            for frame in frames:
+                timestep = frame.get("timestep", 0)
+                writer.write_frame(frame, timestep=timestep)
+            writer.close()
+            
+            # Verify file exists and has content
+            assert Path(tmp.name).exists()
+            assert Path(tmp.name).stat().st_size > 0
+            
+            # Read back and verify
+            reader = mp.io.trajectory.LammpsTrajectoryReader(tmp.name)
+            
+            # Test reading first frame
+            frame_read = reader.read_frame(0)
+            assert frame_read["timestep"] == 0
+            assert frame_read["atoms"].sizes["index"] == 2
+            
+            # Verify coordinates are preserved
+            x_values = frame_read["atoms"]["x"].values
+            assert np.isclose(x_values[0], 0.0)
+            assert np.isclose(x_values[1], 1.0)
+
+    def test_trajectory_timestep_handling(self):
+        """Test that timesteps are correctly handled in trajectory."""
+        frames = []
+        timesteps = [0, 25, 50, 75, 100]
+        
+        for timestep in timesteps:
+            frame = mp.Frame()
+            
+            atoms_data = {
+                'id': [0, 1, 2],
+                'type': ['A', 'B', 'C'],
+                'x': [0.0 + timestep*0.001, 1.0 + timestep*0.001, 2.0 + timestep*0.001],
+                'y': [0.0, 1.0, 2.0],
+                'z': [0.0, 0.0, 0.0]
+            }
+            frame["atoms"] = atoms_data
+            frame["timestep"] = timestep
+            frame.box = mp.Box(np.eye(3) * 10.0)
+            frames.append(frame)
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.dump', delete=False) as tmp:
+            writer = mp.io.trajectory.LammpsTrajectoryWriter(tmp.name)
+            
+            for frame in frames:
+                timestep = frame.get("timestep", 0)
+                writer.write_frame(frame, timestep=timestep)
+            
+            writer.close()
+            
+            # Read back and verify timesteps
+            reader = mp.io.trajectory.LammpsTrajectoryReader(tmp.name)
+            
+            for i, expected_timestep in enumerate(timesteps):
+                frame_read = reader.read_frame(i)
+                assert frame_read["timestep"] == expected_timestep
+
+    def test_multiple_frame_trajectory(self):
+        """Test writing and reading multiple frames in a trajectory."""
+        n_frames = 5
+        frames = []
+        
+        for i in range(n_frames):
+            frame = mp.Frame()
+            
+            atoms_data = {
+                'id': [0, 1, 2],
+                'type': [1, 1, 2],
+                'x': [0.0 + i*0.1, 1.0 + i*0.1, 0.5 + i*0.1],
+                'y': [0.0, 0.0, 1.0],
+                'z': [0.0, 0.0, 0.0]
+            }
+            frame["atoms"] = atoms_data
+            frame["timestep"] = i * 10
+            frame.box = mp.Box(np.eye(3) * 10.0)
+            frames.append(frame)
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.dump', delete=False) as tmp:
+            writer = mp.io.trajectory.LammpsTrajectoryWriter(tmp.name)
+            
+            for frame in frames:
+                timestep = frame.get("timestep", 0)
+                writer.write_frame(frame, timestep=timestep)
+            
+            writer.close()
+            
+            # Verify file content
+            with open(tmp.name, 'r') as f:
+                content = f.read()
+            
+            # Should contain all timesteps
+            assert "ITEM: TIMESTEP" in content
+            assert "0\n" in content  # First timestep
+            assert "40\n" in content  # Last timestep
+            
+            # Should contain atom data for all frames
+            assert content.count("ITEM: ATOMS") == 5
+
+    def test_trajectory_box_handling(self):
+        """Test that box information is correctly written to trajectory."""
+        frame = mp.Frame()
+        
+        atoms_data = {
+            'id': [0],
+            'type': [1],
+            'x': [0.0],
+            'y': [0.0],
+            'z': [0.0]
+        }
+        frame["atoms"] = atoms_data
+        frame["timestep"] = 0
+        
+        # Test with custom box dimensions
+        frame.box = mp.Box(np.diag([5.0, 7.5, 10.0]))
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.dump', delete=False) as tmp:
+            writer = mp.io.trajectory.LammpsTrajectoryWriter(tmp.name)
+            writer.write_frame(frame, timestep=0)
+            writer.close()
+            
+            with open(tmp.name, 'r') as f:
+                content = f.read()
+            
+            # Should contain box bounds
+            assert "ITEM: BOX BOUNDS" in content
+            assert "5.000000" in content  # x dimension
+            assert "7.500000" in content  # y dimension
+            assert "10.000000" in content  # z dimension
