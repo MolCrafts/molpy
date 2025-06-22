@@ -2,22 +2,8 @@ import molpy as mp
 import numpy as np
 from typing import TYPE_CHECKING, Union
 
-if TYPE_CHECKING:
-    try:
-        import molpack as mpk
-    except ImportError:
-        # Create a dummy Constraint type for type checking
-        class _MPK:
-            class Constraint: ...
-        mpk = _MPK()
-else:
-    try:
-        import molpack as mpk
-    except ImportError:  # fallback for environments without molpack
-        # Create a dummy Constraint type
-        class _MPK:
-            class Constraint: ...
-        mpk = _MPK()
+# Note: All constraint classes are now in molpy.pack.constraint
+# No need for molpack dependency
 
 
 class Target:

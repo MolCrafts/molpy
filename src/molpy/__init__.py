@@ -7,7 +7,7 @@ from . import reacter
 from . import polymerizer
 from . import typifier
 from . import builder
-from . import packer
+from . import pack
 from .core import *
 from .core.units import Unit
 from .builder.polymer import PolymerBuilder, AnchorRule, MonomerTemplate
