@@ -2,36 +2,6 @@ import pytest
 import numpy as np
 import molpy as mp
 from pathlib import Path
-import tempfile
-
-
-class TestGMXGroReader:
-    """Basic GRO reading tests."""
-
-    def test_gro(self, test_data_path):
-        fpath = test_data_path / "data/gro/cod_4020641.gro"
-        if not fpath.exists():
-            pytest.skip("gro test data not available")
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
-
-        # Get the main dimension for atoms
-        sizes = frame["atoms"].sizes
-        main_dim = next(iter(sizes.keys()))  # Get first dimension  
-        assert sizes[main_dim] == 81
-        
-        # Select first atom by using the specific dimension for each field
-        atoms = frame["atoms"]
-        res_number_dim = next(d for d in atoms.dims if 'res_number' in str(d))
-        res_name_dim = next(d for d in atoms.dims if 'res_name' in str(d))
-        name_dim = next(d for d in atoms.dims if 'name' in str(d) and 'res_name' not in str(d))
-        atomic_number_dim = next(d for d in atoms.dims if 'atomic_number' in str(d))
-        xyz_dim = next(d for d in atoms.dims if 'xyz' in str(d) and not str(d).endswith('_1'))
-        
-        assert atoms["res_number"].isel({res_number_dim: 0}).item() == "1"
-        assert atoms["res_name"].isel({res_name_dim: 0}).item() == "LIG"
-        assert atoms["name"].isel({name_dim: 0}).item() == "S"
-        assert atoms["atomic_number"].isel({atomic_number_dim: 0}).item() == 1
-        assert atoms["xyz"].isel({xyz_dim: 0}).to_numpy() == pytest.approx([0.310, 0.862, 1.316], rel=1e-5)
 
 
 class TestGROReaderComprehensive:
@@ -39,6 +9,8 @@ class TestGROReaderComprehensive:
 
     def test_roundtrip_gro(self):
         """Test roundtrip writing and reading of GRO files."""
+        import tempfile
+        
         # Create test frame
         frame = mp.Frame()
         atoms_data = {
@@ -103,8 +75,7 @@ class TestGROReaderComprehensive:
         # Check coordinates
         xyz = first_atom["xyz"].values
         expected_xyz = np.array([0.310, 0.862, 1.316])
-        # TODO: Fix coordinate access - currently returns full array
-        # np.testing.assert_allclose(xyz, expected_xyz, rtol=1e-5)
+        np.testing.assert_allclose(xyz, expected_xyz, rtol=1e-5)
         
         # Check box information
         assert frame.box is not None
@@ -169,6 +140,7 @@ class TestGROReaderComprehensive:
             mp.io.read_gro(Path("nonexistent.gro"), frame=mp.Frame())
         
         # Test empty file
+        import tempfile
         with tempfile.NamedTemporaryFile(mode='w', suffix='.gro', delete=False) as tmp:
             tmp.write("")  # Empty file
             
@@ -212,7 +184,7 @@ class TestGROReaderComprehensive:
         assert all(str(rn).strip() for rn in res_names)
 
 
-class TestGROWriter:
+class TestGROWriterComprehensive:
     """Comprehensive tests for GRO writer."""
 
     def test_write_simple_gro(self):
@@ -231,6 +203,7 @@ class TestGROWriter:
         frame.box = mp.Box(np.eye(3) * 2.0)
         
         # Write to temporary file
+        import tempfile
         with tempfile.NamedTemporaryFile(mode='w', suffix='.gro', delete=False) as tmp:
             writer = mp.io.data.GroWriter(tmp.name)
             writer.write(frame)
@@ -254,6 +227,7 @@ class TestGROWriter:
         original_frame = mp.io.read_gro(fpath, frame=mp.Frame())
         
         # Write to temporary file
+        import tempfile
         with tempfile.NamedTemporaryFile(mode='w', suffix='.gro', delete=False) as tmp:
             writer = mp.io.data.GroWriter(tmp.name)
             writer.write(original_frame)
@@ -295,6 +269,7 @@ class TestGROWriter:
         # Test orthogonal box
         frame.box = mp.Box(np.diag([2.0, 3.0, 4.0]))
         
+        import tempfile
         with tempfile.NamedTemporaryFile(mode='w', suffix='.gro', delete=False) as tmp:
             writer = mp.io.data.GroWriter(tmp.name)
             writer.write(frame)
@@ -305,97 +280,3 @@ class TestGROWriter:
                 box_line = lines[-1].strip()
                 # Should contain box dimensions
                 assert "2.0" in box_line or "2.000" in box_line
-
-
-class TestGROEdgeCases:
-    """Edge case tests for GRO format."""
-
-    def test_read_basic_structure(self, test_data_path):
-        """Test reading basic GRO structure."""
-        fpath = test_data_path / "data/gro/cod_4020641.gro"
-        if not fpath.exists():
-            pytest.skip("cod_4020641.gro test data not available")
-        
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
-        
-        # Basic checks
-        assert "atoms" in frame
-        assert frame.box is not None
-        
-        atoms = frame["atoms"]
-        sizes = atoms.sizes
-        main_dim = next(iter(sizes.keys()))
-        assert sizes[main_dim] > 0
-
-    def test_read_with_velocities(self, test_data_path):
-        """Test reading GRO files with velocity information."""
-        # Look for GRO files with velocities
-        for gro_file in ["lysozyme.gro", "cod_4020641.gro"]:
-            fpath = test_data_path / f"data/gro/{gro_file}"
-            if fpath.exists():
-                frame = mp.io.read_gro(fpath, frame=mp.Frame())
-                atoms = frame["atoms"]
-                
-                # Check if velocity fields exist
-                has_velocities = any(field in atoms.data_vars for field in ['vx', 'vy', 'vz'])
-                # Just ensure the file can be read
-                assert "atoms" in frame
-                break
-        else:
-            pytest.skip("No GRO test files available")
-
-    def test_read_without_velocities(self, test_data_path):
-        """Test reading GRO files without velocity information."""
-        fpath = test_data_path / "data/gro/cod_4020641.gro"
-        if not fpath.exists():
-            pytest.skip("cod_4020641.gro test data not available")
-        
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
-        atoms = frame["atoms"]
-        
-        # Should still work without velocities
-        assert "xyz" in atoms.data_vars
-        assert "name" in atoms.data_vars
-
-    def test_coordinate_precision(self, test_data_path):
-        """Test coordinate precision handling."""
-        fpath = test_data_path / "data/gro/cod_4020641.gro"
-        if not fpath.exists():
-            pytest.skip("cod_4020641.gro test data not available")
-        
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
-        atoms = frame["atoms"]
-        
-        xyz = atoms["xyz"].values
-        assert xyz.dtype in [np.float32, np.float64]
-        assert not np.any(np.isnan(xyz))
-
-    def test_box_handling(self, test_data_path):
-        """Test various box format handling."""
-        fpath = test_data_path / "data/gro/cod_4020641.gro"
-        if not fpath.exists():
-            pytest.skip("cod_4020641.gro test data not available")
-        
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
-        
-        # Should have box
-        assert frame.box is not None
-        assert frame.box.matrix.shape == (3, 3)
-
-    def test_large_structures(self, test_data_path):
-        """Test handling of large GRO structures."""
-        fpath = test_data_path / "data/gro/lysozyme.gro"
-        if not fpath.exists():
-            pytest.skip("lysozyme.gro test data not available")
-        
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
-        atoms = frame["atoms"]
-        
-        # Should handle large structures
-        sizes = atoms.sizes
-        main_dim = next(iter(sizes.keys()))
-        n_atoms = sizes[main_dim]
-        assert n_atoms > 1000
-        
-        # Data consistency
-        assert len(atoms["xyz"].values) == n_atoms

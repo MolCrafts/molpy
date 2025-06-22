@@ -17,9 +17,12 @@ class LammpsTrajectoryReader(TrajectoryReader):
         self._open_all_files()
 
     def read_frame(self, index: int) -> mp.Frame:
-        assert index < len(
-            self._byte_offsets
-        ), f"Frame index {index} out of range ({len(self._byte_offsets)})"
+        if index < 0 or index >= len(self._byte_offsets):
+            raise IndexError(f"Frame index {index} out of range ({len(self._byte_offsets)})")
+        
+        # Check if no frames were found (empty file)
+        if len(self._byte_offsets) == 0:
+            raise EOFError("No frames found in trajectory file")
 
         mm, offset = self.get_file_and_offset(index)
         mm.seek(offset)
@@ -50,6 +53,8 @@ class LammpsTrajectoryReader(TrajectoryReader):
     def _parse_trajectories(self):
         self._open_all_files()
         for file_idx, mm in enumerate(self._fp_list):
+            if mm is None:  # Empty file
+                continue
             mm.seek(0)
             while True:
                 pos = mm.tell()
@@ -83,7 +88,7 @@ class LammpsTrajectoryReader(TrajectoryReader):
 
         df = pd.read_csv(
             StringIO("\n".join(frame_lines[data_start:])),
-            delim_whitespace=True,
+            sep=r'\s+',
             names=header,
         )
         
@@ -138,7 +143,11 @@ class LammpsTrajectoryWriter(TrajectoryWriter):
             timestep: Timestep number (if None, uses auto-increment)
         """
         if timestep is None:
-            timestep = self._frame_count
+            # Try to get timestep from frame first
+            if hasattr(frame, 'timestep') and frame.timestep is not None:
+                timestep = frame.timestep
+            else:
+                timestep = self._frame_count
         
         self._frame_count += 1
         
@@ -272,8 +281,16 @@ class LammpsTrajectoryWriter(TrajectoryWriter):
             line_parts = []
             for col in cols:
                 value = atom_data[col][i]
-                if col in ["id", "mol", "type"]:
+                if col in ["id", "mol"]:
                     line_parts.append(f"{int(value)}")
+                elif col == "type":
+                    # Handle both string and numeric types
+                    if isinstance(value, str):
+                        # Create a simple mapping for common atom types
+                        type_map = {'H': 1, 'C': 2, 'N': 3, 'O': 4, 'S': 5, 'P': 6}
+                        line_parts.append(f"{type_map.get(value, 1)}")
+                    else:
+                        line_parts.append(f"{int(value)}")
                 else:
                     line_parts.append(f"{float(value):.6f}")
             

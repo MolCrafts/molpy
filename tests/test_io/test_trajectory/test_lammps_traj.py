@@ -21,7 +21,7 @@ class TestReadLammpsTrajectory:
             [0, 1.5377619196572583, 0],
             [0, 0, 1.5377619196572583],
         ]
-        assert (frame["box"].matrix == expected_box_matrix).all()
+        assert frame.box is not None and (frame.box.matrix == expected_box_matrix).all()
 
     def test_read_frame_fcc_tric(self, test_data_path):
         reader = LammpsTrajectoryReader(test_data_path / "trajectory/lammps/fcc_tric.dump")
@@ -38,12 +38,12 @@ class TestReadLammpsTrajectory:
         xy = -2.2480556300586776e-01
         xz = -1.5685139115469910e+00
         yz = 8.7514948257390660e-02
-        assert frame["box"].matrix[0, 0] == lx
-        assert frame["box"].matrix[1, 1] == ly
-        assert frame["box"].matrix[2, 2] == lz
-        assert frame["box"].matrix[0, 1] == xy
-        assert frame["box"].matrix[0, 2] == xz
-        assert frame["box"].matrix[1, 2] == yz
+        assert frame.box is not None and frame.box.matrix[0, 0] == lx
+        assert frame.box.matrix[1, 1] == ly
+        assert frame.box.matrix[2, 2] == lz
+        assert frame.box.matrix[0, 1] == xy
+        assert frame.box.matrix[0, 2] == xz
+        assert frame.box.matrix[1, 2] == yz
 
     def test_read_multi_traj(self, test_data_path):
         reader = LammpsTrajectoryReader([test_data_path/"trajectory/lammps/fcc_orth.dump", test_data_path/"trajectory/lammps/fcc_tric.dump"])

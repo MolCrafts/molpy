@@ -161,3 +161,11 @@ def write_lammps_trajectory(file: Path, frames: List[mp.Frame], atom_style: str 
         for i, frame in enumerate(frames):
             timestep = getattr(frame, 'timestep', i)
             writer.write_frame(frame, timestep)
+
+def read_amber_rst7(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
+    """Read an AMBER restart file and return a molpy Frame object."""
+    from .data.amber import AmberRst7Reader
+    if frame is None:
+        frame = mp.Frame()
+    reader = AmberRst7Reader(file)
+    return reader.read(frame)

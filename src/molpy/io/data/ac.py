@@ -2,14 +2,15 @@ from pathlib import Path
 from molpy import Element
 from .base import DataReader
 from molpy.core.frame import _dict_to_dataset
+import molpy as mp
 
 class AcReader(DataReader):
 
     def __init__(self, file: str | Path):
-        super().__init__(file)
+        super().__init__(Path(file))
         self._file = Path(file)
 
-    def read(self, frame=None):
+    def read(self, frame: mp.Frame) -> mp.Frame:
         with open(self._file, "r") as f:
             lines = [line.strip() for line in f if line.strip()]
 
@@ -22,10 +23,14 @@ class AcReader(DataReader):
             elif line.startswith("BOND"):
                 self._parse_bond_section(line)
 
-        self.assign_atomic_numbers(self.atoms)
-
-        frame["atoms"] = _dict_to_dataset({k: [d[k] for d in self.atoms] for k in self.atoms[0].keys()})
-        frame["bonds"] = _dict_to_dataset({k: [d[k] for d in self.bonds] for k in self.bonds[0].keys()})
+        if self.atoms:
+            self.assign_atomic_numbers(self.atoms)
+            keys = self.atoms[0].keys()
+            frame["atoms"] = _dict_to_dataset({k: [d[k] for d in self.atoms] for k in keys})
+        
+        if self.bonds:
+            keys = self.bonds[0].keys()
+            frame["bonds"] = _dict_to_dataset({k: [d[k] for d in self.bonds] for k in keys})
 
         return frame
 
@@ -69,9 +74,11 @@ class AcReader(DataReader):
 
     def assign_atomic_numbers(self, atoms):
         for atom in atoms:
-            atomic_number = self._guess_atomic_number(atom["name"]).number
+            element_data = self._guess_atomic_number(atom["name"])
+            atomic_number = element_data.number
             if atomic_number == 0:
-                atomic_number = self._guess_atomic_number(atom["type"]).number
+                element_data = self._guess_atomic_number(atom["type"])
+                atomic_number = element_data.number
             atom["number"] = atomic_number
 
     def _guess_atomic_number(self, name):
@@ -79,4 +86,4 @@ class AcReader(DataReader):
         try:
             return Element(name.capitalize())
         except KeyError:
-            return Element("X")
+            return Element(0)

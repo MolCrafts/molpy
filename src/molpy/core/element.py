@@ -67,16 +67,24 @@ class Element:
         Raises:
             KeyError: If element is not found
         """
+        # Handle atomic number 0 for unknown elements
+        if name_or_symbol_or_number == 0:
+            return ElementData(0, "unknown", "X", 0.0)
+            
         if isinstance(name_or_symbol_or_number, int):
             if name_or_symbol_or_number in cls._number_to_element:
                 return cls._number_to_element[name_or_symbol_or_number]
         elif isinstance(name_or_symbol_or_number, str):
-            # Try name first
-            if name_or_symbol_or_number in cls._elements:
-                return cls._elements[name_or_symbol_or_number]
-            # Then try symbol
-            if name_or_symbol_or_number in cls._symbol_to_element:
-                return cls._symbol_to_element[name_or_symbol_or_number]
+            # Try name first (case-insensitive)
+            name_lower = name_or_symbol_or_number.lower()
+            for element_name, element_data in cls._elements.items():
+                if element_name.lower() == name_lower:
+                    return element_data
+            
+            # Try symbol (case-insensitive)
+            for symbol, element_data in cls._symbol_to_element.items():
+                if symbol.lower() == name_or_symbol_or_number.lower():
+                    return element_data
                 
         raise KeyError(f"Element not found: {name_or_symbol_or_number}")
 
@@ -96,6 +104,8 @@ class Element:
     def initialize(cls):
         """Initialize the element databases with predefined elements."""
         elements_data = [
+            # Special element for unknown atoms
+            ElementData(0, "unknown", "X", 0.0),
             ElementData(1, "hydrogen", "H", 1.007947 * daltons),
             # ElementData(1, "deuterium", "D", 2.01355321270 * daltons),
             ElementData(2, "helium", "He", 4.003 * daltons),

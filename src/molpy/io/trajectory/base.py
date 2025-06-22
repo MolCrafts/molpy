@@ -64,6 +64,16 @@ class TrajectoryReader(ABC):
         self._fp_list.clear()
         for f in self.fpaths:
             fp = open(f, "r+b")
+            # Check file size before mmap
+            fp.seek(0, 2)  # Seek to end
+            file_size = fp.tell()
+            fp.seek(0)  # Seek back to beginning
+            
+            if file_size == 0:
+                # For empty files, store a placeholder and handle in read_frame
+                self._fp_list.append(None)
+                continue
+            
             mm = mmap.mmap(fp.fileno(), 0, access=mmap.ACCESS_READ)
             self._fp_list.append(mm)
 
