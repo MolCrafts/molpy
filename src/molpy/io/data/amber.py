@@ -113,28 +113,45 @@ class AmberInpcrdReader(DataReader):
                     box_matrix = np.diag([a, b, c])
                     box = mp.Box(matrix=box_matrix)
         
-        # Create atom data
-        atoms_data = {
-            'id': np.arange(1, natoms + 1, dtype=int),
-            'name': np.array([f'ATM{i+1}' for i in range(natoms)], dtype='U10'),
-            'xyz': positions,
-            'atomic_number': np.ones(natoms, dtype=int),  # Default to 1 (unknown)
-        }
-        
-        if velocities is not None:
-            atoms_data['vx'] = velocities[:, 0]
-            atoms_data['vy'] = velocities[:, 1]
-            atoms_data['vz'] = velocities[:, 2]
-        
-        # Set frame data
-        frame["atoms"] = _dict_to_dataset(atoms_data)
+        # Update coordinates in existing atoms data or create new if none exists
+        if "atoms" in frame and len(frame["atoms"]["id"]) == natoms:
+            # Update existing atoms data with coordinates
+            import xarray as xr
+            frame["atoms"] = frame["atoms"].assign(
+                xyz=(("atoms_id", "xyz_dim_1"), positions)
+            )
+            
+            if velocities is not None:
+                frame["atoms"] = frame["atoms"].assign(
+                    vx=(("atoms_id",), velocities[:, 0]),
+                    vy=(("atoms_id",), velocities[:, 1]),
+                    vz=(("atoms_id",), velocities[:, 2])
+                )
+        else:
+            # Create new atom data if none exists or atom count mismatch
+            atoms_data = {
+                'id': np.arange(1, natoms + 1, dtype=int),
+                'name': np.array([f'ATM{i+1}' for i in range(natoms)], dtype='U10'),
+                'xyz': positions,
+                'atomic_number': np.ones(natoms, dtype=int),  # Default to 1 (unknown)
+            }
+            
+            if velocities is not None:
+                atoms_data['vx'] = velocities[:, 0]
+                atoms_data['vy'] = velocities[:, 1]
+                atoms_data['vz'] = velocities[:, 2]
+            
+            # Set frame data
+            frame["atoms"] = _dict_to_dataset(atoms_data)
         if box is not None:
             frame.box = box
         if time is not None:
             frame.timestep = int(time)
         
-        frame['props'] = frame.get('props', {})
-        frame['props']['name'] = title
+        # Store metadata properly
+        if 'props' not in frame._meta:
+            frame._meta['props'] = {}
+        frame._meta['props']['name'] = title
         
         return frame
 

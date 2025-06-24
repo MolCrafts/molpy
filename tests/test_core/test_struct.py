@@ -52,20 +52,6 @@ class TestAtom:
         assert d2["name"] == "H"
         assert d2["element"] == "hydrogen"
         assert d2["xyz"] == [1.0, 2.0, 3.0]
-    
-    def test_xyz_property(self):
-        """Test that xyz property provides default even when not set."""
-        from molpy.core.atomistic import Atom
-        
-        atom = Atom(name="C")
-        # Property should return default coordinates
-        xyz = atom.xyz
-        assert xyz.shape == (3,)
-        assert list(xyz) == [0.0, 0.0, 0.0]
-        
-        # But to_dict should not include xyz unless explicitly set
-        d = atom.to_dict()
-        assert "xyz" not in d
 
 
 class TestBond:
@@ -143,7 +129,7 @@ class TestStruct:
         assert struct["name"] == "test_struct"
         assert "test_struct" in repr(struct)
         unnamed = Struct()
-        assert "name" in repr(unnamed)
+        assert "name" not in repr(unnamed)
     
     def test_clone(self):
         struct = Struct(name="foo")

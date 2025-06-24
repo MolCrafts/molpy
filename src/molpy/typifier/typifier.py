@@ -60,11 +60,6 @@ class ForceFieldTypifier(BaseTypifier):
         return struct
 
 
-class RealMoleculeTypifier(BaseTypifier):
-
-    def is_amide(self, bond, struct): ...
-
-
 class SmartsTypifier(ForceFieldTypifier):
 
     def __init__(self, forcefield):

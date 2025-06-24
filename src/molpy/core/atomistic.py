@@ -9,7 +9,7 @@ This module provides the fundamental building blocks for molecular modeling:
 - Collections and containers
 """
 
-from typing import Callable, Optional
+from typing import Callable, Optional, Union, List, Any, Tuple
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -24,7 +24,7 @@ class Atom(Entity):
     Combines Entity's dictionary behavior with spatial operations through wrappers.
     """
 
-    def __init__(self, name: str = "", xyz: Optional[ArrayLike] = None, **kwargs):
+    def __init__(self, name: str = "", **kwargs):
         """
         Initialize an atom.
         
@@ -34,25 +34,10 @@ class Atom(Entity):
             **kwargs: Additional properties
         """
         super().__init__(name=name, **kwargs)
-        if xyz is not None:
-            self.xyz = xyz
 
     def __repr__(self) -> str:
         """Return a string representation of the atom."""
-        return f"<Atom {self.get('name', 'unnamed')}>"
-
-    @property
-    def xyz(self) -> np.ndarray:
-        """Get the xyz coordinates as a numpy array."""
-        return np.array(self.get("xyz", [0.0, 0.0, 0.0]), dtype=float)
-
-    @xyz.setter
-    def xyz(self, value: ArrayLike) -> None:
-        """Set the xyz coordinates."""
-        value = np.asarray(value, dtype=float)
-        if value.shape != (3,):
-            raise ValueError("xyz must be a 3D vector")
-        self["xyz"] = value.tolist()  # Store as list for easier comparison
+        return f"<Atom {self.name}>"
 
     @property
     def name(self) -> str:
@@ -93,138 +78,95 @@ class ManyBody(Entity):
 class Bond(ManyBody):
     """Class representing a bond between two atoms."""
 
-    def __init__(self, atom1=None, atom2=None, itom=None, jtom=None, **kwargs):
+    def __init__(self, itom=None, jtom=None, **kwargs):
         """
         Initialize a bond between two atoms.
 
         Args:
-            atom1: First atom in the bond
-            atom2: Second atom in the bond
-            itom: Alternative name for first atom (for backward compatibility)
-            jtom: Alternative name for second atom (for backward compatibility)
+            itom: First atom in the bond
+            jtom: Second atom in the bond
             **kwargs: Additional properties (e.g., bond_type, length)
         """
-        # Handle backward compatibility with itom/jtom naming
-        if itom is not None:
-            atom1 = itom
-        if jtom is not None:
-            atom2 = jtom
-            
-        if atom1 is None or atom2 is None:
-            raise ValueError("Must provide both atoms for the bond")
-        if atom1 is atom2:
+        if itom is jtom:
             raise ValueError("Cannot create bond between same atom")
-        # Sort atoms for consistent ordering
-        sorted_atoms = sorted([atom1, atom2], key=lambda a: id(a))
+        sorted_atoms = sorted([itom, jtom], key=lambda a: id(a))
         super().__init__(*sorted_atoms, **kwargs)
 
     @property
-    def atom1(self):
+    def itom(self):
         """Get the first atom in the bond."""
         return self._atoms[0]
 
     @property
-    def atom2(self):
+    def jtom(self):
         """Get the second atom in the bond."""
         return self._atoms[1]
 
-    # Aliases for backward compatibility
-    @property
-    def itom(self):
-        """Alias for atom1."""
-        return self.atom1
-
-    @property
-    def jtom(self):
-        """Alias for atom2."""
-        return self.atom2
-
     def __repr__(self) -> str:
         """Return a string representation of the bond."""
-        return f"<Bond: {self.atom1.name}-{self.atom2.name}>"
+        return f"<Bond: {self.itom.name}-{self.jtom.name}>"
 
     def __eq__(self, other) -> bool:
         """Check equality based on the atoms in the bond."""
         if not isinstance(other, Bond):
             return False
-        return (self.atom1 is other.atom1 and self.atom2 is other.atom2) or \
-               (self.atom1 is other.atom2 and self.atom2 is other.atom1)
-
-    @property
-    def length(self) -> float:
-        """Calculate the bond length."""
-        return float(np.linalg.norm(self.atom1.xyz - self.atom2.xyz))
+        return (self.itom is other.itom and self.jtom is other.jtom) or \
+               (self.itom is other.jtom and self.jtom is other.itom)
 
     def to_dict(self) -> dict:
         """Convert the bond to a dictionary."""
         result = super().to_dict()
         # Add atom indices if atoms have ids
-        if hasattr(self.atom1, 'get') and 'id' in self.atom1:
-            result['i'] = self.atom1['id']
-        if hasattr(self.atom2, 'get') and 'id' in self.atom2:
-            result['j'] = self.atom2['id']
+        if hasattr(self.itom, 'get') and 'id' in self.itom:
+            result['i'] = self.itom['id']
+        if hasattr(self.jtom, 'get') and 'id' in self.jtom:
+            result['j'] = self.jtom['id']
         return result
 
 
 class Angle(ManyBody):
     """Class representing an angle between three atoms."""
 
-    def __init__(self, atom1: Atom, vertex: Atom, atom2: Atom, **kwargs):
+    def __init__(self, itom: Atom, jtom: Atom, ktom: Atom, **kwargs):
         """
         Initialize an angle.
 
         Args:
-            atom1: First atom in the angle
-            vertex: Vertex atom (center of angle)
-            atom2: Third atom in the angle
+            itom: First atom in the angle
+            jtom: jtom atom (center of angle)
+            ktom: Third atom in the angle
             **kwargs: Additional properties
         """
-        if len({id(atom1), id(vertex), id(atom2)}) != 3:
+        if len({id(itom), id(jtom), id(ktom)}) != 3:
             raise ValueError("All three atoms must be different")
         # Sort end atoms for consistent ordering
-        end_atoms = sorted([atom1, atom2], key=lambda a: id(a))
-        super().__init__(end_atoms[0], vertex, end_atoms[1], **kwargs)
+        end_atoms = sorted([itom, ktom], key=lambda a: id(a))
+        super().__init__(end_atoms[0], jtom, end_atoms[1], **kwargs)
 
     @property
-    def atom1(self):
+    def itom(self):
         """Get the first atom in the angle."""
         return self._atoms[0]
 
     @property
-    def vertex(self):
-        """Get the vertex atom (center of angle)."""
+    def jtom(self):
+        """Get the jtom atom (center of angle)."""
         return self._atoms[1]
 
     @property
-    def atom2(self):
+    def ktom(self):
         """Get the third atom in the angle."""
         return self._atoms[2]
 
-    # Aliases for backward compatibility
-    @property
-    def itom(self):
-        """Alias for atom1."""
-        return self.atom1
-
-    @property
-    def jtom(self):
-        """Alias for vertex."""
-        return self.vertex
-
-    @property
-    def ktom(self):
-        """Alias for atom2."""
-        return self.atom2
-
     def __repr__(self) -> str:
         """Return a string representation of the angle."""
-        return f"<Angle: {self.atom1.name}-{self.vertex.name}-{self.atom2.name}>"
+        return f"<Angle: {self.itom.name}-{self.jtom.name}-{self.ktom.name}>"
 
     @property
     def value(self) -> float:
         """Calculate the angle value in radians."""
-        v1 = self.atom1.xyz - self.vertex.xyz
-        v2 = self.atom2.xyz - self.vertex.xyz
+        v1 = self.itom.xyz - self.jtom.xyz
+        v2 = self.jtom.xyz - self.jtom.xyz
         cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
         # Clamp to handle numerical errors
         cos_angle = np.clip(cos_angle, -1.0, 1.0)
@@ -233,11 +175,11 @@ class Angle(ManyBody):
     def to_dict(self) -> dict:
         """Convert the angle to a dictionary."""
         result = super().to_dict()
-        if hasattr(self.atom1, 'get') and 'id' in self.atom1:
+        if hasattr(self.itom, 'get') and 'id' in self.itom:
             result.update({
-                'i': self.atom1["id"],
-                'j': self.vertex["id"], 
-                'k': self.atom2["id"]
+                'i': self.itom["id"],
+                'j': self.jtom["id"], 
+                'k': self.jtom["id"]
             })
         return result
 
@@ -245,78 +187,57 @@ class Angle(ManyBody):
 class Dihedral(ManyBody):
     """Class representing a dihedral angle between four atoms."""
 
-    def __init__(self, atom1: Atom, atom2: Atom, atom3: Atom, atom4: Atom, **kwargs):
+    def __init__(self, itom: Atom, jtom: Atom, ktom: Atom, ltom: Atom, **kwargs):
         """
         Initialize a dihedral angle.
 
         Args:
-            atom1: First atom in the dihedral
-            atom2: Second atom in the dihedral
-            atom3: Third atom in the dihedral  
-            atom4: Fourth atom in the dihedral
+            itom: First atom in the dihedral
+            jtom: Second atom in the dihedral
+            ktom: Third atom in the dihedral  
+            ltom: Fourth atom in the dihedral
             **kwargs: Additional properties
         """
-        if len({id(atom1), id(atom2), id(atom3), id(atom4)}) != 4:
+        if len({id(itom), id(jtom), id(ktom), id(ltom)}) != 4:
             raise ValueError("All four atoms must be different")
         
         # Ensure consistent ordering based on central bond
-        if id(atom2) > id(atom3):
-            atom1, atom2, atom3, atom4 = atom4, atom3, atom2, atom1
+        if id(jtom) > id(ktom):
+            itom, jtom, ktom, ltom = ltom, ktom, jtom, itom
             
-        super().__init__(atom1, atom2, atom3, atom4, **kwargs)
+        super().__init__(itom, jtom, ktom, ltom, **kwargs)
 
     @property
-    def atom1(self):
+    def itom(self):
         """Get the first atom in the dihedral."""
         return self._atoms[0]
 
     @property
-    def atom2(self):
+    def jtom(self):
         """Get the second atom in the dihedral."""
         return self._atoms[1]
 
     @property
-    def atom3(self):
+    def ktom(self):
         """Get the third atom in the dihedral."""
         return self._atoms[2]
 
     @property
-    def atom4(self):
-        """Get the fourth atom in the dihedral."""
-        return self._atoms[3]
-
-    # Aliases for backward compatibility
-    @property
-    def itom(self):
-        """Alias for atom1."""
-        return self.atom1
-
-    @property
-    def jtom(self):
-        """Alias for atom2."""
-        return self.atom2
-
-    @property
-    def ktom(self):
-        """Alias for atom3."""
-        return self.atom3
-
-    @property
     def ltom(self):
         """Alias for atom4."""
-        return self.atom4
+        return self._atoms[3]
 
     def __repr__(self) -> str:
         """Return a string representation of the dihedral."""
-        return f"<Dihedral: {self.atom1.name}-{self.atom2.name}-{self.atom3.name}-{self.atom4.name}>"
+        return f"<Dihedral: {self.itom.name}-{self.jtom.name}-{self.ktom.name}-{self.ltom.name}>"
 
     @property
     def value(self) -> float:
         """Calculate the dihedral angle value in radians."""
         # Vectors along the bonds
-        b1 = self.atom2.xyz - self.atom1.xyz
-        b2 = self.atom3.xyz - self.atom2.xyz
-        b3 = self.atom4.xyz - self.atom3.xyz
+        b1 = self.jtom.xyz - self.itom.xyz
+        b2 = self.ktom.xyz - self.jtom.xyz
+        b3 = self.ltom.xyz - self.ktom.xyz
         
         # Normal vectors to the planes
         n1 = np.cross(b1, b2)
@@ -348,10 +269,10 @@ class Dihedral(ManyBody):
         result = super().to_dict()
         if all(hasattr(atom, 'get') and 'id' in atom for atom in self._atoms):
             result.update({
-                'i': self.atom1["id"],
-                'j': self.atom2["id"],
-                'k': self.atom3["id"],
-                'l': self.atom4["id"]
+                'i': self.itom["id"],
+                'j': self.jtom["id"],
+                'k': self.ktom["id"],
+                'l': self.ltom["id"]
             })
         return result
 
@@ -363,24 +284,24 @@ class Improper(Dihedral):
     An improper dihedral is used to maintain planarity in molecular structures.
     """
 
-    def __init__(self, center: Atom, atom1: Atom, atom2: Atom, atom3: Atom, **kwargs):
+    def __init__(self, itom: Atom, jtom: Atom, ktom: Atom, ltom: Atom, **kwargs):
         """
         Initialize an improper dihedral angle.
 
         Args:
-            center: Central atom
-            atom1: First bonded atom
-            atom2: Second bonded atom 
-            atom3: Third bonded atom
+            itom: Central atom
+            itom: First bonded atom
+            jtom: Second bonded atom 
+            ltom: Third bonded atom
             **kwargs: Additional properties
         """
         # Sort the three bonded atoms for consistent ordering
-        bonded_atoms = sorted([atom1, atom2, atom3], key=lambda a: id(a))
-        super().__init__(center, bonded_atoms[0], bonded_atoms[1], bonded_atoms[2], **kwargs)
+        bonded_atoms = sorted([jtom, ktom, ltom], key=lambda a: id(a))
+        super().__init__(itom, bonded_atoms[0], bonded_atoms[1], bonded_atoms[2], **kwargs)
 
     def __repr__(self) -> str:
         """Return a string representation of the improper dihedral."""
-        return f"<Improper: {self.atom1.name}({self.atom2.name},{self.atom3.name},{self.atom4.name})>"
+        return f"<Improper: {self.itom.name}({self.jtom.name},{self.ktom.name},{self.ltom.name})>"
 
 
 class AtomicStructure(Struct):
@@ -410,12 +331,12 @@ class AtomicStructure(Struct):
         return f"<AtomicStructure: {len(self.atoms)} atoms>"
 
     @property
-    def atoms(self):
+    def atoms(self) -> Entities:
         """Get the atoms in the structure."""
         return self["atoms"]
 
     @property
-    def bonds(self):
+    def bonds(self)-> Entities:
         """Get the bonds in the structure."""
         return self["bonds"]
 
@@ -429,27 +350,85 @@ class AtomicStructure(Struct):
         """Get the dihedrals in the structure."""
         return self["dihedrals"]
 
-    @property
-    def xyz(self) -> np.ndarray:
-        """Get the coordinates of all atoms in the structure."""
-        if len(self.atoms) == 0:
-            return np.array([]).reshape(0, 3)
-        return np.array([atom.xyz for atom in self.atoms], dtype=float)
 
-    @xyz.setter
-    def xyz(self, value: ArrayLike) -> None:
+
+    def __getitem__(self, key: Union[str, Tuple[str, str]]) -> Any:
         """
-        Set the coordinates of all atoms in the structure.
+        Get items from the structure.
+        
+        Supports tuple syntax for getting properties from collections:
+        - struct["atoms", "property"] returns a list of property values
+        - struct["bonds", "property"] returns a list of bond property values
+        - etc.
         
         Args:
-            value: Array of shape (n_atoms, 3) with new coordinates
+            key: String key for structure properties, or tuple (collection, property)
+            
+        Returns:
+            Value(s) from the structure as a list for tuple keys, or regular structure value for string keys.
         """
-        value = np.asarray(value)
-        if value.shape != (len(self.atoms), 3):
-            raise ValueError(f"xyz must have shape ({len(self.atoms)}, 3), got {value.shape}")
+        if isinstance(key, tuple) and len(key) == 2:
+            category, prop = key
+            
+            if category not in self:
+                raise KeyError(f"Category '{category}' not found in structure")
+            
+            collection = self[category]
+            values = []
+            
+            for item in collection:
+                if prop in item:
+                    value = item[prop]
+                    values.append(value)
+                else:
+                    # Handle missing properties gracefully
+                    values.append(None)
+            
+            return values
         
-        for i, atom in enumerate(self.atoms):
-            atom.xyz = value[i]
+        return super().__getitem__(key)
+
+    def __setitem__(self, key: Union[str, Tuple[str, str]], value: Union[Any, List[Any], np.ndarray]) -> None:
+        """
+        Set items in the structure.
+        
+        Supports:
+        - struct["property"] = value: sets structure property
+        - struct["atoms", "property"] = values: sets property for all atoms
+        
+        Args:
+            key: String key for structure properties, or tuple (collection, property)
+            value: Value(s) to set. For collections, can be a list, array, or single value to broadcast
+        """
+        # Handle tuple syntax for setting properties on collections
+        if isinstance(key, tuple) and len(key) == 2:
+            category, prop = key
+            
+            if category not in self:
+                raise KeyError(f"Category '{category}' not found in structure")
+            
+            collection = self[category]
+            
+            # Convert value to appropriate format
+            if isinstance(value, np.ndarray):
+                values = value.tolist() if value.ndim > 0 else [value.item()]
+            elif not isinstance(value, (list, tuple)):
+                # Single value - broadcast to all items
+                values = [value] * len(collection)
+            else:
+                values = list(value)
+            
+            if len(values) != len(collection):
+                raise ValueError(f"Number of values ({len(values)}) must match number of items in {category} ({len(collection)})")
+            
+            # Set property for each item
+            for item, val in zip(collection, values):
+                item[prop] = val
+            
+            return
+        
+        # Default behavior for regular structure properties
+        super().__setitem__(key, value)
 
     def add_atom(self, atom):
         """
@@ -497,27 +476,27 @@ class AtomicStructure(Struct):
         """
         return self.bonds.add(bond)
 
-    def def_bond(self, atom1, atom2, **kwargs):
+    def def_bond(self, itom, jtom, **kwargs):
         """
         Create and add a bond between two atoms.
         
         Args:
-            atom1: First atom or its index
-            atom2: Second atom or its index
+            itom: First atom or its index
+            jtom: Second atom or its index
             **kwargs: Bond properties
             
         Returns:
             The created bond
         """
-        if isinstance(atom1, int):
-            atom1 = self.atoms[atom1]
-        if isinstance(atom2, int):
-            atom2 = self.atoms[atom2]
+        if isinstance(itom, int):
+            itom = self.atoms[itom]
+        if isinstance(jtom, int):
+            jtom = self.atoms[jtom]
             
-        if not isinstance(atom1, Atom) or not isinstance(atom2, Atom):
+        if not isinstance(itom, Atom) or not isinstance(jtom, Atom):
             raise TypeError("Arguments must be Atom instances or valid indices")
             
-        bond = Bond(atom1, atom2, **kwargs)
+        bond = Bond(itom, jtom, **kwargs)
         return self.add_bond(bond)
 
     def add_bonds(self, bonds):
@@ -540,6 +519,32 @@ class AtomicStructure(Struct):
             The added angle
         """
         return self.angles.add(angle)
+
+    def def_angle(self, itom, jtom, ktom, **kwargs):
+        """
+        Create and add an angle between three atoms.
+        
+        Args:
+            itom: First atom or its index
+            jtom: Center atom or its index
+            ktom: Third atom or its index
+            **kwargs: Angle properties
+            
+        Returns:
+            The created angle
+        """
+        if isinstance(itom, int):
+            itom = self.atoms[itom]
+        if isinstance(jtom, int):
+            jtom = self.atoms[jtom]
+        if isinstance(ktom, int):
+            ktom = self.atoms[ktom]
+            
+        if not all(isinstance(atom, Atom) for atom in [itom, jtom, ktom]):
+            raise TypeError("Arguments must be Atom instances or valid indices")
+            
+        angle = Angle(itom, jtom, ktom, **kwargs)
+        return self.add_angle(angle)
 
     def add_angles(self, angles):
         """
@@ -589,10 +594,10 @@ class AtomicStructure(Struct):
         """
         if isinstance(bond, tuple):
             # Find and remove bond between these atoms
-            atom1, atom2 = bond
+            itom, jtom = bond
             target_bond = self.bonds.get_by(
-                lambda b: (b.atom1 is atom1 and b.atom2 is atom2) or
-                         (b.atom1 is atom2 and b.atom2 is atom1)
+                lambda b: (b.itom is itom and b.jtom is jtom) or
+                         (b.itom is jtom and b.jtom is itom)
             )
             if target_bond:
                 self.bonds.remove(target_bond)
@@ -727,7 +732,8 @@ class AtomicStructure(Struct):
         atom_name_idx_mapping = {}
         atom_dicts = []
         for i, atom in enumerate(self["atoms"]):
-            atom["id"] = i
+            # if "id" not in atom:
+            #     atom["id"] = i
             atom_name_idx_mapping[atom["name"]] = i
             atom_dicts.append(atom.to_dict())
 
@@ -904,12 +910,12 @@ class AtomicStructure(Struct):
                     if len(angle_indices) >= 3:
                         i, j, k = angle_indices[:3]
                         if i < len(atom_list) and j < len(atom_list) and k < len(atom_list):
-                            atom1 = atom_list[i]
-                            vertex = atom_list[j]
+                            itom = atom_list[i]
+                            jtom = atom_list[j]
                             atom3 = atom_list[k]
                             # Check that all atoms are different
-                            if len({id(atom1), id(vertex), id(atom3)}) == 3:
-                                angle = Angle(atom1, vertex, atom3)
+                            if len({id(itom), id(jtom), id(atom3)}) == 3:
+                                angle = Angle(itom, jtom, atom3)
                                 angles.append(angle)
         except (IndexError, AttributeError) as e:
             # Handle cases where topology properties fail
@@ -953,13 +959,13 @@ class AtomicStructure(Struct):
                     if len(dihedral_indices) >= 4:
                         i, j, k, l = dihedral_indices[:4]
                         if all(idx < len(atom_list) for idx in [i, j, k, l]):
-                            atom1 = atom_list[i]
-                            atom2 = atom_list[j]
+                            itom = atom_list[i]
+                            jtom = atom_list[j]
                             atom3 = atom_list[k]
                             atom4 = atom_list[l]
                             # Check that all atoms are different
-                            if len({id(atom1), id(atom2), id(atom3), id(atom4)}) == 4:
-                                dihedral = Dihedral(atom1, atom2, atom3, atom4)
+                            if len({id(itom), id(jtom), id(atom3), id(atom4)}) == 4:
+                                dihedral = Dihedral(itom, jtom, atom3, atom4)
                                 dihedrals.append(dihedral)
         except (IndexError, AttributeError) as e:
             # Handle cases where topology properties fail
@@ -978,7 +984,7 @@ class AtomicStructure(Struct):
             **kwargs: Properties to modify in the copy
             
         Returns:
-            A new AtomicStructure instance with copied atoms, bonds, and angles
+            A new AtomicStructure instance with copied atoms, bonds, angles, and dihedrals
         """
         import copy
         import inspect
@@ -1008,6 +1014,12 @@ class AtomicStructure(Struct):
         new_instance['angles'].clear()
         new_instance['dihedrals'].clear()
         
+        # Initialize impropers collection if it doesn't exist in the new instance
+        if 'impropers' not in new_instance:
+            new_instance['impropers'] = Entities()
+        else:
+            new_instance['impropers'].clear()
+        
         # Deep copy atoms with modifications
         atom_mapping = {}  # Map old atoms to new atoms
         for atom in self.atoms:
@@ -1021,38 +1033,267 @@ class AtomicStructure(Struct):
         
         # Deep copy bonds
         for bond in self.bonds:
-            new_atom1 = atom_mapping.get(bond.atom1)
-            new_atom2 = atom_mapping.get(bond.atom2)
-            if new_atom1 and new_atom2:
+            new_itom = atom_mapping.get(bond.itom)
+            new_jtom = atom_mapping.get(bond.jtom)
+            if new_itom and new_jtom:
                 bond_data = copy.deepcopy(bond.to_dict())
                 # Remove atom references from bond data
                 bond_data.pop('atoms', None)
                 bond_data.pop('_atoms', None)
-                new_bond = Bond(new_atom1, new_atom2, **bond_data)
+                new_bond = Bond(new_itom, new_jtom, **bond_data)
                 new_instance.add_bond(new_bond)
         
         # Deep copy angles
         for angle in self.angles:  
-            new_atom1 = atom_mapping.get(angle.itom)
-            new_atom2 = atom_mapping.get(angle.jtom)
-            new_atom3 = atom_mapping.get(angle.ktom)
-            if new_atom1 and new_atom2 and new_atom3:
+            new_itom = atom_mapping.get(angle.itom)
+            new_jtom = atom_mapping.get(angle.jtom)
+            new_ktom = atom_mapping.get(angle.ktom)
+            if new_itom and new_jtom and new_ktom:
                 angle_data = copy.deepcopy(angle.to_dict())
                 # Remove atom references from angle data
                 angle_data.pop('atoms', None)
                 angle_data.pop('_atoms', None)
-                new_angle = Angle(new_atom1, new_atom2, new_atom3, **angle_data)
+                new_angle = Angle(new_itom, new_jtom, new_ktom, **angle_data)
                 new_instance.add_angle(new_angle)
+        
+        # Deep copy dihedrals
+        for dihedral in self.dihedrals:
+            new_itom = atom_mapping.get(dihedral.itom)
+            new_jtom = atom_mapping.get(dihedral.jtom)
+            new_ktom = atom_mapping.get(dihedral.ktom)
+            new_ltom = atom_mapping.get(dihedral.ltom)
+            if new_itom and new_jtom and new_ktom and new_ltom:
+                dihedral_data = copy.deepcopy(dihedral.to_dict())
+                # Remove atom references from dihedral data
+                dihedral_data.pop('atoms', None)
+                dihedral_data.pop('_atoms', None)
+                new_dihedral = Dihedral(new_itom, new_jtom, new_ktom, new_ltom, **dihedral_data)
+                new_instance.add_dihedral(new_dihedral)
+        
+        # Deep copy impropers if they exist
+        if 'impropers' in self:
+            for improper in self['impropers']:
+                new_itom = atom_mapping.get(improper.itom)
+                new_jtom = atom_mapping.get(improper.jtom)
+                new_ktom = atom_mapping.get(improper.ktom)
+                new_ltom = atom_mapping.get(improper.ltom)
+                if new_itom and new_jtom and new_ktom and new_ltom:
+                    improper_data = copy.deepcopy(improper.to_dict())
+                    # Remove atom references from improper data
+                    improper_data.pop('atoms', None)
+                    improper_data.pop('_atoms', None)
+                    new_improper = Improper(new_itom, new_jtom, new_ktom, new_ltom, **improper_data)
+                    new_instance['impropers'].add(new_improper)
         
         # Copy other non-structural properties
         for key, value in self.items():
-            if key not in ['atoms', 'bonds', 'angles', 'dihedrals'] and key not in modification_kwargs:
+            if key not in ['atoms', 'bonds', 'angles', 'dihedrals', 'impropers'] and key not in modification_kwargs:
                 if hasattr(value, 'copy'):
                     new_instance[key] = value.copy()
                 else:
-                    new_instance[key] = value
+                    new_instance[key] = copy.deepcopy(value)
         
         return new_instance
 
-    # ...existing code...
-
+    @classmethod
+    def from_frame(cls, frame, name: str = ""):
+        """
+        Create a new AtomicStructure from a Frame object.
+        
+        Args:
+            frame: Frame object containing the structure data
+            name: Name for the new structure (optional)
+            
+        Returns:
+            New AtomicStructure instance populated from the frame
+        """
+        # Get structure name from frame metadata if not provided
+        if not name and "structure_name" in frame:
+            name = frame["structure_name"]
+        elif not name and hasattr(frame, '_meta') and "structure_name" in frame._meta:
+            name = frame._meta["structure_name"]
+        
+        # Create new structure instance
+        struct = cls(name=name)
+        
+        # Handle empty frame case
+        if "atoms" not in frame or not frame["atoms"]:
+            return struct
+        
+        atoms_data = frame["atoms"]
+        
+        # Determine number of atoms from the dataset
+        n_atoms = 0
+        if hasattr(atoms_data, 'dims'):
+            # Get the first dimension size from any data variable
+            for key, data_array in atoms_data.data_vars.items():
+                if data_array.ndim >= 1:
+                    n_atoms = data_array.shape[0]
+                    break
+        
+        if n_atoms == 0:
+            return struct
+        
+        # Create atoms with all their properties
+        atom_list = []
+        for i in range(n_atoms):
+            atom_props = {}
+            
+            # Extract properties for this atom from xarray DataArrays
+            for key, data_array in atoms_data.data_vars.items():
+                if data_array.ndim == 0:
+                    # Scalar value - same for all atoms
+                    atom_props[key] = data_array.values.item()
+                elif data_array.ndim == 1:
+                    # 1D array - one value per atom
+                    if i < len(data_array.values):
+                        atom_props[key] = data_array.values[i]
+                elif data_array.ndim >= 2:
+                    # Multi-dimensional array (like xyz coordinates)
+                    if i < data_array.shape[0]:
+                        atom_props[key] = data_array.values[i]
+            
+            # Create and add atom
+            atom = Atom(**atom_props)
+            struct.add_atom(atom)
+            atom_list.append(atom)
+        
+        # Create bonds if they exist in the frame
+        if "bonds" in frame and frame["bonds"]:
+            bonds_data = frame["bonds"]
+            
+            # Determine number of bonds
+            n_bonds = 0
+            if hasattr(bonds_data, 'dims'):
+                for key, data_array in bonds_data.data_vars.items():
+                    if data_array.ndim >= 1:
+                        n_bonds = data_array.shape[0]
+                        break
+            
+            for i in range(n_bonds):
+                bond_props = {}
+                
+                # Extract properties for this bond
+                for key, data_array in bonds_data.data_vars.items():
+                    if data_array.ndim == 0:
+                        bond_props[key] = data_array.values.item()
+                    elif data_array.ndim >= 1 and i < data_array.shape[0]:
+                        bond_props[key] = data_array.values[i]
+                
+                # Get atom indices
+                if "i" in bond_props and "j" in bond_props:
+                    i_idx = bond_props.pop("i")
+                    j_idx = bond_props.pop("j")
+                    
+                    # Create bond with atom references
+                    if i_idx < len(atom_list) and j_idx < len(atom_list):
+                        bond = Bond(atom_list[i_idx], atom_list[j_idx], **bond_props)
+                        struct.add_bond(bond)
+        
+        # Create angles if they exist in the frame
+        if "angles" in frame and frame["angles"]:
+            angles_data = frame["angles"]
+            
+            # Determine number of angles
+            n_angles = 0
+            if hasattr(angles_data, 'dims'):
+                for key, data_array in angles_data.data_vars.items():
+                    if data_array.ndim >= 1:
+                        n_angles = data_array.shape[0]
+                        break
+            
+            for i in range(n_angles):
+                angle_props = {}
+                
+                # Extract properties for this angle
+                for key, data_array in angles_data.data_vars.items():
+                    if data_array.ndim == 0:
+                        angle_props[key] = data_array.values.item()
+                    elif data_array.ndim >= 1 and i < data_array.shape[0]:
+                        angle_props[key] = data_array.values[i]
+                
+                # Get atom indices
+                if "i" in angle_props and "j" in angle_props and "k" in angle_props:
+                    i_idx = angle_props.pop("i")
+                    j_idx = angle_props.pop("j")
+                    k_idx = angle_props.pop("k")
+                    
+                    # Create angle with atom references
+                    if all(idx < len(atom_list) for idx in [i_idx, j_idx, k_idx]):
+                        angle = Angle(atom_list[i_idx], atom_list[j_idx], atom_list[k_idx], **angle_props)
+                        struct.add_angle(angle)
+        
+        # Create dihedrals if they exist in the frame
+        if "dihedrals" in frame and frame["dihedrals"]:
+            dihedrals_data = frame["dihedrals"]
+            
+            # Determine number of dihedrals
+            n_dihedrals = 0
+            if hasattr(dihedrals_data, 'dims'):
+                for key, data_array in dihedrals_data.data_vars.items():
+                    if data_array.ndim >= 1:
+                        n_dihedrals = data_array.shape[0]
+                        break
+            
+            for i in range(n_dihedrals):
+                dihedral_props = {}
+                
+                # Extract properties for this dihedral
+                for key, data_array in dihedrals_data.data_vars.items():
+                    if data_array.ndim == 0:
+                        dihedral_props[key] = data_array.values.item()
+                    elif data_array.ndim >= 1 and i < data_array.shape[0]:
+                        dihedral_props[key] = data_array.values[i]
+                
+                # Get atom indices
+                if all(idx in dihedral_props for idx in ["i", "j", "k", "l"]):
+                    i_idx = dihedral_props.pop("i")
+                    j_idx = dihedral_props.pop("j")
+                    k_idx = dihedral_props.pop("k")
+                    l_idx = dihedral_props.pop("l")
+                    
+                    # Create dihedral with atom references
+                    if all(idx < len(atom_list) for idx in [i_idx, j_idx, k_idx, l_idx]):
+                        dihedral = Dihedral(atom_list[i_idx], atom_list[j_idx], 
+                                          atom_list[k_idx], atom_list[l_idx], **dihedral_props)
+                        struct.add_dihedral(dihedral)
+        
+        # Create impropers if they exist in the frame
+        if "impropers" in frame and frame["impropers"]:
+            impropers_data = frame["impropers"]
+            
+            # Determine number of impropers
+            n_impropers = 0
+            if hasattr(impropers_data, 'dims'):
+                for key, data_array in impropers_data.data_vars.items():
+                    if data_array.ndim >= 1:
+                        n_impropers = data_array.shape[0]
+                        break
+            
+            for i in range(n_impropers):
+                improper_props = {}
+                
+                # Extract properties for this improper
+                for key, data_array in impropers_data.data_vars.items():
+                    if data_array.ndim == 0:
+                        improper_props[key] = data_array.values.item()
+                    elif data_array.ndim >= 1 and i < data_array.shape[0]:
+                        improper_props[key] = data_array.values[i]
+                
+                # Get atom indices
+                if all(idx in improper_props for idx in ["i", "j", "k", "l"]):
+                    i_idx = improper_props.pop("i")
+                    j_idx = improper_props.pop("j")
+                    k_idx = improper_props.pop("k")
+                    l_idx = improper_props.pop("l")
+                    
+                    # Create improper with atom references
+                    if all(idx < len(atom_list) for idx in [i_idx, j_idx, k_idx, l_idx]):
+                        improper = Improper(atom_list[i_idx], atom_list[j_idx], 
+                                          atom_list[k_idx], atom_list[l_idx], **improper_props)
+                        # Initialize impropers collection if it doesn't exist
+                        if "impropers" not in struct:
+                            struct["impropers"] = Entities()
+                        struct["impropers"].add(improper)
+        
+        return struct

@@ -78,20 +78,43 @@ class Box(Region, PeriodicBoundary):
         ...
 
     def to_dict(self) -> dict:
+        """
+        Convert Box to a dictionary for serialization.
+        
+        Returns:
+            dict: Dictionary containing box matrix, periodic boundary conditions,
+                  origin, and type information for reconstruction.
+        """
         return {
-            "xlo": self.xlo,
-            "xhi": self.xhi,
-            "ylo": self.ylo,
-            "yhi": self.yhi,
-            "zlo": self.zlo,
-            "zhi": self.zhi,
-            "xy": self.xy,
-            "xz": self.xz,
-            "yz": self.yz,
-            "x_pbc": self._pbc[0],
-            "y_pbc": self._pbc[1],
-            "z_pbc": self._pbc[2],
+            "__class__": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
+            "matrix": self._matrix.tolist(),
+            "pbc": self._pbc.tolist(),
+            "origin": self._origin.tolist(),
+            "name": getattr(self, "_name", "Box")
         }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Box":
+        """
+        Create Box from dictionary representation.
+        
+        Args:
+            data: Dictionary containing box parameters
+            
+        Returns:
+            Box: Reconstructed Box instance
+        """
+        # Extract class info if present for validation
+        class_info = data.get("__class__")
+        if class_info and not class_info.endswith("Box"):
+            raise ValueError(f"Cannot create Box from class {class_info}")
+            
+        matrix = np.array(data["matrix"]) if "matrix" in data else None
+        pbc = np.array(data["pbc"]) if "pbc" in data else np.ones(3, dtype=bool)
+        origin = np.array(data["origin"]) if "origin" in data else np.zeros(3)
+        name = data.get("name", "Box")
+        
+        return cls(matrix=matrix, pbc=pbc, origin=origin, name=name)
 
     @classmethod
     def cubic(

@@ -70,8 +70,76 @@ class Entity(UserDict):
         return id(self) < id(other)
 
     def to_dict(self) -> dict:
-        """Convert entity to a standard dictionary."""
-        return dict(self)
+        """
+        Convert entity to a dictionary for serialization.
+        
+        Includes class information for proper reconstruction and recursively
+        converts any nested components that support to_dict.
+        
+        Returns:
+            dict: Dictionary representation including class info and all data
+        """
+        result = {
+            "__class__": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
+        }
+        
+        # Recursively convert data, calling to_dict on nested components if available
+        for key, value in self.data.items():
+            if hasattr(value, "to_dict") and callable(value.to_dict):
+                result[key] = value.to_dict()
+            else:
+                result[key] = value
+                
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Entity":
+        """
+        Create Entity from dictionary representation.
+        
+        Supports recursive reconstruction of nested components that have from_dict methods.
+        
+        Args:
+            data: Dictionary containing entity data
+            
+        Returns:
+            Entity: Reconstructed entity instance
+        """
+        # Extract class info if present for validation
+        class_info = data.get("__class__")
+        if class_info and not class_info.endswith(cls.__name__):
+            # Allow subclasses but warn about potential mismatches
+            pass
+            
+        # Create new instance
+        instance = cls()
+        
+        # Recursively reconstruct data
+        for key, value in data.items():
+            if key == "__class__":
+                continue
+                
+            # If value is a dict with class info, try to reconstruct it
+            if isinstance(value, dict) and "__class__" in value:
+                class_path = value["__class__"]
+                try:
+                    # Import and get the class
+                    module_name, class_name = class_path.rsplit(".", 1)
+                    module = __import__(module_name, fromlist=[class_name])
+                    target_class = getattr(module, class_name)
+                    
+                    # Call from_dict if available
+                    if hasattr(target_class, "from_dict") and callable(target_class.from_dict):
+                        instance[key] = target_class.from_dict(value)
+                    else:
+                        instance[key] = value
+                except (ImportError, AttributeError, ValueError):
+                    # Fallback to raw data if reconstruction fails
+                    instance[key] = value
+            else:
+                instance[key] = value
+                
+        return instance
 
     def keys(self):
         """Return the keys of the entity."""
@@ -216,157 +284,14 @@ class Struct(Entity):
     spatial or atomic properties.
     """
 
-    def __init__(self, name: str = "", **props):
+    def to_frame(self):
         """
-        Initialize a molecular structure.
+        Convert the structure to a frame representation.
         
-        Args:
-            name: Structure name
-            **props: Additional properties
-        """
-        super().__init__(name=name, **props)
-
-    def __call__(self, **kwargs):
-        """
-        Create a new instance of this structure with optional modifications.
+        This method should be implemented by subclasses to provide
+        a specific frame representation of the structure.
         
-        This method enables structures to be used as factory functions,
-        creating copies of themselves with potentially modified properties.
-        
-        For AtomicStructure, this creates a new instance and deep copies all
-        atoms, bonds, angles, etc. with new parameters applied.
-        
-        Args:
-            **kwargs: Properties to pass to the constructor and/or override in the instance
-            
         Returns:
-            A new instance of the same class with copied data
+            Frame: A frame representation of the structure
         """
-        import copy
-        import inspect
-        
-        # For AtomicStructure and subclasses, we need special handling
-        # to avoid double-initialization
-        if hasattr(self, 'atoms') and hasattr(self.__class__, '__init__'):
-            # Get the __init__ signature of the class
-            init_signature = inspect.signature(self.__class__.__init__)
-            constructor_kwargs = {}
-            modification_kwargs = {}
-            
-            # Separate constructor arguments from modification arguments
-            for key, value in kwargs.items():
-                if key in init_signature.parameters:
-                    constructor_kwargs[key] = value
-                else:
-                    modification_kwargs[key] = value
-            
-            # Use existing name if not specified in kwargs  
-            if 'name' not in constructor_kwargs:
-                constructor_kwargs['name'] = self.get('name', '')
-                
-            # Create a new instance with constructor arguments
-            new_instance = self.__class__(**constructor_kwargs)
-            
-            # Deep copy atoms with modifications
-            if hasattr(self, 'atoms') and len(self.atoms) > 0:
-                # Clear the auto-created atoms/bonds/angles from constructor
-                new_instance['atoms'].clear()
-                new_instance['bonds'].clear() 
-                new_instance['angles'].clear()
-                if hasattr(new_instance, 'dihedrals'):
-                    new_instance['dihedrals'].clear()
-                
-                # Deep copy atoms with modifications applied
-                for atom in self.atoms:
-                    new_atom_data = copy.deepcopy(atom.to_dict())
-                    # Apply modifications to atom data
-                    for key, value in modification_kwargs.items():
-                        new_atom_data[key] = value
-                    new_atom = type(atom)(**new_atom_data)
-                    new_instance.add_atom(new_atom)
-                
-                # Deep copy bonds
-                if hasattr(self, 'bonds') and len(self.bonds) > 0:
-                    atom_mapping = {}  # Map old atoms to new atoms
-                    for old_atom, new_atom in zip(self.atoms, new_instance.atoms):
-                        atom_mapping[old_atom] = new_atom
-                    
-                    for bond in self.bonds:
-                        new_atom1 = atom_mapping.get(bond.atom1)
-                        new_atom2 = atom_mapping.get(bond.atom2)
-                        if new_atom1 and new_atom2:
-                            bond_data = copy.deepcopy(bond.to_dict())
-                            # Remove atom references from bond data
-                            bond_data.pop('atoms', None)
-                            new_bond = type(bond)(new_atom1, new_atom2, **bond_data)
-                            new_instance.add_bond(new_bond)
-                
-                # Deep copy angles
-                if hasattr(self, 'angles') and len(self.angles) > 0:
-                    atom_mapping = {}
-                    for old_atom, new_atom in zip(self.atoms, new_instance.atoms):
-                        atom_mapping[old_atom] = new_atom
-                    
-                    for angle in self.angles:
-                        new_atom1 = atom_mapping.get(angle.itom)
-                        new_atom2 = atom_mapping.get(angle.jtom) 
-                        new_atom3 = atom_mapping.get(angle.ktom)
-                        if new_atom1 and new_atom2 and new_atom3:
-                            angle_data = copy.deepcopy(angle.to_dict())
-                            # Remove atom references from angle data
-                            angle_data.pop('atoms', None)
-                            new_angle = type(angle)(new_atom1, new_atom2, new_atom3, **angle_data)
-                            new_instance.add_angle(new_angle)
-            
-            # Copy other non-structural properties
-            for key, value in self.items():
-                if key not in ['atoms', 'bonds', 'angles', 'dihedrals'] and key not in modification_kwargs:
-                    if hasattr(value, 'copy'):
-                        new_instance[key] = value.copy()
-                    else:
-                        new_instance[key] = value
-            
-            return new_instance
-        
-        # Original fallback implementation for other classes
-        try:
-            # Get the __init__ signature of the class
-            init_signature = inspect.signature(self.__class__.__init__)
-            constructor_kwargs = {}
-            remaining_kwargs = {}
-            
-            # Separate constructor arguments from other properties
-            for key, value in kwargs.items():
-                if key in init_signature.parameters:
-                    constructor_kwargs[key] = value
-                else:
-                    remaining_kwargs[key] = value
-            
-            # Create a new instance with constructor arguments
-            # Use existing name if not specified in kwargs  
-            if 'name' not in constructor_kwargs:
-                constructor_kwargs['name'] = self.get('name', '')
-                
-            new_instance = self.__class__(**constructor_kwargs)
-            
-        except Exception:
-            # Final fallback: create with just name if introspection fails
-            new_instance = self.__class__(name=self.get('name', ''))
-            remaining_kwargs = kwargs.copy()
-        
-        # Copy all data from the current instance (deep copy for collections)
-        for key, value in self.items():
-            if key not in remaining_kwargs:  # Don't override specified kwargs
-                if hasattr(value, 'copy'):
-                    # For collections/containers, create a shallow copy
-                    new_instance[key] = value.copy()
-                else:
-                    # For simple values, just assign
-                    new_instance[key] = value
-        
-        # Apply any remaining overrides from kwargs
-        for key, value in remaining_kwargs.items():
-            new_instance[key] = value
-            
-        return new_instance
-
+        raise NotImplementedError("Subclasses must implement to_frame()")

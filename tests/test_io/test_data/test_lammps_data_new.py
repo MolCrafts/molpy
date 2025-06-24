@@ -127,35 +127,35 @@ class TestLammpsDataReader:
         """Test reading labelmap.lmp - file with atom/bond type labels."""
         if 'labelmap' not in test_files:
             pytest.skip("labelmap.lmp test file not found")
-        
-        # With unified string-based type handling, this should work now
-        reader = LammpsDataReader(test_files['labelmap'], atom_style="full")
+            
+        reader = LammpsDataReader(test_files['labelmap'])
         frame = reader.read()
         
-        # Check basic structure
+        # Check atoms
         assert 'atoms' in frame
         atoms = frame['atoms']
+        assert len(atoms['id']) == 16  # Based on file content
         
-        # Should have 16 atoms based on file content
-        assert len(atoms['id']) == 16
-        assert 'type' in atoms.data_vars
-        assert 'xyz' in atoms.data_vars
+        # Check that we have multiple atom types (should be 7 based on file)
+        type_values = atoms['type'].values
+        unique_types = np.unique(type_values)
+        assert len(unique_types) <= 7
         
-        # Check that atom types are strings (labels like 'f', 'c3', etc.)
-        atom_types = atoms['type'].values
-        assert atom_types.dtype.kind == 'U'  # Unicode string
-        
-        # Check for expected labels
-        unique_types = set(atom_types.flat)
+        # With string types, check that they are valid labels
+        # Expected labels: 'f', 'c3', 's6', 'o', 'ne', 'sy', 'Li+'
         expected_labels = {'f', 'c3', 's6', 'o', 'ne', 'sy', 'Li+'}
-        assert unique_types.issubset(expected_labels)
+        assert set(unique_types).issubset(expected_labels)
         
-        # Check bonds if present
-        if 'bonds' in frame:
-            bonds = frame['bonds']
-            assert bonds['type'].values.dtype.kind == 'U'  # String bond types too
-            
-        print(f"✓ labelmap.lmp: {len(atoms['id'])} atoms with string labels: {sorted(unique_types)}")
+        # Check topology sections exist
+        assert 'bonds' in frame
+        assert 'angles' in frame  
+        assert 'dihedrals' in frame
+        
+        bonds = frame['bonds']
+        assert len(bonds['id']) == 14  # Based on file content
+        
+        angles = frame['angles']
+        assert len(angles['id']) == 25  # Based on file content
 
     def test_solvated_file(self, test_files):
         """Test reading solvated.lmp - large file with all topology types."""

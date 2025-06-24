@@ -343,7 +343,7 @@ class PDBWriter(DataWriter):
         """
         
         # Extract data with defaults
-        record_type = atom_data.get("record_type", "HETATM")
+        record_type = atom_data.get("record_type", "ATOM")
         atom_name = atom_data.get("name", "UNK")
         alt_loc = atom_data.get("altLoc", " ")
         res_name = atom_data.get("resName", "UNK")
@@ -454,25 +454,37 @@ class PDBWriter(DataWriter):
         """Extract atom data at given index from dataset."""
         atom_data = {}
         
+        # Find the main atom dimension (should be 'atoms_id' or similar)
+        main_dim = None
+        for dim_name in atoms_dataset.dims:
+            dim_str = str(dim_name)
+            if dim_str.endswith('_id') or 'atom' in dim_str.lower():
+                main_dim = dim_name
+                break
+        
+        if main_dim is None:
+            # Fallback to first dimension
+            main_dim = list(atoms_dataset.dims.keys())[0] if atoms_dataset.dims else None
+        
+        if main_dim is None:
+            return atom_data
+            
         # Extract data for this atom
         for var_name in atoms_dataset.data_vars:
             values = atoms_dataset[var_name]
             
             if var_name == "xyz":
-                # Handle coordinate array - find the xyz dimension
-                xyz_dims = [d for d in values.dims if str(d).startswith('dim_xyz_') and not str(d).endswith('_1')]
-                if xyz_dims:
-                    xyz_dim = xyz_dims[0]
-                    coord = values.isel({xyz_dim: index}).values
-                    atom_data["x"] = float(coord[0])
-                    atom_data["y"] = float(coord[1])
-                    atom_data["z"] = float(coord[2])
+                # Handle coordinate array - should be (atoms_id, xyz_dim_1) or similar
+                if main_dim in values.dims:
+                    coord = values.isel({main_dim: index}).values
+                    if len(coord) >= 3:
+                        atom_data["x"] = float(coord[0])
+                        atom_data["y"] = float(coord[1]) 
+                        atom_data["z"] = float(coord[2])
             else:
-                # Handle scalar values - find the specific dimension for this variable
-                var_dims = [d for d in values.dims if str(d).startswith(f'dim_{var_name}_')]
-                if var_dims:
-                    var_dim = var_dims[0]
-                    value = values.isel({var_dim: index}).values
+                # Handle scalar values - use main dimension if present
+                if main_dim in values.dims:
+                    value = values.isel({main_dim: index}).values
                     if hasattr(value, 'item'):
                         value = value.item()
                     atom_data[var_name] = value
@@ -497,8 +509,20 @@ class PDBWriter(DataWriter):
             if "atoms" in frame:
                 atoms = frame["atoms"]
                 sizes = atoms.sizes
-                main_dim = next(iter(sizes.keys()))
-                n_atoms = sizes[main_dim]
+                
+                # Find the main atom dimension
+                main_dim = None
+                for dim_name in sizes.keys():
+                    dim_str = str(dim_name)
+                    if dim_str.endswith('_id') or 'atom' in dim_str.lower():
+                        main_dim = dim_name
+                        break
+                        
+                if main_dim is None:
+                    main_dim = next(iter(sizes.keys())) if sizes else None
+                    
+                if main_dim:
+                    n_atoms = sizes[main_dim]
                 
                 for i in range(n_atoms):
                     atom_data = self._get_atom_data_at_index(atoms, i)
@@ -518,22 +542,25 @@ class PDBWriter(DataWriter):
                 bonds = frame["bonds"]
                 bond_dict = defaultdict(list)
                 
-                # Get bond dimensions for each variable
-                i_dims = bonds["i"].dims
-                j_dims = bonds["j"].dims
-                i_main_dim = i_dims[0] if i_dims else None
-                j_main_dim = j_dims[0] if j_dims else None
+                # Find the main bond dimension
+                bond_sizes = bonds.sizes
+                bond_main_dim = None
+                for dim_name in bond_sizes.keys():
+                    dim_str = str(dim_name)
+                    if dim_str.endswith('_id') or 'bond' in dim_str.lower():
+                        bond_main_dim = dim_name
+                        break
+                        
+                if bond_main_dim is None:
+                    bond_main_dim = next(iter(bond_sizes.keys())) if bond_sizes else None
                 
-                if i_main_dim is None or j_main_dim is None:
-                    pass  # Skip bond writing if dimensions are missing
-                else:
-                    # Use the size from the i dimension (should be same as j)
-                    n_bonds = bonds["i"].sizes[i_main_dim]
+                if bond_main_dim and "i" in bonds.data_vars and "j" in bonds.data_vars:
+                    n_bonds = bond_sizes[bond_main_dim]
                     
                     # Group bonds by first atom (convert back to 1-based)
                     for i in range(n_bonds):
-                        atom_i = int(bonds["i"].isel({i_main_dim: i}).values) + 1
-                        atom_j = int(bonds["j"].isel({j_main_dim: i}).values) + 1
+                        atom_i = int(bonds["i"].isel({bond_main_dim: i}).values) + 1
+                        atom_j = int(bonds["j"].isel({bond_main_dim: i}).values) + 1
                         
                         bond_dict[atom_i].append(atom_j)
                         bond_dict[atom_j].append(atom_i)

@@ -1,56 +1,87 @@
 [project]
 name = "molcrafts-molpy"
-
-version = "0.0.1"
+version = "0.1.0"
+description = "Modern Python framework for molecular simulation and analysis"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "BSD-3-Clause"}
 
 authors = [
     { name = "Roy Kid", email = "lijichen365@gmail.com" }
 ]
 
-description = "Fundamental package for computational chemistry in Python"
+maintainers = [
+    { name = "MolCrafts Team", email = "molcrafts@example.com" }
+]
 
-readme = "README.md"
-
-requires-python = ">=3.10"
+keywords = [
+    "molecular-simulation",
+    "computational-chemistry", 
+    "molecular-dynamics",
+    "force-fields",
+    "scientific-computing"
+]
 
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: BSD License",
-    "Development Status :: 1 - Planning",
-    'Intended Audience :: Science/Research',
-    'Intended Audience :: Developers',
-    'Programming Language :: C',
-    'Programming Language :: Python',
-    'Programming Language :: Python :: 3',
-    'Programming Language :: Python :: 3.11',
-    'Programming Language :: Python :: 3.12',
-    'Programming Language :: Python :: 3 :: Only',
-    'Programming Language :: Python :: Implementation :: CPython',
-    'Topic :: Software Development',
-    'Topic :: Scientific/Engineering',
-    'Typing :: Typed',
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
     'Operating System :: Microsoft :: Windows',
     'Operating System :: POSIX',
     'Operating System :: Unix',
     'Operating System :: MacOS',
 ]
 
-license = {file = "LICENSE"}
-
 dependencies = [
-  "numpy",  # https://github.com/numpy/numpy
-  "igraph",  # https://github.com/igraph/python-igraph
-  "pint",  # https://github.com/hgrecco/pint
-  "pandas",
-  "lark"
+    "numpy>=1.20.0",
+    "xarray>=0.20.0", 
+    "python-igraph>=0.9.0",
+    "lark>=1.1.0"
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "coverage"]
-doc = [
-    "mkdocs",
-    "mkdocs-material",
-    "mkdocstrings-python"
+dev = [
+    "pytest>=6.0.0",
+    "pytest-cov>=3.0.0", 
+    "black>=22.0.0",
+    "isort>=5.10.0",
+    "flake8>=4.0.0"
 ]
+hdf5 = ["h5py>=3.6.0"]
+analysis = [
+    "pandas>=1.3.0",
+    "matplotlib>=3.5.0",
+    "jupyter>=1.0.0"
+]
+all = [
+    "molcrafts-molpy[dev,hdf5,analysis]"
+]
+doc = [
+    "mkdocs>=1.4.0",
+    "mkdocs-material>=8.0.0",
+    "mkdocstrings[python]>=0.19.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/MolCrafts/molpy"
+Documentation = "https://molcrafts.github.io/molpy"
+Repository = "https://github.com/MolCrafts/molpy.git"
+Issues = "https://github.com/MolCrafts/molpy/issues"
+Changelog = "https://github.com/MolCrafts/molpy/blob/main/CHANGELOG.md"
 
 [project.urls]
 Homepage = "https://github.com/MolCrafts/molpy"

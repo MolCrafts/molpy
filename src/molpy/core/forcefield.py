@@ -1179,3 +1179,143 @@ class ForceField:
         Merge another ForceField into this one (in-place, alias for merge).
         """
         return self.merge(other)
+
+    def to_dict(self) -> dict:
+        """
+        Convert ForceField to a dictionary for serialization.
+        
+        Returns:
+            dict: Dictionary containing all forcefield components and metadata
+        """
+        def style_to_dict(style):
+            """Convert a style object to dictionary"""
+            result = {
+                "__class__": f"{style.__class__.__module__}.{style.__class__.__qualname__}",
+                "name": style.name,
+                "parms": style.parms,
+                "types": []
+            }
+            result.update(style.data)  # Add any additional data from DictWithList
+            
+            # Convert types to dictionaries
+            for type_obj in style.types:
+                type_dict = {
+                    "__class__": f"{type_obj.__class__.__module__}.{type_obj.__class__.__qualname__}",
+                    "name": type_obj.name,
+                    "parms": type_obj.parms
+                }
+                type_dict.update(type_obj.data)  # Add any additional data
+                result["types"].append(type_dict)
+            
+            return result
+        
+        return {
+            "__class__": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
+            "name": self.name,
+            "unit": self.unit,
+            "atomstyles": [style_to_dict(style) for style in self.atomstyles],
+            "bondstyles": [style_to_dict(style) for style in self.bondstyles],
+            "pairstyles": [style_to_dict(style) for style in self.pairstyles],
+            "anglestyles": [style_to_dict(style) for style in self.anglestyles],
+            "dihedralstyles": [style_to_dict(style) for style in self.dihedralstyles],
+            "improperstyles": [style_to_dict(style) for style in self.improperstyles]
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ForceField":
+        """
+        Create ForceField from dictionary representation.
+        
+        Args:
+            data: Dictionary containing forcefield data
+            
+        Returns:
+            ForceField: Reconstructed ForceField instance
+        """
+        # Extract class info if present for validation
+        class_info = data.get("__class__")
+        if class_info and not class_info.endswith("ForceField"):
+            raise ValueError(f"Cannot create ForceField from class {class_info}")
+        
+        def dict_to_style(style_data, default_class_name):
+            """Convert dictionary to style object"""
+            class_path = style_data.get("__class__", f"molpy.core.forcefield.{default_class_name}")
+            try:
+                # Import and get the class
+                module_name, class_name = class_path.rsplit(".", 1)
+                module = __import__(module_name, fromlist=[class_name])
+                style_class = getattr(module, class_name)
+                
+                # Create style instance
+                style = style_class(style_data["name"], style_data.get("parms", []))
+                
+                # Add any additional data
+                for key, value in style_data.items():
+                    if key not in ["__class__", "name", "parms", "types"]:
+                        style[key] = value
+                
+                # Reconstruct types
+                for type_data in style_data.get("types", []):
+                    type_class_path = type_data.get("__class__")
+                    if type_class_path:
+                        try:
+                            type_module_name, type_class_name = type_class_path.rsplit(".", 1)
+                            type_module = __import__(type_module_name, fromlist=[type_class_name])
+                            type_class = getattr(type_module, type_class_name)
+                            
+                            # Create type instance
+                            type_obj = type_class(type_data["name"], type_data.get("parms", []))
+                            
+                            # Add any additional data
+                            for key, value in type_data.items():
+                                if key not in ["__class__", "name", "parms"]:
+                                    type_obj[key] = value
+                            
+                            style.types.add(type_obj)
+                        except (ImportError, AttributeError):
+                            # Skip if type class cannot be imported
+                            pass
+                
+                return style
+            except (ImportError, AttributeError):
+                # Return None if style class cannot be imported
+                return None
+        
+        # Create new forcefield instance
+        forcefield = cls(
+            name=data.get("name", ""),
+            unit=data.get("unit", "real")
+        )
+        
+        # Reconstruct all style lists
+        for style_data in data.get("atomstyles", []):
+            style = dict_to_style(style_data, "AtomStyle")
+            if style:
+                forcefield.atomstyles.append(style)
+                
+        for style_data in data.get("bondstyles", []):
+            style = dict_to_style(style_data, "BondStyle")
+            if style:
+                forcefield.bondstyles.append(style)
+                
+        for style_data in data.get("pairstyles", []):
+            style = dict_to_style(style_data, "PairStyle")
+            if style:
+                forcefield.pairstyles.append(style)
+                
+        for style_data in data.get("anglestyles", []):
+            style = dict_to_style(style_data, "AngleStyle")
+            if style:
+                forcefield.anglestyles.append(style)
+                
+        for style_data in data.get("dihedralstyles", []):
+            style = dict_to_style(style_data, "DihedralStyle")
+            if style:
+                forcefield.dihedralstyles.append(style)
+                
+        for style_data in data.get("improperstyles", []):
+            style = dict_to_style(style_data, "ImproperStyle")
+            if style:
+                forcefield.improperstyles.append(style)
+        
+        return forcefield

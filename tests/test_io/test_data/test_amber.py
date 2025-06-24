@@ -88,9 +88,11 @@ class TestAmberInpcrdReader:
         assert xyz.shape == (n_atoms, 3)
         
         # Check that title is set
-        assert 'props' in result
-        assert 'name' in result['props']
-        assert result['props']['name'] == 'TFSI'
+        # Check metadata
+        props = result.get_meta('props')
+        assert props is not None
+        assert 'name' in props
+        assert props['name'] == 'TFSI'
 
     def test_amber_inpcrd_simple(self):
         """Test AMBER inpcrd reader with simple manually created file."""
@@ -122,5 +124,7 @@ class TestAmberInpcrdReader:
             expected_xyz = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
             np.testing.assert_allclose(xyz, expected_xyz, rtol=1e-6)
             
-            # Check title
-            assert result['props']['name'] == 'Test molecule'
+            # Check title (stored in metadata)
+            props = result.get_meta('props')
+            assert props is not None
+            assert props['name'] == 'Test molecule'

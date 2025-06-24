@@ -7,11 +7,15 @@ from .box import Box
 from .forcefield import ForceField
 
 
-def _dict_to_dataset(data: Dict[str, Any]) -> xr.Dataset:
+def _dict_to_dataset(data: Dict[str, Any], component_name: str = "atoms") -> xr.Dataset:
     """Convert a mapping of arrays to an xarray.Dataset.
     
-    All fields are treated equally as data variables. Dimensions are auto-generated
-    based on array shapes without making assumptions about coordinate semantics.
+    All fields are treated equally as data variables. Uses consistent dimension
+    naming to avoid alignment issues during concatenation.
+    
+    Args:
+        data: Dictionary of arrays/scalars
+        component_name: Name of the component (e.g., 'atoms', 'bonds') for dimension naming
     """
     if not data:
         # Return empty Dataset
@@ -19,7 +23,7 @@ def _dict_to_dataset(data: Dict[str, Any]) -> xr.Dataset:
     
     data_vars = {}
     
-    # First pass: determine the maximum first dimension size
+    # First pass: determine the maximum first dimension size (number of entities)
     max_size = 0
     for k, v in data.items():
         arr = np.asarray(v)
@@ -34,7 +38,11 @@ def _dict_to_dataset(data: Dict[str, Any]) -> xr.Dataset:
             data_vars[k] = arr.item() if arr.ndim == 0 else arr
         return xr.Dataset(data_vars)
     
-    # Second pass: create DataArrays with systematic dimension naming
+    # Use consistent dimension naming for all components
+    # The first dimension is always the entity index (e.g., atom index)
+    primary_dim = f"{component_name}_id"
+    
+    # Second pass: create DataArrays with consistent dimension naming
     for k, v in data.items():
         arr = np.asarray(v)
         
@@ -42,18 +50,27 @@ def _dict_to_dataset(data: Dict[str, Any]) -> xr.Dataset:
             # Scalar - store as scalar data variable
             data_vars[k] = arr.item()
         elif arr.ndim == 1:
-            # 1D array - use generic dimension name
-            data_vars[k] = (f"dim_{k}_0", arr)
+            # 1D array - use primary dimension
+            if arr.shape[0] == max_size:
+                data_vars[k] = (primary_dim, arr)
+            else:
+                # Different size - create specific dimension
+                data_vars[k] = (f"{k}_dim", arr)
         else:
-            # Multi-dimensional arrays - create systematic dimension names
-            dims = [f"dim_{k}_{i}" for i in range(arr.ndim)]
-            data_vars[k] = (dims, arr)
+            # Multi-dimensional arrays - first dim is primary, others are specific
+            dims = [primary_dim] + [f"{k}_dim_{i}" for i in range(1, arr.ndim)]
+            if arr.shape[0] == max_size:
+                data_vars[k] = (dims, arr)
+            else:
+                # Different first dimension size - use specific naming
+                dims = [f"{k}_dim_{i}" for i in range(arr.ndim)]
+                data_vars[k] = (dims, arr)
     
     return xr.Dataset(data_vars)
 
 
 class Frame(MutableMapping):
-    """Container of simulation data based on :class:`xarray.Dataset`."""
+    """Container of simulation data based on :class:`xarray.DataTree`."""
     def __init__(self, data: Optional[Dict[str, Union[Dict[str, Any], xr.Dataset]]] = None, 
                  *, box: Optional[Box] = None, forcefield: Optional[ForceField] = None, meta: Optional[Dict[str, Any]] = None, **extra_meta):
         """Initialize Frame.
@@ -64,10 +81,13 @@ class Frame(MutableMapping):
             Dictionary mapping keys to either:
             - Dict[str, np.ndarray]: Dictionary of arrays/scalars. Non-scalar arrays must have the same first dimension length.
             - xr.Dataset: Pre-built Dataset
+            - Dict with xarray format: Dictionary from Dataset.to_dict() with keys 'data_vars', 'coords', 'dims', 'attrs'
         box : Box, optional
             Simulation box
         """
-        self._data: Dict[str, xr.Dataset] = {}
+        # Use DataTree for hierarchical data organization
+        self._data = xr.DataTree(name="root")
+        
         self._meta: Dict[str, Any] = {}
         
         # Use property setters for validation
@@ -83,53 +103,92 @@ class Frame(MutableMapping):
                 self[key] = value # Calls __setitem__
 
     # Mapping protocol
-    def __getitem__(self, key: str) -> xr.Dataset:
-        if key in self._data:
-            return self._data[key]
-        if key in self._meta:
+    def __getitem__(self, key: str):
+        """Get item from Frame.
+        
+        Returns:
+        - For DataTree children: Returns the underlying Dataset (mutable)
+        - For meta keys: Returns the meta value directly
+        """
+        if key in self._data.children:
+            # Return the actual Dataset, not DatasetView, so it's mutable
+            return self._data[key].to_dataset()
+        elif key in self._meta:
             return self._meta[key]
         raise KeyError(key)
 
     def __setitem__(self, key: str, value: Any) -> None:
-        # 不再允许通过字典访问设置box和forcefield
+        """Set item in Frame with simplified logic around DataTree core."""
         if key in ["box", "forcefield"]:
             raise ValueError(f"'{key}' should be set as an attribute (frame.{key} = value), not as a dictionary key")
         
-        # meta keys (e.g. timestep, etc.)
-        if key in self._meta or np.isscalar(value):
+        # Scalar values directly to meta
+        if self._is_scalar_value(value):
             self._meta[key] = value
             return
+        
+        # Existing meta keys continue to meta
+        if key in self._meta:
+            self._meta[key] = value
+            return
+        
+        # Convert all data to Dataset and store in DataTree
+        dataset = self._to_dataset(value, key)
+        self._data[key] = xr.DataTree(dataset, name=key)
+
+    def _is_scalar_value(self, value: Any) -> bool:
+        """Check if value should be stored as scalar metadata."""
+        return (np.isscalar(value) or 
+                isinstance(value, (str, int, float, bool, list)) or
+                (isinstance(value, dict) and not self._is_data_dict(value)))
+
+    def _is_data_dict(self, value: dict) -> bool:
+        """Check if dictionary contains array data."""
+        if all(k in value for k in ['data_vars', 'coords', 'dims', 'attrs']):
+            return True  # xarray format
+        
+        return any(isinstance(v, (list, np.ndarray)) and len(np.asarray(v).shape) >= 1 
+                   for v in value.values())
+
+    def _to_dataset(self, value: Any, key: str) -> xr.Dataset:
+        """Unified conversion to xarray.Dataset."""
         if isinstance(value, xr.Dataset):
-            self._data[key] = value
+            return value
+        
         elif isinstance(value, dict):
-            self._data[key] = _dict_to_dataset(value)
+            if self._is_xarray_dict_format(value):
+                return xr.Dataset.from_dict(value)
+            else:
+                return _dict_to_dataset(value, component_name=key)
+        
         else:
-            # Try to import pandas and handle DataFrame
+            # Handle pandas DataFrame and other types
             try:
                 import pandas as pd
                 if isinstance(value, pd.DataFrame):
-                    # Convert DataFrame to dict and then to Dataset
-                    df_dict = {}
-                    for col in value.columns:
-                        df_dict[col] = value[col].values
-                    self._data[key] = _dict_to_dataset(df_dict)
-                    return
+                    df_dict = {col: value[col].values for col in value.columns}
+                    return _dict_to_dataset(df_dict, component_name=key)
             except ImportError:
                 pass
-            raise TypeError(f"Frame values for key '{key}' must be xarray.Dataset, dict (for _dict_to_dataset), pandas.DataFrame, or scalar. Got {type(value)}")
+            
+            raise TypeError(f"Cannot convert {type(value)} to Dataset")
+
+    def _is_xarray_dict_format(self, value: dict) -> bool:
+        """Check if dictionary is in xarray.Dataset.to_dict() format."""
+        return all(k in value for k in ['data_vars', 'coords', 'dims', 'attrs'])
 
     def __delitem__(self, key: str) -> None:
         if key in ["box", "forcefield"]:
             raise ValueError(f"'{key}' should be deleted as an attribute (del frame.{key}), not as a dictionary key")
         elif key in self._meta:
             del self._meta[key]
-        elif key in self._data:
+        elif key in self._data.children:
             del self._data[key]
         else:
             raise KeyError(key)
 
     def __iter__(self):
-        yield from self._data.keys()
+        yield from self._data.children.keys()
         yield from self._meta.keys()
         if self.box is not None:
             yield "box"
@@ -139,7 +198,7 @@ class Frame(MutableMapping):
             yield "timestep"
 
     def __len__(self) -> int:
-        n = len(self._data) + len(self._meta)
+        n = len(self._data.children) + len(self._meta)
         if self.box is not None:
             n += 1
         if self.forcefield is not None:
@@ -147,7 +206,7 @@ class Frame(MutableMapping):
         return n
 
     def __repr__(self) -> str:
-        content_keys = list(self._data.keys())
+        content_keys = list(self._data.children.keys())
         meta_keys = list(self._meta.keys())
         special_keys = []
         if self.box is not None:
@@ -155,7 +214,7 @@ class Frame(MutableMapping):
         if self.forcefield is not None:
             special_keys.append("forcefield")
         all_keys = content_keys + meta_keys + special_keys
-        return f"<Frame (Dataset) with keys: {all_keys}>"
+        return f"<Frame (DataTree) with keys: {all_keys}>"
 
     # Meta accessors
     @property
@@ -216,141 +275,151 @@ class Frame(MutableMapping):
         # Create new frame with copied attributes
         box_copy = None
         if self.box is not None:
-            if hasattr(self.box, 'copy'):
-                box_copy = self.box.copy()
-            elif hasattr(Box, 'from_box'):
-                box_copy = Box.from_box(self.box)
-            else:
-                box_copy = self.box  # Fallback if no copy method
+            # Box typically stores numpy arrays that can be copied
+            import copy
+            box_copy = copy.deepcopy(self.box)
         
         forcefield_copy = None
         if self.forcefield is not None:
-            if hasattr(self.forcefield, 'copy'):
-                forcefield_copy = self.forcefield.copy()
-            else:
-                forcefield_copy = self.forcefield  # Assume immutable
+            # ForceField is typically immutable or has complex structure
+            import copy
+            forcefield_copy = copy.deepcopy(self.forcefield)
         
         new_frame = self.__class__(
             box=box_copy,
             forcefield=forcefield_copy,
             meta=self._meta.copy()
         )
-        for key, value in self._data.items():
-            new_frame._data[key] = value.copy(deep=True)
+        for key in self._data.children.keys():
+            new_frame._data[key] = xr.DataTree(self._data[key].ds.copy(deep=True), name=key)
         return new_frame
 
     @classmethod
     def concat(cls, frames: Sequence["Frame"]) -> "Frame":
-        """Concatenate multiple frames along their first dimensions."""
+        """Concatenate multiple frames along their first dimensions.
+        
+        Based on DataTree core, letting xarray handle complex alignment logic.
+        """
         if not frames:
             return cls()
-        new_box = Box.from_box(frames[0].box) if frames[0].box else None
-        new_forcefield = frames[0].forcefield  # Take forcefield from first frame
-        new_meta = frames[0]._meta.copy() if hasattr(frames[0], "_meta") else {}
-        new_frame = cls(box=new_box, forcefield=new_forcefield, meta=new_meta)
-        all_data_keys = set()
-        for frame in frames:
-            all_data_keys.update(frame._data.keys())
+            
+        # Inherit attributes from first frame
+        new_frame = cls(
+            box=frames[0].box,
+            forcefield=frames[0].forcefield,
+            meta=frames[0]._meta.copy()
+        )
         
-        for key in all_data_keys:
-            datasets_to_concat = [frame._data[key] for frame in frames if key in frame._data]
+        # Collect all data keys from all frames
+        all_keys = set()
+        for frame in frames:
+            all_keys.update(frame._data.children.keys())
+        
+        # Concatenate each key using xarray's concat
+        for key in all_keys:
+            datasets = [frame._data[key].ds for frame in frames 
+                       if key in frame._data.children]
             
-            if len(datasets_to_concat) == 1:
-                new_frame._data[key] = datasets_to_concat[0].copy(deep=True)
-                continue
-                
-            # 检查数据变量的dtype一致性
-            first_ds = datasets_to_concat[0]
-            for i, ds in enumerate(datasets_to_concat[1:], 1):
-                for var_name in first_ds.data_vars:
-                    if var_name in ds.data_vars:
-                        first_dtype = first_ds[var_name].dtype
-                        current_dtype = ds[var_name].dtype
-                        if first_dtype != current_dtype:
-                            raise ValueError(f"Cannot concat datasets for key '{key}': "
-                                           f"Variable '{var_name}' has dtype {first_dtype} in frame 0 "
-                                           f"but dtype {current_dtype} in frame {i}")
-            
-            try:
-                # 尝试沿着第一个共同维度拼接
-                # 找到所有数据变量的第一个维度
-                common_dims = None
-                for ds in datasets_to_concat:
-                    for var_name, var in ds.data_vars.items():
-                        if var.dims:  # 如果有维度
-                            first_dim = var.dims[0]
-                            if common_dims is None:
-                                common_dims = first_dim
-                            elif common_dims != first_dim:
-                                # 如果第一个维度不一致，使用第一个找到的维度
-                                pass
-                
-                if common_dims:
-                    concatenated = xr.concat(datasets_to_concat, dim=common_dims)
-                else:
-                    # 如果没有找到共同维度，直接使用第一个dataset
-                    concatenated = datasets_to_concat[0].copy(deep=True)
+            if datasets:
+                # Use xarray's concat, let it handle dimension alignment
+                primary_dim = f"{key}_id"
+                try:
+                    concatenated = xr.concat(datasets, dim=primary_dim)
+                    new_frame._data[key] = xr.DataTree(concatenated, name=key)
+                except Exception as e:
+                    # If dimension mismatch, try reindexing
+                    aligned_datasets = []
+                    total_entities = 0
                     
-                new_frame._data[key] = concatenated
-            except Exception as e:
-                raise RuntimeError(f"Failed to concat datasets for key '{key}': {e}")
+                    for ds in datasets:
+                        # Determine entity count from dataset
+                        entity_count = ds.sizes.get(primary_dim, 0)
+                        if entity_count == 0:
+                            # Infer entity count from largest dimension
+                            entity_count = max(ds.sizes.values()) if ds.sizes else 0
+                        
+                        # Create new coordinates for this dataset
+                        new_coords = np.arange(total_entities, total_entities + entity_count)
+                        aligned_ds = ds.assign_coords({primary_dim: new_coords})
+                        aligned_datasets.append(aligned_ds)
+                        total_entities += entity_count
+                    
+                    concatenated = xr.concat(aligned_datasets, dim=primary_dim)
+                    new_frame._data[key] = xr.DataTree(concatenated, name=key)
+        
         return new_frame
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert frame to a complete dictionary representation.
+        """
+        Convert frame to a complete dictionary representation using unified interface.
         
-        This method leverages xarray's built-in to_dict() functionality for efficient
-        and consistent serialization of datasets.
+        This method leverages xarray's built-in to_dict() functionality and
+        the unified to_dict interface of all molpy components for consistent 
+        serialization.
         
         Returns
         -------
         dict
             Complete dictionary representation of the Frame, including:
+            - __class__: Class information for reconstruction
             - data: All datasets converted using xarray.Dataset.to_dict()
-            - metadata: All frame metadata (excluding box and forcefield)
-            - box: Simulation box (if present)
-            - forcefield: Force field information (if present)
+            - metadata: All frame metadata recursively serialized
+            - box: Simulation box using Box.to_dict() (if present)
+            - forcefield: Force field using ForceField.to_dict() (if present)
             - version: Format version for compatibility
         """
         result = {
+            '__class__': f"{self.__class__.__module__}.{self.__class__.__qualname__}",
             'version': '1.0',
             'data': {},
             'metadata': {}
         }
         
         # Convert datasets using xarray's built-in to_dict method
-        for key, dataset in self._data.items():
+        for key in self._data.children.keys():
             # xarray.Dataset.to_dict() handles all the serialization complexity
-            result['data'][key] = dataset.to_dict()
+            result['data'][key] = self._data[key].ds.to_dict()
         
-        # Convert metadata (excluding box and forcefield which are handled separately)
+        # Convert metadata recursively, calling to_dict on nested components
         for key, value in self._meta.items():
-            if isinstance(value, np.ndarray):
-                result['metadata'][key] = value.tolist()
-            elif isinstance(value, (np.integer, np.floating)):
-                result['metadata'][key] = value.item()
-            elif hasattr(value, 'to_dict') and callable(value.to_dict):
-                result['metadata'][key] = value.to_dict()
-            else:
-                result['metadata'][key] = value
+            result['metadata'][key] = self._serialize_value(value)
         
-        # Store box as a separate top-level field
+        # Store box using unified interface
         if hasattr(self, 'box') and self.box is not None:
-            # Use the {matrix, pbc, origin} format instead of Box.to_dict()
-            result['box'] = {
-                'matrix': self.box.matrix.tolist(),
-                'pbc': self.box.pbc.tolist(),
-                'origin': self.box.origin.tolist()
-            }
+            result['box'] = self._serialize_value(self.box)
                 
-        # Store forcefield as a separate top-level field
+        # Store forcefield using unified interface
         if hasattr(self, 'forcefield') and self.forcefield is not None:
-            if hasattr(self.forcefield, 'to_dict') and callable(self.forcefield.to_dict):
-                result['forcefield'] = self.forcefield.to_dict()
-            else:
-                result['forcefield'] = str(self.forcefield)
+            result['forcefield'] = self._serialize_value(self.forcefield)
         
         return result
+
+    def _serialize_value(self, value: Any) -> Any:
+        """
+        Recursively serialize values using unified to_dict interface.
+        
+        Automatically calls to_dict on objects that support it, otherwise
+        handles numpy arrays and other common types.
+        
+        Args:
+            value: Value to serialize
+            
+        Returns:
+            Serialized value ready for JSON/dict storage
+        """
+        if hasattr(value, 'to_dict') and callable(value.to_dict):
+            # Use the unified to_dict interface
+            return value.to_dict()
+        elif isinstance(value, np.ndarray):
+            return value.tolist()
+        elif isinstance(value, (np.integer, np.floating)):
+            return value.item()
+        elif isinstance(value, dict):
+            return {k: self._serialize_value(v) for k, v in value.items()}
+        elif isinstance(value, (list, tuple)):
+            return [self._serialize_value(v) for v in value]
+        else:
+            return value
 
     def __add__(self, other: "Frame") -> "Frame":
         """Concatenate this frame with another frame using the + operator."""
@@ -717,10 +786,11 @@ class Frame(MutableMapping):
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Frame':
-        """Create Frame from dictionary representation.
+        """
+        Create Frame from dictionary using unified from_dict interface.
         
-        This method leverages xarray's from_dict() functionality for efficient
-        deserialization of datasets.
+        This method leverages xarray's from_dict() functionality and the unified
+        from_dict interface of all molpy components for consistent deserialization.
         
         Parameters
         ----------
@@ -737,66 +807,79 @@ class Frame(MutableMapping):
         if version != '1.0':
             raise ValueError(f"Unsupported Frame format version: {version}")
         
-        # Extract box and forcefield from top-level fields (new format)
-        box_data = data.get('box', None)
-        forcefield_data = data.get('forcefield', None)
-        
-        # Create frame with reconstructed attributes
+        # Create new frame instance
         frame = cls()
-        
-        # Reconstruct box if present
-        if box_data is not None:
-            if isinstance(box_data, dict):
-                # Handle box dict format: {matrix: (3, 3), pbc: (3, ), origin: (3, )}
-                try:
-                    matrix = np.array(box_data['matrix'])
-                    pbc = np.array(box_data['pbc'])
-                    origin = np.array(box_data['origin'])
-                    frame.box = Box(matrix=matrix, pbc=pbc, origin=origin)
-                except Exception:
-                    # Fallback to storing as metadata
-                    frame._meta['box_data'] = box_data
-            else:
-                # Store as metadata if not a dict
-                frame._meta['box_data'] = box_data
-        
-        # Reconstruct forcefield if present
-        if forcefield_data is not None:
-            if isinstance(forcefield_data, dict):
-                # Try to reconstruct ForceField from dict
-                try:
-                    if hasattr(ForceField, 'from_dict'):
-                        frame.forcefield = ForceField.from_dict(forcefield_data)
-                    else:
-                        # Store as metadata for manual reconstruction
-                        frame._meta['forcefield_data'] = forcefield_data
-                except Exception:
-                    # Fallback to storing as metadata
-                    frame._meta['forcefield_data'] = forcefield_data
-            else:
-                # Store as metadata if not a dict
-                frame._meta['forcefield_data'] = forcefield_data
         
         # Reconstruct datasets using xarray's from_dict method
         frame_data = data.get('data', {})
         for key, dataset_dict in frame_data.items():
             # Use xarray.Dataset.from_dict() to reconstruct the dataset
-            frame._data[key] = xr.Dataset.from_dict(dataset_dict)
+            dataset = xr.Dataset.from_dict(dataset_dict)
+            frame._data[key] = xr.DataTree(dataset, name=key)
         
-        # Restore metadata (excluding box and forcefield which are now handled separately)
+        # Recursively reconstruct metadata using unified interface
         metadata = data.get('metadata', {})
         for key, value in metadata.items():
-            # Skip box and forcefield in metadata (legacy format compatibility)
-            if key in ['box', 'forcefield']:
-                # Check if we haven't already processed these from top-level
-                if box_data is None and key == 'box':
-                    frame._meta['box_data'] = value
-                elif forcefield_data is None and key == 'forcefield':
-                    frame._meta['forcefield_data'] = value
-            else:
-                frame._meta[key] = value
+            frame._meta[key] = cls._deserialize_value(value)
+        
+        # Reconstruct box using unified interface
+        box_data = data.get('box')
+        if box_data is not None:
+            frame.box = cls._deserialize_value(box_data, target_type=Box)
+        
+        # Reconstruct forcefield using unified interface  
+        ff_data = data.get('forcefield')
+        if ff_data is not None:
+            frame.forcefield = cls._deserialize_value(ff_data, target_type=ForceField)
         
         return frame
+
+    @classmethod
+    def _deserialize_value(cls, value: Any, target_type: type = None) -> Any:
+        """
+        Recursively deserialize values using unified from_dict interface.
+        
+        Args:
+            value: Value to deserialize
+            target_type: Expected type (if known) that supports from_dict
+            
+        Returns:
+            Deserialized value
+        """
+        if isinstance(value, dict):
+            # If target type specified and has from_dict method, try it first
+            if target_type and hasattr(target_type, 'from_dict') and callable(target_type.from_dict):
+                try:
+                    return target_type.from_dict(value)
+                except Exception:
+                    # If target type reconstruction fails, continue with generic approach
+                    pass
+            
+            # Try to infer type from __class__ key and use appropriate from_dict
+            if '__class__' in value:
+                class_path = value['__class__']
+                try:
+                    # Import and get the class
+                    module_name, class_name = class_path.rsplit(".", 1)
+                    module = __import__(module_name, fromlist=[class_name])
+                    target_class = getattr(module, class_name)
+                    
+                    # Call from_dict if available
+                    if hasattr(target_class, 'from_dict') and callable(target_class.from_dict):
+                        return target_class.from_dict(value)
+                except (ImportError, AttributeError, ValueError):
+                    # If class reconstruction fails, fall through to generic handling
+                    pass
+            
+            # Recursively process regular dictionaries
+            return {k: cls._deserialize_value(v) for k, v in value.items()}
+        
+        elif isinstance(value, list):
+            return [cls._deserialize_value(v) for v in value]
+        
+        else:
+            # Return primitive values as-is
+            return value
 
     def wrapped(self, key: str = "atoms", coord_field: str = "xyz") -> "Frame":
         """
