@@ -1,118 +1,14 @@
 import numpy as np
 from itertools import product
-from typing import Sequence, Iterable, Protocol, runtime_checkable, Optional, Union
-from abc import ABC, abstractmethod
+from typing import Sequence, Iterable, Optional
 
+from molpy.builder.base import StructBuilder, BaseSiteProvider
 from molpy.core.atomistic import AtomicStructure
 from molpy.core.region import Region
 
-@runtime_checkable
-class PositionGenerator(Protocol):
-    """Protocol for position generators that can produce spatial coordinates."""
-    
-    def generate_positions(self, *args, **kwargs) -> np.ndarray:
-        """Generate positions as an array of shape (n_positions, 3)."""
-        ...
 
-class AbstractBuilder(ABC):
-    """
-    Abstract base class for all molecular structure builders.
-    
-    This class defines the common interface for builders that generate
-    molecular structures by placing templates at generated positions.
-    """
-    
-    def __init__(self, position_generator: PositionGenerator):
-        """
-        Initialize builder with a position generator.
-        
-        Args:
-            position_generator: Object that implements generate_positions method
-        """
-        self.position_generator = position_generator
-    
-    @abstractmethod
-    def build(self, *args, **kwargs) -> AtomicStructure:
-        """Build and return the molecular structure."""
-        pass
-    
-    def _place_template_at_positions(
-        self, 
-        positions: np.ndarray, 
-        template: AtomicStructure, 
-        name: str = "structure"
-    ) -> AtomicStructure:
-        """
-        Helper method to place template at given positions.
-        
-        Args:
-            positions: Array of shape (n_positions, 3)
-            template: Template structure to replicate
-            name: Name for the resulting structure
-            
-        Returns:
-            Combined structure with template placed at all positions
-        """
-        if len(positions) == 0:
-            return AtomicStructure(name)
-            
-        replicas = []
-        for i, pos in enumerate(positions):
-            # Create a copy of the template
-            replica = self._copy_structure(template)
-            
-            # Translate all atoms by the position offset
-            for atom in replica.atoms:
-                current_xyz = atom.get("xyz", np.array([0.0, 0.0, 0.0]))
-                atom["xyz"] = current_xyz + pos
-            
-            replicas.append(replica)
-        
-        return AtomicStructure.concat(name, replicas)
-    
-    def _copy_structure(self, struct: AtomicStructure) -> AtomicStructure:
-        """Create a deep copy of a structure."""
-        new_struct = AtomicStructure(struct.get("name", "copy"))
-        
-        # Copy atoms
-        for atom in struct.atoms:
-            new_atom = atom.clone()
-            new_struct.atoms.add(new_atom)
-        
-        # Copy bonds (if any)
-        if hasattr(struct, 'bonds') and len(struct.bonds) > 0:
-            atom_map = {id(old): new for old, new in zip(struct.atoms, new_struct.atoms)}
-            for bond in struct.bonds:
-                if id(bond.itom) in atom_map and id(bond.jtom) in atom_map:
-                    new_bond = bond.clone()
-                    new_bond.itom = atom_map[id(bond.itom)]
-                    new_bond.jtom = atom_map[id(bond.jtom)]
-                    new_struct.bonds.add(new_bond)
-        
-        return new_struct
-        """Create a deep copy of a structure."""
-        new_struct = AtomicStructure(struct.get("name", "copy"))
-        
-        # Copy atoms
-        for atom in struct.atoms:
-            new_atom = atom.copy()
-            new_struct.atoms.add(new_atom)
-        
-        # Copy bonds (if any)
-        if hasattr(struct, 'bonds') and len(struct.bonds) > 0:
-            atom_map = {id(old): new for old, new in zip(struct.atoms, new_struct.atoms)}
-            for bond in struct.bonds:
-                if id(bond.itom) in atom_map and id(bond.jtom) in atom_map:
-                    new_bond = bond.copy()
-                    new_bond.itom = atom_map[id(bond.itom)]
-                    new_bond.jtom = atom_map[id(bond.jtom)]
-                    new_struct.bonds.add(new_bond)
-        
-        return new_struct
-
-
-class CrystalLattice:
-    """Lattice represented by a cell matrix and fractional basis."""
+class CrystalSite(BaseSiteProvider):
+    """Site represented by a cell matrix and fractional basis."""
 
     def __init__(self, cell: Sequence[Sequence[float]], basis: Iterable[Sequence[float]]):
         self.cell = np.asarray(cell, dtype=float)
@@ -135,7 +31,7 @@ class CrystalLattice:
             raise ValueError("Unknown bounds shape")
         return lo, hi
 
-    def generate_positions(self, region: Region) -> np.ndarray:
+    def gen_site(self, region: Region) -> np.ndarray:
         """Return all lattice positions within *region*."""
         lo, hi = self._get_bounds(region)
 
@@ -168,10 +64,10 @@ class CrystalLattice:
                             positions.append(xyz)
         return np.array(positions)
 
-class CrystalBuilder(AbstractBuilder):
+class CrystalBuilder(StructBuilder):
     """Replicate a template structure on a crystal lattice."""
 
-    def __init__(self, lattice: CrystalLattice):
+    def __init__(self, lattice: CrystalSite):
         super().__init__(lattice)
         self.lattice = lattice  # Keep for backward compatibility
 
@@ -193,7 +89,7 @@ class CrystalBuilder(AbstractBuilder):
         """
         Fill the region by placing the template at each lattice site (including basis offsets).
         """
-        positions = self.lattice.generate_positions(region)
+        positions = self.lattice.gen_site(region)
         return self._place_template_at_positions(positions, template, name)
 
     def fill_lattice(self, region: Region, template: AtomicStructure, name: str = "crystal_cell") -> AtomicStructure:
@@ -229,7 +125,7 @@ class FCCBuilder(CrystalBuilder):
             [0.5, 0.0, 0.5],
             [0.0, 0.5, 0.5],
         ]
-        super().__init__(CrystalLattice(cell, basis))
+        super().__init__(CrystalSite(cell, basis))
 
 class BCCBuilder(CrystalBuilder):
     """Body-centered cubic lattice builder."""
@@ -240,7 +136,7 @@ class BCCBuilder(CrystalBuilder):
             [0.0, 0.0, 0.0],
             [0.5, 0.5, 0.5],
         ]
-        super().__init__(CrystalLattice(cell, basis))
+        super().__init__(CrystalSite(cell, basis))
 
 class HCPBuilder(CrystalBuilder):
     """Hexagonal close-packed lattice builder."""
@@ -255,7 +151,7 @@ class HCPBuilder(CrystalBuilder):
             [0.0, 0.0, 0.0],
             [2.0 / 3.0, 1.0 / 3.0, 0.5],
         ]
-        super().__init__(CrystalLattice(cell, basis))
+        super().__init__(CrystalSite(cell, basis))
 
 def bulk(symbol: str, crystalstructure: str, a: Optional[float] = None, c: Optional[float] = None, region: Optional[Region] = None):
     cs = crystalstructure.lower()
@@ -281,7 +177,7 @@ def bulk(symbol: str, crystalstructure: str, a: Optional[float] = None, c: Optio
     template.def_atom(name=symbol, element=symbol, xyz=[0.0, 0.0, 0.0])
     return builder.fill_basis(region, template)
 
-class RandomWalkLattice:
+class RandomWalkSite:
     """
     Self-avoiding random walk position generator.
     
@@ -322,7 +218,7 @@ class RandomWalkLattice:
         norms = np.linalg.norm(self.directions, axis=1)
         self.directions = self.directions / norms[:, np.newaxis] * step_length
     
-    def generate_positions(
+    def gen_site(
         self, 
         n_steps: int, 
         start_pos: Optional[np.ndarray] = None,
@@ -384,7 +280,7 @@ class RandomWalkLattice:
         return True
 
 
-class RandomWalkBuilder(AbstractBuilder):
+class RandomWalkBuilder(StructBuilder):
     """
     Builder for creating polymer chains using self-avoiding random walk.
     """
@@ -403,7 +299,7 @@ class RandomWalkBuilder(AbstractBuilder):
             max_attempts: Maximum attempts per step
             seed: Random seed for reproducibility
         """
-        walk_generator = RandomWalkLattice(step_length, max_attempts, seed)
+        walk_generator = RandomWalkSite(step_length, max_attempts, seed)
         super().__init__(walk_generator)
     
     def build(
@@ -426,7 +322,7 @@ class RandomWalkBuilder(AbstractBuilder):
             Polymer structure with monomers placed along random walk
         """
         # Generate positions (n_monomers positions from n_monomers-1 steps)
-        positions = self.position_generator.generate_positions(
+        positions = self.site_provider.gen_site(
             n_steps=n_monomers - 1,
             start_pos=start_position
         )

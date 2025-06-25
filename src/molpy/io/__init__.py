@@ -7,13 +7,9 @@ from . import forcefield
 from . import log
 from . import trajectory
 
-from .utils import to_system, ZipReader, to_frame, FrameLike
-
 read_txt = np.loadtxt
 
-
-
-def read_lammps_data(file: Path, atom_style: str, frame: mp.Frame | None = None) -> mp.Frame:
+def read_lammps_data(file: Path | str, atom_style: str, frame: mp.Frame | None = None) -> mp.Frame:
     """Read LAMMPS data file and return a molpy System object."""
     from .data.lammps import LammpsDataReader
     reader = LammpsDataReader(file, atom_style)
@@ -25,7 +21,7 @@ def read_lammps_forcefield(scripts: Path|list[Path], frame: mp.ForceField | None
     reader = LAMMPSForceFieldReader(scripts)
     return reader.read(frame=frame)
 
-def read_lammps_molecule(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
+def read_lammps_molecule(file: Path | str, frame: mp.Frame | None = None) -> mp.Frame:
     """Read LAMMPS molecule file and return a molpy System object."""
     from .data.lammps import LammpsMoleculeReader
     reader = LammpsMoleculeReader(file, )
@@ -40,7 +36,7 @@ def read_lammps(data: Path, scripts: Path | list[Path] | None = None, frame: mp.
     frame = read_lammps_data(data, frame)
     return frame
 
-def read_pdb(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
+def read_pdb(file: Path | str, frame: mp.Frame | None = None) -> mp.Frame:
     """Read a PDB file and return a molpy Frame object."""
     from .data.pdb import PDBReader
     reader = PDBReader(file)
@@ -66,7 +62,7 @@ def read_amber(
         frame = reader.read(frame)
     return frame
 
-def read_amber_ac(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
+def read_amber_ac(file: Path | str, frame: mp.Frame | None = None) -> mp.Frame:
 
     """Read an AC file and return a molpy System object."""
     from .data.ac import AcReader
@@ -76,14 +72,14 @@ def read_amber_ac(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
     return reader.read(frame)
 
 
-def read_mol2(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
+def read_mol2(file: Path | str, frame: mp.Frame | None = None) -> mp.Frame:
 
     """Read a mol2 file and return a molpy System object."""
     from .data.mol2 import Mol2Reader
     reader = Mol2Reader(file)
     return reader.read(frame)
 
-def read_xml_forcefield(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
+def read_xml_forcefield(file: Path | str, frame: mp.Frame | None = None) -> mp.Frame:
     """Read an XML force field file and return a molpy System object."""
     from .forcefield.xml import XMLForceFieldReader
     if frame.forcefield is None:
@@ -97,13 +93,13 @@ def read_xml_forcefield(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
     return reader.read(frame)
 
 
-def read_gro(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
+def read_gro(file: Path | str, frame: mp.Frame | None = None) -> mp.Frame:
     """Read a GROMACS gro file and return a molpy System object."""
     from .data.gro import GroReader
     reader = GroReader(file)
     return reader.read(frame)
 
-def read_top(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
+def read_top(file: Path | str, frame: mp.Frame | None = None) -> mp.Frame:
     """Read a GROMACS top file and return a molpy System object."""
     from .data.top import TopReader
     reader = TopReader(file)
@@ -116,19 +112,19 @@ def write_lammps_data(file:Path, frame: mp.Frame) -> None:
     writer = LammpsDataWriter(file)
     writer.write(frame)
 
-def write_pdb(file: Path, frame: mp.Frame) -> None:
+def write_pdb(file: Path | str, frame: mp.Frame) -> None:
     """Write a molpy System object to a PDB file."""
     from .data.pdb import PDBWriter
     writer = PDBWriter(file)
     writer.write(frame)
 
-def write_lammps_molecule(file: Path, frame: mp.Frame) -> None:
+def write_lammps_molecule(file: Path | str, frame: mp.Frame) -> None:
 
     from .data.lammps import LammpsMoleculeWriter
     writer = LammpsMoleculeWriter(file)
     writer.write(frame)
 
-def write_lammps_forcefield(file: Path, forcefield: mp.ForceField) -> None:
+def write_lammps_forcefield(file: Path | str, forcefield: mp.ForceField) -> None:
     """Write a molpy System object to a LAMMPS force field file."""
     from .forcefield.lammps import LAMMPSForceFieldWriter
     writer = LAMMPSForceFieldWriter(file)
@@ -142,19 +138,19 @@ def write_lammps(workdir: Path, frame: mp.Frame) -> None:
     write_lammps_data(file_path.with_suffix(".data"), frame)
     write_lammps_forcefield(file_path.with_suffix(".ff"), frame.forcefield)
 
-def read_top(file: Path, forcefield: mp.ForceField | None = None) -> mp.ForceField:
+def read_top(file: Path | str, forcefield: mp.ForceField | None = None) -> mp.ForceField:
     """Read a GROMACS top file and return a molpy ForceField object."""
     from .forcefield.top import GromacsTopReader
     reader = GromacsTopReader(file)
     return reader.read(forcefield)
 
 # Trajectory functions
-def read_lammps_trajectory(file: Path) -> 'trajectory.lammps.LammpsTrajectoryReader':
+def read_lammps_trajectory(file: Path | str) -> 'trajectory.lammps.LammpsTrajectoryReader':
     """Read LAMMPS trajectory file and return a trajectory reader."""
     from .trajectory.lammps import LammpsTrajectoryReader
     return LammpsTrajectoryReader(file)
 
-def write_lammps_trajectory(file: Path, frames: List[mp.Frame], atom_style: str = "full") -> None:
+def write_lammps_trajectory(file: Path | str, frames: List[mp.Frame], atom_style: str = "full") -> None:
     """Write frames to a LAMMPS trajectory file."""
     from .trajectory.lammps import LammpsTrajectoryWriter
     with LammpsTrajectoryWriter(file, atom_style) as writer:
@@ -162,7 +158,7 @@ def write_lammps_trajectory(file: Path, frames: List[mp.Frame], atom_style: str 
             timestep = getattr(frame, 'timestep', i)
             writer.write_frame(frame, timestep)
 
-def read_amber_rst7(file: Path, frame: mp.Frame | None = None) -> mp.Frame:
+def read_amber_rst7(file: Path | str, frame: mp.Frame | None = None) -> mp.Frame:
     """Read an AMBER restart file and return a molpy Frame object."""
     from .data.amber import AmberRst7Reader
     if frame is None:

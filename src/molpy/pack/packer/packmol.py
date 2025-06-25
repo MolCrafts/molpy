@@ -128,7 +128,6 @@ class Packmol(Packer):
         
         frames = []
         current_instance = 0
-        n_atom_types = 0
         bond_id_counter = 0
         angle_id_counter = 0
         dihedral_id_counter = 0

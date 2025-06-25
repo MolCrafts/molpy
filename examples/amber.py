@@ -51,7 +51,7 @@ poly_builer = mp.builder.AmberToolsPolymerBuilder(workdir=data_path)
 struct_poly = poly_builer.build(
     "polymer",
     [monomer_h, monomer_n, monomer_m, monomer_p, monomer_t],
-    ["H", "N", "M", "P", "T"],
+    list("HNMNMNMNMPPPPT"),
 )
 print(struct_poly.to_frame()["atoms"])
 
@@ -92,14 +92,14 @@ print(litfsi_frame_with_ff["atoms"])
 import molpy.pack as mpk
 
 # Define simulation box parameters
-box_size = np.array([40.0, 40.0, 40.0])  # 40 x 40 x 40 Angstrom box
+box_size = np.array([100.0, 100.0, 100.0])  # 40 x 40 x 40 Angstrom box
 box_origin = np.array([0.0, 0.0, 0.0])
 
 # Create packing session
 packing_session = mpk.Session(packer="packmol")
 
 # Add polymer molecules to the system
-n_polymer_chains = 5  # Number of polymer chains
+n_polymer_chains = 1  # Number of polymer chains
 polymer_constraint = mpk.InsideBoxConstraint(box_size, box_origin)
 packing_session.add_target(
     frame=struct_poly.to_frame(),
@@ -122,6 +122,7 @@ packing_session.add_target(
 # Perform packing optimization
 print("Starting molecular packing optimization...")
 packed_system = packing_session.optimize(max_steps=2000, seed=42)
+packed_system.box = mp.Box.cubic(box_size[0])
 
 print(f"Packing completed!")
 print(f"Final system contains:")
