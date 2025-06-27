@@ -17,13 +17,13 @@ class ReactionTemplate:
 
 class ReactantWrapper(Wrapper):
     """
-    Wrapper for AtomicStructure with reaction-specific functionality.
+    Wrapper for AtomicStruct with reaction-specific functionality.
     Manages reaction sites, anchor points, and template extraction.
     """
     
     def __init__(
         self, 
-        struct: mp.AtomicStructure, 
+        struct: mp.AtomicStruct, 
         **kwargs
     ):
         super().__init__(struct, **kwargs)
@@ -64,9 +64,9 @@ class ReactantWrapper(Wrapper):
         
         return ReactantWrapper(extracted_struct)
     
-    def _extract_substructure(self, atom_indices: set) -> mp.AtomicStructure:
+    def _extract_substructure(self, atom_indices: set) -> mp.AtomicStruct:
         """Extract substructure containing only specified atoms."""
-        new_struct = mp.AtomicStructure(name=f"{self._wrapped.get('name', 'molecule')}_template")
+        new_struct = mp.AtomicStruct(name=f"{self._wrapped.get('name', 'molecule')}_template")
         
         # Map old atom to new atom
         atom_map = {}
@@ -168,7 +168,7 @@ class ReacterBuilder:
         self.workdir.mkdir(parents=True, exist_ok=True)
 
 
-    def export_lammps_template(self, struct: mp.AtomicStructure, name: str) -> Path:
+    def export_lammps_template(self, struct: mp.AtomicStruct, name: str) -> Path:
         """
         Export structure as LAMMPS molecule template using built-in writer.
         

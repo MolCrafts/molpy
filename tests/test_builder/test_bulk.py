@@ -2,11 +2,11 @@ import numpy as np
 
 from molpy.builder.bulk import FCCBuilder, BCCBuilder
 from molpy.core.region import BoxRegion
-from molpy.core.atomistic import AtomicStructure
+from molpy.core.atomistic import AtomicStruct
 
 
 def simple_atom():
-    mol = AtomicStructure()
+    mol = AtomicStruct()
     mol.def_atom(name="X", element="X", xyz=[0.0, 0.0, 0.0])
     return mol
 

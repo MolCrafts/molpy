@@ -1,0 +1,12 @@
+tolerance 2.0
+filetype pdb
+output .optimized.pdb
+seed 3748
+structure /tmp/tmp3gz5r13_.pdb
+  number 10
+inside box 0.0 0.0 0.0 40.0 40.0 40.0
+end structure
+structure /tmp/tmpsb38qv4a.pdb
+  number 10
+inside box 0.0 0.0 0.0 40.0 40.0 40.0
+end structure

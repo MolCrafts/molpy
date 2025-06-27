@@ -9,13 +9,16 @@ This module provides the fundamental building blocks for molecular modeling:
 - Collections and containers
 """
 
-from typing import Callable, Optional, Union, List, Any, Tuple
+from typing import Callable, Iterable
 
 import numpy as np
 from numpy.typing import ArrayLike
 
 from .protocol import Entity, Entities, Struct
+from .wrapper import Wrapper
 from .topology import Topology
+from .utils import to_dict_of_list, to_list_of_dict
+import copy
 
 class Atom(Entity):
     """
@@ -65,10 +68,6 @@ class ManyBody(Entity):
             raise TypeError("All arguments must be Atom instances")
         self._atoms = tuple(atoms)
 
-    def __hash__(self) -> int:
-        """Return a hash based on constituent atoms and class."""
-        return hash(self._atoms) + hash(self.__class__.__name__)
-
     @property
     def atoms(self):
         """Get the atoms involved in the entity."""
@@ -112,13 +111,6 @@ class Bond(ManyBody):
             return False
         return (self.itom is other.itom and self.jtom is other.jtom) or \
                (self.itom is other.jtom and self.jtom is other.itom)
-
-    def to_dict(self) -> dict:
-        """Convert the bond to a dictionary."""
-        result = super().to_dict()
-        result['i'] = self.itom['id']
-        result['j'] = self.jtom['id']
-        return result
 
 
 class Angle(ManyBody):
@@ -168,17 +160,6 @@ class Angle(ManyBody):
         # Clamp to handle numerical errors
         cos_angle = np.clip(cos_angle, -1.0, 1.0)
         return float(np.arccos(cos_angle))
-
-    def to_dict(self) -> dict:
-        """Convert the angle to a dictionary."""
-        result = super().to_dict()
-        if hasattr(self.itom, 'get') and 'id' in self.itom:
-            result.update({
-                'i': self.itom["id"],
-                'j': self.jtom["id"], 
-                'k': self.jtom["id"]
-            })
-        return result
 
 
 class Dihedral(ManyBody):
@@ -261,18 +242,6 @@ class Dihedral(ManyBody):
             
         return float(angle)
 
-    def to_dict(self) -> dict:
-        """Convert the dihedral to a dictionary."""
-        result = super().to_dict()
-        if all(hasattr(atom, 'get') and 'id' in atom for atom in self._atoms):
-            result.update({
-                'i': self.itom["id"],
-                'j': self.jtom["id"],
-                'k': self.ktom["id"],
-                'l': self.ltom["id"]
-            })
-        return result
-
 
 class Improper(Dihedral):
     """
@@ -301,7 +270,7 @@ class Improper(Dihedral):
         return f"<Improper: {self.itom.name}({self.jtom.name},{self.ktom.name},{self.ltom.name})>"
 
 
-class AtomicStructure(Struct):
+class AtomicStruct(Wrapper):
     """
     Structure containing atoms, bonds, angles, and dihedrals.
     
@@ -309,7 +278,7 @@ class AtomicStructure(Struct):
     for spatial operations and hierarchical management.
     """
 
-    def __init__(self, name: str = "", **props):
+    def __init__(self, **props):
         """
         Initialize an atomic structure.
         
@@ -317,115 +286,51 @@ class AtomicStructure(Struct):
             name: Structure name
             **props: Additional properties
         """
-        super().__init__(name=name, **props)
-        self["atoms"] = Entities()
-        self["bonds"] = Entities()
-        self["angles"] = Entities()
-        self["dihedrals"] = Entities()
+        super().__init__(Struct(**props))
+        self["atoms"] = Entities[Atom]()
+        self["bonds"] = Entities[Bond]()
+        self["angles"] = Entities[Angle]()
+        self["dihedrals"] = Entities[Dihedral]()
 
     def __repr__(self) -> str:
         """Return a string representation of the structure."""
-        return f"<AtomicStructure: {len(self.atoms)} atoms>"
+        return f"<AtomicStruct: {len(self.atoms)} atoms>"
 
     @property
-    def atoms(self) -> Entities:
+    def atoms(self) -> Entities[Atom]:
         """Get the atoms in the structure."""
-        return self["atoms"]
+        return self._wrapped["atoms"]
+    
+    @atoms.setter
+    def atoms(self, value: Iterable[Atom]):
+        self._wrapped["atoms"] = Entities[Atom](value)
 
     @property
-    def bonds(self)-> Entities:
+    def bonds(self) -> Entities[Bond]:
         """Get the bonds in the structure."""
-        return self["bonds"]
+        return self._wrapped["bonds"]
+    
+    @bonds.setter
+    def bonds(self, value: Iterable[Bond]):
+        self._wrapped["bonds"] = Entities[Bond](value)
 
     @property
-    def angles(self):
+    def angles(self) -> Entities[Angle]:
         """Get the angles in the structure."""
-        return self["angles"]
+        return self._wrapped["angles"]
+
+    @angles.setter
+    def angles(self, value: Iterable[Angle]):
+        self._wrapped["angles"] = Entities[Angle](value)
 
     @property
-    def dihedrals(self):
+    def dihedrals(self) -> Entities[Dihedral]:
         """Get the dihedrals in the structure."""
-        return self["dihedrals"]
-
-
-
-    def __getitem__(self, key: Union[str, Tuple[str, str]]) -> Any:
-        """
-        Get items from the structure.
-        
-        Supports tuple syntax for getting properties from collections:
-        - struct["atoms", "property"] returns a list of property values
-        - struct["bonds", "property"] returns a list of bond property values
-        - etc.
-        
-        Args:
-            key: String key for structure properties, or tuple (collection, property)
-            
-        Returns:
-            Value(s) from the structure as a list for tuple keys, or regular structure value for string keys.
-        """
-        if isinstance(key, tuple) and len(key) == 2:
-            category, prop = key
-            
-            if category not in self:
-                raise KeyError(f"Category '{category}' not found in structure")
-            
-            collection = self[category]
-            values = []
-            
-            for item in collection:
-                if prop in item:
-                    value = item[prop]
-                    values.append(value)
-                else:
-                    # Handle missing properties gracefully
-                    values.append(None)
-            
-            return values
-        
-        return super().__getitem__(key)
-
-    def __setitem__(self, key: Union[str, Tuple[str, str]], value: Union[Any, List[Any], np.ndarray]) -> None:
-        """
-        Set items in the structure.
-        
-        Supports:
-        - struct["property"] = value: sets structure property
-        - struct["atoms", "property"] = values: sets property for all atoms
-        
-        Args:
-            key: String key for structure properties, or tuple (collection, property)
-            value: Value(s) to set. For collections, can be a list, array, or single value to broadcast
-        """
-        # Handle tuple syntax for setting properties on collections
-        if isinstance(key, tuple) and len(key) == 2:
-            category, prop = key
-            
-            if category not in self:
-                raise KeyError(f"Category '{category}' not found in structure")
-            
-            collection = self[category]
-            
-            # Convert value to appropriate format
-            if isinstance(value, np.ndarray):
-                values = value.tolist() if value.ndim > 0 else [value.item()]
-            elif not isinstance(value, (list, tuple)):
-                # Single value - broadcast to all items
-                values = [value] * len(collection)
-            else:
-                values = list(value)
-            
-            if len(values) != len(collection):
-                raise ValueError(f"Number of values ({len(values)}) must match number of items in {category} ({len(collection)})")
-            
-            # Set property for each item
-            for item, val in zip(collection, values):
-                item[prop] = val
-            
-            return
-        
-        # Default behavior for regular structure properties
-        super().__setitem__(key, value)
+        return self._wrapped["dihedrals"]
+    
+    @dihedrals.setter
+    def dihedrals(self, value: Iterable[Dihedral]):
+        self._wrapped["dihedrals"] = Entities[Dihedral](value)
 
     def add_atom(self, atom):
         """
@@ -450,8 +355,7 @@ class AtomicStructure(Struct):
             The created atom
         """
         atom = Atom(**props)
-        self.add_atom(atom)
-        return self
+        return self.add_atom(atom)
 
     def add_atoms(self, atoms):
         """
@@ -472,52 +376,54 @@ class AtomicStructure(Struct):
         Returns:
             The added bond
         """
-        self.bonds.add(bond)
-        return self
+        return self.bonds.add(bond)
 
-    def def_bond(self, itom, jtom, **kwargs):
+    def def_bond(self, i: Atom | int, j: Atom | int, **kwargs):
         """
         Create and add a bond between two atoms.
         
         Args:
-            itom: First atom or its index
-            jtom: Second atom or its index
+            i: First atom or its index
+            j: Second atom or its index
             **kwargs: Bond properties
             
         Returns:
             The created bond
         """
-        if isinstance(itom, int):
-            itom = self.atoms[itom]
-        if isinstance(jtom, int):
-            jtom = self.atoms[jtom]
-            
+        itom = self.atoms[i] if isinstance(i, int) else i
+        jtom = self.atoms[j] if isinstance(j, int) else j
+
         if not isinstance(itom, Atom) or not isinstance(jtom, Atom):
             raise TypeError("Arguments must be Atom instances or valid indices")
             
         bond = Bond(itom, jtom, **kwargs)
         return self.add_bond(bond)
 
-    def del_bond(self, itom, jtom):
-        if isinstance(itom, int):
-            itom = self.atoms[itom]
-        if isinstance(jtom, int):
-            jtom = self.atoms[jtom]
+    def del_bond(self, i: Atom | int, j: Atom | int):
+        """
+        Remove a bond from the structure.
+
+        Args:
+            i: First atom or its index
+            j: Second atom or its index
+        """
+        itom = self.atoms[i] if isinstance(i, int) else i
+        jtom = self.atoms[j] if isinstance(j, int) else j
 
         if not isinstance(itom, Atom) or not isinstance(jtom, Atom):
             raise TypeError("Arguments must be Atom instances or valid indices")
 
         bond = Bond(itom, jtom)
-        self.bonds.remove(bond)
-        return self
+        return self.bonds.remove(bond)
 
     def add_bonds(self, bonds):
         """
         Add multiple bonds to the structure.
-        
+
         Args:
             bonds: Sequence of bonds to add
         """
+
         self.bonds.extend(bonds)
 
     def add_angle(self, angle):
@@ -532,29 +438,26 @@ class AtomicStructure(Struct):
         """
         return self.angles.add(angle)
 
-    def def_angle(self, itom, jtom, ktom, **kwargs):
+    def def_angle(self, i: Atom | int, j: Atom | int, k: Atom | int, **kwargs):
         """
         Create and add an angle between three atoms.
         
         Args:
-            itom: First atom or its index
-            jtom: Center atom or its index
-            ktom: Third atom or its index
+            i: First atom or its index
+            j: Center atom or its index
+            k: Third atom or its index
             **kwargs: Angle properties
             
         Returns:
             The created angle
         """
-        if isinstance(itom, int):
-            itom = self.atoms[itom]
-        if isinstance(jtom, int):
-            jtom = self.atoms[jtom]
-        if isinstance(ktom, int):
-            ktom = self.atoms[ktom]
-            
+        itom = self.atoms[i] if isinstance(i, int) else i
+        jtom = self.atoms[j] if isinstance(j, int) else j
+        ktom = self.atoms[k] if isinstance(k, int) else k
+
         if not all(isinstance(atom, Atom) for atom in [itom, jtom, ktom]):
             raise TypeError("Arguments must be Atom instances or valid indices")
-            
+
         angle = Angle(itom, jtom, ktom, **kwargs)
         return self.add_angle(angle)
 
@@ -718,164 +621,234 @@ class AtomicStructure(Struct):
             for i, atom in enumerate(result.atoms, 1):
                 atom["id"] = i
         return result
+    
+    def to_dict(self):
 
-    def to_frame(self):
-        """
-        Convert the structure to a Frame object.
+        data = {
+            "atoms": {},
+            "bonds": {},
+            "angles": {},
+            "dihedrals": {},
+            "impropers": {}
+        }
 
-        Returns:
-        - A Frame object containing the structure's data.
-        """
-        from .frame import Frame
+        if not self.atoms:
+            return data
 
-        frame = Frame()
+        atom_dicts = [a.to_dict() for a in self.atoms]
+        atom_map = {a: i for i, a in enumerate(self.atoms)}
+        data["atoms"] = to_dict_of_list(atom_dicts)
 
-        # Handle empty structure case
-        if "atoms" not in self or len(self["atoms"]) == 0:
-            # Create empty dict for atoms
-            frame["atoms"] = {}
-            return frame
+        def serialize_topo(items, ref_keys):
+            return [
+                dict(item.to_dict(), **{k: atom_map[getattr(item, k + "tom")] for k in ref_keys})
+                for item in items
+            ]
 
-        # Set atom IDs and create name-to-index mapping
-        atom_mapping = {}
-        atom_dicts = []
-        for i, atom in enumerate(self["atoms"]):
-            atom_mapping[atom] = i
-            atom_dicts.append(atom.to_dict())
+        data["bonds"] = to_dict_of_list(serialize_topo(self.bonds, ["i", "j"]))
+        data["angles"] = to_dict_of_list(serialize_topo(self.angles, ["i", "j", "k"]))
+        data["dihedrals"] = to_dict_of_list(serialize_topo(self.dihedrals, ["i", "j", "k", "l"]))
+        data["impropers"] = to_dict_of_list(serialize_topo(self.impropers, ["i", "j", "k", "l"]))
 
-        # Create atoms data directly as dict for xarray
-        atoms_data = {}
-        if atom_dicts:
-            # Collect all keys from atom dictionaries
-            all_keys = set()
-            for atom_dict in atom_dicts:
-                all_keys.update(atom_dict.keys())
+        return data
+
+    @classmethod
+    def from_dict(cls, data):
+        struct = cls()
+
+        atom_dicts = to_list_of_dict(data["atoms"])
+        struct.atoms = [Atom.from_dict(d) for d in atom_dicts]
+        atoms_by_index = struct.atoms  # index to Atom list
+
+        bonds = []
+        bond_dicts = to_list_of_dict(data["bonds"])
+        for bd in bond_dicts:
+            itom = atoms_by_index[bd.pop("i")]
+            jtom = atoms_by_index[bd.pop("j")]
+            bond = Bond(itom, jtom, **{k: v for k, v in bd.items()})
+            bonds.append(bond)
+        struct.bonds = bonds
+
+        angles = []
+        angle_dicts = to_list_of_dict(data["angles"])
+        for ad in angle_dicts:
+            itom = atoms_by_index[ad.pop("i")]
+            jtom = atoms_by_index[ad.pop("j")]
+            ktom = atoms_by_index[ad.pop("k")]
+            angle = Angle(itom, jtom, ktom, **{k: v for k, v in ad.items()})
+            angles.append(angle)
+        struct.angles = angles
+
+        dihedrals = []
+        dihedral_dicts = to_list_of_dict(data["dihedrals"])
+        for dd in dihedral_dicts:
+            itom = atoms_by_index[dd.pop("i")]
+            jtom = atoms_by_index[dd.pop("j")]
+            ktom = atoms_by_index[dd.pop("k")]
+            ltom = atoms_by_index[dd.pop("l")]
+            dihedral = Dihedral(itom, jtom, ktom, ltom, **{k: v for k, v in dd.items()})
+            dihedrals.append(dihedral)
+        struct.dihedrals = dihedrals
+
+        return struct
+
+    # def to_frame(self):
+    #     """
+    #     Convert the structure to a Frame object.
+
+    #     Returns:
+    #     - A Frame object containing the structure's data.
+    #     """
+    #     from .frame import Frame
+
+    #     frame = Frame()
+
+    #     # Handle empty structure case
+    #     if "atoms" not in self or len(self["atoms"]) == 0:
+    #         # Create empty dict for atoms
+    #         frame["atoms"] = {}
+    #         return frame
+
+    #     # Set atom IDs and create name-to-index mapping
+    #     atom_mapping = {}
+    #     atom_dicts = []
+    #     for i, atom in enumerate(self["atoms"]):
+    #         atom_mapping[atom] = i
+    #         atom_dicts.append(atom.to_dict())
+
+    #     # Create atoms data directly as dict for xarray
+    #     atoms_data = {}
+    #     if atom_dicts:
+    #         # Collect all keys from atom dictionaries
+    #         all_keys = set()
+    #         for atom_dict in atom_dicts:
+    #             all_keys.update(atom_dict.keys())
             
-            # Build arrays for each property
-            for key in all_keys:
-                values = [atom_dict.get(key) for atom_dict in atom_dicts]
-                atoms_data[key] = values
+    #         # Build arrays for each property
+    #         for key in all_keys:
+    #             values = [atom_dict.get(key) for atom_dict in atom_dicts]
+    #             atoms_data[key] = values
 
-        frame["atoms"] = atoms_data
+    #     frame["atoms"] = atoms_data
         
-        # Create bonds data if bonds exist
-        if "bonds" in self and len(self["bonds"]) > 0:
-            bdicts = []
-            for bond in self["bonds"]:
-                bdict = bond.to_dict()
+    #     # Create bonds data if bonds exist
+    #     if "bonds" in self and len(self["bonds"]) > 0:
+    #         bdicts = []
+    #         for bond in self["bonds"]:
+    #             bdict = bond.to_dict()
 
-                bdict["i"] = atom_mapping[bond.itom]
-                bdict["j"] = atom_mapping[bond.jtom]
-                bdicts.append(bdict)
+    #             bdict["i"] = atom_mapping[bond.itom]
+    #             bdict["j"] = atom_mapping[bond.jtom]
+    #             bdicts.append(bdict)
             
-            if bdicts:
-                # Create bonds data directly as dict
-                bonds_data = {}
-                all_bond_keys = set()
-                for bdict in bdicts:
-                    all_bond_keys.update(bdict.keys())
+    #         if bdicts:
+    #             # Create bonds data directly as dict
+    #             bonds_data = {}
+    #             all_bond_keys = set()
+    #             for bdict in bdicts:
+    #                 all_bond_keys.update(bdict.keys())
                 
-                for key in all_bond_keys:
-                    bonds_data[key] = [bdict.get(key) for bdict in bdicts]
+    #             for key in all_bond_keys:
+    #                 bonds_data[key] = [bdict.get(key) for bdict in bdicts]
                 
-                # Add sequential ids
-                bonds_data["id"] = list(range(1, len(bdicts)+1))
-                frame["bonds"] = bonds_data
+    #             # Add sequential ids
+    #             bonds_data["id"] = list(range(1, len(bdicts)+1))
+    #             frame["bonds"] = bonds_data
 
-        # Create angles data if angles exist
-        if "angles" in self and len(self["angles"]) > 0:
-            adicts = []
-            for angle in self["angles"]:
-                adict = angle.to_dict()
-                # Get atom indices by name
-                iname = angle.itom["name"] if "name" in angle.itom else angle.itom.get("name", "")
-                jname = angle.jtom["name"] if "name" in angle.jtom else angle.jtom.get("name", "")
-                kname = angle.ktom["name"] if "name" in angle.ktom else angle.ktom.get("name", "")
-                if all(name in atom_mapping for name in [iname, jname, kname]):
-                    adict["i"] = atom_mapping[iname]
-                    adict["j"] = atom_mapping[jname]
-                    adict["k"] = atom_mapping[kname]
-                adicts.append(adict)
+    #     # Create angles data if angles exist
+    #     if "angles" in self and len(self["angles"]) > 0:
+    #         adicts = []
+    #         for angle in self["angles"]:
+    #             adict = angle.to_dict()
+    #             # Get atom indices by name
+    #             iname = angle.itom["name"] if "name" in angle.itom else angle.itom.get("name", "")
+    #             jname = angle.jtom["name"] if "name" in angle.jtom else angle.jtom.get("name", "")
+    #             kname = angle.ktom["name"] if "name" in angle.ktom else angle.ktom.get("name", "")
+    #             if all(name in atom_mapping for name in [iname, jname, kname]):
+    #                 adict["i"] = atom_mapping[iname]
+    #                 adict["j"] = atom_mapping[jname]
+    #                 adict["k"] = atom_mapping[kname]
+    #             adicts.append(adict)
             
-            if adicts:
-                angles_data = {}
-                all_angle_keys = set()
-                for adict in adicts:
-                    all_angle_keys.update(adict.keys())
+    #         if adicts:
+    #             angles_data = {}
+    #             all_angle_keys = set()
+    #             for adict in adicts:
+    #                 all_angle_keys.update(adict.keys())
                 
-                for key in all_angle_keys:
-                    angles_data[key] = [adict.get(key) for adict in adicts]
+    #             for key in all_angle_keys:
+    #                 angles_data[key] = [adict.get(key) for adict in adicts]
 
-                angles_data["id"] = list(range(1, len(adicts)+1))
-                frame["angles"] = angles_data
+    #             angles_data["id"] = list(range(1, len(adicts)+1))
+    #             frame["angles"] = angles_data
 
-        # Create dihedrals data if dihedrals exist
-        if "dihedrals" in self and len(self["dihedrals"]) > 0:
-            ddicts = []
-            for dihedral in self["dihedrals"]:
-                ddict = dihedral.to_dict()
-                # Get atom indices by name
-                iname = dihedral.itom["name"] if "name" in dihedral.itom else dihedral.itom.get("name", "")
-                jname = dihedral.jtom["name"] if "name" in dihedral.jtom else dihedral.jtom.get("name", "")
-                kname = dihedral.ktom["name"] if "name" in dihedral.ktom else dihedral.ktom.get("name", "")
-                lname = dihedral.ltom["name"] if "name" in dihedral.ltom else dihedral.ltom.get("name", "")
-                if all(name in atom_mapping for name in [iname, jname, kname, lname]):
-                    ddict["i"] = atom_mapping[iname]
-                    ddict["j"] = atom_mapping[jname]
-                    ddict["k"] = atom_mapping[kname]
-                    ddict["l"] = atom_mapping[lname]
-                ddicts.append(ddict)
+    #     # Create dihedrals data if dihedrals exist
+    #     if "dihedrals" in self and len(self["dihedrals"]) > 0:
+    #         ddicts = []
+    #         for dihedral in self["dihedrals"]:
+    #             ddict = dihedral.to_dict()
+    #             # Get atom indices by name
+    #             iname = dihedral.itom["name"] if "name" in dihedral.itom else dihedral.itom.get("name", "")
+    #             jname = dihedral.jtom["name"] if "name" in dihedral.jtom else dihedral.jtom.get("name", "")
+    #             kname = dihedral.ktom["name"] if "name" in dihedral.ktom else dihedral.ktom.get("name", "")
+    #             lname = dihedral.ltom["name"] if "name" in dihedral.ltom else dihedral.ltom.get("name", "")
+    #             if all(name in atom_mapping for name in [iname, jname, kname, lname]):
+    #                 ddict["i"] = atom_mapping[iname]
+    #                 ddict["j"] = atom_mapping[jname]
+    #                 ddict["k"] = atom_mapping[kname]
+    #                 ddict["l"] = atom_mapping[lname]
+    #             ddicts.append(ddict)
             
-            if ddicts:
-                dihedrals_data = {}
-                all_dihedral_keys = set()
-                for ddict in ddicts:
-                    all_dihedral_keys.update(ddict.keys())
+    #         if ddicts:
+    #             dihedrals_data = {}
+    #             all_dihedral_keys = set()
+    #             for ddict in ddicts:
+    #                 all_dihedral_keys.update(ddict.keys())
                 
-                for key in all_dihedral_keys:
-                    dihedrals_data[key] = [ddict.get(key) for ddict in ddicts]
+    #             for key in all_dihedral_keys:
+    #                 dihedrals_data[key] = [ddict.get(key) for ddict in ddicts]
 
-                dihedrals_data["id"] = list(range(1, len(ddicts)+1))
-                frame["dihedrals"] = dihedrals_data
+    #             dihedrals_data["id"] = list(range(1, len(ddicts)+1))
+    #             frame["dihedrals"] = dihedrals_data
 
-        # Create impropers data if impropers exist
-        if "impropers" in self and len(self["impropers"]) > 0:
-            idicts = []
-            for improper in self["impropers"]:
-                idict = improper.to_dict()
-                # Get atom indices by name (impropers use same structure as dihedrals)
-                iname = improper.itom["name"] if "name" in improper.itom else improper.itom.get("name", "")
-                jname = improper.jtom["name"] if "name" in improper.jtom else improper.jtom.get("name", "")
-                kname = improper.ktom["name"] if "name" in improper.ktom else improper.ktom.get("name", "")
-                lname = improper.ltom["name"] if "name" in improper.ltom else improper.ltom.get("name", "")
-                if all(name in atom_mapping for name in [iname, jname, kname, lname]):
-                    idict["i"] = atom_mapping[iname]
-                    idict["j"] = atom_mapping[jname]
-                    idict["k"] = atom_mapping[kname]
-                    idict["l"] = atom_mapping[lname]
-                idicts.append(idict)
+    #     # Create impropers data if impropers exist
+    #     if "impropers" in self and len(self["impropers"]) > 0:
+    #         idicts = []
+    #         for improper in self["impropers"]:
+    #             idict = improper.to_dict()
+    #             # Get atom indices by name (impropers use same structure as dihedrals)
+    #             iname = improper.itom["name"] if "name" in improper.itom else improper.itom.get("name", "")
+    #             jname = improper.jtom["name"] if "name" in improper.jtom else improper.jtom.get("name", "")
+    #             kname = improper.ktom["name"] if "name" in improper.ktom else improper.ktom.get("name", "")
+    #             lname = improper.ltom["name"] if "name" in improper.ltom else improper.ltom.get("name", "")
+    #             if all(name in atom_mapping for name in [iname, jname, kname, lname]):
+    #                 idict["i"] = atom_mapping[iname]
+    #                 idict["j"] = atom_mapping[jname]
+    #                 idict["k"] = atom_mapping[kname]
+    #                 idict["l"] = atom_mapping[lname]
+    #             idicts.append(idict)
             
-            if idicts:
-                impropers_data = {}
-                all_improper_keys = set()
-                for idict in idicts:
-                    all_improper_keys.update(idict.keys())
+    #         if idicts:
+    #             impropers_data = {}
+    #             all_improper_keys = set()
+    #             for idict in idicts:
+    #                 all_improper_keys.update(idict.keys())
                 
-                for key in all_improper_keys:
-                    impropers_data[key] = [idict.get(key) for idict in idicts]
+    #             for key in all_improper_keys:
+    #                 impropers_data[key] = [idict.get(key) for idict in idicts]
 
-                impropers_data["id"] = list(range(1, len(idicts)+1))
-                frame["impropers"] = impropers_data
+    #             impropers_data["id"] = list(range(1, len(idicts)+1))
+    #             frame["impropers"] = impropers_data
 
-        # Add structure metadata
-        frame._meta["structure_name"] = self.get("name", "")
-        frame._meta["n_atoms"] = len(self["atoms"])
-        frame._meta["n_bonds"] = len(self.get("bonds", []))
-        frame._meta["n_angles"] = len(self.get("angles", []))
-        frame._meta["n_dihedrals"] = len(self.get("dihedrals", []))
-        frame._meta["n_impropers"] = len(self.get("impropers", []))
+    #     # Add structure metadata
+    #     frame._meta["structure_name"] = self.get("name", "")
+    #     frame._meta["n_atoms"] = len(self["atoms"])
+    #     frame._meta["n_bonds"] = len(self.get("bonds", []))
+    #     frame._meta["n_angles"] = len(self.get("angles", []))
+    #     frame._meta["n_dihedrals"] = len(self.get("dihedrals", []))
+    #     frame._meta["n_impropers"] = len(self.get("impropers", []))
 
-        return frame
+    #     return frame
 
     def gen_angles(self, topo=None):
         """
@@ -979,7 +952,7 @@ class AtomicStructure(Struct):
     def get_substruct(self, indices: list[int]):
         """Extract substructure containing only specified atoms."""
         # TODO: TO BE TESTED!
-        new_struct = mp.AtomicStructure(name=f"{self._wrapped.get('name', 'molecule')}_template")
+        new_struct = mp.AtomicStruct(name=f"{self._wrapped.get('name', 'molecule')}_template")
         
         # Map old indices to new indices
         index_map = {}
@@ -1008,139 +981,72 @@ class AtomicStructure(Struct):
         
         return new_struct
     
-    def __call__(self, **kwargs) -> "AtomicStructure":
+    def __call__(self, **new_prop) -> "AtomicStruct":
         """
-        Create a new instance of this AtomicStructure with optional modifications.
+        Create a new instance of this AtomicStruct with optional modifications.
         
         This method creates a proper deep copy of the structure, avoiding
         the double-initialization problem in the base Struct class.
         
         Args:
-            **kwargs: Properties to modify in the copy
+            **new_prop: Properties to modify in the copy
             
         Returns:
-            A new AtomicStructure instance with copied atoms, bonds, angles, and dihedrals
+            A new AtomicStruct instance with copied atoms, bonds, angles, and dihedrals
         """
-        import copy
-        import inspect
-        
-        # Get constructor parameters
-        init_signature = inspect.signature(self.__class__.__init__)
-        constructor_kwargs = {}
-        modification_kwargs = {}
-        
-        # Separate constructor arguments from modification arguments
-        for key, value in kwargs.items():
-            if key in init_signature.parameters:
-                constructor_kwargs[key] = value
-            else:
-                modification_kwargs[key] = value
-        
-        # Use existing name if not specified
-        if 'name' not in constructor_kwargs:
-            constructor_kwargs['name'] = self.get('name', '')
-            
-        # Create a new empty instance
-        new_instance = self.__class__(**constructor_kwargs)
-        
-        # Clear any auto-created collections
-        new_instance['atoms'].clear()
-        new_instance['bonds'].clear()
-        new_instance['angles'].clear()
-        new_instance['dihedrals'].clear()
-        
-        # Initialize impropers collection if it doesn't exist in the new instance
-        if 'impropers' not in new_instance:
-            new_instance['impropers'] = Entities()
-        else:
-            new_instance['impropers'].clear()
-        
-        # Deep copy atoms with modifications
-        atom_mapping = {}  # Map old atoms to new atoms
-        for atom in self.atoms:
-            new_atom_data = copy.deepcopy(atom.to_dict())
-            # Apply modifications to atom data
-            for key, value in modification_kwargs.items():
-                new_atom_data[key] = value
-            new_atom = Atom(**new_atom_data)
+        old_prop = self._wrapped.to_dict()
+        old_prop.update(new_prop)
+        new_instance = self.__class__(**old_prop)
+
+        atom_mapping = {}
+        for old_atom in self.atoms:
+            new_atom = Atom(**copy.deepcopy(old_atom.to_dict()))
             new_instance.add_atom(new_atom)
-            atom_mapping[atom] = new_atom
-        
-        # Deep copy bonds
-        for bond in self.bonds:
-            new_itom = atom_mapping.get(bond.itom)
-            new_jtom = atom_mapping.get(bond.jtom)
-            if new_itom and new_jtom:
-                bond_data = copy.deepcopy(bond.to_dict())
-                # Remove atom references from bond data
-                bond_data.pop('atoms', None)
-                bond_data.pop('_atoms', None)
-                new_bond = Bond(new_itom, new_jtom, **bond_data)
-                new_instance.add_bond(new_bond)
-        
-        # Deep copy angles
-        for angle in self.angles:  
-            new_itom = atom_mapping.get(angle.itom)
-            new_jtom = atom_mapping.get(angle.jtom)
-            new_ktom = atom_mapping.get(angle.ktom)
-            if new_itom and new_jtom and new_ktom:
-                angle_data = copy.deepcopy(angle.to_dict())
-                # Remove atom references from angle data
-                angle_data.pop('atoms', None)
-                angle_data.pop('_atoms', None)
-                new_angle = Angle(new_itom, new_jtom, new_ktom, **angle_data)
-                new_instance.add_angle(new_angle)
-        
-        # Deep copy dihedrals
-        for dihedral in self.dihedrals:
-            new_itom = atom_mapping.get(dihedral.itom)
-            new_jtom = atom_mapping.get(dihedral.jtom)
-            new_ktom = atom_mapping.get(dihedral.ktom)
-            new_ltom = atom_mapping.get(dihedral.ltom)
-            if new_itom and new_jtom and new_ktom and new_ltom:
-                dihedral_data = copy.deepcopy(dihedral.to_dict())
-                # Remove atom references from dihedral data
-                dihedral_data.pop('atoms', None)
-                dihedral_data.pop('_atoms', None)
-                new_dihedral = Dihedral(new_itom, new_jtom, new_ktom, new_ltom, **dihedral_data)
-                new_instance.add_dihedral(new_dihedral)
-        
-        # Deep copy impropers if they exist
-        if 'impropers' in self:
-            for improper in self['impropers']:
-                new_itom = atom_mapping.get(improper.itom)
-                new_jtom = atom_mapping.get(improper.jtom)
-                new_ktom = atom_mapping.get(improper.ktom)
-                new_ltom = atom_mapping.get(improper.ltom)
-                if new_itom and new_jtom and new_ktom and new_ltom:
-                    improper_data = copy.deepcopy(improper.to_dict())
-                    # Remove atom references from improper data
-                    improper_data.pop('atoms', None)
-                    improper_data.pop('_atoms', None)
-                    new_improper = Improper(new_itom, new_jtom, new_ktom, new_ltom, **improper_data)
-                    new_instance['impropers'].add(new_improper)
-        
-        # Copy other non-structural properties
-        for key, value in self.items():
-            if key not in ['atoms', 'bonds', 'angles', 'dihedrals', 'impropers'] and key not in modification_kwargs and key not in constructor_kwargs:
-                if hasattr(value, 'copy'):
-                    new_instance[key] = value.copy()
-                else:
-                    new_instance[key] = copy.deepcopy(value)
-        
+            atom_mapping[old_atom] = new_atom
+
+        def _deepcopy_topo(items, cls, atom_keys, add_method):
+            for item in items:
+                atoms = [atom_mapping.get(getattr(item, k + "tom")) for k in atom_keys]
+                if all(atoms):
+                    data = copy.deepcopy(item.to_dict())
+                    # Remove atom references from data if present
+                    for k in atom_keys:
+                        data.pop(f"{k}tom", None)
+                    new_item = cls(*atoms, **data)
+                    add_method(new_item)
+
+        # Deep copy bonds, angles, dihedrals
+        _deepcopy_topo(self.bonds, Bond, ["i", "j"], new_instance.add_bond)
+        _deepcopy_topo(self.angles, Angle, ["i", "j", "k"], new_instance.add_angle)
+        _deepcopy_topo(self.dihedrals, Dihedral, ["i", "j", "k", "l"], new_instance.add_dihedral)
+        # _deepcopy_topo(self.dihedrals, Improper, ["i", "j", "k", "l"], new_instance.add_improper)
+
         return new_instance
+
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k == '_wrapped':
+                setattr(result, k, copy.deepcopy(v, memo))
+            else:
+                setattr(result, k, copy.deepcopy(v, memo))
+        return result
+
+            
 
     @classmethod
     def from_frame(cls, frame, name: str = ""):
         """
-        Create a new AtomicStructure from a Frame object.
+        Create a new AtomicStruct from a Frame object.
         
         Args:
             frame: Frame object containing the structure data
             name: Name for the new structure (optional)
             
         Returns:
-            New AtomicStructure instance populated from the frame
+            New AtomicStruct instance populated from the frame
         """
         # Get structure name from frame metadata if not provided
         if not name and "structure_name" in frame:

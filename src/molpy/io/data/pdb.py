@@ -1,308 +1,158 @@
-from pathlib import Path
-import re
 from .base import DataWriter, DataReader
 import numpy as np
-
-import molpy as mp
+import re
+from typing import Any
+from pathlib import Path
+from molpy.core import Frame, Block, Box
 from collections import defaultdict
-from molpy.core.frame import _dict_to_dataset
 
 
+# ──────────────────────────────────────────────────────────────────────
+# helpers
+# ──────────────────────────────────────────────────────────────────────
+_ALNUM_RE = re.compile(r"([A-Za-z]+)")
+
+_TWO_CHR_ELEMENTS = {
+    "BR", "CL", "FE", "MG", "CA", "ZN", "NI", "CU", "NA", "SI", "CR",
+}
+
+
+def _dict_to_block(data: dict[str, list[Any]]) -> Block:
+    """Convert 'column → list' dict into a Block of ndarrays."""
+    blk = Block()
+    for k, vals in data.items():
+        if k == "xyz":
+            blk[k] = np.asarray(vals, dtype=float)
+        elif k in {"id", "resSeq"}:
+            blk[k] = np.asarray(vals, dtype=int)
+        else:
+            # variable-width unicode for strings
+            max_len = max(len(str(v)) for v in vals) if vals else 1
+            blk[k] = np.asarray(vals, dtype=f"U{max_len}")
+    return blk
+
+
+# ──────────────────────────────────────────────────────────────────────
+# main reader
+# ──────────────────────────────────────────────────────────────────────
 class PDBReader(DataReader):
     """
-    Robust PDB file reader that handles various PDB formats and edge cases.
-    
-    Features:
-    - Parses ATOM and HETATM records
-    - Handles CRYST1 records for unit cell information
-    - Parses CONECT records for bond information
-    - Handles missing fields gracefully
-    - Processes duplicate atom names
-    - Supports both standard and non-standard PDB formats
+    Minimal-yet-robust PDB reader.
+
+    * ATOM / HETATM parsed per PDB v3.3 fixed columns
+    * CRYST1 → frame.box
+    * CONECT → bond list
     """
 
-    def __init__(self, file: Path):
-        super().__init__(path=file)
+    __slots__ = ()
 
+    # ------------------------------------------------------------------
+    def __init__(self, file: Path, **kwargs):
+        super().__init__(path=file, **kwargs)
+
+    # ------------------------------------------------------------------ private parsers
     @staticmethod
-    def sanitizer(line: str) -> str:
-        """Clean up line by stripping whitespace but preserving PDB formatting."""
-        return line.rstrip('\n\r')
-
-    def _parse_cryst1(self, line: str) -> dict:
-        """Parse CRYST1 record for unit cell parameters."""
+    def _parse_cryst1(line: str) -> np.ndarray | None:
         try:
-            # CRYST1 record format: CRYST1 a b c alpha beta gamma spacegroup z
-            parts = line.split()
-            if len(parts) >= 7:
-                a, b, c = float(parts[1]), float(parts[2]), float(parts[3])
-                alpha, beta, gamma = float(parts[4]), float(parts[5]), float(parts[6])
-                
-                # Convert to box matrix (simplified orthogonal case)
-                if abs(alpha - 90.0) < 1e-6 and abs(beta - 90.0) < 1e-6 and abs(gamma - 90.0) < 1e-6:
-                    # Orthogonal box
-                    matrix = np.diag([a, b, c])
-                else:
-                    # For non-orthogonal, we need proper conversion
-                    # Simplified implementation - use orthogonal approximation
-                    matrix = np.diag([a, b, c])
-                
-                return {
-                    'matrix': matrix,
-                    'a': a, 'b': b, 'c': c,
-                    'alpha': alpha, 'beta': beta, 'gamma': gamma
-                }
-        except (ValueError, IndexError):
-            pass
-        
-        return None
-
-    def _parse_atom_line(self, line: str) -> dict | None:
-        """Parse ATOM or HETATM record according to PDB v3.3 format specification.
-        
-        PDB Format v3.3 ATOM/HETATM Record:
-        COLUMNS        DATA TYPE    FIELD          DEFINITION
-        --------------------------------------------------------------------------------
-         1 -  6        Record name  "ATOM  " or "HETATM"
-         7 - 11        Integer      serial         Atom serial number.
-        13 - 16        Atom         name           Atom name.
-        17             Character    altLoc         Alternate location indicator.
-        18 - 20        Residue name resName        Residue name.
-        22             Character    chainID        Chain identifier.
-        23 - 26        Integer      resSeq         Residue sequence number.
-        27             AChar        iCode          Code for insertion of residues.
-        31 - 38        Real(8.3)    x              Orthogonal coordinates for X in Angstroms.
-        39 - 46        Real(8.3)    y              Orthogonal coordinates for Y in Angstroms.
-        47 - 54        Real(8.3)    z              Orthogonal coordinates for Z in Angstroms.
-        55 - 60        Real(6.2)    occupancy      Occupancy.
-        61 - 66        Real(6.2)    tempFactor     Temperature factor.
-        77 - 78        LString(2)   element        Element symbol, right-justified.
-        79 - 80        LString(2)   charge         Charge on the atom.
-        """
-        if len(line) < 54:  # Minimum required length for coordinates
-            return None
-            
-        try:
-            # Record name (1-6)
-            record_type = line[0:6].strip()
-            
-            # Serial number (7-11)
-            serial_str = line[6:11].strip()
-            serial = int(serial_str) if serial_str else 0
-            
-            # Atom name (13-16) - note: column 12 is space
-            name = line[12:16].strip()
-            
-            # Alternate location indicator (17)
-            altLoc = line[16:17] if len(line) > 16 else ' '
-            
-            # Residue name (18-20)
-            resName = line[17:20].strip() if len(line) > 19 else ''
-            
-            # Chain identifier (22) - note: column 21 is space
-            chainID = line[21:22] if len(line) > 21 else ' '
-            
-            # Residue sequence number (23-26)
-            resSeq_str = line[22:26].strip() if len(line) > 25 else ''
-            resSeq = int(resSeq_str) if resSeq_str and resSeq_str.isdigit() else 0
-            
-            # Insertion code (27)
-            iCode = line[26:27] if len(line) > 26 else ' '
-            
-            # Coordinates (31-38, 39-46, 47-54) - note: columns 28-30 are spaces
-            x_str = line[30:38].strip() if len(line) > 37 else '0.0'
-            y_str = line[38:46].strip() if len(line) > 45 else '0.0'
-            z_str = line[46:54].strip() if len(line) > 53 else '0.0'
-            
-            x = float(x_str) if x_str else 0.0
-            y = float(y_str) if y_str else 0.0
-            z = float(z_str) if z_str else 0.0
-            
-            # Occupancy (55-60)
-            occupancy_str = line[54:60].strip() if len(line) > 59 else '1.0'
-            occupancy = float(occupancy_str) if occupancy_str else 1.0
-            
-            # Temperature factor (61-66)
-            tempFactor_str = line[60:66].strip() if len(line) > 65 else '0.0'
-            tempFactor = float(tempFactor_str) if tempFactor_str else 0.0
-            
-            # Element symbol (77-78) - note: columns 67-76 are spaces or other data
-            element = line[76:78].strip() if len(line) > 77 else ''
-            
-            # Charge (79-80)
-            charge = line[78:80].strip() if len(line) > 79 else ''
-            
-            # If element is empty, try to guess from atom name
-            if not element and name:
-                # Extract alphabetic part from atom name
-                import re
-                element_match = re.match(r'([A-Za-z]+)', name)
-                if element_match:
-                    element_guess = element_match.group(1)
-                    # Take first 1-2 characters as element
-                    if len(element_guess) >= 2 and element_guess[:2] in ['BR', 'CL', 'FE', 'MG', 'CA', 'ZN', 'NI', 'CU']:
-                        element = element_guess[:2].upper()
-                    else:
-                        element = element_guess[0].upper()
-            
-            return {
-                'record_type': record_type,
-                'id': serial,
-                'name': name,
-                'altLoc': altLoc,
-                'resName': resName,
-                'chainID': chainID,
-                'resSeq': resSeq,
-                'iCode': iCode,
-                'x': x,
-                'y': y,
-                'z': z,
-                'occupancy': occupancy,
-                'tempFactor': tempFactor,
-                'element': element,
-                'charge': charge
-            }
-            
-        except (ValueError, IndexError) as e:
-            # Handle malformed lines gracefully
+            a, b, c = map(float, (line[6:15], line[15:24], line[24:33]))
+            alpha, beta, gamma = map(float, (line[33:40], line[40:47], line[47:54]))
+        except ValueError:
             return None
 
-    def _parse_conect_line(self, line: str) -> list:
-        """Parse CONECT record for bond information."""
-        try:
-            parts = line.split()
-            if len(parts) < 3:
-                return []
-            
-            bonds = []
-            atom_i = int(parts[1])
-            
-            # CONECT records can have multiple bonded atoms
-            for j_str in parts[2:]:
-                try:
-                    atom_j = int(j_str)
-                    # Add bond (ensure i < j for consistency)
-                    if atom_i < atom_j:
-                        bonds.append([atom_i, atom_j])
-                    else:
-                        bonds.append([atom_j, atom_i])
-                except ValueError:
-                    continue
-            
-            return bonds
-            
-        except (ValueError, IndexError):
-            return []
+        # Orthorhombic shortcut
+        if all(abs(x - 90) < 1e-3 for x in (alpha, beta, gamma)):
+            return np.diag([a, b, c])
 
-    def read(self, frame):
-        """Read PDB file and populate frame."""
-        
-        atoms_data = {
-            "id": [],
-            "name": [],
-            "altLoc": [],
-            "resName": [],
-            "chainID": [],
-            "resSeq": [],
-            "iCode": [],
-            "xyz": [],
-            "occupancy": [],
-            "tempFactor": [],
-            "element": [],
-            "charge": [],
-            "record_type": []
-        }
-        
+        # Triclinic conversion
+        alpha_r, beta_r, gamma_r = np.deg2rad([alpha, beta, gamma])
+        cos_alpha, cos_beta, cos_gamma = np.cos([alpha_r, beta_r, gamma_r])
+        sin_gamma = np.sin(gamma_r)
+
+        v_x = [a, 0.0, 0.0]
+        v_y = [b * cos_gamma, b * sin_gamma, 0.0]
+        cx = c * cos_beta
+        cy = c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma
+        cz = np.sqrt(c**2 - cx**2 - cy**2)
+        v_z = [cx, cy, cz]
+
+        return np.array([v_x, v_y, v_z])
+
+    # ..................................................................
+    @staticmethod
+    def _parse_atom(line: str) -> tuple[dict[str, Any], np.ndarray]:
+        serial = int(line[6:11])
+        name = line[12:16].strip()
+        res_name = line[17:20].strip()
+        chain = line[21:22] or " "
+        res_seq = int(line[22:26])
+        xyz = np.array([float(line[30:38]), float(line[38:46]), float(line[46:54])])
+        occ_str = line[54:60].strip()
+        occ = float(occ_str) if occ_str else 1.0
+        bfac = float(line[60:66] or 0.0)
+        elem = (line[76:78] or "").strip().upper()
+
+        if not elem:
+            m = _ALNUM_RE.match(name)
+            guess = m.group(1).upper() if m else ""
+            elem = guess[:2] if guess[:2] in _TWO_CHR_ELEMENTS else guess[:1]
+
+        return (
+            {
+                "id": serial,
+                "name": name,
+                "resName": res_name,
+                "chainID": chain,
+                "resSeq": res_seq,
+                "occupancy": occ,
+                "tempFactor": bfac,
+                "element": elem,
+            },
+            xyz,
+        )
+
+    # ..................................................................
+    @staticmethod
+    def _parse_conect(line: str) -> list[tuple[int, int]]:
+        center = int(line[6:11])
         bonds = []
-        box_info = None
-        
-        try:
-            with open(self._path, "r") as f:
-                for line in f:
-                    line = self.sanitizer(line)
-                    
-                    if not line:
-                        continue
-                    
-                    if line.startswith("CRYST1"):
-                        box_info = self._parse_cryst1(line)
-                    
-                    elif line.startswith(("ATOM", "HETATM")):
-                        atom_data = self._parse_atom_line(line)
-                        if atom_data:
-                            atoms_data["id"].append(atom_data["id"])
-                            atoms_data["name"].append(atom_data["name"])
-                            atoms_data["altLoc"].append(atom_data["altLoc"])
-                            atoms_data["resName"].append(atom_data["resName"])
-                            atoms_data["chainID"].append(atom_data["chainID"])
-                            atoms_data["resSeq"].append(atom_data["resSeq"])
-                            atoms_data["iCode"].append(atom_data["iCode"])
-                            atoms_data["xyz"].append([atom_data["x"], atom_data["y"], atom_data["z"]])
-                            atoms_data["occupancy"].append(atom_data["occupancy"])
-                            atoms_data["tempFactor"].append(atom_data["tempFactor"])
-                            atoms_data["element"].append(atom_data["element"])
-                            atoms_data["charge"].append(atom_data["charge"])
-                            atoms_data["record_type"].append(atom_data["record_type"])
-                    
-                    elif line.startswith("CONECT"):
-                        bond_list = self._parse_conect_line(line)
-                        bonds.extend(bond_list)
-        
-        except FileNotFoundError:
-            # Re-raise FileNotFoundError for proper handling
-            raise
-        except Exception as e:
-            # Handle file reading errors gracefully
-            print(f"Warning: Error reading PDB file {self._path}: {e}")
-        
-        # Handle empty file case
-        if not atoms_data["id"]:
-            atoms_data = {"id": [], "name": [], "xyz": [], "element": []}
-        
-        # Remove duplicates from bonds and convert to numpy array
-        if bonds:
-            bonds = np.unique(np.array(bonds), axis=0)
-        
-        # Handle duplicate atom names
-        if len(atoms_data["id"]) > 0 and len(set(atoms_data["name"])) != len(atoms_data["name"]):
-            atom_name_counter = defaultdict(int)
-            for i, name in enumerate(atoms_data["name"]):
-                atom_name_counter[name] += 1
-                if atom_name_counter[name] > 1:
-                    atoms_data["name"][i] = f"{name}{atom_name_counter[name]}"
-        
-        # Convert lists to numpy arrays for consistency
-        for key, values in atoms_data.items():
-            if values:  # Only convert non-empty lists
-                if key == "xyz":
-                    atoms_data[key] = np.array(values, dtype=float)
-                elif key in ["id", "resSeq"]:
-                    atoms_data[key] = np.array(values, dtype=int)
-                elif key in ["occupancy", "tempFactor"]:
-                    atoms_data[key] = np.array(values, dtype=float)
-                else:
-                    # For string data, use proper string dtype
-                    max_len = max(len(str(v)) for v in values) if values else 10
-                    atoms_data[key] = np.array(values, dtype=f'U{max_len}')
-        
-        # Create dataset
-        frame["atoms"] = _dict_to_dataset(atoms_data)
-        
-        # Set box information
-        if box_info:
-            frame.box = mp.Box(matrix=box_info['matrix'])
-        else:
-            frame.box = mp.Box()  # Default box
-        
-        # Add bonds if present
-        if len(bonds) > 0:
-            frame["bonds"] = _dict_to_dataset({
-                "i": bonds[:, 0] - 1,  # Convert to 0-based indexing
-                "j": bonds[:, 1] - 1
-            })
-        
-        return frame
+        for offset in range(11, len(line), 5):
+            seg = line[offset : offset + 5].strip()
+            if seg:
+                partner = int(seg)
+                bonds.append(tuple(sorted((center, partner))))
+        return bonds
 
+    # ------------------------------------------------------------------ public read()
+    def read(self, frame: Frame | None = None) -> Frame:
+        frame = frame or Frame()
+
+        atoms_data: dict[str, list[Any]] = defaultdict(list)
+        coords: list[np.ndarray] = []
+        unique_bonds: set[tuple[int, int]] = set()
+        box_matrix: np.ndarray | None = None
+
+        for raw in self:
+            if raw.startswith("CRYST1"):
+                box_matrix = self._parse_cryst1(raw)
+            elif raw.startswith(("ATOM  ", "HETATM")):
+                info, xyz = self._parse_atom(raw)
+                for k, v in info.items():
+                    atoms_data[k].append(v)
+                coords.append(xyz)
+            elif raw.startswith("CONECT"):
+                unique_bonds.update(self._parse_conect(raw))
+
+        # ---------- commit to frame ------------------------------------
+        if coords:
+            atoms_data["xyz"] = coords
+            frame["atoms"] = _dict_to_block(atoms_data)
+
+        if unique_bonds:
+            ij = np.array(sorted(unique_bonds), dtype=int) - 1  # zero-based
+            frame["bonds"] = Block({"i": ij[:, 0], "j": ij[:, 1]})
+
+        frame.box = Box(matrix=box_matrix) if box_matrix is not None else Box()
+        return frame
 
 class PDBWriter(DataWriter):
     """
@@ -496,7 +346,7 @@ class PDBWriter(DataWriter):
         
         with open(self._path, "w") as f:
             # Write header
-            frame_name = frame.get("name", "MOL")
+            frame_name = frame.metadata.get("name", "MOL")
             f.write(f"REMARK  {frame_name}\n")
             
             # Write CRYST1 record if box exists

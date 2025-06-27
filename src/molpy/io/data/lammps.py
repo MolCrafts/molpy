@@ -45,20 +45,33 @@ class LammpsDataReader(DataReader):
         else:
             masses = {}
         
+        # Parse type labels if present
+        type_labels = {}
+        if 'AtomTypeLabels' in sections:
+            type_labels['atom'] = self._parse_type_labels(sections['AtomTypeLabels'])
+        if 'BondTypeLabels' in sections:
+            type_labels['bond'] = self._parse_type_labels(sections['BondTypeLabels'])
+        if 'AngleTypeLabels' in sections:
+            type_labels['angle'] = self._parse_type_labels(sections['AngleTypeLabels'])
+        if 'DihedralTypeLabels' in sections:
+            type_labels['dihedral'] = self._parse_type_labels(sections['DihedralTypeLabels'])
+        if 'ImproperTypeLabels' in sections:
+            type_labels['improper'] = self._parse_type_labels(sections['ImproperTypeLabels'])
+        
         if 'Atoms' in sections:
-            self._parse_atoms(sections['Atoms'], frame, masses)
+            self._parse_atoms(sections['Atoms'], frame, masses, type_labels.get('atom', {}))
         
         if 'Bonds' in sections and counts.get('bonds', 0) > 0:
-            self._parse_bonds(sections['Bonds'], frame)
+            self._parse_bonds(sections['Bonds'], frame, type_labels.get('bond', {}))
         
         if 'Angles' in sections and counts.get('angles', 0) > 0:
-            self._parse_angles(sections['Angles'], frame)
+            self._parse_angles(sections['Angles'], frame, type_labels.get('angle', {}))
         
         if 'Dihedrals' in sections and counts.get('dihedrals', 0) > 0:
-            self._parse_dihedrals(sections['Dihedrals'], frame)
+            self._parse_dihedrals(sections['Dihedrals'], frame, type_labels.get('dihedral', {}))
         
         if 'Impropers' in sections and counts.get('impropers', 0) > 0:
-            self._parse_impropers(sections['Impropers'], frame)
+            self._parse_impropers(sections['Impropers'], frame, type_labels.get('improper', {}))
         
         # Store metadata
         frame._meta.update({
@@ -92,6 +105,11 @@ class LammpsDataReader(DataReader):
                 line_lower.startswith('impropers')):
                 # Extract the section name (first word)
                 section_name = line.split()[0].capitalize()
+                current_section = section_name
+                sections[current_section] = []
+            elif ('type labels' in line_lower):
+                # Type labels sections
+                section_name = line.replace('Type Labels', 'TypeLabels').replace(' ', '')
                 current_section = section_name
                 sections[current_section] = []
             elif line.lower().endswith('types') or line.lower().endswith('atoms') or line.lower().endswith('bonds'):
@@ -190,10 +208,13 @@ class LammpsDataReader(DataReader):
                         continue
         return masses
     
-    def _parse_atoms(self, atom_lines: List[str], frame: mp.Frame, masses: Dict[str, float]) -> None:
+    def _parse_atoms(self, atom_lines: List[str], frame: mp.Frame, masses: Dict[str, float], type_labels: Optional[Dict[int, str]] = None) -> None:
         """Parse atoms section and add to frame as xarray.Dataset."""
         if not atom_lines:
             return
+        
+        if type_labels is None:
+            type_labels = {}
         
         # Collect atom data
         atom_data = {
@@ -221,21 +242,24 @@ class LammpsDataReader(DataReader):
                 
                 if self.atom_style == "full":
                     mol_id = int(parts[1])
-                    atom_type_str = parts[2]  # Always treat as string
+                    atom_type_id = int(parts[2])
                     charge = float(parts[3])
                     x, y, z = float(parts[4]), float(parts[5]), float(parts[6])
                     
                     atom_data['mol'].append(mol_id)
                     atom_data['q'].append(charge)
                 elif self.atom_style == "charge":
-                    atom_type_str = parts[1]  # Always treat as string
+                    atom_type_id = int(parts[1])
                     charge = float(parts[2])
                     x, y, z = float(parts[3]), float(parts[4]), float(parts[5])
                     
                     atom_data['q'].append(charge)
                 else:  # atomic
-                    atom_type_str = parts[1]  # Always treat as string
+                    atom_type_id = int(parts[1])
                     x, y, z = float(parts[2]), float(parts[3]), float(parts[4])
+                
+                # Convert type ID to label if available, otherwise keep as string
+                atom_type_str = type_labels.get(atom_type_id, str(atom_type_id))
                 
                 atom_data['id'].append(atom_id)
                 atom_data['type'].append(atom_type_str)
@@ -281,10 +305,13 @@ class LammpsDataReader(DataReader):
         atoms_dataset = xr.Dataset(data_vars, coords=coords)
         frame['atoms'] = atoms_dataset
     
-    def _parse_bonds(self, bond_lines: List[str], frame: mp.Frame) -> None:
+    def _parse_bonds(self, bond_lines: List[str], frame: mp.Frame, type_labels: Optional[Dict[int, str]] = None) -> None:
         """Parse bonds section and add to frame as xarray.Dataset."""
         if not bond_lines:
             return
+        
+        if type_labels is None:
+            type_labels = {}
         
         bond_data = {
             'id': [],
@@ -297,9 +324,12 @@ class LammpsDataReader(DataReader):
             if line.strip():
                 parts = line.split()
                 bond_id = int(parts[0])
-                bond_type_str = parts[1]  # Always treat as string
+                bond_type_id = int(parts[1])
                 atom1 = int(parts[2])
                 atom2 = int(parts[3])
+                
+                # Convert type ID to label if available, otherwise keep as string
+                bond_type_str = type_labels.get(bond_type_id, str(bond_type_id))
                 
                 bond_data['id'].append(bond_id)
                 bond_data['type'].append(bond_type_str)
@@ -321,10 +351,13 @@ class LammpsDataReader(DataReader):
         bonds_dataset = xr.Dataset(data_vars, coords=coords)
         frame['bonds'] = bonds_dataset
     
-    def _parse_angles(self, angle_lines: List[str], frame: mp.Frame) -> None:
+    def _parse_angles(self, angle_lines: List[str], frame: mp.Frame, type_labels: Optional[Dict[int, str]] = None) -> None:
         """Parse angles section and add to frame as xarray.Dataset."""
         if not angle_lines:
             return
+        
+        if type_labels is None:
+            type_labels = {}
         
         angle_data = {
             'id': [],
@@ -338,10 +371,13 @@ class LammpsDataReader(DataReader):
             if line.strip():
                 parts = line.split()
                 angle_id = int(parts[0])
-                angle_type_str = parts[1]  # Always treat as string
+                angle_type_id = int(parts[1])
                 atom1 = int(parts[2])
                 atom2 = int(parts[3])
                 atom3 = int(parts[4])
+                
+                # Convert type ID to label if available, otherwise keep as string
+                angle_type_str = type_labels.get(angle_type_id, str(angle_type_id))
                 
                 angle_data['id'].append(angle_id)
                 angle_data['type'].append(angle_type_str)
@@ -364,10 +400,13 @@ class LammpsDataReader(DataReader):
         angles_dataset = xr.Dataset(data_vars, coords=coords)
         frame['angles'] = angles_dataset
     
-    def _parse_dihedrals(self, dihedral_lines: List[str], frame: mp.Frame) -> None:
+    def _parse_dihedrals(self, dihedral_lines: List[str], frame: mp.Frame, type_labels: Optional[Dict[int, str]] = None) -> None:
         """Parse dihedrals section and add to frame as xarray.Dataset."""
         if not dihedral_lines:
             return
+        
+        if type_labels is None:
+            type_labels = {}
         
         dihedral_data = {
             'id': [],
@@ -382,11 +421,14 @@ class LammpsDataReader(DataReader):
             if line.strip():
                 parts = line.split()
                 dihedral_id = int(parts[0])
-                dihedral_type_str = parts[1]  # Always treat as string
+                dihedral_type_id = int(parts[1])
                 atom1 = int(parts[2])
                 atom2 = int(parts[3])
                 atom3 = int(parts[4])
                 atom4 = int(parts[5])
+                
+                # Convert type ID to label if available, otherwise keep as string
+                dihedral_type_str = type_labels.get(dihedral_type_id, str(dihedral_type_id))
                 
                 dihedral_data['id'].append(dihedral_id)
                 dihedral_data['type'].append(dihedral_type_str)
@@ -410,10 +452,13 @@ class LammpsDataReader(DataReader):
         dihedrals_dataset = xr.Dataset(data_vars, coords=coords)
         frame['dihedrals'] = dihedrals_dataset
     
-    def _parse_impropers(self, improper_lines: List[str], frame: mp.Frame) -> None:
+    def _parse_impropers(self, improper_lines: List[str], frame: mp.Frame, type_labels: Optional[Dict[int, str]] = None) -> None:
         """Parse impropers section and add to frame as xarray.Dataset."""
         if not improper_lines:
             return
+        
+        if type_labels is None:
+            type_labels = {}
         
         improper_data = {
             'id': [],
@@ -428,11 +473,14 @@ class LammpsDataReader(DataReader):
             if line.strip():
                 parts = line.split()
                 improper_id = int(parts[0])
-                improper_type_str = parts[1]  # Always treat as string
+                improper_type_id = int(parts[1])
                 atom1 = int(parts[2])
                 atom2 = int(parts[3])
                 atom3 = int(parts[4])
                 atom4 = int(parts[5])
+                
+                # Convert type ID to label if available, otherwise keep as string
+                improper_type_str = type_labels.get(improper_type_id, str(improper_type_id))
                 
                 improper_data['id'].append(improper_id)
                 improper_data['type'].append(improper_type_str)
@@ -455,6 +503,22 @@ class LammpsDataReader(DataReader):
         coords = {'impropers_id': np.arange(n_impropers)}
         impropers_dataset = xr.Dataset(data_vars, coords=coords)
         frame['impropers'] = impropers_dataset
+    
+    def _parse_type_labels(self, label_lines: List[str]) -> Dict[int, str]:
+        """Parse type labels section. Returns mapping from numeric ID to label."""
+        id_to_label = {}
+        for line in label_lines:
+            if line.strip():
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        type_id = int(parts[0])
+                        label = parts[1]
+                        id_to_label[type_id] = label
+                    except ValueError:
+                        # Skip lines where ID can't be parsed
+                        continue
+        return id_to_label
 
 
 class LammpsDataWriter(DataWriter):
@@ -494,58 +558,31 @@ class LammpsDataWriter(DataWriter):
         if 'atoms' in frame:
             atom_types = frame['atoms']['type'].values
             unique_atom_types = np.unique(atom_types)
-            
-            # Try to convert to int, if all can be converted use max, otherwise use count
-            try:
-                numeric_types = [int(t) for t in unique_atom_types]
-                n_atom_types = max(numeric_types) if numeric_types else 0
-            except ValueError:
-                # If conversion fails, use count of unique types
-                n_atom_types = len(unique_atom_types)
+            n_atom_types = len(unique_atom_types)
             lines.append(f"{n_atom_types} atom types")
         
         if 'bonds' in frame and n_bonds > 0:
             bond_types = frame['bonds']['type'].values
             unique_bond_types = np.unique(bond_types)
-            
-            try:
-                numeric_types = [int(t) for t in unique_bond_types]
-                n_bond_types = max(numeric_types) if numeric_types else 0
-            except ValueError:
-                n_bond_types = len(unique_bond_types)
+            n_bond_types = len(unique_bond_types)
             lines.append(f"{n_bond_types} bond types")
         
         if 'angles' in frame and n_angles > 0:
             angle_types = frame['angles']['type'].values
             unique_angle_types = np.unique(angle_types)
-            
-            try:
-                numeric_types = [int(t) for t in unique_angle_types]
-                n_angle_types = max(numeric_types) if numeric_types else 0
-            except ValueError:
-                n_angle_types = len(unique_angle_types)
+            n_angle_types = len(unique_angle_types)
             lines.append(f"{n_angle_types} angle types")
         
         if 'dihedrals' in frame and n_dihedrals > 0:
             dihedral_types = frame['dihedrals']['type'].values
             unique_dihedral_types = np.unique(dihedral_types)
-            
-            try:
-                numeric_types = [int(t) for t in unique_dihedral_types]
-                n_dihedral_types = max(numeric_types) if numeric_types else 0
-            except ValueError:
-                n_dihedral_types = len(unique_dihedral_types)
+            n_dihedral_types = len(unique_dihedral_types)
             lines.append(f"{n_dihedral_types} dihedral types")
         
         if 'impropers' in frame and n_impropers > 0:
             improper_types = frame['impropers']['type'].values
             unique_improper_types = np.unique(improper_types)
-            
-            try:
-                numeric_types = [int(t) for t in unique_improper_types]
-                n_improper_types = max(numeric_types) if numeric_types else 0
-            except ValueError:
-                n_improper_types = len(unique_improper_types)
+            n_improper_types = len(unique_improper_types)
             lines.append(f"{n_improper_types} improper types")
         
         lines.append("")
@@ -567,6 +604,26 @@ class LammpsDataWriter(DataWriter):
         # Masses section
         if 'atoms' in frame:
             self._write_masses(lines, frame)
+        
+        # Atom Type Labels section (if string types are used)
+        if 'atoms' in frame:
+            self._write_atom_type_labels(lines, frame)
+        
+        # Bond Type Labels section (if string types are used)
+        if 'bonds' in frame and n_bonds > 0:
+            self._write_bond_type_labels(lines, frame)
+        
+        # Angle Type Labels section (if string types are used)
+        if 'angles' in frame and n_angles > 0:
+            self._write_angle_type_labels(lines, frame)
+        
+        # Dihedral Type Labels section (if string types are used)
+        if 'dihedrals' in frame and n_dihedrals > 0:
+            self._write_dihedral_type_labels(lines, frame)
+        
+        # Improper Type Labels section (if string types are used)
+        if 'impropers' in frame and n_impropers > 0:
+            self._write_improper_type_labels(lines, frame)
         
         # Atoms section
         if 'atoms' in frame:
@@ -598,15 +655,27 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         atoms_data = frame['atoms']
+        atom_types = atoms_data['type'].values
         
-        # Get unique atom types and their masses
-        unique_types = np.unique(atoms_data['type'].values)
+        # Get type mapping
+        type_to_id = self._create_type_mapping(atom_types)
         
-        # Create type mapping - if types are numeric strings, use them as IDs
-        # If they are string labels, create sequential IDs
+        for atom_type_str in sorted(type_to_id.keys(), key=lambda x: type_to_id[x]):
+            # Find first occurrence of this type to get mass
+            mask = atoms_data['type'].values == atom_type_str
+            mass = atoms_data['mass'].values[mask][0]
+            # Use mapped type ID for output
+            lines.append(f"{type_to_id[atom_type_str]} {mass:.6f}")
+        
+        lines.append("")
+    
+    def _create_type_mapping(self, types: np.ndarray) -> Dict[str, int]:
+        """Create mapping from type labels to numeric IDs."""
+        unique_types = np.unique(types)
         type_to_id = {}
+        
         try:
-            # Try numeric sorting
+            # Try to sort numerically if types are numeric strings
             sorted_types = sorted(unique_types, key=int)
             for atom_type_str in sorted_types:
                 type_to_id[atom_type_str] = int(atom_type_str)
@@ -615,12 +684,105 @@ class LammpsDataWriter(DataWriter):
             for i, atom_type_str in enumerate(sorted(unique_types), 1):
                 type_to_id[atom_type_str] = i
         
-        for atom_type_str in sorted(unique_types, key=lambda x: type_to_id[x]):
-            # Find first occurrence of this type to get mass
-            mask = atoms_data['type'].values == atom_type_str
-            mass = atoms_data['mass'].values[mask][0]
-            # Use mapped type ID for output
-            lines.append(f"{type_to_id[atom_type_str]} {mass:.6f}")
+        return type_to_id
+    
+    def _needs_type_labels(self, types: np.ndarray) -> bool:
+        """Check if type labels section is needed (non-numeric types)."""
+        try:
+            # Try to convert all types to integers
+            for t in np.unique(types):
+                int(t)
+            return False  # All types are numeric
+        except ValueError:
+            return True  # At least one type is non-numeric
+    
+    def _write_atom_type_labels(self, lines: List[str], frame: mp.Frame) -> None:
+        """Write Atom Type Labels section if needed."""
+        atoms_data = frame['atoms']
+        atom_types = atoms_data['type'].values
+        
+        if not self._needs_type_labels(atom_types):
+            return  # Skip if all types are numeric
+        
+        lines.append("Atom Type Labels")
+        lines.append("")
+        
+        type_to_id = self._create_type_mapping(atom_types)
+        
+        for atom_type_str in sorted(type_to_id.keys(), key=lambda x: type_to_id[x]):
+            lines.append(f"{type_to_id[atom_type_str]} {atom_type_str}")
+        
+        lines.append("")
+    
+    def _write_bond_type_labels(self, lines: List[str], frame: mp.Frame) -> None:
+        """Write Bond Type Labels section if needed."""
+        bonds_data = frame['bonds']
+        bond_types = bonds_data['type'].values
+        
+        if not self._needs_type_labels(bond_types):
+            return  # Skip if all types are numeric
+        
+        lines.append("Bond Type Labels")
+        lines.append("")
+        
+        type_to_id = self._create_type_mapping(bond_types)
+        
+        for bond_type_str in sorted(type_to_id.keys(), key=lambda x: type_to_id[x]):
+            lines.append(f"{type_to_id[bond_type_str]} {bond_type_str}")
+        
+        lines.append("")
+    
+    def _write_angle_type_labels(self, lines: List[str], frame: mp.Frame) -> None:
+        """Write Angle Type Labels section if needed."""
+        angles_data = frame['angles']
+        angle_types = angles_data['type'].values
+        
+        if not self._needs_type_labels(angle_types):
+            return  # Skip if all types are numeric
+        
+        lines.append("Angle Type Labels")
+        lines.append("")
+        
+        type_to_id = self._create_type_mapping(angle_types)
+        
+        for angle_type_str in sorted(type_to_id.keys(), key=lambda x: type_to_id[x]):
+            lines.append(f"{type_to_id[angle_type_str]} {angle_type_str}")
+        
+        lines.append("")
+    
+    def _write_dihedral_type_labels(self, lines: List[str], frame: mp.Frame) -> None:
+        """Write Dihedral Type Labels section if needed."""
+        dihedrals_data = frame['dihedrals']
+        dihedral_types = dihedrals_data['type'].values
+        
+        if not self._needs_type_labels(dihedral_types):
+            return  # Skip if all types are numeric
+        
+        lines.append("Dihedral Type Labels")
+        lines.append("")
+        
+        type_to_id = self._create_type_mapping(dihedral_types)
+        
+        for dihedral_type_str in sorted(type_to_id.keys(), key=lambda x: type_to_id[x]):
+            lines.append(f"{type_to_id[dihedral_type_str]} {dihedral_type_str}")
+        
+        lines.append("")
+    
+    def _write_improper_type_labels(self, lines: List[str], frame: mp.Frame) -> None:
+        """Write Improper Type Labels section if needed."""
+        impropers_data = frame['impropers']
+        improper_types = impropers_data['type'].values
+        
+        if not self._needs_type_labels(improper_types):
+            return  # Skip if all types are numeric
+        
+        lines.append("Improper Type Labels")
+        lines.append("")
+        
+        type_to_id = self._create_type_mapping(improper_types)
+        
+        for improper_type_str in sorted(type_to_id.keys(), key=lambda x: type_to_id[x]):
+            lines.append(f"{type_to_id[improper_type_str]} {improper_type_str}")
         
         lines.append("")
     
@@ -630,19 +792,10 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         atoms_data = frame['atoms']
+        atom_types = atoms_data['type'].values
         
-        # Create type mapping like in _write_masses
-        unique_types = np.unique(atoms_data['type'].values)
-        type_to_id = {}
-        try:
-            # Try numeric sorting
-            sorted_types = sorted(unique_types, key=int)
-            for atom_type_str in sorted_types:
-                type_to_id[atom_type_str] = int(atom_type_str)
-        except ValueError:
-            # String labels - assign sequential IDs
-            for i, atom_type_str in enumerate(sorted(unique_types), 1):
-                type_to_id[atom_type_str] = i
+        # Create type mapping
+        type_to_id = self._create_type_mapping(atom_types)
         
         for i in range(len(atoms_data['id'])):
             atom_id = int(atoms_data['id'].values[i])
@@ -668,15 +821,15 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         bonds_data = frame['bonds']
-        
-        # Create bond type to id mapping - always treat as strings
         bond_types = bonds_data['type'].values
-        unique_bond_types = list(dict.fromkeys(str(t) for t in bond_types))
-        bond_type_to_id = {bond_type: i+1 for i, bond_type in enumerate(unique_bond_types)}
+        
+        # Create bond type to id mapping
+        type_to_id = self._create_type_mapping(bond_types)
         
         for i in range(len(bonds_data['id'])):
             bond_id = int(bonds_data['id'].values[i])
-            bond_type = bond_type_to_id[str(bonds_data['type'].values[i])]
+            bond_type_str = str(bonds_data['type'].values[i])
+            bond_type = type_to_id[bond_type_str]
             # Support both 'atom1'/'atom2' and 'i'/'j' naming
             if 'atom1' in bonds_data:
                 atom1 = int(bonds_data['atom1'].values[i])
@@ -694,15 +847,15 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         angles_data = frame['angles']
-        
-        # Create angle type to id mapping - always treat as strings
         angle_types = angles_data['type'].values
-        unique_angle_types = list(dict.fromkeys(str(t) for t in angle_types))
-        angle_type_to_id = {angle_type: i+1 for i, angle_type in enumerate(unique_angle_types)}
+        
+        # Create angle type to id mapping
+        type_to_id = self._create_type_mapping(angle_types)
         
         for i in range(len(angles_data['id'])):
             angle_id = int(angles_data['id'].values[i])
-            angle_type = angle_type_to_id[str(angles_data['type'].values[i])]
+            angle_type_str = str(angles_data['type'].values[i])
+            angle_type = type_to_id[angle_type_str]
             # Support both 'atom1'/'atom2'/'atom3' and 'i'/'j'/'k' naming
             if 'atom1' in angles_data:
                 atom1 = int(angles_data['atom1'].values[i])
@@ -722,15 +875,15 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         dihedrals_data = frame['dihedrals']
-        
-        # Create dihedral type to id mapping - always treat as strings
         dihedral_types = dihedrals_data['type'].values
-        unique_dihedral_types = list(dict.fromkeys(str(t) for t in dihedral_types))
-        dihedral_type_to_id = {dihedral_type: i+1 for i, dihedral_type in enumerate(unique_dihedral_types)}
+        
+        # Create dihedral type to id mapping
+        type_to_id = self._create_type_mapping(dihedral_types)
         
         for i in range(len(dihedrals_data['id'])):
             dihedral_id = int(dihedrals_data['id'].values[i])
-            dihedral_type = dihedral_type_to_id[str(dihedrals_data['type'].values[i])]
+            dihedral_type_str = str(dihedrals_data['type'].values[i])
+            dihedral_type = type_to_id[dihedral_type_str]
             # Support both 'atom1'/'atom2'/'atom3'/'atom4' and 'i'/'j'/'k'/'l' naming
             if 'atom1' in dihedrals_data:
                 atom1 = int(dihedrals_data['atom1'].values[i])
@@ -752,15 +905,15 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         impropers_data = frame['impropers']
-        
-        # Create improper type to id mapping - always treat as strings
         improper_types = impropers_data['type'].values
-        unique_improper_types = list(dict.fromkeys(str(t) for t in improper_types))
-        improper_type_to_id = {improper_type: i+1 for i, improper_type in enumerate(unique_improper_types)}
+        
+        # Create improper type to id mapping
+        type_to_id = self._create_type_mapping(improper_types)
         
         for i in range(len(impropers_data['id'])):
             improper_id = int(impropers_data['id'].values[i])
-            improper_type = improper_type_to_id[str(impropers_data['type'].values[i])]
+            improper_type_str = str(impropers_data['type'].values[i])
+            improper_type = type_to_id[improper_type_str]
             atom1 = int(impropers_data['atom1'].values[i])
             atom2 = int(impropers_data['atom2'].values[i])
             atom3 = int(impropers_data['atom3'].values[i])

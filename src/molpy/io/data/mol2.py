@@ -3,7 +3,7 @@ import re
 from typing import Optional, Dict, List, Any
 
 from molpy import Element
-from molpy.core.frame import _dict_to_dataset
+# from molpy.core.frame import _dict_to_dataset
 from .base import DataReader
 import molpy as mp
 

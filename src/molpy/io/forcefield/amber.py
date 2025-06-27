@@ -3,7 +3,6 @@ import molpy as mp
 import numpy as np
 from typing import Callable, Iterator
 import math
-from molpy.core.frame import _dict_to_dataset
 
 class AmberPrmtopReader:
 

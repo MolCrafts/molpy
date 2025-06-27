@@ -7,7 +7,7 @@ Atomic structure tests have been moved to test_atoms.py.
 
 import pytest
 import numpy as np
-from molpy.core.atomistic import Struct, Atom, Bond, Angle, Dihedral, AtomicStructure
+from molpy.core.atomistic import Struct, Atom, Bond, Angle, Dihedral, AtomicStruct
 
 
 class TestEntity:
@@ -144,7 +144,7 @@ class TestToFrame:
         """Test to_frame with empty structure."""
         from molpy.core.frame import Frame
         
-        struct = AtomicStructure(name="empty")
+        struct = AtomicStruct(name="empty")
         frame = struct.to_frame()
         
         assert isinstance(frame, Frame)
@@ -158,7 +158,7 @@ class TestToFrame:
         from molpy.core.frame import Frame
         import pandas as pd
         
-        struct = AtomicStructure(name="test_atoms")
+        struct = AtomicStruct(name="test_atoms")
         struct.def_atom(name="C", element="carbon", xyz=[0.0, 0.0, 0.0])
         struct.def_atom(name="H", element="hydrogen", xyz=[1.0, 0.0, 0.0])
         
@@ -198,7 +198,7 @@ class TestToFrame:
         """Test to_frame with atoms and bonds."""
         from molpy.core.frame import Frame
         
-        struct = AtomicStructure(name="test_bonds")
+        struct = AtomicStruct(name="test_bonds")
         a1 = struct.def_atom(name="C", element="carbon", xyz=[0.0, 0.0, 0.0])
         a2 = struct.def_atom(name="H", element="hydrogen", xyz=[1.0, 0.0, 0.0])
         struct.def_bond(a1, a2, bond_type="single")
@@ -239,7 +239,7 @@ class TestToFrame:
         """Test to_frame with atoms, bonds, and angles."""
         from molpy.core.frame import Frame
         
-        struct = AtomicStructure(name="test_all")
+        struct = AtomicStruct(name="test_all")
         a1 = struct.def_atom(name="C1", xyz=[0.0, 0.0, 0.0])
         a2 = struct.def_atom(name="C2", xyz=[1.0, 0.0, 0.0])
         a3 = struct.def_atom(name="C3", xyz=[1.0, 1.0, 0.0])
@@ -282,7 +282,7 @@ class TestToFrame:
         import pandas as pd
         
         # Create a structure with atoms and bonds
-        struct = AtomicStructure(name="test_round_trip")
+        struct = AtomicStruct(name="test_round_trip")
         a1 = struct.def_atom(name="C", element="carbon", xyz=[0.0, 0.0, 0.0])
         a2 = struct.def_atom(name="H", element="hydrogen", xyz=[1.0, 0.0, 0.0])
         a3 = struct.def_atom(name="O", element="oxygen", xyz=[0.0, 1.0, 0.0])
@@ -336,7 +336,7 @@ class TestToFrame:
         """Test that to_frame produces consistent data."""
         from molpy.core.frame import Frame
         
-        struct = AtomicStructure(name="consistency_test")
+        struct = AtomicStruct(name="consistency_test")
         a1 = struct.def_atom(name="N", element="nitrogen", xyz=[0.0, 0.0, 0.0])
         a2 = struct.def_atom(name="C", element="carbon", xyz=[1.4, 0.0, 0.0])
         a3 = struct.def_atom(name="O", element="oxygen", xyz=[2.0, 1.2, 0.0])

@@ -4,6 +4,7 @@
 # version: 0.0.1
 
 import numpy as np
+from numpy.typing import ArrayLike
 from .region import Region, PeriodicBoundary
 from enum import Enum
 
@@ -17,7 +18,7 @@ class Box(Region, PeriodicBoundary):
 
     def __init__(
         self,
-        matrix: np.ndarray | None = None,
+        matrix: ArrayLike | None = None,
         pbc: np.ndarray = np.ones(3, dtype=bool),
         origin: np.ndarray = np.zeros(3),
         name: str = "Box"

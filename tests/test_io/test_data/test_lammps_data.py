@@ -17,18 +17,8 @@ import os
 import molpy as mp
 from molpy.io.data.lammps import LammpsDataReader, LammpsDataWriter
 
-# Path to chemfiles test data
-TEST_DATA_DIR = Path(__file__).parent.parent.parent / "chemfile-testcases" / "data" / "lammps-data"
-
-
-def pytest_configure():
-    """Ensure test data directory exists."""
-    if not TEST_DATA_DIR.exists():
-        pytest.skip(f"Test data directory not found: {TEST_DATA_DIR}")
-
-
 @pytest.fixture
-def test_files():
+def test_files(TEST_DATA_DIR):
     """Provide paths to test files."""
     files = {
         'data_body': TEST_DATA_DIR / "data.body",

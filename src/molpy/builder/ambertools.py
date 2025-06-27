@@ -11,6 +11,8 @@ from abc import ABC, abstractmethod
 import molq
 
 import molpy as mp
+# from molpy.core.frame import _dict_to_dataset
+from molpy.core.protocol import Entities
 from .reacter_lammps import ReactantWrapper
 from .polymer import Monomer
 
@@ -51,6 +53,7 @@ class AntechamberStep(BuilderStep):
         net_charge: float = 0.0,
         forcefield: str = "gaff",
         charge_type="bcc",
+        output_format: str = "ac",
     ) -> Generator[Dict, Any, Path]:
         workdir = Path(self.workdir) / name
         workdir.mkdir(parents=True, exist_ok=True)
@@ -59,9 +62,8 @@ class AntechamberStep(BuilderStep):
 
         pdb_name = f"{name}.pdb"
         mp.io.write_pdb(workdir / pdb_name, monomer.to_frame())
-        
-        if isinstance(monomer, Monomer):
 
+        if isinstance(monomer, Monomer):
 
             def get_atom_name(atom_ref) -> str:
                 """Convert atom reference to name."""
@@ -100,7 +102,7 @@ class AntechamberStep(BuilderStep):
 
         yield {
             "job_name": "antechamber",
-            "cmd": f"antechamber -i {pdb_name} -fi pdb -o {ac_name} -fo ac -an y -at {forcefield} -c {charge_type} -nc {net_charge}",
+            "cmd": f"antechamber -i {pdb_name} -fi pdb -o {ac_name} -fo {output_format} -an y -at {forcefield} -c {charge_type} -nc {net_charge}",
             "conda_env": self.conda_env,
             "cwd": workdir,
             "block": True,
@@ -157,40 +159,40 @@ class TLeapStep(BuilderStep):
     def source(self, lib: str):
         self.lines.append(f"source {lib}")
         return self
-    
+
     def load_prepi(self, path: Path):
         """
         Load an Amber prepi file into the TLeap environment.
         """
         self.lines.append(f"loadamberprep {path.absolute()}")
         return self
-    
+
     def load_frcmod(self, path: Path):
         """
         Load an Amber frcmod file into the TLeap environment.
         """
         self.lines.append(f"loadamberparams {path.absolute()}")
         return self
-    
+
     def load_ac(self, path: Path):
         """
         Load an Amber AC file into the TLeap environment.
         """
         self.lines.append(f"loadamberac {path.absolute()}")
         return self
-    
+
     def combine(self, name, names: Union[str, List[str]]):
         """
         Combine multiple monomers into a single polymer.
         """
         if isinstance(names, str):
             names = [names]
-        joined_names = ' '.join(names)
+        joined_names = " ".join(names)
         self.lines.append(f"{name} = combine {{{joined_names}}}")
         return self
 
     def define_polymer(self, seq: list[str], var_name="polymer"):
-        joined = ' '.join(seq)
+        joined = " ".join(seq)
         self.lines.append(f"{var_name} = sequence {{ {joined} }}")
         return self
 
@@ -202,14 +204,14 @@ class TLeapStep(BuilderStep):
         self.lines.append(f"saveamberparm {mol_name} {name}.prmtop {name}.inpcrd")
         self.lines.append(f"savepdb {mol_name} {name}.pdb")
         return self
-    
+
     def save_amberparm(self, name: str):
         """
         Save the Amber parameters and coordinates for the current polymer.
         """
         self.lines.append(f"saveamberparm {name} {name}.prmtop {name}.inpcrd")
         return self
-    
+
     def save_pdb(self, name: str):
         """
         Save the PDB representation of the current polymer.
@@ -223,9 +225,9 @@ class TLeapStep(BuilderStep):
 
     def build(self) -> str:
         return "\n".join(self.lines)
-    
+
     def reset(self):
-        self.lines = []        
+        self.lines = []
 
     @molq.local
     def run(
@@ -240,11 +242,14 @@ class TLeapStep(BuilderStep):
             "job_name": "tleap",
             "cmd": "tleap -f tleap.in",
             "conda_env": self.conda_env,
-            "cwd": self.workdir/name,
+            "cwd": self.workdir / name,
             "block": True,
         }
 
-        return self.workdir/ name / f"{name}.prmtop", self.workdir/ name / f"{name}.inpcrd"
+        return (
+            self.workdir / name / f"{name}.prmtop",
+            self.workdir / name / f"{name}.inpcrd",
+        )
 
 
 class AmberToolsBuilder:
@@ -252,7 +257,7 @@ class AmberToolsBuilder:
     Automated polymer builder using AmberTools workflow via molq.
     """
 
-    def __init__(self, workdir: str|Path, conda_env: str = "AmberTools25"):
+    def __init__(self, workdir: str | Path, conda_env: str = "AmberTools25"):
         """
         Initialize the AmberTools polymer builder.
 
@@ -278,10 +283,10 @@ class AmberToolsBuilder:
     def build_polymer(
         self,
         name: str,
-        monomers: list[mp.AtomicStructure],
+        monomers: list[mp.AtomicStruct],
         sequence: list[str],
         **kwargs,
-    ) -> mp.AtomicStructure:
+    ) -> mp.AtomicStruct:
 
         workdir = self.workdir / name
 
@@ -309,15 +314,13 @@ class AmberToolsBuilder:
         self.tleap_step.save_pdb(name)
         self.tleap_step.quit()
 
-        self.tleap_step.run(
-            name
-        )
+        self.tleap_step.run(name)
         self.tleap_step.reset()
-        return mp.AtomicStructure.from_frame(
+        return mp.AtomicStruct.from_frame(
             mp.io.read_amber(workdir / f"{name}.prmtop", workdir / f"{name}.inpcrd")
         )
 
-    def build_salt(self, name: str, salt: mp.AtomicStructure, ion: str, **kwargs):
+    def build_salt(self, name: str, salt: mp.AtomicStruct, ion: str, **kwargs):
 
         workdir = self.workdir / name
 
@@ -332,7 +335,7 @@ class AmberToolsBuilder:
         self.parmchk_step.run(name)
         self.tleap_step.run(name, ["gaff", "water.tip3p"], seq=[name], ion=[ion])
 
-        return mp.AtomicStructure.from_frame(
+        return mp.AtomicStruct.from_frame(
             mp.io.read_amber(workdir / f"{name}.prmtop", workdir / f"{name}.inpcrd")
         )
 
@@ -344,6 +347,7 @@ class AmberToolsBuilder:
         net_charge: float = 0.0,
         is_frcmod: bool = False,
         is_prepi: bool = False,
+        is_tleap: bool = False,
     ):
         name = struct.get("name")
         if name is None:
@@ -362,20 +366,113 @@ class AmberToolsBuilder:
             forcefield=forcefield,
             charge_type=charge_type,
         )
+        logger.info(f"AnteChamber step completed for {name}")
         if is_prepi:
             self.prepgen_step.run(name)
+        logger.info(f"Prepgen step completed for {name}")
         if is_frcmod:
             self.parmchk_step.run(name)
+        if is_tleap:
+            self.tleap_step.source("leaprc.gaff")
+            self.tleap_step.load_prepi(workdir / f"{name}.prepi")
+            self.tleap_step.load_frcmod(workdir / f"{name}.frcmod")
+            self.tleap_step.save_amberparm(name)
+            self.tleap_step.save_pdb(name)
+            self.tleap_step.quit()
+            self.tleap_step.run(name)
+            self.tleap_step.reset()
+            frame = mp.io.read_amber(
+                workdir / f"{name}.prmtop", workdir / f"{name}.inpcrd"
+            )
 
-        frame = mp.io.read_amber_ac(ac_path, frame=mp.Frame())
-        atom_types = frame["atoms"]["type"]
-        atom_charges = frame["atoms"]["q"]
-        for satom, typ, q in zip(struct["atoms"], atom_types, atom_charges):
-            satom["type"] = typ.item()
-            satom["q"] = q.item()
-        bond_types = frame["bonds"]["type"]
-        for sbond, typ in zip(struct["bonds"], bond_types):
-            sbond["type"] = typ.item()
+            atoms = []
+            atom_ids = frame["atoms"]["id"].values.tolist()
+            atom_names = frame["atoms"]["name"].values.tolist()
+            atom_types = frame["atoms"]["type"].values.tolist()
+            atom_charges = frame["atoms"]["q"].values.tolist()
+            atom_masses = frame["atoms"]["mass"].values.tolist()
+            atom_numbers = frame["atoms"]["atomic_number"].values.tolist()
+            xyz = frame["atoms"]["xyz"].values.tolist()
+            for i in range(len(frame["atoms"]["id"])):
+                atoms.append(mp.Atom(
+                    id=atom_ids[i],
+                    name=atom_names[i],
+                    type=atom_types[i],
+                    element=mp.Element(atom_numbers[i]).symbol,
+                    q=atom_charges[i],
+                    mass=atom_masses[i],
+                    xyz=xyz[i]
+                ))
+            struct["atoms"] = Entities(atoms)
+
+            if "bonds" in frame:
+                bonds = []
+                bond_i = frame["bonds"]["i"].values.tolist()
+                bond_j = frame["bonds"]["j"].values.tolist()
+                bond_types = frame["bonds"]["type"].values.tolist()
+                for i in range(len(frame["bonds"]["id"])):
+                    bonds.append(
+                        mp.Bond(
+                            atoms[bond_i[i]-1],
+                            atoms[bond_j[i]-1],
+                            type=bond_types[i],
+                        )
+                    )
+                struct["bonds"] = Entities(bonds)
+
+            if "angles" in frame:
+                angles = []
+                angle_i = frame["angles"]["i"].values.tolist()
+                angle_j = frame["angles"]["j"].values.tolist()
+                angle_k = frame["angles"]["k"].values.tolist()
+                angle_types = frame["angles"]["type"].values.tolist()
+                for i in range(len(frame["angles"]["id"])):
+                    angles.append(
+                        mp.Angle(
+                            atoms[angle_i[i]-1],
+                            atoms[angle_j[i]-1],
+                            atoms[angle_k[i]-1],
+                            type=angle_types[i],
+                        )
+                    )
+                struct["angles"] = Entities(angles)
+
+            if "dihedrals" in frame:
+                dihedrals = []
+                dihedral_i = frame["dihedrals"]["i"].values.tolist()
+                dihedral_j = frame["dihedrals"]["j"].values.tolist()
+                dihedral_k = frame["dihedrals"]["k"].values.tolist()
+                dihedral_l = frame["dihedrals"]["l"].values.tolist()
+                dihedral_types = frame["dihedrals"]["type"].values.tolist()
+                for i in range(len(frame["dihedrals"]["id"])):
+                    dihedrals.append(
+                        mp.Dihedral(
+                            atoms[dihedral_i[i]-1],
+                            atoms[dihedral_j[i]-1],
+                            atoms[dihedral_k[i]-1],
+                            atoms[dihedral_l[i]-1],
+                            type=dihedral_types[i],
+                        )
+                    )
+                struct["dihedrals"] = Entities(dihedrals)
+
+        else:  # if not is_tleap, just read type from ac file
+            frame = mp.io.read_amber_ac(ac_path, frame=mp.Frame())
+            atom_types = frame["atoms"]["type"]
+            atom_charges = frame["atoms"]["q"]
+            for satom, typ, q in zip(struct["atoms"], atom_types, atom_charges):
+                satom["type"] = typ.item()
+                satom["q"] = q.item()
+
+            # Handle bonds - create if not exist
+            if "bonds" in frame:
+                bond_types = frame["bonds"]["type"]
+                if "bonds" not in struct:
+                    struct["bonds"] = []
+                while len(struct["bonds"]) < len(bond_types):
+                    struct["bonds"].append({"type": ""})
+                for sbond, typ in zip(struct["bonds"], bond_types):
+                    sbond["type"] = typ.item()
 
         return struct
 
@@ -401,14 +498,16 @@ class AmberToolsBuilder:
             )
             self.prepgen_step.run(struct_name)
             self.parmchk_step.run(struct_name)
-            self.tleap_step.load_prepi((self.workdir/struct_name/struct_name).with_suffix(".prepi"))
-            self.tleap_step.load_frcmod((self.workdir/struct_name/struct_name).with_suffix(".frcmod"))
+            self.tleap_step.load_prepi(
+                (self.workdir / struct_name / struct_name).with_suffix(".prepi")
+            )
+            self.tleap_step.load_frcmod(
+                (self.workdir / struct_name / struct_name).with_suffix(".frcmod")
+            )
         self.tleap_step.combine(system_name, list(names))
         self.tleap_step.save_amberparm(system_name)
         self.tleap_step.quit()
-        self.tleap_step.run(
-            name=system_name
-        )
+        self.tleap_step.run(name=system_name)
         self.tleap_step.reset()
 
         frame = mp.io.read_amber(

@@ -3,7 +3,7 @@ import numpy as np
 from .frame import Frame
 from .forcefield import ForceField
 from .box import Box
-from .atomistic import Struct, AtomicStructure
+from .atomistic import Struct, AtomicStruct
 
 
 class System:
@@ -83,8 +83,8 @@ class System:
             # Empty system case
             frame = Frame()
         else:
-            # Combine all structures into one AtomicStructure
-            combined_struct = AtomicStructure("combined_system")
+            # Combine all structures into one AtomicStruct
+            combined_struct = AtomicStruct("combined_system")
             for struct in self._structs:
                 combined_struct.add_struct(struct)
             

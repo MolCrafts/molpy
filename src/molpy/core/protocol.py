@@ -7,7 +7,9 @@ used throughout the molecular modeling framework.
 
 from collections import UserDict
 from copy import deepcopy
-from typing import Callable
+from typing import Callable, TypeVar, Generic, Iterable, Type
+
+T = TypeVar("T", bound="Entity")
 
 class Entity(UserDict):
     """
@@ -71,81 +73,32 @@ class Entity(UserDict):
 
     def to_dict(self) -> dict:
         """
-        Convert entity to a dictionary for serialization.
-        
-        Includes class information for proper reconstruction and recursively
-        converts any nested components that support to_dict.
-        
-        Returns:
-            dict: Dictionary representation including class info and all data
+        Convert the entity and all nested components to a dictionary,
+        including class path for deserialization.
         """
-        result = {
-            "__class__": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
-        }
-        
-        # Recursively convert data, calling to_dict on nested components if available
-        for key, value in self.data.items():
-            if hasattr(value, "to_dict") and callable(value.to_dict):
-                result[key] = value.to_dict()
-            else:
-                result[key] = value
-                
-        return result
+        return {
+                key: value
+                for key, value in self.data.items()
+            }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Entity":
+    def from_dict(cls: Type[T], data: dict) -> T:
         """
-        Create Entity from dictionary representation.
-        
-        Supports recursive reconstruction of nested components that have from_dict methods.
-        
-        Args:
-            data: Dictionary containing entity data
-            
-        Returns:
-            Entity: Reconstructed entity instance
+        Reconstruct the current class from a dictionary.
         """
-        # Extract class info if present for validation
-        class_info = data.get("__class__")
-        if class_info and not class_info.endswith(cls.__name__):
-            # Allow subclasses but warn about potential mismatches
-            pass
-            
-        # Create new instance
-        instance = cls()
-        
-        # Recursively reconstruct data
+        obj = cls()
         for key, value in data.items():
-            if key == "__class__":
-                continue
-                
-            # If value is a dict with class info, try to reconstruct it
-            if isinstance(value, dict) and "__class__" in value:
-                class_path = value["__class__"]
-                try:
-                    # Import and get the class
-                    module_name, class_name = class_path.rsplit(".", 1)
-                    module = __import__(module_name, fromlist=[class_name])
-                    target_class = getattr(module, class_name)
-                    
-                    # Call from_dict if available
-                    if hasattr(target_class, "from_dict") and callable(target_class.from_dict):
-                        instance[key] = target_class.from_dict(value)
-                    else:
-                        instance[key] = value
-                except (ImportError, AttributeError, ValueError):
-                    # Fallback to raw data if reconstruction fails
-                    instance[key] = value
-            else:
-                instance[key] = value
-                
-        return instance
+            obj[key] = value
+        return obj
 
     def keys(self):
         """Return the keys of the entity."""
         return self.data.keys()
 
-class Entities:
+
+T = TypeVar("T", bound=Entity)
+
+class Entities(Generic[T]):
     """
     Container for storing and managing collections of molecular entities.
     
@@ -153,47 +106,35 @@ class Entities:
     finding entities by conditions and names.
     """
 
-    def __init__(self, entities=None):
+    def __init__(self, entities: Iterable[T] | None =None):
         """
         Initialize the container.
         
         Args:
             entities: Optional initial entities to add
         """
-        self._data = list(entities) if entities is not None else []
+        self._data: list[T] = list(entities) if entities is not None else []
 
-    def add(self, entity):
+    def add(self, entity: T):
         """
         Add an entity to the collection.
-        
+
         Args:
             entity: Entity to add
-            
-        Returns:
-            The added entity
         """
         self._data.append(entity)
         return entity
 
-    def remove(self, entity):
+    def remove(self, entity: T):
         """
         Remove an entity from the collection.
-        
+
         Args:
             entity: Entity instance, index, or name to remove
         """
-        if isinstance(entity, int):
-            self._data.pop(entity)
-        elif isinstance(entity, str):
-            # Find by name and remove
-            for i, e in enumerate(self._data):
-                if hasattr(e, 'get') and e.get("name") == entity:
-                    self._data.pop(i)
-                    break
-        else:
-            self._data.remove(entity)
+        self._data.remove(entity)
 
-    def get_by(self, condition: Callable):
+    def get_by(self, condition: Callable[[T], bool]) -> T | None:
         """
         Get an entity based on a condition.
 
@@ -205,15 +146,15 @@ class Entities:
         """
         return next((entity for entity in self._data if condition(entity)), None)
 
-    def get_by_name(self, name):
+    def get_by_name(self, name: str) -> T | None:
         """Get an entity by its 'name' attribute."""
-        return self[ name ]
+        return self.get_by(lambda e: e.get("name") == name)
 
-    def filter_by(self, condition: Callable):
+    def filter_by(self, condition: Callable[[T], bool]) -> list[T]:
         """Return a list of all entities matching the condition."""
         return [entity for entity in self._data if condition(entity)]
 
-    def to_list(self):
+    def to_list(self) -> list[T]:
         """Return all entities as a list."""
         return list(self._data)
 
@@ -225,7 +166,7 @@ class Entities:
         """Return the number of entities in the collection."""
         return len(self._data)
 
-    def extend(self, entities) -> None:
+    def extend(self, entities: Iterable[T]) -> None:
         """
         Extend the collection with multiple entities.
         
@@ -248,29 +189,7 @@ class Entities:
         Returns:
             Entity or list of entities
         """
-        if isinstance(key, (int, slice)):
-            return self._data[key]
-        elif isinstance(key, str):
-            # Find by name
-            for entity in self._data:
-                if hasattr(entity, 'get') and entity.get("name") == key:
-                    return entity
-            return None
-        elif isinstance(key, (list, tuple)):
-            result = []
-            for k in key:
-                if isinstance(k, int):
-                    result.append(self._data[k])
-                elif isinstance(k, str):
-                    found = None
-                    for entity in self._data:
-                        if hasattr(entity, 'get') and entity.get("name") == k:
-                            found = entity
-                            break
-                    result.append(found)
-            return result
-        return None
-    
+        return self._data[key]
 
     def __repr__(self) -> str:
         """Return a string representation of the collection."""

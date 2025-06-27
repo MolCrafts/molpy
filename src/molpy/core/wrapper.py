@@ -7,7 +7,6 @@ flexible composition pattern.
 """
 
 from typing import Callable, Union, Optional, Any
-from abc import ABC, abstractmethod
 import numpy as np
 from numpy.typing import ArrayLike
 
@@ -54,6 +53,10 @@ class Wrapper:
         """Set items on the wrapped entity."""
         self._wrapped[key] = value
 
+    def __contains__(self, key):
+        """Check if the wrapped entity contains a key."""
+        return key in self._wrapped
+
 
 class SpatialWrapper(Wrapper):
     """
@@ -66,9 +69,9 @@ class SpatialWrapper(Wrapper):
     @property
     def xyz(self) -> np.ndarray:
         """Get the xyz coordinates as a numpy array."""
-        # Handle AtomicStructure specifically
+        # Handle AtomicStruct specifically
         if hasattr(self._wrapped, 'atoms') and hasattr(self._wrapped, '__getitem__'):
-            # This is likely an AtomicStructure
+            # This is likely an AtomicStruct
             try:
                 coords = self._wrapped["atoms", "xyz"]
                 # Filter out None values and convert to numpy array
@@ -97,9 +100,9 @@ class SpatialWrapper(Wrapper):
     @xyz.setter
     def xyz(self, value: ArrayLike) -> None:
         """Set the xyz coordinates from an array-like object."""
-        # Handle AtomicStructure specifically
+        # Handle AtomicStruct specifically
         if hasattr(self._wrapped, 'atoms') and hasattr(self._wrapped, '__getitem__'):
-            # This is likely an AtomicStructure
+            # This is likely an AtomicStruct
             value = np.asarray(value, dtype=float)
             
             # Check if we have the right number of atoms

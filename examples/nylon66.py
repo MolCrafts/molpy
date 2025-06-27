@@ -14,11 +14,11 @@ Based on LAMMPS examples: https://github.com/lammps/lammps/tree/develop/examples
 # Create adipic acid structure (HOOC-(CH2)4-COOH)
 # For demonstration, assume this is loaded from PDB/MOL2 files
 # adipic_acid_struct = mp.io.read_pdb("adipic_acid.pdb")
-adipic_acid_struct = mp.AtomicStructure.from_frame(mp.io.read_pdb("adipicacid.pdb"), name="adipic_acid")
+adipic_acid_struct = mp.AtomicStruct.from_frame(mp.io.read_pdb("adipicacid.pdb"), name="adipic_acid")
 
 # Create hexamethylenediamine structure (H2N-(CH2)6-NH2)  
 # hexamethylenediamine_struct = mp.io.read_pdb("hexamethylenediamine.pdb")
-hexamethylenediamine_struct = mp.AtomicStructure.from_frame(mp.io.read_pdb("hexamethylenediamine.pdb"), name="hexamethylenediamine")
+hexamethylenediamine_struct = mp.AtomicStruct.from_frame(mp.io.read_pdb("hexamethylenediamine.pdb"), name="hexamethylenediamine")
 
 # Define reaction sites for adipic acid
 adipic_acid_sites = {
