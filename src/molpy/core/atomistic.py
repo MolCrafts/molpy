@@ -116,11 +116,8 @@ class Bond(ManyBody):
     def to_dict(self) -> dict:
         """Convert the bond to a dictionary."""
         result = super().to_dict()
-        # Add atom indices if atoms have ids
-        if hasattr(self.itom, 'get') and 'id' in self.itom:
-            result['i'] = self.itom['id']
-        if hasattr(self.jtom, 'get') and 'id' in self.jtom:
-            result['j'] = self.jtom['id']
+        result['i'] = self.itom['id']
+        result['j'] = self.jtom['id']
         return result
 
 
@@ -453,7 +450,8 @@ class AtomicStructure(Struct):
             The created atom
         """
         atom = Atom(**props)
-        return self.add_atom(atom)
+        self.add_atom(atom)
+        return self
 
     def add_atoms(self, atoms):
         """
@@ -474,7 +472,8 @@ class AtomicStructure(Struct):
         Returns:
             The added bond
         """
-        return self.bonds.add(bond)
+        self.bonds.add(bond)
+        return self
 
     def def_bond(self, itom, jtom, **kwargs):
         """
@@ -498,6 +497,19 @@ class AtomicStructure(Struct):
             
         bond = Bond(itom, jtom, **kwargs)
         return self.add_bond(bond)
+
+    def del_bond(self, itom, jtom):
+        if isinstance(itom, int):
+            itom = self.atoms[itom]
+        if isinstance(jtom, int):
+            jtom = self.atoms[jtom]
+
+        if not isinstance(itom, Atom) or not isinstance(jtom, Atom):
+            raise TypeError("Arguments must be Atom instances or valid indices")
+
+        bond = Bond(itom, jtom)
+        self.bonds.remove(bond)
+        return self
 
     def add_bonds(self, bonds):
         """
@@ -584,6 +596,7 @@ class AtomicStructure(Struct):
             atom: Atom instance, index, or name to remove
         """
         self.atoms.remove(atom)
+        return self
 
     def remove_bond(self, bond):
         """
@@ -592,17 +605,8 @@ class AtomicStructure(Struct):
         Args:
             bond: Bond instance or tuple of atoms
         """
-        if isinstance(bond, tuple):
-            # Find and remove bond between these atoms
-            itom, jtom = bond
-            target_bond = self.bonds.get_by(
-                lambda b: (b.itom is itom and b.jtom is jtom) or
-                         (b.itom is jtom and b.jtom is itom)
-            )
-            if target_bond:
-                self.bonds.remove(target_bond)
-        else:
-            self.bonds.remove(bond)
+        self.bonds.remove(bond)
+        return self
 
     def get_atom_by(self, condition: Callable):
         """
@@ -695,20 +699,24 @@ class AtomicStructure(Struct):
         return self
 
     @classmethod
-    def concat(cls, name: str, structs):
+    def concat(cls, name: str, structs, reindex=True):
         """
         Concatenate multiple structures into a new structure.
 
         Args:
             name: Name for the new structure
             structs: Sequence of structures to concatenate
-            
+            reindex: Whether to reindex the atoms in the concatenated structure
+
         Returns:
             New structure containing all input structures
         """
         result = cls(name)
         for struct in structs:
             result.add_struct(struct)
+        if reindex:
+            for i, atom in enumerate(result.atoms, 1):
+                atom["id"] = i
         return result
 
     def to_frame(self):
@@ -729,12 +737,10 @@ class AtomicStructure(Struct):
             return frame
 
         # Set atom IDs and create name-to-index mapping
-        atom_name_idx_mapping = {}
+        atom_mapping = {}
         atom_dicts = []
         for i, atom in enumerate(self["atoms"]):
-            # if "id" not in atom:
-            #     atom["id"] = i
-            atom_name_idx_mapping[atom["name"]] = i
+            atom_mapping[atom] = i
             atom_dicts.append(atom.to_dict())
 
         # Create atoms data directly as dict for xarray
@@ -757,12 +763,9 @@ class AtomicStructure(Struct):
             bdicts = []
             for bond in self["bonds"]:
                 bdict = bond.to_dict()
-                # Get atom indices by name
-                iname = bond.itom["name"] if "name" in bond.itom else bond.itom.get("name", "")
-                jname = bond.jtom["name"] if "name" in bond.jtom else bond.jtom.get("name", "")
-                if iname in atom_name_idx_mapping and jname in atom_name_idx_mapping:
-                    bdict["i"] = atom_name_idx_mapping[iname]
-                    bdict["j"] = atom_name_idx_mapping[jname]
+
+                bdict["i"] = atom_mapping[bond.itom]
+                bdict["j"] = atom_mapping[bond.jtom]
                 bdicts.append(bdict)
             
             if bdicts:
@@ -776,7 +779,7 @@ class AtomicStructure(Struct):
                     bonds_data[key] = [bdict.get(key) for bdict in bdicts]
                 
                 # Add sequential ids
-                bonds_data["id"] = list(range(len(bdicts)))
+                bonds_data["id"] = list(range(1, len(bdicts)+1))
                 frame["bonds"] = bonds_data
 
         # Create angles data if angles exist
@@ -788,10 +791,10 @@ class AtomicStructure(Struct):
                 iname = angle.itom["name"] if "name" in angle.itom else angle.itom.get("name", "")
                 jname = angle.jtom["name"] if "name" in angle.jtom else angle.jtom.get("name", "")
                 kname = angle.ktom["name"] if "name" in angle.ktom else angle.ktom.get("name", "")
-                if all(name in atom_name_idx_mapping for name in [iname, jname, kname]):
-                    adict["i"] = atom_name_idx_mapping[iname]
-                    adict["j"] = atom_name_idx_mapping[jname]
-                    adict["k"] = atom_name_idx_mapping[kname]
+                if all(name in atom_mapping for name in [iname, jname, kname]):
+                    adict["i"] = atom_mapping[iname]
+                    adict["j"] = atom_mapping[jname]
+                    adict["k"] = atom_mapping[kname]
                 adicts.append(adict)
             
             if adicts:
@@ -802,8 +805,8 @@ class AtomicStructure(Struct):
                 
                 for key in all_angle_keys:
                     angles_data[key] = [adict.get(key) for adict in adicts]
-                
-                angles_data["id"] = list(range(len(adicts)))
+
+                angles_data["id"] = list(range(1, len(adicts)+1))
                 frame["angles"] = angles_data
 
         # Create dihedrals data if dihedrals exist
@@ -816,11 +819,11 @@ class AtomicStructure(Struct):
                 jname = dihedral.jtom["name"] if "name" in dihedral.jtom else dihedral.jtom.get("name", "")
                 kname = dihedral.ktom["name"] if "name" in dihedral.ktom else dihedral.ktom.get("name", "")
                 lname = dihedral.ltom["name"] if "name" in dihedral.ltom else dihedral.ltom.get("name", "")
-                if all(name in atom_name_idx_mapping for name in [iname, jname, kname, lname]):
-                    ddict["i"] = atom_name_idx_mapping[iname]
-                    ddict["j"] = atom_name_idx_mapping[jname]
-                    ddict["k"] = atom_name_idx_mapping[kname]
-                    ddict["l"] = atom_name_idx_mapping[lname]
+                if all(name in atom_mapping for name in [iname, jname, kname, lname]):
+                    ddict["i"] = atom_mapping[iname]
+                    ddict["j"] = atom_mapping[jname]
+                    ddict["k"] = atom_mapping[kname]
+                    ddict["l"] = atom_mapping[lname]
                 ddicts.append(ddict)
             
             if ddicts:
@@ -831,8 +834,8 @@ class AtomicStructure(Struct):
                 
                 for key in all_dihedral_keys:
                     dihedrals_data[key] = [ddict.get(key) for ddict in ddicts]
-                
-                dihedrals_data["id"] = list(range(len(ddicts)))
+
+                dihedrals_data["id"] = list(range(1, len(ddicts)+1))
                 frame["dihedrals"] = dihedrals_data
 
         # Create impropers data if impropers exist
@@ -845,11 +848,11 @@ class AtomicStructure(Struct):
                 jname = improper.jtom["name"] if "name" in improper.jtom else improper.jtom.get("name", "")
                 kname = improper.ktom["name"] if "name" in improper.ktom else improper.ktom.get("name", "")
                 lname = improper.ltom["name"] if "name" in improper.ltom else improper.ltom.get("name", "")
-                if all(name in atom_name_idx_mapping for name in [iname, jname, kname, lname]):
-                    idict["i"] = atom_name_idx_mapping[iname]
-                    idict["j"] = atom_name_idx_mapping[jname]
-                    idict["k"] = atom_name_idx_mapping[kname]
-                    idict["l"] = atom_name_idx_mapping[lname]
+                if all(name in atom_mapping for name in [iname, jname, kname, lname]):
+                    idict["i"] = atom_mapping[iname]
+                    idict["j"] = atom_mapping[jname]
+                    idict["k"] = atom_mapping[kname]
+                    idict["l"] = atom_mapping[lname]
                 idicts.append(idict)
             
             if idicts:
@@ -860,8 +863,8 @@ class AtomicStructure(Struct):
                 
                 for key in all_improper_keys:
                     impropers_data[key] = [idict.get(key) for idict in idicts]
-                
-                impropers_data["id"] = list(range(len(idicts)))
+
+                impropers_data["id"] = list(range(1, len(idicts)+1))
                 frame["impropers"] = impropers_data
 
         # Add structure metadata
@@ -973,7 +976,39 @@ class AtomicStructure(Struct):
         
         return dihedrals
     
-    def __call__(self, **kwargs):
+    def get_substruct(self, indices: list[int]):
+        """Extract substructure containing only specified atoms."""
+        # TODO: TO BE TESTED!
+        new_struct = mp.AtomicStructure(name=f"{self._wrapped.get('name', 'molecule')}_template")
+        
+        # Map old indices to new indices
+        index_map = {}
+        sorted_indices = sorted(indices)
+
+        # Add atoms
+        for new_idx, old_idx in enumerate(sorted_indices):
+            atom = self.atoms[old_idx]
+            new_atom = atom.copy()
+            new_atom["id"] = new_idx
+            new_struct.atoms.add(new_atom)
+            index_map[old_idx] = new_idx
+        
+        # Add bonds between extracted atoms
+        for bond in self.bonds:
+            atom1_idx = bond.itom.get("id", bond.itom.get("index"))
+            atom2_idx = bond.jtom.get("id", bond.jtom.get("index"))
+            
+            if atom1_idx in index_map and atom2_idx in index_map:
+                new_bond = mp.Bond(
+                    new_struct.atoms[index_map[atom1_idx]],
+                    new_struct.atoms[index_map[atom2_idx]],
+                    **{k: v for k, v in bond.items() if k not in ['itom', 'jtom']}
+                )
+                new_struct.bonds.add(new_bond)
+        
+        return new_struct
+    
+    def __call__(self, **kwargs) -> "AtomicStructure":
         """
         Create a new instance of this AtomicStructure with optional modifications.
         
@@ -1087,7 +1122,7 @@ class AtomicStructure(Struct):
         
         # Copy other non-structural properties
         for key, value in self.items():
-            if key not in ['atoms', 'bonds', 'angles', 'dihedrals', 'impropers'] and key not in modification_kwargs:
+            if key not in ['atoms', 'bonds', 'angles', 'dihedrals', 'impropers'] and key not in modification_kwargs and key not in constructor_kwargs:
                 if hasattr(value, 'copy'):
                     new_instance[key] = value.copy()
                 else:

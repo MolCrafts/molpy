@@ -1,7 +1,7 @@
 from pathlib import Path
 import molpy as mp
 from itertools import islice
-from typing import Iterator
+from typing import Iterator, List, Any, TextIO, Union
 
 
 class LAMMPSForceFieldReader:
@@ -405,111 +405,93 @@ class LAMMPSForceFieldReader:
 
 
 class LAMMPSForceFieldWriter:
-    def __init__(self, fpath: str | Path):
-        self.fpath = fpath
+    def __init__(self, precision: int = 6):
+        self.precision = precision
 
-    @staticmethod
-    def _write_styles(lines: list[str], styles, style_type: str):
-        """
-        写出 bond/angle/dihedral/improper style 及其参数
-        兼容 parms 命名和 TypeContainer/list 类型
-        """
-        if not styles:
-            return
-        if len(styles) == 1:
-            style = styles[0]
-            if not list(style.types):
-                return
-            parms = getattr(style, "parms", [])
-            lines.append(
-                f"{style_type}_style {style.name} {' '.join(f"{x:.3f}" for x in parms)}\n"
-            )
-            if "modified" in style:
-                parms = " ".join(style["modified"])
-                lines.append(f"{style_type}_modify {parms}\n")
-            for typ in list(style.types):
-                parms = getattr(typ, "parms", [])
-                lines.append(
-                    f"{style_type}_coeff {typ.name} {' '.join(f"{x:.3f}" for x in parms)}\n"
-                )
-        else:
-            style_keywords = " ".join([style.name for style in styles])
-            lines.append(f"{style_type}_style hybrid {style_keywords}\n")
-            for style in styles:
-                for typ in list(style.types):
-                    parms = getattr(typ, "parms", [])
-    
-                    lines.append(
-                        f"{style_type}_coeff {typ.name} {style.name} {' '.join(f"{x:.3f}" for x in parms)}\n"
-                    )
-        lines.append("\n")
-
-    @staticmethod
-    def _write_pair_styles(lines: list[str], styles, style_type: str):
-        """
-        写出 pair_style 及其参数，兼容 parms 命名和 TypeContainer/list 类型
-        """
-        if not styles:
-            return
-        if len(styles) == 1:
-            style = styles[0]
-            parms = getattr(style, "parms", [])
-            lines.append(
-                f"{style_type}_style {style.name} {' '.join(f"{x:.3f}" for x in parms)}\n"
-            )
-            if "modified" in style:
-                parms = " ".join(style["modified"])
-                lines.append(f"{style_type}_modify {parms}\n")
-            for typ in list(style.types):
-                parms = getattr(typ, "parms", [])
-
-                ats = typ.atomtypes
-                if ats[0] == ats[1]:
-                    atomnames = ats[0].name
-                else:
-                    atomnames = f"{ats[0].name} {ats[1].name}"
-                lines.append(
-                    f"{style_type}_coeff {atomnames} {' '.join(f"{x:.3f}" for x in parms)}\n"
-                )
-        else:
-            style_keywords = " ".join([style.name for style in styles])
-            lines.append(f"{style_type}_style hybrid {style_keywords}\n")
-            for style in styles:
-                for typ in list(style.types):
-                    parms = getattr(typ, "parms", [])
-    
-                    ats = typ.atomtypes
-                    if ats[0] == ats[1]:
-                        atomnames = ats[0].name
-                    else:
-                        atomnames = f"{ats[0].name} {ats[1].name}"
-                    lines.append(
-                        f"{style_type}_coeff {atomnames} {style.name} {' '.join(f"{x:.3f}" for x in parms)}\n"
-                    )
-        lines.append("\n")
-
-    def write(self, forcefield: mp.ForceField):
-        ff = forcefield
-        lines = []
-        # 写 atom_style
-        if ff.atomstyles:
-            if len(ff.atomstyles) == 1:
-                lines.append(f"# atom_style {ff.atomstyles[0].name}\n")
+    def _format_params(self, params: list) -> str:
+        """Helper to format a list of numeric parameters with configured precision."""
+        formatted = []
+        for p in params:
+            if isinstance(p, float):
+                formatted.append(f"{p:.{self.precision}f}")
             else:
-                atomstyles = " ".join([atomstyle.name for atomstyle in ff.atomstyles])
-                lines.append(f"# atom_style hybrid {atomstyles}\n")
+                formatted.append(str(p))
+        return " ".join(formatted)
+
+    @staticmethod
+    def _get_default_coeff_id(typ) -> str:
+        """Gets the coefficient identifier for bond, angle, etc."""
+        return typ.name
+
+    @staticmethod
+    def _get_pair_coeff_id(typ) -> str:
+        """Gets the coefficient identifier for pair styles (e.g., '1 2')."""
+        ats = typ.atomtypes
+        return f"{ats[0].name} {ats[1].name}" if ats[0] != ats[1] else str(ats[0].name)
+
+    def _write_style_section(
+        self, lines: list[str], styles: list, style_type: str, get_coeff_id_func: callable
+    ):
+        """
+        A generic method to write a style section (e.g., bond, angle, pair).
+        It handles both single and hybrid styles.
+        """
+        if not styles:
+            return
+
+        # --- Single Style Case ---
+        if len(styles) == 1:
+            style = styles[0]
+            parms = getattr(style, "parms", [])
+            lines.append(f"{style_type}_style {style.name} {self._format_params(parms)}\n")
+
+            if "modified" in style:
+                parms_str = " ".join(style["modified"])
+                lines.append(f"{style_type}_modify {parms_str}\n")
+
+            if list(style.types):
+                lines.append("\n")
+                for typ in list(style.types):
+                    parms = getattr(typ, "parms", [])
+                    coeff_id = get_coeff_id_func(typ)
+                    lines.append(
+                        f"{style_type}_coeff {coeff_id} {self._format_params(parms)}\n"
+                    )
+
+        # --- Hybrid Style Case ---
         else:
-            raise ValueError("No atom style defined")
-        # 可选 mass 输出（如需）
-        # for atomstyle in ff.atomstyles:
-        #     for atomtype in atomstyle.types:
-        #         if 'mass' in atomtype:
-        #             lines.append(f"mass {atomtype.name} {atomtype['mass']}\n")
-        self._write_styles(lines, ff.bondstyles, "bond")
-        self._write_styles(lines, ff.anglestyles, "angle")
-        self._write_styles(lines, ff.dihedralstyles, "dihedral")
-        self._write_styles(lines, ff.improperstyles, "improper")
-        self._write_pair_styles(lines, ff.pairstyles, "pair")
+            style_keywords = " ".join([s.name for s in styles])
+            lines.append(f"{style_type}_style hybrid {style_keywords}\n")
+
+            if any(list(s.types) for s in styles):
+                lines.append("\n")
+                for style in styles:
+                    for typ in list(style.types):
+                        parms = getattr(typ, "parms", [])
+                        coeff_id = get_coeff_id_func(typ)
+                        lines.append(
+                            f"{style_type}_coeff {coeff_id} {style.name} {self._format_params(parms)}\n"
+                        )
+
         lines.append("\n")
-        with open(self.fpath, "w") as f:
-            f.writelines(lines)
+
+    def write(self, fpath: Union[str, Path, TextIO], forcefield: mp.ForceField):
+        ff = forcefield
+        lines = [f"# LAMMPS force field generated by molpy version {mp.__version__}\n\n"]
+
+        style_sections = [
+            (ff.pairstyles, "pair", self._get_pair_coeff_id),
+            (ff.bondstyles, "bond", self._get_default_coeff_id),
+            (ff.anglestyles, "angle", self._get_default_coeff_id),
+            (ff.dihedralstyles, "dihedral", self._get_default_coeff_id),
+            (ff.improperstyles, "improper", self._get_default_coeff_id),
+        ]
+
+        for styles, style_type, id_func in style_sections:
+            self._write_style_section(lines, styles, style_type, id_func)
+
+        if isinstance(fpath, (str, Path)):
+            with open(fpath, "w") as f:
+                f.writelines(lines)
+        else:
+            fpath.writelines(lines)

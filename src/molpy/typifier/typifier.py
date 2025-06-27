@@ -1,5 +1,6 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Generator, Any
 
 import molpy as mp
 from molpy.io import write_pdb
@@ -124,87 +125,3 @@ class SmartsTypifier(ForceFieldTypifier):
             for cycle in cycles:
                 graph.vs[i.index]["cycles"].add(tuple(cycle))
 
-
-class AmberToolsTypifier:
-
-    def __init__(
-        self, forcefield: str, charge_type: str = "bcc", conda_env: str = "AmberTools25"
-    ):
-        self.forcefield = forcefield
-        self.charge_type = charge_type
-        self.conda_env = conda_env
-        self.check_antechamber()
-
-    @molq.local
-    def check_antechamber(self):
-        """
-        Check if antechamber is available in the target conda env.
-        """
-        yield {
-            "job_name": "check_antechamber",
-            "cmd": "antechamber -h",
-            "conda_env": self.conda_env,
-            "quiet": True,
-        }
-
-    @molq.local
-    def typify(
-        self,
-        workdir: Path,
-        struct: mp.Struct,
-        net_charge: float = 0.0,
-        is_frcmod: bool = False,
-    ) -> mp.Struct:
-        """
-        Typify the struct using AmberTools.
-        """
-
-        net_charge = struct.get("net_charge", net_charge)
-        name = struct.get("name", None)
-        if name is None:
-            raise ValueError("Struct must have a name attribute")
-
-        with TemporaryDirectory() if workdir is None else workdir as dir:
-            dir = Path(dir) / name
-            if not dir.exists():
-                dir.mkdir(parents=True, exist_ok=True)
-            pdb_name = f"{name}.pdb"
-            ac_name = f"{name}.ac"
-            ac_path = dir / ac_name
-            if not ac_path.exists():
-                write_pdb(dir / pdb_name, struct.to_frame(bond_keys=["i", "j"]))
-                print(f"antechambering...")
-                yield {
-                    "job_name": "antechamber",
-                    "cmd": f"antechamber -i {pdb_name} -fi pdb -o {ac_name} -fo ac -an y -at {self.forcefield} -c {self.charge_type} -nc {net_charge}",
-                    "conda_env": self.conda_env,
-                    "cwd": dir,
-                    "block": True,
-                }
-
-                print(f"prepgening...")
-                yield {
-                    "job_name": "prepgen",
-                    "cmd": f"prepgen -i {name}.ac -o {name}.prepi -f prepi -rn {name} -rf {name}.res",
-                    "conda_env": self.conda_env,
-                    "cwd": dir,
-                    "block": True,
-                }
-
-            if is_frcmod:
-                yield {
-                    "job_name": "parmchk2",
-                    "cmd": f"parmchk2 -i {name}.ac -f ac -o {name}.frcmod",
-                    "conda_env": self.conda_env,
-                    "cwd": dir,
-                    "block": True,
-                }
-
-            frame = mp.io.read_amber_ac(dir / ac_name, frame=mp.Frame())
-
-            for satom, fatom in zip(struct["atoms"], frame["atoms"].iterrows()):
-                satom["type"] = fatom["type"]
-                satom["q"] = fatom["q"]
-            for sbond, fbond in zip(struct["bonds"], frame["bonds"].iterrows()):
-                sbond["type"] = fbond["type"]
-        return struct

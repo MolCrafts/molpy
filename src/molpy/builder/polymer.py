@@ -40,7 +40,7 @@ class Monomer(Wrapper):
     """
 
     anchors: dict[str, AnchorRule]
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __init__(
         self,

@@ -11,7 +11,7 @@ class System:
     def __init__(self):
         self._forcefield = ForceField()
         self._box = Box()
-        self._struct = []
+        self._structs = []
 
     @property
     def forcefield(self):
@@ -20,6 +20,10 @@ class System:
     @forcefield.setter
     def forcefield(self, value):
         self._forcefield = value
+
+    @property
+    def structs(self):
+        return self._structs
 
     def set_forcefield(self, forcefield: ForceField):
         """Set the forcefield for the system."""
@@ -35,13 +39,13 @@ class System:
         self._box = Box(matrix=matrix, pbc=pbc, origin=origin)
 
     def add_struct(self, struct: Struct):
-        self._struct.append(struct)
+        self._structs.append(struct)
 
     def to_dict(self):
         """Convert system to a dictionary representation."""
         # Convert structures to list of dicts
         struct_dicts = []
-        for struct in self._struct:
+        for struct in self._structs:
             if hasattr(struct, 'to_dict'):
                 struct_dicts.append(struct.to_dict())
             else:
@@ -70,18 +74,18 @@ class System:
             'forcefield': ff_dict,
             'box': box_dict,
             'structures': struct_dicts,
-            'n_structures': len(self._struct)
+            'n_structures': len(self._structs)
         }
 
     def to_frame(self, factory=None):
         """Convert system to a Frame."""
-        if not self._struct:
+        if not self._structs:
             # Empty system case
             frame = Frame()
         else:
             # Combine all structures into one AtomicStructure
             combined_struct = AtomicStructure("combined_system")
-            for struct in self._struct:
+            for struct in self._structs:
                 combined_struct.add_struct(struct)
             
             # Convert to frame

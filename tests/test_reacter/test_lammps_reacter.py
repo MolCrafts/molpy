@@ -59,6 +59,19 @@ test_cases = [
         [0, 1, 2, 3, 4],
         [5],
         "Shared branch between two main chain atoms"
+    ),
+    (
+        [        (0, 1), (1, 2), (2, 3),  # C-C-C-C main chain
+
+        (0, 4), (0, 5), (0, 6),  # H on C0
+        (1, 7), (1, 8),          # H on C1
+        (2, 9), (2, 10),         # H on C2
+        (3, 11), (3, 12), (3, 13)  # H on C3]
+        ],
+        1, 3,
+        [1, 2, 3],
+        [9, 10, 11, 12, 13],
+        "butane"
     )
 ]
 

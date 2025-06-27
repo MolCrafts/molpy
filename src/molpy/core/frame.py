@@ -72,7 +72,7 @@ def _dict_to_dataset(data: Dict[str, Any], component_name: str = "atoms") -> xr.
 class Frame(MutableMapping):
     """Container of simulation data based on :class:`xarray.DataTree`."""
     def __init__(self, data: Optional[Dict[str, Union[Dict[str, Any], xr.Dataset]]] = None, 
-                 *, box: Optional[Box] = None, forcefield: Optional[ForceField] = None, meta: Optional[Dict[str, Any]] = None, **extra_meta):
+                 *, box: Optional[Box] = None, forcefield: ForceField | None = None, meta: Optional[Dict[str, Any]] = None, **extra_meta):
         """Initialize Frame.
         
         Parameters
@@ -92,7 +92,7 @@ class Frame(MutableMapping):
         
         # Use property setters for validation
         self.box = box
-        self.forcefield = forcefield
+        self._forcefield = forcefield
         
         if meta is not None:
             self._meta.update(meta)
@@ -192,7 +192,7 @@ class Frame(MutableMapping):
         yield from self._meta.keys()
         if self.box is not None:
             yield "box"
-        if self.forcefield is not None:
+        if self._forcefield is not None:
             yield "forcefield"
         if self.timestep is not None:
             yield "timestep"
@@ -201,7 +201,7 @@ class Frame(MutableMapping):
         n = len(self._data.children) + len(self._meta)
         if self.box is not None:
             n += 1
-        if self.forcefield is not None:
+        if self._forcefield is not None:
             n += 1
         return n
 
@@ -211,7 +211,7 @@ class Frame(MutableMapping):
         special_keys = []
         if self.box is not None:
             special_keys.append("box")
-        if self.forcefield is not None:
+        if self._forcefield is not None:
             special_keys.append("forcefield")
         all_keys = content_keys + meta_keys + special_keys
         return f"<Frame (DataTree) with keys: {all_keys}>"
@@ -251,11 +251,16 @@ class Frame(MutableMapping):
         """Delete the simulation box."""
         self._box = None
     
-    # Forcefield property with validation
     @property
-    def forcefield(self) -> Optional[ForceField]:
-        """Get the force field."""
-        return getattr(self, '_forcefield', None)
+    def forcefield(self) -> ForceField:
+        if self._forcefield is None:
+            raise ValueError("ForceField is not set. Please set it before accessing.")
+        return self._forcefield
+    
+    @property
+    def has_forcefield(self) -> bool:
+        """Check if the frame has a force field."""
+        return self._forcefield is not None
     
     @forcefield.setter
     def forcefield(self, value: Optional[ForceField]) -> None:
@@ -280,10 +285,10 @@ class Frame(MutableMapping):
             box_copy = copy.deepcopy(self.box)
         
         forcefield_copy = None
-        if self.forcefield is not None:
+        if self._forcefield is not None:
             # ForceField is typically immutable or has complex structure
             import copy
-            forcefield_copy = copy.deepcopy(self.forcefield)
+            forcefield_copy = copy.deepcopy(self._forcefield)
         
         new_frame = self.__class__(
             box=box_copy,
@@ -385,12 +390,12 @@ class Frame(MutableMapping):
             result['metadata'][key] = self._serialize_value(value)
         
         # Store box using unified interface
-        if hasattr(self, 'box') and self.box is not None:
+        if self.box is not None:
             result['box'] = self._serialize_value(self.box)
                 
         # Store forcefield using unified interface
-        if hasattr(self, 'forcefield') and self.forcefield is not None:
-            result['forcefield'] = self._serialize_value(self.forcefield)
+        if self._forcefield is not None:
+            result['forcefield'] = self._serialize_value(self._forcefield)
         
         return result
 

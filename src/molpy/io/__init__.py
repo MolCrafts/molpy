@@ -127,8 +127,8 @@ def write_lammps_molecule(file: Path | str, frame: mp.Frame) -> None:
 def write_lammps_forcefield(file: Path | str, forcefield: mp.ForceField) -> None:
     """Write a molpy System object to a LAMMPS force field file."""
     from .forcefield.lammps import LAMMPSForceFieldWriter
-    writer = LAMMPSForceFieldWriter(file)
-    writer.write(forcefield)
+    writer = LAMMPSForceFieldWriter()
+    writer.write(file, forcefield)
 
 def write_lammps(workdir: Path, frame: mp.Frame) -> None:
     """Write a molpy System object to LAMMPS data and force field files."""

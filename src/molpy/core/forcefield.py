@@ -110,6 +110,20 @@ class TypeContainer:
     def __init__(self):
         self._types = list()
 
+    def __getitem__(self, key: int | str) -> Type:
+        """
+        Retrieve a type by its index or name.
+
+        Args:
+            key (int | str): The index or name of the type to retrieve.
+
+        Returns:
+            Type: The type associated with the given index or name.
+        """
+        if isinstance(key, int):
+            return self._types[key]
+        return self.get(key)
+
     def add(self, t: Type):
         """
         Add a type to the container.

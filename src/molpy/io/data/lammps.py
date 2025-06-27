@@ -1221,10 +1221,11 @@ class LammpsMoleculeWriter(DataWriter):
         lines.append("")
         
         atoms_data = frame['atoms']
-        
+        atom_ids = atoms_data['id'].values.tolist()
+        atom_types = atoms_data['type'].values.tolist()
         for i in range(len(atoms_data['id'])):
-            atom_id = int(atoms_data['id'].values[i])
-            atom_type = int(atoms_data['type'].values[i])  # Convert string back to int
+            atom_id = atom_ids[i]
+            atom_type = atom_types[i]
             lines.append(f"{atom_id} {atom_type}")
         
         lines.append("")
@@ -1249,17 +1250,12 @@ class LammpsMoleculeWriter(DataWriter):
         lines.append("")
         
         bonds_data = frame['bonds']
-        
-        # Create bond type to id mapping - always treat as strings
-        bond_types = bonds_data['type'].values
-        unique_bond_types = list(dict.fromkeys(str(t) for t in bond_types))
-        bond_type_to_id = {bond_type: i+1 for i, bond_type in enumerate(unique_bond_types)}
-        
+    
         for i in range(len(bonds_data['id'])):
             bond_id = int(bonds_data['id'].values[i])
-            bond_type = bond_type_to_id[str(bonds_data['type'].values[i])]
-            atom1 = int(bonds_data['atom1'].values[i])
-            atom2 = int(bonds_data['atom2'].values[i])
+            bond_type = str(bonds_data['type'].values[i])
+            atom1 = int(bonds_data['i'].values[i]) + 1
+            atom2 = int(bonds_data['j'].values[i]) + 1
             lines.append(f"{bond_id} {bond_type} {atom1} {atom2}")
         
         lines.append("")
@@ -1270,18 +1266,13 @@ class LammpsMoleculeWriter(DataWriter):
         lines.append("")
         
         angles_data = frame['angles']
-        
-        # Create angle type to id mapping - always treat as strings
-        angle_types = angles_data['type'].values
-        unique_angle_types = list(dict.fromkeys(str(t) for t in angle_types))
-        angle_type_to_id = {angle_type: i+1 for i, angle_type in enumerate(unique_angle_types)}
-        
+
         for i in range(len(angles_data['id'])):
             angle_id = int(angles_data['id'].values[i])
-            angle_type = angle_type_to_id[str(angles_data['type'].values[i])]
-            atom1 = int(angles_data['atom1'].values[i])
-            atom2 = int(angles_data['atom2'].values[i])
-            atom3 = int(angles_data['atom3'].values[i])
+            angle_type = str(angles_data['type'].values[i])
+            atom1 = int(angles_data['i'].values[i]) + 1
+            atom2 = int(angles_data['j'].values[i]) + 1
+            atom3 = int(angles_data['k'].values[i]) + 1
             lines.append(f"{angle_id} {angle_type} {atom1} {atom2} {atom3}")
         
         lines.append("")
@@ -1293,18 +1284,13 @@ class LammpsMoleculeWriter(DataWriter):
         
         dihedrals_data = frame['dihedrals']
         
-        # Create dihedral type to id mapping - always treat as strings
-        dihedral_types = dihedrals_data['type'].values
-        unique_dihedral_types = list(dict.fromkeys(str(t) for t in dihedral_types))
-        dihedral_type_to_id = {dihedral_type: i+1 for i, dihedral_type in enumerate(unique_dihedral_types)}
-        
         for i in range(len(dihedrals_data['id'])):
             dihedral_id = int(dihedrals_data['id'].values[i])
-            dihedral_type = dihedral_type_to_id[str(dihedrals_data['type'].values[i])]
-            atom1 = int(dihedrals_data['atom1'].values[i])
-            atom2 = int(dihedrals_data['atom2'].values[i])
-            atom3 = int(dihedrals_data['atom3'].values[i])
-            atom4 = int(dihedrals_data['atom4'].values[i])
+            dihedral_type = str(dihedrals_data['type'].values[i]) 
+            atom1 = int(dihedrals_data['i'].values[i]) + 1
+            atom2 = int(dihedrals_data['j'].values[i]) + 1
+            atom3 = int(dihedrals_data['k'].values[i]) + 1
+            atom4 = int(dihedrals_data['l'].values[i]) + 1
             lines.append(f"{dihedral_id} {dihedral_type} {atom1} {atom2} {atom3} {atom4}")
         
         lines.append("")
@@ -1318,11 +1304,11 @@ class LammpsMoleculeWriter(DataWriter):
         
         for i in range(len(impropers_data['id'])):
             improper_id = int(impropers_data['id'].values[i])
-            improper_type = int(impropers_data['type'].values[i])  # Convert string back to int
-            atom1 = int(impropers_data['atom1'].values[i])
-            atom2 = int(impropers_data['atom2'].values[i])
-            atom3 = int(impropers_data['atom3'].values[i])
-            atom4 = int(impropers_data['atom4'].values[i])
+            improper_type = impropers_data['type'].values[i]
+            atom1 = int(impropers_data['i'].values[i]) + 1
+            atom2 = int(impropers_data['j'].values[i]) + 1
+            atom3 = int(impropers_data['k'].values[i]) + 1
+            atom4 = int(impropers_data['l'].values[i]) + 1
             lines.append(f"{improper_id} {improper_type} {atom1} {atom2} {atom3} {atom4}")
         
         lines.append("")

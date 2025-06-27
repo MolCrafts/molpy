@@ -157,11 +157,11 @@ class AmberPrmtopReader:
                 bondstyle.def_type(
                     atomtype_map[atom_i_type_name],
                     atomtype_map[atom_j_type_name],
-                    params=[f, r_min],
                     name=bond_name,
                     force_constant=f,
                     equil_value=r_min,
                     id=bond_type,
+                    parms=[f, r_min],
                 )  # if multiply by 2
             bonds["type_id"].append(bond_type)
             bonds["i"].append(i)
@@ -183,11 +183,11 @@ class AmberPrmtopReader:
                     atomtype_map[atom_i_type_name],
                     atomtype_map[atom_j_type_name],
                     atomtype_map[atom_k_type_name],
-                    params=[f, theta_min],
                     name=angle_name,
                     force_constant=f,
                     equil_value=theta_min,
                     id=angle_type,
+                    parms=[f, theta_min],
                 )
 
             angles["type_id"].append(angle_type)
@@ -223,12 +223,12 @@ class AmberPrmtopReader:
                     atomtype_map[atom_j_type_name],
                     atomtype_map[atom_k_type_name],
                     atomtype_map[atom_l_type_name],
-                    params=[f, periodicity, int(phase), 0.5],
                     name=dihe_name,
                     force_constant=f,
                     phase=phase,
                     periodicity=periodicity,
                     id=dihe_type,
+                    parms=[f, periodicity, int(phase), 0.5],
                 )
             dihedrals["type_id"].append(dihe_type)
             dihedrals["i"].append(i)

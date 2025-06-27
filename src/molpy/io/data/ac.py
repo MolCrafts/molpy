@@ -16,12 +16,18 @@ class AcReader(DataReader):
 
         self.atoms = []
         self.bonds = []
+        self.atomtype_map = {}
 
         for line in lines:
             if line.startswith("ATOM"):
-                self._parse_atom_section(line)
+                atom = self._parse_atom_section(line)
+                self.atoms.append(atom)
             elif line.startswith("BOND"):
-                self._parse_bond_section(line)
+                bond = self._parse_bond_section(line)
+                itom_type = self.atoms[bond["i"]]["type"]
+                jtom_type = self.atoms[bond["j"]]["type"]
+                bond["type"] = f"{itom_type}-{jtom_type}"
+                self.bonds.append(bond)
 
         if self.atoms:
             self.assign_atomic_numbers(self.atoms)
@@ -46,7 +52,7 @@ class AcReader(DataReader):
         charge = float(tokens[8])
         atom_type = tokens[9]
 
-        self.atoms.append({
+        return {
             "id": atom_id,
             "name": name,
             "resName": resname,
@@ -54,23 +60,23 @@ class AcReader(DataReader):
             "xyz": xyz,
             "q": charge,
             "type": atom_type
-        })
+        }
 
-    def _parse_bond_section(self, line):
+    def _parse_bond_section(self, line) -> dict:
         # Example:
         # BOND    1    1    2    1      C   H1
         tokens = line.split()
         bond_id = int(tokens[1])
-        atom1 = int(tokens[2])
-        atom2 = int(tokens[3])
-        bond_type = int(tokens[4])  # usually just 1 (single)
+        atom1 = int(tokens[2]) - 1
+        atom2 = int(tokens[3]) - 1
+        # bond_order = int(tokens[4])
 
-        self.bonds.append({
+        return {
             "id": bond_id,
             "i": atom1,
             "j": atom2,
-            "type": bond_type
-        })
+            # "type": bond_type
+        }
 
     def assign_atomic_numbers(self, atoms):
         for atom in atoms:

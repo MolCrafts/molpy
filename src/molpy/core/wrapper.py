@@ -46,6 +46,14 @@ class Wrapper:
         else:
             setattr(self._wrapped, name, value)
 
+    def __getitem__(self, key):
+        """Delegate item access to the wrapped entity."""
+        return self._wrapped[key]
+    
+    def __setitem__(self, key, value):
+        """Set items on the wrapped entity."""
+        self._wrapped[key] = value
+
 
 class SpatialWrapper(Wrapper):
     """

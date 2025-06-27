@@ -1,5 +1,7 @@
 from .core import *
 
+__version__ = "0.1.0"
+
 from . import io
 from . import op
 from . import region
