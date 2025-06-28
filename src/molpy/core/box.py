@@ -7,6 +7,7 @@ import numpy as np
 from numpy.typing import ArrayLike
 from .region import Region, PeriodicBoundary
 from enum import Enum
+from .schema import BoxSchema
 
 
 class Box(Region, PeriodicBoundary):
@@ -19,8 +20,8 @@ class Box(Region, PeriodicBoundary):
     def __init__(
         self,
         matrix: ArrayLike | None = None,
-        pbc: np.ndarray = np.ones(3, dtype=bool),
-        origin: np.ndarray = np.zeros(3),
+        pbc: ArrayLike = np.ones(3, dtype=bool),
+        origin: ArrayLike = np.zeros(3),
         name: str = "Box"
     ):
         """
@@ -37,14 +38,15 @@ class Box(Region, PeriodicBoundary):
         """
         super().__init__(name)
         if matrix is None or np.all(matrix == 0):
-            self._matrix = np.zeros((3, 3))
+            _matrix = np.zeros((3, 3))
         else:
             _matrix = np.asarray(matrix)
             if _matrix.shape == (3,):
                 _matrix = np.diag(_matrix)
-            self._matrix = Box.check_matrix(_matrix)
-        self._pbc = np.array(pbc, dtype=bool)
-        self._origin = origin
+            _matrix = Box.check_matrix(_matrix)
+        self._matrix: np.ndarray = np.array(_matrix, dtype=float)
+        self._pbc: np.ndarray = np.array(pbc, dtype=bool)
+        self._origin: np.ndarray = np.array(origin, dtype=float)
 
     def __repr__(self):
         match self.style:
@@ -86,13 +88,13 @@ class Box(Region, PeriodicBoundary):
             dict: Dictionary containing box matrix, periodic boundary conditions,
                   origin, and type information for reconstruction.
         """
-        return {
-            "__class__": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
-            "matrix": self._matrix.tolist(),
-            "pbc": self._pbc.tolist(),
-            "origin": self._origin.tolist(),
-            "name": getattr(self, "_name", "Box")
-        }
+        schema = BoxSchema(
+            matrix=self._matrix,
+            pbc=self._pbc,
+            origin=self._origin
+        )
+        data = schema.model_dump()
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> "Box":
@@ -121,8 +123,8 @@ class Box(Region, PeriodicBoundary):
     def cubic(
         cls,
         length: float,
-        pbc: np.ndarray = np.ones(3, dtype=bool),
-        origin: np.ndarray = np.zeros(3),
+        pbc: ArrayLike = np.ones(3, dtype=bool),
+        origin: ArrayLike = np.zeros(3),
         central: bool = False,
     ) -> "Box":
         if central:
@@ -132,9 +134,9 @@ class Box(Region, PeriodicBoundary):
     @classmethod
     def orth(
         cls,
-        lengths: np.ndarray,
-        pbc: np.ndarray = np.ones(3, dtype=bool),
-        origin: np.ndarray = np.zeros(3),
+        lengths: ArrayLike,
+        pbc: ArrayLike = np.ones(3, dtype=bool),
+        origin: ArrayLike = np.zeros(3),
         central: bool = False,
     ) -> "Box":
         if central:
@@ -144,10 +146,10 @@ class Box(Region, PeriodicBoundary):
     @classmethod
     def tric(
         cls,
-        lengths: np.ndarray,
-        tilts: np.ndarray,
-        pbc: np.ndarray = np.ones(3, dtype=bool),
-        origin: np.ndarray = np.zeros(3),
+        lengths: ArrayLike,
+        tilts: ArrayLike,
+        pbc: ArrayLike = np.ones(3, dtype=bool),
+        origin: ArrayLike = np.zeros(3),
         central: bool = False,
     ) -> "Box":
         if central:
@@ -538,7 +540,7 @@ class Box(Region, PeriodicBoundary):
 
     @staticmethod
     def calc_matrix_from_lengths_angles(
-        abc: np.ndarray, angles: np.ndarray
+        abc: ArrayLike, angles: ArrayLike
     ) -> np.ndarray:
         """
         Compute restricted triclinic box matrix from lengths and angles.
@@ -651,7 +653,7 @@ class Box(Region, PeriodicBoundary):
             raise ValueError("Invalid box matrix")
 
     @classmethod
-    def from_lengths_angles(cls, lengths: np.ndarray, angles: np.ndarray):
+    def from_lengths_angles(cls, lengths: ArrayLike, angles: ArrayLike):
         """
         Get box matrix from lengths and angles
 

@@ -5,7 +5,6 @@ __version__ = "0.1.0"
 from . import io
 from . import op
 from . import region
-from . import reacter
 from . import typifier
 from . import builder
 from . import pack

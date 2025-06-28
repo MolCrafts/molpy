@@ -356,8 +356,7 @@ class TestBoxUtility:
         box_dict = box.to_dict()
         
         expected_keys = {
-            "xlo", "xhi", "ylo", "yhi", "zlo", "zhi",
-            "xy", "xz", "yz", "x_pbc", "y_pbc", "z_pbc"
+            "matrix", "origin", "pbc"
         }
         assert set(box_dict.keys()) == expected_keys
 

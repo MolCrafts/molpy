@@ -1,8 +1,11 @@
-from pathlib import Path
-import molpy as mp
-import numpy as np
-from typing import Callable, Iterator
 import math
+from pathlib import Path
+from typing import Callable, Iterator
+
+import numpy as np
+
+import molpy as mp
+
 
 class AmberPrmtopReader:
 
