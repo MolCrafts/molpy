@@ -3,7 +3,7 @@ from itertools import product
 from typing import Sequence, Iterable, Optional
 
 from molpy.builder.base import StructBuilder, BaseSiteProvider
-from molpy.core.atomistic import AtomicStruct
+from molpy.core.atomistic import Atomistic
 from molpy.core.region import Region
 
 
@@ -71,7 +71,7 @@ class CrystalBuilder(StructBuilder):
         super().__init__(lattice)
         self.lattice = lattice  # Keep for backward compatibility
 
-    def build(self, region: Region, template: AtomicStruct, name: str = "crystal") -> AtomicStruct:
+    def build(self, region: Region, template: Atomistic, name: str = "crystal") -> Atomistic:
         """
         Build crystal structure by filling region with template at lattice sites.
         
@@ -85,14 +85,14 @@ class CrystalBuilder(StructBuilder):
         """
         return self.fill_basis(region, template, name)
 
-    def fill_basis(self, region: Region, template: AtomicStruct, name: str = "crystal") -> AtomicStruct:
+    def fill_basis(self, region: Region, template: Atomistic, name: str = "crystal") -> Atomistic:
         """
         Fill the region by placing the template at each lattice site (including basis offsets).
         """
         positions = self.lattice.gen_site(region)
         return self._place_template_at_positions(positions, template, name)
 
-    def fill_lattice(self, region: Region, template: AtomicStruct, name: str = "crystal_cell") -> AtomicStruct:
+    def fill_lattice(self, region: Region, template: Atomistic, name: str = "crystal_cell") -> Atomistic:
         """
         Fill the region by placing the entire template at each unit cell origin (without basis offsets).
         """
@@ -173,7 +173,7 @@ def bulk(symbol: str, crystalstructure: str, a: Optional[float] = None, c: Optio
     if region is None:
         return builder
 
-    template = AtomicStruct(symbol)
+    template = Atomistic(symbol)
     template.def_atom(name=symbol, element=symbol, xyz=[0.0, 0.0, 0.0])
     return builder.fill_basis(region, template)
 
@@ -304,11 +304,11 @@ class RandomWalkBuilder(StructBuilder):
     
     def build(
         self, 
-        monomer_template: AtomicStruct,
+        monomer_template: Atomistic,
         n_monomers: int,
         start_position: Optional[np.ndarray] = None,
         name: str = "random_walk_polymer"
-    ) -> AtomicStruct:
+    ) -> Atomistic:
         """
         Build a polymer chain using self-avoiding random walk.
         
@@ -338,12 +338,12 @@ class SAWPolymerBuilder(RandomWalkBuilder):
     
     def build_connected_polymer(
         self,
-        monomer_template: AtomicStruct,
+        monomer_template: Atomistic,
         n_monomers: int,
         bond_length: float = 1.5,
         start_position: Optional[np.ndarray] = None,
         name: str = "saw_polymer"
-    ) -> AtomicStruct:
+    ) -> Atomistic:
         """
         Build a polymer with explicit bonds between consecutive monomers.
         

@@ -5,7 +5,7 @@ from pathlib import Path
 
 data_path = Path("./data/waterbox")
 
-class SPCE(mp.AtomicStruct):
+class SPCE(mp.Atomistic):
 
     def __init__(self, name="spce", molid=1):
         super().__init__(name=name)

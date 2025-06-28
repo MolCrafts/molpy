@@ -11,7 +11,7 @@ from copy import deepcopy
 import numpy as np
 from numpy.typing import ArrayLike
 
-from ..core.atomistic import AtomicStruct, Atom, Bond
+from ..core.atomistic import Atomistic, Atom, Bond
 from ..core.wrapper import Wrapper
 
 
@@ -44,7 +44,7 @@ class Monomer(Wrapper):
 
     def __init__(
         self,
-        struct: Union[AtomicStruct, Wrapper],
+        struct: Union[Atomistic, Wrapper],
         anchors: list[AnchorRule] = [],
         metadata: Optional[Dict[str, Any]] = None,
     ):
@@ -53,7 +53,7 @@ class Monomer(Wrapper):
         self.anchors = {anchor.name: anchor for anchor in anchors}
         self.metadata = metadata or {}
 
-    def clone(self) -> AtomicStruct:
+    def clone(self) -> Atomistic:
         """Create a deep copy of the underlying structure."""
         return deepcopy(self.unwrap())
 
@@ -62,7 +62,7 @@ class Monomer(Wrapper):
         position: Optional[ArrayLike] = None,
         rotation: Optional[Tuple[float, ArrayLike]] = None,
         name: Optional[str] = None,
-    ) -> AtomicStruct:
+    ) -> Atomistic:
         """
         Create a transformed copy of the monomer.
 
@@ -102,15 +102,15 @@ class PolymerBuilder:
     Supports context-aware anchor matching and modular monomer registration.
     """
 
-    def __init__(self, factory: Optional[Callable[..., AtomicStruct]] = None):
+    def __init__(self, factory: Optional[Callable[..., Atomistic]] = None):
         """
         Initialize the polymer builder.
 
         Args:
-            factory: Factory function to create empty structures (defaults to AtomicStruct)
+            factory: Factory function to create empty structures (defaults to Atomistic)
         """
         self.monomers: Dict[str, Monomer] = {}
-        self.factory = factory or AtomicStruct
+        self.factory = factory or Atomistic
 
     def register_monomer(
         self, name: str, template: Monomer
@@ -128,7 +128,7 @@ class PolymerBuilder:
         self.monomers[name] = template
         return self
 
-    def build_linear(self, sequence: List[str], **kwargs) -> AtomicStruct:
+    def build_linear(self, sequence: List[str], **kwargs) -> Atomistic:
         """
         Build a linear polymer from a sequence of monomer names.
 
@@ -137,7 +137,7 @@ class PolymerBuilder:
             **kwargs: Additional build parameters
 
         Returns:
-            AtomicStruct containing the built polymer
+            Atomistic containing the built polymer
         """
         if not sequence:
             return self.factory()
@@ -204,7 +204,7 @@ class PolymerBuilder:
 
     def build_branched(
         self, backbone_sequence: List[str], branches: Dict[int, List[str]], **kwargs
-    ) -> AtomicStruct:
+    ) -> Atomistic:
         """
         Build a branched polymer with side chains.
 
@@ -214,7 +214,7 @@ class PolymerBuilder:
             **kwargs: Additional build parameters
 
         Returns:
-            AtomicStruct containing the branched polymer
+            Atomistic containing the branched polymer
         """
         # Start with linear backbone
         polymer = self.build_linear(backbone_sequence, **kwargs)

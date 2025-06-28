@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 import xarray as xr
-from molpy.core.atomistic import AtomicStruct, Atom
+from molpy.core.atomistic import Atomistic, Atom
 from molpy.core.trajectory import Frame, Trajectory
 
 def make_frame_dataset(x=0, time=0.0, label=None):

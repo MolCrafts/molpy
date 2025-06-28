@@ -17,20 +17,16 @@ class ReactionTemplate:
 
 class ReactantWrapper(Wrapper):
     """
-    Wrapper for AtomicStruct with reaction-specific functionality.
+    Wrapper for Atomistic with reaction-specific functionality.
     Manages reaction sites, anchor points, and template extraction.
     """
     
     def __init__(
         self, 
-        struct: mp.AtomicStruct, 
+        struct: mp.Atomistic, 
         **kwargs
     ):
         super().__init__(struct, **kwargs)
-    
-    def get_topology(self):
-        """Get topology graph from the wrapped structure."""
-        return self._wrapped.get_topology()
     
     def __call__(self, **kwargs):
         return self._wrapped(**kwargs)
@@ -51,9 +47,10 @@ class ReactantWrapper(Wrapper):
         end = template.init_atom
         main_chain, branches = get_main_chain_and_branches(topology, start, end)
         template_atoms = set(main_chain + branches)
+        print(template_atoms)
         
         # Extract substructure
-        extracted_struct = self._extract_substructure(template_atoms)
+        extracted_struct = self.get_substruct(template_atoms)
         
         # Create new template with adjusted reaction sites
         # old_to_new_mapping = {j: i for i, j in enumerate(sorted(template_atoms))}
@@ -63,34 +60,6 @@ class ReactantWrapper(Wrapper):
         # )
         
         return ReactantWrapper(extracted_struct)
-    
-    def _extract_substructure(self, atom_indices: set) -> mp.AtomicStruct:
-        """Extract substructure containing only specified atoms."""
-        new_struct = mp.AtomicStruct(name=f"{self._wrapped.get('name', 'molecule')}_template")
-        
-        # Map old atom to new atom
-        atom_map = {}
-        
-        # Add atoms
-        for old_idx in atom_indices:
-            atom = self._wrapped.atoms[old_idx]
-            new_atom = atom.copy()
-            new_struct.atoms.add(new_atom)
-            atom_map[atom] = new_atom
-        
-        # Add bonds between extracted atoms
-        for bond in self._wrapped.bonds:
-            atom1 = bond.itom
-            atom2 = bond.jtom
-            if atom1 in atom_map and atom2 in atom_map:
-                new_bond = mp.Bond(
-                    atom_map[atom1],
-                    atom_map[atom2],
-                    **{k: v for k, v in bond.items()}
-                )
-                new_struct.bonds.add(new_bond)
-        
-        return new_struct
 
 
 def get_main_chain_and_branches(g: mp.Topology, start: int, end: int):
@@ -168,7 +137,7 @@ class ReacterBuilder:
         self.workdir.mkdir(parents=True, exist_ok=True)
 
 
-    def export_lammps_template(self, struct: mp.AtomicStruct, name: str) -> Path:
+    def export_lammps_template(self, struct: mp.Atomistic, name: str) -> Path:
         """
         Export structure as LAMMPS molecule template using built-in writer.
         

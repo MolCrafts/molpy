@@ -1,7 +1,6 @@
 from pathlib import Path
 from molpy import Element
 from .base import DataReader
-from molpy.core.frame import _dict_to_dataset
 import molpy as mp
 
 class AcReader(DataReader):
@@ -32,11 +31,11 @@ class AcReader(DataReader):
         if self.atoms:
             self.assign_atomic_numbers(self.atoms)
             keys = self.atoms[0].keys()
-            frame["atoms"] = _dict_to_dataset({k: [d[k] for d in self.atoms] for k in keys})
+            frame["atoms"] = {k: [d[k] for d in self.atoms] for k in keys}
         
         if self.bonds:
             keys = self.bonds[0].keys()
-            frame["bonds"] = _dict_to_dataset({k: [d[k] for d in self.bonds] for k in keys})
+            frame["bonds"] = {k: [d[k] for d in self.bonds] for k in keys}
 
         return frame
 

@@ -69,9 +69,9 @@ class SpatialWrapper(Wrapper):
     @property
     def xyz(self) -> np.ndarray:
         """Get the xyz coordinates as a numpy array."""
-        # Handle AtomicStruct specifically
+        # Handle Atomistic specifically
         if hasattr(self._wrapped, 'atoms') and hasattr(self._wrapped, '__getitem__'):
-            # This is likely an AtomicStruct
+            # This is likely an Atomistic
             try:
                 coords = self._wrapped["atoms", "xyz"]
                 # Filter out None values and convert to numpy array
@@ -100,9 +100,9 @@ class SpatialWrapper(Wrapper):
     @xyz.setter
     def xyz(self, value: ArrayLike) -> None:
         """Set the xyz coordinates from an array-like object."""
-        # Handle AtomicStruct specifically
+        # Handle Atomistic specifically
         if hasattr(self._wrapped, 'atoms') and hasattr(self._wrapped, '__getitem__'):
-            # This is likely an AtomicStruct
+            # This is likely an Atomistic
             value = np.asarray(value, dtype=float)
             
             # Check if we have the right number of atoms

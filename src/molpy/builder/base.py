@@ -2,7 +2,7 @@ import numpy as np
 from itertools import product
 from typing import Sequence, Iterable, Protocol, runtime_checkable, Optional, Union
 from abc import ABC, abstractmethod
-from molpy.core.atomistic import AtomicStruct
+from molpy.core.atomistic import Atomistic
 
 class BaseSiteProvider(Protocol):
     """
@@ -43,9 +43,9 @@ class StructBuilder(BaseBuilder):
     def _place_template_at_positions(
         self, 
         positions: np.ndarray, 
-        template: AtomicStruct, 
+        template: Atomistic, 
         name: str = "structure"
-    ) -> AtomicStruct:
+    ) -> Atomistic:
         """
         Helper method to place template at given positions.
         
@@ -58,7 +58,7 @@ class StructBuilder(BaseBuilder):
             Combined structure with template placed at all positions
         """
         if len(positions) == 0:
-            return AtomicStruct(name)
+            return Atomistic(name)
             
         replicas = []
         for i, pos in enumerate(positions):
@@ -72,11 +72,11 @@ class StructBuilder(BaseBuilder):
             
             replicas.append(replica)
         
-        return AtomicStruct.concat(name, replicas)
+        return Atomistic.concat(name, replicas)
     
-    def _copy_structure(self, struct: AtomicStruct) -> AtomicStruct:
+    def _copy_structure(self, struct: Atomistic) -> Atomistic:
         """Create a deep copy of a structure."""
-        new_struct = AtomicStruct(struct.get("name", "copy"))
+        new_struct = Atomistic(struct.get("name", "copy"))
         
         # Copy atoms
         for atom in struct.atoms:

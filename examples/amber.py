@@ -6,12 +6,12 @@ from pathlib import Path
 data_path = Path("data/case1")
 
 # %%
-struct_h = mp.AtomicStruct.from_frame(mp.io.read_pdb(data_path / "H.pdb"), "H")
-struct_n = mp.AtomicStruct.from_frame(mp.io.read_pdb(data_path / "N.pdb"), "N")
-struct_m = mp.AtomicStruct.from_frame(mp.io.read_pdb(data_path / "M.pdb"), "M")
-struct_p = mp.AtomicStruct.from_frame(mp.io.read_pdb(data_path / "P.pdb"), "P")
-struct_t = mp.AtomicStruct.from_frame(mp.io.read_pdb(data_path / "T.pdb"), "T")
-struct_tfsi = mp.AtomicStruct.from_frame(
+struct_h = mp.Atomistic.from_frame(mp.io.read_pdb(data_path / "H.pdb"), "H")
+struct_n = mp.Atomistic.from_frame(mp.io.read_pdb(data_path / "N.pdb"), "N")
+struct_m = mp.Atomistic.from_frame(mp.io.read_pdb(data_path / "M.pdb"), "M")
+struct_p = mp.Atomistic.from_frame(mp.io.read_pdb(data_path / "P.pdb"), "P")
+struct_t = mp.Atomistic.from_frame(mp.io.read_pdb(data_path / "T.pdb"), "T")
+struct_tfsi = mp.Atomistic.from_frame(
     mp.io.read_pdb(data_path / "TFSI.pdb"), "TFSI"
 )
 struct_n["net_charge"] = 1

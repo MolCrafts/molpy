@@ -22,7 +22,7 @@ class AmberPrmtopReader:
 
         return list(map(convert_fn, " ".join(lines).split()))
 
-    def read(self, frame: mp.Frame) -> mp.ForceField:
+    def read(self, frame: mp.Frame):
 
         with open(self.file, "r") as f:
 
@@ -137,7 +137,7 @@ class AmberPrmtopReader:
         # def forcefield
         atoms["id"] = np.arange(meta["n_atoms"], dtype=int) + 1
         atoms["q"] = np.array(atoms["q"]) / 18.2223
-        frame.forcefield = ff = mp.ForceField()
+        ff = mp.ForceField()
         ff.units = "real"
         atomstyle = ff.def_atomstyle("full")
         atomtype_map = {}  # atomtype id : atomtype
@@ -166,8 +166,8 @@ class AmberPrmtopReader:
                     parms=[f, r_min],
                 )  # if multiply by 2
             bonds["type_id"].append(bond_type)
-            bonds["i"].append(i)
-            bonds["j"].append(j)
+            bonds["i"].append(i-1)
+            bonds["j"].append(j-1)
             bonds["type"].append(bond_name)
         bonds["id"] = np.arange(meta["n_bonds"], dtype=int) + 1
 
@@ -193,9 +193,9 @@ class AmberPrmtopReader:
                 )
 
             angles["type_id"].append(angle_type)
-            angles["i"].append(i)
-            angles["j"].append(j)
-            angles["k"].append(k)
+            angles["i"].append(i-1)
+            angles["j"].append(j-1)
+            angles["k"].append(k-1)
             angles["type"].append(angle_name)
 
         angles["id"] = np.arange(meta["n_angles"], dtype=int) + 1
@@ -233,10 +233,10 @@ class AmberPrmtopReader:
                     parms=[f, periodicity, int(phase), 0.5],
                 )
             dihedrals["type_id"].append(dihe_type)
-            dihedrals["i"].append(i)
-            dihedrals["j"].append(j)
-            dihedrals["k"].append(k)
-            dihedrals["l"].append(l)
+            dihedrals["i"].append(i-1)
+            dihedrals["j"].append(j-1)
+            dihedrals["k"].append(k-1)
+            dihedrals["l"].append(l-1)
             dihedrals["type"].append(dihe_name)
         dihedrals["id"] = np.arange(meta["n_dihedrals"], dtype=int) + 1
 
@@ -262,13 +262,13 @@ class AmberPrmtopReader:
             )
 
         # store in frame
-        frame["props"] = meta
-        frame["atoms"] = _dict_to_dataset(atoms)
-        frame["bonds"] = _dict_to_dataset(bonds)
-        frame["angles"] = _dict_to_dataset(angles)
-        frame["dihedrals"] = _dict_to_dataset(dihedrals)
+        frame.metadata.update(meta)
+        frame["atoms"] = atoms
+        frame["bonds"] = bonds
+        frame["angles"] = angles
+        frame["dihedrals"] = dihedrals
 
-        return frame
+        return frame, ff
 
     def _read_pointers(self, lines):
         meta_fields = (
@@ -306,15 +306,17 @@ class AmberPrmtopReader:
             "NCOPY",
         )
         meta_data = dict(zip(meta_fields, map(int, " ".join(lines).split())))
-        meta_data["n_atoms"] = meta_data["NATOM"]
-        meta_data["n_bonds"] = meta_data["NBONH"] + meta_data["MBONA"]
-        meta_data["n_angles"] = meta_data["NTHETH"] + meta_data["MTHETA"]
-        meta_data["n_dihedrals"] = meta_data["NPHIH"] + meta_data["MPHIA"]
-        meta_data["n_atomtypes"] = meta_data["NATYP"]
-        meta_data["n_bondtypes"] = meta_data["NUMBND"]
-        meta_data["n_angletypes"] = meta_data["NUMANG"]
-        meta_data["n_dihedraltypes"] = meta_data["NPTRA"]
-        return meta_data
+        meta = {}
+        meta["n_atoms"] = meta_data["NATOM"]
+        meta["n_bonds"] = meta_data["NBONH"] + meta_data["MBONA"]
+        meta["n_angles"] = meta_data["NTHETH"] + meta_data["MTHETA"]
+        meta["n_dihedrals"] = meta_data["NPHIH"] + meta_data["MPHIA"]
+        meta["n_atomtypes"] = meta_data["NATYP"]
+        meta["n_bondtypes"] = meta_data["NUMBND"]
+        meta["n_angletypes"] = meta_data["NUMANG"]
+        meta["n_dihedraltypes"] = meta_data["NPTRA"]
+        meta.update(meta_data)
+        return meta
 
     def _read_atom_name(self, lines: list[str]):
 

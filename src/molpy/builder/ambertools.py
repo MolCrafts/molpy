@@ -283,10 +283,10 @@ class AmberToolsBuilder:
     def build_polymer(
         self,
         name: str,
-        monomers: list[mp.AtomicStruct],
+        monomers: list[mp.Atomistic],
         sequence: list[str],
         **kwargs,
-    ) -> mp.AtomicStruct:
+    ) -> mp.Atomistic:
 
         workdir = self.workdir / name
 
@@ -316,11 +316,11 @@ class AmberToolsBuilder:
 
         self.tleap_step.run(name)
         self.tleap_step.reset()
-        return mp.AtomicStruct.from_frame(
+        return mp.Atomistic.from_frame(
             mp.io.read_amber(workdir / f"{name}.prmtop", workdir / f"{name}.inpcrd")
         )
 
-    def build_salt(self, name: str, salt: mp.AtomicStruct, ion: str, **kwargs):
+    def build_salt(self, name: str, salt: mp.Atomistic, ion: str, **kwargs):
 
         workdir = self.workdir / name
 
@@ -335,9 +335,32 @@ class AmberToolsBuilder:
         self.parmchk_step.run(name)
         self.tleap_step.run(name, ["gaff", "water.tip3p"], seq=[name], ion=[ion])
 
-        return mp.AtomicStruct.from_frame(
+        return mp.Atomistic.from_frame(
             mp.io.read_amber(workdir / f"{name}.prmtop", workdir / f"{name}.inpcrd")
         )
+
+
+class AmberToolsTypifier:
+    """
+    Automated polymer builder using AmberTools workflow via molq.
+    """
+
+    def __init__(self, workdir: str | Path, conda_env: str = "AmberTools25"):
+        """
+        Initialize the AmberTools polymer builder.
+
+        Args:
+            steps: List of workflow steps. If None, uses default workflow.
+            ambertools_bin: Path to AmberTools binaries. If None, uses system PATH.
+            cleanup: Whether to clean up temporary files after completion.
+        """
+
+        self.workdir = Path(workdir)
+        self.antechamber_step = AntechamberStep(workdir, conda_env)
+        self.prepgen_step = PrepgenStep(workdir, conda_env)
+        self.parmchk_step = ParmchkStep(workdir, conda_env)
+        self.tleap_step = TLeapStep(workdir, conda_env)
+
 
     def typify(
         self,
@@ -381,18 +404,17 @@ class AmberToolsBuilder:
             self.tleap_step.quit()
             self.tleap_step.run(name)
             self.tleap_step.reset()
-            frame = mp.io.read_amber(
+            frame, ff = mp.io.read_amber(
                 workdir / f"{name}.prmtop", workdir / f"{name}.inpcrd"
             )
-
             atoms = []
-            atom_ids = frame["atoms"]["id"].values.tolist()
-            atom_names = frame["atoms"]["name"].values.tolist()
-            atom_types = frame["atoms"]["type"].values.tolist()
-            atom_charges = frame["atoms"]["q"].values.tolist()
-            atom_masses = frame["atoms"]["mass"].values.tolist()
-            atom_numbers = frame["atoms"]["atomic_number"].values.tolist()
-            xyz = frame["atoms"]["xyz"].values.tolist()
+            atom_ids = frame["atoms"]["id"].tolist()
+            atom_names = frame["atoms"]["name"].tolist()
+            atom_types = frame["atoms"]["type"].tolist()
+            atom_charges = frame["atoms"]["q"].tolist()
+            atom_masses = frame["atoms"]["mass"].tolist()
+            atom_numbers = frame["atoms"]["atomic_number"].tolist()
+            xyz = frame["atoms"]["xyz"].tolist()
             for i in range(len(frame["atoms"]["id"])):
                 atoms.append(mp.Atom(
                     id=atom_ids[i],
@@ -407,9 +429,9 @@ class AmberToolsBuilder:
 
             if "bonds" in frame:
                 bonds = []
-                bond_i = frame["bonds"]["i"].values.tolist()
-                bond_j = frame["bonds"]["j"].values.tolist()
-                bond_types = frame["bonds"]["type"].values.tolist()
+                bond_i = frame["bonds"]["i"].tolist()
+                bond_j = frame["bonds"]["j"].tolist()
+                bond_types = frame["bonds"]["type"].tolist()
                 for i in range(len(frame["bonds"]["id"])):
                     bonds.append(
                         mp.Bond(
@@ -422,10 +444,10 @@ class AmberToolsBuilder:
 
             if "angles" in frame:
                 angles = []
-                angle_i = frame["angles"]["i"].values.tolist()
-                angle_j = frame["angles"]["j"].values.tolist()
-                angle_k = frame["angles"]["k"].values.tolist()
-                angle_types = frame["angles"]["type"].values.tolist()
+                angle_i = frame["angles"]["i"].tolist()
+                angle_j = frame["angles"]["j"].tolist()
+                angle_k = frame["angles"]["k"].tolist()
+                angle_types = frame["angles"]["type"].tolist()
                 for i in range(len(frame["angles"]["id"])):
                     angles.append(
                         mp.Angle(
@@ -439,11 +461,11 @@ class AmberToolsBuilder:
 
             if "dihedrals" in frame:
                 dihedrals = []
-                dihedral_i = frame["dihedrals"]["i"].values.tolist()
-                dihedral_j = frame["dihedrals"]["j"].values.tolist()
-                dihedral_k = frame["dihedrals"]["k"].values.tolist()
-                dihedral_l = frame["dihedrals"]["l"].values.tolist()
-                dihedral_types = frame["dihedrals"]["type"].values.tolist()
+                dihedral_i = frame["dihedrals"]["i"].tolist()
+                dihedral_j = frame["dihedrals"]["j"].tolist()
+                dihedral_k = frame["dihedrals"]["k"].tolist()
+                dihedral_l = frame["dihedrals"]["l"].tolist()
+                dihedral_types = frame["dihedrals"]["type"].tolist()
                 for i in range(len(frame["dihedrals"]["id"])):
                     dihedrals.append(
                         mp.Dihedral(
@@ -510,11 +532,11 @@ class AmberToolsBuilder:
         self.tleap_step.run(name=system_name)
         self.tleap_step.reset()
 
-        frame = mp.io.read_amber(
+        _, ff = mp.io.read_amber(
             workdir / f"{system_name}.prmtop",
             workdir / f"{system_name}.inpcrd",
             frame=mp.Frame(),
         )
-        system.set_forcefield(frame.forcefield)
+        system.set_forcefield(ff)
 
         return system

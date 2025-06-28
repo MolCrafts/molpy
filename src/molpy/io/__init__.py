@@ -46,7 +46,7 @@ def read_pdb(file: Path | str, frame: mp.Frame | None = None) -> mp.Frame:
 
 def read_amber(
     prmtop: Path, inpcrd: Path | None = None, frame: mp.Frame | None = None
-) -> mp.Frame:
+) -> tuple[mp.Frame, mp.ForceField]:
     """Read AMBER force field prmtop and return a molpy ForceField object."""
     from .forcefield.amber import AmberPrmtopReader
     prmtop = Path(prmtop)
@@ -54,13 +54,13 @@ def read_amber(
     reader = AmberPrmtopReader(prmtop)
     if frame is None:
         frame = mp.Frame()
-    frame = reader.read(frame)
+    frame, ff = reader.read(frame)
     if inpcrd is not None:
         from .data.amber import AmberInpcrdReader
 
         reader = AmberInpcrdReader(inpcrd)
         frame = reader.read(frame)
-    return frame
+    return frame, ff
 
 def read_amber_ac(file: Path | str, frame: mp.Frame | None = None) -> mp.Frame:
 

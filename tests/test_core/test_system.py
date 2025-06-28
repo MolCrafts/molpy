@@ -5,7 +5,7 @@ Tests for System class.
 import pytest
 import numpy as np
 from molpy.core.system import System
-from molpy.core.atomistic import AtomicStruct, Atom
+from molpy.core.atomistic import Atomistic, Atom
 from molpy.core.forcefield import ForceField
 from molpy.core.box import Box
 from molpy.core.frame import Frame
@@ -60,7 +60,7 @@ class TestSystem:
         system = System()
         
         # Create test structure
-        struct = AtomicStruct(name="test_mol")
+        struct = Atomistic(name="test_mol")
         struct.def_atom(name="C", element="C", xyz=[0, 0, 0])
         
         system.add_struct(struct)
@@ -68,7 +68,7 @@ class TestSystem:
         assert system._struct[0] == struct
         
         # Add another structure
-        struct2 = AtomicStruct(name="test_mol2")
+        struct2 = Atomistic(name="test_mol2")
         struct2.def_atom(name="O", element="O", xyz=[1, 1, 1])
         
         system.add_struct(struct2)
@@ -95,12 +95,12 @@ class TestSystem:
         system = System()
         
         # Add structures
-        struct1 = AtomicStruct(name="water")
+        struct1 = Atomistic(name="water")
         struct1.def_atom(name="O", element="O", xyz=[0, 0, 0])
         struct1.def_atom(name="H1", element="H", xyz=[1, 0, 0])
         struct1.def_atom(name="H2", element="H", xyz=[0, 1, 0])
         
-        struct2 = AtomicStruct(name="methane")
+        struct2 = Atomistic(name="methane")
         struct2.def_atom(name="C", element="C", xyz=[0, 0, 0])
         
         system.add_struct(struct1)
@@ -140,11 +140,11 @@ class TestSystem:
         system = System()
         
         # Create test structures
-        struct1 = AtomicStruct(name="mol1")
+        struct1 = Atomistic(name="mol1")
         struct1.def_atom(name="C1", element="C", xyz=[0, 0, 0])
         struct1.def_atom(name="H1", element="H", xyz=[1, 0, 0])
         
-        struct2 = AtomicStruct(name="mol2")
+        struct2 = Atomistic(name="mol2")
         struct2.def_atom(name="C2", element="C", xyz=[2, 0, 0])
         struct2.def_atom(name="H2", element="H", xyz=[3, 0, 0])
         
@@ -175,10 +175,10 @@ class TestSystem:
         system = System()
         
         # Create nested structure
-        parent_struct = AtomicStruct(name="parent")
+        parent_struct = Atomistic(name="parent")
         parent_struct.def_atom(name="P1", element="P", xyz=[0, 0, 0])
         
-        child_struct = AtomicStruct(name="child")
+        child_struct = Atomistic(name="child")
         child_struct.def_atom(name="C1", element="C", xyz=[1, 1, 1])
         
         # Add child to parent
@@ -219,7 +219,7 @@ class TestSystemIntegration:
         system.def_box(box_matrix)
         
         # Create molecules
-        water = AtomicStruct(name="water")
+        water = Atomistic(name="water")
         o = water.def_atom(name="O", element="O", xyz=[0.0, 0.0, 0.0])
         h1 = water.def_atom(name="H1", element="H", xyz=[0.757, 0.586, 0.0])
         h2 = water.def_atom(name="H2", element="H", xyz=[-0.757, 0.586, 0.0])
@@ -254,14 +254,14 @@ class TestSystemIntegration:
         molecules = []
         
         # Water
-        water = AtomicStruct(name="water")
+        water = Atomistic(name="water")
         water.def_atom(name="O", element="O", xyz=[0, 0, 0])
         water.def_atom(name="H1", element="H", xyz=[1, 0, 0])
         water.def_atom(name="H2", element="H", xyz=[0, 1, 0])
         molecules.append(water)
         
         # Methane
-        methane = AtomicStruct(name="methane")
+        methane = Atomistic(name="methane")
         methane.def_atom(name="C", element="C", xyz=[5, 5, 5])
         for i in range(4):
             methane.def_atom(name=f"H{i+1}", element="H", xyz=[5+i*0.5, 5, 5])
@@ -306,12 +306,12 @@ class TestSystemFrameIntegration:
         system.def_box(box_matrix)
         
         # Create molecules
-        water = AtomicStruct(name="water")
+        water = Atomistic(name="water")
         water.def_atom(name="O", element="O", xyz=[0.0, 0.0, 0.0])
         water.def_atom(name="H1", element="H", xyz=[0.757, 0.586, 0.0])
         water.def_atom(name="H2", element="H", xyz=[-0.757, 0.586, 0.0])
         
-        methane = AtomicStruct(name="methane")
+        methane = Atomistic(name="methane")
         methane.def_atom(name="C", element="C", xyz=[5.0, 5.0, 5.0])
         methane.def_atom(name="H1", element="H", xyz=[5.5, 5.0, 5.0])
         methane.def_atom(name="H2", element="H", xyz=[5.0, 5.5, 5.0])
@@ -361,7 +361,7 @@ class TestSystemFrameIntegration:
         system.def_box(box_matrix)
         
         # Single molecule
-        mol = AtomicStruct(name="test_mol")
+        mol = Atomistic(name="test_mol")
         mol.def_atom(name="C1", element="C", xyz=[0, 0, 0])
         mol.def_atom(name="H1", element="H", xyz=[1, 0, 0])
         system.add_struct(mol)
@@ -391,11 +391,11 @@ class TestSystemFrameIntegration:
         system = System()
         
         # Create test structures with different properties
-        struct1 = AtomicStruct(name="mol1")
+        struct1 = Atomistic(name="mol1")
         struct1.def_atom(name="O1", element="O", xyz=[1.0, 2.0, 3.0])
         struct1.def_atom(name="H1", element="H", xyz=[1.5, 2.0, 3.0])
         
-        struct2 = AtomicStruct(name="mol2") 
+        struct2 = Atomistic(name="mol2") 
         struct2.def_atom(name="C1", element="C", xyz=[4.0, 5.0, 6.0])
         struct2.def_atom(name="N1", element="N", xyz=[4.5, 5.0, 6.0])
         

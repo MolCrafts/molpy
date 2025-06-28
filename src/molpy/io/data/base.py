@@ -57,8 +57,8 @@ class DataReader(FileBase, ABC):
         return self._iter_nonblank()
 
     def read_lines(self) -> List[str]:
-        """Return all non-blank, stripped lines at once."""
-        return list(self._iter_nonblank())
+        """Return all lines at once."""
+        return list(self.fh.readlines())
 
     # -- high-level parse ---------------------------------------------
     @abstractmethod

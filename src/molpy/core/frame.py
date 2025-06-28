@@ -1,9 +1,12 @@
-from typing import Any, overload
+from typing import Any, overload, TypeAlias
 from collections.abc import MutableMapping, Iterator
 import numpy as np
+from numpy.typing import ArrayLike
 
 from .box import Box
 
+
+BlockLike: TypeAlias = dict[str, np.ndarray | ArrayLike]
 
 class Block(MutableMapping[str, np.ndarray]):
     """
@@ -27,29 +30,43 @@ class Block(MutableMapping[str, np.ndarray]):
     __slots__ = ("_vars",)
 
     # ------------------------------------------------------------------
-    def __init__(self, vars_: dict[str, np.ndarray] | None = None) -> None:
+    def __init__(self, vars_: dict[str, np.ndarray | ArrayLike] | None = None) -> None:
         # NOTE: we force every value to ndarray once, so later reads are safe.
         self._vars: dict[str, np.ndarray] = {
             k: np.asarray(v) for k, v in (vars_ or {}).items()
         }
 
     # ------------------------------------------------------------------ core mapping API
-    def __getitem__(self, key: str) -> np.ndarray:                 # type: ignore[override]
-        return self._vars[key]
 
-    def __setitem__(self, key: str, value: Any) -> None:           # type: ignore[override]
+    @overload
+    def __getitem__(self, key: str) -> np.ndarray: ... 
+
+    @overload
+    def __getitem__(self, key: int | slice) -> dict[str, np.ndarray|int|float|str|Any]: ...  # type: ignore[override]
+
+    def __getitem__(self, key):  # type: ignore[override]
+        if isinstance(key, (int, slice)):
+            return {
+                k: (v[key] if v[key].ndim > 0 else v[key].item()) for k, v in self._vars.items()
+            }
+        elif isinstance(key, str):
+            return self._vars[key]
+        else:
+            raise KeyError(f"Invalid key type: {type(key)}. Expected str, int, or slice.")
+
+    def __setitem__(self, key: str, value: Any) -> None:  # type: ignore[override]
         self._vars[key] = np.asarray(value)
 
-    def __delitem__(self, key: str) -> None:                       # type: ignore[override]
+    def __delitem__(self, key: str) -> None:  # type: ignore[override]
         del self._vars[key]
 
-    def __iter__(self) -> Iterator[str]:                           # type: ignore[override]
+    def __iter__(self) -> Iterator[str]:  # type: ignore[override]
         return iter(self._vars)
 
-    def __len__(self) -> int:                                      # type: ignore[override]
+    def __len__(self) -> int:  # type: ignore[override]
         return len(self._vars)
 
-    def __contains__(self, key: str) -> bool:                       # type: ignore[override]
+    def __contains__(self, key: str) -> bool:  # type: ignore[override]
         """Check if a variable exists in this block."""
         return key in self._vars
 
@@ -96,12 +113,8 @@ class Frame:
         ├- box    (simulation box)
         ├- metadata   (dict[str, Any])  # metadata
     """
-    def __init__(
-        self,
-        *,
-        box: Box | None = None,
-        **props
-    ) -> None:
+
+    def __init__(self, *, box: Box | None = None, **props) -> None:
         # guarantee a root block even if none supplied
         self._blocks: dict[str, Block] = {}
         self.box: Box | None = box
@@ -110,7 +123,7 @@ class Frame:
     # ---------- main get/set --------------------------------------------
 
     @overload
-    def __getitem__(self, key: str) -> Block:                 ...  # str  → Block
+    def __getitem__(self, key: str) -> Block: ...  # str  → Block
 
     @overload
     def __getitem__(self, key: tuple[str, str]) -> np.ndarray: ...  # tuple→ ndarray
@@ -121,13 +134,15 @@ class Frame:
             return self._blocks[grp][var]
         return self._blocks[key]
 
-    def __setitem__(self, key: str | tuple[str, str], value):
+    def __setitem__(self, key: str | tuple[str, str], value: BlockLike | Block):
+
+        if not isinstance(value, Block):
+            value = Block(value)
+
         if isinstance(key, tuple):
             grp, var = key
             self._blocks.setdefault(grp, Block())[var] = value
         else:
-            if not isinstance(value, Block):
-                raise ValueError("Value must be a Block instance")
             self._blocks[key] = value
 
     def __delitem__(self, key: str | tuple[str, str]) -> None:
@@ -153,7 +168,7 @@ class Frame:
         return {
             "blocks": block_dict,
             "metadata": meta_dict,
-            "box": self.box.to_dict() if self.box else None
+            "box": self.box.to_dict() if self.box else None,
         }
 
     @classmethod

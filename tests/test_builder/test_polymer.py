@@ -4,7 +4,7 @@ Test suite for molpy.builder.polymer module.
 
 import pytest
 from molpy.builder.polymer import PolymerBuilder, MonomerTemplate, AnchorRule
-from molpy.core.atomistic import AtomicStruct, Atom
+from molpy.core.atomistic import Atomistic, Atom
 from molpy.core.wrapper import Wrapper
 
 
@@ -36,7 +36,7 @@ class TestAnchorRule:
 class TestMonomerTemplate:
     def test_monomer_template_creation(self):
         """Test MonomerTemplate creation."""
-        struct = AtomicStruct(name="test_monomer")
+        struct = Atomistic(name="test_monomer")
         struct.def_atom(name="C1", xyz=[0, 0, 0])
         
         anchors = {
@@ -51,19 +51,19 @@ class TestMonomerTemplate:
         
     def test_monomer_template_clone(self):
         """Test MonomerTemplate cloning."""
-        struct = AtomicStruct(name="test_monomer")
+        struct = Atomistic(name="test_monomer")
         struct.def_atom(name="C1", xyz=[0, 0, 0])
         
         template = MonomerTemplate(struct, {})
         cloned = template.clone()
         
-        assert isinstance(cloned, AtomicStruct)
+        assert isinstance(cloned, Atomistic)
         assert cloned is not struct  # Should be a copy
         assert len(cloned.atoms) == 1
         
     def test_monomer_template_transformed(self):
         """Test MonomerTemplate transformation."""
-        struct = AtomicStruct(name="test_monomer")
+        struct = Atomistic(name="test_monomer")
         struct.def_atom(name="C1", xyz=[0, 0, 0])
         
         template = MonomerTemplate(struct, {})
@@ -72,7 +72,7 @@ class TestMonomerTemplate:
             name="transformed_monomer"
         )
         
-        assert isinstance(transformed, AtomicStruct)
+        assert isinstance(transformed, Atomistic)
         assert transformed["name"] == "transformed_monomer"
         # Check that position was applied
         assert len(transformed.atoms) == 1
@@ -89,7 +89,7 @@ class TestPolymerBuilder:
         """Test monomer registration."""
         builder = PolymerBuilder()
         
-        struct = AtomicStruct(name="test_monomer")
+        struct = Atomistic(name="test_monomer")
         struct.def_atom(name="C1", xyz=[0, 0, 0])
         template = MonomerTemplate(struct, {})
         
@@ -102,7 +102,7 @@ class TestPolymerBuilder:
         builder = PolymerBuilder()
         polymer = builder.build_linear([])
         
-        assert isinstance(polymer, AtomicStruct)
+        assert isinstance(polymer, Atomistic)
         assert len(polymer.atoms) == 0
         
     def test_build_linear_with_monomers(self):
@@ -110,7 +110,7 @@ class TestPolymerBuilder:
         builder = PolymerBuilder()
         
         # Create a simple monomer
-        struct = AtomicStruct(name="test_monomer")
+        struct = Atomistic(name="test_monomer")
         struct.def_atom(name="C1", xyz=[0, 0, 0])
         template = MonomerTemplate(struct, {})
         
@@ -118,14 +118,14 @@ class TestPolymerBuilder:
         
         # Build linear polymer
         polymer = builder.build_linear(["A", "A"])
-        assert isinstance(polymer, AtomicStruct)
+        assert isinstance(polymer, Atomistic)
         assert "polymer_A-A" in polymer["name"]
         
     def test_validate_sequence(self):
         """Test sequence validation."""
         builder = PolymerBuilder()
         
-        struct = AtomicStruct(name="test_monomer")
+        struct = Atomistic(name="test_monomer")
         template = MonomerTemplate(struct, {})
         builder.register_monomer("A", template)
         
@@ -136,7 +136,7 @@ class TestPolymerBuilder:
         """Test getting available monomers."""
         builder = PolymerBuilder()
         
-        struct = AtomicStruct(name="test_monomer")
+        struct = Atomistic(name="test_monomer")
         template = MonomerTemplate(struct, {})
         builder.register_monomer("A", template)
         builder.register_monomer("B", template)
@@ -148,7 +148,7 @@ class TestPolymerBuilder:
         """Test getting anchor atoms."""
         builder = PolymerBuilder()
         
-        struct = AtomicStruct(name="test_monomer")
+        struct = Atomistic(name="test_monomer")
         atom = struct.def_atom(name="C1", xyz=[0, 0, 0])
         
         anchors = {
@@ -163,7 +163,7 @@ class TestPolymerBuilder:
         """Test building branched polymer."""
         builder = PolymerBuilder()
         
-        struct = AtomicStruct(name="test_monomer")
+        struct = Atomistic(name="test_monomer")
         struct.def_atom(name="C1", xyz=[0, 0, 0])
         template = MonomerTemplate(struct, {})
         
@@ -171,13 +171,13 @@ class TestPolymerBuilder:
         
         # Build branched polymer
         polymer = builder.build_branched(["A", "A"], {1: ["A"]})
-        assert isinstance(polymer, AtomicStruct)
+        assert isinstance(polymer, Atomistic)
         
     def test_repr(self):
         """Test PolymerBuilder representation."""
         builder = PolymerBuilder()
         
-        struct = AtomicStruct(name="test_monomer")
+        struct = Atomistic(name="test_monomer")
         template = MonomerTemplate(struct, {})
         builder.register_monomer("A", template)
         

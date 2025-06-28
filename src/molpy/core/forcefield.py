@@ -740,10 +740,10 @@ class ForceField:
     of interactions between atoms, bonds, angles, dihedrals, and impropers in a molecular system.
     """
 
-    def __init__(self, name: str = "", unit: str = "real"):
+    def __init__(self, name: str = "", units: str = "real"):
 
         self.name = name
-        self.unit = unit
+        self.units = units
         self.atomstyles: list[AtomStyle] = []
         self.bondstyles: list[BondStyle] = []
         self.pairstyles: list[PairStyle] = []
@@ -904,7 +904,7 @@ class ForceField:
         Returns:
             int: The number of pair types.
         """
-        return len(self.get_pairstypes())
+        return len(self.get_pairtypes())
 
     def def_atomstyle(self, name: str, parms=[], **data):
         atomstyle = self.get_atomstyle(name)
@@ -1226,7 +1226,7 @@ class ForceField:
         return {
             "__class__": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
             "name": self.name,
-            "unit": self.unit,
+            "units": self.units,
             "atomstyles": [style_to_dict(style) for style in self.atomstyles],
             "bondstyles": [style_to_dict(style) for style in self.bondstyles],
             "pairstyles": [style_to_dict(style) for style in self.pairstyles],
@@ -1298,7 +1298,7 @@ class ForceField:
         # Create new forcefield instance
         forcefield = cls(
             name=data.get("name", ""),
-            unit=data.get("unit", "real")
+            units=data.get("units", "real")
         )
         
         # Reconstruct all style lists

@@ -10,27 +10,12 @@ from .base import DataReader
 # ---------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------
-def _read_fortran_12(data_str: str) -> np.ndarray:
-    """Split a concatenated 12-column string → float array."""
-    vals = [float(data_str[i : i + 12]) for i in range(0, len(data_str), 12)]
-    return np.asarray(vals, dtype=float)
-
-
-def _eat_section(lines: list[str], n_values: int) -> Tuple[np.ndarray, int]:
+def _eat_section(lines: list[str]):
     """
     Consume enough lines to collect *n_values* 12-column floats.
-
-    Returns
-    -------
-    array, int
-        Parsed floats and number of lines consumed.
     """
-    floats: list[float] = []
-    consumed = 0
-    while len(floats) < n_values:
-        floats.extend(_read_fortran_12(lines[consumed]))
-        consumed += 1
-    return np.asarray(floats[:n_values]), consumed
+    data = [float(x) for line in lines for x in line.split()]
+    return np.asarray(data).reshape(-1, 3)
 
 
 # ---------------------------------------------------------------------
@@ -64,19 +49,18 @@ class AmberInpcrdReader(DataReader):
         time = float(header_tokens[1]) if len(header_tokens) > 1 else None
 
         # ---------- coordinates ----------------------------------------
-        coord_vals, line_used = _eat_section(raw_lines[2:], n_atoms * 3)
-        coords = coord_vals.reshape(n_atoms, 3)
-        cursor = 2 + line_used
+        
+        cursor = int(n_atoms/2)+2
+        coords = _eat_section(raw_lines[2:cursor])
 
         # ---------- velocities (optional) ------------------------------
         velocity_vals = None
         if cursor < len(raw_lines):
-            maybe_vels, line_used = _eat_section(raw_lines[cursor:], n_atoms * 3)
+            maybe_vels = _eat_section(raw_lines[cursor : cursor + int(n_atoms/2)])
             # Heuristic: if the number of lines consumed equals coord section,
             # we assume velocities exist.
-            if line_used * 6 >= n_atoms * 3:
-                velocity_vals = maybe_vels.reshape(n_atoms, 3)
-                cursor += line_used
+            velocity_vals = maybe_vels.reshape(n_atoms, 3)
+            cursor += int(n_atoms/2)
 
         # ---------- box (optional) -------------------------------------
         box = mp.Box()
@@ -87,7 +71,10 @@ class AmberInpcrdReader(DataReader):
 
         # ---------- populate frame -------------------------------------
         # If a matching atoms block exists, only replace xyz(/vel)
-        if "atoms" in frame and len(frame["atoms"]["xyz"]) == n_atoms:
+        if "atoms" in frame:
+            assert frame["atoms"].nrows == n_atoms, ValueError(
+                f"Frame atoms block has {frame['atoms'].nrows} rows, expected {n_atoms}"
+            )
             frame["atoms"]["xyz"] = coords
             if velocity_vals is not None:
                 frame["atoms"]["vel"] = velocity_vals

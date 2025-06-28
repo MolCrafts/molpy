@@ -19,19 +19,6 @@ class Entity(UserDict):
     along with cloning and comparison functionality.
     """
 
-    def __init__(self, *args, **kwargs):
-        """
-        Initialize Entity with support for mixins.
-        
-        This method ensures proper initialization of all mixins in the MRO
-        by calling super().__init__() to continue the initialization chain.
-        
-        Args:
-            *args: Positional arguments for UserDict
-            **kwargs: Keyword arguments for UserDict and mixins
-        """
-        super().__init__(*args, **kwargs)
-
     def __call__(self, **modify):
         """
         Return a copy of the entity with optional modifications.

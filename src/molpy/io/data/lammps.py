@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Union, Tuple
 from datetime import datetime
 import numpy as np
-import xarray as xr
 
 import molpy as mp
 from .base import DataReader, DataWriter
@@ -74,7 +73,7 @@ class LammpsDataReader(DataReader):
             self._parse_impropers(sections['Impropers'], frame, type_labels.get('improper', {}))
         
         # Store metadata
-        frame._meta.update({
+        frame.metadata.update({
             'format': 'lammps_data',
             'atom_style': self.atom_style,
             'counts': counts,
@@ -556,31 +555,31 @@ class LammpsDataWriter(DataWriter):
         
         # Type counts - handle both numeric and string types
         if 'atoms' in frame:
-            atom_types = frame['atoms']['type'].values
+            atom_types = frame['atoms']['type']
             unique_atom_types = np.unique(atom_types)
             n_atom_types = len(unique_atom_types)
             lines.append(f"{n_atom_types} atom types")
         
         if 'bonds' in frame and n_bonds > 0:
-            bond_types = frame['bonds']['type'].values
+            bond_types = frame['bonds']['type']
             unique_bond_types = np.unique(bond_types)
             n_bond_types = len(unique_bond_types)
             lines.append(f"{n_bond_types} bond types")
         
         if 'angles' in frame and n_angles > 0:
-            angle_types = frame['angles']['type'].values
+            angle_types = frame['angles']['type']
             unique_angle_types = np.unique(angle_types)
             n_angle_types = len(unique_angle_types)
             lines.append(f"{n_angle_types} angle types")
         
         if 'dihedrals' in frame and n_dihedrals > 0:
-            dihedral_types = frame['dihedrals']['type'].values
+            dihedral_types = frame['dihedrals']['type']
             unique_dihedral_types = np.unique(dihedral_types)
             n_dihedral_types = len(unique_dihedral_types)
             lines.append(f"{n_dihedral_types} dihedral types")
         
         if 'impropers' in frame and n_impropers > 0:
-            improper_types = frame['impropers']['type'].values
+            improper_types = frame['impropers']['type']
             unique_improper_types = np.unique(improper_types)
             n_improper_types = len(unique_improper_types)
             lines.append(f"{n_improper_types} improper types")
@@ -655,15 +654,15 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         atoms_data = frame['atoms']
-        atom_types = atoms_data['type'].values
+        atom_types = atoms_data['type']
         
         # Get type mapping
         type_to_id = self._create_type_mapping(atom_types)
         
         for atom_type_str in sorted(type_to_id.keys(), key=lambda x: type_to_id[x]):
             # Find first occurrence of this type to get mass
-            mask = atoms_data['type'].values == atom_type_str
-            mass = atoms_data['mass'].values[mask][0]
+            mask = atoms_data['type'] == atom_type_str
+            mass = atoms_data['mass'][mask][0]
             # Use mapped type ID for output
             lines.append(f"{type_to_id[atom_type_str]} {mass:.6f}")
         
@@ -699,7 +698,7 @@ class LammpsDataWriter(DataWriter):
     def _write_atom_type_labels(self, lines: List[str], frame: mp.Frame) -> None:
         """Write Atom Type Labels section if needed."""
         atoms_data = frame['atoms']
-        atom_types = atoms_data['type'].values
+        atom_types = atoms_data['type']
         
         if not self._needs_type_labels(atom_types):
             return  # Skip if all types are numeric
@@ -717,7 +716,7 @@ class LammpsDataWriter(DataWriter):
     def _write_bond_type_labels(self, lines: List[str], frame: mp.Frame) -> None:
         """Write Bond Type Labels section if needed."""
         bonds_data = frame['bonds']
-        bond_types = bonds_data['type'].values
+        bond_types = bonds_data['type']
         
         if not self._needs_type_labels(bond_types):
             return  # Skip if all types are numeric
@@ -735,7 +734,7 @@ class LammpsDataWriter(DataWriter):
     def _write_angle_type_labels(self, lines: List[str], frame: mp.Frame) -> None:
         """Write Angle Type Labels section if needed."""
         angles_data = frame['angles']
-        angle_types = angles_data['type'].values
+        angle_types = angles_data['type']
         
         if not self._needs_type_labels(angle_types):
             return  # Skip if all types are numeric
@@ -753,7 +752,7 @@ class LammpsDataWriter(DataWriter):
     def _write_dihedral_type_labels(self, lines: List[str], frame: mp.Frame) -> None:
         """Write Dihedral Type Labels section if needed."""
         dihedrals_data = frame['dihedrals']
-        dihedral_types = dihedrals_data['type'].values
+        dihedral_types = dihedrals_data['type']
         
         if not self._needs_type_labels(dihedral_types):
             return  # Skip if all types are numeric
@@ -771,7 +770,7 @@ class LammpsDataWriter(DataWriter):
     def _write_improper_type_labels(self, lines: List[str], frame: mp.Frame) -> None:
         """Write Improper Type Labels section if needed."""
         impropers_data = frame['impropers']
-        improper_types = impropers_data['type'].values
+        improper_types = impropers_data['type']
         
         if not self._needs_type_labels(improper_types):
             return  # Skip if all types are numeric
@@ -792,23 +791,23 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         atoms_data = frame['atoms']
-        atom_types = atoms_data['type'].values
+        atom_types = atoms_data['type']
         
         # Create type mapping
         type_to_id = self._create_type_mapping(atom_types)
         
         for i in range(len(atoms_data['id'])):
-            atom_id = int(atoms_data['id'].values[i])
-            atom_type_str = atoms_data['type'].values[i]
+            atom_id = int(atoms_data['id'][i])
+            atom_type_str = atoms_data['type'][i]
             atom_type = type_to_id[atom_type_str]  # Convert using mapping
-            x, y, z = atoms_data['xyz'].values[i]
+            x, y, z = atoms_data['xyz'][i]
             
             if self.atom_style == "full":
-                mol_id = int(atoms_data['mol'].values[i]) if 'mol' in atoms_data else 1
-                charge = float(atoms_data['q'].values[i]) if 'q' in atoms_data else 0.0
+                mol_id = int(atoms_data['mol'][i]) if 'mol' in atoms_data else 1
+                charge = float(atoms_data['q'][i]) if 'q' in atoms_data else 0.0
                 lines.append(f"{atom_id} {mol_id} {atom_type} {charge:.6f} {x:.6f} {y:.6f} {z:.6f}")
             elif self.atom_style == "charge":
-                charge = float(atoms_data['q'].values[i]) if 'q' in atoms_data else 0.0
+                charge = float(atoms_data['q'][i]) if 'q' in atoms_data else 0.0
                 lines.append(f"{atom_id} {atom_type} {charge:.6f} {x:.6f} {y:.6f} {z:.6f}")
             else:  # atomic
                 lines.append(f"{atom_id} {atom_type} {x:.6f} {y:.6f} {z:.6f}")
@@ -821,22 +820,22 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         bonds_data = frame['bonds']
-        bond_types = bonds_data['type'].values
+        bond_types = bonds_data['type']
         
         # Create bond type to id mapping
         type_to_id = self._create_type_mapping(bond_types)
         
         for i in range(len(bonds_data['id'])):
-            bond_id = int(bonds_data['id'].values[i])
-            bond_type_str = str(bonds_data['type'].values[i])
+            bond_id = int(bonds_data['id'][i])
+            bond_type_str = str(bonds_data['type'][i])
             bond_type = type_to_id[bond_type_str]
             # Support both 'atom1'/'atom2' and 'i'/'j' naming
             if 'atom1' in bonds_data:
-                atom1 = int(bonds_data['atom1'].values[i])
-                atom2 = int(bonds_data['atom2'].values[i])
+                atom1 = int(bonds_data['atom1'][i])
+                atom2 = int(bonds_data['atom2'][i])
             else:
-                atom1 = int(bonds_data['i'].values[i])
-                atom2 = int(bonds_data['j'].values[i])
+                atom1 = int(bonds_data['i'][i])
+                atom2 = int(bonds_data['j'][i])
             lines.append(f"{bond_id} {bond_type} {atom1} {atom2}")
         
         lines.append("")
@@ -847,24 +846,24 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         angles_data = frame['angles']
-        angle_types = angles_data['type'].values
+        angle_types = angles_data['type']
         
         # Create angle type to id mapping
         type_to_id = self._create_type_mapping(angle_types)
         
         for i in range(len(angles_data['id'])):
-            angle_id = int(angles_data['id'].values[i])
-            angle_type_str = str(angles_data['type'].values[i])
+            angle_id = int(angles_data['id'][i])
+            angle_type_str = str(angles_data['type'][i])
             angle_type = type_to_id[angle_type_str]
             # Support both 'atom1'/'atom2'/'atom3' and 'i'/'j'/'k' naming
             if 'atom1' in angles_data:
-                atom1 = int(angles_data['atom1'].values[i])
-                atom2 = int(angles_data['atom2'].values[i])
-                atom3 = int(angles_data['atom3'].values[i])
+                atom1 = int(angles_data['atom1'][i])
+                atom2 = int(angles_data['atom2'][i])
+                atom3 = int(angles_data['atom3'][i])
             else:
-                atom1 = int(angles_data['i'].values[i])
-                atom2 = int(angles_data['j'].values[i])
-                atom3 = int(angles_data['k'].values[i])
+                atom1 = int(angles_data['i'][i])
+                atom2 = int(angles_data['j'][i])
+                atom3 = int(angles_data['k'][i])
             lines.append(f"{angle_id} {angle_type} {atom1} {atom2} {atom3}")
         
         lines.append("")
@@ -875,26 +874,26 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         dihedrals_data = frame['dihedrals']
-        dihedral_types = dihedrals_data['type'].values
+        dihedral_types = dihedrals_data['type']
         
         # Create dihedral type to id mapping
         type_to_id = self._create_type_mapping(dihedral_types)
         
         for i in range(len(dihedrals_data['id'])):
-            dihedral_id = int(dihedrals_data['id'].values[i])
-            dihedral_type_str = str(dihedrals_data['type'].values[i])
+            dihedral_id = int(dihedrals_data['id'][i])
+            dihedral_type_str = str(dihedrals_data['type'][i])
             dihedral_type = type_to_id[dihedral_type_str]
             # Support both 'atom1'/'atom2'/'atom3'/'atom4' and 'i'/'j'/'k'/'l' naming
             if 'atom1' in dihedrals_data:
-                atom1 = int(dihedrals_data['atom1'].values[i])
-                atom2 = int(dihedrals_data['atom2'].values[i])
-                atom3 = int(dihedrals_data['atom3'].values[i])
-                atom4 = int(dihedrals_data['atom4'].values[i])
+                atom1 = int(dihedrals_data['atom1'][i])
+                atom2 = int(dihedrals_data['atom2'][i])
+                atom3 = int(dihedrals_data['atom3'][i])
+                atom4 = int(dihedrals_data['atom4'][i])
             else:
-                atom1 = int(dihedrals_data['i'].values[i])
-                atom2 = int(dihedrals_data['j'].values[i])
-                atom3 = int(dihedrals_data['k'].values[i])
-                atom4 = int(dihedrals_data['l'].values[i])
+                atom1 = int(dihedrals_data['i'][i])
+                atom2 = int(dihedrals_data['j'][i])
+                atom3 = int(dihedrals_data['k'][i])
+                atom4 = int(dihedrals_data['l'][i])
             lines.append(f"{dihedral_id} {dihedral_type} {atom1} {atom2} {atom3} {atom4}")
         
         lines.append("")
@@ -905,19 +904,19 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         impropers_data = frame['impropers']
-        improper_types = impropers_data['type'].values
+        improper_types = impropers_data['type']
         
         # Create improper type to id mapping
         type_to_id = self._create_type_mapping(improper_types)
         
         for i in range(len(impropers_data['id'])):
-            improper_id = int(impropers_data['id'].values[i])
-            improper_type_str = str(impropers_data['type'].values[i])
+            improper_id = int(impropers_data['id'][i])
+            improper_type_str = str(impropers_data['type'][i])
             improper_type = type_to_id[improper_type_str]
-            atom1 = int(impropers_data['atom1'].values[i])
-            atom2 = int(impropers_data['atom2'].values[i])
-            atom3 = int(impropers_data['atom3'].values[i])
-            atom4 = int(impropers_data['atom4'].values[i])
+            atom1 = int(impropers_data['atom1'][i])
+            atom2 = int(impropers_data['atom2'][i])
+            atom3 = int(impropers_data['atom3'][i])
+            atom4 = int(impropers_data['atom4'][i])
             lines.append(f"{improper_id} {improper_type} {atom1} {atom2} {atom3} {atom4}")
         
         lines.append("")
@@ -963,7 +962,7 @@ class LammpsMoleculeReader(DataReader):
             self._parse_impropers(sections['Impropers'], frame)
         
         # Store metadata
-        frame._meta.update({
+        frame.metadata.update({
             'format': 'lammps_molecule',
             'counts': counts,
             'source_file': str(self._path)
@@ -1303,7 +1302,7 @@ class LammpsMoleculeWriter(DataWriter):
         # Header comment
         lines.append(f"# LAMMPS molecule template written by molpy on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append("")
-        
+        print(frame)
         # Count lines
         n_atoms = len(frame['atoms']['id']) if 'atoms' in frame else 0
         n_bonds = len(frame['bonds']['id']) if 'bonds' in frame else 0
@@ -1362,8 +1361,8 @@ class LammpsMoleculeWriter(DataWriter):
         atoms_data = frame['atoms']
         
         for i in range(len(atoms_data['id'])):
-            atom_id = int(atoms_data['id'].values[i])
-            x, y, z = atoms_data['xyz'].values[i]
+            atom_id = int(atoms_data['id'][i])
+            x, y, z = atoms_data['xyz'][i]
             lines.append(f"{atom_id} {x:.6f} {y:.6f} {z:.6f}")
         
         lines.append("")
@@ -1374,8 +1373,8 @@ class LammpsMoleculeWriter(DataWriter):
         lines.append("")
         
         atoms_data = frame['atoms']
-        atom_ids = atoms_data['id'].values.tolist()
-        atom_types = atoms_data['type'].values.tolist()
+        atom_ids = atoms_data['id'].tolist()
+        atom_types = atoms_data['type'].tolist()
         for i in range(len(atoms_data['id'])):
             atom_id = atom_ids[i]
             atom_type = atom_types[i]
@@ -1391,8 +1390,8 @@ class LammpsMoleculeWriter(DataWriter):
         atoms_data = frame['atoms']
         
         for i in range(len(atoms_data['id'])):
-            atom_id = int(atoms_data['id'].values[i])
-            charge = float(atoms_data['q'].values[i])
+            atom_id = int(atoms_data['id'][i])
+            charge = float(atoms_data['q'][i])
             lines.append(f"{atom_id} {charge:.6f}")
         
         lines.append("")
@@ -1405,10 +1404,10 @@ class LammpsMoleculeWriter(DataWriter):
         bonds_data = frame['bonds']
     
         for i in range(len(bonds_data['id'])):
-            bond_id = int(bonds_data['id'].values[i])
-            bond_type = str(bonds_data['type'].values[i])
-            atom1 = int(bonds_data['i'].values[i]) + 1
-            atom2 = int(bonds_data['j'].values[i]) + 1
+            bond_id = int(bonds_data['id'][i])
+            bond_type = str(bonds_data['type'][i])
+            atom1 = int(bonds_data['i'][i]) + 1
+            atom2 = int(bonds_data['j'][i]) + 1
             lines.append(f"{bond_id} {bond_type} {atom1} {atom2}")
         
         lines.append("")
@@ -1421,11 +1420,11 @@ class LammpsMoleculeWriter(DataWriter):
         angles_data = frame['angles']
 
         for i in range(len(angles_data['id'])):
-            angle_id = int(angles_data['id'].values[i])
-            angle_type = str(angles_data['type'].values[i])
-            atom1 = int(angles_data['i'].values[i]) + 1
-            atom2 = int(angles_data['j'].values[i]) + 1
-            atom3 = int(angles_data['k'].values[i]) + 1
+            angle_id = int(angles_data['id'][i])
+            angle_type = str(angles_data['type'][i])
+            atom1 = int(angles_data['i'][i]) + 1
+            atom2 = int(angles_data['j'][i]) + 1
+            atom3 = int(angles_data['k'][i]) + 1
             lines.append(f"{angle_id} {angle_type} {atom1} {atom2} {atom3}")
         
         lines.append("")
@@ -1438,12 +1437,12 @@ class LammpsMoleculeWriter(DataWriter):
         dihedrals_data = frame['dihedrals']
         
         for i in range(len(dihedrals_data['id'])):
-            dihedral_id = int(dihedrals_data['id'].values[i])
-            dihedral_type = str(dihedrals_data['type'].values[i]) 
-            atom1 = int(dihedrals_data['i'].values[i]) + 1
-            atom2 = int(dihedrals_data['j'].values[i]) + 1
-            atom3 = int(dihedrals_data['k'].values[i]) + 1
-            atom4 = int(dihedrals_data['l'].values[i]) + 1
+            dihedral_id = int(dihedrals_data['id'][i])
+            dihedral_type = str(dihedrals_data['type'][i]) 
+            atom1 = int(dihedrals_data['i'][i]) + 1
+            atom2 = int(dihedrals_data['j'][i]) + 1
+            atom3 = int(dihedrals_data['k'][i]) + 1
+            atom4 = int(dihedrals_data['l'][i]) + 1
             lines.append(f"{dihedral_id} {dihedral_type} {atom1} {atom2} {atom3} {atom4}")
         
         lines.append("")
@@ -1456,12 +1455,12 @@ class LammpsMoleculeWriter(DataWriter):
         impropers_data = frame['impropers']
         
         for i in range(len(impropers_data['id'])):
-            improper_id = int(impropers_data['id'].values[i])
-            improper_type = impropers_data['type'].values[i]
-            atom1 = int(impropers_data['i'].values[i]) + 1
-            atom2 = int(impropers_data['j'].values[i]) + 1
-            atom3 = int(impropers_data['k'].values[i]) + 1
-            atom4 = int(impropers_data['l'].values[i]) + 1
+            improper_id = int(impropers_data['id'][i])
+            improper_type = impropers_data['type'][i]
+            atom1 = int(impropers_data['i'][i]) + 1
+            atom2 = int(impropers_data['j'][i]) + 1
+            atom3 = int(impropers_data['k'][i]) + 1
+            atom4 = int(impropers_data['l'][i]) + 1
             lines.append(f"{improper_id} {improper_type} {atom1} {atom2} {atom3} {atom4}")
         
         lines.append("")

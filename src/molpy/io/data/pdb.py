@@ -88,7 +88,7 @@ class PDBReader(DataReader):
         xyz = np.array([float(line[30:38]), float(line[38:46]), float(line[46:54])])
         occ_str = line[54:60].strip()
         occ = float(occ_str) if occ_str else 1.0
-        bfac = float(line[60:66] or 0.0)
+        bfac = float(line[60:66].strip() or 0.0)
         elem = (line[76:78] or "").strip().upper()
 
         if not elem:
@@ -202,10 +202,8 @@ class PDBWriter(DataWriter):
         i_code = atom_data.get("iCode", " ")
         
         # Coordinates
-        x = atom_data.get("x", 0.0)
-        y = atom_data.get("y", 0.0) 
-        z = atom_data.get("z", 0.0)
-        
+        x, y, z = atom_data["xyz"]
+
         # Optional fields
         occupancy = atom_data.get("occupancy", 1.0)
         temp_factor = atom_data.get("tempFactor", 0.0)
@@ -262,10 +260,10 @@ class PDBWriter(DataWriter):
         line += f"{z:>8.3f}"
         
         # Columns 55-60: Occupancy, right-justified, 6.2 format
-        line += f"{occupancy:>6.2f}"
+        line += f"{float(occupancy):>6.2f}"
         
         # Columns 61-66: Temperature factor, right-justified, 6.2 format
-        line += f"{temp_factor:>6.2f}"
+        line += f"{float(temp_factor):>6.2f}"
         
         # Columns 67-76: Spaces (could contain segment identifier, but we'll use spaces)
         line += "          "
@@ -300,47 +298,6 @@ class PDBWriter(DataWriter):
         
         return f"CRYST1{a:>9.3f}{b:>9.3f}{c:>9.3f}{alpha:>7.2f}{beta:>7.2f}{gamma:>7.2f} P 1           1"
 
-    def _get_atom_data_at_index(self, atoms_dataset, index: int) -> dict:
-        """Extract atom data at given index from dataset."""
-        atom_data = {}
-        
-        # Find the main atom dimension (should be 'atoms_id' or similar)
-        main_dim = None
-        for dim_name in atoms_dataset.dims:
-            dim_str = str(dim_name)
-            if dim_str.endswith('_id') or 'atom' in dim_str.lower():
-                main_dim = dim_name
-                break
-        
-        if main_dim is None:
-            # Fallback to first dimension
-            main_dim = list(atoms_dataset.dims.keys())[0] if atoms_dataset.dims else None
-        
-        if main_dim is None:
-            return atom_data
-            
-        # Extract data for this atom
-        for var_name in atoms_dataset.data_vars:
-            values = atoms_dataset[var_name]
-            
-            if var_name == "xyz":
-                # Handle coordinate array - should be (atoms_id, xyz_dim_1) or similar
-                if main_dim in values.dims:
-                    coord = values.isel({main_dim: index}).values
-                    if len(coord) >= 3:
-                        atom_data["x"] = float(coord[0])
-                        atom_data["y"] = float(coord[1]) 
-                        atom_data["z"] = float(coord[2])
-            else:
-                # Handle scalar values - use main dimension if present
-                if main_dim in values.dims:
-                    value = values.isel({main_dim: index}).values
-                    if hasattr(value, 'item'):
-                        value = value.item()
-                    atom_data[var_name] = value
-        
-        return atom_data
-
     def write(self, frame):
         """Write frame to PDB file."""
         
@@ -358,77 +315,31 @@ class PDBWriter(DataWriter):
             # Write atoms
             if "atoms" in frame:
                 atoms = frame["atoms"]
-                sizes = atoms.sizes
-                
-                # Find the main atom dimension
-                main_dim = None
-                for dim_name in sizes.keys():
-                    dim_str = str(dim_name)
-                    if dim_str.endswith('_id') or 'atom' in dim_str.lower():
-                        main_dim = dim_name
-                        break
-                        
-                if main_dim is None:
-                    main_dim = next(iter(sizes.keys())) if sizes else None
-                    
-                if main_dim:
-                    n_atoms = sizes[main_dim]
-                
+                n_atoms = atoms.nrows
+
                 for i in range(n_atoms):
-                    atom_data = self._get_atom_data_at_index(atoms, i)
-                    serial = i + 1  # PDB uses 1-based indexing
-                    
-                    # Use atom ID if available, otherwise use serial
+                    atom_data = atoms[i]
                     if "id" in atom_data:
-                        display_serial = atom_data["id"]
+                        display_serial = int(atom_data["id"])
                     else:
-                        display_serial = serial
-                    
+                        display_serial = i+1
                     line = self._format_atom_line(display_serial, atom_data)
-                    f.write(line + "\n")
+                    f.write(line)
+                f.write("\n")
             
             # Write bonds as CONECT records
             if "bonds" in frame:
                 bonds = frame["bonds"]
-                bond_dict = defaultdict(list)
-                
-                # Find the main bond dimension
-                bond_sizes = bonds.sizes
-                bond_main_dim = None
-                for dim_name in bond_sizes.keys():
-                    dim_str = str(dim_name)
-                    if dim_str.endswith('_id') or 'bond' in dim_str.lower():
-                        bond_main_dim = dim_name
-                        break
-                        
-                if bond_main_dim is None:
-                    bond_main_dim = next(iter(bond_sizes.keys())) if bond_sizes else None
-                
-                if bond_main_dim and "i" in bonds.data_vars and "j" in bonds.data_vars:
-                    n_bonds = bond_sizes[bond_main_dim]
-                    
-                    # Group bonds by first atom (convert back to 1-based)
-                    for i in range(n_bonds):
-                        atom_i = int(bonds["i"].isel({bond_main_dim: i}).values) + 1
-                        atom_j = int(bonds["j"].isel({bond_main_dim: i}).values) + 1
-                        
-                        bond_dict[atom_i].append(atom_j)
-                        bond_dict[atom_j].append(atom_i)
-                    
-                    # Write CONECT records
-                    for atom_i, connected_atoms in bond_dict.items():
-                        # Remove duplicates and limit to 4 connections per line
-                        connected_atoms = sorted(set(connected_atoms))
-                        
-                        if len(connected_atoms) > 4:
-                            # PDB format limitation - split into multiple CONECT records
-                            for chunk_start in range(0, len(connected_atoms), 4):
-                                chunk = connected_atoms[chunk_start:chunk_start + 4]
-                                conect_line = f"CONECT{atom_i:>5d}" + "".join(f"{j:>5d}" for j in chunk)
-                                f.write(conect_line + "\n")
-                        else:
-                            conect_line = f"CONECT{atom_i:>5d}" + "".join(f"{j:>5d}" for j in connected_atoms)
-                            f.write(conect_line + "\n")
-            
+                connect = defaultdict(list)
+                for i, j in zip(bonds["i"].tolist(), bonds["j"].tolist()):
+                    itom = atoms[i]
+                    jtom = atoms[j]
+                    i_id = itom.get("id", i + 1)
+                    j_id = jtom.get("id", j + 1)
+                    connect[i_id].append(j_id)
+                    # f.write(f"CONECT{str(i_id).rjust(5)}{str(j_id).rjust(5)}\n")
+                for i_id, j_ids in connect.items():
+                    for j_id in j_ids:
+                        f.write(f"CONECT{str(i_id).rjust(5)}{str(j_id).rjust(5)}\n")
             # Write END record
             f.write("END\n")
