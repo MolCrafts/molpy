@@ -35,7 +35,7 @@ class TestFrame:
 
     def test_setitem_creates_block(self):
         f = Frame()
-        f["foo", "bar"] = np.ones(4)
+        f["foo"] = {"bar": np.ones(4)}
         assert "foo" in list(f.blocks())
         assert np.array_equal(f["foo", "bar"], np.ones(4))
 
@@ -70,5 +70,5 @@ class TestFrame:
 
     def test_forbid_assigning_non_block(self):
         f = Frame()
-        with pytest.raises(ValueError, match="Value must be a Block instance"):
-            f["invalid"] = np.array([1, 2, 3])
+        with pytest.raises(ValueError):
+            f["invalid"] = np.array([1, 2, 3])  # type: ignore[assignment]

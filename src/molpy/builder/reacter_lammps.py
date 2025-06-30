@@ -47,17 +47,7 @@ class ReactantWrapper(Wrapper):
         end = template.init_atom
         main_chain, branches = get_main_chain_and_branches(topology, start, end)
         template_atoms = set(main_chain + branches)
-        print(template_atoms)
-        
-        # Extract substructure
         extracted_struct = self.get_substruct(template_atoms)
-        
-        # Create new template with adjusted reaction sites
-        # old_to_new_mapping = {j: i for i, j in enumerate(sorted(template_atoms))}
-        # new_template = ReactionTemplate(
-        #     init_atom=old_to_new_mapping[template.init_atom],
-        #     edge_atom=old_to_new_mapping[template.edge_atom]
-        # )
         
         return ReactantWrapper(extracted_struct)
 
@@ -156,8 +146,6 @@ class ReacterBuilder:
         frame = struct.to_frame()
         # Use molpy's built-in LAMMPS molecule writer
         mp.io.write_lammps_molecule(template_path, frame)
-        
-        logger.info(f"LAMMPS template written to {template_path}")
         return template_path
 
     def generate_mapping(self, name, pre_struct: ReactantWrapper, post_struct: ReactantWrapper, inits: list[int], edges: list[int]) -> dict:

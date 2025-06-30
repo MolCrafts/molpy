@@ -30,11 +30,14 @@ class Block(MutableMapping[str, np.ndarray]):
     __slots__ = ("_vars",)
 
     # ------------------------------------------------------------------
-    def __init__(self, vars_: dict[str, np.ndarray | ArrayLike] | None = None) -> None:
+    def __init__(self, vars_: dict[str, np.ndarray | ArrayLike] = {}) -> None:
         # NOTE: we force every value to ndarray once, so later reads are safe.
-        self._vars: dict[str, np.ndarray] = {
-            k: np.asarray(v) for k, v in (vars_ or {}).items()
-        }
+        try:
+            self._vars: dict[str, np.ndarray] = {
+                k: np.asarray(v) for k, v in vars_.items()
+            }
+        except Exception:
+            raise ValueError("Value must be a BlockLike, i.e. dict[str, np.ndarray | ArrayLike]")
 
     # ------------------------------------------------------------------ core mapping API
 
@@ -71,12 +74,12 @@ class Block(MutableMapping[str, np.ndarray]):
         return key in self._vars
 
     # ------------------------------------------------------------------ helpers
-    def to_dict(self) -> dict[str, list]:
+    def to_dict(self) -> dict[str, np.ndarray]:
         """Return a JSON-serialisable copy (arrays → Python lists)."""
-        return {k: v.tolist() for k, v in self._vars.items()}
+        return {k: v for k, v in self._vars.items()}
 
     @classmethod
-    def from_dict(cls, data: dict[str, list]) -> "Block":
+    def from_dict(cls, data: dict[str, np.ndarray]) -> "Block":
         """Inverse of :meth:`to_dict`."""
         return cls({k: np.asarray(v) for k, v in data.items()})
 
@@ -136,13 +139,12 @@ class Frame:
 
     def __setitem__(self, key: str | tuple[str, str], value: BlockLike | Block):
 
-        if not isinstance(value, Block):
-            value = Block(value)
-
         if isinstance(key, tuple):
             grp, var = key
             self._blocks.setdefault(grp, Block())[var] = value
         else:
+            if not isinstance(value, Block):
+                value = Block(value)
             self._blocks[key] = value
 
     def __delitem__(self, key: str | tuple[str, str]) -> None:

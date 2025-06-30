@@ -135,8 +135,8 @@ def write_lammps(workdir: Path, frame: mp.Frame) -> None:
     if not workdir.exists():
         workdir.mkdir(parents=True, exist_ok=True)
     file_path = workdir / workdir.stem
-    write_lammps_data(file_path.with_suffix(".data"), frame)
-    write_lammps_forcefield(file_path.with_suffix(".ff"), frame.forcefield)
+    write_lammps_data(file_path.with_suffix(".data"), frame[0])
+    write_lammps_forcefield(file_path.with_suffix(".ff"), frame[1])
 
 def read_top(file: Path | str, forcefield: mp.ForceField | None = None) -> mp.ForceField:
     """Read a GROMACS top file and return a molpy ForceField object."""

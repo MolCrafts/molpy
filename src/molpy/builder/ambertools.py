@@ -3,14 +3,14 @@ AmberTools-based polymer builder for molpy.
 Uses molq to orchestrate AmberTools workflows for automated polymer construction.
 """
 
-import tempfile
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Generator, Any
+from typing import Dict, List, Union, Generator, Any
 from abc import ABC, abstractmethod
 import molq
 
 import molpy as mp
+
 # from molpy.core.frame import _dict_to_dataset
 from molpy.core.protocol import Entities
 from .reacter_lammps import ReactantWrapper
@@ -48,21 +48,41 @@ class AntechamberStep(BuilderStep):
     @molq.local
     def run(
         self,
-        name,
+        monomer_name,
         monomer: Monomer | ReactantWrapper,
         net_charge: float = 0.0,
         forcefield: str = "gaff",
         charge_type="bcc",
         output_format: str = "ac",
     ) -> Generator[Dict, Any, Path]:
-        workdir = Path(self.workdir) / name
+        workdir = Path(self.workdir) / monomer_name
         workdir.mkdir(parents=True, exist_ok=True)
-        ac_name = f"{name}.ac"
+        ac_name = f"{monomer_name}.ac"
         ac_path = workdir / ac_name
 
-        pdb_name = f"{name}.pdb"
+        pdb_name = f"{monomer_name}.pdb"
         mp.io.write_pdb(workdir / pdb_name, monomer.to_frame())
 
+        if not ac_path.exists():
+
+            yield {
+                "job_name": "antechamber",
+                "cmd": f"antechamber -i {pdb_name} -fi pdb -o {ac_name} -fo {output_format} -an y -at {forcefield} -c {charge_type} -nc {net_charge}",
+                "conda_env": self.conda_env,
+                "cwd": workdir,
+                "block": True,
+            }
+
+        frame = mp.io.read_amber_ac(ac_path, frame=mp.Frame())
+        atom_names = frame["atoms"]["name"]
+        atom_types = frame["atoms"]["type"]
+        atom_charges = frame["atoms"]["q"]
+        for satom, typ, q, name in zip(monomer["atoms"], atom_types, atom_charges, atom_names):
+            satom["name"] = name.item()
+            satom["type"] = typ.item()
+            satom["q"] = q.item()
+
+            
         if isinstance(monomer, Monomer):
 
             def get_atom_name(atom_ref) -> str:
@@ -73,7 +93,7 @@ class AntechamberStep(BuilderStep):
                     else atom_ref
                 )
 
-            with open(workdir / f"{name}.mc", "w") as f:
+            with open(workdir / f"{monomer_name}.mc", "w") as f:
                 # Process head anchor
                 if "head" in monomer.anchors:
                     head_anchor = monomer.anchors["head"]
@@ -97,17 +117,6 @@ class AntechamberStep(BuilderStep):
                         for delete in tail_anchor.deletes:
                             f.write(f"OMIT_NAME {get_atom_name(delete)}\n")
 
-        if ac_path.exists():
-            return ac_path
-
-        yield {
-            "job_name": "antechamber",
-            "cmd": f"antechamber -i {pdb_name} -fi pdb -o {ac_name} -fo {output_format} -an y -at {forcefield} -c {charge_type} -nc {net_charge}",
-            "conda_env": self.conda_env,
-            "cwd": workdir,
-            "block": True,
-        }
-
         return ac_path
 
     typify = run
@@ -125,13 +134,14 @@ class PrepgenStep(BuilderStep):
         )
         if (workdir / f"{name}.mc").exists():
             cmd += f"-m {name}.mc"
-        yield {
-            "job_name": "prepgen",
-            "cmd": cmd,
-            "conda_env": conda_env,
-            "cwd": workdir,
-            "block": True,
-        }
+        if not (workdir / f"{name}.prepi").exists():
+            yield {
+                "job_name": "prepgen",
+                "cmd": cmd,
+                "conda_env": conda_env,
+                "cwd": workdir,
+                "block": True,
+            }
         return workdir / f"{name}.prepi"
 
 
@@ -140,13 +150,14 @@ class ParmchkStep(BuilderStep):
     @molq.local
     def run(self, name: str) -> Generator[Dict, Any, Path]:
         workdir = Path(self.workdir) / name
-        yield {
-            "job_name": "parmchk2",
-            "cmd": f"parmchk2 -i {name}.ac -f ac -o {name}.frcmod",
-            "conda_env": self.conda_env,
-            "cwd": workdir,
-            "block": True,
-        }
+        if not (workdir / f"{name}.frcmod").exists():
+            yield {
+                "job_name": "parmchk2",
+                "cmd": f"parmchk2 -i {name}.ac -f ac -o {name}.frcmod",
+                "conda_env": self.conda_env,
+                "cwd": workdir,
+                "block": True,
+            }
         return workdir / f"{name}.frcmod"
 
 
@@ -235,6 +246,7 @@ class TLeapStep(BuilderStep):
         name: str,
     ) -> Generator[Dict, Any, tuple[Path, Path]]:
 
+        (self.workdir/name).mkdir(parents=True, exist_ok=True)
         with open(self.workdir / name / "tleap.in", "w") as f:
             f.write(self.build())
 
@@ -283,8 +295,9 @@ class AmberToolsBuilder:
     def build_polymer(
         self,
         name: str,
-        monomers: list[mp.Atomistic],
+        monomers: list[Monomer],
         sequence: list[str],
+        forcefield: str = "gaff",
         **kwargs,
     ) -> mp.Atomistic:
 
@@ -307,8 +320,10 @@ class AmberToolsBuilder:
 
         self.tleap_step.source("leaprc.gaff")
         for s in set(sequence):
-            base_path = workdir / s / s
-            self.tleap_step.load_monomer(s, base_path)
+            base_path = self.workdir / s / s
+            self.tleap_step.load_prepi(base_path.with_suffix(".prepi"))
+            self.tleap_step.load_frcmod(base_path.with_suffix(".frcmod"))
+        self.tleap_step.define_polymer(sequence, var_name=name)
 
         self.tleap_step.save_amberparm(name)
         self.tleap_step.save_pdb(name)
@@ -317,26 +332,36 @@ class AmberToolsBuilder:
         self.tleap_step.run(name)
         self.tleap_step.reset()
         return mp.Atomistic.from_frame(
-            mp.io.read_amber(workdir / f"{name}.prmtop", workdir / f"{name}.inpcrd")
+            mp.io.read_amber(workdir / f"{name}.prmtop", workdir / f"{name}.inpcrd")[0]
         )
 
-    def build_salt(self, name: str, salt: mp.Atomistic, ion: str, **kwargs):
+    def build_salt(self, name: str, salt: mp.Atomistic | Monomer, ion: str, **kwargs):
 
         workdir = self.workdir / name
-
+        struct_name = salt.get("name", name)
         self.antechamber_step.run(
-            name,
+            struct_name,
             salt,
             net_charge=salt.get("net_charge", 0.0),
             forcefield="gaff",
             charge_type="bcc",
         )
-        self.prepgen_step.run(name)
-        self.parmchk_step.run(name)
-        self.tleap_step.run(name, ["gaff", "water.tip3p"], seq=[name], ion=[ion])
+        self.prepgen_step.run(struct_name)
+        self.parmchk_step.run(struct_name)
+        self.tleap_step.source("leaprc.gaff")
+        self.tleap_step.source("leaprc.water.tip3p")
+        self.tleap_step.load_prepi(self.workdir / struct_name / f"{struct_name}.prepi")
+        self.tleap_step.load_frcmod(self.workdir / struct_name / f"{struct_name}.frcmod")
+        self.tleap_step.combine(name, struct_name)
+        self.tleap_step.add_ions(name, ion, charge=0)
+        self.tleap_step.save_amberparm(name)
+        self.tleap_step.save_pdb(name)
+        self.tleap_step.quit()
+        self.tleap_step.run(name)
+
 
         return mp.Atomistic.from_frame(
-            mp.io.read_amber(workdir / f"{name}.prmtop", workdir / f"{name}.inpcrd")
+            mp.io.read_amber(workdir / f"{name}.prmtop", workdir / f"{name}.inpcrd")[0]
         )
 
 
@@ -360,7 +385,6 @@ class AmberToolsTypifier:
         self.prepgen_step = PrepgenStep(workdir, conda_env)
         self.parmchk_step = ParmchkStep(workdir, conda_env)
         self.tleap_step = TLeapStep(workdir, conda_env)
-
 
     def typify(
         self,
@@ -416,15 +440,17 @@ class AmberToolsTypifier:
             atom_numbers = frame["atoms"]["atomic_number"].tolist()
             xyz = frame["atoms"]["xyz"].tolist()
             for i in range(len(frame["atoms"]["id"])):
-                atoms.append(mp.Atom(
-                    id=atom_ids[i],
-                    name=atom_names[i],
-                    type=atom_types[i],
-                    element=mp.Element(atom_numbers[i]).symbol,
-                    q=atom_charges[i],
-                    mass=atom_masses[i],
-                    xyz=xyz[i]
-                ))
+                atoms.append(
+                    mp.Atom(
+                        id=atom_ids[i],
+                        name=atom_names[i],
+                        type=atom_types[i],
+                        element=mp.Element(atom_numbers[i]).symbol,
+                        q=atom_charges[i],
+                        mass=atom_masses[i],
+                        xyz=xyz[i],
+                    )
+                )
             struct["atoms"] = Entities(atoms)
 
             if "bonds" in frame:
@@ -432,12 +458,14 @@ class AmberToolsTypifier:
                 bond_i = frame["bonds"]["i"].tolist()
                 bond_j = frame["bonds"]["j"].tolist()
                 bond_types = frame["bonds"]["type"].tolist()
-                for i in range(len(frame["bonds"]["id"])):
+                bond_ids = frame["bonds"]["id"].tolist()
+                for i in range(len(bond_ids)):
                     bonds.append(
                         mp.Bond(
-                            atoms[bond_i[i]-1],
-                            atoms[bond_j[i]-1],
+                            atoms[bond_i[i]],
+                            atoms[bond_j[i]],
                             type=bond_types[i],
+                            id=bond_ids[i],
                         )
                     )
                 struct["bonds"] = Entities(bonds)
@@ -448,13 +476,15 @@ class AmberToolsTypifier:
                 angle_j = frame["angles"]["j"].tolist()
                 angle_k = frame["angles"]["k"].tolist()
                 angle_types = frame["angles"]["type"].tolist()
-                for i in range(len(frame["angles"]["id"])):
+                angle_ids = frame["angles"]["id"].tolist()
+                for i in range(len(angle_ids)):
                     angles.append(
                         mp.Angle(
-                            atoms[angle_i[i]-1],
-                            atoms[angle_j[i]-1],
-                            atoms[angle_k[i]-1],
+                            atoms[angle_i[i]],
+                            atoms[angle_j[i]],
+                            atoms[angle_k[i]],
                             type=angle_types[i],
+                            id=angle_ids[i],
                         )
                     )
                 struct["angles"] = Entities(angles)
@@ -466,14 +496,16 @@ class AmberToolsTypifier:
                 dihedral_k = frame["dihedrals"]["k"].tolist()
                 dihedral_l = frame["dihedrals"]["l"].tolist()
                 dihedral_types = frame["dihedrals"]["type"].tolist()
-                for i in range(len(frame["dihedrals"]["id"])):
+                dihedral_ids = frame["dihedrals"]["id"].tolist()
+                for i in range(len(dihedral_ids)):
                     dihedrals.append(
                         mp.Dihedral(
-                            atoms[dihedral_i[i]-1],
-                            atoms[dihedral_j[i]-1],
-                            atoms[dihedral_k[i]-1],
-                            atoms[dihedral_l[i]-1],
+                            atoms[dihedral_i[i]],
+                            atoms[dihedral_j[i]],
+                            atoms[dihedral_k[i]],
+                            atoms[dihedral_l[i]],
                             type=dihedral_types[i],
+                            id=dihedral_ids[i],
                         )
                     )
                 struct["dihedrals"] = Entities(dihedrals)

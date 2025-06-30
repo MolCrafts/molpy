@@ -69,77 +69,17 @@ class SpatialWrapper(Wrapper):
     @property
     def xyz(self) -> np.ndarray:
         """Get the xyz coordinates as a numpy array."""
-        # Handle Atomistic specifically
-        if hasattr(self._wrapped, 'atoms') and hasattr(self._wrapped, '__getitem__'):
-            # This is likely an Atomistic
-            try:
-                coords = self._wrapped["atoms", "xyz"]
-                # Filter out None values and convert to numpy array
-                valid_coords = [coord for coord in coords if coord is not None]
-                if not valid_coords:
-                    return np.array([]).reshape(0, 3)
-                return np.array(valid_coords, dtype=float)
-            except (KeyError, TypeError):
-                # Fallback: try to get xyz from individual atoms
-                if hasattr(self._wrapped, 'atoms') and len(self._wrapped.atoms) > 0:
-                    coords = []
-                    for atom in self._wrapped.atoms:
-                        if "xyz" in atom:
-                            coords.append(atom["xyz"])
-                        else:
-                            coords.append([0.0, 0.0, 0.0])
-                    return np.array(coords, dtype=float) if coords else np.array([]).reshape(0, 3)
-                return np.array([]).reshape(0, 3)
-        
-        # Handle single entity (Atom, etc.)
-        if hasattr(self._wrapped, 'xyz'):
-            return self._wrapped.xyz
-        else:
-            return np.array(self._wrapped.get("xyz", [0.0, 0.0, 0.0]), dtype=float)
+        atoms = self.atoms
+        return np.array([atom["xyz"] for atom in atoms], dtype=float)
     
     @xyz.setter
     def xyz(self, value: ArrayLike) -> None:
         """Set the xyz coordinates from an array-like object."""
-        # Handle Atomistic specifically
-        if hasattr(self._wrapped, 'atoms') and hasattr(self._wrapped, '__getitem__'):
-            # This is likely an Atomistic
-            value = np.asarray(value, dtype=float)
-            
-            # Check if we have the right number of atoms
-            n_atoms = len(self._wrapped.atoms)
-            if n_atoms == 0:
-                return  # Nothing to set
-                
-            # Handle different input shapes
-            if value.ndim == 1 and len(value) == 3:
-                # Single coordinate - broadcast to all atoms
-                coords = [value.tolist()] * n_atoms
-            elif value.ndim == 2 and value.shape[0] == n_atoms and value.shape[1] == 3:
-                # Coordinate array matching number of atoms
-                coords = value.tolist()
-            elif value.ndim == 2 and value.shape[0] == 1 and value.shape[1] == 3:
-                # Single coordinate in 2D array - broadcast to all atoms
-                coords = [value[0].tolist()] * n_atoms
-            else:
-                raise ValueError(f"xyz must be shape (3,) or ({n_atoms}, 3), got {value.shape}")
-            
-            try:
-                self._wrapped["atoms", "xyz"] = coords
-            except (KeyError, TypeError):
-                # Fallback: set individual atom coordinates
-                for i, atom in enumerate(self._wrapped.atoms):
-                    if i < len(coords):
-                        atom["xyz"] = coords[i]
-            return
-        
-        # Handle single entity (Atom, etc.)
-        if hasattr(self._wrapped, 'xyz') and hasattr(type(self._wrapped).xyz, 'setter'):
-            self._wrapped.xyz = value
-        else:
-            value = np.asarray(value, dtype=float)
-            if value.shape != (3,):
-                raise ValueError("xyz must be a 3D vector")
-            self._wrapped["xyz"] = value.tolist()
+        new_xyz = np.array(value, dtype=float)
+        if new_xyz.shape[0] != len(self.atoms):
+            raise ValueError("New xyz coordinates must match the number of atoms.")
+        for i, atom in enumerate(self.atoms):
+            atom["xyz"] = new_xyz[i]
 
     def distance_to(self, other) -> float:
         """

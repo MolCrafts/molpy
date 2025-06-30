@@ -537,8 +537,6 @@ class Atomistic(Wrapper):
         Returns:
             A Topology object representing the structure's topology.
         """
-        # Create a simple topology-like object for testing
-        from .topology import Topology
 
         topo = Topology()
         atoms = {atom: i for i, atom in enumerate(self.atoms)}
@@ -548,8 +546,7 @@ class Atomistic(Wrapper):
             for attr in attrs:
                 atom_attrs[attr] = [atom[attr] for atom in atoms]
         topo.add_atoms(len(atoms), **atom_attrs)
-        bonds = self["bonds"]
-        topo.add_bonds([(atoms[bond.itom], atoms[bond.jtom]) for bond in bonds])
+        topo.add_bonds([(atoms[bond.itom], atoms[bond.jtom]) for bond in self.bonds])
         return topo
 
     def gen_topo_items(
@@ -746,6 +743,7 @@ class Atomistic(Wrapper):
                 d["i"] = atom_map[bond.itom]
                 d["j"] = atom_map[bond.jtom]
                 bond_dicts.append(d)
+
             all_keys = set().union(*(d.keys() for d in bond_dicts))
             bonds_block = Block(
                 {k: np.asarray([d.get(k) for d in bond_dicts]) for k in all_keys}
@@ -821,9 +819,7 @@ class Atomistic(Wrapper):
         Returns:
             A new Atomistic instance with copied atoms, bonds, angles, and dihedrals
         """
-        old_prop = self._wrapped.to_dict()
-        old_prop.update(new_prop)
-        new_instance = self.__class__(**old_prop)
+        new_instance = self.__class__(**new_prop)
 
         atom_mapping = {}
         for old_atom in self.atoms:
@@ -883,7 +879,7 @@ class Atomistic(Wrapper):
 
         atoms = frame["atoms"]
         n_atoms = atoms.nrows
-
+        print(n_atoms)
         # Create atoms with all their properties
         for i in range(n_atoms):
             atom = Atom(**atoms[i])
@@ -933,7 +929,6 @@ class Atomistic(Wrapper):
                         **dihedral_props,
                     )
                 )
-
         return struct
 
     def gen_angles(self, topo=None):

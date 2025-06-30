@@ -82,12 +82,12 @@ class Packmol(Packer):
             )
             lines.append(f"end structure")
 
-        with open(".packmol.inp", "w") as f:
+        with open(self.workdir/".packmol.inp", "w") as f:
             f.write("\n".join(lines))
 
     def remove_input(self):
         for file in self.intermediate_files:
-            Path(file).unlink()
+            (self.workdir/file).unlink()
 
     @molq.local
     def pack(self, targets=None, max_steps: int = 1000, seed: int | None = None) -> Generator[Dict, Any, mp.Frame]:
@@ -102,162 +102,116 @@ class Packmol(Packer):
             "cleanup_temp_files": True,
             "block": True,
         }
-        optimized_frame = mp.io.read_pdb(Path(".optimized.pdb"))
-        # self.remove_input()
+        optimized_frame = mp.io.read_pdb(self.workdir/".optimized.pdb")
+        self.remove_input()
         
-        # Calculate total atoms for each target instance
+        # Count atoms per instance
         target_atoms_count = []
         for target in targets:
+            atoms_block = target.frame['atoms']
+            n_atoms = len(atoms_block.get('id', atoms_block.get('xyz', [])))
             for _ in range(target.number):
-                # Get the actual number of atoms from the atoms dataset
-                atoms_dataset = target.frame["atoms"]
-                # Find the atoms dimension (usually 'atoms_id')
-                atoms_dim = None
-                for dim_name in atoms_dataset.dims:
-                    if str(dim_name).endswith('_id') or 'atom' in str(dim_name).lower():
-                        atoms_dim = dim_name
-                        break
-                if atoms_dim is None:
-                    atoms_dim = list(atoms_dataset.dims.keys())[0]
-                
-                atoms_in_target = atoms_dataset.sizes[atoms_dim]
-                target_atoms_count.append(atoms_in_target)
-        
-        # Calculate cumulative atom offsets
+                target_atoms_count.append(n_atoms)
+
+        # Compute cumulative offsets
         atom_offsets = np.concatenate([[0], np.cumsum(target_atoms_count)])
-        
-        frames = []
-        current_instance = 0
-        bond_id_counter = 0
-        angle_id_counter = 0
-        dihedral_id_counter = 0
-        
-        for target in targets:
-            for i in range(target.number):
-                # Copy the entire frame for this instance
-                instance_frame = mp.Frame()
-                
-                # Calculate current atom offset
-                current_offset = atom_offsets[current_instance]
-                
-                # Process atoms
-                atoms = target.frame["atoms"].copy()
-                
-                # Add molid if not present
-                if "molid" not in atoms.data_vars:
-                    main_dim = None
-                    for dim_name in atoms.dims:
-                        if str(dim_name).endswith('_id') or 'atom' in str(dim_name).lower():
-                            main_dim = dim_name
-                            break
-                    if main_dim is None:
-                        main_dim = list(atoms.dims.keys())[0] if atoms.dims else 'atoms_id'
-                    atoms = atoms.assign(molid=(main_dim, np.full(atoms.sizes[main_dim], current_instance + 1)))
-                
-                # Update atom IDs with offset
-                if "id" in atoms.data_vars:
-                    # Always assign sequential IDs starting from current_offset + 1
-                    # regardless of the original ID values
-                    new_ids = np.arange(current_offset + 1, current_offset + len(atoms["id"]) + 1)
-                    atoms = atoms.assign(id=(atoms["id"].dims, new_ids))
-                if "molid" in atoms.data_vars:
-                    atoms = atoms.assign(molid=(atoms["molid"].dims, np.full(atoms.sizes[atoms["molid"].dims[0]], current_instance + 1)))
-                # Note: 'type' field contains string atom types (e.g., 'ca', 'c3') which should not be offset
-                # Only type_id fields need offsetting, but we don't handle that here since it's handled 
-                # in the bonds/angles/dihedrals sections below
-                
-                instance_frame["atoms"] = atoms
-                
-                # Process bonds if present
-                if "bonds" in target.frame:
-                    bonds = target.frame["bonds"].copy()
-                    if "id" in bonds.data_vars:
-                        new_bond_ids = np.arange(bond_id_counter + 1, bond_id_counter + len(bonds["id"]) + 1)
-                        bonds = bonds.assign(id=(bonds["id"].dims, new_bond_ids))
-                        bond_id_counter += len(bonds["id"])
-                    if "i" in bonds.data_vars:
-                        bonds = bonds.assign(i=(bonds["i"].dims, bonds["i"].values + current_offset))
-                    if "j" in bonds.data_vars:
-                        bonds = bonds.assign(j=(bonds["j"].dims, bonds["j"].values + current_offset))
-                    instance_frame["bonds"] = bonds
-                
-                # Process angles if present
-                if "angles" in target.frame:
-                    angles = target.frame["angles"].copy()
-                    if "id" in angles.data_vars:
-                        new_angle_ids = np.arange(angle_id_counter + 1, angle_id_counter + len(angles["id"]) + 1)
-                        angles = angles.assign(id=(angles["id"].dims, new_angle_ids))
-                        angle_id_counter += len(angles["id"])
-                    if "i" in angles.data_vars:
-                        angles = angles.assign(i=(angles["i"].dims, angles["i"].values + current_offset))
-                    if "j" in angles.data_vars:
-                        angles = angles.assign(j=(angles["j"].dims, angles["j"].values + current_offset))
-                    if "k" in angles.data_vars:
-                        angles = angles.assign(k=(angles["k"].dims, angles["k"].values + current_offset))
-                    instance_frame["angles"] = angles
-                
-                # Process dihedrals if present
-                if "dihedrals" in target.frame:
-                    dihedrals = target.frame["dihedrals"].copy()
-                    if "id" in dihedrals.data_vars:
-                        new_dihedral_ids = np.arange(dihedral_id_counter + 1, dihedral_id_counter + len(dihedrals["id"]) + 1)
-                        dihedrals = dihedrals.assign(id=(dihedrals["id"].dims, new_dihedral_ids))
-                        dihedral_id_counter += len(dihedrals["id"])
-                    if "i" in dihedrals.data_vars:
-                        dihedrals = dihedrals.assign(i=(dihedrals["i"].dims, dihedrals["i"].values + current_offset))
-                    if "j" in dihedrals.data_vars:
-                        dihedrals = dihedrals.assign(j=(dihedrals["j"].dims, dihedrals["j"].values + current_offset))
-                    if "k" in dihedrals.data_vars:
-                        dihedrals = dihedrals.assign(k=(dihedrals["k"].dims, dihedrals["k"].values + current_offset))
-                    if "l" in dihedrals.data_vars:
-                        dihedrals = dihedrals.assign(l=(dihedrals["l"].dims, dihedrals["l"].values + current_offset))
-                    instance_frame["dihedrals"] = dihedrals
-                
-                frames.append(instance_frame)
-                current_instance += 1
-            
-            # Note: We don't need to track n_atom_types anymore since atom 'type' fields 
-            # are now strings (like 'ca', 'c3') rather than integer IDs that need offsetting
-        
-        # Concatenate all frames using direct xarray operations
+
+        # Prepare lists for each block
         all_atoms = []
         all_bonds = []
         all_angles = []
         all_dihedrals = []
-        
-        for frame in frames:
-            all_atoms.append(frame["atoms"])
-            if "bonds" in frame:
-                all_bonds.append(frame["bonds"])
-            if "angles" in frame:
-                all_angles.append(frame["angles"])
-            if "dihedrals" in frame:
-                all_dihedrals.append(frame["dihedrals"])
-        
-        # Create final frame
+
+        current_instance = 0
+        bond_id_counter = 0
+        angle_id_counter = 0
+        dihedral_id_counter = 0
+
+        for target in targets:
+            for inst in range(target.number):
+                offset = atom_offsets[current_instance]
+                frame_dict = {}
+
+                # Process atoms block
+                atoms = target.frame['atoms'].copy()
+                n = len(atoms.get('id', atoms.get('xyz', [])))
+
+                atoms['mol'] = np.full(n, current_instance + 1, dtype=int)
+
+                # Reassign atom IDs sequentially
+                if 'id' in atoms:
+                    atoms['id'] = np.arange(offset + 1, offset + n + 1, dtype=int)
+
+                frame_dict['atoms'] = atoms
+
+                # Process bonds
+                if 'bonds' in target.frame:
+                    bonds = target.frame['bonds'].copy()
+                    m = len(bonds.get('id', bonds.get('i', [])))
+                    # IDs
+                    if 'id' in bonds:
+                        bonds['id'] = np.arange(bond_id_counter + 1, bond_id_counter + m + 1, dtype=int)
+                        bond_id_counter += m
+                    # Endpoints
+                    for end in ('i', 'j'):
+                        if end in bonds:
+                            bonds[end] = bonds[end] + offset
+                    frame_dict['bonds'] = bonds
+
+                # Process angles
+                if 'angles' in target.frame:
+                    angles = target.frame['angles'].copy()
+                    p = len(angles.get('id', angles.get('i', [])))
+                    if 'id' in angles:
+                        angles['id'] = np.arange(angle_id_counter + 1, angle_id_counter + p + 1, dtype=int)
+                        angle_id_counter += p
+                    for end in ('i', 'j', 'k'):
+                        if end in angles:
+                            angles[end] = angles[end] + offset
+                    frame_dict['angles'] = angles
+
+                # Process dihedrals
+                if 'dihedrals' in target.frame:
+                    dihedrals = target.frame['dihedrals'].copy()
+                    q = len(dihedrals.get('id', dihedrals.get('i', [])))
+                    if 'id' in dihedrals:
+                        dihedrals['id'] = np.arange(dihedral_id_counter + 1, dihedral_id_counter + q + 1, dtype=int)
+                        dihedral_id_counter += q
+                    for end in ('i', 'j', 'k', 'l'):
+                        if end in dihedrals:
+                            dihedrals[end] = dihedrals[end] + offset
+                    frame_dict['dihedrals'] = dihedrals
+
+                # Collect instance frame
+                all_atoms.append(frame_dict['atoms'])
+                if 'bonds' in frame_dict:
+                    all_bonds.append(frame_dict['bonds'])
+                if 'angles' in frame_dict:
+                    all_angles.append(frame_dict['angles'])
+                if 'dihedrals' in frame_dict:
+                    all_dihedrals.append(frame_dict['dihedrals'])
+
+                current_instance += 1
+
+        # Helper to concatenate dicts of arrays
+        def concat_blocks(blocks):
+            if not blocks:
+                return {}
+            keys = blocks[0].keys()
+            combined = {}
+            for key in keys:
+                combined[key] = np.concatenate([blk[key] for blk in blocks], axis=0)
+            return combined
+
+        # Build final frame
         final_frame = mp.Frame()
-        
-        # Concatenate atoms
-        if all_atoms:
-            combined_atoms = xr.concat(all_atoms, dim="atoms_id")
-            # Update coordinates from optimized positions
-            opt_coords = optimized_frame["atoms"]["xyz"]  # shape: (n_atoms, 3)
-            combined_atoms["xyz"] = opt_coords
-            final_frame["atoms"] = combined_atoms
-        
-        # Concatenate bonds
-        if all_bonds:
-            combined_bonds = xr.concat(all_bonds, dim="bonds_id")
-            final_frame["bonds"] = combined_bonds
-            
-        # Concatenate angles
-        if all_angles:
-            combined_angles = xr.concat(all_angles, dim="angles_id")
-            final_frame["angles"] = combined_angles
-            
-        # Concatenate dihedrals
-        if all_dihedrals:
-            combined_dihedrals = xr.concat(all_dihedrals, dim="dihedrals_id")
-            final_frame["dihedrals"] = combined_dihedrals
-        
+        final_frame['atoms'] = concat_blocks(all_atoms)
+        # Overwrite coordinates with optimized positions
+        if 'xyz' in optimized_frame['atoms']:
+            final_frame['atoms']['xyz'] = optimized_frame['atoms']['xyz']
+
+        final_frame['bonds'] = concat_blocks(all_bonds)
+        final_frame['angles'] = concat_blocks(all_angles)
+        final_frame['dihedrals'] = concat_blocks(all_dihedrals)
+
         return final_frame

@@ -2,8 +2,82 @@ import pytest
 import numpy as np
 import molpy as mp
 
+from molpy.core import Atom, Bond, Angle, Dihedral
 
-# --- 通用断言工具 ---
+class TestAtom:
+    def test_to_dict(self):
+        """Test Atom.to_dict method."""
+        from molpy.core.atomistic import Atom
+        
+        # Test basic atom (without explicit xyz)
+        atom = Atom(name="C", element="carbon")
+        d = atom.to_dict()
+        assert d["name"] == "C"
+        assert d["element"] == "carbon"
+        # xyz should not be in dict if not explicitly set
+        assert "xyz" not in d
+        
+        # Test atom with coordinates
+        atom_with_xyz = Atom(name="H", element="hydrogen", xyz=[1.0, 2.0, 3.0])
+        d2 = atom_with_xyz.to_dict()
+        assert d2["name"] == "H"
+        assert d2["element"] == "hydrogen"
+        assert d2["xyz"] == [1.0, 2.0, 3.0]
+
+
+class TestBond:
+    def test_to_dict(self):
+        """Test Bond.to_dict method."""
+        atom1 = Atom(name="C", id=0)
+        atom2 = Atom(name="H", id=1)
+        bond = Bond(atom1, atom2, bond_type="single", length=1.5)
+        
+        d = bond.to_dict()
+        
+        # Check that bond properties are included
+        assert d["bond_type"] == "single"
+        assert d["length"] == 1.5
+    
+    def test_to_dict_no_atom_ids(self):
+        """Test Bond.to_dict when atoms don't have ids."""
+        atom1 = Atom(name="C")
+        atom2 = Atom(name="H")
+        bond = Bond(atom1, atom2, bond_type="single")
+        
+        d = bond.to_dict()
+        
+        assert d["bond_type"] == "single"
+        # Should not have i,j keys when atoms don't have ids
+        assert "i" not in d
+        assert "j" not in d
+
+
+class TestAngle:
+    def test_to_dict(self):
+        """Test Angle.to_dict method."""
+        atom1 = Atom(name="H", id=0)
+        atom2 = Atom(name="C", id=1)  # vertex
+        atom3 = Atom(name="O", id=2)
+        angle = Angle(atom1, atom2, atom3, angle_type="harmonic")
+        
+        d = angle.to_dict()
+        
+        assert d["angle_type"] == "harmonic"
+
+
+class TestDihedral:
+    def test_to_dict(self):
+        """Test Dihedral.to_dict method."""
+        atom1 = Atom(name="C1", id=0)
+        atom2 = Atom(name="C2", id=1)
+        atom3 = Atom(name="C3", id=2)
+        atom4 = Atom(name="C4", id=3)
+        dihedral = Dihedral(atom1, atom2, atom3, atom4, dihedral_type="periodic")
+        
+        d = dihedral.to_dict()
+        
+        assert d["dihedral_type"] == "periodic"
+
 def assert_atoms_deepcopied(orig_atoms, copy_atoms):
     assert len(orig_atoms) == len(copy_atoms)
     for a, b in zip(orig_atoms, copy_atoms):

@@ -280,6 +280,7 @@ class PDBWriter(DataWriter):
         else:
             line += "  "
         
+        line += "\n"  # End with newline
         return line
 
     def _format_cryst1_line(self, box) -> str:
@@ -337,9 +338,9 @@ class PDBWriter(DataWriter):
                     i_id = itom.get("id", i + 1)
                     j_id = jtom.get("id", j + 1)
                     connect[i_id].append(j_id)
-                    # f.write(f"CONECT{str(i_id).rjust(5)}{str(j_id).rjust(5)}\n")
+                    connect[j_id].append(i_id)
                 for i_id, j_ids in connect.items():
-                    for j_id in j_ids:
-                        f.write(f"CONECT{str(i_id).rjust(5)}{str(j_id).rjust(5)}\n")
+                    js = [str(j_id).rjust(5) for j_id in j_ids]
+                    f.write(f"CONECT{str(i_id).rjust(5)}{''.join(js)}\n")
             # Write END record
             f.write("END\n")

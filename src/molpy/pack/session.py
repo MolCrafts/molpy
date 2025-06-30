@@ -6,10 +6,11 @@ from .packer import get_packer
 
 class Session:
 
-    def __init__(self, packer: Literal["packmol", "nlopt"] = "packmol"):
-        
+    def __init__(self, workdir, packer: Literal["packmol", "nlopt"] = "packmol"):
+
+        self.workdir = workdir
         self.targets = []
-        self.packer = get_packer(packer)
+        self.packer = get_packer(packer, workdir=workdir )
 
     def add_target(self, frame: mp.Frame, number: int, constraint):
         target = Target(frame, number, constraint)
