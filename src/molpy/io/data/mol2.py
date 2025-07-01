@@ -1,9 +1,5 @@
 from pathlib import Path
-import re
-from typing import Optional, Dict, List, Any
-
 from molpy import Element
-# from molpy.core.frame import _dict_to_dataset
 from .base import DataReader
 import molpy as mp
 
@@ -76,11 +72,11 @@ class Mol2Reader(DataReader):
         # Build datasets
         if self.atoms:
             keys = self.atoms[0].keys()
-            frame["atoms"] = _dict_to_dataset({k: [d[k] for d in self.atoms] for k in keys})
-        
+            frame["atoms"] = {k: [d[k] for d in self.atoms] for k in keys}
+
         if self.bonds:
             keys = self.bonds[0].keys()
-            frame["bonds"] = _dict_to_dataset({k: [d[k] for d in self.bonds] for k in keys})
+            frame["bonds"] = {k: [d[k] for d in self.bonds] for k in keys}
 
         return frame
 
@@ -170,8 +166,8 @@ class Mol2Reader(DataReader):
             
             self.bonds.append({
                 "id": index,
-                "i": atom1,
-                "j": atom2,
+                "i": atom1-1,
+                "j": atom2-1,  # Convert to zero-based index
                 "type": bond_type,
                 "status_bits": status_bits
             })

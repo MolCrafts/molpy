@@ -2,12 +2,8 @@ import lark
 import pytest
 import molpy as mp
 
-# from molpy.typifier.exceptions import molpy.typifierError
-# from molpy.typifier.forcefield import Forcefield
 from molpy.typifier.parser import SmartsParser
 from molpy.typifier.graph import SMARTSGraph
-
-# from molpy.typifier.topology_graph import TopologyGraph
 
 
 class TestSMARTS:
@@ -49,43 +45,34 @@ class TestSMARTS:
     def test_parse(self, pattern, smarts_parser):
         assert smarts_parser.parse(pattern)
 
-    def test_uniqueness(self, rule_match, test_data_path):
+    def test_uniqueness(self, rule_match, TEST_DATA_DIR):
         frame = mp.Frame()
-        mol2 = (
-            mp.io.read_mol2(test_data_path / "data/mol2/uniqueness_test.mol2", frame)
-            .to_struct()
-            .get_topology(attrs=["name", "number"])
-
-        )
+        mol2 = mp.Atomistic.from_frame(
+            mp.io.read_mol2(TEST_DATA_DIR / "data/mol2/uniqueness_test.mol2", frame)
+        ).get_topology(attrs=["name", "number"])
         rule_match(mol2, "[#6]1[#6][#6][#6][#6][#6]1", False)
         rule_match(mol2, "[#6]1[#6][#6][#6][#6]1", False)
         rule_match(mol2, "[#6]1[#6][#6][#6]1", True)
 
-    def test_ringness(self, rule_match, test_data_path):
+    def test_ringness(self, rule_match, TEST_DATA_DIR):
         frame = mp.Frame()
-        ring_mol2 = (
-            mp.io.read_mol2(test_data_path / "data/mol2/ring.mol2", frame)
-            .to_struct()
-            .get_topology(attrs=["name", "number"])
-        )
+        ring_mol2 = mp.Atomistic.from_frame(
+            mp.io.read_mol2(TEST_DATA_DIR / "data/mol2/ring.mol2", frame)
+        ).get_topology(attrs=["name", "number"])
 
         rule_match(ring_mol2, "[#6]1[#6][#6][#6][#6][#6]1", True)
 
-        not_ring_mol2 = (
-            mp.io.read_mol2(test_data_path / "data/mol2/not_ring.mol2", frame)
-            .to_struct()
-            .get_topology(attrs=["name", "number"])
-        )
+        not_ring_mol2 = mp.Atomistic.from_frame(
+            mp.io.read_mol2(TEST_DATA_DIR / "data/mol2/not_ring.mol2", frame)
+        ).get_topology(attrs=["name", "number"])
 
         rule_match(not_ring_mol2, "[#6]1[#6][#6][#6][#6][#6]1", False)
 
-    def test_fused_ring(self, smarts_parser, test_data_path):
+    def test_fused_ring(self, smarts_parser, TEST_DATA_DIR):
         frame = mp.Frame()
-        mol2 = (
-            mp.io.read_mol2(test_data_path / "data/mol2/fused.mol2", frame)
-            .to_struct()
-            .get_topology(attrs=["name", "number"])
-        )
+        mol2 = mp.Atomistic.from_frame(
+            mp.io.read_mol2(TEST_DATA_DIR / "data/mol2/fused.mol2", frame)
+        ).get_topology(attrs=["name", "number"])
         rule = SMARTSGraph(
             name="test",
             parser=smarts_parser,
@@ -95,14 +82,12 @@ class TestSMARTS:
         assert all(n in match_name for n in ("C4", "C5"))
         assert len(match_name) == 2
 
-    def test_ring_count(self, smarts_parser, test_data_path):
+    def test_ring_count(self, smarts_parser, TEST_DATA_DIR):
         # Two rings
         frame = mp.Frame()
-        mol2 = (
-            mp.io.read_mol2(test_data_path / "data/mol2/fused.mol2", frame)
-            .to_struct()
-            .get_topology(attrs=["name", "number"])
-        )
+        mol2 = mp.Atomistic.from_frame(
+            mp.io.read_mol2(TEST_DATA_DIR / "data/mol2/fused.mol2", frame)
+        ).get_topology(attrs=["name", "number"])
         rule = SMARTSGraph(name="test", parser=smarts_parser, smarts_string="[#6;R2]")
 
         match_name = [mol2.vs[i]["name"] for i in rule.find_matches(mol2)]
@@ -111,15 +96,15 @@ class TestSMARTS:
 
         rule = SMARTSGraph(name="test", parser=smarts_parser, smarts_string="[#6;R1]")
         match_name = [mol2.vs[i]["name"] for i in rule.find_matches(mol2)]
-        assert all(n in match_name for n in ("C1", "C2", "C3", "C6", "C7", "C8", "C9", "C10"))
+        assert all(
+            n in match_name for n in ("C1", "C2", "C3", "C6", "C7", "C8", "C9", "C10")
+        )
         assert len(match_name) == 8
 
         # One ring
-        ring = (
-            mp.io.read_mol2(test_data_path / "data/mol2/ring.mol2", frame)
-            .to_struct()
-            .get_topology(attrs=["name", "number"])
-        )
+        ring = mp.Atomistic.from_frame(
+            mp.io.read_mol2(TEST_DATA_DIR / "data/mol2/ring.mol2", frame)
+        ).get_topology(attrs=["name", "number"])
 
         rule = SMARTSGraph(name="test", parser=smarts_parser, smarts_string="[#6;R1]")
         match_indices = [i for i in rule.find_matches(ring)]
@@ -144,14 +129,12 @@ class TestSMARTS:
         assert ast1.children[0].children[0].children[1].data == "and_expression"
         assert ast2.children[0].children[0].children[0].data == "and_expression"
 
-    def test_precedence(self, rule_match_count, test_data_path):
+    def test_precedence(self, rule_match_count, TEST_DATA_DIR):
         pytest.xfail("SMARTS precedence known issue after xarray refactor")
         frame = mp.Frame()
-        mol2 = (
-            mp.io.read_mol2(test_data_path / "data/mol2/ethane.mol2", frame)
-            .to_struct()
-            .get_topology(attrs=["name", "number"])
-        )
+        mol2 = mp.Atomistic.from_frame(
+            mp.io.read_mol2(TEST_DATA_DIR / "data/mol2/ethane.mol2", frame)
+        ).get_topology(attrs=["name", "number"])
 
         checks = {
             "[C,O;C]": 2,
@@ -180,14 +163,11 @@ class TestSMARTS:
             with pytest.raises(lark.UnexpectedInput):
                 smarts_parser.parse(smart)
 
-    def test_not(self, rule_match_count, test_data_path):
-        pytest.xfail("SMARTS negation known issue after xarray refactor")
+    def test_not(self, rule_match_count, TEST_DATA_DIR):
         frame = mp.Frame()
-        mol2 = (
-            mp.io.read_mol2(test_data_path / "data/mol2/ethane.mol2", frame)
-            .to_struct()
-            .get_topology(attrs=["name", "number"])
-        )
+        mol2 = mp.Atomistic.from_frame(
+            mp.io.read_mol2(TEST_DATA_DIR / "data/mol2/ethane.mol2", frame)
+        ).get_topology(attrs=["name", "number"])
 
         checks = {
             "[!O]": 8,
@@ -200,16 +180,15 @@ class TestSMARTS:
         for smart, result in checks.items():
             rule_match_count(mol2, smart, result)
 
-    def test_hexa_coordinated(self, test_data_path):
+    def test_hexa_coordinated(self, TEST_DATA_DIR):
         pytest.xfail("ForceField API changed")
         system = mp.System()
         ff = mp.io.read_xml_forcefield(
-            test_data_path / "forcefield/xml/pf6.xml",
-            system
+            TEST_DATA_DIR / "forcefield/xml/pf6.xml", system
         ).forcefield
 
         frame = mp.Frame()
-        mol2 = mp.io.read_mol2(test_data_path / "data/mol2/pf6.mol2", frame).to_struct()
+        mol2 = mp.io.read_mol2(TEST_DATA_DIR / "data/mol2/pf6.mol2", frame).to_struct()
 
         typifier = mp.SmartsTypifier(ff)
         pf6 = typifier.typify(mol2)
@@ -220,7 +199,6 @@ class TestSMARTS:
         assert types.count("F2") == 2
         assert types.count("F3") == 2
 
-           
         # assert len(pf6["bonds"]) == 6
         # assert all(bond["type"] for bond in pf6["bonds"])
 
@@ -244,14 +222,11 @@ class TestSMARTS:
         for name in optional_names:
             assert name in symbols
 
-
-    def test_pf6(self, smarts_parser, test_data_path):
+    def test_pf6(self, smarts_parser, TEST_DATA_DIR):
         frame = mp.Frame()
-        mol2 = (
-            mp.io.read_mol2(test_data_path / "data/mol2/pf6.mol2", frame)
-            .to_struct()
-            .get_topology(attrs=["name", "number", "type"])
-        )
+        mol2 = mp.Atomistic.from_frame(
+            mp.io.read_mol2(TEST_DATA_DIR / "data/mol2/pf6.mol2", frame)
+        ).get_topology(attrs=["name", "number", "type"])
         rule = SMARTSGraph(
             name="test",
             parser=smarts_parser,

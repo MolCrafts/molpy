@@ -6,7 +6,7 @@ from numpy.typing import ArrayLike
 from .box import Box
 
 
-BlockLike: TypeAlias = dict[str, np.ndarray | ArrayLike]
+BlockLike: TypeAlias = dict[str, ArrayLike]
 
 class Block(MutableMapping[str, np.ndarray]):
     """

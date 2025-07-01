@@ -7,6 +7,6 @@ from .topology import *
 from .region import *
 from .system import *
 from .protocol import *
-# For backward compatibility, also import from struct
+from .trajectory import *
 from .atomistic import *
 from .wrapper import *

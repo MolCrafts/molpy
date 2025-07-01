@@ -5,13 +5,13 @@ This module provides a modular and extensible builder system for constructing
 polymers using reusable monomer templates with context-aware anchor matching.
 """
 
-from typing import Callable, Dict, List, Optional, Union, Any, Tuple, Literal
+from typing import Callable, Dict, List, Optional, Union, Any, Tuple
 from dataclasses import dataclass, field
 from copy import deepcopy
 import numpy as np
 from numpy.typing import ArrayLike
 
-from ..core.atomistic import Atomistic, Atom, Bond
+from ..core.atomistic import Atomistic, Atom
 from ..core.wrapper import Wrapper
 
 

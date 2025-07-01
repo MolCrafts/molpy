@@ -879,7 +879,6 @@ class Atomistic(Wrapper):
 
         atoms = frame["atoms"]
         n_atoms = atoms.nrows
-        print(n_atoms)
         # Create atoms with all their properties
         for i in range(n_atoms):
             atom = Atom(**atoms[i])

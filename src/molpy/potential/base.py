@@ -1,16 +1,17 @@
 import numpy as np
 import molpy as mp
+from molpy.core.forcefield import KernelMeta
 
-class Potential:
+class Potential(metaclass=KernelMeta):
        
     def calc_energy(self, r: np.ndarray) -> np.ndarray:
-        pass
+        ...
     
     def calc_force(self, r: np.ndarray) -> np.ndarray:
-        pass
+        ...
 
     def get_energy(self, frame: mp.Frame) -> np.ndarray:
-        pass
+        ...
 
 class PotentialDict(dict, Potential):
 

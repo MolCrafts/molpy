@@ -7,7 +7,8 @@ from .packer import get_packer
 class Session:
 
     def __init__(self, workdir, packer: Literal["packmol", "nlopt"] = "packmol"):
-
+        if not workdir.exists():
+            workdir.mkdir(parents=True, exist_ok=True)
         self.workdir = workdir
         self.targets = []
         self.packer = get_packer(packer, workdir=workdir )

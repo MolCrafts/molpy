@@ -26,8 +26,9 @@ class ForceFieldTypifier(BaseTypifier):
         bondtypes = self.forcefield.get_bondtypes()
         for bond in bonds:
             for bondtype in bondtypes:
-                if bondtype.match(bond):
+                if {bondtype.itype, bondtype.jtype} == {bond.itom["type"], bond.jtom["type"]}:
                     bond["type"] = str(bondtype)
+                    # bond["style"] = bondtype.style
                     break
         return struct
 

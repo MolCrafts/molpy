@@ -4,7 +4,8 @@ from typing import List, Sequence, Union, Optional
 
 import numpy as np
 import pandas as pd
-import molpy as mp
+
+from molpy.core import Trajectory, Frame,  Box
 
 from .base import TrajectoryReader, TrajectoryWriter
 
@@ -12,11 +13,16 @@ from .base import TrajectoryReader, TrajectoryWriter
 class LammpsTrajectoryReader(TrajectoryReader):
     """Reader for LAMMPS trajectory files, supporting multiple files."""
 
-    def __init__(self, fpaths: Union[str, Path, List[Union[str, Path]]]):
-        super().__init__(fpaths)
+    def __init__(self, trajectory: "Trajectory", fpaths: Union[str, Path, List[Union[str, Path]]]):
+        # Convert fpaths to the expected format
+        if not isinstance(fpaths, list):
+            fpaths = [fpaths]
+        fpaths_converted: List[Path] = [Path(p) for p in fpaths]
+        super().__init__(trajectory, fpaths_converted)
         self._open_all_files()
 
-    def read_frame(self, index: int) -> mp.Frame:
+    def read_frame(self, index: int) -> "Frame":
+        """Read a specific frame from the trajectory."""
         if index < 0 or index >= len(self._byte_offsets):
             raise IndexError(f"Frame index {index} out of range ({len(self._byte_offsets)})")
         
@@ -29,28 +35,28 @@ class LammpsTrajectoryReader(TrajectoryReader):
 
         file_idx, start_offset = self._byte_offsets[index]
 
-        # 如果有下一个 offset，就用它作为 end
         if (
             index + 1 < len(self._byte_offsets)
             and self._byte_offsets[index + 1][0] == file_idx
         ):
             end_offset = self._byte_offsets[index + 1][1]
         else:
-            end_offset = None  # 读到文件尾
+            end_offset = None  
 
         mm = self._fp_list[file_idx]
 
         if end_offset is None:
             mm.seek(start_offset)
-            frame_bytes = mm.read()  # 读到结尾
+            frame_bytes = mm.read()  
         else:
-            frame_bytes = mm[start_offset:end_offset]  # 一次性读取所需段
+            frame_bytes = mm[start_offset:end_offset] 
 
         frame_lines = frame_bytes.decode("utf-8").splitlines()
 
         return self._parse_frame(frame_lines)
 
     def _parse_trajectories(self):
+        """Parse trajectory files and update frame count."""
         self._open_all_files()
         for file_idx, mm in enumerate(self._fp_list):
             if mm is None:  # Empty file
@@ -63,8 +69,13 @@ class LammpsTrajectoryReader(TrajectoryReader):
                     break
                 if line.strip().startswith(b"ITEM: TIMESTEP"):
                     self._byte_offsets.append((file_idx, pos))
+        
+        # Update total frames count
+        self._total_frames = len(self._byte_offsets)
 
-    def _parse_frame(self, frame_lines: Sequence[str]) -> mp.Frame:
+    def _parse_frame(self, frame_lines: Sequence[str]) -> Frame:
+        """Parse frame lines into a Frame object."""
+        
         header = []
         box_bounds = []
         timestep = int(frame_lines[1].strip())
@@ -92,7 +103,7 @@ class LammpsTrajectoryReader(TrajectoryReader):
             names=header,
         )
         
-        # Convert pandas DataFrame to dictionary format for _dict_to_dataset
+        # Convert pandas DataFrame to dictionary format for Frame
         atoms_data = {k: df[k].to_numpy() for k in header}
         
         box_bounds = np.array(box_bounds)
@@ -119,12 +130,13 @@ class LammpsTrajectoryReader(TrajectoryReader):
         else:
             raise ValueError(f"Invalid box bounds shape {box_bounds.shape}")
 
-        box = mp.Box(matrix=box_matrix, origin=origin)
-        return mp.Frame(
-            data={"atoms": atoms_data}, 
-            box=box, 
-            timestep=timestep
-        )
+        box = Box(matrix=box_matrix, origin=origin)
+        
+        # Create frame with proper structure
+        frame = Frame(box=box, timestep=timestep)
+        frame["atoms"] = atoms_data
+        
+        return frame
 
 
 class LammpsTrajectoryWriter(TrajectoryWriter):
@@ -135,7 +147,7 @@ class LammpsTrajectoryWriter(TrajectoryWriter):
         self.atom_style = atom_style
         self._frame_count = 0
 
-    def write_frame(self, frame: mp.Frame, timestep: Optional[int] = None):
+    def write_frame(self, frame: "Frame", timestep: Optional[int] = None):
         """Write a single frame to the trajectory file.
         
         Args:
@@ -143,9 +155,9 @@ class LammpsTrajectoryWriter(TrajectoryWriter):
             timestep: Timestep number (if None, uses auto-increment)
         """
         if timestep is None:
-            # Try to get timestep from frame first
-            if hasattr(frame, 'timestep') and frame.timestep is not None:
-                timestep = frame.timestep
+            # Try to get timestep from frame metadata first
+            if hasattr(frame, 'metadata') and frame.metadata and 'timestep' in frame.metadata:
+                timestep = frame.metadata['timestep']
             else:
                 timestep = self._frame_count
         
@@ -159,16 +171,11 @@ class LammpsTrajectoryWriter(TrajectoryWriter):
         
         # Get number of atoms
         n_atoms = 0
-        if hasattr(atoms, 'sizes'):
-            # xarray Dataset - find the main dimension
-            sizes = atoms.sizes
-            for dim_name in ['index', 'dim_id_0', 'dim_q_0', 'dim_xyz_0']:
-                if dim_name in sizes:
-                    n_atoms = sizes[dim_name]
-                    break
-            else:
-                if sizes:
-                    n_atoms = max(sizes.values())
+        if hasattr(atoms, '_vars'):
+            # Block object - get count from first variable
+            if atoms._vars:
+                first_key = next(iter(atoms._vars))
+                n_atoms = len(atoms._vars[first_key])
         else:
             # Dict-like - count entries in first field
             if atoms and isinstance(atoms, dict):
@@ -242,11 +249,11 @@ class LammpsTrajectoryWriter(TrajectoryWriter):
         
         # Handle coordinates - try individual x,y,z first, then xyz array
         if all(coord in atoms for coord in ["x", "y", "z"]):
-            atom_data["x"] = atoms["x"].values if hasattr(atoms["x"], 'values') else atoms["x"]
-            atom_data["y"] = atoms["y"].values if hasattr(atoms["y"], 'values') else atoms["y"]
-            atom_data["z"] = atoms["z"].values if hasattr(atoms["z"], 'values') else atoms["z"]
+            atom_data["x"] = atoms["x"]
+            atom_data["y"] = atoms["y"]
+            atom_data["z"] = atoms["z"]
         elif "xyz" in atoms:
-            coords = atoms["xyz"].values if hasattr(atoms["xyz"], 'values') else atoms["xyz"]
+            coords = atoms["xyz"]
             coords = np.asarray(coords)
             if coords.ndim == 2 and coords.shape[1] == 3:
                 atom_data["x"] = coords[:, 0]
@@ -264,7 +271,7 @@ class LammpsTrajectoryWriter(TrajectoryWriter):
             
             field_name = field_mapping.get(col, col)
             if field_name in atoms:
-                atom_data[col] = atoms[field_name].values if hasattr(atoms[field_name], 'values') else atoms[field_name]
+                atom_data[col] = atoms[field_name]
             else:
                 # Provide defaults
                 if col == "id":

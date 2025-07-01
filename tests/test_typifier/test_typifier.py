@@ -1,23 +1,21 @@
 import molpy as mp
 import pytest
 
-pytest.skip("Typifier tests require builder features not implemented", allow_module_level=True)
-
 class TestTypifier:
 
     @pytest.fixture(scope='class', name="ethane")
     def ethane(self):
-        class Ethane(mp.Struct):
+        class Ethane(mp.Atomistic):
             def __init__(self):
                 super().__init__()
-                ch3_1 = mp.builder.CH3()
-                ch3_1.translate(-ch3_1["atoms"][0].xyz)
-                ch3_2 = mp.builder.CH3()
-                ch3_2.translate(-ch3_2["atoms"][0].xyz)
-                ch3_2.rotate(180, axis=(0, 1, 0))
+                ch3_1 = mp.Spatial(mp.builder.CH3())
+                ch3_1.move(-ch3_1["atoms"][0]["xyz"])
+                ch3_2 = mp.Spatial(mp.builder.CH3())
+                ch3_2.move(-ch3_2["atoms"][0]["xyz"])
+                ch3_2.rotate(axis=(0, 1, 0), angle=120.0)
                 self.add_struct(ch3_1)
                 self.add_struct(ch3_2)
-                self.add_bond(ch3_1["atoms"][0], ch3_2["atoms"][0])
+                self.def_bond(ch3_1["atoms"][0], ch3_2["atoms"][0])
 
         return Ethane()
     
@@ -39,7 +37,7 @@ class TestTypifier:
 
     def test_bond(self, ff_ethane, ethane):
 
-        typifier = mp.typifier.Typifier(ff_ethane)
+        typifier = mp.typifier.ForceFieldTypifier(ff_ethane)
         typifier.typify_bonds(ethane)
         
         bonds = ethane.bonds

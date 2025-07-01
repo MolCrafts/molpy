@@ -58,7 +58,7 @@ class Wrapper:
         return key in self._wrapped
 
 
-class SpatialWrapper(Wrapper):
+class Spatial(Wrapper):
     """
     Wrapper class providing spatial operations for entities.
     
@@ -156,8 +156,8 @@ class SpatialWrapper(Wrapper):
         # If the wrapped entity has a __call__ method, use it
         if hasattr(self._wrapped, '__call__'):
             new_wrapped = self._wrapped(**kwargs)
-            # Return a new SpatialWrapper wrapping the new instance
-            return SpatialWrapper(new_wrapped)
+            # Return a new Spatial wrapping the new instance
+            return Spatial(new_wrapped)
         
         # Otherwise, create a new instance using the wrapped entity's class
         wrapped_class = type(self._wrapped)

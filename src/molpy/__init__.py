@@ -11,4 +11,4 @@ from . import pack
 from .core import *
 from .core.units import Unit
 from .builder.polymer import PolymerBuilder, AnchorRule, Monomer
-from .core.wrapper import SpatialWrapper, HierarchyWrapper, IdentifierWrapper, VisualWrapper, Wrapper, wrap, unwrap_all, is_wrapped
+from .core.wrapper import Spatial, HierarchyWrapper, IdentifierWrapper, VisualWrapper, Wrapper, wrap, unwrap_all, is_wrapped
