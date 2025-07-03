@@ -26,9 +26,9 @@ class GromacsTopReader:
         self.include = include
 
     # NOTE: `forcefield` is optional and only used to help resolve #include paths
-    def read(self, forcefield: mp.ForceField|None = None, *,
+    def read(self, forcefield: mp.ForceField, *,
              strip_comments: bool = True,
-             recursive: bool = True) -> dict[str, list[str]]:
+             recursive: bool = True) -> mp.ForceField:
         """Parse the topology file.
 
         Parameters

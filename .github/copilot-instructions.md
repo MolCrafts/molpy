@@ -10,3 +10,5 @@ applyTo: "**"
 # Unit Test
 - Always use pytest
 - The unit tests are organized into class, and each test file coresponds to a module
+
+# Doc 

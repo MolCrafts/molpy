@@ -54,7 +54,7 @@ class XMLForceFieldReader:
                 name = attrib.pop("name")
                 atomstyle.def_type(name, **atomtype.attrib)
         
-        logger.info(f"Read {len(ff.atomtypes)} atom types")
+        logger.info(f"Read {len(ff.get_atomtypes())} atom types")
         return atomstyle
 
     def _read_nonbonded(self, nonbonded, atomstyle, pairstyle):

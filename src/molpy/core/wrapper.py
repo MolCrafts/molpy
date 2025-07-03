@@ -6,22 +6,24 @@ to molecular entities. Replaces the old mixin-based approach with a more
 flexible composition pattern.
 """
 
-from typing import Callable, Union, Optional, Any
+from typing import Callable, Union, Optional, Any, Generic, TypeVar, overload
 import numpy as np
 from numpy.typing import ArrayLike
 
 from ..op import rotate_by_rodrigues
 
 
-class Wrapper:
+T = TypeVar("T")
+
+class Wrapper(Generic[T]):
     """
     Base class for all wrappers.
     
     Wrappers provide a composable way to add functionality to entities
     without using inheritance mixins.
     """
-    
-    def __init__(self, wrapped):
+
+    def __init__(self, wrapped: T):
         """
         Initialize wrapper with an entity to wrap.
         
@@ -29,33 +31,61 @@ class Wrapper:
             wrapped: The entity to wrap
         """
         self._wrapped = wrapped
-    
-    def unwrap(self):
+
+    def unwrap(self) -> T:
         """Get the wrapped entity."""
         return self._wrapped
-    
-    def __getattr__(self, name):
+
+    def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to the wrapped entity."""
         return getattr(self._wrapped, name)
-    
-    def __setattr__(self, name, value):
+
+    def __setattr__(self, name: str, value: Any) -> None:
         """Set attributes on wrapper or delegate to wrapped entity."""
         if name.startswith('_') or name in self.__dict__ or hasattr(type(self), name):
             super().__setattr__(name, value)
         else:
             setattr(self._wrapped, name, value)
 
-    def __getitem__(self, key):
+    def __getitem__(self, key, /):
         """Delegate item access to the wrapped entity."""
-        return self._wrapped[key]
-    
-    def __setitem__(self, key, value):
-        """Set items on the wrapped entity."""
-        self._wrapped[key] = value
+        return self._wrapped[key]  # type: ignore[attr-defined]
 
-    def __contains__(self, key):
+    def __setitem__(self, key: Any, value: Any) -> None:
+        """Set items on the wrapped entity."""
+        self._wrapped[key] = value  # type: ignore[attr-defined]
+
+    def __contains__(self, key: Any) -> bool:
         """Check if the wrapped entity contains a key."""
         return key in self._wrapped
+    
+    def wrapper_chain(self) -> list[Any]:
+        """
+        Return the list of objects from the outermost wrapper
+        all the way down to the final un­wrapped entity.
+        """
+        chain = []
+        obj = self
+        while isinstance(obj, Wrapper):
+            chain.append(obj)
+            obj = obj.unwrap()
+        chain.append(obj)  # the final, non‐wrapper object
+        return chain
+
+    def wrapper_types(self) -> list[str]:
+        """
+        Return the list of class‐names for each layer in the wrapper chain,
+        from outermost to innermost.
+        """
+        return [type(o).__name__ for o in self.wrapper_chain()]
+
+    def wrapper_depth(self) -> int:
+        """
+        How many Wrapper‐layers are there?  (Does *not* count the final unwrapped.)
+        """
+        # subtract 1 if you don’t want to count the raw object
+        return len(self.wrapper_chain()) - 1
+    
 
 
 class Spatial(Wrapper):
@@ -139,6 +169,15 @@ class Spatial(Wrapper):
             rotated = rotated[0]
         rotated = np.where(np.abs(rotated) < 1e-12, 0.0, rotated)
         self.xyz = origin + rotated
+
+    def rotate_with_matrix(self, R: np.ndarray):
+        """
+        Rotate the entity using a rotation matrix.
+        
+        Args:
+            R: 3x3 rotation matrix
+        """
+        self.xyz = np.dot(self.xyz, R)
 
     def __call__(self, **kwargs):
         """
