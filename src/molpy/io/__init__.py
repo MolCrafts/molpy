@@ -92,6 +92,12 @@ def read_mol2(file: Path | str, frame: mp.Frame | None = None) -> mp.Frame:
     reader = Mol2Reader(file)
     return reader.read(frame)
 
+def read_xsf(file: Path | str) -> mp.FrameSystem:
+    """Read an XSF file and return a molpy FrameSystem object."""
+    from .data.xsf import XsfReader
+    reader = XsfReader(file)
+    return reader.read()
+
 def read_xml_forcefield(name_or_path: Path | str, system: mp.FrameSystem | None = None) -> mp.FrameSystem:
     """Read an XML force field file and return a FrameSystem."""
     from .forcefield.xml import XMLForceFieldReader
@@ -179,6 +185,12 @@ def write_pdb(file: Path | str, frame: mp.Frame) -> None:
     from .data.pdb import PDBWriter
     writer = PDBWriter(Path(file))
     writer.write(frame)
+
+def write_xsf(file: Path | str, system: mp.FrameSystem) -> None:
+    """Write a molpy FrameSystem object to an XSF file."""
+    from .data.xsf import XsfWriter
+    writer = XsfWriter(Path(file))
+    writer.write(system)
 
 def write_lammps_molecule(file: Path | str, frame: mp.Frame) -> None:
 

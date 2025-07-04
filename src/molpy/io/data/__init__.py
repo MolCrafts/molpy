@@ -4,3 +4,4 @@ from .pdb import *
 from .gro import *
 from .mol2 import *
 from .amber import *
+from .xsf import *

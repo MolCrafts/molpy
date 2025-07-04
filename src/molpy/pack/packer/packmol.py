@@ -1,7 +1,6 @@
 from pathlib import Path
 import shutil
 import molpy as mp
-import xarray as xr
 import molpy.pack as mpk
 import molq
 import tempfile

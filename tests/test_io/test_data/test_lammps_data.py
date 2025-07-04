@@ -9,7 +9,6 @@ Also tests Frame initialization with xarray to_dict format.
 import pytest
 import tempfile
 import numpy as np
-import xarray as xr
 from pathlib import Path
 import os
 

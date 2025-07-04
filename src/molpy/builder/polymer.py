@@ -48,3 +48,4 @@ class Monomer(Wrapper):
 class PolymerBuilder:
 
     def __init__(self, monomers: dict[str, Monomer]):
+        self.monomers = monomers

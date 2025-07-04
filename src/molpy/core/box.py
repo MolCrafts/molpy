@@ -441,6 +441,11 @@ class Box(Region, PeriodicBoundary):
     def tilts(self) -> np.ndarray:
         return np.array([self.xy, self.xz, self.yz])
 
+    @property
+    def is_periodic(self) -> bool:
+        """Check if the box has periodic boundary conditions in all directions."""
+        return self.periodic
+
     @staticmethod
     def check_matrix(matrix: np.ndarray) -> np.ndarray:
         """
@@ -919,3 +924,23 @@ class Box(Region, PeriodicBoundary):
             Box: A new box representing the common space.
         """
         return Box(matrix=other.matrix)
+
+    def transform(self, transformation_matrix: np.ndarray) -> 'Box':
+        """Transform the box using a transformation matrix.
+        
+        Args:
+            transformation_matrix: 3x3 transformation matrix.
+            
+        Returns:
+            New Box with transformed dimensions.
+        """
+        # Transform the box matrix
+        new_matrix = self._matrix @ transformation_matrix
+        
+        # Keep the same periodic boundary conditions and origin
+        return Box(
+            matrix=new_matrix,
+            pbc=self._pbc.copy(),
+            origin=self._origin.copy(),
+            name=self.name
+        )

@@ -2,9 +2,7 @@
 Modern LAMMPS data and molecule template file I/O.
 
 This module provides clean, efficient, and maintainable readers and writers
-for LAMMPS data files and molecule templates, fully compatible with xarray-based Frame structure.
-All operations use xarray.Dataset directly with unified string-based type handling.
-No backward compatibility code - all type fields are handled uniformly as strings.
+for LAMMPS data files and molecule templates
 """
 
 from pathlib import Path
@@ -17,7 +15,6 @@ from .base import DataReader, DataWriter
 
 
 class LammpsDataReader(DataReader):
-    """Modern LAMMPS data file reader using xarray exclusively."""
     
     def __init__(self, path: Union[str, Path], atom_style: str = "full"):
         super().__init__(Path(path))  # Convert to Path explicitly
@@ -536,12 +533,11 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         # Count sections
-        n_atoms = len(frame['atoms']['id']) if 'atoms' in frame else 0
-        n_bonds = len(frame['bonds']['id']) if 'bonds' in frame else 0
-        n_angles = len(frame['angles']['id']) if 'angles' in frame else 0
-        n_dihedrals = len(frame['dihedrals']['id']) if 'dihedrals' in frame else 0
-        n_impropers = len(frame['impropers']['id']) if 'impropers' in frame else 0
-        
+        n_atoms = frame["atoms"].nrows
+        n_bonds = frame['bonds'].nrows if 'bonds' in frame else 0
+        n_angles = frame["angles"].nrows if 'angles' in frame else 0
+        n_dihedrals = frame["dihedrals"].nrows if 'dihedrals' in frame else 0
+        n_impropers = frame["impropers"].nrows if 'impropers' in frame else 0
         lines.append(f"{n_atoms} atoms")
         if n_bonds > 0:
             lines.append(f"{n_bonds} bonds")
@@ -602,11 +598,10 @@ class LammpsDataWriter(DataWriter):
         
         # Masses section
         if 'atoms' in frame:
-            self._write_masses(lines, frame)
-        
-        # Atom Type Labels section (if string types are used)
-        if 'atoms' in frame:
-            self._write_atom_type_labels(lines, frame)
+            if "mass" in frame["atoms"]:
+                self._write_masses(lines, frame)
+            if "type" in frame["atoms"]:
+                self._write_atom_type_labels(lines, frame)
         
         # Bond Type Labels section (if string types are used)
         if 'bonds' in frame and n_bonds > 0:

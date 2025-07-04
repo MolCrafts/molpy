@@ -5,11 +5,15 @@ Uses molq to orchestrate AmberTools workflows for automated polymer construction
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Union, Generator, Any
+from typing import Dict, List, Union, Generator, Any, TYPE_CHECKING
 from abc import ABC, abstractmethod
 import molq
 
-import molpy as mp
+if TYPE_CHECKING:
+    import molpy as mp
+    from molpy.core.system import System
+else:
+    import molpy as mp
 
 # from molpy.core.frame import _dict_to_dataset
 from molpy.core.protocol import Entities
@@ -530,7 +534,7 @@ class AmberToolsTypifier:
 
         return struct
 
-    def parameterize(self, system_name, system: mp.System) -> mp.System:
+    def parameterize(self, system_name, system) -> Any:
         """
         Parameterize the system using AmberTools.
         """
