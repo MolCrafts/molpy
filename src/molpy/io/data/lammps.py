@@ -205,7 +205,7 @@ class LammpsDataReader(DataReader):
         return masses
     
     def _parse_atoms(self, atom_lines: List[str], frame: mp.Frame, masses: Dict[str, float], type_labels: Optional[Dict[int, str]] = None) -> None:
-        """Parse atoms section and add to frame as xarray.Dataset."""
+        """Parse atoms section and add to frame as Block."""
         if not atom_lines:
             return
         
@@ -265,44 +265,28 @@ class LammpsDataReader(DataReader):
                 # Get mass from mapping, default to 1.0 if not found
                 atom_data['mass'].append(masses.get(atom_type_str, 1.0))
         
-        # Convert to numpy arrays
-        for key, values in atom_data.items():
-            if key == 'type':
-                # Keep type as string array
-                atom_data[key] = np.array(values, dtype=str)
-            else:
-                atom_data[key] = np.array(values)
-        
         # Create xyz coordinate array
         xyz = np.column_stack([atom_data['x'], atom_data['y'], atom_data['z']])
-        atom_data['xyz'] = xyz
         
-        # Remove individual x, y, z
-        del atom_data['x'], atom_data['y'], atom_data['z']
-        
-        # Create xarray Dataset directly
-        data_vars = {}
-        n_atoms = len(atom_data['id'])
-        
-        for key, values in atom_data.items():
-            if key == 'xyz':
-                # 2D coordinate array
-                data_vars[key] = (['atoms_id', 'spatial'], values)
-            else:
-                # 1D arrays
-                data_vars[key] = (['atoms_id'], values)
-        
-        # Create coordinates
-        coords = {
-            'atoms_id': np.arange(n_atoms),
-            'spatial': ['x', 'y', 'z']
+        # Create data dict for Block (Block will convert to numpy arrays automatically)
+        block_data = {
+            'id': atom_data['id'],
+            'type': atom_data['type'],
+            'mass': atom_data['mass'],
+            'xyz': xyz
         }
         
-        atoms_dataset = xr.Dataset(data_vars, coords=coords)
-        frame['atoms'] = atoms_dataset
+        # Add optional fields
+        if 'mol' in atom_data:
+            block_data['mol'] = atom_data['mol']
+        if 'q' in atom_data:
+            block_data['q'] = atom_data['q']
+        
+        # Create Block and store in frame
+        frame['atoms'] = mp.Block(block_data)
     
     def _parse_bonds(self, bond_lines: List[str], frame: mp.Frame, type_labels: Optional[Dict[int, str]] = None) -> None:
-        """Parse bonds section and add to frame as xarray.Dataset."""
+        """Parse bonds section and add to frame as Block."""
         if not bond_lines:
             return
         
@@ -332,23 +316,11 @@ class LammpsDataReader(DataReader):
                 bond_data['atom1'].append(atom1)
                 bond_data['atom2'].append(atom2)
         
-        # Convert to numpy arrays and create Dataset
-        data_vars = {}
-        n_bonds = len(bond_data['id'])
-        
-        for key, values in bond_data.items():
-            if key == 'type':
-                # Keep type as string array
-                data_vars[key] = (['bonds_id'], np.array(values, dtype=str))
-            else:
-                data_vars[key] = (['bonds_id'], np.array(values))
-        
-        coords = {'bonds_id': np.arange(n_bonds)}
-        bonds_dataset = xr.Dataset(data_vars, coords=coords)
-        frame['bonds'] = bonds_dataset
+        # Create Block and store in frame
+        frame['bonds'] = mp.Block(bond_data)
     
     def _parse_angles(self, angle_lines: List[str], frame: mp.Frame, type_labels: Optional[Dict[int, str]] = None) -> None:
-        """Parse angles section and add to frame as xarray.Dataset."""
+        """Parse angles section and add to frame as Block."""
         if not angle_lines:
             return
         
@@ -381,23 +353,11 @@ class LammpsDataReader(DataReader):
                 angle_data['atom2'].append(atom2)
                 angle_data['atom3'].append(atom3)
         
-        # Convert to numpy arrays and create Dataset
-        data_vars = {}
-        n_angles = len(angle_data['id'])
-        
-        for key, values in angle_data.items():
-            if key == 'type':
-                # Keep type as string array
-                data_vars[key] = (['angles_id'], np.array(values, dtype=str))
-            else:
-                data_vars[key] = (['angles_id'], np.array(values))
-        
-        coords = {'angles_id': np.arange(n_angles)}
-        angles_dataset = xr.Dataset(data_vars, coords=coords)
-        frame['angles'] = angles_dataset
+        # Create Block and store in frame
+        frame['angles'] = mp.Block(angle_data)
     
     def _parse_dihedrals(self, dihedral_lines: List[str], frame: mp.Frame, type_labels: Optional[Dict[int, str]] = None) -> None:
-        """Parse dihedrals section and add to frame as xarray.Dataset."""
+        """Parse dihedrals section and add to frame as Block."""
         if not dihedral_lines:
             return
         
@@ -433,23 +393,11 @@ class LammpsDataReader(DataReader):
                 dihedral_data['atom3'].append(atom3)
                 dihedral_data['atom4'].append(atom4)
         
-        # Convert to numpy arrays and create Dataset
-        data_vars = {}
-        n_dihedrals = len(dihedral_data['id'])
-        
-        for key, values in dihedral_data.items():
-            if key == 'type':
-                # Keep type as string array
-                data_vars[key] = (['dihedrals_id'], np.array(values, dtype=str))
-            else:
-                data_vars[key] = (['dihedrals_id'], np.array(values))
-        
-        coords = {'dihedrals_id': np.arange(n_dihedrals)}
-        dihedrals_dataset = xr.Dataset(data_vars, coords=coords)
-        frame['dihedrals'] = dihedrals_dataset
+        # Create Block and store in frame
+        frame['dihedrals'] = mp.Block(dihedral_data)
     
     def _parse_impropers(self, improper_lines: List[str], frame: mp.Frame, type_labels: Optional[Dict[int, str]] = None) -> None:
-        """Parse impropers section and add to frame as xarray.Dataset."""
+        """Parse impropers section and add to frame as Block."""
         if not improper_lines:
             return
         
@@ -485,20 +433,8 @@ class LammpsDataReader(DataReader):
                 improper_data['atom3'].append(atom3)
                 improper_data['atom4'].append(atom4)
         
-        # Convert to numpy arrays and create Dataset
-        data_vars = {}
-        n_impropers = len(improper_data['id'])
-        
-        for key, values in improper_data.items():
-            if key == 'type':
-                # Keep type as string array
-                data_vars[key] = (['impropers_id'], np.array(values, dtype=str))
-            else:
-                data_vars[key] = (['impropers_id'], np.array(values))
-        
-        coords = {'impropers_id': np.arange(n_impropers)}
-        impropers_dataset = xr.Dataset(data_vars, coords=coords)
-        frame['impropers'] = impropers_dataset
+        # Create Block and store in frame
+        frame['impropers'] = mp.Block(improper_data)
     
     def _parse_type_labels(self, label_lines: List[str]) -> Dict[int, str]:
         """Parse type labels section. Returns mapping from numeric ID to label."""
@@ -601,6 +537,7 @@ class LammpsDataWriter(DataWriter):
             if "mass" in frame["atoms"]:
                 self._write_masses(lines, frame)
             if "type" in frame["atoms"]:
+                print("type in atoms")
                 self._write_atom_type_labels(lines, frame)
         
         # Bond Type Labels section (if string types are used)
@@ -668,27 +605,21 @@ class LammpsDataWriter(DataWriter):
         unique_types = np.unique(types)
         type_to_id = {}
         
-        try:
-            # Try to sort numerically if types are numeric strings
-            sorted_types = sorted(unique_types, key=int)
-            for atom_type_str in sorted_types:
-                type_to_id[atom_type_str] = int(atom_type_str)
-        except ValueError:
-            # String labels - assign sequential IDs
-            for i, atom_type_str in enumerate(sorted(unique_types), 1):
-                type_to_id[atom_type_str] = i
+        for i, atom_type_str in enumerate(sorted(unique_types), 1):
+            type_to_id[atom_type_str] = i
         
         return type_to_id
     
     def _needs_type_labels(self, types: np.ndarray) -> bool:
         """Check if type labels section is needed (non-numeric types)."""
-        try:
-            # Try to convert all types to integers
-            for t in np.unique(types):
-                int(t)
-            return False  # All types are numeric
-        except ValueError:
-            return True  # At least one type is non-numeric
+        # try:
+        #     # Try to convert all types to integers
+        #     for t in np.unique(types):
+        #         int(t)
+        #     return False  # All types are numeric
+        # except ValueError:
+        #     return True  # At least one type is non-numeric
+        return True
     
     def _write_atom_type_labels(self, lines: List[str], frame: mp.Frame) -> None:
         """Write Atom Type Labels section if needed."""
@@ -791,6 +722,8 @@ class LammpsDataWriter(DataWriter):
         # Create type mapping
         type_to_id = self._create_type_mapping(atom_types)
         
+        if "id" not in atoms_data:
+            atoms_data["id"] = np.arange(1, atoms_data.nrows + 1)
         for i in range(len(atoms_data['id'])):
             atom_id = int(atoms_data['id'][i])
             atom_type_str = atoms_data['type'][i]
@@ -815,14 +748,15 @@ class LammpsDataWriter(DataWriter):
         lines.append("")
         
         bonds_data = frame['bonds']
-        bond_types = bonds_data['type']
+        bond_types_raw = bonds_data['type']
         
-        # Create bond type to id mapping
-        type_to_id = self._create_type_mapping(bond_types)
+        # Convert to strings for consistent type mapping
+        bond_types = [str(t) for t in bond_types_raw]
+        
+        # Create bond type to id mapping based on string types
+        type_to_id = self._create_type_mapping(np.array(bond_types))
         
         atoms_ids = frame["atoms"]["id"]
-
-        bond_types = [str(t) for t in bonds_data["type"]]
 
         lines.extend([
             f"{int(bond_id)} {type_to_id[btype]} {atoms_ids[int(i1)]} {atoms_ids[int(j1)]}"
@@ -1018,29 +952,18 @@ class LammpsMoleculeReader(DataReader):
                 coords_data['z'].append(z)
         
         if coords_data['id']:
-            # Convert to numpy arrays
-            for key, values in coords_data.items():
-                coords_data[key] = np.array(values)
-            
             # Create xyz coordinate array
             xyz = np.column_stack([coords_data['x'], coords_data['y'], coords_data['z']])
             
-            # Create or update atoms dataset
+            # Create or update atoms block
             if 'atoms' not in frame:
-                data_vars = {
-                    'id': (['atoms_id'], coords_data['id']),
-                    'xyz': (['atoms_id', 'spatial'], xyz)
-                }
-                coords_dict = {
-                    'atoms_id': np.arange(len(coords_data['id'])),
-                    'spatial': ['x', 'y', 'z']
-                }
-                frame['atoms'] = xr.Dataset(data_vars, coords=coords_dict)
-            else:
-                # Update existing dataset
-                frame['atoms'] = frame['atoms'].assign({
-                    'xyz': (['atoms_id', 'spatial'], xyz)
+                frame['atoms'] = mp.Block({
+                    'id': coords_data['id'],
+                    'xyz': xyz
                 })
+            else:
+                # Update existing block by setting xyz
+                frame['atoms']['xyz'] = xyz
     
     def _parse_types(self, type_lines: List[str], frame: mp.Frame) -> None:
         """Parse types section."""
@@ -1056,17 +979,13 @@ class LammpsMoleculeReader(DataReader):
                 types_data['type'].append(atom_type_str)
         
         if types_data['id']:
-            type_array = np.array(types_data['type'], dtype=str)  # Ensure string array
-            
             if 'atoms' not in frame:
-                data_vars = {
-                    'id': (['atoms_id'], np.array(types_data['id'])),
-                    'type': (['atoms_id'], type_array)
-                }
-                coords_dict = {'atoms_id': np.arange(len(types_data['id']))}
-                frame['atoms'] = xr.Dataset(data_vars, coords=coords_dict)
+                frame['atoms'] = mp.Block({
+                    'id': types_data['id'],
+                    'type': types_data['type']
+                })
             else:
-                frame['atoms'] = frame['atoms'].assign({'type': (['atoms_id'], type_array)})
+                frame['atoms']['type'] = types_data['type']
     
     def _parse_charges(self, charge_lines: List[str], frame: mp.Frame) -> None:
         """Parse charges section."""
@@ -1082,17 +1001,13 @@ class LammpsMoleculeReader(DataReader):
                 charges_data['q'].append(charge)
         
         if charges_data['id']:
-            charge_array = np.array(charges_data['q'])
-            
             if 'atoms' not in frame:
-                data_vars = {
-                    'id': (['atoms_id'], np.array(charges_data['id'])),
-                    'q': (['atoms_id'], charge_array)
-                }
-                coords_dict = {'atoms_id': np.arange(len(charges_data['id']))}
-                frame['atoms'] = xr.Dataset(data_vars, coords=coords_dict)
+                frame['atoms'] = mp.Block({
+                    'id': charges_data['id'],
+                    'q': charges_data['q']
+                })
             else:
-                frame['atoms'] = frame['atoms'].assign({'q': (['atoms_id'], charge_array)})
+                frame['atoms']['q'] = charges_data['q']
     
     def _parse_bonds(self, bond_lines: List[str], frame: mp.Frame) -> None:
         """Parse bonds section."""
@@ -1117,19 +1032,7 @@ class LammpsMoleculeReader(DataReader):
                 bond_data['atom2'].append(atom2)
         
         if bond_data['id']:
-            # Convert to numpy arrays and create Dataset
-            data_vars = {}
-            n_bonds = len(bond_data['id'])
-            
-            for key, values in bond_data.items():
-                if key == 'type':
-                    # Keep type as string array
-                    data_vars[key] = (['bonds_id'], np.array(values, dtype=str))
-                else:
-                    data_vars[key] = (['bonds_id'], np.array(values))
-            
-            coords = {'bonds_id': np.arange(n_bonds)}
-            frame['bonds'] = xr.Dataset(data_vars, coords=coords)
+            frame['bonds'] = mp.Block(bond_data)
     
     def _parse_angles(self, angle_lines: List[str], frame: mp.Frame) -> None:
         """Parse angles section - same as LammpsDataReader."""
@@ -1160,19 +1063,7 @@ class LammpsMoleculeReader(DataReader):
                 angle_data['atom3'].append(atom3)
         
         if angle_data['id']:
-            # Convert to numpy arrays and create Dataset
-            data_vars = {}
-            n_angles = len(angle_data['id'])
-            
-            for key, values in angle_data.items():
-                if key == 'type':
-                    # Keep type as string array
-                    data_vars[key] = (['angles_id'], np.array(values, dtype=str))
-                else:
-                    data_vars[key] = (['angles_id'], np.array(values))
-            
-            coords = {'angles_id': np.arange(n_angles)}
-            frame['angles'] = xr.Dataset(data_vars, coords=coords)
+            frame['angles'] = mp.Block(angle_data)
     
     def _parse_dihedrals(self, dihedral_lines: List[str], frame: mp.Frame) -> None:
         """Parse dihedrals section - same as LammpsDataReader."""

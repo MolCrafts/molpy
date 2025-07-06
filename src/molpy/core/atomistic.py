@@ -10,7 +10,7 @@ This module provides the fundamental building blocks for molecular modeling:
 """
 
 import copy
-from typing import Callable, Iterable
+from typing import Iterable
 
 import numpy as np
 
@@ -336,6 +336,30 @@ class Atomistic(Wrapper):
     def dihedrals(self, value: Iterable[Dihedral]):
         self._wrapped["dihedrals"] = Entities[Dihedral](value)
 
+    @property
+    def symbols(self) -> list[str]:
+        """Get atomic symbols from all atoms."""
+        symbols = []
+        for atom in self.atoms:
+            if "symbol" in atom:
+                symbols.append(atom["symbol"])
+            elif "name" in atom:
+                symbols.append(atom["name"])
+            else:
+                symbols.append("X")  # default symbol
+        return symbols
+
+    @property
+    def positions(self) -> np.ndarray:
+        """Get atomic positions from all atoms."""
+        positions = []
+        for atom in self.atoms:
+            if "xyz" in atom:
+                positions.append(atom["xyz"])
+            else:
+                positions.append([0.0, 0.0, 0.0])  # default position
+        return np.array(positions)
+
     def add_atom(self, atom):
         """
         Add an atom to the structure.
@@ -502,30 +526,6 @@ class Atomistic(Wrapper):
         Args:
             atom: Atom instance, index, or name to remove
         """
-        self.atoms.remove(atom)
-        return self
-
-    def remove_bond(self, bond):
-        """
-        Remove a bond from the structure.
-
-        Args:
-            bond: Bond instance or tuple of atoms
-        """
-        self.bonds.remove(bond)
-        return self
-
-    def get_atom_by(self, condition: Callable):
-        """
-        Get an atom based on a condition.
-
-        Args:
-            condition: Function that takes an atom and returns a boolean
-
-        Returns:
-            The first atom that satisfies the condition, or None
-        """
-        return self.atoms.get_by(condition)
 
     def get_topology(self, attrs=None):
         """
@@ -608,7 +608,7 @@ class Atomistic(Wrapper):
         return self
 
     @classmethod
-    def concat(cls, name: str, structs, reindex=True):
+    def concat(cls, structs, **new_prop):
         """
         Concatenate multiple structures into a new structure.
 
@@ -620,12 +620,9 @@ class Atomistic(Wrapper):
         Returns:
             New structure containing all input structures
         """
-        result = cls(name=name)
+        result = cls(**new_prop)
         for struct in structs:
             result.add_struct(struct)
-        if reindex:
-            for i, atom in enumerate(result.atoms, 1):
-                atom["id"] = i
         return result
 
     def to_dict(self):
@@ -730,6 +727,9 @@ class Atomistic(Wrapper):
             atoms_block = Block(
                 {k: np.asarray([d.get(k) for d in atom_dicts]) for k in all_keys}
             )
+            # Add atom IDs if not present (1-based indexing for LAMMPS)
+            if "id" not in atoms_block:
+                atoms_block["id"] = np.arange(1, len(atom_dicts) + 1)
             frame["atoms"] = atoms_block
         else:
             frame["atoms"] = Block()
@@ -748,6 +748,9 @@ class Atomistic(Wrapper):
             bonds_block = Block(
                 {k: np.asarray([d.get(k) for d in bond_dicts]) for k in all_keys}
             )
+            # Add bond IDs if not present (1-based indexing for LAMMPS)
+            if "id" not in bonds_block:
+                bonds_block["id"] = np.arange(1, len(bond_dicts) + 1)
             frame["bonds"] = bonds_block
             frame.metadata["n_bonds"] = frame["bonds"].nrows
 
@@ -806,19 +809,8 @@ class Atomistic(Wrapper):
         # Optionally add more metadata as needed
         return frame
 
-    def __call__(self, **new_prop) -> "Atomistic":
-        """
-        Create a new instance of this Atomistic with optional modifications.
+    def __call__(self, **new_prop):
 
-        This method creates a proper deep copy of the structure, avoiding
-        the double-initialization problem in the base Struct class.
-
-        Args:
-            **new_prop: Properties to modify in the copy
-
-        Returns:
-            A new Atomistic instance with copied atoms, bonds, angles, and dihedrals
-        """
         new_instance = self.__class__(**new_prop)
 
         atom_mapping = {}

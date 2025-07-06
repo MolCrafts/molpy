@@ -13,6 +13,33 @@ from molpy.builder.polybuilder import PolymerBuilder, Monomer, AnchorRule
 from molpy.op.geometry import rotation_matrix_from_vectors
 
 
+@pytest.fixture
+def test_monomers():
+    """Create test monomers for polymer building."""
+    # Create a simple methylene monomer (-CH2-)
+    methylene = Atomistic()
+    methylene.atoms.add(Atom(name="C1", symbol="C", xyz=np.array([0.0, 0.0, 0.0])))
+    methylene.atoms.add(Atom(name="H1", symbol="H", xyz=np.array([0.0, 1.0, 0.0])))
+    methylene.atoms.add(Atom(name="H2", symbol="H", xyz=np.array([0.0, 0.0, 1.0])))
+    methylene.atoms.add(Atom(name="C2", symbol="C", xyz=np.array([1.5, 0.0, 0.0])))
+    
+    # Anchor rule: from C1 (init=0) to C2 (end=3), delete nothing for first unit
+    anchor_ch2 = AnchorRule(init=0, end=3, deletes=[])
+    monomer_ch2 = Monomer(methylene, anchors=[anchor_ch2])
+    
+    # Create a methyl end cap (-CH3)
+    methyl = Atomistic()
+    methyl.atoms.add(Atom(name="C1", symbol="C", xyz=np.array([0.0, 0.0, 0.0])))
+    methyl.atoms.add(Atom(name="H1", symbol="H", xyz=np.array([0.0, 1.0, 0.0])))
+    methyl.atoms.add(Atom(name="H2", symbol="H", xyz=np.array([0.0, 0.0, 1.0])))
+    methyl.atoms.add(Atom(name="H3", symbol="H", xyz=np.array([1.0, 0.0, 0.0])))
+    
+    anchor_ch3 = AnchorRule(init=0, end=0, deletes=[])  # Self-contained unit
+    monomer_ch3 = Monomer(methyl, anchors=[anchor_ch3])
+    
+    return {"CH2": monomer_ch2, "CH3": monomer_ch3}
+
+
 class TestAnchorRule:
     """Test suite for AnchorRule class."""
     
@@ -67,37 +94,11 @@ class TestMonomer:
         """Test that Monomer correctly provides symbols property."""
         monomer = Monomer(simple_atomistic, anchors=[])
         expected_symbols = ['C', 'C', 'H']
-        assert monomer.struct.symbols == expected_symbols
+        assert monomer.symbols == expected_symbols
 
 
 class TestPolymerBuilder:
     """Test suite for PolymerBuilder class."""
-    
-    @pytest.fixture
-    def test_monomers(self):
-        """Create test monomers for polymer building."""
-        # Create a simple methylene monomer (-CH2-)
-        methylene = Atomistic()
-        methylene.atoms.add(Atom(name="C1", symbol="C", xyz=np.array([0.0, 0.0, 0.0])))
-        methylene.atoms.add(Atom(name="H1", symbol="H", xyz=np.array([0.0, 1.0, 0.0])))
-        methylene.atoms.add(Atom(name="H2", symbol="H", xyz=np.array([0.0, 0.0, 1.0])))
-        methylene.atoms.add(Atom(name="C2", symbol="C", xyz=np.array([1.5, 0.0, 0.0])))
-        
-        # Anchor rule: from C1 (init=0) to C2 (end=3), delete nothing for first unit
-        anchor_ch2 = AnchorRule(init=0, end=3, deletes=[])
-        monomer_ch2 = Monomer(methylene, anchors=[anchor_ch2])
-        
-        # Create a methyl end cap (-CH3)
-        methyl = Atomistic()
-        methyl.atoms.add(Atom(name="C1", symbol="C", xyz=np.array([0.0, 0.0, 0.0])))
-        methyl.atoms.add(Atom(name="H1", symbol="H", xyz=np.array([0.0, 1.0, 0.0])))
-        methyl.atoms.add(Atom(name="H2", symbol="H", xyz=np.array([0.0, 0.0, 1.0])))
-        methyl.atoms.add(Atom(name="H3", symbol="H", xyz=np.array([1.0, 0.0, 0.0])))
-        
-        anchor_ch3 = AnchorRule(init=0, end=0, deletes=[])  # Self-contained unit
-        monomer_ch3 = Monomer(methyl, anchors=[anchor_ch3])
-        
-        return {"CH2": monomer_ch2, "CH3": monomer_ch3}
     
     def test_polymer_builder_creation(self, test_monomers):
         """Test PolymerBuilder initialization."""
