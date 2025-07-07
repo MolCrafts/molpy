@@ -215,9 +215,8 @@ class TestOPLSTypifier:
         for molecule_name in test_molecules:
             try:
                 _, top_file = self.get_molecule_files(molecule_name, opls_validation_dir)
-                
-                ff = mp.ForceField()
-                topology_ff = mp.io.read_top(str(top_file), ff)
+
+                topology_ff = mp.io.read_top(str(top_file))
                 
                 if topology_ff.n_atomstyles > 0:
                     atomstyle = topology_ff.atomstyles[0]

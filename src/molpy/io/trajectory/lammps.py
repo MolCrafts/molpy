@@ -13,7 +13,7 @@ from .base import TrajectoryReader, TrajectoryWriter
 class LammpsTrajectoryReader(TrajectoryReader):
     """Reader for LAMMPS trajectory files, supporting multiple files."""
 
-    def __init__(self, trajectory: "Trajectory", fpaths: Union[str, Path, List[Union[str, Path]]]):
+    def __init__(self, fpaths: Union[str, Path, List[Union[str, Path]]], trajectory: "Trajectory"):
         # Convert fpaths to the expected format
         if not isinstance(fpaths, list):
             fpaths = [fpaths]

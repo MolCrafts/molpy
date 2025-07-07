@@ -385,6 +385,7 @@ class AmberToolsTypifier:
         """
 
         self.workdir = Path(workdir)
+        self.conda_env = conda_env
         self.antechamber_step = AntechamberStep(workdir, conda_env)
         self.prepgen_step = PrepgenStep(workdir, conda_env)
         self.parmchk_step = ParmchkStep(workdir, conda_env)
@@ -392,13 +393,13 @@ class AmberToolsTypifier:
 
     def typify(
         self,
-        struct: mp.Struct,
+        struct: mp.Atomistic,
         forcefield: str = "gaff",
         charge_type: str = "bcc",
         net_charge: float = 0.0,
-        is_frcmod: bool = False,
-        is_prepi: bool = False,
-        is_tleap: bool = False,
+        is_frcmod: bool = True,
+        is_prepi: bool = True,
+        is_tleap: bool = True,
     ):
         name = struct.get("name")
         if name is None:
@@ -542,7 +543,8 @@ class AmberToolsTypifier:
         workdir = self.workdir / system_name
         if not workdir.exists():
             workdir.mkdir(parents=True, exist_ok=True)
-        self.tleap_step.source("leaprc.gaff")
+        local_tleap = TLeapStep(self.workdir, self.conda_env)
+        local_tleap.source("leaprc.gaff")
         for struct in system.structs:
             if not struct.get("name"):
                 raise ValueError("Struct must have a name attribute")
@@ -556,17 +558,17 @@ class AmberToolsTypifier:
             )
             self.prepgen_step.run(struct_name)
             self.parmchk_step.run(struct_name)
-            self.tleap_step.load_prepi(
+            local_tleap.load_prepi(
                 (self.workdir / struct_name / struct_name).with_suffix(".prepi")
             )
-            self.tleap_step.load_frcmod(
+            local_tleap.load_frcmod(
                 (self.workdir / struct_name / struct_name).with_suffix(".frcmod")
             )
-        self.tleap_step.combine(system_name, list(names))
-        self.tleap_step.save_amberparm(system_name)
-        self.tleap_step.quit()
-        self.tleap_step.run(name=system_name)
-        self.tleap_step.reset()
+        local_tleap.combine(system_name, list(names))
+        local_tleap.save_amberparm(system_name)
+        local_tleap.quit()
+        local_tleap.run(name=system_name)
+        local_tleap.reset()
 
         _, ff = mp.io.read_amber(
             workdir / f"{system_name}.prmtop",

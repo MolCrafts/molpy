@@ -12,7 +12,7 @@ class TestReadLammpsTrajectory:
         reader = LammpsTrajectoryReader(test_data_path / "trajectory/lammps/fcc_orth.dump")
         frame = reader.read_frame(0)
 
-        assert frame["timestep"] == 0
+        assert frame.metadata["timestep"] == 0
         assert frame.box.matrix.shape == (3, 3)  # type: ignore
         assert len(frame["atoms"].data_vars) > 0  # Check atoms exist
         assert len(frame["atoms"].data_vars) == 5
@@ -27,7 +27,7 @@ class TestReadLammpsTrajectory:
         reader = LammpsTrajectoryReader(test_data_path / "trajectory/lammps/fcc_tric.dump")
         frame = reader.read_frame(0)
 
-        assert frame["timestep"] == 0
+        assert frame.metadata["timestep"] == 0
         assert frame.box.matrix.shape == (3, 3)  # type: ignore
         assert len(frame["atoms"].data_vars) > 0  # Check atoms exist 
         assert len(frame["atoms"].data_vars) == 5
@@ -81,7 +81,7 @@ class TestReadLammpsTrajectory:
         
         # Check timestep
         assert "timestep" in frame
-        assert isinstance(frame["timestep"], (int, np.integer))
+        assert isinstance(frame.metadata["timestep"], (int, np.integer))
         
         # Check atoms data
         assert "atoms" in frame
@@ -127,7 +127,7 @@ class TestWriteLammpsTrajectory:
                 'z': [0.0, 0.0, 0.0]
             }
             frame["atoms"] = atoms_data
-            frame["timestep"] = i * 100
+            frame.metadata["timestep"] = i * 100
             frame.box = mp.Box(np.eye(3) * 10.0)
             frames.append(frame)
         
@@ -165,7 +165,7 @@ class TestWriteLammpsTrajectory:
             'z': [0.0, 0.0]
         }
         frame["atoms"] = atoms_data
-        frame["timestep"] = 0
+        frame.metadata["timestep"] = 0
         frame.box = mp.Box(np.eye(3) * 5.0)
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.dump', delete=False) as tmp:
@@ -188,7 +188,7 @@ class TestWriteLammpsTrajectory:
             'vz': [0.0, 0.0, 0.0, 0.0]
         }
         frame["atoms"] = atoms_data
-        frame["timestep"] = 1000
+        frame.metadata["timestep"] = 1000
         frame.box = mp.Box(np.diag([5.0, 5.0, 5.0]))
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.dump', delete=False) as tmp:
@@ -293,7 +293,7 @@ class TestTrajectoryIntegration:
             'xyz': [[0.0, 0.0, 0.0], [0.816, 0.577, 0.0], [-0.816, 0.577, 0.0]]
         }
         frame["atoms"] = atoms_data
-        frame["timestep"] = 0
+        frame.metadata["timestep"] = 0
         frame.box = mp.Box(np.diag([10.0, 10.0, 10.0]))
         
         # Write as trajectory
@@ -365,7 +365,7 @@ class TestLammpsTrajectoryFixes:
                 'q': [0.5, -0.5]
             }
             frame["atoms"] = atoms_data
-            frame["timestep"] = timestep
+            frame.metadata["timestep"] = timestep
             frame.box = mp.Box(np.eye(3) * 10.0)
             frames.append(frame)
         
@@ -410,7 +410,7 @@ class TestLammpsTrajectoryFixes:
                 'z': [0.0, 0.0, 0.0]
             }
             frame["atoms"] = atoms_data
-            frame["timestep"] = timestep
+            frame.metadata["timestep"] = timestep
             frame.box = mp.Box(np.eye(3) * 10.0)
             frames.append(frame)
         
@@ -446,7 +446,7 @@ class TestLammpsTrajectoryFixes:
                 'z': [0.0, 0.0, 0.0]
             }
             frame["atoms"] = atoms_data
-            frame["timestep"] = i * 10
+            frame.metadata["timestep"] = i * 10
             frame.box = mp.Box(np.eye(3) * 10.0)
             frames.append(frame)
         
@@ -483,7 +483,7 @@ class TestLammpsTrajectoryFixes:
             'z': [0.0]
         }
         frame["atoms"] = atoms_data
-        frame["timestep"] = 0
+        frame.metadata["timestep"] = 0
         
         # Test with custom box dimensions
         frame.box = mp.Box(np.diag([5.0, 7.5, 10.0]))

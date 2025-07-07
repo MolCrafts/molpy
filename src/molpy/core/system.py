@@ -2,17 +2,17 @@
 
 This module defines three types of molecular systems:
 - FrameSystem: Uses Frame/Block API for columnar data storage
-- StructSystem: Uses Struct API for object graph storage
+- StructSystem: Uses Struct | Wrapper API for object graph storage
 - PeriodicSystem: Wrapper for periodic systems supporting supercell operations
 """
 
-from struct import Struct
 import numpy as np
 
 from .frame import Frame
 from .forcefield import ForceField
 from .box import Box
 from .wrapper import Wrapper
+from .protocol import Struct
 
 
 class Systemic(Wrapper):
@@ -31,6 +31,14 @@ class Systemic(Wrapper):
     def box(self) -> Box:
         """Return the simulation box of this system."""
         return self._box
+    
+    def set_forcefield(self, forcefield: ForceField):
+        """Set the force field for this system."""
+        self._forcefield = forcefield
+
+    def set_box(self, box: Box):
+        """Set the simulation box for this system."""
+        self._box = box
 
 
 class FrameSystem(Systemic):
@@ -46,9 +54,16 @@ class FrameSystem(Systemic):
 
 class StructSystem(Systemic):
 
-    def __init__(self, struct: Struct, box: Box, forcefield: ForceField):
+    def __init__(self, struct: Struct | Wrapper[Struct] | None = None, box: Box | None = None, forcefield: ForceField | None = None):
+        if struct is None:
+            struct = Struct()
         super().__init__(struct, box, forcefield)
+        self.structs = []
 
+    def add_struct(self, struct: Struct | Wrapper[Struct]):
+        """Add a structure to the system."""
+        self._wrapped.add_struct(struct)
+        self.structs.append(struct)
 
 class PeriodicSystem(Wrapper):
     """Wrapper for periodic systems supporting supercell operations.
@@ -242,8 +257,8 @@ class PeriodicSystem(Wrapper):
         
         return new_frame
 
-    def _replicate_struct(self, struct: Struct, matrix: np.ndarray) -> Struct:
-        """Replicate Struct data according to transformation matrix.
+    def _replicate_struct(self, struct: Struct | Wrapper, matrix: np.ndarray) -> Struct | Wrapper:
+        """Replicate Struct | Wrapper data according to transformation matrix.
         
         Args:
             struct: Original struct to replicate.
@@ -253,7 +268,7 @@ class PeriodicSystem(Wrapper):
             New struct with replicated data.
         """
         # This is a placeholder implementation
-        # The actual implementation depends on the Struct data structure
+        # The actual implementation depends on the Struct | Wrapper data structure
         # For now, return the original struct
         return struct
     

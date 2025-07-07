@@ -17,27 +17,20 @@ from molpy.op.geometry import rotation_matrix_from_vectors
 def test_monomers():
     """Create test monomers for polymer building."""
     # Create a simple methylene monomer (-CH2-)
-    methylene = Atomistic()
-    methylene.atoms.add(Atom(name="C1", symbol="C", xyz=np.array([0.0, 0.0, 0.0])))
-    methylene.atoms.add(Atom(name="H1", symbol="H", xyz=np.array([0.0, 1.0, 0.0])))
-    methylene.atoms.add(Atom(name="H2", symbol="H", xyz=np.array([0.0, 0.0, 1.0])))
-    methylene.atoms.add(Atom(name="C2", symbol="C", xyz=np.array([1.5, 0.0, 0.0])))
-    
-    # Anchor rule: from C1 (init=0) to C2 (end=3), delete nothing for first unit
-    anchor_ch2 = AnchorRule(init=0, end=3, deletes=[])
-    monomer_ch2 = Monomer(methylene, anchors=[anchor_ch2])
+    monomer_ch2 = Monomer(anchors=[AnchorRule(init=0, end=3, deletes=[])])
+    monomer_ch2.atoms.add(Atom(name="C1", symbol="C", xyz=np.array([0.0, 0.0, 0.0])))
+    monomer_ch2.atoms.add(Atom(name="H1", symbol="H", xyz=np.array([0.0, 1.0, 0.0])))
+    monomer_ch2.atoms.add(Atom(name="H2", symbol="H", xyz=np.array([0.0, 0.0, 1.0])))
+    monomer_ch2.atoms.add(Atom(name="C2", symbol="C", xyz=np.array([1.5, 0.0, 0.0])))
     
     # Create a methyl end cap (-CH3)
-    methyl = Atomistic()
-    methyl.atoms.add(Atom(name="C1", symbol="C", xyz=np.array([0.0, 0.0, 0.0])))
-    methyl.atoms.add(Atom(name="H1", symbol="H", xyz=np.array([0.0, 1.0, 0.0])))
-    methyl.atoms.add(Atom(name="H2", symbol="H", xyz=np.array([0.0, 0.0, 1.0])))
-    methyl.atoms.add(Atom(name="H3", symbol="H", xyz=np.array([1.0, 0.0, 0.0])))
+    monomer_ch3 = Monomer(anchors=[AnchorRule(init=0, end=0, deletes=[])])  # Self-contained unit
+    monomer_ch3.atoms.add(Atom(name="C1", symbol="C", xyz=np.array([0.0, 0.0, 0.0])))
+    monomer_ch3.atoms.add(Atom(name="H1", symbol="H", xyz=np.array([0.0, 1.0, 0.0])))
+    monomer_ch3.atoms.add(Atom(name="H2", symbol="H", xyz=np.array([0.0, 0.0, 1.0])))
+    monomer_ch3.atoms.add(Atom(name="H3", symbol="H", xyz=np.array([1.0, 0.0, 0.0])))
     
-    anchor_ch3 = AnchorRule(init=0, end=0, deletes=[])  # Self-contained unit
-    monomer_ch3 = Monomer(methyl, anchors=[anchor_ch3])
-    
-    return {"CH2": monomer_ch2, "CH3": monomer_ch3}
+    return {"CH2": lambda: monomer_ch2, "CH3": lambda: monomer_ch3}
 
 
 class TestAnchorRule:
@@ -73,7 +66,10 @@ class TestMonomer:
     def test_monomer_creation(self, simple_atomistic):
         """Test basic Monomer creation."""
         anchor = AnchorRule(init=0, end=1)
-        monomer = Monomer(simple_atomistic, anchors=[anchor])
+        monomer = Monomer(anchors=[anchor])
+        # Copy atoms from simple_atomistic to monomer
+        for atom in simple_atomistic.atoms:
+            monomer.atoms.add(atom)
         
         assert len(monomer.anchors) == 1
         assert monomer.anchors[0].init == 0
@@ -82,17 +78,25 @@ class TestMonomer:
     
     def test_monomer_xyz_property(self, simple_atomistic):
         """Test that Monomer correctly inherits xyz property from structure."""
-        monomer = Monomer(simple_atomistic, anchors=[])
+        monomer = Monomer(anchors=[])
+        # Copy atoms from simple_atomistic to monomer
+        for atom in simple_atomistic.atoms:
+            monomer.atoms.add(atom)
+        
         expected_xyz = np.array([
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0]
         ])
-        npt.assert_array_almost_equal(monomer.xyz, expected_xyz)
+        npt.assert_array_almost_equal(monomer.positions, expected_xyz)
     
     def test_monomer_symbols_property(self, simple_atomistic):
         """Test that Monomer correctly provides symbols property."""
-        monomer = Monomer(simple_atomistic, anchors=[])
+        monomer = Monomer(anchors=[])
+        # Copy atoms from simple_atomistic to monomer
+        for atom in simple_atomistic.atoms:
+            monomer.atoms.add(atom)
+        
         expected_symbols = ['C', 'C', 'H']
         assert monomer.symbols == expected_symbols
 
@@ -164,17 +168,14 @@ class TestPolymerBuilder:
     def test_build_with_deletions(self):
         """Test polymer building with atom deletions."""
         # Create monomer with deletion rule
-        methylene = Atomistic()
-        methylene.atoms.add(Atom(name="C1", symbol="C", xyz=np.array([0.0, 0.0, 0.0])))
-        methylene.atoms.add(Atom(name="H1", symbol="H", xyz=np.array([0.0, 1.0, 0.0])))
-        methylene.atoms.add(Atom(name="H2", symbol="H", xyz=np.array([0.0, 0.0, 1.0])))
-        methylene.atoms.add(Atom(name="C2", symbol="C", xyz=np.array([1.5, 0.0, 0.0])))
-        
-        # Rule that deletes H2 atom (index 2) after first monomer
         anchor_with_deletion = AnchorRule(init=0, end=3, deletes=[2])
-        monomer_del = Monomer(methylene, anchors=[anchor_with_deletion])
+        monomer_del = Monomer(anchors=[anchor_with_deletion])
+        monomer_del.atoms.add(Atom(name="C1", symbol="C", xyz=np.array([0.0, 0.0, 0.0])))
+        monomer_del.atoms.add(Atom(name="H1", symbol="H", xyz=np.array([0.0, 1.0, 0.0])))
+        monomer_del.atoms.add(Atom(name="H2", symbol="H", xyz=np.array([0.0, 0.0, 1.0])))
+        monomer_del.atoms.add(Atom(name="C2", symbol="C", xyz=np.array([1.5, 0.0, 0.0])))
         
-        builder = PolymerBuilder({"DEL": monomer_del})
+        builder = PolymerBuilder({"DEL": lambda: monomer_del})
         
         path = np.array([
             [0.0, 0.0, 0.0],
@@ -194,8 +195,10 @@ class TestPolymerBuilder:
         path = np.array([[0.0, 0.0, 0.0]])
         seq = []
         
-        with pytest.raises((IndexError, ValueError)):
-            builder.build(path, seq)
+        # Empty sequence should return empty structure
+        result = builder.build(path, seq)
+        assert isinstance(result, Atomistic)
+        assert len(result.atoms) == 0
     
     def test_mismatched_path_sequence_length(self, test_monomers):
         """Test handling of mismatched path and sequence lengths."""
@@ -265,8 +268,6 @@ class TestIntegration:
     def test_build_realistic_polymer(self):
         """Test building a more realistic polymer structure."""
         # Create ethylene monomer (C2H4 unit)
-        ethylene = Atomistic()
-        # Add atoms with realistic coordinates
         positions = np.array([
             [0.0, 0.0, 0.0],    # C1
             [1.54, 0.0, 0.0],   # C2 (typical C-C bond length)
@@ -277,14 +278,15 @@ class TestIntegration:
         ])
         
         symbols = ['C', 'C', 'H', 'H', 'H', 'H']
-        for i, (pos, sym) in enumerate(zip(positions, symbols)):
-            ethylene.atoms.add(Atom(name=f"{sym}{i+1}", symbol=sym, xyz=pos))
         
         # Anchor from C1 to C2, delete overlapping hydrogens
         anchor = AnchorRule(init=0, end=1, deletes=[4, 5])  # Delete H3, H4 from subsequent units
-        eth_monomer = Monomer(ethylene, anchors=[anchor])
+        eth_monomer = Monomer(anchors=[anchor])
         
-        builder = PolymerBuilder({"ETH": eth_monomer})
+        for i, (pos, sym) in enumerate(zip(positions, symbols)):
+            eth_monomer.atoms.add(Atom(name=f"{sym}{i+1}", symbol=sym, xyz=pos))
+        
+        builder = PolymerBuilder({"ETH": lambda: eth_monomer})
         
         # Create a curved path
         path = np.array([
