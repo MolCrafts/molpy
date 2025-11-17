@@ -318,9 +318,9 @@ class TestMultipleFilesTrajectory:
 
         # File 1: basic format
         tmp_file = tmp_path / "test1.dump"
-        filenames.append(tmp_file.name)
+        filenames.append(tmp_file)
 
-        writer = LammpsTrajectoryWriter(tmp_file.name)
+        writer = LammpsTrajectoryWriter(tmp_file)
         frame = mp.Frame()
 
         atoms_data = {
@@ -339,9 +339,9 @@ class TestMultipleFilesTrajectory:
 
         # File 2: format with velocities
         tmp_file = tmp_path / "test2.dump"
-        filenames.append(tmp_file.name)
+        filenames.append(tmp_file)
 
-        writer = LammpsTrajectoryWriter(tmp_file.name)
+        writer = LammpsTrajectoryWriter(tmp_file)
         frame = mp.Frame()
 
         atoms_data = {

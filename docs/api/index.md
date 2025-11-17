@@ -9,7 +9,6 @@ Complete API reference for all MolPy modules. This documentation is automaticall
 - **[Parser](parser.md)**: SMILES/SMARTS parsing
 - **[Reacter](reacter.md)**: Chemical reaction modeling
 - **[Builder](builder.md)**: Molecular construction tools
-- **[Engine](engine.md)**: Simulation engine interfaces
 - **[Pack](pack.md)**: Molecular packing algorithms
 - **[Potential](potential.md)**: Force field potential functions
 - **[Adapter](adapter.md)**: External tool integrations
