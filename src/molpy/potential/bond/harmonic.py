@@ -1,0 +1,85 @@
+"""
+Harmonic bond potential.
+"""
+
+import numpy as np
+from numpy.typing import NDArray
+
+from .base import BondPotential
+
+
+class Harmonic(BondPotential):
+    name = "harmonic"
+    type = "bond"
+
+    def __init__(
+        self, k: NDArray[np.floating] | float, r0: NDArray[np.floating] | float
+    ):
+        """
+        Initialize harmonic bond potential.
+
+        Args:
+            k: Force constant (array for multiple types, or scalar)
+            r0: Equilibrium bond length (array for multiple types, or scalar)
+        """
+        self.k = np.array(k, dtype=np.float64).reshape(-1, 1)
+        self.r0 = np.array(r0, dtype=np.float64).reshape(-1, 1)
+
+    def calc_energy(
+        self,
+        r: NDArray[np.floating],
+        bond_idx: NDArray[np.integer],
+        bond_types: NDArray[np.integer],
+    ) -> float:
+        """
+        Calculate bond energy.
+
+        Args:
+            r: Atom coordinates (shape: (n_atoms, 3))
+            bond_idx: Bond indices (shape: (n_bonds, 2))
+            bond_types: Bond types (shape: (n_bonds,))
+
+        Returns:
+            Total bond energy
+        """
+        # Calculate bond vectors
+        dr = r[bond_idx[:, 1]] - r[bond_idx[:, 0]]
+        dr_norm = np.linalg.norm(dr, axis=1, keepdims=True)
+
+        # Calculate energy
+        energy = 0.5 * self.k[bond_types] * (dr_norm - self.r0[bond_types]) ** 2
+
+        return float(np.sum(energy))
+
+    def calc_forces(
+        self,
+        r: NDArray[np.floating],
+        bond_idx: NDArray[np.integer],
+        bond_types: NDArray[np.integer],
+    ) -> NDArray[np.floating]:
+        """
+        Calculate bond forces.
+
+        Args:
+            r: Atom coordinates (shape: (n_atoms, 3))
+            bond_idx: Bond indices (shape: (n_bonds, 2))
+            bond_types: Bond types (shape: (n_bonds,))
+
+        Returns:
+            Array of forces on each atom (shape: (n_atoms, 3))
+        """
+        n_atoms = len(r)
+
+        # Calculate bond vectors
+        dr = r[bond_idx[:, 1]] - r[bond_idx[:, 0]]
+        dr_norm = np.linalg.norm(dr, axis=1, keepdims=True)
+
+        # Calculate forces on bonds
+        forces = -self.k[bond_types] * (dr_norm - self.r0[bond_types]) * dr / dr_norm
+
+        # Accumulate forces on atoms
+        per_atom_forces = np.zeros((n_atoms, 3), dtype=np.float64)
+        np.add.at(per_atom_forces, bond_idx[:, 0], -forces.squeeze())
+        np.add.at(per_atom_forces, bond_idx[:, 1], forces.squeeze())
+
+        return per_atom_forces

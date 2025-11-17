@@ -1,0 +1,203 @@
+/* ===== Color Variables ===== */
+:root {
+  --md-primary-fg-color:        #184A2C;
+  --md-primary-fg-color--light: #81A784;
+  --md-primary-fg-color--dark:  #0F2A17;
+  --md-accent-fg-color: #81A784;
+  --md-default-bg-color: #FAF7EF;
+}
+
+/* ===== Home Page Layout ===== */
+.home-page {
+  margin: 0;
+  padding: 0;
+}
+
+.home-page .md-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 3rem 2rem;
+}
+
+/* ===== Hero Header ===== */
+.home-page h1 {
+  font-size: 2.5rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.home-page .lead {
+  font-size: 1.1rem;
+  text-align: center;
+  color: var(--md-typeset-color);
+  opacity: 0.75;
+  margin-bottom: 2rem;
+  max-width: 800px;
+  margin-left: auto;
+  margin-right: auto;
+  line-height: 1.6;
+}
+
+/* ===== Button Group ===== */
+.button-group {
+  text-align: center;
+  margin: 2.5rem 0;
+}
+
+.button-group .md-button {
+  margin: 0.5rem;
+  padding: 0.7rem 1.2rem;
+  font-size: 1rem;
+  font-weight: 500;
+  border-radius: 0.3rem;
+  transition: all 0.25s ease;
+}
+
+.button-group .md-button--primary {
+  box-shadow: 0 2px 8px rgba(24, 74, 44, 0.2);
+}
+
+.button-group .md-button--primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(24, 74, 44, 0.3);
+}
+
+.button-group .md-button:not(.md-button--primary):hover {
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* ===== Badges ===== */
+.badges {
+  text-align: center;
+  margin: 2rem 0 3rem;
+}
+
+.badges img {
+  margin: 0.25rem;
+}
+
+/* ===== Features Grid (Material Cards) ===== */
+.home-page .grid.cards {
+  margin: 2rem 0;
+}
+
+.home-page .grid.cards > li {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.home-page .grid.cards > li:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+}
+
+/* ===== Quick Links Grid ===== */
+.home-page .grid:not(.cards) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin: 2rem 0;
+}
+
+/* ===== Section Headings ===== */
+.home-page h2 {
+  font-size: 1.75rem;
+  font-weight: 600;
+  margin-top: 3rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 2px solid var(--md-primary-fg-color);
+  padding-bottom: 0.5rem;
+}
+
+/* ===== Roadmap Grid ===== */
+.roadmap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  margin: 2rem 0;
+}
+
+.roadmap-grid h3 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-top: 0;
+  margin-bottom: 1rem;
+  color: var(--md-primary-fg-color);
+  border-bottom: 2px solid var(--md-primary-fg-color);
+  padding-bottom: 0.4rem;
+}
+
+.roadmap-grid ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.roadmap-grid li {
+  margin-bottom: 0.5rem;
+  line-height: 1.6;
+}
+
+/* ===== Responsive Design ===== */
+@media screen and (max-width: 76.1875em) {
+  .home-page .md-content {
+    padding: 2rem 1.5rem;
+  }
+}
+
+@media screen and (max-width: 60em) {
+  .home-page h1 {
+    font-size: 2rem;
+  }
+
+  .home-page .lead {
+    font-size: 1rem;
+  }
+
+  .home-page h2 {
+    font-size: 1.5rem;
+  }
+
+  .button-group .md-button {
+    display: inline-block;
+    margin: 0.2rem;
+  }
+
+  .home-page .grid:not(.cards),
+  .roadmap-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media screen and (max-width: 44.984375em) {
+  .home-page .md-content {
+    padding: 1.5rem 1rem;
+  }
+
+  .home-page h1 {
+    font-size: 1.75rem;
+  }
+
+  .home-page .lead {
+    font-size: 0.95rem;
+  }
+
+  .home-page h2 {
+    font-size: 1.35rem;
+  }
+
+  .button-group {
+    margin: 1rem 0;
+  }
+
+  .button-group .md-button {
+    display: block;
+    width: calc(100% - 1rem);
+    margin: 0.5rem auto;
+  }
+
+  .roadmap-grid h3 {
+    font-size: 1.1rem;
+  }
+}

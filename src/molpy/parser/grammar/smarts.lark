@@ -1,0 +1,55 @@
+start: _string
+
+// Rules
+_string: _chain nonlastbranch* _lastbranch?
+_chain: atom _chain | atom
+nonlastbranch: "(" branch ")"
+_lastbranch: branch
+branch: _string
+atom: ("[" weak_and_expression "]" | atom_symbol) atom_label?
+atom_label: NUM
+?weak_and_expression: (weak_and_expression ";")? or_expression
+?or_expression: (or_expression ",")? and_expression
+?and_expression: (and_expression "&")? (atom_id | not_expression)
+not_expression: "!" atom_id
+atom_id: atom_symbol
+            | "#" atomic_num
+            | "$(" matches_string ")"
+            | has_label
+            | "X" neighbor_count
+            | "r" ring_size
+            | "R" ring_count
+            | "H" hydrogen_count
+            | "h" implicit_hydrogen_count
+atom_symbol: SYMBOL | STAR
+atomic_num: NUM
+matches_string: _string
+has_label: LABEL
+neighbor_count: NUM
+ring_size: NUM
+ring_count: NUM
+hydrogen_count: NUM
+implicit_hydrogen_count: NUM
+
+// Terminals
+STAR: "*"
+NUM: /\d+/
+LABEL: /%[A-Za-z_0-9]+/
+
+// Tokens for chemical elements and aromatic symbols
+SYMBOL: "C" | "c" | "N" | "n" | "O" | "o" | "S" | "s" | "P" | "p"
+    | "B" | "F" | "Cl" | "Br" | "I" | "H"
+    | "Al" | "Si" | "Ar" | "As" | "Se"
+    | "He" | "Li" | "Be" | "Ne" | "Na" | "Mg" | "K" | "Ca"
+    | "Sc" | "Ti" | "V" | "Cr" | "Mn" | "Fe" | "Co" | "Ni" | "Cu" | "Zn"
+    | "Ga" | "Ge" | "Kr" | "Rb" | "Sr" | "Y" | "Zr" | "Nb" | "Mo" | "Tc"
+    | "Ru" | "Rh" | "Pd" | "Ag" | "Cd" | "In" | "Sn" | "Sb" | "Te" | "Xe"
+    | "Cs" | "Ba" | "La" | "Ce" | "Pr" | "Nd" | "Pm" | "Sm" | "Eu" | "Gd"
+    | "Tb" | "Dy" | "Ho" | "Er" | "Tm" | "Yb" | "Lu" | "Hf" | "Ta" | "W"
+    | "Re" | "Os" | "Ir" | "Pt" | "Au" | "Hg" | "Tl" | "Pb" | "Bi" | "Po"
+    | "At" | "Rn" | "Fr" | "Ra" | "Ac" | "Th" | "Pa" | "U" | "Np" | "Pu"
+    | "Am" | "Cm" | "Bk" | "Cf" | "Es" | "Fm" | "Md" | "No" | "Lr" | "Rf"
+    | "Db" | "Sg" | "Bh" | "Hs" | "Mt" | "Ds" | "Rg" | "Cn" | "Fl" | "Lv"
+
+%import common.WS
+%ignore WS

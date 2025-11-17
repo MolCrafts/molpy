@@ -1,0 +1,153 @@
+site_name: molpy
+site_url: https://molcrafts.github.io/molpy
+repo_url: https://github.com/MolCrafts/molpy
+repo_name: MolCrafts/molpy
+site_description: A fast, clean, and composable toolkit for molecular modeling.
+
+copyright: Copyright © 2024 - 2025 MolCrafts Team
+
+theme:
+  name: material
+  language: en
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.top
+    - navigation.sections
+    - navigation.expand
+    - navigation.footer
+    - toc.follow
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - search.suggest
+    - search.highlight
+  font:
+    text: Inter
+    code: JetBrains Mono
+  favicon: assets/favicon.ico
+  logo: assets/molpy.png
+  icon:
+    repo: fontawesome/brands/github
+  custom_dir: docs/assets/overrides
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.emoji
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.snippets
+  - pymdownx.arithmatex:
+      generic: true
+  - codehilite
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: true
+            separate_signature: true
+            heading_level: 2
+            merge_init_into_class: true
+            filters: ["!^_"]
+  - mkdocs-jupyter:
+      execute: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.ipynb
+      - Quickstart: getting-started/quickstart.ipynb
+      - FAQ: getting-started/faq.md
+      - Core Concepts: getting-started/core-concepts.ipynb
+  - Tutorials:
+      - Overview: tutorials/index.md
+      - Box: tutorials/box.ipynb
+      - Frame & Block: tutorials/frame-block.ipynb
+      - Wrappers: tutorials/wrappers.ipynb
+      - Crystal Builder: tutorials/crystal-builder.ipynb
+      - Force Field: tutorials/force-field.ipynb
+      - Molecular Graph Model: tutorials/molecular-graph-model.ipynb
+      - Selector: tutorials/selector.ipynb
+      - Topology: tutorials/topology.ipynb
+      - Trajectory: tutorials/trajectory.ipynb
+  - User Guide:
+      - Overview: user-guide/index.md
+      - Adapter: user-guide/adapter.ipynb
+      - Builder: user-guide/builder.ipynb
+      - Compute: user-guide/compute.ipynb
+      - IO: user-guide/io.ipynb
+      - Op: user-guide/op.ipynb
+      - Pack: user-guide/pack.ipynb
+      - Parser: user-guide/parser.ipynb
+      - Potential: user-guide/potential.ipynb
+      - Reacter: user-guide/reacter.ipynb
+      - Typifier: user-guide/typifier.ipynb
+  - API Reference:
+      - Overview: api/index.md
+      - Core: api/core.md
+      - IO: api/io.md
+      - Parser: api/parser.md
+      - Reacter: api/reacter.md
+      - Builder: api/builder.md
+      - Engine: api/engine.md
+      - Pack: api/pack.md
+      - Potential: api/potential.md
+      - Adapter: api/adapter.md
+      - Typifier: api/typifier.md
+      - Op: api/op.md
+  - Developer:
+      - Overview: developer/index.md
+      - Contributing: developer/contributing.md
+      - Development Setup: developer/development-setup.md
+      - Coding Style: developer/coding-style.md
+      - Testing: developer/testing.md
+      - Release Process: developer/release-process.md
+      - How to write a `Compute`: developer/compute.py
+  - Changelog:
+      - Overview: changelog/index.md
+      - Releases: changelog/releases.md
+
+extra_javascript:
+  - assets/javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/MolCrafts/molpy
+  generator: false
