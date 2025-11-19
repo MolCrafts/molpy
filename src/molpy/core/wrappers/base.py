@@ -12,42 +12,12 @@ from the inner object, rather than relying on automatic delegation.
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Protocol, Self, TypeVar, runtime_checkable
+from typing import Any, Self, TypeVar
 
 from ..entity import Struct
 
 # Type variable for the inner type (bound to Struct)
 TInner = TypeVar("TInner", bound=Struct)
-
-
-@runtime_checkable
-class DictLike(Protocol):
-    """Protocol for objects with dict-like property access.
-
-    This protocol defines common dict-like methods that wrappers may choose
-    to explicitly forward from their inner objects.
-
-    Note: This protocol focuses on dict-like access methods that are
-    commonly forwarded. Properties like `entities` and `links` are not
-    included as they are specific to Struct types.
-
-    The return types use object instead of Any for better type safety
-    while maintaining flexibility for property values.
-    """
-
-    def copy(self) -> object: ...
-
-    def __getitem__(self, key: str) -> object: ...
-
-    def __setitem__(self, key: str, value: object) -> None: ...
-
-    def __contains__(self, key: str) -> bool: ...
-
-    def get(self, key: str, default: object | None = None) -> object: ...
-
-
-# Make Wrapper satisfy DictLike protocol by ensuring it has the required methods
-# The base Wrapper class already implements __getitem__, __setitem__, __contains__, get, and copy
 
 
 class Wrapper[TInner: Struct]:

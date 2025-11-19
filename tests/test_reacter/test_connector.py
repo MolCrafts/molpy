@@ -87,20 +87,18 @@ class TestReacterConnector:
         connector = ReacterConnector(default=default_reacter)
 
         # Create monomers
-        asm_L = Atomistic()
+        mono_L = Monomer()
         c_L = Atom(symbol="C")
         h_L = Atom(symbol="H")
-        asm_L.add_entity(c_L, h_L)
-        asm_L.add_link(Bond(c_L, h_L))
-        mono_L = Monomer(asm_L)
+        mono_L.add_entity(c_L, h_L)
+        mono_L.add_link(Bond(c_L, h_L))
         mono_L.set_port("1", c_L)
 
-        asm_R = Atomistic()
+        mono_R = Monomer()
         c_R = Atom(symbol="C")
         h_R = Atom(symbol="H")
-        asm_R.add_entity(c_R, h_R)
-        asm_R.add_link(Bond(c_R, h_R))
-        mono_R = Monomer(asm_R)
+        mono_R.add_entity(c_R, h_R)
+        mono_R.add_link(Bond(c_R, h_R))
         mono_R.set_port("2", c_R)
 
         # Connect
@@ -134,20 +132,18 @@ class TestReacterConnector:
         connector = ReacterConnector(default=default_reacter, overrides=overrides)
 
         # Create monomers
-        asm_L = Atomistic()
+        mono_L = Monomer()
         c_L = Atom(symbol="C")
         h_L = Atom(symbol="H")
-        asm_L.add_entity(c_L, h_L)
-        asm_L.add_link(Bond(c_L, h_L))
-        mono_L = Monomer(asm_L)
+        mono_L.add_entity(c_L, h_L)
+        mono_L.add_link(Bond(c_L, h_L))
         mono_L.set_port("1", c_L)
 
-        asm_R = Atomistic()
+        mono_R = Monomer()
         c_R = Atom(symbol="C")
         h_R = Atom(symbol="H")
-        asm_R.add_entity(c_R, h_R)
-        asm_R.add_link(Bond(c_R, h_R))
-        mono_R = Monomer(asm_R)
+        mono_R.add_entity(c_R, h_R)
+        mono_R.add_link(Bond(c_R, h_R))
         mono_R.set_port("2", c_R)
 
         # Connect with types that match override
@@ -189,20 +185,18 @@ class TestReacterConnector:
         connector = ReacterConnector(default=default_reacter, overrides=overrides)
 
         # Create monomers
-        asm_L = Atomistic()
+        mono_L = Monomer()
         c_L = Atom(symbol="C")
         h_L = Atom(symbol="H")
-        asm_L.add_entity(c_L, h_L)
-        asm_L.add_link(Bond(c_L, h_L))
-        mono_L = Monomer(asm_L)
+        mono_L.add_entity(c_L, h_L)
+        mono_L.add_link(Bond(c_L, h_L))
         mono_L.set_port("1", c_L)
 
-        asm_R = Atomistic()
+        mono_R = Monomer()
         c_R = Atom(symbol="C")
         h_R = Atom(symbol="H")
-        asm_R.add_entity(c_R, h_R)
-        asm_R.add_link(Bond(c_R, h_R))
-        mono_R = Monomer(asm_R)
+        mono_R.add_entity(c_R, h_R)
+        mono_R.add_link(Bond(c_R, h_R))
         mono_R.set_port("2", c_R)
 
         # Connect with reverse types (B, A) should match (A, B) override
@@ -232,16 +226,14 @@ class TestReacterConnector:
 
         connector = ReacterConnector(default=default_reacter)
 
-        asm_L = Atomistic()
+        mono_L = Monomer()
         c_L = Atom(symbol="C")
-        asm_L.add_entity(c_L)
-        mono_L = Monomer(asm_L)
+        mono_L.add_entity(c_L)
         # Don't set port
 
-        asm_R = Atomistic()
+        mono_R = Monomer()
         c_R = Atom(symbol="C")
-        asm_R.add_entity(c_R)
-        mono_R = Monomer(asm_R)
+        mono_R.add_entity(c_R)
         mono_R.set_port("2", c_R)
 
         with pytest.raises(ValueError, match="Port '1' not found"):
@@ -260,16 +252,14 @@ class TestReacterConnector:
 
         connector = ReacterConnector(default=default_reacter)
 
-        asm_L = Atomistic()
+        mono_L = Monomer()
         c_L = Atom(symbol="C")
-        asm_L.add_entity(c_L)
-        mono_L = Monomer(asm_L)
+        mono_L.add_entity(c_L)
         mono_L.set_port("1", c_L)
 
-        asm_R = Atomistic()
+        mono_R = Monomer()
         c_R = Atom(symbol="C")
-        asm_R.add_entity(c_R)
-        mono_R = Monomer(asm_R)
+        mono_R.add_entity(c_R)
         # Don't set port
 
         with pytest.raises(ValueError, match="Port '2' not found"):
@@ -293,16 +283,14 @@ class TestReacterConnector:
         assert len(history) == 0
 
         # Create and connect monomers
-        asm_L = Atomistic()
+        mono_L = Monomer()
         c_L = Atom(symbol="C")
-        asm_L.add_entity(c_L)
-        mono_L = Monomer(asm_L)
+        mono_L.add_entity(c_L)
         mono_L.set_port("1", c_L)
 
-        asm_R = Atomistic()
+        mono_R = Monomer()
         c_R = Atom(symbol="C")
-        asm_R.add_entity(c_R)
-        mono_R = Monomer(asm_R)
+        mono_R.add_entity(c_R)
         mono_R.set_port("2", c_R)
 
         connector.connect(mono_L, mono_R, port_L="1", port_R="2")
@@ -351,16 +339,14 @@ class TestReacterConnector:
         assert len(modified) == 0
 
         # Create and connect monomers
-        asm_L = Atomistic()
+        mono_L = Monomer()
         c_L = Atom(symbol="C")
-        asm_L.add_entity(c_L)
-        mono_L = Monomer(asm_L)
+        mono_L.add_entity(c_L)
         mono_L.set_port("1", c_L)
 
-        asm_R = Atomistic()
+        mono_R = Monomer()
         c_R = Atom(symbol="C")
-        asm_R.add_entity(c_R)
-        mono_R = Monomer(asm_R)
+        mono_R.add_entity(c_R)
         mono_R.set_port("2", c_R)
 
         connector.connect(mono_L, mono_R, port_L="1", port_R="2")
@@ -386,16 +372,14 @@ class TestReacterConnector:
         assert connector.needs_retypification() is False
 
         # Create and connect monomers
-        asm_L = Atomistic()
+        mono_L = Monomer()
         c_L = Atom(symbol="C")
-        asm_L.add_entity(c_L)
-        mono_L = Monomer(asm_L)
+        mono_L.add_entity(c_L)
         mono_L.set_port("1", c_L)
 
-        asm_R = Atomistic()
+        mono_R = Monomer()
         c_R = Atom(symbol="C")
-        asm_R.add_entity(c_R)
-        mono_R = Monomer(asm_R)
+        mono_R.add_entity(c_R)
         mono_R.set_port("2", c_R)
 
         connector.connect(mono_L, mono_R, port_L="1", port_R="2")
@@ -417,16 +401,14 @@ class TestReacterConnector:
         connector = ReacterConnector(default=default_reacter)
 
         # Create and connect monomers
-        asm_L = Atomistic()
+        mono_L = Monomer()
         c_L = Atom(symbol="C")
-        asm_L.add_entity(c_L)
-        mono_L = Monomer(asm_L)
+        mono_L.add_entity(c_L)
         mono_L.set_port("1", c_L)
 
-        asm_R = Atomistic()
+        mono_R = Monomer()
         c_R = Atom(symbol="C")
-        asm_R.add_entity(c_R)
-        mono_R = Monomer(asm_R)
+        mono_R.add_entity(c_R)
         mono_R.set_port("2", c_R)
 
         connector.connect(mono_L, mono_R, port_L="1", port_R="2")

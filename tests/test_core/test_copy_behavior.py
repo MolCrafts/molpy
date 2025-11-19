@@ -155,75 +155,68 @@ class TestMonomerCopy:
 
     def test_copy_preserves_structure(self):
         """Test that monomer copy preserves all atoms and bonds."""
-        # Create atomistic structure
-        asm = Atomistic()
+        # Create monomer
+        monomer = Monomer()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
         h1 = Atom(symbol="H")
 
-        asm.entities.add(c1)
-        asm.entities.add(c2)
-        asm.entities.add(h1)
+        monomer.entities.add(c1)
+        monomer.entities.add(c2)
+        monomer.entities.add(h1)
 
         b1 = Bond(c1, c2)
         b2 = Bond(c1, h1)
 
-        asm.links.add(b1)
-        asm.links.add(b2)
-
-        # Create monomer
-        monomer = Monomer(asm)
+        monomer.links.add(b1)
+        monomer.links.add(b2)
 
         # Copy
         monomer_copy = monomer.copy()
 
         # Check structure
-        asm_copy = monomer_copy.unwrap()
-        atoms_copy = list(asm_copy.atoms)
-        bonds_copy = list(asm_copy.bonds)
+        atoms_copy = list(monomer_copy.atoms)
+        bonds_copy = list(monomer_copy.bonds)
 
         assert len(atoms_copy) == 3
         assert len(bonds_copy) == 2
 
     def test_copy_no_orphan_bonds(self):
         """Test that monomer copy doesn't create orphan bonds."""
-        # Create atomistic structure
-        asm = Atomistic()
+        # Create monomer
+        monomer = Monomer()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
         o1 = Atom(symbol="O")
         h1 = Atom(symbol="H")
 
-        asm.entities.add(c1)
-        asm.entities.add(c2)
-        asm.entities.add(o1)
-        asm.entities.add(h1)
+        monomer.entities.add(c1)
+        monomer.entities.add(c2)
+        monomer.entities.add(o1)
+        monomer.entities.add(h1)
 
         b1 = Bond(c1, c2)
         b2 = Bond(c1, o1)
         b3 = Bond(o1, h1)
 
-        asm.links.add(b1)
-        asm.links.add(b2)
-        asm.links.add(b3)
+        monomer.links.add(b1)
+        monomer.links.add(b2)
+        monomer.links.add(b3)
 
-        # Create monomer with port
-        monomer = Monomer(asm)
+        # Set port
         monomer.set_port("port_1", c1, role="reactive")
 
         # Copy
         monomer_copy = monomer.copy()
 
         # Check for orphan bonds
-        asm_copy = monomer_copy.unwrap()
-
         entities_set = set()
-        for entity_type in asm_copy.entities.classes():
-            for entity in asm_copy.entities.bucket(entity_type):
+        for entity_type in monomer_copy.entities.classes():
+            for entity in monomer_copy.entities.bucket(entity_type):
                 entities_set.add(entity)
 
         orphan_bonds = []
-        for bond in asm_copy.bonds:
+        for bond in monomer_copy.bonds:
             for ep in bond.endpoints:
                 if ep not in entities_set:
                     orphan_bonds.append(bond)
@@ -235,19 +228,18 @@ class TestMonomerCopy:
 
     def test_copy_ports_remapped(self):
         """Test that ports are correctly remapped to copied atoms."""
-        # Create atomistic structure
-        asm = Atomistic()
+        # Create monomer
+        monomer = Monomer()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
 
-        asm.entities.add(c1)
-        asm.entities.add(c2)
+        monomer.entities.add(c1)
+        monomer.entities.add(c2)
 
         b1 = Bond(c1, c2)
-        asm.links.add(b1)
+        monomer.links.add(b1)
 
-        # Create monomer with port
-        monomer = Monomer(asm)
+        # Set port
         monomer.set_port("port_1", c1, role="reactive")
 
         # Copy
@@ -259,24 +251,21 @@ class TestMonomerCopy:
         assert port_copy.target is not c1  # Should point to copied atom
 
         # Check port target is in copied atoms
-        atoms_copy = list(monomer_copy.unwrap().atoms)
+        atoms_copy = list(monomer_copy.atoms)
         assert port_copy.target in atoms_copy
 
     def test_multiple_copies_independent(self):
         """Test that multiple copies are independent."""
-        # Create atomistic structure
-        asm = Atomistic()
+        # Create monomer
+        monomer = Monomer()
         c1 = Atom(symbol="C")
         h1 = Atom(symbol="H")
 
-        asm.entities.add(c1)
-        asm.entities.add(h1)
+        monomer.entities.add(c1)
+        monomer.entities.add(h1)
 
         b1 = Bond(c1, h1)
-        asm.links.add(b1)
-
-        # Create monomer
-        monomer = Monomer(asm)
+        monomer.links.add(b1)
 
         # Create multiple copies
         copy1 = monomer.copy()
@@ -284,11 +273,11 @@ class TestMonomerCopy:
         copy3 = monomer.copy()
 
         # Modify each copy
-        copy1.unwrap().entities.add(Atom(symbol="O"))
-        copy2.unwrap().entities.add(Atom(symbol="N"))
+        copy1.entities.add(Atom(symbol="O"))
+        copy2.entities.add(Atom(symbol="N"))
 
         # Check independence
-        assert len(list(monomer.unwrap().atoms)) == 2
-        assert len(list(copy1.unwrap().atoms)) == 3
-        assert len(list(copy2.unwrap().atoms)) == 3
-        assert len(list(copy3.unwrap().atoms)) == 2
+        assert len(list(monomer.atoms)) == 2
+        assert len(list(copy1.atoms)) == 3
+        assert len(list(copy2.atoms)) == 3
+        assert len(list(copy3.atoms)) == 2

@@ -30,8 +30,8 @@ class XYZReader(DataReader):
         Frame
             Frame with:
               * block ``"atoms"``:
-                  - ``element``   → (N,)  <U3   array
-                  - ``xyz``       → (N,3) float array (Å)
+                  - ``element``   -> (N,)  <U3   array
+                  - ``xyz``       -> (N,3) float array (Å)
               * metadata ``comment`` (str)
         """
         # --- collect lines ------------------------------------------------

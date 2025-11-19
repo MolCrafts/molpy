@@ -4,14 +4,14 @@ from pathlib import Path
 import pytest
 
 _REPO_URL = "https://github.com/molcrafts/tests-data.git"
-_DEFAULT_DIR = Path(__file__).resolve().parent.parent / "tests-data"
+_DEFAULT_DIR = Path(__file__).resolve().parent / "tests-data"
 
 
 @pytest.fixture(scope="session", name="TEST_DATA_DIR")
 def find_test_data() -> Path:
     """
     Ensure the tests-data repository is present and up-to-date.
-    * If the directory already contains a `.git` folder → `git pull`.
+    * If the directory already contains a `.git` folder -> `git pull`.
       Otherwise clone afresh.
     """
     if (_DEFAULT_DIR / ".git").exists():

@@ -62,7 +62,7 @@ class Harmonic(AnglePotential):
         cos_theta = np.clip(cos_theta, -1.0, 1.0)
         theta_rad = np.arccos(cos_theta)
 
-        # Convert theta0 to radians (assuming it's in degrees)
+        # Convert theta0 from degrees to radians for calculation
         theta0_rad = np.deg2rad(self.theta0[angle_types])
 
         # Calculate energy
@@ -110,7 +110,7 @@ class Harmonic(AnglePotential):
         cos_theta = np.clip(cos_theta, -1.0, 1.0)
         theta = np.arccos(cos_theta)
 
-        # Convert theta0 to radians (assuming it's in degrees)
+        # Convert theta0 from degrees to radians for calculation
         theta0_rad = np.deg2rad(self.theta0[angle_types])
 
         # Calculate force magnitude

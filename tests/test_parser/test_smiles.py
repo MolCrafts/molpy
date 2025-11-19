@@ -1299,7 +1299,7 @@ except:
 
 @pytest.mark.skipif(not RDKIT_FIND, reason="rdkit not find")
 class TestRDKitConverter:
-    """Test SmilesIR → RDKit Mol conversion."""
+    """Test SmilesIR -> RDKit Mol conversion."""
 
     # Test cases: (smiles_string, expected_num_atoms, expected_num_bonds)
     converter_test_cases = [
@@ -1314,7 +1314,7 @@ class TestRDKitConverter:
 
     @pytest.mark.parametrize("smiles,n_atoms,n_bonds", converter_test_cases)
     def test_smilesir_to_mol_basic(self, smiles, n_atoms, n_bonds):
-        """Test basic IR → Mol conversion."""
+        """Test basic IR -> Mol conversion."""
 
         from molpy.parser.smiles import smilesir_to_mol
 

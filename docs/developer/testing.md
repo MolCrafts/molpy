@@ -26,7 +26,7 @@ This makes it easy to find tests corresponding to a module.
   - Serialization (`to_dict`/`from_dict`, IO round‑trips)
   - Edge cases (empty blocks, unusual shapes, etc.)
 - **IO**:
-  - Round‑trip tests (write → read → compare)
+  - Round‑trip tests (write -> read -> compare)
   - Handling of minimal and slightly “messy” inputs
 - **Domain logic** (builders, reacters, typifiers, packers):
   - Correctness on small, realistic systems

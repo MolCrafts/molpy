@@ -4,30 +4,49 @@ Polymer wrapper for Struct objects.
 Provides port management for polymer structures.
 """
 
-from typing import Any, Self, TypeVar
+from typing import Any, Self
 
-from ..entity import Entity, Struct
-from .base import Wrapper
-
-T = TypeVar("T", bound=Struct)
+from ..atomistic import Atomistic
+from ..entity import Entity
 
 
-class Polymer(Wrapper[T]):
+class Polymer(Atomistic):
     """Wrapper representing a polymer with named connection ports.
 
     Polymer wraps a Struct and adds port management functionality
     for tracking connection points (head, tail, reactive sites, etc.).
     """
 
-    def __init__(self, wrapped: T | Wrapper[T], **props: Any):
+    def __init__(self, **props: Any):
         """Initialize polymer wrapper.
 
         Args:
-            wrapped: Struct instance or Wrapper to wrap
             **props: Additional properties
         """
-        super().__init__(wrapped, **props)
+        super().__init__(**props)
         self._ports: dict[str, Entity] = {}
+
+    @classmethod
+    def from_atomistic(cls, atomistic: Atomistic) -> "Polymer":
+        """Create a Polymer from an existing Atomistic structure.
+
+        Args:
+            atomistic: Source Atomistic structure
+
+        Returns:
+            New Polymer instance containing the same data
+        """
+        # Create new instance
+        poly = cls()
+
+        # Copy data from source
+        # Note: This is a shallow copy of containers, but entities are shared
+        # This matches the behavior of Monomer.from_atomistic
+        poly._entities = atomistic._entities
+        poly._links = atomistic._links
+        poly._topology = atomistic._topology
+
+        return poly
 
     def set_port(
         self,
@@ -128,4 +147,4 @@ class Polymer(Wrapper[T]):
     def __repr__(self) -> str:
         """Repr showing polymer ports."""
         port_names = list(self._ports.keys())
-        return f"<Polymer ports={port_names} wrapping {self.inner!r}>"
+        return f"<Polymer ports={port_names} atoms={len(self.atoms)}>"

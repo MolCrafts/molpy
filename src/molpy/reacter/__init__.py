@@ -52,7 +52,6 @@ from .selectors import (
     remove_dummy_atoms,
     remove_OH,
     remove_one_H,
-    remove_water,
 )
 from .transformers import (
     break_bond,
@@ -90,5 +89,4 @@ __all__ = [
     "remove_all_H",
     "remove_dummy_atoms",
     "remove_one_H",
-    "remove_water",
 ]

@@ -824,7 +824,7 @@ def smilesir_to_mol(ir: SmilesIR) -> "Chem.Mol":
 
     # Add atoms
     for atom_ir in ir.atoms:
-        # Handle aromatic symbols (lowercase in SMILES → uppercase + aromatic flag)
+        # Handle aromatic symbols (lowercase in SMILES -> uppercase + aromatic flag)
         symbol = atom_ir.symbol.upper() if atom_ir.symbol.islower() else atom_ir.symbol
         is_aromatic = atom_ir.symbol.islower()
 
@@ -872,7 +872,7 @@ def smilesir_to_mol(ir: SmilesIR) -> "Chem.Mol":
             and bond_ir.start.symbol.islower()
             and bond_ir.end.symbol.islower()
         ):
-            # Single bond between aromatic atoms → aromatic bond
+            # Single bond between aromatic atoms -> aromatic bond
             rdkit_bond_type = Chem.BondType.AROMATIC
         else:
             rdkit_bond_type = bond_type_map.get(bond_kind_str)
@@ -917,10 +917,10 @@ class PolymerSegment:
         end_groups: Optional end-group structures
     """
 
-    monomers: list[Monomer[Atomistic]]
+    monomers: list[Monomer]
     composition_type: str | None = None
     distribution_params: dict | None = None
-    end_groups: list[Monomer[Atomistic]] = field(default_factory=list)
+    end_groups: list[Monomer] = field(default_factory=list)
 
 
 @dataclass
@@ -957,7 +957,7 @@ class PolymerSpec:
 
     segments: list[PolymerSegment]
     topology: str
-    all_monomers: list[Monomer[Atomistic]] = field(default_factory=list)
+    all_monomers: list[Monomer] = field(default_factory=list)
 
     def __post_init__(self):
         """Compute all_monomers from segments."""
@@ -967,7 +967,7 @@ class PolymerSpec:
             ]
 
 
-def bigsmilesir_to_monomer(ir: BigSmilesIR) -> Monomer[Atomistic]:
+def bigsmilesir_to_monomer(ir: BigSmilesIR) -> Monomer:
     """
     Convert BigSmilesIR to Monomer (topology only).
 
@@ -982,7 +982,7 @@ def bigsmilesir_to_monomer(ir: BigSmilesIR) -> Monomer[Atomistic]:
         ir: BigSmilesIR from parser
 
     Returns:
-        Monomer[Atomistic] with ports set, NO positions
+        Monomer with ports set, NO positions
 
     Raises:
         ValueError: If IR contains multiple repeat units (use bigsmilesir_to_polymerspec instead)
@@ -1037,7 +1037,7 @@ def bigsmilesir_to_polymerspec(ir: BigSmilesIR) -> PolymerSpec:
     """
     Convert BigSmilesIR to complete polymer specification.
 
-    Single responsibility: IR → PolymerSpec conversion only.
+    Single responsibility: IR -> PolymerSpec conversion only.
     Parsing should be done separately.
 
     Extracts monomers and analyzes polymer topology and composition.
@@ -1077,7 +1077,7 @@ def bigsmilesir_to_polymerspec(ir: BigSmilesIR) -> PolymerSpec:
     return extract_polymerspec_from_ir(ir)
 
 
-def extract_monomers_from_ir(ir: BigSmilesIR) -> list[Monomer[Atomistic]]:
+def extract_monomers_from_ir(ir: BigSmilesIR) -> list[Monomer]:
     """
     Extract monomers from BigSmilesIR (topology only).
 
@@ -1091,7 +1091,7 @@ def extract_monomers_from_ir(ir: BigSmilesIR) -> list[Monomer[Atomistic]]:
         ir: BigSmilesIR from parser
 
     Returns:
-        List of Monomer[Atomistic] with ports set
+        List of Monomer with ports set
     """
     monomers = []
 
@@ -1184,7 +1184,7 @@ def create_polymer_segment_from_stochastic_object(
         composition_type = obj.distribution.name
         distribution_params = {"params": obj.distribution.params}
     elif len(monomers) > 1:
-        # Multiple repeat units without explicit distribution → assume random
+        # Multiple repeat units without explicit distribution -> assume random
         composition_type = "random"
 
     # Process end groups if present
@@ -1211,9 +1211,9 @@ def determine_polymer_topology(segments: list[PolymerSegment]) -> str:
     Determine overall polymer topology from segments.
 
     Rules:
-    - 1 segment + 1 monomer → "homopolymer"
-    - 1 segment + multiple monomers → "random_copolymer" or based on composition_type
-    - Multiple segments → "block_copolymer"
+    - 1 segment + 1 monomer -> "homopolymer"
+    - 1 segment + multiple monomers -> "random_copolymer" or based on composition_type
+    - Multiple segments -> "block_copolymer"
 
     Args:
         segments: List of polymer segments
@@ -1239,7 +1239,7 @@ def determine_polymer_topology(segments: list[PolymerSegment]) -> str:
 
 def create_monomer_from_unit(
     unit: SmilesIR, left_desc: BondDescriptorIR, right_desc: BondDescriptorIR
-) -> Monomer[Atomistic]:
+) -> Monomer:
     """
     Create Monomer from repeat unit (topology only).
 
@@ -1253,10 +1253,10 @@ def create_monomer_from_unit(
         right_desc: Right terminal descriptor from stochastic_object
 
     Returns:
-        Monomer[Atomistic] with ports set
+        Monomer with ports set
     """
-    # 1. Create Atomistic (topology only, no positions)
-    atomistic = Atomistic()
+    # 1. Create Monomer (topology only, no positions)
+    monomer = Monomer()
 
     # Add atoms without positions
     for atom_ir in unit.atoms:
@@ -1272,7 +1272,7 @@ def create_monomer_from_unit(
             except (ValueError, AttributeError):
                 element_symbol = atom_ir.symbol
 
-        atomistic.def_atom(
+        monomer.def_atom(
             symbol=atom_ir.symbol,
             element=element_symbol,
             atomic_num=atomic_num,
@@ -1281,16 +1281,13 @@ def create_monomer_from_unit(
         )
 
     # Add bonds
-    atoms = atomistic.atoms
+    atoms = monomer.atoms
     for bond_ir in unit.bonds:
         i = unit.atoms.index(bond_ir.start)
         j = unit.atoms.index(bond_ir.end)
-        atomistic.def_bond(atoms[i], atoms[j], kind=bond_ir.kind)
+        monomer.def_bond(atoms[i], atoms[j], kind=bond_ir.kind)
 
-    # 2. Create Monomer and set ports
-    monomer = Monomer(atomistic)
-
-    # By convention: left descriptor → first atom, right descriptor → last atom
+    # By convention: left descriptor -> first atom, right descriptor -> last atom
     if len(atoms) > 0:
         left_port_name = descriptor_to_port_name(left_desc)
         monomer.set_port(left_port_name, atoms[0])
@@ -1335,12 +1332,12 @@ def descriptor_to_port_name(desc: BondDescriptorIR) -> str:
     Convert bond descriptor to standardized port name.
 
     Naming rules:
-    - [<]   → "in"
-    - [>]   → "out"
-    - [$]   → "branch"
-    - [<1]  → "in_1"
-    - [>2]  → "out_2"
-    - [$3]  → "branch_3"
+    - [<]   -> "in"
+    - [>]   -> "out"
+    - [$]   -> "branch"
+    - [<1]  -> "in_1"
+    - [>2]  -> "out_2"
+    - [$3]  -> "branch_3"
 
     Args:
         desc: Bond descriptor IR
@@ -1363,13 +1360,13 @@ def descriptor_to_port_name(desc: BondDescriptorIR) -> str:
     return base
 
 
-def create_monomer_from_atom_class_ports(ir: BigSmilesIR) -> Monomer[Atomistic] | None:
+def create_monomer_from_atom_class_ports(ir: BigSmilesIR) -> Monomer | None:
     """
     Create Monomer from plain SMILES with atom class notation as ports.
 
     Atom class notation [*:n] is interpreted as port markers:
-    - [*:1] → port "port_1" points to the atom connected to [*:1]
-    - [*:2] → port "port_2" points to the atom connected to [*:2]
+    - [*:1] -> port "port_1" points to the atom connected to [*:1]
+    - [*:2] -> port "port_2" points to the atom connected to [*:2]
     - etc.
 
     The [*:n] atoms themselves are REMOVED from the final structure,
@@ -1379,7 +1376,7 @@ def create_monomer_from_atom_class_ports(ir: BigSmilesIR) -> Monomer[Atomistic] 
         ir: BigSmilesIR from plain SMILES (no stochastic objects)
 
     Returns:
-        Monomer[Atomistic] with ports from atom classes, or None if no ports found
+        Monomer with ports from atom classes, or None if no ports found
 
     Examples:
         >>> parser = SmilesParser()
@@ -1388,11 +1385,10 @@ def create_monomer_from_atom_class_ports(ir: BigSmilesIR) -> Monomer[Atomistic] 
         >>> monomer.port_names()
         ['port_1']
         >>> # Port points to O atom (connected to [*:1])
-
-        >>> ir = parser.parse_bigsmiles("CC(C[*:2])O[*:3]")
+        >>> ir = parser.parse_bigsmiles("CCCCO[*:1]")
         >>> monomer = create_monomer_from_atom_class_ports(ir)
         >>> set(monomer.port_names())
-        {'port_2', 'port_3'}
+        {'port_1'}
     """
     # Find atoms with class_ attribute (atom class ports)
     port_markers: dict[int, AtomIR] = {}  # class_ -> AtomIR (the [*:n] atom)
@@ -1445,8 +1441,8 @@ def create_monomer_from_atom_class_ports(ir: BigSmilesIR) -> Monomer[Atomistic] 
         and b.end not in port_markers.values()
     ]
 
-    # Create Atomistic (topology only, no positions)
-    atomistic = Atomistic()
+    # Create Monomer (topology only, no positions)
+    monomer = Monomer()
 
     # Add real atoms and store references immediately
     for atom_ir in real_atoms:
@@ -1462,7 +1458,7 @@ def create_monomer_from_atom_class_ports(ir: BigSmilesIR) -> Monomer[Atomistic] 
             except (ValueError, AttributeError):
                 element_symbol = atom_ir.symbol
 
-        atom = atomistic.def_atom(
+        atom = monomer.def_atom(
             symbol=atom_ir.symbol,
             element=element_symbol,
             atomic_num=atomic_num,
@@ -1475,10 +1471,7 @@ def create_monomer_from_atom_class_ports(ir: BigSmilesIR) -> Monomer[Atomistic] 
     for bond_ir in real_bonds:
         atom_i = atomir_to_atom[id(bond_ir.start)]
         atom_j = atomir_to_atom[id(bond_ir.end)]
-        atomistic.def_bond(atom_i, atom_j, kind=bond_ir.kind)
-
-    # Create Monomer and set ports using stored atom references
-    monomer = Monomer(atomistic)
+        monomer.def_bond(atom_i, atom_j, kind=bond_ir.kind)
 
     for class_num, connected_atomir in port_atomirs.items():
         port_name = f"port_{class_num}"

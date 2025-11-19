@@ -64,7 +64,7 @@ def linear(
     else:
         first_monomer = first_copy
 
-    current_polymer = Polymer(first_copy)
+    current_polymer = Polymer.from_atomistic(first_copy)
 
     # Transfer ports from the Monomer
     for pname, p in first_monomer.ports.items():
@@ -157,7 +157,7 @@ def linear(
             needs_retypification = True
 
         # Wrap product in new Polymer
-        current_polymer = Polymer(product_assembly)
+        current_polymer = Polymer.from_atomistic(product_assembly)
 
         # Transfer unused ports
         atoms_in_product = set(product_assembly.atoms)
@@ -192,7 +192,7 @@ def linear(
 
     # Step 3: Retypify ONCE after all connections
     if auto_retypify and typifier and needs_retypification:
-        final_product = current_polymer.unwrap()
+        final_product = current_polymer
 
         # Clear existing angles/dihedrals to avoid duplication
 

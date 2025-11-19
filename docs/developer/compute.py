@@ -368,7 +368,7 @@ class MeanSquaredDisplacementCompute(
         msd = particle_msd.mean(axis=-1)
 
         # Calculate diffusion coefficient (slope of MSD vs time)
-        # D = lim_{t→∞} MSD(t) / (2 * d * t) where d is dimensionality
+        # D = lim_{t->∞} MSD(t) / (2 * d * t) where d is dimensionality
         if len(msd) > 10:
             # Use linear fit on latter half of data
             t = np.arange(len(msd) // 2, len(msd))

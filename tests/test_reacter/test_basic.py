@@ -65,11 +65,10 @@ def test_merge_simple():
 def test_port_anchor_selector():
     """Test selecting anchor from port."""
     # Create monomer with port
-    asm = Atomistic()
+    mono = Monomer()
     c = Atom(symbol="C")
-    asm.add_entity(c)
+    mono.add_entity(c)
 
-    mono = Monomer(asm)
     mono.set_port("1", c)
 
     # Select anchor
@@ -80,16 +79,14 @@ def test_port_anchor_selector():
 def test_remove_one_H():
     """Test removing single hydrogen."""
     # Create C with 3 H
-    asm = Atomistic()
+    mono = Monomer()
     c = Atom(symbol="C")
     h1 = Atom(symbol="H")
     h2 = Atom(symbol="H")
     h3 = Atom(symbol="H")
 
-    asm.add_entity(c, h1, h2, h3)
-    asm.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
-
-    mono = Monomer(asm)
+    mono.add_entity(c, h1, h2, h3)
+    mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
     # Remove one H
     leaving = remove_one_H(mono, c)
@@ -100,16 +97,14 @@ def test_remove_one_H():
 def test_remove_all_H():
     """Test removing all hydrogens."""
     # Create C with 3 H
-    asm = Atomistic()
+    mono = Monomer()
     c = Atom(symbol="C")
     h1 = Atom(symbol="H")
     h2 = Atom(symbol="H")
     h3 = Atom(symbol="H")
 
-    asm.add_entity(c, h1, h2, h3)
-    asm.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
-
-    mono = Monomer(asm)
+    mono.add_entity(c, h1, h2, h3)
+    mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
     # Remove all H
     leaving = remove_all_H(mono, c)
@@ -119,10 +114,9 @@ def test_remove_all_H():
 
 def test_no_leaving_group():
     """Test no leaving group selector."""
-    asm = Atomistic()
+    mono = Monomer()
     c = Atom(symbol="C")
-    asm.add_entity(c)
-    mono = Monomer(asm)
+    mono.add_entity(c)
 
     leaving = no_leaving_group(mono, c)
     assert len(leaving) == 0
@@ -152,21 +146,19 @@ def test_find_neighbors():
 def test_simple_cc_coupling():
     """Test simple C-C coupling reaction."""
     # Create left monomer: C-H
-    asm_L = Atomistic()
+    mono_L = Monomer()
     c_L = Atom(symbol="C")
     h_L = Atom(symbol="H")
-    asm_L.add_entity(c_L, h_L)
-    asm_L.add_link(Bond(c_L, h_L))
-    mono_L = Monomer(asm_L)
+    mono_L.add_entity(c_L, h_L)
+    mono_L.add_link(Bond(c_L, h_L))
     mono_L.set_port("1", c_L)
 
     # Create right monomer: C-H
-    asm_R = Atomistic()
+    mono_R = Monomer()
     c_R = Atom(symbol="C")
     h_R = Atom(symbol="H")
-    asm_R.add_entity(c_R, h_R)
-    asm_R.add_link(Bond(c_R, h_R))
-    mono_R = Monomer(asm_R)
+    mono_R.add_entity(c_R, h_R)
+    mono_R.add_link(Bond(c_R, h_R))
     mono_R.set_port("2", c_R)
 
     # Create C-C coupling reaction
@@ -202,22 +194,20 @@ def test_simple_cc_coupling():
 def test_asymmetric_reaction():
     """Test reaction with different leaving groups."""
     # Create left: C-H-H
-    asm_L = Atomistic()
+    mono_L = Monomer()
     c_L = Atom(symbol="C")
     h_L1 = Atom(symbol="H")
     h_L2 = Atom(symbol="H")
-    asm_L.add_entity(c_L, h_L1, h_L2)
-    asm_L.add_link(Bond(c_L, h_L1), Bond(c_L, h_L2))
-    mono_L = Monomer(asm_L)
+    mono_L.add_entity(c_L, h_L1, h_L2)
+    mono_L.add_link(Bond(c_L, h_L1), Bond(c_L, h_L2))
     mono_L.set_port("1", c_L)
 
     # Create right: C-H
-    asm_R = Atomistic()
+    mono_R = Monomer()
     c_R = Atom(symbol="C")
     h_R = Atom(symbol="H")
-    asm_R.add_entity(c_R, h_R)
-    asm_R.add_link(Bond(c_R, h_R))
-    mono_R = Monomer(asm_R)
+    mono_R.add_entity(c_R, h_R)
+    mono_R.add_link(Bond(c_R, h_R))
     mono_R.set_port("2", c_R)
 
     # Create reaction: remove all H from left, one H from right
@@ -245,16 +235,14 @@ def test_asymmetric_reaction():
 def test_addition_reaction():
     """Test addition reaction (no leaving groups)."""
     # Create two monomers
-    asm_L = Atomistic()
+    mono_L = Monomer()
     c_L = Atom(symbol="C")
-    asm_L.add_entity(c_L)
-    mono_L = Monomer(asm_L)
+    mono_L.add_entity(c_L)
     mono_L.set_port("1", c_L)
 
-    asm_R = Atomistic()
+    mono_R = Monomer()
     c_R = Atom(symbol="C")
-    asm_R.add_entity(c_R)
-    mono_R = Monomer(asm_R)
+    mono_R.add_entity(c_R)
     mono_R.set_port("2", c_R)
 
     # Addition reaction (no leaving groups)

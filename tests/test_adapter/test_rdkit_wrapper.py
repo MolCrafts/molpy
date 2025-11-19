@@ -169,6 +169,7 @@ class TestRDKitWrapperSymbolHandling:
 
         # Should have 2 C + 6 H = 8 atoms
         h_atoms = [a for a in atoms_after if a.get("atomic_num") == 1]
+        print([h for h in h_atoms])
 
         assert len(h_atoms) == 6, f"Expected 6 H atoms, got {len(h_atoms)}"
 
@@ -204,23 +205,20 @@ class TestRDKitWrapperSymbolHandling:
         """Test symbol preservation when working with Monomer wrappers."""
         from molpy.core.wrappers.monomer import Monomer
 
-        # Create simple Atomistic
-        atomistic = Atomistic()
-        c1 = atomistic.def_atom(symbol="C", atomic_num=6, xyz=[0.0, 0.0, 0.0])
-        c2 = atomistic.def_atom(symbol="C", atomic_num=6, xyz=[1.5, 0.0, 0.0])
-        o1 = atomistic.def_atom(symbol="O", atomic_num=8, xyz=[3.0, 0.0, 0.0])
-        atomistic.def_bond(c1, c2, order=1.0)
-        atomistic.def_bond(c2, o1, order=1.0)
-
-        # Wrap as Monomer
-        monomer = Monomer(atomistic)
+        # Create simple Monomer
+        monomer = Monomer()
+        c1 = monomer.def_atom(symbol="C", atomic_num=6, xyz=[0.0, 0.0, 0.0])
+        c2 = monomer.def_atom(symbol="C", atomic_num=6, xyz=[1.5, 0.0, 0.0])
+        o1 = monomer.def_atom(symbol="O", atomic_num=8, xyz=[3.0, 0.0, 0.0])
+        monomer.def_bond(c1, c2, order=1.0)
+        monomer.def_bond(c2, o1, order=1.0)
         monomer.define_port("port1", o1)
 
         # Convert to RDKit and generate 3D
         wrapper = RDKitWrapper.from_atomistic(monomer)
         wrapper.generate_3d(add_hydrogens=True, optimize=False)
 
-        # Get back the atomistic
+        # Get back the monomer
         final_atomistic = wrapper.inner
         atoms = list(final_atomistic.atoms)
 

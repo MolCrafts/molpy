@@ -27,7 +27,7 @@ def extract_bond_data(frame: Frame) -> tuple[NDArray, NDArray, NDArray]:
     """
     r = frame["atoms"]["xyz"]
     bonds = frame["bonds"]
-    bond_idx = bonds[["i", "j"]]
+    bond_idx = bonds[["atom_i", "atom_j"]]
     bond_types = bonds["type"]
     return r, bond_idx, bond_types
 
@@ -47,7 +47,7 @@ def extract_angle_data(frame: Frame) -> tuple[NDArray, NDArray, NDArray]:
     """
     r = frame["atoms"]["xyz"]
     angles = frame["angles"]
-    angle_idx = angles[["i", "j", "k"]]
+    angle_idx = angles[["atom_i", "atom_j", "atom_k"]]
     angle_types = angles["type"]
     return r, angle_idx, angle_types
 

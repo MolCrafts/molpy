@@ -57,11 +57,10 @@ def remove_one_H(monomer: Monomer, anchor: Entity) -> list[Entity]:
         >>> leaving = remove_one_H(monomer, carbon_atom)
         >>> # [H_atom] or []
     """
-    assembly = monomer.unwrap()
-    if not isinstance(assembly, Atomistic):
+    if not isinstance(monomer, Atomistic):
         return []
 
-    h_neighbors = find_neighbors(assembly, anchor, element="H")
+    h_neighbors = find_neighbors(monomer, anchor, element="H")
     if h_neighbors:
         return [h_neighbors[0]]
     return []
@@ -84,11 +83,10 @@ def remove_all_H(monomer: Monomer, anchor: Entity) -> list[Entity]:
         >>> leaving = remove_all_H(monomer, carbon_atom)
         >>> # [H1, H2, H3] for CH3
     """
-    assembly = monomer.unwrap()
-    if not isinstance(assembly, Atomistic):
+    if not isinstance(monomer, Atomistic):
         return []
 
-    return find_neighbors(assembly, anchor, element="H")
+    return find_neighbors(monomer, anchor, element="H")
 
 
 def remove_dummy_atoms(monomer: Monomer, anchor: Entity) -> list[Entity]:
@@ -108,11 +106,10 @@ def remove_dummy_atoms(monomer: Monomer, anchor: Entity) -> list[Entity]:
         >>> leaving = remove_dummy_atoms(monomer, carbon_atom)
         >>> # [*_atom]
     """
-    assembly = monomer.unwrap()
-    if not isinstance(assembly, Atomistic):
+    if not isinstance(monomer, Atomistic):
         return []
 
-    neighbors = find_neighbors(assembly, anchor)
+    neighbors = find_neighbors(monomer, anchor)
     return [n for n in neighbors if n.get("symbol") == "*"]
 
 
@@ -121,7 +118,7 @@ def remove_OH(monomer: Monomer, anchor: Entity) -> list[Entity]:
     Remove hydroxyl group (-OH) bonded to the anchor.
 
     Useful for esterification and condensation reactions.
-    Finds O neighbor, then finds H bonded to that O.
+    Finds single-bonded O neighbor (not double-bonded C=O), then finds H bonded to that O.
 
     Args:
         monomer: Monomer containing the atoms
@@ -132,41 +129,35 @@ def remove_OH(monomer: Monomer, anchor: Entity) -> list[Entity]:
 
     Example:
         >>> leaving = remove_OH(monomer, carboxyl_carbon)
-        >>> # [O_atom, H_atom]
+        >>> # [O_atom, H_atom] from -OH group, not from C=O
     """
-    assembly = monomer.unwrap()
-    if not isinstance(assembly, Atomistic):
+    if not isinstance(monomer, Atomistic):
         return []
 
-    # Find O neighbor
-    o_neighbors = find_neighbors(assembly, anchor, element="O")
+    from .utils import get_bond_between
+
+    # Find all O neighbors
+    o_neighbors = find_neighbors(monomer, anchor, element="O")
     if not o_neighbors:
         return []
 
-    o_atom = o_neighbors[0]
+    # Find single-bonded oxygen (hydroxyl, not carbonyl)
+    hydroxyl_o = None
+    for o in o_neighbors:
+        bond = get_bond_between(monomer, anchor, o)
+        if bond and bond.get("order") == 1:  # Single bond = hydroxyl
+            hydroxyl_o = o
+            break
+
+    if hydroxyl_o is None:
+        return []
 
     # Find H bonded to O
-    h_neighbors = find_neighbors(assembly, o_atom, element="H")
+    h_neighbors = find_neighbors(monomer, hydroxyl_o, element="H")
     if not h_neighbors:
-        return [o_atom]  # Just remove O if no H found
+        return [hydroxyl_o]  # Just remove O if no H found
 
-    return [o_atom, h_neighbors[0]]
-
-
-def remove_water(monomer: Monomer, anchor: Entity) -> list[Entity]:
-    """
-    Remove water molecule (H2O) formed during condensation.
-
-    Alternative name for remove_OH for clarity in certain contexts.
-
-    Args:
-        monomer: Monomer containing the atoms
-        anchor: Anchor atom
-
-    Returns:
-        List containing O and H atoms forming water
-    """
-    return remove_OH(monomer, anchor)
+    return [hydroxyl_o, h_neighbors[0]]
 
 
 def no_leaving_group(monomer: Monomer, anchor: Entity) -> list[Entity]:

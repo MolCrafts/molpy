@@ -74,8 +74,8 @@ class AutoConnector(Connector):
     BigSMILES-guided automatic port selection.
 
     Strategy:
-    1. If left has port with role='right' and right has role='left' → use those
-    2. Else if each side has exactly one unconsumed port → use that pair
+    1. If left has port with role='right' and right has role='left' -> use those
+    2. Else if each side has exactly one unconsumed port -> use that pair
     3. Else raise AmbiguousPortsError
 
     This implements the common case where:
@@ -136,7 +136,7 @@ class TableConnector(Connector):
     """
     Rule-based port selection using a lookup table.
 
-    Maps (left_label, right_label) → (left_port, right_port [, bond_kind])
+    Maps (left_label, right_label) -> (left_port, right_port [, bond_kind])
 
     Example:
         rules = {

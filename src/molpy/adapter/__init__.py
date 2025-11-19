@@ -8,7 +8,6 @@ from .rdkit_adapter import (
     RDKitWrapper,
     atomistic_to_mol,
     mol_to_atomistic,
-    monomer_to_mol,
     smilesir_to_atomistic,
     smilesir_to_mol,
 )
@@ -17,7 +16,6 @@ __all__ = [
     "RDKitWrapper",
     "atomistic_to_mol",
     "mol_to_atomistic",
-    "monomer_to_mol",
     "smilesir_to_atomistic",
     "smilesir_to_mol",
 ]

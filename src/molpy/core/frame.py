@@ -15,7 +15,7 @@ type BlockLike = Mapping[str, ArrayLike]
 
 class Block(MutableMapping[str, np.ndarray]):
     """
-    Lightweight container that maps variable names → NumPy arrays.
+    Lightweight container that maps variable names -> NumPy arrays.
 
     • Behaves like a dict but auto-casts any assigned value to ndarray.
     • All built-in `dict`/`MutableMapping` helpers work out of the box.
@@ -173,7 +173,7 @@ class Block(MutableMapping[str, np.ndarray]):
 
     # ------------------------------------------------------------------ helpers
     def to_dict(self) -> dict[str, np.ndarray]:
-        """Return a JSON-serialisable copy (arrays → Python lists)."""
+        """Return a JSON-serialisable copy (arrays -> Python lists)."""
         return {k: v for k, v in self._vars.items()}
 
     @classmethod

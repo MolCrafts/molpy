@@ -4,12 +4,10 @@ Monomer wrapper for Struct objects.
 Provides port definition management for monomer units.
 """
 
-from typing import Any, Self, TypeVar
+from typing import Any, Self
 
-from ..entity import Entity, Struct
-from .base import Wrapper
-
-T = TypeVar("T", bound=Struct)
+from ..atomistic import Atomistic
+from ..entity import Entity
 
 
 class Port(Entity):
@@ -126,22 +124,39 @@ class Port(Entity):
         return f"<Port {self.name!r} -> {self.target}>"
 
 
-class Monomer(Wrapper[T]):
-    """Wrapper representing a monomer unit with port definitions.
+class Monomer(Atomistic):
+    """Monomer unit with port definitions.
 
-    Monomer wraps a Struct and adds port definition management
+    Monomer is an Atomistic structure that adds port definition management
     for tracking reactive sites and connection points.
     """
 
-    def __init__(self, wrapped: T | Wrapper[T], **props: Any):
-        """Initialize monomer wrapper.
+    def __init__(self, **props: Any):
+        """Initialize monomer.
 
         Args:
-            wrapped: Struct instance or Wrapper to wrap
-            **props: Additional properties
+            **props: Properties passed to Atomistic constructor
         """
-        super().__init__(wrapped, **props)
+        super().__init__(**props)
         self._port_defs: dict[str, Port] = {}
+
+    @classmethod
+    def from_atomistic(cls, atomistic: Atomistic, **props: Any) -> "Monomer":
+        """Create a Monomer from an existing Atomistic structure.
+
+        This creates a new Monomer instance and transfers all entities and links
+        from the source Atomistic structure.
+
+        Args:
+            atomistic: Source Atomistic structure
+            **props: Additional properties for the Monomer
+
+        Returns:
+            New Monomer instance containing the same structure
+        """
+        monomer = cls(**props)
+        monomer.merge(atomistic)
+        return monomer
 
     def define_port(
         self,
@@ -268,34 +283,39 @@ class Monomer(Wrapper[T]):
     def copy(self) -> Self:
         """Create a deep copy with properly remapped port targets.
 
-        Overrides Wrapper.copy() to ensure port targets point to
-        copied atoms rather than original atoms.
-
         Returns:
             New Monomer with copied assembly and remapped ports
         """
-        import copy as copy_module
+        # Create a copy using Atomistic.copy() logic (via super or by manual copy)
+        # Since we inherit from Atomistic, super().copy() returns an Atomistic (or self type)
+        # We need to ensure we get a Monomer back and copy ports
 
-        # Deep copy the inner struct
-        old_inner = self.inner
-        new_inner = copy_module.deepcopy(old_inner)
+        new_monomer = (
+            super().copy()
+        )  # Should return Monomer because type(self)() is used in Struct.copy
 
         # Build entity map: old entity -> new entity
+        # We need to map old atoms to new atoms to update port targets
+        # Struct.copy() doesn't expose the map, so we have to reconstruct it or rely on order?
+        # Struct.copy() iterates buckets. If order is preserved, we can zip.
+
+        # Reconstruct map by iterating atoms (assuming deterministic order)
+        old_atoms = list(self.atoms)
+        new_atoms = list(new_monomer.atoms)
         entity_map = {}
+        if len(old_atoms) == len(new_atoms):
+            for old, new in zip(old_atoms, new_atoms):
+                entity_map[old] = new
 
-        # Map atoms
-        old_atoms = list(old_inner.atoms)
-        new_atoms = list(new_inner.atoms)
-        for old_atom, new_atom in zip(old_atoms, new_atoms):
-            entity_map[old_atom] = new_atom
+        # Also map other entities if ports point to them? Usually ports point to atoms.
 
-        # Create new wrapper
-        new_monomer = type(self)(new_inner)
-
-        # Remap ports: create new Port objects with mapped targets
+        # Remap ports
         for port_name, old_port in self._port_defs.items():
             old_target = old_port.target
             new_target = entity_map.get(old_target, old_target)
+
+            # If target wasn't mapped (e.g. not an atom?), we might have an issue.
+            # But for now assume ports point to atoms.
 
             new_monomer.define_port(
                 port_name,
@@ -312,7 +332,7 @@ class Monomer(Wrapper[T]):
     def __repr__(self) -> str:
         """Repr showing monomer port definitions."""
         port_names = list(self._port_defs.keys())
-        return f"<Monomer port_defs={port_names} wrapping {self.inner!r}>"
+        return f"<Monomer port_defs={port_names} {super().__repr__()}>"
 
     def port_names(self) -> list[str]:
         """Return defined port names."""

@@ -30,7 +30,7 @@ _TWO_CHR_ELEMENTS = {
 
 
 def _dict_to_block(data: dict[str, list[Any]]) -> Block:
-    """Convert 'column → list' dict into a Block of ndarrays."""
+    """Convert 'column -> list' dict into a Block of ndarrays."""
     blk = Block()
     for k, vals in data.items():
         if k == "xyz":
@@ -52,8 +52,8 @@ class PDBReader(DataReader):
     Minimal-yet-robust PDB reader.
 
     * ATOM / HETATM parsed per PDB v3.3 fixed columns
-    * CRYST1 → frame.box
-    * CONECT → bond list
+    * CRYST1 -> frame.box
+    * CONECT -> bond list
     """
 
     __slots__ = ()

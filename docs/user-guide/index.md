@@ -9,7 +9,6 @@ All modules in MolPy are built around the `core` module, which provides the fund
 - **[Adapter](adapter.ipynb)**: Bridge to external libraries (RDKit)
 - **[Builder](builder.ipynb)**: Molecular construction and assembly
 - **[Compute](compute.ipynb)**: Unified computation abstraction
-- **[Engine](engine.ipynb)**: Interfaces to simulation engines (LAMMPS, CP2K)
 - **[IO](io.ipynb)**: File format readers and writers
 - **[Op](op.ipynb)**: Geometric operations
 - **[Pack](pack.ipynb)**: Molecular packing tools

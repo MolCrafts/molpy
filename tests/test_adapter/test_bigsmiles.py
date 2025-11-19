@@ -1,4 +1,4 @@
-"""Tests for BigSMILES to Monomer[Atomistic] conversion."""
+"""Tests for BigSMILES to Monomer conversion."""
 
 import pytest
 
@@ -64,19 +64,17 @@ class TestBigSmilesToMonomer:
 
         # Check types
         assert isinstance(monomer, Monomer)
-        atomistic = monomer.unwrap()
-        assert isinstance(atomistic, Atomistic)
 
         # Check topology
-        assert len(atomistic.atoms) == 2  # 2 carbons
+        assert len(monomer.atoms) == 2  # 2 carbons
         assert set(monomer.port_names()) == {"in", "out"}
 
         # Check port connections
-        assert monomer.get_port("in").target == atomistic.atoms[0]  # First atom
-        assert monomer.get_port("out").target == atomistic.atoms[-1]  # Last atom
+        assert monomer.get_port("in").target == monomer.atoms[0]  # First atom
+        assert monomer.get_port("out").target == monomer.atoms[-1]  # Last atom
 
         # No coordinates! (Atom is dict-like)
-        for atom in atomistic.atoms:
+        for atom in monomer.atoms:
             assert "xyz" not in atom or atom["xyz"] is None
 
     def test_atom_class_port_single(self):
@@ -86,9 +84,8 @@ class TestBigSmilesToMonomer:
         monomer = bigsmilesir_to_monomer(ir)
 
         # Check structure
-        atomistic = monomer.unwrap()
-        assert len(atomistic.atoms) == 5  # 4C + 1O (no * atom)
-        symbols = [a["symbol"] for a in atomistic.atoms]
+        assert len(monomer.atoms) == 5  # 4C + 1O (no * atom)
+        symbols = [a["symbol"] for a in monomer.atoms]
         # Note: Order may vary based on parsing, but should have 4C + 1O
         assert symbols.count("C") == 4
         assert symbols.count("O") == 1
@@ -106,8 +103,7 @@ class TestBigSmilesToMonomer:
         monomer = bigsmilesir_to_monomer(ir)
 
         # Check structure
-        atomistic = monomer.unwrap()
-        assert len(atomistic.atoms) == 4  # 3C + 1O (no * atoms)
+        assert len(monomer.atoms) == 4  # 3C + 1O (no * atoms)
 
         # Check ports
         assert set(monomer.port_names()) == {"port_2", "port_3"}
@@ -141,12 +137,12 @@ class TestBigSmilesToMonomer:
         parser = SmilesParser()
         ir = parser.parse_bigsmiles("{[<]CC[>]}")
         monomer = bigsmilesir_to_monomer(ir)
-        atomistic = monomer.unwrap()
+        atomistic = monomer
 
         # Check port names
         assert set(monomer.port_names()) == {"in", "out"}
 
-        # Check port atoms (left → first, right → last)
+        # Check port atoms (left -> first, right -> last)
         in_port = monomer.get_port("in")
         out_port = monomer.get_port("out")
         assert in_port is not None and in_port.target is atomistic.atoms[0]
@@ -189,19 +185,19 @@ class TestCoordinateBinding:
         coords = [(0.0, 0.0, 0.0), (1.5, 0.0, 0.0)]
 
         # User binds coords (Atom is dict-like)
-        for i, atom in enumerate(monomer.unwrap().atoms):
+        for i, atom in enumerate(monomer.atoms):
             atom["xyz"] = coords[i]
 
         # Verify
-        assert monomer.unwrap().atoms[0]["xyz"] == (0.0, 0.0, 0.0)
-        assert monomer.unwrap().atoms[1]["xyz"] == (1.5, 0.0, 0.0)
+        assert monomer.atoms[0]["xyz"] == (0.0, 0.0, 0.0)
+        assert monomer.atoms[1]["xyz"] == (1.5, 0.0, 0.0)
 
 
 class TestPolymerSpec:
     """Test PolymerSpec and bigsmiles_to_polymerspec()."""
 
     def test_homopolymer(self):
-        """Test {[<]CC[>]} → homopolymer."""
+        """Test {[<]CC[>]} -> homopolymer."""
         parser = SmilesParser()
         ir = parser.parse_bigsmiles("{[<]CC[>]}")
         spec = bigsmilesir_to_polymerspec(ir)
@@ -213,7 +209,7 @@ class TestPolymerSpec:
         assert len(spec.all_monomers) == 1
 
     def test_random_copolymer(self):
-        """Test {[<]CC[>],[<]OCC[>]} → random copolymer."""
+        """Test {[<]CC[>],[<]OCC[>]} -> random copolymer."""
         parser = SmilesParser()
         ir = parser.parse_bigsmiles("{[<]CC[>],[<]OCC[>]}")
         spec = bigsmilesir_to_polymerspec(ir)
@@ -225,7 +221,7 @@ class TestPolymerSpec:
         assert len(spec.all_monomers) == 2
 
     def test_block_copolymer(self):
-        """Test {[<]CC[>]}{[<]OCC[>]} → block copolymer."""
+        """Test {[<]CC[>]}{[<]OCC[>]} -> block copolymer."""
         parser = SmilesParser()
         ir = parser.parse_bigsmiles("{[<]CC[>]}{[<]OCC[>]}")
         spec = bigsmilesir_to_polymerspec(ir)
@@ -236,11 +232,11 @@ class TestPolymerSpec:
 
         # First block
         assert len(spec.segments[0].monomers) == 1
-        assert len(spec.segments[0].monomers[0].unwrap().atoms) == 2  # CC
+        assert len(spec.segments[0].monomers[0].atoms) == 2  # CC
 
         # Second block
         assert len(spec.segments[1].monomers) == 1
-        assert len(spec.segments[1].monomers[0].unwrap().atoms) == 3  # OCC
+        assert len(spec.segments[1].monomers[0].atoms) == 3  # OCC
 
     def test_polymer_segment_structure(self):
         """Test PolymerSegment structure."""

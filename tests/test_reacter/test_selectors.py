@@ -7,7 +7,6 @@ Tests cover:
 - remove_all_H
 - remove_dummy_atoms (from selectors)
 - remove_OH
-- remove_water
 - no_leaving_group
 """
 
@@ -22,7 +21,6 @@ from molpy.reacter.selectors import (
     remove_dummy_atoms,
     remove_OH,
     remove_one_H,
-    remove_water,
 )
 
 
@@ -31,11 +29,10 @@ class TestPortAnchorSelector:
 
     def test_port_anchor_selector_basic(self):
         """Test selecting anchor from port."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
-        asm.add_entity(c)
+        mono.add_entity(c)
 
-        mono = Monomer(asm)
         mono.set_port("1", c)
 
         anchor = port_anchor_selector(mono, "1")
@@ -44,12 +41,11 @@ class TestPortAnchorSelector:
 
     def test_port_anchor_selector_different_port(self):
         """Test selecting anchor from different port."""
-        asm = Atomistic()
+        mono = Monomer()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
-        asm.add_entity(c1, c2)
+        mono.add_entity(c1, c2)
 
-        mono = Monomer(asm)
         mono.set_port("head", c1)
         mono.set_port("tail", c2)
 
@@ -59,11 +55,10 @@ class TestPortAnchorSelector:
 
     def test_port_anchor_selector_missing_port(self):
         """Test selecting anchor from non-existent port raises error."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
-        asm.add_entity(c)
+        mono.add_entity(c)
 
-        mono = Monomer(asm)
         # Don't set port
 
         with pytest.raises(ValueError, match="Port '1' not found"):
@@ -75,13 +70,11 @@ class TestRemoveOneH:
 
     def test_remove_one_H_single(self):
         """Test removing one H when one exists."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         h = Atom(symbol="H")
-        asm.add_entity(c, h)
-        asm.add_link(Bond(c, h))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, h)
+        mono.add_link(Bond(c, h))
 
         leaving = remove_one_H(mono, c)
 
@@ -91,15 +84,13 @@ class TestRemoveOneH:
 
     def test_remove_one_H_multiple(self):
         """Test removing one H when multiple exist."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         h1 = Atom(symbol="H")
         h2 = Atom(symbol="H")
         h3 = Atom(symbol="H")
-        asm.add_entity(c, h1, h2, h3)
-        asm.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, h1, h2, h3)
+        mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
         leaving = remove_one_H(mono, c)
 
@@ -110,13 +101,11 @@ class TestRemoveOneH:
 
     def test_remove_one_H_none(self):
         """Test removing one H when none exist."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         o = Atom(symbol="O")
-        asm.add_entity(c, o)
-        asm.add_link(Bond(c, o))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, o)
+        mono.add_link(Bond(c, o))
 
         leaving = remove_one_H(mono, c)
 
@@ -124,11 +113,9 @@ class TestRemoveOneH:
 
     def test_remove_one_H_no_neighbors(self):
         """Test removing one H from isolated atom."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
-        asm.add_entity(c)
-
-        mono = Monomer(asm)
+        mono.add_entity(c)
 
         leaving = remove_one_H(mono, c)
 
@@ -140,13 +127,11 @@ class TestRemoveAllH:
 
     def test_remove_all_H_single(self):
         """Test removing all H when one exists."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         h = Atom(symbol="H")
-        asm.add_entity(c, h)
-        asm.add_link(Bond(c, h))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, h)
+        mono.add_link(Bond(c, h))
 
         leaving = remove_all_H(mono, c)
 
@@ -155,15 +140,13 @@ class TestRemoveAllH:
 
     def test_remove_all_H_multiple(self):
         """Test removing all H when multiple exist."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         h1 = Atom(symbol="H")
         h2 = Atom(symbol="H")
         h3 = Atom(symbol="H")
-        asm.add_entity(c, h1, h2, h3)
-        asm.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, h1, h2, h3)
+        mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
         leaving = remove_all_H(mono, c)
 
@@ -175,13 +158,11 @@ class TestRemoveAllH:
 
     def test_remove_all_H_none(self):
         """Test removing all H when none exist."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         o = Atom(symbol="O")
-        asm.add_entity(c, o)
-        asm.add_link(Bond(c, o))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, o)
+        mono.add_link(Bond(c, o))
 
         leaving = remove_all_H(mono, c)
 
@@ -189,15 +170,13 @@ class TestRemoveAllH:
 
     def test_remove_all_H_mixed_neighbors(self):
         """Test removing all H when other neighbors exist."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         h1 = Atom(symbol="H")
         h2 = Atom(symbol="H")
         o = Atom(symbol="O")
-        asm.add_entity(c, h1, h2, o)
-        asm.add_link(Bond(c, h1), Bond(c, h2), Bond(c, o))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, h1, h2, o)
+        mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, o))
 
         leaving = remove_all_H(mono, c)
 
@@ -212,13 +191,11 @@ class TestRemoveDummyAtoms:
 
     def test_remove_dummy_atoms_single(self):
         """Test removing dummy atoms when one exists."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         dummy = Atom(symbol="*")
-        asm.add_entity(c, dummy)
-        asm.add_link(Bond(c, dummy))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, dummy)
+        mono.add_link(Bond(c, dummy))
 
         leaving = remove_dummy_atoms(mono, c)
 
@@ -228,14 +205,12 @@ class TestRemoveDummyAtoms:
 
     def test_remove_dummy_atoms_multiple(self):
         """Test removing dummy atoms when multiple exist."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         dummy1 = Atom(symbol="*")
         dummy2 = Atom(symbol="*")
-        asm.add_entity(c, dummy1, dummy2)
-        asm.add_link(Bond(c, dummy1), Bond(c, dummy2))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, dummy1, dummy2)
+        mono.add_link(Bond(c, dummy1), Bond(c, dummy2))
 
         leaving = remove_dummy_atoms(mono, c)
 
@@ -246,13 +221,11 @@ class TestRemoveDummyAtoms:
 
     def test_remove_dummy_atoms_none(self):
         """Test removing dummy atoms when none exist."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         h = Atom(symbol="H")
-        asm.add_entity(c, h)
-        asm.add_link(Bond(c, h))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, h)
+        mono.add_link(Bond(c, h))
 
         leaving = remove_dummy_atoms(mono, c)
 
@@ -260,14 +233,12 @@ class TestRemoveDummyAtoms:
 
     def test_remove_dummy_atoms_mixed_neighbors(self):
         """Test removing dummy atoms when other neighbors exist."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         dummy = Atom(symbol="*")
         h = Atom(symbol="H")
-        asm.add_entity(c, dummy, h)
-        asm.add_link(Bond(c, dummy), Bond(c, h))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, dummy, h)
+        mono.add_link(Bond(c, dummy), Bond(c, h))
 
         leaving = remove_dummy_atoms(mono, c)
 
@@ -282,14 +253,12 @@ class TestRemoveOH:
 
     def test_remove_OH_complete(self):
         """Test removing complete OH group."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         o = Atom(symbol="O")
         h = Atom(symbol="H")
-        asm.add_entity(c, o, h)
-        asm.add_link(Bond(c, o), Bond(o, h))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, o, h)
+        mono.add_link(Bond(c, o), Bond(o, h))
 
         leaving = remove_OH(mono, c)
 
@@ -299,14 +268,12 @@ class TestRemoveOH:
 
     def test_remove_OH_no_H(self):
         """Test removing OH when O has no H (just O)."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         o = Atom(symbol="O")
-        asm.add_entity(c, o)
-        asm.add_link(Bond(c, o))
+        mono.add_entity(c, o)
+        mono.add_link(Bond(c, o))
         # O has no H
-
-        mono = Monomer(asm)
 
         leaving = remove_OH(mono, c)
 
@@ -316,13 +283,11 @@ class TestRemoveOH:
 
     def test_remove_OH_no_O(self):
         """Test removing OH when no O neighbor exists."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         h = Atom(symbol="H")
-        asm.add_entity(c, h)
-        asm.add_link(Bond(c, h))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, h)
+        mono.add_link(Bond(c, h))
 
         leaving = remove_OH(mono, c)
 
@@ -330,16 +295,14 @@ class TestRemoveOH:
 
     def test_remove_OH_multiple_O(self):
         """Test removing OH when multiple O neighbors exist."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         o1 = Atom(symbol="O")
         o2 = Atom(symbol="O")
         h = Atom(symbol="H")
-        asm.add_entity(c, o1, o2, h)
-        asm.add_link(Bond(c, o1), Bond(c, o2), Bond(o1, h))
+        mono.add_entity(c, o1, o2, h)
+        mono.add_link(Bond(c, o1), Bond(c, o2), Bond(o1, h))
         # Only o1 has H
-
-        mono = Monomer(asm)
 
         leaving = remove_OH(mono, c)
 
@@ -354,40 +317,16 @@ class TestRemoveOH:
         assert any(atom.get("symbol") == "H" for atom in leaving)
 
 
-class TestRemoveWater:
-    """Test remove_water function."""
-
-    def test_remove_water_same_as_remove_OH(self):
-        """Test that remove_water is same as remove_OH."""
-        asm = Atomistic()
-        c = Atom(symbol="C")
-        o = Atom(symbol="O")
-        h = Atom(symbol="H")
-        asm.add_entity(c, o, h)
-        asm.add_link(Bond(c, o), Bond(o, h))
-
-        mono = Monomer(asm)
-
-        leaving = remove_water(mono, c)
-
-        # Should behave same as remove_OH
-        assert len(leaving) == 2
-        assert o in leaving
-        assert h in leaving
-
-
 class TestNoLeavingGroup:
     """Test no_leaving_group function."""
 
     def test_no_leaving_group_always_empty(self):
         """Test that no_leaving_group always returns empty list."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
         h = Atom(symbol="H")
-        asm.add_entity(c, h)
-        asm.add_link(Bond(c, h))
-
-        mono = Monomer(asm)
+        mono.add_entity(c, h)
+        mono.add_link(Bond(c, h))
 
         leaving = no_leaving_group(mono, c)
 
@@ -395,11 +334,9 @@ class TestNoLeavingGroup:
 
     def test_no_leaving_group_ignores_anchor(self):
         """Test that no_leaving_group ignores anchor parameter."""
-        asm = Atomistic()
+        mono = Monomer()
         c = Atom(symbol="C")
-        asm.add_entity(c)
-
-        mono = Monomer(asm)
+        mono.add_entity(c)
 
         # Should work even with None or different anchor
         leaving = no_leaving_group(mono, c)
