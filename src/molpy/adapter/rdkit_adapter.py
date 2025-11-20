@@ -367,74 +367,92 @@ class RDKitWrapper(Wrapper[Atomistic]):
     #   Coordinate synchronization
     # ------------------------------------------------------------------
 
-    def sync_coords_from_mol(self) -> None:
-        """Synchronize coordinates from RDKit conformer to Atomistic."""
-        if self._mol.GetNumConformers() == 0:
-            return
+    def sync(self, direction: str = "both") -> None:
+        """Synchronize data between RDKit `Mol` and MolPy `Atomistic`.
 
-        self._ensure_atom_map_ready()
-        conf = self._mol.GetConformer()
-        mon_atoms = self._core_atoms()
-        atom_by_id = _build_atom_id_index(mon_atoms)
+        Args:
+            direction: one of "from_mol", "to_mol", or "both".
 
-        for a in self._mol.GetAtoms():
-            if a.GetAtomicNum() == 1:
-                continue  # Skip hydrogens for now
+        Behavior:
+        - "from_mol": copy coordinates, element/ids and hydrogen atoms from RDKit into
+          the MolPy Atomistic (uses a hydrogen-expanded RDKit mol when available).
+        - "to_mol": copy per-atom `xyz` from Atomistic into the RDKit conformer
+          (creates a conformer if necessary).
+        - "both": perform "from_mol" followed by "to_mol" (useful after structural
+          edits on either side).
+        """
+        direction = (direction or "both").lower()
+        if direction not in ("from_mol", "to_mol", "both"):
+            raise ValueError("direction must be one of 'from_mol', 'to_mol', 'both'")
 
-            ridx = a.GetIdx()
-            ent: Any | None = None
+        # Ensure maps are available when needed
+        if direction in ("from_mol", "both"):
+            # Transfer coordinates + hydrogens from RDKit into Atomistic.
+            if self._mol.GetNumConformers() > 0:
+                # Build a hydrogen-expanded copy to capture explicit H atoms and coords
+                mol_h = Chem.Mol(self._mol)
+                mol_h = Chem.AddHs(mol_h, addCoords=True)
 
-            # Preferred: MP_ID tag
-            if a.HasProp(MP_ID):
-                hid = int(a.GetIntProp(MP_ID))
-                ent = atom_by_id.get(hid)
+                # If the hydrogenized copy lacks conformers but original has one, copy it
+                if mol_h.GetNumConformers() == 0 and self._mol.GetNumConformers() > 0:
+                    mol_h.AddConformer(self._mol.GetConformer(), assignId=True)
 
-            # Fallback: atom_map (rd_idx -> ent)
-            if ent is None:
+                # Reuse internal transfer helper (handles hydrogen addition & mapping)
+                self._transfer_coords_and_hydrogens(mol_h)
+
+        if direction in ("to_mol", "both"):
+            # Copy coordinates from Atomistic into RDKit conformer
+            mon_atoms = self._core_atoms()
+            n_atoms = len(mon_atoms)
+            if n_atoms == 0:
+                return
+
+            self._ensure_atom_map_ready()
+
+            # Get or create conformer
+            if self._mol.GetNumConformers() == 0:
+                conf = Chem.Conformer(n_atoms)
+                self._mol.AddConformer(conf, assignId=True)
+            else:
+                conf = self._mol.GetConformer()
+
+            for a in self._mol.GetAtoms():
+                ridx = a.GetIdx()
+                if a.GetAtomicNum() == 1:
+                    continue
+
                 ent = self._atom_map.get(ridx)
+                if ent is None and ridx < len(mon_atoms):
+                    ent = mon_atoms[ridx]
+                if ent is None:
+                    continue
 
-            # Fallback: index-based
-            if ent is None and ridx < len(mon_atoms):
-                ent = mon_atoms[ridx]
+                xyz = ent.get("xyz", [0.0, 0.0, 0.0])
+                if len(xyz) >= 3:
+                    conf.SetAtomPosition(ridx, (float(xyz[0]), float(xyz[1]), float(xyz[2])))
 
-            if ent is None:
-                continue
+    # ------------------------------------------------------------------
+    #   Convenience factories / helpers
+    # ------------------------------------------------------------------
 
-            p = conf.GetAtomPosition(ridx)
-            ent["xyz"] = [float(p.x), float(p.y), float(p.z)]
+    @classmethod
+    def from_smiles(cls, smi: str, sync_coords: bool = False) -> "RDKitWrapper":
+        """Create RDKitWrapper directly from a SMILES string.
 
-    def sync_coords_to_mol(self) -> None:
-        """Synchronize coordinates from Atomistic to RDKit conformer."""
-        mon_atoms = self._core_atoms()
-        n_atoms = len(mon_atoms)
-        if n_atoms == 0:
-            return
+        Args:
+            smi: SMILES string
+            sync_coords: if True, attempt to sync coordinates into Atomistic
+        """
+        mol = Chem.MolFromSmiles(smi)
+        return cls.from_mol(mol, sync_coords=sync_coords)
 
-        self._ensure_atom_map_ready()
+    def to_smiles(self, canonical: bool = True) -> str:
+        """Return SMILES for the wrapped RDKit molecule."""
+        return Chem.MolToSmiles(Chem.Mol(self._mol), canonical=canonical)
 
-        # Get or create conformer
-        if self._mol.GetNumConformers() == 0:
-            conf = Chem.Conformer(n_atoms)
-            self._mol.AddConformer(conf, assignId=True)
-        else:
-            conf = self._mol.GetConformer()
-
-        for a in self._mol.GetAtoms():
-            ridx = a.GetIdx()
-            if a.GetAtomicNum() == 1:
-                continue  # Skip hydrogens for now
-
-            ent = self._atom_map.get(ridx)
-            if ent is None and ridx < len(mon_atoms):
-                ent = mon_atoms[ridx]
-            if ent is None:
-                continue
-
-            xyz = ent.get("xyz", [0.0, 0.0, 0.0])
-            if len(xyz) >= 3:
-                conf.SetAtomPosition(
-                    ridx, (float(xyz[0]), float(xyz[1]), float(xyz[2]))
-                )
+    def embed_and_optimize(self, *, optimize: bool = True, random_seed: int = 42, max_iters: int = 200, add_hydrogens: bool = True) -> "RDKitWrapper":
+        """Convenience wrapper around `generate_3d()` that returns self for chaining."""
+        return self.generate_3d(optimize=optimize, random_seed=random_seed, max_iters=max_iters, add_hydrogens=add_hydrogens)
 
     # ------------------------------------------------------------------
     #   Atom mapping utilities

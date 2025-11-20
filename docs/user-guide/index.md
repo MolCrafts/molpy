@@ -7,10 +7,10 @@ Welcome to the MolPy User Guide! Whether you're building polymers, setting up si
 This guide provides **in-depth documentation** for each of MolPy's modules. Unlike the quick-start tutorials, these pages dive deep into capabilities, design patterns, and best practices for production workflows.
 
 **How to use this guide:**
-- 📖 **Reference-style** – Look up specific modules when you need them
-- 🔗 **Interconnected** – Each module links to related concepts
-- 💻 **Code-first** – Every page includes working examples
-- 🎯 **Practical** – Focused on real-world molecular modeling tasks
+* 📖 **Reference-style** – Look up specific modules when you need them
+* 🔗 **Interconnected** – Each module links to related concepts
+* 💻 **Code-first** – Every page includes working examples
+* 🎯 **Practical** – Focused on real-world molecular modeling tasks
 
 ---
 

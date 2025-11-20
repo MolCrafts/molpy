@@ -4,7 +4,6 @@
   --md-primary-fg-color--light: #81A784;
   --md-primary-fg-color--dark: #0F2A17;
   --md-accent-fg-color: #81A784;
-  --md-default-bg-color: #FAF7EF;
 
   /* Enhanced color palette */
   --molpy-gradient-start: #1a3d2a;
@@ -16,6 +15,7 @@
   --molpy-shadow-heavy: rgba(24, 74, 44, 0.25);
 }
 
+/* Dark mode */
 [data-md-color-scheme="slate"] {
   --molpy-gradient-start: #1a3d2a;
   --molpy-gradient-end: #4a7a5a;
@@ -24,6 +24,11 @@
   --molpy-shadow-light: rgba(0, 0, 0, 0.2);
   --molpy-shadow-medium: rgba(0, 0, 0, 0.3);
   --molpy-shadow-heavy: rgba(0, 0, 0, 0.4);
+}
+
+/* Light mode */
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #fdf7e4;
 }
 
 /* ===== Home Page Layout ===== */
