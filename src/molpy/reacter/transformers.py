@@ -10,11 +10,11 @@ from typing import cast
 from molpy import Atom, Atomistic, Bond
 from molpy.core.entity import Entity
 
-from .base import BondMaker
+from .base import BondFormer
 from .utils import get_bond_between
 
 
-def make_single_bond(assembly: Atomistic, i: Entity, j: Entity) -> None:
+def form_single_bond(assembly: Atomistic, i: Entity, j: Entity) -> Bond | None:
     """
     Create a single bond between two atoms.
 
@@ -25,12 +25,14 @@ def make_single_bond(assembly: Atomistic, i: Entity, j: Entity) -> None:
         i: First atom
         j: Second atom
 
+    Returns:
+        The created or updated Bond object
+
     Side effects:
         Adds Bond(i, j, order=1) to assembly.links
 
     Example:
-        >>> make_single_bond(merged, carbon1, carbon2)
-        >>> # Creates C-C single bond
+        >>> bond = form_single_bond(merged, carbon1, carbon2)
     """
     # Check if bond exists
     existing = get_bond_between(assembly, i, j)
@@ -39,13 +41,15 @@ def make_single_bond(assembly: Atomistic, i: Entity, j: Entity) -> None:
         # Update existing bond
         existing["order"] = 1
         existing["kind"] = "-"
+        return existing
     else:
         # Create new bond
         bond = Bond(cast(Atom, i), cast(Atom, j), order=1, kind="-")
         assembly.add_link(bond, include_endpoints=False)
+        return bond
 
 
-def make_double_bond(assembly: Atomistic, i: Entity, j: Entity) -> None:
+def form_double_bond(assembly: Atomistic, i: Entity, j: Entity) -> Bond | None:
     """
     Create a double bond between two atoms.
 
@@ -56,24 +60,25 @@ def make_double_bond(assembly: Atomistic, i: Entity, j: Entity) -> None:
         i: First atom
         j: Second atom
 
+    Returns:
+        The created or updated Bond object
+
     Side effects:
         Adds Bond(i, j, order=2) to assembly.links
-
-    Example:
-        >>> make_double_bond(merged, carbon1, carbon2)
-        >>> # Creates C=C double bond
     """
     existing = get_bond_between(assembly, i, j)
 
     if existing is not None:
         existing["order"] = 2
         existing["kind"] = "="
+        return existing
     else:
         bond = Bond(cast(Atom, i), cast(Atom, j), order=2, kind="=")
         assembly.add_link(bond, include_endpoints=False)
+        return bond
 
 
-def make_triple_bond(assembly: Atomistic, i: Entity, j: Entity) -> None:
+def form_triple_bond(assembly: Atomistic, i: Entity, j: Entity) -> Bond | None:
     """
     Create a triple bond between two atoms.
 
@@ -84,24 +89,25 @@ def make_triple_bond(assembly: Atomistic, i: Entity, j: Entity) -> None:
         i: First atom
         j: Second atom
 
+    Returns:
+        The created or updated Bond object
+
     Side effects:
         Adds Bond(i, j, order=3) to assembly.links
-
-    Example:
-        >>> make_triple_bond(merged, carbon1, carbon2)
-        >>> # Creates C≡C triple bond
     """
     existing = get_bond_between(assembly, i, j)
 
     if existing is not None:
         existing["order"] = 3
         existing["kind"] = "#"
+        return existing
     else:
         bond = Bond(cast(Atom, i), cast(Atom, j), order=3, kind="#")
         assembly.add_link(bond, include_endpoints=False)
+        return bond
 
 
-def make_aromatic_bond(assembly: Atomistic, i: Entity, j: Entity) -> None:
+def form_aromatic_bond(assembly: Atomistic, i: Entity, j: Entity) -> Bond | None:
     """
     Create an aromatic bond between two atoms.
 
@@ -112,12 +118,11 @@ def make_aromatic_bond(assembly: Atomistic, i: Entity, j: Entity) -> None:
         i: First atom
         j: Second atom
 
+    Returns:
+        The created or updated Bond object
+
     Side effects:
         Adds Bond(i, j, order=1.5, kind=':') to assembly.links
-
-    Example:
-        >>> make_aromatic_bond(merged, carbon1, carbon2)
-        >>> # Creates C:C aromatic bond
     """
     existing = get_bond_between(assembly, i, j)
 
@@ -125,30 +130,32 @@ def make_aromatic_bond(assembly: Atomistic, i: Entity, j: Entity) -> None:
         existing["order"] = 1.5
         existing["kind"] = ":"
         existing["aromatic"] = True
+        return existing
     else:
         bond = Bond(cast(Atom, i), cast(Atom, j), order=1.5, kind=":", aromatic=True)
         assembly.add_link(bond, include_endpoints=False)
+        return bond
 
 
-def make_bond_by_order(order: int) -> BondMaker:
+def create_bond_former(order: int) -> BondFormer:
     """
-    Factory function to create bond maker with specific order.
+    Factory function to create bond former with specific order.
 
     Args:
         order: Bond order (1, 2, 3, or 1.5 for aromatic)
 
     Returns:
-        BondMaker function that creates bonds with specified order
+        BondFormer function that creates bonds with specified order
 
     Example:
-        >>> double_bond_maker = make_bond_by_order(2)
+        >>> double_bond_former = create_bond_former(2)
         >>> reacter = Reacter(
-        ...     bond_maker=double_bond_maker,
+        ...     bond_former=double_bond_former,
         ...     ...
         ... )
     """
 
-    def bond_maker(assembly: Atomistic, i: Entity, j: Entity) -> None:
+    def bond_former(assembly: Atomistic, i: Entity, j: Entity) -> Bond | None:
         existing = get_bond_between(assembly, i, j)
 
         # Determine kind symbol
@@ -160,17 +167,19 @@ def make_bond_by_order(order: int) -> BondMaker:
             existing["kind"] = kind
             if order == 1.5:
                 existing["aromatic"] = True
+            return existing
         else:
             attrs = {"order": order, "kind": kind}
             if order == 1.5:
                 attrs["aromatic"] = True
             bond = Bond(cast(Atom, i), cast(Atom, j), **attrs)
             assembly.add_link(bond, include_endpoints=False)
+            return bond
 
-    return bond_maker
+    return bond_former
 
 
-def no_new_bond(assembly: Atomistic, i: Entity, j: Entity) -> None:
+def skip_bond_formation(assembly: Atomistic, i: Entity, j: Entity) -> None:
     """
     Do not create any bond.
 
@@ -186,7 +195,7 @@ def no_new_bond(assembly: Atomistic, i: Entity, j: Entity) -> None:
 
     Example:
         >>> reacter = Reacter(
-        ...     bond_maker=no_new_bond,  # Just remove leaving groups
+        ...     bond_former=skip_bond_formation,  # Just remove leaving groups
         ...     ...
         ... )
     """

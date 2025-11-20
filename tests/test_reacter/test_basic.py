@@ -12,15 +12,15 @@ import pytest
 from molpy import Atom, Atomistic, Bond
 from molpy.core.wrappers.monomer import Monomer
 from molpy.reacter import (
-    ProductSet,
+    ReactionProduct,
     Reacter,
     find_neighbors,
-    make_double_bond,
-    make_single_bond,
-    no_leaving_group,
-    port_anchor_selector,
-    remove_all_H,
-    remove_one_H,
+    form_double_bond,
+    form_single_bond,
+    select_none,
+    select_port_atom,
+    select_all_hydrogens,
+    select_one_hydrogen,
 )
 
 
@@ -72,7 +72,7 @@ def test_port_anchor_selector():
     mono.set_port("1", c)
 
     # Select anchor
-    anchor = port_anchor_selector(mono, "1")
+    anchor = select_port_atom(mono, "1")
     assert anchor is c
 
 
@@ -89,7 +89,7 @@ def test_remove_one_H():
     mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
     # Remove one H
-    leaving = remove_one_H(mono, c)
+    leaving = select_one_hydrogen(mono, c)
     assert len(leaving) == 1
     assert leaving[0].get("symbol") == "H"
 
@@ -107,7 +107,7 @@ def test_remove_all_H():
     mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
     # Remove all H
-    leaving = remove_all_H(mono, c)
+    leaving = select_all_hydrogens(mono, c)
     assert len(leaving) == 3
     assert all(h.get("symbol") == "H" for h in leaving)
 
@@ -118,7 +118,7 @@ def test_no_leaving_group():
     c = Atom(symbol="C")
     mono.add_entity(c)
 
-    leaving = no_leaving_group(mono, c)
+    leaving = select_none(mono, c)
     assert len(leaving) == 0
 
 
@@ -164,18 +164,18 @@ def test_simple_cc_coupling():
     # Create C-C coupling reaction
     cc_coupling = Reacter(
         name="C-C_coupling",
-        anchor_left=port_anchor_selector,
-        anchor_right=port_anchor_selector,
-        leaving_left=remove_one_H,
-        leaving_right=remove_one_H,
-        bond_maker=make_single_bond,
+        port_selector_left=select_port_atom,
+        port_selector_right=select_port_atom,
+        leaving_selector_left=select_one_hydrogen,
+        leaving_selector_right=select_one_hydrogen,
+        bond_former=form_single_bond,
     )
 
     # Run reaction
     product = cc_coupling.run(mono_L, mono_R, port_L="1", port_R="2")
 
     # Check product
-    assert isinstance(product, ProductSet)
+    assert isinstance(product, ReactionProduct)
     assert isinstance(product.product, Atomistic)
 
     # Should have 2 C + 0 H (both removed)
@@ -187,7 +187,7 @@ def test_simple_cc_coupling():
     assert len(bonds) == 1
 
     # Check notes
-    assert product.notes["removed_count"] == 2
+    assert product.notes["n_eliminated"] == 2
     assert product.notes["reaction_name"] == "C-C_coupling"
 
 
@@ -213,18 +213,18 @@ def test_asymmetric_reaction():
     # Create reaction: remove all H from left, one H from right
     reacter = Reacter(
         name="asymmetric",
-        anchor_left=port_anchor_selector,
-        anchor_right=port_anchor_selector,
-        leaving_left=remove_all_H,  # Remove both H
-        leaving_right=remove_one_H,  # Remove one H
-        bond_maker=make_double_bond,  # Make C=C
+        port_selector_left=select_port_atom,
+        port_selector_right=select_port_atom,
+        leaving_selector_left=select_all_hydrogens,  # Remove both H
+        leaving_selector_right=select_one_hydrogen,  # Remove one H
+        bond_former=form_double_bond,  # Make C=C
     )
 
     # Run reaction
     product = reacter.run(mono_L, mono_R, port_L="1", port_R="2")
 
     # Should remove 3 H total
-    assert product.notes["removed_count"] == 3
+    assert product.notes["n_eliminated"] == 3
 
     # Check bond order
     bonds = list(product.product.bonds)
@@ -248,17 +248,17 @@ def test_addition_reaction():
     # Addition reaction (no leaving groups)
     addition = Reacter(
         name="addition",
-        anchor_left=port_anchor_selector,
-        anchor_right=port_anchor_selector,
-        leaving_left=no_leaving_group,
-        leaving_right=no_leaving_group,
-        bond_maker=make_single_bond,
+        port_selector_left=select_port_atom,
+        port_selector_right=select_port_atom,
+        leaving_selector_left=select_none,
+        leaving_selector_right=select_none,
+        bond_former=form_single_bond,
     )
 
     product = addition.run(mono_L, mono_R, port_L="1", port_R="2")
 
     # No atoms removed
-    assert product.notes["removed_count"] == 0
+    assert product.notes["n_eliminated"] == 0
 
     # 2 atoms total
     assert len(list(product.product.atoms)) == 2

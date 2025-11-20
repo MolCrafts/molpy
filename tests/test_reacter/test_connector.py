@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Unit tests for ReacterConnector class.
+"""Unit tests for MonomerLinker class.
 
 Tests cover:
-- ReacterConnector initialization
+- MonomerLinker initialization
 - connect method
 - _select_reacter method
 - get_history method
@@ -17,74 +17,76 @@ from molpy import Atom, Atomistic, Bond
 from molpy.core.wrappers.monomer import Monomer
 from molpy.reacter import (
     Reacter,
-    ReacterConnector,
-    make_single_bond,
-    no_leaving_group,
-    port_anchor_selector,
-    remove_one_H,
+    MonomerLinker,
+    form_single_bond,
+    select_none,
+    select_port_atom,
+    select_one_hydrogen,
 )
 
 
-class TestReacterConnector:
-    """Test ReacterConnector class."""
+class TestMonomerLinker:
+    """Test MonomerLinker class."""
 
     def test_connector_initialization(self):
-        """Test ReacterConnector initialization."""
+        """Test MonomerLinker initialization."""
         default_reacter = Reacter(
             name="default",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=remove_one_H,
-            leaving_right=remove_one_H,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_one_hydrogen,
+            leaving_selector_right=select_one_hydrogen,
+            bond_former=form_single_bond,
         )
 
-        connector = ReacterConnector(default=default_reacter)
+        connector = MonomerLinker(default_reaction=default_reacter)
 
-        assert connector.default is default_reacter
-        assert connector.overrides == {}
+        assert connector.default_reaction is default_reacter
+        assert connector.specialized_reactions == {}
 
     def test_connector_initialization_with_overrides(self):
-        """Test ReacterConnector initialization with overrides."""
+        """Test MonomerLinker initialization with overrides."""
         default_reacter = Reacter(
             name="default",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=remove_one_H,
-            leaving_right=remove_one_H,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_one_hydrogen,
+            leaving_selector_right=select_one_hydrogen,
+            bond_former=form_single_bond,
         )
 
         special_reacter = Reacter(
             name="special",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=no_leaving_group,
-            leaving_right=no_leaving_group,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_none,
+            leaving_selector_right=select_none,
+            bond_former=form_single_bond,
         )
 
         overrides = {("A", "B"): special_reacter}
 
-        connector = ReacterConnector(default=default_reacter, overrides=overrides)
+        connector = MonomerLinker(
+            default_reaction=default_reacter, specialized_reactions=overrides
+        )
 
-        assert connector.default is default_reacter
-        assert connector.overrides == overrides
-        assert connector.overrides[("A", "B")] is special_reacter
+        assert connector.default_reaction is default_reacter
+        assert connector.specialized_reactions == overrides
+        assert connector.specialized_reactions[("A", "B")] is special_reacter
 
     def test_connector_connect_basic(self):
         """Test basic connector.connect() execution."""
         # Create default reacter
         default_reacter = Reacter(
             name="default",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=remove_one_H,
-            leaving_right=remove_one_H,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_one_hydrogen,
+            leaving_selector_right=select_one_hydrogen,
+            bond_former=form_single_bond,
         )
 
-        connector = ReacterConnector(default=default_reacter)
+        connector = MonomerLinker(default_reaction=default_reacter)
 
         # Create monomers
         mono_L = Monomer()
@@ -112,24 +114,26 @@ class TestReacterConnector:
         """Test connector.connect() using override reacter."""
         default_reacter = Reacter(
             name="default",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=remove_one_H,
-            leaving_right=remove_one_H,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_one_hydrogen,
+            leaving_selector_right=select_one_hydrogen,
+            bond_former=form_single_bond,
         )
 
         special_reacter = Reacter(
             name="special",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=no_leaving_group,
-            leaving_right=no_leaving_group,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_none,
+            leaving_selector_right=select_none,
+            bond_former=form_single_bond,
         )
 
         overrides = {("A", "B"): special_reacter}
-        connector = ReacterConnector(default=default_reacter, overrides=overrides)
+        connector = MonomerLinker(
+            default_reaction=default_reacter, specialized_reactions=overrides
+        )
 
         # Create monomers
         mono_L = Monomer()
@@ -165,24 +169,26 @@ class TestReacterConnector:
         """Test connector.connect() using reverse direction override."""
         default_reacter = Reacter(
             name="default",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=remove_one_H,
-            leaving_right=remove_one_H,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_one_hydrogen,
+            leaving_selector_right=select_one_hydrogen,
+            bond_former=form_single_bond,
         )
 
         special_reacter = Reacter(
             name="special",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=no_leaving_group,
-            leaving_right=no_leaving_group,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_none,
+            leaving_selector_right=select_none,
+            bond_former=form_single_bond,
         )
 
         overrides = {("A", "B"): special_reacter}
-        connector = ReacterConnector(default=default_reacter, overrides=overrides)
+        connector = MonomerLinker(
+            default_reaction=default_reacter, specialized_reactions=overrides
+        )
 
         # Create monomers
         mono_L = Monomer()
@@ -217,14 +223,14 @@ class TestReacterConnector:
         """Test connector.connect() raises error when left port is missing."""
         default_reacter = Reacter(
             name="default",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=no_leaving_group,
-            leaving_right=no_leaving_group,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_none,
+            leaving_selector_right=select_none,
+            bond_former=form_single_bond,
         )
 
-        connector = ReacterConnector(default=default_reacter)
+        connector = MonomerLinker(default_reaction=default_reacter)
 
         mono_L = Monomer()
         c_L = Atom(symbol="C")
@@ -243,14 +249,14 @@ class TestReacterConnector:
         """Test connector.connect() raises error when right port is missing."""
         default_reacter = Reacter(
             name="default",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=no_leaving_group,
-            leaving_right=no_leaving_group,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_none,
+            leaving_selector_right=select_none,
+            bond_former=form_single_bond,
         )
 
-        connector = ReacterConnector(default=default_reacter)
+        connector = MonomerLinker(default_reaction=default_reacter)
 
         mono_L = Monomer()
         c_L = Atom(symbol="C")
@@ -269,14 +275,14 @@ class TestReacterConnector:
         """Test connector.get_history() method."""
         default_reacter = Reacter(
             name="default",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=no_leaving_group,
-            leaving_right=no_leaving_group,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_none,
+            leaving_selector_right=select_none,
+            bond_former=form_single_bond,
         )
 
-        connector = ReacterConnector(default=default_reacter)
+        connector = MonomerLinker(default_reaction=default_reacter)
 
         # Initially empty
         history = connector.get_history()
@@ -304,14 +310,14 @@ class TestReacterConnector:
         """Test that get_history() returns a copy."""
         default_reacter = Reacter(
             name="default",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=no_leaving_group,
-            leaving_right=no_leaving_group,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_none,
+            leaving_selector_right=select_none,
+            bond_former=form_single_bond,
         )
 
-        connector = ReacterConnector(default=default_reacter)
+        connector = MonomerLinker(default_reaction=default_reacter)
 
         history1 = connector.get_history()
         history2 = connector.get_history()
@@ -325,14 +331,14 @@ class TestReacterConnector:
         """Test connector.get_all_modified_atoms() method."""
         default_reacter = Reacter(
             name="default",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=no_leaving_group,
-            leaving_right=no_leaving_group,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_none,
+            leaving_selector_right=select_none,
+            bond_former=form_single_bond,
         )
 
-        connector = ReacterConnector(default=default_reacter)
+        connector = MonomerLinker(default_reaction=default_reacter)
 
         # Initially empty
         modified = connector.get_all_modified_atoms()
@@ -359,14 +365,14 @@ class TestReacterConnector:
         """Test connector.needs_retypification() method."""
         default_reacter = Reacter(
             name="default",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=no_leaving_group,
-            leaving_right=no_leaving_group,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_none,
+            leaving_selector_right=select_none,
+            bond_former=form_single_bond,
         )
 
-        connector = ReacterConnector(default=default_reacter)
+        connector = MonomerLinker(default_reaction=default_reacter)
 
         # Initially False (no reactions yet)
         assert connector.needs_retypification() is False
@@ -391,14 +397,14 @@ class TestReacterConnector:
         """Test connector.clear_history() method."""
         default_reacter = Reacter(
             name="default",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=no_leaving_group,
-            leaving_right=no_leaving_group,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_none,
+            leaving_selector_right=select_none,
+            bond_former=form_single_bond,
         )
 
-        connector = ReacterConnector(default=default_reacter)
+        connector = MonomerLinker(default_reaction=default_reacter)
 
         # Create and connect monomers
         mono_L = Monomer()

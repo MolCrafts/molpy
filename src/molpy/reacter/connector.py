@@ -8,10 +8,10 @@ allowing flexible reaction specification with default and specialized reactors.
 from molpy import Atomistic
 from molpy.core.wrappers.monomer import Monomer
 
-from .base import ProductSet, Reacter
+from .base import ReactionProduct, Reacter
 
 
-class ReacterConnector:
+class MonomerLinker:
     """
     Connector adapter that manages Reacter instances for polymer assembly.
 
@@ -25,7 +25,7 @@ class ReacterConnector:
     be handled by the higher-level builder logic.
 
     Example:
-        >>> from molpy.reacter import Reacter, ReacterConnector
+        >>> from molpy.reacter import Reacter, MonomerLinker
         >>>
         >>> # Default reaction for most connections
         >>> default_reacter = Reacter(...)
@@ -33,9 +33,9 @@ class ReacterConnector:
         >>> # Special reaction for A-B connection
         >>> special_reacter = Reacter(...)
         >>>
-        >>> connector = ReacterConnector(
-        ...     default=default_reacter,
-        ...     overrides={('A', 'B'): special_reacter}
+        >>> connector = MonomerLinker(
+        ...     default_reaction=default_reacter,
+        ...     specialized_reactions={('A', 'B'): special_reacter}
         ... )
         >>>
         >>> # Explicit port specification required
@@ -48,19 +48,19 @@ class ReacterConnector:
 
     def __init__(
         self,
-        default: Reacter,
-        overrides: dict[tuple[str, str], Reacter] | None = None,
+        default_reaction: Reacter,
+        specialized_reactions: dict[tuple[str, str], Reacter] | None = None,
     ):
         """
-        Initialize connector with default and override reacters.
+        Initialize connector with default and specialized reacters.
 
         Args:
-            default: Default Reacter used for most connections
-            overrides: Dict mapping (left_type, right_type) -> specialized Reacter
+            default_reaction: Default Reacter used for most connections
+            specialized_reactions: Dict mapping (left_type, right_type) -> specialized Reacter
         """
-        self.default = default
-        self.overrides = overrides or {}
-        self._history: list[ProductSet] = []
+        self.default_reaction = default_reaction
+        self.specialized_reactions = specialized_reactions or {}
+        self._history: list[ReactionProduct] = []
 
     def connect(
         self,
@@ -122,23 +122,23 @@ class ReacterConnector:
         """Select appropriate reacter based on monomer types."""
         if left_type and right_type:
             key = (left_type, right_type)
-            if key in self.overrides:
-                return self.overrides[key]
+            if key in self.specialized_reactions:
+                return self.specialized_reactions[key]
             # Try reverse direction
             reverse_key = (right_type, left_type)
-            if reverse_key in self.overrides:
-                return self.overrides[reverse_key]
+            if reverse_key in self.specialized_reactions:
+                return self.specialized_reactions[reverse_key]
 
-        return self.default
+        return self.default_reaction
 
-    def get_history(self) -> list[ProductSet]:
+    def get_history(self) -> list[ReactionProduct]:
         """
         Get history of all reactions performed.
 
         Useful for batch retypification after polymer assembly.
 
         Returns:
-            List of ProductSet for each connection made
+            List of ReactionProduct for each connection made
         """
         return self._history.copy()
 
@@ -161,7 +161,7 @@ class ReacterConnector:
         Returns:
             True if retypification needed
         """
-        return any(p.notes.get("needs_retypification", False) for p in self._history)
+        return any(p.notes.get("requires_retype", False) for p in self._history)
 
     def clear_history(self):
         """Clear reaction history."""

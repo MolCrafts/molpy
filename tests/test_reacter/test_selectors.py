@@ -2,12 +2,12 @@
 """Unit tests for Reacter selector functions.
 
 Tests cover:
-- port_anchor_selector
-- remove_one_H
-- remove_all_H
-- remove_dummy_atoms (from selectors)
-- remove_OH
-- no_leaving_group
+- select_port_atom
+- select_one_hydrogen
+- select_all_hydrogens
+- select_dummy_atoms (from selectors)
+- select_hydroxyl_group
+- select_none
 """
 
 import pytest
@@ -15,17 +15,17 @@ import pytest
 from molpy import Atom, Atomistic, Bond
 from molpy.core.wrappers.monomer import Monomer
 from molpy.reacter.selectors import (
-    no_leaving_group,
-    port_anchor_selector,
-    remove_all_H,
-    remove_dummy_atoms,
-    remove_OH,
-    remove_one_H,
+    select_none,
+    select_port_atom,
+    select_all_hydrogens,
+    select_dummy_atoms,
+    select_hydroxyl_group,
+    select_one_hydrogen,
 )
 
 
 class TestPortAnchorSelector:
-    """Test port_anchor_selector function."""
+    """Test select_port_atom function."""
 
     def test_port_anchor_selector_basic(self):
         """Test selecting anchor from port."""
@@ -35,7 +35,7 @@ class TestPortAnchorSelector:
 
         mono.set_port("1", c)
 
-        anchor = port_anchor_selector(mono, "1")
+        anchor = select_port_atom(mono, "1")
 
         assert anchor is c
 
@@ -49,7 +49,7 @@ class TestPortAnchorSelector:
         mono.set_port("head", c1)
         mono.set_port("tail", c2)
 
-        anchor = port_anchor_selector(mono, "tail")
+        anchor = select_port_atom(mono, "tail")
 
         assert anchor is c2
 
@@ -62,11 +62,11 @@ class TestPortAnchorSelector:
         # Don't set port
 
         with pytest.raises(ValueError, match="Port '1' not found"):
-            port_anchor_selector(mono, "1")
+            select_port_atom(mono, "1")
 
 
 class TestRemoveOneH:
-    """Test remove_one_H function."""
+    """Test select_one_hydrogen function."""
 
     def test_remove_one_H_single(self):
         """Test removing one H when one exists."""
@@ -76,7 +76,7 @@ class TestRemoveOneH:
         mono.add_entity(c, h)
         mono.add_link(Bond(c, h))
 
-        leaving = remove_one_H(mono, c)
+        leaving = select_one_hydrogen(mono, c)
 
         assert len(leaving) == 1
         assert leaving[0] is h
@@ -92,7 +92,7 @@ class TestRemoveOneH:
         mono.add_entity(c, h1, h2, h3)
         mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
-        leaving = remove_one_H(mono, c)
+        leaving = select_one_hydrogen(mono, c)
 
         # Should return only one H
         assert len(leaving) == 1
@@ -107,7 +107,7 @@ class TestRemoveOneH:
         mono.add_entity(c, o)
         mono.add_link(Bond(c, o))
 
-        leaving = remove_one_H(mono, c)
+        leaving = select_one_hydrogen(mono, c)
 
         assert len(leaving) == 0
 
@@ -117,13 +117,13 @@ class TestRemoveOneH:
         c = Atom(symbol="C")
         mono.add_entity(c)
 
-        leaving = remove_one_H(mono, c)
+        leaving = select_one_hydrogen(mono, c)
 
         assert len(leaving) == 0
 
 
 class TestRemoveAllH:
-    """Test remove_all_H function."""
+    """Test select_all_hydrogens function."""
 
     def test_remove_all_H_single(self):
         """Test removing all H when one exists."""
@@ -133,7 +133,7 @@ class TestRemoveAllH:
         mono.add_entity(c, h)
         mono.add_link(Bond(c, h))
 
-        leaving = remove_all_H(mono, c)
+        leaving = select_all_hydrogens(mono, c)
 
         assert len(leaving) == 1
         assert leaving[0] is h
@@ -148,7 +148,7 @@ class TestRemoveAllH:
         mono.add_entity(c, h1, h2, h3)
         mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
-        leaving = remove_all_H(mono, c)
+        leaving = select_all_hydrogens(mono, c)
 
         assert len(leaving) == 3
         assert all(h.get("symbol") == "H" for h in leaving)
@@ -164,7 +164,7 @@ class TestRemoveAllH:
         mono.add_entity(c, o)
         mono.add_link(Bond(c, o))
 
-        leaving = remove_all_H(mono, c)
+        leaving = select_all_hydrogens(mono, c)
 
         assert len(leaving) == 0
 
@@ -178,7 +178,7 @@ class TestRemoveAllH:
         mono.add_entity(c, h1, h2, o)
         mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, o))
 
-        leaving = remove_all_H(mono, c)
+        leaving = select_all_hydrogens(mono, c)
 
         # Should only return H atoms
         assert len(leaving) == 2
@@ -187,7 +187,7 @@ class TestRemoveAllH:
 
 
 class TestRemoveDummyAtoms:
-    """Test remove_dummy_atoms function (from selectors)."""
+    """Test select_dummy_atoms function (from selectors)."""
 
     def test_remove_dummy_atoms_single(self):
         """Test removing dummy atoms when one exists."""
@@ -197,7 +197,7 @@ class TestRemoveDummyAtoms:
         mono.add_entity(c, dummy)
         mono.add_link(Bond(c, dummy))
 
-        leaving = remove_dummy_atoms(mono, c)
+        leaving = select_dummy_atoms(mono, c)
 
         assert len(leaving) == 1
         assert leaving[0] is dummy
@@ -212,7 +212,7 @@ class TestRemoveDummyAtoms:
         mono.add_entity(c, dummy1, dummy2)
         mono.add_link(Bond(c, dummy1), Bond(c, dummy2))
 
-        leaving = remove_dummy_atoms(mono, c)
+        leaving = select_dummy_atoms(mono, c)
 
         assert len(leaving) == 2
         assert all(d.get("symbol") == "*" for d in leaving)
@@ -227,7 +227,7 @@ class TestRemoveDummyAtoms:
         mono.add_entity(c, h)
         mono.add_link(Bond(c, h))
 
-        leaving = remove_dummy_atoms(mono, c)
+        leaving = select_dummy_atoms(mono, c)
 
         assert len(leaving) == 0
 
@@ -240,7 +240,7 @@ class TestRemoveDummyAtoms:
         mono.add_entity(c, dummy, h)
         mono.add_link(Bond(c, dummy), Bond(c, h))
 
-        leaving = remove_dummy_atoms(mono, c)
+        leaving = select_dummy_atoms(mono, c)
 
         # Should only return dummy atoms
         assert len(leaving) == 1
@@ -249,7 +249,7 @@ class TestRemoveDummyAtoms:
 
 
 class TestRemoveOH:
-    """Test remove_OH function."""
+    """Test select_hydroxyl_group function."""
 
     def test_remove_OH_complete(self):
         """Test removing complete OH group."""
@@ -258,9 +258,9 @@ class TestRemoveOH:
         o = Atom(symbol="O")
         h = Atom(symbol="H")
         mono.add_entity(c, o, h)
-        mono.add_link(Bond(c, o), Bond(o, h))
+        mono.add_link(Bond(c, o, order=1), Bond(o, h, order=1))
 
-        leaving = remove_OH(mono, c)
+        leaving = select_hydroxyl_group(mono, c)
 
         assert len(leaving) == 2
         assert o in leaving
@@ -272,10 +272,10 @@ class TestRemoveOH:
         c = Atom(symbol="C")
         o = Atom(symbol="O")
         mono.add_entity(c, o)
-        mono.add_link(Bond(c, o))
+        mono.add_link(Bond(c, o, order=1))
         # O has no H
 
-        leaving = remove_OH(mono, c)
+        leaving = select_hydroxyl_group(mono, c)
 
         # Should return just O
         assert len(leaving) == 1
@@ -289,7 +289,7 @@ class TestRemoveOH:
         mono.add_entity(c, h)
         mono.add_link(Bond(c, h))
 
-        leaving = remove_OH(mono, c)
+        leaving = select_hydroxyl_group(mono, c)
 
         assert len(leaving) == 0
 
@@ -297,48 +297,47 @@ class TestRemoveOH:
         """Test removing OH when multiple O neighbors exist."""
         mono = Monomer()
         c = Atom(symbol="C")
-        o1 = Atom(symbol="O")
-        o2 = Atom(symbol="O")
+        o1 = Atom(symbol="O")  # hydroxyl oxygen
+        o2 = Atom(symbol="O")  # carbonyl oxygen
         h = Atom(symbol="H")
         mono.add_entity(c, o1, o2, h)
-        mono.add_link(Bond(c, o1), Bond(c, o2), Bond(o1, h))
-        # Only o1 has H
+        mono.add_link(
+            Bond(c, o1, order=1),  # single bond = hydroxyl
+            Bond(c, o2, order=2),  # double bond = carbonyl
+            Bond(o1, h, order=1),
+        )
+        # Only o1 has H and single bond
 
-        leaving = remove_OH(mono, c)
+        leaving = select_hydroxyl_group(mono, c)
 
-        # Should return first O neighbor (o1) and its H
-        # Note: remove_OH finds first O neighbor, then its H
+        # Should return o1 (single-bonded) and its H
         assert len(leaving) == 2
-        assert o1 in leaving  # First O found
+        assert o1 in leaving
         assert h in leaving
-        # o2 might be in leaving if it's found first, or not if o1 is found first
-        # The behavior depends on iteration order, so we just check that we got O and H
-        assert any(atom.get("symbol") == "O" for atom in leaving)
-        assert any(atom.get("symbol") == "H" for atom in leaving)
 
 
 class TestNoLeavingGroup:
-    """Test no_leaving_group function."""
+    """Test select_none function."""
 
     def test_no_leaving_group_always_empty(self):
-        """Test that no_leaving_group always returns empty list."""
+        """Test that select_none always returns empty list."""
         mono = Monomer()
         c = Atom(symbol="C")
         h = Atom(symbol="H")
         mono.add_entity(c, h)
         mono.add_link(Bond(c, h))
 
-        leaving = no_leaving_group(mono, c)
+        leaving = select_none(mono, c)
 
         assert len(leaving) == 0
 
     def test_no_leaving_group_ignores_anchor(self):
-        """Test that no_leaving_group ignores anchor parameter."""
+        """Test that select_none ignores anchor parameter."""
         mono = Monomer()
         c = Atom(symbol="C")
         mono.add_entity(c)
 
         # Should work even with None or different anchor
-        leaving = no_leaving_group(mono, c)
+        leaving = select_none(mono, c)
 
         assert len(leaving) == 0

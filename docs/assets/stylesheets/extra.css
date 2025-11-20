@@ -1,16 +1,36 @@
 /* ===== Color Variables ===== */
 :root {
-  --md-primary-fg-color:        #184A2C;
+  --md-primary-fg-color: #184A2C;
   --md-primary-fg-color--light: #81A784;
-  --md-primary-fg-color--dark:  #0F2A17;
+  --md-primary-fg-color--dark: #0F2A17;
   --md-accent-fg-color: #81A784;
   --md-default-bg-color: #FAF7EF;
+
+  /* Enhanced color palette */
+  --molpy-gradient-start: #1a3d2a;
+  --molpy-gradient-end: #4a7a5a;
+  --molpy-glass-bg: rgba(255, 255, 255, 0.7);
+  --molpy-glass-border: rgba(255, 255, 255, 0.18);
+  --molpy-shadow-light: rgba(24, 74, 44, 0.08);
+  --molpy-shadow-medium: rgba(24, 74, 44, 0.15);
+  --molpy-shadow-heavy: rgba(24, 74, 44, 0.25);
+}
+
+[data-md-color-scheme="slate"] {
+  --molpy-gradient-start: #1a3d2a;
+  --molpy-gradient-end: #4a7a5a;
+  --molpy-glass-bg: rgba(30, 30, 30, 0.6);
+  --molpy-glass-border: rgba(255, 255, 255, 0.1);
+  --molpy-shadow-light: rgba(0, 0, 0, 0.2);
+  --molpy-shadow-medium: rgba(0, 0, 0, 0.3);
+  --molpy-shadow-heavy: rgba(0, 0, 0, 0.4);
 }
 
 /* ===== Home Page Layout ===== */
 .home-page {
   margin: 0;
   padding: 0;
+  position: relative;
 }
 
 .home-page .md-content {
@@ -19,136 +39,366 @@
   padding: 3rem 2rem;
 }
 
-/* ===== Hero Header ===== */
+/* ===== Animated Background Gradient ===== */
+.home-page::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100vh;
+  background: linear-gradient(135deg, var(--molpy-gradient-start) 0%, var(--molpy-gradient-end) 100%);
+  opacity: 0.03;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* ===== Hero Header with Gradient Text ===== */
 .home-page h1 {
-  font-size: 2.5rem;
-  font-weight: 600;
-  margin-bottom: 0.75rem;
+  font-size: 3.5rem;
+  font-weight: 700;
+  margin-bottom: 1.25rem;
   text-align: center;
   line-height: 1.2;
+  background: linear-gradient(135deg, var(--molpy-gradient-start), var(--molpy-gradient-end));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.02em;
+  animation: fadeInUp 0.8s ease-out;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .home-page .lead {
-  font-size: 1.1rem;
+  font-size: 1.25rem;
   text-align: center;
   color: var(--md-typeset-color);
-  opacity: 0.75;
-  margin-bottom: 2rem;
-  max-width: 800px;
+  opacity: 0.85;
+  margin-bottom: 2.5rem;
+  max-width: 700px;
   margin-left: auto;
   margin-right: auto;
-  line-height: 1.6;
+  line-height: 1.7;
+  font-weight: 400;
+  animation: fadeInUp 0.8s ease-out 0.1s both;
 }
 
-/* ===== Button Group ===== */
+/* ===== Badges with Animation ===== */
+.badges {
+  text-align: center;
+  margin: 2.5rem 0 3.5rem;
+  animation: fadeInUp 0.8s ease-out 0.2s both;
+}
+
+.badges img {
+  margin: 0.3rem;
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+
+.badges img:hover {
+  transform: scale(1.05);
+}
+
+/* ===== Button Group with Premium Styling ===== */
 .button-group {
   text-align: center;
-  margin: 2.5rem 0;
+  margin: 3rem 0;
+  animation: fadeInUp 0.8s ease-out 0.3s both;
 }
 
 .button-group .md-button {
   margin: 0.5rem;
-  padding: 0.7rem 1.2rem;
+  padding: 0.875rem 2rem;
   font-size: 1rem;
-  font-weight: 500;
-  border-radius: 0.3rem;
-  transition: all 0.25s ease;
+  font-weight: 600;
+  border-radius: 8px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
 }
 
 .button-group .md-button--primary {
-  box-shadow: 0 2px 8px rgba(24, 74, 44, 0.2);
+  background: linear-gradient(135deg, var(--molpy-gradient-start), var(--molpy-gradient-end));
+  box-shadow: 0 4px 15px var(--molpy-shadow-medium);
+  border: none;
+}
+
+.button-group .md-button--primary::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s ease;
+}
+
+.button-group .md-button--primary:hover::before {
+  left: 100%;
 }
 
 .button-group .md-button--primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(24, 74, 44, 0.3);
+  transform: translateY(-3px);
+  box-shadow: 0 6px 20px var(--molpy-shadow-heavy);
+}
+
+.button-group .md-button:not(.md-button--primary) {
+  background: var(--molpy-glass-bg);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--molpy-glass-border);
+  box-shadow: 0 2px 10px var(--molpy-shadow-light);
 }
 
 .button-group .md-button:not(.md-button--primary):hover {
-  transform: translateY(-2px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transform: translateY(-3px);
+  box-shadow: 0 4px 15px var(--molpy-shadow-medium);
+  border-color: var(--md-primary-fg-color--light);
+  color: var(--md-primary-fg-color);
 }
 
-/* ===== Badges ===== */
-.badges {
+/* ===== Section Headings with Gradient Underline ===== */
+.home-page h2 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-top: 4rem;
+  margin-bottom: 2rem;
+  position: relative;
+  padding-bottom: 0.75rem;
   text-align: center;
-  margin: 2rem 0 3rem;
 }
 
-.badges img {
-  margin: 0.25rem;
+.home-page h2::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80px;
+  height: 4px;
+  background: linear-gradient(90deg, var(--molpy-gradient-start), var(--molpy-gradient-end));
+  border-radius: 2px;
 }
 
-/* ===== Features Grid (Material Cards) ===== */
+/* ===== Features Grid with Glassmorphism ===== */
 .home-page .grid.cards {
-  margin: 2rem 0;
+  margin: 3rem 0;
+  gap: 1.5rem;
 }
 
-.home-page .grid.cards > li {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+.home-page .grid.cards>li {
+  background: var(--molpy-glass-bg);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--molpy-glass-border);
+  border-radius: 16px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 20px var(--molpy-shadow-light);
 }
 
-.home-page .grid.cards > li:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+.home-page .grid.cards>li:hover {
+  transform: translateY(-8px) scale(1.02);
+  box-shadow: 0 12px 40px var(--molpy-shadow-medium);
+  border-color: var(--md-primary-fg-color--light);
 }
 
-/* ===== Quick Links Grid ===== */
+.home-page .grid.cards>li>hr {
+  margin: 1rem 0;
+  border: none;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--molpy-gradient-end), transparent);
+}
+
+/* Icon animation */
+.home-page .grid.cards .twemoji {
+  transition: transform 0.3s ease;
+  display: inline-block;
+}
+
+.home-page .grid.cards>li:hover .twemoji {
+  transform: scale(1.1) rotate(5deg);
+}
+
+/* ===== Quick Links Grid with Enhanced Cards ===== */
 .home-page .grid:not(.cards) {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1rem;
-  margin: 2rem 0;
+  gap: 1.5rem;
+  margin: 3rem 0;
 }
 
-/* ===== Section Headings ===== */
-.home-page h2 {
-  font-size: 1.75rem;
-  font-weight: 600;
-  margin-top: 3rem;
-  margin-bottom: 1.5rem;
-  border-bottom: 2px solid var(--md-primary-fg-color);
-  padding-bottom: 0.5rem;
+.home-page .admonition {
+  border-radius: 12px;
+  border-left-width: 4px;
+  box-shadow: 0 4px 15px var(--molpy-shadow-light);
+  transition: all 0.3s ease;
+  background: var(--molpy-glass-bg);
+  backdrop-filter: blur(10px);
 }
 
-/* ===== Roadmap Grid ===== */
+.home-page .admonition:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 25px var(--molpy-shadow-medium);
+}
+
+/* ===== Roadmap Grid with Progress Indicators ===== */
 .roadmap-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 1.5rem;
-  margin: 2rem 0;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 2rem;
+  margin: 3rem 0;
+}
+
+.roadmap-grid>div {
+  background: var(--molpy-glass-bg);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--molpy-glass-border);
+  border-radius: 16px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 20px var(--molpy-shadow-light);
+  transition: all 0.3s ease;
+}
+
+.roadmap-grid>div:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 30px var(--molpy-shadow-medium);
 }
 
 .roadmap-grid h3 {
-  font-size: 1.15rem;
-  font-weight: 600;
+  font-size: 1.25rem;
+  font-weight: 700;
   margin-top: 0;
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
   color: var(--md-primary-fg-color);
-  border-bottom: 2px solid var(--md-primary-fg-color);
-  padding-bottom: 0.4rem;
+  padding-bottom: 0.75rem;
+  position: relative;
+}
+
+.roadmap-grid h3::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 50px;
+  height: 3px;
+  background: linear-gradient(90deg, var(--molpy-gradient-start), var(--molpy-gradient-end));
+  border-radius: 2px;
 }
 
 .roadmap-grid ul {
   margin: 0;
-  padding-left: 1.2rem;
+  padding-left: 1.5rem;
 }
 
 .roadmap-grid li {
-  margin-bottom: 0.5rem;
-  line-height: 1.6;
+  margin-bottom: 0.75rem;
+  line-height: 1.7;
+  transition: color 0.2s ease;
+}
+
+.roadmap-grid li:hover {
+  color: var(--md-primary-fg-color);
+}
+
+/* Checkbox styling */
+.roadmap-grid .task-list-item {
+  list-style: none;
+  position: relative;
+  padding-left: 0.25rem;
+}
+
+/* ===== Ecosystem Section ===== */
+.home-page p strong {
+  background: linear-gradient(135deg, var(--molpy-gradient-start), var(--molpy-gradient-end));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 700;
+}
+
+/* ===== Dividers with Gradient ===== */
+.home-page hr {
+  margin: 3rem 0;
+  border: none;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--molpy-gradient-end), transparent);
+  opacity: 0.3;
+}
+
+/* ===== Smooth Scroll Behavior ===== */
+html {
+  scroll-behavior: smooth;
+}
+
+/* ===== Link Enhancements ===== */
+.home-page a {
+  position: relative;
+  transition: color 0.2s ease;
+}
+
+.home-page a:not(.md-button):hover {
+  color: var(--md-primary-fg-color);
 }
 
 /* ===== Responsive Design ===== */
 @media screen and (max-width: 76.1875em) {
   .home-page .md-content {
-    padding: 2rem 1.5rem;
+    padding: 2.5rem 1.5rem;
+  }
+
+  .home-page h1 {
+    font-size: 3rem;
   }
 }
 
 @media screen and (max-width: 60em) {
   .home-page h1 {
+    font-size: 2.5rem;
+  }
+
+  .home-page .lead {
+    font-size: 1.1rem;
+  }
+
+  .home-page h2 {
+    font-size: 1.75rem;
+  }
+
+  .button-group .md-button {
+    padding: 0.75rem 1.5rem;
+    margin: 0.4rem;
+  }
+
+  .home-page .grid:not(.cards),
+  .roadmap-grid {
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+
+  .roadmap-grid {
+    gap: 1.5rem;
+  }
+}
+
+@media screen and (max-width: 44.984375em) {
+  .home-page .md-content {
+    padding: 2rem 1rem;
+  }
+
+  .home-page h1 {
     font-size: 2rem;
+    letter-spacing: -0.01em;
   }
 
   .home-page .lead {
@@ -157,47 +407,37 @@
 
   .home-page h2 {
     font-size: 1.5rem;
-  }
-
-  .button-group .md-button {
-    display: inline-block;
-    margin: 0.2rem;
-  }
-
-  .home-page .grid:not(.cards),
-  .roadmap-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media screen and (max-width: 44.984375em) {
-  .home-page .md-content {
-    padding: 1.5rem 1rem;
-  }
-
-  .home-page h1 {
-    font-size: 1.75rem;
-  }
-
-  .home-page .lead {
-    font-size: 0.95rem;
-  }
-
-  .home-page h2 {
-    font-size: 1.35rem;
+    margin-top: 3rem;
   }
 
   .button-group {
-    margin: 1rem 0;
+    margin: 2rem 0;
   }
 
   .button-group .md-button {
     display: block;
     width: calc(100% - 1rem);
     margin: 0.5rem auto;
+    padding: 0.875rem 1rem;
   }
 
   .roadmap-grid h3 {
-    font-size: 1.1rem;
+    font-size: 1.15rem;
+  }
+
+  .home-page .grid.cards {
+    gap: 1.25rem;
+  }
+}
+
+/* ===== Accessibility ===== */
+@media (prefers-reduced-motion: reduce) {
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

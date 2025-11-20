@@ -143,6 +143,8 @@ dmypy.json
 .DS_Store
 
 # Output files of docs
+docs/
+!docs/assets/
 !docs/**/*.py
 !docs/**/*.md
 !docs/**/*.ipynb

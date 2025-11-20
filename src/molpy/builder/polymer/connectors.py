@@ -316,16 +316,16 @@ class ReacterConnector(Connector):
 
     Example:
         >>> from molpy.reacter import Reacter
-        >>> from molpy.reacter.selectors import port_anchor_selector, remove_one_H
-        >>> from molpy.reacter.transformers import make_single_bond
+        >>> from molpy.reacter.selectors import select_port_atom, select_one_hydrogen
+        >>> from molpy.reacter.transformers import form_single_bond
         >>>
         >>> default_reacter = Reacter(
         ...     name="C-C_coupling",
-        ...     anchor_left=port_anchor_selector,
-        ...     anchor_right=port_anchor_selector,
-        ...     leaving_left=remove_one_H,
-        ...     leaving_right=remove_one_H,
-        ...     bond_maker=make_single_bond,
+        ...     port_selector_left=select_port_atom,
+        ...     port_selector_right=select_port_atom,
+        ...     leaving_selector_left=select_one_hydrogen,
+        ...     leaving_selector_right=select_one_hydrogen,
+        ...     bond_former=form_single_bond,
         ... )
         >>>
         >>> # Explicit port mapping for all monomer pairs
@@ -363,7 +363,7 @@ class ReacterConnector(Connector):
         self.default = default
         self.overrides = overrides or {}
         self.port_map = port_map
-        self._history: list = []  # List of ProductSet objects
+        self._history: list = []  # List of ReactionProduct objects
 
     def get_reacter(self, left_type: str, right_type: str) -> "Reacter":
         """
@@ -464,13 +464,13 @@ class ReacterConnector(Connector):
                 - modified_atoms: atoms whose types may have changed
                 - needs_retypification: whether retypification is needed
         """
-        from molpy.reacter.base import ProductSet
+        from molpy.reacter.base import ReactionProduct
 
         # Select reacter
         reacter = self.get_reacter(left_type, right_type)
 
         # Execute reaction
-        product_set: ProductSet = reacter.run(
+        product_set: ReactionProduct = reacter.run(
             left,
             right,
             port_L=port_L,
@@ -486,13 +486,11 @@ class ReacterConnector(Connector):
             "port_L": port_L,
             "port_R": port_R,
             "reaction_name": reacter.name,
-            "new_bonds": product_set.notes.get("new_bonds", []),
+            "formed_bonds": product_set.notes.get("formed_bonds", []),
             "new_angles": product_set.notes.get("new_angles", []),
             "new_dihedrals": product_set.notes.get("new_dihedrals", []),
             "modified_atoms": product_set.notes.get("modified_atoms", set()),
-            "needs_retypification": product_set.notes.get(
-                "needs_retypification", False
-            ),
+            "requires_retype": product_set.notes.get("requires_retype", False),
             "entity_maps": product_set.notes.get(
                 "entity_maps", []
             ),  # For port remapping
@@ -501,7 +499,7 @@ class ReacterConnector(Connector):
         return product_set.product, metadata
 
     def get_history(self) -> list:
-        """Get all reaction history (list of ProductSet)."""
+        """Get all reaction history (list of ReactionProduct)."""
         return self._history
 
     def get_all_modified_atoms(self) -> set:
@@ -513,7 +511,7 @@ class ReacterConnector(Connector):
 
     def needs_retypification(self) -> bool:
         """Check if any reactions require retypification."""
-        return any(p.notes.get("needs_retypification", False) for p in self._history)
+        return any(p.notes.get("requires_retype", False) for p in self._history)
 
 
 # Alias for backward compatibility

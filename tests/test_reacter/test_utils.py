@@ -11,6 +11,7 @@ Tests cover:
 from molpy import Atom, Atomistic, Bond
 from molpy.reacter.utils import (
     count_bonds,
+    create_atom_mapping,
     find_neighbors,
     get_bond_between,
     remove_dummy_atoms,

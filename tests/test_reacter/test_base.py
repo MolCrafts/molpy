@@ -2,7 +2,7 @@
 """Unit tests for Reacter base classes and core functionality.
 
 Tests cover:
-- ProductSet dataclass
+- ReactionProduct dataclass
 - Reacter class initialization
 - Reacter.run() method with various scenarios
 - Error handling
@@ -13,42 +13,42 @@ import pytest
 from molpy import Atom, Atomistic, Bond
 from molpy.core.wrappers.monomer import Monomer
 from molpy.reacter import (
-    ProductSet,
+    ReactionProduct,
     Reacter,
-    make_double_bond,
-    make_single_bond,
-    make_triple_bond,
-    no_leaving_group,
-    port_anchor_selector,
-    remove_all_H,
-    remove_one_H,
+    form_double_bond,
+    form_single_bond,
+    form_triple_bond,
+    select_none,
+    select_port_atom,
+    select_all_hydrogens,
+    select_one_hydrogen,
 )
 
 
 class TestProductSet:
-    """Test ProductSet dataclass."""
+    """Test ReactionProduct dataclass."""
 
     def test_productset_creation(self):
-        """Test creating a ProductSet with product and notes."""
+        """Test creating a ReactionProduct with product and notes."""
         asm = Atomistic()
         c = Atom(symbol="C")
         asm.add_entity(c)
 
         notes = {
             "reaction_name": "test_reaction",
-            "removed_count": 0,
+            "n_eliminated": 0,
         }
 
-        product = ProductSet(product=asm, notes=notes)
+        product = ReactionProduct(product=asm, notes=notes)
 
         assert product.product is asm
         assert product.notes == notes
         assert product.notes["reaction_name"] == "test_reaction"
 
     def test_productset_default_notes(self):
-        """Test ProductSet with default empty notes."""
+        """Test ReactionProduct with default empty notes."""
         asm = Atomistic()
-        product = ProductSet(product=asm)
+        product = ReactionProduct(product=asm)
 
         assert product.product is asm
         assert product.notes == {}
@@ -61,29 +61,29 @@ class TestReacter:
         """Test Reacter initialization with all components."""
         reacter = Reacter(
             name="test_reaction",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=remove_one_H,
-            leaving_right=remove_one_H,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_one_hydrogen,
+            leaving_selector_right=select_one_hydrogen,
+            bond_former=form_single_bond,
         )
 
         assert reacter.name == "test_reaction"
-        assert reacter.anchor_left is port_anchor_selector
-        assert reacter.anchor_right is port_anchor_selector
-        assert reacter.leaving_left is remove_one_H
-        assert reacter.leaving_right is remove_one_H
-        assert reacter.bond_maker is make_single_bond
+        assert reacter.port_selector_left is select_port_atom
+        assert reacter.port_selector_right is select_port_atom
+        assert reacter.leaving_selector_left is select_one_hydrogen
+        assert reacter.leaving_selector_right is select_one_hydrogen
+        assert reacter.bond_former is form_single_bond
 
     def test_reacter_repr(self):
         """Test Reacter string representation."""
         reacter = Reacter(
             name="test_reaction",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=remove_one_H,
-            leaving_right=remove_one_H,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_one_hydrogen,
+            leaving_selector_right=select_one_hydrogen,
+            bond_former=form_single_bond,
         )
 
         repr_str = repr(reacter)
@@ -111,18 +111,18 @@ class TestReacter:
         # Create reaction
         reacter = Reacter(
             name="C-C_coupling",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=remove_one_H,
-            leaving_right=remove_one_H,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_one_hydrogen,
+            leaving_selector_right=select_one_hydrogen,
+            bond_former=form_single_bond,
         )
 
         # Run reaction
         product = reacter.run(mono_L, mono_R, port_L="1", port_R="2")
 
-        # Validate ProductSet
-        assert isinstance(product, ProductSet)
+        # Validate ReactionProduct
+        assert isinstance(product, ReactionProduct)
         assert isinstance(product.product, Atomistic)
 
         # Check atoms (2 C, 0 H)
@@ -137,11 +137,13 @@ class TestReacter:
 
         # Check notes
         assert product.notes["reaction_name"] == "C-C_coupling"
-        assert product.notes["removed_count"] == 2
-        assert len(product.notes["removed_atoms"]) == 2
-        assert product.notes["port_L"] == "1"
-        assert product.notes["port_R"] == "2"
-        assert product.notes["needs_retypification"] is True
+        assert product.notes["n_eliminated"] == 2
+        assert len(product.notes["eliminated_atoms"]) == 2
+        assert product.notes["port_name_L"] == "1"
+        assert product.notes["port_name_R"] == "2"
+        assert product.notes["port_L"] == c_L
+        assert product.notes["port_R"] == c_R
+        assert product.notes["requires_retype"] is True
 
     def test_reacter_run_with_double_bond(self):
         """Test Reacter.run() with double bond formation."""
@@ -163,11 +165,11 @@ class TestReacter:
         # Create reaction with double bond
         reacter = Reacter(
             name="C=C_coupling",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=remove_one_H,
-            leaving_right=remove_one_H,
-            bond_maker=make_double_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_one_hydrogen,
+            leaving_selector_right=select_one_hydrogen,
+            bond_former=form_double_bond,
         )
 
         product = reacter.run(mono_L, mono_R, port_L="1", port_R="2")
@@ -198,11 +200,11 @@ class TestReacter:
         # Create reaction with triple bond
         reacter = Reacter(
             name="C#C_coupling",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=remove_one_H,
-            leaving_right=remove_one_H,
-            bond_maker=make_triple_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_one_hydrogen,
+            leaving_selector_right=select_one_hydrogen,
+            bond_former=form_triple_bond,
         )
 
         product = reacter.run(mono_L, mono_R, port_L="1", port_R="2")
@@ -229,18 +231,18 @@ class TestReacter:
         # Addition reaction
         reacter = Reacter(
             name="addition",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=no_leaving_group,
-            leaving_right=no_leaving_group,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_none,
+            leaving_selector_right=select_none,
+            bond_former=form_single_bond,
         )
 
         product = reacter.run(mono_L, mono_R, port_L="1", port_R="2")
 
         # No atoms removed
-        assert product.notes["removed_count"] == 0
-        assert len(product.notes["removed_atoms"]) == 0
+        assert product.notes["n_eliminated"] == 0
+        assert len(product.notes["eliminated_atoms"]) == 0
 
         # 2 atoms, 1 bond
         assert len(list(product.product.atoms)) == 2
@@ -269,18 +271,18 @@ class TestReacter:
         # Remove all H from left, one H from right
         reacter = Reacter(
             name="asymmetric",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=remove_all_H,
-            leaving_right=remove_one_H,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_all_hydrogens,
+            leaving_selector_right=select_one_hydrogen,
+            bond_former=form_single_bond,
         )
 
         product = reacter.run(mono_L, mono_R, port_L="1", port_R="2")
 
         # Should remove 4 H total
-        assert product.notes["removed_count"] == 4
-        assert len(product.notes["removed_atoms"]) == 4
+        assert product.notes["n_eliminated"] == 4
+        assert len(product.notes["eliminated_atoms"]) == 4
 
         # Only 2 C atoms remain
         atoms = list(product.product.atoms)
@@ -306,11 +308,11 @@ class TestReacter:
 
         reacter = Reacter(
             name="test",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=remove_one_H,
-            leaving_right=remove_one_H,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_one_hydrogen,
+            leaving_selector_right=select_one_hydrogen,
+            bond_former=form_single_bond,
         )
 
         product = reacter.run(
@@ -318,7 +320,7 @@ class TestReacter:
         )
 
         # Should still work
-        assert isinstance(product, ProductSet)
+        assert isinstance(product, ReactionProduct)
         assert len(list(product.product.atoms)) == 2
 
     def test_reacter_run_with_record_intermediates(self):
@@ -340,11 +342,11 @@ class TestReacter:
 
         reacter = Reacter(
             name="test",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=remove_one_H,
-            leaving_right=remove_one_H,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_one_hydrogen,
+            leaving_selector_right=select_one_hydrogen,
+            bond_former=form_single_bond,
         )
 
         product = reacter.run(
@@ -376,11 +378,11 @@ class TestReacter:
 
         reacter = Reacter(
             name="test",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=no_leaving_group,
-            leaving_right=no_leaving_group,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_none,
+            leaving_selector_right=select_none,
+            bond_former=form_single_bond,
         )
 
         with pytest.raises(ValueError, match="Port '1' not found"):
@@ -400,11 +402,11 @@ class TestReacter:
 
         reacter = Reacter(
             name="test",
-            anchor_left=port_anchor_selector,
-            anchor_right=port_anchor_selector,
-            leaving_left=no_leaving_group,
-            leaving_right=no_leaving_group,
-            bond_maker=make_single_bond,
+            port_selector_left=select_port_atom,
+            port_selector_right=select_port_atom,
+            leaving_selector_left=select_none,
+            leaving_selector_right=select_none,
+            bond_former=form_single_bond,
         )
 
         with pytest.raises(ValueError, match="Port '2' not found"):

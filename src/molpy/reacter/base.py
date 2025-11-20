@@ -14,34 +14,34 @@ from molpy.core.entity import Entity
 from molpy.core.wrappers.monomer import Monomer
 
 # Type aliases for clarity
-AtomId = Entity  # Direct reference to an Atom entity
+AtomEntity = Entity  # Direct reference to an Atom entity
 
 # Callable type signatures for reaction components
-AnchorSelector = Callable[[Monomer, str], AtomId]
+PortSelector = Callable[[Monomer, str], AtomEntity]
 """
-Select anchor atom from a monomer given a port name.
+Select port atom from a monomer given a port name.
 
 Args:
     monomer: The monomer to select from
     port_name: Name of the port to use for selection
 
 Returns:
-    AtomId: The anchor atom entity
+    AtomEntity: The port atom entity
 """
 
-LeavingSelector = Callable[[Monomer, AtomId], list[AtomId]]
+LeavingSelector = Callable[[Monomer, AtomEntity], list[AtomEntity]]
 """
-Select leaving group atoms given an anchor atom.
+Select leaving group atoms given a port atom.
 
 Args:
     monomer: The monomer containing the atoms
-    anchor: The anchor atom entity
+    port_atom: The port atom entity
 
 Returns:
     List of atom entities to be removed
 """
 
-BondMaker = Callable[[Atomistic, AtomId, AtomId], None]
+BondFormer = Callable[[Atomistic, AtomEntity, AtomEntity], None]
 """
 Create or modify bonds between two atoms in an assembly.
 
@@ -56,7 +56,7 @@ Side effects:
 
 
 @dataclass
-class ProductSet:
+class ReactionProduct:
     """
     Container for reaction products and metadata.
 
@@ -64,16 +64,16 @@ class ProductSet:
         product: The resulting Atomistic assembly after reaction
         notes: Dictionary containing execution metadata:
             - 'reaction_name': str
-            - 'removed_atoms': List of removed atom entities
-            - 'removed_count': int
-            - 'anchor_left': Entity
-            - 'anchor_right': Entity
+            - 'eliminated_atoms': List of eliminated atom entities
+            - 'n_eliminated': int
+            - 'port_L': Entity (left port atom)
+            - 'port_R': Entity (right port atom)
             - 'entity_maps': List of entity mappings from merge
-            - 'new_bonds': List of newly created bonds
+            - 'formed_bonds': List of newly formed bonds
             - 'new_angles': List of newly created angles (if computed)
             - 'new_dihedrals': List of newly created dihedrals (if computed)
             - 'modified_atoms': List of atoms whose types may have changed
-            - 'needs_retypification': bool indicating if retypification needed
+            - 'requires_retype': bool indicating if retypification needed
     """
 
     product: Atomistic
@@ -85,69 +85,69 @@ class Reacter:
     Programmable chemical reaction executor.
 
     A Reacter represents one specific chemical reaction type by composing:
-    1. Anchor selectors - identify reactive atoms via ports
-    2. Leaving group selectors - identify atoms to remove
-    3. Bond maker - create new bonds between anchors
+    1. Port selectors - identify reactive atoms via ports
+    2. Leaving selectors - identify atoms to remove
+    3. Bond former - create new bonds between port atoms
 
     The reaction is executed on copies of input monomers, ensuring
     original structures remain unchanged.
 
     **Port Selection Philosophy:**
-    Reacter does NOT handle port selection. The caller (e.g., ReacterConnector)
+    Reacter does NOT handle port selection. The caller (e.g., MonomerLinker)
     must explicitly specify which ports to connect via port_L and port_R.
     This makes the reaction execution deterministic and explicit.
 
     Attributes:
         name: Descriptive name for this reaction type
-        anchor_left: Function to select left anchor atom
-        anchor_right: Function to select right anchor atom
-        leaving_left: Function to select left leaving group
-        leaving_right: Function to select right leaving group
-        bond_maker: Function to create bond between anchors
+        port_selector_left: Function to select left port atom
+        port_selector_right: Function to select right port atom
+        leaving_selector_left: Function to select left leaving group
+        leaving_selector_right: Function to select right leaving group
+        bond_former: Function to create bond between port atoms
 
     Example:
-        >>> from molpy.reacter import Reacter, port_anchor_selector, remove_one_H, make_single_bond
+        >>> from molpy.reacter import Reacter, select_port_atom, select_one_hydrogen, form_single_bond
         >>>
         >>> cc_coupling = Reacter(
         ...     name="C-C_coupling_with_H_loss",
-        ...     anchor_left=port_anchor_selector,
-        ...     anchor_right=port_anchor_selector,
-        ...     leaving_left=remove_one_H,
-        ...     leaving_right=remove_one_H,
-        ...     bond_maker=make_single_bond,
+        ...     port_selector_left=select_port_atom,
+        ...     port_selector_right=select_port_atom,
+        ...     leaving_selector_left=select_one_hydrogen,
+        ...     leaving_selector_right=select_one_hydrogen,
+        ...     bond_former=form_single_bond,
         ... )
         >>>
         >>> # Port selection is explicit!
         >>> product = cc_coupling.run(monomerA, monomerB, port_L="1", port_R="2")
-        >>> print(product.notes['removed_atoms'])  # [H1, H2]
+        >>> print(product.notes['eliminated_atoms'])  # [H1, H2]
     """
 
     def __init__(
         self,
         name: str,
-        anchor_left: AnchorSelector,
-        anchor_right: AnchorSelector,
-        leaving_left: LeavingSelector,
-        leaving_right: LeavingSelector,
-        bond_maker: BondMaker,
+        port_selector_left: PortSelector,
+        port_selector_right: PortSelector,
+        leaving_selector_left: LeavingSelector,
+        leaving_selector_right: LeavingSelector,
+        bond_former: BondFormer,
     ):
         """
         Initialize a Reacter with reaction components.
 
         Args:
             name: Descriptive name for this reaction
-            anchor_left: Selector for left anchor atom
-            anchor_right: Selector for right anchor atom
-            leaving_left: Selector for left leaving group
-            leaving_right: Selector for right leaving group
-            bond_maker: Function to create bond between anchors
+            port_selector_left: Selector for left port atom
+            port_selector_right: Selector for right port atom
+            leaving_selector_left: Selector for left leaving group
+            leaving_selector_right: Selector for right leaving group
+            bond_former: Function to create bond between port atoms
         """
         self.name = name
-        self.anchor_left = anchor_left
-        self.anchor_right = anchor_right
-        self.leaving_left = leaving_left
-        self.leaving_right = leaving_right
-        self.bond_maker = bond_maker
+        self.port_selector_left = port_selector_left
+        self.port_selector_right = port_selector_right
+        self.leaving_selector_left = leaving_selector_left
+        self.leaving_selector_right = leaving_selector_right
+        self.bond_former = bond_former
 
     def run(
         self,
@@ -157,7 +157,7 @@ class Reacter:
         port_R: str,
         compute_topology: bool = True,
         record_intermediates: bool = False,
-    ) -> ProductSet:
+    ) -> ReactionProduct:
         """
         Execute the reaction between two monomers.
 
@@ -166,12 +166,12 @@ class Reacter:
 
         Workflow (STRICT ORDER):
         1. Check ports exist on monomers
-        2. Select anchors via ports
+        2. Select port atoms via ports
         3. Merge right into left (direct transfer, no copy)
-        4. Create bond between anchors
+        4. Create bond between port atoms
         5. Remove leaving groups from MERGED assembly
         6. (Optional) Compute new angles/dihedrals
-        7. Return ProductSet with metadata
+        7. Return ReactionProduct with metadata
 
         Args:
             left: Left reactant monomer
@@ -182,12 +182,12 @@ class Reacter:
             record_intermediates: If True, record intermediate states in notes
 
         Returns:
-            ProductSet containing:
+            ReactionProduct containing:
                 - product: Final product assembly
                 - notes: Metadata including intermediate states if requested
 
         Raises:
-            ValueError: If ports not found or anchors invalid
+            ValueError: If ports not found or port atoms invalid
         """
         intermediates: list[dict] | None = [] if record_intermediates else None
 
@@ -200,9 +200,9 @@ class Reacter:
         if right_port is None:
             raise ValueError(f"Port '{port_R}' not found on right monomer")
 
-        # Step 2: Select anchors via ports
-        anchor_L = left_port.target
-        anchor_R = right_port.target
+        # Step 2: Select port atoms via ports
+        port_atom_L = left_port.target
+        port_atom_R = right_port.target
 
         # Get unwrapped assemblies
         left_asm = left
@@ -219,7 +219,7 @@ class Reacter:
             intermediates.append(
                 {
                     "step": "initial",
-                    "description": "Initial reactants (Step 1-2: validated ports and anchors)",
+                    "description": "Initial reactants (Step 1-2: validated ports and port atoms)",
                     "left": left_copy,
                     "right": right_copy,
                 }
@@ -241,10 +241,12 @@ class Reacter:
                 }
             )
 
-        # Step 4: Create bond between anchors
-        new_bond = self.bond_maker(left_asm, anchor_L, anchor_R)
-        if new_bond is not None:
-            left_asm.add_link(new_bond, include_endpoints=False)
+        # Step 4: Create bond between port atoms
+        # Bond former is responsible for adding the bond to the assembly
+        new_bond = self.bond_former(left_asm, port_atom_L, port_atom_R)
+        # Note: we don't call left_asm.add_link(new_bond) here because
+        # standard bond formers already do it. If a custom bond former returns
+        # a bond but doesn't add it, it won't be in the assembly.
 
         if intermediates is not None:
             product_copy = left_asm.copy()
@@ -254,7 +256,7 @@ class Reacter:
             intermediates.append(
                 {
                     "step": "bond_formation",
-                    "description": "After forming new bond between anchors (Step 4)",
+                    "description": "After forming new bond between port atoms (Step 4)",
                     "product": product_copy,
                     "new_bond": new_bond,
                 }
@@ -264,8 +266,8 @@ class Reacter:
         # IMPORTANT: After merge, right_asm's entities are moved to left_asm,
         # so we need to wrap left_asm in a temporary monomer for the selector
         merged_monomer = left_asm
-        leaving_L = self.leaving_left(merged_monomer, anchor_L)
-        leaving_R = self.leaving_right(merged_monomer, anchor_R)
+        leaving_L = self.leaving_selector_left(merged_monomer, port_atom_L)
+        leaving_R = self.leaving_selector_right(merged_monomer, port_atom_R)
 
         if intermediates is not None:
             intermediates.append(
@@ -316,23 +318,23 @@ class Reacter:
                     }
                 )
 
-        # Step 7: Return ProductSet with metadata
+        # Step 7: Return ReactionProduct with metadata
         notes = {
             "reaction_name": self.name,
-            "removed_atoms": removed_atoms,
-            "removed_count": len(removed_atoms),
-            "anchor_left": anchor_L,
-            "anchor_right": anchor_R,
-            "port_L": port_L,
-            "port_R": port_R,
-            "new_bonds": [new_bond] if new_bond else [],
-            "needs_retypification": True,
+            "eliminated_atoms": removed_atoms,
+            "n_eliminated": len(removed_atoms),
+            "port_L": port_atom_L,
+            "port_R": port_atom_R,
+            "port_name_L": port_L,
+            "port_name_R": port_R,
+            "formed_bonds": [new_bond] if new_bond else [],
+            "requires_retype": True,
         }
 
         if record_intermediates:
             notes["intermediates"] = intermediates
 
-        return ProductSet(product=left_asm, notes=notes)
+        return ReactionProduct(product=left_asm, notes=notes)
 
     def __repr__(self) -> str:
         return f"Reacter(name={self.name!r})"

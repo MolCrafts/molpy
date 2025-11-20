@@ -82,7 +82,7 @@ plugins:
             merge_init_into_class: true
             filters: ["!^_"]
   - mkdocs-jupyter:
-      execute: true
+      execute: false
 
 nav:
   - Home: index.md
@@ -150,3 +150,7 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/MolCrafts/molpy
   generator: false
+
+watch:
+  - src
+  - docs/assets/overrides

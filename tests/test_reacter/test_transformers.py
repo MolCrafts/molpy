@@ -2,30 +2,30 @@
 """Unit tests for Reacter transformer functions.
 
 Tests cover:
-- make_single_bond
-- make_double_bond
-- make_triple_bond
-- make_aromatic_bond
-- make_bond_by_order
-- no_new_bond
+- form_single_bond
+- form_double_bond
+- form_triple_bond
+- form_aromatic_bond
+- create_bond_former
+- skip_bond_formation
 - break_bond
 """
 
 from molpy import Atom, Atomistic, Bond
 from molpy.reacter.transformers import (
     break_bond,
-    make_aromatic_bond,
-    make_bond_by_order,
-    make_double_bond,
-    make_single_bond,
-    make_triple_bond,
-    no_new_bond,
+    form_aromatic_bond,
+    create_bond_former,
+    form_double_bond,
+    form_single_bond,
+    form_triple_bond,
+    skip_bond_formation,
 )
 from molpy.reacter.utils import get_bond_between
 
 
 class TestMakeSingleBond:
-    """Test make_single_bond function."""
+    """Test form_single_bond function."""
 
     def test_make_single_bond_new(self):
         """Test creating a new single bond."""
@@ -34,7 +34,7 @@ class TestMakeSingleBond:
         c2 = Atom(symbol="C")
         asm.add_entity(c1, c2)
 
-        make_single_bond(asm, c1, c2)
+        form_single_bond(asm, c1, c2)
 
         bond = get_bond_between(asm, c1, c2)
         assert bond is not None
@@ -50,7 +50,7 @@ class TestMakeSingleBond:
         asm.add_entity(c1, c2)
         asm.add_link(bond)
 
-        make_single_bond(asm, c1, c2)
+        form_single_bond(asm, c1, c2)
 
         # Should update existing bond
         found = get_bond_between(asm, c1, c2)
@@ -60,7 +60,7 @@ class TestMakeSingleBond:
 
 
 class TestMakeDoubleBond:
-    """Test make_double_bond function."""
+    """Test form_double_bond function."""
 
     def test_make_double_bond_new(self):
         """Test creating a new double bond."""
@@ -69,7 +69,7 @@ class TestMakeDoubleBond:
         c2 = Atom(symbol="C")
         asm.add_entity(c1, c2)
 
-        make_double_bond(asm, c1, c2)
+        form_double_bond(asm, c1, c2)
 
         bond = get_bond_between(asm, c1, c2)
         assert bond is not None
@@ -85,7 +85,7 @@ class TestMakeDoubleBond:
         asm.add_entity(c1, c2)
         asm.add_link(bond)
 
-        make_double_bond(asm, c1, c2)
+        form_double_bond(asm, c1, c2)
 
         found = get_bond_between(asm, c1, c2)
         assert found is bond
@@ -94,7 +94,7 @@ class TestMakeDoubleBond:
 
 
 class TestMakeTripleBond:
-    """Test make_triple_bond function."""
+    """Test form_triple_bond function."""
 
     def test_make_triple_bond_new(self):
         """Test creating a new triple bond."""
@@ -103,7 +103,7 @@ class TestMakeTripleBond:
         c2 = Atom(symbol="C")
         asm.add_entity(c1, c2)
 
-        make_triple_bond(asm, c1, c2)
+        form_triple_bond(asm, c1, c2)
 
         bond = get_bond_between(asm, c1, c2)
         assert bond is not None
@@ -119,7 +119,7 @@ class TestMakeTripleBond:
         asm.add_entity(c1, c2)
         asm.add_link(bond)
 
-        make_triple_bond(asm, c1, c2)
+        form_triple_bond(asm, c1, c2)
 
         found = get_bond_between(asm, c1, c2)
         assert found is bond
@@ -128,7 +128,7 @@ class TestMakeTripleBond:
 
 
 class TestMakeAromaticBond:
-    """Test make_aromatic_bond function."""
+    """Test form_aromatic_bond function."""
 
     def test_make_aromatic_bond_new(self):
         """Test creating a new aromatic bond."""
@@ -137,7 +137,7 @@ class TestMakeAromaticBond:
         c2 = Atom(symbol="C")
         asm.add_entity(c1, c2)
 
-        make_aromatic_bond(asm, c1, c2)
+        form_aromatic_bond(asm, c1, c2)
 
         bond = get_bond_between(asm, c1, c2)
         assert bond is not None
@@ -154,7 +154,7 @@ class TestMakeAromaticBond:
         asm.add_entity(c1, c2)
         asm.add_link(bond)
 
-        make_aromatic_bond(asm, c1, c2)
+        form_aromatic_bond(asm, c1, c2)
 
         found = get_bond_between(asm, c1, c2)
         assert found is bond
@@ -164,18 +164,18 @@ class TestMakeAromaticBond:
 
 
 class TestMakeBondByOrder:
-    """Test make_bond_by_order factory function."""
+    """Test create_bond_former factory function."""
 
     def test_make_bond_by_order_single(self):
         """Test factory creating single bond maker."""
-        bond_maker = make_bond_by_order(1)
+        bond_former = create_bond_former(1)
 
         asm = Atomistic()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
         asm.add_entity(c1, c2)
 
-        bond_maker(asm, c1, c2)
+        bond_former(asm, c1, c2)
 
         bond = get_bond_between(asm, c1, c2)
         assert bond is not None
@@ -184,14 +184,14 @@ class TestMakeBondByOrder:
 
     def test_make_bond_by_order_double(self):
         """Test factory creating double bond maker."""
-        bond_maker = make_bond_by_order(2)
+        bond_former = create_bond_former(2)
 
         asm = Atomistic()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
         asm.add_entity(c1, c2)
 
-        bond_maker(asm, c1, c2)
+        bond_former(asm, c1, c2)
 
         bond = get_bond_between(asm, c1, c2)
         assert bond.get("order") == 2
@@ -199,14 +199,14 @@ class TestMakeBondByOrder:
 
     def test_make_bond_by_order_triple(self):
         """Test factory creating triple bond maker."""
-        bond_maker = make_bond_by_order(3)
+        bond_former = create_bond_former(3)
 
         asm = Atomistic()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
         asm.add_entity(c1, c2)
 
-        bond_maker(asm, c1, c2)
+        bond_former(asm, c1, c2)
 
         bond = get_bond_between(asm, c1, c2)
         assert bond.get("order") == 3
@@ -214,14 +214,14 @@ class TestMakeBondByOrder:
 
     def test_make_bond_by_order_aromatic(self):
         """Test factory creating aromatic bond maker."""
-        bond_maker = make_bond_by_order(1.5)
+        bond_former = create_bond_former(1.5)
 
         asm = Atomistic()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
         asm.add_entity(c1, c2)
 
-        bond_maker(asm, c1, c2)
+        bond_former(asm, c1, c2)
 
         bond = get_bond_between(asm, c1, c2)
         assert bond.get("order") == 1.5
@@ -230,7 +230,7 @@ class TestMakeBondByOrder:
 
     def test_make_bond_by_order_update_existing(self):
         """Test factory bond maker updates existing bond."""
-        bond_maker = make_bond_by_order(2)
+        bond_former = create_bond_former(2)
 
         asm = Atomistic()
         c1 = Atom(symbol="C")
@@ -239,7 +239,7 @@ class TestMakeBondByOrder:
         asm.add_entity(c1, c2)
         asm.add_link(bond)
 
-        bond_maker(asm, c1, c2)
+        bond_former(asm, c1, c2)
 
         found = get_bond_between(asm, c1, c2)
         assert found is bond
@@ -247,16 +247,16 @@ class TestMakeBondByOrder:
 
 
 class TestNoNewBond:
-    """Test no_new_bond function."""
+    """Test skip_bond_formation function."""
 
     def test_no_new_bond_does_nothing(self):
-        """Test that no_new_bond doesn't create any bond."""
+        """Test that skip_bond_formation doesn't create any bond."""
         asm = Atomistic()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
         asm.add_entity(c1, c2)
 
-        result = no_new_bond(asm, c1, c2)
+        result = skip_bond_formation(asm, c1, c2)
 
         # Should return None
         assert result is None
@@ -266,7 +266,7 @@ class TestNoNewBond:
         assert bond is None
 
     def test_no_new_bond_with_existing_bond(self):
-        """Test that no_new_bond doesn't modify existing bond."""
+        """Test that skip_bond_formation doesn't modify existing bond."""
         asm = Atomistic()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
@@ -274,7 +274,7 @@ class TestNoNewBond:
         asm.add_entity(c1, c2)
         asm.add_link(bond)
 
-        no_new_bond(asm, c1, c2)
+        skip_bond_formation(asm, c1, c2)
 
         # Bond should remain unchanged
         found = get_bond_between(asm, c1, c2)

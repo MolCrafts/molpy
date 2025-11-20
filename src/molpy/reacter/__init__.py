@@ -8,29 +8,29 @@ entirely on native data structures (Atom, Bond, Struct, Monomer).
 Core Concepts:
 --------------
 - **Reacter**: Represents a single chemical reaction type
-- **ProductSet**: Container for reaction products and metadata
-- **Selectors**: Functions that identify anchor atoms and leaving groups
+- **ReactionProduct**: Container for reaction products and metadata
+- **Selectors**: Functions that identify port atoms and leaving groups
 - **Transformers**: Functions that create or modify bonds
 
 Example Usage:
 --------------
 ```python
-from molpy.reacter import Reacter, port_anchor_selector, remove_one_H, make_single_bond
+from molpy.reacter import Reacter, select_port_atom, select_one_hydrogen, form_single_bond
 
 # Define a C-C coupling reaction
 cc_coupling = Reacter(
     name="C-C_coupling_with_H_loss",
-    anchor_left=port_anchor_selector,
-    anchor_right=port_anchor_selector,
-    leaving_left=remove_one_H,
-    leaving_right=remove_one_H,
-    bond_maker=make_single_bond,
+    port_selector_left=select_port_atom,
+    port_selector_right=select_port_atom,
+    leaving_selector_left=select_one_hydrogen,
+    leaving_selector_right=select_one_hydrogen,
+    bond_former=form_single_bond,
 )
 
 # Execute reaction between two monomers
-product = cc_coupling.run(monoA, monoB, port_L="1", port_R="2")
-print(f"Removed atoms: {product.notes['removed_atoms']}")
-print(f"New bonds: {product.notes['new_bonds']}")
+product = cc_coupling.run(left=mono_a, right=mono_b, port_L="1", port_R="2")
+print(f"Eliminated atoms: {product.notes['eliminated_atoms']}")
+print(f"Formed bonds: {product.notes['formed_bonds']}")
 ```
 
 Design Goals:
@@ -40,53 +40,52 @@ Design Goals:
 - Stable indexing: atom deletion doesn't shift IDs
 - Single responsibility: one Reacter = one reaction type
 - Extensible: easy to subclass for specialized reactions
-- Auditable: all changes recorded in ProductSet.notes
+- Auditable: all changes recorded in ReactionProduct.notes
 """
 
-from .base import AtomId, ProductSet, Reacter
-from .connector import ReacterConnector
+from .base import AtomEntity, ReactionProduct, Reacter
+from .connector import MonomerLinker
 from .selectors import (
-    no_leaving_group,
-    port_anchor_selector,
-    remove_all_H,
-    remove_dummy_atoms,
-    remove_OH,
-    remove_one_H,
+    select_all_hydrogens,
+    select_dummy_atoms,
+    select_hydroxyl_group,
+    select_none,
+    select_one_hydrogen,
+    select_port_atom,
 )
 from .transformers import (
     break_bond,
-    make_aromatic_bond,
-    make_bond_by_order,
-    make_double_bond,
-    make_single_bond,
-    make_triple_bond,
-    no_new_bond,
+    create_bond_former,
+    form_aromatic_bond,
+    form_double_bond,
+    form_single_bond,
+    form_triple_bond,
+    skip_bond_formation,
 )
 from .utils import create_atom_mapping, find_neighbors
 
 __all__ = [
-    "AtomId",
-    "ProductSet",
+    "AtomEntity",
     # Core classes
+    "MonomerLinker",
+    "ReactionProduct",
     "Reacter",
-    # Connectors
-    "ReacterConnector",
+    # Transformers (Bond Formers)
     "break_bond",
-    "create_atom_mapping",
+    "create_bond_former",
     # Utilities
+    "create_atom_mapping",
     "find_neighbors",
-    "make_aromatic_bond",
-    "make_bond_by_order",
-    "make_double_bond",
-    # Transformers
-    "make_single_bond",
-    "make_triple_bond",
-    "no_leaving_group",
-    "no_new_bond",
+    "form_aromatic_bond",
+    "form_double_bond",
+    "form_single_bond",
+    "form_triple_bond",
     # Selectors
-    "port_anchor_selector",
-    "remove_OH",
-    "remove_all_H",
-    "remove_dummy_atoms",
-    "remove_one_H",
+    "select_all_hydrogens",
+    "select_dummy_atoms",
+    "select_hydroxyl_group",
+    "select_none",
+    "select_one_hydrogen",
+    "select_port_atom",
+    "skip_bond_formation",
 ]
