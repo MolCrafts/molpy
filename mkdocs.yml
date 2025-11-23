@@ -93,15 +93,14 @@ nav:
       - FAQ: getting-started/faq.md
   - Tutorials:
       - Overview: tutorials/index.md
-      - Box: tutorials/box.ipynb
       - Frame & Block: tutorials/frame-block.ipynb
-      - Wrappers: tutorials/wrappers.ipynb
-      - Crystal Builder: tutorials/crystal-builder.ipynb
-      - Force Field: tutorials/force-field.ipynb
-      - Molecular Graph Model: tutorials/molecular-graph-model.ipynb
-      - Selector: tutorials/selector.ipynb
+      - Molecular Graph: tutorials/molecular-graph.ipynb
+      - Simulation Box: tutorials/box.ipynb
       - Topology: tutorials/topology.ipynb
+      - Force Field: tutorials/force-field.ipynb
       - Trajectory: tutorials/trajectory.ipynb
+      - Wrappers: tutorials/wrappers.ipynb
+      - Selector: tutorials/selector.ipynb
   - User Guide:
       - Overview: user-guide/index.md
       - Adapter: user-guide/adapter.ipynb
@@ -114,6 +113,7 @@ nav:
       - Potential: user-guide/potential.ipynb
       - Reacter: user-guide/reacter.ipynb
       - Typifier: user-guide/typifier.ipynb
+      - Crystal Builder: tutorials/crystal-builder.ipynb
   - API Reference:
       - Overview: api/index.md
       - Core: api/core.md

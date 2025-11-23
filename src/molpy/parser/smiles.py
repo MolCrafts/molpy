@@ -1,4 +1,5 @@
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,7 +53,10 @@ class BondIR:
     kind: str
 
     def __repr__(self):
-        return f"BondIR({self.start.symbol!r}, {self.end.symbol!r}, {self.kind!r})"
+        def _sym(obj):
+            return getattr(obj, "symbol", obj.__class__.__name__)
+
+        return f"BondIR({_sym(self.start)!r}, {_sym(self.end)!r}, {self.kind!r})"
 
 
 @dataclass(eq=True)
@@ -97,6 +101,60 @@ class SmilesTransformer(Transformer):
 
     def ring_id(self, d: list[Token]) -> str:
         return "".join(t.value for t in d)
+
+    # ================== Bond descriptor (BigSMILES compatibility) ==================
+    def bond_descriptor_symbol(self, t: list[Token]) -> str:
+        return t[0].value
+
+    def bond_descriptor_symbol_idx(self, items: list):
+        symbol = items[0] if items else None
+        idx = items[1] if len(items) > 1 else None
+        return symbol, idx
+
+    def bond_descriptor_generation(self, items: list) -> list[int]:
+        numbers = [
+            it
+            for it in items
+            if isinstance(it, (int, float))
+            or (isinstance(it, Token) and it.type == "NUMBER")
+        ]
+        return [int(float(n.value) if isinstance(n, Token) else n) for n in numbers]
+
+    def inner_bond_descriptor(self, items: list):
+        symbol, index = items[0] if isinstance(items[0], tuple) else (None, None)
+        gen = items[1] if len(items) > 1 else None
+        return BondDescriptorIR(symbol=symbol, index=index, generation=gen)  # type: ignore[arg-type]
+
+    def simple_bond_descriptor(self, items: list):
+        filtered = [
+            it
+            for it in items
+            if not (isinstance(it, Token) and it.type in {"LSQB", "RSQB"})
+        ]
+        return filtered[0] if filtered else BondDescriptorIR()
+
+    def bond_descriptor(self, items: list):
+        return items[0] if items else BondDescriptorIR()
+
+    def terminal_bond_descriptor(self, items: list):
+        filtered = [
+            it
+            for it in items
+            if not (isinstance(it, Token) and it.type in {"LSQB", "RSQB"})
+        ]
+
+        symbol, index, gen = None, None, None
+        if filtered:
+            first = filtered[0]
+            if isinstance(first, tuple):
+                symbol, index = first
+                if len(filtered) > 1:
+                    gen = filtered[1]
+            elif isinstance(first, list):
+                gen = first
+            elif isinstance(first, BondDescriptorIR):
+                return first
+        return BondDescriptorIR(symbol=symbol, index=index, generation=gen)  # type: ignore[arg-type]
 
     # ================== Atom and its attributes construction ==================
     def atom(self, children: list[AtomIR]) -> AtomIR:
@@ -709,7 +767,8 @@ class SmilesParser(GrammarParserBase):
             return BigSmilesIR(atoms=[], bonds=[], chain=chain)
 
         # Check if this is plain SMILES (no BigSMILES syntax)
-        has_bigsmiles_syntax = any(c in text for c in "{}")
+        bigsmiles_pattern = r"[{}]|\[(?:<|>|\$)"
+        has_bigsmiles_syntax = bool(re.search(bigsmiles_pattern, text))
 
         if not has_bigsmiles_syntax:
             # Plain SMILES - parse as SMILES and wrap in BigSmilesIR
@@ -764,143 +823,6 @@ class SmilesParser(GrammarParserBase):
             empty_smiles = SmilesIR(atoms=[], bonds=[])
             chain = BigSmilesChainIR(start_smiles=empty_smiles, repeat_segments=[])
             return BigSmilesIR(atoms=[], bonds=[], chain=chain)
-
-
-# ===================================================================
-#   Converter: SmilesIR -> RDKit Mol
-# ===================================================================
-
-
-def smilesir_to_mol(ir: SmilesIR) -> "Chem.Mol":
-    """
-    Convert SmilesIR to RDKit Mol by directly constructing the molecule graph.
-
-    This approach preserves IR-specific information and supports extended syntax
-    (BigSMILES, G-BigSMILES) where explicit topology is essential.
-
-    Args:
-        ir: SmilesIR instance with atoms and bonds
-
-    Returns:
-        RDKit Mol object
-
-    Raises:
-        ImportError: if RDKit is not available
-        ValueError: if IR contains invalid molecular data
-
-    Example:
-        >>> parser = SmilesParser()
-        >>> ir = parser.parser_smiles("CCO")
-        >>> mol = smilesir_to_mol(ir)
-        >>> mol.GetNumAtoms()
-        3
-    """
-    assert isinstance(ir, SmilesIR), "Input must be a SmilesIR instance"
-
-    try:
-        from rdkit import Chem
-    except ImportError as e:
-        raise ImportError("RDKit is required for smilesir_to_mol conversion") from e
-
-    if not ir.atoms:
-        # Empty molecule
-        return Chem.Mol()
-
-    # Bond type mapping
-    bond_type_map = {
-        "-": Chem.BondType.SINGLE,
-        "=": Chem.BondType.DOUBLE,
-        "#": Chem.BondType.TRIPLE,
-        ":": Chem.BondType.AROMATIC,
-        "/": Chem.BondType.SINGLE,  # Stereochemistry, treat as single for now
-        "\\": Chem.BondType.SINGLE,  # Stereochemistry, treat as single for now
-    }
-
-    # Create editable molecule
-    mol = Chem.RWMol()
-
-    # Map AtomIR -> RDKit atom index (using object identity)
-    atom_to_idx: dict[int, int] = {}
-
-    # Add atoms
-    for atom_ir in ir.atoms:
-        # Handle aromatic symbols (lowercase in SMILES -> uppercase + aromatic flag)
-        symbol = atom_ir.symbol.upper() if atom_ir.symbol.islower() else atom_ir.symbol
-        is_aromatic = atom_ir.symbol.islower()
-
-        # Create RDKit atom
-        rdkit_atom = Chem.Atom(symbol)
-
-        # Set properties
-        if atom_ir.charge is not None:
-            rdkit_atom.SetFormalCharge(atom_ir.charge)
-
-        if atom_ir.isotope is not None:
-            rdkit_atom.SetIsotope(atom_ir.isotope)
-
-        if atom_ir.h_count is not None:
-            rdkit_atom.SetNumExplicitHs(atom_ir.h_count)
-
-        # Handle chirality
-        if atom_ir.chiral is not None:
-            if atom_ir.chiral == "@":
-                rdkit_atom.SetChiralTag(Chem.ChiralType.CHI_TETRAHEDRAL_CCW)
-            elif atom_ir.chiral == "@@":
-                rdkit_atom.SetChiralTag(Chem.ChiralType.CHI_TETRAHEDRAL_CW)
-            # Other chiral tags can be added as needed
-
-        # Set aromaticity
-        if is_aromatic:
-            rdkit_atom.SetIsAromatic(True)
-
-        # Add atom and store mapping (use id() for object identity)
-        atom_idx = mol.AddAtom(rdkit_atom)
-        atom_to_idx[id(atom_ir)] = atom_idx
-
-    # Add bonds
-    for bond_ir in ir.bonds:
-        start_idx = atom_to_idx.get(id(bond_ir.start))
-        end_idx = atom_to_idx.get(id(bond_ir.end))
-
-        if start_idx is None or end_idx is None:
-            raise ValueError(f"Bond references unknown atom: {bond_ir}")
-
-        # Determine bond kind (upgrade single bonds between aromatic atoms to aromatic)
-        bond_kind_str = bond_ir.kind
-        if (
-            bond_kind_str == "-"
-            and bond_ir.start.symbol.islower()
-            and bond_ir.end.symbol.islower()
-        ):
-            # Single bond between aromatic atoms -> aromatic bond
-            rdkit_bond_type = Chem.BondType.AROMATIC
-        else:
-            rdkit_bond_type = bond_type_map.get(bond_kind_str)
-            if rdkit_bond_type is None:
-                raise ValueError(f"Unknown bond kind: {bond_kind_str}")
-
-        mol.AddBond(start_idx, end_idx, rdkit_bond_type)
-
-    # Convert to immutable Mol
-    final_mol = mol.GetMol()
-
-    # Sanitize molecule (compute aromaticity, implicit Hs, etc.)
-    try:
-        Chem.SanitizeMol(final_mol)
-    except Exception as e:
-        # If sanitization fails, return unsanitized molecule with warning
-        import warnings
-
-        warnings.warn(
-            f"Molecule sanitization failed: {e}. Returning unsanitized molecule.",
-            stacklevel=2,
-        )
-
-    return final_mol
-
-
-# Note: Converter registration is handled by molpy.adapter module
-# Parser module should NOT import adapter to avoid circular dependencies
 
 
 @dataclass
@@ -1296,6 +1218,60 @@ def create_monomer_from_unit(
         monomer.set_port(right_port_name, atoms[-1])
 
     return monomer
+
+
+def smilesir_to_atomistic(ir: SmilesIR) -> Atomistic:
+    """Convert a `SmilesIR` into an `Atomistic` structure.
+
+    This performs a best-effort, dependency-free conversion by creating
+    atoms and bonds directly from the intermediate representation. The
+    result is a MolPy `Atomistic` object suitable for downstream use.
+
+    Notes:
+    - Does not attempt to perceive stereochemistry beyond the IR fields.
+    - Bond `kind` (e.g. '-', '=', '#', ':') is preserved in the bond attrs.
+    """
+    atomistic = Atomistic()
+    atomir_to_atom: dict[int, Atom] = {}
+
+    # Populate atoms
+    for atom_ir in ir.atoms:
+        symbol = atom_ir.symbol or "C"
+        atomic_num = None
+        element_symbol = None
+        try:
+            from molpy.core.element import Element
+
+            element_symbol = Element(symbol).symbol
+            atomic_num = Element(symbol).number
+        except Exception:
+            element_symbol = symbol
+
+        attrs: dict = {
+            "symbol": symbol,
+            "element": element_symbol,
+            "atomic_num": atomic_num,
+        }
+        if atom_ir.charge is not None:
+            attrs["charge"] = int(atom_ir.charge)
+        if getattr(atom_ir, "isotope", None) is not None:
+            attrs["isotope"] = int(atom_ir.isotope)
+        if getattr(atom_ir, "h_count", None) is not None:
+            attrs["h_count"] = int(atom_ir.h_count)
+
+        atom = atomistic.def_atom(**attrs)
+        atomir_to_atom[id(atom_ir)] = atom
+
+    # Populate bonds
+    for bond_ir in ir.bonds:
+        a = atomir_to_atom.get(id(bond_ir.start))
+        b = atomir_to_atom.get(id(bond_ir.end))
+        if a is None or b is None or a is b:
+            continue
+        bond_attrs = {"kind": getattr(bond_ir, "kind", "-")}
+        atomistic.def_bond(a, b, **bond_attrs)
+
+    return atomistic
 
 
 def find_adjacent_atom_index(ir: SmilesIR, descriptor_idx: int) -> int:

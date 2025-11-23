@@ -308,7 +308,9 @@ class LinearOrienter:
         anchor_pos = np.array(anchor.get("xyz", anchor.get("xyz", [0.0, 0.0, 0.0])))
 
         # Try to find a bonded neighbor
-        atomistic = monomer.unwrap()
+        # Monomer and Polymer are Atomistic subclasses in the current API —
+        # use the object directly and avoid calling `unwrap()`.
+        atomistic = monomer
         bonds = list(atomistic.bonds)
 
         neighbor_pos = None
@@ -470,7 +472,8 @@ class Placer:
             rotation: 3x3 rotation matrix
             pivot: Optional pivot point for rotation (default: centroid)
         """
-        atomistic = monomer.unwrap()
+        # Monomer/Polymer are Atomistic subclasses; use directly
+        atomistic = monomer
         atoms = list(atomistic.atoms)
 
         # Calculate centroid if no pivot given

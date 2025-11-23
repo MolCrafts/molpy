@@ -34,6 +34,10 @@ def form_single_bond(assembly: Atomistic, i: Entity, j: Entity) -> Bond | None:
     Example:
         >>> bond = form_single_bond(merged, carbon1, carbon2)
     """
+    # Avoid creating self-bonds (loop edges) which break topology algorithms
+    if i is j:
+        return None
+
     # Check if bond exists
     existing = get_bond_between(assembly, i, j)
 

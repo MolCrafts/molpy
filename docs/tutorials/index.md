@@ -5,6 +5,7 @@ Welcome to the MolPy Tutorials! These **hands-on, example-driven guides** help y
 ## How to Use These Tutorials
 
 **Learning path:**
+
 * 📘 **Foundational** – Start here if you're new to MolPy
 * 🔧 **Practical** – Learn by running real examples
 * 🎯 **Task-focused** – Each tutorial solves a specific problem
@@ -17,6 +18,7 @@ Welcome to the MolPy Tutorials! These **hands-on, example-driven guides** help y
 ## Getting Started
 
 If you haven't already:
+
 1. 📦 **[Install MolPy](../getting-started/installation.ipynb)** – Set up your environment
 2. 🚀 **[Quickstart Guide](../getting-started/quickstart.ipynb)** – 5-minute introduction
 3. 📚 **[Core Concepts](../getting-started/core-concepts.ipynb)** – Understand the data model
@@ -30,65 +32,75 @@ If you haven't already:
 Master MolPy's fundamental building blocks before diving into advanced features.
 
 #### [Frame & Block](frame-block.ipynb)
-**Learn MolPy's tabular data system**
 
-- Creating and manipulating `Frame` objects
-- Working with `Block` columns (coordinates, velocities, properties)
-- Converting between data formats
-- Understanding the Frame/Block architecture
-
-**Start here if:** You're new to MolPy and want to understand how data is organized.
+**Start here if:** You need to access data from chemical files and analyze results.
 
 **What you'll learn:**
 ```python
-frame = Frame(...)
-frame.block.xyz  # Access coordinates
-frame.block["mass"]  # Access properties
+frame = mp.io.read_lammps_data("data.lmp")
+frame["atoms"]["xyz"]
+frame["bonds"]["type"]
+```
+
+---
+
+#### [Molecular Graph](molecular-graph.ipynb)
+
+**Start here if:** You need create or edit molecule.
+
+**What you'll learn:**
+
+```python
+atoms = mp.Atomistic()
+C = atoms.def_atom(symbol="C", xyz=[0, 0, 0])
+O = atoms.def_atom(symbol="O", xyz=[1.2, 0, 0])
+atoms.def_bond(C, O, order=2)
 ```
 
 ---
 
 #### [Box](box.ipynb)
-**Work with simulation cells and periodic boundaries**
-
-- Creating simulation boxes (orthorhombic, triclinic)
-- Setting periodic boundary conditions (PBC)
-- Box transformations and resizing
-- Understanding box vectors and lattice parameters
 
 **Start here if:** You need to define simulation boundaries or work with periodic systems.
 
 **Key concepts:** Cell dimensions, PBC wrapping, lattice vectors
 
+```python
+box = mp.Box.cubic(length=10.0, origin=[0, 0, 0], pbc=[True, True, False])
+```
+
 ---
 
 #### [Topology](topology.ipynb)
-**Understand molecular connectivity and bonding**
 
-- Building molecular graphs (atoms, bonds)
-- Topology representation in MolPy
-- Bond orders and molecular structure
-- Integration with `Atomistic` objects
+**Start here if:** You're working with abstract molecular graph or graph algorithms.
 
-**Start here if:** You're working with molecular graphs or need to understand bonding information.
-
-**Applications:** Force field assignment, reaction modeling, structure analysis
-
+```
+from igraph import Graph
+topo: Graph = mp.Atomistic().get_topology()
+```
 ---
 
-#### [Molecular Graph Model](molecular-graph-model.ipynb)
-**Deep dive into graph-based molecular representation**
+#### [Force Field](force-field.ipynb)
 
-- Graph theory applied to molecules
-- Node and edge attributes
-- Traversing molecular graphs
-- Substructure matching
+**Start here if:** You're manupulating force field parameters
 
-**Start here if:** You need advanced graph operations or are implementing custom algorithms.
+```python
+ff = mp.ForceField()
+atype = ff.def_style(mp.AtomStyle("full"))
+atype.def_type("C", mass=12.01, charge=0.0)
 
-**Advanced topics:** Graph algorithms, pattern matching, molecular descriptors
+```
 
----
+#### [Trajectory](trajectory.ipynb)
+
+**Start here if:** You need to analyze simulation results or process large trajectory files.
+
+```python
+traj = mp.Trajectory.read_lammps_trajectory("traj.lammpstrj")
+for frame in traj:
+    print(frame.metadata["temperature"])
+```
 
 ### 🛠️ Building & Construction
 
@@ -114,7 +126,6 @@ Learn to construct molecular systems from scratch.
 from molpy.builder.crystal import fcc
 crystal = fcc(element="Cu", a=3.61, n_cells=(3, 3, 3))
 ```
-
 ---
 
 ### ⚗️ Chemistry & Reactions
@@ -144,66 +155,17 @@ selected = selector(atomistic)
 
 ---
 
-#### [Force Field](force-field.ipynb)
-**Assign force field parameters and atom types**
-
-- Force field typification workflow
-- OPLS-AA, AMBER typing
-- Custom typing rules
-- Validation and troubleshooting
-
-**Start here if:** You're preparing structures for molecular dynamics simulations.
-
-**Complete workflow:**
-1. Build or import structure
-2. Assign atom types with typifier
-3. Validate assignments
-4. Export to simulation format
-
-**Integration:** Works with Builder, Reacter, IO modules
-
----
-
-### 📊 Analysis & Trajectories
-
-Analyze molecular dynamics results and time-series data.
-
-#### [Trajectory](trajectory.ipynb)
-**Work with MD trajectory files**
-
-- Reading trajectory formats (LAMMPS, GROMACS, XYZ)
-- Memory-efficient streaming
-- Frame-by-frame analysis
-- Trajectory manipulation and export
-
-**Start here if:** You're analyzing simulation results or processing large trajectory files.
-
-**Key features:**
-- Lazy loading (memory efficient)
-- Format conversion
-- Property calculation over time
-- Integration with Compute module
-
-**Example workflow:**
-```python
-for frame in trajectory:
-    rg = compute_radius_of_gyration(frame)
-    results.append(rg)
-```
-
----
-
 ### 🔧 Advanced Features
 
 Extend MolPy with custom functionality.
 
 #### [Wrappers](wrappers.ipynb)
+
 **Understand MolPy's wrapper system**
 
 - Wrapper pattern for external libraries
 - RDKit integration example
 - Creating custom wrappers
-- Bidirectional data conversion
 
 **Start here if:** You're integrating external tools or extending MolPy's capabilities.
 
@@ -219,17 +181,15 @@ Extend MolPy with custom functionality.
 ## Learning Paths
 
 ### Path 1: Complete Beginner
+
 **Goal:** Learn MolPy from scratch
 
 ```
-1. Frame & Block → Understand data structures
-2. Box → Learn about simulation cells
-3. Topology → Master molecular connectivity
-4. Crystal Builder → Create first structure
-5. Force Field → Prepare for simulation
+1. Frame & Block -> Understand data structures
+2. Box -> Learn about simulation cells
+3. Topology -> Master molecular connectivity
+4. Force Field -> Prepare for simulation
 ```
-
-**Time:** ~3-4 hours | **Level:** Beginner
 
 ---
 
@@ -237,13 +197,12 @@ Extend MolPy with custom functionality.
 **Goal:** Prepare systems for MD simulations
 
 ```
-1. Box → Define simulation boundaries
+1. Box -> Define simulation boundaries
 2. Crystal Builder OR import structure
-3. Force Field → Assign types
-4. Export to LAMMPS/GROMACS (see User Guide: IO)
+3. Molecular Graph -> Edit molecule manually
+4. Force Field -> Assign types
+5. IO modules -> Export for simulation
 ```
-
-**Time:** ~2 hours | **Level:** Intermediate
 
 ---
 
@@ -251,101 +210,36 @@ Extend MolPy with custom functionality.
 **Goal:** Analyze simulation results
 
 ```
-1. Frame & Block → Understand data format
-2. Trajectory → Learn trajectory handling
-3. Analysis with Compute module (see User Guide)
+1. Frame & Block -> Understand data format
+2. Trajectory -> Learn trajectory handling
+3. Analysis with Compute module
 ```
-
-**Time:** ~2 hours | **Level:** Intermediate
-
----
-
-### Path 4: Advanced Customization
-**Goal:** Extend MolPy for custom needs
-
-```
-1. Molecular Graph Model → Graph operations
-2. Selector → Pattern matching
-3. Wrappers → External integrations
-4. Custom modules (see Developer Guide)
-```
-
-**Time:** ~4-5 hours | **Level:** Advanced
-
----
-
-## Tutorial Quick Reference
-
-| Tutorial | Duration | Difficulty | Prerequisites |
-|----------|----------|------------|---------------|
-| [Frame & Block](frame-block.ipynb) | 30 min | ⭐ Beginner | None |
-| [Box](box.ipynb) | 20 min | ⭐ Beginner | Frame & Block |
-| [Topology](topology.ipynb) | 30 min | ⭐⭐ Intermediate | Frame & Block |
-| [Molecular Graph Model](molecular-graph-model.ipynb) | 45 min | ⭐⭐⭐ Advanced | Topology |
-| [Crystal Builder](crystal-builder.ipynb) | 30 min | ⭐⭐ Intermediate | Frame & Block, Box |
-| [Selector](selector.ipynb) | 25 min | ⭐⭐ Intermediate | Topology |
-| [Force Field](force-field.ipynb) | 40 min | ⭐⭐ Intermediate | Topology |
-| [Trajectory](trajectory.ipynb) | 35 min | ⭐⭐ Intermediate | Frame & Block |
-| [Wrappers](wrappers.ipynb) | 30 min | ⭐⭐⭐ Advanced | Core concepts |
 
 ---
 
 ## Running the Tutorials
-
-### Interactive (Recommended)
-
-**Local:**
-```bash
-git clone https://github.com/MolCrafts/molpy.git
-cd molpy/docs/tutorials
-jupyter notebook
-```
-
-**Google Colab:**
-Click the "Open in Colab" badge at the top of each tutorial.
-
-### Read-Only
-
-Browse tutorials directly on the [documentation site](https://molcrafts.github.io/molpy/tutorials/) – great for quick reference!
-
----
 
 ## What's Next?
 
 **After completing tutorials:**
 
 1. 📖 **[User Guide](../user-guide/index.md)** – Comprehensive module documentation
+
    - Deeper coverage of each module
    - Production workflow patterns
    - Best practices and optimization tips
 
 2. 🔬 **[API Reference](../api/index.md)** – Complete function documentation
+
    - Full API specifications
    - Parameter details
    - Return value documentation
 
 3. 🛠️ **[Developer Guide](../developer/index.md)** – Contribute to MolPy
+
    - Development setup
    - Coding standards
    - Creating custom modules
-
----
-
-## Tips for Learning
-
-💡 **Best practices:**
-- Run notebooks interactively – don't just read!
-- Experiment with parameters and see what happens
-- Check the User Guide for deeper explanations
-- Join our [Discussions](https://github.com/MolCrafts/molpy/discussions) to ask questions
-
-⚠️ **Common beginner mistakes:**
-- Skipping Frame & Block (start here!)
-- Not understanding Frame vs Atomistic distinction
-- Forgetting to typify before simulation export
-- Mixing data structures without conversion
-
----
 
 ## Need Help?
 

@@ -7,6 +7,7 @@ Welcome to the MolPy User Guide! Whether you're building polymers, setting up si
 This guide provides **in-depth documentation** for each of MolPy's modules. Unlike the quick-start tutorials, these pages dive deep into capabilities, design patterns, and best practices for production workflows.
 
 **How to use this guide:**
+
 * 📖 **Reference-style** – Look up specific modules when you need them
 * 🔗 **Interconnected** – Each module links to related concepts
 * 💻 **Code-first** – Every page includes working examples
@@ -20,48 +21,14 @@ Before diving into specific modules, familiarize yourself with MolPy's core data
 
 | Structure | Purpose | When to Use |
 |-----------|---------|-------------|
-| **`Frame` + `Block`** | Tabular data (coordinates, properties) | File I/O, simulation export, analysis |
-| **`Atomistic`** | Graph-based molecules (atoms, bonds) | Building, reactions, force field typing |
-| **`Box`** | Simulation cell + PBC | Defining system boundaries |
-| **`Trajectory`** | Time series of frames | MD analysis, streaming large files |
+| **`Frame` & `Block`** | Tabular data (coordinates, properties) | File I/O, simulation export, analysis |
+| **`Molecule Graph`** | Graph-based molecules (atoms, bonds) | Building, reactions, force field typing |
 
-> 💡 **Key insight**: MolPy uses `Atomistic` for *chemistry* (bonds, reactions) and `Frame` for *geometry* (coordinates, simulation setup). Most workflows involve converting between them.
+> 💡 **Key insight**: MolPy uses `Molecule Graph` for *chemistry* (bonds, reactions) and `Frame` for *geometry* (coordinates, simulation setup). Most workflows involve converting between them.
 
 ---
 
 ## Module Overview
-
-### 🏗️ Building & Construction
-
-#### [Builder](builder.ipynb)
-**Build polymers and assemble molecular systems**
-
-- Linear polymer assembly from monomer sequences
-- Crystal structure generation (FCC, BCC, HCP lattices)
-- Integration with reaction-based workflows
-
-**Start here if:** You're constructing polymers, crystals, or composite systems from scratch.
-
-**Quick taste:**
-```python
-from molpy.builder.polymer.linear import linear
-poly = linear(sequence="ABAB", library=monomers, connector=ReacterConnector())
-```
-
----
-
-#### [Pack](pack.ipynb)
-**Distribute molecules spatially without overlaps**
-
-- Packing algorithms (Packmol integration)
-- Constraint-based placement (boxes, spheres, regions)
-- Multi-component systems (solvation, polymer melts)
-
-**Start here if:** You need to create simulation boxes with realistic initial configurations.
-
-**Typical use:** Creating a box with 500 water molecules + 1 protein.
-
----
 
 #### [Reacter](reacter.ipynb)
 **Program chemical reactions like code**
@@ -104,6 +71,37 @@ product = esterification.run(acid, alcohol, port_L="1", port_R="1")
 typifier = OplsAtomisticTypifier()
 typifier.typify(atomistic)  # Assigns OPLS types
 ```
+
+### 🏗️ Building & Construction
+
+#### [Builder](builder.ipynb)
+**Build polymers and assemble molecular systems**
+
+- Linear polymer assembly from monomer sequences
+- Crystal structure generation (FCC, BCC, HCP lattices)
+- Integration with reaction-based workflows
+
+**Start here if:** You're constructing polymers, crystals, or composite systems from scratch.
+
+**Quick taste:**
+```python
+from molpy.builder.polymer.linear import linear
+poly = linear(sequence="ABAB", library=monomers, connector=ReacterConnector())
+```
+
+---
+
+#### [Pack](pack.ipynb)
+**Distribute molecules spatially without overlaps**
+
+- Packing algorithms (Packmol integration)
+- Constraint-based placement (boxes, spheres, regions)
+- Multi-component systems (solvation, polymer melts)
+
+**Start here if:** You need to create simulation boxes with realistic initial configurations.
+
+**Typical use:** Creating a box with 500 water molecules + 1 protein.
+
 
 ---
 

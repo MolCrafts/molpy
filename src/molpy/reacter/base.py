@@ -192,26 +192,12 @@ class Reacter:
         intermediates: list[dict] | None = [] if record_intermediates else None
 
         # Step 1: Check ports exist on monomers
-        left_port = left.get_port_def(port_L)
-        right_port = right.get_port_def(port_R)
-
-        if left_port is None:
-            raise ValueError(f"Port '{port_L}' not found on left monomer")
-        if right_port is None:
-            raise ValueError(f"Port '{port_R}' not found on right monomer")
-
-        # Step 2: Select port atoms via ports
-        port_atom_L = left_port.target
-        port_atom_R = right_port.target
-
-        # Get unwrapped assemblies
-        left_asm = left
-        right_asm = right
-
+        port_atom_L = self.port_selector_left(left, port_L)  # Validate left port
+        port_atom_R = self.port_selector_right(right, port_R)  # Validate right port
         if intermediates is not None:
             # Record initial state (copy first, then gen_topo on the copy!)
-            left_copy = left_asm.copy()
-            right_copy = right_asm.copy()
+            left_copy = left.copy()
+            right_copy = right.copy()
             if compute_topology:
                 left_copy.get_topo(gen_angle=True, gen_dihe=True)
                 right_copy.get_topo(gen_angle=True, gen_dihe=True)
@@ -226,30 +212,17 @@ class Reacter:
             )
 
         # Step 3: Merge right into left (direct transfer, entities are SAME objects)
-        left_asm.merge(right_asm)
-
-        if intermediates is not None:
-            product_copy = left_asm.copy()
-            if compute_topology:
-                product_copy.get_topo(gen_angle=True, gen_dihe=True)
-
-            intermediates.append(
-                {
-                    "step": "merge",
-                    "description": "After merging right into left (Step 3)",
-                    "product": product_copy,
-                }
-            )
+        left.merge(right)
 
         # Step 4: Create bond between port atoms
         # Bond former is responsible for adding the bond to the assembly
-        new_bond = self.bond_former(left_asm, port_atom_L, port_atom_R)
-        # Note: we don't call left_asm.add_link(new_bond) here because
+        new_bond = self.bond_former(left, port_atom_L, port_atom_R)
+        # Note: we don't call left.add_link(new_bond) here because
         # standard bond formers already do it. If a custom bond former returns
         # a bond but doesn't add it, it won't be in the assembly.
 
         if intermediates is not None:
-            product_copy = left_asm.copy()
+            product_copy = left.copy()
             if compute_topology:
                 product_copy.get_topo(gen_angle=True, gen_dihe=True)
 
@@ -263,54 +236,60 @@ class Reacter:
             )
 
         # Step 5: Remove leaving groups from MERGED assembly
-        # IMPORTANT: After merge, right_asm's entities are moved to left_asm,
-        # so we need to wrap left_asm in a temporary monomer for the selector
-        merged_monomer = left_asm
+        # IMPORTANT: After merge, right's entities are moved to left,
+        # so we need to wrap left in a temporary monomer for the selector
+        merged_monomer = left
         leaving_L = self.leaving_selector_left(merged_monomer, port_atom_L)
         leaving_R = self.leaving_selector_right(merged_monomer, port_atom_R)
 
-        if intermediates is not None:
-            intermediates.append(
-                {
-                    "step": "identify_leaving",
-                    "description": f"Identified leaving groups (Step 5a): {len(leaving_L)} from left anchor, {len(leaving_R)} from right anchor",
-                    "leaving_L": leaving_L,
-                    "leaving_R": leaving_R,
-                }
-            )
-
         removed_atoms = []
         if leaving_L:
-            left_asm.remove_entity(*leaving_L, drop_incident_links=True)
+            left.remove_entity(*leaving_L, drop_incident_links=True)
             removed_atoms.extend(leaving_L)
         if leaving_R:
-            left_asm.remove_entity(*leaving_R, drop_incident_links=True)
+            left.remove_entity(*leaving_R, drop_incident_links=True)
             removed_atoms.extend(leaving_R)
 
         if intermediates is not None:
-            product_copy = left_asm.copy()
+            product_copy = left.copy()
             if compute_topology:
                 product_copy.get_topo(gen_angle=True, gen_dihe=True)
 
+            removed_meta = [
+                {"symbol": a.get("symbol"), "id": a.get("id"), "ref": a}
+                for a in removed_atoms
+            ]
             intermediates.append(
                 {
                     "step": "remove_leaving",
                     "description": f"After removing {len(removed_atoms)} leaving atoms (Step 5b)",
                     "product": product_copy,
+                    "removed_atoms": removed_atoms,
+                    "removed_meta": removed_meta,
                 }
             )
 
         # Step 6: (Optional) Compute new angles/dihedrals
         if compute_topology:
-            topo = left_asm.get_topo(gen_angle=True, gen_dihe=True)
+            # Sanitize links: remove any self-loop links (endpoints duplicated)
+            doomed: list = []
+            for lcls in list(left.links.classes()):
+                bucket = left.links.bucket(lcls)
+                for l in list(bucket):
+                    if len(set(l.endpoints)) != len(l.endpoints):
+                        doomed.append(l)
+            if doomed:
+                left.remove_link(*doomed)
+
+            topo = left.get_topo(gen_angle=True, gen_dihe=True)
 
             if intermediates is not None:
-                product_copy = left_asm.copy()
+                product_copy = left.copy()
                 product_copy.get_topo(gen_angle=True, gen_dihe=True)
 
                 intermediates.append(
                     {
-                        "step": "topology",
+                        "step": "final",
                         "description": "Final topology computation (Step 6)",
                         "product": product_copy,
                         "n_angles": topo.n_angles,
@@ -334,7 +313,7 @@ class Reacter:
         if record_intermediates:
             notes["intermediates"] = intermediates
 
-        return ReactionProduct(product=left_asm, notes=notes)
+        return ReactionProduct(product=left, notes=notes)
 
     def __repr__(self) -> str:
         return f"Reacter(name={self.name!r})"

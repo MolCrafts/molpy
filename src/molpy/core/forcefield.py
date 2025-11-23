@@ -1,6 +1,6 @@
 from collections import defaultdict
 from collections.abc import Iterator
-from typing import Any, Self, TypeVar
+from typing import Any, Self, TypeVar, List, cast
 
 from .entity import Entity
 
@@ -27,11 +27,12 @@ class TypeBucket[T]:
         cls = get_nearest_type(item)
         self._items[cls].discard(item)
 
-    def bucket(self, cls: type[T]) -> list[T]:
-        result: list[T] = []
+    def bucket(self, cls: type) -> List[T]:
+        result: List[T] = []
         for k, items in self._items.items():
+            # runtime check: k is a class, cls is a class
             if issubclass(k, cls):
-                result.extend(items)
+                result.extend(list(items))
         return result
 
     def classes(self) -> Iterator[type[T]]:
@@ -71,11 +72,15 @@ class Type:
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}: {self.name}>"
 
-    def __eq__(self, other: Self | Entity) -> bool:
-        return isinstance(other, self.__class__) and self.name == other.name
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Type):
+            return False
+        return self.__class__ == other.__class__ and self.name == other.name
 
-    def __gt__(self, other: Self | Entity) -> bool:
-        return isinstance(other, self.__class__) and self.name > other.name
+    def __gt__(self, other: object) -> bool:
+        if not isinstance(other, Type):
+            return False
+        return self.__class__ == other.__class__ and self.name > other.name
 
     def __getitem__(self, key: str) -> Any:
         return self.params.kwargs.get(key, None)
@@ -127,20 +132,34 @@ class ForceField:
         self.units = units
         self.styles = TypeBucket[Style]()
 
-    def def_style(
-        self, style_class: type[S], name: str, *args: Any, **kwargs: Any
-    ) -> S:
-        existing_styles = self.styles.bucket(style_class)
-        for style in existing_styles:
-            if style.name == name:
-                return style
+    def def_style(self, style: Style) -> Style:
+        """Register a Style instance with the force field.
 
-        new_style = style_class(name, *args, **kwargs)
-        self.styles.add(new_style)
-        return new_style
+        The API no longer accepts Style classes. Callers must pass an instantiated
+        Style (e.g. ``ff.def_style(AtomStyle("full"))``). If a style with the
+        same runtime class and name already exists it will be returned instead of
+        registering a duplicate.
+        """
+        if not isinstance(style, Style):
+            raise TypeError(
+                "def_style expects a Style instance; passing a class is no longer supported"
+            )
 
-    def get_styles(self, style_class: type[S]) -> list[S]:
-        return self.styles.bucket(style_class)
+        style_inst: Style = style
+        style_cls = style_inst.__class__
+        style_name = style_inst.name
+
+        # Return existing style if one with same class/name exists
+        for s in self.styles.bucket(style_cls):
+            if s.name == style_name:
+                return s
+
+        # Otherwise register provided instance
+        self.styles.add(style_inst)
+        return style_inst
+
+    def get_styles(self, style_class: type[S]) -> List[S]:
+        return cast(List[S], self.styles.bucket(style_class))
 
     def get_types(self, type_class: type[Ty]) -> list[Ty]:
         all_types = set()
@@ -183,7 +202,8 @@ class ForceField:
             # Check if style has to_potential method
             if hasattr(style, "to_potential"):
                 try:
-                    potential = style.to_potential()
+                    # mypy cannot infer that 'style' has to_potential, so cast
+                    potential = cast(Any, style).to_potential()
                     if potential is not None:
                         potentials.append(potential)
                 except (ValueError, AttributeError):
@@ -649,22 +669,22 @@ class PairStyle(Style):
 
 class AtomisticForcefield(ForceField):
     def def_atomstyle(self, name: str, *args: Any, **kwargs: Any) -> AtomStyle:
-        return self.def_style(AtomStyle, name, *args, **kwargs)
+        return cast(AtomStyle, self.def_style(AtomStyle(name, *args, **kwargs)))
 
     def def_bondstyle(self, name: str, *args: Any, **kwargs: Any) -> BondStyle:
-        return self.def_style(BondStyle, name, *args, **kwargs)
+        return cast(BondStyle, self.def_style(BondStyle(name, *args, **kwargs)))
 
     def def_anglestyle(self, name: str, *args: Any, **kwargs: Any) -> AngleStyle:
-        return self.def_style(AngleStyle, name, *args, **kwargs)
+        return cast(AngleStyle, self.def_style(AngleStyle(name, *args, **kwargs)))
 
     def def_dihedralstyle(self, name: str, *args: Any, **kwargs: Any) -> DihedralStyle:
-        return self.def_style(DihedralStyle, name, *args, **kwargs)
+        return cast(DihedralStyle, self.def_style(DihedralStyle(name, *args, **kwargs)))
 
     def def_improperstyle(self, name: str, *args: Any, **kwargs: Any) -> ImproperStyle:
-        return self.def_style(ImproperStyle, name, *args, **kwargs)
+        return cast(ImproperStyle, self.def_style(ImproperStyle(name, *args, **kwargs)))
 
     def def_pairstyle(self, name: str, *args: Any, **kwargs: Any) -> PairStyle:
-        return self.def_style(PairStyle, name, *args, **kwargs)
+        return cast(PairStyle, self.def_style(PairStyle(name, *args, **kwargs)))
 
     def get_atomtypes(self) -> list[AtomType]:
         return self.get_types(AtomType)

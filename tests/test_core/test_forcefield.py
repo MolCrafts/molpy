@@ -279,22 +279,22 @@ class TestForceField:
     def test_forcefield_def_style(self):
         """Test defining styles in force field."""
         ff = ForceField()
-        style = ff.def_style(Style, "test_style", param1=1.0)
+        style = ff.def_style(Style("test_style", param1=1.0))
         assert isinstance(style, Style)
         assert style.name == "test_style"
 
     def test_forcefield_def_style_idempotent(self):
         """Test that defining the same style twice returns the same instance."""
         ff = ForceField()
-        style1 = ff.def_style(Style, "test_style", param1=1.0)
-        style2 = ff.def_style(Style, "test_style", param2=2.0)
+        style1 = ff.def_style(Style("test_style", param1=1.0))
+        style2 = ff.def_style(Style("test_style", param2=2.0))
         assert style1 is style2
 
     def test_forcefield_get_styles(self):
         """Test getting styles from force field."""
         ff = ForceField()
-        ff.def_style(AtomStyle, "full")
-        ff.def_style(BondStyle, "harmonic")
+        ff.def_style(AtomStyle("full"))
+        ff.def_style(BondStyle("harmonic"))
 
         atom_styles = ff.get_styles(AtomStyle)
         bond_styles = ff.get_styles(BondStyle)
@@ -307,7 +307,7 @@ class TestForceField:
     def test_forcefield_get_types(self):
         """Test getting types from force field."""
         ff = ForceField()
-        astyle = ff.def_style(AtomStyle, "full")
+        astyle = ff.def_style(AtomStyle("full"))
         at1 = astyle.def_type("CA", mass=12.011)
         at2 = astyle.def_type("CB", mass=12.011)
 
@@ -321,10 +321,10 @@ class TestForceField:
         ff1 = ForceField(name="FF1")
         ff2 = ForceField(name="FF2")
 
-        astyle1 = ff1.def_style(AtomStyle, "full")
+        astyle1 = ff1.def_style(AtomStyle("full"))
         astyle1.def_type("CA", mass=12.011)
 
-        astyle2 = ff2.def_style(AtomStyle, "full")
+        astyle2 = ff2.def_style(AtomStyle("full"))
         astyle2.def_type("CB", mass=12.011)
 
         ff1.merge(ff2)

@@ -160,6 +160,33 @@ def select_hydroxyl_group(monomer: Monomer, port_atom: Entity) -> list[Entity]:
     return [hydroxyl_o, h_neighbors[0]]
 
 
+def select_hydroxyl_h_only(monomer: Monomer, port_atom: Entity) -> list[Entity]:
+    """
+    Select only the hydrogen from a hydroxyl group bonded to the port atom.
+
+    This is useful when the hydroxyl oxygen must remain (e.g., port anchor sits
+    on the neighboring atom and the O should participate in the final bond).
+
+    Returns:
+        [H_atom] if found, otherwise [].
+    """
+    if not isinstance(monomer, Atomistic):
+        return []
+
+    from .utils import get_bond_between
+
+    # Find O neighbor
+    o_neighbors = find_neighbors(monomer, port_atom, element="O")
+    for o in o_neighbors:
+        bond = get_bond_between(monomer, port_atom, o)
+        if not bond or bond.get("order") != 1:
+            continue
+        h_neighbors = find_neighbors(monomer, o, element="H")
+        if h_neighbors:
+            return [h_neighbors[0]]
+    return []
+
+
 def select_none(monomer: Monomer, port_atom: Entity) -> list[Entity]:
     """
     Select no leaving group - returns empty list.

@@ -620,7 +620,7 @@ class TestFrame:
     def test_setitem_creates_block(self):
         f = Frame()
         f["foo"] = {"bar": np.ones(4)}
-        assert "foo" in list(f.blocks())
+        assert "foo" in f
         assert np.array_equal(f["foo"]["bar"], np.ones(4))
 
     def test_get_block(self, simple_frame):
@@ -629,27 +629,27 @@ class TestFrame:
         assert set(blk) == {"xyz", "charge"}
 
     def test_variables(self, simple_frame):
-        assert set(simple_frame.variables("atoms")) == {"xyz", "charge"}
-        assert set(simple_frame.variables("bonds")) == {"i"}
+        assert set(simple_frame["atoms"].keys()) == {"xyz", "charge"}
+        assert set(simple_frame["bonds"].keys()) == {"i"}
 
     def test_blocks_iter_and_len(self, simple_frame):
-        blocks = set(simple_frame.blocks())
+        blocks = set(simple_frame._blocks)
         assert blocks == {"atoms", "bonds"}
-        assert len(list(simple_frame.blocks())) == 2
+        assert len(list(simple_frame._blocks)) == 2
 
     def test_delete_variable(self, simple_frame):
         del simple_frame["atoms"]["charge"]
-        assert "charge" not in simple_frame.variables("atoms")
+        assert "charge" not in set(simple_frame["atoms"].keys())
 
     def test_delete_block(self, simple_frame):
         del simple_frame._blocks["bonds"]
-        assert "bonds" not in set(simple_frame.blocks())
+        assert "bonds" not in set(simple_frame._blocks)
 
     def test_to_from_dict_roundtrip(self, simple_frame):
         dct = simple_frame.to_dict()
         restored = Frame.from_dict(dct)
-        for g in restored.blocks():
-            for v in restored.variables(g):
+        for g in restored._blocks:
+            for v in restored[g].keys():
                 assert np.array_equal(restored[g][v], simple_frame[g][v])
 
     def test_assign_dict_converts_to_block(self):
@@ -668,8 +668,8 @@ class TestFrame:
         valid_blocks = {"atoms": atoms_block, "bonds": bonds_block}
 
         frame = Frame(blocks=valid_blocks)
-        assert "atoms" in frame.blocks()
-        assert "bonds" in frame.blocks()
+        assert "atoms" in frame
+        assert "bonds" in frame
         assert isinstance(frame["atoms"], Block)
         assert isinstance(frame["bonds"], Block)
 
@@ -681,8 +681,8 @@ class TestFrame:
         }
 
         frame = Frame(blocks=nested_blocks)
-        assert "atoms" in frame.blocks()
-        assert "bonds" in frame.blocks()
+        assert "atoms" in frame
+        assert "bonds" in frame
         assert isinstance(frame["atoms"], Block)
         assert isinstance(frame["bonds"], Block)
 
@@ -708,15 +708,15 @@ class TestFrame:
     def test_frame_init_with_empty_blocks(self):
         """Test Frame initialization with no blocks."""
         frame = Frame()
-        assert len(list(frame.blocks())) == 0
+        assert len(list(frame._blocks)) == 0
 
         frame2 = Frame(blocks=None)
-        assert len(list(frame2.blocks())) == 0
+        assert len(list(frame2._blocks)) == 0
 
     def test_frame_init_with_empty_dict(self):
         """Test Frame initialization with empty dict."""
         frame = Frame(blocks={})
-        assert len(list(frame.blocks())) == 0
+        assert len(list(frame._blocks)) == 0
 
     def test_frame_init_invalid_blocks_type(self):
         """Test Frame initialization with invalid blocks type."""
@@ -765,12 +765,12 @@ class TestFrame:
         frame = Frame(blocks=complex_blocks)
 
         # Verify all blocks are created
-        assert "atoms" in frame.blocks()
-        assert "bonds" in frame.blocks()
-        assert "angles" in frame.blocks()
+        assert "atoms" in frame
+        assert "bonds" in frame
+        assert "angles" in frame
 
         # Verify all values are Block instances
-        for block_name in frame.blocks():
+        for block_name in frame._blocks:
             assert isinstance(frame[block_name], Block)
 
         # Verify data integrity

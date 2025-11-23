@@ -29,7 +29,7 @@ class TestRDKitWrapperSymbolHandling:
         mol = Chem.MolFromSmiles("CCO")
 
         # Convert to Atomistic
-        wrapper = RDKitWrapper.from_mol(mol, sync_coords=True)
+        wrapper = RDKitWrapper.from_mol(mol)
         atomistic = wrapper.inner
 
         # Check symbols
@@ -50,7 +50,7 @@ class TestRDKitWrapperSymbolHandling:
         assert mol_h.GetNumAtoms() == 9, "Should have 9 total atoms (3 heavy + 6 H)"
 
         # Convert to Atomistic
-        wrapper = RDKitWrapper.from_mol(mol_h, sync_coords=False)
+        wrapper = RDKitWrapper.from_mol(mol_h)
         atomistic = wrapper.inner
 
         # Check all symbols
@@ -86,7 +86,7 @@ class TestRDKitWrapperSymbolHandling:
         mol = Chem.MolFromSmiles("CCCCO")  # Butanol
 
         # Create wrapper and generate 3D
-        wrapper = RDKitWrapper.from_mol(mol, sync_coords=False)
+        wrapper = RDKitWrapper.from_mol(mol)
         wrapper.generate_3d(optimize=True, add_hydrogens=True)
 
         atomistic = wrapper.inner
@@ -117,9 +117,9 @@ class TestRDKitWrapperSymbolHandling:
             expected_symbols = {1: "H", 6: "C", 8: "O"}
             expected_symbol = expected_symbols.get(atomic_num)
 
-            assert symbol == expected_symbol, (
-                f"Atom {i}: symbol={symbol} doesn't match atomic_num={atomic_num} (expected {expected_symbol})"
-            )
+            assert (
+                symbol == expected_symbol
+            ), f"Atom {i}: symbol={symbol} doesn't match atomic_num={atomic_num} (expected {expected_symbol})"
 
     def test_round_trip_conversion(self):
         """Test Atomistic -> Mol -> Atomistic round-trip."""
@@ -136,7 +136,7 @@ class TestRDKitWrapperSymbolHandling:
         mol = wrapper1.mol
 
         # Convert back to Atomistic
-        wrapper2 = RDKitWrapper.from_mol(mol, sync_coords=True)
+        wrapper2 = RDKitWrapper.from_mol(mol)
         atomistic2 = wrapper2.inner
 
         # Check symbols are preserved
@@ -146,16 +146,16 @@ class TestRDKitWrapperSymbolHandling:
         symbols1 = [a.get("symbol") for a in atoms1]
         symbols2 = [a.get("symbol") for a in atoms2]
 
-        assert symbols1 == symbols2, (
-            f"Symbols changed in round-trip: {symbols1} -> {symbols2}"
-        )
+        assert (
+            symbols1 == symbols2
+        ), f"Symbols changed in round-trip: {symbols1} -> {symbols2}"
 
     def test_hydrogen_addition_symbols(self):
         """Test that hydrogens added via generate_3d have correct symbols."""
         # Create simple molecule
         mol = Chem.MolFromSmiles("CC")  # Ethane
 
-        wrapper = RDKitWrapper.from_mol(mol, sync_coords=False)
+        wrapper = RDKitWrapper.from_mol(mol)
 
         # Before generate_3d: only heavy atoms
         atoms_before = list(wrapper.inner.atoms)
@@ -183,7 +183,7 @@ class TestRDKitWrapperSymbolHandling:
         # Create molecule with different elements
         mol = Chem.MolFromSmiles("CCO")
 
-        wrapper = RDKitWrapper.from_mol(mol, sync_coords=False)
+        wrapper = RDKitWrapper.from_mol(mol)
         wrapper.generate_3d(add_hydrogens=True, optimize=False)
 
         atomistic = wrapper.inner
@@ -197,9 +197,9 @@ class TestRDKitWrapperSymbolHandling:
             # 'element' should be set and match 'symbol'
             # (Some code may use 'element' instead of 'symbol')
             if element is not None:
-                assert element == symbol, (
-                    f"element={element} doesn't match symbol={symbol}"
-                )
+                assert (
+                    element == symbol
+                ), f"element={element} doesn't match symbol={symbol}"
 
     def test_monomer_with_ports_symbol_preservation(self):
         """Test symbol preservation when working with Monomer wrappers."""
@@ -239,7 +239,7 @@ class TestRDKitWrapperAtomMapping:
         """Test that atom mapping is correctly updated after adding H."""
         mol = Chem.MolFromSmiles("CCO")
 
-        wrapper = RDKitWrapper.from_mol(mol, sync_coords=False)
+        wrapper = RDKitWrapper.from_mol(mol)
         wrapper.generate_3d(add_hydrogens=True, optimize=False)
 
         # Access internal atom map
@@ -251,15 +251,15 @@ class TestRDKitWrapperAtomMapping:
             if atom_ent.get("atomic_num") != 1:
                 heavy_count += 1
 
-        assert heavy_count >= 3, (
-            f"Expected at least 3 heavy atoms mapped, got {heavy_count}"
-        )
+        assert (
+            heavy_count >= 3
+        ), f"Expected at least 3 heavy atoms mapped, got {heavy_count}"
 
     def test_coordinate_sync_after_optimization(self):
         """Test that coordinates are correctly synced after optimization."""
         mol = Chem.MolFromSmiles("CCCC")
 
-        wrapper = RDKitWrapper.from_mol(mol, sync_coords=False)
+        wrapper = RDKitWrapper.from_mol(mol)
         wrapper.generate_3d(add_hydrogens=True, optimize=True)
 
         atomistic = wrapper.inner

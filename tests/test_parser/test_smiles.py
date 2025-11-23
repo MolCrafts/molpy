@@ -1026,6 +1026,10 @@ basic_bigsmiles_compat = [
             (["C", "C", "O", "O"], [(0, 1, "-"), (1, 2, "="), (1, 3, "-")]), []
         ),
     ),
+    (
+        "[$]CC[$]",
+        mk_bigsmiles_ir((["C", "C"], [(0, 1, "-")]), []),
+    ),
 ]
 
 
@@ -1292,9 +1296,10 @@ class TestBigSmilesParser:
 
 RDKIT_FIND = True
 try:
-    pass
+    from molpy.adapter.rdkit_adapter import smilesir_to_mol
 except:
     RDKIT_FIND = False
+    smilesir_to_mol = lambda x: x
 
 
 @pytest.mark.skipif(not RDKIT_FIND, reason="rdkit not find")
@@ -1316,8 +1321,6 @@ class TestRDKitConverter:
     def test_smilesir_to_mol_basic(self, smiles, n_atoms, n_bonds):
         """Test basic IR -> Mol conversion."""
 
-        from molpy.parser.smiles import smilesir_to_mol
-
         ir = parser.parse_smiles(smiles)
         mol = smilesir_to_mol(ir)
 
@@ -1327,8 +1330,6 @@ class TestRDKitConverter:
 
     def test_smilesir_to_mol_charged_atoms(self):
         """Test conversion with charged atoms."""
-
-        from molpy.parser.smiles import smilesir_to_mol
 
         # [NH4+]
         ir = parser.parse_smiles("[NH4+]")
@@ -1343,8 +1344,6 @@ class TestRDKitConverter:
     def test_smilesir_to_mol_isotopes(self):
         """Test conversion with isotopes."""
 
-        from molpy.parser.smiles import smilesir_to_mol
-
         # [13C]
         ir = parser.parse_smiles("[13C]")
         mol = smilesir_to_mol(ir)
@@ -1356,8 +1355,6 @@ class TestRDKitConverter:
 
     def test_smilesir_to_mol_aromatic(self):
         """Test conversion with aromatic atoms."""
-
-        from molpy.parser.smiles import smilesir_to_mol
 
         # Benzene
         ir = parser.parse_smiles("c1ccccc1")
@@ -1372,8 +1369,6 @@ class TestRDKitConverter:
         """Test conversion with chiral centers."""
 
         from rdkit import Chem
-
-        from molpy.parser.smiles import smilesir_to_mol
 
         # L-alanine: N[C@@H](C)C(=O)O
         ir = parser.parse_smiles("N[C@@H](C)C(=O)O")

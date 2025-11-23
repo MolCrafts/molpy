@@ -157,7 +157,7 @@ def smilesir_to_mol(ir: SmilesIR) -> Chem.Mol:
         if mol.GetBondBetweenAtoms(begin, end) is not None:
             continue
 
-        bond_symbol = bond_ir.bond_type or "-"
+        bond_symbol = bond_ir.kind or "-"
         # If both atoms are aromatic and no explicit aromatic bond is set, use aromatic bond
         start_is_aromatic = aromatic_flags.get(start_key, False)
         end_is_aromatic = aromatic_flags.get(end_key, False)
@@ -173,22 +173,23 @@ def smilesir_to_mol(ir: SmilesIR) -> Chem.Mol:
 
 def smilesir_to_atomistic(ir: SmilesIR) -> Atomistic:
     """Convert SmilesIR to Atomistic structure via RDKit."""
-    wrapper = RDKitWrapper.from_mol(smilesir_to_mol(ir), sync_coords=True)
+    wrapper = RDKitWrapper.from_mol(smilesir_to_mol(ir))
     return wrapper.core
 
 
-def atomistic_to_mol(atomistic: Atomistic) -> Chem.Mol:
+def atomistic_to_mol(atomistic: Atomistic | Wrapper[Atomistic]) -> Chem.Mol:
     """Convert Atomistic structure to RDKit Mol."""
     mol = Chem.RWMol()
     atom_map: dict[int, int] = {}  # id(atom) -> rdkit_idx
 
     # Add atoms
     for i, atom in enumerate(atomistic.atoms):
-        symbol = atom.get("symbol", "C")
+        symbol = atom.get("symbol")
         rd_atom = Chem.Atom(symbol)
 
-        if "charge" in atom:
-            rd_atom.SetFormalCharge(int(atom["charge"]))
+        charge = atom.get("charge")
+        if charge is not None:
+            rd_atom.SetFormalCharge(int(charge))
 
         atom_id = atom.get("id", i)
         rd_atom.SetIntProp(MP_ID, int(atom_id))
@@ -203,11 +204,27 @@ def atomistic_to_mol(atomistic: Atomistic) -> Chem.Mol:
         if begin_idx is None or end_idx is None:
             continue
 
-        order = bond.get("type", 1.0)
+        # Prefer explicit numeric 'order' attribute. Some workflows set a
+        # human-readable bond 'type' (e.g. 'CT-CT') instead of a numeric order.
+        # Be robust: try 'order' first, then attempt to coerce 'type' to float,
+        # otherwise fall back to single bond (1.0).
+        order_val = bond.get("order")
+        if order_val is None:
+            type_val = bond.get("type", 1.0)
+            try:
+                order = float(type_val)
+            except Exception:
+                order = 1.0
+        else:
+            try:
+                order = float(order_val)
+            except Exception:
+                order = 1.0
+
         bt = _rdkit_bond_type(order)
         mol.AddBond(begin_idx, end_idx, bt)
 
-    Chem.SanitizeMol(mol)
+    # Chem.SanitizeMol(mol)
     return mol.GetMol()
 
 
@@ -336,12 +353,11 @@ class RDKitWrapper(Wrapper[Atomistic]):
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_mol(cls, mol: Chem.Mol, sync_coords: bool = False) -> RDKitWrapper:
+    def from_mol(cls, mol: Chem.Mol) -> RDKitWrapper:
         """Create RDKitWrapper from a Chem.Mol."""
         atomistic = mol_to_atomistic(mol)
         wrapper = cls(atomistic, mol=mol)
-        if sync_coords:
-            wrapper.sync_coords_from_mol()
+        wrapper.sync_from_mol()
         return wrapper
 
     @classmethod
@@ -358,6 +374,10 @@ class RDKitWrapper(Wrapper[Atomistic]):
         """Get the RDKit molecule."""
         return self._mol
 
+    def with_mol(self, mol: Chem.Mol) -> RDKitWrapper:
+        """Return a new RDKitWrapper with the given Chem.Mol."""
+        return RDKitWrapper(self.unwrap(), mol=mol)
+
     @property
     def core(self) -> Atomistic:
         """Get the Atomistic structure (alias for inner)."""
@@ -367,92 +387,77 @@ class RDKitWrapper(Wrapper[Atomistic]):
     #   Coordinate synchronization
     # ------------------------------------------------------------------
 
-    def sync(self, direction: str = "both") -> None:
-        """Synchronize data between RDKit `Mol` and MolPy `Atomistic`.
+    def sync_from_mol(self) -> None:
+        """Synchronize coordinates from RDKit Mol to Atomistic.
 
-        Args:
-            direction: one of "from_mol", "to_mol", or "both".
-
-        Behavior:
-        - "from_mol": copy coordinates, element/ids and hydrogen atoms from RDKit into
-          the MolPy Atomistic (uses a hydrogen-expanded RDKit mol when available).
-        - "to_mol": copy per-atom `xyz` from Atomistic into the RDKit conformer
-          (creates a conformer if necessary).
-        - "both": perform "from_mol" followed by "to_mol" (useful after structural
-          edits on either side).
+        Only transfers coordinates for existing atoms. Does NOT add hydrogens.
+        Use add_hydrogens() separately if needed.
         """
-        direction = (direction or "both").lower()
-        if direction not in ("from_mol", "to_mol", "both"):
-            raise ValueError("direction must be one of 'from_mol', 'to_mol', 'both'")
+        if self._mol.GetNumConformers() == 0:
+            return
 
-        # Ensure maps are available when needed
-        if direction in ("from_mol", "both"):
-            # Transfer coordinates + hydrogens from RDKit into Atomistic.
-            if self._mol.GetNumConformers() > 0:
-                # Build a hydrogen-expanded copy to capture explicit H atoms and coords
-                mol_h = Chem.Mol(self._mol)
-                mol_h = Chem.AddHs(mol_h, addCoords=True)
+        self._ensure_atom_map_ready()
+        conf = self._mol.GetConformer()
 
-                # If the hydrogenized copy lacks conformers but original has one, copy it
-                if mol_h.GetNumConformers() == 0 and self._mol.GetNumConformers() > 0:
-                    mol_h.AddConformer(self._mol.GetConformer(), assignId=True)
+        for a in self._mol.GetAtoms():
+            ridx = a.GetIdx()
+            ent = self._atom_map.get(ridx)
+            if ent is None:
+                continue
 
-                # Reuse internal transfer helper (handles hydrogen addition & mapping)
-                self._transfer_coords_and_hydrogens(mol_h)
+            pos = conf.GetAtomPosition(ridx)
+            ent["xyz"] = [float(pos.x), float(pos.y), float(pos.z)]
 
-        if direction in ("to_mol", "both"):
-            # Copy coordinates from Atomistic into RDKit conformer
-            mon_atoms = self._core_atoms()
-            n_atoms = len(mon_atoms)
-            if n_atoms == 0:
-                return
+    def sync_to_mol(self):
+        """Synchronize data from MolPy `Atomistic` into RDKit `Mol`."""
+        mon_atoms = self._core_atoms()
+        n_atoms = len(mon_atoms)
+        if n_atoms == 0:
+            return
 
-            self._ensure_atom_map_ready()
+        self._ensure_atom_map_ready()
 
-            # Get or create conformer
-            if self._mol.GetNumConformers() == 0:
-                conf = Chem.Conformer(n_atoms)
-                self._mol.AddConformer(conf, assignId=True)
-            else:
-                conf = self._mol.GetConformer()
+        # Get or create conformer
+        if self._mol.GetNumConformers() == 0:
+            conf = Chem.Conformer(n_atoms)
+            self._mol.AddConformer(conf, assignId=True)
+        else:
+            conf = self._mol.GetConformer()
 
-            for a in self._mol.GetAtoms():
-                ridx = a.GetIdx()
-                if a.GetAtomicNum() == 1:
-                    continue
+        for a in self._mol.GetAtoms():
+            ridx = a.GetIdx()
+            if a.GetAtomicNum() == 1:
+                continue
 
-                ent = self._atom_map.get(ridx)
-                if ent is None and ridx < len(mon_atoms):
-                    ent = mon_atoms[ridx]
-                if ent is None:
-                    continue
+            ent = self._atom_map.get(ridx)
+            if ent is None and ridx < len(mon_atoms):
+                ent = mon_atoms[ridx]
+            if ent is None:
+                continue
 
-                xyz = ent.get("xyz", [0.0, 0.0, 0.0])
-                if len(xyz) >= 3:
-                    conf.SetAtomPosition(ridx, (float(xyz[0]), float(xyz[1]), float(xyz[2])))
+            xyz = ent.get("xyz", [0.0, 0.0, 0.0])
+            if len(xyz) >= 3:
+                conf.SetAtomPosition(
+                    ridx, (float(xyz[0]), float(xyz[1]), float(xyz[2]))
+                )
 
     # ------------------------------------------------------------------
     #   Convenience factories / helpers
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_smiles(cls, smi: str, sync_coords: bool = False) -> "RDKitWrapper":
+    def from_smiles(cls, smi: str) -> "RDKitWrapper":
         """Create RDKitWrapper directly from a SMILES string.
 
         Args:
             smi: SMILES string
-            sync_coords: if True, attempt to sync coordinates into Atomistic
         """
         mol = Chem.MolFromSmiles(smi)
-        return cls.from_mol(mol, sync_coords=sync_coords)
+        return cls.from_mol(mol)
 
     def to_smiles(self, canonical: bool = True) -> str:
         """Return SMILES for the wrapped RDKit molecule."""
         return Chem.MolToSmiles(Chem.Mol(self._mol), canonical=canonical)
-
-    def embed_and_optimize(self, *, optimize: bool = True, random_seed: int = 42, max_iters: int = 200, add_hydrogens: bool = True) -> "RDKitWrapper":
-        """Convenience wrapper around `generate_3d()` that returns self for chaining."""
-        return self.generate_3d(optimize=optimize, random_seed=random_seed, max_iters=max_iters, add_hydrogens=add_hydrogens)
 
     # ------------------------------------------------------------------
     #   Atom mapping utilities
@@ -535,7 +540,6 @@ class RDKitWrapper(Wrapper[Atomistic]):
         highlight_atoms: list[int] | None = None,
         highlight_bonds: list[int] | None = None,
         title: str | None = None,
-        show: bool = True,  # kept for API compatibility; unused here
     ) -> str:
         """Generate 2D molecular structure drawing as SVG."""
         _ensure_2d(self._mol)
@@ -547,9 +551,9 @@ class RDKitWrapper(Wrapper[Atomistic]):
         w, h = size
         drawer = rdMolDraw2D.MolDraw2DSVG(w, h)
         opts = drawer.drawOptions()
-        opts.padding = 0.12
+        opts.padding = 0.1
         opts.additionalAtomLabelPadding = 0.06
-        opts.fixedFontSize = 13
+        opts.fixedFontSize = -1
         opts.minFontSize = 9
         opts.bondLineWidth = 2
         opts.addAtomIndices = bool(show_indices)
@@ -568,61 +572,94 @@ class RDKitWrapper(Wrapper[Atomistic]):
         return svg
 
     # ------------------------------------------------------------------
-    #   3D generation / optimization
+    #   Hydrogen management
     # ------------------------------------------------------------------
 
-    def generate_3d(
-        self,
-        *,
-        optimize: bool = True,
-        random_seed: int = 42,
-        max_iters: int = 200,
-        add_hydrogens: bool = True,
-    ) -> RDKitWrapper:
-        """Generate 3D coordinates using RDKit ETKDG + optional MMFF optimization."""
-        mol = self._mol
-        if mol.GetNumAtoms() == 0:
+    def add_hydrogens(self) -> RDKitWrapper:
+        """Add explicit hydrogens to the molecule.
+
+        Returns:
+            Self for method chaining
+        """
+        mol_h = Chem.AddHs(self._mol, addCoords=True)
+
+        # If original had conformer, ensure hydrogenated version has it too
+        if self._mol.GetNumConformers() > 0 and mol_h.GetNumConformers() == 0:
+            mol_h.AddConformer(self._mol.GetConformer(), assignId=True)
+
+        # Add hydrogen atoms to Atomistic structure
+        if mol_h.GetNumConformers() > 0:
+            self._add_hydrogens_to_atomistic(mol_h)
+
+        # Update mol reference
+        object.__setattr__(self, "_mol", mol_h)
+        self._rebuild_atom_map()
+
+        return self
+
+    def remove_hydrogens(self) -> RDKitWrapper:
+        """Remove explicit hydrogens from the molecule.
+
+        Returns:
+            Self for method chaining
+        """
+        mol_no_h = Chem.RemoveHs(self._mol, updateExplicitCount=True)
+
+        # Remove hydrogen atoms from Atomistic structure
+        core = self.unwrap()
+        h_atoms = [atom for atom in core.atoms if atom.get("atomic_num") == 1]
+        for h_atom in h_atoms:
+            core.remove_atom(h_atom)
+
+        # Update mol reference
+        object.__setattr__(self, "_mol", mol_no_h)
+        self._rebuild_atom_map()
+
+        return self
+
+    # ------------------------------------------------------------------
+    #   Coordinate generation
+    # ------------------------------------------------------------------
+
+    def generate_2d_coords(self) -> RDKitWrapper:
+        """Generate 2D coordinates for visualization.
+
+        Returns:
+            Self for method chaining
+        """
+        _ensure_2d(self._mol)
+        self.sync_from_mol()
+        return self
+
+    def generate_3d_coords(self, random_seed: int = 42) -> RDKitWrapper:
+        """Generate 3D coordinates using RDKit ETKDG.
+
+        Args:
+            random_seed: Random seed for reproducible coordinate generation
+
+        Returns:
+            Self for method chaining
+        """
+        if self._mol.GetNumAtoms() == 0:
             raise ValueError("Cannot generate 3D coordinates for empty molecule")
-
-        mol_working = Chem.Mol(mol)
-
-        if add_hydrogens:
-            molH = Chem.AddHs(mol_working, addCoords=True)
-        else:
-            molH = Chem.Mol(mol_working)
-            if molH.GetNumConformers() == 0:
-                conf = Chem.Conformer(molH.GetNumAtoms())
-                molH.AddConformer(conf, assignId=True)
 
         params = AllChem.ETKDGv3()  # type: ignore[attr-defined]
         params.randomSeed = int(random_seed)
         params.useRandomCoords = True
 
-        embed_result = AllChem.EmbedMolecule(molH, params)  # type: ignore[attr-defined]
+        embed_result = AllChem.EmbedMolecule(self._mol, params)  # type: ignore[attr-defined]
         if embed_result == -1:
             params.useRandomCoords = True
-            embed_result = AllChem.EmbedMolecule(molH, params)  # type: ignore[attr-defined]
+            embed_result = AllChem.EmbedMolecule(self._mol, params)  # type: ignore[attr-defined]
             if embed_result == -1:
                 raise RuntimeError("ETKDG embedding failed")
 
-        if optimize:
-            try:
-                AllChem.MMFFOptimizeMolecule(molH, maxIters=int(max_iters))  # type: ignore[attr-defined]
-            except Exception as e:  # pragma: no cover - defensive
-                import warnings
-
-                warnings.warn(f"MMFF optimization failed: {e}", stacklevel=2)
-
-        # Synchronize coordinates and hydrogens to Atomistic
-        self._transfer_coords_and_hydrogens(molH)
-
-        # Update mol reference to include hydrogens
-        object.__setattr__(self, "_mol", molH)
-
-        # Rebuild atom mapping (may have added hydrogens)
-        self._rebuild_atom_map()
-
+        self.sync_from_mol()
         return self
+
+    # ------------------------------------------------------------------
+    #   Geometry optimization
+    # ------------------------------------------------------------------
 
     def optimize_geometry(
         self,
@@ -630,16 +667,25 @@ class RDKitWrapper(Wrapper[Atomistic]):
         max_iters: int = 200,
         force_field: str = "MMFF",
     ) -> RDKitWrapper:
-        """Optimize molecular geometry using force field minimization."""
-        if self._mol.GetNumConformers() == 0:
-            raise ValueError("No conformer found. Call generate_3d() first.")
+        """Optimize molecular geometry using force field minimization.
 
-        mol = self._mol
+        Requires existing 3D coordinates. Call generate_3d_coords() first if needed.
+
+        Args:
+            max_iters: Maximum number of optimization iterations
+            force_field: Force field to use ('MMFF' or 'UFF')
+
+        Returns:
+            Self for method chaining
+        """
+        if self._mol.GetNumConformers() == 0:
+            raise ValueError("No conformer found. Call generate_3d_coords() first.")
+
         try:
             if force_field == "MMFF":
-                AllChem.MMFFOptimizeMolecule(mol, maxIters=int(max_iters))  # type: ignore[attr-defined]
+                AllChem.MMFFOptimizeMolecule(self._mol, maxIters=int(max_iters))  # type: ignore[attr-defined]
             elif force_field == "UFF":
-                AllChem.UFFOptimizeMolecule(mol, maxIters=int(max_iters))  # type: ignore[attr-defined]
+                AllChem.UFFOptimizeMolecule(self._mol, maxIters=int(max_iters))  # type: ignore[attr-defined]
             else:
                 raise ValueError(
                     f"Unknown force field: {force_field}. Use 'MMFF' or 'UFF'."
@@ -650,49 +696,29 @@ class RDKitWrapper(Wrapper[Atomistic]):
             warnings.warn(f"Geometry optimization failed: {e}", stacklevel=2)
             return self
 
-        self.sync_coords_from_mol()
+        self.sync_from_mol()
         return self
 
     # ------------------------------------------------------------------
-    #   Internal: coordinate + hydrogen transfer
+    #   Internal helpers
     # ------------------------------------------------------------------
 
-    def _transfer_coords_and_hydrogens(self, mol_with_h: Chem.Mol) -> None:
-        """Transfer coordinates and hydrogens from RDKit mol to Atomistic."""
+    def _add_hydrogens_to_atomistic(self, mol_with_h: Chem.Mol) -> None:
+        """Add hydrogen atoms from RDKit mol to Atomistic structure.
+
+        Args:
+            mol_with_h: RDKit molecule with explicit hydrogens and conformer
+        """
         if mol_with_h.GetNumConformers() == 0:
             raise ValueError("RDKit mol has no conformer")
 
         self._ensure_atom_map_ready()
-
         conf = mol_with_h.GetConformer()
         core = self.unwrap()
         mon_atoms = list(core.atoms)
         heavy_index = _build_mon_heavy_index(mon_atoms)
         atom_by_id = _build_atom_id_index(mon_atoms)
 
-        # 1) Transfer heavy atom coordinates
-        for a in mol_with_h.GetAtoms():
-            if a.GetAtomicNum() == 1:
-                continue
-
-            if a.HasProp(MP_ID):
-                hid = int(a.GetIntProp(MP_ID))
-            else:
-                hid = a.GetIdx()
-
-            ent = heavy_index.get(hid)
-            if ent is None:
-                ent = self._atom_map.get(a.GetIdx())
-            if ent is None:
-                ent = atom_by_id.get(hid)
-            if ent is None:
-                continue
-
-            p = conf.GetAtomPosition(a.GetIdx())
-            ent["xyz"] = [float(p.x), float(p.y), float(p.z)]
-            ent["atomic_num"] = a.GetAtomicNum()
-
-        # 2) Add / sync hydrogen atoms
         existing_ids = {int(a.get("id")) for a in mon_atoms if "id" in a}
         next_id = max(existing_ids) + 1 if existing_ids else len(mon_atoms)
 
@@ -708,12 +734,14 @@ class RDKitWrapper(Wrapper[Atomistic]):
 
             rd_idx = a.GetIdx()
 
-            # If we already have mapping for this RDKit index, treat it as already present H
+            # If we already have mapping for this RDKit index, update coordinates only
             mapped_ent = self._atom_map.get(rd_idx)
             if mapped_ent is not None:
                 p = conf.GetAtomPosition(rd_idx)
                 mapped_ent["xyz"] = [float(p.x), float(p.y), float(p.z)]
                 mapped_ent["atomic_num"] = 1
+                if not a.HasProp(MP_ID):
+                    a.SetIntProp(MP_ID, int(mapped_ent.get("id", rd_idx)))
                 continue
 
             # New H: need to attach to a heavy neighbor
@@ -739,6 +767,12 @@ class RDKitWrapper(Wrapper[Atomistic]):
             )
             existing_ids.add(hid)
 
+            # Tag RDKit atom for future mapping
+            try:
+                a.SetIntProp(MP_ID, int(hid))
+            except Exception:
+                pass
+
             # Attach bond heavy-H if possible
             heavy_ent: Any | None = None
 
@@ -751,3 +785,7 @@ class RDKitWrapper(Wrapper[Atomistic]):
 
             if heavy_ent is not None:
                 core.def_bond(heavy_ent, h_ent, type=1.0)
+
+            # Update atom maps for round-tripping
+            self._atom_map[rd_idx] = h_ent
+            self._atom_map_reverse[h_ent] = rd_idx

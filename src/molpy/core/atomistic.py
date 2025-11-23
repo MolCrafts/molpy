@@ -537,6 +537,10 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
                 # Data fields
                 for key in bond:
                     bond_dict[key].append(bond.get(key, None))
+            # Ensure a 'type' column exists for compatibility with writers
+            if "type" not in bond_dict:
+                bond_dict["type"] = [1] * len(bonds_data)
+
             bond_dict_np = {k: np.array(v) for k, v in bond_dict.items()}
             frame["bonds"] = Block.from_dict(bond_dict_np)
 
@@ -553,6 +557,10 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
                 for key in angle:
                     angle_dict[key].append(angle.get(key, None))
 
+            # Ensure a 'type' column exists for compatibility with writers
+            if "type" not in angle_dict:
+                angle_dict["type"] = [1] * len(angles_data)
+
             angle_dict_np = {k: np.array(v) for k, v in angle_dict.items()}
             frame["angles"] = Block.from_dict(angle_dict_np)
         # Build dihedrals Block - convert array of struct to struct of array
@@ -568,6 +576,10 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
                 # Data fields
                 for key in dihedral:
                     dihedral_dict[key].append(dihedral.get(key, None))
+
+            # Ensure a 'type' column exists for compatibility with writers
+            if "type" not in dihedral_dict:
+                dihedral_dict["type"] = [1] * len(dihedrals_data)
 
             dihedral_dict_np = {k: np.array(v) for k, v in dihedral_dict.items()}
             frame["dihedrals"] = Block.from_dict(dihedral_dict_np)

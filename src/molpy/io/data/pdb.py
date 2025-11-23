@@ -184,7 +184,7 @@ class PDBWriter(DataWriter):
     def __init__(self, path: Path):
         super().__init__(path=path)
 
-    def _format_atom_line(self, serial: int, atom_data: dict) -> str:
+    def _format_atom_line(self, serial: int, atom_data: Block) -> str:
         """Format a single ATOM/HETATM line according to PDB v3.3 specifications.
 
         PDB Format v3.3 ATOM/HETATM Record:
@@ -208,13 +208,13 @@ class PDBWriter(DataWriter):
         """
 
         # Extract data with defaults
-        record_type = atom_data.get("record_type", "ATOM")
-        atom_name = atom_data.get("name", "UNK")
-        alt_loc = atom_data.get("altLoc", " ")
-        res_name = atom_data.get("resName", "UNK")
-        chain_id = atom_data.get("chainID", " ")
-        res_seq = atom_data.get("resSeq", 1)
-        i_code = atom_data.get("iCode", " ")
+        record_type = str(atom_data.get("record_type", "ATOM"))
+        atom_name = str(atom_data.get("name", "UNK"))
+        alt_loc = str(atom_data.get("altLoc", " "))
+        res_name = str(atom_data.get("resName", "UNK"))
+        chain_id = str(atom_data.get("chainID", " "))
+        res_seq = str(atom_data.get("resSeq", 1))
+        i_code = str(atom_data.get("iCode", " "))
 
         # Coordinates - try xyz first, then xyz, then x/y/z
         if "xyz" in atom_data:
@@ -226,10 +226,9 @@ class PDBWriter(DataWriter):
             z = atom_data.get("z")
 
         # Optional fields
-        occupancy = atom_data.get("occupancy", 1.0)
-        temp_factor = atom_data.get("tempFactor", 0.0)
-        element = atom_data.get("element")
-        atom_data.get("charge")
+        occupancy = float(atom_data.get("occupancy", 1.0))
+        temp_factor = float(atom_data.get("tempFactor", 0.0))
+        element = str(atom_data.get("element"))
 
         # Format according to PDB v3.3 specification
         # Columns 1-6: Record name, left-justified
@@ -243,6 +242,7 @@ class PDBWriter(DataWriter):
 
         # Columns 13-16: Atom name
         # For atom names: if 1 character, start at column 14; if 2+ characters, start at column 13
+        atom_name = str(atom_name)
         if len(atom_name) == 1:
             line += f" {atom_name:<3s}"  # Space + 1 char + 2 spaces
         elif len(atom_name) <= 4:
@@ -263,7 +263,7 @@ class PDBWriter(DataWriter):
         line += f"{chain_id[0] if chain_id else ' ':1s}"
 
         # Columns 23-26: Residue sequence number, right-justified
-        line += f"{res_seq:>4d}"
+        line += f"{res_seq:>4s}"
 
         # Column 27: Insertion code
         line += f"{i_code[0] if i_code else ' ':1s}"
@@ -353,8 +353,8 @@ class PDBWriter(DataWriter):
                 for i, j in zip(bonds["i"].tolist(), bonds["j"].tolist()):
                     itom = atoms[i]
                     jtom = atoms[j]
-                    i_id = itom.get("id", i + 1)
-                    j_id = jtom.get("id", j + 1)
+                    i_id = int(itom.get("id", i + 1))
+                    j_id = int(jtom.get("id", j + 1))
                     connect[i_id].append(j_id)
                     connect[j_id].append(i_id)
                 for i_id, j_ids in connect.items():

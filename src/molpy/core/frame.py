@@ -95,7 +95,7 @@ class Block(MutableMapping[str, np.ndarray]):
     def __getitem__(self, key: str) -> np.ndarray: ...
 
     @overload
-    def __getitem__(self, key: int | slice) -> dict[str, np.ndarray]: ...  # type: ignore[override]
+    def __getitem__(self, key: int | slice) -> "Block": ...  # type: ignore[override]
 
     @overload
     def __getitem__(self, key: list[str]) -> np.ndarray: ...  # type: ignore[override]
@@ -108,10 +108,18 @@ class Block(MutableMapping[str, np.ndarray]):
 
     def __getitem__(self, key):  # type: ignore[override]
         if isinstance(key, (int, slice)):
-            return {
-                k: (v[key] if v[key].ndim > 0 else v[key].item())
-                for k, v in self._vars.items()
-            }
+            # Return a new Block containing the selected rows.
+            # For integer indices, scalars are converted to ndarray via np.asarray
+            return Block(
+                {
+                    k: (
+                        v[key]
+                        if (isinstance(key, slice) or v[key].ndim > 0)
+                        else np.asarray(v[key].item())
+                    )
+                    for k, v in self._vars.items()
+                }
+            )
         elif isinstance(key, str):
             return self._vars[key]
         elif isinstance(key, list):
@@ -573,7 +581,7 @@ class Frame:
     ...     "atoms": {"id": [1, 2, 3], "type": ["C", "H", "H"]},
     ...     "bonds": {"i": [0, 0], "j": [1, 2]}
     ... })
-    >>> list(frame.blocks())
+    >>> list(frame._blocks)
     ['atoms', 'bonds']
     >>> frame["atoms"]["id"]
     array([1, 2, 3])
@@ -602,8 +610,8 @@ class Frame:
     ...     "atoms": {"id": [1, 2], "mass": [12.0, 1.0]},
     ...     "bonds": {"i": [0], "j": [1]}
     ... })
-    >>> for block_name in frame.blocks():
-    ...     print(f"{block_name}: {list(frame.variables(block_name))}")
+    >>> for block_name in frame._blocks:
+    ...     print(f"{block_name}: {list(frame[block_name].keys())}")
     atoms: ['id', 'mass']
     bonds: ['i', 'j']
     """
@@ -773,44 +781,31 @@ class Frame:
         return key in self._blocks
 
     # ---------- helpers -------------------------------------------------
-    def blocks(self) -> Iterator[str]:
+    @property
+    def blocks(self) -> Iterator["Block"]:
         """
-        Iterate over all block names.
+        Iterate over stored Block objects.
 
         Returns
         -------
-        Iterator[str]
-            Iterator over block names.
+        Iterator[Block]
+            Iterator over Block values stored in this Frame.
+
+        Notes
+        -----
+        - To iterate over block *names* use `for name in frame._blocks` or
+          `frame._blocks.keys()`.
 
         Examples
         --------
         >>> frame = Frame(blocks={"atoms": {"x": [1]}, "bonds": {"i": [0]}})
-        >>> sorted(frame.blocks())
-        ['atoms', 'bonds']
+        >>> [b for b in frame.blocks]
+        [Block(x: shape=(1,), i: shape=(1,))]
         """
-        return iter(self._blocks)
+        return iter(self._blocks.values())
 
-    def variables(self, block_name: str) -> Iterator[str]:
-        """
-        Iterate over all variable names in a specific block.
-
-        Parameters
-        ----------
-        block_name : str
-            Name of the block.
-
-        Returns
-        -------
-        Iterator[str]
-            Iterator over variable names in the block.
-
-        Examples
-        --------
-        >>> frame = Frame(blocks={"atoms": {"x": [1, 2], "y": [3, 4], "z": [5, 6]}})
-        >>> sorted(frame.variables("atoms"))
-        ['x', 'y', 'z']
-        """
-        return iter(self._blocks[block_name])
+    # NOTE: `variables` helper removed — use `frame[block_name].keys()` or
+    # `set(frame[block_name])` to iterate variable names.
 
     # ---------- (de)serialization --------------------------------------
     def to_dict(self) -> dict:

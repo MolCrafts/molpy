@@ -39,12 +39,12 @@ class Polymer(Atomistic):
         # Create new instance
         poly = cls()
 
-        # Copy data from source
-        # Note: This is a shallow copy of containers, but entities are shared
-        # This matches the behavior of Monomer.from_atomistic
-        poly._entities = atomistic._entities
-        poly._links = atomistic._links
-        poly._topology = atomistic._topology
+        # Copy data from source using the public buckets (Entities/TypeBucket)
+        # Note: shallow copy of references is intentional so entities remain shared
+        poly.entities = atomistic.entities
+        poly.links = atomistic.links
+        # Preserve topology metadata if present on the source
+        poly._topology = getattr(atomistic, "_topology", None)
 
         return poly
 

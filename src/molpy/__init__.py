@@ -13,6 +13,7 @@ from . import (
 )
 
 # Core atomistic classes
+from .core.entity import Entity, Struct, Link
 from .core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral
 from .core.box import Box
 from .core import Wrapper

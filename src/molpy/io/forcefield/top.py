@@ -188,7 +188,7 @@ class GromacsTopReader:
         """
         from molpy import AtomStyle
 
-        atomstyle = ff.def_style(AtomStyle, "full")
+        atomstyle = ff.def_style(AtomStyle("full"))
 
         header = [
             "nr",
@@ -244,7 +244,7 @@ class GromacsTopReader:
 
             from molpy import BondStyle
 
-            bondstyle = ff.def_style(BondStyle, style_name)
+            bondstyle = ff.def_style(BondStyle(style_name))
 
             itype = self.atomtypes[int(i) - 1]
             jtype = self.atomtypes[int(j) - 1]
@@ -290,7 +290,7 @@ class GromacsTopReader:
 
             from molpy import AngleStyle
 
-            anglestyle = ff.def_style(AngleStyle, style_name)
+            anglestyle = ff.def_style(AngleStyle(style_name))
 
             itype = self.atomtypes[int(i) - 1]
             jtype = self.atomtypes[int(j) - 1]
@@ -332,7 +332,7 @@ class GromacsTopReader:
 
             from molpy import DihedralStyle
 
-            dihstyle = ff.def_style(DihedralStyle, style_name)
+            dihstyle = ff.def_style(DihedralStyle(style_name))
 
             itype = self.atomtypes[int(i) - 1]
             jtype = self.atomtypes[int(j) - 1]
@@ -372,7 +372,7 @@ class GromacsTopReader:
 
             from molpy import PairStyle
 
-            pairstyle = ff.def_style(PairStyle, style_name)
+            pairstyle = ff.def_style(PairStyle(style_name))
             itype = self.atomtypes[int(i) - 1]
             jtype = self.atomtypes[int(j) - 1]
 
