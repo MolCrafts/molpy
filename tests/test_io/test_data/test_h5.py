@@ -490,6 +490,232 @@ class TestHDF5RoundTrip:
                     orig_atoms[key], read_atoms[key], decimal=6
                 )
 
+
+class TestHDF5Compression:
+    """Comprehensive tests for HDF5 compression options."""
+
+    @pytest.mark.parametrize("compression", ["gzip", "lzf", None])
+    def test_compression_options_frame(self, test_files, tmp_path, compression):
+        """Test all compression options for Frame I/O."""
+        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
+
+        # Write with specified compression
+        h5_file = tmp_path / f"test_{compression or 'none'}.h5"
+        if compression == "gzip":
+            write_h5(h5_file, original_frame, compression="gzip", compression_opts=4)
+        elif compression == "lzf":
+            write_h5(h5_file, original_frame, compression="lzf")
+        else:
+            write_h5(h5_file, original_frame, compression=None)
+
+        assert h5_file.exists()
+
+        # Read back and verify
+        read_frame = read_h5(h5_file)
+        orig_atoms = original_frame["atoms"]
+        read_atoms = read_frame["atoms"]
+
+        assert orig_atoms.nrows == read_atoms.nrows
+        assert set(orig_atoms.keys()) == set(read_atoms.keys())
+
+        for key in orig_atoms.keys():
+            if orig_atoms[key].dtype.kind in "biufc":
+                np.testing.assert_array_almost_equal(
+                    orig_atoms[key], read_atoms[key], decimal=6
+                )
+
+    @pytest.mark.parametrize("compression_opts", [1, 4, 9])
+    def test_gzip_compression_levels(self, test_files, tmp_path, compression_opts):
+        """Test different gzip compression levels."""
+        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
+
+        h5_file = tmp_path / f"test_gzip_{compression_opts}.h5"
+        write_h5(
+            h5_file, original_frame, compression="gzip", compression_opts=compression_opts
+        )
+
+        assert h5_file.exists()
+
+        # Read back and verify data integrity
+        read_frame = read_h5(h5_file)
+        orig_atoms = original_frame["atoms"]
+        read_atoms = read_frame["atoms"]
+
+        assert orig_atoms.nrows == read_atoms.nrows
+        for key in orig_atoms.keys():
+            if orig_atoms[key].dtype.kind in "biufc":
+                np.testing.assert_array_almost_equal(
+                    orig_atoms[key], read_atoms[key], decimal=6
+                )
+
+    def test_compression_with_connectivity(self, test_files, tmp_path):
+        """Test compression with frames containing connectivity data."""
+        original_frame = read_lammps_data(test_files["labelmap"], atom_style="full")
+
+        # Test gzip
+        h5_file_gzip = tmp_path / "test_gzip_connectivity.h5"
+        write_h5(h5_file_gzip, original_frame, compression="gzip", compression_opts=4)
+
+        read_frame_gzip = read_h5(h5_file_gzip)
+        assert set(original_frame._blocks.keys()) == set(read_frame_gzip._blocks.keys())
+
+        # Test lzf
+        h5_file_lzf = tmp_path / "test_lzf_connectivity.h5"
+        write_h5(h5_file_lzf, original_frame, compression="lzf")
+
+        read_frame_lzf = read_h5(h5_file_lzf)
+        assert set(original_frame._blocks.keys()) == set(read_frame_lzf._blocks.keys())
+
+        # Verify all blocks are correctly restored
+        for block_name in original_frame._blocks.keys():
+            orig_block = original_frame[block_name]
+            read_block_gzip = read_frame_gzip[block_name]
+            read_block_lzf = read_frame_lzf[block_name]
+
+            assert orig_block.nrows == read_block_gzip.nrows
+            assert orig_block.nrows == read_block_lzf.nrows
+
+            for var_name in orig_block.keys():
+                orig_data = orig_block[var_name]
+                if orig_data.dtype.kind in "biufc":
+                    np.testing.assert_array_almost_equal(
+                        orig_data, read_block_gzip[var_name], decimal=6
+                    )
+                    np.testing.assert_array_almost_equal(
+                        orig_data, read_block_lzf[var_name], decimal=6
+                    )
+
+    def test_compression_with_metadata(self, test_files, tmp_path):
+        """Test compression with frames containing metadata including Box."""
+        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
+
+        # Ensure box exists
+        assert "box" in original_frame.metadata
+        orig_box = original_frame.metadata["box"]
+
+        # Test gzip with metadata
+        h5_file_gzip = tmp_path / "test_gzip_metadata.h5"
+        write_h5(h5_file_gzip, original_frame, compression="gzip", compression_opts=4)
+
+        read_frame_gzip = read_h5(h5_file_gzip)
+        assert "box" in read_frame_gzip.metadata
+        read_box_gzip = read_frame_gzip.metadata["box"]
+        assert isinstance(read_box_gzip, mp.Box)
+        np.testing.assert_array_almost_equal(
+            orig_box.matrix, read_box_gzip.matrix, decimal=6
+        )
+
+        # Test lzf with metadata
+        h5_file_lzf = tmp_path / "test_lzf_metadata.h5"
+        write_h5(h5_file_lzf, original_frame, compression="lzf")
+
+        read_frame_lzf = read_h5(h5_file_lzf)
+        assert "box" in read_frame_lzf.metadata
+        read_box_lzf = read_frame_lzf.metadata["box"]
+        assert isinstance(read_box_lzf, mp.Box)
+        np.testing.assert_array_almost_equal(
+            orig_box.matrix, read_box_lzf.matrix, decimal=6
+        )
+
+    def test_compression_with_string_types(self, test_files, tmp_path):
+        """Test compression with frames containing string type data."""
+        original_frame = read_lammps_data(test_files["labelmap"], atom_style="full")
+
+        # Test gzip with strings
+        h5_file_gzip = tmp_path / "test_gzip_strings.h5"
+        write_h5(h5_file_gzip, original_frame, compression="gzip", compression_opts=4)
+
+        read_frame_gzip = read_h5(h5_file_gzip)
+        if "type" in original_frame["atoms"]:
+            orig_type = original_frame["atoms"]["type"]
+            read_type = read_frame_gzip["atoms"]["type"]
+            if orig_type.dtype.kind == "U":
+                np.testing.assert_array_equal(orig_type, read_type)
+
+        # Test lzf with strings
+        h5_file_lzf = tmp_path / "test_lzf_strings.h5"
+        write_h5(h5_file_lzf, original_frame, compression="lzf")
+
+        read_frame_lzf = read_h5(h5_file_lzf)
+        if "type" in original_frame["atoms"]:
+            orig_type = original_frame["atoms"]["type"]
+            read_type = read_frame_lzf["atoms"]["type"]
+            if orig_type.dtype.kind == "U":
+                np.testing.assert_array_equal(orig_type, read_type)
+
+    def test_compression_file_sizes(self, test_files, tmp_path):
+        """Test that compression options work (file size may vary)."""
+        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
+
+        # Write without compression
+        h5_file_no_comp = tmp_path / "test_no_comp.h5"
+        write_h5(h5_file_no_comp, original_frame, compression=None)
+        size_no_comp = h5_file_no_comp.stat().st_size
+        assert size_no_comp > 0
+
+        # Write with gzip
+        h5_file_gzip = tmp_path / "test_gzip.h5"
+        write_h5(h5_file_gzip, original_frame, compression="gzip", compression_opts=9)
+        size_gzip = h5_file_gzip.stat().st_size
+        assert size_gzip > 0
+
+        # Write with lzf
+        h5_file_lzf = tmp_path / "test_lzf.h5"
+        write_h5(h5_file_lzf, original_frame, compression="lzf")
+        size_lzf = h5_file_lzf.stat().st_size
+        assert size_lzf > 0
+
+        # Verify all files are readable
+        read_frame_no_comp = read_h5(h5_file_no_comp)
+        read_frame_gzip = read_h5(h5_file_gzip)
+        read_frame_lzf = read_h5(h5_file_lzf)
+
+        assert read_frame_no_comp["atoms"].nrows == original_frame["atoms"].nrows
+        assert read_frame_gzip["atoms"].nrows == original_frame["atoms"].nrows
+        assert read_frame_lzf["atoms"].nrows == original_frame["atoms"].nrows
+
+    def test_compression_with_writer_class(self, test_files, tmp_path):
+        """Test compression using HDF5Writer class directly."""
+        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
+
+        # Test gzip with HDF5Writer (using context manager)
+        h5_file_gzip = tmp_path / "test_writer_gzip.h5"
+        with HDF5Writer(
+            h5_file_gzip, compression="gzip", compression_opts=4
+        ) as writer_gzip:
+            writer_gzip.write(original_frame)
+
+        read_frame_gzip = read_h5(h5_file_gzip)
+        assert read_frame_gzip["atoms"].nrows == original_frame["atoms"].nrows
+
+        # Test lzf with HDF5Writer (using context manager)
+        h5_file_lzf = tmp_path / "test_writer_lzf.h5"
+        with HDF5Writer(h5_file_lzf, compression="lzf") as writer_lzf:
+            writer_lzf.write(original_frame)
+
+        read_frame_lzf = read_h5(h5_file_lzf)
+        assert read_frame_lzf["atoms"].nrows == original_frame["atoms"].nrows
+
+    def test_compression_with_context_manager(self, test_files, tmp_path):
+        """Test compression using context manager."""
+        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
+
+        # Test gzip with context manager
+        h5_file_gzip = tmp_path / "test_ctx_gzip.h5"
+        with HDF5Writer(h5_file_gzip, compression="gzip", compression_opts=4) as writer:
+            writer.write(original_frame)
+
+        read_frame_gzip = read_h5(h5_file_gzip)
+        assert read_frame_gzip["atoms"].nrows == original_frame["atoms"].nrows
+
+        # Test lzf with context manager
+        h5_file_lzf = tmp_path / "test_ctx_lzf.h5"
+        with HDF5Writer(h5_file_lzf, compression="lzf") as writer:
+            writer.write(original_frame)
+
+        read_frame_lzf = read_h5(h5_file_lzf)
+        assert read_frame_lzf["atoms"].nrows == original_frame["atoms"].nrows
+
     def test_roundtrip_different_atom_styles(self, test_files, tmp_path):
         """Test round-trip with different atom styles."""
         atom_styles = ["atomic", "charge", "full"]

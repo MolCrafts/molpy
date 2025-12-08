@@ -662,3 +662,348 @@ class TestHDF5TrajectoryAppend:
         read_reader = read_h5_trajectory(h5_file)
         assert read_reader.n_frames == len(frames_1) + len(frames_2)
 
+
+class TestHDF5TrajectoryCompression:
+    """Comprehensive tests for HDF5 trajectory compression options."""
+
+    @pytest.mark.parametrize("compression", ["gzip", "lzf", None])
+    def test_compression_options_trajectory(
+        self, TEST_DATA_DIR, tmp_path, compression
+    ):
+        """Test all compression options for Trajectory I/O."""
+        reader = read_lammps_trajectory(TEST_DATA_DIR / "lammps/unwrapped.lammpstrj")
+
+        frames = []
+        for i, frame in enumerate(reader):
+            frames.append(frame)
+            if i >= 2:
+                break
+
+        # Write with specified compression
+        h5_file = tmp_path / f"test_{compression or 'none'}.h5"
+        if compression == "gzip":
+            write_h5_trajectory(
+                h5_file, frames, compression="gzip", compression_opts=4
+            )
+        elif compression == "lzf":
+            write_h5_trajectory(h5_file, frames, compression="lzf")
+        else:
+            write_h5_trajectory(h5_file, frames, compression=None)
+
+        assert h5_file.exists()
+
+        # Read back and verify
+        read_reader = read_h5_trajectory(h5_file)
+        assert read_reader.n_frames == len(frames)
+
+        # Compare all frames
+        for i in range(len(frames)):
+            orig_frame = frames[i]
+            read_frame = read_reader.read_frame(i)
+
+            orig_atoms = orig_frame["atoms"]
+            read_atoms = read_frame["atoms"]
+
+            assert orig_atoms.nrows == read_atoms.nrows
+            for key in orig_atoms.keys():
+                if orig_atoms[key].dtype.kind in "biufc":
+                    np.testing.assert_array_almost_equal(
+                        orig_atoms[key], read_atoms[key], decimal=6
+                    )
+
+    @pytest.mark.parametrize("compression_opts", [1, 4, 9])
+    def test_gzip_compression_levels_trajectory(
+        self, TEST_DATA_DIR, tmp_path, compression_opts
+    ):
+        """Test different gzip compression levels for trajectories."""
+        reader = read_lammps_trajectory(TEST_DATA_DIR / "lammps/unwrapped.lammpstrj")
+
+        frames = []
+        for i, frame in enumerate(reader):
+            frames.append(frame)
+            if i >= 2:
+                break
+
+        h5_file = tmp_path / f"test_gzip_{compression_opts}.h5"
+        write_h5_trajectory(
+            h5_file, frames, compression="gzip", compression_opts=compression_opts
+        )
+
+        assert h5_file.exists()
+
+        # Read back and verify data integrity
+        read_reader = read_h5_trajectory(h5_file)
+        assert read_reader.n_frames == len(frames)
+
+        for i in range(len(frames)):
+            orig_frame = frames[i]
+            read_frame = read_reader.read_frame(i)
+
+            orig_atoms = orig_frame["atoms"]
+            read_atoms = read_frame["atoms"]
+
+            assert orig_atoms.nrows == read_atoms.nrows
+            for key in orig_atoms.keys():
+                if orig_atoms[key].dtype.kind in "biufc":
+                    np.testing.assert_array_almost_equal(
+                        orig_atoms[key], read_atoms[key], decimal=6
+                    )
+
+    def test_compression_with_trajectory_metadata(self, TEST_DATA_DIR, tmp_path):
+        """Test compression with trajectories containing metadata including Box."""
+        reader = read_lammps_trajectory(TEST_DATA_DIR / "lammps/unwrapped.lammpstrj")
+
+        frames = []
+        for i, frame in enumerate(reader):
+            frames.append(frame)
+            if i >= 2:
+                break
+
+        # Verify frames have box
+        boxes_found = sum(
+            1 for f in frames if "box" in f.metadata and f.metadata["box"] is not None
+        )
+        assert boxes_found > 0, "No boxes found in frames"
+
+        # Test gzip with metadata
+        h5_file_gzip = tmp_path / "test_gzip_metadata.h5"
+        write_h5_trajectory(
+            h5_file_gzip, frames, compression="gzip", compression_opts=4
+        )
+
+        read_reader_gzip = read_h5_trajectory(h5_file_gzip)
+        for i in range(len(frames)):
+            orig_frame = frames[i]
+            read_frame = read_reader_gzip.read_frame(i)
+
+            if "box" in orig_frame.metadata and orig_frame.metadata["box"] is not None:
+                assert "box" in read_frame.metadata
+                orig_box = orig_frame.metadata["box"]
+                read_box = read_frame.metadata["box"]
+                assert isinstance(read_box, mp.Box)
+                np.testing.assert_array_almost_equal(
+                    orig_box.matrix, read_box.matrix, decimal=6
+                )
+
+        # Test lzf with metadata
+        h5_file_lzf = tmp_path / "test_lzf_metadata.h5"
+        write_h5_trajectory(h5_file_lzf, frames, compression="lzf")
+
+        read_reader_lzf = read_h5_trajectory(h5_file_lzf)
+        for i in range(len(frames)):
+            orig_frame = frames[i]
+            read_frame = read_reader_lzf.read_frame(i)
+
+            if "box" in orig_frame.metadata and orig_frame.metadata["box"] is not None:
+                assert "box" in read_frame.metadata
+                orig_box = orig_frame.metadata["box"]
+                read_box = read_frame.metadata["box"]
+                assert isinstance(read_box, mp.Box)
+                np.testing.assert_array_almost_equal(
+                    orig_box.matrix, read_box.matrix, decimal=6
+                )
+
+    def test_compression_file_sizes_trajectory(self, TEST_DATA_DIR, tmp_path):
+        """Test that compression options work for trajectories."""
+        reader = read_lammps_trajectory(TEST_DATA_DIR / "lammps/unwrapped.lammpstrj")
+
+        frames = []
+        for i, frame in enumerate(reader):
+            frames.append(frame)
+            if i >= 4:  # Use more frames for better compression test
+                break
+
+        # Write without compression
+        h5_file_no_comp = tmp_path / "test_no_comp.h5"
+        write_h5_trajectory(h5_file_no_comp, frames, compression=None)
+        size_no_comp = h5_file_no_comp.stat().st_size
+        assert size_no_comp > 0
+
+        # Write with gzip
+        h5_file_gzip = tmp_path / "test_gzip.h5"
+        write_h5_trajectory(
+            h5_file_gzip, frames, compression="gzip", compression_opts=9
+        )
+        size_gzip = h5_file_gzip.stat().st_size
+        assert size_gzip > 0
+
+        # Write with lzf
+        h5_file_lzf = tmp_path / "test_lzf.h5"
+        write_h5_trajectory(h5_file_lzf, frames, compression="lzf")
+        size_lzf = h5_file_lzf.stat().st_size
+        assert size_lzf > 0
+
+        # Verify all files are readable
+        read_reader_no_comp = read_h5_trajectory(h5_file_no_comp)
+        read_reader_gzip = read_h5_trajectory(h5_file_gzip)
+        read_reader_lzf = read_h5_trajectory(h5_file_lzf)
+
+        assert read_reader_no_comp.n_frames == len(frames)
+        assert read_reader_gzip.n_frames == len(frames)
+        assert read_reader_lzf.n_frames == len(frames)
+
+    def test_compression_with_writer_class_trajectory(self, TEST_DATA_DIR, tmp_path):
+        """Test compression using HDF5TrajectoryWriter class directly."""
+        reader = read_lammps_trajectory(TEST_DATA_DIR / "lammps/unwrapped.lammpstrj")
+
+        frames = []
+        for i, frame in enumerate(reader):
+            frames.append(frame)
+            if i >= 2:
+                break
+
+        # Test gzip with HDF5TrajectoryWriter
+        h5_file_gzip = tmp_path / "test_writer_gzip.h5"
+        with HDF5TrajectoryWriter(
+            h5_file_gzip, compression="gzip", compression_opts=4
+        ) as writer_gzip:
+            for frame in frames:
+                writer_gzip.write_frame(frame)
+
+        read_reader_gzip = read_h5_trajectory(h5_file_gzip)
+        assert read_reader_gzip.n_frames == len(frames)
+
+        # Test lzf with HDF5TrajectoryWriter
+        h5_file_lzf = tmp_path / "test_writer_lzf.h5"
+        with HDF5TrajectoryWriter(h5_file_lzf, compression="lzf") as writer_lzf:
+            for frame in frames:
+                writer_lzf.write_frame(frame)
+
+        read_reader_lzf = read_h5_trajectory(h5_file_lzf)
+        assert read_reader_lzf.n_frames == len(frames)
+
+    def test_compression_with_context_manager_trajectory(
+        self, TEST_DATA_DIR, tmp_path
+    ):
+        """Test compression using context manager for trajectories."""
+        reader = read_lammps_trajectory(TEST_DATA_DIR / "lammps/unwrapped.lammpstrj")
+
+        frames = []
+        for i, frame in enumerate(reader):
+            frames.append(frame)
+            if i >= 2:
+                break
+
+        # Test gzip with context manager
+        h5_file_gzip = tmp_path / "test_ctx_gzip.h5"
+        with HDF5TrajectoryWriter(
+            h5_file_gzip, compression="gzip", compression_opts=4
+        ) as writer:
+            for frame in frames:
+                writer.write_frame(frame)
+
+        read_reader_gzip = read_h5_trajectory(h5_file_gzip)
+        assert read_reader_gzip.n_frames == len(frames)
+
+        # Test lzf with context manager
+        h5_file_lzf = tmp_path / "test_ctx_lzf.h5"
+        with HDF5TrajectoryWriter(h5_file_lzf, compression="lzf") as writer:
+            for frame in frames:
+                writer.write_frame(frame)
+
+        read_reader_lzf = read_h5_trajectory(h5_file_lzf)
+        assert read_reader_lzf.n_frames == len(frames)
+
+    def test_compression_with_append_trajectory(self, TEST_DATA_DIR, tmp_path):
+        """Test compression when appending frames to trajectory."""
+        reader = read_lammps_trajectory(TEST_DATA_DIR / "lammps/unwrapped.lammpstrj")
+
+        frames_1 = []
+        for i, frame in enumerate(reader):
+            frames_1.append(frame)
+            if i >= 1:
+                break
+
+        frames_2 = []
+        for i, frame in enumerate(reader):
+            frames_2.append(frame)
+            if i >= 1:
+                break
+
+        # Write first batch with gzip
+        h5_file = tmp_path / "test_append_gzip.h5"
+        write_h5_trajectory(
+            h5_file, frames_1, compression="gzip", compression_opts=4
+        )
+
+        # Append second batch (should use same compression)
+        with HDF5TrajectoryWriter(h5_file, compression="gzip", compression_opts=4) as writer:
+            for frame in frames_2:
+                writer.write_frame(frame)
+
+        read_reader = read_h5_trajectory(h5_file)
+        assert read_reader.n_frames == len(frames_1) + len(frames_2)
+
+        # Verify all frames are readable
+        for i in range(len(frames_1)):
+            orig_frame = frames_1[i]
+            read_frame = read_reader.read_frame(i)
+            assert orig_frame["atoms"].nrows == read_frame["atoms"].nrows
+
+        for i in range(len(frames_2)):
+            orig_frame = frames_2[i]
+            read_frame = read_reader.read_frame(len(frames_1) + i)
+            assert orig_frame["atoms"].nrows == read_frame["atoms"].nrows
+
+    def test_compression_mixed_data_types_trajectory(self, TEST_DATA_DIR, tmp_path):
+        """Test compression with trajectories containing mixed data types."""
+        reader = read_lammps_trajectory(TEST_DATA_DIR / "lammps/unwrapped.lammpstrj")
+
+        frames = []
+        for i, frame in enumerate(reader):
+            frames.append(frame)
+            if i >= 2:
+                break
+
+        # Test gzip with mixed types
+        h5_file_gzip = tmp_path / "test_gzip_mixed.h5"
+        write_h5_trajectory(
+            h5_file_gzip, frames, compression="gzip", compression_opts=4
+        )
+
+        read_reader_gzip = read_h5_trajectory(h5_file_gzip)
+        for i in range(len(frames)):
+            orig_frame = frames[i]
+            read_frame = read_reader_gzip.read_frame(i)
+
+            # Check all blocks
+            for block_name in orig_frame._blocks.keys():
+                orig_block = orig_frame[block_name]
+                read_block = read_frame[block_name]
+
+                for var_name in orig_block.keys():
+                    orig_data = orig_block[var_name]
+                    read_data = read_block[var_name]
+
+                    if orig_data.dtype.kind in "biufc":
+                        np.testing.assert_array_almost_equal(
+                            orig_data, read_data, decimal=6
+                        )
+                    elif orig_data.dtype.kind == "U":
+                        np.testing.assert_array_equal(orig_data, read_data)
+
+        # Test lzf with mixed types
+        h5_file_lzf = tmp_path / "test_lzf_mixed.h5"
+        write_h5_trajectory(h5_file_lzf, frames, compression="lzf")
+
+        read_reader_lzf = read_h5_trajectory(h5_file_lzf)
+        for i in range(len(frames)):
+            orig_frame = frames[i]
+            read_frame = read_reader_lzf.read_frame(i)
+
+            # Check all blocks
+            for block_name in orig_frame._blocks.keys():
+                orig_block = orig_frame[block_name]
+                read_block = read_frame[block_name]
+
+                for var_name in orig_block.keys():
+                    orig_data = orig_block[var_name]
+                    read_data = read_block[var_name]
+
+                    if orig_data.dtype.kind in "biufc":
+                        np.testing.assert_array_almost_equal(
+                            orig_data, read_data, decimal=6
+                        )
+                    elif orig_data.dtype.kind == "U":
+                        np.testing.assert_array_equal(orig_data, read_data)
+

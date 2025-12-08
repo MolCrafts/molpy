@@ -90,22 +90,40 @@ def frame_to_h5_group(
                 # Convert to variable-length UTF-8 strings
                 # h5py supports variable-length strings via object dtype
                 data_as_objects = data.astype(object)
+                # lzf doesn't support compression_opts
+                create_kwargs = {
+                    "compression": compression,
+                    "shuffle": True if compression else False,
+                }
+                if compression == "gzip" and compression_opts is not None:
+                    create_kwargs["compression_opts"] = compression_opts
+                elif compression == "lzf":
+                    # lzf doesn't use compression_opts
+                    pass
+
                 dataset = block_group.create_dataset(
                     var_name,
                     data=data_as_objects,
                     dtype=h5py.string_dtype(encoding="utf-8"),
-                    compression=compression,
-                    compression_opts=compression_opts if compression else None,
-                    shuffle=True if compression else False,
+                    **create_kwargs,
                 )
             else:
                 # Create dataset with compression for numeric types
+                # lzf doesn't support compression_opts
+                create_kwargs = {
+                    "compression": compression,
+                    "shuffle": True if compression else False,
+                }
+                if compression == "gzip" and compression_opts is not None:
+                    create_kwargs["compression_opts"] = compression_opts
+                elif compression == "lzf":
+                    # lzf doesn't use compression_opts
+                    pass
+
                 dataset = block_group.create_dataset(
                     var_name,
                     data=data,
-                    compression=compression,
-                    compression_opts=compression_opts if compression else None,
-                    shuffle=True if compression else False,
+                    **create_kwargs,
                 )
 
             # Store dtype information as attribute for better reconstruction
@@ -222,24 +240,19 @@ def _write_metadata_to_group(
             box_group = metadata_group.create_group(key)
             # Use np.array(box) which will call __array__ method
             box_matrix = np.array(value)
-            box_group.create_dataset(
-                "matrix",
-                data=box_matrix,
-                compression=compression,
-                compression_opts=compression_opts if compression else None,
-            )
-            box_group.create_dataset(
-                "pbc",
-                data=value.pbc,
-                compression=compression,
-                compression_opts=compression_opts if compression else None,
-            )
-            box_group.create_dataset(
-                "origin",
-                data=value.origin,
-                compression=compression,
-                compression_opts=compression_opts if compression else None,
-            )
+            # lzf doesn't support compression_opts
+            create_kwargs = {
+                "compression": compression,
+            }
+            if compression == "gzip" and compression_opts is not None:
+                create_kwargs["compression_opts"] = compression_opts
+            elif compression == "lzf":
+                # lzf doesn't use compression_opts
+                pass
+
+            box_group.create_dataset("matrix", data=box_matrix, **create_kwargs)
+            box_group.create_dataset("pbc", data=value.pbc, **create_kwargs)
+            box_group.create_dataset("origin", data=value.origin, **create_kwargs)
             box_group.attrs["_type"] = "Box"
             continue
 
@@ -249,22 +262,32 @@ def _write_metadata_to_group(
             metadata_group.attrs[key] = value
         elif isinstance(value, np.ndarray):
             # Store numpy arrays as datasets
-            metadata_group.create_dataset(
-                key,
-                data=value,
-                compression=compression,
-                compression_opts=compression_opts if compression else None,
-            )
+            # lzf doesn't support compression_opts
+            create_kwargs = {
+                "compression": compression,
+            }
+            if compression == "gzip" and compression_opts is not None:
+                create_kwargs["compression_opts"] = compression_opts
+            elif compression == "lzf":
+                # lzf doesn't use compression_opts
+                pass
+
+            metadata_group.create_dataset(key, data=value, **create_kwargs)
         elif isinstance(value, (list, tuple)):
             # Convert lists/tuples to numpy arrays
             try:
                 arr = np.asarray(value)
-                metadata_group.create_dataset(
-                    key,
-                    data=arr,
-                    compression=compression,
-                    compression_opts=compression_opts if compression else None,
-                )
+                # lzf doesn't support compression_opts
+                create_kwargs = {
+                    "compression": compression,
+                }
+                if compression == "gzip" and compression_opts is not None:
+                    create_kwargs["compression_opts"] = compression_opts
+                elif compression == "lzf":
+                    # lzf doesn't use compression_opts
+                    pass
+
+                metadata_group.create_dataset(key, data=arr, **create_kwargs)
             except (ValueError, TypeError):
                 # If conversion fails, store as JSON string
                 metadata_group.attrs[key] = json.dumps(value)
