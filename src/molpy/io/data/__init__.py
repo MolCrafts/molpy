@@ -1,7 +1,11 @@
-from .amber import *
-from .gro import *
-from .lammps import *
-from .mol2 import *
-from .pdb import *
-from .xsf import *
-from .xyz import *
+# Import order: Deepest to shallowest to avoid circular dependencies
+# Note: Only base classes are imported here to avoid circular dependencies.
+# Specific implementations are imported in io/__init__.py
+
+# 1. Base classes (deepest)
+from .base import DataReader, DataWriter
+
+__all__ = [
+    "DataReader",
+    "DataWriter",
+]

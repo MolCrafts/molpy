@@ -9,8 +9,8 @@ from molpy.optimize.potential_wrappers import (
     AnglePotentialWrapper,
     BondPotentialWrapper,
 )
-from molpy.potential.angle import Harmonic as HarmonicAngle
-from molpy.potential.bond import Harmonic as HarmonicBond
+from molpy.potential.angle import AngleHarmonic
+from molpy.potential.bond import BondHarmonic
 from molpy.potential.base import Potentials
 
 

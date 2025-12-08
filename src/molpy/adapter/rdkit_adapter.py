@@ -14,8 +14,9 @@ from rdkit.Chem import AllChem, rdDepictor
 from rdkit.Chem.Draw import rdMolDraw2D
 from rdkit.Chem.rdchem import ChiralType
 
-from molpy import Atomistic, Wrapper
+from molpy import Atomistic
 from molpy.parser.smiles import SmilesGraphIR
+from molpy.core.wrapper import Wrapper
 
 # Monomer is no longer used, removed from imports
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import molpy as mp
-from molpy import Element
+from molpy.core.element import Element
 
 from .base import DataReader
 

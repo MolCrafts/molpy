@@ -661,3 +661,4 @@ class TestHDF5TrajectoryAppend:
         # Read back and verify
         read_reader = read_h5_trajectory(h5_file)
         assert read_reader.n_frames == len(frames_1) + len(frames_2)
+

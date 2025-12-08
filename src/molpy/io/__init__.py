@@ -51,21 +51,39 @@ import numpy as np
 PathLike = str | Path
 
 # =============================================================================
-# Import organized reader/writer functions
+# Import order: Deepest to shallowest to avoid circular dependencies
 # =============================================================================
 
-# Data readers
-# Force field readers
-# Trajectory readers
+# 1. Deepest level: Base classes
+from .data.base import DataReader, DataWriter
+from .trajectory.base import BaseTrajectoryReader, TrajectoryWriter, FrameLocation
+
+# 2. Data Readers and Writers
+from .data.ac import AcReader
+from .data.amber import AmberInpcrdReader
+from .data.gro import GroReader, GroWriter
+from .data.h5 import HDF5Reader, HDF5Writer
+from .data.lammps import LammpsDataReader, LammpsDataWriter
+from .data.lammps_molecule import LammpsMoleculeReader, LammpsMoleculeWriter
+from .data.mol2 import Mol2Reader
+from .data.pdb import PDBReader, PDBWriter
+from .data.top import TopReader
+from .data.xsf import XsfReader, XsfWriter
+from .data.xyz import XYZReader
+
+# 3. Trajectory Readers and Writers
+from .trajectory.h5 import HDF5TrajectoryReader, HDF5TrajectoryWriter
+from .trajectory.lammps import LammpsTrajectoryReader, LammpsTrajectoryWriter
+from .trajectory.xyz import XYZTrajectoryReader, XYZTrajectoryWriter
+
+
+# 5. Factory functions (use the classes above)
 from .readers import (
     read_amber_ac,
     read_amber_inpcrd,
     read_amber_prmtop,
-    read_amber_system,
     read_gro,
-    read_gromacs_system,
     read_h5,
-    read_lammps,
     read_lammps_data,
     read_lammps_forcefield,
     read_lammps_molecule,
@@ -80,10 +98,6 @@ from .readers import (
     read_h5_trajectory,
 )
 
-# Data writers
-# Force field writers
-# Trajectory writers
-# System writers
 from .writers import (
     write_h5,
     write_h5_trajectory,
@@ -97,66 +111,86 @@ from .writers import (
     write_xyz_trajectory,
 )
 
-# Backward compatibility aliases
-read_amber = read_amber_prmtop  # Keep old name for compatibility
-write_lammps = write_lammps_system  # Keep old name for compatibility
-
-
-# =============================================================================
-# Utility functions
-# =============================================================================
-
-# Numpy loadtxt shortcut
+# 6. Utility functions (shallowest level)
 read_txt = np.loadtxt
-
-
-# =============================================================================
-# Module Exports
-# =============================================================================
 
 __all__ = [
     # Core types
     "PathLike",
-    # AMBER readers
-    "read_amber",
+    # Factory functions - Readers
     "read_amber_ac",
     "read_amber_inpcrd",
     "read_amber_prmtop",
-    "read_amber_system",
-    # GROMACS readers
     "read_gro",
-    "read_gromacs_system",
-    "read_top",
-    # LAMMPS readers
-    "read_lammps",
+    "read_h5",
     "read_lammps_data",
     "read_lammps_forcefield",
     "read_lammps_molecule",
     "read_lammps_trajectory",
-    # Other data readers
-    "read_h5",
     "read_mol2",
     "read_pdb",
+    "read_top",
     "read_xml_forcefield",
     "read_xsf",
     "read_xyz",
-    # Trajectory readers
     "read_xyz_trajectory",
     "read_h5_trajectory",
-    # Utility functions
-    "read_txt",
-    # LAMMPS writers
-    "write_lammps",
+    # Factory functions - Writers
+    "write_h5",
+    "write_h5_trajectory",
     "write_lammps_data",
     "write_lammps_forcefield",
     "write_lammps_molecule",
     "write_lammps_system",
     "write_lammps_trajectory",
-    # Other data writers
-    "write_h5",
     "write_pdb",
     "write_xsf",
-    # Trajectory writers
     "write_xyz_trajectory",
-    "write_h5_trajectory",
+    # Utility functions
+    "read_txt",
+    # Data Readers
+    "DataReader",
+    "AcReader",
+    "AmberInpcrdReader",
+    "GroReader",
+    "HDF5Reader",
+    "LammpsDataReader",
+    "LammpsMoleculeReader",
+    "Mol2Reader",
+    "PDBReader",
+    "TopReader",
+    "XsfReader",
+    "XYZReader",
+    # Data Writers
+    "DataWriter",
+    "GroWriter",
+    "HDF5Writer",
+    "LammpsDataWriter",
+    "LammpsMoleculeWriter",
+    "PDBWriter",
+    "XsfWriter",
+    # ForceField Readers
+    "ForceFieldReader",
+    "AmberPrmtopReader",
+    "GromacsTopReader",
+    "LAMMPSForceFieldReader",
+    "MolTemplateReader",
+    "XMLForceFieldReader",
+    "OPLSAAForceFieldReader",
+    # ForceField Writers
+    "ForceFieldWriter",
+    "LAMMPSForceFieldWriter",
+    # Trajectory Readers
+    "BaseTrajectoryReader",
+    "FrameLocation",
+    "HDF5TrajectoryReader",
+    "LammpsTrajectoryReader",
+    "XYZTrajectoryReader",
+    # Trajectory Writers
+    "TrajectoryWriter",
+    "HDF5TrajectoryWriter",
+    "LammpsTrajectoryWriter",
+    "XYZTrajectoryWriter",
+    # Utility Classes
+    "ZipReader",
 ]

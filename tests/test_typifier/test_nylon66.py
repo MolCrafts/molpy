@@ -22,15 +22,15 @@ import pytest
 
 from molpy import Atom, Atomistic
 from molpy.io import read_xml_forcefield
-from molpy.parser.smiles import SmilesIR, parse_bigsmiles
+from molpy.parser.smiles import SmilesGraphIR, parse_bigsmiles
 from molpy.typifier.atomistic import OplsAtomisticTypifier
 
 
-def smilesir_to_atomistic(ir: SmilesIR) -> Atomistic:
-    """Convert SmilesIR to Atomistic structure without RDKit dependency.
+def smilesir_to_atomistic(ir: SmilesGraphIR) -> Atomistic:
+    """Convert SmilesGraphIR to Atomistic structure without RDKit dependency.
 
     Args:
-        ir: SmilesIR instance with atoms and bonds
+        ir: SmilesGraphIR instance with atoms and bonds
 
     Returns:
         Atomistic structure with atoms and bonds (no 3D coordinates)
@@ -42,12 +42,12 @@ def smilesir_to_atomistic(ir: SmilesIR) -> Atomistic:
 
     # Add atoms
     for atom_ir in ir.atoms:
-        # Get symbol (handle aromatic lowercase)
-        symbol = atom_ir.symbol.upper() if atom_ir.symbol.islower() else atom_ir.symbol
+        # Get element (handle aromatic lowercase)
+        element = atom_ir.element.upper() if atom_ir.element.islower() else atom_ir.element
 
         # Create atom
         atom = atomistic.def_atom(
-            symbol=symbol,
+            element=element,
             charge=atom_ir.charge,
             # No xyz - topology only
         )
@@ -93,7 +93,7 @@ def add_hydrogens(atomistic: Atomistic) -> Atomistic:
     """
 
     # Standard valence for common elements
-    # Format: {element_symbol: (normal_valence, max_valence)}
+    # Format: {element_element: (normal_valence, max_valence)}
     # max_valence accounts for hypervalent compounds
     standard_valence = {
         "H": (1, 1),
@@ -124,15 +124,15 @@ def add_hydrogens(atomistic: Atomistic) -> Atomistic:
 
     # Add hydrogens
     for atom in atoms:
-        symbol = atom.get("symbol", atom.get("element", "C"))
+        element = atom.get("element", atom.get("element", "C"))
         charge = atom.get("charge", 0) or 0
 
         # Get valence info
-        if symbol not in standard_valence:
+        if element not in standard_valence:
             # Unknown element, skip
             continue
 
-        normal_valence, _max_valence = standard_valence[symbol]
+        normal_valence, _max_valence = standard_valence[element]
         current_valence = atom_valence[atom]
 
         # Adjust valence for charge
@@ -144,7 +144,7 @@ def add_hydrogens(atomistic: Atomistic) -> Atomistic:
 
         # Add hydrogen atoms
         for _ in range(needed_h):
-            h_atom = atomistic.def_atom(symbol="H")
+            h_atom = atomistic.def_atom(element="H")
             atomistic.def_bond(atom, h_atom, order=1.0)
 
     return atomistic
@@ -206,7 +206,7 @@ class TestOplsTypifier:
 
         # Count N atoms (should be 2 for diamine)
         n_atoms = [
-            a for a in atoms if a.get("symbol") == "N" or a.get("element") == "N"
+            a for a in atoms if a.get("element") == "N" or a.get("element") == "N"
         ]
         assert (
             len(n_atoms) == 2
@@ -225,7 +225,7 @@ class TestOplsTypifier:
 
         # Count O atoms (should be multiple for carboxylic acids)
         o_atoms = [
-            a for a in atoms if a.get("symbol") == "O" or a.get("element") == "O"
+            a for a in atoms if a.get("element") == "O" or a.get("element") == "O"
         ]
         assert (
             len(o_atoms) >= 4
@@ -263,7 +263,7 @@ class TestOplsTypifier:
         # so SMARTS patterns like [N;X3](H)(H)C may not match exactly.
         # We check that N atoms that can be typed have the correct type.
         n_atoms = [
-            a for a in atoms if a.get("symbol") == "N" or a.get("element") == "N"
+            a for a in atoms if a.get("element") == "N" or a.get("element") == "N"
         ]
         assert len(n_atoms) == 2, f"Should have 2 N atoms, got {len(n_atoms)}"
 
@@ -286,7 +286,7 @@ class TestOplsTypifier:
         # Check H atoms on N should be opls_909 (H[N;%opls_900])
         # Find H atoms bonded to N atoms
         h_atoms = [
-            a for a in atoms if a.get("symbol") == "H" or a.get("element") == "H"
+            a for a in atoms if a.get("element") == "H" or a.get("element") == "H"
         ]
         bonds = list(diamine_structure.bonds)
 
@@ -296,7 +296,7 @@ class TestOplsTypifier:
             for bond in bonds:
                 if bond.itom is h_atom or bond.jtom is h_atom:
                     other = bond.jtom if bond.itom is h_atom else bond.itom
-                    if other.get("symbol") == "N" or other.get("element") == "N":
+                    if other.get("element") == "N" or other.get("element") == "N":
                         h_on_n.append(h_atom)
                         break
 
@@ -341,7 +341,7 @@ class TestOplsTypifier:
 
         # Check O atoms have types
         o_atoms = [
-            a for a in atoms if a.get("symbol") == "O" or a.get("element") == "O"
+            a for a in atoms if a.get("element") == "O" or a.get("element") == "O"
         ]
         for o_atom in o_atoms:
             o_type = o_atom.data.get("type")

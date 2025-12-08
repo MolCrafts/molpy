@@ -644,3 +644,4 @@ class TestHDF5ContextManager:
             read_frame = reader.read()
 
         assert read_frame["atoms"].nrows == original_frame["atoms"].nrows
+
