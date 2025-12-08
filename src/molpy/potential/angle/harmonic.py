@@ -1,14 +1,16 @@
 """
-Harmonic angle potential.
+Harmonic angle potential and force field styles.
 """
 
 import numpy as np
 from numpy.typing import NDArray
 
+from molpy.core.forcefield import AngleStyle, AngleType, AtomType
+
 from .base import AnglePotential
 
 
-class Harmonic(AnglePotential):
+class AngleHarmonic(AnglePotential):
     name = "harmonic"
     type = "angle"
 
@@ -19,7 +21,7 @@ class Harmonic(AnglePotential):
         Initialize harmonic angle potential.
 
         Args:
-            k: Force constant (array for multiple types, or scalar)
+            k: Force constant in kcal/mol/rad² (LAMMPS format)
             theta0: Equilibrium angle in degrees (array for multiple types, or scalar)
         """
         self.k = np.array(k, dtype=np.float64)
@@ -57,16 +59,17 @@ class Harmonic(AnglePotential):
         ua = a / norm_a
         ub = b / norm_b
 
-        # Calculate angle (in radians)
+        # Calculate angle in radians
         cos_theta = np.sum(ua * ub, axis=1)
         cos_theta = np.clip(cos_theta, -1.0, 1.0)
         theta_rad = np.arccos(cos_theta)
 
-        # Convert theta0 from degrees to radians for calculation
+        # theta0 is stored in degrees, convert to radians for calculation
         theta0_rad = np.deg2rad(self.theta0[angle_types])
 
-        # Calculate energy
-        energy = 0.5 * self.k[angle_types] * (theta_rad - theta0_rad) ** 2
+        # Calculate energy using LAMMPS formula: E = k * (theta_rad - theta0_rad)^2
+        # k is in kcal/mol/rad²
+        energy = self.k[angle_types] * (theta_rad - theta0_rad) ** 2
 
         return float(np.sum(energy))
 
@@ -105,16 +108,18 @@ class Harmonic(AnglePotential):
         ua = a / norm_a
         ub = b / norm_b
 
-        # Calculate angle (in radians)
+        # Calculate angle in radians
         cos_theta = np.sum(ua * ub, axis=1, keepdims=True)
         cos_theta = np.clip(cos_theta, -1.0, 1.0)
-        theta = np.arccos(cos_theta)
+        theta_rad = np.arccos(cos_theta)
 
-        # Convert theta0 from degrees to radians for calculation
+        # theta0 is stored in degrees, convert to radians for calculation
         theta0_rad = np.deg2rad(self.theta0[angle_types])
 
-        # Calculate force magnitude
-        dtheta = -self.k[angle_types] * (theta.squeeze() - theta0_rad)
+        # Calculate force magnitude using LAMMPS formula
+        # dE/dtheta_rad = 2 * k * (theta_rad - theta0_rad)
+        # k is in kcal/mol/rad²
+        dtheta = -2.0 * self.k[angle_types] * (theta_rad.squeeze() - theta0_rad)
 
         # Calculate force directions
         norm_c = np.linalg.norm(c, axis=-1, keepdims=True)
@@ -133,3 +138,67 @@ class Harmonic(AnglePotential):
         np.add.at(per_atom_forces, angle_idx[:, 2], F3)
 
         return per_atom_forces
+
+
+# ===================================================================
+#               Force Field Style and Type Classes
+# ===================================================================
+
+
+class AngleHarmonicType(AngleType):
+    """Harmonic angle type with k and theta0 parameters."""
+
+    def __init__(
+        self,
+        name: str,
+        itom: AtomType,
+        jtom: AtomType,
+        ktom: AtomType,
+        k: float,
+        theta0: float,
+    ):
+        """
+        Args:
+            name: Type name
+            itom: First atom type
+            jtom: Central atom type
+            ktom: Third atom type
+            k: Force constant
+            theta0: Equilibrium angle in degrees
+        """
+        super().__init__(name, itom, jtom, ktom, k=k, theta0=theta0)
+
+
+class AngleHarmonicStyle(AngleStyle):
+    """Harmonic angle style with fixed name='harmonic'."""
+
+    def __init__(self):
+        super().__init__("harmonic")
+
+    def def_type(
+        self,
+        itom: AtomType,
+        jtom: AtomType,
+        ktom: AtomType,
+        k: float,
+        theta0: float,
+        name: str = "",
+    ) -> AngleHarmonicType:
+        """Define harmonic angle type.
+
+        Args:
+            itom: First atom type
+            jtom: Central atom type
+            ktom: Third atom type
+            k: Force constant
+            theta0: Equilibrium angle in degrees
+            name: Optional name (defaults to itom-jtom-ktom)
+
+        Returns:
+            AngleHarmonicType instance
+        """
+        if not name:
+            name = f"{itom.name}-{jtom.name}-{ktom.name}"
+        at = AngleHarmonicType(name, itom, jtom, ktom, k, theta0)
+        self.types.add(at)
+        return at

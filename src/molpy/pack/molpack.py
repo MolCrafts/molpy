@@ -1,29 +1,30 @@
 """
 Molpack - High-level molecular packing interface.
 
-This module provides the main entry point for molecular packing.
-It allows selecting different packer backends (Packmol, nlopt, etc.).
+This module provides the main entry point for molecular packing using Packmol.
 """
 
 import random
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING
 
 from molpy import Frame
 
 from .packer import get_packer
 from .target import Target
 
+if TYPE_CHECKING:
+    from .constraint import Constraint
+
 
 class Molpack:
     """
     High-level molecular packing interface.
 
-    This class provides a clean API for molecular packing with the ability
-    to choose different packer backends.
+    This class provides a clean API for molecular packing using Packmol backend.
 
     Usage:
-        packer = Molpack(workdir=Path("packing"), packer="packmol")
+        packer = Molpack(workdir=Path("packing"))
         packer.add_target(frame, number=100, constraint=box_constraint)
         result = packer.optimize(max_steps=1000, seed=42)
     """
@@ -31,22 +32,20 @@ class Molpack:
     def __init__(
         self,
         workdir: Path,
-        packer: Literal["packmol", "nlopt"] = "packmol",
     ):
         """
         Initialize Molpack.
 
         Args:
             workdir: Working directory for packing operations
-            packer: Packer backend to use ("packmol" or "nlopt")
         """
         if not workdir.exists():
             workdir.mkdir(parents=True, exist_ok=True)
         self.workdir = workdir
         self.targets = []
-        self.packer = get_packer(packer, workdir=workdir)
+        self.packer = get_packer(workdir=workdir)
 
-    def add_target(self, frame: Frame, number: int, constraint: Any) -> Target:
+    def add_target(self, frame: Frame, number: int, constraint: "Constraint") -> Target:
         """
         Add a packing target.
 

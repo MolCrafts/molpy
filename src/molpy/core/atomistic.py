@@ -431,29 +431,93 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
     def __len__(self) -> int:
         return len(self.atoms)
 
-    def get_topo(self, gen_angle: bool = False, gen_dihe=False):
-        vertrices = {}
-        for i, atom in enumerate(self.entities[Atom]):
-            vertrices[atom] = i
-        edges = []
-        for bond in self.links[Bond]:  # type: ignore[arg-type]
-            edges.append((vertrices[bond.itom], vertrices[bond.jtom]))
-        atoms = list(vertrices.keys())
-        from .topology import Topology
+    def get_topo(
+        self,
+        entity_type: type[Entity] = Atom,
+        link_type: type[Link] = Bond,
+        gen_angle: bool = False,
+        gen_dihe: bool = False,
+        clear_existing: bool = False,
+    ):
+        """Generate topology (angles and dihedrals) from bonds.
 
-        topo = Topology(len(vertrices), edges=edges)
+        Args:
+            entity_type: Entity type to include in topology (default: Atom)
+            link_type: Link type to use for connections (default: Bond)
+            gen_angle: Whether to generate angles
+            gen_dihe: Whether to generate dihedrals
+            clear_existing: If True, clear existing angles/dihedrals before generating new ones.
+                          If False, only add angles/dihedrals that don't already exist.
+
+        Returns:
+            Topology object
+        """
+        # Use the generic ConnectivityMixin.get_topo method
+        topo = super().get_topo(entity_type=entity_type, link_type=link_type)
+
+        # Get the entity mapping from Topology
+        atoms = topo.idx_to_entity
+
+        # gen_angle and gen_dihe only work with Atom entities
+        if gen_angle and entity_type is not Atom:
+            raise ValueError("gen_angle=True requires entity_type=Atom")
+        if gen_dihe and entity_type is not Atom:
+            raise ValueError("gen_dihe=True requires entity_type=Atom")
+
         if gen_angle:
+            if clear_existing:
+                # Remove all existing angles
+                existing_angles = list(self.links.bucket(Angle))
+                if existing_angles:
+                    self.links.remove(*existing_angles)
+
+            # Build set of existing angle endpoints for deduplication
+            existing_angle_endpoints: set[tuple[Atom, Atom, Atom]] = set()
+            if not clear_existing:
+                for angle in self.links.bucket(Angle):
+                    existing_angle_endpoints.add((angle.itom, angle.jtom, angle.ktom))
+
+            # Add new angles, avoiding duplicates
             for angle in topo.angles:
-                angle = angle.tolist()
-                self.links.add(Angle(atoms[angle[0]], atoms[angle[1]], atoms[angle[2]]))
+                angle_indices = angle.tolist()
+                atom_i = atoms[angle_indices[0]]
+                atom_j = atoms[angle_indices[1]]
+                atom_k = atoms[angle_indices[2]]
+
+                # Check if this angle already exists
+                if (atom_i, atom_j, atom_k) not in existing_angle_endpoints:
+                    new_angle = Angle(atom_i, atom_j, atom_k)
+                    self.links.add(new_angle)
+                    existing_angle_endpoints.add((atom_i, atom_j, atom_k))
+
         if gen_dihe:
-            for dihe in topo.dihedrals:
-                dihe = dihe.tolist()
-                self.links.add(
-                    Dihedral(
-                        atoms[dihe[0]], atoms[dihe[1]], atoms[dihe[2]], atoms[dihe[3]]
+            if clear_existing:
+                # Remove all existing dihedrals
+                existing_dihedrals = list(self.links.bucket(Dihedral))
+                if existing_dihedrals:
+                    self.links.remove(*existing_dihedrals)
+
+            # Build set of existing dihedral endpoints for deduplication
+            existing_dihedral_endpoints: set[tuple[Atom, Atom, Atom, Atom]] = set()
+            if not clear_existing:
+                for dihedral in self.links.bucket(Dihedral):
+                    existing_dihedral_endpoints.add(
+                        (dihedral.itom, dihedral.jtom, dihedral.ktom, dihedral.ltom)
                     )
-                )
+
+            # Add new dihedrals, avoiding duplicates
+            for dihe in topo.dihedrals:
+                dihe_indices = dihe.tolist()
+                atom_i = atoms[dihe_indices[0]]
+                atom_j = atoms[dihe_indices[1]]
+                atom_k = atoms[dihe_indices[2]]
+                atom_l = atoms[dihe_indices[3]]
+
+                # Check if this dihedral already exists
+                if (atom_i, atom_j, atom_k, atom_l) not in existing_dihedral_endpoints:
+                    new_dihedral = Dihedral(atom_i, atom_j, atom_k, atom_l)
+                    self.links.add(new_dihedral)
+                    existing_dihedral_endpoints.add((atom_i, atom_j, atom_k, atom_l))
 
         return topo
 
@@ -581,106 +645,6 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
             if "type" not in dihedral_dict:
                 dihedral_dict["type"] = [1] * len(dihedrals_data)
 
-            dihedral_dict_np = {k: np.array(v) for k, v in dihedral_dict.items()}
-            frame["dihedrals"] = Block.from_dict(dihedral_dict_np)
-
-        return frame
-
-    def to_molecule_frame(self) -> "Frame":
-        """Convert to LAMMPS molecule template Frame format.
-
-        Converts this Atomistic structure into a Frame suitable for writing
-        as a LAMMPS molecule template file. The molecule template format
-        uses local atom IDs (starting from 1) and doesn't include box information.
-
-        Returns:
-            Frame with atoms, bonds, angles, and dihedrals blocks
-
-        Example:
-            >>> ch2 = CH2()
-            >>> frame = ch2.to_molecule_frame()
-            >>> writer = LammpsMoleculeWriter("ch2.mol")
-            >>> writer.write(frame)
-        """
-        import numpy as np
-
-        from .frame import Block, Frame
-
-        frame = Frame()
-
-        atoms_data = list(self.atoms)
-        bonds_data = list(self.bonds)
-        angles_data = list(self.angles)
-        dihedrals_data = list(self.dihedrals)
-
-        # Build atoms Block (molecule template format)
-        atom_dict = {
-            "id": [],
-            "type": [],
-            "q": [],
-            "x": [],
-            "y": [],
-            "z": [],
-        }
-
-        atom_id_to_index = {}
-
-        for i, atom in enumerate(atoms_data, 1):
-            atom_id_to_index[id(atom)] = i
-            atom_dict["id"].append(i)
-            atom_type = atom.get("type")
-            atom_dict["type"].append(atom_type)
-            charge = atom.get("charge", atom.get("q"))
-            atom_dict["q"].append(charge)
-            xyz = atom.get("xyz", atom.get("xyz", [0.0, 0.0, 0.0]))
-            atom_dict["x"].append(float(xyz[0]))
-            atom_dict["y"].append(float(xyz[1]))
-            atom_dict["z"].append(float(xyz[2]))
-
-        atom_dict_np = {k: np.array(v) for k, v in atom_dict.items()}
-        frame["atoms"] = Block.from_dict(atom_dict_np)
-
-        # Build connectivity blocks
-        if bonds_data:
-            bond_dict = {"id": [], "type": [], "atom1": [], "atom2": []}
-            for i, bond in enumerate(bonds_data, 1):
-                bond_dict["id"].append(i)
-                bond_type = bond.get("type")
-                bond_dict["type"].append(bond_type)
-                bond_dict["atom1"].append(atom_id_to_index[id(bond.itom)])
-                bond_dict["atom2"].append(atom_id_to_index[id(bond.jtom)])
-            bond_dict_np = {k: np.array(v) for k, v in bond_dict.items()}
-            frame["bonds"] = Block.from_dict(bond_dict_np)
-
-        if angles_data:
-            angle_dict = {"id": [], "type": [], "atom1": [], "atom2": [], "atom3": []}
-            for i, angle in enumerate(angles_data, 1):
-                angle_dict["id"].append(i)
-                angle_type = angle.get("type")
-                angle_dict["type"].append(angle_type)
-                angle_dict["atom1"].append(atom_id_to_index[id(angle.itom)])
-                angle_dict["atom2"].append(atom_id_to_index[id(angle.jtom)])
-                angle_dict["atom3"].append(atom_id_to_index[id(angle.ktom)])
-            angle_dict_np = {k: np.array(v) for k, v in angle_dict.items()}
-            frame["angles"] = Block.from_dict(angle_dict_np)
-
-        if dihedrals_data:
-            dihedral_dict = {
-                "id": [],
-                "type": [],
-                "atom1": [],
-                "atom2": [],
-                "atom3": [],
-                "atom4": [],
-            }
-            for i, dihedral in enumerate(dihedrals_data, 1):
-                dihedral_dict["id"].append(i)
-                dihedral_type = dihedral.get("type")
-                dihedral_dict["type"].append(dihedral_type)
-                dihedral_dict["atom1"].append(atom_id_to_index[id(dihedral.itom)])
-                dihedral_dict["atom2"].append(atom_id_to_index[id(dihedral.jtom)])
-                dihedral_dict["atom3"].append(atom_id_to_index[id(dihedral.ktom)])
-                dihedral_dict["atom4"].append(atom_id_to_index[id(dihedral.ltom)])
             dihedral_dict_np = {k: np.array(v) for k, v in dihedral_dict.items()}
             frame["dihedrals"] = Block.from_dict(dihedral_dict_np)
 

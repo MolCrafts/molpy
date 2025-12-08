@@ -2,7 +2,7 @@
 """Unit tests for Reacter base classes and core functionality.
 
 Tests cover:
-- ReactionProduct dataclass
+- ReactionResult dataclass
 - Reacter class initialization
 - Reacter.run() method with various scenarios
 - Error handling
@@ -10,11 +10,14 @@ Tests cover:
 
 import pytest
 
-from molpy import Atom, Atomistic, Bond
-from molpy.core.wrappers.monomer import Monomer
+from molpy.core.atomistic import Atom, Atomistic, Bond
 from molpy.reacter import (
-    ReactionProduct,
+    ProductInfo,
+    ReactantInfo,
+    ReactionMetadata,
+    ReactionResult,
     Reacter,
+    TopologyChanges,
     form_double_bond,
     form_single_bond,
     form_triple_bond,
@@ -26,32 +29,34 @@ from molpy.reacter import (
 
 
 class TestProductSet:
-    """Test ReactionProduct dataclass."""
+    """Test ReactionResult dataclass."""
 
-    def test_productset_creation(self):
-        """Test creating a ReactionProduct with product and notes."""
+    def test_reactionresult_creation(self):
+        """Test creating a ReactionResult with new structure."""
         asm = Atomistic()
         c = Atom(symbol="C")
         asm.add_entity(c)
 
-        notes = {
-            "reaction_name": "test_reaction",
-            "n_eliminated": 0,
-        }
+        reactant_info = ReactantInfo(left=asm, right=asm, port_L="1", port_R="2")
+        product_info = ProductInfo(product=asm)
+        topology_changes = TopologyChanges()
+        metadata = ReactionMetadata(reaction_name="test_reaction")
 
-        product = ReactionProduct(product=asm, notes=notes)
+        result = ReactionResult(
+            reactant_info=reactant_info,
+            product_info=product_info,
+            topology_changes=topology_changes,
+            metadata=metadata,
+        )
 
-        assert product.product is asm
-        assert product.notes == notes
-        assert product.notes["reaction_name"] == "test_reaction"
+        # Test new structure
+        assert result.product_info.product is asm
+        assert result.metadata.reaction_name == "test_reaction"
 
-    def test_productset_default_notes(self):
-        """Test ReactionProduct with default empty notes."""
-        asm = Atomistic()
-        product = ReactionProduct(product=asm)
-
-        assert product.product is asm
-        assert product.notes == {}
+        # Test backward compatibility properties
+        assert result.product is asm
+        assert result.reaction_name == "test_reaction"
+        assert result.reactants is asm
 
 
 class TestReacter:
@@ -92,21 +97,21 @@ class TestReacter:
 
     def test_reacter_run_basic(self):
         """Test basic Reacter.run() execution."""
-        # Create left monomer: C-H
-        mono_L = Monomer()
+        # Create left structure: C-H
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
         h_L = Atom(symbol="H")
-        mono_L.add_entity(c_L, h_L)
-        mono_L.add_link(Bond(c_L, h_L))
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L, h_L)
+        struct_L.add_link(Bond(c_L, h_L))
+        c_L["port"] = "1"
 
-        # Create right monomer: C-H
-        mono_R = Monomer()
+        # Create right structure: C-H
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
         h_R = Atom(symbol="H")
-        mono_R.add_entity(c_R, h_R)
-        mono_R.add_link(Bond(c_R, h_R))
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R, h_R)
+        struct_R.add_link(Bond(c_R, h_R))
+        c_R["port"] = "2"
 
         # Create reaction
         reacter = Reacter(
@@ -119,48 +124,48 @@ class TestReacter:
         )
 
         # Run reaction
-        product = reacter.run(mono_L, mono_R, port_L="1", port_R="2")
+        result = reacter.run(struct_L, struct_R, port_L="1", port_R="2")
 
-        # Validate ReactionProduct
-        assert isinstance(product, ReactionProduct)
-        assert isinstance(product.product, Atomistic)
+        # Validate ReactionResult
+        assert isinstance(result, ReactionResult)
+        assert isinstance(result.product, Atomistic)
 
         # Check atoms (2 C, 0 H)
-        atoms = list(product.product.atoms)
+        atoms = list(result.product.atoms)
         assert len(atoms) == 2
         assert all(a.get("symbol") == "C" for a in atoms)
 
         # Check bonds (1 C-C bond)
-        bonds = list(product.product.bonds)
+        bonds = list(result.product.bonds)
         assert len(bonds) == 1
         assert bonds[0].get("order") == 1
 
-        # Check notes
-        assert product.notes["reaction_name"] == "C-C_coupling"
-        assert product.notes["n_eliminated"] == 2
-        assert len(product.notes["eliminated_atoms"]) == 2
-        assert product.notes["port_name_L"] == "1"
-        assert product.notes["port_name_R"] == "2"
-        assert product.notes["port_L"] == c_L
-        assert product.notes["port_R"] == c_R
-        assert product.notes["requires_retype"] is True
+        # Check ReactionResult attributes
+        assert result.reaction_name == "C-C_coupling"
+        assert len(result.removed_atoms) == 2
+        # port_L and port_R are copied atoms, not originals
+        assert result.port_L is not None
+        assert result.port_R is not None
+        assert result.port_L.get("symbol") == "C"
+        assert result.port_R.get("symbol") == "C"
+        assert result.requires_retype is True
 
     def test_reacter_run_with_double_bond(self):
         """Test Reacter.run() with double bond formation."""
-        # Create monomers
-        mono_L = Monomer()
+        # Create structures
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
         h_L = Atom(symbol="H")
-        mono_L.add_entity(c_L, h_L)
-        mono_L.add_link(Bond(c_L, h_L))
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L, h_L)
+        struct_L.add_link(Bond(c_L, h_L))
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
         h_R = Atom(symbol="H")
-        mono_R.add_entity(c_R, h_R)
-        mono_R.add_link(Bond(c_R, h_R))
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R, h_R)
+        struct_R.add_link(Bond(c_R, h_R))
+        c_R["port"] = "2"
 
         # Create reaction with double bond
         reacter = Reacter(
@@ -172,30 +177,30 @@ class TestReacter:
             bond_former=form_double_bond,
         )
 
-        product = reacter.run(mono_L, mono_R, port_L="1", port_R="2")
+        result = reacter.run(struct_L, struct_R, port_L="1", port_R="2")
 
         # Check bond order
-        bonds = list(product.product.bonds)
+        bonds = list(result.product.bonds)
         assert len(bonds) == 1
         assert bonds[0].get("order") == 2
         assert bonds[0].get("kind") == "="
 
     def test_reacter_run_with_triple_bond(self):
         """Test Reacter.run() with triple bond formation."""
-        # Create monomers
-        mono_L = Monomer()
+        # Create structures
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
         h_L = Atom(symbol="H")
-        mono_L.add_entity(c_L, h_L)
-        mono_L.add_link(Bond(c_L, h_L))
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L, h_L)
+        struct_L.add_link(Bond(c_L, h_L))
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
         h_R = Atom(symbol="H")
-        mono_R.add_entity(c_R, h_R)
-        mono_R.add_link(Bond(c_R, h_R))
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R, h_R)
+        struct_R.add_link(Bond(c_R, h_R))
+        c_R["port"] = "2"
 
         # Create reaction with triple bond
         reacter = Reacter(
@@ -207,26 +212,26 @@ class TestReacter:
             bond_former=form_triple_bond,
         )
 
-        product = reacter.run(mono_L, mono_R, port_L="1", port_R="2")
+        result = reacter.run(struct_L, struct_R, port_L="1", port_R="2")
 
         # Check bond order
-        bonds = list(product.product.bonds)
+        bonds = list(result.product.bonds)
         assert len(bonds) == 1
         assert bonds[0].get("order") == 3
         assert bonds[0].get("kind") == "#"
 
     def test_reacter_run_no_leaving_groups(self):
         """Test Reacter.run() with no leaving groups."""
-        # Create monomers
-        mono_L = Monomer()
+        # Create structures
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
-        mono_L.add_entity(c_L)
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L)
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
-        mono_R.add_entity(c_R)
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R)
+        c_R["port"] = "2"
 
         # Addition reaction
         reacter = Reacter(
@@ -238,35 +243,34 @@ class TestReacter:
             bond_former=form_single_bond,
         )
 
-        product = reacter.run(mono_L, mono_R, port_L="1", port_R="2")
+        result = reacter.run(struct_L, struct_R, port_L="1", port_R="2")
 
         # No atoms removed
-        assert product.notes["n_eliminated"] == 0
-        assert len(product.notes["eliminated_atoms"]) == 0
+        assert len(result.removed_atoms) == 0
 
         # 2 atoms, 1 bond
-        assert len(list(product.product.atoms)) == 2
-        assert len(list(product.product.bonds)) == 1
+        assert len(list(result.product.atoms)) == 2
+        assert len(list(result.product.bonds)) == 1
 
     def test_reacter_run_with_all_H_removal(self):
         """Test Reacter.run() removing all H from one side."""
         # Create left: C-H-H-H
-        mono_L = Monomer()
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
         h_L1 = Atom(symbol="H")
         h_L2 = Atom(symbol="H")
         h_L3 = Atom(symbol="H")
-        mono_L.add_entity(c_L, h_L1, h_L2, h_L3)
-        mono_L.add_link(Bond(c_L, h_L1), Bond(c_L, h_L2), Bond(c_L, h_L3))
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L, h_L1, h_L2, h_L3)
+        struct_L.add_link(Bond(c_L, h_L1), Bond(c_L, h_L2), Bond(c_L, h_L3))
+        c_L["port"] = "1"
 
         # Create right: C-H
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
         h_R = Atom(symbol="H")
-        mono_R.add_entity(c_R, h_R)
-        mono_R.add_link(Bond(c_R, h_R))
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R, h_R)
+        struct_R.add_link(Bond(c_R, h_R))
+        c_R["port"] = "2"
 
         # Remove all H from left, one H from right
         reacter = Reacter(
@@ -278,33 +282,32 @@ class TestReacter:
             bond_former=form_single_bond,
         )
 
-        product = reacter.run(mono_L, mono_R, port_L="1", port_R="2")
+        result = reacter.run(struct_L, struct_R, port_L="1", port_R="2")
 
         # Should remove 4 H total
-        assert product.notes["n_eliminated"] == 4
-        assert len(product.notes["eliminated_atoms"]) == 4
+        assert len(result.removed_atoms) == 4
 
         # Only 2 C atoms remain
-        atoms = list(product.product.atoms)
+        atoms = list(result.product.atoms)
         assert len(atoms) == 2
         assert all(a.get("symbol") == "C" for a in atoms)
 
     def test_reacter_run_with_compute_topology_false(self):
         """Test Reacter.run() with compute_topology=False."""
-        # Create monomers
-        mono_L = Monomer()
+        # Create structures
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
         h_L = Atom(symbol="H")
-        mono_L.add_entity(c_L, h_L)
-        mono_L.add_link(Bond(c_L, h_L))
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L, h_L)
+        struct_L.add_link(Bond(c_L, h_L))
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
         h_R = Atom(symbol="H")
-        mono_R.add_entity(c_R, h_R)
-        mono_R.add_link(Bond(c_R, h_R))
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R, h_R)
+        struct_R.add_link(Bond(c_R, h_R))
+        c_R["port"] = "2"
 
         reacter = Reacter(
             name="test",
@@ -315,30 +318,30 @@ class TestReacter:
             bond_former=form_single_bond,
         )
 
-        product = reacter.run(
-            mono_L, mono_R, port_L="1", port_R="2", compute_topology=False
+        result = reacter.run(
+            struct_L, struct_R, port_L="1", port_R="2", compute_topology=False
         )
 
         # Should still work
-        assert isinstance(product, ReactionProduct)
-        assert len(list(product.product.atoms)) == 2
+        assert isinstance(result, ReactionResult)
+        assert len(list(result.product.atoms)) == 2
 
     def test_reacter_run_with_record_intermediates(self):
         """Test Reacter.run() with record_intermediates=True."""
-        # Create monomers
-        mono_L = Monomer()
+        # Create structures
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
         h_L = Atom(symbol="H")
-        mono_L.add_entity(c_L, h_L)
-        mono_L.add_link(Bond(c_L, h_L))
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L, h_L)
+        struct_L.add_link(Bond(c_L, h_L))
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
         h_R = Atom(symbol="H")
-        mono_R.add_entity(c_R, h_R)
-        mono_R.add_link(Bond(c_R, h_R))
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R, h_R)
+        struct_R.add_link(Bond(c_R, h_R))
+        c_R["port"] = "2"
 
         reacter = Reacter(
             name="test",
@@ -349,32 +352,30 @@ class TestReacter:
             bond_former=form_single_bond,
         )
 
-        product = reacter.run(
-            mono_L, mono_R, port_L="1", port_R="2", record_intermediates=True
+        result = reacter.run(
+            struct_L, struct_R, port_L="1", port_R="2", record_intermediates=True
         )
 
         # Check intermediates are recorded
-        assert "intermediates" in product.notes
-        intermediates = product.notes["intermediates"]
-        assert isinstance(intermediates, list)
-        assert len(intermediates) > 0
+        assert isinstance(result.intermediates, list)
+        assert len(result.intermediates) > 0
 
         # Check intermediate structure
-        for inter in intermediates:
+        for inter in result.intermediates:
             assert "step" in inter
             assert "description" in inter
 
     def test_reacter_run_missing_port_left(self):
         """Test Reacter.run() raises error when left port is missing."""
-        mono_L = Monomer()
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
-        mono_L.add_entity(c_L)
+        struct_L.add_entity(c_L)
         # Don't set port
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
-        mono_R.add_entity(c_R)
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R)
+        c_R["port"] = "2"
 
         reacter = Reacter(
             name="test",
@@ -386,18 +387,18 @@ class TestReacter:
         )
 
         with pytest.raises(ValueError, match="Port '1' not found"):
-            reacter.run(mono_L, mono_R, port_L="1", port_R="2")
+            reacter.run(struct_L, struct_R, port_L="1", port_R="2")
 
     def test_reacter_run_missing_port_right(self):
         """Test Reacter.run() raises error when right port is missing."""
-        mono_L = Monomer()
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
-        mono_L.add_entity(c_L)
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L)
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
-        mono_R.add_entity(c_R)
+        struct_R.add_entity(c_R)
         # Don't set port
 
         reacter = Reacter(
@@ -410,4 +411,4 @@ class TestReacter:
         )
 
         with pytest.raises(ValueError, match="Port '2' not found"):
-            reacter.run(mono_L, mono_R, port_L="1", port_R="2")
+            reacter.run(struct_L, struct_R, port_L="1", port_R="2")

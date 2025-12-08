@@ -22,30 +22,6 @@ hide:
 
 ---
 
-## Quick Example
-
-```python
-import molpy as mp
-
-# Create a water molecule
-mol = mp.Atomistic()
-mol.def_atom(symbol="O", xyz=[0.0, 0.0, 0.0])
-mol.def_atom(symbol="H", xyz=[0.0, 0.75, 0.5])
-mol.def_atom(symbol="H", xyz=[0.0, -0.75, 0.5])
-
-# Define a simulation box
-box = mp.Box.cubic(10.0)
-
-# Create a frame
-frame = mp.Frame()
-frame["atoms"] = mol.atoms
-frame.box = box
-
-print(f"System created with {frame.n_atoms} atoms in a {box.lengths} box.")
-```
-
----
-
 ## Features
 
 <div class="grid cards" markdown>
@@ -123,15 +99,6 @@ MolPy is designed for researchers and engineers who need **reliable**, **transpa
     - You want **full control** without framework lock-in
     - You're building **custom workflows** that don't fit traditional GUI tools
     - You need **interoperability** between multiple simulation engines
-
-- :microscope:{ .lg .middle } __Research-Ready__
-
-    ---
-
-    - Validated force field typing with literature references
-    - Reproducible workflows via explicit configuration
-    - Integration with Jupyter notebooks for interactive exploration
-    - Export results to standard formats (PDB, LAMMPS DATA, OpenMM XML)
 
 </div>
 

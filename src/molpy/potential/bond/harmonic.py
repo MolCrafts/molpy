@@ -1,14 +1,16 @@
 """
-Harmonic bond potential.
+Harmonic bond potential and force field styles.
 """
 
 import numpy as np
 from numpy.typing import NDArray
 
+from molpy.core.forcefield import AtomType, BondStyle, BondType
+
 from .base import BondPotential
 
 
-class Harmonic(BondPotential):
+class BondHarmonic(BondPotential):
     name = "harmonic"
     type = "bond"
 
@@ -83,3 +85,63 @@ class Harmonic(BondPotential):
         np.add.at(per_atom_forces, bond_idx[:, 1], forces.squeeze())
 
         return per_atom_forces
+
+
+# ===================================================================
+#               Force Field Style and Type Classes
+# ===================================================================
+
+
+class BondHarmonicType(BondType):
+    """Harmonic bond type with k and r0 parameters."""
+
+    def __init__(
+        self,
+        name: str,
+        itom: AtomType,
+        jtom: AtomType,
+        k: float,
+        r0: float,
+    ):
+        """
+        Args:
+            name: Type name
+            itom: First atom type
+            jtom: Second atom type
+            k: Force constant
+            r0: Equilibrium bond length
+        """
+        super().__init__(name, itom, jtom, k=k, r0=r0)
+
+
+class BondHarmonicStyle(BondStyle):
+    """Harmonic bond style with fixed name='harmonic'."""
+
+    def __init__(self):
+        super().__init__("harmonic")
+
+    def def_type(
+        self,
+        itom: AtomType,
+        jtom: AtomType,
+        k: float,
+        r0: float,
+        name: str = "",
+    ) -> BondHarmonicType:
+        """Define harmonic bond type.
+
+        Args:
+            itom: First atom type
+            jtom: Second atom type
+            k: Force constant
+            r0: Equilibrium bond length
+            name: Optional name (defaults to itom-jtom)
+
+        Returns:
+            BondHarmonicType instance
+        """
+        if not name:
+            name = f"{itom.name}-{jtom.name}"
+        bt = BondHarmonicType(name, itom, jtom, k, r0)
+        self.types.add(bt)
+        return bt

@@ -1,6 +1,9 @@
-?start: big_smiles big_smiles_molecule stochastic_object atom BOND_SYM ring_bond ALIPHATIC_ORGANIC AROMATIC_ORGANIC branch smiles bond_descriptor_symbol bond_descriptor_generation ladder_bond_descriptor non_covalent_bond_descriptor bond_descriptor simple_bond_descriptor terminal_bond_descriptor stochastic_generation stochastic_distribution dot_system_size dot_generation dot isotope ATOM_SYM AROMATIC_SYM bracket_atom flory_schulz uniform schulz_zimm log_normal gauss poisson
+?start: big_smiles big_smiles_molecule gbigsmiles_molecule stochastic_object atom BOND_SYM ring_bond ALIPHATIC_ORGANIC AROMATIC_ORGANIC branch smiles bond_descriptor_symbol bond_descriptor_generation ladder_bond_descriptor non_covalent_bond_descriptor bond_descriptor simple_bond_descriptor terminal_bond_descriptor stochastic_generation stochastic_distribution dot_system_size system_size dot_generation dot isotope ATOM_SYM AROMATIC_SYM bracket_atom flory_schulz uniform schulz_zimm log_normal gauss poisson
 
 big_smiles: big_smiles_molecule* big_smiles_fragment_definition*
+
+// Generative BigSMILES molecule with optional system size
+gbigsmiles_molecule: big_smiles_chain dot_generation? system_size?
 
 big_smiles_molecule: big_smiles_chain dot_generation?
 
@@ -106,6 +109,9 @@ _non_covalent_context: WS_INLINE* "|" WS_INLINE* _index_expression _non_covalent
 dot_system_size: "|" WS_INLINE* NUMBER WS_INLINE* "|"
 dot_generation: dot dot_system_size?
 dot: "."
+
+// System size for generative BigSMILES (e.g., |5e5|)
+system_size: "|" WS_INLINE* NUMBER WS_INLINE* "|"
 
 _number_list_repeat.-1: WS_INLINE+ NUMBER
 

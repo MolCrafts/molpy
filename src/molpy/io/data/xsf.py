@@ -104,15 +104,16 @@ class XsfReader(DataReader):
 
         # Create atoms block
         if atoms_data:
+            # Store coordinates as separate x, y, z fields only
+            coords_array = np.array([atom["xyz"] for atom in atoms_data])
             atoms_dict = {
                 "atomic_number": np.array(
                     [atom["atomic_number"] for atom in atoms_data]
                 ),
-                "xyz": np.array([atom["xyz"] for atom in atoms_data]),
                 "element": np.array([atom["element"] for atom in atoms_data]),
-                "x": np.array([atom["xyz"][0] for atom in atoms_data]),
-                "y": np.array([atom["xyz"][1] for atom in atoms_data]),
-                "z": np.array([atom["xyz"][2] for atom in atoms_data]),
+                "x": coords_array[:, 0],
+                "y": coords_array[:, 1],
+                "z": coords_array[:, 2],
             }
             frame["atoms"] = Block(atoms_dict)
 
@@ -244,16 +245,22 @@ class XsfWriter(DataWriter):
             if "atoms" in frame:
                 atoms = frame["atoms"]
                 atomic_numbers = atoms["atomic_number"]
-                xyz = atoms["xyz"]
+                x = atoms["x"]
+                y = atoms["y"]
+                z = atoms["z"]
                 n_atoms = len(atomic_numbers)
 
                 f.write("PRIMCOORD\n")
                 f.write(f"       {n_atoms} 1\n")
 
-                for i in range(n_atoms):
-                    an = atomic_numbers[i]
-                    x, y, z = xyz[i]
-                    f.write(f"{an:2d}    {x:12.8f}    {y:12.8f}    {z:12.8f}\n")
+                for idx in range(n_atoms):
+                    an = atomic_numbers[idx]
+                    x_val = x[idx]
+                    y_val = y[idx]
+                    z_val = z[idx]
+                    f.write(
+                        f"{an:2d}    {x_val:12.8f}    {y_val:12.8f}    {z_val:12.8f}\n"
+                    )
             else:
                 # Empty structure
                 f.write("PRIMCOORD\n")

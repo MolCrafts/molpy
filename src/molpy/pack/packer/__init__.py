@@ -1,33 +1,22 @@
 from typing import Any
 
+from .base import Packer
 from .packmol import Packmol
 
-__all__ = ["Packmol", "get_packer"]
+__all__ = ["Packmol", "Packer", "get_packer"]
 
 
-def get_packer(name: str, *args: Any, **kwargs: Any) -> Packmol:
+def get_packer(*args: Any, **kwargs: Any) -> Packmol:
     """
-    Factory function to get a packer by name.
+    Factory function to get a packer instance.
+
+    Currently only supports Packmol backend.
 
     Args:
-        name: Packer name ("packmol" or "nlopt")
-        *args: Positional arguments passed to packer constructor
-        **kwargs: Keyword arguments passed to packer constructor
+        *args: Positional arguments passed to Packmol constructor
+        **kwargs: Keyword arguments passed to Packmol constructor
 
     Returns:
-        Packer instance
-
-    Raises:
-        NotImplementedError: If packer name is not recognized
+        Packmol instance
     """
-    if name == "packmol":
-        return Packmol(*args, **kwargs)
-    elif name == "nlopt":
-        # Nlopt packer not yet implemented
-        raise NotImplementedError(
-            f"Packer '{name}' not yet implemented. Use 'packmol' instead."
-        )
-    else:
-        raise NotImplementedError(
-            f"Packer '{name}' not recognized. Available: 'packmol'"
-        )
+    return Packmol(*args, **kwargs)

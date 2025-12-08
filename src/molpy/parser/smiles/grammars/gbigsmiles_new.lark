@@ -1,0 +1,383 @@
+// ============================================================
+// gBigSMILES superset grammar
+// - Covers BigSMILES and gBigSMILES
+// - BigSMILES is the subset without any `|...|` annotations
+// ============================================================
+
+%import common.DIGIT
+%import common.INT
+%import common.NUMBER
+%import common.WS
+%import common.WS_INLINE
+
+// ------------------------------------------------------------
+// Top-level
+// ------------------------------------------------------------
+
+?start: big_smiles
+
+// A BigSMILES / gBigSMILES "file":
+// multiple molecules plus optional fragment definitions.
+big_smiles: big_smiles_molecule* big_smiles_fragment_definition*
+
+// A single (possibly polydisperse) molecule/system.
+//
+// This covers both:
+// - Plain BigSMILES molecules
+// - gBigSMILES with optional dot_generation
+big_smiles_molecule: (smiles | big_smiles_repeat)+ stochastic_generation? dot_generation? system_size?
+
+// A "repeat block" on the main chain: one or more stochastic objects,
+// optionally followed by a trailing smiles segment.
+big_smiles_repeat: stochastic_object+ smiles?
+
+// ------------------------------------------------------------
+// Atom, bond, SMILES core
+// ------------------------------------------------------------
+
+// Plain SMILES-like atom
+atom: bracket_atom
+    | aliphatic_organic
+    | aromatic_organic
+    | "*"
+
+// Bracket atom with optional decorations
+bracket_atom: "[" isotope? atom_symbol chiral? h_count? atom_charge? atom_class? "]"
+
+atom_symbol: element_symbol
+           | aromatic_symbol
+           | "*"
+
+isotope: INT
+
+h_count: "H"
+       | "H" INT
+
+atom_charge: "-" INT?
+           | "+" INT?
+           | "--"
+           | "++"
+
+atom_class: ":" INT
+
+// Bond symbols (covalent)
+bond_symbol: "-"
+           | "="
+           | "#"
+           | "$"
+           | ":"
+           | "/"
+           | "\\"
+
+// Ring closures
+ring_bond: bond_symbol? DIGIT
+         | bond_symbol? "%" DIGIT? DIGIT
+
+// ------------------------------------------------------------
+// Atom stand-ins (BigSMILES extensions)
+// ------------------------------------------------------------
+
+// Atom stand-in (可以是普通 atom、stochastic_object、bond_descriptor 或 fragment 引用)
+_atom_stand_in: atom
+               | stochastic_object
+               | bond_descriptor
+               | big_smiles_fragment_declaration
+
+// Branched atom: stand-in + ring closures + branches
+branched_atom: _atom_stand_in ring_bond* branch*
+
+// Branch: a side chain (必须非空)
+branch: "(" bond_symbol? smiles ")"  // 简化为 branch 中只放 smiles 链
+
+// Atom assembly and SMILES chain
+atom_assembly: bond_symbol? branched_atom
+
+smiles: branched_atom atom_assembly*
+
+// ------------------------------------------------------------
+// BigSMILES fragments
+// ------------------------------------------------------------
+
+// Fragment name: printable characters except a few
+_printable_character: /['?'-Z]/
+                    | /['^'-z]/
+                    | /[!-']/
+                    | /[*-;]/
+                    | "~"
+
+big_smiles_fragment_name: _printable_character+
+
+// Fragment declaration used as atom stand-in: [#Name]
+big_smiles_fragment_declaration: "[#" big_smiles_fragment_name "]"
+
+// Fragment definition: .{#Name= big_smiles_molecule+ }
+big_smiles_fragment_definition: dot "{#" big_smiles_fragment_name "=" big_smiles_molecule+ "}"
+
+// ------------------------------------------------------------
+// Bond descriptors (covalent + non-covalent + ladder)
+// ------------------------------------------------------------
+
+bond_descriptor_symbol: "$"
+                      | ">"
+                      | "<"
+
+bond_descriptor_symbol_idx: bond_descriptor_symbol INT?
+
+// gBigSMILES generation annotation on a bond descriptor: |w| or |w1 w2 ...|
+bond_descriptor_generation: "|" WS_INLINE* NUMBER WS_INLINE* "|"
+                          | "|" WS_INLINE* NUMBER number_list_repeat* WS_INLINE* "|"
+
+number_list_repeat: WS_INLINE+ NUMBER
+
+// Ambi (covalent / non-covalent) descriptor core
+inner_bond_descriptor: bond_descriptor_symbol_idx bond_descriptor_generation?
+
+inner_non_covalent_descriptor: bond_descriptor_symbol ":" INT? non_covalent_context?
+inner_ambi_covalent_descriptor: inner_bond_descriptor
+                              | inner_non_covalent_descriptor
+
+// Simple / non-covalent / ladder descriptors
+simple_bond_descriptor: "[" inner_bond_descriptor "]"
+non_covalent_bond_descriptor: "[" inner_non_covalent_descriptor "]"
+
+ladder_bond_descriptor: "[" inner_ambi_covalent_descriptor simple_bond_descriptor INT? "]"
+                      | "[" inner_ambi_covalent_descriptor non_covalent_bond_descriptor INT? "]"
+
+// Bond descriptor node (structural + optional gBigSMILES generation)
+// Priority: bond_descriptor should be tried before terminal_bond_descriptor
+// when parsing inside repeat units
+bond_descriptor: simple_bond_descriptor
+               | ladder_bond_descriptor
+               | non_covalent_bond_descriptor
+
+// Terminal bond descriptor (used at stochastic_object boundaries)
+// Note: This has the same syntax as simple_bond_descriptor, but is only used
+// at the boundaries of stochastic_object. Inside repeat units, [>] and [<]
+// are parsed as bond_descriptors (via simple_bond_descriptor).
+// Lower priority than bond_descriptor to allow [>] and [<] inside repeat units
+terminal_bond_descriptor.-1: "[" bond_descriptor_symbol_idx? bond_descriptor_generation? "]"
+
+// ------------------------------------------------------------
+// Non-covalent context (for advanced descriptors)
+// ------------------------------------------------------------
+
+_unary_index_operator: "!"
+_binary_index_operator: "~" | "&"
+
+_index_statement: INT
+                | branched_index_expression
+                | unbranched_index_expression
+
+branched_index_expression: "(" WS_INLINE* _index_statement WS_INLINE* _binary_index_operator WS_INLINE* _index_statement WS_INLINE* ")"
+unbranched_index_expression: _index_statement WS_INLINE* _binary_index_operator WS_INLINE* _index_statement
+
+_index_expression: _unary_index_operator? WS_INLINE* _index_statement
+
+_non_covalent_key_value_pair: WS_INLINE* "," WS_INLINE* _printable_character+ "=" _printable_character+ WS_INLINE*
+
+non_covalent_context: WS_INLINE* "|" WS_INLINE* _index_expression _non_covalent_key_value_pair*
+
+// ------------------------------------------------------------
+// Stochastic objects + distributions
+// ------------------------------------------------------------
+
+// Distribution functions for chain length / MWD
+flory_schulz: "flory_schulz(" WS_INLINE* NUMBER WS_INLINE* ","? WS_INLINE* ")"
+schulz_zimm: "schulz_zimm(" WS_INLINE* NUMBER WS_INLINE* "," WS_INLINE* NUMBER WS_INLINE* ")"
+gauss: "gauss(" WS_INLINE* NUMBER WS_INLINE* "," WS_INLINE* NUMBER WS_INLINE* ")"
+uniform: "uniform(" WS_INLINE* NUMBER WS_INLINE* "," WS_INLINE* NUMBER WS_INLINE* ")"
+log_normal: "log_normal(" WS_INLINE* NUMBER WS_INLINE* "," WS_INLINE* NUMBER WS_INLINE* ")"
+poisson: "poisson(" WS_INLINE* NUMBER WS_INLINE* ","? WS_INLINE* ")"
+
+stochastic_distribution: flory_schulz
+                       | schulz_zimm
+                       | gauss
+                       | uniform
+                       | log_normal
+                       | poisson
+
+// gBigSMILES distribution annotation after a stochastic object: {...}|dist(...)|
+stochastic_generation: "|" stochastic_distribution "|"
+
+// Repeat units and end groups inside stochastic_object
+// Note: repeat units can contain bond_descriptors (like [>] or [<]) as part of the smiles
+// These are NOT terminal_bond_descriptors - they're part of the repeat unit structure
+_repeat_units: (smiles | big_smiles_molecule) monomer_list*
+monomer_list: WS_INLINE* "," WS_INLINE* (smiles | big_smiles_molecule)
+
+_end_group: ";" WS_INLINE* (smiles | big_smiles_molecule) monomer_list*
+
+// Stochastic object itself
+// Format: {[<] repeat_unit1, repeat_unit2, ... [>]}
+// OR: {[<] repeat_unit1[>], repeat_unit2[>], ... } (where [>] inside repeat units are bond_descriptors)
+// The terminal_bond_descriptors are ONLY at the boundaries (after { and before })
+// Any [<] or [>] inside repeat units are bond_descriptors, not terminal_bond_descriptors
+// Note: The grammar allows [>] or [<] inside repeat units as bond_descriptors
+// The parser will correctly distinguish them from terminal_bond_descriptors based on context
+// The second terminal_bond_descriptor is optional - if the last repeat unit ends with [>],
+// it can be either a bond_descriptor (part of the repeat unit) or terminal_bond_descriptor
+stochastic_object: "{" WS_INLINE* terminal_bond_descriptor WS_INLINE* _repeat_units WS_INLINE* _end_group? WS_INLINE* terminal_bond_descriptor? "}" stochastic_generation?
+
+// ------------------------------------------------------------
+// Dot generation (system-level annotation)
+// ------------------------------------------------------------
+
+dot_system_size: "|" WS_INLINE* NUMBER WS_INLINE* "|"
+dot_generation: dot dot_system_size?
+dot: "."
+
+system_size: "|" WS_INLINE* NUMBER WS_INLINE* "|"
+
+// ------------------------------------------------------------
+// Atomic symbols / chirality / elements
+// ------------------------------------------------------------
+
+aliphatic_organic: "B"
+                 | "C"
+                 | "N"
+                 | "O"
+                 | "S"
+                 | "P"
+                 | "F"
+                 | "Cl"
+                 | "Br"
+                 | "I"
+
+aromatic_organic: "b"
+                | "c"
+                | "n"
+                | "o"
+                | "s"
+                | "p"
+
+aromatic_symbol: aromatic_organic
+               | "se"
+               | "as"
+
+chiral: "@"
+      | "@@"
+      | "@TH1"
+      | "@TH2"
+      | "@AL1"
+      | "@AL2"
+      | "@SP1"
+      | "@SP2"
+      | "@SP3"
+      | "@TB" INT
+      | "@OH" INT
+
+// Full list of element symbols (upper-case, terminal-like)
+element_symbol: "H"
+              | "He"
+              | "Li"
+              | "Be"
+              | "B"
+              | "C"
+              | "N"
+              | "O"
+              | "F"
+              | "Ne"
+              | "Na"
+              | "Mg"
+              | "Al"
+              | "Si"
+              | "P"
+              | "S"
+              | "Cl"
+              | "Ar"
+              | "K"
+              | "Ca"
+              | "Sc"
+              | "Ti"
+              | "V"
+              | "Cr"
+              | "Mn"
+              | "Fe"
+              | "Co"
+              | "Ni"
+              | "Cu"
+              | "Zn"
+              | "Ga"
+              | "Ge"
+              | "As"
+              | "Se"
+              | "Br"
+              | "Kr"
+              | "Rb"
+              | "Sr"
+              | "Y"
+              | "Zr"
+              | "Nb"
+              | "Mo"
+              | "Tc"
+              | "Ru"
+              | "Rh"
+              | "Pd"
+              | "Ag"
+              | "Cd"
+              | "In"
+              | "Sn"
+              | "Sb"
+              | "Te"
+              | "I"
+              | "Xe"
+              | "Cs"
+              | "Ba"
+              | "Hf"
+              | "Ta"
+              | "W"
+              | "Re"
+              | "Os"
+              | "Ir"
+              | "Pt"
+              | "Au"
+              | "Hg"
+              | "Tl"
+              | "Pb"
+              | "Bi"
+              | "Po"
+              | "At"
+              | "Rn"
+              | "Fr"
+              | "Ra"
+              | "Rf"
+              | "Db"
+              | "Sg"
+              | "Bh"
+              | "Hs"
+              | "Mt"
+              | "Ds"
+              | "Rg"
+              | "Cn"
+              | "Fl"
+              | "Lv"
+              | "La"
+              | "Ce"
+              | "Pr"
+              | "Nd"
+              | "Pm"
+              | "Sm"
+              | "Eu"
+              | "Gd"
+              | "Tb"
+              | "Dy"
+              | "Ho"
+              | "Er"
+              | "Tm"
+              | "Yb"
+              | "Lu"
+              | "Ac"
+              | "Th"
+              | "Pa"
+              | "U"
+              | "Np"
+              | "Pu"
+              | "Am"
+              | "Cm"
+              | "Bk"
+              | "Cf"
+              | "Es"
+              | "Fm"
+              | "Md"
+              | "No"
+              | "Lr"

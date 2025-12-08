@@ -40,17 +40,6 @@ def build_mol_graph(
         - is_aromatic: bool
         - is_in_ring: bool
     """
-    from molpy.core.atomistic import Atomistic
-    from molpy.core.wrappers.base import Wrapper
-
-    # Unwrap if it's a Wrapper
-    if isinstance(structure, Wrapper):
-        structure = structure.unwrap()
-
-    if not isinstance(structure, Atomistic):
-        raise TypeError(
-            f"Expected Atomistic or Wrapper[Atomistic], got {type(structure)}"
-        )
 
     atoms = list(structure.atoms)
     bonds = list(structure.bonds)

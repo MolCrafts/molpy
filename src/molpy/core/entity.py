@@ -399,7 +399,9 @@ class SpatialMixin:
 
     def move(self, delta: list[float], *, entity_type: type[Entity]) -> Self:
         for e in self.entities.bucket(entity_type):
-            e["xyz"] = _vec_add(e.get("xyz", [0, 0, 0]), delta)
+            e["x"] = e["x"] + delta[0]
+            e["y"] = e["y"] + delta[1]
+            e["z"] = e["z"] + delta[2]
         return self
 
     def rotate(
@@ -413,9 +415,11 @@ class SpatialMixin:
         k = _unit(axis)
         o = [0.0, 0.0, 0.0] if about is None else about
         for e in self.entities.bucket(entity_type):
-            xyz = e.get("xyz")
-            if isinstance(xyz, list) and len(xyz) == 3:
-                e["xyz"] = _rodrigues_rotate(xyz, k, angle, o)
+            xyz = [e["x"], e["y"], e["z"]]
+            xyz = _rodrigues_rotate(xyz, k, angle, o)
+            e["x"] = xyz[0]
+            e["y"] = xyz[1]
+            e["z"] = xyz[2]
         return self
 
     def scale(
@@ -427,10 +431,12 @@ class SpatialMixin:
     ) -> Self:
         o = [0.0, 0.0, 0.0] if about is None else about
         for e in self.entities.bucket(entity_type):
-            xyz = e.get("xyz")
-            if isinstance(xyz, list) and len(xyz) == 3:
-                v = _vec_sub(xyz, o)
-                e["xyz"] = _vec_add(o, _vec_scale(v, factor))
+            xyz = [e["x"], e["y"], e["z"]]
+            xyz = _vec_sub(xyz, o)
+            xyz = _vec_add(o, _vec_scale(xyz, factor))
+            e["x"] = xyz[0]
+            e["y"] = xyz[1]
+            e["z"] = xyz[2]
         return self
 
     def align(
@@ -443,8 +449,8 @@ class SpatialMixin:
         flip: bool = False,
         entity_type: type[Entity],
     ) -> Self:
-        pa = a.get("xyz")
-        pb = b.get("xyz")
+        pa = [a["x"], a["y"], a["z"]]
+        pb = [b["x"], b["y"], b["z"]]
         if not (
             isinstance(pa, list)
             and isinstance(pb, list)
@@ -470,16 +476,14 @@ class SpatialMixin:
 
                 angle = atan2(na, _dot(va, vb))
                 for e in ents:
-                    xyz = e.get("xyz")
-                    if isinstance(xyz, list) and len(xyz) == 3:
-                        e["xyz"] = _rodrigues_rotate(
-                            xyz, _vec_scale(axis, 1.0 / na), angle, pa
-                        )
+                    xyz = [e["x"], e["y"], e["z"]]
+                    xyz = _rodrigues_rotate(xyz, _vec_scale(axis, 1.0 / na), angle, pa)
+                    e["x"] = xyz[0]
+                    e["y"] = xyz[1]
+                    e["z"] = xyz[2]
         # translate so that a -> b
-        new_pa = a.get("xyz")
-        if isinstance(new_pa, list) and len(new_pa) == 3:
-            delta = _vec_sub(pb, new_pa)
-            self.move(delta, entity_type=entity_type)
+        delta = _vec_sub(pb, pa)
+        self.move(delta, entity_type=entity_type)
 
         return self
 
@@ -567,3 +571,236 @@ class ConnectivityMixin:
                     if ep is not entity:
                         neighbors.append(ep)  # type: ignore[arg-type]
         return neighbors
+
+    def get_topo(
+        self,
+        entity_type: type[Entity] = Entity,
+        link_type: type[Link] = Link,
+    ) -> "Topology":
+        """将结构导出为拓扑图。
+
+        Args:
+            entity_type: 要包含在拓扑图中的实体类型
+            link_type: 用于构建连接的链接类型
+
+        Returns:
+            Topology: igraph.Graph 对象，包含实体到顶点的映射信息
+
+        Note:
+            返回的 Topology 图的顶点顺序与 entities[entity_type] 的顺序一致。
+            可以使用 `entity_to_idx` 和 `idx_to_entity` 属性访问映射关系。
+        """
+        from molpy.core.topology import Topology
+
+        # 收集所有相关实体
+        entities_list = list(self.entities.bucket(entity_type))
+        entity_to_idx: dict[Entity, int] = {
+            ent: i for i, ent in enumerate(entities_list)
+        }
+        entity_set = set(entities_list)
+
+        # 构建边列表（只考虑连接两个端点的链接）
+        edges: list[tuple[int, int]] = []
+        for link in self.links.bucket(link_type):  # type: ignore[arg-type]
+            endpoints = link.endpoints
+            # 只处理包含两个端点且都在实体集合中的链接
+            if len(endpoints) >= 2:
+                ep1, ep2 = endpoints[0], endpoints[1]
+                if ep1 in entity_set and ep2 in entity_set:
+                    idx1 = entity_to_idx[ep1]
+                    idx2 = entity_to_idx[ep2]
+                    if idx1 != idx2:  # 避免自环
+                        edges.append((idx1, idx2))
+
+        # 创建拓扑图，使用正式成员存储映射关系
+        topo = Topology(
+            n=len(entities_list),
+            edges=edges,
+            directed=False,
+            entity_to_idx=entity_to_idx,
+            idx_to_entity=entities_list,
+        )
+
+        return topo
+
+    def get_topo_neighbors(
+        self,
+        entity: Entity,
+        radius: int = 1,
+        entity_type: type[Entity] = Entity,
+        link_type: type[Link] = Link,
+    ) -> list[Entity]:
+        """获取指定实体在给定拓扑半径内的所有邻居。
+
+        Args:
+            entity: 中心实体
+            radius: 拓扑半径（跳数）
+            entity_type: 要考虑的实体类型
+            link_type: 用于拓扑连接的链接类型
+
+        Returns:
+            list[Entity]: 在半径内的所有邻居实体列表（包括自身，如果半径>=0）
+        """
+        topo = self.get_topo(entity_type=entity_type, link_type=link_type)
+
+        # 获取实体在图中的索引
+        entity_to_idx: dict[Entity, int] = topo.entity_to_idx
+        if entity not in entity_to_idx:
+            return []
+
+        center_idx = entity_to_idx[entity]
+
+        # 获取距离
+        distances = topo.distances(source=[center_idx])[0]
+
+        # 收集在半径内的所有实体
+        neighbors: list[Entity] = []
+        idx_to_entity: list[Entity] = topo.idx_to_entity
+        for i, dist in enumerate(distances):
+            if dist <= radius and dist < float("inf"):
+                neighbors.append(idx_to_entity[i])
+
+        return neighbors
+
+    def get_topo_distances(
+        self,
+        source: Entity,
+        entity_type: type[Entity] = Entity,
+        link_type: type[Link] = Link,
+    ) -> dict[Entity, int]:
+        """获取从源实体到所有其他实体的拓扑距离。
+
+        Args:
+            source: 源实体
+            entity_type: 要考虑的实体类型
+            link_type: 用于拓扑连接的链接类型
+
+        Returns:
+            dict[Entity, int]: 从源实体到每个实体的拓扑距离字典。
+                如果实体不可达，距离为无穷大（float('inf')）。
+        """
+        topo = self.get_topo(entity_type=entity_type, link_type=link_type)
+
+        # 获取源实体在图中的索引
+        entity_to_idx: dict[Entity, int] = topo.entity_to_idx
+        if source not in entity_to_idx:
+            return {}
+
+        source_idx = entity_to_idx[source]
+
+        # 计算距离
+        distances = topo.distances(source=[source_idx])[0]
+
+        # 构建距离字典
+        idx_to_entity: list[Entity] = topo.idx_to_entity
+        result: dict[Entity, int] = {}
+        for i, dist in enumerate(distances):
+            if dist < float("inf"):
+                result[idx_to_entity[i]] = int(dist)
+
+        return result
+
+    def extract_subgraph(
+        self,
+        center_entities: Iterable[Entity],
+        radius: int,
+        entity_type: type[Entity] = Entity,
+        link_type: type[Link] = Link,
+    ) -> tuple["Struct", list[Entity]]:
+        """提取在指定拓扑半径内的子图。
+
+        Args:
+            center_entities: 中心实体集合
+            radius: 拓扑半径（跳数）
+            entity_type: 要考虑的实体类型
+            link_type: 用于拓扑连接的链接类型
+
+        Returns:
+            tuple[Struct, list[Entity]]: 包含：
+                - subgraph: 提取的子图（新的 Struct 实例）
+                - edge_entities: 边界实体列表（在原图中有邻居但不在子图中的实体）
+
+        Note:
+            子图包含所有在半径内的实体和它们之间的链接。
+            边界实体是指在原图中还有邻居不在子图里的实体。
+        """
+        center_entities_list = list(center_entities)
+        topo = self.get_topo(entity_type=entity_type, link_type=link_type)
+
+        entity_to_idx: dict[Entity, int] = topo.entity_to_idx
+        idx_to_entity: list[Entity] = topo.idx_to_entity
+
+        # 获取中心实体的索引
+        center_indices: list[int] = []
+        for cent in center_entities_list:
+            if cent in entity_to_idx:
+                center_indices.append(entity_to_idx[cent])
+
+        if not center_indices:
+            # 如果没有有效的中心实体，返回空子图
+            from copy import deepcopy
+
+            new_struct = type(self)()
+            return new_struct, []
+
+        # 收集在半径内的所有实体索引
+        selected_indices: set[int] = set()
+        for c in center_indices:
+            distances = topo.distances(source=[c])[0]
+            for i, d in enumerate(distances):
+                if d <= radius and d < float("inf"):
+                    selected_indices.add(i)
+
+        selected_indices_list = sorted(selected_indices)
+        selected_entities = [idx_to_entity[i] for i in selected_indices_list]
+        selected_entities_set = set(selected_entities)
+
+        # 找到边界实体（在子图中有邻居不在子图里的实体）
+        selected_indices_set = set(selected_indices)
+        edge_indices: set[int] = set()
+        for i in selected_indices:
+            for j in topo.neighbors(i):
+                if j not in selected_indices_set:
+                    edge_indices.add(i)
+                    break
+
+        edge_entities = [idx_to_entity[i] for i in sorted(edge_indices)]
+
+        # 创建新的 Struct 实例
+        from copy import deepcopy
+
+        new_struct = type(self)()
+        new_struct._props = deepcopy(self._props)
+
+        # 添加选中的实体并创建实体映射（原实体 -> 克隆实体）
+        entity_map: dict[Entity, Entity] = {}
+        cloned_entities_list: list[Entity] = []
+        for ent in selected_entities:
+            # 深拷贝实体
+            cloned_ent = ent.__class__(deepcopy(getattr(ent, "data", {})))
+            new_struct.entities.add(cloned_ent)
+            entity_map[ent] = cloned_ent
+            cloned_entities_list.append(cloned_ent)
+
+        # 添加在子图中的链接
+        for link in self.links.bucket(link_type):  # type: ignore[arg-type]
+            endpoints = link.endpoints
+            if len(endpoints) >= 2:
+                # 检查链接的所有端点是否都在子图中
+                if all(ep in selected_entities_set for ep in endpoints):
+                    # 创建链接的克隆，映射端点到新实体
+                    cloned_eps = [entity_map[ep] for ep in endpoints]
+                    attrs = deepcopy(getattr(link, "data", {}))
+                    lcls: type[Link] = type(link)
+                    try:
+                        new_link = lcls(*cloned_eps, **attrs)
+                    except TypeError:
+                        new_link = lcls(cloned_eps, **attrs)
+                    new_struct.links.add(new_link)
+
+        # 更新边界实体列表为克隆后的实体
+        cloned_edge_entities = [
+            entity_map[ep] for ep in edge_entities if ep in entity_map
+        ]
+
+        return new_struct, cloned_edge_entities

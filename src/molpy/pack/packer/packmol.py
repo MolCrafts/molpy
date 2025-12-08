@@ -193,8 +193,8 @@ class Packmol(Packer):
             struct_file = workdir / f"structure_{i}.pdb"
             mp_io.write_pdb(struct_file, frame)
 
-            # Add structure block
-            script.append(f"structure {struct_file}")
+            # Add structure block - use relative path (filename only) since packmol runs in workdir
+            script.append(f"structure {struct_file.name}")
             script.append(f"  number {number}")
             constraint_def = self._constraint_to_packmol(constraint)
             if constraint_def:
@@ -347,8 +347,18 @@ class Packmol(Packer):
     def _build_final_frame(
         self, targets: list[Target], optimized_frame: Frame
     ) -> Frame:
-        """Build final frame from packing results."""
-        # Count atoms per instance
+        """
+        Build final frame by expanding target frames according to instance counts,
+        then writing optimized coordinates back.
+
+        Process:
+        1. Expand each target frame by its number of instances
+        2. Offset topology indices (bonds, angles, dihedrals) for each instance
+        3. Concatenate all expanded frames
+        4. Write optimized coordinates back to the expanded frame
+        """
+        # Step 1: Expand target frames according to instance counts
+        # Count atoms per instance to compute offsets
         target_atoms_count = []
         for target in targets:
             atoms_block = target.frame["atoms"]
@@ -356,71 +366,94 @@ class Packmol(Packer):
             for _ in range(target.number):
                 target_atoms_count.append(n_atoms)
 
-        # Compute cumulative offsets
+        # Compute cumulative offsets for atom indices
         atom_offsets = np.concatenate([[0], np.cumsum(target_atoms_count)])
 
-        # Prepare lists for each block
+        # Prepare lists for collecting expanded blocks
         all_atoms = []
         all_bonds = []
         all_angles = []
         all_dihedrals = []
 
+        # Counters for topology IDs
         current_instance = 0
         bond_id_counter = 0
         angle_id_counter = 0
         dihedral_id_counter = 0
 
+        # Step 2: Expand each target frame by its number of instances
         for target in targets:
             for _inst in range(target.number):
                 offset = atom_offsets[current_instance]
-                frame_dict = {}
 
-                # Process atoms block
+                # Expand atoms block - preserve ALL fields including type and charge
                 atoms = target.frame["atoms"].copy()
                 n = len(atoms.get("id", atoms.get("xyz", [])))
 
+                # Set molecule ID for this instance
                 atoms["mol"] = np.full(n, current_instance + 1, dtype=int)
 
-                # Reassign atom IDs sequentially
+                # Reassign atom IDs sequentially (1-indexed)
                 if "id" in atoms:
                     atoms["id"] = np.arange(offset + 1, offset + n + 1, dtype=int)
 
-                frame_dict["atoms"] = atoms
+                # Ensure charge field is available as 'q' for LAMMPS compatibility
+                # LAMMPS uses 'q' but we store as 'charge' in atoms
+                if "charge" in atoms and "q" not in atoms:
+                    atoms["q"] = atoms["charge"]
+                elif "q" in atoms and "charge" not in atoms:
+                    atoms["charge"] = atoms["q"]
 
-                # Process bonds
+                all_atoms.append(atoms)
+
+                # Expand bonds block
                 if "bonds" in target.frame:
                     bonds = target.frame["bonds"].copy()
-                    m = len(bonds.get("id", bonds.get("i", [])))
-                    # IDs
+                    m = len(bonds.get("id", bonds.get("i", bonds.get("atom_i", []))))
+
+                    # Reassign bond IDs sequentially
                     if "id" in bonds:
                         bonds["id"] = np.arange(
                             bond_id_counter + 1, bond_id_counter + m + 1, dtype=int
                         )
                         bond_id_counter += m
-                    # Endpoints
-                    for end in ("i", "j"):
+
+                    # Offset atom indices in bonds
+                    for end in ("i", "j", "atom_i", "atom_j"):
                         if end in bonds:
                             bonds[end] = bonds[end] + offset
-                    frame_dict["bonds"] = bonds
 
-                # Process angles
+                    all_bonds.append(bonds)
+
+                # Expand angles block
                 if "angles" in target.frame:
                     angles = target.frame["angles"].copy()
-                    p = len(angles.get("id", angles.get("i", [])))
+                    p = len(angles.get("id", angles.get("i", angles.get("atom_i", []))))
+
+                    # Reassign angle IDs sequentially
                     if "id" in angles:
                         angles["id"] = np.arange(
                             angle_id_counter + 1, angle_id_counter + p + 1, dtype=int
                         )
                         angle_id_counter += p
-                    for end in ("i", "j", "k"):
+
+                    # Offset atom indices in angles
+                    for end in ("i", "j", "k", "atom_i", "atom_j", "atom_k"):
                         if end in angles:
                             angles[end] = angles[end] + offset
-                    frame_dict["angles"] = angles
 
-                # Process dihedrals
+                    all_angles.append(angles)
+
+                # Expand dihedrals block
                 if "dihedrals" in target.frame:
                     dihedrals = target.frame["dihedrals"].copy()
-                    q = len(dihedrals.get("id", dihedrals.get("i", [])))
+                    q = len(
+                        dihedrals.get(
+                            "id", dihedrals.get("i", dihedrals.get("atom_i", []))
+                        )
+                    )
+
+                    # Reassign dihedral IDs sequentially
                     if "id" in dihedrals:
                         dihedrals["id"] = np.arange(
                             dihedral_id_counter + 1,
@@ -428,42 +461,87 @@ class Packmol(Packer):
                             dtype=int,
                         )
                         dihedral_id_counter += q
-                    for end in ("i", "j", "k", "l"):
+
+                    # Offset atom indices in dihedrals
+                    for end in (
+                        "i",
+                        "j",
+                        "k",
+                        "l",
+                        "atom_i",
+                        "atom_j",
+                        "atom_k",
+                        "atom_l",
+                    ):
                         if end in dihedrals:
                             dihedrals[end] = dihedrals[end] + offset
-                    frame_dict["dihedrals"] = dihedrals
 
-                # Collect instance frame
-                all_atoms.append(frame_dict["atoms"])
-                if "bonds" in frame_dict:
-                    all_bonds.append(frame_dict["bonds"])
-                if "angles" in frame_dict:
-                    all_angles.append(frame_dict["angles"])
-                if "dihedrals" in frame_dict:
-                    all_dihedrals.append(frame_dict["dihedrals"])
+                    all_dihedrals.append(dihedrals)
 
                 current_instance += 1
 
-        # Helper to concatenate dicts of arrays
+        # Step 3: Concatenate all expanded blocks
         def concat_blocks(blocks):
+            """Concatenate list of block dicts into a single block dict, preserving all fields."""
             if not blocks:
                 return {}
-            keys = blocks[0].keys()
+            # Collect all keys from all blocks (in case some blocks have different fields)
+            all_keys = set()
+            for blk in blocks:
+                all_keys.update(blk.keys())
+
             combined = {}
-            for key in keys:
-                combined[key] = np.concatenate([blk[key] for blk in blocks], axis=0)
+            for key in all_keys:
+                # Concatenate arrays for this key from all blocks
+                arrays = []
+                for blk in blocks:
+                    if key in blk:
+                        arrays.append(blk[key])
+                    else:
+                        # If a block doesn't have this key, use None or default value
+                        # This shouldn't happen if all blocks come from the same source
+                        raise ValueError(
+                            f"Inconsistent fields in blocks: key '{key}' missing in some blocks"
+                        )
+                combined[key] = np.concatenate(arrays, axis=0)
             return combined
 
-        # Build final frame
+        # Build expanded frame with all topology
         final_frame = Frame()
         final_frame["atoms"] = concat_blocks(all_atoms)
-        # Overwrite coordinates with optimized positions
+        if all_bonds:
+            final_frame["bonds"] = concat_blocks(all_bonds)
+        if all_angles:
+            final_frame["angles"] = concat_blocks(all_angles)
+        if all_dihedrals:
+            final_frame["dihedrals"] = concat_blocks(all_dihedrals)
+
+        # Validate that all required fields are present in final frame
+        required_atom_fields = ["type", "charge"]
+        for field in required_atom_fields:
+            if field not in final_frame["atoms"]:
+                raise ValueError(
+                    f"Required field '{field}' missing in final packed frame. "
+                    f"Available fields: {list(final_frame['atoms'].keys())}"
+                )
+
+        # Step 4: Write optimized coordinates back to expanded frame
+        # Packmol returns coordinates in optimized_frame, overwrite them
         if "xyz" in optimized_frame["atoms"]:
             final_frame["atoms"]["xyz"] = optimized_frame["atoms"]["xyz"]
-
-        final_frame["bonds"] = concat_blocks(all_bonds)
-        final_frame["angles"] = concat_blocks(all_angles)
-        final_frame["dihedrals"] = concat_blocks(all_dihedrals)
+        elif (
+            "x" in optimized_frame["atoms"]
+            and "y" in optimized_frame["atoms"]
+            and "z" in optimized_frame["atoms"]
+        ):
+            # Handle separate x, y, z columns
+            final_frame["atoms"]["x"] = optimized_frame["atoms"]["x"]
+            final_frame["atoms"]["y"] = optimized_frame["atoms"]["y"]
+            final_frame["atoms"]["z"] = optimized_frame["atoms"]["z"]
+        else:
+            raise ValueError(
+                "Optimized frame must contain 'xyz' or 'x', 'y', 'z' coordinates"
+            )
 
         return final_frame
 

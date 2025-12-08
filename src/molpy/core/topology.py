@@ -2,12 +2,44 @@
 # contact: lijichen365@126.com
 # date: 2023-01-10
 # version: 0.0.1
+from typing import Any
 import numpy as np
 from igraph import Graph
 from numpy.typing import ArrayLike
 
 
 class Topology(Graph):
+    """Topology graph with bidirectional entity-to-index mapping.
+
+    Attributes:
+        entity_to_idx: Dictionary mapping Entity objects to their vertex indices
+        idx_to_entity: List mapping vertex indices to Entity objects
+    """
+
+    def __init__(
+        self,
+        *args,
+        entity_to_idx: dict[Any, int] | None = None,
+        idx_to_entity: list[Any] | None = None,
+        **kwargs,
+    ):
+        """Initialize Topology graph.
+
+        Args:
+            *args: Arguments passed to igraph.Graph.__init__
+            entity_to_idx: Optional dictionary mapping entities to indices
+            idx_to_entity: Optional list mapping indices to entities
+            **kwargs: Keyword arguments passed to igraph.Graph.__init__
+        """
+        super().__init__(*args, **kwargs)
+        # Initialize bidirectional mapping members
+        self.entity_to_idx: dict[Any, int] = (
+            entity_to_idx if entity_to_idx is not None else {}
+        )
+        self.idx_to_entity: list[Any] = (
+            idx_to_entity if idx_to_entity is not None else []
+        )
+
     @property
     def n_atoms(self):
         return self.vcount()

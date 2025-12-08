@@ -5,12 +5,7 @@ unit tests that target the new core architecture.
 """
 
 # Submodules - Import these AFTER core classes to avoid circular imports
-from . import (
-    data,
-    io,
-    potential,
-    typifier,
-)
+from . import data, io, potential, typifier, parser
 
 # Core atomistic classes
 from .core.entity import Entity, Struct, Link
@@ -40,6 +35,8 @@ from .core.forcefield import (
     TypeBucket,
 )
 
+from .potential import *
+
 # Core frame and box classes
 from .core.frame import Block, Frame
 
@@ -49,3 +46,4 @@ from .core.script import Script, ScriptLanguage
 # Core topology class
 from .core.topology import Topology
 from .version import version
+from . import adapter

@@ -70,12 +70,15 @@ class AmberInpcrdReader(DataReader):
                 box = Box(matrix=np.diag(box_floats[:3]))
 
         # ---------- populate frame -------------------------------------
-        # If a matching atoms block exists, only replace xyz(/vel)
+        # If a matching atoms block exists, only replace coordinates
         if "atoms" in frame:
             assert frame["atoms"].nrows == n_atoms, ValueError(
                 f"Frame atoms block has {frame['atoms'].nrows} rows, expected {n_atoms}"
             )
-            frame["atoms"]["xyz"] = coords
+            # Store coordinates as separate x, y, z fields
+            frame["atoms"]["x"] = coords[:, 0]
+            frame["atoms"]["y"] = coords[:, 1]
+            frame["atoms"]["z"] = coords[:, 2]
             if velocity_vals is not None:
                 frame["atoms"]["vel"] = velocity_vals
         else:
@@ -83,7 +86,9 @@ class AmberInpcrdReader(DataReader):
                 {
                     "id": np.arange(1, n_atoms + 1, dtype=int),
                     "name": np.array([f"ATM{i + 1}" for i in range(n_atoms)], "U6"),
-                    "xyz": coords,
+                    "x": coords[:, 0],
+                    "y": coords[:, 1],
+                    "z": coords[:, 2],
                 }
             )
             if velocity_vals is not None:

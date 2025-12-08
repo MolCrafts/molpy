@@ -241,6 +241,26 @@ class Box(PeriodicBoundary):
         """
         return self._matrix
 
+    def __array__(self, dtype=None, copy=None):
+        """Allow Box to be converted to numpy array (returns 3x3 matrix).
+
+        This enables np.array(box) to automatically convert Box to its matrix
+        representation, which is useful for serialization and numerical operations.
+
+        Args:
+            dtype: Optional numpy dtype for the array.
+            copy: Optional copy flag (for numpy 2.0+ compatibility).
+
+        Returns:
+            np.ndarray: The 3x3 box matrix.
+        """
+        matrix = self._matrix
+        if dtype is not None:
+            matrix = matrix.astype(dtype)
+        if copy is True:
+            matrix = matrix.copy()
+        return matrix
+
     @property
     def volume(self) -> float:
         """

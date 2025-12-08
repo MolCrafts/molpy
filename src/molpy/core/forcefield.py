@@ -94,6 +94,66 @@ class Type:
     def get(self, key: str, default: Any = None) -> Any:
         return self.params.kwargs.get(key, default)
 
+    def copy(self) -> "Type":
+        """Create a copy of this type with the same name and parameters.
+
+        Returns:
+            A new Type instance with copied parameters
+        """
+        # Get the actual type class
+        actual_type_class = type(self)
+
+        # Copy parameters
+        type_params = self.params.kwargs.copy()
+        type_args = list(self.params.args)
+
+        # Handle special types with atom type references
+        if isinstance(self, BondType):
+            # BondType requires itom and jtom as positional args
+            return actual_type_class(
+                self.name, self.itom, self.jtom, *type_args, **type_params
+            )
+        elif isinstance(self, AngleType):
+            # AngleType requires itom, jtom, ktom as positional args
+            return actual_type_class(
+                self.name, self.itom, self.jtom, self.ktom, *type_args, **type_params
+            )
+        elif isinstance(self, DihedralType):
+            # DihedralType requires itom, jtom, ktom, ltom as positional args
+            return actual_type_class(
+                self.name,
+                self.itom,
+                self.jtom,
+                self.ktom,
+                self.ltom,
+                *type_args,
+                **type_params,
+            )
+        elif isinstance(self, ImproperType):
+            # ImproperType requires itom, jtom, ktom, ltom as positional args
+            return actual_type_class(
+                self.name,
+                self.itom,
+                self.jtom,
+                self.ktom,
+                self.ltom,
+                *type_args,
+                **type_params,
+            )
+        elif isinstance(self, PairType):
+            # PairType requires atom types as positional args
+            if self.itom == self.jtom:
+                return actual_type_class(
+                    self.name, self.itom, *type_args, **type_params
+                )
+            else:
+                return actual_type_class(
+                    self.name, self.itom, self.jtom, *type_args, **type_params
+                )
+        else:
+            # Regular Type (e.g., AtomType) - just name and kwargs
+            return actual_type_class(self.name, *type_args, **type_params)
+
 
 class Style:
     def __init__(self, name: str, *args: Any, **kwargs: Any):
@@ -116,6 +176,63 @@ class Style:
         for t in other.types.bucket(Type):
             self.types.add(t)
         return self
+
+    def copy(self) -> "Style":
+        """Create a copy of this style with the same name and parameters (but not types).
+
+        Returns:
+            A new Style instance with copied name and parameters
+        """
+        import inspect
+
+        # Get the actual style class
+        actual_style_class = type(self)
+
+        # Get constructor signature to determine how to create the copy
+        sig = inspect.signature(actual_style_class.__init__)
+        param_count = len(sig.parameters) - 1  # Exclude 'self'
+
+        # Copy parameters
+        style_params = self.params.kwargs.copy()
+        style_args = list(self.params.args)
+
+        if param_count == 0:
+            # Style with no parameters (shouldn't happen for base Style, but handle it)
+            new_style = actual_style_class(self.name)
+        elif param_count == 1:
+            # Style with just name parameter
+            new_style = actual_style_class(self.name)
+        else:
+            # Style with name and additional parameters
+            new_style = actual_style_class(self.name, *style_args, **style_params)
+
+        return new_style
+
+    def get_types(self, type_class: type[Ty]) -> list[Ty]:
+        """Get all types of the specified class from this style.
+
+        Args:
+            type_class: Class of the types to retrieve (e.g., AtomType, BondType)
+
+        Returns:
+            List of types of the specified class
+        """
+        return cast(list[Ty], self.types.bucket(type_class))
+
+    def get_type_by_name(self, name: str, type_class: type[Ty] = Type) -> Ty | None:
+        """Get a type by name from this style.
+
+        Args:
+            name: Name of the type to find
+            type_class: Class of the type to search for (defaults to Type)
+
+        Returns:
+            The first matching Type instance, or None if not found
+        """
+        for type_obj in self.types.bucket(type_class):
+            if type_obj.name == name:
+                return cast(Ty, type_obj)
+        return None
 
 
 # ===================================================================
@@ -160,6 +277,21 @@ class ForceField:
 
     def get_styles(self, style_class: type[S]) -> List[S]:
         return cast(List[S], self.styles.bucket(style_class))
+
+    def get_style_by_name(self, name: str, style_class: type[S] = Style) -> S | None:
+        """Get a style by name from the force field.
+
+        Args:
+            name: Name of the style to find
+            style_class: Class of the style to search for (defaults to Style)
+
+        Returns:
+            The first matching Style instance, or None if not found
+        """
+        for style in self.styles.bucket(style_class):
+            if style.name == name:
+                return cast(S, style)
+        return None
 
     def get_types(self, type_class: type[Ty]) -> list[Ty]:
         all_types = set()
@@ -694,3 +826,68 @@ class AtomisticForcefield(ForceField):
 
     def get_angletypes(self) -> list[AngleType]:
         return self.get_types(AngleType)
+
+
+# Import specialized Style and Type classes from potential.forcefield_styles
+# No circular dependency since styles are now in potential, not core
+def __getattr__(name: str):
+    """Lazy import of specialized Style and Type classes."""
+    specialized_names = {
+        "AngleHarmonicStyle",
+        "AngleHarmonicType",
+        "BondHarmonicStyle",
+        "BondHarmonicType",
+        "DihedralOPLSStyle",
+        "DihedralOPLSType",
+        "PairCoulLongStyle",
+        "PairLJ126CoulCutStyle",
+        "PairLJ126CoulLongStyle",
+        "PairLJ126Style",
+        "PairLJ126Type",
+    }
+    if name in specialized_names:
+        # Import from respective potential modules
+        if name == "BondHarmonicStyle" or name == "BondHarmonicType":
+            from molpy.potential.bond import BondHarmonicStyle, BondHarmonicType
+
+            return (
+                BondHarmonicStyle if name == "BondHarmonicStyle" else BondHarmonicType
+            )
+        elif name == "AngleHarmonicStyle" or name == "AngleHarmonicType":
+            from molpy.potential.angle import AngleHarmonicStyle, AngleHarmonicType
+
+            return (
+                AngleHarmonicStyle
+                if name == "AngleHarmonicStyle"
+                else AngleHarmonicType
+            )
+        elif name == "DihedralOPLSStyle" or name == "DihedralOPLSType":
+            from molpy.potential.dihedral import DihedralOPLSStyle, DihedralOPLSType
+
+            return (
+                DihedralOPLSStyle if name == "DihedralOPLSStyle" else DihedralOPLSType
+            )
+        elif name in [
+            "PairCoulLongStyle",
+            "PairLJ126CoulCutStyle",
+            "PairLJ126CoulLongStyle",
+            "PairLJ126Style",
+            "PairLJ126Type",
+        ]:
+            from molpy.potential.pair import (
+                PairCoulLongStyle,
+                PairLJ126CoulCutStyle,
+                PairLJ126CoulLongStyle,
+                PairLJ126Style,
+                PairLJ126Type,
+            )
+
+            return {
+                "PairCoulLongStyle": PairCoulLongStyle,
+                "PairLJ126CoulCutStyle": PairLJ126CoulCutStyle,
+                "PairLJ126CoulLongStyle": PairLJ126CoulLongStyle,
+                "PairLJ126Style": PairLJ126Style,
+                "PairLJ126Type": PairLJ126Type,
+            }[name]
+        return getattr(styles, name)
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

@@ -5,10 +5,10 @@ This module provides connectors that use Reacter for polymer assembly,
 allowing flexible reaction specification with default and specialized reactors.
 """
 
-from molpy import Atomistic
-from molpy.core.wrappers.monomer import Monomer
+from molpy.core.atomistic import Atomistic
+from molpy.core.entity import Entity
 
-from .base import ReactionProduct, Reacter
+from .base import ReactionResult, Reacter
 
 
 class MonomerLinker:
@@ -21,11 +21,17 @@ class MonomerLinker:
 
     **Port Selection Philosophy:**
     This connector does NOT handle port selection. The caller must explicitly
-    provide port_L and port_R when calling connect(). Port selection should
-    be handled by the higher-level builder logic.
+    provide port_L and port_R when calling connect(). Ports must be marked
+    directly on atoms using the "port" or "ports" attribute.
+    Port selection should be handled by the higher-level builder logic.
 
     Example:
         >>> from molpy.reacter import Reacter, MonomerLinker
+        >>> from molpy import Atomistic
+        >>>
+        >>> # Mark ports on atoms
+        >>> atom_a["port"] = "1"
+        >>> atom_b["port"] = "2"
         >>>
         >>> # Default reaction for most connections
         >>> default_reacter = Reacter(...)
@@ -40,7 +46,7 @@ class MonomerLinker:
         >>>
         >>> # Explicit port specification required
         >>> product = connector.connect(
-        ...     left=monomer_a, right=monomer_b,
+        ...     left=struct_a, right=struct_b,
         ...     left_type='A', right_type='B',
         ...     port_L='1', port_R='2'  # REQUIRED
         ... )
@@ -60,47 +66,59 @@ class MonomerLinker:
         """
         self.default_reaction = default_reaction
         self.specialized_reactions = specialized_reactions or {}
-        self._history: list[ReactionProduct] = []
+        self._history: list[ReactionResult] = []
 
     def connect(
         self,
-        left: Monomer,
-        right: Monomer,
+        left: Atomistic,
+        right: Atomistic,
         port_L: str,
         port_R: str,
         left_type: str | None = None,
         right_type: str | None = None,
     ) -> Atomistic:
         """
-        Connect two monomers using appropriate reacter.
+        Connect two Atomistic structures using appropriate reacter.
 
         **IMPORTANT: port_L and port_R must be explicitly specified.**
+        Ports must be marked on atoms using the "port" or "ports" attribute.
         No automatic port selection or fallback is performed.
 
         Args:
-            left: Left monomer
-            right: Right monomer
-            port_L: Port name on left monomer (REQUIRED)
-            port_R: Port name on right monomer (REQUIRED)
-            left_type: Type label for left monomer (e.g., 'A', 'B')
-            right_type: Type label for right monomer
+            left: Left Atomistic structure
+            right: Right Atomistic structure
+            port_L: Port name on left structure (REQUIRED)
+            port_R: Port name on right structure (REQUIRED)
+            left_type: Type label for left structure (e.g., 'A', 'B')
+            right_type: Type label for right structure
 
         Returns:
             Connected Atomistic assembly
 
         Raises:
-            ValueError: If ports not found on monomers
+            ValueError: If ports not found on structures
         """
-        # Validate ports exist
-        if port_L not in left.ports:
+        # Validate ports exist by checking if any atom has the port marker
+        left_has_port = any(
+            atom.get("port") == port_L
+            or (isinstance(atom.get("ports"), list) and port_L in atom.get("ports", []))
+            for atom in left.atoms
+        )
+        if not left_has_port:
             raise ValueError(
-                f"Port '{port_L}' not found on left monomer. "
-                f"Available ports: {list(left.ports.keys())}"
+                f"Port '{port_L}' not found on left structure. "
+                f"Atoms must have 'port' or 'ports' attribute set to '{port_L}'"
             )
-        if port_R not in right.ports:
+
+        right_has_port = any(
+            atom.get("port") == port_R
+            or (isinstance(atom.get("ports"), list) and port_R in atom.get("ports", []))
+            for atom in right.atoms
+        )
+        if not right_has_port:
             raise ValueError(
-                f"Port '{port_R}' not found on right monomer. "
-                f"Available ports: {list(right.ports.keys())}"
+                f"Port '{port_R}' not found on right structure. "
+                f"Atoms must have 'port' or 'ports' attribute set to '{port_R}'"
             )
 
         # Select reacter based on monomer types
@@ -131,27 +149,27 @@ class MonomerLinker:
 
         return self.default_reaction
 
-    def get_history(self) -> list[ReactionProduct]:
+    def get_history(self) -> list[ReactionResult]:
         """
         Get history of all reactions performed.
 
         Useful for batch retypification after polymer assembly.
 
         Returns:
-            List of ReactionProduct for each connection made
+            List of ReactionResult for each connection made
         """
         return self._history.copy()
 
-    def get_all_modified_atoms(self) -> set:
+    def get_all_modified_atoms(self) -> set[Entity]:
         """
         Get all atoms that have been modified across all reactions.
 
         Returns:
             Set of all atoms that need retypification
         """
-        modified = set()
+        modified: set[Entity] = set()
         for product in self._history:
-            modified.update(product.notes.get("modified_atoms", []))
+            modified.update(product.modified_atoms)
         return modified
 
     def needs_retypification(self) -> bool:
@@ -161,7 +179,7 @@ class MonomerLinker:
         Returns:
             True if retypification needed
         """
-        return any(p.notes.get("requires_retype", False) for p in self._history)
+        return any(p.requires_retype for p in self._history)
 
     def clear_history(self):
         """Clear reaction history."""

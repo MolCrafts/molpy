@@ -22,7 +22,7 @@ import pytest
 
 from molpy import Atom, Atomistic
 from molpy.io import read_xml_forcefield
-from molpy.parser.smiles import SmilesIR, SmilesParser
+from molpy.parser.smiles import SmilesIR, parse_bigsmiles
 from molpy.typifier.atomistic import OplsAtomisticTypifier
 
 
@@ -164,11 +164,10 @@ class TestOplsTypifier:
     @pytest.fixture(scope="class")
     def diamine_structure(self):
         """Create hexamethylenediamine (己二胺: H₂N-(CH₂)₆-NH₂) structure."""
-        parser = SmilesParser()
         diamine_smiles = "NCCCCCCN"
 
         # Parse SMILES
-        diamine_ir = parser.parse_bigsmiles(diamine_smiles)
+        diamine_ir = parse_bigsmiles(diamine_smiles)
 
         # Convert to Atomistic (topology only, no 3D coordinates)
         atomistic = smilesir_to_atomistic(diamine_ir)
@@ -181,11 +180,10 @@ class TestOplsTypifier:
     @pytest.fixture(scope="class")
     def diacid_structure(self):
         """Create adipic acid (己二酸: HOOC-(CH₂)₄-COOH) structure."""
-        parser = SmilesParser()
         diacid_smiles = "O=C(O)CCCCC(=O)O"
 
         # Parse SMILES
-        diacid_ir = parser.parse_bigsmiles(diacid_smiles)
+        diacid_ir = parse_bigsmiles(diacid_smiles)
 
         # Convert to Atomistic (topology only, no 3D coordinates)
         atomistic = smilesir_to_atomistic(diacid_ir)
@@ -210,9 +208,9 @@ class TestOplsTypifier:
         n_atoms = [
             a for a in atoms if a.get("symbol") == "N" or a.get("element") == "N"
         ]
-        assert len(n_atoms) == 2, (
-            f"Diamine should have 2 nitrogen atoms, got {len(n_atoms)}"
-        )
+        assert (
+            len(n_atoms) == 2
+        ), f"Diamine should have 2 nitrogen atoms, got {len(n_atoms)}"
 
     def test_diacid_structure_creation(self, diacid_structure):
         """Test that diacid structure is created correctly."""
@@ -229,9 +227,9 @@ class TestOplsTypifier:
         o_atoms = [
             a for a in atoms if a.get("symbol") == "O" or a.get("element") == "O"
         ]
-        assert len(o_atoms) >= 4, (
-            f"Diacid should have at least 4 oxygen atoms, got {len(o_atoms)}"
-        )
+        assert (
+            len(o_atoms) >= 4
+        ), f"Diacid should have at least 4 oxygen atoms, got {len(o_atoms)}"
 
     def test_diamine_atom_typing(self, diamine_structure, oplsaa_forcefield):
         """Test that diamine atoms have correct OPLS types assigned.
@@ -271,9 +269,9 @@ class TestOplsTypifier:
 
         # Check that all N atoms have types assigned
         typed_n_atoms = [a for a in n_atoms if a.data.get("type") is not None]
-        assert len(typed_n_atoms) == len(n_atoms), (
-            f"All N atoms should have types assigned, got {len(typed_n_atoms)}/{len(n_atoms)}"
-        )
+        assert len(typed_n_atoms) == len(
+            n_atoms
+        ), f"All N atoms should have types assigned, got {len(typed_n_atoms)}/{len(n_atoms)}"
 
         # With explicit H atoms added, N atoms should match opls_900
         # [N;X3](H)(H)C pattern for primary amines
@@ -281,9 +279,9 @@ class TestOplsTypifier:
             n_type = n_atom.data.get("type")
             assert n_type is not None, "N atoms should have types assigned"
             # Primary amines should be opls_900
-            assert n_type == "opls_900", (
-                f"N atom should be opls_900 (primary amine), got {n_type}"
-            )
+            assert (
+                n_type == "opls_900"
+            ), f"N atom should be opls_900 (primary amine), got {n_type}"
 
         # Check H atoms on N should be opls_909 (H[N;%opls_900])
         # Find H atoms bonded to N atoms
@@ -305,17 +303,17 @@ class TestOplsTypifier:
         # H atoms on N should have types assigned
         if len(h_on_n) > 0:
             typed_h_on_n = [h for h in h_on_n if h.data.get("type") is not None]
-            assert len(typed_h_on_n) > 0, (
-                "At least some H atoms on N should have types assigned"
-            )
+            assert (
+                len(typed_h_on_n) > 0
+            ), "At least some H atoms on N should have types assigned"
 
             # Ideally should be opls_909 for H on primary amine N
             for h_atom in typed_h_on_n:
                 h_type = h_atom.data.get("type")
                 assert h_type is not None, "H atoms on N should have types assigned"
-                assert "opls_" in str(h_type), (
-                    f"H atom on N type should be OPLS type, got {h_type}"
-                )
+                assert "opls_" in str(
+                    h_type
+                ), f"H atom on N type should be OPLS type, got {h_type}"
 
     def test_diacid_atom_typing(self, diacid_structure, oplsaa_forcefield):
         """Test that diacid atoms have correct OPLS types assigned.
@@ -349,9 +347,9 @@ class TestOplsTypifier:
             o_type = o_atom.data.get("type")
             assert o_type is not None, "Oxygen atoms should have types assigned"
             # O atoms should be OPLS types
-            assert "opls_" in str(o_type), (
-                f"Oxygen type should be OPLS type, got {o_type}"
-            )
+            assert "opls_" in str(
+                o_type
+            ), f"Oxygen type should be OPLS type, got {o_type}"
 
     def test_diamine_bond_typing(self, diamine_structure, oplsaa_forcefield):
         """Test that diamine bonds have correct OPLS types assigned."""
@@ -382,9 +380,9 @@ class TestOplsTypifier:
             # Bonds should have type and parameters (k, r0 for harmonic bonds)
             assert bond.data.get("type") is not None, "Bond should have type"
             # Check for bond parameters
-            assert "k" in bond.data or "r0" in bond.data, (
-                f"Bond {bond} should have parameters (k or r0)"
-            )
+            assert (
+                "k" in bond.data or "r0" in bond.data
+            ), f"Bond {bond} should have parameters (k or r0)"
 
     def test_diacid_bond_typing(self, diacid_structure, oplsaa_forcefield):
         """Test that diacid bonds have correct OPLS types assigned."""
@@ -415,9 +413,9 @@ class TestOplsTypifier:
             # Bonds should have type and parameters (k, r0 for harmonic bonds)
             assert bond.data.get("type") is not None, "Bond should have type"
             # Check for bond parameters
-            assert "k" in bond.data or "r0" in bond.data, (
-                f"Bond {bond} should have parameters (k or r0)"
-            )
+            assert (
+                "k" in bond.data or "r0" in bond.data
+            ), f"Bond {bond} should have parameters (k or r0)"
 
     def test_diamine_angle_typing(self, diamine_structure, oplsaa_forcefield):
         """Test that diamine angles have correct OPLS types assigned."""
@@ -440,18 +438,18 @@ class TestOplsTypifier:
         if len(angles) > 0:
             typed_angles = [a for a in angles if a.data.get("type") is not None]
             # Note: Some angles may not have types if not in force field
-            assert len(typed_angles) > 0, (
-                "At least some angles should have types assigned"
-            )
+            assert (
+                len(typed_angles) > 0
+            ), "At least some angles should have types assigned"
 
             # Check that typed angles have parameters
             for angle in typed_angles:
                 # Angles should have type and parameters (k, theta0 for harmonic angles)
                 assert angle.data.get("type") is not None, "Angle should have type"
                 # Check for angle parameters
-                assert "k" in angle.data or "theta0" in angle.data, (
-                    f"Angle {angle} should have parameters (k or theta0)"
-                )
+                assert (
+                    "k" in angle.data or "theta0" in angle.data
+                ), f"Angle {angle} should have parameters (k or theta0)"
 
     def test_diacid_angle_typing(self, diacid_structure, oplsaa_forcefield):
         """Test that diacid angles have correct OPLS types assigned."""
@@ -480,18 +478,18 @@ class TestOplsTypifier:
         if len(angles) > 0:
             typed_angles = [a for a in angles if a.data.get("type") is not None]
             # Note: Some angles may not have types if not in force field
-            assert len(typed_angles) > 0, (
-                "At least some angles should have types assigned"
-            )
+            assert (
+                len(typed_angles) > 0
+            ), "At least some angles should have types assigned"
 
             # Check that typed angles have parameters
             for angle in typed_angles:
                 # Angles should have type and parameters (k, theta0 for harmonic angles)
                 assert angle.data.get("type") is not None, "Angle should have type"
                 # Check for angle parameters
-                assert "k" in angle.data or "theta0" in angle.data, (
-                    f"Angle {angle} should have parameters (k or theta0)"
-                )
+                assert (
+                    "k" in angle.data or "theta0" in angle.data
+                ), f"Angle {angle} should have parameters (k or theta0)"
 
     def test_diamine_dihedral_typing(self, diamine_structure, oplsaa_forcefield):
         """Test that diamine dihedrals have correct OPLS types assigned."""
@@ -514,16 +512,16 @@ class TestOplsTypifier:
         if len(dihedrals) > 0:
             typed_dihedrals = [d for d in dihedrals if d.data.get("type") is not None]
             # Note: Some dihedrals may not have types if not in force field
-            assert len(typed_dihedrals) > 0, (
-                "At least some dihedrals should have types assigned"
-            )
+            assert (
+                len(typed_dihedrals) > 0
+            ), "At least some dihedrals should have types assigned"
 
             # Check that typed dihedrals have parameters
             for dihedral in typed_dihedrals:
                 # Dihedrals should have type and parameters (c0, c1, c2, c3, c4 for OPLS dihedrals)
-                assert dihedral.data.get("type") is not None, (
-                    "Dihedral should have type"
-                )
+                assert (
+                    dihedral.data.get("type") is not None
+                ), "Dihedral should have type"
                 # Check for dihedral parameters (OPLS uses c0, c1, c2, c3, c4)
                 has_params = any(f"c{i}" in dihedral.data for i in range(5))
                 assert has_params, f"Dihedral {dihedral} should have parameters (c0-c4)"
@@ -555,16 +553,16 @@ class TestOplsTypifier:
         if len(dihedrals) > 0:
             typed_dihedrals = [d for d in dihedrals if d.data.get("type") is not None]
             # Note: Some dihedrals may not have types if not in force field
-            assert len(typed_dihedrals) > 0, (
-                "At least some dihedrals should have types assigned"
-            )
+            assert (
+                len(typed_dihedrals) > 0
+            ), "At least some dihedrals should have types assigned"
 
             # Check that typed dihedrals have parameters
             for dihedral in typed_dihedrals:
                 # Dihedrals should have type and parameters (c0, c1, c2, c3, c4 for OPLS dihedrals)
-                assert dihedral.data.get("type") is not None, (
-                    "Dihedral should have type"
-                )
+                assert (
+                    dihedral.data.get("type") is not None
+                ), "Dihedral should have type"
                 # Check for dihedral parameters (OPLS uses c0, c1, c2, c3, c4)
                 has_params = any(f"c{i}" in dihedral.data for i in range(5))
                 assert has_params, f"Dihedral {dihedral} should have parameters (c0-c4)"

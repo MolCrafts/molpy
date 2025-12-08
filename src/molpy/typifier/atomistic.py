@@ -1,4 +1,3 @@
-# pyright: reportIncompatibleMethodOverride=false
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import override
@@ -351,7 +350,6 @@ class PairTypifier(TypifierBase[Atom]):
     def _build_pair_table(self):
         """Build lookup table for pair types"""
         self._pair_table = {}
-        print(self.ff.get_types(PairType))
         for pair_type in self.ff.get_types(PairType):
             self._pair_table[pair_type.name] = pair_type
 
@@ -367,13 +365,9 @@ class PairTypifier(TypifierBase[Atom]):
 
         # Find matching PairType
         pair_type = self._pair_table.get(atom_type)
-        print(self._pair_table)
 
         if pair_type:
-            # Assign charge, sigma, epsilon from PairType
-            for key in ["charge", "sigma", "epsilon"]:
-                if key in pair_type.params.kwargs:
-                    atom.data[key] = pair_type.params.kwargs[key]
+            atom.update(**pair_type.params.kwargs)
         else:
             raise ValueError(f"No pair type found for atom type: {atom_type}")
 
@@ -383,13 +377,26 @@ class PairTypifier(TypifierBase[Atom]):
 class OplsAtomTypifier(TypifierBase["Atomistic"]):
     """Assign atom types using SMARTS matcher (support type references and dependency resolution)"""
 
-    def __init__(self, forcefield: ForceField) -> None:
+    def __init__(
+        self,
+        forcefield: ForceField,
+        strict: bool = False,
+    ) -> None:
+        """
+        Initialize OPLS atom typifier.
+
+        Args:
+            forcefield: Force field to use for typing
+            strict: If True, raise error when atoms cannot be typed.
+                   If False (default), silently skip untyped atoms.
+        """
         super().__init__(forcefield)
         from .adapter import build_mol_graph
 
         # Extract patterns from forcefield
         self.pattern_dict = self._extract_patterns()
         self._build_mol_graph = build_mol_graph
+        self.strict = strict
 
         # Use LayeredTypingEngine
         from .layered_engine import LayeredTypingEngine
@@ -520,16 +527,31 @@ class OplsAtomisticTypifier(TypifierBase[Atomistic]):
         skip_bond_typing: bool = False,
         skip_angle_typing: bool = False,
         skip_dihedral_typing: bool = False,
+        strict_typing: bool = True,
     ) -> None:
+        """
+        Initialize OPLS atomistic typifier.
+
+        Args:
+            forcefield: Force field to use for typing
+            skip_atom_typing: If True, skip atom type assignment
+            skip_pair_typing: If True, skip pair type assignment
+            skip_bond_typing: If True, skip bond type assignment
+            skip_angle_typing: If True, skip angle type assignment
+            skip_dihedral_typing: If True, skip dihedral type assignment
+            strict_typing: If True (default), raise error when atoms cannot be typed.
+                          If False, emit warnings for untyped atoms.
+        """
         super().__init__(forcefield)
         self.skip_atom_typing = skip_atom_typing
         self.skip_pair_typing = skip_pair_typing
         self.skip_bond_typing = skip_bond_typing
         self.skip_angle_typing = skip_angle_typing
         self.skip_dihedral_typing = skip_dihedral_typing
+        self.strict_typing = strict_typing
 
         if not skip_atom_typing:
-            self.atom_typifier = OplsAtomTypifier(forcefield)
+            self.atom_typifier = OplsAtomTypifier(forcefield, strict=strict_typing)
         if not skip_pair_typing:
             self.pair_typifier = PairTypifier(forcefield)
         if not skip_bond_typing:

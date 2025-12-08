@@ -31,7 +31,9 @@ class XYZReader(DataReader):
             Frame with:
               * block ``"atoms"``:
                   - ``element``   -> (N,)  <U3   array
-                  - ``xyz``       -> (N,3) float array (Å)
+                  - ``x``         -> (N,)  float array (Å)
+                  - ``y``         -> (N,)  float array (Å)
+                  - ``z``         -> (N,)  float array (Å)
               * metadata ``comment`` (str)
         """
         # --- collect lines ------------------------------------------------
@@ -62,7 +64,11 @@ class XYZReader(DataReader):
         self._parse_xyz_comment(frame, comment)
         atoms_blk = Block()
         atoms_blk["element"] = np.array(symbols, dtype="U3")
-        atoms_blk["xyz"] = np.asarray(coords, dtype=float)
+        # Store coordinates as separate x, y, z fields
+        coords_array = np.asarray(coords, dtype=float)
+        atoms_blk["x"] = coords_array[:, 0]
+        atoms_blk["y"] = coords_array[:, 1]
+        atoms_blk["z"] = coords_array[:, 2]
 
         frame["atoms"] = atoms_blk
         return frame

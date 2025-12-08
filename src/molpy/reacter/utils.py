@@ -5,7 +5,7 @@ This module provides helper functions for finding neighbors
 and other common operations needed for reactions.
 """
 
-from molpy import Atom, Atomistic, Bond
+from molpy.core.atomistic import Atom, Atomistic, Bond
 from molpy.core.entity import Entity
 
 
@@ -174,18 +174,28 @@ def create_atom_mapping(pre_atoms: list, post_atoms: list) -> dict[int, int]:
 
     # If no matches by ID, try matching by position (for atoms without IDs)
     if not mapping:
+        import numpy as np
+
         for i, pre_atom in enumerate(pre_atoms):
-            pre_pos = pre_atom.get("xyz", pre_atom.get("xyz"))
-            if pre_pos is None:
-                continue
+            pre_pos = np.array(
+                [
+                    pre_atom["x"],
+                    pre_atom["y"],
+                    pre_atom["z"],
+                ]
+            )
 
             for j, post_atom in enumerate(post_atoms):
-                post_pos = post_atom.get("xyz", post_atom.get("xyz"))
-                if post_pos is None:
-                    continue
+                post_pos = np.array(
+                    [
+                        post_atom["x"],
+                        post_atom["y"],
+                        post_atom["z"],
+                    ]
+                )
 
                 # Check if positions are close (within 0.01 Angstrom)
-                dist_sq = sum((pre_pos[k] - post_pos[k]) ** 2 for k in range(3))
+                dist_sq = np.sum((pre_pos - post_pos) ** 2)
                 if dist_sq < 1e-4:
                     mapping[i + 1] = j + 1
                     break

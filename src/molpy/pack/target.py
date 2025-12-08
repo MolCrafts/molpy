@@ -1,6 +1,10 @@
 import numpy as np
+from typing import TYPE_CHECKING
 
 from molpy import Frame
+
+if TYPE_CHECKING:
+    from .constraint import Constraint
 
 # Note: All constraint classes are now in molpy.pack.constraint
 # No need for molpack dependency
@@ -11,51 +15,38 @@ class Target:
         self,
         frame: Frame,
         number: int,
-        constraint,  # Remove specific type annotation since mpk might not be available
+        constraint: "Constraint",
         is_fixed: bool = False,
-        optimizer=None,
         name: str = "",
     ):
         self.frame = frame
         self.number = number
         self.constraint = constraint
         self.is_fixed = is_fixed
-        self.optimizer = optimizer
         self.name = name
 
-    def __repr__(self):
+    def _get_n_atoms(self) -> int:
+        """Helper method to get number of atoms from frame."""
         atoms = self.frame["atoms"]
-        n_atoms = (
-            len(atoms["id"])
-            if "id" in atoms
-            else len(atoms["x"])
-            if "x" in atoms
-            else 0
-        )
+        if "id" in atoms:
+            return len(atoms["id"])
+        elif "x" in atoms:
+            return len(atoms["x"])
+        else:
+            return 0
+
+    def __repr__(self):
+        n_atoms = self._get_n_atoms()
         return f"<Target {self.name}: {n_atoms} atoms in {self.constraint}>"
 
     @property
     def n_points(self):
-        atoms = self.frame["atoms"]
-        n_atoms = (
-            len(atoms["id"])
-            if "id" in atoms
-            else len(atoms["x"])
-            if "x" in atoms
-            else 0
-        )
-        return n_atoms * self.number
+        return self._get_n_atoms() * self.number
 
-    @property
-    def points(self):
+    def _extract_coordinates(self) -> np.ndarray:
+        """Extract coordinates from frame atoms block."""
         atoms = self.frame["atoms"]
-        # Handle different coordinate formats and empty frames
-        if "id" in atoms:
-            n_atoms = len(atoms["id"])
-        elif "x" in atoms:
-            n_atoms = len(atoms["x"])
-        else:
-            n_atoms = 0
+        n_atoms = self._get_n_atoms()
 
         if n_atoms == 0:
             # Return empty array with correct shape for empty frames
@@ -74,5 +65,11 @@ class Target:
                 "Frame must contain either 'xyz' or 'x', 'y', 'z' coordinates"
             )
 
+        return coords
+
+    @property
+    def points(self) -> np.ndarray:
+        """Get all points (coordinates replicated for each copy)."""
+        coords = self._extract_coordinates()
         # Replicate coordinates for each copy of the molecule
         return np.tile(coords, (self.number, 1))

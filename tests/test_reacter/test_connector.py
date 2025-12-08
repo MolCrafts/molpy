@@ -13,8 +13,7 @@ Tests cover:
 
 import pytest
 
-from molpy import Atom, Atomistic, Bond
-from molpy.core.wrappers.monomer import Monomer
+from molpy.core.atomistic import Atom, Atomistic, Bond
 from molpy.reacter import (
     Reacter,
     MonomerLinker,
@@ -88,23 +87,25 @@ class TestMonomerLinker:
 
         connector = MonomerLinker(default_reaction=default_reacter)
 
-        # Create monomers
-        mono_L = Monomer()
+        # Create structures
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
         h_L = Atom(symbol="H")
-        mono_L.add_entity(c_L, h_L)
-        mono_L.add_link(Bond(c_L, h_L))
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L, h_L)
+        struct_L.add_link(Bond(c_L, h_L))
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
         h_R = Atom(symbol="H")
-        mono_R.add_entity(c_R, h_R)
-        mono_R.add_link(Bond(c_R, h_R))
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R, h_R)
+        struct_R.add_link(Bond(c_R, h_R))
+        c_R["port"] = "2"
 
         # Connect
-        product = connector.connect(left=mono_L, right=mono_R, port_L="1", port_R="2")
+        product = connector.connect(
+            left=struct_L, right=struct_R, port_L="1", port_R="2"
+        )
 
         assert isinstance(product, Atomistic)
         assert len(list(product.atoms)) == 2
@@ -136,24 +137,24 @@ class TestMonomerLinker:
         )
 
         # Create monomers
-        mono_L = Monomer()
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
         h_L = Atom(symbol="H")
-        mono_L.add_entity(c_L, h_L)
-        mono_L.add_link(Bond(c_L, h_L))
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L, h_L)
+        struct_L.add_link(Bond(c_L, h_L))
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
         h_R = Atom(symbol="H")
-        mono_R.add_entity(c_R, h_R)
-        mono_R.add_link(Bond(c_R, h_R))
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R, h_R)
+        struct_R.add_link(Bond(c_R, h_R))
+        c_R["port"] = "2"
 
         # Connect with types that match override
         product = connector.connect(
-            left=mono_L,
-            right=mono_R,
+            left=struct_L,
+            right=struct_R,
             port_L="1",
             port_R="2",
             left_type="A",
@@ -191,24 +192,24 @@ class TestMonomerLinker:
         )
 
         # Create monomers
-        mono_L = Monomer()
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
         h_L = Atom(symbol="H")
-        mono_L.add_entity(c_L, h_L)
-        mono_L.add_link(Bond(c_L, h_L))
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L, h_L)
+        struct_L.add_link(Bond(c_L, h_L))
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
         h_R = Atom(symbol="H")
-        mono_R.add_entity(c_R, h_R)
-        mono_R.add_link(Bond(c_R, h_R))
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R, h_R)
+        struct_R.add_link(Bond(c_R, h_R))
+        c_R["port"] = "2"
 
         # Connect with reverse types (B, A) should match (A, B) override
         product = connector.connect(
-            left=mono_L,
-            right=mono_R,
+            left=struct_L,
+            right=struct_R,
             port_L="1",
             port_R="2",
             left_type="B",
@@ -232,18 +233,18 @@ class TestMonomerLinker:
 
         connector = MonomerLinker(default_reaction=default_reacter)
 
-        mono_L = Monomer()
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
-        mono_L.add_entity(c_L)
+        struct_L.add_entity(c_L)
         # Don't set port
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
-        mono_R.add_entity(c_R)
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R)
+        c_R["port"] = "2"
 
         with pytest.raises(ValueError, match="Port '1' not found"):
-            connector.connect(mono_L, mono_R, port_L="1", port_R="2")
+            connector.connect(struct_L, struct_R, port_L="1", port_R="2")
 
     def test_connector_connect_missing_port_right(self):
         """Test connector.connect() raises error when right port is missing."""
@@ -258,18 +259,18 @@ class TestMonomerLinker:
 
         connector = MonomerLinker(default_reaction=default_reacter)
 
-        mono_L = Monomer()
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
-        mono_L.add_entity(c_L)
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L)
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
-        mono_R.add_entity(c_R)
+        struct_R.add_entity(c_R)
         # Don't set port
 
         with pytest.raises(ValueError, match="Port '2' not found"):
-            connector.connect(mono_L, mono_R, port_L="1", port_R="2")
+            connector.connect(struct_L, struct_R, port_L="1", port_R="2")
 
     def test_connector_get_history(self):
         """Test connector.get_history() method."""
@@ -288,18 +289,18 @@ class TestMonomerLinker:
         history = connector.get_history()
         assert len(history) == 0
 
-        # Create and connect monomers
-        mono_L = Monomer()
+        # Create and connect structures
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
-        mono_L.add_entity(c_L)
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L)
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
-        mono_R.add_entity(c_R)
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R)
+        c_R["port"] = "2"
 
-        connector.connect(mono_L, mono_R, port_L="1", port_R="2")
+        connector.connect(struct_L, struct_R, port_L="1", port_R="2")
 
         # Should have one entry
         history = connector.get_history()
@@ -344,18 +345,18 @@ class TestMonomerLinker:
         modified = connector.get_all_modified_atoms()
         assert len(modified) == 0
 
-        # Create and connect monomers
-        mono_L = Monomer()
+        # Create and connect structures
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
-        mono_L.add_entity(c_L)
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L)
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
-        mono_R.add_entity(c_R)
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R)
+        c_R["port"] = "2"
 
-        connector.connect(mono_L, mono_R, port_L="1", port_R="2")
+        connector.connect(struct_L, struct_R, port_L="1", port_R="2")
 
         # Check modified atoms (may be empty if notes don't include it)
         modified = connector.get_all_modified_atoms()
@@ -377,18 +378,18 @@ class TestMonomerLinker:
         # Initially False (no reactions yet)
         assert connector.needs_retypification() is False
 
-        # Create and connect monomers
-        mono_L = Monomer()
+        # Create and connect structures
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
-        mono_L.add_entity(c_L)
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L)
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
-        mono_R.add_entity(c_R)
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R)
+        c_R["port"] = "2"
 
-        connector.connect(mono_L, mono_R, port_L="1", port_R="2")
+        connector.connect(struct_L, struct_R, port_L="1", port_R="2")
 
         # Should be True (default reacter sets needs_retypification=True)
         assert connector.needs_retypification() is True
@@ -406,18 +407,18 @@ class TestMonomerLinker:
 
         connector = MonomerLinker(default_reaction=default_reacter)
 
-        # Create and connect monomers
-        mono_L = Monomer()
+        # Create and connect structures
+        struct_L = Atomistic()
         c_L = Atom(symbol="C")
-        mono_L.add_entity(c_L)
-        mono_L.set_port("1", c_L)
+        struct_L.add_entity(c_L)
+        c_L["port"] = "1"
 
-        mono_R = Monomer()
+        struct_R = Atomistic()
         c_R = Atom(symbol="C")
-        mono_R.add_entity(c_R)
-        mono_R.set_port("2", c_R)
+        struct_R.add_entity(c_R)
+        c_R["port"] = "2"
 
-        connector.connect(mono_L, mono_R, port_L="1", port_R="2")
+        connector.connect(struct_L, struct_R, port_L="1", port_R="2")
 
         # Should have history
         assert len(connector.get_history()) == 1

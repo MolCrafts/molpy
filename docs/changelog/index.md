@@ -9,6 +9,7 @@ See [Releases](releases.md) for detailed release notes.
 ## Version History
 
 MolPy follows [Semantic Versioning](https://semver.org/):
+
 - **MAJOR**: Incompatible API changes
 - **MINOR**: New functionality in a backwards-compatible manner
 - **PATCH**: Backwards-compatible bug fixes
@@ -16,6 +17,7 @@ MolPy follows [Semantic Versioning](https://semver.org/):
 ## Current Version
 
 **v0.1.0** (Beta)
+
 - Core data structures (Frame, Block, Box, Trajectory)
 - Basic I/O support for common formats
 - Selection system and topology management

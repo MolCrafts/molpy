@@ -1,17 +1,14 @@
 {
     "name": "MolCrafts - molpy",
-    "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
     "features": {
-        "ghcr.io/molcrafts/features/utils:latest": {},
-        "ghcr.io/molcrafts/features/miniforge": {}
+        "ghcr.io/devcontainers/features/common-utils:2": {},
+        "ghcr.io/devcontainers/features/anaconda:1": {}
     },
     "customizations": {
         "vscode": {
             "extensions": [
-                "ms-python.python",
-                "ms-python.black-formatter",
-                "ms-python.isort",
-                "njpwerner.autodocstring"
+                "ms-python.python"
             ]
         }
       },

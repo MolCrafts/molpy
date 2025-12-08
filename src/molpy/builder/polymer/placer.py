@@ -12,8 +12,10 @@ from typing import Protocol
 
 import numpy as np
 
+from molpy.core.atomistic import Atomistic
 from molpy.core.element import Element
-from molpy.core.wrappers.monomer import Monomer, Port
+
+from .port_utils import PortInfo
 
 __all__ = [
     "CovalentSeparator",
@@ -28,23 +30,23 @@ __all__ = [
 
 
 class Separator(Protocol):
-    """Protocol for calculating separation distance between monomers."""
+    """Protocol for calculating separation distance between structures."""
 
     def get_separation(
         self,
-        left_monomer: Monomer,
-        right_monomer: Monomer,
-        left_port: Port,
-        right_port: Port,
+        left_struct: Atomistic,
+        right_struct: Atomistic,
+        left_port: PortInfo,
+        right_port: PortInfo,
     ) -> float:
         """
-        Calculate separation distance between monomers.
+        Calculate separation distance between structures.
 
         Args:
-            left_monomer: Previous monomer in sequence
-            right_monomer: Next monomer to place
-            left_port: Connection port on left monomer
-            right_port: Connection port on right monomer
+            left_struct: Previous structure in sequence
+            right_struct: Next structure to place
+            left_port: Connection port on left structure
+            right_port: Connection port on right structure
 
         Returns:
             Separation distance in Angstroms
@@ -53,28 +55,28 @@ class Separator(Protocol):
 
 
 class Orienter(Protocol):
-    """Protocol for determining monomer orientation."""
+    """Protocol for determining structure orientation."""
 
     def get_orientation(
         self,
-        left_monomer: Monomer,
-        right_monomer: Monomer,
-        left_port: Port,
-        right_port: Port,
+        left_struct: Atomistic,
+        right_struct: Atomistic,
+        left_port: PortInfo,
+        right_port: PortInfo,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Calculate target position and orientation for right monomer.
+        Calculate target position and orientation for right structure.
 
         Args:
-            left_monomer: Previous monomer in sequence
-            right_monomer: Next monomer to place
-            left_port: Connection port on left monomer
-            right_port: Connection port on right monomer
+            left_struct: Previous structure in sequence
+            right_struct: Next structure to place
+            left_port: Connection port on left structure
+            right_port: Connection port on right structure
 
         Returns:
             Tuple of (translation_vector, rotation_matrix)
-            - translation_vector: 3D vector to move right monomer
-            - rotation_matrix: 3x3 rotation matrix to orient right monomer
+            - translation_vector: 3D vector to move right structure
+            - rotation_matrix: 3x3 rotation matrix to orient right structure
         """
         ...
 
@@ -101,19 +103,19 @@ class VdWSeparator:
 
     def get_separation(
         self,
-        left_monomer: Monomer,
-        right_monomer: Monomer,
-        left_port: Port,
-        right_port: Port,
+        left_struct: Atomistic,
+        right_struct: Atomistic,
+        left_port: PortInfo,
+        right_port: PortInfo,
     ) -> float:
         """
         Calculate separation based on VdW radii.
 
         Args:
-            left_monomer: Previous monomer in sequence
-            right_monomer: Next monomer to place
-            left_port: Connection port on left monomer
-            right_port: Connection port on right monomer
+            left_struct: Previous structure in sequence
+            right_struct: Next structure to place
+            left_port: Connection port on left structure
+            right_port: Connection port on right structure
 
         Returns:
             Separation distance = vdw_left + vdw_right + buffer
@@ -179,19 +181,19 @@ class CovalentSeparator:
 
     def get_separation(
         self,
-        left_monomer: Monomer,
-        right_monomer: Monomer,
-        left_port: Port,
-        right_port: Port,
+        left_struct: Atomistic,
+        right_struct: Atomistic,
+        left_port: PortInfo,
+        right_port: PortInfo,
     ) -> float:
         """
         Calculate separation based on typical bond lengths.
 
         Args:
-            left_monomer: Previous monomer in sequence
-            right_monomer: Next monomer to place
-            left_port: Connection port on left monomer
-            right_port: Connection port on right monomer
+            left_struct: Previous structure in sequence
+            right_struct: Next structure to place
+            left_port: Connection port on left structure
+            right_port: Connection port on right structure
 
         Returns:
             Separation distance = typical_bond_length + buffer
@@ -209,9 +211,9 @@ class CovalentSeparator:
         reverse_key = (right_symbol, left_symbol)
 
         if bond_key in self.bond_lengths:
-            bond_length = self.bond_lengths[bond_key]
+            bond_length = self.bond_lengths[bond_key] / 2
         elif reverse_key in self.bond_lengths:
-            bond_length = self.bond_lengths[reverse_key]
+            bond_length = self.bond_lengths[reverse_key] / 2
         else:
             # Default: C-C bond length
             bond_length = 1.54
@@ -232,10 +234,10 @@ class LinearOrienter:
 
     def get_orientation(
         self,
-        left_monomer: Monomer,
-        right_monomer: Monomer,
-        left_port: Port,
-        right_port: Port,
+        left_struct: Atomistic,
+        right_struct: Atomistic,
+        left_port: PortInfo,
+        right_port: PortInfo,
         separation: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -243,14 +245,14 @@ class LinearOrienter:
 
         Strategy:
         1. Get direction vector from left port anchor (outward)
-        2. Place right monomer so its port anchor is at the target position
-        3. Align right monomer's port direction with left port direction
+        2. Place right structure so its port anchor is at the target position
+        3. Align right structure's port direction with left port direction
 
         Args:
-            left_monomer: Previous monomer in sequence
-            right_monomer: Next monomer to place
-            left_port: Connection port on left monomer
-            right_port: Connection port on right monomer
+            left_struct: Previous structure in sequence
+            right_struct: Next structure to place
+            left_port: Connection port on left structure
+            right_port: Connection port on right structure
             separation: Distance between port anchors
 
         Returns:
@@ -260,21 +262,29 @@ class LinearOrienter:
         left_anchor = left_port.target
         right_anchor = right_port.target
 
-        # Get positions
+        # Get positions from x/y/z fields
         left_anchor_pos = np.array(
-            left_anchor.get("xyz", left_anchor.get("xyz", [0.0, 0.0, 0.0]))
+            [
+                left_anchor["x"],
+                left_anchor["y"],
+                left_anchor["z"],
+            ]
         )
         right_anchor_pos = np.array(
-            right_anchor.get("xyz", right_anchor.get("xyz", [0.0, 0.0, 0.0]))
+            [
+                right_anchor["x"],
+                right_anchor["y"],
+                right_anchor["z"],
+            ]
         )
 
         # Calculate port direction vectors
-        # For left port: direction pointing outward (away from monomer center)
-        left_direction = self._get_port_direction(left_monomer, left_port)
+        # For left port: direction pointing outward (away from structure center)
+        left_direction = self._get_port_direction(left_struct, left_port)
 
-        # For right port: direction pointing inward (toward monomer center)
+        # For right port: direction pointing inward (toward structure center)
         # We'll reverse it to get the connection direction
-        right_direction = self._get_port_direction(right_monomer, right_port)
+        right_direction = self._get_port_direction(right_struct, right_port)
 
         # Target position for right anchor
         target_pos = left_anchor_pos + left_direction * separation
@@ -289,42 +299,53 @@ class LinearOrienter:
 
         return translation, rotation
 
-    def _get_port_direction(self, monomer: Monomer, port: Port) -> np.ndarray:
+    def _get_port_direction(self, struct: Atomistic, port: PortInfo) -> np.ndarray:
         """
         Calculate direction vector for a port.
 
         Strategy:
         - If port has a neighbor atom (bonded), use that direction
-        - Otherwise, use direction from monomer centroid to port anchor
+        - Otherwise, use direction from structure centroid to port anchor
 
         Args:
-            monomer: Monomer containing the port
+            struct: Atomistic structure containing the port
             port: Port to calculate direction for
 
         Returns:
             Normalized 3D direction vector
         """
         anchor = port.target
-        anchor_pos = np.array(anchor.get("xyz", anchor.get("xyz", [0.0, 0.0, 0.0])))
+        anchor_pos = np.array(
+            [
+                anchor["x"],
+                anchor["y"],
+                anchor["z"],
+            ]
+        )
 
         # Try to find a bonded neighbor
-        # Monomer and Polymer are Atomistic subclasses in the current API —
-        # use the object directly and avoid calling `unwrap()`.
-        atomistic = monomer
-        bonds = list(atomistic.bonds)
+        bonds = list(struct.bonds)
 
         neighbor_pos = None
         for bond in bonds:
             if bond.itom == anchor:
                 neighbor = bond.jtom
                 neighbor_pos = np.array(
-                    neighbor.get("xyz", neighbor.get("xyz", [0.0, 0.0, 0.0]))
+                    [
+                        neighbor["x"],
+                        neighbor["y"],
+                        neighbor["z"],
+                    ]
                 )
                 break
             elif bond.jtom == anchor:
                 neighbor = bond.itom
                 neighbor_pos = np.array(
-                    neighbor.get("xyz", neighbor.get("xyz", [0.0, 0.0, 0.0]))
+                    [
+                        neighbor["x"],
+                        neighbor["y"],
+                        neighbor["z"],
+                    ]
                 )
                 break
 
@@ -333,10 +354,8 @@ class LinearOrienter:
             direction = anchor_pos - neighbor_pos
         else:
             # Fallback: use direction from centroid
-            atoms = list(atomistic.atoms)
-            positions = [
-                np.array(a.get("xyz", a.get("xyz", [0.0, 0.0, 0.0]))) for a in atoms
-            ]
+            atoms = list(struct.atoms)
+            positions = [np.array([a["x"], a["y"], a["z"]]) for a in atoms]
             centroid = np.mean(positions, axis=0)
             direction = anchor_pos - centroid
 
@@ -397,7 +416,7 @@ class LinearOrienter:
 
 class Placer:
     """
-    Combined placer for positioning monomers during assembly.
+    Combined placer for positioning structures during assembly.
 
     Uses a Separator to determine distance and an Orienter to
     determine orientation.
@@ -416,80 +435,83 @@ class Placer:
 
     def place_monomer(
         self,
-        left_monomer: Monomer,
-        right_monomer: Monomer,
-        left_port: Port,
-        right_port: Port,
+        left_struct: Atomistic,
+        right_struct: Atomistic,
+        left_port: PortInfo,
+        right_port: PortInfo,
     ) -> None:
         """
-        Position right_monomer relative to left_monomer.
+        Position right_struct relative to left_struct.
 
-        Modifies right_monomer's atomic coordinates in-place.
+        Modifies right_struct's atomic coordinates in-place.
 
         Args:
-            left_monomer: Previous monomer in sequence
-            right_monomer: Next monomer to place
-            left_port: Connection port on left monomer
-            right_port: Connection port on right monomer
+            left_struct: Previous structure in sequence
+            right_struct: Next structure to place
+            left_port: Connection port on left structure
+            right_port: Connection port on right structure
         """
         # Calculate separation
         separation = self.separator.get_separation(
-            left_monomer, right_monomer, left_port, right_port
+            left_struct, right_struct, left_port, right_port
         )
 
         # Calculate orientation
         translation, rotation = self.orienter.get_orientation(
-            left_monomer, right_monomer, left_port, right_port, separation
+            left_struct, right_struct, left_port, right_port, separation
         )
 
         # Use right port anchor as pivot for rotation
         right_anchor = right_port.target
         right_anchor_pos = np.array(
-            right_anchor.get("xyz", right_anchor.get("xyz", [0.0, 0.0, 0.0]))
+            [
+                right_anchor["x"],
+                right_anchor["y"],
+                right_anchor["z"],
+            ]
         )
 
-        # Apply transformation to right monomer
+        # Apply transformation to right structure
         self._apply_transform(
-            right_monomer, translation, rotation, pivot=right_anchor_pos
+            right_struct, translation, rotation, pivot=right_anchor_pos
         )
 
     def _apply_transform(
         self,
-        monomer: Monomer,
+        struct: Atomistic,
         translation: np.ndarray,
         rotation: np.ndarray,
         pivot: np.ndarray | None = None,
     ) -> None:
         """
-        Apply rotation and translation to all atoms in monomer.
+        Apply rotation and translation to all atoms in structure.
 
         Rotation is applied around a pivot point (default: centroid),
         then translation is applied.
 
         Args:
-            monomer: Monomer to transform
+            struct: Atomistic structure to transform
             translation: 3D translation vector
             rotation: 3x3 rotation matrix
             pivot: Optional pivot point for rotation (default: centroid)
         """
-        # Monomer/Polymer are Atomistic subclasses; use directly
-        atomistic = monomer
-        atoms = list(atomistic.atoms)
+        atoms = list(struct.atoms)
 
         # Calculate centroid if no pivot given
         if pivot is None:
-            positions = []
-            for atom in atoms:
-                pos_key = "xyz" if "xyz" in atom.data else "xyz"
-                xyz = np.array(atom.get(pos_key, [0.0, 0.0, 0.0]))
-                positions.append(xyz)
+            positions = [np.array([atom["x"], atom["y"], atom["z"]]) for atom in atoms]
             pivot = np.mean(positions, axis=0)
 
         # Transform each atom
         for atom in atoms:
-            # Get current position
-            pos_key = "xyz" if "xyz" in atom.data else "xyz"
-            xyz = np.array(atom.get(pos_key, [0.0, 0.0, 0.0]))
+            # Get current position from x/y/z fields
+            xyz = np.array(
+                [
+                    atom["x"],
+                    atom["y"],
+                    atom["z"],
+                ]
+            )
 
             # Rotate around pivot, then translate
             # 1. Move to origin
@@ -499,8 +521,10 @@ class Placer:
             # 3. Move back and translate
             new_pos = pos_rotated + pivot + translation
 
-            # Update position
-            atom.data[pos_key] = new_pos.tolist()
+            # Update position to x/y/z fields
+            atom["x"] = float(new_pos[0])
+            atom["y"] = float(new_pos[1])
+            atom["z"] = float(new_pos[2])
 
 
 # Convenience factory functions

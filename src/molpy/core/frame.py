@@ -544,109 +544,112 @@ class Block(MutableMapping[str, np.ndarray]):
 
 
 class Frame:
-    """
-    Hierarchical numerical data container with named blocks.
+    """Hierarchical numerical data container with named blocks.
 
     Frame stores multiple Block objects under string keys (e.g., "atoms", "bonds")
     and allows arbitrary metadata to be attached. It's designed for molecular
     simulation data where different entity types need separate tabular storage.
 
-    Structure
-    ---------
+    Structure:
         Frame
         ├─ blocks: dict[str, Block]     # Named data blocks
         └─ metadata: dict[str, Any]     # Arbitrary metadata (box, timestep, etc.)
 
-    Parameters
-    ----------
-    blocks : dict[str, Block | dict] or None, optional
-        Initial blocks. If a dict value is not a Block, it will be converted.
-    **props
-        Arbitrary keyword arguments stored in metadata.
+    Args:
+        blocks (dict[str, Block | dict] | None, optional): Initial blocks. If a
+            dict value is not a Block, it will be converted.
+        **props: Arbitrary keyword arguments stored in metadata.
 
-    Examples
-    --------
-    Create Frame and add data blocks:
+    Examples:
+        Create Frame and add data blocks:
 
-    >>> frame = Frame()
-    >>> frame["atoms"] = Block({"x": [0.0, 1.0], "y": [0.0, 0.0], "z": [0.0, 0.0]})
-    >>> frame["atoms"]["x"]
-    array([0., 1.])
-    >>> frame["atoms"].nrows
-    2
+        >>> frame = Frame()
+        >>> frame["atoms"] = Block({"x": [0.0, 1.0], "y": [0.0, 0.0], "z": [0.0, 0.0]})
+        >>> frame["atoms"]["x"]
+        array([0., 1.])
+        >>> frame["atoms"].nrows
+        2
 
-    Initialize with nested dictionaries:
+        Initialize with nested dictionaries:
 
-    >>> frame = Frame(blocks={
-    ...     "atoms": {"id": [1, 2, 3], "type": ["C", "H", "H"]},
-    ...     "bonds": {"i": [0, 0], "j": [1, 2]}
-    ... })
-    >>> list(frame._blocks)
-    ['atoms', 'bonds']
-    >>> frame["atoms"]["id"]
-    array([1, 2, 3])
+        >>> frame = Frame(blocks={
+        ...     "atoms": {"id": [1, 2, 3], "type": ["C", "H", "H"]},
+        ...     "bonds": {"i": [0, 0], "j": [1, 2]}
+        ... })
+        >>> list(frame._blocks)
+        ['atoms', 'bonds']
+        >>> frame["atoms"]["id"]
+        array([1, 2, 3])
 
-    Add metadata:
+        Add metadata:
 
-    >>> frame = Frame()
-    >>> frame.metadata["timestep"] = 0
-    >>> frame.metadata["description"] = "Test system"
-    >>> frame.metadata["timestep"]
-    0
-    >>> frame.metadata["description"]
-    'Test system'
+        >>> frame = Frame()
+        >>> frame.metadata["timestep"] = 0
+        >>> frame.metadata["description"] = "Test system"
+        >>> frame.metadata["timestep"]
+        0
+        >>> frame.metadata["description"]
+        'Test system'
 
-    Chained access:
+        Chained access:
 
-    >>> frame = Frame(blocks={"atoms": {"x": [1, 2, 3], "y": [4, 5, 6]}})
-    >>> atoms = frame["atoms"]
-    >>> xyz_combined = atoms[["x", "y"]]
-    >>> xyz_combined.shape
-    (3, 2)
+        >>> frame = Frame(blocks={"atoms": {"x": [1, 2, 3], "y": [4, 5, 6]}})
+        >>> atoms = frame["atoms"]
+        >>> xyz_combined = atoms[["x", "y"]]
+        >>> xyz_combined.shape
+        (3, 2)
 
-    Iterate over all blocks and variables:
+        Iterate over all blocks and variables:
 
-    >>> frame = Frame(blocks={
-    ...     "atoms": {"id": [1, 2], "mass": [12.0, 1.0]},
-    ...     "bonds": {"i": [0], "j": [1]}
-    ... })
-    >>> for block_name in frame._blocks:
-    ...     print(f"{block_name}: {list(frame[block_name].keys())}")
-    atoms: ['id', 'mass']
-    bonds: ['i', 'j']
+        >>> frame = Frame(blocks={
+        ...     "atoms": {"id": [1, 2], "mass": [12.0, 1.0]},
+        ...     "bonds": {"i": [0], "j": [1]}
+        ... })
+        >>> for block_name in frame._blocks:
+        ...     print(f"{block_name}: {list(frame[block_name].keys())}")
+        atoms: ['id', 'mass']
+        bonds: ['i', 'j']
     """
 
-    def __init__(self, blocks=None, **props) -> None:
+    def __init__(
+        self,
+        blocks: dict[str, Block | BlockLike] | None = None,
+        **props: Any,
+    ) -> None:
+        """Initialize a Frame with optional blocks and metadata.
+
+        Args:
+            blocks (dict[str, Block | BlockLike] | None, optional): Initial
+                blocks. If a dict value is not a Block, it will be converted to
+                a Block. Defaults to None.
+            **props (Any): Arbitrary keyword arguments stored in metadata.
+        """
         # guarantee a root block even if none supplied
         self._blocks: dict[str, Block] = {}
         if blocks is not None:
             self._blocks = self._validate_and_convert_blocks(blocks)
-        self.metadata = props
+        self.metadata: dict[str, Any] = props
 
-    def _validate_and_convert_blocks(self, blocks) -> dict[str, Block]:
-        """
-        Validate and convert input blocks to ensure all values are Block instances.
+    def _validate_and_convert_blocks(
+        self, blocks: dict[str, Block | BlockLike | Any]
+    ) -> dict[str, Block]:
+        """Validate and convert input blocks to ensure all values are Block instances.
 
         This method recursively processes nested dictionaries and converts
         all leaf values to Block instances.
 
-        Parameters
-        ----------
-        blocks : dict[str, Block] | dict[str, dict] | dict[str, Any]
-            Input blocks. Can be:
-            - dict[str, Block]: Already correct format
-            - dict[str, dict]: Nested dictionaries that will be converted to Block
-            - dict[str, Any]: Mixed format that will be validated and converted
+        Args:
+            blocks (dict[str, Block] | dict[str, dict] | dict[str, Any]): Input
+                blocks. Can be:
+                - dict[str, Block]: Already correct format
+                - dict[str, dict]: Nested dictionaries that will be converted to Block
+                - dict[str, Any]: Mixed format that will be validated and converted
 
-        Returns
-        -------
-        dict[str, Block]
-            Validated blocks where all values are Block instances
+        Returns:
+            dict[str, Block]: Validated blocks where all values are Block instances.
 
-        Raises
-        ------
-        ValueError
-            If any leaf value cannot be converted to Block
+        Raises:
+            ValueError: If any leaf value cannot be converted to Block.
         """
         if not isinstance(blocks, dict):
             raise ValueError(f"blocks must be a dict, got {type(blocks)}")
@@ -684,123 +687,96 @@ class Frame:
     # ---------- main get/set --------------------------------------------
 
     def __getitem__(self, key: str) -> Block:
-        """
-        Get a Block by name.
+        """Get a Block by name.
 
-        Parameters
-        ----------
-        key : str
-            Name of the block to retrieve.
+        Args:
+            key (str): Name of the block to retrieve.
 
-        Returns
-        -------
-        Block
-            The requested block.
+        Returns:
+            Block: The requested block.
 
-        Raises
-        ------
-        KeyError
-            If the block name doesn't exist.
+        Raises:
+            KeyError: If the block name doesn't exist.
 
-        Examples
-        --------
-        >>> frame = Frame(blocks={"atoms": {"x": [1, 2], "y": [3, 4]}})
-        >>> atoms = frame["atoms"]
-        >>> atoms["x"]
-        array([1, 2])
-        >>> frame["nonexistent"]
-        Traceback (most recent call last):
-            ...
-        KeyError: 'nonexistent'
+        Examples:
+            >>> frame = Frame(blocks={"atoms": {"x": [1, 2], "y": [3, 4]}})
+            >>> atoms = frame["atoms"]
+            >>> atoms["x"]
+            array([1, 2])
+            >>> frame["nonexistent"]
+            Traceback (most recent call last):
+                ...
+            KeyError: 'nonexistent'
         """
         return self._blocks[key]
 
     def __setitem__(self, key: str, value: BlockLike | Block) -> None:
-        """
-        Set a Block by name.
+        """Set a Block by name.
 
-        Parameters
-        ----------
-        key : str
-            Name of the block to set.
-        value : Block or dict[str, ArrayLike]
-            Block to store, or dict-like data that will be converted to Block.
+        Args:
+            key (str): Name of the block to set.
+            value (Block | dict[str, ArrayLike]): Block to store, or dict-like
+                data that will be converted to Block.
 
-        Examples
-        --------
-        >>> frame = Frame()
-        >>> frame["atoms"] = Block({"x": [1, 2, 3]})
-        >>> frame["bonds"] = {"i": [0, 1], "j": [1, 2]}  # Auto-converted
-        >>> isinstance(frame["bonds"], Block)
-        True
+        Examples:
+            >>> frame = Frame()
+            >>> frame["atoms"] = Block({"x": [1, 2, 3]})
+            >>> frame["bonds"] = {"i": [0, 1], "j": [1, 2]}  # Auto-converted
+            >>> isinstance(frame["bonds"], Block)
+            True
         """
         if not isinstance(value, Block):
             value = Block(value)
         self._blocks[key] = value
 
     def __delitem__(self, key: str) -> None:
-        """
-        Delete a Block by name.
+        """Delete a Block by name.
 
-        Parameters
-        ----------
-        key : str
-            Name of the block to delete.
+        Args:
+            key (str): Name of the block to delete.
 
-        Examples
-        --------
-        >>> frame = Frame(blocks={"atoms": {"x": [1, 2]}})
-        >>> del frame["atoms"]
-        >>> "atoms" in frame
-        False
+        Examples:
+            >>> frame = Frame(blocks={"atoms": {"x": [1, 2]}})
+            >>> del frame["atoms"]
+            >>> "atoms" in frame
+            False
         """
         del self._blocks[key]
 
     def __contains__(self, key: str) -> bool:
-        """
-        Check if a block exists.
+        """Check if a block exists.
 
-        Parameters
-        ----------
-        key : str
-            Name of the block to check.
+        Args:
+            key (str): Name of the block to check.
 
-        Returns
-        -------
-        bool
-            True if the block exists, False otherwise.
+        Returns:
+            bool: True if the block exists, False otherwise.
 
-        Examples
-        --------
-        >>> frame = Frame(blocks={"atoms": {"x": [1, 2]}})
-        >>> "atoms" in frame
-        True
-        >>> "bonds" in frame
-        False
+        Examples:
+            >>> frame = Frame(blocks={"atoms": {"x": [1, 2]}})
+            >>> "atoms" in frame
+            True
+            >>> "bonds" in frame
+            False
         """
         return key in self._blocks
 
     # ---------- helpers -------------------------------------------------
     @property
     def blocks(self) -> Iterator["Block"]:
-        """
-        Iterate over stored Block objects.
+        """Iterate over stored Block objects.
 
-        Returns
-        -------
-        Iterator[Block]
-            Iterator over Block values stored in this Frame.
+        Returns:
+            Iterator[Block]: Iterator over Block values stored in this Frame.
 
-        Notes
-        -----
-        - To iterate over block *names* use `for name in frame._blocks` or
-          `frame._blocks.keys()`.
+        Note:
+            To iterate over block *names* use `for name in frame._blocks` or
+            `frame._blocks.keys()`.
 
-        Examples
-        --------
-        >>> frame = Frame(blocks={"atoms": {"x": [1]}, "bonds": {"i": [0]}})
-        >>> [b for b in frame.blocks]
-        [Block(x: shape=(1,), i: shape=(1,))]
+        Examples:
+            >>> frame = Frame(blocks={"atoms": {"x": [1]}, "bonds": {"i": [0]}})
+            >>> [b for b in frame.blocks]
+            [Block(x: shape=(1,), i: shape=(1,))]
         """
         return iter(self._blocks.values())
 
@@ -808,13 +784,47 @@ class Frame:
     # `set(frame[block_name])` to iterate variable names.
 
     # ---------- (de)serialization --------------------------------------
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
+        """Convert Frame to a dictionary representation.
+
+        Returns:
+            dict[str, Any]: Dictionary containing "blocks" and "metadata" keys.
+                Blocks are converted to dictionaries via Block.to_dict().
+
+        Examples:
+            >>> frame = Frame(blocks={"atoms": {"x": [1, 2]}}, timestep=0)
+            >>> data = frame.to_dict()
+            >>> "blocks" in data
+            True
+            >>> "metadata" in data
+            True
+        """
         block_dict = {g: grp.to_dict() for g, grp in self._blocks.items()}
         meta_dict = {k: v for k, v in self.metadata.items()}
         return {"blocks": block_dict, "metadata": meta_dict}
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Frame":
+    def from_dict(cls, data: dict[str, Any]) -> "Frame":
+        """Create a Frame from a dictionary representation.
+
+        Args:
+            data (dict[str, Any]): Dictionary containing "blocks" and optionally
+                "metadata" keys.
+
+        Returns:
+            Frame: A new Frame instance reconstructed from the dictionary.
+
+        Examples:
+            >>> data = {
+            ...     "blocks": {"atoms": {"x": [1, 2, 3]}},
+            ...     "metadata": {"timestep": 0}
+            ... }
+            >>> frame = Frame.from_dict(data)
+            >>> frame["atoms"]["x"]
+            array([1, 2, 3])
+            >>> frame.metadata["timestep"]
+            0
+        """
         blocks = {g: Block.from_dict(grp) for g, grp in data["blocks"].items()}
         frame = cls(blocks=blocks)
         frame.metadata = data.get("metadata", {})
@@ -829,8 +839,56 @@ class Frame:
         return "\n".join(txt) + "\n)"
 
     def get_topology(self) -> Topology:
-        """Get the topology of the frame."""
+        """Get the topology of the frame from atoms and bonds blocks.
+
+        Constructs a Topology object from the "atoms" and "bonds" blocks
+        in the frame. The bonds block must contain "i" and "j" columns
+        representing bond connections.
+
+        Returns:
+            Topology: A Topology object representing the molecular connectivity.
+
+        Raises:
+            KeyError: If the "atoms" or "bonds" blocks are missing from the frame.
+            KeyError: If the "bonds" block is missing "i" or "j" columns.
+
+        Examples:
+            >>> frame = Frame(blocks={
+            ...     "atoms": {"id": [1, 2, 3], "type": ["C", "H", "H"]},
+            ...     "bonds": {"i": [0, 0], "j": [1, 2]}
+            ... })
+            >>> topo = frame.get_topology()
+            >>> topo.n_atoms
+            3
+            >>> topo.n_bonds
+            2
+        """
+        # Check for required blocks
+        if "atoms" not in self._blocks:
+            raise KeyError(
+                "Frame must contain an 'atoms' block to extract topology. "
+                f"Available blocks: {list(self._blocks.keys())}"
+            )
+        if "bonds" not in self._blocks:
+            raise KeyError(
+                "Frame must contain a 'bonds' block to extract topology. "
+                f"Available blocks: {list(self._blocks.keys())}"
+            )
+
         bonds_block = self["bonds"]
+
+        # Check for required columns in bonds block
+        if "i" not in bonds_block:
+            raise KeyError(
+                "Bonds block must contain an 'i' column. "
+                f"Available columns: {list(bonds_block.keys())}"
+            )
+        if "j" not in bonds_block:
+            raise KeyError(
+                "Bonds block must contain a 'j' column. "
+                f"Available columns: {list(bonds_block.keys())}"
+            )
+
         i = bonds_block["i"]
         j = bonds_block["j"]
         bonds_list = [(int(ii), int(jj)) for ii, jj in zip(i.tolist(), j.tolist())]

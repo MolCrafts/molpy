@@ -9,10 +9,9 @@ Tests verify:
 
 import pytest
 
-from molpy import Atom, Atomistic, Bond
-from molpy.core.wrappers.monomer import Monomer
+from molpy.core.atomistic import Atom, Atomistic, Bond
 from molpy.reacter import (
-    ReactionProduct,
+    ReactionResult,
     Reacter,
     find_neighbors,
     form_double_bond,
@@ -64,32 +63,31 @@ def test_merge_simple():
 
 def test_port_anchor_selector():
     """Test selecting anchor from port."""
-    # Create monomer with port
-    mono = Monomer()
+    # Create structure with port marked on atom
+    struct = Atomistic()
     c = Atom(symbol="C")
-    mono.add_entity(c)
-
-    mono.set_port("1", c)
+    struct.add_entity(c)
+    c["port"] = "1"
 
     # Select anchor
-    anchor = select_port_atom(mono, "1")
+    anchor = select_port_atom(struct, "1")
     assert anchor is c
 
 
 def test_remove_one_H():
     """Test removing single hydrogen."""
     # Create C with 3 H
-    mono = Monomer()
+    struct = Atomistic()
     c = Atom(symbol="C")
     h1 = Atom(symbol="H")
     h2 = Atom(symbol="H")
     h3 = Atom(symbol="H")
 
-    mono.add_entity(c, h1, h2, h3)
-    mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
+    struct.add_entity(c, h1, h2, h3)
+    struct.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
     # Remove one H
-    leaving = select_one_hydrogen(mono, c)
+    leaving = select_one_hydrogen(struct, c)
     assert len(leaving) == 1
     assert leaving[0].get("symbol") == "H"
 
@@ -97,28 +95,28 @@ def test_remove_one_H():
 def test_remove_all_H():
     """Test removing all hydrogens."""
     # Create C with 3 H
-    mono = Monomer()
+    struct = Atomistic()
     c = Atom(symbol="C")
     h1 = Atom(symbol="H")
     h2 = Atom(symbol="H")
     h3 = Atom(symbol="H")
 
-    mono.add_entity(c, h1, h2, h3)
-    mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
+    struct.add_entity(c, h1, h2, h3)
+    struct.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
     # Remove all H
-    leaving = select_all_hydrogens(mono, c)
+    leaving = select_all_hydrogens(struct, c)
     assert len(leaving) == 3
     assert all(h.get("symbol") == "H" for h in leaving)
 
 
 def test_no_leaving_group():
     """Test no leaving group selector."""
-    mono = Monomer()
+    struct = Atomistic()
     c = Atom(symbol="C")
-    mono.add_entity(c)
+    struct.add_entity(c)
 
-    leaving = select_none(mono, c)
+    leaving = select_none(struct, c)
     assert len(leaving) == 0
 
 
@@ -145,21 +143,21 @@ def test_find_neighbors():
 
 def test_simple_cc_coupling():
     """Test simple C-C coupling reaction."""
-    # Create left monomer: C-H
-    mono_L = Monomer()
+    # Create left structure: C-H
+    struct_L = Atomistic()
     c_L = Atom(symbol="C")
     h_L = Atom(symbol="H")
-    mono_L.add_entity(c_L, h_L)
-    mono_L.add_link(Bond(c_L, h_L))
-    mono_L.set_port("1", c_L)
+    struct_L.add_entity(c_L, h_L)
+    struct_L.add_link(Bond(c_L, h_L))
+    c_L["port"] = "1"
 
-    # Create right monomer: C-H
-    mono_R = Monomer()
+    # Create right structure: C-H
+    struct_R = Atomistic()
     c_R = Atom(symbol="C")
     h_R = Atom(symbol="H")
-    mono_R.add_entity(c_R, h_R)
-    mono_R.add_link(Bond(c_R, h_R))
-    mono_R.set_port("2", c_R)
+    struct_R.add_entity(c_R, h_R)
+    struct_R.add_link(Bond(c_R, h_R))
+    c_R["port"] = "2"
 
     # Create C-C coupling reaction
     cc_coupling = Reacter(
@@ -172,43 +170,43 @@ def test_simple_cc_coupling():
     )
 
     # Run reaction
-    product = cc_coupling.run(mono_L, mono_R, port_L="1", port_R="2")
+    result = cc_coupling.run(struct_L, struct_R, port_L="1", port_R="2")
 
     # Check product
-    assert isinstance(product, ReactionProduct)
-    assert isinstance(product.product, Atomistic)
+    assert isinstance(result, ReactionResult)
+    assert isinstance(result.product, Atomistic)
 
     # Should have 2 C + 0 H (both removed)
-    atoms = list(product.product.atoms)
+    atoms = list(result.product.atoms)
     assert len(atoms) == 2
 
     # Should have 1 C-C bond
-    bonds = list(product.product.bonds)
+    bonds = list(result.product.bonds)
     assert len(bonds) == 1
 
-    # Check notes
-    assert product.notes["n_eliminated"] == 2
-    assert product.notes["reaction_name"] == "C-C_coupling"
+    # Check result attributes
+    assert len(result.removed_atoms) == 2
+    assert result.reaction_name == "C-C_coupling"
 
 
 def test_asymmetric_reaction():
     """Test reaction with different leaving groups."""
     # Create left: C-H-H
-    mono_L = Monomer()
+    struct_L = Atomistic()
     c_L = Atom(symbol="C")
     h_L1 = Atom(symbol="H")
     h_L2 = Atom(symbol="H")
-    mono_L.add_entity(c_L, h_L1, h_L2)
-    mono_L.add_link(Bond(c_L, h_L1), Bond(c_L, h_L2))
-    mono_L.set_port("1", c_L)
+    struct_L.add_entity(c_L, h_L1, h_L2)
+    struct_L.add_link(Bond(c_L, h_L1), Bond(c_L, h_L2))
+    c_L["port"] = "1"
 
     # Create right: C-H
-    mono_R = Monomer()
+    struct_R = Atomistic()
     c_R = Atom(symbol="C")
     h_R = Atom(symbol="H")
-    mono_R.add_entity(c_R, h_R)
-    mono_R.add_link(Bond(c_R, h_R))
-    mono_R.set_port("2", c_R)
+    struct_R.add_entity(c_R, h_R)
+    struct_R.add_link(Bond(c_R, h_R))
+    c_R["port"] = "2"
 
     # Create reaction: remove all H from left, one H from right
     reacter = Reacter(
@@ -221,29 +219,29 @@ def test_asymmetric_reaction():
     )
 
     # Run reaction
-    product = reacter.run(mono_L, mono_R, port_L="1", port_R="2")
+    result = reacter.run(struct_L, struct_R, port_L="1", port_R="2")
 
     # Should remove 3 H total
-    assert product.notes["n_eliminated"] == 3
+    assert len(result.removed_atoms) == 3
 
     # Check bond order
-    bonds = list(product.product.bonds)
+    bonds = list(result.product.bonds)
     assert len(bonds) == 1
     assert bonds[0].get("order") == 2
 
 
 def test_addition_reaction():
     """Test addition reaction (no leaving groups)."""
-    # Create two monomers
-    mono_L = Monomer()
+    # Create two structures
+    struct_L = Atomistic()
     c_L = Atom(symbol="C")
-    mono_L.add_entity(c_L)
-    mono_L.set_port("1", c_L)
+    struct_L.add_entity(c_L)
+    c_L["port"] = "1"
 
-    mono_R = Monomer()
+    struct_R = Atomistic()
     c_R = Atom(symbol="C")
-    mono_R.add_entity(c_R)
-    mono_R.set_port("2", c_R)
+    struct_R.add_entity(c_R)
+    c_R["port"] = "2"
 
     # Addition reaction (no leaving groups)
     addition = Reacter(
@@ -255,16 +253,16 @@ def test_addition_reaction():
         bond_former=form_single_bond,
     )
 
-    product = addition.run(mono_L, mono_R, port_L="1", port_R="2")
+    result = addition.run(struct_L, struct_R, port_L="1", port_R="2")
 
     # No atoms removed
-    assert product.notes["n_eliminated"] == 0
+    assert len(result.removed_atoms) == 0
 
     # 2 atoms total
-    assert len(list(product.product.atoms)) == 2
+    assert len(list(result.product.atoms)) == 2
 
     # 1 bond
-    assert len(list(product.product.bonds)) == 1
+    assert len(list(result.product.bonds)) == 1
 
 
 if __name__ == "__main__":

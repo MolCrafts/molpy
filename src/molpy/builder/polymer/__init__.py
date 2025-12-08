@@ -17,6 +17,17 @@ from .connectors import (
     TopologyConnector,
 )
 from .linear import linear
+from .polydisperse import Polydisperse, SchulzZimm
+from .sequence_generator import SequenceGenerator, WeightedSequenceGenerator
+from .system import (
+    Chain,
+    DPDistribution,
+    PolydisperseChainGenerator,
+    SchulzZimmDPDistribution,
+    SystemPlan,
+    SystemPlanner,
+)
+from .types import ConnectionMetadata, ConnectionResult, PolymerBuildResult
 
 __all__ = [
     "AutoConnector",
@@ -30,4 +41,21 @@ __all__ = [
     "TableConnector",
     "TopologyConnector",
     "linear",
+    # Polydisperse (legacy)
+    "Polydisperse",
+    "SchulzZimm",
+    # Sequence Generators
+    "SequenceGenerator",
+    "WeightedSequenceGenerator",
+    # System-level (new three-layer architecture)
+    "Chain",
+    "DPDistribution",
+    "PolydisperseChainGenerator",
+    "SchulzZimmDPDistribution",
+    "SystemPlan",
+    "SystemPlanner",
+    # Types
+    "ConnectionMetadata",
+    "ConnectionResult",
+    "PolymerBuildResult",
 ]

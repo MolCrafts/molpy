@@ -207,11 +207,19 @@ class GroReader(DataReader):
             for i, atom_dict in enumerate(atom_dicts):
                 atoms_data["number"][i] = atom_dict["number"]
 
+        # Convert xyz to separate x, y, z fields
+        if "xyz" in atoms_data and atoms_data["xyz"]:
+            xyz_array = np.array(atoms_data["xyz"], dtype=float)
+            atoms_data["x"] = xyz_array[:, 0]
+            atoms_data["y"] = xyz_array[:, 1]
+            atoms_data["z"] = xyz_array[:, 2]
+            del atoms_data["xyz"]
+
         # Convert to numpy arrays
         for key in list(atoms_data.keys()):
             values = atoms_data[key]
             if values:
-                if key == "xyz" or key == "velocity":
+                if key == "velocity":
                     atoms_data[key] = np.array(values, dtype=float)
                 elif key == "number":
                     atoms_data[key] = np.array(values, dtype=int)
@@ -394,22 +402,10 @@ class GroWriter(DataWriter):
                     atom_name = str(atom_data.get("name", "X"))
                     atom_num = int(atom_data.get("number", i + 1))
 
-                    # Handle coordinates
-                    xyz = atom_data.get("xyz", [0.0, 0.0, 0.0])
-                    try:
-                        xyz_array = np.asarray(xyz, dtype=float)
-                        if xyz_array.size >= 3:
-                            x, y, z = (
-                                float(xyz_array[0]),
-                                float(xyz_array[1]),
-                                float(xyz_array[2]),
-                            )
-                        else:
-                            x = y = z = 0.0
-                    except:
-                        x = float(atom_data.get("x", 0.0))
-                        y = float(atom_data.get("y", 0.0))
-                        z = float(atom_data.get("z", 0.0))
+                    # Handle coordinates - must use separate x, y, z fields
+                    x = float(atom_data["x"])
+                    y = float(atom_data["y"])
+                    z = float(atom_data["z"])
 
                     # Velocity (optional)
                     vx = float(atom_data.get("vx", 0.0)) if has_velocity else None

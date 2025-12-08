@@ -650,3 +650,179 @@ class TestForceFieldToPotentials:
 
         # Should only have bond potential
         assert len(potentials) == 1
+
+
+class TestTypeCopy:
+    """Test Type.copy() method."""
+
+    def test_atomtype_copy(self):
+        """Test copying an AtomType."""
+        at = AtomType("CA", element="C", mass=12.011, sigma=0.355, epsilon=0.293)
+        at_copy = at.copy()
+
+        assert at_copy is not at
+        assert at_copy.name == at.name
+        assert at_copy.params.kwargs == at.params.kwargs
+        assert at_copy["element"] == "C"
+        assert at_copy["mass"] == 12.011
+
+    def test_bondtype_copy(self):
+        """Test copying a BondType."""
+        at1 = AtomType("CA")
+        at2 = AtomType("CB")
+        bt = BondType("CA-CB", at1, at2, k=1000.0, r0=1.5)
+        bt_copy = bt.copy()
+
+        assert bt_copy is not bt
+        assert bt_copy.name == bt.name
+        assert bt_copy.itom == bt.itom
+        assert bt_copy.jtom == bt.jtom
+        assert bt_copy["k"] == 1000.0
+        assert bt_copy["r0"] == 1.5
+
+    def test_angletype_copy(self):
+        """Test copying an AngleType."""
+        at1 = AtomType("CA")
+        at2 = AtomType("CB")
+        at3 = AtomType("CC")
+        angle = AngleType("CA-CB-CC", at1, at2, at3, k=500.0, theta0=120.0)
+        angle_copy = angle.copy()
+
+        assert angle_copy is not angle
+        assert angle_copy.name == angle.name
+        assert angle_copy.itom == angle.itom
+        assert angle_copy.jtom == angle.jtom
+        assert angle_copy.ktom == angle.ktom
+        assert angle_copy["k"] == 500.0
+        assert angle_copy["theta0"] == 120.0
+
+
+class TestStyleCopy:
+    """Test Style.copy() method."""
+
+    def test_style_copy(self):
+        """Test copying a Style."""
+        style = Style("harmonic", k_unit="kcal/mol", r_unit="angstrom")
+        style_copy = style.copy()
+
+        assert style_copy is not style
+        assert style_copy.name == style.name
+        assert style_copy.params.kwargs == style.params.kwargs
+        # Types should not be copied
+        assert len(style_copy.types.bucket(Type)) == 0
+
+    def test_atomstyle_copy(self):
+        """Test copying an AtomStyle."""
+        astyle = AtomStyle("full")
+        astyle.def_type("CA", mass=12.011)
+        astyle_copy = astyle.copy()
+
+        assert astyle_copy is not astyle
+        assert astyle_copy.name == astyle.name
+        # Types should not be copied
+        assert len(astyle_copy.types.bucket(AtomType)) == 0
+
+
+class TestForceFieldGetStyleByName:
+    """Test ForceField.get_style_by_name() method."""
+
+    def test_get_style_by_name(self):
+        """Test getting a style by name."""
+        ff = ForceField()
+        ff.def_style(AtomStyle("full"))
+        ff.def_style(BondStyle("harmonic"))
+
+        atom_style = ff.get_style_by_name("full", AtomStyle)
+        assert atom_style is not None
+        assert isinstance(atom_style, AtomStyle)
+        assert atom_style.name == "full"
+
+        bond_style = ff.get_style_by_name("harmonic", BondStyle)
+        assert bond_style is not None
+        assert isinstance(bond_style, BondStyle)
+        assert bond_style.name == "harmonic"
+
+    def test_get_style_by_name_not_found(self):
+        """Test getting a style that doesn't exist."""
+        ff = ForceField()
+        ff.def_style(AtomStyle("full"))
+
+        result = ff.get_style_by_name("nonexistent", AtomStyle)
+        assert result is None
+
+    def test_get_style_by_name_default_class(self):
+        """Test getting a style by name with default Style class."""
+        ff = ForceField()
+        style = ff.def_style(Style("test_style"))
+
+        result = ff.get_style_by_name("test_style")
+        assert result is not None
+        assert result.name == "test_style"
+
+
+class TestStyleGetTypes:
+    """Test Style.get_types() method."""
+
+    def test_get_types(self):
+        """Test getting types from a style."""
+        astyle = AtomStyle("full")
+        at1 = astyle.def_type("CA", mass=12.011)
+        at2 = astyle.def_type("CB", mass=12.011)
+
+        atom_types = astyle.get_types(AtomType)
+        assert len(atom_types) == 2
+        assert at1 in atom_types
+        assert at2 in atom_types
+
+    def test_get_types_empty(self):
+        """Test getting types from an empty style."""
+        astyle = AtomStyle("full")
+        atom_types = astyle.get_types(AtomType)
+        assert len(atom_types) == 0
+
+    def test_get_types_bond(self):
+        """Test getting bond types from a bond style."""
+        bstyle = BondStyle("harmonic")
+        at1 = AtomType("CA")
+        at2 = AtomType("CB")
+        bt = bstyle.def_type(at1, at2, k=1000.0, r0=1.5)
+
+        bond_types = bstyle.get_types(BondType)
+        assert len(bond_types) == 1
+        assert bt in bond_types
+
+
+class TestStyleGetTypeByName:
+    """Test Style.get_type_by_name() method."""
+
+    def test_get_type_by_name(self):
+        """Test getting a type by name."""
+        astyle = AtomStyle("full")
+        at1 = astyle.def_type("CA", mass=12.011)
+        at2 = astyle.def_type("CB", mass=12.011)
+
+        result = astyle.get_type_by_name("CA", AtomType)
+        assert result is not None
+        assert result == at1
+        assert result.name == "CA"
+
+        result = astyle.get_type_by_name("CB", AtomType)
+        assert result is not None
+        assert result == at2
+
+    def test_get_type_by_name_not_found(self):
+        """Test getting a type that doesn't exist."""
+        astyle = AtomStyle("full")
+        astyle.def_type("CA", mass=12.011)
+
+        result = astyle.get_type_by_name("nonexistent", AtomType)
+        assert result is None
+
+    def test_get_type_by_name_default_class(self):
+        """Test getting a type by name with default Type class."""
+        astyle = AtomStyle("full")
+        at = astyle.def_type("CA", mass=12.011)
+
+        result = astyle.get_type_by_name("CA")
+        assert result is not None
+        assert result == at

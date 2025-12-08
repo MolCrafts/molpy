@@ -3,12 +3,12 @@ Programmable Reacter Module for Chemical Transformations.
 
 This module provides a framework for defining and executing chemical reactions
 within the molpy framework, following SMIRKS-style semantics but working
-entirely on native data structures (Atom, Bond, Struct, Monomer).
+entirely on native data structures (Atom, Bond, Atomistic).
 
 Core Concepts:
 --------------
 - **Reacter**: Represents a single chemical reaction type
-- **ReactionProduct**: Container for reaction products and metadata
+- **ReactionResult**: Container for reaction products and metadata
 - **Selectors**: Functions that identify port atoms and leaving groups
 - **Transformers**: Functions that create or modify bonds
 
@@ -27,10 +27,14 @@ cc_coupling = Reacter(
     bond_former=form_single_bond,
 )
 
-# Execute reaction between two monomers
-product = cc_coupling.run(left=mono_a, right=mono_b, port_L="1", port_R="2")
-print(f"Eliminated atoms: {product.notes['eliminated_atoms']}")
-print(f"Formed bonds: {product.notes['formed_bonds']}")
+# Mark ports on atoms
+atom_a["port"] = "1"
+atom_b["port"] = "2"
+
+# Execute reaction between two Atomistic structures
+product = cc_coupling.run(left=struct_a, right=struct_b, port_L="1", port_R="2")
+print(f"Removed atoms: {product.removed_atoms}")
+print(f"New bonds: {product.new_bonds}")
 ```
 
 Design Goals:
@@ -40,10 +44,18 @@ Design Goals:
 - Stable indexing: atom deletion doesn't shift IDs
 - Single responsibility: one Reacter = one reaction type
 - Extensible: easy to subclass for specialized reactions
-- Auditable: all changes recorded in ReactionProduct.notes
+- Auditable: all changes recorded in ReactionResult.notes
 """
 
-from .base import AtomEntity, ReactionProduct, Reacter
+from .base import (
+    ProductInfo,
+    ReactantInfo,
+    ReactionMetadata,
+    ReactionResult,
+    Reacter,
+    TopologyChanges,
+)
+from .topology_detector import TopologyDetector
 from .connector import MonomerLinker
 from .selectors import (
     select_all_hydrogens,
@@ -52,6 +64,7 @@ from .selectors import (
     select_none,
     select_one_hydrogen,
     select_port_atom,
+    select_prev_atom,
 )
 from .transformers import (
     break_bond,
@@ -65,11 +78,15 @@ from .transformers import (
 from .utils import create_atom_mapping, find_neighbors
 
 __all__ = [
-    "AtomEntity",
     # Core classes
     "MonomerLinker",
-    "ReactionProduct",
+    "ProductInfo",
+    "ReactantInfo",
+    "ReactionMetadata",
+    "ReactionResult",
     "Reacter",
+    "TopologyChanges",
+    "TopologyDetector",
     # Transformers (Bond Formers)
     "break_bond",
     "create_bond_former",
@@ -87,5 +104,6 @@ __all__ = [
     "select_none",
     "select_one_hydrogen",
     "select_port_atom",
+    "select_prev_atom",
     "skip_bond_formation",
 ]

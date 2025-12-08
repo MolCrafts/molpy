@@ -29,18 +29,49 @@ _TWO_CHR_ELEMENTS = {
 }
 
 
-def _dict_to_block(data: dict[str, list[Any]]) -> Block:
-    """Convert 'column -> list' dict into a Block of ndarrays."""
+def _dict_to_block(data: dict[str, list[Any] | np.ndarray]) -> Block:
+    """Convert 'column -> list/array' dict into a Block of ndarrays.
+
+    Args:
+        data: Dictionary where values can be lists or numpy arrays
+
+    Returns:
+        Block with all values converted to numpy arrays
+    """
     blk = Block()
     for k, vals in data.items():
-        if k == "xyz":
-            blk[k] = np.asarray(vals, dtype=float)
-        elif k in {"id", "resSeq"}:
-            blk[k] = np.asarray(vals, dtype=int)
+        # If already a numpy array, use it directly (after ensuring it's the right dtype)
+        if isinstance(vals, np.ndarray):
+            if k == "xyz":
+                blk[k] = vals.astype(float)
+            elif k in {"id", "resSeq"}:
+                blk[k] = vals.astype(int)
+            else:
+                # Keep as is, Block will handle dtype conversion if needed
+                blk[k] = vals
         else:
-            # variable-width unicode for strings
-            max_len = max(len(str(v)) for v in vals) if vals else 1
-            blk[k] = np.asarray(vals, dtype=f"U{max_len}")
+            # Convert from list
+            if k == "xyz":
+                blk[k] = np.asarray(vals, dtype=float)
+            elif k in {"id", "resSeq"}:
+                blk[k] = np.asarray(vals, dtype=int)
+            else:
+                # variable-width unicode for strings
+                # Handle empty list case
+                if not vals:
+                    blk[k] = np.array([], dtype="U1")
+                else:
+                    # Convert list to array, handling mixed types
+                    try:
+                        max_len = (
+                            max(len(str(v)) for v in vals if v is not None)
+                            if vals
+                            else 1
+                        )
+                        blk[k] = np.asarray(vals, dtype=f"U{max_len}")
+                    except (TypeError, ValueError):
+                        # Fallback: use object dtype if conversion fails
+                        blk[k] = np.asarray(vals, dtype=object)
     return blk
 
 
@@ -156,12 +187,20 @@ class PDBReader(DataReader):
 
         # ---------- commit to frame ------------------------------------
         if coords:
-            atoms_data["xyz"] = coords
+            # Store coordinates as separate x, y, z fields only
+            coords_array = np.array(coords)
+            atoms_data["x"] = coords_array[:, 0]
+            atoms_data["y"] = coords_array[:, 1]
+            atoms_data["z"] = coords_array[:, 2]
             frame["atoms"] = _dict_to_block(atoms_data)
 
         if unique_bonds:
-            ij = np.array(sorted(unique_bonds), dtype=int) - 1  # zero-based
-            frame["bonds"] = Block({"i": ij[:, 0], "j": ij[:, 1]})
+            # Keep atom IDs as 1-based (no conversion)
+            # Use atom1, atom2 field names
+            bonds_array = np.array(sorted(unique_bonds), dtype=int)
+            frame["bonds"] = Block(
+                {"atom1": bonds_array[:, 0], "atom2": bonds_array[:, 1]}
+            )
 
         frame.metadata["box"] = (
             Box(matrix=box_matrix) if box_matrix is not None else Box()
@@ -183,6 +222,94 @@ class PDBWriter(DataWriter):
 
     def __init__(self, path: Path):
         super().__init__(path=path)
+
+    def _format_atom_line_fast(
+        self,
+        serial: int,
+        atom_name: str,
+        res_name: str,
+        chain_id: str,
+        res_seq: int,
+        x: float,
+        y: float,
+        z: float,
+        occupancy: float,
+        temp_factor: float,
+        element: str,
+    ) -> str:
+        """Fast version of _format_atom_line that takes individual parameters."""
+        # Format according to PDB v3.3 specification
+        line = "ATOM  "  # Columns 1-6: Record name
+
+        # Columns 7-11: Serial number, right-justified
+        line += f"{serial:>5d}"
+
+        # Column 12: Space
+        line += " "
+
+        # Columns 13-16: Atom name
+        if len(atom_name) == 1:
+            line += f" {atom_name:<3s}"  # Space + 1 char + 2 spaces
+        elif len(atom_name) <= 4:
+            line += f"{atom_name:<4s}"  # Up to 4 characters
+        else:
+            line += f"{atom_name[:4]:<4s}"  # Truncate to 4 characters
+
+        # Column 17: Alternate location indicator (space)
+        line += " "
+
+        # Columns 18-20: Residue name, left-justified
+        line += f"{res_name[:3]:<3s}"
+
+        # Column 21: Space
+        line += " "
+
+        # Column 22: Chain identifier
+        line += f"{chain_id[0] if chain_id else ' ':1s}"
+
+        # Columns 23-26: Residue sequence number, right-justified
+        line += f"{res_seq:>4d}"
+
+        # Column 27: Insertion code (space)
+        line += " "
+
+        # Columns 28-30: Spaces
+        line += "   "
+
+        # Columns 31-38: X coordinate, right-justified, 8.3 format
+        line += f"{x:>8.3f}"
+
+        # Columns 39-46: Y coordinate, right-justified, 8.3 format
+        line += f"{y:>8.3f}"
+
+        # Columns 47-54: Z coordinate, right-justified, 8.3 format
+        line += f"{z:>8.3f}"
+
+        # Columns 55-60: Occupancy, right-justified, 6.2 format
+        line += f"{occupancy:>6.2f}"
+
+        # Columns 61-66: Temperature factor, right-justified, 6.2 format
+        line += f"{temp_factor:>6.2f}"
+
+        # Columns 67-76: Spaces
+        line += "          "
+
+        # Columns 77-78: Element symbol, right-justified
+        elem_str = str(element).upper()[:2] if element else "  "
+        line += f"{elem_str:>2s}"
+
+        # Columns 79-80: Charge (optional, use spaces if not provided)
+        line += "  "
+
+        # Ensure line is exactly 79 characters before adding newline
+        if len(line) < 79:
+            line = line.ljust(79)
+        elif len(line) > 79:
+            line = line[:79]
+
+        # End with newline (total 80 characters: 79 content + 1 newline)
+        line += "\n"
+        return line
 
     def _format_atom_line(self, serial: int, atom_data: Block) -> str:
         """Format a single ATOM/HETATM line according to PDB v3.3 specifications.
@@ -216,14 +343,10 @@ class PDBWriter(DataWriter):
         res_seq = str(atom_data.get("resSeq", 1))
         i_code = str(atom_data.get("iCode", " "))
 
-        # Coordinates - try xyz first, then xyz, then x/y/z
-        if "xyz" in atom_data:
-            xyz = atom_data["xyz"]
-            x, y, z = float(xyz[0]), float(xyz[1]), float(xyz[2])
-        else:
-            x = atom_data.get("x")
-            y = atom_data.get("y")
-            z = atom_data.get("z")
+        # Coordinates - must use separate x, y, z fields
+        x = float(atom_data["x"])
+        y = float(atom_data["y"])
+        z = float(atom_data["z"])
 
         # Optional fields
         occupancy = float(atom_data.get("occupancy", 1.0))
@@ -289,19 +412,26 @@ class PDBWriter(DataWriter):
         # Columns 67-76: Spaces (could contain segment identifier, but we'll use spaces)
         line += "          "
 
-        # Columns 77-78: Element symbol, right-justified
+        # Columns 77-78: Element symbol, right-justified (2 characters)
         if element:
-            line += f"{element[:2]:>2s}"
+            elem_str = str(element)[:2].upper().strip()
+            line += f"{elem_str:>2s}"
         else:
             line += "  "
 
-        # Columns 79-80: Charge
-        # if charge:
-        #     line += f"{str(charge):2s}"
-        # else:
-        #     line += "  "
+        # Columns 79-80: Charge (optional, use spaces if not provided)
+        # Charge is typically not provided, so use spaces (2 characters)
+        line += "  "
 
-        line += "\n"  # End with newline
+        # At this point, line should be exactly 79 characters
+        # Verify and fix if needed
+        if len(line) < 79:
+            line = line.ljust(79)
+        elif len(line) > 79:
+            line = line[:79]
+
+        # Add newline to make total 80 characters
+        line += "\n"
         return line
 
     def _format_cryst1_line(self, box) -> str:
@@ -323,7 +453,35 @@ class PDBWriter(DataWriter):
         return f"CRYST1{a:>9.3f}{b:>9.3f}{c:>9.3f}{alpha:>7.2f}{beta:>7.2f}{gamma:>7.2f} P 1           1"
 
     def write(self, frame):
-        """Write frame to PDB file."""
+        """Write frame to PDB file.
+
+        Required fields in frame["atoms"]:
+        - x, y, z: coordinates (float, required)
+        - id: atom ID (int, optional, defaults to index+1)
+
+        Optional fields in frame["atoms"]:
+        - name: atom name (str)
+        - resName: residue name (str)
+        - element: element symbol (str)
+        - resSeq: residue sequence number (int)
+        - chainID: chain identifier (str)
+        - occupancy: occupancy (float)
+        - tempFactor: temperature factor (float)
+
+        Optional metadata:
+        - elements: space-separated string of element symbols (one per atom)
+        - name: frame name (str)
+        - box: Box object for CRYST1 record
+
+        Raises:
+            ValueError: If required fields (x, y, z) are missing or contain None
+        """
+        # Extract elements from metadata if available
+        elements_list = None
+        if "elements" in frame.metadata:
+            elements_str = frame.metadata["elements"]
+            if isinstance(elements_str, str):
+                elements_list = elements_str.split()
 
         with open(self._path, "w") as f:
             # Write header
@@ -339,26 +497,121 @@ class PDBWriter(DataWriter):
             atoms = frame["atoms"]
             n_atoms = atoms.nrows
 
+            # Validate required fields exist and are not None
+            required_fields = ["x", "y", "z"]
+            for field in required_fields:
+                if field not in atoms:
+                    raise ValueError(
+                        f"Required field '{field}' is missing in frame['atoms']"
+                    )
+                # Check if any values are None
+                values = atoms[field]
+                if values is None:
+                    raise ValueError(f"Required field '{field}' contains None")
+                # Check for None in array (if object dtype)
+                if hasattr(values, "dtype") and values.dtype == object:
+                    if any(v is None for v in values):
+                        raise ValueError(
+                            f"Required field '{field}' contains None values"
+                        )
+
             for i in range(n_atoms):
-                atom_data = atoms[i]
-                display_serial = int(atom_data["id"]) if "id" in atom_data else i + 1
-                line = self._format_atom_line(display_serial, atom_data)
+                # Extract required fields - raise error if None
+                x_val = atoms["x"][i]
+                y_val = atoms["y"][i]
+                z_val = atoms["z"][i]
+
+                if x_val is None or y_val is None or z_val is None:
+                    raise ValueError(
+                        f"Required coordinate fields contain None at index {i}: "
+                        f"x={x_val}, y={y_val}, z={z_val}"
+                    )
+
+                x = float(x_val)
+                y = float(y_val)
+                z = float(z_val)
+
+                # Extract optional fields with defaults
+                atom_id = (
+                    int(atoms["id"][i])
+                    if "id" in atoms and atoms["id"][i] is not None
+                    else i + 1
+                )
+
+                # Get element from metadata list or atom_data
+                element = None
+                if elements_list and i < len(elements_list):
+                    element = elements_list[i]
+                elif "element" in atoms and atoms["element"][i] is not None:
+                    element = str(atoms["element"][i])
+                elif "symbol" in atoms and atoms["symbol"][i] is not None:
+                    element = str(atoms["symbol"][i]).upper()
+                else:
+                    element = "X"  # Default unknown element
+
+                # Get atom name (use element if not specified)
+                atom_name = None
+                if "name" in atoms and atoms["name"][i] is not None:
+                    atom_name = str(atoms["name"][i])
+                else:
+                    atom_name = element  # Use element as fallback
+
+                # Get residue name
+                res_name = "UNK"
+                if "resName" in atoms and atoms["resName"][i] is not None:
+                    res_name = str(atoms["resName"][i])
+
+                # Get residue sequence number
+                res_seq = 1
+                if "resSeq" in atoms and atoms["resSeq"][i] is not None:
+                    res_seq = int(atoms["resSeq"][i])
+
+                # Get chain ID
+                chain_id = " "
+                if "chainID" in atoms and atoms["chainID"][i] is not None:
+                    chain_id = str(atoms["chainID"][i])[:1]
+
+                # Get optional fields with defaults
+                occupancy = 1.0
+                if "occupancy" in atoms and atoms["occupancy"][i] is not None:
+                    occupancy = float(atoms["occupancy"][i])
+
+                temp_factor = 0.0
+                if "tempFactor" in atoms and atoms["tempFactor"][i] is not None:
+                    temp_factor = float(atoms["tempFactor"][i])
+
+                # Format and write atom line
+                line = self._format_atom_line_fast(
+                    serial=atom_id,
+                    atom_name=atom_name,
+                    res_name=res_name,
+                    chain_id=chain_id,
+                    res_seq=res_seq,
+                    x=x,
+                    y=y,
+                    z=z,
+                    occupancy=occupancy,
+                    temp_factor=temp_factor,
+                    element=element,
+                )
                 f.write(line)
             f.write("\n")
 
             # Write bonds as CONECT records
             if "bonds" in frame:
                 bonds = frame["bonds"]
-                connect = defaultdict(list)
-                for i, j in zip(bonds["i"].tolist(), bonds["j"].tolist()):
-                    itom = atoms[i]
-                    jtom = atoms[j]
-                    i_id = int(itom.get("id", i + 1))
-                    j_id = int(jtom.get("id", j + 1))
-                    connect[i_id].append(j_id)
-                    connect[j_id].append(i_id)
-                for i_id, j_ids in connect.items():
-                    js = [str(j_id).rjust(5) for j_id in j_ids]
-                    f.write(f"CONECT{str(i_id).rjust(5)}{''.join(js)}\n")
+                if "atom1" in bonds and "atom2" in bonds:
+                    connect = defaultdict(list)
+                    # atom1, atom2 are stored as atom IDs (1-based), use directly
+                    for atom1_id, atom2_id in zip(
+                        bonds["atom1"].tolist(), bonds["atom2"].tolist()
+                    ):
+                        atom1_id_int = int(atom1_id)
+                        atom2_id_int = int(atom2_id)
+                        connect[atom1_id_int].append(atom2_id_int)
+                        connect[atom2_id_int].append(atom1_id_int)
+                    for atom1_id, atom2_ids in connect.items():
+                        js = [str(atom2_id).rjust(5) for atom2_id in atom2_ids]
+                        f.write(f"CONECT{str(atom1_id).rjust(5)}{''.join(js)}\n")
             # Write END record
             f.write("END\n")

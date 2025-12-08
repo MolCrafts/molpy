@@ -1,2 +1,2 @@
 from .base import AnglePotential
-from .harmonic import Harmonic
+from .harmonic import AngleHarmonicStyle, AngleHarmonicType, AngleHarmonic

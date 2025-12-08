@@ -14,7 +14,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Self, TypeVar
 
-from ..entity import Struct
+from .entity import Struct
 
 # Type variable for the inner type (bound to Struct)
 TInner = TypeVar("TInner", bound=Struct)

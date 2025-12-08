@@ -76,6 +76,34 @@ def write_lammps_molecule(
     writer.write(frame)
 
 
+def write_h5(
+    file: PathLike,
+    frame: Any,
+    compression: str | None = "gzip",
+    compression_opts: int = 4,
+) -> None:
+    """
+    Write a Frame object to an HDF5 file.
+
+    Args:
+        file: Output file path
+        frame: Frame object to write
+        compression: Compression algorithm (None, 'gzip', 'lzf', 'szip').
+            Defaults to 'gzip'.
+        compression_opts: Compression level (for gzip: 0-9). Defaults to 4.
+
+    Examples:
+        >>> frame = Frame(blocks={"atoms": {"x": [0, 1, 2], "y": [0, 0, 0]}})
+        >>> write_h5("structure.h5", frame)
+    """
+    from .data.h5 import HDF5Writer
+
+    writer = HDF5Writer(
+        Path(file), compression=compression, compression_opts=compression_opts
+    )
+    writer.write(frame)
+
+
 # =============================================================================
 # Force Field Writers
 # =============================================================================
@@ -137,9 +165,33 @@ def write_xyz_trajectory(file: PathLike, frames: list) -> None:
             writer.write_frame(frame)
 
 
-# =============================================================================
-# Combined System Writers
-# =============================================================================
+def write_h5_trajectory(
+    file: PathLike,
+    frames: list,
+    compression: str | None = "gzip",
+    compression_opts: int = 4,
+) -> None:
+    """
+    Write frames to an HDF5 trajectory file.
+
+    Args:
+        file: Output file path
+        frames: List of Frame objects to write
+        compression: Compression algorithm (None, 'gzip', 'lzf', 'szip').
+            Defaults to 'gzip'.
+        compression_opts: Compression level (for gzip: 0-9). Defaults to 4.
+
+    Examples:
+        >>> frames = [frame0, frame1, frame2]
+        >>> write_h5_trajectory("trajectory.h5", frames)
+    """
+    from .trajectory.h5 import HDF5TrajectoryWriter
+
+    with HDF5TrajectoryWriter(
+        Path(file), compression=compression, compression_opts=compression_opts
+    ) as writer:
+        for frame in frames:
+            writer.write_frame(frame)
 
 
 def write_lammps_system(workdir: PathLike, frame: Any, forcefield: Any) -> None:
@@ -158,4 +210,38 @@ def write_lammps_system(workdir: PathLike, frame: Any, forcefield: Any) -> None:
     # Use directory name as file stem
     file_stem = workdir_path / workdir_path.stem
     write_lammps_data(file_stem.with_suffix(".data"), frame)
-    write_lammps_forcefield(file_stem.with_suffix(".ff"), forcefield)
+
+    # Extract type names from frame to create whitelist
+    atom_types = None
+    bond_types = None
+    angle_types = None
+    dihedral_types = None
+    improper_types = None
+
+    if "atoms" in frame and "type" in frame["atoms"]:
+        atom_types = set(frame["atoms"]["type"])
+
+    if "bonds" in frame and "type" in frame["bonds"]:
+        bond_types = set(frame["bonds"]["type"])
+
+    if "angles" in frame and "type" in frame["angles"]:
+        angle_types = set(frame["angles"]["type"])
+
+    if "dihedrals" in frame and "type" in frame["dihedrals"]:
+        dihedral_types = set(frame["dihedrals"]["type"])
+
+    if "impropers" in frame and "type" in frame["impropers"]:
+        improper_types = set(frame["impropers"]["type"])
+
+    # Write forcefield with whitelist
+    from .forcefield.lammps import LAMMPSForceFieldWriter
+
+    writer = LAMMPSForceFieldWriter(file_stem.with_suffix(".ff"))
+    writer.write(
+        forcefield,
+        atom_types=atom_types,
+        bond_types=bond_types,
+        angle_types=angle_types,
+        dihedral_types=dihedral_types,
+        improper_types=improper_types,
+    )

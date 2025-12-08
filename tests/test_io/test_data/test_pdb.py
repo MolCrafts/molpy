@@ -25,8 +25,8 @@ class TestPDBIO:
         assert frame.metadata["box"] is not None
         # Bonds block exists and has correct shape
         bonds = frame["bonds"]
-        assert bonds["i"].shape[0] == 7
-        assert bonds["j"].shape[0] == 7
+        assert bonds["atom1"].shape[0] == 7
+        assert bonds["atom2"].shape[0] == 7
 
     def test_read_water(self, pdb_test_files):
         if "water.pdb" not in pdb_test_files:
@@ -37,7 +37,11 @@ class TestPDBIO:
         n_atoms = atoms["name"].shape[0]
         assert n_atoms > 1000
         assert frame.metadata["box"] is not None
-        assert atoms["xyz"].shape == (n_atoms, 3)
+        # Check separate x, y, z fields
+        assert "x" in atoms and "y" in atoms and "z" in atoms
+        assert atoms["x"].shape[0] == n_atoms
+        assert atoms["y"].shape[0] == n_atoms
+        assert atoms["z"].shape[0] == n_atoms
 
     def test_write_and_read_roundtrip(self, tmp_path, pdb_test_files):
         if "1avg.pdb" not in pdb_test_files:
@@ -51,5 +55,8 @@ class TestPDBIO:
         atoms1 = frame["atoms"]
         atoms2 = frame2["atoms"]
         assert atoms1["name"].shape == atoms2["name"].shape
-        assert np.allclose(atoms1["xyz"], atoms2["xyz"])  # allow float tolerance
+        # Check separate x, y, z fields
+        assert np.allclose(atoms1["x"], atoms2["x"])
+        assert np.allclose(atoms1["y"], atoms2["y"])
+        assert np.allclose(atoms1["z"], atoms2["z"])
         assert frame2.metadata["box"] is not None

@@ -1,6 +1,7 @@
 """XML force field parser for atomistic force fields."""
 
 import logging
+import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -8,8 +9,11 @@ from typing import Any
 from molpy import (
     AtomisticForcefield,
     AtomType,
-    DihedralType,
 )
+from molpy.potential.angle import AngleHarmonicStyle
+from molpy.potential.bond import BondHarmonicStyle
+from molpy.potential.dihedral import DihedralOPLSStyle
+from molpy.potential.pair import PairLJ126CoulCutStyle, PairLJ126CoulLongStyle
 
 logger = logging.getLogger(__name__)
 
@@ -297,9 +301,9 @@ class XMLForceFieldReader:
         # Case 1: Full wildcard ("*", "*")
         if type_ == "*" and canonical_class == "*":
             if self._any_atomtype is None:
-                assert self._ff is not None, (
-                    "Force field must be initialized before creating atom types"
-                )
+                assert (
+                    self._ff is not None
+                ), "Force field must be initialized before creating atom types"
                 atomstyle = self._ff.def_atomstyle("full")
                 self._any_atomtype = atomstyle.def_type(name=name, **kwargs)
                 # record overrides if present for a specific type (not wildcard)
@@ -313,9 +317,9 @@ class XMLForceFieldReader:
         if type_ != "*" and canonical_class == "*":
             if type_ in self._type_to_atomtype:
                 return self._type_to_atomtype[type_]
-            assert self._ff is not None, (
-                "Force field must be initialized before creating atom types"
-            )
+            assert (
+                self._ff is not None
+            ), "Force field must be initialized before creating atom types"
             atomstyle = self._ff.def_atomstyle("full")
             atomtype = atomstyle.def_type(name=name, **kwargs)
             ov = kwargs.get("overrides")
@@ -329,9 +333,9 @@ class XMLForceFieldReader:
         if type_ == "*" and canonical_class != "*":
             if canonical_class in self._class_to_atomtype:
                 return self._class_to_atomtype[canonical_class]
-            assert self._ff is not None, (
-                "Force field must be initialized before creating atom types"
-            )
+            assert (
+                self._ff is not None
+            ), "Force field must be initialized before creating atom types"
             atomstyle = self._ff.def_atomstyle("full")
             atomtype = atomstyle.def_type(name=name, **kwargs)
             ov = kwargs.get("overrides")
@@ -346,9 +350,9 @@ class XMLForceFieldReader:
         if type_ in self._type_to_atomtype:
             return self._type_to_atomtype[type_]
         # Create new AtomType
-        assert self._ff is not None, (
-            "Force field must be initialized before creating atom types"
-        )
+        assert (
+            self._ff is not None
+        ), "Force field must be initialized before creating atom types"
         atomstyle = self._ff.def_atomstyle("full")
         atomtype = atomstyle.def_type(name=name, **kwargs)
         ov = kwargs.get("overrides")
@@ -418,7 +422,7 @@ class XMLForceFieldReader:
             element: HarmonicBondForce XML element
         """
         assert self._ff is not None, "Force field must be initialized before parsing"
-        bondstyle = self._ff.def_bondstyle("harmonic")
+        bondstyle = self._ff.def_style(BondHarmonicStyle())
         count = 0
 
         for bond_elem in element:
@@ -449,7 +453,7 @@ class XMLForceFieldReader:
             k = float(k_str) if k_str else 0.0
 
             # Define bond type
-            bondstyle.def_type(at1, at2, r0=r0, k=k)
+            bondstyle.def_type(at1, at2, k, r0)
             count += 1
 
         logger.info(f"Parsed {count} bond types")
@@ -462,7 +466,7 @@ class XMLForceFieldReader:
             element: HarmonicAngleForce XML element
         """
         assert self._ff is not None, "Force field must be initialized before parsing"
-        anglestyle = self._ff.def_anglestyle("harmonic")
+        anglestyle = self._ff.def_style(AngleHarmonicStyle())
         count = 0
 
         for angle_elem in element:
@@ -492,11 +496,13 @@ class XMLForceFieldReader:
             at3 = self._get_or_create_atomtype(type3, class3)
 
             # Parse parameters
-            theta0 = float(angle_str) if angle_str else 0.0
+            theta0_rad = float(angle_str) if angle_str else 0.0
             k = float(k_str) if k_str else 0.0
+            # Convert radians to degrees
+            theta0 = theta0_rad * 180.0 / math.pi
 
             # Define angle type
-            anglestyle.def_type(at1, at2, at3, theta0=theta0, k=k)
+            anglestyle.def_type(at1, at2, at3, k, theta0)
             count += 1
 
         logger.info(f"Parsed {count} angle types")
@@ -509,7 +515,7 @@ class XMLForceFieldReader:
             element: RBTorsionForce XML element
         """
         assert self._ff is not None, "Force field must be initialized before parsing"
-        dihedralstyle = self._ff.def_dihedralstyle("opls")
+        dihedralstyle = self._ff.def_style(DihedralOPLSStyle())
         count = 0
 
         for dihedral_elem in element:
@@ -538,33 +544,15 @@ class XMLForceFieldReader:
             at4 = self._get_or_create_atomtype(type4, class4)
 
             # Parse RB coefficients (c0-c5)
-            params = {}
-            for i in range(6):
-                c_str = dihedral_elem.get(f"c{i}")
-                if c_str:
-                    params[f"c{i}"] = float(c_str)
+            c0 = float(dihedral_elem.get("c0", "0.0"))
+            c1 = float(dihedral_elem.get("c1", "0.0"))
+            c2 = float(dihedral_elem.get("c2", "0.0"))
+            c3 = float(dihedral_elem.get("c3", "0.0"))
+            c4 = float(dihedral_elem.get("c4", "0.0"))
+            c5 = float(dihedral_elem.get("c5", "0.0"))
 
-            # Define dihedral type - create and add manually
-            # Use more specific name: if type is "*", use class name instead
-            name1 = type1 if type1 != "*" else class1
-            name2 = type2 if type2 != "*" else class2
-            name3 = type3 if type3 != "*" else class3
-            name4 = type4 if type4 != "*" else class4
-            dihedral_name = f"{name1}-{name2}-{name3}-{name4}"
-
-            # If still not unique (same name already exists), append counter
-            # Note: we check by trying to find existing type with same name
-            base_name = dihedral_name
-            counter = 1
-            existing_names = {
-                dt.name for dt in dihedralstyle.types.bucket(DihedralType)
-            }
-            while dihedral_name in existing_names:
-                dihedral_name = f"{base_name}#{counter}"
-                counter += 1
-
-            dihedral_type = DihedralType(dihedral_name, at1, at2, at3, at4, **params)
-            dihedralstyle.types.add(dihedral_type)
+            # Use standard API to define dihedral type
+            dihedralstyle.def_type(at1, at2, at3, at4, c0, c1, c2, c3, c4, c5)
             count += 1
 
         logger.info(f"Parsed {count} dihedral types")
@@ -581,10 +569,11 @@ class XMLForceFieldReader:
         coulomb14scale = element.get("coulomb14scale", "0.5")
         lj14scale = element.get("lj14scale", "0.5")
 
-        pairstyle = self._ff.def_pairstyle(
-            "lj/cut/coul/cut",
-            coulomb14scale=float(coulomb14scale),
-            lj14scale=float(lj14scale),
+        pairstyle = self._ff.def_style(
+            PairLJ126CoulCutStyle(
+                coulomb14scale=float(coulomb14scale),
+                lj14scale=float(lj14scale),
+            )
         )
         count = 0
 
@@ -619,9 +608,7 @@ class XMLForceFieldReader:
 
             # Define pair parameters (self-interaction)
             # If atomtype exists, update its params; else create new pair type
-            pairstyle.def_type(
-                atomtype, atomtype, charge=charge, sigma=sigma, epsilon=epsilon
-            )
+            pairstyle.def_type(atomtype, atomtype, epsilon, sigma, charge)
             count += 1
 
         logger.info(f"Parsed {count} nonbonded parameters")
@@ -649,5 +636,286 @@ def read_xml_forcefield(
         >>> from pathlib import Path
         >>> ff = read_xml_forcefield(Path("/path/to/custom.xml"))
     """
+    # Check if this is oplsaa.xml and use specialized reader
+    filepath_obj = Path(filepath)
+    if filepath_obj.name == "oplsaa.xml" or str(filepath).endswith("oplsaa.xml"):
+        return read_oplsaa_forcefield(filepath, forcefield)
+
     reader = XMLForceFieldReader(filepath)
+    return reader.read(forcefield)
+
+
+class OPLSAAForceFieldReader(XMLForceFieldReader):
+    """
+    Specialized reader for OPLS-AA force field with LAMMPS unit conversions.
+
+    This reader extends XMLForceFieldReader to:
+    1. Use lj/cut/coul/long pair style instead of lj/cut/coul/cut
+    2. Convert epsilon: kJ/mol → kcal/mol (÷4.184)
+    3. Convert sigma: nm → Å (×10)
+    4. Convert bond K: kJ/mol/nm² → kcal/mol/Å² (÷(4.184×100), both use 0.5 factor in formula)
+    5. Convert angle K: kJ/mol/rad² → kcal/mol/deg² (direct to LAMMPS format)
+       Formula: k_lammps = (0.5 * k_opls / 4.184) * (π/180)²
+       Stored internally in LAMMPS format, so no conversion needed when writing
+    6. Convert dihedral K: kJ/mol → kcal/mol (÷4.184)
+    """
+
+    def _parse_bonds(self, element: ET.Element) -> None:
+        """
+        Parse HarmonicBondForce section with OPLS-AA unit conversions.
+
+        Args:
+            element: HarmonicBondForce XML element
+        """
+        assert self._ff is not None, "Force field must be initialized before parsing"
+        bondstyle = self._ff.def_style(BondHarmonicStyle())
+        count = 0
+
+        for bond_elem in element:
+            if bond_elem.tag != "Bond":
+                continue
+
+            # Get atom type identifiers
+            class1 = bond_elem.get("class1", "*")
+            class2 = bond_elem.get("class2", "*")
+            type1 = bond_elem.get("type1", "*")
+            type2 = bond_elem.get("type2", "*")
+
+            # Get bond parameters
+            length_str = bond_elem.get("length")
+            k_str = bond_elem.get("k")
+
+            # Check if types are present
+            if type1 is None or type2 is None:
+                logger.warning("Skipping bond without type information")
+                continue
+
+            # Get or create atom types
+            at1 = self._get_or_create_atomtype(type1, class1)
+            at2 = self._get_or_create_atomtype(type2, class2)
+
+            # Parse parameters and convert units
+            r0_nm = float(length_str) if length_str else 0.0
+            k_opls = float(k_str) if k_str else 0.0
+
+            # Convert units for LAMMPS
+            # OPLS XML: E = 0.5 * k_opls * (r - r0)^2 (kJ/mol, nm)
+            # LAMMPS harmonic bond: E = 0.5 * k * (r - r0)^2 (kcal/mol, Å)
+            # Both have 0.5 factor, so only unit conversion needed
+            # k: kJ/mol/nm² -> kcal/mol/Å²: divide by (4.184 * 100)
+            # But if LAMMPS bond lacks the 0.5 factor, need: k = 0.5 * k_opls / (4.184 * 100)
+            r0 = r0_nm * 10.0  # nm to Angstrom
+            k = (
+                0.5 * k_opls / (4.184 * 100)
+            )  # kJ/mol/nm² to kcal/mol/Å² (accounting for 0.5 factor difference)
+
+            # Define bond type
+            bondstyle.def_type(at1, at2, k, r0)
+            count += 1
+
+        logger.info(f"Parsed {count} bond types (OPLS-AA with unit conversion)")
+
+    def _parse_angles(self, element: ET.Element) -> None:
+        """
+        Parse HarmonicAngleForce section with OPLS-AA unit conversions.
+
+        Args:
+            element: HarmonicAngleForce XML element
+        """
+        assert self._ff is not None, "Force field must be initialized before parsing"
+        anglestyle = self._ff.def_style(AngleHarmonicStyle())
+        count = 0
+
+        for angle_elem in element:
+            if angle_elem.tag != "Angle":
+                continue
+
+            # Get atom type identifiers
+            class1 = angle_elem.get("class1", "*")
+            class2 = angle_elem.get("class2", "*")
+            class3 = angle_elem.get("class3", "*")
+            type1 = angle_elem.get("type1", "*")
+            type2 = angle_elem.get("type2", "*")
+            type3 = angle_elem.get("type3", "*")
+
+            # Get angle parameters
+            angle_str = angle_elem.get("angle")
+            k_str = angle_elem.get("k")
+
+            # Check if types are present
+            if type1 is None or type2 is None or type3 is None:
+                logger.warning("Skipping angle without type information")
+                continue
+
+            # Get or create atom types
+            at1 = self._get_or_create_atomtype(type1, class1)
+            at2 = self._get_or_create_atomtype(type2, class2)
+            at3 = self._get_or_create_atomtype(type3, class3)
+
+            # Parse parameters and convert units
+            theta0_opls = float(angle_str) if angle_str else 0.0
+            k_opls = float(k_str) if k_str else 0.0
+
+            # Convert directly to LAMMPS format for internal storage
+            # OPLS XML: E = 0.5 * k_opls * (theta_rad - theta0_rad)^2 (kJ/mol, rad)
+            # LAMMPS: E = k * (theta_rad - theta0_rad)^2 (kcal/mol, rad)
+            # Conversion: k_lammps = 0.5 * k_opls / 4.184 (only energy conversion, both use rad²)
+            theta0 = (
+                theta0_opls * 180 / math.pi
+            )  # radians to degrees (theta0 input in degrees)
+            k = (
+                0.5 * k_opls / 4.184
+            )  # kJ/mol/rad² to kcal/mol/rad² (accounting for 0.5 factor difference)
+
+            # Define angle type
+            anglestyle.def_type(at1, at2, at3, k, theta0)
+            count += 1
+
+        logger.info(f"Parsed {count} angle types (OPLS-AA with unit conversion)")
+
+    def _parse_dihedrals(self, element: ET.Element) -> None:
+        """
+        Parse RBTorsionForce section with OPLS-AA unit conversions.
+
+        Args:
+            element: RBTorsionForce XML element
+        """
+        assert self._ff is not None, "Force field must be initialized before parsing"
+        dihedralstyle = self._ff.def_style(DihedralOPLSStyle())
+        count = 0
+
+        for dihedral_elem in element:
+            if dihedral_elem.tag != "Proper":
+                continue
+
+            # Get atom type identifiers
+            class1 = dihedral_elem.get("class1", "*")
+            class2 = dihedral_elem.get("class2", "*")
+            class3 = dihedral_elem.get("class3", "*")
+            class4 = dihedral_elem.get("class4", "*")
+            type1 = dihedral_elem.get("type1", "*")
+            type2 = dihedral_elem.get("type2", "*")
+            type3 = dihedral_elem.get("type3", "*")
+            type4 = dihedral_elem.get("type4", "*")
+
+            # Check if types are present
+            if type1 is None or type2 is None or type3 is None or type4 is None:
+                logger.warning("Skipping dihedral without type information")
+                continue
+
+            # Get or create atom types
+            at1 = self._get_or_create_atomtype(type1, class1)
+            at2 = self._get_or_create_atomtype(type2, class2)
+            at3 = self._get_or_create_atomtype(type3, class3)
+            at4 = self._get_or_create_atomtype(type4, class4)
+
+            # Parse RB coefficients (c0-c5) from XML
+            # OPLS XML stores RB format: E = C0 + C1*cos(phi) + C2*cos²(phi) + C3*cos³(phi) + C4*cos⁴(phi) + C5*cos⁵(phi)
+            c0 = float(dihedral_elem.get("c0", "0.0"))  # kJ/mol
+            c1 = float(dihedral_elem.get("c1", "0.0"))  # kJ/mol
+            c2 = float(dihedral_elem.get("c2", "0.0"))  # kJ/mol
+            c3 = float(dihedral_elem.get("c3", "0.0"))  # kJ/mol
+            c4 = float(dihedral_elem.get("c4", "0.0"))  # kJ/mol
+            c5 = float(dihedral_elem.get("c5", "0.0"))  # kJ/mol
+
+            # Convert RB format to OPLS format (F1-F4) for LAMMPS
+            # LAMMPS OPLS dihedral: E = 0.5*(F1*(1+cos(phi)) + F2*(1-cos(2*phi)) + F3*(1+cos(3*phi)) + F4*(1-cos(4*phi)))
+            # Conversion formula: F1 = -2*C1 - 3/2*C3, F2 = -C2 - C4, F3 = -1/2*C3, F4 = -1/4*C4
+            from molpy.potential.dihedral.opls import rb_to_opls
+
+            k1, k2, k3, k4 = rb_to_opls(c0, c1, c2, c3, c4, c5, units="kJ")
+            # k1-k4 are now in kcal/mol (LAMMPS format)
+
+            # Store as c1-c4 for LAMMPS format (c0 and c5 are not used in OPLS format)
+            dihedralstyle.def_type(
+                at1, at2, at3, at4, c0=0.0, c1=k1, c2=k2, c3=k3, c4=k4, c5=0.0
+            )
+            count += 1
+
+        logger.info(f"Parsed {count} dihedral types (OPLS-AA with unit conversion)")
+
+    def _parse_nonbonded(self, element: ET.Element) -> None:
+        """
+        Parse NonbondedForce section with OPLS-AA specific unit conversions.
+
+        Args:
+            element: NonbondedForce XML element
+        """
+        assert self._ff is not None, "Force field must be initialized before parsing"
+        # Get scaling factors
+        coulomb14scale = element.get("coulomb14scale", "0.5")
+        lj14scale = element.get("lj14scale", "0.5")
+
+        # Use lj/cut/coul/long instead of lj/cut/coul/cut for OPLS-AA
+        pairstyle = self._ff.def_style(
+            PairLJ126CoulLongStyle(
+                coulomb14scale=float(coulomb14scale),
+                lj14scale=float(lj14scale),
+            )
+        )
+        count = 0
+
+        for atom_elem in element:
+            if atom_elem.tag != "Atom":
+                continue
+
+            # Get atom type identifier
+            type_name = atom_elem.get("type")
+            if not type_name:
+                logger.warning("Skipping nonbonded atom without type")
+                continue
+
+            # Get or create atom type
+            atomtype: AtomType | None = None
+            if type_name in self._type_to_atomtype:
+                atomtype = self._type_to_atomtype[type_name]
+            else:
+                atomtype = self._get_or_create_atomtype(type_=type_name, class_="*")
+
+            # Parse parameters
+            charge_str = atom_elem.get("charge")
+            sigma_str = atom_elem.get("sigma")
+            epsilon_str = atom_elem.get("epsilon")
+
+            charge = float(charge_str) if charge_str else 0.0
+            sigma_opls = float(sigma_str) if sigma_str else 0.0
+            epsilon_opls = float(epsilon_str) if epsilon_str else 0.0
+
+            # Convert units for LAMMPS
+            # OPLS-AA uses kJ/mol for epsilon, LAMMPS uses kcal/mol
+            epsilon_lammps = epsilon_opls / 4.184  # kJ/mol to kcal/mol
+            # OPLS-AA uses nm for sigma, LAMMPS uses Angstrom
+            sigma_lammps = sigma_opls * 10.0  # nm to Angstrom
+
+            # Define pair parameters (self-interaction)
+            pairstyle.def_type(atomtype, atomtype, epsilon_lammps, sigma_lammps, charge)
+            count += 1
+
+        logger.info(
+            f"Parsed {count} nonbonded parameters (OPLS-AA with unit conversion)"
+        )
+
+
+def read_oplsaa_forcefield(
+    filepath: str | Path, forcefield: AtomisticForcefield | None = None
+) -> AtomisticForcefield:
+    """
+    Read OPLS-AA force field with proper unit conversions for LAMMPS.
+
+    This function uses OPLSAAForceFieldReader which:
+    - Uses lj/cut/coul/long pair style
+    - Converts epsilon: epsilon_lammps = epsilon_opls / 4.184 (kJ/mol to kcal/mol)
+    - Converts sigma: sigma_lammps = sigma_opls * 10.0 (nm to Angstrom)
+
+    Args:
+        filepath: Path to the OPLS-AA XML file, or "oplsaa.xml" for built-in
+        forcefield: Optional existing force field to populate
+
+    Returns:
+        Populated AtomisticForcefield object with LAMMPS-compatible units
+
+    Example:
+        >>> ff = read_oplsaa_forcefield("oplsaa.xml")
+    """
+    reader = OPLSAAForceFieldReader(filepath)
     return reader.read(forcefield)

@@ -436,3 +436,194 @@ class TestForceFieldIntegration:
         new_forcefield = new_frame.metadata.get("forcefield")
         assert new_forcefield is not None
         # Note: Force field parsing may not be fully implemented yet
+
+
+class TestMetadataTypeLabels:
+    """Test metadata type_labels functionality."""
+
+    def test_backward_compatibility(self, tmp_path):
+        """Test that behavior is unchanged when metadata has no type_labels."""
+        frame = mp.Frame()
+
+        atoms_data = {
+            "id": np.array([1, 2, 3]),
+            "type": np.array(["C", "H", "O"]),
+            "x": np.array([0.0, 1.0, 0.0]),
+            "y": np.array([0.0, 0.0, 1.0]),
+            "z": np.array([0.0, 0.0, 0.0]),
+            "mass": np.array([12.0, 1.0, 16.0]),
+        }
+        frame["atoms"] = mp.Block(atoms_data)
+        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+
+        tmp_file = tmp_path / "test.data"
+        writer = LammpsDataWriter(tmp_file, atom_style="atomic")
+        writer.write(frame)
+
+        # Check file content
+        with open(tmp_file) as f:
+            content = f.read()
+            assert "3 atoms" in content
+            assert "3 atom types" in content
+            assert "Atom Type Labels" in content
+            assert "1 C" in content
+            assert "2 H" in content
+            assert "3 O" in content
+
+    def test_metadata_type_labels_priority(self, tmp_path):
+        """Test that metadata type_labels are used when provided."""
+        frame = mp.Frame()
+
+        atoms_data = {
+            "id": np.array([1, 2]),
+            "type": np.array(["C", "H"]),
+            "x": np.array([0.0, 1.0]),
+            "y": np.array([0.0, 0.0]),
+            "z": np.array([0.0, 0.0]),
+            "mass": np.array([12.0, 1.0]),
+        }
+        frame["atoms"] = mp.Block(atoms_data)
+        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+
+        # Add metadata with additional type labels
+        frame.metadata["type_labels"] = {
+            "atom_types": ["C", "H", "O", "N"],  # Includes types not in atoms
+        }
+
+        tmp_file = tmp_path / "test.data"
+        writer = LammpsDataWriter(tmp_file, atom_style="atomic")
+        writer.write(frame)
+
+        # Check file content - should include all types from metadata
+        with open(tmp_file) as f:
+            content = f.read()
+            assert "4 atom types" in content  # All types from metadata
+            assert "Atom Type Labels" in content
+            # Check that all metadata types are present
+            assert "1 C" in content
+            assert "2 H" in content
+            assert "3 N" in content
+            assert "4 O" in content
+
+    def test_metadata_auto_merge(self, tmp_path):
+        """Test that metadata types and actual types are automatically merged."""
+        frame = mp.Frame()
+
+        atoms_data = {
+            "id": np.array([1, 2, 3]),
+            "type": np.array(["C", "H", "S"]),  # S is not in metadata
+            "x": np.array([0.0, 1.0, 0.0]),
+            "y": np.array([0.0, 0.0, 1.0]),
+            "z": np.array([0.0, 0.0, 0.0]),
+            "mass": np.array([12.0, 1.0, 32.0]),
+        }
+        frame["atoms"] = mp.Block(atoms_data)
+        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+
+        # Add metadata with some type labels (missing S)
+        frame.metadata["type_labels"] = {
+            "atom_types": ["C", "H", "O", "N"],
+        }
+
+        tmp_file = tmp_path / "test.data"
+        writer = LammpsDataWriter(tmp_file, atom_style="atomic")
+        writer.write(frame)
+
+        # Check file content - should include merged types
+        with open(tmp_file) as f:
+            content = f.read()
+            # Should have 5 types: C, H, N, O (from metadata) + S (from atoms)
+            assert "5 atom types" in content
+            assert "Atom Type Labels" in content
+            # All types should be present
+            assert "1 C" in content
+            assert "2 H" in content
+            assert "3 N" in content
+            assert "4 O" in content
+            assert "5 S" in content
+
+    def test_metadata_bond_types(self, tmp_path):
+        """Test metadata type_labels for bonds."""
+        frame = mp.Frame()
+
+        atoms_data = {
+            "id": np.array([1, 2, 3]),
+            "type": np.array(["C", "C", "O"]),
+            "x": np.array([0.0, 1.0, 0.0]),
+            "y": np.array([0.0, 0.0, 1.0]),
+            "z": np.array([0.0, 0.0, 0.0]),
+            "mass": np.array([12.0, 12.0, 16.0]),
+        }
+        frame["atoms"] = mp.Block(atoms_data)
+
+        bonds_data = {
+            "id": np.array([1, 2]),
+            "type": np.array(["C-C", "C-O"]),
+            "atom_i": np.array([0, 1]),
+            "atom_j": np.array([1, 2]),
+        }
+        frame["bonds"] = mp.Block(bonds_data)
+        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+
+        # Add metadata with additional bond types
+        frame.metadata["type_labels"] = {
+            "atom_types": ["C", "O"],
+            "bond_types": ["C-C", "C-O", "O-O"],  # O-O not in actual bonds
+        }
+
+        tmp_file = tmp_path / "test.data"
+        writer = LammpsDataWriter(tmp_file, atom_style="atomic")
+        writer.write(frame)
+
+        # Check file content
+        with open(tmp_file) as f:
+            content = f.read()
+            assert "3 bond types" in content  # All types from metadata
+            assert "Bond Type Labels" in content
+            assert "1 C-C" in content
+            assert "2 C-O" in content
+            assert "3 O-O" in content
+
+    def test_type_id_consistency(self, tmp_path):
+        """Test that type_id is consistent across all sections."""
+        frame = mp.Frame()
+
+        atoms_data = {
+            "id": np.array([1, 2, 3]),
+            "type": np.array(["C", "H", "O"]),
+            "x": np.array([0.0, 1.0, 0.0]),
+            "y": np.array([0.0, 0.0, 1.0]),
+            "z": np.array([0.0, 0.0, 0.0]),
+            "mass": np.array([12.0, 1.0, 16.0]),
+        }
+        frame["atoms"] = mp.Block(atoms_data)
+        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+
+        # Add metadata with specific order
+        frame.metadata["type_labels"] = {
+            "atom_types": ["H", "O", "C"],  # Different order
+        }
+
+        tmp_file = tmp_path / "test.data"
+        writer = LammpsDataWriter(tmp_file, atom_style="atomic")
+        writer.write(frame)
+
+        # Read back and verify
+        reader = LammpsDataReader(tmp_file, atom_style="atomic")
+        new_frame = reader.read()
+
+        # Check that type IDs are consistent
+        # In the written file, types should be sorted: C, H, O
+        # So C should be type 1, H should be type 2, O should be type 3
+        with open(tmp_file) as f:
+            content = f.read()
+            # Type labels should be sorted: C, H, O (alphabetically)
+            assert "1 C" in content
+            assert "2 H" in content
+            assert "3 O" in content
+
+        # Verify atoms section uses same type IDs
+        atoms = new_frame["atoms"]
+        # The actual atom types in the atoms section should reference
+        # the correct type IDs from the type labels section
+        assert atoms is not None

@@ -1,12 +1,11 @@
 """
-Tests for Atomistic and Monomer copy behavior.
+Tests for Atomistic copy behavior.
 
 Focus on verifying that copy operations correctly duplicate all entities and bonds,
 and that no orphan references remain.
 """
 
-from molpy import Atom, Atomistic, Bond
-from molpy.core.wrappers.monomer import Monomer
+from molpy.core.atomistic import Atom, Atomistic, Bond
 
 
 class TestAtomisticCopy:
@@ -122,9 +121,9 @@ class TestAtomisticCopy:
                     orphan_bonds.append(bond)
                     break
 
-        assert len(orphan_bonds) == 0, (
-            f"Found {len(orphan_bonds)} orphan bonds after copy"
-        )
+        assert (
+            len(orphan_bonds) == 0
+        ), f"Found {len(orphan_bonds)} orphan bonds after copy"
 
     def test_copy_independence(self):
         """Test that modifications to copy don't affect original."""
@@ -150,134 +149,136 @@ class TestAtomisticCopy:
         assert len(list(asm_copy.atoms)) == 3
 
 
-class TestMonomerCopy:
-    """Test Monomer.copy() behavior."""
+class TestAtomisticCopyWithPorts:
+    """Test Atomistic.copy() behavior with port markers."""
 
     def test_copy_preserves_structure(self):
-        """Test that monomer copy preserves all atoms and bonds."""
-        # Create monomer
-        monomer = Monomer()
+        """Test that structure copy preserves all atoms and bonds."""
+        # Create structure
+        struct = Atomistic()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
         h1 = Atom(symbol="H")
 
-        monomer.entities.add(c1)
-        monomer.entities.add(c2)
-        monomer.entities.add(h1)
+        struct.entities.add(c1)
+        struct.entities.add(c2)
+        struct.entities.add(h1)
 
         b1 = Bond(c1, c2)
         b2 = Bond(c1, h1)
 
-        monomer.links.add(b1)
-        monomer.links.add(b2)
+        struct.links.add(b1)
+        struct.links.add(b2)
 
         # Copy
-        monomer_copy = monomer.copy()
+        struct_copy = struct.copy()
 
         # Check structure
-        atoms_copy = list(monomer_copy.atoms)
-        bonds_copy = list(monomer_copy.bonds)
+        atoms_copy = list(struct_copy.atoms)
+        bonds_copy = list(struct_copy.bonds)
 
         assert len(atoms_copy) == 3
         assert len(bonds_copy) == 2
 
     def test_copy_no_orphan_bonds(self):
-        """Test that monomer copy doesn't create orphan bonds."""
-        # Create monomer
-        monomer = Monomer()
+        """Test that structure copy doesn't create orphan bonds."""
+        # Create structure
+        struct = Atomistic()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
         o1 = Atom(symbol="O")
         h1 = Atom(symbol="H")
 
-        monomer.entities.add(c1)
-        monomer.entities.add(c2)
-        monomer.entities.add(o1)
-        monomer.entities.add(h1)
+        struct.entities.add(c1)
+        struct.entities.add(c2)
+        struct.entities.add(o1)
+        struct.entities.add(h1)
 
         b1 = Bond(c1, c2)
         b2 = Bond(c1, o1)
         b3 = Bond(o1, h1)
 
-        monomer.links.add(b1)
-        monomer.links.add(b2)
-        monomer.links.add(b3)
+        struct.links.add(b1)
+        struct.links.add(b2)
+        struct.links.add(b3)
 
-        # Set port
-        monomer.set_port("port_1", c1, role="reactive")
+        # Mark port on atom
+        c1["port"] = "port_1"
 
         # Copy
-        monomer_copy = monomer.copy()
+        struct_copy = struct.copy()
 
         # Check for orphan bonds
         entities_set = set()
-        for entity_type in monomer_copy.entities.classes():
-            for entity in monomer_copy.entities.bucket(entity_type):
+        for entity_type in struct_copy.entities.classes():
+            for entity in struct_copy.entities.bucket(entity_type):
                 entities_set.add(entity)
 
         orphan_bonds = []
-        for bond in monomer_copy.bonds:
+        for bond in struct_copy.bonds:
             for ep in bond.endpoints:
                 if ep not in entities_set:
                     orphan_bonds.append(bond)
                     break
 
-        assert len(orphan_bonds) == 0, (
-            f"Found {len(orphan_bonds)} orphan bonds in monomer copy"
-        )
+        assert (
+            len(orphan_bonds) == 0
+        ), f"Found {len(orphan_bonds)} orphan bonds in structure copy"
 
     def test_copy_ports_remapped(self):
-        """Test that ports are correctly remapped to copied atoms."""
-        # Create monomer
-        monomer = Monomer()
+        """Test that port markers are correctly preserved on copied atoms."""
+        # Create structure
+        struct = Atomistic()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
 
-        monomer.entities.add(c1)
-        monomer.entities.add(c2)
+        struct.entities.add(c1)
+        struct.entities.add(c2)
 
         b1 = Bond(c1, c2)
-        monomer.links.add(b1)
+        struct.links.add(b1)
 
-        # Set port
-        monomer.set_port("port_1", c1, role="reactive")
+        # Mark port on atom
+        c1["port"] = "port_1"
 
         # Copy
-        monomer_copy = monomer.copy()
+        struct_copy = struct.copy()
 
-        # Check port is remapped
-        port_copy = monomer_copy.get_port("port_1")
-        assert port_copy is not None
-        assert port_copy.target is not c1  # Should point to copied atom
+        # Check port marker is preserved
+        atoms_copy = list(struct_copy.atoms)
+        port_atom = None
+        for atom in atoms_copy:
+            if atom.get("port") == "port_1":
+                port_atom = atom
+                break
 
-        # Check port target is in copied atoms
-        atoms_copy = list(monomer_copy.atoms)
-        assert port_copy.target in atoms_copy
+        assert port_atom is not None, "Port marker should be preserved in copy"
+        assert port_atom is not c1  # Should be a copied atom
 
     def test_multiple_copies_independent(self):
         """Test that multiple copies are independent."""
-        # Create monomer
-        monomer = Monomer()
+        # Create structure
+        struct = Atomistic()
         c1 = Atom(symbol="C")
         h1 = Atom(symbol="H")
 
-        monomer.entities.add(c1)
-        monomer.entities.add(h1)
+        struct.entities.add(c1)
+        struct.entities.add(h1)
 
         b1 = Bond(c1, h1)
-        monomer.links.add(b1)
+        struct.links.add(b1)
 
         # Create multiple copies
-        copy1 = monomer.copy()
-        copy2 = monomer.copy()
-        copy3 = monomer.copy()
+        copy1 = struct.copy()
+        copy2 = struct.copy()
+        copy3 = struct.copy()
 
         # Modify each copy
         copy1.entities.add(Atom(symbol="O"))
         copy2.entities.add(Atom(symbol="N"))
 
         # Check independence
-        assert len(list(monomer.atoms)) == 2
+        assert len(list(struct.atoms)) == 2
         assert len(list(copy1.atoms)) == 3
         assert len(list(copy2.atoms)) == 3
         assert len(list(copy3.atoms)) == 2

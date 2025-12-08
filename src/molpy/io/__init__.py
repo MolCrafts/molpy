@@ -60,8 +60,12 @@ PathLike = str | Path
 from .readers import (
     read_amber_ac,
     read_amber_inpcrd,
-    read_amber_prmtop as read_amber,  # Keep old name for compatibility
+    read_amber_prmtop,
+    read_amber_system,
     read_gro,
+    read_gromacs_system,
+    read_h5,
+    read_lammps,
     read_lammps_data,
     read_lammps_forcefield,
     read_lammps_molecule,
@@ -73,6 +77,7 @@ from .readers import (
     read_xsf,
     read_xyz,
     read_xyz_trajectory,
+    read_h5_trajectory,
 )
 
 # Data writers
@@ -80,108 +85,21 @@ from .readers import (
 # Trajectory writers
 # System writers
 from .writers import (
+    write_h5,
+    write_h5_trajectory,
     write_lammps_data,
     write_lammps_forcefield,
     write_lammps_molecule,
-    write_lammps_system as write_lammps,  # Keep old name for compatibility
+    write_lammps_system,
     write_lammps_trajectory,
     write_pdb,
     write_xsf,
     write_xyz_trajectory,
 )
 
-# =============================================================================
-# Backward Compatibility: Complex system readers
-# =============================================================================
-
-
-def read_lammps(
-    data: PathLike,
-    scripts: PathLike | list[PathLike] | None = None,
-    frame: Any = None,
-    atomstyle: str = "full",
-) -> Any:
-    """
-    Read LAMMPS data and optional force field files.
-
-    Args:
-        data: Path to LAMMPS data file
-        scripts: Optional path(s) to LAMMPS force field scripts
-        frame: Optional existing Frame to populate
-        atomstyle: LAMMPS atom style (default: 'full')
-
-    Returns:
-        Frame object (force field is loaded but returned separately if needed)
-
-    Note:
-        For new code, prefer using read_lammps_data() and read_lammps_forcefield() separately.
-    """
-    if scripts is not None:
-        # Load force field first (though return value not used in original)
-        _ = read_lammps_forcefield(scripts)
-
-    return read_lammps_data(data, atomstyle, frame)
-
-
-def read_amber_system(
-    prmtop: PathLike,
-    inpcrd: PathLike | None = None,
-    system: Any = None,
-) -> Any:
-    """
-    Read AMBER prmtop and optional inpcrd files (legacy function).
-
-    Args:
-        prmtop: Path to AMBER prmtop file
-        inpcrd: Optional path to AMBER inpcrd file
-        system: Optional FrameSystem (unused, kept for compatibility)
-
-    Returns:
-        Tuple of (Frame, ForceField)
-
-    Note:
-        For new code, prefer using read_amber() directly.
-    """
-    frame, ff = read_amber(prmtop, inpcrd)
-
-    # Original function returned FrameSystem namedtuple
-    from collections import namedtuple
-
-    FrameSystem = namedtuple("FrameSystem", ["frame", "forcefield", "box"])
-    return FrameSystem(frame=frame, forcefield=ff, box=getattr(frame, "box", None))
-
-
-def read_gromacs_system(
-    gro_file: PathLike,
-    top_file: PathLike | None = None,
-    system: Any = None,
-) -> Any:
-    """
-    Read GROMACS structure and optional topology files.
-
-    Args:
-        gro_file: Path to GROMACS .gro file
-        top_file: Optional path to GROMACS .top file
-        system: Optional FrameSystem (unused, kept for compatibility)
-
-    Returns:
-        Frame if no topology, or tuple of (Frame, ForceField) if topology provided
-
-    Note:
-        For new code, prefer using read_gro() and read_top() separately.
-    """
-    frame = read_gro(gro_file)
-
-    if top_file is not None:
-        forcefield = read_top(top_file)
-        from collections import namedtuple
-
-        FrameSystem = namedtuple("FrameSystem", ["frame", "forcefield", "box"])
-        return FrameSystem(
-            frame=frame, forcefield=forcefield, box=getattr(frame, "box", None)
-        )
-
-    return frame
+# Backward compatibility aliases
+read_amber = read_amber_prmtop  # Keep old name for compatibility
+write_lammps = write_lammps_system  # Keep old name for compatibility
 
 
 # =============================================================================
@@ -199,39 +117,46 @@ read_txt = np.loadtxt
 __all__ = [
     # Core types
     "PathLike",
+    # AMBER readers
     "read_amber",
     "read_amber_ac",
     "read_amber_inpcrd",
+    "read_amber_prmtop",
     "read_amber_system",
+    # GROMACS readers
     "read_gro",
     "read_gromacs_system",
-    # System readers (backward compatibility)
+    "read_top",
+    # LAMMPS readers
     "read_lammps",
-    # Data readers
     "read_lammps_data",
-    # Force field readers
     "read_lammps_forcefield",
     "read_lammps_molecule",
-    # Trajectory functions
     "read_lammps_trajectory",
+    # Other data readers
+    "read_h5",
     "read_mol2",
     "read_pdb",
-    "read_top",
-    # Utility functions
-    "read_txt",
     "read_xml_forcefield",
     "read_xsf",
     "read_xyz",
+    # Trajectory readers
     "read_xyz_trajectory",
-    # System writers
+    "read_h5_trajectory",
+    # Utility functions
+    "read_txt",
+    # LAMMPS writers
     "write_lammps",
-    # Data writers
     "write_lammps_data",
-    # Force field writers
     "write_lammps_forcefield",
     "write_lammps_molecule",
+    "write_lammps_system",
     "write_lammps_trajectory",
+    # Other data writers
+    "write_h5",
     "write_pdb",
     "write_xsf",
+    # Trajectory writers
     "write_xyz_trajectory",
+    "write_h5_trajectory",
 ]

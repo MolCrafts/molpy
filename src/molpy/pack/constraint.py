@@ -5,16 +5,22 @@ from molpy.core.region import BoxRegion, SphereRegion
 
 # === Base Constraint class ===
 class Constraint:
+    """Base class for all packing constraints."""
+
     def penalty(self, points: np.ndarray) -> float:
+        """Calculate penalty for given points. Lower is better."""
         raise NotImplementedError
 
     def dpenalty(self, points: np.ndarray) -> np.ndarray:
+        """Calculate gradient of penalty with respect to points."""
         raise NotImplementedError
 
-    def __and__(self, other):
+    def __and__(self, other: "Constraint") -> "AndConstraint":
+        """Combine constraints with AND (both must be satisfied)."""
         return AndConstraint(self, other)
 
-    def __or__(self, other):
+    def __or__(self, other: "Constraint") -> "OrConstraint":
+        """Combine constraints with OR (either can be satisfied)."""
         return OrConstraint(self, other)
 
 
@@ -45,8 +51,11 @@ class OrConstraint(Constraint):
         pb = self.b.penalty(points)
         if pa < pb:
             return self.a.dpenalty(points)
-        else:
+        elif pb < pa:
             return self.b.dpenalty(points)
+        else:
+            # When penalties are equal, use average gradient for stability
+            return (self.a.dpenalty(points) + self.b.dpenalty(points)) / 2.0
 
 
 class InsideBoxConstraint(Constraint):

@@ -274,13 +274,13 @@ class TestMolpack:
 
     def test_init(self, tmp_path):
         """Test Molpack initialization."""
-        packer = Molpack(workdir=tmp_path, packer="packmol")
+        packer = Molpack(workdir=tmp_path)
         assert packer.workdir == tmp_path
         assert len(packer.targets) == 0
 
     def test_add_target(self, simple_water_frame, tmp_path):
         """Test adding target via Molpack."""
-        packer = Molpack(workdir=tmp_path, packer="packmol")
+        packer = Molpack(workdir=tmp_path)
         box_constraint = mpk.InsideBoxConstraint(
             length=np.array([10.0, 10.0, 10.0]), origin=np.array([0.0, 0.0, 0.0])
         )
@@ -292,7 +292,7 @@ class TestMolpack:
 
     def test_optimize(self, simple_water_frame, tmp_path):
         """Test optimize method with real packmol."""
-        packer = Molpack(workdir=tmp_path, packer="packmol")
+        packer = Molpack(workdir=tmp_path)
         box_constraint = mpk.InsideBoxConstraint(
             length=np.array([10.0, 10.0, 10.0]), origin=np.array([0.0, 0.0, 0.0])
         )

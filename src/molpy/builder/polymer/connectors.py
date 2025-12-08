@@ -8,11 +8,14 @@ and optionally execute chemical reactions during connection.
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Literal
 
-from molpy import Atomistic
-from molpy.core.wrappers.monomer import Monomer, Port
+from molpy.core.atomistic import Atomistic
+from molpy.core.entity import Entity
 from molpy.reacter.base import Reacter
+from molpy.typifier.atomistic import TypifierBase
 
 from .errors import AmbiguousPortsError, MissingConnectorRule, NoCompatiblePortsError
+from .port_utils import PortInfo, get_all_port_info
+from .types import ConnectionMetadata, ConnectionResult
 
 BondKind = Literal["-", "=", "#", ":"]
 
@@ -34,7 +37,7 @@ class ConnectorContext(dict[str, Any]):
 
 class Connector:
     """
-    Abstract base for port selection between two adjacent monomers.
+    Abstract base for port selection between two adjacent Atomistic structures.
 
     This is topology-only: connectors decide WHICH ports to connect,
     not HOW to position them geometrically.
@@ -42,20 +45,20 @@ class Connector:
 
     def select_ports(
         self,
-        left: Monomer,
-        right: Monomer,
-        left_ports: Mapping[str, Port],  # unconsumed ports
-        right_ports: Mapping[str, Port],  # unconsumed ports
+        left: Atomistic,
+        right: Atomistic,
+        left_ports: Mapping[str, PortInfo],  # unconsumed ports
+        right_ports: Mapping[str, PortInfo],  # unconsumed ports
         ctx: ConnectorContext,
     ) -> tuple[str, str, BondKind | None]:
         """
-        Select which ports to connect between left and right monomers.
+        Select which ports to connect between left and right structures.
 
         Args:
-            left: Left monomer in the sequence
-            right: Right monomer in the sequence
-            left_ports: Available (unconsumed) ports on left monomer
-            right_ports: Available (unconsumed) ports on right monomer
+            left: Left Atomistic structure in the sequence
+            right: Right Atomistic structure in the sequence
+            left_ports: Available (unconsumed) ports on left structure
+            right_ports: Available (unconsumed) ports on right structure
             ctx: Shared context with step info, sequence, etc.
 
         Returns:
@@ -81,37 +84,33 @@ class AutoConnector(Connector):
     This implements the common case where:
     - BigSMILES uses [<] for "left" role and [>] for "right" role
     - We connect left's "right" port to right's "left" port
+
+    Ports are stored directly on atoms using the "port" or "ports" attribute.
     """
 
     def select_ports(
         self,
-        left: Monomer,
-        right: Monomer,
-        left_ports: Mapping[str, Port],
-        right_ports: Mapping[str, Port],
+        left: Atomistic,
+        right: Atomistic,
+        left_ports: Mapping[str, PortInfo],
+        right_ports: Mapping[str, PortInfo],
         ctx: ConnectorContext,
     ) -> tuple[str, str, BondKind | None]:
         """Select ports using BigSMILES role heuristics."""
 
         # Strategy 1: Try role-based selection (BigSMILES < and >)
         # Case 1a: left has role='right', right has role='left' (normal chain extension)
-        left_right_role = [
-            name for name, p in left_ports.items() if p.data.get("role") == "right"
-        ]
-        right_left_role = [
-            name for name, p in right_ports.items() if p.data.get("role") == "left"
-        ]
+        left_right_role = [name for name, p in left_ports.items() if p.role == "right"]
+        right_left_role = [name for name, p in right_ports.items() if p.role == "left"]
 
         if len(left_right_role) == 1 and len(right_left_role) == 1:
             return (left_right_role[0], right_left_role[0], None)
 
         # Case 1b: left has role='left', right has role='right' (terminus connection)
         # E.g., HO[*:t] (left terminus) connects to CC[>] (right-directed monomer)
-        left_left_role = [
-            name for name, p in left_ports.items() if p.data.get("role") == "left"
-        ]
+        left_left_role = [name for name, p in left_ports.items() if p.role == "left"]
         right_right_role = [
-            name for name, p in right_ports.items() if p.data.get("role") == "right"
+            name for name, p in right_ports.items() if p.role == "right"
         ]
 
         if len(left_left_role) == 1 and len(right_right_role) == 1:
@@ -164,10 +163,10 @@ class TableConnector(Connector):
 
     def select_ports(
         self,
-        left: Monomer,
-        right: Monomer,
-        left_ports: Mapping[str, Port],
-        right_ports: Mapping[str, Port],
+        left: Atomistic,
+        right: Atomistic,
+        left_ports: Mapping[str, PortInfo],
+        right_ports: Mapping[str, PortInfo],
         ctx: ConnectorContext,
     ) -> tuple[str, str, BondKind | None]:
         """Select ports using table lookup."""
@@ -209,10 +208,10 @@ class CallbackConnector(Connector):
         self,
         fn: Callable[
             [
-                Monomer,
-                Monomer,
-                Mapping[str, Port],
-                Mapping[str, Port],
+                Atomistic,
+                Atomistic,
+                Mapping[str, PortInfo],
+                Mapping[str, PortInfo],
                 ConnectorContext,
             ],
             tuple[str, str] | tuple[str, str, BondKind],
@@ -229,10 +228,10 @@ class CallbackConnector(Connector):
 
     def select_ports(
         self,
-        left: Monomer,
-        right: Monomer,
-        left_ports: Mapping[str, Port],
-        right_ports: Mapping[str, Port],
+        left: Atomistic,
+        right: Atomistic,
+        left_ports: Mapping[str, PortInfo],
+        right_ports: Mapping[str, PortInfo],
         ctx: ConnectorContext,
     ) -> tuple[str, str, BondKind | None]:
         """Select ports using user callback."""
@@ -267,10 +266,10 @@ class ChainConnector(Connector):
 
     def select_ports(
         self,
-        left: Monomer,
-        right: Monomer,
-        left_ports: Mapping[str, Port],
-        right_ports: Mapping[str, Port],
+        left: Atomistic,
+        right: Atomistic,
+        left_ports: Mapping[str, PortInfo],
+        right_ports: Mapping[str, PortInfo],
         ctx: ConnectorContext,
     ) -> tuple[str, str, BondKind | None]:
         """Try connectors in order until one succeeds."""
@@ -300,14 +299,14 @@ class ReacterConnector(Connector):
 
     This connector integrates port selection and chemical reaction execution.
     It manages multiple Reacter instances and port mapping strategies for
-    different monomer pairs.
+    different structure pairs.
 
     **Port Selection Strategy:**
-    Port selection is handled via a `port_strategy` which must be one of:
-    1. **Callable**: Custom function (left, right, left_ports, right_ports, ctx) -> (port_L, port_R)
-    2. **Dict**: Explicit mapping {('A','B'): ('1','2'), ...}
+    Port selection is handled via a `port_map` which must be a dict:
+    - **Dict**: Explicit mapping {('A','B'): ('1','2'), ...}
 
     There is NO 'auto' mode - port selection must be explicit via port_map.
+    Ports are stored directly on atoms using the "port" or "ports" attribute.
 
     Attributes:
         default: Default Reacter for most connections
@@ -328,7 +327,7 @@ class ReacterConnector(Connector):
         ...     bond_former=form_single_bond,
         ... )
         >>>
-        >>> # Explicit port mapping for all monomer pairs
+        >>> # Explicit port mapping for all structure pairs
         >>> connector = ReacterConnector(
         ...     default=default_reacter,
         ...     port_map={
@@ -363,15 +362,15 @@ class ReacterConnector(Connector):
         self.default = default
         self.overrides = overrides or {}
         self.port_map = port_map
-        self._history: list = []  # List of ReactionProduct objects
+        self._history: list = []  # List of ReactionResult objects
 
     def get_reacter(self, left_type: str, right_type: str) -> "Reacter":
         """
-        Get appropriate reacter for a monomer pair.
+        Get appropriate reacter for a structure pair.
 
         Args:
-            left_type: Type label of left monomer (e.g., 'A', 'B')
-            right_type: Type label of right monomer
+            left_type: Type label of left structure (e.g., 'A', 'B')
+            right_type: Type label of right structure
 
         Returns:
             The appropriate Reacter (override if exists, else default)
@@ -381,21 +380,21 @@ class ReacterConnector(Connector):
 
     def select_ports(
         self,
-        left: Monomer,
-        right: Monomer,
-        left_ports: Mapping[str, Port],
-        right_ports: Mapping[str, Port],
+        left: Atomistic,
+        right: Atomistic,
+        left_ports: Mapping[str, PortInfo],
+        right_ports: Mapping[str, PortInfo],
         ctx: ConnectorContext,
     ) -> tuple[str, str, BondKind | None]:
         """
         Select ports using the configured port_map.
 
         Args:
-            left: Left monomer
-            right: Right monomer
+            left: Left Atomistic structure
+            right: Right Atomistic structure
             left_ports: Available ports on left
             right_ports: Available ports on right
-            ctx: Connector context with monomer type information
+            ctx: Connector context with structure type information
 
         Returns:
             Tuple of (port_L, port_R, None)
@@ -419,99 +418,100 @@ class ReacterConnector(Connector):
         # Validate ports exist
         if port_L not in left_ports:
             raise ValueError(
-                f"Selected port '{port_L}' not found in left monomer ({left_type})"
+                f"Selected port '{port_L}' not found in left structure ({left_type})"
             )
         if port_R not in right_ports:
             raise ValueError(
-                f"Selected port '{port_R}' not found in right monomer ({right_type})"
+                f"Selected port '{port_R}' not found in right structure ({right_type})"
             )
 
         return port_L, port_R, None  # bond_kind determined by reacter
 
     def connect(
         self,
-        left: Monomer,
-        right: Monomer,
+        left: Atomistic,
+        right: Atomistic,
         left_type: str,
         right_type: str,
         port_L: str,
         port_R: str,
-    ) -> tuple["Atomistic", dict[str, Any]]:
+        typifier: TypifierBase | None = None,
+    ) -> ConnectionResult:
         """
-        Execute chemical reaction between two monomers.
+        Execute chemical reaction between two Atomistic structures.
 
         This method performs the full chemical reaction including:
-        1. Selecting appropriate reacter based on monomer types
+        1. Selecting appropriate reacter based on structure types
         2. Executing reaction (merging, bond making, removing leaving groups)
         3. Computing new topology (angles, dihedrals)
         4. Collecting metadata for retypification
 
         Args:
-            left: Left monomer
-            right: Right monomer
-            left_type: Type label of left monomer
-            right_type: Type label of right monomer
-            port_L: Port name on left monomer
-            port_R: Port name on right monomer
+            left: Left Atomistic structure
+            right: Right Atomistic structure
+            left_type: Type label of left structure
+            right_type: Type label of right structure
+            port_L: Port name on left structure
+            port_R: Port name on right structure
 
         Returns:
-            Tuple of (assembly, metadata) where:
-            - assembly: Atomistic product of reaction
-            - metadata: Dict containing:
-                - port_L, port_R: used ports
-                - reaction_name: name of the reacter
-                - new_bonds, new_angles, new_dihedrals: newly created topology
-                - modified_atoms: atoms whose types may have changed
-                - needs_retypification: whether retypification is needed
+            ConnectionResult containing product and metadata
         """
-        from molpy.reacter.base import ReactionProduct
+        from molpy.reacter.base import ReactionResult
 
         # Select reacter
         reacter = self.get_reacter(left_type, right_type)
 
         # Execute reaction
-        product_set: ReactionProduct = reacter.run(
+        product_set: ReactionResult = reacter.run(
             left,
             right,
             port_L=port_L,
             port_R=port_R,
             compute_topology=True,
+            typifier=typifier,
         )
 
         # Store in history
         self._history.append(product_set)
 
-        # Extract metadata
-        metadata = {
-            "port_L": port_L,
-            "port_R": port_R,
-            "reaction_name": reacter.name,
-            "formed_bonds": product_set.notes.get("formed_bonds", []),
-            "new_angles": product_set.notes.get("new_angles", []),
-            "new_dihedrals": product_set.notes.get("new_dihedrals", []),
-            "modified_atoms": product_set.notes.get("modified_atoms", set()),
-            "requires_retype": product_set.notes.get("requires_retype", False),
-            "entity_maps": product_set.notes.get(
-                "entity_maps", []
-            ),  # For port remapping
-        }
+        # Create metadata dataclass
+        metadata = ConnectionMetadata(
+            port_L=port_L,
+            port_R=port_R,
+            reaction_name=reacter.name,
+            formed_bonds=product_set.new_bonds,
+            new_angles=product_set.new_angles,
+            new_dihedrals=product_set.new_dihedrals,
+            modified_atoms=product_set.modified_atoms,
+            requires_retype=product_set.requires_retype,
+            entity_maps=product_set.entity_maps,
+        )
 
-        return product_set.product, metadata
+        return ConnectionResult(product=product_set.product, metadata=metadata)
 
     def get_history(self) -> list:
-        """Get all reaction history (list of ReactionProduct)."""
+        """Get all reaction history (list of ReactionResult)."""
         return self._history
 
-    def get_all_modified_atoms(self) -> set:
-        """Get all atoms modified across all reactions."""
-        all_atoms = set()
+    def get_all_modified_atoms(self) -> set[Entity]:
+        """Get all atoms modified across all reactions.
+
+        Returns:
+            Set of all atoms that were modified during reactions
+        """
+        all_atoms: set[Entity] = set()
         for product in self._history:
-            all_atoms.update(product.notes.get("modified_atoms", set()))
+            all_atoms.update(product.modified_atoms)
         return all_atoms
 
     def needs_retypification(self) -> bool:
-        """Check if any reactions require retypification."""
-        return any(p.notes.get("requires_retype", False) for p in self._history)
+        """Check if any reactions require retypification.
+
+        Returns:
+            True if any reaction requires retypification
+        """
+        return any(p.requires_retype for p in self._history)
 
 
 # Alias for backward compatibility

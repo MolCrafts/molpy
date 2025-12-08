@@ -1,25 +1,59 @@
 import pytest
 
 from molpy.parser.smiles import (
-    AtomIR,
-    BigSmilesChainIR,
-    BigSmilesIR,
-    BondDescriptorIR,
-    BondIR,
-    RepeatSegmentIR,
-    SmilesIR,
-    SmilesParser,
-    StochasticDistributionIR,
+    parse_smiles,
+    parse_bigsmiles,
+    BigSmilesMoleculeIR,
+    BondingDescriptorIR,
+    SmilesAtomIR,
+    SmilesBondIR,
+    SmilesGraphIR,
     StochasticObjectIR,
 )
 
 
+def _bond_order(symbol: str) -> str | int:
+    mapping = {
+        "-": 1,
+        "=": 2,
+        "#": 3,
+        ":": "ar",
+    }
+    return mapping.get(symbol, symbol)
+
+
 def mk_smiles_ir(atom_specs, bond_tuples):
-    atoms = [
-        AtomIR(symbol=a) if isinstance(a, str) else AtomIR(**a) for a in atom_specs
+    atoms = []
+    for a in atom_specs:
+        if isinstance(a, str):
+            # Handle aromatic: lowercase in SMILES means aromatic
+            aromatic = a.islower()
+            element = a.upper() if aromatic else a
+            atoms.append(SmilesAtomIR(element=element, aromatic=aromatic))
+        else:
+            element = a.get("symbol") or a.get("element", "C")
+            aromatic = element.islower() if isinstance(element, str) else False
+            if isinstance(element, str) and aromatic:
+                element = element.upper()
+            extras = {
+                k: v
+                for k, v in a.items()
+                if k not in ("symbol", "element", "charge", "h_count")
+            }
+            atoms.append(
+                SmilesAtomIR(
+                    element=element,
+                    aromatic=aromatic,
+                    charge=a.get("charge"),
+                    hydrogens=a.get("h_count"),
+                    extras=extras,
+                )
+            )
+    bonds = [
+        SmilesBondIR(atom_i=atoms[i], atom_j=atoms[j], order=_bond_order(b))
+        for (i, j, b) in bond_tuples
     ]
-    bonds = [BondIR(atoms[i], atoms[j], b) for (i, j, b) in bond_tuples]
-    return SmilesIR(atoms=atoms, bonds=bonds)
+    return SmilesGraphIR(atoms=atoms, bonds=bonds)
 
 
 plain_smiles = [
@@ -579,70 +613,73 @@ error_smiles = [
     "C(=O",  # Unclosed parenthesis
 ]
 
-parser = SmilesParser()
-
 
 class TestSmilesParser:
     @pytest.mark.parametrize("smiles, expected", plain_smiles)
     def test_plain_smiles(self, smiles, expected):
-        result = parser.parse_smiles(smiles)
+        result = parse_smiles(smiles)
         assert result == expected
 
     @pytest.mark.parametrize("smiles, expected", branch_smiles)
     def test_branch_smiles(self, smiles, expected):
-        result = parser.parse_smiles(smiles)
+        result = parse_smiles(smiles)
         assert result == expected
 
     @pytest.mark.parametrize("smiles, expected", ring_smiles)
     def test_ring_smiles(self, smiles, expected):
-        result = parser.parse_smiles(smiles)
+        result = parse_smiles(smiles)
         assert result == expected
 
     @pytest.mark.parametrize("smiles, expected", aromatic_smiles)
     def test_aromatic_smiles(self, smiles, expected):
-        result = parser.parse_smiles(smiles)
+        result = parse_smiles(smiles)
         assert result == expected
 
     @pytest.mark.parametrize("smiles, expected", charged_smiles)
     def test_charged_smiles(self, smiles, expected):
-        result = parser.parse_smiles(smiles)
+        result = parse_smiles(smiles)
         assert result == expected
 
     @pytest.mark.parametrize("smiles, expected", isotope_smiles)
     def test_isotope_smiles(self, smiles, expected):
-        result = parser.parse_smiles(smiles)
+        result = parse_smiles(smiles)
         assert result == expected
 
     @pytest.mark.parametrize("smiles, expected", chirality_smiles)
     def test_chirality_smiles(self, smiles, expected):
-        result = parser.parse_smiles(smiles)
+        result = parse_smiles(smiles)
         assert result == expected
 
     @pytest.mark.parametrize("smiles, expected", dot_smiles)
     def test_dot_smiles(self, smiles, expected):
-        result = parser.parse_dot_smiles(smiles)
-        assert result == expected
+        """Test dot-separated SMILES (mixtures/disconnected components)."""
+        result = parse_smiles(smiles)
+        # For dot-separated SMILES, result should be a list
+        assert isinstance(result, list)
+        assert len(result) == len(expected)
+        for actual, exp in zip(result, expected):
+            assert actual == exp
 
     @pytest.mark.parametrize("smiles, expected", nested_smiles)
     def test_nested_smiles(self, smiles, expected):
-        result = parser.parse_smiles(smiles)
+        result = parse_smiles(smiles)
         assert result == expected
 
     @pytest.mark.parametrize("smiles, expected", func_smiles)
     def test_functional_groups(self, smiles, expected):
-        result = parser.parse_smiles(smiles)
+        result = parse_smiles(smiles)
         assert result == expected
 
     @pytest.mark.parametrize("smiles, expected", complex_smiles)
     def test_complex_smiles(self, smiles, expected):
-        result = parser.parse_smiles(smiles)
+        result = parse_smiles(smiles)
         assert result == expected
 
     @pytest.mark.parametrize("smiles", error_smiles)
     def test_error_smiles(self, smiles):
         """Test that invalid SMILES raise exceptions"""
         with pytest.raises(Exception):
-            parser.parse_smiles(smiles)
+            parse_smiles(smiles)
 
 
 # ======================== BigSMILES IR tests ========================
@@ -650,119 +687,238 @@ class TestSmilesParser:
 
 def mk_bigsmiles_ir(start_specs, segments_specs):
     """
-    Helper to build expected BigSmilesIR.
+    Helper to build expected BigSmilesMoleculeIR.
 
-    start_specs: (atom_specs, bond_tuples) for start_smiles
+    start_specs: (atom_specs, bond_tuples) for backbone
     segments_specs: list of segment specs, each segment is:
         {
             "objects": [{"left": desc_spec, "right": desc_spec, "units": [unit_specs],
-                         "end_groups": [eg_specs] or None, "distribution": dist_spec or None}],
-            "implicit": (atom_specs, bond_tuples) or None
+                         "end_groups": [eg_specs] or None}],
         }
 
-    Returns BigSmilesIR with properly collected atoms and bonds.
+    Returns BigSmilesMoleculeIR with properly structured backbone and stochastic objects.
     """
+    from molpy.parser.smiles.bigsmiles_ir import (
+        BigSmilesSubgraphIR,
+        EndGroupIR,
+        RepeatUnitIR,
+        TerminalDescriptorIR,
+    )
 
-    start_smiles = mk_smiles_ir(*start_specs) if start_specs else mk_smiles_ir([], [])
+    # Build backbone from start_specs
+    backbone_graph = mk_smiles_ir(*start_specs) if start_specs else mk_smiles_ir([], [])
+    backbone = BigSmilesSubgraphIR(
+        atoms=list(backbone_graph.atoms),
+        bonds=list(backbone_graph.bonds),
+        descriptors=[],
+    )
 
-    # Collect all atoms and bonds
-    all_atoms = list(start_smiles.atoms)
-    all_bonds = list(start_smiles.bonds)
-
-    segments = []
+    stochastic_objects = []
     for seg_spec in segments_specs:
-        objs = []
         for obj_spec in seg_spec["objects"]:
-            left_desc = (
-                BondDescriptorIR(**obj_spec["left"])
-                if obj_spec["left"]
-                else BondDescriptorIR()
-            )
-            right_desc = (
-                BondDescriptorIR(**obj_spec["right"])
-                if obj_spec["right"]
-                else BondDescriptorIR()
-            )
-            units = [mk_smiles_ir(*u) for u in obj_spec["units"]]
+            # Build left terminal
+            left_desc_spec = obj_spec.get("left", {})
+            left_descriptors = []
+            if left_desc_spec:
+                symbol = left_desc_spec.get("symbol")
+                label = left_desc_spec.get("index") or left_desc_spec.get("label")
+                left_descriptors.append(
+                    BondingDescriptorIR(
+                        symbol=symbol,
+                        label=label,
+                        role="terminal_left",
+                    )
+                )
+            left_terminal = TerminalDescriptorIR(descriptors=left_descriptors)
 
-            # Collect atoms and bonds from units
-            for unit in units:
-                all_atoms.extend(unit.atoms)
-                all_bonds.extend(unit.bonds)
+            # Build right terminal
+            right_desc_spec = obj_spec.get("right", {})
+            right_descriptors = []
+            if right_desc_spec:
+                symbol = right_desc_spec.get("symbol")
+                label = right_desc_spec.get("index") or right_desc_spec.get("label")
+                right_descriptors.append(
+                    BondingDescriptorIR(
+                        symbol=symbol,
+                        label=label,
+                        role="terminal_right",
+                    )
+                )
+            right_terminal = TerminalDescriptorIR(descriptors=right_descriptors)
 
-            end_groups = (
-                [mk_smiles_ir(*eg) for eg in obj_spec["end_groups"]]
-                if obj_spec.get("end_groups")
-                else None
-            )
+            # Build repeat units
+            repeat_units = []
+            for unit_spec in obj_spec.get("units", []):
+                unit_graph = mk_smiles_ir(*unit_spec)
+                unit_subgraph = BigSmilesSubgraphIR(
+                    atoms=list(unit_graph.atoms),
+                    bonds=list(unit_graph.bonds),
+                    descriptors=[],
+                )
+                repeat_units.append(RepeatUnitIR(graph=unit_subgraph))
 
-            # Collect atoms and bonds from end groups
-            if end_groups:
-                for eg in end_groups:
-                    all_atoms.extend(eg.atoms)
-                    all_bonds.extend(eg.bonds)
+            # Build end groups
+            end_groups = []
+            for eg_spec in obj_spec.get("end_groups", []):
+                eg_graph = mk_smiles_ir(*eg_spec)
+                eg_subgraph = BigSmilesSubgraphIR(
+                    atoms=list(eg_graph.atoms),
+                    bonds=list(eg_graph.bonds),
+                    descriptors=[],
+                )
+                end_groups.append(EndGroupIR(graph=eg_subgraph))
 
-            dist = (
-                StochasticDistributionIR(**obj_spec["distribution"])
-                if obj_spec.get("distribution")
-                else None
-            )
-            objs.append(
+            stochastic_objects.append(
                 StochasticObjectIR(
-                    left_descriptor=left_desc,
-                    right_descriptor=right_desc,
-                    repeat_units=units,
+                    left_terminal=left_terminal,
+                    right_terminal=right_terminal,
+                    repeat_units=repeat_units,
                     end_groups=end_groups,
-                    distribution=dist,
                 )
             )
-        implicit = (
-            mk_smiles_ir(*seg_spec["implicit"]) if seg_spec.get("implicit") else None
+
+        # Handle implicit smiles (trailing smiles after stochastic objects)
+        # These should be added to the backbone
+        if "implicit" in seg_spec and seg_spec["implicit"] is not None:
+            implicit_spec = seg_spec["implicit"]
+            if isinstance(implicit_spec, tuple) and len(implicit_spec) == 2:
+                implicit_atoms, implicit_bonds = implicit_spec
+                implicit_graph = mk_smiles_ir(implicit_atoms, implicit_bonds)
+                backbone.atoms.extend(implicit_graph.atoms)
+                backbone.bonds.extend(implicit_graph.bonds)
+
+    return BigSmilesMoleculeIR(backbone=backbone, stochastic_objects=stochastic_objects)
+
+
+def mk_bigsmiles_ir_with_descriptors(start_specs, descriptors_specs, segments_specs):
+    """
+    Helper to build expected BigSmilesMoleculeIR with descriptors in backbone.
+
+    Similar to mk_bigsmiles_ir but allows specifying descriptors for the backbone.
+
+    Args:
+        start_specs: (atom_specs, bond_tuples) for backbone
+        descriptors_specs: list of descriptor specs, each is {"symbol": str, "role": str, ...}
+        segments_specs: list of segment specs (same as mk_bigsmiles_ir)
+    """
+    from molpy.parser.smiles.bigsmiles_ir import (
+        BigSmilesMoleculeIR,
+        BigSmilesSubgraphIR,
+        BondingDescriptorIR,
+        EndGroupIR,
+        RepeatUnitIR,
+        StochasticObjectIR,
+        TerminalDescriptorIR,
+    )
+
+    # Build backbone from start_specs
+    backbone_graph = mk_smiles_ir(*start_specs) if start_specs else mk_smiles_ir([], [])
+    backbone = BigSmilesSubgraphIR(
+        atoms=list(backbone_graph.atoms),
+        bonds=list(backbone_graph.bonds),
+        descriptors=[],
+    )
+
+    # Add descriptors to backbone
+    for desc_spec in descriptors_specs:
+        descriptor = BondingDescriptorIR(
+            symbol=desc_spec.get("symbol"),
+            label=desc_spec.get("label"),
+            role=desc_spec.get("role", "internal"),
+            anchor_atom=desc_spec.get("anchor_atom"),
+            bond_order=desc_spec.get("bond_order", 1),
         )
+        if "extras" in desc_spec:
+            descriptor.extras.update(desc_spec["extras"])
+        backbone.descriptors.append(descriptor)
 
-        # Collect atoms and bonds from implicit smiles
-        if implicit:
-            all_atoms.extend(implicit.atoms)
-            all_bonds.extend(implicit.bonds)
+    # Build stochastic objects (same as mk_bigsmiles_ir)
+    stochastic_objects = []
+    for seg_spec in segments_specs:
+        for obj_spec in seg_spec["objects"]:
+            # Build left terminal
+            left_desc_spec = obj_spec.get("left", {})
+            left_descriptors = []
+            if left_desc_spec:
+                symbol = left_desc_spec.get("symbol")
+                label = left_desc_spec.get("index") or left_desc_spec.get("label")
+                left_descriptors.append(
+                    BondingDescriptorIR(
+                        symbol=symbol,
+                        label=label,
+                        role="terminal_left",
+                    )
+                )
+            left_terminal = TerminalDescriptorIR(descriptors=left_descriptors)
 
-        segments.append(
-            RepeatSegmentIR(stochastic_objects=objs, implicit_smiles=implicit)
-        )
+            # Build right terminal
+            right_desc_spec = obj_spec.get("right", {})
+            right_descriptors = []
+            if right_desc_spec:
+                symbol = right_desc_spec.get("symbol")
+                label = right_desc_spec.get("index") or right_desc_spec.get("label")
+                right_descriptors.append(
+                    BondingDescriptorIR(
+                        symbol=symbol,
+                        label=label,
+                        role="terminal_right",
+                    )
+                )
+            right_terminal = TerminalDescriptorIR(descriptors=right_descriptors)
 
-    chain = BigSmilesChainIR(start_smiles=start_smiles, repeat_segments=segments)
-    return BigSmilesIR(atoms=all_atoms, bonds=all_bonds, chain=chain)
+            # Build repeat units
+            repeat_units = []
+            for unit_spec in obj_spec.get("units", []):
+                unit_graph = mk_smiles_ir(*unit_spec)
+                unit_subgraph = BigSmilesSubgraphIR(
+                    atoms=list(unit_graph.atoms),
+                    bonds=list(unit_graph.bonds),
+                    descriptors=[],
+                )
+                repeat_units.append(RepeatUnitIR(graph=unit_subgraph))
+
+            # Build end groups
+            end_groups = []
+            for eg_spec in obj_spec.get("end_groups", []):
+                eg_graph = mk_smiles_ir(*eg_spec)
+                eg_subgraph = BigSmilesSubgraphIR(
+                    atoms=list(eg_graph.atoms),
+                    bonds=list(eg_graph.bonds),
+                    descriptors=[],
+                )
+                end_groups.append(EndGroupIR(graph=eg_subgraph))
+
+            stochastic_objects.append(
+                StochasticObjectIR(
+                    left_terminal=left_terminal,
+                    right_terminal=right_terminal,
+                    repeat_units=repeat_units,
+                    end_groups=end_groups,
+                )
+            )
+
+        # Handle implicit smiles (trailing smiles after stochastic objects)
+        if "implicit" in seg_spec and seg_spec["implicit"] is not None:
+            implicit_spec = seg_spec["implicit"]
+            if isinstance(implicit_spec, tuple) and len(implicit_spec) == 2:
+                implicit_atoms, implicit_bonds = implicit_spec
+                implicit_graph = mk_smiles_ir(implicit_atoms, implicit_bonds)
+                backbone.atoms.extend(implicit_graph.atoms)
+                backbone.bonds.extend(implicit_graph.bonds)
+
+    return BigSmilesMoleculeIR(backbone=backbone, stochastic_objects=stochastic_objects)
 
 
 # Bond descriptor test cases (field variants)
 bond_descriptor_cases = [
     # (name, kwargs, expected_checks)
-    ("empty", {}, {"symbol": None, "index": None, "generation": None}),
-    ("symbol_only", {"symbol": "<"}, {"symbol": "<", "index": None}),
-    ("symbol_index", {"symbol": ">", "index": 1}, {"symbol": ">", "index": 1}),
+    ("empty", {}, {"symbol": None, "label": None}),
+    ("symbol_only", {"symbol": "<"}, {"symbol": "<", "label": None}),
+    ("symbol_label", {"symbol": ">", "label": 1}, {"symbol": ">", "label": 1}),
     (
-        "symbol_index_gen",
-        {"symbol": "$", "index": 2, "generation": [0, 1]},
-        {"symbol": "$", "index": 2, "generation": [0, 1]},
-    ),
-    ("generation_only", {"generation": [1, 2, 3]}, {"generation": [1, 2, 3]}),
-]
-
-# Stochastic distribution test cases
-distribution_cases = [
-    (
-        "flory_schulz",
-        {"name": "flory_schulz", "params": [0.8]},
-        {"name": "flory_schulz", "params": [0.8]},
-    ),
-    (
-        "schulz_zimm",
-        {"name": "schulz_zimm", "params": [2.0, 100.0]},
-        {"name": "schulz_zimm", "params": [2.0, 100.0]},
-    ),
-    (
-        "poisson",
-        {"name": "poisson", "params": [50.0]},
-        {"name": "poisson", "params": [50.0]},
+        "symbol_label_extras",
+        {"symbol": "$", "label": 2, "extras": {"generation": [0, 1]}},
+        {"symbol": "$", "label": 2},
     ),
 ]
 
@@ -771,40 +927,40 @@ stochastic_object_cases = [
     # (name, left_desc, right_desc, units, end_groups, distribution)
     (
         "minimal_one_unit",
-        {"symbol": "<", "index": 1},
-        {"symbol": ">", "index": 1},
+        {"symbol": "<", "label": 1},
+        {"symbol": ">", "label": 1},
         [(["C", "C"], [(0, 1, "-")])],
         None,
         None,
     ),
     (
         "two_units",
-        {"symbol": "<", "index": 1},
-        {"symbol": ">", "index": 1},
+        {"symbol": "<", "label": 1},
+        {"symbol": ">", "label": 1},
         [(["C", "C"], [(0, 1, "-")]), (["O"], [])],
         None,
         None,
     ),
     (
         "with_end_groups",
-        {"symbol": "<", "index": 2},
-        {"symbol": ">", "index": 2},
+        {"symbol": "<", "label": 2},
+        {"symbol": ">", "label": 2},
         [(["C", "C", "O"], [(0, 1, "-"), (1, 2, "-")])],
         [(["H"], []), (["OH"], [])],
         None,
     ),
     (
         "with_distribution",
-        {"symbol": "<", "index": 3},
-        {"symbol": ">", "index": 3},
+        {"symbol": "<", "label": 3},
+        {"symbol": ">", "label": 3},
         [(["C", "C"], [(0, 1, "-")])],
         None,
         {"name": "flory_schulz", "params": [0.9]},
     ),
     (
         "full_fields",
-        {"symbol": "$", "index": 10, "generation": [0]},
-        {"symbol": "$", "index": 10, "generation": [0]},
+        {"symbol": "$", "label": 10, "generation": [0]},
+        {"symbol": "$", "label": 10, "generation": [0]},
         [(["C", "C"], [(0, 1, "-")]), (["C", "O"], [(0, 1, "-")])],
         [(["Br"], [])],
         {"name": "poisson", "params": [25.0]},
@@ -821,8 +977,8 @@ chain_segment_cases = [
             {
                 "objects": [
                     {
-                        "left": {"symbol": "<", "index": 1},
-                        "right": {"symbol": ">", "index": 1},
+                        "left": {"symbol": "<", "label": 1},
+                        "right": {"symbol": ">", "label": 1},
                         "units": [(["C", "C"], [(0, 1, "-")])],
                     }
                 ],
@@ -837,8 +993,8 @@ chain_segment_cases = [
             {
                 "objects": [
                     {
-                        "left": {"symbol": "<", "index": 1},
-                        "right": {"symbol": ">", "index": 1},
+                        "left": {"symbol": "<", "label": 1},
+                        "right": {"symbol": ">", "label": 1},
                         "units": [(["C", "C"], [(0, 1, "-")])],
                     }
                 ],
@@ -853,8 +1009,8 @@ chain_segment_cases = [
             {
                 "objects": [
                     {
-                        "left": {"symbol": "<", "index": 1},
-                        "right": {"symbol": ">", "index": 1},
+                        "left": {"symbol": "<", "label": 1},
+                        "right": {"symbol": ">", "label": 1},
                         "units": [(["O"], [])],
                     }
                 ],
@@ -869,13 +1025,13 @@ chain_segment_cases = [
             {
                 "objects": [
                     {
-                        "left": {"symbol": "<", "index": 1},
-                        "right": {"symbol": ">", "index": 1},
+                        "left": {"symbol": "<", "label": 1},
+                        "right": {"symbol": ">", "label": 1},
                         "units": [(["C"], [])],
                     },
                     {
-                        "left": {"symbol": "<", "index": 2},
-                        "right": {"symbol": ">", "index": 2},
+                        "left": {"symbol": "<", "label": 2},
+                        "right": {"symbol": ">", "label": 2},
                         "units": [(["O"], [])],
                     },
                 ],
@@ -890,8 +1046,8 @@ chain_segment_cases = [
             {
                 "objects": [
                     {
-                        "left": {"symbol": "<", "index": 1},
-                        "right": {"symbol": ">", "index": 1},
+                        "left": {"symbol": "<", "label": 1},
+                        "right": {"symbol": ">", "label": 1},
                         "units": [(["C", "C"], [(0, 1, "-")])],
                     }
                 ],
@@ -900,8 +1056,8 @@ chain_segment_cases = [
             {
                 "objects": [
                     {
-                        "left": {"symbol": "<", "index": 2},
-                        "right": {"symbol": ">", "index": 2},
+                        "left": {"symbol": "<", "label": 2},
+                        "right": {"symbol": ">", "label": 2},
                         "units": [(["O"], [])],
                     }
                 ],
@@ -915,15 +1071,9 @@ chain_segment_cases = [
 class TestBigSmilesIR:
     @pytest.mark.parametrize("name,kwargs,expected", bond_descriptor_cases)
     def test_bond_descriptor_fields(self, name, kwargs, expected):
-        desc = BondDescriptorIR(**kwargs)
+        desc = BondingDescriptorIR(**kwargs)
         for key, val in expected.items():
             assert getattr(desc, key) == val
-
-    @pytest.mark.parametrize("name,kwargs,expected", distribution_cases)
-    def test_stochastic_distribution_fields(self, name, kwargs, expected):
-        dist = StochasticDistributionIR(**kwargs)
-        for key, val in expected.items():
-            assert getattr(dist, key) == val
 
     @pytest.mark.parametrize(
         "name,left_desc,right_desc,units,end_groups,distribution",
@@ -932,69 +1082,100 @@ class TestBigSmilesIR:
     def test_stochastic_object_fields(
         self, name, left_desc, right_desc, units, end_groups, distribution
     ):
-        left = BondDescriptorIR(**left_desc)
-        right = BondDescriptorIR(**right_desc)
-        unit_irs = [mk_smiles_ir(*u) for u in units]
-        eg_irs = [mk_smiles_ir(*eg) for eg in end_groups] if end_groups else None
-        dist_ir = StochasticDistributionIR(**distribution) if distribution else None
-
-        sobj = StochasticObjectIR(
-            left_descriptor=left,
-            right_descriptor=right,
-            repeat_units=unit_irs,
-            end_groups=eg_irs,
-            distribution=dist_ir,
+        from molpy.parser.smiles.bigsmiles_ir import (
+            BigSmilesSubgraphIR,
+            EndGroupIR,
+            RepeatUnitIR,
+            TerminalDescriptorIR,
         )
 
-        assert sobj.left_descriptor.symbol == left_desc["symbol"]
-        assert sobj.right_descriptor.symbol == right_desc["symbol"]
+        # Handle generation parameter by moving it to extras
+        left_desc_fixed = {}
+        if left_desc:
+            left_desc_fixed = dict(left_desc)
+            if "generation" in left_desc_fixed:
+                generation = left_desc_fixed.pop("generation")
+                left_desc_fixed["extras"] = {"generation": generation}
+        right_desc_fixed = {}
+        if right_desc:
+            right_desc_fixed = dict(right_desc)
+            if "generation" in right_desc_fixed:
+                generation = right_desc_fixed.pop("generation")
+                right_desc_fixed["extras"] = {"generation": generation}
+
+        left_descriptors = [BondingDescriptorIR(**left_desc_fixed)] if left_desc else []
+        right_descriptors = (
+            [BondingDescriptorIR(**right_desc_fixed)] if right_desc else []
+        )
+        left_terminal = TerminalDescriptorIR(descriptors=left_descriptors)
+        right_terminal = TerminalDescriptorIR(descriptors=right_descriptors)
+
+        repeat_units = []
+        for unit_spec in units:
+            unit_graph = mk_smiles_ir(*unit_spec)
+            unit_subgraph = BigSmilesSubgraphIR(
+                atoms=list(unit_graph.atoms),
+                bonds=list(unit_graph.bonds),
+                descriptors=[],
+            )
+            repeat_units.append(RepeatUnitIR(graph=unit_subgraph))
+
+        end_group_irs = []
+        if end_groups:
+            for eg_spec in end_groups:
+                eg_graph = mk_smiles_ir(*eg_spec)
+                eg_subgraph = BigSmilesSubgraphIR(
+                    atoms=list(eg_graph.atoms),
+                    bonds=list(eg_graph.bonds),
+                    descriptors=[],
+                )
+                end_group_irs.append(EndGroupIR(graph=eg_subgraph))
+
+        sobj = StochasticObjectIR(
+            left_terminal=left_terminal,
+            right_terminal=right_terminal,
+            repeat_units=repeat_units,
+            end_groups=end_group_irs,
+        )
+
+        if left_desc:
+            assert sobj.left_terminal.descriptors[0].symbol == left_desc["symbol"]
+        if right_desc:
+            assert sobj.right_terminal.descriptors[0].symbol == right_desc["symbol"]
         assert len(sobj.repeat_units) == len(units)
         if end_groups:
-            assert sobj.end_groups is not None and len(sobj.end_groups) == len(
-                end_groups
-            )
+            assert len(sobj.end_groups) == len(end_groups)
         else:
-            assert sobj.end_groups is None
-        if distribution:
-            assert (
-                sobj.distribution is not None
-                and sobj.distribution.name == distribution["name"]
-            )
-        else:
-            assert sobj.distribution is None
+            assert len(sobj.end_groups) == 0
 
     @pytest.mark.parametrize("name,start_specs,segments_specs", chain_segment_cases)
     def test_chain_and_segments(self, name, start_specs, segments_specs):
         expected_ir = mk_bigsmiles_ir(start_specs, segments_specs)
 
-        # Verify chain structure
-        chain = expected_ir.chain
-        assert chain.start_smiles is not None
-        assert len(chain.repeat_segments) == len(segments_specs)
+        # Verify structure
+        assert expected_ir.backbone is not None
+        assert len(expected_ir.stochastic_objects) == sum(
+            len(seg["objects"]) for seg in segments_specs
+        )
 
-        # Verify first segment has expected object count
-        if segments_specs:
-            assert len(chain.repeat_segments[0].stochastic_objects) == len(
-                segments_specs[0]["objects"]
-            )
+    def test_bigsmiles_ir_is_distinct_class(self):
+        # BigSmilesMoleculeIR is a distinct class
+        assert BigSmilesMoleculeIR is not SmilesGraphIR
+        assert not issubclass(BigSmilesMoleculeIR, SmilesGraphIR)
 
-    def test_bigsmiles_ir_inherits_smilesir(self):
-        assert issubclass(BigSmilesIR, SmilesIR)
+    def test_bigsmiles_ir_has_backbone_field(self):
+        from molpy.parser.smiles.bigsmiles_ir import BigSmilesSubgraphIR
 
-    def test_bigsmiles_ir_has_chain_field(self):
-        start = mk_smiles_ir([], [])
-        chain = BigSmilesChainIR(start_smiles=start, repeat_segments=[])
-        big = BigSmilesIR(atoms=[], bonds=[], chain=chain)
+        backbone = BigSmilesSubgraphIR()
+        big = BigSmilesMoleculeIR(backbone=backbone, stochastic_objects=[])
 
-        assert hasattr(big, "chain")
-        assert isinstance(big.chain, BigSmilesChainIR)
-        assert isinstance(big, SmilesIR)
+        assert hasattr(big, "backbone")
+        assert isinstance(big.backbone, BigSmilesSubgraphIR)
+        assert isinstance(big, BigSmilesMoleculeIR)
 
     def test_parse_bigsmiles_method_exists(self):
-        # Verify SmilesParser has parse_bigsmiles entrypoint
-        parse_fn = getattr(parser, "parse_bigsmiles", None)
-        if parse_fn is None:
-            pytest.xfail("SmilesParser.parse_bigsmiles not implemented yet")
+        # Verify parse_bigsmiles function exists
+        assert callable(parse_bigsmiles)
 
 
 # ======================== BigSMILES Parser tests ========================
@@ -1028,7 +1209,16 @@ basic_bigsmiles_compat = [
     ),
     (
         "[$]CC[$]",
-        mk_bigsmiles_ir((["C", "C"], [(0, 1, "-")]), []),
+        # With new IR, descriptors are preserved as graph nodes in backbone
+        # Create expected structure with descriptors in backbone
+        mk_bigsmiles_ir_with_descriptors(
+            (["C", "C"], [(0, 1, "-")]),  # backbone atoms and bonds
+            [
+                {"symbol": "$", "role": "internal"},
+                {"symbol": "$", "role": "internal"},
+            ],  # descriptors
+            [],  # no stochastic objects
+        ),
     ),
 ]
 
@@ -1235,8 +1425,8 @@ indexed_descriptor_bigsmiles = [
                 {
                     "objects": [
                         {
-                            "left": {"symbol": "<", "index": 1},
-                            "right": {"symbol": ">", "index": 1},
+                            "left": {"symbol": "<", "label": 1},
+                            "right": {"symbol": ">", "label": 1},
                             "units": [(["C", "C"], [(0, 1, "-")])],
                         }
                     ],
@@ -1254,42 +1444,44 @@ class TestBigSmilesParser:
     @pytest.mark.parametrize("smiles,expected", basic_bigsmiles_compat)
     def test_basic_smiles_compatibility(self, smiles, expected):
         """BigSMILES is SMILES superset - all plain SMILES must parse."""
-        ir = parser.parse_bigsmiles(smiles)
+        if expected is None:
+            pytest.skip("Test case skipped - needs special handling for descriptors")
+        ir = parse_bigsmiles(smiles)
         assert ir == expected
 
     @pytest.mark.parametrize("bigsmiles,expected", simple_repeat_bigsmiles)
     def test_simple_repeat_units(self, bigsmiles, expected):
         """Test basic {} repeat unit parsing."""
-        ir = parser.parse_bigsmiles(bigsmiles)
+        ir = parse_bigsmiles(bigsmiles)
         assert ir == expected
 
     @pytest.mark.parametrize("bigsmiles,expected", stochastic_copolymer_bigsmiles)
     def test_stochastic_copolymer(self, bigsmiles, expected):
         """Test random copolymer with comma-separated monomers."""
-        ir = parser.parse_bigsmiles(bigsmiles)
+        ir = parse_bigsmiles(bigsmiles)
         assert ir == expected
 
     @pytest.mark.parametrize("bigsmiles,expected", block_copolymer_bigsmiles)
     def test_block_copolymers(self, bigsmiles, expected):
         """Test block copolymer with multiple {} segments."""
-        ir = parser.parse_bigsmiles(bigsmiles)
+        ir = parse_bigsmiles(bigsmiles)
         assert ir == expected
 
     @pytest.mark.parametrize("bigsmiles,expected", mixed_bigsmiles)
     def test_mixed_with_smiles(self, bigsmiles, expected):
         """Test BigSMILES mixed with plain SMILES fragments."""
-        ir = parser.parse_bigsmiles(bigsmiles)
+        ir = parse_bigsmiles(bigsmiles)
         assert ir == expected
 
     @pytest.mark.parametrize("bigsmiles,expected", indexed_descriptor_bigsmiles)
     def test_indexed_descriptors(self, bigsmiles, expected):
         """Test bond descriptors with indices."""
-        ir = parser.parse_bigsmiles(bigsmiles)
+        ir = parse_bigsmiles(bigsmiles)
         assert ir == expected
 
     def test_empty_bigsmiles(self):
         """Test empty string returns valid IR."""
-        ir = parser.parse_bigsmiles("")
+        ir = parse_bigsmiles("")
         expected = mk_bigsmiles_ir(([], []), [])
         assert ir == expected
 
@@ -1321,7 +1513,7 @@ class TestRDKitConverter:
     def test_smilesir_to_mol_basic(self, smiles, n_atoms, n_bonds):
         """Test basic IR -> Mol conversion."""
 
-        ir = parser.parse_smiles(smiles)
+        ir = parse_smiles(smiles)
         mol = smilesir_to_mol(ir)
 
         assert mol is not None
@@ -1332,7 +1524,7 @@ class TestRDKitConverter:
         """Test conversion with charged atoms."""
 
         # [NH4+]
-        ir = parser.parse_smiles("[NH4+]")
+        ir = parse_smiles("[NH4+]")
         mol = smilesir_to_mol(ir)
 
         assert mol.GetNumAtoms() == 1
@@ -1345,7 +1537,7 @@ class TestRDKitConverter:
         """Test conversion with isotopes."""
 
         # [13C]
-        ir = parser.parse_smiles("[13C]")
+        ir = parse_smiles("[13C]")
         mol = smilesir_to_mol(ir)
 
         assert mol.GetNumAtoms() == 1
@@ -1357,7 +1549,7 @@ class TestRDKitConverter:
         """Test conversion with aromatic atoms."""
 
         # Benzene
-        ir = parser.parse_smiles("c1ccccc1")
+        ir = parse_smiles("c1ccccc1")
         mol = smilesir_to_mol(ir)
 
         assert mol.GetNumAtoms() == 6
@@ -1371,7 +1563,7 @@ class TestRDKitConverter:
         from rdkit import Chem
 
         # L-alanine: N[C@@H](C)C(=O)O
-        ir = parser.parse_smiles("N[C@@H](C)C(=O)O")
+        ir = parse_smiles("N[C@@H](C)C(=O)O")
         mol = smilesir_to_mol(ir)
 
         # Check chiral center exists

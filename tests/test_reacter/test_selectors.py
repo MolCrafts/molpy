@@ -12,8 +12,7 @@ Tests cover:
 
 import pytest
 
-from molpy import Atom, Atomistic, Bond
-from molpy.core.wrappers.monomer import Monomer
+from molpy.core.atomistic import Atom, Atomistic, Bond
 from molpy.reacter.selectors import (
     select_none,
     select_port_atom,
@@ -29,40 +28,40 @@ class TestPortAnchorSelector:
 
     def test_port_anchor_selector_basic(self):
         """Test selecting anchor from port."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
-        mono.add_entity(c)
+        struct.add_entity(c)
 
-        mono.set_port("1", c)
+        c["port"] = "1"
 
-        anchor = select_port_atom(mono, "1")
+        anchor = select_port_atom(struct, "1")
 
         assert anchor is c
 
     def test_port_anchor_selector_different_port(self):
         """Test selecting anchor from different port."""
-        mono = Monomer()
+        struct = Atomistic()
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
-        mono.add_entity(c1, c2)
+        struct.add_entity(c1, c2)
 
-        mono.set_port("head", c1)
-        mono.set_port("tail", c2)
+        c1["port"] = "head"
+        c2["port"] = "tail"
 
-        anchor = select_port_atom(mono, "tail")
+        anchor = select_port_atom(struct, "tail")
 
         assert anchor is c2
 
     def test_port_anchor_selector_missing_port(self):
         """Test selecting anchor from non-existent port raises error."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
-        mono.add_entity(c)
+        struct.add_entity(c)
 
         # Don't set port
 
         with pytest.raises(ValueError, match="Port '1' not found"):
-            select_port_atom(mono, "1")
+            select_port_atom(struct, "1")
 
 
 class TestRemoveOneH:
@@ -70,13 +69,13 @@ class TestRemoveOneH:
 
     def test_remove_one_H_single(self):
         """Test removing one H when one exists."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         h = Atom(symbol="H")
-        mono.add_entity(c, h)
-        mono.add_link(Bond(c, h))
+        struct.add_entity(c, h)
+        struct.add_link(Bond(c, h))
 
-        leaving = select_one_hydrogen(mono, c)
+        leaving = select_one_hydrogen(struct, c)
 
         assert len(leaving) == 1
         assert leaving[0] is h
@@ -84,15 +83,15 @@ class TestRemoveOneH:
 
     def test_remove_one_H_multiple(self):
         """Test removing one H when multiple exist."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         h1 = Atom(symbol="H")
         h2 = Atom(symbol="H")
         h3 = Atom(symbol="H")
-        mono.add_entity(c, h1, h2, h3)
-        mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
+        struct.add_entity(c, h1, h2, h3)
+        struct.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
-        leaving = select_one_hydrogen(mono, c)
+        leaving = select_one_hydrogen(struct, c)
 
         # Should return only one H
         assert len(leaving) == 1
@@ -101,23 +100,23 @@ class TestRemoveOneH:
 
     def test_remove_one_H_none(self):
         """Test removing one H when none exist."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         o = Atom(symbol="O")
-        mono.add_entity(c, o)
-        mono.add_link(Bond(c, o))
+        struct.add_entity(c, o)
+        struct.add_link(Bond(c, o))
 
-        leaving = select_one_hydrogen(mono, c)
+        leaving = select_one_hydrogen(struct, c)
 
         assert len(leaving) == 0
 
     def test_remove_one_H_no_neighbors(self):
         """Test removing one H from isolated atom."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
-        mono.add_entity(c)
+        struct.add_entity(c)
 
-        leaving = select_one_hydrogen(mono, c)
+        leaving = select_one_hydrogen(struct, c)
 
         assert len(leaving) == 0
 
@@ -127,28 +126,28 @@ class TestRemoveAllH:
 
     def test_remove_all_H_single(self):
         """Test removing all H when one exists."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         h = Atom(symbol="H")
-        mono.add_entity(c, h)
-        mono.add_link(Bond(c, h))
+        struct.add_entity(c, h)
+        struct.add_link(Bond(c, h))
 
-        leaving = select_all_hydrogens(mono, c)
+        leaving = select_all_hydrogens(struct, c)
 
         assert len(leaving) == 1
         assert leaving[0] is h
 
     def test_remove_all_H_multiple(self):
         """Test removing all H when multiple exist."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         h1 = Atom(symbol="H")
         h2 = Atom(symbol="H")
         h3 = Atom(symbol="H")
-        mono.add_entity(c, h1, h2, h3)
-        mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
+        struct.add_entity(c, h1, h2, h3)
+        struct.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
-        leaving = select_all_hydrogens(mono, c)
+        leaving = select_all_hydrogens(struct, c)
 
         assert len(leaving) == 3
         assert all(h.get("symbol") == "H" for h in leaving)
@@ -158,27 +157,27 @@ class TestRemoveAllH:
 
     def test_remove_all_H_none(self):
         """Test removing all H when none exist."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         o = Atom(symbol="O")
-        mono.add_entity(c, o)
-        mono.add_link(Bond(c, o))
+        struct.add_entity(c, o)
+        struct.add_link(Bond(c, o))
 
-        leaving = select_all_hydrogens(mono, c)
+        leaving = select_all_hydrogens(struct, c)
 
         assert len(leaving) == 0
 
     def test_remove_all_H_mixed_neighbors(self):
         """Test removing all H when other neighbors exist."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         h1 = Atom(symbol="H")
         h2 = Atom(symbol="H")
         o = Atom(symbol="O")
-        mono.add_entity(c, h1, h2, o)
-        mono.add_link(Bond(c, h1), Bond(c, h2), Bond(c, o))
+        struct.add_entity(c, h1, h2, o)
+        struct.add_link(Bond(c, h1), Bond(c, h2), Bond(c, o))
 
-        leaving = select_all_hydrogens(mono, c)
+        leaving = select_all_hydrogens(struct, c)
 
         # Should only return H atoms
         assert len(leaving) == 2
@@ -191,13 +190,13 @@ class TestRemoveDummyAtoms:
 
     def test_remove_dummy_atoms_single(self):
         """Test removing dummy atoms when one exists."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         dummy = Atom(symbol="*")
-        mono.add_entity(c, dummy)
-        mono.add_link(Bond(c, dummy))
+        struct.add_entity(c, dummy)
+        struct.add_link(Bond(c, dummy))
 
-        leaving = select_dummy_atoms(mono, c)
+        leaving = select_dummy_atoms(struct, c)
 
         assert len(leaving) == 1
         assert leaving[0] is dummy
@@ -205,14 +204,14 @@ class TestRemoveDummyAtoms:
 
     def test_remove_dummy_atoms_multiple(self):
         """Test removing dummy atoms when multiple exist."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         dummy1 = Atom(symbol="*")
         dummy2 = Atom(symbol="*")
-        mono.add_entity(c, dummy1, dummy2)
-        mono.add_link(Bond(c, dummy1), Bond(c, dummy2))
+        struct.add_entity(c, dummy1, dummy2)
+        struct.add_link(Bond(c, dummy1), Bond(c, dummy2))
 
-        leaving = select_dummy_atoms(mono, c)
+        leaving = select_dummy_atoms(struct, c)
 
         assert len(leaving) == 2
         assert all(d.get("symbol") == "*" for d in leaving)
@@ -221,26 +220,26 @@ class TestRemoveDummyAtoms:
 
     def test_remove_dummy_atoms_none(self):
         """Test removing dummy atoms when none exist."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         h = Atom(symbol="H")
-        mono.add_entity(c, h)
-        mono.add_link(Bond(c, h))
+        struct.add_entity(c, h)
+        struct.add_link(Bond(c, h))
 
-        leaving = select_dummy_atoms(mono, c)
+        leaving = select_dummy_atoms(struct, c)
 
         assert len(leaving) == 0
 
     def test_remove_dummy_atoms_mixed_neighbors(self):
         """Test removing dummy atoms when other neighbors exist."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         dummy = Atom(symbol="*")
         h = Atom(symbol="H")
-        mono.add_entity(c, dummy, h)
-        mono.add_link(Bond(c, dummy), Bond(c, h))
+        struct.add_entity(c, dummy, h)
+        struct.add_link(Bond(c, dummy), Bond(c, h))
 
-        leaving = select_dummy_atoms(mono, c)
+        leaving = select_dummy_atoms(struct, c)
 
         # Should only return dummy atoms
         assert len(leaving) == 1
@@ -253,14 +252,14 @@ class TestRemoveOH:
 
     def test_remove_OH_complete(self):
         """Test removing complete OH group."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         o = Atom(symbol="O")
         h = Atom(symbol="H")
-        mono.add_entity(c, o, h)
-        mono.add_link(Bond(c, o, order=1), Bond(o, h, order=1))
+        struct.add_entity(c, o, h)
+        struct.add_link(Bond(c, o, order=1), Bond(o, h, order=1))
 
-        leaving = select_hydroxyl_group(mono, c)
+        leaving = select_hydroxyl_group(struct, c)
 
         assert len(leaving) == 2
         assert o in leaving
@@ -268,47 +267,47 @@ class TestRemoveOH:
 
     def test_remove_OH_no_H(self):
         """Test removing OH when O has no H (just O)."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         o = Atom(symbol="O")
-        mono.add_entity(c, o)
-        mono.add_link(Bond(c, o, order=1))
+        struct.add_entity(c, o)
+        struct.add_link(Bond(c, o, order=1))
         # O has no H
 
-        leaving = select_hydroxyl_group(mono, c)
-
-        # Should return just O
-        assert len(leaving) == 1
-        assert leaving[0] is o
+        # Should raise error when no H found
+        with pytest.raises(
+            ValueError, match="No hydrogen found bonded to hydroxyl oxygen"
+        ):
+            select_hydroxyl_group(struct, c)
 
     def test_remove_OH_no_O(self):
         """Test removing OH when no O neighbor exists."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         h = Atom(symbol="H")
-        mono.add_entity(c, h)
-        mono.add_link(Bond(c, h))
+        struct.add_entity(c, h)
+        struct.add_link(Bond(c, h))
 
-        leaving = select_hydroxyl_group(mono, c)
-
-        assert len(leaving) == 0
+        # Should raise error when no O found
+        with pytest.raises(ValueError, match="No oxygen neighbors found for port atom"):
+            select_hydroxyl_group(struct, c)
 
     def test_remove_OH_multiple_O(self):
         """Test removing OH when multiple O neighbors exist."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         o1 = Atom(symbol="O")  # hydroxyl oxygen
         o2 = Atom(symbol="O")  # carbonyl oxygen
         h = Atom(symbol="H")
-        mono.add_entity(c, o1, o2, h)
-        mono.add_link(
+        struct.add_entity(c, o1, o2, h)
+        struct.add_link(
             Bond(c, o1, order=1),  # single bond = hydroxyl
             Bond(c, o2, order=2),  # double bond = carbonyl
             Bond(o1, h, order=1),
         )
         # Only o1 has H and single bond
 
-        leaving = select_hydroxyl_group(mono, c)
+        leaving = select_hydroxyl_group(struct, c)
 
         # Should return o1 (single-bonded) and its H
         assert len(leaving) == 2
@@ -321,23 +320,23 @@ class TestNoLeavingGroup:
 
     def test_no_leaving_group_always_empty(self):
         """Test that select_none always returns empty list."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
         h = Atom(symbol="H")
-        mono.add_entity(c, h)
-        mono.add_link(Bond(c, h))
+        struct.add_entity(c, h)
+        struct.add_link(Bond(c, h))
 
-        leaving = select_none(mono, c)
+        leaving = select_none(struct, c)
 
         assert len(leaving) == 0
 
     def test_no_leaving_group_ignores_anchor(self):
         """Test that select_none ignores anchor parameter."""
-        mono = Monomer()
+        struct = Atomistic()
         c = Atom(symbol="C")
-        mono.add_entity(c)
+        struct.add_entity(c)
 
         # Should work even with None or different anchor
-        leaving = select_none(mono, c)
+        leaving = select_none(struct, c)
 
         assert len(leaving) == 0

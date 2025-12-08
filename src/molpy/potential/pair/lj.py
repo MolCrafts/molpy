@@ -1,9 +1,11 @@
 """
-Lennard-Jones 12-6 pair potential.
+Lennard-Jones 12-6 pair potential and force field styles.
 """
 
 import numpy as np
 from numpy.typing import NDArray
+
+from molpy.core.forcefield import AtomType, PairStyle, PairType
 
 from .base import PairPotential
 
@@ -131,3 +133,198 @@ class LJ126(PairPotential):
         np.add.at(per_atom_forces, pair_idx[:, 1], forces.squeeze())
 
         return per_atom_forces
+
+
+# ===================================================================
+#               Force Field Style and Type Classes
+# ===================================================================
+
+
+class PairLJ126Type(PairType):
+    """Lennard-Jones 12-6 pair type with epsilon and sigma parameters."""
+
+    def __init__(
+        self,
+        name: str,
+        itom: AtomType,
+        jtom: AtomType | None = None,
+        epsilon: float = 0.0,
+        sigma: float = 0.0,
+        charge: float = 0.0,
+    ):
+        """
+        Args:
+            name: Type name
+            itom: First atom type
+            jtom: Second atom type (None for self-interaction)
+            epsilon: LJ epsilon parameter
+            sigma: LJ sigma parameter
+            charge: Atomic charge (optional)
+        """
+        if jtom is None:
+            jtom = itom
+        super().__init__(name, itom, jtom, epsilon=epsilon, sigma=sigma, charge=charge)
+
+
+class PairLJ126Style(PairStyle):
+    """Lennard-Jones 12-6 pair style with fixed name='lj126'."""
+
+    def __init__(self, cutoff: float = 10.0):
+        """
+        Args:
+            cutoff: Cutoff distance in Angstroms (default: 10.0)
+        """
+        super().__init__("lj126", cutoff)
+
+    def def_type(
+        self,
+        itom: AtomType,
+        jtom: AtomType | None = None,
+        epsilon: float = 0.0,
+        sigma: float = 0.0,
+        charge: float = 0.0,
+        name: str = "",
+    ) -> PairLJ126Type:
+        """Define LJ 12-6 pair type.
+
+        Args:
+            itom: First atom type
+            jtom: Second atom type (None for self-interaction)
+            epsilon: LJ epsilon parameter
+            sigma: LJ sigma parameter
+            charge: Atomic charge (optional)
+            name: Optional name
+
+        Returns:
+            PairLJ126Type instance
+        """
+        if jtom is None:
+            jtom = itom
+        if not name:
+            name = itom.name if itom == jtom else f"{itom.name}-{jtom.name}"
+        pt = PairLJ126Type(name, itom, jtom, epsilon, sigma, charge)
+        self.types.add(pt)
+        return pt
+
+
+class PairCoulLongStyle(PairStyle):
+    """Coulomb long-range pair style with fixed name='coul/long'."""
+
+    def __init__(self, cutoff: float = 10.0):
+        """
+        Args:
+            cutoff: Cutoff distance in Angstroms (default: 10.0)
+        """
+        super().__init__("coul/long", cutoff)
+
+
+class PairLJ126CoulLongStyle(PairStyle):
+    """Combined LJ 12-6 and Coulomb long pair style.
+
+    This is a composite style that combines PairLJ126Style and PairCoulLongStyle.
+    The name is 'lj/cut/coul/long' for LAMMPS compatibility.
+    """
+
+    def __init__(
+        self,
+        lj_cutoff: float = 10.0,
+        coul_cutoff: float = 10.0,
+        coulomb14scale: float = 0.5,
+        lj14scale: float = 0.5,
+    ):
+        """
+        Args:
+            lj_cutoff: LJ cutoff distance in Angstroms (default: 10.0)
+            coul_cutoff: Coulomb cutoff distance in Angstroms (default: 10.0)
+            coulomb14scale: 1-4 Coulomb scaling factor (default: 0.5)
+            lj14scale: 1-4 LJ scaling factor (default: 0.5)
+        """
+        super().__init__("lj/cut/coul/long", lj_cutoff, coul_cutoff)
+        self.params.kwargs["coulomb14scale"] = coulomb14scale
+        self.params.kwargs["lj14scale"] = lj14scale
+
+    def def_type(
+        self,
+        itom: AtomType,
+        jtom: AtomType | None = None,
+        epsilon: float = 0.0,
+        sigma: float = 0.0,
+        charge: float = 0.0,
+        name: str = "",
+    ) -> PairLJ126Type:
+        """Define LJ 12-6 pair type (same as PairLJ126Style).
+
+        Args:
+            itom: First atom type
+            jtom: Second atom type (None for self-interaction)
+            epsilon: LJ epsilon parameter
+            sigma: LJ sigma parameter
+            charge: Atomic charge (optional)
+            name: Optional name
+
+        Returns:
+            PairLJ126Type instance
+        """
+        if jtom is None:
+            jtom = itom
+        if not name:
+            name = itom.name if itom == jtom else f"{itom.name}-{jtom.name}"
+        pt = PairLJ126Type(name, itom, jtom, epsilon, sigma, charge)
+        self.types.add(pt)
+        return pt
+
+
+class PairLJ126CoulCutStyle(PairStyle):
+    """Combined LJ 12-6 and Coulomb cut pair style.
+
+    This is a composite style that combines PairLJ126Style and Coulomb cut.
+    The name is 'lj/cut/coul/cut' for LAMMPS compatibility.
+    """
+
+    def __init__(
+        self,
+        lj_cutoff: float = 10.0,
+        coul_cutoff: float = 10.0,
+        coulomb14scale: float = 0.5,
+        lj14scale: float = 0.5,
+    ):
+        """
+        Args:
+            lj_cutoff: LJ cutoff distance in Angstroms (default: 10.0)
+            coul_cutoff: Coulomb cutoff distance in Angstroms (default: 10.0)
+            coulomb14scale: 1-4 Coulomb scaling factor (default: 0.5)
+            lj14scale: 1-4 LJ scaling factor (default: 0.5)
+        """
+        super().__init__("lj/cut/coul/cut", lj_cutoff, coul_cutoff)
+        self.params.kwargs["coulomb14scale"] = coulomb14scale
+        self.params.kwargs["lj14scale"] = lj14scale
+
+    def def_type(
+        self,
+        itom: AtomType,
+        jtom: AtomType | None = None,
+        epsilon: float = 0.0,
+        sigma: float = 0.0,
+        charge: float = 0.0,
+        name: str = "",
+    ) -> PairLJ126Type:
+        """Define LJ 12-6 pair type (same as PairLJ126Style).
+
+        Args:
+            itom: First atom type
+            jtom: Second atom type (None for self-interaction)
+            epsilon: LJ epsilon parameter
+            sigma: LJ sigma parameter
+            charge: Atomic charge (optional)
+            name: Optional name
+
+        Returns:
+            PairLJ126Type instance
+        """
+        if jtom is None:
+            jtom = itom
+        if not name:
+            name = itom.name if itom == jtom else f"{itom.name}-{jtom.name}"
+        pt = PairLJ126Type(name, itom, jtom, epsilon, sigma, charge)
+        self.types.add(pt)
+        return pt

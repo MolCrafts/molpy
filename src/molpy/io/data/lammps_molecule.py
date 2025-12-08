@@ -131,11 +131,16 @@ class LammpsMoleculeReader(DataReader):
 
         frame["atoms"] = mp.Block(atoms_data)
 
+        # Build atom ID to index mapping for connectivity conversion
+        atom_id_to_index = {}
+        for idx, atom_id in enumerate(atom_ids):
+            atom_id_to_index[int(atom_id)] = idx
+
         # Parse connectivity sections
-        self._parse_json_connectivity(data, frame, "bonds")
-        self._parse_json_connectivity(data, frame, "angles")
-        self._parse_json_connectivity(data, frame, "dihedrals")
-        self._parse_json_connectivity(data, frame, "impropers")
+        self._parse_json_connectivity(data, frame, "bonds", atom_id_to_index)
+        self._parse_json_connectivity(data, frame, "angles", atom_id_to_index)
+        self._parse_json_connectivity(data, frame, "dihedrals", atom_id_to_index)
+        self._parse_json_connectivity(data, frame, "impropers", atom_id_to_index)
 
         # Store molecule properties in metadata
         if "com" in data:
@@ -148,9 +153,22 @@ class LammpsMoleculeReader(DataReader):
         return frame
 
     def _parse_json_connectivity(
-        self, data: dict, frame: mp.Frame, section: str
+        self,
+        data: dict,
+        frame: mp.Frame,
+        section: str,
+        atom_id_to_index: dict[int, int],
     ) -> None:
-        """Parse connectivity sections from JSON data."""
+        """Parse connectivity sections from JSON data.
+
+        Converts atom IDs (from file) to indices (0-based) for internal Frame representation.
+
+        Args:
+            data: JSON data dictionary
+            frame: Frame to populate
+            section: Section name (bonds, angles, etc.)
+            atom_id_to_index: Mapping from atom ID to index in atoms array
+        """
         if section not in data:
             return
 
@@ -160,67 +178,79 @@ class LammpsMoleculeReader(DataReader):
 
         if section == "bonds":
             bond_types = []
-            atom1_list = []
-            atom2_list = []
+            atom_i_list = []
+            atom_j_list = []
 
             for _i, bond_entry in enumerate(connectivity_data):
                 bond_types.append(bond_entry[0])
-                atom1_list.append(int(bond_entry[1]))
-                atom2_list.append(int(bond_entry[2]))
+                atom1_id = int(bond_entry[1])
+                atom2_id = int(bond_entry[2])
+                # Convert atom IDs to indices
+                atom_i_list.append(atom_id_to_index[atom1_id])
+                atom_j_list.append(atom_id_to_index[atom2_id])
 
             frame[section] = mp.Block(
                 {
                     "id": np.arange(1, len(bond_types) + 1),
                     "type": np.array(bond_types),
-                    "atom1": np.array(atom1_list),
-                    "atom2": np.array(atom2_list),
+                    "atom_i": np.array(atom_i_list),
+                    "atom_j": np.array(atom_j_list),
                 }
             )
 
         elif section == "angles":
             angle_types = []
-            atom1_list = []
-            atom2_list = []
-            atom3_list = []
+            atom_i_list = []
+            atom_j_list = []
+            atom_k_list = []
 
             for _i, angle_entry in enumerate(connectivity_data):
                 angle_types.append(angle_entry[0])
-                atom1_list.append(int(angle_entry[1]))
-                atom2_list.append(int(angle_entry[2]))
-                atom3_list.append(int(angle_entry[3]))
+                atom1_id = int(angle_entry[1])
+                atom2_id = int(angle_entry[2])
+                atom3_id = int(angle_entry[3])
+                # Convert atom IDs to indices
+                atom_i_list.append(atom_id_to_index[atom1_id])
+                atom_j_list.append(atom_id_to_index[atom2_id])
+                atom_k_list.append(atom_id_to_index[atom3_id])
 
             frame[section] = mp.Block(
                 {
                     "id": np.arange(1, len(angle_types) + 1),
                     "type": np.array(angle_types),
-                    "atom1": np.array(atom1_list),
-                    "atom2": np.array(atom2_list),
-                    "atom3": np.array(atom3_list),
+                    "atom_i": np.array(atom_i_list),
+                    "atom_j": np.array(atom_j_list),
+                    "atom_k": np.array(atom_k_list),
                 }
             )
 
         elif section in ["dihedrals", "impropers"]:
             types_list = []
-            atom1_list = []
-            atom2_list = []
-            atom3_list = []
-            atom4_list = []
+            atom_i_list = []
+            atom_j_list = []
+            atom_k_list = []
+            atom_l_list = []
 
             for _i, entry in enumerate(connectivity_data):
                 types_list.append(entry[0])
-                atom1_list.append(int(entry[1]))
-                atom2_list.append(int(entry[2]))
-                atom3_list.append(int(entry[3]))
-                atom4_list.append(int(entry[4]))
+                atom1_id = int(entry[1])
+                atom2_id = int(entry[2])
+                atom3_id = int(entry[3])
+                atom4_id = int(entry[4])
+                # Convert atom IDs to indices
+                atom_i_list.append(atom_id_to_index[atom1_id])
+                atom_j_list.append(atom_id_to_index[atom2_id])
+                atom_k_list.append(atom_id_to_index[atom3_id])
+                atom_l_list.append(atom_id_to_index[atom4_id])
 
             frame[section] = mp.Block(
                 {
                     "id": np.arange(1, len(types_list) + 1),
                     "type": np.array(types_list),
-                    "atom1": np.array(atom1_list),
-                    "atom2": np.array(atom2_list),
-                    "atom3": np.array(atom3_list),
-                    "atom4": np.array(atom4_list),
+                    "atom_i": np.array(atom_i_list),
+                    "atom_j": np.array(atom_j_list),
+                    "atom_k": np.array(atom_k_list),
+                    "atom_l": np.array(atom_l_list),
                 }
             )
 
@@ -252,9 +282,19 @@ class LammpsMoleculeReader(DataReader):
         if atoms_data:
             frame["atoms"] = mp.Block(atoms_data)
 
+            # Build atom ID to index mapping for connectivity conversion
+            atom_id_to_index = {}
+            if "id" in atoms_data:
+                for idx, atom_id in enumerate(atoms_data["id"]):
+                    atom_id_to_index[int(atom_id)] = idx
+        else:
+            atom_id_to_index = {}
+
         # Parse connectivity sections
         for section in ["bonds", "angles", "dihedrals", "impropers"]:
-            connectivity_data = self._parse_native_connectivity(sections, section)
+            connectivity_data = self._parse_native_connectivity(
+                sections, section, atom_id_to_index
+            )
             if connectivity_data:
                 frame[section] = mp.Block(connectivity_data)
 
@@ -467,9 +507,20 @@ class LammpsMoleculeReader(DataReader):
         return atoms_data
 
     def _parse_native_connectivity(
-        self, sections: dict[str, list[str]], section_type: str
+        self,
+        sections: dict[str, list[str]],
+        section_type: str,
+        atom_id_to_index: dict[int, int],
     ) -> dict[str, np.ndarray] | None:
-        """Parse connectivity sections from native format."""
+        """Parse connectivity sections from native format.
+
+        Converts atom IDs (from file) to indices (0-based) for internal Frame representation.
+
+        Args:
+            sections: Parsed sections from file
+            section_type: Type of connectivity section (bonds, angles, etc.)
+            atom_id_to_index: Mapping from atom ID to index in atoms array
+        """
         section_name = section_type.capitalize()
 
         if section_name not in sections:
@@ -490,17 +541,25 @@ class LammpsMoleculeReader(DataReader):
             if section_type == "bonds" and len(parts) >= 4:
                 ids.append(int(parts[0]))
                 types.append(parts[1])
-                atoms.append([int(parts[2]), int(parts[3])])
+                # Parts 2 and 3 are atom IDs, convert to indices
+                atom1_id = int(parts[2])
+                atom2_id = int(parts[3])
+                atoms.append([atom1_id, atom2_id])
             elif section_type == "angles" and len(parts) >= 5:
                 ids.append(int(parts[0]))
                 types.append(parts[1])
-                atoms.append([int(parts[2]), int(parts[3]), int(parts[4])])
+                atom1_id = int(parts[2])
+                atom2_id = int(parts[3])
+                atom3_id = int(parts[4])
+                atoms.append([atom1_id, atom2_id, atom3_id])
             elif section_type in ["dihedrals", "impropers"] and len(parts) >= 6:
                 ids.append(int(parts[0]))
                 types.append(parts[1])
-                atoms.append(
-                    [int(parts[2]), int(parts[3]), int(parts[4]), int(parts[5])]
-                )
+                atom1_id = int(parts[2])
+                atom2_id = int(parts[3])
+                atom3_id = int(parts[4])
+                atom4_id = int(parts[5])
+                atoms.append([atom1_id, atom2_id, atom3_id, atom4_id])
 
         if not ids:
             return None
@@ -509,18 +568,47 @@ class LammpsMoleculeReader(DataReader):
         connectivity_data["type"] = np.array(types)
 
         atoms_array = np.array(atoms)
+        # Convert atom IDs to indices (0-based)
+        # Use atom_i, atom_j, etc. field names to match to_frame() output
         if section_type == "bonds":
-            connectivity_data["atom1"] = atoms_array[:, 0]
-            connectivity_data["atom2"] = atoms_array[:, 1]
+            atom_indices = np.array(
+                [
+                    [atom_id_to_index[atom1_id], atom_id_to_index[atom2_id]]
+                    for atom1_id, atom2_id in atoms_array
+                ]
+            )
+            connectivity_data["atom_i"] = atom_indices[:, 0]
+            connectivity_data["atom_j"] = atom_indices[:, 1]
         elif section_type == "angles":
-            connectivity_data["atom1"] = atoms_array[:, 0]
-            connectivity_data["atom2"] = atoms_array[:, 1]
-            connectivity_data["atom3"] = atoms_array[:, 2]
+            atom_indices = np.array(
+                [
+                    [
+                        atom_id_to_index[atom1_id],
+                        atom_id_to_index[atom2_id],
+                        atom_id_to_index[atom3_id],
+                    ]
+                    for atom1_id, atom2_id, atom3_id in atoms_array
+                ]
+            )
+            connectivity_data["atom_i"] = atom_indices[:, 0]
+            connectivity_data["atom_j"] = atom_indices[:, 1]
+            connectivity_data["atom_k"] = atom_indices[:, 2]
         elif section_type in ["dihedrals", "impropers"]:
-            connectivity_data["atom1"] = atoms_array[:, 0]
-            connectivity_data["atom2"] = atoms_array[:, 1]
-            connectivity_data["atom3"] = atoms_array[:, 2]
-            connectivity_data["atom4"] = atoms_array[:, 3]
+            atom_indices = np.array(
+                [
+                    [
+                        atom_id_to_index[atom1_id],
+                        atom_id_to_index[atom2_id],
+                        atom_id_to_index[atom3_id],
+                        atom_id_to_index[atom4_id],
+                    ]
+                    for atom1_id, atom2_id, atom3_id, atom4_id in atoms_array
+                ]
+            )
+            connectivity_data["atom_i"] = atom_indices[:, 0]
+            connectivity_data["atom_j"] = atom_indices[:, 1]
+            connectivity_data["atom_k"] = atom_indices[:, 2]
+            connectivity_data["atom_l"] = atom_indices[:, 3]
 
         return connectivity_data
 
@@ -571,9 +659,9 @@ class LammpsMoleculeWriter(DataWriter):
 
         # Types section (required)
         types_data = []
-        for i in range(atoms.nrows):
-            atom_id = int(atoms["id"][i]) if "id" in atoms else i + 1
-            atom_type = atoms["type"][i]
+        for idx in range(atoms.nrows):
+            atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
+            atom_type = atoms["type"][idx]
             types_data.append([atom_id, atom_type])
 
         data["types"] = {"format": ["atom-id", "type"], "data": types_data}
@@ -581,11 +669,11 @@ class LammpsMoleculeWriter(DataWriter):
         # Coordinates section
         if "x" in atoms and "y" in atoms and "z" in atoms:
             coords_data = []
-            for i in range(atoms.nrows):
-                atom_id = int(atoms["id"][i]) if "id" in atoms else i + 1
-                x = float(atoms["x"][i])
-                y = float(atoms["y"][i])
-                z = float(atoms["z"][i])
+            for idx in range(atoms.nrows):
+                atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
+                x = float(atoms["x"][idx])
+                y = float(atoms["y"][idx])
+                z = float(atoms["z"][idx])
                 coords_data.append([atom_id, x, y, z])
 
             data["coords"] = {"format": ["atom-id", "x", "y", "z"], "data": coords_data}
@@ -593,9 +681,9 @@ class LammpsMoleculeWriter(DataWriter):
         # Charges section
         if "q" in atoms:
             charges_data = []
-            for i in range(atoms.nrows):
-                atom_id = int(atoms["id"][i]) if "id" in atoms else i + 1
-                charge = float(atoms["q"][i])
+            for idx in range(atoms.nrows):
+                atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
+                charge = float(atoms["q"][idx])
                 charges_data.append([atom_id, charge])
 
             data["charges"] = {"format": ["atom-id", "charge"], "data": charges_data}
@@ -603,9 +691,9 @@ class LammpsMoleculeWriter(DataWriter):
         # Masses section
         if "mass" in atoms:
             masses_data = []
-            for i in range(atoms.nrows):
-                atom_id = int(atoms["id"][i]) if "id" in atoms else i + 1
-                mass = float(atoms["mass"][i])
+            for idx in range(atoms.nrows):
+                atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
+                mass = float(atoms["mass"][idx])
                 masses_data.append([atom_id, mass])
 
             data["masses"] = {"format": ["atom-id", "mass"], "data": masses_data}
@@ -613,9 +701,9 @@ class LammpsMoleculeWriter(DataWriter):
         # Molecule IDs section
         if "mol" in atoms:
             molecule_data = []
-            for i in range(atoms.nrows):
-                atom_id = int(atoms["id"][i]) if "id" in atoms else i + 1
-                mol_id = int(atoms["mol"][i])
+            for idx in range(atoms.nrows):
+                atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
+                mol_id = int(atoms["mol"][idx])
                 molecule_data.append([atom_id, mol_id])
 
             data["molecule"] = {
@@ -626,9 +714,9 @@ class LammpsMoleculeWriter(DataWriter):
         # Diameters section
         if "diameter" in atoms:
             diameters_data = []
-            for i in range(atoms.nrows):
-                atom_id = int(atoms["id"][i]) if "id" in atoms else i + 1
-                diameter = float(atoms["diameter"][i])
+            for idx in range(atoms.nrows):
+                atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
+                diameter = float(atoms["diameter"][idx])
                 diameters_data.append([atom_id, diameter])
 
             data["diameters"] = {
@@ -668,31 +756,33 @@ class LammpsMoleculeWriter(DataWriter):
 
         if section == "bonds":
             format_list = ["bond-type", "atom1", "atom2"]
-            for i in range(block.nrows):
-                bond_type = block["type"][i]
-                atom1 = int(block["atom1"][i])
-                atom2 = int(block["atom2"][i])
-                connectivity_data.append([bond_type, atom1, atom2])
+            for idx in range(block.nrows):
+                bond_type = block["type"][idx]
+                atom1_id = int(block["atom1"][idx])
+                atom2_id = int(block["atom2"][idx])
+                connectivity_data.append([bond_type, atom1_id, atom2_id])
 
         elif section == "angles":
             format_list = ["angle-type", "atom1", "atom2", "atom3"]
-            for i in range(block.nrows):
-                angle_type = block["type"][i]
-                atom1 = int(block["atom1"][i])
-                atom2 = int(block["atom2"][i])
-                atom3 = int(block["atom3"][i])
-                connectivity_data.append([angle_type, atom1, atom2, atom3])
+            for idx in range(block.nrows):
+                angle_type = block["type"][idx]
+                atom1_id = int(block["atom1"][idx])
+                atom2_id = int(block["atom2"][idx])
+                atom3_id = int(block["atom3"][idx])
+                connectivity_data.append([angle_type, atom1_id, atom2_id, atom3_id])
 
         elif section in ["dihedrals", "impropers"]:
             type_name = section[:-1] + "-type"  # 'dihedral-type' or 'improper-type'
             format_list = [type_name, "atom1", "atom2", "atom3", "atom4"]
-            for i in range(block.nrows):
-                item_type = block["type"][i]
-                atom1 = int(block["atom1"][i])
-                atom2 = int(block["atom2"][i])
-                atom3 = int(block["atom3"][i])
-                atom4 = int(block["atom4"][i])
-                connectivity_data.append([item_type, atom1, atom2, atom3, atom4])
+            for idx in range(block.nrows):
+                item_type = block["type"][idx]
+                atom1_id = int(block["atom1"][idx])
+                atom2_id = int(block["atom2"][idx])
+                atom3_id = int(block["atom3"][idx])
+                atom4_id = int(block["atom4"][idx])
+                connectivity_data.append(
+                    [item_type, atom1_id, atom2_id, atom3_id, atom4_id]
+                )
 
         if connectivity_data and format_list:
             data[section] = {"format": format_list, "data": connectivity_data}
@@ -752,26 +842,27 @@ class LammpsMoleculeWriter(DataWriter):
     def _write_native_atoms_sections(self, lines: list[str], atoms: mp.Block) -> None:
         """Write atoms-related sections in native format."""
         # Coords section
+        self._atom_mapping = {}
         if "x" in atoms and "y" in atoms and "z" in atoms:
             lines.append("Coords")
             lines.append("")
-
-            for i in range(atoms.nrows):
-                atom_id = int(atoms["id"][i]) if "id" in atoms else i + 1
-                x = float(atoms["x"][i])
-                y = float(atoms["y"][i])
-                z = float(atoms["z"][i])
+            for idx in range(atoms.nrows):
+                atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
+                self._atom_mapping[idx] = atom_id
+                x = float(atoms["x"][idx])
+                y = float(atoms["y"][idx])
+                z = float(atoms["z"][idx])
                 lines.append(f"{atom_id} {x:.6f} {y:.6f} {z:.6f}")
 
             lines.append("")
-
         # Types section (required)
         lines.append("Types")
         lines.append("")
 
-        for i in range(atoms.nrows):
-            atom_id = int(atoms["id"][i]) if "id" in atoms else i + 1
-            atom_type = atoms["type"][i]
+        for idx in range(atoms.nrows):
+            atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
+            self._atom_mapping[idx] = atom_id
+            atom_type = atoms["type"][idx]
             lines.append(f"{atom_id} {atom_type}")
 
         lines.append("")
@@ -789,9 +880,9 @@ class LammpsMoleculeWriter(DataWriter):
                 lines.append(section_name)
                 lines.append("")
 
-                for i in range(atoms.nrows):
-                    atom_id = int(atoms["id"][i]) if "id" in atoms else i + 1
-                    value = atoms[attr_name][i]
+                for idx in range(atoms.nrows):
+                    atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
+                    value = atoms[attr_name][idx]
                     if value is None:
                         value = 0.0
                     value = float(value)
@@ -802,28 +893,35 @@ class LammpsMoleculeWriter(DataWriter):
     def _write_native_connectivity_section(
         self, lines: list[str], block: mp.Block, section_type: str
     ) -> None:
-        """Write connectivity section in native format."""
+        """Write connectivity section in native format.
+
+        Note: atom1, atom2, etc. in block are stored as atom IDs (1-based),
+        use them directly without conversion.
+        """
         lines.append(section_type.capitalize())
         lines.append("")
 
-        for i in range(block.nrows):
-            item_id = int(block["id"][i]) if "id" in block else i + 1
-            item_type = block["type"][i]
+        for idx in range(block.nrows):
+            item_id = int(block["id"][idx]) if "id" in block else (idx + 1)
+            item_type = block["type"][idx]
 
             if section_type == "bonds":
-                atom1 = int(block["atom1"][i])
-                atom2 = int(block["atom2"][i])
-                lines.append(f"{item_id} {item_type} {atom1} {atom2}")
+                # atom1, atom2 are stored as atom IDs (1-based), use directly
+                atom1_id = int(block["atom1"][idx])
+                atom2_id = int(block["atom2"][idx])
+                lines.append(f"{item_id} {item_type} {atom1_id} {atom2_id}")
             elif section_type == "angles":
-                atom1 = int(block["atom1"][i])
-                atom2 = int(block["atom2"][i])
-                atom3 = int(block["atom3"][i])
-                lines.append(f"{item_id} {item_type} {atom1} {atom2} {atom3}")
+                atom1_id = int(block["atom1"][idx])
+                atom2_id = int(block["atom2"][idx])
+                atom3_id = int(block["atom3"][idx])
+                lines.append(f"{item_id} {item_type} {atom1_id} {atom2_id} {atom3_id}")
             elif section_type in ["dihedrals", "impropers"]:
-                atom1 = int(block["atom1"][i])
-                atom2 = int(block["atom2"][i])
-                atom3 = int(block["atom3"][i])
-                atom4 = int(block["atom4"][i])
-                lines.append(f"{item_id} {item_type} {atom1} {atom2} {atom3} {atom4}")
+                atom1_id = int(block["atom1"][idx])
+                atom2_id = int(block["atom2"][idx])
+                atom3_id = int(block["atom3"][idx])
+                atom4_id = int(block["atom4"][idx])
+                lines.append(
+                    f"{item_id} {item_type} {atom1_id} {atom2_id} {atom3_id} {atom4_id}"
+                )
 
         lines.append("")
