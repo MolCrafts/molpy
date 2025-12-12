@@ -11,7 +11,7 @@ call potential functions with the extracted data.
 
 # Import all potential implementations to register them
 from . import angle, bond, pair
+from .angle import *
 from .base import Potential, Potentials
 from .bond import *
-from .angle import *
 from .pair import *

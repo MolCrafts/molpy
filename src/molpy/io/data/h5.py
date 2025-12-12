@@ -40,7 +40,6 @@ except ImportError:
 
 from .base import PathLike
 
-
 # =============================================================================
 # Frame <-> HDF5 Conversion Functions (reusable for trajectory)
 # =============================================================================
@@ -394,7 +393,7 @@ class HDF5Reader:
         array([0., 1., 2.])
     """
 
-    def __init__(self, path: PathLike, **open_kwargs):
+    def __init__(self, path: PathLike, **open_kwargs: Any):
         """Initialize HDF5 reader.
 
         Args:
@@ -452,7 +451,7 @@ class HDF5Writer:
         path: PathLike,
         compression: str | None = "gzip",
         compression_opts: int = 4,
-        **open_kwargs,
+        **open_kwargs: Any,
     ):
         """Initialize HDF5 writer.
 

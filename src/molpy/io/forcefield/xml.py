@@ -6,10 +6,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-from molpy import (
-    AtomisticForcefield,
-    AtomType,
-)
+from molpy.core.forcefield import AtomisticForcefield, AtomType
 from molpy.potential.angle import AngleHarmonicStyle
 from molpy.potential.bond import BondHarmonicStyle
 from molpy.potential.dihedral import DihedralOPLSStyle
@@ -496,12 +493,10 @@ class XMLForceFieldReader:
             at3 = self._get_or_create_atomtype(type3, class3)
 
             # Parse parameters
-            theta0_rad = float(angle_str) if angle_str else 0.0
+            theta0 = float(angle_str) if angle_str else 0.0  # Store in radians as in XML
             k = float(k_str) if k_str else 0.0
-            # Convert radians to degrees
-            theta0 = theta0_rad * 180.0 / math.pi
 
-            # Define angle type
+            # Define angle type (theta0 in radians)
             anglestyle.def_type(at1, at2, at3, k, theta0)
             count += 1
 
@@ -753,21 +748,19 @@ class OPLSAAForceFieldReader(XMLForceFieldReader):
             at3 = self._get_or_create_atomtype(type3, class3)
 
             # Parse parameters and convert units
-            theta0_opls = float(angle_str) if angle_str else 0.0
+            theta0 = float(angle_str) if angle_str else 0.0  # Keep in radians
             k_opls = float(k_str) if k_str else 0.0
 
-            # Convert directly to LAMMPS format for internal storage
-            # OPLS XML: E = 0.5 * k_opls * (theta_rad - theta0_rad)^2 (kJ/mol, rad)
-            # LAMMPS: E = k * (theta_rad - theta0_rad)^2 (kcal/mol, rad)
-            # Conversion: k_lammps = 0.5 * k_opls / 4.184 (only energy conversion, both use rad²)
-            theta0 = (
-                theta0_opls * 180 / math.pi
-            )  # radians to degrees (theta0 input in degrees)
+            # Convert energy units only
+            # OPLS XML: E = 0.5 * k_opls * (theta - theta0)^2 (kJ/mol, rad)
+            # LAMMPS: E = k * (theta - theta0)^2 (kcal/mol, rad)
+            # Both use radians, so only energy conversion needed
+            # Conversion: k_lammps = 0.5 * k_opls / 4.184
             k = (
                 0.5 * k_opls / 4.184
             )  # kJ/mol/rad² to kcal/mol/rad² (accounting for 0.5 factor difference)
 
-            # Define angle type
+            # Define angle type (theta0 in radians)
             anglestyle.def_type(at1, at2, at3, k, theta0)
             count += 1
 

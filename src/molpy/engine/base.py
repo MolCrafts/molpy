@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Self
 if TYPE_CHECKING:
     pass
 
-from molpy import Script
+from molpy.core.script import Script
 
 
 class Engine(ABC):

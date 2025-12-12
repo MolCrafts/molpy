@@ -10,7 +10,9 @@ from typing import Any
 
 import numpy as np
 
-from molpy import Block, Box, Frame
+from molpy.core.frame import Block
+from molpy.core.box import Box
+from molpy.core.frame import Frame
 from molpy.core.element import Element
 
 from .base import DataReader, DataWriter

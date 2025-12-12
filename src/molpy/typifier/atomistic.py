@@ -502,6 +502,22 @@ class OplsAtomTypifier(TypifierBase["Atomistic"]):
                 if atom_type_obj:
                     atom.data.update(**atom_type_obj.params.kwargs)
 
+        # Check for untyped atoms if strict mode is enabled
+        if self.strict:
+            untyped_atoms = [atom for atom in struct.atoms if atom.get("type") is None]
+            if untyped_atoms:
+                untyped_info = [
+                    f"{atom.get('symbol', '?')} (id={id(atom)})"
+                    for atom in untyped_atoms[:10]
+                ]
+                error_msg = (
+                    f"Failed to assign types to {len(untyped_atoms)} atom(s). "
+                    f"Examples: {', '.join(untyped_info)}"
+                )
+                if len(untyped_atoms) > 10:
+                    error_msg += f" (and {len(untyped_atoms) - 10} more)"
+                raise ValueError(error_msg)
+
         return struct
 
     def _find_atomtype_by_name(self, name: str) -> AtomType | None:
@@ -578,25 +594,40 @@ class OplsAtomisticTypifier(TypifierBase[Atomistic]):
             self.atom_typifier.typify(struct)
 
         # Assign pair types (nonbond parameters: charge, sigma, epsilon)
+        # Only type atoms that already have atom types assigned
         if not self.skip_pair_typing:
             for atom in struct.atoms:
-                self.pair_typifier.typify(atom)
+                # Skip atoms without type (they may be skipped in non-strict mode)
+                if atom.get("type") is not None:
+                    self.pair_typifier.typify(atom)
 
         # Assign types to all bonds
+        # Only type bonds where both endpoints have atom types
         if not self.skip_bond_typing:
             for bond in struct.bonds:
-                self.bond_typifier.typify(bond)
+                # Skip bonds where endpoints don't have types (may be skipped in non-strict mode)
+                if (
+                    bond.itom.get("type") is not None
+                    and bond.jtom.get("type") is not None
+                ):
+                    self.bond_typifier.typify(bond)
 
         # Assign types to all angles (if exist)
+        # Only type angles where all endpoints have atom types
         if not self.skip_angle_typing:
             angles = struct.links.bucket(Angle)
             for angle in angles:
-                self.angle_typifier.typify(angle)
+                endpoints = angle.endpoints
+                if all(ep.get("type") is not None for ep in endpoints):
+                    self.angle_typifier.typify(angle)
 
         # Assign types to all dihedrals (if exist)
+        # Only type dihedrals where all endpoints have atom types
         if not self.skip_dihedral_typing:
             dihedrals = struct.links.bucket(Dihedral)
             for dihedral in dihedrals:
-                self.dihedral_typifier.typify(dihedral)
+                endpoints = dihedral.endpoints
+                if all(ep.get("type") is not None for ep in endpoints):
+                    self.dihedral_typifier.typify(dihedral)
 
         return struct

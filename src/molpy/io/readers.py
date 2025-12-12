@@ -15,7 +15,7 @@ PathLike = str | Path
 def _ensure_frame(frame):
     """Ensure a Frame object exists."""
     if frame is None:
-        from molpy import Frame
+        from molpy.core.frame import Frame
 
         return Frame()
     return frame
@@ -289,7 +289,7 @@ def read_top(file: PathLike, forcefield: Any = None) -> Any:
     Returns:
         Populated ForceField object
     """
-    from molpy import ForceField
+    from molpy.core.forcefield import ForceField
 
     from .forcefield.top import GromacsTopReader
 
@@ -355,5 +355,3 @@ def read_h5_trajectory(file: PathLike) -> Any:
     from .trajectory.h5 import HDF5TrajectoryReader
 
     return HDF5TrajectoryReader(Path(file))
-
-

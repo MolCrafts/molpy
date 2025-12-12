@@ -1,11 +1,12 @@
 """Unit tests for PDB writer focusing on required fields and None handling."""
 
-import numpy as np
-import pytest
 from pathlib import Path
 
-from molpy.core.frame import Frame, Block
-from molpy.io.data.pdb import PDBWriter, PDBReader
+import numpy as np
+import pytest
+
+from molpy.core.frame import Block, Frame
+from molpy.io.data.pdb import PDBReader, PDBWriter
 
 
 class TestPDBWriterRequiredFields:

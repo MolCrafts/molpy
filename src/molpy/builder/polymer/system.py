@@ -16,9 +16,77 @@ from __future__ import annotations
 from dataclasses import dataclass
 from random import Random
 from typing import Protocol
+from molpy.parser.smiles.gbigsmiles_ir import DistributionIR
 import numpy as np
 
 from .sequence_generator import SequenceGenerator
+
+
+# ============================================================================
+# Capability-Based Distribution Protocols
+# ============================================================================
+
+
+class SupportsDP(Protocol):
+    """Protocol for distributions that sample degree of polymerization directly.
+    
+    Distributions implementing this protocol can sample DP values without
+    requiring monomer mass information. This is suitable for distributions
+    defined in DP space (e.g., Poisson, Uniform).
+    """
+    
+    def sample_dp(self, rng: np.random.Generator) -> int:
+        """Sample degree of polymerization from distribution.
+        
+        Args:
+            rng: NumPy random number generator
+            
+        Returns:
+            Degree of polymerization (>= 1)
+        """
+        ...
+    
+    def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
+        """Probability mass function for DP values.
+        
+        Args:
+            dp_array: Array of DP values
+            
+        Returns:
+            Array of probability mass values
+        """
+        ...
+
+
+class SupportsMass(Protocol):
+    """Protocol for distributions that sample molecular weight directly.
+    
+    Distributions implementing this protocol sample mass values directly
+    from the distribution without converting through DP. This is suitable
+    for distributions defined in mass space (e.g., Schulz-Zimm, Flory-Schulz).
+    """
+    
+    def sample_mass(self, rng: np.random.Generator) -> float:
+        """Sample molecular weight from distribution.
+        
+        Args:
+            rng: NumPy random number generator
+            
+        Returns:
+            Molecular weight (g/mol, > 0)
+        """
+        ...
+    
+    def mass_pdf(self, mass_array: np.ndarray) -> np.ndarray:
+        """Probability density function for mass values.
+        
+        Args:
+            mass_array: Array of mass values (g/mol)
+            
+        Returns:
+            Array of probability density values
+        """
+        ...
 
 
 @dataclass
@@ -70,7 +138,7 @@ class PolydisperseChainGenerator:
         seq_generator: SequenceGenerator,
         monomer_mass: dict[str, float],
         end_group_mass: float = 0.0,
-        dp_distribution: DPDistribution | None = None,
+        distribution: SupportsDP | SupportsMass | None = None,
     ):
         """
         Initialize polydisperse chain generator.
@@ -79,15 +147,15 @@ class PolydisperseChainGenerator:
             seq_generator: Sequence generator for generating monomer sequences
             monomer_mass: Dictionary mapping monomer identifiers to their masses (g/mol)
             end_group_mass: Mass of end groups (g/mol), default 0.0
-            dp_distribution: Distribution for sampling degree of polymerization
+            distribution: Distribution implementing SupportsDP or SupportsMass protocol
         """
         self.seq_generator = seq_generator
         self.monomer_mass = monomer_mass
         self.end_group_mass = end_group_mass
 
-        if dp_distribution is None:
-            raise ValueError("dp_distribution must be provided")
-        self.dp_distribution = dp_distribution
+        if distribution is None:
+            raise ValueError("distribution must be provided")
+        self.distribution = distribution
 
     def sample_dp(self, rng: Random) -> int:
         """
@@ -99,9 +167,28 @@ class PolydisperseChainGenerator:
         Returns:
             Degree of polymerization (>= 1)
         """
-        if self.dp_distribution is None:
-            raise ValueError("dp_distribution must be set")
-        return self.dp_distribution.sample_dp(rng)
+        if self.distribution is None:
+            raise ValueError("distribution must be set")
+        
+        # Convert Random to numpy Generator
+        seed = rng.randint(0, 2**31 - 1)
+        np_rng = np.random.Generator(np.random.PCG64(seed))
+        
+        # Check which protocol the distribution implements
+        if hasattr(self.distribution, 'sample_dp'):
+            # SupportsDP protocol
+            return self.distribution.sample_dp(np_rng)
+        elif hasattr(self.distribution, 'sample_mass'):
+            # SupportsMass protocol - sample mass and convert to DP
+            avg_monomer_mass = sum(self.monomer_mass.values()) / len(self.monomer_mass)
+            mass = self.distribution.sample_mass(np_rng)
+            dp = int(np.round(mass / avg_monomer_mass))
+            return max(1, dp)
+        else:
+            raise ValueError(
+                f"Distribution {type(self.distribution).__name__} must implement "
+                "either SupportsDP or SupportsMass protocol"
+            )
 
     def build_chain(self, rng: Random) -> Chain:
         """
@@ -132,78 +219,46 @@ class PolydisperseChainGenerator:
         return monomer_mass_sum + self.end_group_mass
 
 
-class DPDistribution(Protocol):
+class SchulzZimmPolydisperse:
     """
-    Protocol for degree of polymerization distributions.
-
-    Used by PolydisperseChainGenerator to sample chain lengths.
-    """
-
-    def sample_dp(self, rng: Random) -> int:
-        """
-        Sample a degree of polymerization.
-
-        Args:
-            rng: Random number generator
-
-        Returns:
-            Degree of polymerization (>= 1)
-        """
-        ...
-
-
-class SchulzZimmDPDistribution:
-    """
-    Adapter that wraps SchulzZimm distribution to conform to DPDistribution protocol.
-
-    This allows the existing SchulzZimm class to be used with PolydisperseChainGenerator.
+    Schulz-Zimm distribution for polydisperse polymer generation.
+    
+    Implements SupportsMass protocol - samples directly in molecular weight space.
+    This is a Gamma distribution commonly used for condensation polymerization.
     """
 
     def __init__(
         self,
         Mn: float,
         Mw: float,
-        avg_monomer_mass: float,
         random_seed: int | None = None,
     ):
         """
-        Initialize Schulz-Zimm DP distribution adapter.
+        Initialize Schulz-Zimm polydisperse distribution.
 
         Args:
             Mn: Number-average molecular weight (g/mol)
             Mw: Weight-average molecular weight (g/mol)
-            avg_monomer_mass: Average monomer molecular weight (g/mol)
             random_seed: Random seed for reproducibility (optional)
         """
-        from .polydisperse import SchulzZimm
-
-        self.sz_dist = SchulzZimm(Mn=Mn, Mw=Mw, random_seed=random_seed)
-        self.avg_monomer_mass = avg_monomer_mass
-        # Expose Mn, Mw, PDI for unified interface
+        if Mw <= Mn:
+            raise ValueError(
+                f"Mw ({Mw}) must be greater than Mn ({Mn}) for valid Schulz-Zimm distribution"
+            )
+        
         self.Mn = Mn
         self.Mw = Mw
-        self.PDI = self.sz_dist.PDI
+        self.random_seed = random_seed
+        
+        # Calculate Gamma distribution parameters
+        # Schulz-Zimm: M ~ Gamma(k, theta)
+        # From: Mn = k * theta, Mw = (k + 1) * theta
+        # Solving: k = Mn / (Mw - Mn), theta = (Mw - Mn)
+        self.k = Mn / (Mw - Mn)
+        self.theta = Mw - Mn
+        self.PDI = Mw / Mn
 
-    def sample_dp(self, rng: Random) -> int:
-        """
-        Sample a degree of polymerization using Schulz-Zimm distribution.
 
-        Args:
-            rng: Random number generator (converted to numpy seed)
-
-        Returns:
-            Degree of polymerization (>= 1)
-        """
-        import numpy as np
-
-        # Convert Random to numpy seed by sampling an integer from Random
-        # and using it as seed for numpy
-        # Random.randint(a, b) returns a random integer N such that a <= N <= b
-        seed = rng.randint(0, 2**31 - 1)
-        return self.sz_dist.sample_length(
-            monomer_mw=self.avg_monomer_mass,
-            random_seed=seed,
-        )
 
     def molecular_weight_pdf(
         self,
@@ -221,7 +276,6 @@ class SchulzZimmDPDistribution:
         Returns:
             Array of probability density values
         """
-        import numpy as np
 
         if self.sz_dist.Mw <= self.sz_dist.Mn or self.sz_dist.Mn <= 0:
             return np.zeros_like(M)
@@ -276,29 +330,62 @@ class SchulzZimmDPDistribution:
         return pdf
 
 
-class UniformDPDistribution:
-    """
-    Uniform distribution for degree of polymerization.
+    # SupportsMass protocol implementation
+    def sample_mass(self, rng: np.random.Generator) -> float:
+        """Sample molecular weight directly from Schulz-Zimm distribution.
+        
+        Args:
+            rng: NumPy random number generator
+            
+        Returns:
+            Molecular weight (g/mol)
+        """
+        # Schulz-Zimm samples from Gamma distribution directly
+        return rng.gamma(shape=self.sz_dist.k, scale=self.sz_dist.theta)
+    
+    def mass_pdf(self, mass_array: np.ndarray) -> np.ndarray:
+        """Probability density function for mass values.
+        
+        Args:
+            mass_array: Array of mass values (g/mol)
+            
+        Returns:
+            Array of probability density values
+        """
+        return self.molecular_weight_pdf(mass_array)
 
-    All chain lengths between min_dp and max_dp are equally likely.
+
+class UniformPolydisperse:
+    """
+    Uniform distribution over degree of polymerization (DP).
+    
+    Implements SupportsDP protocol - samples directly in DP space.
+    All integer DP values in [min_dp, max_dp] are equally likely.
     """
 
     def __init__(
         self,
         min_dp: int,
         max_dp: int,
-        avg_monomer_mass: float,
         random_seed: int | None = None,
     ):
         """
         Initialize uniform DP distribution.
 
         Args:
-            min_dp: Minimum degree of polymerization
-            max_dp: Maximum degree of polymerization
-            avg_monomer_mass: Average monomer molecular weight (g/mol)
-            random_seed: Random seed for reproducibility (optional)
+            min_dp: Minimum degree of polymerization (must be >= 1)
+            max_dp: Maximum degree of polymerization (must be >= min_dp)
+            random_seed: Random seed for reproducible sampling (optional)
+
+        Raises:
+            ValueError: If min_dp < 1 or max_dp < min_dp
+            TypeError: If min_dp or max_dp are not integers
         """
+        # Parameter validation
+        if not isinstance(min_dp, int):
+            raise TypeError(f"min_dp must be an integer, got {type(min_dp).__name__}")
+        if not isinstance(max_dp, int):
+            raise TypeError(f"max_dp must be an integer, got {type(max_dp).__name__}")
         if min_dp < 1:
             raise ValueError(f"min_dp must be >= 1, got {min_dp}")
         if max_dp < min_dp:
@@ -306,58 +393,64 @@ class UniformDPDistribution:
 
         self.min_dp = min_dp
         self.max_dp = max_dp
-        self.avg_monomer_mass = avg_monomer_mass
         self.random_seed = random_seed
 
-        # Calculate molecular weight range
-        self.min_mw = min_dp * avg_monomer_mass
-        self.max_mw = max_dp * avg_monomer_mass
-        self.Mn = (self.min_mw + self.max_mw) / 2.0
-        self.Mw = self.Mn  # Uniform distribution has PDI = 1
-        self.PDI = 1.0
 
-    def sample_dp(self, rng: Random) -> int:
+
+    def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
         """
-        Sample a degree of polymerization from uniform distribution.
+        Compute the probability mass function (PMF) over DP values.
+
+        The PMF assigns equal probability to all integer DP values between
+        min_dp and max_dp (inclusive), and zero probability outside this range.
 
         Args:
-            rng: Random number generator
+            dp_array: Array of DP values (typically integer, but can be float)
 
         Returns:
-            Degree of polymerization
+            Array of PMF values, same shape as dp_array.
+            PMF[i] = 1 / (max_dp - min_dp + 1) if min_dp <= dp_array[i] <= max_dp,
+                    0 otherwise.
         """
-        return rng.randint(self.min_dp, self.max_dp + 1)
+        dp_array = np.asarray(dp_array, dtype=float)
+        pmf = np.zeros_like(dp_array, dtype=float)
+        
+        # Count number of valid integer DP values in the range
+        n_valid = self.max_dp - self.min_dp + 1
+        uniform_prob = 1.0 / n_valid
+        
+        # Assign probability to DP values within the valid range
+        # Use np.round to handle float DP values (rounds to nearest integer)
+        dp_rounded = np.round(dp_array).astype(int)
+        mask = (dp_rounded >= self.min_dp) & (dp_rounded <= self.max_dp)
+        pmf[mask] = uniform_prob
+        
+        return pmf
 
-    def molecular_weight_pdf(self, M: np.ndarray) -> np.ndarray:
-        """
-        Calculate uniform molecular weight distribution PDF.
-
+    # SupportsDP protocol implementation
+    def sample_dp(self, rng: np.random.Generator) -> int:
+        """Sample degree of polymerization from uniform distribution.
+        
         Args:
-            M: Array of molecular weight values (g/mol)
-
+            rng: NumPy random number generator
+            
         Returns:
-            Array of probability density values
+            Degree of polymerization (>= 1)
         """
-        import numpy as np
-
-        pdf = np.zeros_like(M, dtype=float)
-        mask = (M >= self.min_mw) & (M <= self.max_mw)
-        if np.any(mask):
-            pdf[mask] = 1.0 / (self.max_mw - self.min_mw)
-        return pdf
+        return int(rng.integers(self.min_dp, self.max_dp + 1))
 
 
-class PoissonDPDistribution:
+class PoissonPolydisperse:
     """
     Poisson distribution for degree of polymerization.
-
-    The Poisson distribution models the number of events (monomers) in a fixed interval.
+    
+    Implements SupportsDP protocol - samples directly in DP space.
+    Models the number of monomers as a Poisson process.
     """
 
     def __init__(
         self,
         lambda_param: float,  # Mean of Poisson distribution
-        avg_monomer_mass: float,
         random_seed: int | None = None,
     ):
         """
@@ -365,113 +458,43 @@ class PoissonDPDistribution:
 
         Args:
             lambda_param: Mean (lambda) parameter of Poisson distribution
-            avg_monomer_mass: Average monomer molecular weight (g/mol)
             random_seed: Random seed for reproducibility (optional)
         """
         if lambda_param <= 0:
             raise ValueError(f"lambda_param must be > 0, got {lambda_param}")
 
         self.lambda_param = lambda_param
-        self.avg_monomer_mass = avg_monomer_mass
         self.random_seed = random_seed
 
-        # For Poisson, mean = lambda, variance = lambda
-        # Mn = lambda * avg_monomer_mass
-        # Mw = (lambda + 1) * avg_monomer_mass (approximately, for large lambda)
-        self.Mn = lambda_param * avg_monomer_mass
-        self.Mw = (lambda_param + 1.0) * avg_monomer_mass
-        self.PDI = self.Mw / self.Mn if self.Mn > 0 else 1.0
 
-    def sample_dp(self, rng: Random) -> int:
-        """
-        Sample a degree of polymerization from Poisson distribution.
 
+
+
+    # SupportsDP protocol implementation
+    def sample_dp(self, rng: np.random.Generator) -> int:
+        """Sample degree of polymerization from Poisson distribution.
+        
         Args:
-            rng: Random number generator
-
+            rng: NumPy random number generator
+            
         Returns:
             Degree of polymerization (>= 1)
         """
-        import numpy as np
-
-        seed = rng.randint(0, 2**31 - 1)
-        rng_np = np.random.RandomState(seed)
-        dp = rng_np.poisson(self.lambda_param)
-        return max(1, dp)
-
-    def molecular_weight_pdf(self, M: np.ndarray) -> np.ndarray:
-        """
-        Calculate Poisson molecular weight distribution PDF.
-
-        Args:
-            M: Array of molecular weight values (g/mol)
-
-        Returns:
-            Array of probability density values
-        """
-        import numpy as np
-
-        # Convert molecular weight to DP
-        dp_values = M / self.avg_monomer_mass
-
-        # Poisson PMF: P(k) = lambda^k * exp(-lambda) / k!
-        # For PDF, we need to account for the conversion from DP to MW
-        pdf = np.zeros_like(M, dtype=float)
-
-        # Compute log(Gamma(k+1)) = log(k!) for k >= 0
-        def log_gamma(z: float) -> float:
-            if z <= 0:
-                return np.nan
-            if z < 12:
-                result = 0.0
-                current_z = z
-                while current_z < 12:
-                    result -= np.log(current_z)
-                    current_z += 1.0
-                return (
-                    result
-                    + (current_z - 0.5) * np.log(current_z)
-                    - current_z
-                    + 0.5 * np.log(2 * np.pi)
-                    + 1.0 / (12 * current_z)
-                )
-            return (z - 0.5) * np.log(z) - z + 0.5 * np.log(2 * np.pi) + 1.0 / (12 * z)
-
-        # For each molecular weight, compute corresponding DP and Poisson probability
-        for i, mw in enumerate(M):
-            if mw <= 0:
-                continue
-            dp = mw / self.avg_monomer_mass
-            k = int(np.round(dp))
-            if k < 1:
-                continue
-
-            # Poisson PMF: P(k) = lambda^k * exp(-lambda) / k!
-            # In log space: log(P(k)) = k*log(lambda) - lambda - log(k!)
-            log_pmf = (
-                k * np.log(self.lambda_param) - self.lambda_param - log_gamma(k + 1)
-            )
-            pmf = np.exp(log_pmf)
-
-            # Convert from PMF (per integer DP) to PDF (per unit MW)
-            # PDF = PMF / (avg_monomer_mass)
-            pdf[i] = pmf / self.avg_monomer_mass
-
-        return pdf
+        dp = rng.poisson(self.lambda_param)
+        return max(1, int(dp))
 
 
-class FlorySchulzDPDistribution:
+class FlorySchulzPolydisperse:
     """
     Flory-Schulz distribution for degree of polymerization.
-
-    This is a geometric distribution, which is the discrete analog of exponential distribution.
-    It's commonly used for step-growth polymerization.
+    
+    Implements SupportsDP protocol - samples directly in DP space.
+    This is a geometric distribution commonly used for step-growth polymerization.
     """
 
     def __init__(
         self,
         p: float,  # Success probability (0 < p < 1)
-        avg_monomer_mass: float,
         random_seed: int | None = None,
     ):
         """
@@ -479,99 +502,67 @@ class FlorySchulzDPDistribution:
 
         Args:
             p: Success probability (0 < p < 1), related to extent of reaction
-            avg_monomer_mass: Average monomer molecular weight (g/mol)
             random_seed: Random seed for reproducibility (optional)
         """
         if not (0 < p < 1):
             raise ValueError(f"p must be in (0, 1), got {p}")
 
         self.p = p
-        self.avg_monomer_mass = avg_monomer_mass
         self.random_seed = random_seed
 
-        # For geometric distribution: mean = (1-p)/p, variance = (1-p)/p^2
-        # Mn = mean * avg_monomer_mass = (1-p)/p * avg_monomer_mass
-        # Mw = (2-p)/(1-p) * Mn (for Flory-Schulz)
-        mean_dp = (1.0 - p) / p
-        self.Mn = mean_dp * avg_monomer_mass
-        self.Mw = (2.0 - p) / (1.0 - p) * self.Mn
-        self.PDI = self.Mw / self.Mn if self.Mn > 0 else 1.0
-
-    def sample_dp(self, rng: Random) -> int:
+    def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
         """
-        Sample a degree of polymerization from Flory-Schulz distribution.
+        Compute the probability mass function (PMF) over DP values.
 
         Args:
-            rng: Random number generator
+            dp_array: Array of DP values
 
+        Returns:
+            Array of PMF values
+        """
+        dp_array = np.asarray(dp_array, dtype=float)
+        pmf = np.zeros_like(dp_array, dtype=float)
+        
+        # Flory-Schulz (geometric) PMF: P(k) = (1-p)^(k-1) * p for k >= 1
+        for i, dp in enumerate(dp_array):
+            if dp < 1:
+                continue
+            k = int(np.round(dp))
+            pmf[i] = ((1 - self.p) ** (k - 1)) * self.p
+        
+        return pmf
+
+    # SupportsDP protocol implementation
+    def sample_dp(self, rng: np.random.Generator) -> int:
+        """Sample degree of polymerization from Flory-Schulz distribution.
+        
+        Args:
+            rng: NumPy random number generator
+            
         Returns:
             Degree of polymerization (>= 1)
         """
-        import numpy as np
+        dp = rng.geometric(p=self.p)
+        return max(1, int(dp))
+    
 
-        seed = rng.randint(0, 2**31 - 1)
-        rng_np = np.random.RandomState(seed)
-        # Geometric distribution: number of failures before first success
-        # We want number of successes (DP), so use geometric with p
-        # For DP >= 1, we use: DP = geometric(p) + 1
-        dp = rng_np.geometric(p=self.p)
-        return max(1, dp)
-
-    def molecular_weight_pdf(self, M: np.ndarray) -> np.ndarray:
-        """
-        Calculate Flory-Schulz molecular weight distribution PDF.
-
-        Args:
-            M: Array of molecular weight values (g/mol)
-
-        Returns:
-            Array of probability density values
-        """
-        import numpy as np
-
-        # Convert molecular weight to DP
-        dp_values = M / self.avg_monomer_mass
-
-        # Flory-Schulz (geometric) PMF: P(k) = (1-p)^(k-1) * p for k >= 1
-        # In log space: log(P(k)) = (k-1)*log(1-p) + log(p)
-        pdf = np.zeros_like(M, dtype=float)
-
-        log_one_minus_p = np.log(1.0 - self.p)
-        log_p = np.log(self.p)
-
-        for i, mw in enumerate(M):
-            if mw <= 0:
-                continue
-            dp = mw / self.avg_monomer_mass
-            k = int(np.round(dp))
-            if k < 1:
-                continue
-
-            # Flory-Schulz PMF: P(k) = (1-p)^(k-1) * p
-            log_pmf = (k - 1) * log_one_minus_p + log_p
-            pmf = np.exp(log_pmf)
-
-            # Convert from PMF (per integer DP) to PDF (per unit MW)
-            pdf[i] = pmf / self.avg_monomer_mass
-
-        return pdf
+    
 
 
-def create_dp_distribution_from_ir(
+
+def create_polydisperse_from_ir(
     distribution_ir: DistributionIR,
-    avg_monomer_mass: float,
     random_seed: int | None = None,
-) -> DPDistribution:
+) -> SupportsDP | SupportsMass:
     """
-    Create a DPDistribution instance from DistributionIR.
+    Create a Polydisperse instance from DistributionIR.
 
     Args:
         distribution_ir: DistributionIR from parser
-        avg_monomer_mass: Average monomer molecular weight (g/mol)
         random_seed: Random seed for reproducibility
 
     Returns:
-        DPDistribution instance
+        Polydisperse instance
 
     Raises:
         ValueError: If distribution type is not supported or parameters are invalid
@@ -586,8 +577,8 @@ def create_dp_distribution_from_ir(
             )
         Mn = float(params["p0"])
         Mw = float(params["p1"])
-        return SchulzZimmDPDistribution(
-            Mn=Mn, Mw=Mw, avg_monomer_mass=avg_monomer_mass, random_seed=random_seed
+        return SchulzZimmPolydisperse(
+            Mn=Mn, Mw=Mw, random_seed=random_seed
         )
 
     elif dist_name == "uniform":
@@ -597,10 +588,9 @@ def create_dp_distribution_from_ir(
             )
         min_dp = int(params["p0"])
         max_dp = int(params["p1"])
-        return UniformDPDistribution(
+        return UniformPolydisperse(
             min_dp=min_dp,
             max_dp=max_dp,
-            avg_monomer_mass=avg_monomer_mass,
             random_seed=random_seed,
         )
 
@@ -608,9 +598,8 @@ def create_dp_distribution_from_ir(
         if "p0" not in params:
             raise ValueError(f"poisson requires 'p0' (lambda) parameter, got {params}")
         lambda_param = float(params["p0"])
-        return PoissonDPDistribution(
+        return PoissonPolydisperse(
             lambda_param=lambda_param,
-            avg_monomer_mass=avg_monomer_mass,
             random_seed=random_seed,
         )
 
@@ -618,8 +607,8 @@ def create_dp_distribution_from_ir(
         if "p0" not in params:
             raise ValueError(f"flory_schulz requires 'p0' (p) parameter, got {params}")
         p = float(params["p0"])
-        return FlorySchulzDPDistribution(
-            p=p, avg_monomer_mass=avg_monomer_mass, random_seed=random_seed
+        return FlorySchulzPolydisperse(
+            p=p, random_seed=random_seed
         )
 
     else:
@@ -716,7 +705,7 @@ class SystemPlanner:
     ) -> Chain | None:
         """
         Optional trimming logic: reduce chain.dp, regenerate sequence,
-        so that mass ≈ remaining_mass.
+        so that mass ~= remaining_mass.
 
         May return None if trimming is not desired or not possible.
 

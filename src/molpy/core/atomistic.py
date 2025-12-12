@@ -593,17 +593,49 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         if bonds_data:
             # Always include atom references
             bond_dict = defaultdict(list)
-
+            
+            # Collect all keys from all bonds first to ensure consistent fields
+            all_bond_keys = set()
             for bond in bonds_data:
+                all_bond_keys.update(bond.keys())
+
+            for bond_idx, bond in enumerate(bonds_data):
                 # Atom references from properties
+                # Validate that atoms exist in atoms_data
+                if id(bond.itom) not in atom_id_to_index:
+                    raise ValueError(
+                        f"Bond {bond_idx + 1}: atom_i (id={id(bond.itom)}) is not in atoms list. "
+                        f"This bond references an atom that was removed or is invalid."
+                    )
+                if id(bond.jtom) not in atom_id_to_index:
+                    raise ValueError(
+                        f"Bond {bond_idx + 1}: atom_j (id={id(bond.jtom)}) is not in atoms list. "
+                        f"This bond references an atom that was removed or is invalid."
+                    )
                 bond_dict["atom_i"].append(atom_id_to_index[id(bond.itom)])
                 bond_dict["atom_j"].append(atom_id_to_index[id(bond.jtom)])
-                # Data fields
-                for key in bond:
-                    bond_dict[key].append(bond.get(key, None))
+                # Data fields - iterate over all keys to ensure consistent length
+                for key in all_bond_keys:
+                    if key not in ["atom_i", "atom_j"]:  # Skip atom indices, already added
+                        value = bond.get(key, None)
+                        bond_dict[key].append(value)
+            
             # Ensure a 'type' column exists for compatibility with writers
+            # If missing, raise error instead of using default
+            n_bonds = len(bonds_data)
             if "type" not in bond_dict:
-                bond_dict["type"] = [1] * len(bonds_data)
+                raise ValueError(
+                    f"Bonds are missing 'type' field. All {n_bonds} bonds must have a 'type' attribute. "
+                    f"This may indicate that ring closure bonds were created without proper typing."
+                )
+            elif len(bond_dict["type"]) != n_bonds:
+                # Some bonds are missing 'type' field
+                missing_count = n_bonds - len(bond_dict["type"])
+                raise ValueError(
+                    f"Bonds 'type' field has {len(bond_dict['type'])} values, but expected {n_bonds} "
+                    f"(based on atom index fields). {missing_count} bond(s) are missing 'type' field. "
+                    f"This may indicate that ring closure bonds were created without proper typing."
+                )
 
             bond_dict_np = {k: np.array(v) for k, v in bond_dict.items()}
             frame["bonds"] = Block.from_dict(bond_dict_np)
@@ -611,39 +643,110 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         # Build angles Block - convert array of struct to struct of array
         if angles_data:
             angle_dict = defaultdict(list)
-
+            
+            # Collect all keys from all angles first to ensure consistent fields
+            all_angle_keys = set()
             for angle in angles_data:
+                all_angle_keys.update(angle.keys())
+
+            for angle_idx, angle in enumerate(angles_data):
                 # Atom references from properties
+                # Validate that atoms exist in atoms_data
+                if id(angle.itom) not in atom_id_to_index:
+                    raise ValueError(
+                        f"Angle {angle_idx + 1}: atom_i (id={id(angle.itom)}) is not in atoms list. "
+                        f"This angle references an atom that was removed or is invalid."
+                    )
+                if id(angle.jtom) not in atom_id_to_index:
+                    raise ValueError(
+                        f"Angle {angle_idx + 1}: atom_j (id={id(angle.jtom)}) is not in atoms list. "
+                        f"This angle references an atom that was removed or is invalid."
+                    )
+                if id(angle.ktom) not in atom_id_to_index:
+                    raise ValueError(
+                        f"Angle {angle_idx + 1}: atom_k (id={id(angle.ktom)}) is not in atoms list. "
+                        f"This angle references an atom that was removed or is invalid."
+                    )
                 angle_dict["atom_i"].append(atom_id_to_index[id(angle.itom)])
                 angle_dict["atom_j"].append(atom_id_to_index[id(angle.jtom)])
                 angle_dict["atom_k"].append(atom_id_to_index[id(angle.ktom)])
-                # Data fields
-                for key in angle:
-                    angle_dict[key].append(angle.get(key, None))
-
+                # Data fields - iterate over all keys to ensure consistent length
+                for key in all_angle_keys:
+                    if key not in ["atom_i", "atom_j", "atom_k"]:  # Skip atom indices, already added
+                        value = angle.get(key, None)
+                        angle_dict[key].append(value)
+            
             # Ensure a 'type' column exists for compatibility with writers
+            # If missing, raise error instead of using default
+            n_angles = len(angles_data)
             if "type" not in angle_dict:
-                angle_dict["type"] = [1] * len(angles_data)
+                raise ValueError(
+                    f"Angles are missing 'type' field. All {n_angles} angles must have a 'type' attribute."
+                )
+            elif len(angle_dict["type"]) != n_angles:
+                missing_count = n_angles - len(angle_dict["type"])
+                raise ValueError(
+                    f"Angles 'type' field has {len(angle_dict['type'])} values, but expected {n_angles} "
+                    f"(based on atom index fields). {missing_count} angle(s) are missing 'type' field."
+                )
 
             angle_dict_np = {k: np.array(v) for k, v in angle_dict.items()}
             frame["angles"] = Block.from_dict(angle_dict_np)
         # Build dihedrals Block - convert array of struct to struct of array
         if dihedrals_data:
             dihedral_dict = defaultdict(list)
-
+            
+            # Collect all keys from all dihedrals first to ensure consistent fields
+            all_dihedral_keys = set()
             for dihedral in dihedrals_data:
+                all_dihedral_keys.update(dihedral.keys())
+
+            for dihedral_idx, dihedral in enumerate(dihedrals_data):
                 # Atom references from properties
+                # Validate that atoms exist in atoms_data
+                if id(dihedral.itom) not in atom_id_to_index:
+                    raise ValueError(
+                        f"Dihedral {dihedral_idx + 1}: atom_i (id={id(dihedral.itom)}) is not in atoms list. "
+                        f"This dihedral references an atom that was removed or is invalid."
+                    )
+                if id(dihedral.jtom) not in atom_id_to_index:
+                    raise ValueError(
+                        f"Dihedral {dihedral_idx + 1}: atom_j (id={id(dihedral.jtom)}) is not in atoms list. "
+                        f"This dihedral references an atom that was removed or is invalid."
+                    )
+                if id(dihedral.ktom) not in atom_id_to_index:
+                    raise ValueError(
+                        f"Dihedral {dihedral_idx + 1}: atom_k (id={id(dihedral.ktom)}) is not in atoms list. "
+                        f"This dihedral references an atom that was removed or is invalid."
+                    )
+                if id(dihedral.ltom) not in atom_id_to_index:
+                    raise ValueError(
+                        f"Dihedral {dihedral_idx + 1}: atom_l (id={id(dihedral.ltom)}) is not in atoms list. "
+                        f"This dihedral references an atom that was removed or is invalid."
+                    )
                 dihedral_dict["atom_i"].append(atom_id_to_index[id(dihedral.itom)])
                 dihedral_dict["atom_j"].append(atom_id_to_index[id(dihedral.jtom)])
                 dihedral_dict["atom_k"].append(atom_id_to_index[id(dihedral.ktom)])
                 dihedral_dict["atom_l"].append(atom_id_to_index[id(dihedral.ltom)])
-                # Data fields
-                for key in dihedral:
-                    dihedral_dict[key].append(dihedral.get(key, None))
-
+                # Data fields - iterate over all keys to ensure consistent length
+                for key in all_dihedral_keys:
+                    if key not in ["atom_i", "atom_j", "atom_k", "atom_l"]:  # Skip atom indices, already added
+                        value = dihedral.get(key, None)
+                        dihedral_dict[key].append(value)
+            
             # Ensure a 'type' column exists for compatibility with writers
+            # If missing, raise error instead of using default
+            n_dihedrals = len(dihedrals_data)
             if "type" not in dihedral_dict:
-                dihedral_dict["type"] = [1] * len(dihedrals_data)
+                raise ValueError(
+                    f"Dihedrals are missing 'type' field. All {n_dihedrals} dihedrals must have a 'type' attribute."
+                )
+            elif len(dihedral_dict["type"]) != n_dihedrals:
+                missing_count = n_dihedrals - len(dihedral_dict["type"])
+                raise ValueError(
+                    f"Dihedrals 'type' field has {len(dihedral_dict['type'])} values, but expected {n_dihedrals} "
+                    f"(based on atom index fields). {missing_count} dihedral(s) are missing 'type' field."
+                )
 
             dihedral_dict_np = {k: np.array(v) for k, v in dihedral_dict.items()}
             frame["dihedrals"] = Block.from_dict(dihedral_dict_np)

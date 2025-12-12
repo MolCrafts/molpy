@@ -11,15 +11,15 @@ import pytest
 
 from molpy.core.atomistic import Atom, Atomistic, Bond
 from molpy.reacter import (
-    ReactionResult,
     Reacter,
+    ReactionResult,
     find_neighbors,
     form_double_bond,
     form_single_bond,
-    select_none,
-    select_port_atom,
     select_all_hydrogens,
+    select_none,
     select_one_hydrogen,
+    select_port_atom,
 )
 
 

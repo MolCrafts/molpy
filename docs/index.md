@@ -112,7 +112,7 @@ MolPy is designed for researchers and engineers who need **reliable**, **transpa
     New to MolPy? Start with our [Quick Start Guide](getting-started/quickstart.ipynb) to learn the basics.
 
 !!! info "Documentation"
-    Explore comprehensive guides in our [User Guide](user-guide/index.md) and [Tutorials](tutorials/index.md).
+    Explore comprehensive guides in our [User Guide](user-guide/index.md) with **31 detailed notebooks** covering all modules, plus [Tutorials](tutorials/index.md) for hands-on learning.
 
 !!! example "API Reference"
     Detailed API documentation is available in the [API Reference](api/index.md) section.
@@ -121,6 +121,42 @@ MolPy is designed for researchers and engineers who need **reliable**, **transpa
     Check out our [FAQ](getting-started/faq.md) or open an issue on [GitHub](https://github.com/MolCrafts/molpy/issues).
 
 </div>
+
+---
+
+## Comprehensive Documentation
+
+MolPy features **31 detailed Jupyter notebooks** covering every module with runnable examples and complete API documentation.
+
+<div class="grid cards" markdown>
+
+- :books:{ .lg .middle } __31 Detailed Notebooks__
+
+    ---
+
+    Complete coverage across **9 modules**: Parser (3), Reacter (4), Builder (5), Typifier (3), IO (4), Adapter (3), Potential (3), Compute (2), Developer (4)
+
+- :code-braces:{ .lg .middle } __150+ Code Examples__
+
+    ---
+
+    Every notebook includes working code demonstrations with real-world use cases. All examples are tested and runnable.
+
+- :check-all:{ .lg .middle } __100% API Coverage__
+
+    ---
+
+    All public APIs documented with parameters, return values, and usage examples. No undocumented functions.
+
+- :school:{ .lg .middle } __Architecture Guides__
+
+    ---
+
+    Developer documentation covering recipe system, design patterns, IR principles, and contribution guidelines.
+
+</div>
+
+[Explore the User Guide →](user-guide/index.md){ .md-button .md-button--primary }
 
 ---
 
@@ -182,8 +218,8 @@ MolPy is designed for researchers and engineers who need **reliable**, **transpa
 
 ## Ecosystem
 
-**[MolVis](https://github.com/MolCrafts/molvis)** — Production-level visualization with WebGL acceleration and real-time manipulation
-**[MolRS](https://github.com/MolCrafts/molrs)** — Rust backend for performance-critical operations
+- **[MolVis](https://github.com/MolCrafts/molvis)** — Production-level visualization with WebGL acceleration and real-time manipulation
+- **[MolRS](https://github.com/MolCrafts/molrs)** — Rust backend for performance-critical operations
 
 MolPy is the **core Python library** in the MolCrafts ecosystem. MolVis provides high-performance 3D visualization, while MolRS offers compiled speed for compute-intensive tasks. All three projects share a unified data model and can be used independently or together.
 

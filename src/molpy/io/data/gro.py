@@ -2,7 +2,9 @@ from pathlib import Path
 
 import numpy as np
 
-from molpy import Block, Box, Frame
+from molpy.core.frame import Block
+from molpy.core.box import Box
+from molpy.core.frame import Frame
 from molpy.core.element import Element
 
 from .base import DataReader, DataWriter
@@ -207,25 +209,32 @@ class GroReader(DataReader):
             for i, atom_dict in enumerate(atom_dicts):
                 atoms_data["number"][i] = atom_dict["number"]
 
-        # Convert xyz to separate x, y, z fields
+        # Convert xyz to separate x, y, z fields (keep both formats)
         if "xyz" in atoms_data and atoms_data["xyz"]:
             xyz_array = np.array(atoms_data["xyz"], dtype=float)
             atoms_data["x"] = xyz_array[:, 0]
             atoms_data["y"] = xyz_array[:, 1]
             atoms_data["z"] = xyz_array[:, 2]
-            del atoms_data["xyz"]
+            # Keep xyz field for backward compatibility
+            atoms_data["xyz"] = xyz_array
 
         # Convert to numpy arrays
         for key in list(atoms_data.keys()):
             values = atoms_data[key]
-            if values:
-                if key == "velocity":
-                    atoms_data[key] = np.array(values, dtype=float)
+            # Check if values is not empty (works for lists and arrays)
+            if values is not None and len(values) > 0:
+                if key in ["xyz", "velocity"]:
+                    # Already numpy array or should be 2D array
+                    if not isinstance(values, np.ndarray):
+                        atoms_data[key] = np.array(values, dtype=float)
                 elif key == "number":
                     atoms_data[key] = np.array(values, dtype=int)
+                elif key in ["x", "y", "z", "vx", "vy", "vz"]:
+                    # Coordinate/velocity components
+                    atoms_data[key] = np.array(values, dtype=float)
                 else:
                     # For string data, use proper string dtype
-                    max_len = max(len(str(v)) for v in values) if values else 10
+                    max_len = max(len(str(v)) for v in values)
                     atoms_data[key] = np.array(values, dtype=f"U{max_len}")
 
         # Create dataset
@@ -402,10 +411,19 @@ class GroWriter(DataWriter):
                     atom_name = str(atom_data.get("name", "X"))
                     atom_num = int(atom_data.get("number", i + 1))
 
-                    # Handle coordinates - must use separate x, y, z fields
-                    x = float(atom_data["x"])
-                    y = float(atom_data["y"])
-                    z = float(atom_data["z"])
+                    # Handle coordinates - support both xyz array and separate x, y, z fields
+                    if "x" in atom_data and "y" in atom_data and "z" in atom_data:
+                        x = float(atom_data["x"])
+                        y = float(atom_data["y"])
+                        z = float(atom_data["z"])
+                    elif "xyz" in atom_data:
+                        xyz = atom_data["xyz"]
+                        if hasattr(xyz, '__iter__') and not isinstance(xyz, str):
+                            x, y, z = float(xyz[0]), float(xyz[1]), float(xyz[2])
+                        else:
+                            raise ValueError(f"Invalid xyz format for atom {i}")
+                    else:
+                        raise ValueError(f"Atom {i} missing coordinate information (need x/y/z or xyz)")
 
                     # Velocity (optional)
                     vx = float(atom_data.get("vx", 0.0)) if has_velocity else None

@@ -3,11 +3,11 @@
 import pytest
 
 from molpy.parser.smiles import (
-    parse_gbigsmiles,
     GBigSmilesMoleculeIR,
     GBigSmilesSystemIR,
-    SmilesGraphIR,
     SmilesAtomIR,
+    SmilesGraphIR,
+    parse_gbigsmiles,
 )
 
 
@@ -46,7 +46,13 @@ class TestSystemSizeParsing:
         """Test parsing without system size."""
         ir = parse_gbigsmiles("{[<]CC[>]}")
 
-        assert isinstance(ir, GBigSmilesMoleculeIR)
+        # parse_gbigsmiles always returns GBigSmilesSystemIR
+        assert isinstance(ir, GBigSmilesSystemIR)
+        # Should have one molecule
+        assert len(ir.molecules) == 1
+        # Extract the molecule structure
+        molecule = ir.molecules[0].molecule
+        assert isinstance(molecule, GBigSmilesMoleculeIR)
 
 
 class TestGBigSmilesBasic:
@@ -255,9 +261,13 @@ class TestBackwardCompatibility:
         """Test that BigSMILES without system size still works."""
         ir = parse_gbigsmiles("{[<]CC[>]}")
 
-        assert isinstance(ir, GBigSmilesMoleculeIR)
+        # parse_gbigsmiles always returns GBigSmilesSystemIR
+        assert isinstance(ir, GBigSmilesSystemIR)
+        # Extract molecule
+        assert len(ir.molecules) >= 1
+        molecule = ir.molecules[0].molecule
         # Check structure has atoms
-        assert len(ir.structure.stochastic_objects) >= 1
+        assert len(molecule.structure.stochastic_objects) >= 1
 
 
 class TestEdgeCases:
@@ -267,8 +277,12 @@ class TestEdgeCases:
         """Test parsing empty string."""
         ir = parse_gbigsmiles("")
 
-        assert isinstance(ir, GBigSmilesMoleculeIR)
-        assert len(ir.structure.backbone.atoms) == 0
+        # parse_gbigsmiles always returns GBigSmilesSystemIR
+        assert isinstance(ir, GBigSmilesSystemIR)
+        # Should have one molecule with empty structure
+        assert len(ir.molecules) >= 1
+        molecule = ir.molecules[0].molecule
+        assert len(molecule.structure.backbone.atoms) == 0
 
     def test_only_system_size_no_molecule(self):
         """Test that system size requires a molecule."""

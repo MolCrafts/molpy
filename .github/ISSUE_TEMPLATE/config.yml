@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 Discussions
+    url: https://github.com/MolCrafts/molpy/discussions
+    about: Ask questions and discuss ideas with the community
+  - name: 📚 Documentation
+    url: https://molcrafts.github.io/molpy/
+    about: Read the comprehensive documentation
+  - name: ❓ FAQ
+    url: https://molcrafts.github.io/molpy/getting-started/faq/
+    about: Check frequently asked questions

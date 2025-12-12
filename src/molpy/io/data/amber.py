@@ -2,7 +2,8 @@ from pathlib import Path
 
 import numpy as np
 
-from molpy import Block, Box, Frame
+from molpy.core.box import Box
+from molpy.core.frame import Frame, Block
 
 from .base import DataReader
 
@@ -27,7 +28,7 @@ class AmberInpcrdReader(DataReader):
 
     * Coordinates: 12.7/12.8 format, 6 numbers per line
     * Optional velocities section (same length as coordinates)
-    * Optional final box line (3–6 floats)
+    * Optional final box line (3-6 floats)
     """
 
     __slots__ = ()

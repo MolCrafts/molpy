@@ -71,19 +71,22 @@ class TestLammpsMoleculeReader:
         # Check bonds
         assert "bonds" in frame
         bonds = frame["bonds"]
-        assert bonds.nrows == 2
+        assert len(bonds["id"]) == 2
+        assert len(bonds["type"]) == 2
         np.testing.assert_array_equal(bonds["type"], ["1", "1"])
-        np.testing.assert_array_equal(bonds["atom1"], [1, 1])
-        np.testing.assert_array_equal(bonds["atom2"], [2, 3])
+        # atom_i/atom_j are 0-based indices, not 1-based IDs
+        np.testing.assert_array_equal(bonds["atom_i"], [0, 0])
+        np.testing.assert_array_equal(bonds["atom_j"], [1, 2])
 
         # Check angles
         assert "angles" in frame
         angles = frame["angles"]
         assert angles.nrows == 1
         np.testing.assert_array_equal(angles["type"], ["1"])
-        np.testing.assert_array_equal(angles["atom1"], [2])
-        np.testing.assert_array_equal(angles["atom2"], [1])
-        np.testing.assert_array_equal(angles["atom3"], [3])
+        # atom_i/atom_j/atom_k are 0-based indices
+        np.testing.assert_array_equal(angles["atom_i"], [1])
+        np.testing.assert_array_equal(angles["atom_j"], [0])
+        np.testing.assert_array_equal(angles["atom_k"], [2])
 
     def test_read_json_water(self, test_files):
         """Test reading JSON format water molecule."""
@@ -129,17 +132,19 @@ class TestLammpsMoleculeReader:
         bonds = frame["bonds"]
         assert bonds.nrows == 2
         np.testing.assert_array_equal(bonds["type"], ["OW-HO1", "OW-HO1"])
-        np.testing.assert_array_equal(bonds["atom1"], [1, 1])
-        np.testing.assert_array_equal(bonds["atom2"], [2, 3])
+        # atom_i/atom_j are 0-based indices
+        np.testing.assert_array_equal(bonds["atom_i"], [0, 0])
+        np.testing.assert_array_equal(bonds["atom_j"], [1, 2])
 
         # Check angles
         assert "angles" in frame
         angles = frame["angles"]
         assert angles.nrows == 1
         np.testing.assert_array_equal(angles["type"], ["HO1-OW-HO1"])
-        np.testing.assert_array_equal(angles["atom1"], [2])
-        np.testing.assert_array_equal(angles["atom2"], [1])
-        np.testing.assert_array_equal(angles["atom3"], [3])
+        # atom_i/atom_j/atom_k are 0-based indices
+        np.testing.assert_array_equal(angles["atom_i"], [1])
+        np.testing.assert_array_equal(angles["atom_j"], [0])
+        np.testing.assert_array_equal(angles["atom_k"], [2])
 
     def test_read_ethane_native(self, test_files):
         """Test reading more complex native format ethane molecule."""

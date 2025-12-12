@@ -12,15 +12,7 @@ Tests cover:
 
 import pytest
 
-from molpy import (
-    Angle,
-    Atom,
-    Atomistic,
-    AtomisticForcefield,
-    AtomType,
-    Bond,
-    Dihedral,
-)
+from molpy import Angle, Atom, Atomistic, AtomisticForcefield, AtomType, Bond, Dihedral
 from molpy.typifier.atomistic import (
     OplsAngleTypifier,
     OplsAtomisticTypifier,

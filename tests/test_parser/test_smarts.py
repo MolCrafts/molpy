@@ -13,11 +13,7 @@ Tests cover:
 
 import pytest
 
-from molpy.parser.smarts import (
-    AtomExpressionIR,
-    AtomPrimitiveIR,
-    SmartsParser,
-)
+from molpy.parser.smarts import AtomExpressionIR, AtomPrimitiveIR, SmartsParser
 
 
 class TestSimpleAtoms:

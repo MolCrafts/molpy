@@ -6,6 +6,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from molpy.core.forcefield import AtomType, BondStyle, BondType
+from molpy.potential.utils import TypeIndexedArray
 
 from .base import BondPotential
 
@@ -15,23 +16,26 @@ class BondHarmonic(BondPotential):
     type = "bond"
 
     def __init__(
-        self, k: NDArray[np.floating] | float, r0: NDArray[np.floating] | float
+        self, 
+        k: NDArray[np.floating] | float | dict[str, float], 
+        r0: NDArray[np.floating] | float | dict[str, float]
     ):
         """
         Initialize harmonic bond potential.
 
         Args:
-            k: Force constant (array for multiple types, or scalar)
-            r0: Equilibrium bond length (array for multiple types, or scalar)
+            k: Force constant (array for multiple types, scalar, or dict mapping type names to values)
+            r0: Equilibrium bond length (array for multiple types, scalar, or dict mapping type names to values)
         """
-        self.k = np.array(k, dtype=np.float64).reshape(-1, 1)
-        self.r0 = np.array(r0, dtype=np.float64).reshape(-1, 1)
+        # TypeIndexedArray automatically handles both integer and string indexing
+        self.k = TypeIndexedArray(k).reshape(-1, 1)
+        self.r0 = TypeIndexedArray(r0).reshape(-1, 1)
 
     def calc_energy(
         self,
         r: NDArray[np.floating],
         bond_idx: NDArray[np.integer],
-        bond_types: NDArray[np.integer],
+        bond_types: NDArray[np.integer] | NDArray[np.str_],
     ) -> float:
         """
         Calculate bond energy.
@@ -39,7 +43,7 @@ class BondHarmonic(BondPotential):
         Args:
             r: Atom coordinates (shape: (n_atoms, 3))
             bond_idx: Bond indices (shape: (n_bonds, 2))
-            bond_types: Bond types (shape: (n_bonds,))
+            bond_types: Bond types (shape: (n_bonds,)) - can be integer indices or string type names
 
         Returns:
             Total bond energy
@@ -48,7 +52,7 @@ class BondHarmonic(BondPotential):
         dr = r[bond_idx[:, 1]] - r[bond_idx[:, 0]]
         dr_norm = np.linalg.norm(dr, axis=1, keepdims=True)
 
-        # Calculate energy
+        # TypeIndexedArray automatically handles both integer and string indexing
         energy = 0.5 * self.k[bond_types] * (dr_norm - self.r0[bond_types]) ** 2
 
         return float(np.sum(energy))
@@ -57,7 +61,7 @@ class BondHarmonic(BondPotential):
         self,
         r: NDArray[np.floating],
         bond_idx: NDArray[np.integer],
-        bond_types: NDArray[np.integer],
+        bond_types: NDArray[np.integer] | NDArray[np.str_],
     ) -> NDArray[np.floating]:
         """
         Calculate bond forces.
@@ -65,7 +69,7 @@ class BondHarmonic(BondPotential):
         Args:
             r: Atom coordinates (shape: (n_atoms, 3))
             bond_idx: Bond indices (shape: (n_bonds, 2))
-            bond_types: Bond types (shape: (n_bonds,))
+            bond_types: Bond types (shape: (n_bonds,)) - can be integer indices or string type names
 
         Returns:
             Array of forces on each atom (shape: (n_atoms, 3))
@@ -76,7 +80,7 @@ class BondHarmonic(BondPotential):
         dr = r[bond_idx[:, 1]] - r[bond_idx[:, 0]]
         dr_norm = np.linalg.norm(dr, axis=1, keepdims=True)
 
-        # Calculate forces on bonds
+        # TypeIndexedArray handles both integer and string indexing automatically
         forces = -self.k[bond_types] * (dr_norm - self.r0[bond_types]) * dr / dr_norm
 
         # Accumulate forces on atoms

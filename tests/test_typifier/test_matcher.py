@@ -9,11 +9,7 @@ Tests cover:
 
 from molpy.parser.smarts import SmartsParser
 from molpy.typifier.graph import SMARTSGraph
-from molpy.typifier.matcher import (
-    Candidate,
-    ScoringPolicy,
-    SmartsMatcher,
-)
+from molpy.typifier.matcher import Candidate, ScoringPolicy, SmartsMatcher
 
 
 class TestCandidate:

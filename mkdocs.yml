@@ -82,7 +82,7 @@ plugins:
             merge_init_into_class: true
             filters: ["!^_"]
   - mkdocs-jupyter:
-      execute: false
+      execute: true
 
 nav:
   - Home: index.md
@@ -93,27 +93,57 @@ nav:
       - FAQ: getting-started/faq.md
   - Tutorials:
       - Overview: tutorials/index.md
-      - Frame & Block: tutorials/frame-block.ipynb
-      - Molecular Graph: tutorials/molecular-graph.ipynb
-      - Simulation Box: tutorials/box.ipynb
-      - Topology: tutorials/topology.ipynb
-      - Force Field: tutorials/force-field.ipynb
-      - Trajectory: tutorials/trajectory.ipynb
-      - Wrappers: tutorials/wrappers.ipynb
-      - Selector: tutorials/selector.ipynb
+      - Core Concepts:
+          - Frame & Block: tutorials/frame-block.ipynb
+          - Simulation Box: tutorials/box.ipynb
+          - Topology: tutorials/topology.ipynb
+          - Selectors: tutorials/selector.ipynb
+          - Wrappers: tutorials/wrappers.ipynb
+      - Advanced Topics:
+          - Force Field: tutorials/force-field.ipynb
+          - Trajectory: tutorials/trajectory.ipynb
+      - Polymer Workflows:
+          - Step-by-Step Visualization: tutorials/polymer-step-by-step.ipynb
+          - Linear Polymer Chains: tutorials/polymer-linear-chain.ipynb
+          - Polydisperse Systems: tutorials/polymer-polydisperse-system.ipynb
+          - Cross-linked Networks: tutorials/polymer-crosslinked-network.ipynb
   - User Guide:
       - Overview: user-guide/index.md
-      - Adapter: user-guide/adapter.ipynb
-      - Builder: user-guide/builder.ipynb
-      - Compute: user-guide/compute.ipynb
-      - IO: user-guide/io.ipynb
-      - Op: user-guide/op.ipynb
-      - Pack: user-guide/pack.ipynb
-      - Parser: user-guide/parser.ipynb
-      - Potential: user-guide/potential.ipynb
-      - Reacter: user-guide/reacter.ipynb
-      - Typifier: user-guide/typifier.ipynb
-      - Crystal Builder: tutorials/crystal-builder.ipynb
+      - Parser:
+          - Parser Overview: user-guide/parser.ipynb
+          - BigSMILES Parser: user-guide/gbigsmiles_parser.ipynb
+          - Monomer IR: user-guide/monomer_ir.ipynb
+      - Reacter:
+          - Reacter Overview: user-guide/reacter.ipynb
+          - Connector: user-guide/connector.ipynb
+          - Selectors: user-guide/selectors.ipynb
+          - Transformers: user-guide/transformers.ipynb
+      - Builder:
+          - Builder Overview: user-guide/polymer_builder_overview.ipynb
+          - Sequence Generator: user-guide/sequence_generator.ipynb
+          - Polydisperse Chain: user-guide/polydisperse_chain_generator.ipynb
+          - System Planner: user-guide/system_planner.ipynb
+          - Placer: user-guide/placer.ipynb
+      - Typifier:
+          - Typifier Overview: user-guide/typifier.ipynb
+          - Typifier Rules: user-guide/typifier_rules.ipynb
+          - Typifier SMARTS: user-guide/typifier_smarts.ipynb
+      - IO:
+          - IO Overview: user-guide/io.ipynb
+          - Data Formats: user-guide/data_formats.ipynb
+          - Force Field Formats: user-guide/forcefield_formats.ipynb
+          - LAMMPS Integration: user-guide/lammps_integration.ipynb
+      - Adapter:
+          - Adapter Overview: user-guide/adapter.ipynb
+          - RDKit Adapter: user-guide/rdkit_adapter.ipynb
+          - External Tools: user-guide/external_tools.ipynb
+      - Potential:
+          - Potential Overview: user-guide/potential.ipynb
+          - Force Field Parameters: user-guide/forcefield_parameters.ipynb
+          - LAMMPS Fix Bond React: user-guide/lammps_fix_bond_react.ipynb
+      - Compute:
+          - Compute Overview: user-guide/compute.ipynb
+          - Analysis Functions: user-guide/analysis_functions.ipynb
   - API Reference:
       - Overview: api/index.md
       - Core: api/core.md
@@ -128,12 +158,15 @@ nav:
       - Op: api/op.md
   - Developer:
       - Overview: developer/index.md
-      - Contributing: developer/contributing.md
+      - Architecture:
+          - Recipe System: developer/recipe_system.ipynb
+          - Wrapper & Adapter: developer/wrapper_adapter_layers.ipynb
+          - Python IR System: developer/python_ir_system.ipynb
+      - Contributing: developer/contributing.ipynb
       - Development Setup: developer/development-setup.md
       - Coding Style: developer/coding-style.md
       - Testing: developer/testing.md
       - Release Process: developer/release-process.md
-      - How to write a `Compute`: developer/compute.py
   - Changelog:
       - Overview: changelog/index.md
       - Releases: changelog/releases.md

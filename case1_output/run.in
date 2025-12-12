@@ -1,0 +1,57 @@
+# LAMMPS input script for PEO crosslinking simulation
+# Force field: OPLS-AA
+# Reaction: Asymmetric ether formation with H2O elimination
+
+# ============================================================================
+# Initialization
+# ============================================================================
+
+units           real
+atom_style      full
+boundary        p p p
+dimension       3
+
+# ============================================================================
+# Read data and force field
+# ============================================================================
+
+read_data       ring.data
+include         system.ff
+kspace_style    pppm 1.0e-5
+special_bonds   lj/coul 0.0 0.0 0.5
+
+# ============================================================================
+# Neighbor settings
+# ============================================================================
+
+neighbor        2.0 bin
+neigh_modify    delay 0 every 1 check yes
+
+# ============================================================================
+# Energy minimization
+# ============================================================================
+
+print "=========================================="
+print "Step 1: Energy Minimization"
+print "=========================================="
+
+minimize        1.0e-4 1.0e-4 1000 10000
+
+write_data ring_min.data noceff
+
+# ============================================================================
+# Equilibration: NPT
+# ============================================================================
+
+print "=========================================="
+print "Step 3: NPT Equilibration"
+print "=========================================="
+
+fix             npt all npt temp 300.0 600.0 100.0 iso 1.5 1.5 1000.0
+
+dump            2 all custom 500 equil.dump id type x y z
+
+run             5000
+unfix           npt
+undump          2
+

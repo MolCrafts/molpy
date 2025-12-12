@@ -124,37 +124,41 @@ class LBFGS(Optimizer[S]):
                     self.rho_history.pop(0)
 
         # Compute search direction using two-loop recursion
+        # LBFGS returns H^{-1} * g, which is the direction for minimization
         search_dir = self._lbfgs_direction(g)
 
         # Apply step-size control
         step_size = self._compute_step_size(search_dir)
 
-        # Update positions
+        # Update positions: move in the direction of -∇E (minimization)
         new_x = x - step_size * search_dir
         new_positions = new_x.reshape(positions.shape)
         self.set_positions(structure, new_positions)
 
-        # Store for next iteration
+        # Store for next iteration (before updating positions)
         self._prev_positions = x.copy()
         self._prev_gradient = g.copy()
 
-        # Compute fmax (maximum force component)
-        fmax = float(np.max(np.abs(forces)))
+        # Recompute energy and forces at new positions
+        new_energy = self.get_energy(structure)
+        new_forces = self.get_forces(structure)
+        fmax = float(np.max(np.abs(new_forces)))
 
-        return energy, fmax
+        return new_energy, fmax
 
     def _lbfgs_direction(self, g: np.ndarray) -> np.ndarray:
         """Compute LBFGS search direction via two-loop recursion.
 
         Args:
-            g: Current gradient (flattened)
+            g: Current gradient (flattened, ∇E)
 
         Returns:
-            Search direction (same shape as g)
+            Search direction (same shape as g) - H^{-1} * g for minimization
         """
         if not self.s_history:
             # First iteration: use steepest descent
-            return g
+            # Return -g (negative gradient) for minimization
+            return -g
 
         q = g.copy()
         alphas = []
@@ -194,10 +198,21 @@ class LBFGS(Optimizer[S]):
             search_dir: Search direction (flattened)
 
         Returns:
-            Step size (scalar)
+            Step size (scalar) - the actual step will be step_size * search_dir
         """
-        # Limit step by maxstep
+        # Limit step displacement by maxstep
+        # The step will be: new_x = x - step_size * search_dir
+        # We want: ||step_size * search_dir|| <= maxstep * damping
+        # Note: search_dir is already in the minimization direction (H^{-1} * g or -g)
         dr_norm = np.linalg.norm(search_dir)
+        if dr_norm < 1e-12:
+            return 0.0  # Avoid division by zero
+        
+        # If direction norm is larger than maxstep, scale it down
+        # Otherwise, use damping as step size (LBFGS direction should already have correct scale)
         if dr_norm > self.maxstep:
+            # Scale down: step_size * dr_norm = maxstep * damping
             return self.damping * self.maxstep / dr_norm
-        return self.damping
+        else:
+            # Direction is already small enough, use damping as step size
+            return self.damping

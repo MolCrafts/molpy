@@ -1,6 +1,7 @@
 from collections import defaultdict
 from collections.abc import Iterator
-from typing import Any, Self, TypeVar, List, cast
+from typing import Any, List, Self, TypeVar, cast
+import numpy as np
 
 from .entity import Entity
 
@@ -547,7 +548,8 @@ class BondStyle(Style):
         """Create corresponding Potential instance from BondStyle.
 
         Returns:
-            Potential instance containing all BondType parameters
+            Potential instance that accepts string type labels (from Frame).
+            The potential internally uses dictionaries to map type names to parameters.
 
         Raises:
             ValueError: If corresponding Potential class not found or missing required parameters
@@ -570,9 +572,9 @@ class BondStyle(Style):
         if not bond_types:
             raise ValueError(f"No bond types defined in style '{self.name}'")
 
-        # Extract parameters
-        k_list = []
-        r0_list = []
+        # Extract parameters as dictionaries (type name -> parameter)
+        k_dict = {}
+        r0_dict = {}
 
         for bt in bond_types:
             k = bt.params.kwargs.get("k")
@@ -584,13 +586,12 @@ class BondStyle(Style):
                     f"k={k}, r0={r0}"
                 )
 
-            k_list.append(k)
-            r0_list.append(r0)
+            k_dict[bt.name] = k
+            r0_dict[bt.name] = r0
 
-        # Create Potential instance
-        import numpy as np
-
-        return potential_class(k=np.array(k_list), r0=np.array(r0_list))
+        # Create Potential instance with dictionaries
+        # TypeIndexedArray automatically handles string type name indexing
+        return potential_class(k=k_dict, r0=r0_dict)
 
 
 class AngleStyle(Style):
@@ -621,7 +622,8 @@ class AngleStyle(Style):
         """Create corresponding Potential instance from AngleStyle.
 
         Returns:
-            Potential instance containing all AngleType parameters
+            Potential instance that accepts string type labels (from Frame).
+            The potential internally uses TypeIndexedArray to map type names to parameters.
 
         Raises:
             ValueError: If corresponding Potential class not found or missing required parameters
@@ -644,9 +646,9 @@ class AngleStyle(Style):
         if not angle_types:
             raise ValueError(f"No angle types defined in style '{self.name}'")
 
-        # Extract parameters
-        k_list = []
-        theta0_list = []
+        # Extract parameters as dictionaries (type name -> parameter)
+        k_dict = {}
+        theta0_dict = {}
 
         for at in angle_types:
             k = at.params.kwargs.get("k")
@@ -658,13 +660,12 @@ class AngleStyle(Style):
                     f"k={k}, theta0={theta0}"
                 )
 
-            k_list.append(k)
-            theta0_list.append(theta0)
+            k_dict[at.name] = k
+            theta0_dict[at.name] = theta0
 
-        # Create Potential instance
-        import numpy as np
-
-        return potential_class(k=np.array(k_list), theta0=np.array(theta0_list))
+        # Create Potential instance with dictionaries
+        # TypeIndexedArray automatically handles string type name indexing
+        return potential_class(k=k_dict, theta0=theta0_dict)
 
 
 class DihedralStyle(Style):

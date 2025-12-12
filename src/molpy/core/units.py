@@ -1,6 +1,8 @@
 from typing import Literal
 
-from pint import DimensionalityError, Quantity, Unit as PintUnit, UnitRegistry
+from pint import DimensionalityError, Quantity
+from pint import Unit as PintUnit
+from pint import UnitRegistry
 
 UnitSystemName = Literal["real", "metal", "si", "cgs", "electron", "micro", "nano"]
 

@@ -22,7 +22,7 @@ import pytest
 
 from molpy import Atom, Atomistic
 from molpy.io import read_xml_forcefield
-from molpy.parser.smiles import SmilesGraphIR, parse_bigsmiles
+from molpy.parser.smiles import SmilesGraphIR, parse_smiles
 from molpy.typifier.atomistic import OplsAtomisticTypifier
 
 
@@ -42,43 +42,28 @@ def smilesir_to_atomistic(ir: SmilesGraphIR) -> Atomistic:
 
     # Add atoms
     for atom_ir in ir.atoms:
-        # Get element (handle aromatic lowercase)
         element = atom_ir.element.upper() if atom_ir.element.islower() else atom_ir.element
-
-        # Create atom
-        atom = atomistic.def_atom(
-            element=element,
-            charge=atom_ir.charge,
-            # No xyz - topology only
-        )
-
-        # Store mapping
+        atom = atomistic.def_atom(element=element, charge=atom_ir.charge)
         atomir_to_atom[id(atom_ir)] = atom
 
     # Add bonds
     for bond_ir in ir.bonds:
-        start_atom = atomir_to_atom.get(id(bond_ir.start))
-        end_atom = atomir_to_atom.get(id(bond_ir.end))
-
+        start_atom = atomir_to_atom.get(id(bond_ir.atom_i))
+        end_atom = atomir_to_atom.get(id(bond_ir.atom_j))
         if start_atom is None or end_atom is None:
             continue
-
-        # Convert bond kind to order
-        bond_kind = bond_ir.kind
-        if bond_kind == "=":
+        bond_kind = bond_ir.order  # Use 'order' not 'kind'
+        if bond_kind == 2:
             order = 2.0
-        elif bond_kind == "#":
+        elif bond_kind == 3:
             order = 3.0
-        elif bond_kind == ":":
-            order = 1.5  # Aromatic
+        elif bond_kind == "ar":
+            order = 1.5
         else:
-            order = 1.0  # Single bond or default
-
+            order = 1.0
         atomistic.def_bond(start_atom, end_atom, order=order)
 
     return atomistic
-
-
 def add_hydrogens(atomistic: Atomistic) -> Atomistic:
     """Add explicit hydrogen atoms to an Atomistic structure based on valence.
 
@@ -167,7 +152,7 @@ class TestOplsTypifier:
         diamine_smiles = "NCCCCCCN"
 
         # Parse SMILES
-        diamine_ir = parse_bigsmiles(diamine_smiles)
+        diamine_ir = parse_smiles(diamine_smiles)
 
         # Convert to Atomistic (topology only, no 3D coordinates)
         atomistic = smilesir_to_atomistic(diamine_ir)
@@ -183,7 +168,7 @@ class TestOplsTypifier:
         diacid_smiles = "O=C(O)CCCCC(=O)O"
 
         # Parse SMILES
-        diacid_ir = parse_bigsmiles(diacid_smiles)
+        diacid_ir = parse_smiles(diacid_smiles)
 
         # Convert to Atomistic (topology only, no 3D coordinates)
         atomistic = smilesir_to_atomistic(diacid_ir)

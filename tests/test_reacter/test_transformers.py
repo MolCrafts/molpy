@@ -14,8 +14,8 @@ Tests cover:
 from molpy import Atom, Atomistic, Bond
 from molpy.reacter.transformers import (
     break_bond,
-    form_aromatic_bond,
     create_bond_former,
+    form_aromatic_bond,
     form_double_bond,
     form_single_bond,
     form_triple_bond,

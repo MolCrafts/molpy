@@ -10,7 +10,8 @@ from typing import Any
 
 import numpy as np
 
-from molpy import Block, Frame
+from molpy.core.frame import Block
+from molpy.core.frame import Frame
 from molpy.core.element import Element
 
 from .base import DataReader, PathLike
@@ -66,7 +67,7 @@ class TopReader(DataReader):
                 if ";" in line:
                     line = line.split(";")[0]
                 line = line.strip()
-                
+
                 # Skip empty lines
                 if not line:
                     continue
@@ -324,7 +325,9 @@ class TopReader(DataReader):
                     # Try integer first
                     int_values = [int(v) for v in non_none_values]
                     # If successful, create array with proper None handling
-                    arr = np.array([int(v) if v is not None else 0 for v in values], dtype=int)
+                    arr = np.array(
+                        [int(v) if v is not None else 0 for v in values], dtype=int
+                    )
                     result[key] = arr
                     continue
                 except (ValueError, TypeError):
@@ -333,7 +336,10 @@ class TopReader(DataReader):
                 # Try float
                 try:
                     float_values = [float(v) for v in non_none_values]
-                    arr = np.array([float(v) if v is not None else np.nan for v in values], dtype=float)
+                    arr = np.array(
+                        [float(v) if v is not None else np.nan for v in values],
+                        dtype=float,
+                    )
                     result[key] = arr
                     continue
                 except (ValueError, TypeError):

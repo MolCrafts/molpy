@@ -47,22 +47,23 @@ class Connector:
         self,
         left: Atomistic,
         right: Atomistic,
-        left_ports: Mapping[str, PortInfo],  # unconsumed ports
-        right_ports: Mapping[str, PortInfo],  # unconsumed ports
+        left_ports: Mapping[str, list[PortInfo]],  # unconsumed ports
+        right_ports: Mapping[str, list[PortInfo]],  # unconsumed ports
         ctx: ConnectorContext,
-    ) -> tuple[str, str, BondKind | None]:
+    ) -> tuple[str, int, str, int, BondKind | None]:
         """
         Select which ports to connect between left and right structures.
 
         Args:
             left: Left Atomistic structure in the sequence
             right: Right Atomistic structure in the sequence
-            left_ports: Available (unconsumed) ports on left structure
-            right_ports: Available (unconsumed) ports on right structure
+            left_ports: Available (unconsumed) ports on left structure (port name -> list of PortInfo)
+            right_ports: Available (unconsumed) ports on right structure (port name -> list of PortInfo)
             ctx: Shared context with step info, sequence, etc.
 
         Returns:
-            Tuple of (left_port_name, right_port_name, optional_bond_kind_override)
+            Tuple of (left_port_name, left_port_index, right_port_name, right_port_index, optional_bond_kind_override)
+            The indices specify which port to use when multiple ports have the same name.
 
         Raises:
             AmbiguousPortsError: Cannot uniquely determine ports
@@ -92,41 +93,79 @@ class AutoConnector(Connector):
         self,
         left: Atomistic,
         right: Atomistic,
-        left_ports: Mapping[str, PortInfo],
-        right_ports: Mapping[str, PortInfo],
+        left_ports: Mapping[str, list[PortInfo]],
+        right_ports: Mapping[str, list[PortInfo]],
         ctx: ConnectorContext,
-    ) -> tuple[str, str, BondKind | None]:
+    ) -> tuple[str, int, str, int, BondKind | None]:
         """Select ports using BigSMILES role heuristics."""
 
         # Strategy 1: Try role-based selection (BigSMILES < and >)
         # Case 1a: left has role='right', right has role='left' (normal chain extension)
-        left_right_role = [name for name, p in left_ports.items() if p.role == "right"]
-        right_left_role = [name for name, p in right_ports.items() if p.role == "left"]
+        # Flatten lists and find ports with matching roles
+        left_right_role = [
+            (name, idx)
+            for name, port_list in left_ports.items()
+            for idx, p in enumerate(port_list)
+            if p.role == "right"
+        ]
+        right_left_role = [
+            (name, idx)
+            for name, port_list in right_ports.items()
+            for idx, p in enumerate(port_list)
+            if p.role == "left"
+        ]
 
         if len(left_right_role) == 1 and len(right_left_role) == 1:
-            return (left_right_role[0], right_left_role[0], None)
+            return (left_right_role[0][0], left_right_role[0][1], right_left_role[0][0], right_left_role[0][1], None)
 
         # Case 1b: left has role='left', right has role='right' (terminus connection)
         # E.g., HO[*:t] (left terminus) connects to CC[>] (right-directed monomer)
-        left_left_role = [name for name, p in left_ports.items() if p.role == "left"]
+        left_left_role = [
+            (name, idx)
+            for name, port_list in left_ports.items()
+            for idx, p in enumerate(port_list)
+            if p.role == "left"
+        ]
         right_right_role = [
-            name for name, p in right_ports.items() if p.role == "right"
+            (name, idx)
+            for name, port_list in right_ports.items()
+            for idx, p in enumerate(port_list)
+            if p.role == "right"
         ]
 
         if len(left_left_role) == 1 and len(right_right_role) == 1:
-            return (left_left_role[0], right_right_role[0], None)
+            return (left_left_role[0][0], left_left_role[0][1], right_right_role[0][0], right_right_role[0][1], None)
 
-        # Strategy 2: If exactly one port on each side, use those
+        # Strategy 2: If both sides have the same port name(s) (e.g., all $), randomly select one
+        # Since all ports are equivalent, just pick the first available one
         if len(left_ports) == 1 and len(right_ports) == 1:
             left_name = next(iter(left_ports.keys()))
             right_name = next(iter(right_ports.keys()))
-            return (left_name, right_name, None)
+            # If same port name or both are $, they're compatible - use first available
+            if left_name == right_name or (left_name == "$" and right_name == "$"):
+                # Use the first port in each list (all are equivalent)
+                return (left_name, 0, right_name, 0, None)
+        
+        # Strategy 3: Try to match port names - if same name exists on both sides, use it
+        common_port_names = set(left_ports.keys()) & set(right_ports.keys())
+        if common_port_names:
+            # Use first common port name
+            port_name = next(iter(common_port_names))
+            return (port_name, 0, port_name, 0, None)
+        
+        # Strategy 4: If both sides have $ ports, use them (all ports are equivalent)
+        if "$" in left_ports and "$" in right_ports:
+            return ("$", 0, "$", 0, None)
 
-        # Strategy 3: Ambiguous - cannot decide
+        # Strategy 5: Ambiguous - cannot decide
+        # Count total ports (flattened)
+        left_total = sum(len(port_list) for port_list in left_ports.values())
+        right_total = sum(len(port_list) for port_list in right_ports.values())
+        
         raise AmbiguousPortsError(
             f"Cannot auto-select ports between {ctx.get('left_label')} and {ctx.get('right_label')}: "
-            f"left has {len(left_ports)} available ports {list(left_ports.keys())}, "
-            f"right has {len(right_ports)} available ports {list(right_ports.keys())}. "
+            f"left has {left_total} available ports across {len(left_ports)} port names {list(left_ports.keys())}, "
+            f"right has {right_total} available ports across {len(right_ports)} port names {list(right_ports.keys())}. "
             "Use TableConnector or CallbackConnector to specify explicit rules."
         )
 
@@ -165,10 +204,10 @@ class TableConnector(Connector):
         self,
         left: Atomistic,
         right: Atomistic,
-        left_ports: Mapping[str, PortInfo],
-        right_ports: Mapping[str, PortInfo],
+        left_ports: Mapping[str, list[PortInfo]],
+        right_ports: Mapping[str, list[PortInfo]],
         ctx: ConnectorContext,
-    ) -> tuple[str, str, BondKind | None]:
+    ) -> tuple[str, int, str, int, BondKind | None]:
         """Select ports using table lookup."""
 
         left_label = ctx.get("left_label", "")
@@ -177,10 +216,11 @@ class TableConnector(Connector):
 
         if key in self.rules:
             rule = self.rules[key]
+            # Use first port (index 0) when multiple ports have the same name
             if len(rule) == 2:
-                return (rule[0], rule[1], None)
+                return (rule[0], 0, rule[1], 0, None)
             else:
-                return (rule[0], rule[1], rule[2])
+                return (rule[0], 0, rule[1], 0, rule[2])
 
         # Try fallback if available
         if self.fallback is not None:
@@ -230,18 +270,19 @@ class CallbackConnector(Connector):
         self,
         left: Atomistic,
         right: Atomistic,
-        left_ports: Mapping[str, PortInfo],
-        right_ports: Mapping[str, PortInfo],
+        left_ports: Mapping[str, list[PortInfo]],
+        right_ports: Mapping[str, list[PortInfo]],
         ctx: ConnectorContext,
-    ) -> tuple[str, str, BondKind | None]:
+    ) -> tuple[str, int, str, int, BondKind | None]:
         """Select ports using user callback."""
 
         result = self.fn(left, right, left_ports, right_ports, ctx)
 
-        if len(result) == 2:
-            return (result[0], result[1], None)
+        # Callback can return either (name, idx, name, idx) or (name, idx, name, idx, bond_kind)
+        if len(result) == 4:
+            return (result[0], result[1], result[2], result[3], None)
         else:
-            return (result[0], result[1], result[2])
+            return (result[0], result[1], result[2], result[3], result[4])
 
 
 class ChainConnector(Connector):
@@ -268,10 +309,10 @@ class ChainConnector(Connector):
         self,
         left: Atomistic,
         right: Atomistic,
-        left_ports: Mapping[str, PortInfo],
-        right_ports: Mapping[str, PortInfo],
+        left_ports: Mapping[str, list[PortInfo]],
+        right_ports: Mapping[str, list[PortInfo]],
         ctx: ConnectorContext,
-    ) -> tuple[str, str, BondKind | None]:
+    ) -> tuple[str, int, str, int, BondKind | None]:
         """Try connectors in order until one succeeds."""
 
         errors = []
@@ -382,22 +423,23 @@ class ReacterConnector(Connector):
         self,
         left: Atomistic,
         right: Atomistic,
-        left_ports: Mapping[str, PortInfo],
-        right_ports: Mapping[str, PortInfo],
+        left_ports: Mapping[str, list[PortInfo]],
+        right_ports: Mapping[str, list[PortInfo]],
         ctx: ConnectorContext,
-    ) -> tuple[str, str, BondKind | None]:
+    ) -> tuple[str, int, str, int, BondKind | None]:
         """
         Select ports using the configured port_map.
 
         Args:
             left: Left Atomistic structure
             right: Right Atomistic structure
-            left_ports: Available ports on left
-            right_ports: Available ports on right
+            left_ports: Available ports on left (port name -> list of PortInfo)
+            right_ports: Available ports on right (port name -> list of PortInfo)
             ctx: Connector context with structure type information
 
         Returns:
-            Tuple of (port_L, port_R, None)
+            Tuple of (port_L, port_L_idx, port_R, port_R_idx, None)
+            Uses index 0 when multiple ports share the same name.
 
         Raises:
             ValueError: If port mapping not found or ports invalid
@@ -425,7 +467,8 @@ class ReacterConnector(Connector):
                 f"Selected port '{port_R}' not found in right structure ({right_type})"
             )
 
-        return port_L, port_R, None  # bond_kind determined by reacter
+        # Use first port (index 0) when multiple ports share the same name
+        return port_L, 0, port_R, 0, None  # bond_kind determined by reacter
 
     def connect(
         self,

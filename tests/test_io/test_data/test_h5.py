@@ -531,7 +531,10 @@ class TestHDF5Compression:
 
         h5_file = tmp_path / f"test_gzip_{compression_opts}.h5"
         write_h5(
-            h5_file, original_frame, compression="gzip", compression_opts=compression_opts
+            h5_file,
+            original_frame,
+            compression="gzip",
+            compression_opts=compression_opts,
         )
 
         assert h5_file.exists()

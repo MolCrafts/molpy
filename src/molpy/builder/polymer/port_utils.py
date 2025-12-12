@@ -7,47 +7,54 @@ replacing the previous Monomer.ports dictionary approach.
 
 from typing import Any
 
-from molpy.core.atomistic import Atomistic, Atom
+from molpy.core.atomistic import Atom, Atomistic
 
 
-def get_ports(struct: Atomistic) -> dict[str, Atom]:
+def get_ports(struct: Atomistic) -> dict[str, list[Atom]]:
     """
     Get all ports from an Atomistic structure.
 
-    Returns a dictionary mapping port names to the atoms that have those ports.
+    Returns a dictionary mapping port names to lists of atoms that have those ports.
+    Multiple atoms can have the same port name (e.g., BigSMILES [$]CC[$]CC[$]).
 
     Args:
         struct: Atomistic structure to extract ports from
 
     Returns:
-        Dictionary mapping port name -> atom entity
+        Dictionary mapping port name -> list of atom entities
 
     Example:
         >>> # Mark ports on atoms
         >>> atom1["port"] = "head"
         >>> atom2["port"] = "tail"
+        >>> atom3["port"] = "head"  # Same name as atom1
         >>> ports = get_ports(struct)
-        >>> # ports = {"head": atom1, "tail": atom2}
+        >>> # ports = {"head": [atom1, atom3], "tail": [atom2]}
     """
-    ports: dict[str, Atom] = {}
+    ports: dict[str, list[Atom]] = {}
     for atom in struct.atoms:
         # Check single port marker
         port_name = atom.get("port")
         if port_name is not None:
-            ports[port_name] = atom
+            if port_name not in ports:
+                ports[port_name] = []
+            ports[port_name].append(atom)
     return ports
 
 
 def get_port_atom(struct: Atomistic, port_name: str) -> Atom | None:
     """
-    Get the atom entity for a specific port name.
+    Get the first atom entity for a specific port name.
+
+    Note: If multiple atoms have the same port name, this returns only the first one.
+    Use get_ports() to get all atoms with a given port name.
 
     Args:
         struct: Atomistic structure to search
         port_name: Name of the port to find
 
     Returns:
-        Atom entity with the port, or None if not found
+        First atom entity with the port, or None if not found
     """
     for atom in struct.atoms:
         if atom.get("port") == port_name:
@@ -183,14 +190,17 @@ class PortInfo:
 
 def get_port_info(struct: Atomistic, port_name: str) -> PortInfo | None:
     """
-    Get PortInfo object for a port name.
+    Get the first PortInfo object for a port name.
+
+    Note: If multiple atoms have the same port name, this returns only the first one.
+    Use get_all_port_info() to get all ports with a given name.
 
     Args:
         struct: Atomistic structure
         port_name: Port name
 
     Returns:
-        PortInfo object or None if port not found
+        First PortInfo object or None if port not found
     """
     atom = get_port_atom(struct, port_name)
     if atom is None:
@@ -200,21 +210,27 @@ def get_port_info(struct: Atomistic, port_name: str) -> PortInfo | None:
     return PortInfo(port_name, atom, **metadata)
 
 
-def get_all_port_info(struct: Atomistic) -> dict[str, PortInfo]:
+def get_all_port_info(struct: Atomistic) -> dict[str, list[PortInfo]]:
     """
     Get all PortInfo objects from an Atomistic structure.
+
+    Returns a dictionary mapping port names to lists of PortInfo objects.
+    Multiple atoms can have the same port name (e.g., BigSMILES [$]CC[$]CC[$]).
 
     Args:
         struct: Atomistic structure
 
     Returns:
-        Dictionary mapping port name -> PortInfo
+        Dictionary mapping port name -> list of PortInfo objects
     """
-    ports: dict[str, PortInfo] = {}
+    ports: dict[str, list[PortInfo]] = {}
     for atom in struct.atoms:
         # Check single port marker
         port_name = atom.get("port")
         if port_name is not None:
             metadata = get_port_metadata(atom, port_name)
-            ports[port_name] = PortInfo(port_name, atom, **metadata)
+            if port_name not in ports:
+                ports[port_name] = []
+            ports[port_name].append(PortInfo(port_name, atom, **metadata))
     return ports
+

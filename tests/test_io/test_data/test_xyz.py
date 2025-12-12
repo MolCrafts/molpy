@@ -22,6 +22,13 @@ class TestXYZReader:
         frame = reader.read()
 
         box = frame.box
+        # Check that coordinates are stored as separate x, y, z fields
+        assert "x" in frame["atoms"]
+        assert "y" in frame["atoms"]
+        assert "z" in frame["atoms"]
+        assert frame["atoms"]["x"].shape == (192,)
+        assert frame["atoms"]["y"].shape == (192,)
+        assert frame["atoms"]["z"].shape == (192,)
         assert isinstance(box, Box)
         assert box.matrix.shape == (3, 3)
         assert np.allclose(
@@ -43,4 +50,3 @@ class TestXYZReader:
 
         pytest.approx(frame.metadata["ENERGY"], -2069.84934116)
 
-        assert frame["atoms"]["xyz"].shape == (192, 3)

@@ -45,6 +45,20 @@ def write_pdb(file: PathLike, frame: Any) -> None:
     writer.write(frame)
 
 
+def write_gro(file: PathLike, frame: Any) -> None:
+    """
+    Write a Frame object to a GROMACS GRO file.
+
+    Args:
+        file: Output file path
+        frame: Frame object to write
+    """
+    from .data.gro import GroWriter
+
+    writer = GroWriter(Path(file))
+    writer.write(frame)
+
+
 def write_xsf(file: PathLike, frame: Any) -> None:
     """
     Write a Frame object to an XSF file.

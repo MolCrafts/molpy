@@ -7,7 +7,7 @@ product assembly.
 
 from typing import cast
 
-from molpy import Atom, Atomistic, Bond
+from molpy.core.atomistic import Atom, Atomistic, Bond
 from molpy.core.entity import Entity
 
 from .base import BondFormer

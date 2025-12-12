@@ -6,6 +6,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from molpy.core.forcefield import AngleStyle, AngleType, AtomType
+from molpy.potential.utils import TypeIndexedArray
 
 from .base import AnglePotential
 
@@ -15,23 +16,26 @@ class AngleHarmonic(AnglePotential):
     type = "angle"
 
     def __init__(
-        self, k: NDArray[np.floating] | float, theta0: NDArray[np.floating] | float
+        self, 
+        k: NDArray[np.floating] | float | dict[str, float], 
+        theta0: NDArray[np.floating] | float | dict[str, float]
     ):
         """
         Initialize harmonic angle potential.
 
         Args:
-            k: Force constant in kcal/mol/rad² (LAMMPS format)
-            theta0: Equilibrium angle in degrees (array for multiple types, or scalar)
+            k: Force constant in kcal/mol/rad² (array, scalar, or dict mapping type names to values)
+            theta0: Equilibrium angle in degrees (array, scalar, or dict mapping type names to values)
         """
-        self.k = np.array(k, dtype=np.float64)
-        self.theta0 = np.array(theta0, dtype=np.float64)
+        # TypeIndexedArray automatically handles both integer and string indexing
+        self.k = TypeIndexedArray(k).reshape(-1, 1)
+        self.theta0 = TypeIndexedArray(theta0).reshape(-1, 1)
 
     def calc_energy(
         self,
         r: NDArray[np.floating],
         angle_idx: NDArray[np.integer],
-        angle_types: NDArray[np.integer],
+        angle_types: NDArray[np.integer] | NDArray[np.str_],
     ) -> float:
         """
         Calculate angle energy.
@@ -65,6 +69,7 @@ class AngleHarmonic(AnglePotential):
         theta_rad = np.arccos(cos_theta)
 
         # theta0 is stored in degrees, convert to radians for calculation
+        # TypeIndexedArray automatically handles both integer and string indexing
         theta0_rad = np.deg2rad(self.theta0[angle_types])
 
         # Calculate energy using LAMMPS formula: E = k * (theta_rad - theta0_rad)^2
@@ -77,7 +82,7 @@ class AngleHarmonic(AnglePotential):
         self,
         r: NDArray[np.floating],
         angle_idx: NDArray[np.integer],
-        angle_types: NDArray[np.integer],
+        angle_types: NDArray[np.integer] | NDArray[np.str_],
     ) -> NDArray[np.floating]:
         """
         Calculate angle forces.
@@ -114,12 +119,16 @@ class AngleHarmonic(AnglePotential):
         theta_rad = np.arccos(cos_theta)
 
         # theta0 is stored in degrees, convert to radians for calculation
+        # TypeIndexedArray automatically handles both integer and string indexing
         theta0_rad = np.deg2rad(self.theta0[angle_types])
 
         # Calculate force magnitude using LAMMPS formula
         # dE/dtheta_rad = 2 * k * (theta_rad - theta0_rad)
         # k is in kcal/mol/rad²
-        dtheta = -2.0 * self.k[angle_types] * (theta_rad.squeeze() - theta0_rad)
+        k_vals = self.k[angle_types].squeeze()
+        theta0_rad_vals = theta0_rad.squeeze()
+        theta_rad_vals = theta_rad.squeeze()
+        dtheta = -2.0 * k_vals * (theta_rad_vals - theta0_rad_vals)
 
         # Calculate force directions
         norm_c = np.linalg.norm(c, axis=-1, keepdims=True)

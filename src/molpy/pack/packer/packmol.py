@@ -14,7 +14,8 @@ from pathlib import Path
 import numpy as np
 
 import molpy.io as mp_io
-from molpy import Frame, Script
+from molpy.core.frame import Frame
+from molpy.core.script import Script
 
 from ..target import Target
 from .base import Packer
@@ -188,6 +189,8 @@ class Packmol(Packer):
             frame = target.frame
             number = target.number
             constraint = target.constraint
+
+            # Frame should already have x, y, z fields (never use xyz)
 
             # Create structure file
             struct_file = workdir / f"structure_{i}.pdb"
@@ -516,20 +519,10 @@ class Packmol(Packer):
         if all_dihedrals:
             final_frame["dihedrals"] = concat_blocks(all_dihedrals)
 
-        # Validate that all required fields are present in final frame
-        required_atom_fields = ["type", "charge"]
-        for field in required_atom_fields:
-            if field not in final_frame["atoms"]:
-                raise ValueError(
-                    f"Required field '{field}' missing in final packed frame. "
-                    f"Available fields: {list(final_frame['atoms'].keys())}"
-                )
-
         # Step 4: Write optimized coordinates back to expanded frame
         # Packmol returns coordinates in optimized_frame, overwrite them
-        if "xyz" in optimized_frame["atoms"]:
-            final_frame["atoms"]["xyz"] = optimized_frame["atoms"]["xyz"]
-        elif (
+        # Always use x, y, z fields (never use xyz)
+        if (
             "x" in optimized_frame["atoms"]
             and "y" in optimized_frame["atoms"]
             and "z" in optimized_frame["atoms"]

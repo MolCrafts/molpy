@@ -1,3 +1,4 @@
+import numpy as np
 import molpy as mp
 
 
@@ -20,5 +21,11 @@ class TestAmberInpcrdReader:
 
         assert n_atoms == 16  # Based on the file content
 
-        xyz = atoms["xyz"]
+        # Check coordinates - stored as separate x, y, z fields
+        assert "x" in atoms
+        assert "y" in atoms
+        assert "z" in atoms
+        
+        # Combine into xyz for comparison
+        xyz = np.column_stack([atoms["x"], atoms["y"], atoms["z"]])
         assert xyz.shape == (n_atoms, 3)

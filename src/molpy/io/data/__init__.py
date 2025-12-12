@@ -4,8 +4,10 @@
 
 # 1. Base classes (deepest)
 from .base import DataReader, DataWriter
+from .gro import GroWriter
 
 __all__ = [
     "DataReader",
     "DataWriter",
+    "GroWriter",
 ]

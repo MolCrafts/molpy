@@ -353,62 +353,61 @@ def create_monomer_from_repeat_unit(
                 bonds_added.add(bond_key)
 
     # Set ports based on descriptors
-    # Use terminal descriptors from stochastic object
-    left_descriptors = stoch_obj.left_terminal.descriptors
-    right_descriptors = stoch_obj.right_terminal.descriptors
+    # Use position_hint if available, otherwise assign sequentially
+    all_descriptors = stoch_obj.terminals.descriptors
 
-    # Also check descriptors in the graph itself (repeat unit internal descriptors)
-    all_descriptors = list(graph.descriptors)
-
-    # Find ports from descriptors with anchor_atom
-    for descriptor in all_descriptors + left_descriptors + right_descriptors:
-        if descriptor.anchor_atom is not None:
-            try:
-                atom_idx = graph.atoms.index(descriptor.anchor_atom)
-                if atom_idx < len(atoms):
-                    port_name = descriptor_to_port_name(descriptor)
-                    atoms[atom_idx]["port"] = port_name
-            except ValueError:
-                pass
-
-    # Handle descriptors without anchor_atom (internal descriptors in repeat units)
-    # For [<], assign to first atom; for [>], assign to last atom
-    if len(atoms) > 0:
-        for descriptor in all_descriptors:
-            if descriptor.anchor_atom is None:
+    if len(atoms) > 0 and all_descriptors:
+        # Separate descriptors by position hint
+        first_descriptors = [d for d in all_descriptors if d.position_hint == "first"]
+        last_descriptors = [d for d in all_descriptors if d.position_hint == "last"]
+        other_descriptors = [d for d in all_descriptors if d.position_hint is None]
+        
+        # Assign first descriptors to first atom(s)
+        for descriptor in first_descriptors:
+            if len(atoms) > 0 and atoms[0].get("port") is None:
                 port_name = descriptor_to_port_name(descriptor)
-                if descriptor.symbol == "<":
-                    # [<] at start of repeat unit -> first atom
-                    if atoms[0].get("port") is None:
-                        atoms[0]["port"] = port_name
-                elif descriptor.symbol == ">":
-                    # [>] at end of repeat unit -> last atom
-                    if atoms[-1].get("port") is None:
-                        atoms[-1]["port"] = port_name
-
-    # Also check if left_terminal descriptor should apply to this repeat unit
-    # This handles cases where [<] appears at the start of a repeat unit
-    # but wasn't extracted as a graph descriptor
-    if len(atoms) > 0 and left_descriptors:
-        # Check if first atom doesn't have a port yet
-        if atoms[0].get("port") is None:
-            left_desc = left_descriptors[0]
-            port_name = descriptor_to_port_name(left_desc)
-            atoms[0]["port"] = port_name
-
-    # If no ports found from descriptors, use terminal descriptors convention
-    # Left descriptor -> first atom, right descriptor -> last atom
-    if len(atoms) > 0:
-        has_ports = any(atom.get("port") is not None for atom in atoms)
-        if not has_ports:
-            if left_descriptors:
-                left_desc = left_descriptors[0]
-                port_name = descriptor_to_port_name(left_desc)
                 atoms[0]["port"] = port_name
-            if right_descriptors:
-                right_desc = right_descriptors[0]
-                port_name = descriptor_to_port_name(right_desc)
+                from molpy.builder.polymer.port_utils import set_port_metadata
+                set_port_metadata(
+                    atoms[0],
+                    port_name,
+                    role="terminal",
+                    bond_kind="-",
+                    compat=set(),
+                    priority=0,
+                )
+        
+        # Assign last descriptors to last atom(s)
+        for descriptor in last_descriptors:
+            if len(atoms) > 0 and atoms[-1].get("port") is None:
+                port_name = descriptor_to_port_name(descriptor)
                 atoms[-1]["port"] = port_name
+                from molpy.builder.polymer.port_utils import set_port_metadata
+                set_port_metadata(
+                    atoms[-1],
+                    port_name,
+                    role="terminal",
+                    bond_kind="-",
+                    compat=set(),
+                    priority=0,
+                )
+        
+        # Assign other descriptors sequentially to available atoms
+        available_atom_indices = [i for i in range(len(atoms)) if atoms[i].get("port") is None]
+        for i, descriptor in enumerate(other_descriptors):
+            if i < len(available_atom_indices):
+                atom_idx = available_atom_indices[i]
+                port_name = descriptor_to_port_name(descriptor)
+                atoms[atom_idx]["port"] = port_name
+                from molpy.builder.polymer.port_utils import set_port_metadata
+                set_port_metadata(
+                    atoms[atom_idx],
+                    port_name,
+                    role="terminal",
+                    bond_kind="-",
+                    compat=set(),
+                    priority=0,
+                )
 
     return struct
 
@@ -470,15 +469,7 @@ def create_monomer_from_end_group(
                 bonds_added.add(bond_key)
 
     # Set ports from descriptors
-    for descriptor in graph.descriptors:
-        if descriptor.anchor_atom is not None:
-            try:
-                atom_idx = graph.atoms.index(descriptor.anchor_atom)
-                if atom_idx < len(atoms):
-                    port_name = descriptor_to_port_name(descriptor)
-                    atoms[atom_idx]["port"] = port_name
-            except ValueError:
-                pass
+    # All descriptors are unified in terminals - no graph descriptors to process
 
     return struct
 

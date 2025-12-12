@@ -12,7 +12,10 @@ from typing import Any
 
 import numpy as np
 
-from molpy import Block, Box, ForceField, Frame
+from molpy.core.frame import Block
+from molpy.core.box import Box
+from molpy.core.forcefield import ForceField
+from molpy.core.frame import Frame
 
 from .base import DataReader, DataWriter
 
@@ -461,8 +464,8 @@ class LammpsDataWriter(DataWriter):
 
     **Frame Structure:**
     - Atoms: Must include 'id' field. Other required fields depend on atom_style.
-    - Bonds/Angles/Dihedrals: Use atom indices in 'atom_i', 'atom_j', etc.
-      (from to_frame()) or 'atom1', 'atom2', etc. (legacy format).
+    - Bonds/Angles/Dihedrals: Use atom indices in 'atom_i', 'atom_j', 'atom_k', 'atom_l'
+      (from to_frame()). These are 0-based indices that will be converted to 1-based atom IDs.
     """
 
     def __init__(self, path: str | Path, atom_style: str = "full") -> None:
@@ -1041,7 +1044,43 @@ class LammpsDataWriter(DataWriter):
             type_to_id = self._get_type_to_id_mapping(type_list)
 
         data = frame[section_name]
-        for idx in range(len(data["type"])):
+        
+        # Validate that 'type' field exists
+        if "type" not in data:
+            raise ValueError(
+                f"{section_name.capitalize()} data must have 'type' field. "
+                f"Available fields: {list(data.keys())}"
+            )
+        
+        # Get number of items from the data block (not from type length)
+        n_items = data.nrows
+        
+        # Validate that all required atom index fields exist
+        if section_name == "bonds":
+            if "atom_i" not in data or "atom_j" not in data:
+                raise ValueError(
+                    f"Bonds must have 'atom_i' and 'atom_j' fields (0-based atom indices)"
+                )
+        elif section_name == "angles":
+            if "atom_i" not in data or "atom_j" not in data or "atom_k" not in data:
+                raise ValueError(
+                    f"Angles must have 'atom_i', 'atom_j', and 'atom_k' fields (0-based atom indices)"
+                )
+        elif section_name in ["dihedrals", "impropers"]:
+            if "atom_i" not in data or "atom_j" not in data or "atom_k" not in data or "atom_l" not in data:
+                raise ValueError(
+                    f"{section_name.capitalize()} must have 'atom_i', 'atom_j', 'atom_k', and 'atom_l' "
+                    f"fields (0-based atom indices)"
+                )
+        
+        # Validate that type field has the same length as atom index fields
+        if len(data["type"]) != n_items:
+            raise ValueError(
+                f"{section_name.capitalize()} 'type' field has {len(data['type'])} values, "
+                f"but expected {n_items} (based on atom index fields)"
+            )
+        
+        for idx in range(n_items):
             item_id = idx + 1
             item_type_str = str(data["type"][idx])
             # Use merged type_id mapping, fallback to old behavior
@@ -1058,105 +1097,80 @@ class LammpsDataWriter(DataWriter):
 
             if section_name == "bonds":
                 # Convert indices to IDs
-                # Support both atom_i/atom_j (from to_frame) and atom1/atom2 (from legacy)
-                if "atom_i" in data and "atom_j" in data:
-                    atom1_idx = int(data["atom_i"][idx])
-                    atom2_idx = int(data["atom_j"][idx])
-                elif "atom1" in data and "atom2" in data:
-                    # Legacy format: atom1/atom2 might already be IDs or indices
-                    # Try to convert from index if value is < len(atoms)
-                    val1 = int(data["atom1"][idx])
-                    val2 = int(data["atom2"][idx])
-                    if val1 in index_to_id:
-                        atom1_idx = val1
-                        atom2_idx = val2
-                    else:
-                        # Already IDs, use directly
-                        atom1_id = val1
-                        atom2_id = val2
-                        lines.append(f"{item_id} {item_type} {atom1_id} {atom2_id}")
-                        continue
-                else:
-                    raise ValueError(
-                        f"Bonds must have either 'atom_i'/'atom_j' or 'atom1'/'atom2' fields"
-                    )
+                atom1_idx = int(data["atom_i"][idx])
+                atom2_idx = int(data["atom_j"][idx])
 
+                # Validate indices before converting - raise error if invalid
+                if atom1_idx not in index_to_id:
+                    raise ValueError(
+                        f"Bond {idx + 1}: atom_i index {atom1_idx} is out of range. "
+                        f"Valid indices: 0-{len(atoms_data) - 1}"
+                    )
+                if atom2_idx not in index_to_id:
+                    raise ValueError(
+                        f"Bond {idx + 1}: atom_j index {atom2_idx} is out of range. "
+                        f"Valid indices: 0-{len(atoms_data) - 1}"
+                    )
+                    
                 atom1_id = index_to_id[atom1_idx]
                 atom2_id = index_to_id[atom2_idx]
                 lines.append(f"{item_id} {item_type} {atom1_id} {atom2_id}")
             elif section_name == "angles":
                 # Convert indices to IDs
-                if "atom_i" in data and "atom_j" in data and "atom_k" in data:
-                    atom1_idx = int(data["atom_i"][idx])
-                    atom2_idx = int(data["atom_j"][idx])
-                    atom3_idx = int(data["atom_k"][idx])
-                elif "atom1" in data and "atom2" in data and "atom3" in data:
-                    val1 = int(data["atom1"][idx])
-                    val2 = int(data["atom2"][idx])
-                    val3 = int(data["atom3"][idx])
-                    if val1 in index_to_id:
-                        atom1_idx = val1
-                        atom2_idx = val2
-                        atom3_idx = val3
-                    else:
-                        atom1_id = val1
-                        atom2_id = val2
-                        atom3_id = val3
-                        lines.append(
-                            f"{item_id} {item_type} {atom1_id} {atom2_id} {atom3_id}"
-                        )
-                        continue
-                else:
-                    raise ValueError(
-                        f"Angles must have either 'atom_i'/'atom_j'/'atom_k' or 'atom1'/'atom2'/'atom3' fields"
-                    )
+                atom1_idx = int(data["atom_i"][idx])
+                atom2_idx = int(data["atom_j"][idx])
+                atom3_idx = int(data["atom_k"][idx])
 
+                # Validate indices before converting - raise error if invalid
+                if atom1_idx not in index_to_id:
+                    raise ValueError(
+                        f"Angle {idx + 1}: atom_i index {atom1_idx} is out of range. "
+                        f"Valid indices: 0-{len(atoms_data) - 1}"
+                    )
+                if atom2_idx not in index_to_id:
+                    raise ValueError(
+                        f"Angle {idx + 1}: atom_j index {atom2_idx} is out of range. "
+                        f"Valid indices: 0-{len(atoms_data) - 1}"
+                    )
+                if atom3_idx not in index_to_id:
+                    raise ValueError(
+                        f"Angle {idx + 1}: atom_k index {atom3_idx} is out of range. "
+                        f"Valid indices: 0-{len(atoms_data) - 1}"
+                    )
+                    
                 atom1_id = index_to_id[atom1_idx]
                 atom2_id = index_to_id[atom2_idx]
                 atom3_id = index_to_id[atom3_idx]
                 lines.append(f"{item_id} {item_type} {atom1_id} {atom2_id} {atom3_id}")
             elif section_name in ["dihedrals", "impropers"]:
                 # Convert indices to IDs
-                if (
-                    "atom_i" in data
-                    and "atom_j" in data
-                    and "atom_k" in data
-                    and "atom_l" in data
-                ):
-                    atom1_idx = int(data["atom_i"][idx])
-                    atom2_idx = int(data["atom_j"][idx])
-                    atom3_idx = int(data["atom_k"][idx])
-                    atom4_idx = int(data["atom_l"][idx])
-                elif (
-                    "atom1" in data
-                    and "atom2" in data
-                    and "atom3" in data
-                    and "atom4" in data
-                ):
-                    val1 = int(data["atom1"][idx])
-                    val2 = int(data["atom2"][idx])
-                    val3 = int(data["atom3"][idx])
-                    val4 = int(data["atom4"][idx])
-                    if val1 in index_to_id:
-                        atom1_idx = val1
-                        atom2_idx = val2
-                        atom3_idx = val3
-                        atom4_idx = val4
-                    else:
-                        atom1_id = val1
-                        atom2_id = val2
-                        atom3_id = val3
-                        atom4_id = val4
-                        lines.append(
-                            f"{item_id} {item_type} {atom1_id} {atom2_id} {atom3_id} {atom4_id}"
-                        )
-                        continue
-                else:
-                    raise ValueError(
-                        f"{section_name.capitalize()} must have either 'atom_i'/'atom_j'/'atom_k'/'atom_l' "
-                        f"or 'atom1'/'atom2'/'atom3'/'atom4' fields"
-                    )
+                atom1_idx = int(data["atom_i"][idx])
+                atom2_idx = int(data["atom_j"][idx])
+                atom3_idx = int(data["atom_k"][idx])
+                atom4_idx = int(data["atom_l"][idx])
 
+                # Validate indices before converting - raise error if invalid
+                if atom1_idx not in index_to_id:
+                    raise ValueError(
+                        f"{section_name.capitalize()} {idx + 1}: atom_i index {atom1_idx} is out of range. "
+                        f"Valid indices: 0-{len(atoms_data) - 1}"
+                    )
+                if atom2_idx not in index_to_id:
+                    raise ValueError(
+                        f"{section_name.capitalize()} {idx + 1}: atom_j index {atom2_idx} is out of range. "
+                        f"Valid indices: 0-{len(atoms_data) - 1}"
+                    )
+                if atom3_idx not in index_to_id:
+                    raise ValueError(
+                        f"{section_name.capitalize()} {idx + 1}: atom_k index {atom3_idx} is out of range. "
+                        f"Valid indices: 0-{len(atoms_data) - 1}"
+                    )
+                if atom4_idx not in index_to_id:
+                    raise ValueError(
+                        f"{section_name.capitalize()} {idx + 1}: atom_l index {atom4_idx} is out of range. "
+                        f"Valid indices: 0-{len(atoms_data) - 1}"
+                    )
+                    
                 atom1_id = index_to_id[atom1_idx]
                 atom2_id = index_to_id[atom2_idx]
                 atom3_id = index_to_id[atom3_idx]

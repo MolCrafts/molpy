@@ -6,7 +6,8 @@ import numpy as np
 from ..target import Target
 
 if TYPE_CHECKING:
-    import molpy as mp
+    from molpy.core.frame import Frame
+
     from ..constraint import Constraint
 
 
@@ -22,7 +23,7 @@ class Packer(ABC):
 
     def def_target(
         self,
-        frame: "mp.Frame",
+        frame: "Frame",
         number: int,
         constraint: "Constraint",
         is_fixed: bool = False,
@@ -51,7 +52,7 @@ class Packer(ABC):
         targets: list[Target] | None = None,
         max_steps: int = 1000,
         seed: int | None = None,
-    ) -> "mp.Frame":
+    ) -> "Frame":
         """
         Pack molecules according to targets.
 
@@ -71,7 +72,7 @@ class Packer(ABC):
         max_steps: int = 1000,
         seed: int | None = None,
         **kwargs,
-    ) -> "mp.Frame":
+    ) -> "Frame":
         """
         Call packer as a function. Delegates to pack() method.
 

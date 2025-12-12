@@ -1,0 +1,349 @@
+{
+    "valid": [
+        {
+            "name": "Polyethylene (PE) Basic",
+            "input": "{[][<]CC[>][]}",
+            "description": "Simple PE repeat unit with default AB ports.",
+            "expected_ir": {
+                "atoms": [
+                    {
+                        "id": 0,
+                        "element": "C",
+                        "ports": [
+                            {
+                                "type": "AB_in",
+                                "id": 1,
+                                "atom_id": 0
+                            }
+                        ]
+                    },
+                    {
+                        "id": 1,
+                        "element": "C",
+                        "ports": [
+                            {
+                                "type": "AB_out",
+                                "id": 1,
+                                "atom_id": 1
+                            }
+                        ]
+                    }
+                ],
+                "bonds": [
+                    [
+                        0,
+                        1
+                    ]
+                ]
+            }
+        },
+        {
+            "name": "Poly(ethylene-butene) Stochastic",
+            "input": "{[][$]CC[$],[$]CC(CC)[$][]}",
+            "description": "Stochastic object with two repeat units, AA type. Manual Example.",
+            "expected_ir": {
+                "repeat_units": [
+                    {
+                        "descriptors": [
+                            "$",
+                            "$"
+                        ]
+                    },
+                    {
+                        "descriptors": [
+                            "$",
+                            "$"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "Random Copolymer (Manual)",
+            "input": "{[][$]CC(C#N)[$],[$]CC(c1ccccc1)[$][]}",
+            "description": "Random copolymer of acrylonitrile and styrene.",
+            "expected_ir": {
+                "repeat_units": [
+                    {
+                        "descriptors": [
+                            "$",
+                            "$"
+                        ]
+                    },
+                    {
+                        "descriptors": [
+                            "$",
+                            "$"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "Block Copolymer (Manual)",
+            "input": "{[][<]OCC[>][<]}{[>][<]OC(C)C[>][]}",
+            "description": "Block copolymer: Poly(ethylene oxide) -block- Poly(propylene oxide). Two stochastic objects.",
+            "expected_ir": {
+                "stochastic_objects_count": 2
+            }
+        },
+        {
+            "name": "Alternating Polymer (Manual)",
+            "input": "{[][<]C(=O)c1ccc(cc1)C(=O)[<],[>]OCCO[>][]}",
+            "description": "Alternating polyester (PET-like structure but alternating definition).",
+            "expected_ir": {
+                "repeat_units": [
+                    {
+                        "descriptors": [
+                            "<",
+                            "<"
+                        ]
+                    },
+                    {
+                        "descriptors": [
+                            ">",
+                            ">"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "Branched Polymer (Manual)",
+            "input": "{[][$]CC[$],[$]CC([$])[$][]}",
+            "description": "Branched polyethylene (3 AA descriptors in one unit).",
+            "expected_ir": {
+                "repeat_units": [
+                    {
+                        "descriptors": [
+                            "$",
+                            "$"
+                        ]
+                    },
+                    {
+                        "descriptors": [
+                            "$",
+                            "$",
+                            "$"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "Polymer Graft (Manual)",
+            "input": "{[][$]CC(C)(C)[$],[$]CC(c1ccc(cc1)C{[$][$]CC(C)(C(=O)OC)[$][$]}Br)[$][]}",
+            "description": "Graft copolymer with nested stochastic object.",
+            "expected_ir": {
+                "nested_stochastic_objects": true
+            }
+        },
+        {
+            "name": "Macromonomer (Manual)",
+            "input": "{[][>]C(=O)Nc1ccc(C)c(c1)NC(=O)[>],[<]OCC{[<][>]OCC[<][>]}O[<],[<]OCCCO[<][]}",
+            "description": "Polyurethane with oligomer chain extenders (nested).",
+            "expected_ir": {
+                "nested_stochastic_objects": true
+            }
+        },
+        {
+            "name": "Ladder Polymer (Manual - Valid AA)",
+            "input": "{[][$1[<1]1]C[$1[>1]1][]}",
+            "description": "simplified ladder representation logic (checking nested descriptor syntax parsing).",
+            "expected_ir": {
+                "atoms": [
+                    {
+                        "id": 0,
+                        "element": "C",
+                        "ports": [
+                            {
+                                "type": "AA",
+                                "id": 1,
+                                "inner": {
+                                    "type": "AB_in",
+                                    "id": 1
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "id": 1,
+                        "element": "C",
+                        "ports": [
+                            {
+                                "type": "AA",
+                                "id": 1,
+                                "inner": {
+                                    "type": "AB_out",
+                                    "id": 1
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "Tacticity - Isotactic PP",
+            "input": "{[][<]C[C@@H](C)[>][]}",
+            "description": "Isotactic Polypropylene with stereochemistry.",
+            "expected_ir": {
+                "atoms": [
+                    {
+                        "element": "C",
+                        "chiral": "@@"
+                    }
+                ]
+            }
+        },
+        {
+            "name": "Geometric Isomer - Trans",
+            "input": "{[][$]/C=C/[$][]}",
+            "description": "Trans-polyacetylene.",
+            "expected_ir": {
+                "bonds": [
+                    {
+                        "order": 2,
+                        "stereo": "trans"
+                    }
+                ]
+            }
+        },
+        {
+            "name": "Polyelectrolyte (Manual)",
+            "input": "{[][$]CC(C)(C(=O)[O-])[$].[Na+][]}",
+            "description": "Polyelectrolyte with counter-ion.",
+            "expected_ir": {
+                "atoms": [
+                    {
+                        "element": "Na",
+                        "charge": 1
+                    },
+                    {
+                        "element": "O",
+                        "charge": -1
+                    }
+                ]
+            }
+        },
+        {
+            "name": "Nylon-6 Explicit IDs",
+            "input": "{[][<1]CCCCCC(=O)N[>1][]}",
+            "description": "Nylon-6 with explicit ID 1.",
+            "expected_ir": {
+                "atoms": [
+                    {
+                        "id": 0,
+                        "element": "C",
+                        "ports": [
+                            {
+                                "type": "AB_in",
+                                "id": 1
+                            }
+                        ]
+                    },
+                    {
+                        "id": 7,
+                        "element": "N",
+                        "ports": [
+                            {
+                                "type": "AB_out",
+                                "id": 1
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "name": "Multi-Port Atom",
+            "input": "{[][$1]C([$2])[$1][]}",
+            "description": "Single atom with multiple distinct AA descriptors.",
+            "expected_ir": {
+                "atoms": [
+                    {
+                        "id": 0,
+                        "element": "C",
+                        "ports": [
+                            {
+                                "type": "AA",
+                                "id": 1
+                            },
+                            {
+                                "type": "AA",
+                                "id": 2
+                            },
+                            {
+                                "type": "AA",
+                                "id": 1
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    ],
+    "invalid": [
+        {
+            "name": "Forbidden Terminal Descriptor (Left)",
+            "input": "{[<]CC[>][]}",
+            "reason": "Non-empty left terminal descriptor '[<]' is not supported."
+        },
+        {
+            "name": "Forbidden Terminal Descriptor (Right)",
+            "input": "{[][<]CC[>][>]}",
+            "reason": "Non-empty right terminal descriptor '[>]' is not supported."
+        },
+        {
+            "name": "Legacy Terminal Keywords",
+            "input": "{[left]CC[right]}",
+            "reason": "Legacy keywords 'left'/'right' are not supported."
+        },
+        {
+            "name": "Mixed AA/AB on Same Atom",
+            "input": "{[][<]$C[>][]}",
+            "reason": "Atom has both AA ('$') and AB ('<') descriptors."
+        },
+        {
+            "name": "Descriptor attached to Bond",
+            "input": "{[]C-[$]-C[]}",
+            "reason": "Syntax Error: Descriptors must be attached to atoms, not bonds."
+        },
+        {
+            "name": "Malformed Nested Descriptor",
+            "input": "{[][$1[<1]]C[$1][]}",
+            "reason": "Missing closing bracket or group ID for ladder descriptor."
+        }
+    ],
+    "round_trip": [
+        {
+            "input": "{[][<]CC[>][]}"
+        },
+        {
+            "input": "{[][$]CC[$][]}"
+        },
+        {
+            "input": "{[][<]C(=O)CCCCC(=O)[<],[>]NCCCCCCN[>][]}"
+        },
+        {
+            "input": "C{[][<]CC[>][]}"
+        },
+        {
+            "input": "{[][$][#RepUnit][$][]}.{#RepUnit=CC}"
+        }
+    ],
+    "stress": [
+        {
+            "name": "Deeply Nested Graft",
+            "input": "{[][$]C{[$]C{[$]C[$]}[$]}[$][]}"
+        },
+        {
+            "name": "Large Multi-Unit Stochastic",
+            "input": "{[][$]CC[$],[$]CC(C)[$],[$]CC(c1ccccc1)[$],[$]CC(Cl)[$],[$]CC(F)[$],[$]CC(Br)[$][]}"
+        },
+        {
+            "name": "High Branching Density",
+            "input": "{[][<]C([<])([<])([<])C([>])([>])([>])[>][]}"
+        }
+    ]
+}

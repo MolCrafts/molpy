@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-from molpy import ForceField
+from molpy.core.forcefield import ForceField
 
 
 class GromacsTopReader:
@@ -186,7 +186,7 @@ class GromacsTopReader:
         -------
         None
         """
-        from molpy import AtomStyle
+        from molpy.core.forcefield import AtomStyle
 
         atomstyle = ff.def_style(AtomStyle("full"))
 
@@ -242,7 +242,7 @@ class GromacsTopReader:
             if style_name is None:
                 raise ValueError(f"Unknown bond funct '{funct}' in line: {raw}")
 
-            from molpy import BondStyle
+            from molpy.core.forcefield import BondStyle
 
             bondstyle = ff.def_style(BondStyle(style_name))
 
@@ -288,7 +288,7 @@ class GromacsTopReader:
             if style_name is None:
                 raise ValueError(f"Unknown angle funct '{funct}' in line: {raw}")
 
-            from molpy import AngleStyle
+            from molpy.core.forcefield import AngleStyle
 
             anglestyle = ff.def_style(AngleStyle(style_name))
 
@@ -330,7 +330,7 @@ class GromacsTopReader:
             if style_name is None:
                 raise ValueError(f"Unknown dihedral funct '{funct}' in line: {raw}")
 
-            from molpy import DihedralStyle
+            from molpy.core.forcefield import DihedralStyle
 
             dihstyle = ff.def_style(DihedralStyle(style_name))
 
@@ -370,7 +370,7 @@ class GromacsTopReader:
                 raise ValueError(f"Unknown pair funct '{funct}' in line: {raw}")
             param_names = param_specs[style_name]
 
-            from molpy import PairStyle
+            from molpy.core.forcefield import PairStyle
 
             pairstyle = ff.def_style(PairStyle(style_name))
             itype = self.atomtypes[int(i) - 1]

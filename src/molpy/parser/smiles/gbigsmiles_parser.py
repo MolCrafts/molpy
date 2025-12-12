@@ -20,10 +20,11 @@ from .gbigsmiles_ir import (
 
 
 def _iter_descriptors(structure: BigSmilesMoleculeIR) -> Iterable[BondingDescriptorIR]:
+    """Iterate over all bonding descriptors in a BigSmilesMoleculeIR structure."""
     yield from structure.backbone.descriptors
     for sobj in structure.stochastic_objects:
-        yield from sobj.left_terminal.descriptors
-        yield from sobj.right_terminal.descriptors
+        # Use unified terminals field (per BigSMILES v1.1 refactor)
+        yield from sobj.terminals.descriptors
         for repeat_unit in sobj.repeat_units:
             yield from repeat_unit.graph.descriptors
         for end_group in sobj.end_groups:

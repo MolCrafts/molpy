@@ -9,10 +9,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from molpy.core.atomistic import Angle, Atomistic, Bond, Dihedral, Atom
+from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral
 from molpy.core.entity import Entity
 from molpy.reacter.topology_detector import TopologyDetector
-
 from molpy.typifier.atomistic import TypifierBase
 
 # Callable type signatures for reaction components
@@ -127,7 +126,7 @@ class ReactionResult:
     # Backward compatibility properties
     @property
     def reactants(self) -> Atomistic:
-        """Backward compatibility: get reactants (merged left and right)."""
+        """Backward compatibility: return merged reactants."""
         return self.reactant_info.merged_reactants
 
     @property
@@ -495,20 +494,51 @@ class Reacter:
         """
         intermediates: list[dict] = []
 
-        # Step 1: Prepare reactants
-        left_copy, right_copy, left_entity_map, right_entity_map = (
-            self._prepare_reactants(left, right)
-        )
+        # Check if this is a ring closure (left and right are the same object)
+        is_ring_closure = left is right
 
-        # Step 2: Select port atoms and leaving groups
-        port_atom_L = self.port_selector_left(left_copy, port_L)
-        port_atom_R = self.port_selector_right(right_copy, port_R)
+        if is_ring_closure:
+            # For ring closure, work directly on a single copy of the structure
+            # This avoids duplication and ensures port atoms are in the same structure
+            merged = left.copy()
+            # Update atom IDs
+            for i, atom in enumerate(merged.atoms, start=1):
+                atom["id"] = i
+            
+            # Build entity map: original -> copied (for ring closure, left and right are the same)
+            original_atoms = list(left.atoms)
+            copied_atoms = list(merged.atoms)
+            entity_map: dict[Entity, Entity] = {}
+            if len(original_atoms) == len(copied_atoms):
+                for orig, copied in zip(original_atoms, copied_atoms):
+                    entity_map[orig] = copied
+            
+            # For ring closure, left_entity_map and right_entity_map are the same
+            left_entity_map = entity_map
+            right_entity_map = entity_map
+            
+            # Step 2: Select port atoms and leaving groups (both from merged structure)
+            port_atom_L = self.port_selector_left(merged, port_L)
+            port_atom_R = self.port_selector_right(merged, port_R)
+            
+            leaving_L = self.leaving_selector_left(merged, port_atom_L)
+            leaving_R = self.leaving_selector_right(merged, port_atom_R)
+        else:
+            # Step 1: Prepare reactants (normal case)
+            left_copy, right_copy, left_entity_map, right_entity_map = (
+                self._prepare_reactants(left, right)
+            )
 
-        leaving_L = self.leaving_selector_left(left_copy, port_atom_L)
-        leaving_R = self.leaving_selector_right(right_copy, port_atom_R)
+            # Step 2: Select port atoms and leaving groups
+            port_atom_L = self.port_selector_left(left_copy, port_L)
+            port_atom_R = self.port_selector_right(right_copy, port_R)
 
-        # Step 3: Merge structures
-        merged = self._merge_structures(left_copy, right_copy)
+            leaving_L = self.leaving_selector_left(left_copy, port_atom_L)
+            leaving_R = self.leaving_selector_right(right_copy, port_atom_R)
+
+            # Step 3: Merge structures
+            merged = self._merge_structures(left_copy, right_copy)
+        
         # Save merged reactants BEFORE reaction (for template generation)
         merged_reactants_before_reaction = merged.copy()
         merged_copy = merged.copy()

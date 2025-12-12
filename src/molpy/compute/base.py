@@ -2,47 +2,22 @@
 
 This module provides the core abstractions for defining computation units:
 - Compute: Generic base class for all compute operations
-- ComputeContext: Optional context for sharing expensive intermediates
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
 from typing import TypeVar
 
-from .result import Result
-
 InT = TypeVar("InT")
-OutT = TypeVar("OutT", bound=Result)
+OutT = TypeVar("OutT")
 
 
-@dataclass
-class ComputeContext:
-    """Context for sharing expensive intermediate computations.
-
-    This allows multiple compute operations to reuse expensive intermediates
-    like neighbor lists, distance matrices, etc.
-
-    Attributes:
-        data: Dictionary storing intermediate computation results.
-
-    Examples:
-        >>> context = ComputeContext()
-        >>> context.data["neighbor_list"] = compute_neighbors()
-        >>> compute1 = SomeCompute(context=context)
-        >>> compute2 = AnotherCompute(context=context)
-        >>> # Both compute1 and compute2 can access the neighbor list
-    """
-
-    data: dict[str, object] = field(default_factory=dict)
-
-
-class Compute[InT, OutT: Result](ABC):
+class Compute[InT, OutT](ABC):
     """Abstract base class for compute operations.
 
     A Compute is a callable object that takes an input of type InT and returns
-    a result of type OutT (which must be a Result subclass).
+    a result of type OutT.
 
     To implement a new compute operation:
     1. Subclass Compute[InT, OutT] with appropriate types
@@ -55,9 +30,6 @@ class Compute[InT, OutT: Result](ABC):
     3. Calls after(input, result) for cleanup
     4. Returns the result
 
-    Attributes:
-        context: Optional shared context for expensive intermediates.
-
     Examples:
         >>> class MyCompute(Compute[Frame, MyResult]):
         ...     def compute(self, frame: Frame) -> MyResult:
@@ -67,14 +39,6 @@ class Compute[InT, OutT: Result](ABC):
         >>> compute = MyCompute()
         >>> result = compute(frame)  # Calls __call__, which calls compute()
     """
-
-    def __init__(self, context: ComputeContext | None = None) -> None:
-        """Initialize the compute operation.
-
-        Args:
-            context: Optional context for sharing expensive intermediates.
-        """
-        self.context = context
 
     def __call__(self, input: InT) -> OutT:
         """Execute the computation.

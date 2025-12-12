@@ -1,3 +1,7 @@
+"""LAMMPS log file parser.
+
+Parses LAMMPS log files to extract thermodynamic output and simulation metadata.
+"""
 # author: Roy Kid
 # contact: lijichen365@126.com
 # date: 2023-09-29
@@ -10,6 +14,15 @@ import numpy as np
 
 
 class LAMMPSLog:
+    """
+    Parser for LAMMPS log files.
+    
+    Extracts version info and thermodynamic output from LAMMPS log files.
+    
+    Args:
+        file: Path to LAMMPS log file
+        style: Log style (default: "default")
+    """
     def __init__(self, file: str | Path, style="default"):
         self.file = Path(file)
         self.info = {
@@ -19,6 +32,7 @@ class LAMMPSLog:
         self.style = style
 
     def read(self):
+        """Read and parse the log file."""
         with open(self.file) as f:
             log_str = f.read()
 
@@ -26,10 +40,12 @@ class LAMMPSLog:
         self.read_thermo(log_str, self.style)
 
     def read_version(self, text: str):
+        """Extract LAMMPS version from log text."""
         index = text.find("\n")
         self["version"] = text[:index]
 
     def read_thermo(self, text, style):
+        """Parse thermodynamic output stages from log."""
         if style == "default":
             pattern = r"Per MPI rank .*?\n(.*?Loop time.*?)\n"
             result = re.search(pattern, text, re.DOTALL)
@@ -46,7 +62,9 @@ class LAMMPSLog:
             self["n_stages"] = len(self["stages"])
 
     def __getitem__(self, key):
+        """Get info field by key."""
         return self.info[key]
 
     def __setitem__(self, key, value):
+        """Set info field by key."""
         self.info[key] = value

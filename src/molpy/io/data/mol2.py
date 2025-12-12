@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from molpy import Frame
+from molpy.core.frame import Frame
 from molpy.core.element import Element
 
 from .base import DataReader

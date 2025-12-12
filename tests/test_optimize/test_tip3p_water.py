@@ -10,8 +10,8 @@ from molpy.optimize.potential_wrappers import (
     BondPotentialWrapper,
 )
 from molpy.potential.angle import AngleHarmonic
-from molpy.potential.bond import BondHarmonic
 from molpy.potential.base import Potentials
+from molpy.potential.bond import BondHarmonic
 
 
 def test_tip3p_water_optimization():
@@ -57,12 +57,12 @@ def test_tip3p_water_optimization():
     # NOTE: Angle potential internally uses DEGREES as the standard unit
     # Convert from radians in XML: 1.82421813418 rad = 104.5199948597°
 
-    bond_potential = HarmonicBond(
+    bond_potential = BondHarmonic(
         k=np.array([462750.4]),  # kJ/mol/nm²
         r0=np.array([0.09572]),  # nm
     )
 
-    angle_potential = HarmonicAngle(
+    angle_potential = AngleHarmonic(
         k=np.array([836.8]),  # kJ/mol/rad²
         theta0=np.array([104.5199948597]),  # degrees (converted from 1.82421813418 rad)
     )
@@ -112,12 +112,12 @@ def test_tip3p_water_optimization():
 
     print(f"Final bond lengths: {bond1_length:.5f} nm, {bond2_length:.5f} nm")
     print(f"                    ({bond1_length * 10:.4f} Å, {bond2_length * 10:.4f} Å)")
-    assert abs(bond1_length - 0.09572) < 0.01, (
-        f"O-H1 bond should be ~0.09572 nm, got {bond1_length:.5f} nm"
-    )
-    assert abs(bond2_length - 0.09572) < 0.01, (
-        f"O-H2 bond should be ~0.09572 nm, got {bond2_length:.5f} nm"
-    )
+    assert (
+        abs(bond1_length - 0.09572) < 0.01
+    ), f"O-H1 bond should be ~0.09572 nm, got {bond1_length:.5f} nm"
+    assert (
+        abs(bond2_length - 0.09572) < 0.01
+    ), f"O-H2 bond should be ~0.09572 nm, got {bond2_length:.5f} nm"
 
     # Check angle (should be close to 104.52° = 1.824 rad)
     cos_angle = np.dot(bond1_vec, bond2_vec) / (bond1_length * bond2_length)
@@ -126,9 +126,9 @@ def test_tip3p_water_optimization():
 
     print(f"Final H-O-H angle: {angle_rad:.4f} rad = {angle_deg:.2f}°")
     # TIP3P target: 1.82421813418 rad (~104.52°)
-    assert abs(angle_rad - 1.82421813418) < 0.15, (
-        f"H-O-H angle should be ~1.824 rad (~104.52°), got {angle_rad:.4f} rad ({angle_deg:.2f}°)"
-    )
+    assert (
+        abs(angle_rad - 1.82421813418) < 0.15
+    ), f"H-O-H angle should be ~1.824 rad (~104.52°), got {angle_rad:.4f} rad ({angle_deg:.2f}°)"
 
     print(f"✓ TIP3P water optimized successfully in {result.nsteps} steps")
     print(f"  Final energy: {result.energy:.4f}")

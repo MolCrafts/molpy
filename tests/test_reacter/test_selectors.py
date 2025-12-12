@@ -14,12 +14,12 @@ import pytest
 
 from molpy.core.atomistic import Atom, Atomistic, Bond
 from molpy.reacter.selectors import (
-    select_none,
-    select_port_atom,
     select_all_hydrogens,
     select_dummy_atoms,
     select_hydroxyl_group,
+    select_none,
     select_one_hydrogen,
+    select_port_atom,
 )
 
 

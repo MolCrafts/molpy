@@ -667,9 +667,7 @@ class TestHDF5TrajectoryCompression:
     """Comprehensive tests for HDF5 trajectory compression options."""
 
     @pytest.mark.parametrize("compression", ["gzip", "lzf", None])
-    def test_compression_options_trajectory(
-        self, TEST_DATA_DIR, tmp_path, compression
-    ):
+    def test_compression_options_trajectory(self, TEST_DATA_DIR, tmp_path, compression):
         """Test all compression options for Trajectory I/O."""
         reader = read_lammps_trajectory(TEST_DATA_DIR / "lammps/unwrapped.lammpstrj")
 
@@ -682,9 +680,7 @@ class TestHDF5TrajectoryCompression:
         # Write with specified compression
         h5_file = tmp_path / f"test_{compression or 'none'}.h5"
         if compression == "gzip":
-            write_h5_trajectory(
-                h5_file, frames, compression="gzip", compression_opts=4
-            )
+            write_h5_trajectory(h5_file, frames, compression="gzip", compression_opts=4)
         elif compression == "lzf":
             write_h5_trajectory(h5_file, frames, compression="lzf")
         else:
@@ -872,9 +868,7 @@ class TestHDF5TrajectoryCompression:
         read_reader_lzf = read_h5_trajectory(h5_file_lzf)
         assert read_reader_lzf.n_frames == len(frames)
 
-    def test_compression_with_context_manager_trajectory(
-        self, TEST_DATA_DIR, tmp_path
-    ):
+    def test_compression_with_context_manager_trajectory(self, TEST_DATA_DIR, tmp_path):
         """Test compression using context manager for trajectories."""
         reader = read_lammps_trajectory(TEST_DATA_DIR / "lammps/unwrapped.lammpstrj")
 
@@ -922,12 +916,12 @@ class TestHDF5TrajectoryCompression:
 
         # Write first batch with gzip
         h5_file = tmp_path / "test_append_gzip.h5"
-        write_h5_trajectory(
-            h5_file, frames_1, compression="gzip", compression_opts=4
-        )
+        write_h5_trajectory(h5_file, frames_1, compression="gzip", compression_opts=4)
 
         # Append second batch (should use same compression)
-        with HDF5TrajectoryWriter(h5_file, compression="gzip", compression_opts=4) as writer:
+        with HDF5TrajectoryWriter(
+            h5_file, compression="gzip", compression_opts=4
+        ) as writer:
             for frame in frames_2:
                 writer.write_frame(frame)
 

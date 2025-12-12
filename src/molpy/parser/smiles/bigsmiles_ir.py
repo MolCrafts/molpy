@@ -8,7 +8,7 @@ from typing import Any, Literal
 from .smiles_ir import BondOrder, SmilesAtomIR, SmilesBondIR
 
 DescriptorSymbol = Literal["$", "<", ">"]
-DescriptorRole = Literal["internal", "terminal_left", "terminal_right", "end_group"]
+DescriptorRole = Literal["internal", "terminal", "end_group"]  # unified terminal role
 
 _id_counter = 0
 
@@ -21,16 +21,24 @@ def _generate_id() -> int:
 
 @dataclass(eq=True)
 class BondingDescriptorIR:
-    """Standalone descriptor node that can anchor to atoms or terminals."""
+    """Standalone descriptor node for bonding points.
+    
+    Per BigSMILES v1.1: bonding descriptors attach to atoms within repeat units.
+    The anchor_atom field tracks which atom this descriptor is attached to.
+    If anchor_atom is None, this is a terminal bonding descriptor at the
+    stochastic object boundary.
+    """
 
     id: int = field(default_factory=_generate_id, compare=False)
     symbol: DescriptorSymbol | None = None
     label: int | None = None
-    anchor_atom: SmilesAtomIR | None = None
     bond_order: BondOrder = 1
     role: DescriptorRole = "internal"
+    anchor_atom: SmilesAtomIR | None = None  # Atom this descriptor attaches to
     non_covalent_context: dict[str, Any] | None = None
     extras: dict[str, Any] = field(default_factory=dict)
+    # Position hint: "first" for first atom, "last" for last atom, None for unspecified
+    position_hint: str | None = None  # "first" | "last" | None
 
     def __hash__(self) -> int:
         return self.id
@@ -76,9 +84,8 @@ class StochasticObjectIR:
     """Container for repeat units, terminals, and end groups."""
 
     id: int = field(default_factory=_generate_id, compare=False)
-    left_terminal: TerminalDescriptorIR = field(default_factory=TerminalDescriptorIR)
+    terminals: TerminalDescriptorIR = field(default_factory=TerminalDescriptorIR)
     repeat_units: list[RepeatUnitIR] = field(default_factory=list)
-    right_terminal: TerminalDescriptorIR = field(default_factory=TerminalDescriptorIR)
     end_groups: list[EndGroupIR] = field(default_factory=list)
     extras: dict[str, Any] = field(default_factory=dict)
 

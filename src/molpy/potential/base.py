@@ -7,6 +7,7 @@ from collections import UserList
 import numpy as np
 
 from ..core.forcefield import ForceField
+from ..core.frame import Frame
 
 
 class KernelMeta(type):
@@ -83,13 +84,13 @@ class Potentials(UserList[Potential]):
         """
         Calculate the total energy by summing energies from all potentials.
 
-        Note: This assumes all potentials in the collection accept the same
-        arguments. For different potential types, you should call calc_energy
-        on each potential separately.
+        If a Frame object is passed as the first argument, automatically extracts
+        the necessary data for each potential type.
 
         Parameters
         ----------
-        *args: Arguments passed to each potential's calc_energy method
+        *args: Arguments passed to each potential's calc_energy method.
+               If first arg is a Frame, data is automatically extracted.
         **kwargs: Keyword arguments passed to each potential's calc_energy method
 
         Returns
@@ -97,20 +98,25 @@ class Potentials(UserList[Potential]):
         float
             The total energy.
         """
+        # Check if first argument is a Frame
+        if args and isinstance(args[0], Frame):
+            from .utils import calc_energy_from_frame
+            return sum(calc_energy_from_frame(pot, args[0]) for pot in self)
+        
+        # Otherwise, pass arguments directly
         return sum(pot.calc_energy(*args, **kwargs) for pot in self)
 
     def calc_forces(self, *args, **kwargs) -> np.ndarray:
         """
         Calculate the total forces by summing forces from all potentials.
 
-        Note: This assumes all potentials in the collection accept the same
-        arguments and return forces with the same shape. For different potential
-        types, you should call calc_forces on each potential separately and
-        sum the results.
+        If a Frame object is passed as the first argument, automatically extracts
+        the necessary data for each potential type.
 
         Parameters
         ----------
-        *args: Arguments passed to each potential's calc_forces method
+        *args: Arguments passed to each potential's calc_forces method.
+               If first arg is a Frame, data is automatically extracted.
         **kwargs: Keyword arguments passed to each potential's calc_forces method
 
         Returns
@@ -123,6 +129,20 @@ class Potentials(UserList[Potential]):
                 "Cannot determine force shape: no potentials in collection"
             )
 
+        # Check if first argument is a Frame
+        if args and isinstance(args[0], Frame):
+            from .utils import calc_forces_from_frame
+            # Get forces from first potential to determine shape
+            first_forces = calc_forces_from_frame(self[0], args[0])
+            total_forces = np.zeros_like(first_forces)
+            
+            for pot in self:
+                forces = calc_forces_from_frame(pot, args[0])
+                total_forces += forces
+            
+            return total_forces
+
+        # Otherwise, pass arguments directly
         # Get forces from first potential to determine shape
         first_forces = self[0].calc_forces(*args, **kwargs)
         total_forces = np.zeros_like(first_forces)

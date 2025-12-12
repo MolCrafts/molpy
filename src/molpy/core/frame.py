@@ -830,6 +830,29 @@ class Frame:
         frame.metadata = data.get("metadata", {})
         return frame
 
+    def copy(self) -> "Frame":
+        """Create a shallow copy of the Frame.
+        
+        Blocks are copied (shallow), but the underlying numpy arrays are not.
+        
+        Returns:
+            Frame: A new Frame instance with copied blocks and metadata.
+            
+        Examples:
+            >>> frame = Frame(blocks={"atoms": {"x": [1, 2, 3]}}, timestep=0)
+            >>> frame_copy = frame.copy()
+            >>> frame_copy.metadata["timestep"] = 1
+            >>> frame.metadata["timestep"]  # Original unchanged
+            0
+        """
+        # Copy blocks (shallow copy of Block objects)
+        new_blocks = {name: block.copy() for name, block in self._blocks.items()}
+        # Create new frame
+        new_frame = Frame(blocks=new_blocks)
+        # Copy metadata (shallow copy of dict)
+        new_frame.metadata = self.metadata.copy()
+        return new_frame
+
     # ---------- repr ----------------------------------------------------
     def __repr__(self) -> str:
         txt = ["Frame("]

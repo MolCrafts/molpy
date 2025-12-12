@@ -50,12 +50,11 @@ Design Goals:
 from .base import (
     ProductInfo,
     ReactantInfo,
+    Reacter,
     ReactionMetadata,
     ReactionResult,
-    Reacter,
     TopologyChanges,
 )
-from .topology_detector import TopologyDetector
 from .connector import MonomerLinker
 from .selectors import (
     select_all_hydrogens,
@@ -66,6 +65,7 @@ from .selectors import (
     select_port_atom,
     select_prev_atom,
 )
+from .topology_detector import TopologyDetector
 from .transformers import (
     break_bond,
     create_bond_former,

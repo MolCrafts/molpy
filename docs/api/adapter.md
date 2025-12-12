@@ -1,3 +1,5 @@
-# molpy.adapter
+# Adapter
 
-::: molpy.adapter
+External tool integrations and adapters.
+
+::: molpy.external

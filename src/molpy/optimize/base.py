@@ -86,8 +86,15 @@ class Optimizer(ABC, Generic[S]):
             (N, 3) numpy array of positions
         """
         entities = structure.entities.all()
-        xyz_list = entities["xyz"]  # Column-style access
-        positions = np.array(xyz_list, dtype=float)
+        if not entities:
+            return np.empty((0, 3), dtype=float)
+        
+        # Use x, y, z fields (never use xyz)
+        x_list = entities["x"]
+        y_list = entities["y"]
+        z_list = entities["z"]
+        positions = np.column_stack([x_list, y_list, z_list])
+        
         if positions.ndim == 1:
             positions = positions.reshape(-1, 3)
         return positions
@@ -102,7 +109,11 @@ class Optimizer(ABC, Generic[S]):
         entities = structure.entities.all()
         positions = positions.reshape(-1, 3)
         for i, entity in enumerate(entities):
-            entity["xyz"] = positions[i].tolist()
+            pos = positions[i]
+            # Update x, y, z fields (never use xyz)
+            entity["x"] = float(pos[0])
+            entity["y"] = float(pos[1])
+            entity["z"] = float(pos[2])
 
     def get_energy_and_forces(self, structure: S) -> tuple[float, np.ndarray]:
         """Compute energy and forces via Frame interface.

@@ -1,7 +1,8 @@
-import numpy as np
 from typing import TYPE_CHECKING
 
-from molpy import Frame
+import numpy as np
+
+from molpy.core.frame import Frame
 
 if TYPE_CHECKING:
     from .constraint import Constraint

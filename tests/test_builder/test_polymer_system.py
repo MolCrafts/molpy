@@ -16,7 +16,7 @@ from molpy.builder.polymer.sequence_generator import WeightedSequenceGenerator
 from molpy.builder.polymer.system import (
     Chain,
     PolydisperseChainGenerator,
-    SchulzZimmDPDistribution,
+    SchulzZimmPolydisperse,
     SystemPlan,
     SystemPlanner,
 )
@@ -82,7 +82,7 @@ class TestPolydisperseChainGenerator:
         """Test basic chain generation."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
 
-        dp_dist = SchulzZimmDPDistribution(
+        dp_dist = SchulzZimmPolydisperse(
             Mn=1500.0, Mw=3000.0, avg_monomer_mass=100.0, random_seed=42
         )
 
@@ -90,7 +90,7 @@ class TestPolydisperseChainGenerator:
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0, "B": 150.0},
             end_group_mass=18.0,
-            dp_distribution=dp_dist,
+            distribution=dp_dist,
         )
 
         rng = Random(42)
@@ -109,18 +109,21 @@ class TestPolydisperseChainGenerator:
         )
 
         # Create a simple fixed DP distribution for testing
-        class FixedDPDistribution:
+        from molpy.builder.polymer.polydisperse import Polydisperse
+        
+        class FixedDPDistribution(Polydisperse):
             def __init__(self, dp: int):
+                super().__init__()
                 self.dp = dp
 
-            def sample_dp(self, rng: Random) -> int:
+            def sample_length(self, monomer_mw: float, random_seed: int | None = None) -> int:
                 return self.dp
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0},
             end_group_mass=18.0,
-            dp_distribution=FixedDPDistribution(dp=10),
+            distribution=FixedDPDistribution(dp=10),
         )
 
         rng = Random(42)
@@ -135,7 +138,7 @@ class TestPolydisperseChainGenerator:
         """Test that DP distribution is followed."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
 
-        dp_dist = SchulzZimmDPDistribution(
+        dp_dist = SchulzZimmPolydisperse(
             Mn=1500.0, Mw=3000.0, avg_monomer_mass=100.0, random_seed=42
         )
 
@@ -143,7 +146,7 @@ class TestPolydisperseChainGenerator:
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0},
             end_group_mass=0.0,
-            dp_distribution=dp_dist,
+            distribution=dp_dist,
         )
 
         rng = Random(42)
@@ -161,7 +164,7 @@ class TestSystemPlanner:
         """Test basic system planning."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
 
-        dp_dist = SchulzZimmDPDistribution(
+        dp_dist = SchulzZimmPolydisperse(
             Mn=1500.0, Mw=3000.0, avg_monomer_mass=100.0, random_seed=42
         )
 
@@ -169,7 +172,7 @@ class TestSystemPlanner:
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0, "B": 150.0},
             end_group_mass=18.0,
-            dp_distribution=dp_dist,
+            distribution=dp_dist,
         )
 
         planner = SystemPlanner(
@@ -198,18 +201,21 @@ class TestSystemPlanner:
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
 
         # Use fixed DP for predictable testing
-        class FixedDPDistribution:
+        from molpy.builder.polymer.polydisperse import Polydisperse
+        
+        class FixedDPDistribution(Polydisperse):
             def __init__(self, dp: int):
+                super().__init__()
                 self.dp = dp
 
-            def sample_dp(self, rng: Random) -> int:
+            def sample_length(self, monomer_mw: float, random_seed: int | None = None) -> int:
                 return self.dp
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0},
             end_group_mass=0.0,
-            dp_distribution=FixedDPDistribution(dp=10),  # Each chain = 1000 g/mol
+            distribution=FixedDPDistribution(dp=10),
         )
 
         planner = SystemPlanner(
@@ -232,18 +238,21 @@ class TestSystemPlanner:
         """Test that max_chains constraint is respected."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
 
-        class FixedDPDistribution:
+        from molpy.builder.polymer.polydisperse import Polydisperse
+        
+        class FixedDPDistribution(Polydisperse):
             def __init__(self, dp: int):
+                super().__init__()
                 self.dp = dp
 
-            def sample_dp(self, rng: Random) -> int:
+            def sample_length(self, monomer_mw: float, random_seed: int | None = None) -> int:
                 return self.dp
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0},
             end_group_mass=0.0,
-            dp_distribution=FixedDPDistribution(dp=10),
+            distribution=FixedDPDistribution(dp=10),
         )
 
         planner = SystemPlanner(
@@ -262,18 +271,21 @@ class TestSystemPlanner:
         """Test that chain trimming works when enabled."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
 
-        class FixedDPDistribution:
+        from molpy.builder.polymer.polydisperse import Polydisperse
+        
+        class FixedDPDistribution(Polydisperse):
             def __init__(self, dp: int):
+                super().__init__()
                 self.dp = dp
 
-            def sample_dp(self, rng: Random) -> int:
+            def sample_length(self, monomer_mw: float, random_seed: int | None = None) -> int:
                 return self.dp
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0},
             end_group_mass=0.0,
-            dp_distribution=FixedDPDistribution(dp=100),  # Large chains
+            distribution=FixedDPDistribution(dp=100),  # Large chains
         )
 
         planner = SystemPlanner(
@@ -299,18 +311,21 @@ class TestSystemPlanner:
         """Test that trimming can be disabled."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
 
-        class FixedDPDistribution:
+        from molpy.builder.polymer.polydisperse import Polydisperse
+        
+        class FixedDPDistribution(Polydisperse):
             def __init__(self, dp: int):
+                super().__init__()
                 self.dp = dp
 
-            def sample_dp(self, rng: Random) -> int:
+            def sample_length(self, monomer_mw: float, random_seed: int | None = None) -> int:
                 return self.dp
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0},
             end_group_mass=0.0,
-            dp_distribution=FixedDPDistribution(dp=100),
+            distribution=FixedDPDistribution(dp=100),
         )
 
         planner = SystemPlanner(
@@ -337,7 +352,7 @@ class TestIntegration:
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
 
         # Middle layer: PolydisperseChainGenerator
-        dp_dist = SchulzZimmDPDistribution(
+        dp_dist = SchulzZimmPolydisperse(
             Mn=1500.0, Mw=3000.0, avg_monomer_mass=100.0, random_seed=42
         )
 
@@ -345,7 +360,7 @@ class TestIntegration:
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0, "B": 150.0},
             end_group_mass=18.0,
-            dp_distribution=dp_dist,
+            distribution=dp_dist,
         )
 
         # Top layer: SystemPlanner
@@ -375,3 +390,4 @@ class TestIntegration:
             / system_plan.target_mass
         )
         assert rel_error <= planner.max_rel_error * 1.1
+

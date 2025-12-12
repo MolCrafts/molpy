@@ -1,14 +1,7 @@
 from collections import UserDict
 from collections.abc import Iterable, Iterator
 from copy import deepcopy
-from typing import (
-    Any,
-    Protocol,
-    Self,
-    TypeVar,
-    cast,
-    overload,
-)
+from typing import Any, Protocol, Self, TypeVar, cast, overload
 
 from molpy.core.ops.geometry import (
     _cross,

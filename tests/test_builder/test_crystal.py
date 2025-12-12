@@ -4,12 +4,7 @@ import numpy as np
 import pytest
 
 from molpy import Atomistic
-from molpy.builder.crystal import (
-    BlockRegion,
-    CrystalBuilder,
-    Lattice,
-    Site,
-)
+from molpy.builder.crystal import BlockRegion, CrystalBuilder, Lattice, Site
 
 
 class TestSite:

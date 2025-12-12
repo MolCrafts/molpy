@@ -2,7 +2,7 @@
 
 import pytest
 
-from molpy.potential.dihedral.opls import rb_to_opls, format_lammps_dihedral_coeff
+from molpy.potential.dihedral.opls import format_lammps_dihedral_coeff, rb_to_opls
 
 
 def test_rb_to_opls_exact_conversion():
@@ -83,33 +83,27 @@ def test_rb_to_opls_valid_constraints():
 
 
 def test_rb_to_opls_invalid_c5():
-    """Test that invalid C5 triggers warning."""
-    import warnings
-
-    # Invalid: C5 != 0
+    """Test that invalid C5 raises ValueError (cannot represent cos⁵φ)."""
+    # Invalid: C5 != 0 - cannot represent with 4-term OPLS
     C0, C1, C2, C3, C4, C5 = 0.0, 1.0, 2.0, 3.0, 4.0, 5.0
 
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
+    with pytest.raises(ValueError, match="cos⁵φ"):
         rb_to_opls(C0, C1, C2, C3, C4, C5, units="kJ")
-        # Should have warning about C5
-        assert len(w) > 0
-        assert "C5" in str(w[0].message)
 
 
 def test_rb_to_opls_invalid_sum():
-    """Test that invalid sum (C0+C1+C2+C3+C4 != 0) triggers warning."""
+    """Test that non-zero sum triggers warning (MD-safe constant offset)."""
     import warnings
 
-    # Invalid: sum != 0
+    # Non-zero sum indicates constant energy offset (harmless for MD)
     C0, C1, C2, C3, C4, C5 = 1.0, 2.0, 3.0, 4.0, 5.0, 0.0
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         rb_to_opls(C0, C1, C2, C3, C4, C5, units="kJ")
-        # Should have warning about sum
+        # Should have warning about constant offset
         assert len(w) > 0
-        assert "OPLS-RB linear relation" in str(w[0].message)
+        assert "constant energy offset" in str(w[0].message)
 
 
 def test_format_lammps_dihedral_coeff():

@@ -8,7 +8,7 @@ import random
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from molpy import Frame
+from molpy.core.frame import Frame
 
 from .packer import get_packer
 from .target import Target

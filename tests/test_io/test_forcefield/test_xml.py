@@ -15,12 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from molpy import (
-    AtomisticForcefield,
-    AtomType,
-    BondType,
-    PairType,
-)
+from molpy import AtomisticForcefield, AtomType, BondType, PairType
 from molpy.io.forcefield.xml import XMLForceFieldReader, read_xml_forcefield
 
 
@@ -73,9 +68,9 @@ class TestXMLForceFieldReader:
 
             # Validate parsed atom types
             atomtypes = ff.get_atomtypes()
-            assert len(atomtypes) == len(expected_atomtypes), (
-                f"Expected {len(expected_atomtypes)} atom types, got {len(atomtypes)}"
-            )
+            assert len(atomtypes) == len(
+                expected_atomtypes
+            ), f"Expected {len(expected_atomtypes)} atom types, got {len(atomtypes)}"
 
             for name, expected in expected_atomtypes.items():
                 # Find atom type by name
@@ -126,9 +121,9 @@ class TestXMLForceFieldReader:
 
             # Validate parsed pair types
             pairtypes = ff.get_types(PairType)
-            assert len(pairtypes) >= len(expected_pairs), (
-                f"Expected at least {len(expected_pairs)} pair types, got {len(pairtypes)}"
-            )
+            assert len(pairtypes) >= len(
+                expected_pairs
+            ), f"Expected at least {len(expected_pairs)} pair types, got {len(pairtypes)}"
 
             for type_name, expected in expected_pairs.items():
                 # Find pair type by atom type name
@@ -183,9 +178,9 @@ class TestXMLForceFieldReader:
 
             # Validate parsed bond types
             bondtypes = ff.get_bondtypes()
-            assert len(bondtypes) == len(expected_bonds), (
-                f"Expected {len(expected_bonds)} bond types, got {len(bondtypes)}"
-            )
+            assert len(bondtypes) == len(
+                expected_bonds
+            ), f"Expected {len(expected_bonds)} bond types, got {len(bondtypes)}"
 
             for expected in expected_bonds:
                 # Find bond type by atom types
@@ -205,9 +200,9 @@ class TestXMLForceFieldReader:
                         found = bt
                         break
 
-                assert found is not None, (
-                    f"Bond type '{expected['type1']}-{expected['type2']}' not found"
-                )
+                assert (
+                    found is not None
+                ), f"Bond type '{expected['type1']}-{expected['type2']}' not found"
                 if expected["length"] is not None:
                     assert (
                         abs(found.params.kwargs.get("r0", 0) - expected["length"])
@@ -245,9 +240,9 @@ class TestXMLForceFieldReader:
 
             # Validate parsed angle types
             angletypes = ff.get_angletypes()
-            assert len(angletypes) == len(expected_angles), (
-                f"Expected {len(expected_angles)} angle types, got {len(angletypes)}"
-            )
+            assert len(angletypes) == len(
+                expected_angles
+            ), f"Expected {len(expected_angles)} angle types, got {len(angletypes)}"
 
             # Track which angles we've matched
             matched_indices = set()
@@ -311,9 +306,9 @@ class TestXMLForceFieldReader:
                             found_idx = idx
                             break
 
-                assert found is not None, (
-                    f"Angle type '{expected['type1']}-{expected['type2']}-{expected['type3']}' not found"
-                )
+                assert (
+                    found is not None
+                ), f"Angle type '{expected['type1']}-{expected['type2']}-{expected['type3']}' not found"
                 if found_idx is not None:
                     matched_indices.add(found_idx)
                 if expected["angle"] is not None:
@@ -366,9 +361,9 @@ class TestXMLForceFieldReader:
 
             # Validate parsed atom types
             atomtypes = ff.get_atomtypes()
-            assert len(atomtypes) == len(expected_atomtypes), (
-                f"Expected {len(expected_atomtypes)} atom types, got {len(atomtypes)}"
-            )
+            assert len(atomtypes) == len(
+                expected_atomtypes
+            ), f"Expected {len(expected_atomtypes)} atom types, got {len(atomtypes)}"
 
             for name, expected in expected_atomtypes.items():
                 # Find atom type by name
@@ -418,9 +413,9 @@ class TestXMLForceFieldReader:
 
             # Validate parsed bond types
             bondtypes = ff.get_bondtypes()
-            assert len(bondtypes) == len(expected_bonds), (
-                f"Expected {len(expected_bonds)} bond types, got {len(bondtypes)}"
-            )
+            assert len(bondtypes) == len(
+                expected_bonds
+            ), f"Expected {len(expected_bonds)} bond types, got {len(bondtypes)}"
 
             for expected in expected_bonds:
                 # Find bond type by atom types
@@ -438,9 +433,9 @@ class TestXMLForceFieldReader:
                         found = bt
                         break
 
-                assert found is not None, (
-                    f"Bond type '{expected['type1']}-{expected['type2']}' not found"
-                )
+                assert (
+                    found is not None
+                ), f"Bond type '{expected['type1']}-{expected['type2']}' not found"
                 if expected["length"] is not None:
                     assert (
                         abs(found.params.kwargs.get("r0", 0) - expected["length"])
@@ -472,9 +467,9 @@ class TestXMLForceFieldReader:
 
             # Validate parsed angle types
             angletypes = ff.get_angletypes()
-            assert len(angletypes) == len(expected_angles), (
-                f"Expected {len(expected_angles)} angle types, got {len(angletypes)}"
-            )
+            assert len(angletypes) == len(
+                expected_angles
+            ), f"Expected {len(expected_angles)} angle types, got {len(angletypes)}"
 
             for expected in expected_angles:
                 # Find angle type by atom types
@@ -496,9 +491,9 @@ class TestXMLForceFieldReader:
                         found = at
                         break
 
-                assert found is not None, (
-                    f"Angle type '{expected['type1']}-{expected['type2']}-{expected['type3']}' not found"
-                )
+                assert (
+                    found is not None
+                ), f"Angle type '{expected['type1']}-{expected['type2']}-{expected['type3']}' not found"
                 if expected["angle"] is not None:
                     assert (
                         abs(found.params.kwargs.get("theta0", 0) - expected["angle"])
@@ -524,9 +519,9 @@ class TestXMLForceFieldReader:
 
             # Validate parsed pair types
             pairtypes = ff.get_types(PairType)
-            assert len(pairtypes) >= len(expected_pairs), (
-                f"Expected at least {len(expected_pairs)} pair types, got {len(pairtypes)}"
-            )
+            assert len(pairtypes) >= len(
+                expected_pairs
+            ), f"Expected at least {len(expected_pairs)} pair types, got {len(pairtypes)}"
 
             for type_name, expected in expected_pairs.items():
                 # Find pair type by atom type name
@@ -584,9 +579,9 @@ class TestXMLForceFieldReader:
             expected_count = len(list(atomtypes_elem.findall("Type")))
             atomtypes = ff.get_atomtypes()
             # The parser may create additional types, so we check >=
-            assert len(atomtypes) >= expected_count, (
-                f"Expected at least {expected_count} atom types, got {len(atomtypes)}"
-            )
+            assert (
+                len(atomtypes) >= expected_count
+            ), f"Expected at least {expected_count} atom types, got {len(atomtypes)}"
 
             # But we should verify all expected types are present
             expected_names = {
@@ -659,9 +654,9 @@ class TestXMLForceFieldReader:
                 o3_wildcard = at
                 break
 
-        assert o3_wildcard is not None, (
-            "O_3 wildcard AtomType should be created when parsing bonds"
-        )
+        assert (
+            o3_wildcard is not None
+        ), "O_3 wildcard AtomType should be created when parsing bonds"
         assert o3_wildcard.name == "O_3", "O_3 wildcard AtomType should have name 'O_3'"
 
         # Check that C wildcard AtomType exists

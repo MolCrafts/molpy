@@ -84,8 +84,8 @@ def linear(
             audit=[],
         )
 
-        # Select ports
-        left_port_name, right_port_name, _ = connector.select_ports(
+        # Select ports (now returns indices for when multiple ports share the same name)
+        left_port_name, left_port_idx, right_port_name, right_port_idx, _ = connector.select_ports(
             current,
             right,
             left_ports,
@@ -93,9 +93,9 @@ def linear(
             ctx,
         )
 
-        # Get the actual PortInfo objects for placer
-        left_port = left_ports[left_port_name]
-        right_port = right_ports[right_port_name]
+        # Get the actual PortInfo objects for placer using the indices
+        left_port = left_ports[left_port_name][left_port_idx]
+        right_port = right_ports[right_port_name][right_port_idx]
 
         # Position right structure (if placer provided)
         if placer is not None:
@@ -111,13 +111,15 @@ def linear(
         # correspond to the original port targets
 
         # Save left port targets (atoms) before connection
-        left_port_targets: dict[str, Atom] = {
-            name: port.target for name, port in left_ports.items()
+        left_port_targets: dict[str, list[Atom]] = {
+            name: [port.target for port in port_list]
+            for name, port_list in left_ports.items()
         }
 
         # Save right port targets before connection
-        right_port_targets: dict[str, Atom] = {
-            name: port.target for name, port in right_ports.items()
+        right_port_targets: dict[str, list[Atom]] = {
+            name: [port.target for port in port_list]
+            for name, port_list in right_ports.items()
         }
 
         # Execute reaction
@@ -148,52 +150,56 @@ def linear(
                 entity_map.update(emap)
 
         # Transfer unused left ports
-        for port_name, original_target in left_port_targets.items():
-            if port_name == left_port_name:
-                continue  # Skip the port that was used
+        for port_name, original_targets in left_port_targets.items():
+            for idx, original_target in enumerate(original_targets):
+                # Skip the specific port that was used
+                if port_name == left_port_name and idx == left_port_idx:
+                    continue
 
-            # Find the corresponding atom in product using entity map
-            new_target = entity_map.get(original_target)
+                # Find the corresponding atom in product using entity map
+                new_target = entity_map.get(original_target)
 
-            # Only add port if we found a valid target in product
-            if new_target is not None and new_target in atoms_in_product:
-                # Get original port metadata
-                original_port = left_ports[port_name]
-                # Mark port on atom
-                new_target["port"] = port_name
-                # Set port metadata
-                set_port_metadata(
-                    new_target,
-                    port_name,
-                    role=original_port.role,
-                    bond_kind=original_port.bond_kind,
-                    compat=original_port.compat,
-                    priority=original_port.priority,
-                )
+                # Only add port if we found a valid target in product
+                if new_target is not None and new_target in atoms_in_product:
+                    # Get original port metadata
+                    original_port = left_ports[port_name][idx]
+                    # Mark port on atom
+                    new_target["port"] = port_name
+                    # Set port metadata
+                    set_port_metadata(
+                        new_target,
+                        port_name,
+                        role=original_port.role,
+                        bond_kind=original_port.bond_kind,
+                        compat=original_port.compat,
+                        priority=original_port.priority,
+                    )
 
         # Transfer unused right ports
-        for port_name, original_target in right_port_targets.items():
-            if port_name == right_port_name:
-                continue  # Skip the port that was used
+        for port_name, original_targets in right_port_targets.items():
+            for idx, original_target in enumerate(original_targets):
+                # Skip the specific port that was used
+                if port_name == right_port_name and idx == right_port_idx:
+                    continue
 
-            # Find the corresponding atom in product using entity map
-            new_target = entity_map.get(original_target)
+                # Find the corresponding atom in product using entity map
+                new_target = entity_map.get(original_target)
 
-            # Only add port if we found a valid target in product
-            if new_target is not None and new_target in atoms_in_product:
-                # Get original port metadata
-                original_port = right_ports[port_name]
-                # Mark port on atom
-                new_target["port"] = port_name
-                # Set port metadata
-                set_port_metadata(
-                    new_target,
-                    port_name,
-                    role=original_port.role,
-                    bond_kind=original_port.bond_kind,
-                    compat=original_port.compat,
-                    priority=original_port.priority,
-                )
+                # Only add port if we found a valid target in product
+                if new_target is not None and new_target in atoms_in_product:
+                    # Get original port metadata
+                    original_port = right_ports[port_name][idx]
+                    # Mark port on atom
+                    new_target["port"] = port_name
+                    # Set port metadata
+                    set_port_metadata(
+                        new_target,
+                        port_name,
+                        role=original_port.role,
+                        bond_kind=original_port.bond_kind,
+                        compat=original_port.compat,
+                        priority=original_port.priority,
+                    )
 
     return PolymerBuildResult(
         polymer=current,

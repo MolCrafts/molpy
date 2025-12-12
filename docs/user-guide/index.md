@@ -4,14 +4,25 @@ Welcome to the MolPy User Guide! Whether you're building polymers, setting up si
 
 ## What You'll Find Here
 
-This guide provides **in-depth documentation** for each of MolPy's modules. Unlike the quick-start tutorials, these pages dive deep into capabilities, design patterns, and best practices for production workflows.
+This guide provides **comprehensive documentation** for each of MolPy's modules through **31 detailed Jupyter notebooks**. Each notebook includes working examples, API coverage, and best practices.
 
 **How to use this guide:**
 
-* 📖 **Reference-style** – Look up specific modules when you need them
+* 📖 **Comprehensive notebooks** – Detailed guides with 30-50 cells for core modules
 * 🔗 **Interconnected** – Each module links to related concepts
-* 💻 **Code-first** – Every page includes working examples
+* 💻 **Runnable examples** – All code cells are tested and executable
 * 🎯 **Practical** – Focused on real-world molecular modeling tasks
+
+**Documentation coverage:**
+- **Parser** (3 notebooks): SMILES, BigSMILES, GBigSMILES, IR system
+- **Reacter** (4 notebooks): Reactions, connectors, selectors, transformers
+- **Builder** (5 notebooks): Polymer building, sequence generation, system planning
+- **Typifier** (3 notebooks): Atom typing, rules, SMARTS patterns
+- **IO** (4 notebooks): File formats, force fields, LAMMPS integration
+- **Adapter** (3 notebooks): RDKit, external tools
+- **Potential** (3 notebooks): Force fields, parameters
+- **Compute** (2 notebooks): Analysis functions
+- **Developer** (4 notebooks): Architecture, contributing
 
 ---
 
@@ -74,7 +85,7 @@ typifier.typify(atomistic)  # Assigns OPLS types
 
 ### 🏗️ Building & Construction
 
-#### [Builder](builder.ipynb)
+#### [Builder](polymer_builder_overview.ipynb)
 **Build polymers and assemble molecular systems**
 
 - Linear polymer assembly from monomer sequences
@@ -91,7 +102,7 @@ poly = linear(sequence="ABAB", library=monomers, connector=ReacterConnector())
 
 ---
 
-#### [Pack](pack.ipynb)
+#### Pack
 **Distribute molecules spatially without overlaps**
 
 - Packing algorithms (Packmol integration)
@@ -177,7 +188,7 @@ for frame in trajectory:
 
 ### 🧮 Geometric Operations
 
-#### [Op](op.ipynb)
+#### Op
 **Low-level coordinate manipulation**
 
 - Rotation (Rodrigues, quaternions)

@@ -23,7 +23,11 @@ class BondPotentialWrapper:
 
     def calc_energy(self, frame):
         """Extract bond data from Frame and compute energy."""
-        r = frame["atoms"]["xyz"]
+        # Get coordinates from x, y, z fields (never use xyz)
+        x = frame["atoms"]["x"]
+        y = frame["atoms"]["y"]
+        z = frame["atoms"]["z"]
+        r = np.column_stack([x, y, z])
         bonds = frame["bonds"]
         bond_idx = bonds[["atom_i", "atom_j"]]
         bond_types = bonds["type"]
@@ -31,7 +35,11 @@ class BondPotentialWrapper:
 
     def calc_forces(self, frame):
         """Extract bond data from Frame and compute forces."""
-        r = frame["atoms"]["xyz"]
+        # Get coordinates from x, y, z fields (never use xyz)
+        x = frame["atoms"]["x"]
+        y = frame["atoms"]["y"]
+        z = frame["atoms"]["z"]
+        r = np.column_stack([x, y, z])
         bonds = frame["bonds"]
         bond_idx = bonds[["atom_i", "atom_j"]]
         bond_types = bonds["type"]
@@ -51,7 +59,11 @@ class AnglePotentialWrapper:
 
     def calc_energy(self, frame):
         """Extract angle data from Frame and compute energy."""
-        r = frame["atoms"]["xyz"]
+        # Get coordinates from x, y, z fields (never use xyz)
+        x = frame["atoms"]["x"]
+        y = frame["atoms"]["y"]
+        z = frame["atoms"]["z"]
+        r = np.column_stack([x, y, z])
         angles = frame["angles"]
         angle_idx = angles[["atom_i", "atom_j", "atom_k"]]
         angle_types = angles["type"]
@@ -59,7 +71,11 @@ class AnglePotentialWrapper:
 
     def calc_forces(self, frame):
         """Extract angle data from Frame and compute forces."""
-        r = frame["atoms"]["xyz"]
+        # Get coordinates from x, y, z fields (never use xyz)
+        x = frame["atoms"]["x"]
+        y = frame["atoms"]["y"]
+        z = frame["atoms"]["z"]
+        r = np.column_stack([x, y, z])
         angles = frame["angles"]
         angle_idx = angles[["atom_i", "atom_j", "atom_k"]]
         angle_types = angles["type"]

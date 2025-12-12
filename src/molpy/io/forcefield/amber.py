@@ -4,7 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
-import molpy as mp
+from molpy.core.forcefield import ForceField
+from molpy.core.frame import Frame
 
 
 class AmberPrmtopReader:
@@ -22,7 +23,7 @@ class AmberPrmtopReader:
     def read_section(lines: Iterator[str], convert_fn: Callable = int) -> list[str]:
         return list(map(convert_fn, " ".join(lines).split()))
 
-    def read(self, frame: mp.Frame):
+    def read(self, frame: Frame):
         with open(self.file) as f:
             lines = filter(
                 lambda line: line, map(AmberPrmtopReader.sanitizer, f.readlines())
@@ -131,7 +132,7 @@ class AmberPrmtopReader:
         # def forcefield
         atoms["id"] = np.arange(meta["n_atoms"], dtype=int) + 1
         atoms["q"] = np.array(atoms["q"]) / 18.2223
-        ff = mp.ForceField()
+        ff = ForceField()
         ff.units = "real"
         atomstyle = ff.def_atomstyle("full")
         atomtype_map = {}  # atomtype id : atomtype

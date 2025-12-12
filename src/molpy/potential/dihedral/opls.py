@@ -57,30 +57,48 @@ def rb_to_opls(C0, C1, C2, C3, C4, C5, *, units="kJ"):
         Tuple of (K1, K2, K3, K4) in kcal/mol for LAMMPS OPLS dihedral style
 
     Raises:
-        None (warnings are issued for invalid conversions but conversion continues)
+        ValueError: If C5 ≠ 0 (cannot represent cos⁵φ with 4-term OPLS)
 
     Note:
-        - Valid RB → OPLS conversion requires C5 ≈ 0 and C0 ≈ -(C1 + C2 + C3 + C4)
-        - Warnings are issued if these constraints are violated, but the analytical
-          conversion is still performed
-    # """
-    # # Verify constraints
-    # if abs(C5) > 1e-6:
-    #     warnings.warn(
-    #         f"RB torsion cannot be exactly represented as OPLS (C5 = {C5:.6f} != 0). "
-    #         "Conversion may be unreliable.",
-    #         UserWarning
-    #     )
+        **MD-Safe Conversion**: This converter preserves forces and relative energies
+        exactly when C5 ≈ 0. The conversion uses only C1-C4 to compute F1-F4:
+        
+        - F1-F4 are computed from C1-C4 only, preserving dV/dφ exactly
+        - Any difference in C0 from the "ideal" C0' = F2 + 0.5*(F1+F3) represents
+          a harmless constant energy offset
+        - MD trajectories and thermodynamics (up to arbitrary reference energies)
+          are unaffected by this constant offset
+        - The only strict requirement is C5 ≈ 0 (cannot represent cos⁵φ term)
+        
+        If C0 + C1 + C2 + C3 + C4 ≠ 0, this indicates a non-zero constant offset
+        but does NOT affect MD correctness.
+    """
+    # STRICT validation: Only C5 ≠ 0 is a hard error
+    # C5 ≠ 0 means the RB potential contains cos⁵φ which cannot be represented
+    # by a 4-term OPLS potential (we don't support F5)
+    
+    if abs(C5) > 1e-6:
+        raise ValueError(
+            f"RB torsion uses C5 = {C5:.6f}, which cannot be represented by "
+            f"a 4-term OPLS potential (no cos⁵φ term). "
+            f"This RB potential cannot be converted to OPLS format."
+        )
 
-    # sum_c = C0 + C1 + C2 + C3 + C4
-    # if abs(sum_c) > 1e-6:
-    #     warnings.warn(
-    #         f"RB coefficients do not satisfy the OPLS-RB linear relation "
-    #         f"(C0 + C1 + C2 + C3 + C4 = {sum_c:.6f} ≈ 0). Conversion may be unreliable.",
-    #         UserWarning
-    #     )
+    # Soft validation: C0+...+C4 ≠ 0 indicates constant energy offset
+    # This is harmless for MD (doesn't affect forces or relative energies)
+    sum_c = C0 + C1 + C2 + C3 + C4
+    if abs(sum_c) > 1e-2:
+        warnings.warn(
+            f"RB coefficients do not lie on the ideal 4-term OPLS manifold "
+            f"(C0+C1+C2+C3+C4 = {sum_c:.6f}, expected ≈ 0). "
+            f"Conversion will preserve forces and relative energies exactly, "
+            f"but will introduce a constant energy offset of ΔE = {sum_c:.6f} kJ/mol. "
+            f"This does not affect MD simulations.",
+            UserWarning
+        )
 
     # Compute F1-F4 analytically using inverted formulas
+    # These formulas use ONLY C1-C4, preserving dV/dφ exactly
     F1 = -2.0 * C1 - 1.5 * C3
     F2 = -C2 - C4
     F3 = -0.5 * C3

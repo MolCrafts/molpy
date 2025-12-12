@@ -14,17 +14,17 @@ from molpy.core.atomistic import Atom, Atomistic, Bond
 from molpy.reacter import (
     ProductInfo,
     ReactantInfo,
+    Reacter,
     ReactionMetadata,
     ReactionResult,
-    Reacter,
     TopologyChanges,
     form_double_bond,
     form_single_bond,
     form_triple_bond,
-    select_none,
-    select_port_atom,
     select_all_hydrogens,
+    select_none,
     select_one_hydrogen,
+    select_port_atom,
 )
 
 
@@ -37,7 +37,11 @@ class TestProductSet:
         c = Atom(symbol="C")
         asm.add_entity(c)
 
-        reactant_info = ReactantInfo(left=asm, right=asm, port_L="1", port_R="2")
+        # Create merged reactants for ReactantInfo
+        merged = Atomistic()
+        merged.add_entity(c)
+        
+        reactant_info = ReactantInfo(merged_reactants=merged, port_L="1", port_R="2")
         product_info = ProductInfo(product=asm)
         topology_changes = TopologyChanges()
         metadata = ReactionMetadata(reaction_name="test_reaction")
@@ -56,7 +60,7 @@ class TestProductSet:
         # Test backward compatibility properties
         assert result.product is asm
         assert result.reaction_name == "test_reaction"
-        assert result.reactants is asm
+        assert result.reactants is merged  # reactants should be the merged reactants, not product
 
 
 class TestReacter:

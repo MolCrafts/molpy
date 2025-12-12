@@ -135,6 +135,151 @@ class LJ126(PairPotential):
         return per_atom_forces
 
 
+class LJ126CoulLong(PairPotential):
+    """
+    Combined Lennard-Jones 12-6 and Coulomb long-range pair potential.
+    
+    This is a composite potential that combines LJ and Coulomb interactions.
+    Uses PairTypeIndexedArray internally for automatic combining rules.
+    
+    V(r) = V_LJ(r) + V_Coul(r)
+    """
+    
+    name = "lj/cut/coul/long"
+    type = "pair"
+    
+    def __init__(
+        self,
+        epsilon: NDArray[np.float64],
+        sigma: NDArray[np.float64],
+        charges: NDArray[np.float64],
+        type_names: list[str],
+    ) -> None:
+        """
+        Initialize LJ126CoulLong potential.
+        
+        Args:
+            epsilon: Per-atom-type epsilon values (numpy array)
+            sigma: Per-atom-type sigma values (numpy array)
+            charges: Per-atom-type charges (numpy array)
+            type_names: List of atom type names corresponding to array indices
+        """
+        from molpy.potential.utils import TypeIndexedArray
+        from molpy.potential.pair_params import PairTypeIndexedArray
+        
+        # Create dictionaries from arrays and type names
+        epsilon_dict = {name: float(eps) for name, eps in zip(type_names, epsilon)}
+        sigma_dict = {name: float(sig) for name, sig in zip(type_names, sigma)}
+        charge_dict = {name: float(q) for name, q in zip(type_names, charges)}
+        
+        # Create TypeIndexedArrays with combining rules
+        self.epsilon = PairTypeIndexedArray(epsilon_dict, combining_rule='geometric')
+        self.sigma = PairTypeIndexedArray(sigma_dict, combining_rule='arithmetic')
+        self.charges = TypeIndexedArray(charge_dict)
+    
+    def calc_energy(
+        self,
+        dr: NDArray[np.floating],
+        dr_norm: NDArray[np.floating],
+        pair_types_i: NDArray,
+        pair_types_j: NDArray,
+    ) -> float:
+        """
+        Calculate combined LJ + Coulomb energy.
+        
+        Uses PairTypeIndexedArray to automatically apply combining rules.
+        """
+        if len(pair_types_i) == 0:
+            return 0.0
+        
+        # Ensure dr_norm has correct shape
+        if dr_norm.ndim == 1:
+            dr_norm = dr_norm[:, None]
+        
+        # Use PairTypeIndexedArray pair indexing (automatic combining rules)
+        pair_types = np.column_stack([pair_types_i, pair_types_j])
+        eps = self.epsilon[pair_types]
+        sig = self.sigma[pair_types]
+        
+        # Ensure correct shape for broadcasting
+        if isinstance(eps, np.ndarray) and eps.ndim == 1:
+            eps = eps[:, None]
+        if isinstance(sig, np.ndarray) and sig.ndim == 1:
+            sig = sig[:, None]
+        
+        # Calculate LJ energy
+        lj_energy = 4 * eps * ((sig / dr_norm) ** 12 - (sig / dr_norm) ** 6)
+        
+        # Calculate Coulomb energy
+        q_i = self.charges[pair_types_i]
+        q_j = self.charges[pair_types_j]
+        coul_energy = (q_i * q_j / dr_norm.squeeze())
+        
+        if isinstance(coul_energy, np.ndarray) and coul_energy.ndim == 1:
+            coul_energy = coul_energy[:, None]
+        
+        total_energy = lj_energy + coul_energy
+        return float(np.sum(total_energy))
+    
+    def calc_forces(
+        self,
+        dr: NDArray[np.floating],
+        dr_norm: NDArray[np.floating],
+        pair_types_i: NDArray,
+        pair_types_j: NDArray,
+        pair_idx: NDArray[np.integer],
+        n_atoms: int,
+    ) -> NDArray[np.floating]:
+        """
+        Calculate combined LJ + Coulomb forces.
+        
+        Uses PairTypeIndexedArray to automatically apply combining rules.
+        """
+        if len(pair_types_i) == 0:
+            return np.zeros((n_atoms, 3), dtype=np.float64)
+        
+        # Ensure dr_norm has correct shape
+        if dr_norm.ndim == 1:
+            dr_norm = dr_norm[:, None]
+        
+        # Use PairTypeIndexedArray pair indexing
+        pair_types = np.column_stack([pair_types_i, pair_types_j])
+        eps = self.epsilon[pair_types]
+        sig = self.sigma[pair_types]
+        
+        # Ensure correct shape for broadcasting
+        if isinstance(eps, np.ndarray) and eps.ndim == 1:
+            eps = eps[:, None]
+        if isinstance(sig, np.ndarray) and sig.ndim == 1:
+            sig = sig[:, None]
+        
+        # Calculate LJ force magnitude
+        lj_force_mag = (
+            24 * eps * (2 * (sig / dr_norm) ** 12 - (sig / dr_norm) ** 6) / (dr_norm**2)
+        )
+        
+        # Calculate Coulomb force magnitude
+        q_i = self.charges[pair_types_i]
+        q_j = self.charges[pair_types_j]
+        coul_force_mag = (q_i * q_j / (dr_norm.squeeze() ** 3))
+        
+        if isinstance(coul_force_mag, np.ndarray) and coul_force_mag.ndim == 1:
+            coul_force_mag = coul_force_mag[:, None]
+        
+        # Total force magnitude
+        total_force_mag = lj_force_mag + coul_force_mag
+        
+        # Calculate force vectors
+        forces = total_force_mag * dr
+        
+        # Accumulate forces on atoms
+        per_atom_forces = np.zeros((n_atoms, 3), dtype=np.float64)
+        np.add.at(per_atom_forces, pair_idx[:, 0], -forces.squeeze())
+        np.add.at(per_atom_forces, pair_idx[:, 1], forces.squeeze())
+        
+        return per_atom_forces
+
+
 # ===================================================================
 #               Force Field Style and Type Classes
 # ===================================================================
@@ -272,6 +417,49 @@ class PairLJ126CoulLongStyle(PairStyle):
         pt = PairLJ126Type(name, itom, jtom, epsilon, sigma, charge)
         self.types.add(pt)
         return pt
+    
+    def to_potential(self):
+        """Convert this style to a Potential object."""
+        from molpy.core.forcefield import PairType
+        
+        pair_types = list(self.types.bucket(PairType))
+        if not pair_types:
+            raise ValueError("No pair types defined in style")
+        
+        # Extract parameters as lists
+        type_names = []
+        epsilon_list = []
+        sigma_list = []
+        charge_list = []
+        
+        for pt in pair_types:
+            epsilon = pt.params.kwargs.get("epsilon")
+            sigma = pt.params.kwargs.get("sigma")
+            charge = pt.params.kwargs.get("charge", 0.0)
+            
+            if epsilon is None or sigma is None:
+                raise ValueError(
+                    f"PairType '{pt.name}' is missing required parameters: "
+                    f"epsilon={epsilon}, sigma={sigma}"
+                )
+            
+            type_names.append(pt.itom.name)
+            epsilon_list.append(epsilon)
+            sigma_list.append(sigma)
+            charge_list.append(charge)
+        
+        # Convert to numpy arrays
+        epsilon_array = np.array(epsilon_list, dtype=np.float64)
+        sigma_array = np.array(sigma_list, dtype=np.float64)
+        charges_array = np.array(charge_list, dtype=np.float64)
+        
+        # Create Potential instance with numpy arrays
+        return LJ126CoulLong(
+            epsilon=epsilon_array,
+            sigma=sigma_array,
+            charges=charges_array,
+            type_names=type_names,
+        )
 
 
 class PairLJ126CoulCutStyle(PairStyle):

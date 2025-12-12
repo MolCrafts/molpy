@@ -4,10 +4,13 @@ Avoid eager imports to prevent legacy dependencies from loading during
 unit tests that target the new core architecture.
 """
 
-# Core atomistic classes
-from .core.entity import Entity, Struct, Link
+# Submodules - Import these AFTER core classes to avoid circular imports
+from . import data, external, io, parser, potential, typifier
 from .core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral
 from .core.box import Box
+
+# Core atomistic classes
+from .core.entity import Entity, Link, Struct
 
 # Core forcefield classes
 from .core.forcefield import (
@@ -31,7 +34,6 @@ from .core.forcefield import (
     TypeBucket,
 )
 
-
 # Core frame and box classes
 from .core.frame import Block, Frame
 
@@ -40,8 +42,7 @@ from .core.script import Script, ScriptLanguage
 
 # Core topology class
 from .core.topology import Topology
-from .version import version
+from .core.trajectory import Trajectory
+from .core.wrapper import Wrapper
 from .potential import *
-
-# Submodules - Import these AFTER core classes to avoid circular imports
-from . import data, io, potential, typifier, parser, adapter
+from .version import __version__, version

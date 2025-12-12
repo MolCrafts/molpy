@@ -10,8 +10,8 @@ The SequenceGenerator is the bottom layer in the three-layer architecture:
 - SequenceGenerator (bottom, monomer level)
 """
 
-from typing import Protocol, Iterator, List, Dict
 from random import Random
+from typing import Dict, Iterator, List, Protocol
 
 
 class SequenceGenerator(Protocol):

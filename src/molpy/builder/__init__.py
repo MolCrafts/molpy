@@ -5,13 +5,7 @@ favour of the new declarative API documented in
 ``notebooks/reacter_polymerbuilder_integration.ipynb``.
 """
 
-from .crystal import (
-    BlockRegion,
-    CrystalBuilder,
-    Lattice,
-    Region,
-    Site,
-)
+from .crystal import BlockRegion, CrystalBuilder, Lattice, Region, Site
 from .polymer import *
 
 __all__ = [

@@ -3,7 +3,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import IO
 
-from molpy import Frame
+from molpy.core.frame import Frame
 
 PathLike = str | Path
 

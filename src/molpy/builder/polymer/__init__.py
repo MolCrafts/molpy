@@ -16,18 +16,31 @@ from .connectors import (
     TableConnector,
     TopologyConnector,
 )
+from .growth_kernel import GrowthKernel, ProbabilityTableKernel
 from .linear import linear
+from .polymer_builder import PolymerBuilder
 from .polydisperse import Polydisperse, SchulzZimm
 from .sequence_generator import SequenceGenerator, WeightedSequenceGenerator
+from .stochastic_generator import StochasticChainGenerator
 from .system import (
     Chain,
-    DPDistribution,
+    FlorySchulzPolydisperse,
+    PoissonPolydisperse,
     PolydisperseChainGenerator,
-    SchulzZimmDPDistribution,
+    SchulzZimmPolydisperse,
     SystemPlan,
     SystemPlanner,
+    UniformPolydisperse,
 )
-from .types import ConnectionMetadata, ConnectionResult, PolymerBuildResult
+from .types import (
+    ConnectionMetadata,
+    ConnectionResult,
+    MonomerPlacement,
+    MonomerTemplate,
+    PolymerBuildResult,
+    PortDescriptor,
+    StochasticChain,
+)
 
 __all__ = [
     "AutoConnector",
@@ -41,6 +54,8 @@ __all__ = [
     "TableConnector",
     "TopologyConnector",
     "linear",
+    # CGSmiles Builder
+    "PolymerBuilder",
     # Polydisperse (legacy)
     "Polydisperse",
     "SchulzZimm",
@@ -49,13 +64,25 @@ __all__ = [
     "WeightedSequenceGenerator",
     # System-level (new three-layer architecture)
     "Chain",
-    "DPDistribution",
+    "FlorySchulzPolydisperse",
+    "PoissonPolydisperse",
     "PolydisperseChainGenerator",
-    "SchulzZimmDPDistribution",
+    "SchulzZimmPolydisperse",
     "SystemPlan",
     "SystemPlanner",
+    "UniformPolydisperse",
     # Types
     "ConnectionMetadata",
     "ConnectionResult",
     "PolymerBuildResult",
+    # G-BigSMILES Stochastic Growth Types
+    "MonomerTemplate",
+    "PortDescriptor",
+    "MonomerPlacement",
+    "StochasticChain",
+    # G-BigSMILES Growth Kernel
+    "GrowthKernel",
+    "ProbabilityTableKernel",
+    # G-BigSMILES Stochastic Generator
+    "StochasticChainGenerator",
 ]

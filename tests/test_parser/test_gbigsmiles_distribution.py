@@ -1,6 +1,7 @@
 """Unit tests for GBigSMILES distribution parsing."""
 
 import pytest
+
 from molpy.parser.smiles import parse_gbigsmiles
 from molpy.parser.smiles.gbigsmiles_ir import GBigSmilesMoleculeIR, GBigSmilesSystemIR
 
@@ -133,3 +134,4 @@ def test_parse_multiple_stochastic_objects_with_distribution():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+

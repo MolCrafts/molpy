@@ -8,7 +8,7 @@ allowing flexible reaction specification with default and specialized reactors.
 from molpy.core.atomistic import Atomistic
 from molpy.core.entity import Entity
 
-from .base import ReactionResult, Reacter
+from .base import Reacter, ReactionResult
 
 
 class MonomerLinker:

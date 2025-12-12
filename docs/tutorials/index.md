@@ -44,7 +44,7 @@ frame["bonds"]["type"]
 
 ---
 
-#### [Molecular Graph](molecular-graph.ipynb)
+#### Molecular Graph
 
 **Start here if:** You need create or edit molecule.
 
@@ -56,6 +56,8 @@ C = atoms.def_atom(symbol="C", xyz=[0, 0, 0])
 O = atoms.def_atom(symbol="O", xyz=[1.2, 0, 0])
 atoms.def_bond(C, O, order=2)
 ```
+
+**Note:** See [Parser](../user-guide/parser.ipynb) and [Reacter](../user-guide/reacter.ipynb) user guides for detailed molecular construction.
 
 ---
 
@@ -106,7 +108,7 @@ for frame in traj:
 
 Learn to construct molecular systems from scratch.
 
-#### [Crystal Builder](crystal-builder.ipynb)
+#### Crystal Builder
 **Generate crystal structures and lattices**
 
 - Building crystal unit cells
@@ -126,6 +128,8 @@ Learn to construct molecular systems from scratch.
 from molpy.builder.crystal import fcc
 crystal = fcc(element="Cu", a=3.61, n_cells=(3, 3, 3))
 ```
+
+**Note:** See [Builder](../user-guide/polymer_builder_overview.ipynb) user guide for detailed construction workflows.
 ---
 
 ### ⚗️ Chemistry & Reactions

@@ -22,7 +22,8 @@ from typing import Any, Literal
 
 import numpy as np
 
-from molpy import Atomistic, Box
+from molpy.core.atomistic import Atomistic
+from molpy.core.box import Box
 
 # Coordinate system type
 CoordSystem = Literal["lattice", "cartesian"]

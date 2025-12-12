@@ -14,11 +14,8 @@ import re
 from pathlib import Path
 from typing import Any, cast
 
-from molpy import (
-    Atomistic,
-    AtomType,
-    ForceField,
-)
+from molpy.core.atomistic import Atomistic
+from molpy.core.forcefield import AtomType, ForceField
 from molpy.io.builtin_resolver import resolve_builtin_path
 
 

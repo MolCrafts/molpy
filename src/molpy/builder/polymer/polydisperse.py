@@ -37,6 +37,25 @@ class Polydisperse(ABC):
         if random_seed is not None:
             np.random.seed(random_seed)
 
+    def _get_rng(self, random_seed: int | None = None):
+        """
+        Get a numpy random number generator for sampling.
+
+        Args:
+            random_seed: Optional random seed for this specific sample.
+                        If None, uses the instance's random_seed if set,
+                        otherwise uses the global numpy random state.
+
+        Returns:
+            A numpy RandomState or Generator instance for random number generation.
+        """
+        if random_seed is not None:
+            return np.random.RandomState(random_seed)
+        elif self.random_seed is not None:
+            return np.random.RandomState(self.random_seed)
+        else:
+            return np.random
+
     @abstractmethod
     def sample_length(
         self,
@@ -237,13 +256,7 @@ class SchulzZimm(Polydisperse):
         Returns:
             Number of monomers in the chain (>= 1)
         """
-        if random_seed is not None:
-            # Create a temporary random state for this sample
-            rng = np.random.RandomState(random_seed)
-        elif self.random_seed is not None:
-            rng = np.random.RandomState(self.random_seed)
-        else:
-            rng = np.random
+        rng = self._get_rng(random_seed)
 
         # Sample molecular weight from Gamma distribution
         # Schulz-Zimm is a Gamma distribution with:
