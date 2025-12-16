@@ -82,9 +82,7 @@ class TestPolydisperseChainGenerator:
         """Test basic chain generation."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
 
-        dp_dist = SchulzZimmPolydisperse(
-            Mn=1500.0, Mw=3000.0, avg_monomer_mass=100.0, random_seed=42
-        )
+        dp_dist = SchulzZimmPolydisperse(Mn=1500.0, Mw=3000.0, random_seed=42)
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
@@ -109,15 +107,20 @@ class TestPolydisperseChainGenerator:
         )
 
         # Create a simple fixed DP distribution for testing
-        from molpy.builder.polymer.polydisperse import Polydisperse
-        
-        class FixedDPDistribution(Polydisperse):
+        import numpy as np
+
+        class FixedDPDistribution:
             def __init__(self, dp: int):
-                super().__init__()
                 self.dp = dp
 
-            def sample_length(self, monomer_mw: float, random_seed: int | None = None) -> int:
+            def sample_dp(self, rng: np.random.Generator) -> int:
                 return self.dp
+
+            def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
+                # Delta function at self.dp
+                pmf = np.zeros_like(dp_array, dtype=float)
+                pmf[np.round(dp_array).astype(int) == self.dp] = 1.0
+                return pmf
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
@@ -136,11 +139,26 @@ class TestPolydisperseChainGenerator:
 
     def test_chain_generator_dp_distribution(self):
         """Test that DP distribution is followed."""
+        import numpy as np
+
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
 
-        dp_dist = SchulzZimmPolydisperse(
-            Mn=1500.0, Mw=3000.0, avg_monomer_mass=100.0, random_seed=42
-        )
+        # Use a simple DP-based distribution for testing
+        class PoissonDPDistribution:
+            """Simple Poisson distribution for DP testing."""
+
+            def __init__(self, mean_dp: float):
+                self.mean_dp = mean_dp
+
+            def sample_dp(self, rng: np.random.Generator) -> int:
+                return max(1, int(rng.poisson(self.mean_dp)))
+
+            def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
+                from scipy.stats import poisson
+
+                return poisson.pmf(dp_array, self.mean_dp)
+
+        dp_dist = PoissonDPDistribution(mean_dp=15)
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
@@ -152,7 +170,7 @@ class TestPolydisperseChainGenerator:
         rng = Random(42)
         dps = [chain_gen.sample_dp(Random(i)) for i in range(100)]
 
-        # Average DP should be approximately Mn / avg_monomer_mass = 15
+        # Average DP should be approximately mean_dp = 15
         avg_dp = sum(dps) / len(dps)
         assert avg_dp == pytest.approx(15.0, abs=5.0)
 
@@ -164,9 +182,7 @@ class TestSystemPlanner:
         """Test basic system planning."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
 
-        dp_dist = SchulzZimmPolydisperse(
-            Mn=1500.0, Mw=3000.0, avg_monomer_mass=100.0, random_seed=42
-        )
+        dp_dist = SchulzZimmPolydisperse(Mn=1500.0, Mw=3000.0, random_seed=42)
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
@@ -201,15 +217,19 @@ class TestSystemPlanner:
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
 
         # Use fixed DP for predictable testing
-        from molpy.builder.polymer.polydisperse import Polydisperse
-        
-        class FixedDPDistribution(Polydisperse):
+        import numpy as np
+
+        class FixedDPDistribution:
             def __init__(self, dp: int):
-                super().__init__()
                 self.dp = dp
 
-            def sample_length(self, monomer_mw: float, random_seed: int | None = None) -> int:
+            def sample_dp(self, rng: np.random.Generator) -> int:
                 return self.dp
+
+            def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
+                pmf = np.zeros_like(dp_array, dtype=float)
+                pmf[np.round(dp_array).astype(int) == self.dp] = 1.0
+                return pmf
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
@@ -238,15 +258,19 @@ class TestSystemPlanner:
         """Test that max_chains constraint is respected."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
 
-        from molpy.builder.polymer.polydisperse import Polydisperse
-        
-        class FixedDPDistribution(Polydisperse):
+        import numpy as np
+
+        class FixedDPDistribution:
             def __init__(self, dp: int):
-                super().__init__()
                 self.dp = dp
 
-            def sample_length(self, monomer_mw: float, random_seed: int | None = None) -> int:
+            def sample_dp(self, rng: np.random.Generator) -> int:
                 return self.dp
+
+            def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
+                pmf = np.zeros_like(dp_array, dtype=float)
+                pmf[np.round(dp_array).astype(int) == self.dp] = 1.0
+                return pmf
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
@@ -271,15 +295,19 @@ class TestSystemPlanner:
         """Test that chain trimming works when enabled."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
 
-        from molpy.builder.polymer.polydisperse import Polydisperse
-        
-        class FixedDPDistribution(Polydisperse):
+        import numpy as np
+
+        class FixedDPDistribution:
             def __init__(self, dp: int):
-                super().__init__()
                 self.dp = dp
 
-            def sample_length(self, monomer_mw: float, random_seed: int | None = None) -> int:
+            def sample_dp(self, rng: np.random.Generator) -> int:
                 return self.dp
+
+            def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
+                pmf = np.zeros_like(dp_array, dtype=float)
+                pmf[np.round(dp_array).astype(int) == self.dp] = 1.0
+                return pmf
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
@@ -311,15 +339,19 @@ class TestSystemPlanner:
         """Test that trimming can be disabled."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
 
-        from molpy.builder.polymer.polydisperse import Polydisperse
-        
-        class FixedDPDistribution(Polydisperse):
+        import numpy as np
+
+        class FixedDPDistribution:
             def __init__(self, dp: int):
-                super().__init__()
                 self.dp = dp
 
-            def sample_length(self, monomer_mw: float, random_seed: int | None = None) -> int:
+            def sample_dp(self, rng: np.random.Generator) -> int:
                 return self.dp
+
+            def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
+                pmf = np.zeros_like(dp_array, dtype=float)
+                pmf[np.round(dp_array).astype(int) == self.dp] = 1.0
+                return pmf
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
@@ -352,9 +384,7 @@ class TestIntegration:
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
 
         # Middle layer: PolydisperseChainGenerator
-        dp_dist = SchulzZimmPolydisperse(
-            Mn=1500.0, Mw=3000.0, avg_monomer_mass=100.0, random_seed=42
-        )
+        dp_dist = SchulzZimmPolydisperse(Mn=1500.0, Mw=3000.0, random_seed=42)
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
@@ -390,4 +420,3 @@ class TestIntegration:
             / system_plan.target_mass
         )
         assert rel_error <= planner.max_rel_error * 1.1
-

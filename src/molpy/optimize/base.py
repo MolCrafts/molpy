@@ -88,13 +88,13 @@ class Optimizer(ABC, Generic[S]):
         entities = structure.entities.all()
         if not entities:
             return np.empty((0, 3), dtype=float)
-        
+
         # Use x, y, z fields (never use xyz)
         x_list = entities["x"]
         y_list = entities["y"]
         z_list = entities["z"]
         positions = np.column_stack([x_list, y_list, z_list])
-        
+
         if positions.ndim == 1:
             positions = positions.reshape(-1, 3)
         return positions

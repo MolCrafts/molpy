@@ -525,4 +525,3 @@ class Placer:
             atom["x"] = float(new_pos[0])
             atom["y"] = float(new_pos[1])
             atom["z"] = float(new_pos[2])
-

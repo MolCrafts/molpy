@@ -832,12 +832,12 @@ class Frame:
 
     def copy(self) -> "Frame":
         """Create a shallow copy of the Frame.
-        
+
         Blocks are copied (shallow), but the underlying numpy arrays are not.
-        
+
         Returns:
             Frame: A new Frame instance with copied blocks and metadata.
-            
+
         Examples:
             >>> frame = Frame(blocks={"atoms": {"x": [1, 2, 3]}}, timestep=0)
             >>> frame_copy = frame.copy()

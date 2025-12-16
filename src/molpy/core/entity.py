@@ -570,42 +570,42 @@ class ConnectivityMixin:
         entity_type: type[Entity] = Entity,
         link_type: type[Link] = Link,
     ) -> "Topology":
-        """将结构导出为拓扑图。
+        """Export structure as a topology graph.
 
         Args:
-            entity_type: 要包含在拓扑图中的实体类型
-            link_type: 用于构建连接的链接类型
+            entity_type: Entity type to include in the topology graph
+            link_type: Link type used to build connections
 
         Returns:
-            Topology: igraph.Graph 对象，包含实体到顶点的映射信息
+            Topology: igraph.Graph object containing entity-to-vertex mapping information
 
         Note:
-            返回的 Topology 图的顶点顺序与 entities[entity_type] 的顺序一致。
-            可以使用 `entity_to_idx` 和 `idx_to_entity` 属性访问映射关系。
+            The vertex order in the returned Topology graph is consistent with entities[entity_type].
+            Use `entity_to_idx` and `idx_to_entity` attributes to access the mapping.
         """
         from molpy.core.topology import Topology
 
-        # 收集所有相关实体
+        # Collect all relevant entities
         entities_list = list(self.entities.bucket(entity_type))
         entity_to_idx: dict[Entity, int] = {
             ent: i for i, ent in enumerate(entities_list)
         }
         entity_set = set(entities_list)
 
-        # 构建边列表（只考虑连接两个端点的链接）
+        # Build edge list (only consider links connecting two endpoints)
         edges: list[tuple[int, int]] = []
         for link in self.links.bucket(link_type):  # type: ignore[arg-type]
             endpoints = link.endpoints
-            # 只处理包含两个端点且都在实体集合中的链接
+            # Only process links with two endpoints that are both in the entity set
             if len(endpoints) >= 2:
                 ep1, ep2 = endpoints[0], endpoints[1]
                 if ep1 in entity_set and ep2 in entity_set:
                     idx1 = entity_to_idx[ep1]
                     idx2 = entity_to_idx[ep2]
-                    if idx1 != idx2:  # 避免自环
+                    if idx1 != idx2:  # Avoid self-loops
                         edges.append((idx1, idx2))
 
-        # 创建拓扑图，使用正式成员存储映射关系
+        # Create topology graph, using formal members to store mapping
         topo = Topology(
             n=len(entities_list),
             edges=edges,
@@ -623,30 +623,30 @@ class ConnectivityMixin:
         entity_type: type[Entity] = Entity,
         link_type: type[Link] = Link,
     ) -> list[Entity]:
-        """获取指定实体在给定拓扑半径内的所有邻居。
+        """Get all neighbors of a specified entity within a given topological radius.
 
         Args:
-            entity: 中心实体
-            radius: 拓扑半径（跳数）
-            entity_type: 要考虑的实体类型
-            link_type: 用于拓扑连接的链接类型
+            entity: Center entity
+            radius: Topological radius (number of hops)
+            entity_type: Entity type to consider
+            link_type: Link type used for topological connections
 
         Returns:
-            list[Entity]: 在半径内的所有邻居实体列表（包括自身，如果半径>=0）
+            list[Entity]: List of all neighbor entities within radius (including self if radius>=0)
         """
         topo = self.get_topo(entity_type=entity_type, link_type=link_type)
 
-        # 获取实体在图中的索引
+        # Get entity index in graph
         entity_to_idx: dict[Entity, int] = topo.entity_to_idx
         if entity not in entity_to_idx:
             return []
 
         center_idx = entity_to_idx[entity]
 
-        # 获取距离
+        # Get distances
         distances = topo.distances(source=[center_idx])[0]
 
-        # 收集在半径内的所有实体
+        # Collect all entities within radius
         neighbors: list[Entity] = []
         idx_to_entity: list[Entity] = topo.idx_to_entity
         for i, dist in enumerate(distances):
@@ -661,30 +661,30 @@ class ConnectivityMixin:
         entity_type: type[Entity] = Entity,
         link_type: type[Link] = Link,
     ) -> dict[Entity, int]:
-        """获取从源实体到所有其他实体的拓扑距离。
+        """Get topological distances from source entity to all other entities.
 
         Args:
-            source: 源实体
-            entity_type: 要考虑的实体类型
-            link_type: 用于拓扑连接的链接类型
+            source: Source entity
+            entity_type: Entity type to consider
+            link_type: Link type used for topological connections
 
         Returns:
-            dict[Entity, int]: 从源实体到每个实体的拓扑距离字典。
-                如果实体不可达，距离为无穷大（float('inf')）。
+            dict[Entity, int]: Dictionary of topological distances from source to each entity.
+                If an entity is unreachable, the distance is infinity (float('inf')).
         """
         topo = self.get_topo(entity_type=entity_type, link_type=link_type)
 
-        # 获取源实体在图中的索引
+        # Get source entity index in graph
         entity_to_idx: dict[Entity, int] = topo.entity_to_idx
         if source not in entity_to_idx:
             return {}
 
         source_idx = entity_to_idx[source]
 
-        # 计算距离
+        # Calculate distances
         distances = topo.distances(source=[source_idx])[0]
 
-        # 构建距离字典
+        # Build distance dictionary
         idx_to_entity: list[Entity] = topo.idx_to_entity
         result: dict[Entity, int] = {}
         for i, dist in enumerate(distances):
@@ -700,22 +700,22 @@ class ConnectivityMixin:
         entity_type: type[Entity] = Entity,
         link_type: type[Link] = Link,
     ) -> tuple["Struct", list[Entity]]:
-        """提取在指定拓扑半径内的子图。
+        """Extract subgraph within specified topological radius.
 
         Args:
-            center_entities: 中心实体集合
-            radius: 拓扑半径（跳数）
-            entity_type: 要考虑的实体类型
-            link_type: 用于拓扑连接的链接类型
+            center_entities: Set of center entities
+            radius: Topological radius (number of hops)
+            entity_type: Entity type to consider
+            link_type: Link type used for topological connections
 
         Returns:
-            tuple[Struct, list[Entity]]: 包含：
-                - subgraph: 提取的子图（新的 Struct 实例）
-                - edge_entities: 边界实体列表（在原图中有邻居但不在子图中的实体）
+            tuple[Struct, list[Entity]]: Contains:
+                - subgraph: Extracted subgraph (new Struct instance)
+                - edge_entities: List of boundary entities (entities with neighbors in original graph but not in subgraph)
 
         Note:
-            子图包含所有在半径内的实体和它们之间的链接。
-            边界实体是指在原图中还有邻居不在子图里的实体。
+            The subgraph contains all entities within radius and links between them.
+            Boundary entities are those that have neighbors in the original graph not included in the subgraph.
         """
         center_entities_list = list(center_entities)
         topo = self.get_topo(entity_type=entity_type, link_type=link_type)
@@ -723,20 +723,20 @@ class ConnectivityMixin:
         entity_to_idx: dict[Entity, int] = topo.entity_to_idx
         idx_to_entity: list[Entity] = topo.idx_to_entity
 
-        # 获取中心实体的索引
+        # Get indices of center entities
         center_indices: list[int] = []
         for cent in center_entities_list:
             if cent in entity_to_idx:
                 center_indices.append(entity_to_idx[cent])
 
         if not center_indices:
-            # 如果没有有效的中心实体，返回空子图
+            # If no valid center entities, return empty subgraph
             from copy import deepcopy
 
             new_struct = type(self)()
             return new_struct, []
 
-        # 收集在半径内的所有实体索引
+        # Collect all entity indices within radius
         selected_indices: set[int] = set()
         for c in center_indices:
             distances = topo.distances(source=[c])[0]
@@ -748,7 +748,7 @@ class ConnectivityMixin:
         selected_entities = [idx_to_entity[i] for i in selected_indices_list]
         selected_entities_set = set(selected_entities)
 
-        # 找到边界实体（在子图中有邻居不在子图里的实体）
+        # Find boundary entities (entities in subgraph with neighbors not in subgraph)
         selected_indices_set = set(selected_indices)
         edge_indices: set[int] = set()
         for i in selected_indices:
@@ -759,29 +759,29 @@ class ConnectivityMixin:
 
         edge_entities = [idx_to_entity[i] for i in sorted(edge_indices)]
 
-        # 创建新的 Struct 实例
+        # Create new Struct instance
         from copy import deepcopy
 
         new_struct = type(self)()
         new_struct._props = deepcopy(self._props)
 
-        # 添加选中的实体并创建实体映射（原实体 -> 克隆实体）
+        # Add selected entities and create entity mapping (original entity -> cloned entity)
         entity_map: dict[Entity, Entity] = {}
         cloned_entities_list: list[Entity] = []
         for ent in selected_entities:
-            # 深拷贝实体
+            # Deep copy entity
             cloned_ent = ent.__class__(deepcopy(getattr(ent, "data", {})))
             new_struct.entities.add(cloned_ent)
             entity_map[ent] = cloned_ent
             cloned_entities_list.append(cloned_ent)
 
-        # 添加在子图中的链接
+        # Add links in subgraph
         for link in self.links.bucket(link_type):  # type: ignore[arg-type]
             endpoints = link.endpoints
             if len(endpoints) >= 2:
-                # 检查链接的所有端点是否都在子图中
+                # Check if all link endpoints are in subgraph
                 if all(ep in selected_entities_set for ep in endpoints):
-                    # 创建链接的克隆，映射端点到新实体
+                    # Create cloned link, mapping endpoints to new entities
                     cloned_eps = [entity_map[ep] for ep in endpoints]
                     attrs = deepcopy(getattr(link, "data", {}))
                     lcls: type[Link] = type(link)
@@ -791,7 +791,7 @@ class ConnectivityMixin:
                         new_link = lcls(cloned_eps, **attrs)
                     new_struct.links.add(new_link)
 
-        # 更新边界实体列表为克隆后的实体
+        # Update boundary entity list to cloned entities
         cloned_edge_entities = [
             entity_map[ep] for ep in edge_entities if ep in entity_map
         ]

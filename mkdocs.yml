@@ -94,6 +94,7 @@ nav:
   - Tutorials:
       - Overview: tutorials/index.md
       - Core Concepts:
+          - Atomistic Graph: tutorials/atomistic.ipynb
           - Frame & Block: tutorials/frame-block.ipynb
           - Simulation Box: tutorials/box.ipynb
           - Topology: tutorials/topology.ipynb
@@ -102,48 +103,13 @@ nav:
       - Advanced Topics:
           - Force Field: tutorials/force-field.ipynb
           - Trajectory: tutorials/trajectory.ipynb
-      - Polymer Workflows:
-          - Step-by-Step Visualization: tutorials/polymer-step-by-step.ipynb
-          - Linear Polymer Chains: tutorials/polymer-linear-chain.ipynb
-          - Polydisperse Systems: tutorials/polymer-polydisperse-system.ipynb
-          - Cross-linked Networks: tutorials/polymer-crosslinked-network.ipynb
   - User Guide:
       - Overview: user-guide/index.md
-      - Parser:
-          - Parser Overview: user-guide/parser.ipynb
-          - BigSMILES Parser: user-guide/gbigsmiles_parser.ipynb
-          - Monomer IR: user-guide/monomer_ir.ipynb
-      - Reacter:
-          - Reacter Overview: user-guide/reacter.ipynb
-          - Connector: user-guide/connector.ipynb
-          - Selectors: user-guide/selectors.ipynb
-          - Transformers: user-guide/transformers.ipynb
-      - Builder:
-          - Builder Overview: user-guide/polymer_builder_overview.ipynb
-          - Sequence Generator: user-guide/sequence_generator.ipynb
-          - Polydisperse Chain: user-guide/polydisperse_chain_generator.ipynb
-          - System Planner: user-guide/system_planner.ipynb
-          - Placer: user-guide/placer.ipynb
-      - Typifier:
-          - Typifier Overview: user-guide/typifier.ipynb
-          - Typifier Rules: user-guide/typifier_rules.ipynb
-          - Typifier SMARTS: user-guide/typifier_smarts.ipynb
-      - IO:
-          - IO Overview: user-guide/io.ipynb
-          - Data Formats: user-guide/data_formats.ipynb
-          - Force Field Formats: user-guide/forcefield_formats.ipynb
-          - LAMMPS Integration: user-guide/lammps_integration.ipynb
-      - Adapter:
-          - Adapter Overview: user-guide/adapter.ipynb
-          - RDKit Adapter: user-guide/rdkit_adapter.ipynb
-          - External Tools: user-guide/external_tools.ipynb
-      - Potential:
-          - Potential Overview: user-guide/potential.ipynb
-          - Force Field Parameters: user-guide/forcefield_parameters.ipynb
-          - LAMMPS Fix Bond React: user-guide/lammps_fix_bond_react.ipynb
-      - Compute:
-          - Compute Overview: user-guide/compute.ipynb
-          - Analysis Functions: user-guide/analysis_functions.ipynb
+      - 01 Parsing Chemistry: user-guide/01_parsing_chemistry.ipynb
+      - 02 Polymer Stepwise: user-guide/02_polymer_stepwise.ipynb
+      - 03 Polymer SMILES: user-guide/03_polymer_smiles.ipynb
+      - 04 Polymer Crosslinking: user-guide/04_polymer_crosslinking.ipynb
+      - 05 Polymer Polydisperse: user-guide/05_polymer_polydisperse.ipynb
   - API Reference:
       - Overview: api/index.md
       - Core: api/core.md
@@ -159,10 +125,8 @@ nav:
   - Developer:
       - Overview: developer/index.md
       - Architecture:
-          - Recipe System: developer/recipe_system.ipynb
           - Wrapper & Adapter: developer/wrapper_adapter_layers.ipynb
-          - Python IR System: developer/python_ir_system.ipynb
-      - Contributing: developer/contributing.ipynb
+      - Contributing: developer/contributing.md
       - Development Setup: developer/development-setup.md
       - Coding Style: developer/coding-style.md
       - Testing: developer/testing.md

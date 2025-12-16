@@ -2,6 +2,7 @@
 
 Provides type conversion helpers and reader utilities for IO operations.
 """
+
 from functools import wraps
 
 from molpy.core.frame import Frame
@@ -16,16 +17,17 @@ FrameLike = Frame | System | Struct
 def to_system(func):
     """
     Decorator to convert first argument to System.
-    
+
     Automatically converts Frame, Struct, or Segment to System
     before calling the decorated function.
-    
+
     Args:
         func: Function expecting System as first argument
-    
+
     Returns:
         Wrapped function
     """
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         if len(args) > 0:
@@ -50,10 +52,10 @@ def to_system(func):
 def to_frame(framelike: FrameLike) -> Frame:
     """
     Convert frame-like object to Frame.
-    
+
     Args:
         framelike: System, Frame, or Struct
-    
+
     Returns:
         Frame instance
     """
@@ -70,12 +72,13 @@ def to_frame(framelike: FrameLike) -> Frame:
 class ZipReader:
     """
     Zip multiple readers together for parallel iteration.
-    
+
     Context manager that yields tuples of frames from multiple readers.
-    
+
     Args:
         *readers: Variable number of reader objects
     """
+
     def __init__(self, *readers):
         self.readers = readers
 

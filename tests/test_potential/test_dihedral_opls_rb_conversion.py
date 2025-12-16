@@ -91,19 +91,18 @@ def test_rb_to_opls_invalid_c5():
         rb_to_opls(C0, C1, C2, C3, C4, C5, units="kJ")
 
 
-def test_rb_to_opls_invalid_sum():
+def test_rb_to_opls_invalid_sum(caplog):
     """Test that non-zero sum triggers warning (MD-safe constant offset)."""
-    import warnings
+    import logging
 
     # Non-zero sum indicates constant energy offset (harmless for MD)
     C0, C1, C2, C3, C4, C5 = 1.0, 2.0, 3.0, 4.0, 5.0, 0.0
 
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
+    with caplog.at_level(logging.WARNING):
         rb_to_opls(C0, C1, C2, C3, C4, C5, units="kJ")
         # Should have warning about constant offset
-        assert len(w) > 0
-        assert "constant energy offset" in str(w[0].message)
+        assert len(caplog.records) > 0
+        assert "constant energy offset" in caplog.text
 
 
 def test_format_lammps_dihedral_coeff():

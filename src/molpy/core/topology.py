@@ -3,6 +3,7 @@
 Provides graph-based representation of molecular connectivity with
 automated detection of angles, dihedrals, and impropers.
 """
+
 # author: Roy Kid
 # contact: lijichen365@126.com
 # date: 2023-01-10

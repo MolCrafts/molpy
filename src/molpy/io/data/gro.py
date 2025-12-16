@@ -418,12 +418,14 @@ class GroWriter(DataWriter):
                         z = float(atom_data["z"])
                     elif "xyz" in atom_data:
                         xyz = atom_data["xyz"]
-                        if hasattr(xyz, '__iter__') and not isinstance(xyz, str):
+                        if hasattr(xyz, "__iter__") and not isinstance(xyz, str):
                             x, y, z = float(xyz[0]), float(xyz[1]), float(xyz[2])
                         else:
                             raise ValueError(f"Invalid xyz format for atom {i}")
                     else:
-                        raise ValueError(f"Atom {i} missing coordinate information (need x/y/z or xyz)")
+                        raise ValueError(
+                            f"Atom {i} missing coordinate information (need x/y/z or xyz)"
+                        )
 
                     # Velocity (optional)
                     vx = float(atom_data.get("vx", 0.0)) if has_velocity else None

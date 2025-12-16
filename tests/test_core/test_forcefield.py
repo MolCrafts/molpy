@@ -492,8 +492,8 @@ class TestStyleToPotential:
 
         assert len(potential.k) == 2
         assert len(potential.r0) == 2
-        assert set(potential.k.flatten()) == {1000.0, 800.0}
-        assert set(potential.r0.flatten()) == {1.5, 1.4}
+        assert set(potential.k.values.flatten()) == {1000.0, 800.0}
+        assert set(potential.r0.values.flatten()) == {1.5, 1.4}
 
     def test_bondstyle_to_potential_missing_parameters(self):
         """Test that missing parameters raise ValueError."""
@@ -574,8 +574,11 @@ class TestStyleToPotential:
 
         assert len(potential.epsilon) == 2
         assert len(potential.sigma) == 2
-        assert set(potential.epsilon.flatten()) == {0.293, 0.126}
-        assert set(potential.sigma.flatten()) == {0.355, 0.242}
+        # Get values - handle both numpy arrays and TypeIndexedArray
+        eps_values = getattr(potential.epsilon, "values", potential.epsilon)
+        sig_values = getattr(potential.sigma, "values", potential.sigma)
+        assert set(eps_values.flatten()) == {0.293, 0.126}
+        assert set(sig_values.flatten()) == {0.355, 0.242}
 
     def test_pairstyle_to_potential_missing_parameters(self):
         """Test that missing parameters raise ValueError."""

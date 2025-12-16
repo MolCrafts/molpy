@@ -129,4 +129,3 @@ class Wrapper(ABC):
             f"<{self.__class__.__name__}(name='{self.name}', "
             f"exe='{self.exe}', workdir={workdir_str})>"
         )
-

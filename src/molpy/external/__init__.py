@@ -37,7 +37,7 @@ from .antechamber_wrapper import AntechamberWrapper
 
 # Adapter exports
 from .base import Adapter
-from .rdkit_adapter import RDKitAdapter
+from .rdkit_adapter import MP_ID, RDKitAdapter
 from .rdkit_compute import Generate3D, OptimizeGeometry
 from .tleap_wrapper import TLeapWrapper
 
@@ -48,6 +48,7 @@ __all__ = [
     # Adapters
     "Adapter",
     "RDKitAdapter",
+    "MP_ID",
     "Generate3D",
     "OptimizeGeometry",
     # Wrappers

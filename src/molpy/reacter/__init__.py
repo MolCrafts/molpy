@@ -9,32 +9,33 @@ Core Concepts:
 --------------
 - **Reacter**: Represents a single chemical reaction type
 - **ReactionResult**: Container for reaction products and metadata
-- **Selectors**: Functions that identify port atoms and leaving groups
+- **Selectors**: Functions that map port atoms to anchors and choose leaving groups
 - **Transformers**: Functions that create or modify bonds
 
 Example Usage:
 --------------
 ```python
-from molpy.reacter import Reacter, select_port_atom, select_one_hydrogen, form_single_bond
+from molpy.reacter import Reacter, select_identity, select_one_hydrogen, form_single_bond
 
 # Define a C-C coupling reaction
 cc_coupling = Reacter(
     name="C-C_coupling_with_H_loss",
-    port_selector_left=select_port_atom,
-    port_selector_right=select_port_atom,
+    anchor_selector_left=select_identity,
+    anchor_selector_right=select_identity,
     leaving_selector_left=select_one_hydrogen,
     leaving_selector_right=select_one_hydrogen,
     bond_former=form_single_bond,
 )
 
-# Mark ports on atoms
-atom_a["port"] = "1"
-atom_b["port"] = "2"
+# Find port atoms first
+port_atom_a = find_port_atom(struct_a, "1")
+port_atom_b = find_port_atom(struct_b, "2")
 
-# Execute reaction between two Atomistic structures
-product = cc_coupling.run(left=struct_a, right=struct_b, port_L="1", port_R="2")
-print(f"Removed atoms: {product.removed_atoms}")
-print(f"New bonds: {product.new_bonds}")
+# Execute reaction
+result = cc_coupling.run(
+    left=struct_a, right=struct_b,
+    port_atom_L=port_atom_a, port_atom_R=port_atom_b
+)
 ```
 
 Design Goals:
@@ -56,14 +57,24 @@ from .base import (
     TopologyChanges,
 )
 from .connector import MonomerLinker
+from .template import TemplateReacter, TemplateResult, write_template_files
 from .selectors import (
+    # Anchor selectors (transform port_atom to anchor atom)
+    select_identity,
+    select_c_neighbor,
+    select_o_neighbor,
+    select_dehydration_left,
+    select_dehydration_right,
+    # Leaving selectors (identify atoms to remove)
     select_all_hydrogens,
     select_dummy_atoms,
     select_hydroxyl_group,
+    select_hydroxyl_h_only,
     select_none,
     select_one_hydrogen,
-    select_port_atom,
-    select_prev_atom,
+    # Utilities
+    find_port_atom,
+    find_port_atom_by_node,
 )
 from .topology_detector import TopologyDetector
 from .transformers import (
@@ -85,25 +96,35 @@ __all__ = [
     "ReactionMetadata",
     "ReactionResult",
     "Reacter",
+    "TemplateReacter",
+    "TemplateResult",
     "TopologyChanges",
     "TopologyDetector",
+    "write_template_files",
     # Transformers (Bond Formers)
     "break_bond",
     "create_bond_former",
-    # Utilities
-    "create_atom_mapping",
-    "find_neighbors",
     "form_aromatic_bond",
     "form_double_bond",
     "form_single_bond",
     "form_triple_bond",
-    # Selectors
+    "skip_bond_formation",
+    # Utilities
+    "create_atom_mapping",
+    "find_neighbors",
+    "find_port_atom",
+    "find_port_atom_by_node",
+    # Anchor selectors
+    "select_identity",
+    "select_c_neighbor",
+    "select_o_neighbor",
+    "select_dehydration_left",
+    "select_dehydration_right",
+    # Leaving selectors
     "select_all_hydrogens",
     "select_dummy_atoms",
     "select_hydroxyl_group",
+    "select_hydroxyl_h_only",
     "select_none",
     "select_one_hydrogen",
-    "select_port_atom",
-    "select_prev_atom",
-    "skip_bond_formation",
 ]

@@ -3,6 +3,7 @@
 Reads Antechamber .ac files containing atom and bond information
 with force field types and charges.
 """
+
 from pathlib import Path
 
 from molpy.core.frame import Frame
@@ -14,13 +15,14 @@ from .base import DataReader
 class AcReader(DataReader):
     """
     Reader for Antechamber .ac format files.
-    
+
     Parses ATOM and BOND sections from Antechamber output files,
     extracting coordinates, charges, atom types, and connectivity.
-    
+
     Args:
         file: Path to .ac file
     """
+
     def __init__(self, file: str | Path):
         super().__init__(Path(file))
         self._file = Path(file)
@@ -28,10 +30,10 @@ class AcReader(DataReader):
     def read(self, frame: Frame) -> Frame:
         """
         Read .ac file and populate Frame with atoms and bonds.
-        
+
         Args:
             frame: Frame to populate
-        
+
         Returns:
             Frame with atoms and bonds data
         """

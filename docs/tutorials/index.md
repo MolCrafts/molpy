@@ -57,7 +57,7 @@ O = atoms.def_atom(symbol="O", xyz=[1.2, 0, 0])
 atoms.def_bond(C, O, order=2)
 ```
 
-**Note:** See [Parser](../user-guide/parser.ipynb) and [Reacter](../user-guide/reacter.ipynb) user guides for detailed molecular construction.
+**Note:** See [Parser](../user-guide/01_parsing_chemistry.ipynb) and [Polymer SMILES](../user-guide/03_polymer_smiles.ipynb) user guides for detailed molecular construction.
 
 ---
 
@@ -129,7 +129,7 @@ from molpy.builder.crystal import fcc
 crystal = fcc(element="Cu", a=3.61, n_cells=(3, 3, 3))
 ```
 
-**Note:** See [Builder](../user-guide/polymer_builder_overview.ipynb) user guide for detailed construction workflows.
+**Note:** See [Builder](../user-guide/02_polymer_stepwise.ipynb) user guide for detailed construction workflows.
 ---
 
 ### ⚗️ Chemistry & Reactions

@@ -643,15 +643,17 @@ def _format_bond_harmonic(typ) -> list[float]:
 def _format_angle_harmonic(typ) -> list[float]:
     """Format AngleHarmonicType parameters: k theta0
 
-    Parameters are already in LAMMPS format (kcal/mol/rad² for k, degrees for theta0),
-    so no conversion is needed - just return them directly.
+    Note: theta0 is stored internally in RADIANS but LAMMPS requires DEGREES.
+    The k parameter is in kcal/mol/rad² which is what LAMMPS expects.
     """
+    import math
     from molpy.potential.angle import AngleHarmonicType
 
-    k = typ.params.kwargs.get("k", 0.0)  # kcal/mol/rad² (already in LAMMPS format)
-    theta0 = typ.params.kwargs.get("theta0", 0.0)  # degrees
+    k = typ.params.kwargs.get("k", 0.0)  # kcal/mol/rad²
+    theta0_rad = typ.params.kwargs.get("theta0", 0.0)  # radians (internal storage)
+    theta0_deg = math.degrees(theta0_rad)  # Convert to degrees for LAMMPS
 
-    return [k, theta0]
+    return [k, theta0_deg]
 
 
 def _format_dihedral_opls(typ) -> list[float]:

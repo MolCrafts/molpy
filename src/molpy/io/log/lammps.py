@@ -2,6 +2,7 @@
 
 Parses LAMMPS log files to extract thermodynamic output and simulation metadata.
 """
+
 # author: Roy Kid
 # contact: lijichen365@126.com
 # date: 2023-09-29
@@ -16,13 +17,14 @@ import numpy as np
 class LAMMPSLog:
     """
     Parser for LAMMPS log files.
-    
+
     Extracts version info and thermodynamic output from LAMMPS log files.
-    
+
     Args:
         file: Path to LAMMPS log file
         style: Log style (default: "default")
     """
+
     def __init__(self, file: str | Path, style="default"):
         self.file = Path(file)
         self.info = {

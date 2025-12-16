@@ -26,9 +26,9 @@ def test_wrapper_initialization():
     assert wrapper.env == {}
 
 
-def test_wrapper_with_workdir():
+def test_wrapper_with_workdir(tmp_path: Path):
     """Test wrapper with working directory."""
-    workdir = Path("test_workdir")
+    workdir = tmp_path / "test_workdir"
     wrapper = MockWrapper(name="test", exe="test_exe", workdir=workdir)
     assert wrapper.workdir == workdir
 
@@ -56,9 +56,9 @@ def test_wrapper_run_basic():
         assert call_args[0][0] == ["echo", "hello"]
 
 
-def test_wrapper_run_with_workdir():
+def test_wrapper_run_with_workdir(tmp_path: Path):
     """Test run() with working directory."""
-    workdir = Path("test_workdir")
+    workdir = tmp_path / "test_workdir"
     wrapper = MockWrapper(name="test", exe="echo", workdir=workdir)
 
     with patch("subprocess.run") as mock_run:
@@ -69,10 +69,10 @@ def test_wrapper_run_with_workdir():
         assert call_kwargs["cwd"] == str(workdir)
 
 
-def test_wrapper_run_with_cwd_override():
+def test_wrapper_run_with_cwd_override(tmp_path: Path):
     """Test run() with cwd parameter overriding workdir."""
-    workdir = Path("default_workdir")
-    override_cwd = Path("override_workdir")
+    workdir = tmp_path / "default_workdir"
+    override_cwd = tmp_path / "override_workdir"
     wrapper = MockWrapper(name="test", exe="echo", workdir=workdir)
 
     with patch("subprocess.run") as mock_run:
@@ -90,4 +90,3 @@ def test_wrapper_repr():
     assert "MockWrapper" in repr_str
     assert "test_tool" in repr_str
     assert "test_exe" in repr_str
-

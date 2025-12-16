@@ -1044,17 +1044,17 @@ class LammpsDataWriter(DataWriter):
             type_to_id = self._get_type_to_id_mapping(type_list)
 
         data = frame[section_name]
-        
+
         # Validate that 'type' field exists
         if "type" not in data:
             raise ValueError(
                 f"{section_name.capitalize()} data must have 'type' field. "
                 f"Available fields: {list(data.keys())}"
             )
-        
+
         # Get number of items from the data block (not from type length)
         n_items = data.nrows
-        
+
         # Validate that all required atom index fields exist
         if section_name == "bonds":
             if "atom_i" not in data or "atom_j" not in data:
@@ -1067,19 +1067,24 @@ class LammpsDataWriter(DataWriter):
                     f"Angles must have 'atom_i', 'atom_j', and 'atom_k' fields (0-based atom indices)"
                 )
         elif section_name in ["dihedrals", "impropers"]:
-            if "atom_i" not in data or "atom_j" not in data or "atom_k" not in data or "atom_l" not in data:
+            if (
+                "atom_i" not in data
+                or "atom_j" not in data
+                or "atom_k" not in data
+                or "atom_l" not in data
+            ):
                 raise ValueError(
                     f"{section_name.capitalize()} must have 'atom_i', 'atom_j', 'atom_k', and 'atom_l' "
                     f"fields (0-based atom indices)"
                 )
-        
+
         # Validate that type field has the same length as atom index fields
         if len(data["type"]) != n_items:
             raise ValueError(
                 f"{section_name.capitalize()} 'type' field has {len(data['type'])} values, "
                 f"but expected {n_items} (based on atom index fields)"
             )
-        
+
         for idx in range(n_items):
             item_id = idx + 1
             item_type_str = str(data["type"][idx])
@@ -1111,7 +1116,7 @@ class LammpsDataWriter(DataWriter):
                         f"Bond {idx + 1}: atom_j index {atom2_idx} is out of range. "
                         f"Valid indices: 0-{len(atoms_data) - 1}"
                     )
-                    
+
                 atom1_id = index_to_id[atom1_idx]
                 atom2_id = index_to_id[atom2_idx]
                 lines.append(f"{item_id} {item_type} {atom1_id} {atom2_id}")
@@ -1137,7 +1142,7 @@ class LammpsDataWriter(DataWriter):
                         f"Angle {idx + 1}: atom_k index {atom3_idx} is out of range. "
                         f"Valid indices: 0-{len(atoms_data) - 1}"
                     )
-                    
+
                 atom1_id = index_to_id[atom1_idx]
                 atom2_id = index_to_id[atom2_idx]
                 atom3_id = index_to_id[atom3_idx]
@@ -1170,7 +1175,7 @@ class LammpsDataWriter(DataWriter):
                         f"{section_name.capitalize()} {idx + 1}: atom_l index {atom4_idx} is out of range. "
                         f"Valid indices: 0-{len(atoms_data) - 1}"
                     )
-                    
+
                 atom1_id = index_to_id[atom1_idx]
                 atom2_id = index_to_id[atom2_idx]
                 atom3_id = index_to_id[atom3_idx]

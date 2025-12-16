@@ -24,9 +24,9 @@ def test_antechamber_wrapper_default_exe():
     assert wrapper.exe == "antechamber"
 
 
-def test_antechamber_wrapper_run_raw():
+def test_antechamber_wrapper_run_raw(tmp_path):
     """Test run_raw() method."""
-    wrapper = AntechamberWrapper(name="ante", workdir=Path("work"))
+    wrapper = AntechamberWrapper(name="ante", workdir=tmp_path / "work")
 
     with patch("subprocess.run") as mock_run:
         mock_run.return_value.returncode = 0
@@ -51,10 +51,10 @@ def test_antechamber_wrapper_run_raw():
         ]
 
 
-def test_antechamber_wrapper_run_raw_with_cwd():
+def test_antechamber_wrapper_run_raw_with_cwd(tmp_path):
     """Test run_raw() with cwd override."""
-    wrapper = AntechamberWrapper(name="ante", workdir=Path("default"))
-    override_cwd = Path("override")
+    wrapper = AntechamberWrapper(name="ante", workdir=tmp_path / "default")
+    override_cwd = tmp_path / "override"
 
     with patch("subprocess.run") as mock_run:
         mock_run.return_value.returncode = 0
@@ -62,4 +62,3 @@ def test_antechamber_wrapper_run_raw_with_cwd():
 
         call_kwargs = mock_run.call_args[1]
         assert call_kwargs["cwd"] == str(override_cwd)
-

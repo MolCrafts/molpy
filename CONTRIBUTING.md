@@ -69,11 +69,11 @@ git checkout -b fix/your-bug-fix
 ```
 
 **Branch naming conventions:**
-- `feature/` - New features
-- `fix/` - Bug fixes
-- `docs/` - Documentation changes
-- `refactor/` - Code refactoring
-- `test/` - Test additions/improvements
+- `[feature]` - New features
+- `[fix]` - Bug fixes
+- `[docs]` - Documentation changes
+- `[refactor]` - Code refactoring
+- `[test]` - Test additions/improvements
 
 ### 2. Make Changes
 
@@ -99,17 +99,17 @@ pytest --cov=molpy tests/
 
 ```bash
 git add .
-git commit -m "feat: add new feature"
+git commit -m "[feature] add new feature"
 ```
 
 **Commit message format:**
-- `feat:` - New feature
-- `fix:` - Bug fix
-- `docs:` - Documentation changes
-- `test:` - Test additions/improvements
-- `refactor:` - Code refactoring
-- `perf:` - Performance improvements
-- `chore:` - Maintenance tasks
+- `[feature]` - New feature
+- `[fix]` - Bug fix
+- `[docs]` - Documentation changes
+- `[test]` - Test additions/improvements
+- `[refactor]` - Code refactoring
+- `[perf]` - Performance improvements
+- `[chore]` - Maintenance tasks
 
 ### 5. Push and Create PR
 

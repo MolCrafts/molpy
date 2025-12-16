@@ -92,7 +92,7 @@ class _AtomMapper:
 
         mol_atoms = list(self.mol.GetAtoms())
 
-        # STRICT ID-BASED MAPPING ONLY - no position-based fallback
+        # STRICT MP_ID-BASED MAPPING ONLY - no position-based fallback
         # Map by MP_ID property
         # Handle both positive (existing atoms) and negative (new atoms) IDs
         for rd_idx, rd_atom in enumerate(mol_atoms):
@@ -109,13 +109,12 @@ class _AtomMapper:
             # Do NOT map them here - they don't exist in atomistic yet
             if hid < 0:
                 continue
-
-            # STRICT ID-BASED MAPPING - must find atom with matching ID
+            # STRICT MP_ID-BASED MAPPING - must find atom with matching MP_ID
             if hid not in atom_by_id:
                 raise RuntimeError(
                     f"RDKit atom at index {rd_idx} (symbol={rd_atom.GetSymbol()}) "
-                    f"has {MP_ID}={hid}, but no Atomistic atom with this id exists. "
-                    "This indicates a mapping error. All existing atoms must have matching IDs."
+                    f"has {MP_ID}={hid}, but no Atomistic atom with this MP_ID exists. "
+                    "This indicates a mapping error. All existing atoms must have matching MP_IDs."
                 )
             atom_map[rd_idx] = atom_by_id[hid]
 
@@ -124,27 +123,27 @@ class _AtomMapper:
         return atom_map
 
     def _build_atom_id_index(self) -> dict[int, Any]:
-        """Build index of Atomistic atoms by their 'id' property.
+        """Build index of Atomistic atoms by their MP_ID property.
 
         Raises:
-            ValueError: If any atom is missing an 'id' attribute
+            ValueError: If any atom is missing an MP_ID attribute
         """
         by_id: dict[int, Any] = {}
         for i, atom in enumerate(self.atomistic_atoms):
-            atom_id = atom.get("id")
-            if atom_id is None:
+            mp_id = atom.get(MP_ID)
+            if mp_id is None:
                 raise ValueError(
-                    f"Atomistic atom at index {i} (symbol={atom.get('symbol')}) "
-                    "has no 'id' attribute. All atoms must have an 'id' for mapping."
+                    f"Atomistic atom at index {i} (element={atom.get('element')}) "
+                    f"has no '{MP_ID}' attribute. All atoms must have a '{MP_ID}' "
+                    "for RDKit mapping."
                 )
-            atom_id_int = int(atom_id)
-            if atom_id_int in by_id:
+            mp_id_int = int(mp_id)
+            if mp_id_int in by_id:
                 raise ValueError(
-                    f"Duplicate atom id {atom_id_int} found. "
-                    f"Atoms at indices {list(by_id.keys()).index(atom_id_int)} and {i} "
-                    "have the same id."
+                    f"Duplicate {MP_ID} {mp_id_int} found. "
+                    f"Atoms with this {MP_ID} are not uniquely identifiable."
                 )
-            by_id[atom_id_int] = atom
+            by_id[mp_id_int] = atom
         return by_id
 
     def ensure_tags(self) -> None:
@@ -163,13 +162,13 @@ class _AtomMapper:
                     "Cannot establish mapping."
                 )
             ent = self.atomistic_atoms[i]
-            ent_id = ent.get("id")
-            if ent_id is None:
+            ent_mp_id = ent.get(MP_ID)
+            if ent_mp_id is None:
                 raise ValueError(
-                    f"Atomistic atom at index {i} (symbol={ent.get('symbol')}) "
-                    "has no 'id' attribute. Cannot set MP_ID tag."
+                    f"Atomistic atom at index {i} (element={ent.get('element')}) "
+                    f"has no '{MP_ID}' attribute. Cannot set MP_ID tag."
                 )
-            rd_atom.SetIntProp(MP_ID, int(ent_id))
+            rd_atom.SetIntProp(MP_ID, int(ent_mp_id))
 
 
 class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
@@ -212,7 +211,9 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
         At least one must be provided, or both can be None and set later.
 
         If internal is provided and atoms don't have 'id' attributes,
-        they will be automatically assigned internal IDs for mapping.
+        they will be automatically assigned internal IDs. In addition,
+        each atom gets a stable MP_ID (``'mp_id'``) used exclusively
+        for RDKit ↔ MolPy atom mapping.
         """
         super().__init__(internal, external)
         self._atom_mapper: _AtomMapper | None = None
@@ -232,10 +233,12 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
         return self.get_external()
 
     def _ensure_atom_ids(self) -> None:
-        """Ensure all atoms in internal Atomistic have 'id' attributes.
+        """Ensure all atoms in internal Atomistic have ID and MP_ID attributes.
 
-        Assigns sequential IDs starting from 0 if atoms don't have them.
-        This is required for proper mapping between Atomistic and RDKit.
+        - Assigns sequential integer ``'id'`` fields starting from 0 if atoms
+          don't have them (for general MolPy tooling).
+        - Mirrors these IDs into ``MP_ID`` (``'mp_id'``) for use as the *only*
+          key in RDKit ↔ MolPy atom mapping.
         """
         if self._internal is None:
             return
@@ -266,105 +269,90 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
             atom["id"] = next_id
             next_id += 1
 
-    def sync_to_external(self) -> None:
-        """Synchronize external RDKit Mol from internal Atomistic.
+        # Ensure each atom also has an MP_ID used for RDKit mapping
+        for atom in atomistic.atoms:
+            if atom.get(MP_ID) is None:
+                atom[MP_ID] = int(atom["id"])
 
-        Creates or updates the RDKit Mol based on the current Atomistic structure.
-        Handles atoms, bonds, coordinates, and properties.
+    # ------------------------------------------------------------------
+    #  Low-level conversion helpers
+    # ------------------------------------------------------------------
 
-        Raises:
-            ValueError: If internal is None
-            RuntimeError: If conversion fails
+    def _build_mol_from_atomistic(self, atomistic: Atomistic) -> Chem.Mol:
+        """Create a fresh RDKit ``Chem.Mol`` from an ``Atomistic``.
+
+        This constructs a new molecule, populating atoms, bonds and (optionally)
+        3D coordinates. Atom indices in RDKit are tagged with MP_ID so that
+        subsequent updates can be mapped back to MolPy atoms.
         """
-        super().sync_to_external()
-
-        atomistic = self._internal
-        if atomistic is None:
-            return
-
-        if isinstance(atomistic, Wrapper):
-            atomistic = atomistic.unwrap()
-
-        # Ensure all atoms have IDs (should already be done in __init__, but double-check)
         self._ensure_atom_ids()
 
         mol = Chem.RWMol()
         atom_map: dict[int, int] = {}
 
-        # Build mapping from atom id to atom object - STRICT ID-BASED MAPPING ONLY
-        atom_by_id: dict[int, Any] = {}
+        # Validate and collect unique MP_IDs
+        atom_by_mp_id: dict[int, Any] = {}
         for atom in atomistic.atoms:
-            atom_id = atom.get("id")
-            if atom_id is None:
+            mp_id = atom.get(MP_ID)
+            if mp_id is None:
                 raise RuntimeError(
-                    f"Atom {atom} (symbol={atom.get('symbol')}) has no 'id' attribute. "
-                    "All atoms must have an 'id' for mapping. "
-                    "This should have been assigned in __init__ or _ensure_atom_ids()."
+                    f"Atom {atom} (element={atom.get('element')}) has no '{MP_ID}' attribute. "
+                    "All atoms must have an MP_ID for mapping. "
+                    "This should have been assigned in _ensure_atom_ids()."
                 )
-            atom_id_int = int(atom_id)
-            if atom_id_int in atom_by_id:
+            mp_id_int = int(mp_id)
+            if mp_id_int in atom_by_mp_id:
                 raise RuntimeError(
-                    f"Duplicate atom id {atom_id_int} found. "
-                    "Each atom must have a unique 'id'."
+                    f"Duplicate {MP_ID} {mp_id_int} found. "
+                    "Each atom must have a unique MP_ID."
                 )
-            atom_by_id[atom_id_int] = atom
+            atom_by_mp_id[mp_id_int] = atom
 
-        # Create RDKit atoms and build mapping - ID-BASED ONLY
+        # Create RDKit atoms and build mapping using MP_ID
         for atom in atomistic.atoms:
-            atom_id = atom.get("id")
-            if atom_id is None:
+            mp_id = atom.get(MP_ID)
+            if mp_id is None:
                 raise RuntimeError(
-                    f"Atom {atom} (symbol={atom.get('symbol')}) has no 'id' attribute."
+                    f"Atom {atom} (element={atom.get('element')}) has no '{MP_ID}' attribute."
                 )
-            atom_id_int = int(atom_id)
+            mp_id_int = int(mp_id)
 
-            symbol = atom.get("symbol")
-            if symbol is None:
+            # MolPy uses 'element'; RDKit uses symbol
+            element = atom.get("element") or atom.get("symbol")
+            if element is None:
                 raise ValueError(
-                    f"Atom with id {atom_id_int} has no 'symbol' attribute. "
-                    "All atoms must have a symbol."
+                    f"Atom with {MP_ID}={mp_id_int} has neither 'element' nor 'symbol' attribute. "
+                    "All atoms must have an element."
                 )
-            rd_atom = Chem.Atom(symbol)
+            rd_atom = Chem.Atom(str(element))
 
             charge = atom.get("charge")
             if charge is not None:
                 rd_atom.SetFormalCharge(int(charge))
 
-            rd_atom.SetIntProp(MP_ID, atom_id_int)
+            rd_atom.SetIntProp(MP_ID, mp_id_int)
             idx = mol.AddAtom(rd_atom)
 
-            # STRICT ID-BASED MAPPING - no position fallback
             atom_map[id(atom)] = idx
 
+        # Bonds
         for bond in atomistic.bonds:
             begin_idx = atom_map.get(id(bond.itom))
             end_idx = atom_map.get(id(bond.jtom))
             if begin_idx is None or end_idx is None:
                 continue
 
-            order_val = bond.get("order")
-            if order_val is None:
-                type_val = bond.get("type", 1.0)
-                try:
-                    order = float(type_val)
-                except Exception:
-                    order = 1.0
-            else:
-                try:
-                    order = float(order_val)
-                except Exception:
-                    order = 1.0
-
-            bt = _rdkit_bond_type(order)
+            bt = _rdkit_bond_type(bond.get("order"))
             mol.AddBond(begin_idx, end_idx, bt)
 
+        # Optional coordinates: expect x/y/z on atoms
         if any(atom.get("x") is not None for atom in atomistic.atoms):
             conf = Chem.Conformer(mol.GetNumAtoms())
             for atom in atomistic.atoms:
                 rdkit_idx = atom_map.get(id(atom))
                 if rdkit_idx is None:
                     raise RuntimeError(
-                        f"Atom {atom} (symbol={atom.get('symbol')}) not found in atom_map "
+                        f"Atom {atom} (element={atom.get('element')}) not found in atom_map "
                         "when setting coordinates."
                     )
                 x = atom.get("x")
@@ -372,63 +360,138 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                 z = atom.get("z")
                 if x is None or y is None or z is None:
                     raise ValueError(
-                        f"Atom {atom} (symbol={atom.get('symbol')}) has incomplete coordinates. "
+                        f"Atom {atom} (element={atom.get('element')}) has incomplete coordinates. "
                         f"x={x}, y={y}, z={z}. All coordinates must be present."
                     )
                 conf.SetAtomPosition(rdkit_idx, (float(x), float(y), float(z)))
             mol.AddConformer(conf, assignId=True)
 
-        # Sanitize the molecule to ensure proper atom types and hybridization
-        # This is required for many RDKit operations including optimization
         final_mol = mol.GetMol()
-        try:
-            Chem.SanitizeMol(final_mol)
-        except Exception:
-            # If sanitization fails, update property cache with less strict settings
-            # This allows molecules with unusual valencies to still be used
-            final_mol.UpdatePropertyCache(strict=False)
+        # Let RDKit report sanitization errors directly (no try/except)
+        Chem.SanitizeMol(final_mol)
+        return final_mol
 
-        self._external = final_mol
-        self._rebuild_atom_mapper()
+    def _build_atomistic_from_mol(self, mol: Chem.Mol) -> Atomistic:
+        """Create a fresh ``Atomistic`` from a RDKit ``Chem.Mol``.
 
-    def sync_to_internal(self, update_topology: bool = True) -> None:
-        """Synchronize internal Atomistic from external RDKit Mol.
-
-        Creates or updates the Atomistic structure based on the current RDKit Mol.
-        Handles atoms, bonds, coordinates, and properties. Preserves existing
-        atom references when possible.
-
-        Args:
-            update_topology: If True, rebuild bonds from RDKit Mol. If False,
-                            only update coordinates and preserve existing bonds.
-                            Default is True for full sync, False is useful for
-                            geometry optimization where only coordinates change.
-
-        Raises:
-            ValueError: If external is None
-            RuntimeError: If conversion fails
+        A new ``Atomistic`` is allocated and populated from ``mol``. MP_ID tags
+        on RDKit atoms are used to assign both ``'id'`` and ``'mp_id'`` on the
+        created MolPy atoms.
         """
-        super().sync_to_internal()
+        atomistic = Atomistic()
 
-        mol = self._external
-        if mol is None:
-            return
+        # For pure creation there is no existing Atomistic, so we do NOT use
+        # AtomMapper here. Instead we seed IDs directly from RDKit MP_ID tags.
+        conf = mol.GetNumConformers() > 0 and mol.GetConformer() or None
 
+        max_existing_id = -1
+        next_new_id = max_existing_id + 1
+
+        for rdkit_idx in range(mol.GetNumAtoms()):
+            rd_atom = mol.GetAtomWithIdx(rdkit_idx)
+            if not rd_atom.HasProp(MP_ID):
+                raise RuntimeError(
+                    f"RDKit atom at index {rdkit_idx} (symbol={rd_atom.GetSymbol()}) "
+                    f"does not have {MP_ID} property. "
+                    "All RDKit atoms must have this property for mapping."
+                )
+            atom_id_raw = rd_atom.GetIntProp(MP_ID)
+
+            if atom_id_raw < 0:
+                atom_id = next_new_id
+                next_new_id += 1
+            else:
+                atom_id = atom_id_raw
+
+            symbol = rd_atom.GetSymbol()
+            props: dict[str, Any] = {
+                "element": symbol,
+                "symbol": symbol,
+                "atomic_num": rd_atom.GetAtomicNum(),
+                "id": atom_id,
+                MP_ID: atom_id,
+            }
+
+            if rd_atom.GetFormalCharge() != 0:
+                props["charge"] = rd_atom.GetFormalCharge()
+
+            if conf is not None:
+                pos = conf.GetAtomPosition(rdkit_idx)
+                props["x"] = float(pos.x)
+                props["y"] = float(pos.y)
+                props["z"] = float(pos.z)
+
+            atomistic.def_atom(**props)
+
+        # Bonds
+        rdkit_to_atom: dict[int, Any] = {}
+        for idx, atom in enumerate(atomistic.atoms):
+            rdkit_to_atom[idx] = atom
+
+        for rd_bond in mol.GetBonds():
+            begin_idx = rd_bond.GetBeginAtomIdx()
+            end_idx = rd_bond.GetEndAtomIdx()
+
+            atom1 = rdkit_to_atom.get(begin_idx)
+            atom2 = rdkit_to_atom.get(end_idx)
+
+            if atom1 is None:
+                raise RuntimeError(
+                    f"RDKit atom at index {begin_idx} not found in rdkit_to_atom mapping. "
+                    "This indicates a synchronization error."
+                )
+            if atom2 is None:
+                raise RuntimeError(
+                    f"RDKit atom at index {end_idx} not found in rdkit_to_atom mapping. "
+                    "This indicates a synchronization error."
+                )
+
+            bond_type = rd_bond.GetBondType()
+            if bond_type not in RDKIT_TO_BOND_ORDER:
+                raise ValueError(
+                    f"RDKit bond type {bond_type} is not supported. "
+                    f"Supported types: {list(RDKIT_TO_BOND_ORDER.keys())}"
+                )
+            order = RDKIT_TO_BOND_ORDER[bond_type]
+            atomistic.def_bond(atom1, atom2, order=order)
+
+        return atomistic
+
+    def _update_mol_from_atomistic(
+        self, atomistic: Atomistic, mol: Chem.Mol
+    ) -> Chem.Mol:
+        """Update an existing RDKit ``Chem.Mol`` from an ``Atomistic``.
+
+        The topology is rebuilt from the Atomistic object; MP_ID tags on atoms
+        are preserved and reused for mapping.
+        """
+        self._ensure_atom_ids()
+        # Just rebuild from scratch and return new sanitized molecule
+        # while keeping MP_ID values consistent.
+        self._external = mol  # keep reference type stable
+        new_mol = self._build_mol_from_atomistic(atomistic)
+        return new_mol
+
+    def _update_atomistic_from_mol(
+        self,
+        mol: Chem.Mol,
+        atomistic: Atomistic,
+        update_topology: bool = True,
+    ) -> None:
+        """Update an existing ``Atomistic`` from a RDKit ``Chem.Mol``.
+
+        Uses ``_AtomMapper`` and MP_ID tags to preserve existing atom objects
+        wherever possible. Optionally rebuilds topology from the RDKit molecule.
+        """
+        self._external = mol
+        self._internal = atomistic
         self._rebuild_atom_mapper()
         if self._atom_mapper is None:
             raise RuntimeError("Atom mapper not initialized")
 
         atom_map = self._atom_mapper.build_mapping()
 
-        if self._internal is None:
-            atomistic = Atomistic()
-        else:
-            atomistic = self._internal
-            if isinstance(atomistic, Wrapper):
-                atomistic = atomistic.unwrap()
-
         conf = mol.GetNumConformers() > 0 and mol.GetConformer() or None
-        existing_atoms = list(atomistic.atoms)
         rdkit_to_atom: dict[int, Any] = {}
 
         # Find maximum existing atom ID to assign IDs to new atoms
@@ -450,7 +513,6 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
             atom = atom_map.get(rdkit_idx)
 
             if atom is None:
-                # New atom from RDKit (e.g., added hydrogens by AddHs)
                 if not rd_atom.HasProp(MP_ID):
                     raise RuntimeError(
                         f"RDKit atom at index {rdkit_idx} (symbol={rd_atom.GetSymbol()}) "
@@ -459,20 +521,19 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                     )
                 atom_id_raw = rd_atom.GetIntProp(MP_ID)
 
-                # Negative IDs are temporary IDs for new atoms (from Generate3D)
-                # Assign a proper positive ID
                 if atom_id_raw < 0:
                     atom_id = next_new_id
                     next_new_id += 1
                 else:
-                    # This should not happen if mapping is correct
-                    # But handle it anyway
                     atom_id = atom_id_raw
 
+                symbol = rd_atom.GetSymbol()
                 props: dict[str, Any] = {
-                    "symbol": rd_atom.GetSymbol(),
+                    "element": symbol,
+                    "symbol": symbol,
                     "atomic_num": rd_atom.GetAtomicNum(),
                     "id": atom_id,
+                    MP_ID: atom_id,
                 }
 
                 if rd_atom.GetFormalCharge() != 0:
@@ -483,13 +544,14 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                     props["x"] = float(pos.x)
                     props["y"] = float(pos.y)
                     props["z"] = float(pos.z)
-                    props["xyz"] = [float(pos.x), float(pos.y), float(pos.z)]
 
                 new_atom = atomistic.def_atom(**props)
                 rdkit_to_atom[rdkit_idx] = new_atom
             else:
-                # Existing atom - update properties
-                atom["symbol"] = rd_atom.GetSymbol()
+                # Existing atom - update properties but keep identity
+                symbol = rd_atom.GetSymbol()
+                atom["element"] = symbol
+                atom["symbol"] = symbol
                 atom["atomic_num"] = rd_atom.GetAtomicNum()
 
                 if atom.get("id") is None:
@@ -501,6 +563,9 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                         )
                     atom["id"] = rd_atom.GetIntProp(MP_ID)
 
+                if atom.get(MP_ID) is None and rd_atom.HasProp(MP_ID):
+                    atom[MP_ID] = rd_atom.GetIntProp(MP_ID)
+
                 if rd_atom.GetFormalCharge() != 0:
                     atom["charge"] = rd_atom.GetFormalCharge()
 
@@ -509,12 +574,9 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                     atom["x"] = float(pos.x)
                     atom["y"] = float(pos.y)
                     atom["z"] = float(pos.z)
-                    atom["xyz"] = [float(pos.x), float(pos.y), float(pos.z)]
 
                 rdkit_to_atom[rdkit_idx] = atom
 
-        # Only update topology (bonds) if requested
-        # For geometry optimization, we want to preserve existing bonds and their properties
         if update_topology:
             existing_bonds = list(atomistic.bonds)
             if existing_bonds:
@@ -546,6 +608,60 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                     )
                 order = RDKIT_TO_BOND_ORDER[bond_type]
                 atomistic.def_bond(atom1, atom2, order=order)
+
+    def sync_to_external(self) -> None:
+        """Synchronize external RDKit Mol from internal Atomistic.
+
+        Creates or updates the RDKit Mol based on the current Atomistic structure.
+        Handles atoms, bonds, coordinates, and properties.
+
+        Raises:
+            ValueError: If internal is None
+            RuntimeError: If conversion fails
+        """
+        super().sync_to_external()
+
+        atomistic = self._internal
+        if atomistic is None:
+            return
+
+        # Fresh build / update share the same low-level helper
+        new_mol = self._build_mol_from_atomistic(atomistic)
+        self._external = new_mol
+        self._rebuild_atom_mapper()
+
+    def sync_to_internal(self, update_topology: bool = True) -> None:
+        """Synchronize internal Atomistic from external RDKit Mol.
+
+        Creates or updates the Atomistic structure based on the current RDKit Mol.
+        Handles atoms, bonds, coordinates, and properties. Preserves existing
+        atom references when possible.
+
+        Args:
+            update_topology: If True, rebuild bonds from RDKit Mol. If False,
+                            only update coordinates and preserve existing bonds.
+                            Default is True for full sync, False is useful for
+                            geometry optimization where only coordinates change.
+
+        Raises:
+            ValueError: If external is None
+            RuntimeError: If conversion fails
+        """
+        super().sync_to_internal()
+
+        mol = self._external
+        if mol is None:
+            return
+
+        if self._internal is None:
+            atomistic = self._build_atomistic_from_mol(mol)
+        else:
+            atomistic = self._internal
+            if isinstance(atomistic, Wrapper):
+                atomistic = atomistic.unwrap()
+            self._update_atomistic_from_mol(
+                mol, atomistic, update_topology=update_topology
+            )
 
         self._internal = atomistic
 

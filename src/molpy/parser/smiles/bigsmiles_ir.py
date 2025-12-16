@@ -22,7 +22,7 @@ def _generate_id() -> int:
 @dataclass(eq=True)
 class BondingDescriptorIR:
     """Standalone descriptor node for bonding points.
-    
+
     Per BigSMILES v1.1: bonding descriptors attach to atoms within repeat units.
     The anchor_atom field tracks which atom this descriptor is attached to.
     If anchor_atom is None, this is a terminal bonding descriptor at the

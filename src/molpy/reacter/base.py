@@ -15,28 +15,29 @@ from molpy.reacter.topology_detector import TopologyDetector
 from molpy.typifier.atomistic import TypifierBase
 
 # Callable type signatures for reaction components
-PortSelector = Callable[[Atomistic, str], Atom]
+AnchorSelector = Callable[[Atomistic, Atom], Atom]
 """
-Select port atom from an Atomistic structure given a port name.
+Select **anchor atom** given a **port atom**.
 
-The port name should be stored as a "port" attribute on the atom,
-or atoms can have multiple ports stored as a "ports" list.
+Port atoms are SMILES-marked connection sites (e.g. $, *, <, >) stored on
+atoms via the "port" / "ports" attributes. An *anchor* is the actual atom
+that participates in bond formation.
 
 Args:
     assembly: The Atomistic structure to select from
-    port_name: Name of the port to use for selection
+    port_atom: The port atom entity (SMILES-marked atom)
 
 Returns:
-    Atom: The port atom entity
+    Atom: The anchor atom where the new bond should be formed
 """
 
 LeavingSelector = Callable[[Atomistic, Atom], list[Atom]]
 """
-Select leaving group atoms given a port atom.
+Select leaving group atoms given an **anchor atom**.
 
 Args:
     assembly: The Atomistic structure containing the atoms
-    port_atom: The port atom entity
+    anchor_atom: The anchor atom entity (actual reaction site)
 
 Returns:
     List of atom entities to be removed
@@ -44,34 +45,46 @@ Returns:
 
 BondFormer = Callable[[Atomistic, Atom, Atom], Bond | None]
 """
-Create or modify bonds between two atoms in an assembly.
+Create or modify bonds between two **anchor atoms** in an assembly.
 
 Args:
     assembly: The atomistic assembly to modify
-    i: First atom entity
-    j: Second atom entity
+    i: First anchor atom
+    j: Second anchor atom
 
 Side effects:
-    Adds bonds to assembly.links
+    Adds or updates bonds in assembly.links
 """
 
 
 @dataclass
 class ReactantInfo:
-    """Information about the reactants in a reaction."""
+    """Information about the reactants in a reaction.
 
-    merged_reactants: Atomistic  # Merged reactants with reassigned IDs
-    port_L: str
-    port_R: str
+    Ports vs anchors:
+    - **Ports** are SMILES-marked connection atoms (e.g. $, *, <, >)
+    - **Anchors** are the actual atoms where bonds are formed
+
+    This dataclass tracks the merged reactants and the original **port atoms**
+    on each side before the reaction is executed.
+    """
+
+    merged_reactants: Atomistic
+    port_atom_L: Entity | None = None
+    port_atom_R: Entity | None = None
 
 
 @dataclass
 class ProductInfo:
-    """Information about the reaction product."""
+    """Information about the reaction product.
+
+    This captures the final product structure and the **anchor atoms**
+    where the new bond was formed.
+    """
 
     product: Atomistic
-    port_L_atom: Atom | None = None
-    port_R_atom: Atom | None = None
+    anchor_L: Atom | None = None
+    anchor_R: Atom | None = None
 
 
 @dataclass
@@ -102,20 +115,12 @@ class ReactionResult:
     """
     Container for reaction products and metadata with organized structure.
 
-    **Important: port_L_atom and port_R_atom are actual reaction sites.**
-
-    The `port_L_atom` and `port_R_atom` attributes contain the actual reaction site atoms
-    selected by the port selector functions. For example, in EO polymerization,
-    the actual reaction site is C or H.
-
     This class organizes reaction information into logical groups:
-    - reactant_info: Information about the reactants
-    - product_info: Information about the product
-    - topology_changes: All topology changes (bonds, angles, dihedrals)
-    - metadata: Reaction metadata (name, retyping info, etc.)
 
-    For backward compatibility, the original flat structure is also available
-    through properties that access the nested structures.
+    - ``reactant_info``: Information about the reactants and their **port atoms**
+    - ``product_info``: Information about the product and the **anchor atoms**
+    - ``topology_changes``: All topology changes (bonds, angles, dihedrals)
+    - ``metadata``: Reaction metadata (name, retyping info, etc.)
     """
 
     reactant_info: ReactantInfo
@@ -123,91 +128,15 @@ class ReactionResult:
     topology_changes: TopologyChanges
     metadata: ReactionMetadata
 
-    # Backward compatibility properties
-    @property
-    def reactants(self) -> Atomistic:
-        """Backward compatibility: return merged reactants."""
-        return self.reactant_info.merged_reactants
-
-    @property
-    def product(self) -> Atomistic:
-        """Backward compatibility: get product."""
-        return self.product_info.product
-
-    @property
-    def reaction_name(self) -> str:
-        """Backward compatibility: get reaction name."""
-        return self.metadata.reaction_name
-
-    @property
-    def port_L(self) -> Atom | None:
-        """Backward compatibility: get left port atom."""
-        return self.product_info.port_L_atom
-
-    @property
-    def port_R(self) -> Atom | None:
-        """Backward compatibility: get right port atom."""
-        return self.product_info.port_R_atom
-
-    @property
-    def removed_atoms(self) -> list[Atom]:
-        """Backward compatibility: get removed atoms."""
-        return self.topology_changes.removed_atoms
-
-    @property
-    def new_bonds(self) -> list[Any]:
-        """Backward compatibility: get new bonds."""
-        return self.topology_changes.new_bonds
-
-    @property
-    def new_angles(self) -> list[Any]:
-        """Backward compatibility: get new angles."""
-        return self.topology_changes.new_angles
-
-    @property
-    def new_dihedrals(self) -> list[Any]:
-        """Backward compatibility: get new dihedrals."""
-        return self.topology_changes.new_dihedrals
-
-    @property
-    def modified_atoms(self) -> set[Atom]:
-        """Backward compatibility: get modified atoms."""
-        return self.topology_changes.modified_atoms
-
-    @property
-    def requires_retype(self) -> bool:
-        """Backward compatibility: get retyping requirement."""
-        return self.metadata.requires_retype
-
-    @property
-    def entity_maps(self) -> list[dict[Entity, Entity]]:
-        """Backward compatibility: get entity maps."""
-        return self.metadata.entity_maps
-
-    @property
-    def intermediates(self) -> list[dict]:
-        """Backward compatibility: get intermediates."""
-        return self.metadata.intermediates
-
-    @property
-    def removed_angles(self) -> list[Angle]:
-        """Get removed angles (new property)."""
-        return self.topology_changes.removed_angles
-
-    @property
-    def removed_dihedrals(self) -> list[Dihedral]:
-        """Get removed dihedrals (new property)."""
-        return self.topology_changes.removed_dihedrals
-
 
 class Reacter:
     """
     Programmable chemical reaction executor.
 
     A Reacter represents one specific chemical reaction type by composing:
-    1. Port selectors - identify reactive atoms via ports
+    1. Anchor selectors - map **port atoms** to **anchor atoms**
     2. Leaving selectors - identify atoms to remove
-    3. Bond former - create new bonds between port atoms
+    3. Bond former - create new bonds between anchor atoms
 
     The reaction is executed on copies of input monomers, ensuring
     original structures remain unchanged.
@@ -220,11 +149,11 @@ class Reacter:
 
     Attributes:
         name: Descriptive name for this reaction type
-        port_selector_left: Function to select left port atom
-        port_selector_right: Function to select right port atom
-        leaving_selector_left: Function to select left leaving group
-        leaving_selector_right: Function to select right leaving group
-        bond_former: Function to create bond between port atoms
+        anchor_selector_left: Function to map left port atom to anchor atom
+        anchor_selector_right: Function to map right port atom to anchor atom
+        leaving_selector_left: Function to select left leaving group from left anchor
+        leaving_selector_right: Function to select right leaving group from right anchor
+        bond_former: Function to create bond between anchor atoms
 
     Example:
         >>> from molpy.reacter import Reacter, select_port_atom, select_one_hydrogen, form_single_bond
@@ -251,8 +180,8 @@ class Reacter:
     def __init__(
         self,
         name: str,
-        port_selector_left: PortSelector,
-        port_selector_right: PortSelector,
+        anchor_selector_left: AnchorSelector,
+        anchor_selector_right: AnchorSelector,
         leaving_selector_left: LeavingSelector,
         leaving_selector_right: LeavingSelector,
         bond_former: BondFormer,
@@ -262,15 +191,15 @@ class Reacter:
 
         Args:
             name: Descriptive name for this reaction
-            port_selector_left: Selector for left port atom
-            port_selector_right: Selector for right port atom
-            leaving_selector_left: Selector for left leaving group
-            leaving_selector_right: Selector for right leaving group
-            bond_former: Function to create bond between port atoms
+            anchor_selector_left: Selector that maps left **port atom** to **anchor atom**
+            anchor_selector_right: Selector that maps right **port atom** to **anchor atom**
+            leaving_selector_left: Selector for left leaving group (from left anchor)
+            leaving_selector_right: Selector for right leaving group (from right anchor)
+            bond_former: Function to create bond between anchor atoms
         """
         self.name = name
-        self.port_selector_left = port_selector_left
-        self.port_selector_right = port_selector_right
+        self.anchor_selector_left = anchor_selector_left
+        self.anchor_selector_right = anchor_selector_right
         self.leaving_selector_left = leaving_selector_left
         self.leaving_selector_right = leaving_selector_right
         self.bond_former = bond_former
@@ -335,53 +264,38 @@ class Reacter:
     def _execute_reaction(
         self,
         assembly: Atomistic,
-        port_atom_L: Atom,
-        port_atom_R: Atom,
+        anchor_L: Atom,
+        anchor_R: Atom,
         leaving_L: list[Atom],
         leaving_R: list[Atom],
-        port_L: str,
-        port_R: str,
     ) -> tuple[Bond | None, list[Atom]]:
         """
         Execute the reaction core steps: bond formation and leaving group removal.
 
         Args:
             assembly: The merged assembly
-            port_atom_L: Left port atom
-            port_atom_R: Right port atom
+            anchor_L: Left anchor atom (actual reaction site)
+            anchor_R: Right anchor atom (actual reaction site)
             leaving_L: Left leaving group atoms
             leaving_R: Right leaving group atoms
-            port_L: Left port name
-            port_R: Right port name
 
         Returns:
             Tuple of (new_bond, removed_atoms)
         """
-        # Form bond
-        new_bond = self.bond_former(assembly, port_atom_L, port_atom_R)
+        # Form bond between anchors
+        new_bond = self.bond_former(assembly, anchor_L, anchor_R)
 
-        # Remove port markers
-        if port_atom_L.get("port") == port_L:
-            del port_atom_L["port"]
-        if "ports" in port_atom_L:
-            ports_list = port_atom_L.get("ports", [])
-            if isinstance(ports_list, list):
-                ports_list = [p for p in ports_list if p != port_L]
-                if ports_list:
-                    port_atom_L["ports"] = ports_list
-                else:
-                    del port_atom_L["ports"]
+        # Clear any port markers from anchors
+        # (They may have already been cleared by selectors)
+        if "port" in anchor_L:
+            del anchor_L["port"]
+        if "ports" in anchor_L:
+            del anchor_L["ports"]
 
-        if port_atom_R.get("port") == port_R:
-            del port_atom_R["port"]
-        if "ports" in port_atom_R:
-            ports_list = port_atom_R.get("ports", [])
-            if isinstance(ports_list, list):
-                ports_list = [p for p in ports_list if p != port_R]
-                if ports_list:
-                    port_atom_R["ports"] = ports_list
-                else:
-                    del port_atom_R["ports"]
+        if "port" in anchor_R:
+            del anchor_R["port"]
+        if "ports" in anchor_R:
+            del anchor_R["ports"]
 
         # Remove leaving groups
         removed_atoms = []
@@ -451,8 +365,8 @@ class Reacter:
         self,
         left: Atomistic,
         right: Atomistic,
-        port_L: str,
-        port_R: str,
+        port_atom_L: Entity,
+        port_atom_R: Entity,
         compute_topology: bool = True,
         record_intermediates: bool = False,
         typifier: TypifierBase | None = None,
@@ -460,37 +374,32 @@ class Reacter:
         """
         Execute the reaction between two Atomistic structures.
 
-        **IMPORTANT: port_L and port_R must be explicitly specified.**
-        No automatic port selection is performed.
+        **IMPORTANT: port_atom_L and port_atom_R must be explicit Atom objects.**
+        Use find_port_atom() or find_port_atom_by_node() to get them first.
 
-        Workflow (STRICT ORDER):
-        1. Check ports exist on structures (atoms must have port markers)
-        2. Select port atoms via port selectors
-        3. Merge right into left (direct transfer, no copy)
-        4. Create bond between port atoms
-        5. Remove leaving groups from MERGED assembly
+        Workflow:
+        1. Transform port atoms to reaction sites via port selectors
+        2. Merge structures (or work on single copy for ring closure)
+        3. Select leaving groups from reaction sites
+        4. Create bond between reaction sites
+        5. Remove leaving groups
         6. (Optional) Compute new angles/dihedrals
-        7. Return ReactionResult with metadata
+        7. Return ReactionResult
 
         Args:
             left: Left reactant Atomistic structure
             right: Right reactant Atomistic structure
-            port_L: Port name on left structure (REQUIRED - must be explicit)
-            port_R: Port name on right structure (REQUIRED - must be explicit)
+            port_atom_L: Port atom from left structure (the atom with port marker)
+            port_atom_R: Port atom from right structure (the atom with port marker)
             compute_topology: If True, compute new angles/dihedrals (default True)
-            record_intermediates: If True, record intermediate states in notes
-            typifier: Optional typifier for incremental retypification.
-                                 If provided, will retype only affected atoms and
-                                 topology items (new bonds/angles/dihedrals and modified atoms)
-                                 after the reaction (default None)
+            record_intermediates: If True, record intermediate states
+            typifier: Optional typifier for incremental retypification
 
         Returns:
-            ReactionResult containing:
-                - product: Final product assembly
-                - notes: Metadata including intermediate states if requested
+            ReactionResult containing product and metadata
 
         Raises:
-            ValueError: If ports not found or port atoms invalid
+            ValueError: If port atoms invalid
         """
         intermediates: list[dict] = []
 
@@ -499,46 +408,53 @@ class Reacter:
 
         if is_ring_closure:
             # For ring closure, work directly on a single copy of the structure
-            # This avoids duplication and ensures port atoms are in the same structure
             merged = left.copy()
-            # Update atom IDs
             for i, atom in enumerate(merged.atoms, start=1):
                 atom["id"] = i
-            
-            # Build entity map: original -> copied (for ring closure, left and right are the same)
+
+            # Build entity map: original -> copied
             original_atoms = list(left.atoms)
             copied_atoms = list(merged.atoms)
             entity_map: dict[Entity, Entity] = {}
             if len(original_atoms) == len(copied_atoms):
                 for orig, copied in zip(original_atoms, copied_atoms):
                     entity_map[orig] = copied
-            
-            # For ring closure, left_entity_map and right_entity_map are the same
+
             left_entity_map = entity_map
             right_entity_map = entity_map
-            
-            # Step 2: Select port atoms and leaving groups (both from merged structure)
-            port_atom_L = self.port_selector_left(merged, port_L)
-            port_atom_R = self.port_selector_right(merged, port_R)
-            
-            leaving_L = self.leaving_selector_left(merged, port_atom_L)
-            leaving_R = self.leaving_selector_right(merged, port_atom_R)
+
+            # Map port atoms to their copies
+            copied_port_L = entity_map.get(port_atom_L, port_atom_L)
+            copied_port_R = entity_map.get(port_atom_R, port_atom_R)
+
+            # Transform port atoms to anchors
+            anchor_L = self.anchor_selector_left(merged, copied_port_L)
+            anchor_R = self.anchor_selector_right(merged, copied_port_R)
+
+            # Select leaving groups from anchors
+            leaving_L = self.leaving_selector_left(merged, anchor_L)
+            leaving_R = self.leaving_selector_right(merged, anchor_R)
         else:
-            # Step 1: Prepare reactants (normal case)
+            # Normal case: prepare reactants (creates copies)
             left_copy, right_copy, left_entity_map, right_entity_map = (
                 self._prepare_reactants(left, right)
             )
 
-            # Step 2: Select port atoms and leaving groups
-            port_atom_L = self.port_selector_left(left_copy, port_L)
-            port_atom_R = self.port_selector_right(right_copy, port_R)
+            # Map port atoms to their copies
+            copied_port_L = left_entity_map.get(port_atom_L, port_atom_L)
+            copied_port_R = right_entity_map.get(port_atom_R, port_atom_R)
 
-            leaving_L = self.leaving_selector_left(left_copy, port_atom_L)
-            leaving_R = self.leaving_selector_right(right_copy, port_atom_R)
+            # Transform port atoms to anchors
+            anchor_L = self.anchor_selector_left(left_copy, copied_port_L)
+            anchor_R = self.anchor_selector_right(right_copy, copied_port_R)
 
-            # Step 3: Merge structures
+            # Select leaving groups from anchors
+            leaving_L = self.leaving_selector_left(left_copy, anchor_L)
+            leaving_R = self.leaving_selector_right(right_copy, anchor_R)
+
+            # Merge structures
             merged = self._merge_structures(left_copy, right_copy)
-        
+
         # Save merged reactants BEFORE reaction (for template generation)
         merged_reactants_before_reaction = merged.copy()
         merged_copy = merged.copy()
@@ -557,12 +473,10 @@ class Reacter:
         # Step 4: Execute reaction (bond formation and leaving group removal)
         new_bond, removed_atoms = self._execute_reaction(
             merged,
-            port_atom_L,
-            port_atom_R,
+            anchor_L,
+            anchor_R,
             leaving_L,
             leaving_R,
-            port_L,
-            port_R,
         )
 
         if record_intermediates:
@@ -611,15 +525,11 @@ class Reacter:
         # Use merged reactants saved BEFORE reaction (with all atoms including removed_atoms)
         reactant_info = ReactantInfo(
             merged_reactants=merged_reactants_before_reaction,
-            port_L=port_L,
-            port_R=port_R,
+            port_atom_L=port_atom_L,
+            port_atom_R=port_atom_R,
         )
 
-        product_info = ProductInfo(
-            product=merged,
-            port_L_atom=port_atom_L,
-            port_R_atom=port_atom_R,
-        )
+        product_info = ProductInfo(product=merged, anchor_L=anchor_L, anchor_R=anchor_R)
 
         topology_changes = TopologyChanges(
             new_bonds=[new_bond] if new_bond else [],
@@ -628,9 +538,7 @@ class Reacter:
             removed_angles=removed_angles,
             removed_dihedrals=removed_dihedrals,
             removed_atoms=removed_atoms,
-            modified_atoms=(
-                {port_atom_L, port_atom_R} if port_atom_L and port_atom_R else set()
-            ),
+            modified_atoms=({anchor_L, anchor_R} if anchor_L and anchor_R else set()),
         )
 
         metadata = ReactionMetadata(
@@ -663,7 +571,7 @@ class Reacter:
         Perform incremental typification using exact information from reaction result.
 
         Types only the specific atoms and topology items that were affected:
-        - Modified atoms (port atoms where bonds were formed)
+        - Modified atoms (anchors where bonds were formed)
         - New bonds, angles, and dihedrals
         - Existing bonds/angles/dihedrals involving modified atoms
 
@@ -672,10 +580,10 @@ class Reacter:
             reaction_result: Result from the reaction containing exact topology changes
             typifier: OPLS typifier for assigning types
         """
-        modified_atoms = reaction_result.modified_atoms
-        new_bonds = reaction_result.new_bonds
-        new_angles = reaction_result.new_angles
-        new_dihedrals = reaction_result.new_dihedrals
+        modified_atoms = reaction_result.topology_changes.modified_atoms
+        new_bonds = reaction_result.topology_changes.new_bonds
+        new_angles = reaction_result.topology_changes.new_angles
+        new_dihedrals = reaction_result.topology_changes.new_dihedrals
 
         # Step 1: Re-type modified atoms (port atoms where bonds were formed)
         if hasattr(typifier, "atom_typifier") and typifier.atom_typifier:

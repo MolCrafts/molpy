@@ -25,7 +25,7 @@ def _generate_id() -> int:
 @dataclass(eq=False)
 class CGSmilesNodeIR:
     """Intermediate representation for a CGSmiles node.
-    
+
     A coarse-grained node with a label (e.g., "PEO", "PMA") and optional annotations.
     """
 
@@ -92,7 +92,7 @@ class CGSmilesGraphIR:
 @dataclass(eq=True)
 class CGSmilesFragmentIR:
     """Fragment definition.
-    
+
     Maps a fragment name to its SMILES or CGSmiles representation.
     """
 

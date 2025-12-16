@@ -3,22 +3,23 @@ Logging utilities for MolPy.
 
 Provides configured logger instances with consistent formatting.
 """
+
 import logging
 
 
 def get_logger(name: str) -> logging.Logger:
     """
     Create a configured logger instance.
-    
+
     Creates a logger with DEBUG level and stream handler using
     a standard timestamp + name + level + message format.
-    
+
     Args:
         name: Logger name (typically __name__ of calling module)
-    
+
     Returns:
         Configured logging.Logger instance
-    
+
     Examples:
         >>> logger = get_logger(__name__)
         >>> logger.info("Processing started")
@@ -32,4 +33,3 @@ def get_logger(name: str) -> logging.Logger:
     )
     logger.addHandler(handler)
     return logger
-

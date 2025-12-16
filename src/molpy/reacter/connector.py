@@ -84,6 +84,11 @@ class MonomerLinker:
         Ports must be marked on atoms using the "port" or "ports" attribute.
         No automatic port selection or fallback is performed.
 
+        This connector is responsible for locating **port atoms** by name.
+        The underlying :class:`Reacter` only operates on **anchors** and
+        receives explicit port atoms which it converts to anchors via its
+        ``anchor_selector_left`` / ``anchor_selector_right`` callables.
+
         Args:
             left: Left Atomistic structure
             right: Right Atomistic structure
@@ -124,13 +129,24 @@ class MonomerLinker:
         # Select reacter based on monomer types
         reacter = self._select_reacter(left_type, right_type)
 
-        # Execute reaction
-        product = reacter.run(left, right, port_L=port_L, port_R=port_R)
+        # Locate concrete port atoms – Reacter itself only works with anchors
+        from molpy.reacter.selectors import find_port_atom
+
+        port_atom_L = find_port_atom(left, port_L)
+        port_atom_R = find_port_atom(right, port_R)
+
+        # Execute reaction on explicit port atoms
+        result: ReactionResult = reacter.run(
+            left,
+            right,
+            port_atom_L=port_atom_L,
+            port_atom_R=port_atom_R,
+        )
 
         # Store in history for retypification
-        self._history.append(product)
+        self._history.append(result)
 
-        return product.product
+        return result.product_info.product
 
     def _select_reacter(
         self,
@@ -168,8 +184,8 @@ class MonomerLinker:
             Set of all atoms that need retypification
         """
         modified: set[Entity] = set()
-        for product in self._history:
-            modified.update(product.modified_atoms)
+        for result in self._history:
+            modified.update(result.topology_changes.modified_atoms)
         return modified
 
     def needs_retypification(self) -> bool:
@@ -179,7 +195,7 @@ class MonomerLinker:
         Returns:
             True if retypification needed
         """
-        return any(p.requires_retype for p in self._history)
+        return any(r.metadata.requires_retype for r in self._history)
 
     def clear_history(self):
         """Clear reaction history."""

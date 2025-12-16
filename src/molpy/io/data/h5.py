@@ -502,4 +502,3 @@ class HDF5Writer:
             # Otherwise, open and close file
             with h5py.File(self._path, "w") as f:
                 frame_to_h5_group(frame, f, self.compression, self.compression_opts)
-

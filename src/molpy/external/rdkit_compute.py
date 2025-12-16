@@ -64,7 +64,7 @@ class OptimizeGeometry(Compute[RDKitAdapter, RDKitAdapter]):
         # Create a copy to avoid modifying the original
         # Chem.Mol() creates a deep copy, but we need to ensure conformer is copied
         mol = Chem.Mol(original_mol)
-        
+
         # Explicitly copy conformer if it wasn't copied automatically
         if mol.GetNumConformers() == 0 and original_mol.GetNumConformers() > 0:
             original_conf = original_mol.GetConformer()
@@ -122,11 +122,11 @@ class OptimizeGeometry(Compute[RDKitAdapter, RDKitAdapter]):
                 coords_before = [
                     conf_before.GetAtomPosition(i) for i in range(mol.GetNumAtoms())
                 ]
-            
+
             opt_result = AllChem.UFFOptimizeMolecule(  # type: ignore[attr-defined]
                 mol, maxIters=int(self.max_opt_iters)
             )
-            
+
             # Check if coordinates actually changed
             coords_changed = False
             if conf_before is not None and mol.GetNumConformers() > 0:
@@ -144,7 +144,7 @@ class OptimizeGeometry(Compute[RDKitAdapter, RDKitAdapter]):
                         ):
                             coords_changed = True
                             break
-            
+
             if opt_result != 0:
                 msg = (
                     f"UFF optimization returned code {opt_result}. "
@@ -174,8 +174,10 @@ class OptimizeGeometry(Compute[RDKitAdapter, RDKitAdapter]):
                             + (pos1.z - pos2.z) ** 2
                         ) ** 0.5
                         max_bond_length = max(max_bond_length, bond_length)
-                
-                if max_bond_length > 2.0:  # Typical bond length is ~1.5 Å, >2.0 is suspicious
+
+                if (
+                    max_bond_length > 2.0
+                ):  # Typical bond length is ~1.5 Å, >2.0 is suspicious
                     warnings.warn(
                         f"UFF optimization completed but coordinates did not change, "
                         f"despite long bonds detected (max bond length: {max_bond_length:.3f} Å). "
@@ -360,7 +362,7 @@ class Generate3D(Compute[RDKitAdapter, RDKitAdapter]):
                 max_opt_iters=self.max_opt_iters,
                 forcefield=self.forcefield,
                 update_internal=False,  # We'll update internal at the end
-                raise_on_failure=False  # Don't raise, just warn
+                raise_on_failure=False,  # Don't raise, just warn
             )
             input.set_external(mol)
             input = optimizer(input)

@@ -1,8 +1,9 @@
 """OPLS dihedral force field styles."""
 
-import warnings
-
+from molpy.core.logger import get_logger
 from molpy.core.forcefield import AtomType, DihedralStyle, DihedralType
+
+logger = get_logger(__name__)
 
 
 def rb_to_opls(C0, C1, C2, C3, C4, C5, *, units="kJ"):
@@ -76,7 +77,7 @@ def rb_to_opls(C0, C1, C2, C3, C4, C5, *, units="kJ"):
     # STRICT validation: Only C5 ≠ 0 is a hard error
     # C5 ≠ 0 means the RB potential contains cos⁵φ which cannot be represented
     # by a 4-term OPLS potential (we don't support F5)
-    
+
     if abs(C5) > 1e-6:
         raise ValueError(
             f"RB torsion uses C5 = {C5:.6f}, which cannot be represented by "
@@ -88,13 +89,12 @@ def rb_to_opls(C0, C1, C2, C3, C4, C5, *, units="kJ"):
     # This is harmless for MD (doesn't affect forces or relative energies)
     sum_c = C0 + C1 + C2 + C3 + C4
     if abs(sum_c) > 1e-2:
-        warnings.warn(
-            f"RB coefficients do not lie on the ideal 4-term OPLS manifold "
+        logger.warning(
+            "RB coefficients do not lie on the ideal 4-term OPLS manifold "
             f"(C0+C1+C2+C3+C4 = {sum_c:.6f}, expected ≈ 0). "
-            f"Conversion will preserve forces and relative energies exactly, "
+            "Conversion will preserve forces and relative energies exactly, "
             f"but will introduce a constant energy offset of ΔE = {sum_c:.6f} kJ/mol. "
-            f"This does not affect MD simulations.",
-            UserWarning
+            "This does not affect MD simulations."
         )
 
     # Compute F1-F4 analytically using inverted formulas

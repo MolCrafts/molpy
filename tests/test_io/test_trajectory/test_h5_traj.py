@@ -1000,4 +1000,3 @@ class TestHDF5TrajectoryCompression:
                         )
                     elif orig_data.dtype.kind == "U":
                         np.testing.assert_array_equal(orig_data, read_data)
-

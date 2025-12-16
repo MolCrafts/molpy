@@ -1,45 +1,112 @@
-# Security Policy
+# Policy on Critical Bugs and Scientific Correctness
 
-## Supported Versions
+## Scope and Motivation
 
-We release patches for security vulnerabilities for the following versions:
+MolPy is developed as a **scientific modeling framework**.
+Its primary responsibility is to support **physically meaningful, reproducible, and methodologically sound simulations**.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
-| < 0.1   | :x:                |
+This policy concerns the identification and handling of **critical defects** that may compromise:
 
-## Reporting a Vulnerability
+* **Scientific correctness**
+  (e.g. incorrect physical models, flawed algorithms, invalid assumptions)
 
-**Please do not report security vulnerabilities through public GitHub issues.**
+* **Numerical validity**
+  (e.g. unstable schemes, hidden unit inconsistencies, silent numerical errors)
 
-If you discover a security vulnerability, please send an email to [security@molcrafts.org] with:
+* **Reproducibility**
+  (e.g. undocumented sources of non-determinism, inconsistent defaults)
 
-1. **Description** of the vulnerability
-2. **Steps to reproduce** the issue
-3. **Potential impact** of the vulnerability
-4. **Suggested fix** (if you have one)
+* **Data and topology integrity**
+  (e.g. incorrect atom mappings, broken connectivity, invalid force-field assignments)
 
-### What to Expect
+* **Interpretability of results**
+  (e.g. misleading outputs that appear plausible but are scientifically incorrect)
 
-- **Acknowledgment**: We'll acknowledge receipt within 48 hours
-- **Assessment**: We'll assess the vulnerability and determine severity
-- **Fix**: We'll work on a fix and coordinate disclosure timing with you
-- **Credit**: We'll credit you in the security advisory (unless you prefer to remain anonymous)
+This policy does **not** apply to feature requests, performance optimizations, or minor usability issues.
 
-### Disclosure Policy
+---
 
-- Security issues will be disclosed after a fix is available
-- We aim to release security patches within 30 days of report
-- We'll coordinate with you on the disclosure timeline
+## Reporting Critical Bugs or Scientific Issues
 
-## Security Best Practices
+**Please do not report critical scientific or methodological issues via public issue trackers.**
 
-When using MolPy:
+If you identify a **fatal bug, methodological flaw, or scientific inconsistency**, please contact the maintainers privately at:
 
-1. **Keep updated**: Always use the latest version
-2. **Validate inputs**: Sanitize user inputs before processing
-3. **Review dependencies**: Regularly update dependencies
-4. **Report issues**: If you find a security issue, report it responsibly
+📧 **[integrity@molcrafts.org](mailto:integrity@molcrafts.org)**
 
-Thank you for helping keep MolPy and its users safe!
+A report should include, where possible:
+
+1. **Description of the issue**
+   A clear explanation of what is incorrect and why it is scientifically or methodologically significant.
+
+2. **Affected components**
+   For example: structure builders, reaction templates, force-field handling, analysis workflows, or numerical routines.
+
+3. **Reproduction or evidence**
+
+   * Minimal scripts or configurations
+   * Counterexamples
+   * Analytical arguments
+   * Comparisons with reference implementations or literature
+
+4. **Observed vs expected behavior**
+   Especially important for numerical or physical discrepancies.
+
+5. **Scientific impact**
+   Including whether:
+
+   * Results may be quantitatively wrong
+   * Qualitative trends may be misleading
+   * Published or shared conclusions could be affected
+
+6. **Suggested correction or references** (optional)
+   Patches, alternative formulations, or relevant literature are welcome but not required.
+
+---
+
+## Assessment and Response
+
+All reported issues will be evaluated with respect to:
+
+* Severity and scope of scientific impact
+* Whether the issue is conceptual, algorithmic, or implementation-related
+* Potential implications for reproducibility and prior results
+
+Depending on the outcome, responses may include:
+
+* Code corrections or refactoring
+* Explicit documentation of limitations or assumptions
+* Deprecation of affected functionality
+* Release notes or technical advisories describing the issue and its resolution
+
+---
+
+## Transparency and Disclosure
+
+MolPy follows a **science-first disclosure principle**:
+
+* Scientifically significant issues will be documented once understood
+* Corrections will be released together with clear explanations
+* If prior results may be affected, this will be stated explicitly
+
+Our objective is not to obscure errors, but to ensure that users can **evaluate, reproduce, and trust** the results produced with the framework.
+
+---
+
+## Responsibility of Users
+
+Users of MolPy are encouraged to:
+
+* Validate results against physical intuition and reference methods
+* Inspect assumptions and defaults used in workflows
+* Treat automated outputs as scientific hypotheses, not ground truth
+* Report suspected inconsistencies, even when uncertain
+
+---
+
+## Commitment to Scientific Integrity
+
+MolPy is intended to be a **transparent and inspectable scientific tool**, not a black box.
+We consider the identification and correction of critical bugs and scientific errors to be a core part of responsible research software development.
+
+We appreciate the community’s role in maintaining scientific rigor and reproducibility.

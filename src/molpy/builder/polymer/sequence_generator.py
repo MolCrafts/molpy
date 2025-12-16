@@ -11,7 +11,7 @@ The SequenceGenerator is the bottom layer in the three-layer architecture:
 """
 
 from random import Random
-from typing import Dict, Iterator, List, Protocol
+from typing import Protocol
 
 
 class SequenceGenerator(Protocol):
@@ -30,7 +30,7 @@ class SequenceGenerator(Protocol):
         self,
         dp: int,
         rng: Random,
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Generate a monomer sequence of specified degree of polymerization.
 
@@ -43,7 +43,7 @@ class SequenceGenerator(Protocol):
         """
         ...
 
-    def expected_composition(self) -> Dict[str, float]:
+    def expected_composition(self) -> dict[str, float]:
         """
         Optional: Return expected long-chain monomer fractions.
 
@@ -68,9 +68,9 @@ class WeightedSequenceGenerator:
 
     def __init__(
         self,
-        weights: Dict[int, float] | None = None,
+        weights: dict[int, float] | None = None,
         n_monomers: int | None = None,
-        monomer_weights: Dict[str, float] | None = None,
+        monomer_weights: dict[str, float] | None = None,
     ):
         """
         Initialize weighted sequence generator.
@@ -123,7 +123,7 @@ class WeightedSequenceGenerator:
         self,
         dp: int,
         rng: Random,
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Generate a sequence of specified degree of polymerization.
 
@@ -132,7 +132,7 @@ class WeightedSequenceGenerator:
             rng: Random number generator for reproducible sampling
 
         Returns:
-            List of monomer identifiers (strings)
+            list of monomer identifiers (strings)
         """
         # Use rng.choices for weighted random selection
         sequence = rng.choices(
@@ -142,7 +142,7 @@ class WeightedSequenceGenerator:
         )
         return sequence
 
-    def expected_composition(self) -> Dict[str, float]:
+    def expected_composition(self) -> dict[str, float]:
         """
         Return expected long-chain monomer fractions.
 

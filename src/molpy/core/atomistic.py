@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any
+from typing import Any, Iterable
 
 from .entity import (
     ConnectivityMixin,
@@ -137,8 +137,10 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         atoms = list(self.atoms)
         positions = []
         for atom in atoms:
-            xyz = atom.get("xyz", atom.get("xyz", [0.0, 0.0, 0.0]))
-            positions.append(xyz)
+            x = atom.get("x", 0.0)
+            y = atom.get("y", 0.0)
+            z = atom.get("z", 0.0)
+            positions.append([x, y, z])
 
         try:
             import numpy as np
@@ -193,7 +195,17 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
     # ========== Factory Methods (def_*: create and add) ==========
 
     def def_atom(self, **attrs: Any) -> Atom:
-        """Create a new Atom and add it to the structure."""
+        """Create a new Atom and add it to the structure.
+
+        If 'xyz' is provided, it will be converted to separate x, y, z fields.
+        """
+        # Convert xyz to x, y, z if provided
+        if "xyz" in attrs:
+            xyz = attrs.pop("xyz")
+            attrs["x"] = float(xyz[0])
+            attrs["y"] = float(xyz[1])
+            attrs["z"] = float(xyz[2])
+
         atom = Atom(**attrs)
         self.entities.add(atom)
         return atom
@@ -213,6 +225,89 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
     def def_dihedral(
         self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any
     ) -> Dihedral:
+        """Create a new Dihedral between four atoms and add it to the structure."""
+        dihedral = Dihedral(a, b, c, d, **attrs)
+        self.links.add(dihedral)
+        return dihedral
+
+    def extract_subgraph(
+        self,
+        center_entities: Iterable[Atom],
+        radius: int,
+        entity_type: type[Atom] = Atom,
+        link_type: type[Link] = Bond,
+    ) -> tuple["Atomistic", list[Atom]]:
+        """Extract subgraph preserving all topology (bonds, angles, dihedrals).
+
+        Overrides ConnectivityMixin.extract_subgraph to ensure all topology
+        types (bonds, angles, dihedrals) are preserved in the extracted subgraph.
+
+        Args:
+            center_entities: Center atoms for extraction
+            radius: Topological radius
+            entity_type: Entity type (should be Atom)
+            link_type: Link type for topology calculation (should be Bond)
+
+        Returns:
+            Tuple of (subgraph Atomistic, edge atoms)
+        """
+        from copy import deepcopy
+
+        # Call parent method to extract subgraph with bonds
+        subgraph, edge_entities = super().extract_subgraph(
+            center_entities=center_entities,
+            radius=radius,
+            entity_type=entity_type,
+            link_type=link_type,
+        )
+
+        # Build mapping from original atoms to subgraph atoms (by react_id or id)
+        original_to_subgraph = {}
+        subgraph_atoms_set = set(subgraph.atoms)
+
+        for subgraph_atom in subgraph_atoms_set:
+            # Try to match by react_id first, then by id
+            subgraph_rid = subgraph_atom.get("react_id")
+            subgraph_id = subgraph_atom.get("id")
+
+            for orig_atom in self.atoms:
+                if subgraph_rid and orig_atom.get("react_id") == subgraph_rid:
+                    original_to_subgraph[orig_atom] = subgraph_atom
+                    break
+                elif subgraph_id and orig_atom.get("id") == subgraph_id:
+                    original_to_subgraph[orig_atom] = subgraph_atom
+                    break
+
+        # Copy angles from original to subgraph
+        for angle in self.angles:
+            endpoints = angle.endpoints
+            if all(ep in original_to_subgraph for ep in endpoints):
+                subgraph_eps = [original_to_subgraph[ep] for ep in endpoints]
+                # Check if angle already exists
+                exists = any(
+                    set(a.endpoints) == set(subgraph_eps) for a in subgraph.angles
+                )
+                if not exists:
+                    attrs = deepcopy(getattr(angle, "data", {}))
+                    subgraph.def_angle(*subgraph_eps, **attrs)
+
+        # Copy dihedrals from original to subgraph
+        for dihedral in self.dihedrals:
+            endpoints = dihedral.endpoints
+            if all(ep in original_to_subgraph for ep in endpoints):
+                subgraph_eps = [original_to_subgraph[ep] for ep in endpoints]
+                # Check if dihedral already exists
+                exists = any(
+                    set(d.endpoints) == set(subgraph_eps) for d in subgraph.dihedrals
+                )
+                if not exists:
+                    attrs = deepcopy(getattr(dihedral, "data", {}))
+                    subgraph.def_dihedral(*subgraph_eps, **attrs)
+
+        # Convert edge_entities to list of Atoms
+        edge_atoms = [e for e in edge_entities if isinstance(e, Atom)]
+
+        return subgraph, edge_atoms
         """Create a new Dihedral between four atoms and add it to the structure."""
         dihedral = Dihedral(a, b, c, d, **attrs)
         self.links.add(dihedral)
@@ -593,7 +688,7 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         if bonds_data:
             # Always include atom references
             bond_dict = defaultdict(list)
-            
+
             # Collect all keys from all bonds first to ensure consistent fields
             all_bond_keys = set()
             for bond in bonds_data:
@@ -616,10 +711,13 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
                 bond_dict["atom_j"].append(atom_id_to_index[id(bond.jtom)])
                 # Data fields - iterate over all keys to ensure consistent length
                 for key in all_bond_keys:
-                    if key not in ["atom_i", "atom_j"]:  # Skip atom indices, already added
+                    if key not in [
+                        "atom_i",
+                        "atom_j",
+                    ]:  # Skip atom indices, already added
                         value = bond.get(key, None)
                         bond_dict[key].append(value)
-            
+
             # Ensure a 'type' column exists for compatibility with writers
             # If missing, raise error instead of using default
             n_bonds = len(bonds_data)
@@ -643,7 +741,7 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         # Build angles Block - convert array of struct to struct of array
         if angles_data:
             angle_dict = defaultdict(list)
-            
+
             # Collect all keys from all angles first to ensure consistent fields
             all_angle_keys = set()
             for angle in angles_data:
@@ -672,10 +770,14 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
                 angle_dict["atom_k"].append(atom_id_to_index[id(angle.ktom)])
                 # Data fields - iterate over all keys to ensure consistent length
                 for key in all_angle_keys:
-                    if key not in ["atom_i", "atom_j", "atom_k"]:  # Skip atom indices, already added
+                    if key not in [
+                        "atom_i",
+                        "atom_j",
+                        "atom_k",
+                    ]:  # Skip atom indices, already added
                         value = angle.get(key, None)
                         angle_dict[key].append(value)
-            
+
             # Ensure a 'type' column exists for compatibility with writers
             # If missing, raise error instead of using default
             n_angles = len(angles_data)
@@ -695,7 +797,7 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         # Build dihedrals Block - convert array of struct to struct of array
         if dihedrals_data:
             dihedral_dict = defaultdict(list)
-            
+
             # Collect all keys from all dihedrals first to ensure consistent fields
             all_dihedral_keys = set()
             for dihedral in dihedrals_data:
@@ -730,10 +832,15 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
                 dihedral_dict["atom_l"].append(atom_id_to_index[id(dihedral.ltom)])
                 # Data fields - iterate over all keys to ensure consistent length
                 for key in all_dihedral_keys:
-                    if key not in ["atom_i", "atom_j", "atom_k", "atom_l"]:  # Skip atom indices, already added
+                    if key not in [
+                        "atom_i",
+                        "atom_j",
+                        "atom_k",
+                        "atom_l",
+                    ]:  # Skip atom indices, already added
                         value = dihedral.get(key, None)
                         dihedral_dict[key].append(value)
-            
+
             # Ensure a 'type' column exists for compatibility with writers
             # If missing, raise error instead of using default
             n_dihedrals = len(dihedrals_data)

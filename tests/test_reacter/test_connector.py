@@ -18,9 +18,9 @@ from molpy.reacter import (
     MonomerLinker,
     Reacter,
     form_single_bond,
+    select_identity,
     select_none,
     select_one_hydrogen,
-    select_port_atom,
 )
 
 
@@ -31,8 +31,8 @@ class TestMonomerLinker:
         """Test MonomerLinker initialization."""
         default_reacter = Reacter(
             name="default",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_one_hydrogen,
             leaving_selector_right=select_one_hydrogen,
             bond_former=form_single_bond,
@@ -47,8 +47,8 @@ class TestMonomerLinker:
         """Test MonomerLinker initialization with overrides."""
         default_reacter = Reacter(
             name="default",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_one_hydrogen,
             leaving_selector_right=select_one_hydrogen,
             bond_former=form_single_bond,
@@ -56,8 +56,8 @@ class TestMonomerLinker:
 
         special_reacter = Reacter(
             name="special",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_none,
             leaving_selector_right=select_none,
             bond_former=form_single_bond,
@@ -78,8 +78,8 @@ class TestMonomerLinker:
         # Create default reacter
         default_reacter = Reacter(
             name="default",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_one_hydrogen,
             leaving_selector_right=select_one_hydrogen,
             bond_former=form_single_bond,
@@ -115,8 +115,8 @@ class TestMonomerLinker:
         """Test connector.connect() using override reacter."""
         default_reacter = Reacter(
             name="default",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_one_hydrogen,
             leaving_selector_right=select_one_hydrogen,
             bond_former=form_single_bond,
@@ -124,8 +124,8 @@ class TestMonomerLinker:
 
         special_reacter = Reacter(
             name="special",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_none,
             leaving_selector_right=select_none,
             bond_former=form_single_bond,
@@ -170,8 +170,8 @@ class TestMonomerLinker:
         """Test connector.connect() using reverse direction override."""
         default_reacter = Reacter(
             name="default",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_one_hydrogen,
             leaving_selector_right=select_one_hydrogen,
             bond_former=form_single_bond,
@@ -179,8 +179,8 @@ class TestMonomerLinker:
 
         special_reacter = Reacter(
             name="special",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_none,
             leaving_selector_right=select_none,
             bond_former=form_single_bond,
@@ -224,8 +224,8 @@ class TestMonomerLinker:
         """Test connector.connect() raises error when left port is missing."""
         default_reacter = Reacter(
             name="default",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_none,
             leaving_selector_right=select_none,
             bond_former=form_single_bond,
@@ -250,8 +250,8 @@ class TestMonomerLinker:
         """Test connector.connect() raises error when right port is missing."""
         default_reacter = Reacter(
             name="default",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_none,
             leaving_selector_right=select_none,
             bond_former=form_single_bond,
@@ -276,8 +276,8 @@ class TestMonomerLinker:
         """Test connector.get_history() method."""
         default_reacter = Reacter(
             name="default",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_none,
             leaving_selector_right=select_none,
             bond_former=form_single_bond,
@@ -305,14 +305,14 @@ class TestMonomerLinker:
         # Should have one entry
         history = connector.get_history()
         assert len(history) == 1
-        assert isinstance(history[0].product, Atomistic)
+        assert isinstance(history[0].product_info.product, Atomistic)
 
     def test_connector_get_history_copy(self):
         """Test that get_history() returns a copy."""
         default_reacter = Reacter(
             name="default",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_none,
             leaving_selector_right=select_none,
             bond_former=form_single_bond,
@@ -332,8 +332,8 @@ class TestMonomerLinker:
         """Test connector.get_all_modified_atoms() method."""
         default_reacter = Reacter(
             name="default",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_none,
             leaving_selector_right=select_none,
             bond_former=form_single_bond,
@@ -366,8 +366,8 @@ class TestMonomerLinker:
         """Test connector.needs_retypification() method."""
         default_reacter = Reacter(
             name="default",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_none,
             leaving_selector_right=select_none,
             bond_former=form_single_bond,
@@ -398,8 +398,8 @@ class TestMonomerLinker:
         """Test connector.clear_history() method."""
         default_reacter = Reacter(
             name="default",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_none,
             leaving_selector_right=select_none,
             bond_former=form_single_bond,

@@ -20,6 +20,7 @@ Examples:
     ...     print(config.log_level)  # 'WARNING'
     >>> print(config.log_level)  # Back to 'DEBUG'
 """
+
 import contextlib
 import threading
 from collections.abc import Generator
@@ -31,28 +32,29 @@ from pydantic import BaseModel, Field
 class Config(BaseModel):
     """
     Global configuration for MolPy.
-    
+
     Thread-safe singleton that stores global settings like logging level
     and parallelization parameters. Use class methods to access and modify
     the singleton instance.
-    
+
     Attributes:
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         n_threads: Number of threads for parallel computations
-    
+
     Examples:
         >>> # Get singleton instance
         >>> cfg = Config.instance()
-        >>> 
+        >>>
         >>> # Update configuration
         >>> Config.update(n_threads=8)
-        >>> 
+        >>>
         >>> # Temporary override
         >>> with Config.temporary(log_level='DEBUG'):
         ...     # Config is DEBUG here
         ...     pass
         >>> # Config restored here
     """
+
     log_level: str = Field(default="INFO")
 
     n_threads: int = Field(
@@ -68,12 +70,12 @@ class Config(BaseModel):
     def instance(cls) -> Self:
         """
         Get the singleton Config instance.
-        
+
         Thread-safe lazy initialization. Creates instance on first call.
-        
+
         Returns:
             The singleton Config instance
-        
+
         Examples:
             >>> cfg = Config.instance()
             >>> print(cfg.log_level)
@@ -89,13 +91,13 @@ class Config(BaseModel):
     def update(cls, **kwargs):
         """
         Update the global configuration.
-        
+
         Thread-safe update that creates a new instance with updated values.
         Changes persist until reset() or another update().
-        
+
         Args:
             **kwargs: Configuration fields to update (log_level, n_threads, etc.)
-        
+
         Examples:
             >>> Config.update(log_level='DEBUG', n_threads=4)
             >>> cfg = Config.instance()
@@ -110,9 +112,9 @@ class Config(BaseModel):
     def reset(cls):
         """
         Reset configuration to default values.
-        
+
         Thread-safe reset. Creates a new instance with all default values.
-        
+
         Examples:
             >>> Config.update(n_threads=8)
             >>> Config.reset()
@@ -128,16 +130,16 @@ class Config(BaseModel):
     def temporary(cls, **overrides) -> Generator[None, None, None]:
         """
         Temporarily override configuration within a context.
-        
+
         Thread-safe context manager that restores original config on exit.
         Useful for testing or temporary parameter changes.
-        
+
         Args:
             **overrides: Configuration fields to temporarily override
-        
+
         Yields:
             None
-        
+
         Examples:
             >>> original_level = Config.instance().log_level
             >>> with Config.temporary(log_level='DEBUG'):
@@ -164,16 +166,15 @@ config = Config.instance()
 def get_config() -> Config:
     """
     Get the global configuration instance.
-    
+
     Convenience function equivalent to Config.instance().
-    
+
     Returns:
         The singleton Config instance
-    
+
     Examples:
         >>> cfg = get_config()
         >>> print(cfg.log_level)
         'INFO'
     """
     return config
-

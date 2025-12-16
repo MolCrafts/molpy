@@ -16,9 +16,9 @@ class BondHarmonic(BondPotential):
     type = "bond"
 
     def __init__(
-        self, 
-        k: NDArray[np.floating] | float | dict[str, float], 
-        r0: NDArray[np.floating] | float | dict[str, float]
+        self,
+        k: NDArray[np.floating] | float | dict[str, float],
+        r0: NDArray[np.floating] | float | dict[str, float],
     ):
         """
         Initialize harmonic bond potential.

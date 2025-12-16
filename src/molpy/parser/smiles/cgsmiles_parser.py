@@ -59,6 +59,7 @@ class CGSmilesTransformer(Transformer):
         """Parse fragment body from regex match."""
         # children[0] is the Token from the regex
         from lark import Token
+
         child = children[0]
         if isinstance(child, Token):
             return str(child.value).strip()
@@ -69,6 +70,7 @@ class CGSmilesTransformer(Transformer):
         # children = ['#', NAME]
         # Return the NAME (second child), but Token inherits from str!
         from lark import Token
+
         for child in children:
             if isinstance(child, str) and not isinstance(child, Token):
                 return child
@@ -79,7 +81,10 @@ class CGSmilesTransformer(Transformer):
         # children = [NAME, '=', VALUE]
         # Filter out Token objects
         from lark import Token
-        values = [c for c in children if isinstance(c, str) and not isinstance(c, Token)]
+
+        values = [
+            c for c in children if isinstance(c, str) and not isinstance(c, Token)
+        ]
         if len(values) >= 2:
             return (values[0], values[1])
         return ("", "")
@@ -97,6 +102,7 @@ class CGSmilesTransformer(Transformer):
         # Filter out tokens and get label and annotations
         # Note: Token inherits from str, so we must check explicitly!
         from lark import Token
+
         label = None
         annotations = {}
         for child in children:
@@ -111,6 +117,7 @@ class CGSmilesTransformer(Transformer):
         """Parse bond symbol."""
         # children contains the bond token
         from lark import Token
+
         if children:
             child = children[0]
             if isinstance(child, Token):
@@ -123,10 +130,11 @@ class CGSmilesTransformer(Transformer):
         # children = ['|', INT]
         # Return the INT value (second child)
         from lark import Token
+
         for child in children:
             if isinstance(child, int):
                 return child
-            elif isinstance(child, Token) and child.type == 'INT':
+            elif isinstance(child, Token) and child.type == "INT":
                 return int(child.value)
         return 1
 
@@ -137,12 +145,12 @@ class CGSmilesTransformer(Transformer):
         # Extract bond symbol and ring number
         bond_symbol = None
         ring_num = value
-        
+
         # Check for bond symbol at start
         if value and value[0] in ".=-#$":
             bond_symbol = value[0]
             ring_num = value[1:]
-        
+
         bond_order = self._bond_from_symbol(bond_symbol) if bond_symbol else 1
         return (ring_num, bond_order)
 
@@ -151,7 +159,9 @@ class CGSmilesTransformer(Transformer):
         # children[0] is the result from RING_BOND terminal
         return children[0]
 
-    def atom(self, children: list) -> tuple[CGSmilesNodeIR, list[tuple[str, BondOrder]]]:
+    def atom(
+        self, children: list
+    ) -> tuple[CGSmilesNodeIR, list[tuple[str, BondOrder]]]:
         """Parse atom: node ring_bond*."""
         node = children[0]
         ring_bonds = children[1:] if len(children) > 1 else []
@@ -162,8 +172,9 @@ class CGSmilesTransformer(Transformer):
         # children = ['(', bond?, chain, ')']
         # Filter out Token objects
         from lark import Token
+
         filtered = [c for c in children if not isinstance(c, Token)]
-        
+
         if len(filtered) == 1:
             # No explicit bond: (chain)
             bond_order = 1
@@ -178,6 +189,7 @@ class CGSmilesTransformer(Transformer):
     def branched_atom(self, children: list) -> dict[str, Any]:
         """Parse branched_atom: atom branch* repeat_op?."""
         from lark import Token
+
         result = {
             "atom": None,
             "branches": [],
@@ -231,7 +243,7 @@ class CGSmilesTransformer(Transformer):
                         annots = {}
                     else:
                         annots = node_template.annotations.copy()
-                    
+
                     node = CGSmilesNodeIR(
                         label=node_template.label,
                         annotations=annots,
@@ -330,7 +342,10 @@ class CGSmilesTransformer(Transformer):
         # children = ['#', NAME, '=', fragment_body]
         # Filter out Token objects
         from lark import Token
-        values = [c for c in children if isinstance(c, str) and not isinstance(c, Token)]
+
+        values = [
+            c for c in children if isinstance(c, str) and not isinstance(c, Token)
+        ]
         if len(values) >= 2:
             name = values[0]
             body = values[1]
@@ -339,9 +354,7 @@ class CGSmilesTransformer(Transformer):
             body = ""
         return CGSmilesFragmentIR(name=name, body=body)
 
-    def fragment_block(
-        self, children: list
-    ) -> list[CGSmilesFragmentIR]:
+    def fragment_block(self, children: list) -> list[CGSmilesFragmentIR]:
         """Parse fragment_block: { fragment_def, ... }."""
         # Filter out tokens ('{', ',', '}') and keep only CGSmilesFragmentIR
         return [child for child in children if isinstance(child, CGSmilesFragmentIR)]

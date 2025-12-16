@@ -8,6 +8,7 @@ Note:
     These are internal utilities. For high-performance operations,
     consider using numpy arrays instead.
 """
+
 from math import cos, sin
 
 
@@ -29,11 +30,11 @@ def _vec_scale(a: list[float], s: float) -> list[float]:
 def _dot(a: list[float], b: list[float]) -> float:
     """
     Compute dot product of two 3D vectors.
-    
+
     Args:
         a: First vector [x, y, z]
         b: Second vector [x, y, z]
-    
+
     Returns:
         Scalar dot product a · b
     """
@@ -43,11 +44,11 @@ def _dot(a: list[float], b: list[float]) -> float:
 def _cross(a: list[float], b: list[float]) -> list[float]:
     """
     Compute cross product of two 3D vectors.
-    
+
     Args:
         a: First vector [x, y, z]
         b: Second vector [x, y, z]
-    
+
     Returns:
         Vector cross product a × b
     """
@@ -61,10 +62,10 @@ def _cross(a: list[float], b: list[float]) -> list[float]:
 def _norm(v: list[float]) -> float:
     """
     Compute Euclidean norm (magnitude) of a 3D vector.
-    
+
     Args:
         v: Vector [x, y, z]
-    
+
     Returns:
         ||v|| = sqrt(x² + y² + z²)
     """
@@ -74,10 +75,10 @@ def _norm(v: list[float]) -> float:
 def _unit(v: list[float]) -> list[float]:
     """
     Normalize a 3D vector to unit length.
-    
+
     Args:
         v: Vector [x, y, z]
-    
+
     Returns:
         Unit vector v/||v||, or [0,0,0] if ||v|| = 0
     """
@@ -92,20 +93,20 @@ def _rodrigues_rotate(
 ) -> list[float]:
     """
     Rotate a point using Rodrigues' rotation formula.
-    
+
     Rotates point p around axis k by angle (radians) about center point.
     Uses rotation matrix R = I + sin(θ)K + (1-cos(θ))K²
     where K is the skew-symmetric matrix of k.
-    
+
     Args:
         p: Point to rotate [x, y, z]
         k: Unit rotation axis [x, y, z] (must be normalized)
         angle: Rotation angle in radians
         about: Center of rotation [x, y, z]
-    
+
     Returns:
         Rotated point coordinates [x', y', z']
-    
+
     Examples:
         >>> # Rotate point [1,0,0] by 90° around z-axis
         >>> p = [1.0, 0.0, 0.0]
@@ -136,4 +137,3 @@ def _rodrigues_rotate(
     y = r10 * v[0] + r11 * v[1] + r12 * v[2]
     z = r20 * v[0] + r21 * v[1] + r22 * v[2]
     return _vec_add([x, y, z], about)
-

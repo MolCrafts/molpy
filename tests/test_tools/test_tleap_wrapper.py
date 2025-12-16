@@ -24,9 +24,9 @@ def test_tleap_wrapper_default_exe():
     assert wrapper.exe == "tleap"
 
 
-def test_tleap_wrapper_run_script():
+def test_tleap_wrapper_run_script(tmp_path):
     """Test run_script() method."""
-    workdir = Path("test_workdir")
+    workdir = tmp_path / "test_workdir"
     wrapper = TLeapWrapper(name="tleap", workdir=workdir)
 
     script_text = "source leaprc.gaff\nquit\n"
@@ -54,9 +54,9 @@ def test_tleap_wrapper_run_script():
         assert call_kwargs["cwd"] == str(workdir)
 
 
-def test_tleap_wrapper_run_script_default_name():
+def test_tleap_wrapper_run_script_default_name(tmp_path):
     """Test run_script() with default script name."""
-    workdir = Path("test_workdir")
+    workdir = tmp_path / "test_workdir"
     wrapper = TLeapWrapper(name="tleap", workdir=workdir)
 
     script_text = "quit\n"
@@ -81,10 +81,10 @@ def test_tleap_wrapper_run_script_no_workdir():
         wrapper.run_script(script_text="quit\n")
 
 
-def test_tleap_wrapper_run_script_with_cwd_override():
+def test_tleap_wrapper_run_script_with_cwd_override(tmp_path):
     """Test run_script() with cwd override."""
-    wrapper = TLeapWrapper(name="tleap", workdir=Path("default"))
-    override_cwd = Path("override")
+    wrapper = TLeapWrapper(name="tleap", workdir=tmp_path / "default")
+    override_cwd = tmp_path / "override"
 
     script_text = "quit\n"
 
@@ -97,4 +97,3 @@ def test_tleap_wrapper_run_script_with_cwd_override():
 
         call_kwargs = mock_run.call_args[1]
         assert call_kwargs["cwd"] == str(override_cwd)
-

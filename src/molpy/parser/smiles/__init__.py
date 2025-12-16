@@ -1,9 +1,10 @@
-"""SMILES, BigSMILES, and GBigSMILES parsers.
+"""SMILES, BigSMILES, GBigSMILES, and CGSmiles parsers.
 
-This module provides three explicit parser APIs:
+This module provides four explicit parser APIs:
 - parse_smiles: Parse pure SMILES strings
 - parse_bigsmiles: Parse BigSMILES strings
 - parse_gbigsmiles: Parse GBigSMILES strings
+- parse_cgsmiles: Parse CGSmiles strings
 
 Each parser uses its own dedicated grammar and transformer.
 """
@@ -29,6 +30,14 @@ from .gbigsmiles_ir import (
 from .gbigsmiles_parser import GBigSmilesParserImpl
 from .smiles_ir import SmilesAtomIR, SmilesBondIR, SmilesGraphIR
 from .smiles_parser import SmilesParserImpl
+from .cgsmiles_ir import (
+    CGSmilesBondIR,
+    CGSmilesFragmentIR,
+    CGSmilesGraphIR,
+    CGSmilesIR,
+    CGSmilesNodeIR,
+)
+from .cgsmiles_parser import CGSmilesParserImpl, parse_cgsmiles
 
 # Parser instances (singleton pattern)
 _smiles_parser = SmilesParserImpl()
@@ -125,70 +134,15 @@ from .converter import (
     PolymerSegment,
 )
 
-
-def parse_gbigsmiles_to_polymerspec(src: str) -> PolymerSpec:
-    """
-    Parse GBigSMILES string directly to PolymerSpec.
-
-    Convenience function that combines parsing and conversion.
-
-    Args:
-        src: GBigSMILES string
-
-    Returns:
-        PolymerSpec containing all monomers, end groups, topology, and original IR
-
-    Examples:
-        >>> spec = parse_gbigsmiles_to_polymerspec("{[<]CC[>]}")
-        >>> len(spec.segments)
-        1
-        >>> len(spec.segments[0].repeat_units_ir)
-        1
-    """
-    ir = parse_gbigsmiles(src)
-    # Extract BigSmilesMoleculeIR from gBigSMILES IR
-    if not ir.molecules:
-        raise ValueError("Cannot convert empty gBigSMILES IR to PolymerSpec")
-    # Use first molecule's structure
-    return bigsmilesir_to_polymerspec(ir.molecules[0].molecule.structure)
-
-
-# Backward compatibility: SmilesParser class
-class SmilesParser:
-    """
-    Backward compatibility wrapper for the old SmilesParser API.
-
-    This class provides the same interface as the old SmilesParser,
-    but uses the new parser implementations under the hood.
-
-    Examples:
-        >>> parser = SmilesParser()
-        >>> ir = parser.parse_bigsmiles("{[<]CC[>]}")
-        >>> ir = parser.parse_smiles("CCO")
-    """
-
-    def parse_smiles(self, smiles: str) -> SmilesGraphIR:
-        """Parse SMILES string into SmilesGraphIR."""
-        return parse_smiles(smiles)
-
-    def parse_bigsmiles(self, text: str) -> BigSmilesMoleculeIR:
-        """Parse BigSMILES string into BigSmilesMoleculeIR."""
-        return parse_bigsmiles(text)
-
-    def parse_gbigsmiles(self, text: str) -> GBigSmilesSystemIR:
-        """Parse GBigSMILES string into GBigSmilesSystemIR."""
-        return parse_gbigsmiles(text)
-
-
 __all__ = [
     "parse_smiles",
     "parse_bigsmiles",
     "parse_gbigsmiles",
+    "parse_cgsmiles",
     "bigsmilesir_to_monomer",
     "bigsmilesir_to_polymerspec",
     "PolymerSpec",
     "PolymerSegment",
-    "SmilesParser",
     # SMILES IR
     "SmilesGraphIR",
     "SmilesAtomIR",
@@ -208,4 +162,10 @@ __all__ = [
     "GBBondingDescriptorIR",
     "GBStochasticObjectIR",
     "DistributionIR",
+    # CGSmiles IR
+    "CGSmilesIR",
+    "CGSmilesGraphIR",
+    "CGSmilesNodeIR",
+    "CGSmilesBondIR",
+    "CGSmilesFragmentIR",
 ]

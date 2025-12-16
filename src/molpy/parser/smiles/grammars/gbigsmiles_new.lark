@@ -216,7 +216,9 @@ _end_group: ";" WS_INLINE* (smiles | big_smiles_molecule) monomer_list*
 // The parser will correctly distinguish them from terminal_bond_descriptors based on context
 // The second terminal_bond_descriptor is optional - if the last repeat unit ends with [>],
 // it can be either a bond_descriptor (part of the repeat unit) or terminal_bond_descriptor
-stochastic_object: "{" WS_INLINE* terminal_bond_descriptor WS_INLINE* _repeat_units WS_INLINE* _end_group? WS_INLINE* terminal_bond_descriptor? "}" stochastic_generation?
+// Per BigSMILES v1.1 spec: both terminal bonding descriptors are MANDATORY
+// Empty [] means no external connection, non-empty e.g. [$] means connection (possibly to implicit H)
+stochastic_object: "{" WS_INLINE* terminal_bond_descriptor WS_INLINE* _repeat_units WS_INLINE* _end_group? WS_INLINE* terminal_bond_descriptor "}" stochastic_generation?
 
 // ------------------------------------------------------------
 // Dot generation (system-level annotation)

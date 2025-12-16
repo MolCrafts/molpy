@@ -17,9 +17,9 @@ from molpy.reacter import (
     form_double_bond,
     form_single_bond,
     select_all_hydrogens,
+    select_identity,
     select_none,
     select_one_hydrogen,
-    select_port_atom,
 )
 
 
@@ -62,16 +62,16 @@ def test_merge_simple():
 
 
 def test_port_anchor_selector():
-    """Test selecting anchor from port."""
-    # Create structure with port marked on atom
+    """Test selecting anchor from port using find_port_atom."""
+    from molpy.reacter.selectors import find_port_atom
+
     struct = Atomistic()
     c = Atom(symbol="C")
     struct.add_entity(c)
     c["port"] = "1"
 
-    # Select anchor
-    anchor = select_port_atom(struct, "1")
-    assert anchor is c
+    port_atom = find_port_atom(struct, "1")
+    assert port_atom is c
 
 
 def test_remove_one_H():
@@ -162,31 +162,39 @@ def test_simple_cc_coupling():
     # Create C-C coupling reaction
     cc_coupling = Reacter(
         name="C-C_coupling",
-        port_selector_left=select_port_atom,
-        port_selector_right=select_port_atom,
+        anchor_selector_left=select_identity,
+        anchor_selector_right=select_identity,
         leaving_selector_left=select_one_hydrogen,
         leaving_selector_right=select_one_hydrogen,
         bond_former=form_single_bond,
     )
 
-    # Run reaction
-    result = cc_coupling.run(struct_L, struct_R, port_L="1", port_R="2")
+    from molpy.reacter.selectors import find_port_atom
+
+    port_atom_L = find_port_atom(struct_L, "1")
+    port_atom_R = find_port_atom(struct_R, "2")
+    result = cc_coupling.run(
+        struct_L,
+        struct_R,
+        port_atom_L=port_atom_L,
+        port_atom_R=port_atom_R,
+    )
 
     # Check product
     assert isinstance(result, ReactionResult)
-    assert isinstance(result.product, Atomistic)
+    assert isinstance(result.product_info.product, Atomistic)
 
     # Should have 2 C + 0 H (both removed)
-    atoms = list(result.product.atoms)
+    atoms = list(result.product_info.product.atoms)
     assert len(atoms) == 2
 
     # Should have 1 C-C bond
-    bonds = list(result.product.bonds)
+    bonds = list(result.product_info.product.bonds)
     assert len(bonds) == 1
 
     # Check result attributes
-    assert len(result.removed_atoms) == 2
-    assert result.reaction_name == "C-C_coupling"
+    assert len(result.topology_changes.removed_atoms) == 2
+    assert result.metadata.reaction_name == "C-C_coupling"
 
 
 def test_asymmetric_reaction():
@@ -211,21 +219,29 @@ def test_asymmetric_reaction():
     # Create reaction: remove all H from left, one H from right
     reacter = Reacter(
         name="asymmetric",
-        port_selector_left=select_port_atom,
-        port_selector_right=select_port_atom,
+        anchor_selector_left=select_identity,
+        anchor_selector_right=select_identity,
         leaving_selector_left=select_all_hydrogens,  # Remove both H
         leaving_selector_right=select_one_hydrogen,  # Remove one H
         bond_former=form_double_bond,  # Make C=C
     )
 
-    # Run reaction
-    result = reacter.run(struct_L, struct_R, port_L="1", port_R="2")
+    from molpy.reacter.selectors import find_port_atom
+
+    port_atom_L = find_port_atom(struct_L, "1")
+    port_atom_R = find_port_atom(struct_R, "2")
+    result = reacter.run(
+        struct_L,
+        struct_R,
+        port_atom_L=port_atom_L,
+        port_atom_R=port_atom_R,
+    )
 
     # Should remove 3 H total
-    assert len(result.removed_atoms) == 3
+    assert len(result.topology_changes.removed_atoms) == 3
 
     # Check bond order
-    bonds = list(result.product.bonds)
+    bonds = list(result.product_info.product.bonds)
     assert len(bonds) == 1
     assert bonds[0].get("order") == 2
 
@@ -246,23 +262,32 @@ def test_addition_reaction():
     # Addition reaction (no leaving groups)
     addition = Reacter(
         name="addition",
-        port_selector_left=select_port_atom,
-        port_selector_right=select_port_atom,
+        anchor_selector_left=select_identity,
+        anchor_selector_right=select_identity,
         leaving_selector_left=select_none,
         leaving_selector_right=select_none,
         bond_former=form_single_bond,
     )
 
-    result = addition.run(struct_L, struct_R, port_L="1", port_R="2")
+    from molpy.reacter.selectors import find_port_atom
+
+    port_atom_L = find_port_atom(struct_L, "1")
+    port_atom_R = find_port_atom(struct_R, "2")
+    result = addition.run(
+        struct_L,
+        struct_R,
+        port_atom_L=port_atom_L,
+        port_atom_R=port_atom_R,
+    )
 
     # No atoms removed
-    assert len(result.removed_atoms) == 0
+    assert len(result.topology_changes.removed_atoms) == 0
 
     # 2 atoms total
-    assert len(list(result.product.atoms)) == 2
+    assert len(list(result.product_info.product.atoms)) == 2
 
     # 1 bond
-    assert len(list(result.product.bonds)) == 1
+    assert len(list(result.product_info.product.bonds)) == 1
 
 
 if __name__ == "__main__":

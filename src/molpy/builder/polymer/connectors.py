@@ -116,7 +116,13 @@ class AutoConnector(Connector):
         ]
 
         if len(left_right_role) == 1 and len(right_left_role) == 1:
-            return (left_right_role[0][0], left_right_role[0][1], right_left_role[0][0], right_left_role[0][1], None)
+            return (
+                left_right_role[0][0],
+                left_right_role[0][1],
+                right_left_role[0][0],
+                right_left_role[0][1],
+                None,
+            )
 
         # Case 1b: left has role='left', right has role='right' (terminus connection)
         # E.g., HO[*:t] (left terminus) connects to CC[>] (right-directed monomer)
@@ -134,7 +140,13 @@ class AutoConnector(Connector):
         ]
 
         if len(left_left_role) == 1 and len(right_right_role) == 1:
-            return (left_left_role[0][0], left_left_role[0][1], right_right_role[0][0], right_right_role[0][1], None)
+            return (
+                left_left_role[0][0],
+                left_left_role[0][1],
+                right_right_role[0][0],
+                right_right_role[0][1],
+                None,
+            )
 
         # Strategy 2: If both sides have the same port name(s) (e.g., all $), randomly select one
         # Since all ports are equivalent, just pick the first available one
@@ -145,14 +157,14 @@ class AutoConnector(Connector):
             if left_name == right_name or (left_name == "$" and right_name == "$"):
                 # Use the first port in each list (all are equivalent)
                 return (left_name, 0, right_name, 0, None)
-        
+
         # Strategy 3: Try to match port names - if same name exists on both sides, use it
         common_port_names = set(left_ports.keys()) & set(right_ports.keys())
         if common_port_names:
             # Use first common port name
             port_name = next(iter(common_port_names))
             return (port_name, 0, port_name, 0, None)
-        
+
         # Strategy 4: If both sides have $ ports, use them (all ports are equivalent)
         if "$" in left_ports and "$" in right_ports:
             return ("$", 0, "$", 0, None)
@@ -161,7 +173,7 @@ class AutoConnector(Connector):
         # Count total ports (flattened)
         left_total = sum(len(port_list) for port_list in left_ports.values())
         right_total = sum(len(port_list) for port_list in right_ports.values())
-        
+
         raise AmbiguousPortsError(
             f"Cannot auto-select ports between {ctx.get('left_label')} and {ctx.get('right_label')}: "
             f"left has {left_total} available ports across {len(left_ports)} port names {list(left_ports.keys())}, "
@@ -476,8 +488,8 @@ class ReacterConnector(Connector):
         right: Atomistic,
         left_type: str,
         right_type: str,
-        port_L: str,
-        port_R: str,
+        port_atom_L: Entity,
+        port_atom_R: Entity,
         typifier: TypifierBase | None = None,
     ) -> ConnectionResult:
         """
@@ -494,8 +506,9 @@ class ReacterConnector(Connector):
             right: Right Atomistic structure
             left_type: Type label of left structure
             right_type: Type label of right structure
-            port_L: Port name on left structure
-            port_R: Port name on right structure
+            port_atom_L: Port atom from left structure
+            port_atom_R: Port atom from right structure
+            typifier: Optional typifier
 
         Returns:
             ConnectionResult containing product and metadata
@@ -509,8 +522,8 @@ class ReacterConnector(Connector):
         product_set: ReactionResult = reacter.run(
             left,
             right,
-            port_L=port_L,
-            port_R=port_R,
+            port_atom_L=port_atom_L,
+            port_atom_R=port_atom_R,
             compute_topology=True,
             typifier=typifier,
         )
@@ -519,19 +532,23 @@ class ReacterConnector(Connector):
         self._history.append(product_set)
 
         # Create metadata dataclass
+        port_name_L = port_atom_L.get("port", "unknown")
+        port_name_R = port_atom_R.get("port", "unknown")
         metadata = ConnectionMetadata(
-            port_L=port_L,
-            port_R=port_R,
+            port_L=port_name_L,
+            port_R=port_name_R,
             reaction_name=reacter.name,
-            formed_bonds=product_set.new_bonds,
-            new_angles=product_set.new_angles,
-            new_dihedrals=product_set.new_dihedrals,
-            modified_atoms=product_set.modified_atoms,
-            requires_retype=product_set.requires_retype,
-            entity_maps=product_set.entity_maps,
+            formed_bonds=product_set.topology_changes.new_bonds,
+            new_angles=product_set.topology_changes.new_angles,
+            new_dihedrals=product_set.topology_changes.new_dihedrals,
+            modified_atoms=product_set.topology_changes.modified_atoms,
+            requires_retype=product_set.metadata.requires_retype,
+            entity_maps=product_set.metadata.entity_maps,
         )
 
-        return ConnectionResult(product=product_set.product, metadata=metadata)
+        return ConnectionResult(
+            product=product_set.product_info.product, metadata=metadata
+        )
 
     def get_history(self) -> list:
         """Get all reaction history (list of ReactionResult)."""
@@ -544,8 +561,8 @@ class ReacterConnector(Connector):
             Set of all atoms that were modified during reactions
         """
         all_atoms: set[Entity] = set()
-        for product in self._history:
-            all_atoms.update(product.modified_atoms)
+        for result in self._history:
+            all_atoms.update(result.topology_changes.modified_atoms)
         return all_atoms
 
     def needs_retypification(self) -> bool:
@@ -554,7 +571,7 @@ class ReacterConnector(Connector):
         Returns:
             True if any reaction requires retypification
         """
-        return any(p.requires_retype for p in self._history)
+        return any(r.metadata.requires_retype for r in self._history)
 
 
 # Alias for backward compatibility

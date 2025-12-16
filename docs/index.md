@@ -134,15 +134,9 @@ MolPy features **31 detailed Jupyter notebooks** covering every module with runn
 
     ---
 
-    Complete coverage across **9 modules**: Parser (3), Reacter (4), Builder (5), Typifier (3), IO (4), Adapter (3), Potential (3), Compute (2), Developer (4)
+    Complete coverage across **9 modules**: Parser, Reacter, Builder, Typifier, IO, Adapter, Potential, Compute, Developer
 
-- :code-braces:{ .lg .middle } __150+ Code Examples__
-
-    ---
-
-    Every notebook includes working code demonstrations with real-world use cases. All examples are tested and runnable.
-
-- :check-all:{ .lg .middle } __100% API Coverage__
+- :check_mark_button:{ .lg .middle } __100% API Coverage__
 
     ---
 

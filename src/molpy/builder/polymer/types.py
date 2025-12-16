@@ -74,7 +74,7 @@ class PolymerBuildResult:
 @dataclass
 class PortDescriptor:
     """Descriptor for a reactive port on a monomer template.
-    
+
     Attributes:
         descriptor_id: Unique ID within template (e.g., 0, 1, 2)
         port_name: Port name on atom (e.g., "<", ">", "branch")
@@ -82,7 +82,7 @@ class PortDescriptor:
         bond_kind: Bond type (e.g., "-", "=", "#")
         compat: Compatibility set for port matching
     """
-    
+
     descriptor_id: int
     port_name: str
     role: str | None = None
@@ -93,11 +93,11 @@ class PortDescriptor:
 @dataclass
 class MonomerTemplate:
     """Template for a monomer with port descriptors and metadata.
-    
+
     This represents a monomer type that can be instantiated multiple times
     during stochastic growth. Each instantiation creates a fresh copy of
     the structure.
-    
+
     Attributes:
         label: Monomer label (e.g., "EO2", "PS")
         structure: Base Atomistic structure (will be copied on instantiation)
@@ -105,35 +105,35 @@ class MonomerTemplate:
         mass: Molecular weight (g/mol)
         metadata: Additional metadata (optional)
     """
-    
+
     label: str
     structure: Atomistic
     port_descriptors: dict[int, PortDescriptor]
     mass: float
     metadata: dict[str, Any] = field(default_factory=dict)
-    
+
     def instantiate(self) -> Atomistic:
         """Create a fresh copy of the structure.
-        
+
         Returns:
             New Atomistic instance with independent atoms and bonds
         """
         return self.structure.copy()
-    
+
     def get_port_by_descriptor(self, descriptor_id: int) -> PortDescriptor | None:
         """Get port descriptor for a specific descriptor ID.
-        
+
         Args:
             descriptor_id: Descriptor ID to look up
-            
+
         Returns:
             PortDescriptor if found, None otherwise
         """
         return self.port_descriptors.get(descriptor_id)
-    
+
     def get_all_descriptors(self) -> list[PortDescriptor]:
         """Get all port descriptors for this template.
-        
+
         Returns:
             List of all PortDescriptor objects
         """
@@ -143,12 +143,12 @@ class MonomerTemplate:
 @dataclass
 class MonomerPlacement:
     """Decision for next monomer placement during stochastic growth.
-    
+
     Attributes:
         template: MonomerTemplate to add
         target_descriptor_id: Which port descriptor on the new monomer to connect
     """
-    
+
     template: "MonomerTemplate"
     target_descriptor_id: int
 
@@ -156,14 +156,14 @@ class MonomerPlacement:
 @dataclass
 class StochasticChain:
     """Result of stochastic BFS growth.
-    
+
     Attributes:
         polymer: The assembled Atomistic structure
         dp: Degree of polymerization (number of monomers added)
         mass: Total molecular weight (g/mol)
         growth_history: Metadata for each monomer addition step
     """
-    
+
     polymer: Atomistic
     dp: int
     mass: float

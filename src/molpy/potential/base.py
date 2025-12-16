@@ -101,8 +101,9 @@ class Potentials(UserList[Potential]):
         # Check if first argument is a Frame
         if args and isinstance(args[0], Frame):
             from .utils import calc_energy_from_frame
+
             return sum(calc_energy_from_frame(pot, args[0]) for pot in self)
-        
+
         # Otherwise, pass arguments directly
         return sum(pot.calc_energy(*args, **kwargs) for pot in self)
 
@@ -132,14 +133,15 @@ class Potentials(UserList[Potential]):
         # Check if first argument is a Frame
         if args and isinstance(args[0], Frame):
             from .utils import calc_forces_from_frame
+
             # Get forces from first potential to determine shape
             first_forces = calc_forces_from_frame(self[0], args[0])
             total_forces = np.zeros_like(first_forces)
-            
+
             for pot in self:
                 forces = calc_forces_from_frame(pot, args[0])
                 total_forces += forces
-            
+
             return total_forces
 
         # Otherwise, pass arguments directly

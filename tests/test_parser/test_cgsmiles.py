@@ -17,12 +17,12 @@ from molpy.parser.smiles import (
 
 def mk_cgsmiles_ir(node_labels, bond_tuples, annotations=None):
     """Helper to build expected CGSmilesGraphIR.
-    
+
     Args:
         node_labels: List of node labels (strings)
         bond_tuples: List of (i, j, order) tuples
         annotations: Optional dict mapping node index to annotations dict
-    
+
     Returns:
         CGSmilesGraphIR
     """
@@ -30,12 +30,12 @@ def mk_cgsmiles_ir(node_labels, bond_tuples, annotations=None):
     for i, label in enumerate(node_labels):
         annots = annotations.get(i, {}) if annotations else {}
         nodes.append(CGSmilesNodeIR(label=label, annotations=annots))
-    
+
     bonds = [
         CGSmilesBondIR(node_i=nodes[i], node_j=nodes[j], order=order)
         for (i, j, order) in bond_tuples
     ]
-    
+
     return CGSmilesGraphIR(nodes=nodes, bonds=bonds)
 
 
@@ -151,23 +151,65 @@ branch_tests = [
     # Simple branch expansion
     (
         "{[#PMA]([#PEO][#PEO][#OHter])|3}",
-        ["PMA", "PEO", "PEO", "OHter",
-         "PMA", "PEO", "PEO", "OHter",
-         "PMA", "PEO", "PEO", "OHter"],
-        [(0, 1), (1, 2), (2, 3),
-         (0, 4), (4, 5), (5, 6), (6, 7),
-         (4, 8), (8, 9), (9, 10), (10, 11)],
+        [
+            "PMA",
+            "PEO",
+            "PEO",
+            "OHter",
+            "PMA",
+            "PEO",
+            "PEO",
+            "OHter",
+            "PMA",
+            "PEO",
+            "PEO",
+            "OHter",
+        ],
+        [
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (0, 4),
+            (4, 5),
+            (5, 6),
+            (6, 7),
+            (4, 8),
+            (8, 9),
+            (9, 10),
+            (10, 11),
+        ],
         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
     ),
     # Branch expansion with bond orders
     (
         "{[#PMA]([#PEO][#PEO]=[#OHter])|3}",
-        ["PMA", "PEO", "PEO", "OHter",
-         "PMA", "PEO", "PEO", "OHter",
-         "PMA", "PEO", "PEO", "OHter"],
-        [(0, 1), (1, 2), (2, 3),
-         (0, 4), (4, 5), (5, 6), (6, 7),
-         (4, 8), (8, 9), (9, 10), (10, 11)],
+        [
+            "PMA",
+            "PEO",
+            "PEO",
+            "OHter",
+            "PMA",
+            "PEO",
+            "PEO",
+            "OHter",
+            "PMA",
+            "PEO",
+            "PEO",
+            "OHter",
+        ],
+        [
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (0, 4),
+            (4, 5),
+            (5, 6),
+            (6, 7),
+            (4, 8),
+            (8, 9),
+            (9, 10),
+            (10, 11),
+        ],
         [1, 1, 2, 1, 1, 1, 2, 1, 1, 1, 2],
     ),
     # Nested branching
@@ -247,53 +289,70 @@ fragment_tests = [
 class TestCGSmilesParser:
     """Test suite for CGSmiles parser."""
 
-    @pytest.mark.parametrize("cgsmiles, expected_labels, expected_edges, expected_orders", basic_sequences)
-    def test_basic_sequences(self, cgsmiles, expected_labels, expected_edges, expected_orders):
+    @pytest.mark.parametrize(
+        "cgsmiles, expected_labels, expected_edges, expected_orders", basic_sequences
+    )
+    def test_basic_sequences(
+        self, cgsmiles, expected_labels, expected_edges, expected_orders
+    ):
         """Test basic linear sequences with various bond orders."""
         result = parse_cgsmiles(cgsmiles)
-        
+
         # Check node count
         assert len(result.base_graph.nodes) == len(expected_labels)
-        
+
         # Check node labels
         actual_labels = [node.label for node in result.base_graph.nodes]
         assert actual_labels == expected_labels
-        
+
         # Check bond count
         assert len(result.base_graph.bonds) == len(expected_edges)
-        
+
         # Check bonds and orders
-        for bond, (i, j), expected_order in zip(result.base_graph.bonds, expected_edges, expected_orders):
+        for bond, (i, j), expected_order in zip(
+            result.base_graph.bonds, expected_edges, expected_orders
+        ):
             assert result.base_graph.nodes.index(bond.node_i) == i
             assert result.base_graph.nodes.index(bond.node_j) == j
             assert bond.order == expected_order
 
-    @pytest.mark.parametrize("cgsmiles, expected_labels, expected_edges, expected_orders", repeat_operator_tests)
-    def test_repeat_operators(self, cgsmiles, expected_labels, expected_edges, expected_orders):
+    @pytest.mark.parametrize(
+        "cgsmiles, expected_labels, expected_edges, expected_orders",
+        repeat_operator_tests,
+    )
+    def test_repeat_operators(
+        self, cgsmiles, expected_labels, expected_edges, expected_orders
+    ):
         """Test repeat operator |INT."""
         result = parse_cgsmiles(cgsmiles)
-        
+
         assert len(result.base_graph.nodes) == len(expected_labels)
         actual_labels = [node.label for node in result.base_graph.nodes]
         assert actual_labels == expected_labels
-        
+
         assert len(result.base_graph.bonds) == len(expected_edges)
-        for bond, (i, j), expected_order in zip(result.base_graph.bonds, expected_edges, expected_orders):
+        for bond, (i, j), expected_order in zip(
+            result.base_graph.bonds, expected_edges, expected_orders
+        ):
             assert result.base_graph.nodes.index(bond.node_i) == i
             assert result.base_graph.nodes.index(bond.node_j) == j
             assert bond.order == expected_order
 
-    @pytest.mark.parametrize("cgsmiles, expected_labels, expected_edges, expected_orders", ring_closure_tests)
-    def test_ring_closures(self, cgsmiles, expected_labels, expected_edges, expected_orders):
+    @pytest.mark.parametrize(
+        "cgsmiles, expected_labels, expected_edges, expected_orders", ring_closure_tests
+    )
+    def test_ring_closures(
+        self, cgsmiles, expected_labels, expected_edges, expected_orders
+    ):
         """Test ring closure syntax."""
         result = parse_cgsmiles(cgsmiles)
-        
+
         assert len(result.base_graph.nodes) == len(expected_labels)
         actual_labels = [node.label for node in result.base_graph.nodes]
         assert actual_labels == expected_labels
-        
+
         assert len(result.base_graph.bonds) == len(expected_edges)
-        
+
         # Check that all expected edges exist (order may vary)
         actual_edges = set()
         bond_orders = {}
@@ -303,26 +362,28 @@ class TestCGSmilesParser:
             edge = tuple(sorted([i, j]))
             actual_edges.add(edge)
             bond_orders[edge] = bond.order
-        
+
         expected_edges_set = set(tuple(sorted([i, j])) for i, j in expected_edges)
         assert actual_edges == expected_edges_set
-        
+
         # Check bond orders
         for (i, j), expected_order in zip(expected_edges, expected_orders):
             edge = tuple(sorted([i, j]))
             assert bond_orders[edge] == expected_order
 
-    @pytest.mark.parametrize("cgsmiles, expected_labels, expected_edges, expected_orders", branch_tests)
+    @pytest.mark.parametrize(
+        "cgsmiles, expected_labels, expected_edges, expected_orders", branch_tests
+    )
     def test_branches(self, cgsmiles, expected_labels, expected_edges, expected_orders):
         """Test branch syntax and expansion."""
         result = parse_cgsmiles(cgsmiles)
-        
+
         assert len(result.base_graph.nodes) == len(expected_labels)
         actual_labels = [node.label for node in result.base_graph.nodes]
         assert actual_labels == expected_labels
-        
+
         assert len(result.base_graph.bonds) == len(expected_edges)
-        
+
         # For branches, check edges exist (order may vary)
         actual_edges = set()
         bond_orders = {}
@@ -332,17 +393,27 @@ class TestCGSmilesParser:
             edge = tuple(sorted([i, j]))
             actual_edges.add(edge)
             bond_orders[edge] = bond.order
-        
+
         expected_edges_set = set(tuple(sorted([i, j])) for i, j in expected_edges)
         assert actual_edges == expected_edges_set
 
-    @pytest.mark.parametrize("cgsmiles, expected_labels, expected_edges, expected_orders, expected_annots", annotation_tests)
-    def test_annotations(self, cgsmiles, expected_labels, expected_edges, expected_orders, expected_annots):
+    @pytest.mark.parametrize(
+        "cgsmiles, expected_labels, expected_edges, expected_orders, expected_annots",
+        annotation_tests,
+    )
+    def test_annotations(
+        self,
+        cgsmiles,
+        expected_labels,
+        expected_edges,
+        expected_orders,
+        expected_annots,
+    ):
         """Test node annotations."""
         result = parse_cgsmiles(cgsmiles)
-        
+
         assert len(result.base_graph.nodes) == len(expected_labels)
-        
+
         # Check annotations
         for i, node in enumerate(result.base_graph.nodes):
             if i in expected_annots:
@@ -350,17 +421,30 @@ class TestCGSmilesParser:
             else:
                 assert node.annotations == {}
 
-    @pytest.mark.parametrize("cgsmiles, expected_labels, expected_edges, expected_orders, expected_annots, expected_fragments", fragment_tests)
-    def test_fragments(self, cgsmiles, expected_labels, expected_edges, expected_orders, expected_annots, expected_fragments):
+    @pytest.mark.parametrize(
+        "cgsmiles, expected_labels, expected_edges, expected_orders, expected_annots, expected_fragments",
+        fragment_tests,
+    )
+    def test_fragments(
+        self,
+        cgsmiles,
+        expected_labels,
+        expected_edges,
+        expected_orders,
+        expected_annots,
+        expected_fragments,
+    ):
         """Test fragment definitions."""
         result = parse_cgsmiles(cgsmiles)
-        
+
         # Check base graph
         assert len(result.base_graph.nodes) == len(expected_labels)
-        
+
         # Check fragments
         assert len(result.fragments) == len(expected_fragments)
-        for fragment, (expected_name, expected_body) in zip(result.fragments, expected_fragments):
+        for fragment, (expected_name, expected_body) in zip(
+            result.fragments, expected_fragments
+        ):
             assert fragment.name == expected_name
             assert fragment.body == expected_body
 
@@ -379,10 +463,22 @@ class TestCGSmilesParser:
         """Test complex nested branching with expansion."""
         cgsmiles = "{[#PMA][#PMA]([#PEO][#PQ]([#OH])|3[#PEO])[#PMA]}"
         result = parse_cgsmiles(cgsmiles)
-        
-        expected_labels = ["PMA", "PMA", "PEO", "PQ", "OH", "PQ", "OH", "PQ", "OH", "PEO", "PMA"]
+
+        expected_labels = [
+            "PMA",
+            "PMA",
+            "PEO",
+            "PQ",
+            "OH",
+            "PQ",
+            "OH",
+            "PQ",
+            "OH",
+            "PEO",
+            "PMA",
+        ]
         actual_labels = [node.label for node in result.base_graph.nodes]
         assert actual_labels == expected_labels
-        
+
         # Should have 10 bonds
         assert len(result.base_graph.bonds) == 10

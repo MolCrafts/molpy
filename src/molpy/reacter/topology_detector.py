@@ -394,9 +394,14 @@ class TopologyDetector:
         Detect and update topology structure after reaction.
 
         This method:
-        1. Identifies atoms affected by new bonds
-        2. Removes old topology items involving affected or removed atoms
-        3. Generates new topology items based on current bond structure
+        1. Removes topology items involving removed atoms
+        2. Generates new topology items based on new bonds
+        3. Adds new topology items (deduplicated with existing)
+
+        Note: We do NOT remove topology involving "affected atoms" (bond endpoints
+        and neighbors) because those angles/dihedrals don't need to change -
+        they still exist with the same atoms. We only need to add NEW topology
+        created by the new bond.
 
         Args:
             assembly: The Atomistic structure (will be modified)
@@ -406,29 +411,12 @@ class TopologyDetector:
         Returns:
             Tuple of (new_angles, new_dihedrals, removed_angles, removed_dihedrals)
         """
-        # Step 1: Remove topology items involving removed atoms
-        removed_angles_from_atoms, removed_dihedrals_from_atoms = (
-            cls._remove_topology_with_removed_atoms(assembly, removed_atoms)
+        # Step 1: Remove topology items involving removed atoms ONLY
+        removed_angles, removed_dihedrals = cls._remove_topology_with_removed_atoms(
+            assembly, removed_atoms
         )
 
-        # Step 2: Identify affected atoms (endpoints of new bonds and their neighbors)
-        affected_atoms = cls._get_affected_atoms(assembly, new_bonds)
-
-        # Step 3: Remove old topology items involving affected atoms
-        removed_angles_from_bonds = cls._remove_angles_involving_atoms(
-            assembly, affected_atoms
-        )
-        removed_dihedrals_from_bonds = cls._remove_dihedrals_involving_atoms(
-            assembly, affected_atoms
-        )
-
-        # Combine removed items
-        all_removed_angles = removed_angles_from_atoms + removed_angles_from_bonds
-        all_removed_dihedrals = (
-            removed_dihedrals_from_atoms + removed_dihedrals_from_bonds
-        )
-
-        # Step 4: Generate new topology items based on new bonds
+        # Step 2: Generate new topology items based on new bonds
         # Get existing topology items for deduplication
         existing_angles = list(assembly.links.bucket(Angle))
         existing_dihedrals = list(assembly.links.bucket(Dihedral))
@@ -454,7 +442,7 @@ class TopologyDetector:
             )
             new_dihedrals_candidates.extend(dihedrals_continuing)
 
-        # Step 5: Deduplicate and add new topology items
+        # Step 3: Deduplicate and add new topology items
         unique_new_angles = cls._deduplicate_angles(
             new_angles_candidates, existing_angles
         )
@@ -471,6 +459,6 @@ class TopologyDetector:
         return (
             unique_new_angles,
             unique_new_dihedrals,
-            all_removed_angles,
-            all_removed_dihedrals,
+            removed_angles,
+            removed_dihedrals,
         )

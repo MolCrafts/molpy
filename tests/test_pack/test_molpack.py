@@ -27,10 +27,14 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture
 def simple_water_frame() -> Frame:
     """Create a simple water molecule frame."""
+    xyz = np.array([[0.0, 0.0, 0.0], [0.96, 0.0, 0.0], [-0.24, 0.93, 0.0]])
     atoms = Block(
         {
             "element": np.array(["O", "H", "H"]),
-            "xyz": np.array([[0.0, 0.0, 0.0], [0.96, 0.0, 0.0], [-0.24, 0.93, 0.0]]),
+            "x": xyz[:, 0],
+            "y": xyz[:, 1],
+            "z": xyz[:, 2],
+            "xyz": xyz,  # Keep for backward compatibility
         }
     )
     return Frame({"atoms": atoms})
@@ -197,11 +201,14 @@ class TestPackmol:
 
         # Create optimized frame with coordinates
         n_atoms_total = 5 * 3  # 5 water molecules * 3 atoms
+        xyz = np.random.rand(n_atoms_total, 3) * 10.0
         optimized_frame = Frame(
             {
                 "atoms": Block(
                     {
-                        "xyz": np.random.rand(n_atoms_total, 3) * 10.0,
+                        "x": xyz[:, 0],
+                        "y": xyz[:, 1],
+                        "z": xyz[:, 2],
                     }
                 )
             }
@@ -211,9 +218,14 @@ class TestPackmol:
 
         assert isinstance(result, Frame)
         assert "atoms" in result
-        assert len(result["atoms"]["xyz"]) == n_atoms_total
+        # Check x, y, z fields
+        assert len(result["atoms"]["x"]) == n_atoms_total
+        assert len(result["atoms"]["y"]) == n_atoms_total
+        assert len(result["atoms"]["z"]) == n_atoms_total
         # Check that coordinates match
-        assert np.allclose(result["atoms"]["xyz"], optimized_frame["atoms"]["xyz"])
+        assert np.allclose(result["atoms"]["x"], xyz[:, 0])
+        assert np.allclose(result["atoms"]["y"], xyz[:, 1])
+        assert np.allclose(result["atoms"]["z"], xyz[:, 2])
 
     def test_real_packing_small(self, simple_target, tmp_path):
         """Test real packing with packmol."""

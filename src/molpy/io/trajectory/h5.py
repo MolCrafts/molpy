@@ -310,4 +310,3 @@ class HDF5TrajectoryWriter(TrajectoryWriter):
         if self._file is not None:
             self._file.close()
             self._file = None
-

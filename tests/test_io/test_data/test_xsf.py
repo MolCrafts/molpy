@@ -157,8 +157,12 @@ class TestXSFCore:
             frame["atoms"]["atomic_number"], frame2["atoms"]["atomic_number"]
         )
         # Compare coordinates (use separate x,y,z fields)
-        coords1 = np.column_stack([frame["atoms"]["x"], frame["atoms"]["y"], frame["atoms"]["z"]])
-        coords2 = np.column_stack([frame2["atoms"]["x"], frame2["atoms"]["y"], frame2["atoms"]["z"]])
+        coords1 = np.column_stack(
+            [frame["atoms"]["x"], frame["atoms"]["y"], frame["atoms"]["z"]]
+        )
+        coords2 = np.column_stack(
+            [frame2["atoms"]["x"], frame2["atoms"]["y"], frame2["atoms"]["z"]]
+        )
         np.testing.assert_array_almost_equal(coords1, coords2)
         np.testing.assert_array_almost_equal(
             frame.metadata["box"].matrix, frame2.metadata["box"].matrix

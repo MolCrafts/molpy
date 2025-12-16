@@ -25,7 +25,7 @@ class TestAmberInpcrdReader:
         assert "x" in atoms
         assert "y" in atoms
         assert "z" in atoms
-        
+
         # Combine into xyz for comparison
         xyz = np.column_stack([atoms["x"], atoms["y"], atoms["z"]])
         assert xyz.shape == (n_atoms, 3)

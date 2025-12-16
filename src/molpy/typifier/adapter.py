@@ -43,9 +43,7 @@ def build_mol_graph(
 
     # Type check
     if not isinstance(structure, Atomistic):
-        raise TypeError(
-            f"Expected Atomistic structure, got {type(structure).__name__}"
-        )
+        raise TypeError(f"Expected Atomistic structure, got {type(structure).__name__}")
 
     atoms = list(structure.atoms)
     bonds = list(structure.bonds)

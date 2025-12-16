@@ -42,7 +42,9 @@ def smilesir_to_atomistic(ir: SmilesGraphIR) -> Atomistic:
 
     # Add atoms
     for atom_ir in ir.atoms:
-        element = atom_ir.element.upper() if atom_ir.element.islower() else atom_ir.element
+        element = (
+            atom_ir.element.upper() if atom_ir.element.islower() else atom_ir.element
+        )
         atom = atomistic.def_atom(element=element, charge=atom_ir.charge)
         atomir_to_atom[id(atom_ir)] = atom
 
@@ -64,6 +66,8 @@ def smilesir_to_atomistic(ir: SmilesGraphIR) -> Atomistic:
         atomistic.def_bond(start_atom, end_atom, order=order)
 
     return atomistic
+
+
 def add_hydrogens(atomistic: Atomistic) -> Atomistic:
     """Add explicit hydrogen atoms to an Atomistic structure based on valence.
 

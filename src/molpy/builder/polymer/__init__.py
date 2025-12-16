@@ -17,11 +17,9 @@ from .connectors import (
     TopologyConnector,
 )
 from .growth_kernel import GrowthKernel, ProbabilityTableKernel
-from .linear import linear
+
 from .polymer_builder import PolymerBuilder
-from .polydisperse import Polydisperse, SchulzZimm
 from .sequence_generator import SequenceGenerator, WeightedSequenceGenerator
-from .stochastic_generator import StochasticChainGenerator
 from .system import (
     Chain,
     FlorySchulzPolydisperse,
@@ -53,12 +51,9 @@ __all__ = [
     "ReacterConnector",
     "TableConnector",
     "TopologyConnector",
-    "linear",
+
     # CGSmiles Builder
     "PolymerBuilder",
-    # Polydisperse (legacy)
-    "Polydisperse",
-    "SchulzZimm",
     # Sequence Generators
     "SequenceGenerator",
     "WeightedSequenceGenerator",
@@ -83,6 +78,4 @@ __all__ = [
     # G-BigSMILES Growth Kernel
     "GrowthKernel",
     "ProbabilityTableKernel",
-    # G-BigSMILES Stochastic Generator
-    "StochasticChainGenerator",
 ]

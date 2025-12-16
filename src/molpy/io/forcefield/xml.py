@@ -493,7 +493,9 @@ class XMLForceFieldReader:
             at3 = self._get_or_create_atomtype(type3, class3)
 
             # Parse parameters
-            theta0 = float(angle_str) if angle_str else 0.0  # Store in radians as in XML
+            theta0 = (
+                float(angle_str) if angle_str else 0.0
+            )  # Store in radians as in XML
             k = float(k_str) if k_str else 0.0
 
             # Define angle type (theta0 in radians)

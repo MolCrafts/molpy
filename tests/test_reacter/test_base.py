@@ -22,9 +22,9 @@ from molpy.reacter import (
     form_single_bond,
     form_triple_bond,
     select_all_hydrogens,
+    select_identity,
     select_none,
     select_one_hydrogen,
-    select_port_atom,
 )
 
 
@@ -40,9 +40,13 @@ class TestProductSet:
         # Create merged reactants for ReactantInfo
         merged = Atomistic()
         merged.add_entity(c)
-        
-        reactant_info = ReactantInfo(merged_reactants=merged, port_L="1", port_R="2")
-        product_info = ProductInfo(product=asm)
+
+        reactant_info = ReactantInfo(
+            merged_reactants=merged,
+            port_atom_L=None,
+            port_atom_R=None,
+        )
+        product_info = ProductInfo(product=asm, anchor_L=None, anchor_R=None)
         topology_changes = TopologyChanges()
         metadata = ReactionMetadata(reaction_name="test_reaction")
 
@@ -56,11 +60,7 @@ class TestProductSet:
         # Test new structure
         assert result.product_info.product is asm
         assert result.metadata.reaction_name == "test_reaction"
-
-        # Test backward compatibility properties
-        assert result.product is asm
-        assert result.reaction_name == "test_reaction"
-        assert result.reactants is merged  # reactants should be the merged reactants, not product
+        assert result.reactant_info.merged_reactants is merged
 
 
 class TestReacter:
@@ -70,16 +70,16 @@ class TestReacter:
         """Test Reacter initialization with all components."""
         reacter = Reacter(
             name="test_reaction",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_one_hydrogen,
             leaving_selector_right=select_one_hydrogen,
             bond_former=form_single_bond,
         )
 
         assert reacter.name == "test_reaction"
-        assert reacter.port_selector_left is select_port_atom
-        assert reacter.port_selector_right is select_port_atom
+        assert reacter.anchor_selector_left is select_identity
+        assert reacter.anchor_selector_right is select_identity
         assert reacter.leaving_selector_left is select_one_hydrogen
         assert reacter.leaving_selector_right is select_one_hydrogen
         assert reacter.bond_former is form_single_bond
@@ -88,8 +88,8 @@ class TestReacter:
         """Test Reacter string representation."""
         reacter = Reacter(
             name="test_reaction",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_one_hydrogen,
             leaving_selector_right=select_one_hydrogen,
             bond_former=form_single_bond,
@@ -120,39 +120,44 @@ class TestReacter:
         # Create reaction
         reacter = Reacter(
             name="C-C_coupling",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_one_hydrogen,
             leaving_selector_right=select_one_hydrogen,
             bond_former=form_single_bond,
         )
 
         # Run reaction
-        result = reacter.run(struct_L, struct_R, port_L="1", port_R="2")
+        from molpy.reacter.selectors import find_port_atom
+
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
+        result = reacter.run(
+            struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
+        )
 
         # Validate ReactionResult
         assert isinstance(result, ReactionResult)
-        assert isinstance(result.product, Atomistic)
+        assert isinstance(result.product_info.product, Atomistic)
 
         # Check atoms (2 C, 0 H)
-        atoms = list(result.product.atoms)
+        atoms = list(result.product_info.product.atoms)
         assert len(atoms) == 2
         assert all(a.get("symbol") == "C" for a in atoms)
 
         # Check bonds (1 C-C bond)
-        bonds = list(result.product.bonds)
+        bonds = list(result.product_info.product.bonds)
         assert len(bonds) == 1
         assert bonds[0].get("order") == 1
 
         # Check ReactionResult attributes
-        assert result.reaction_name == "C-C_coupling"
-        assert len(result.removed_atoms) == 2
-        # port_L and port_R are copied atoms, not originals
-        assert result.port_L is not None
-        assert result.port_R is not None
-        assert result.port_L.get("symbol") == "C"
-        assert result.port_R.get("symbol") == "C"
-        assert result.requires_retype is True
+        assert result.metadata.reaction_name == "C-C_coupling"
+        assert len(result.topology_changes.removed_atoms) == 2
+        assert result.product_info.anchor_L is not None
+        assert result.product_info.anchor_R is not None
+        assert result.product_info.anchor_L.get("symbol") == "C"
+        assert result.product_info.anchor_R.get("symbol") == "C"
+        assert result.metadata.requires_retype is True
 
     def test_reacter_run_with_double_bond(self):
         """Test Reacter.run() with double bond formation."""
@@ -174,17 +179,23 @@ class TestReacter:
         # Create reaction with double bond
         reacter = Reacter(
             name="C=C_coupling",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_one_hydrogen,
             leaving_selector_right=select_one_hydrogen,
             bond_former=form_double_bond,
         )
 
-        result = reacter.run(struct_L, struct_R, port_L="1", port_R="2")
+        from molpy.reacter.selectors import find_port_atom
+
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
+        result = reacter.run(
+            struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
+        )
 
         # Check bond order
-        bonds = list(result.product.bonds)
+        bonds = list(result.product_info.product.bonds)
         assert len(bonds) == 1
         assert bonds[0].get("order") == 2
         assert bonds[0].get("kind") == "="
@@ -209,17 +220,23 @@ class TestReacter:
         # Create reaction with triple bond
         reacter = Reacter(
             name="C#C_coupling",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_one_hydrogen,
             leaving_selector_right=select_one_hydrogen,
             bond_former=form_triple_bond,
         )
 
-        result = reacter.run(struct_L, struct_R, port_L="1", port_R="2")
+        from molpy.reacter.selectors import find_port_atom
+
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
+        result = reacter.run(
+            struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
+        )
 
         # Check bond order
-        bonds = list(result.product.bonds)
+        bonds = list(result.product_info.product.bonds)
         assert len(bonds) == 1
         assert bonds[0].get("order") == 3
         assert bonds[0].get("kind") == "#"
@@ -240,21 +257,27 @@ class TestReacter:
         # Addition reaction
         reacter = Reacter(
             name="addition",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_none,
             leaving_selector_right=select_none,
             bond_former=form_single_bond,
         )
 
-        result = reacter.run(struct_L, struct_R, port_L="1", port_R="2")
+        from molpy.reacter.selectors import find_port_atom
+
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
+        result = reacter.run(
+            struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
+        )
 
         # No atoms removed
-        assert len(result.removed_atoms) == 0
+        assert len(result.topology_changes.removed_atoms) == 0
 
         # 2 atoms, 1 bond
-        assert len(list(result.product.atoms)) == 2
-        assert len(list(result.product.bonds)) == 1
+        assert len(list(result.product_info.product.atoms)) == 2
+        assert len(list(result.product_info.product.bonds)) == 1
 
     def test_reacter_run_with_all_H_removal(self):
         """Test Reacter.run() removing all H from one side."""
@@ -279,20 +302,26 @@ class TestReacter:
         # Remove all H from left, one H from right
         reacter = Reacter(
             name="asymmetric",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_all_hydrogens,
             leaving_selector_right=select_one_hydrogen,
             bond_former=form_single_bond,
         )
 
-        result = reacter.run(struct_L, struct_R, port_L="1", port_R="2")
+        from molpy.reacter.selectors import find_port_atom
+
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
+        result = reacter.run(
+            struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
+        )
 
         # Should remove 4 H total
-        assert len(result.removed_atoms) == 4
+        assert len(result.topology_changes.removed_atoms) == 4
 
         # Only 2 C atoms remain
-        atoms = list(result.product.atoms)
+        atoms = list(result.product_info.product.atoms)
         assert len(atoms) == 2
         assert all(a.get("symbol") == "C" for a in atoms)
 
@@ -315,20 +344,28 @@ class TestReacter:
 
         reacter = Reacter(
             name="test",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_one_hydrogen,
             leaving_selector_right=select_one_hydrogen,
             bond_former=form_single_bond,
         )
 
+        from molpy.reacter.selectors import find_port_atom
+
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
         result = reacter.run(
-            struct_L, struct_R, port_L="1", port_R="2", compute_topology=False
+            struct_L,
+            struct_R,
+            port_atom_L=port_atom_L,
+            port_atom_R=port_atom_R,
+            compute_topology=False,
         )
 
         # Should still work
         assert isinstance(result, ReactionResult)
-        assert len(list(result.product.atoms)) == 2
+        assert len(list(result.product_info.product.atoms)) == 2
 
     def test_reacter_run_with_record_intermediates(self):
         """Test Reacter.run() with record_intermediates=True."""
@@ -349,23 +386,31 @@ class TestReacter:
 
         reacter = Reacter(
             name="test",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_one_hydrogen,
             leaving_selector_right=select_one_hydrogen,
             bond_former=form_single_bond,
         )
 
+        from molpy.reacter.selectors import find_port_atom
+
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
         result = reacter.run(
-            struct_L, struct_R, port_L="1", port_R="2", record_intermediates=True
+            struct_L,
+            struct_R,
+            port_atom_L=port_atom_L,
+            port_atom_R=port_atom_R,
+            record_intermediates=True,
         )
 
         # Check intermediates are recorded
-        assert isinstance(result.intermediates, list)
-        assert len(result.intermediates) > 0
+        assert isinstance(result.metadata.intermediates, list)
+        assert len(result.metadata.intermediates) > 0
 
         # Check intermediate structure
-        for inter in result.intermediates:
+        for inter in result.metadata.intermediates:
             assert "step" in inter
             assert "description" in inter
 
@@ -383,15 +428,17 @@ class TestReacter:
 
         reacter = Reacter(
             name="test",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_none,
             leaving_selector_right=select_none,
             bond_former=form_single_bond,
         )
 
+        from molpy.reacter.selectors import find_port_atom
+
         with pytest.raises(ValueError, match="Port '1' not found"):
-            reacter.run(struct_L, struct_R, port_L="1", port_R="2")
+            port_atom_L = find_port_atom(struct_L, "1")  # noqa: F841
 
     def test_reacter_run_missing_port_right(self):
         """Test Reacter.run() raises error when right port is missing."""
@@ -407,12 +454,14 @@ class TestReacter:
 
         reacter = Reacter(
             name="test",
-            port_selector_left=select_port_atom,
-            port_selector_right=select_port_atom,
+            anchor_selector_left=select_identity,
+            anchor_selector_right=select_identity,
             leaving_selector_left=select_none,
             leaving_selector_right=select_none,
             bond_former=form_single_bond,
         )
 
+        from molpy.reacter.selectors import find_port_atom
+
         with pytest.raises(ValueError, match="Port '2' not found"):
-            reacter.run(struct_L, struct_R, port_L="1", port_R="2")
+            port_atom_R = find_port_atom(struct_R, "2")  # noqa: F841

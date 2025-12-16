@@ -59,10 +59,10 @@ def _bond_from_symbol(
 ) -> tuple[BondOrder, Literal["/", "\\"] | None]:
     """
     Convert bond symbol to (order, stereo) tuple.
-    
+
     Args:
         symbol: Bond symbol (-, =, #, :, /, \\, or None)
-    
+
     Returns:
         (bond_order, stereo_direction) tuple
     """
@@ -80,10 +80,10 @@ def _bond_from_symbol(
 class BigSmilesTransformer(Transformer):
     """
     Lark transformer that converts parse trees to BigSMILES IR.
-    
+
     This transformer maps the unified grammar (supporting SMILES, BigSMILES,
     and gBigSMILES) into structural BigSMILES intermediate representation.
-    
+
     The transformer handles:
     - Atom parsing (bracket atoms, organic subsets, aromatic atoms)
     - Bond formation (single, double, triple, aromatic, stereo)
@@ -93,22 +93,22 @@ class BigSmilesTransformer(Transformer):
     - Stochastic objects (polymer repeat units)
     - Molecular weight distributions (gBigSMILES only)
     - System size annotations (gBigSMILES only)
-    
+
     Architecture:
         The transformer uses a stateful approach to track:
         - ring_openings: Dict of open ring closures
         - _system_size: Global system size annotation
         - _dot_size: Dot notation size
         - _dot_present: Whether dot notation is used
-    
+
     Args:
         allow_generative: If True, enables gBigSMILES features
                          (distributions, weights, system sizes)
-    
+
     Raises:
         ValueError: If gBigSMILES features used without allow_generative=True
         ValueError: If rings are unclosed after parsing
-    
+
     Examples:
         >>> transformer = BigSmilesTransformer()
         >>> tree = parser.parse("{[<]CC[>]}")
@@ -395,6 +395,9 @@ class BigSmilesTransformer(Transformer):
                 seq.append(item)
         active_atom: SmilesAtomIR | None = None
         pending_bond: str | None = None
+        # Track descriptors that appeared before any atom (prefix case like [$]O)
+        pending_descriptors: list[BondingDescriptorIR] = []
+
         for entry in seq:
             if isinstance(entry, str):
                 pending_bond = entry
@@ -403,10 +406,16 @@ class BigSmilesTransformer(Transformer):
                 continue
             node, rings, branches = entry
             if isinstance(node, BondingDescriptorIR):
-                if pending_bond is not None and active_atom is not None:
+                if active_atom is not None:
+                    # Postfix case: descriptor after atom (like C[$])
+                    # Use pending_bond if present, otherwise default
                     order, _ = _bond_from_symbol(pending_bond)
                     node.bond_order = order
                     node.anchor_atom = active_atom
+                else:
+                    # Prefix case: descriptor before atom (like [$]O)
+                    # Store and link to next atom
+                    pending_descriptors.append(node)
                 segment.descriptors.append(node)
                 pending_bond = None
                 continue
@@ -416,6 +425,18 @@ class BigSmilesTransformer(Transformer):
                 continue
             if not isinstance(node, SmilesAtomIR):
                 continue
+
+            # Link any pending prefix descriptors to this atom
+            # Also assign bond order from the bond between descriptor and this atom
+            for descriptor in pending_descriptors:
+                descriptor.anchor_atom = node
+                # For prefix descriptors like [$]=C, the pending_bond is the bond
+                # FROM descriptor TO this atom - assign it as bond_order
+                if pending_bond is not None:
+                    order, _ = _bond_from_symbol(pending_bond)
+                    descriptor.bond_order = order
+            pending_descriptors = []
+
             segment.graph.atoms.append(node)
             if active_atom is not None and active_atom is not node:
                 order, stereo = _bond_from_symbol(pending_bond)
@@ -482,7 +503,9 @@ class BigSmilesTransformer(Transformer):
             return item.backbone
         raise TypeError(f"Unsupported repeat unit type: {type(item)!r}")
 
-    def _mark_terminal_role(self, terminal: TerminalDescriptorIR) -> TerminalDescriptorIR:
+    def _mark_terminal_role(
+        self, terminal: TerminalDescriptorIR
+    ) -> TerminalDescriptorIR:
         """Mark all descriptors in terminal with unified 'terminal' role."""
         for descriptor in terminal.descriptors:
             descriptor.role = "terminal"
@@ -566,24 +589,45 @@ class BigSmilesTransformer(Transformer):
 
     def stochastic_object(self, children: list) -> StochasticObjectIR:
         """Parse stochastic object with unified terminal handling.
-        
+
         Per BigSMILES v1.1: terminal bonding descriptors at stochastic object
         boundaries connect internal structure to external SMILES. Both terminals
         serve the same semantic role, so we merge them into a single `terminals` field.
+
+        Per BigSMILES v1.1 syntax: { [terminal] repeat_units ; end_groups [terminal] }
+        Both terminal descriptors are REQUIRED, even if empty [] (explicitly indicating
+        no external connection). Empty [] must be explicitly written.
+
+        Terminal descriptors are linked to atoms:
+        - First terminal descriptors attach to first atom of first repeat unit
+        - Last terminal descriptors attach to last atom of last repeat unit
         """
         filtered = [child for child in children if not isinstance(child, Token)]
-        if len(filtered) < 1:
-            raise ValueError("Stochastic object requires at least one terminal")
-        
-        # Collect all terminal descriptors (first and optionally last)
+        if len(filtered) < 2:
+            raise ValueError(
+                "Stochastic object requires two terminal descriptors (even if empty []). "
+                "Per BigSMILES v1.1: { [terminal] repeat_units ; end_groups [terminal] }"
+            )
+
+        # Collect all terminal descriptors (both first and last are REQUIRED per BigSMILES v1.1)
         first_terminal = filtered[0]
-        if len(filtered) > 1 and isinstance(filtered[-1], TerminalDescriptorIR):
-            last_terminal = filtered[-1]
-            body = filtered[1:-1]
-        else:
-            last_terminal = TerminalDescriptorIR(descriptors=[], extras={})
-            body = filtered[1:]
-        
+        if not isinstance(first_terminal, TerminalDescriptorIR):
+            raise ValueError(
+                "Stochastic object must start with a terminal descriptor (even if empty []). "
+                "Per BigSMILES v1.1: { [terminal] repeat_units ; end_groups [terminal] }"
+            )
+
+        # Last terminal descriptor is REQUIRED per BigSMILES v1.1 syntax
+        if not isinstance(filtered[-1], TerminalDescriptorIR):
+            raise ValueError(
+                "Stochastic object must end with a terminal descriptor (even if empty []). "
+                "Per BigSMILES v1.1: { [terminal] repeat_units ; end_groups [terminal] }"
+                " Example: {[]C(COCCO[>])(COCCO[>])COCCO[>][]} instead of "
+                "{C(COCCO[>])(COCCO[>])COCCO[>]}"
+            )
+        last_terminal = filtered[-1]
+        body = filtered[1:-1]
+
         # Parse body content
         distribution = None
         repeat_items: list[Any] = []
@@ -597,29 +641,49 @@ class BigSmilesTransformer(Transformer):
                 repeat_items.extend(part)
             else:
                 repeat_items.append(part)
-        
+
+        # Collect all atoms from repeat units to link terminal descriptors
+        all_atoms: list[SmilesAtomIR] = []
+        for item in repeat_items:
+            if isinstance(item, SmilesSegment):
+                all_atoms.extend(item.graph.atoms)
+
+        # Link first terminal descriptors to first atom
+        if all_atoms and first_terminal.descriptors:
+            for descriptor in first_terminal.descriptors:
+                if descriptor.anchor_atom is None:
+                    descriptor.anchor_atom = all_atoms[0]
+
+        # Link last terminal descriptors to last atom
+        if all_atoms and last_terminal.descriptors:
+            for descriptor in last_terminal.descriptors:
+                if descriptor.anchor_atom is None:
+                    descriptor.anchor_atom = all_atoms[-1]
+
         # Collect terminal symbols for pruning
         terminal_symbols = {
             descriptor.symbol
             for descriptor in first_terminal.descriptors + last_terminal.descriptors
             if descriptor.symbol is not None
         }
-        
+
         # Extract unanchored terminal descriptors from repeat units
-        extracted_descriptors = self._prune_terminal_descriptors(repeat_items, terminal_symbols)
-        
+        extracted_descriptors = self._prune_terminal_descriptors(
+            repeat_items, terminal_symbols
+        )
+
         # Merge all terminal descriptors into unified terminals field
         all_terminal_descriptors = (
-            first_terminal.descriptors + 
-            last_terminal.descriptors + 
-            extracted_descriptors
+            first_terminal.descriptors
+            + last_terminal.descriptors
+            + extracted_descriptors
         )
         unified_terminals = TerminalDescriptorIR(
             descriptors=all_terminal_descriptors,
-            extras={**first_terminal.extras, **last_terminal.extras}
+            extras={**first_terminal.extras, **last_terminal.extras},
         )
         self._mark_terminal_role(unified_terminals)
-        
+
         sobj = StochasticObjectIR(
             terminals=unified_terminals,
             repeat_units=self._convert_repeat_items(repeat_items),
@@ -633,24 +697,27 @@ class BigSmilesTransformer(Transformer):
         self, items: Sequence[Any], terminal_symbols: set[str | None]
     ) -> list[BondingDescriptorIR]:
         """Extract unanchored terminal descriptors from repeat units.
-        
+
         Per BigSMILES v1.1: bonding descriptors without anchor atoms (not attached
         to any atom in the repeat unit) are terminal bonding descriptors that
         connect the stochastic object to external SMILES.
-        
+
         Returns:
             List of extracted terminal descriptors (unanchored < and > symbols)
         """
         extracted_descriptors: list[BondingDescriptorIR] = []
         # Always consider < and > as potential terminal symbols
-        all_terminal_symbols = terminal_symbols | {'<', '>'}
-        
+        all_terminal_symbols = terminal_symbols | {"<", ">"}
+
         for item in items:
             if isinstance(item, SmilesSegment):
                 kept: list[BondingDescriptorIR] = []
                 for descriptor in item.descriptors:
                     # Extract unanchored descriptors with terminal symbols
-                    if descriptor.anchor_atom is None and descriptor.symbol in all_terminal_symbols:
+                    if (
+                        descriptor.anchor_atom is None
+                        and descriptor.symbol in all_terminal_symbols
+                    ):
                         extracted_descriptors.append(descriptor)
                     else:
                         kept.append(descriptor)
@@ -748,10 +815,10 @@ class BigSmilesTransformer(Transformer):
 class BigSmilesParserImpl(GrammarParserBase):
     """
     Parser that produces BigSmilesMoleculeIR from BigSMILES strings.
-    
+
     Uses Lark parser with Earley algorithm and BigSmilesTransformer
     to convert BigSMILES notation into structured IR.
-    
+
     Examples:
         >>> parser = BigSmilesParserImpl()
         >>> molecule = parser.parse("{[<]CC[>]}")

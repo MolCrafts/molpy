@@ -756,7 +756,11 @@ class LammpsMoleculeWriter(DataWriter):
 
         # Get atom IDs for index-to-ID conversion
         atoms_block = frame["atoms"]
-        atom_ids = atoms_block["id"] if "id" in atoms_block else np.arange(1, atoms_block.nrows + 1)
+        atom_ids = (
+            atoms_block["id"]
+            if "id" in atoms_block
+            else np.arange(1, atoms_block.nrows + 1)
+        )
 
         if section == "bonds":
             format_list = ["bond-type", "atom1", "atom2"]
@@ -807,6 +811,10 @@ class LammpsMoleculeWriter(DataWriter):
         if "atoms" not in frame:
             raise ValueError("Frame must contain atoms data")
 
+        # Convert type names to numeric IDs for LAMMPS compatibility
+        # LAMMPS requires numeric type IDs, not type names
+        self._convert_types_to_ids(frame)
+
         lines = []
 
         # Header comment
@@ -847,11 +855,60 @@ class LammpsMoleculeWriter(DataWriter):
         # Connectivity sections
         for section in ["bonds", "angles", "dihedrals", "impropers"]:
             if section in frame:
-                self._write_native_connectivity_section(lines, frame[section], section, frame)
+                self._write_native_connectivity_section(
+                    lines, frame[section], section, frame
+                )
 
         # Write to file
         with open(self._path, "w") as f:
             f.write("\n".join(lines))
+
+    def _convert_types_to_ids(self, frame: Frame) -> None:
+        """Convert type names to numeric IDs for LAMMPS compatibility.
+
+        LAMMPS molecule files require numeric type IDs (1-based), not type names.
+        This method converts string type names to sequential numeric IDs.
+
+        If types are already integers, this method does nothing (allows pre-conversion
+        with a unified type mapping for fix bond/react templates).
+
+        Args:
+            frame: Frame to modify in-place
+        """
+        # Convert atom types (skip if already numeric)
+        if "atoms" in frame and "type" in frame["atoms"]:
+            atoms = frame["atoms"]
+            # Check if first type is already an integer
+            first_type = atoms["type"][0] if atoms.nrows > 0 else None
+            if first_type is not None and isinstance(first_type, (int, np.integer)):
+                # Already converted, skip
+                pass
+            else:
+                unique_atom_types = sorted(set(str(t) for t in atoms["type"]))
+                atom_type_to_id = {t: i + 1 for i, t in enumerate(unique_atom_types)}
+                for idx in range(atoms.nrows):
+                    type_name = str(atoms["type"][idx])
+                    if type_name in atom_type_to_id:
+                        atoms["type"][idx] = atom_type_to_id[type_name]
+
+        # Convert connectivity types (bonds, angles, dihedrals, impropers)
+        for section in ["bonds", "angles", "dihedrals", "impropers"]:
+            if section in frame and frame[section].nrows > 0:
+                block = frame[section]
+                if "type" in block:
+                    # Check if first type is already an integer
+                    first_type = block["type"][0] if block.nrows > 0 else None
+                    if first_type is not None and isinstance(
+                        first_type, (int, np.integer)
+                    ):
+                        # Already converted, skip
+                        continue
+                    unique_types = sorted(set(str(t) for t in block["type"]))
+                    type_to_id = {t: i + 1 for i, t in enumerate(unique_types)}
+                    for idx in range(block.nrows):
+                        type_name = str(block["type"][idx])
+                        if type_name in type_to_id:
+                            block["type"][idx] = type_to_id[type_name]
 
     def _write_native_atoms_sections(self, lines: list[str], atoms: Block) -> None:
         """Write atoms-related sections in native format."""
@@ -922,14 +979,18 @@ class LammpsMoleculeWriter(DataWriter):
         # atom_i, atom_j, etc. are stored as 0-based indices
         # but we need to write 1-based atom IDs
         atoms_block = frame["atoms"]
-        atom_ids = atoms_block["id"] if "id" in atoms_block else np.arange(1, atoms_block.nrows + 1)
+        atom_ids = (
+            atoms_block["id"]
+            if "id" in atoms_block
+            else np.arange(1, atoms_block.nrows + 1)
+        )
 
         for idx in range(block.nrows):
             item_id = int(block["id"][idx]) if "id" in block else (idx + 1)
             item_type = block["type"][idx]
 
             if section_type == "bonds":
-                # Convert indices to IDs
+                # Convert indices to IDs (atom_i, atom_j are 0-based indices)
                 atom_i_idx = int(block["atom_i"][idx])
                 atom_j_idx = int(block["atom_j"][idx])
                 atom1_id = int(atom_ids[atom_i_idx])

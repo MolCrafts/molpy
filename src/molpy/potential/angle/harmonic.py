@@ -16,9 +16,9 @@ class AngleHarmonic(AnglePotential):
     type = "angle"
 
     def __init__(
-        self, 
-        k: NDArray[np.floating] | float | dict[str, float], 
-        theta0: NDArray[np.floating] | float | dict[str, float]
+        self,
+        k: NDArray[np.floating] | float | dict[str, float],
+        theta0: NDArray[np.floating] | float | dict[str, float],
     ):
         """
         Initialize harmonic angle potential.
@@ -125,9 +125,10 @@ class AngleHarmonic(AnglePotential):
         # Calculate force magnitude using LAMMPS formula
         # dE/dtheta_rad = 2 * k * (theta_rad - theta0_rad)
         # k is in kcal/mol/rad²
-        k_vals = self.k[angle_types].squeeze()
-        theta0_rad_vals = theta0_rad.squeeze()
-        theta_rad_vals = theta_rad.squeeze()
+        # Use np.atleast_1d to ensure arrays stay 1D even with single angle
+        k_vals = np.atleast_1d(self.k[angle_types].squeeze())
+        theta0_rad_vals = np.atleast_1d(theta0_rad.squeeze())
+        theta_rad_vals = np.atleast_1d(theta_rad.squeeze())
         dtheta = -2.0 * k_vals * (theta_rad_vals - theta0_rad_vals)
 
         # Calculate force directions

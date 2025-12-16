@@ -85,30 +85,30 @@ class CoulCut(PairPotential):
 class CoulLong(PairPotential):
     """
     Coulomb long-range pair potential with TypeIndexedArray support.
-    
+
     This version uses the same interface as LJ126 for composition.
     """
-    
+
     name = "coul/long"
     type = "pair"
-    
+
     def __init__(
         self,
         charges: dict[str, float] | float | NDArray[np.float64],
     ) -> None:
         """
         Initialize CoulLong potential.
-        
+
         Args:
             charges: Atomic charges, can be dict (type->value), scalar, or array
         """
         from molpy.potential.utils import TypeIndexedArray
-        
+
         if isinstance(charges, dict):
             self.charges = TypeIndexedArray(charges)
         else:
             self.charges = np.array(charges, dtype=np.float64).reshape(-1)
-    
+
     def calc_energy(
         self,
         dr: NDArray[np.floating],
@@ -118,32 +118,32 @@ class CoulLong(PairPotential):
     ) -> float:
         """
         Calculate Coulomb energy.
-        
+
         Args:
             dr: Pair displacement vectors (shape: (n_pairs, 3))
             dr_norm: Pair distances (shape: (n_pairs,))
             pair_types_i: Atom types for first atom in each pair
             pair_types_j: Atom types for second atom in each pair
-        
+
         Returns:
             Total Coulomb energy
         """
         if len(pair_types_i) == 0:
             return 0.0
-        
+
         # Get charges by type
         q_i = self.charges[pair_types_i]
         q_j = self.charges[pair_types_j]
-        
+
         # Ensure dr_norm is 1D
         if dr_norm.ndim > 1:
             dr_norm = dr_norm.squeeze()
-        
+
         # Calculate energy
         energy = q_i * q_j / dr_norm
-        
+
         return float(np.sum(energy))
-    
+
     def calc_forces(
         self,
         dr: NDArray[np.floating],
@@ -155,7 +155,7 @@ class CoulLong(PairPotential):
     ) -> NDArray[np.floating]:
         """
         Calculate Coulomb forces.
-        
+
         Args:
             dr: Pair displacement vectors (shape: (n_pairs, 3))
             dr_norm: Pair distances (shape: (n_pairs,))
@@ -163,30 +163,30 @@ class CoulLong(PairPotential):
             pair_types_j: Atom types for second atom in each pair
             pair_idx: Pair indices (shape: (n_pairs, 2))
             n_atoms: Number of atoms
-        
+
         Returns:
             Array of forces on each atom (shape: (n_atoms, 3))
         """
         if len(pair_types_i) == 0:
             return np.zeros((n_atoms, 3), dtype=np.float64)
-        
+
         # Get charges by type
         q_i = self.charges[pair_types_i]
         q_j = self.charges[pair_types_j]
-        
+
         # Ensure dr_norm has correct shape
         if dr_norm.ndim == 1:
             dr_norm = dr_norm[:, None]
-        
+
         # Calculate force magnitude
         force_mag = (q_i * q_j / (dr_norm.squeeze() ** 3))[:, None]
-        
+
         # Calculate force vectors
         forces = force_mag * dr
-        
+
         # Accumulate forces on atoms
         per_atom_forces = np.zeros((n_atoms, 3), dtype=np.float64)
         np.add.at(per_atom_forces, pair_idx[:, 0], -forces)
         np.add.at(per_atom_forces, pair_idx[:, 1], forces)
-        
+
         return per_atom_forces

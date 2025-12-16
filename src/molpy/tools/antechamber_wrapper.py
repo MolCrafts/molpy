@@ -88,4 +88,3 @@ class AntechamberWrapper(Wrapper):
             >>> proc = ante.run_raw(["-i", "lig.mol2", "-fi", "mol2", "-o", "out.mol2", "-fo", "mol2"])
         """
         return self.run(args=args, cwd=cwd, input_text=input_text)
-

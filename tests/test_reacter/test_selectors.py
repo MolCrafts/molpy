@@ -14,17 +14,17 @@ import pytest
 
 from molpy.core.atomistic import Atom, Atomistic, Bond
 from molpy.reacter.selectors import (
+    find_port_atom,
     select_all_hydrogens,
     select_dummy_atoms,
     select_hydroxyl_group,
     select_none,
     select_one_hydrogen,
-    select_port_atom,
 )
 
 
 class TestPortAnchorSelector:
-    """Test select_port_atom function."""
+    """Test port-to-anchor utilities."""
 
     def test_port_anchor_selector_basic(self):
         """Test selecting anchor from port."""
@@ -34,9 +34,9 @@ class TestPortAnchorSelector:
 
         c["port"] = "1"
 
-        anchor = select_port_atom(struct, "1")
+        port_atom = find_port_atom(struct, "1")
 
-        assert anchor is c
+        assert port_atom is c
 
     def test_port_anchor_selector_different_port(self):
         """Test selecting anchor from different port."""
@@ -48,9 +48,9 @@ class TestPortAnchorSelector:
         c1["port"] = "head"
         c2["port"] = "tail"
 
-        anchor = select_port_atom(struct, "tail")
+        port_atom = find_port_atom(struct, "tail")
 
-        assert anchor is c2
+        assert port_atom is c2
 
     def test_port_anchor_selector_missing_port(self):
         """Test selecting anchor from non-existent port raises error."""
@@ -61,7 +61,7 @@ class TestPortAnchorSelector:
         # Don't set port
 
         with pytest.raises(ValueError, match="Port '1' not found"):
-            select_port_atom(struct, "1")
+            find_port_atom(struct, "1")
 
 
 class TestRemoveOneH:
@@ -289,7 +289,9 @@ class TestRemoveOH:
         struct.add_link(Bond(c, h))
 
         # Should raise error when no O found
-        with pytest.raises(ValueError, match="No oxygen neighbors found for port atom"):
+        with pytest.raises(
+            ValueError, match="No oxygen neighbors found for reaction site"
+        ):
             select_hydroxyl_group(struct, c)
 
     def test_remove_OH_multiple_O(self):

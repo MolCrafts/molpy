@@ -4,10 +4,11 @@ This module provides conversion functions from the new BigSmilesIR structure
 to MolPy Atomistic structures and PolymerSpec objects.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import TYPE_CHECKING
 
 from molpy.core.atomistic import Atom, Atomistic
+from molpy.core.element import Element
 
 from .bigsmiles_ir import (
     BigSmilesMoleculeIR,
@@ -17,10 +18,7 @@ from .bigsmiles_ir import (
     RepeatUnitIR,
     StochasticObjectIR,
 )
-from .smiles_ir import SmilesAtomIR, SmilesBondIR, SmilesGraphIR
-
-if TYPE_CHECKING:
-    from molpy.core.element import Element
+from .smiles_ir import SmilesAtomIR, SmilesGraphIR
 
 
 def _convert_bond_order_to_kind(order: int | float) -> str:
@@ -93,8 +91,14 @@ def bigsmilesir_to_monomer(ir: BigSmilesMoleculeIR) -> Atomistic:
         >>> struct = bigsmilesir_to_monomer(ir)
         >>> # Ports are marked on atoms: atom["port"] = "<" or ">"
     """
-    # Try BigSMILES format (with stochastic objects)
-    monomers = extract_monomers_from_ir(ir)
+    monomers = []
+
+    # Extract from stochastic objects
+    for stoch_obj in ir.stochastic_objects:
+        for repeat_unit in stoch_obj.repeat_units:
+            monomer = create_monomer_from_repeat_unit(repeat_unit, stoch_obj)
+            if monomer is not None:
+                monomers.append(monomer)
 
     if len(monomers) == 1:
         return monomers[0]
@@ -132,30 +136,6 @@ def bigsmilesir_to_polymerspec(ir: BigSmilesMoleculeIR) -> PolymerSpec:
         'homopolymer'
     """
     return extract_polymerspec_from_ir(ir)
-
-
-def extract_monomers_from_ir(ir: BigSmilesMoleculeIR) -> list[Atomistic]:
-    """
-    Extract structures from BigSmilesMoleculeIR (topology only).
-
-    Supports BigSMILES with stochastic objects: {[<]CC[>]}
-
-    Args:
-        ir: BigSmilesMoleculeIR from parser
-
-    Returns:
-        List of Atomistic structures with ports marked on atoms
-    """
-    monomers = []
-
-    # Extract from stochastic objects
-    for stoch_obj in ir.stochastic_objects:
-        for repeat_unit in stoch_obj.repeat_units:
-            monomer = create_monomer_from_repeat_unit(repeat_unit, stoch_obj)
-            if monomer is not None:
-                monomers.append(monomer)
-
-    return monomers
 
 
 def extract_polymerspec_from_ir(ir: BigSmilesMoleculeIR) -> PolymerSpec:
@@ -305,28 +285,11 @@ def create_monomer_from_repeat_unit(
 
     # Add atoms
     for atom_ir in graph.atoms:
-        from molpy.core.element import Element
-
-        symbol = atom_ir.element or "C"
-        # Convert aromatic 'c' to 'C' for RDKit compatibility
-        if symbol and symbol.lower() == "c":
-            symbol = "C"
-
-        atomic_num = None
-        element_symbol = None
-        if symbol:
-            try:
-                element_symbol = symbol.upper()
-                atomic_num = Element(element_symbol).number
-            except (ValueError, AttributeError):
-                element_symbol = symbol
-
-        struct.def_atom(
-            symbol=symbol,
-            element=element_symbol,
-            atomic_num=atomic_num,
-            charge=atom_ir.charge,
-        )
+        atom_data = asdict(atom_ir)
+        # SmilesAtomIR has 'element' but not 'symbol', so copy element to symbol
+        if atom_data.get("element") and not atom_data.get("symbol"):
+            atom_data["symbol"] = atom_data["element"]
+        struct.def_atom(**atom_data)
 
     # Add bonds
     atoms = list(struct.atoms)
@@ -352,69 +315,43 @@ def create_monomer_from_repeat_unit(
                 struct.def_bond(atoms[i], atoms[j], order=bond_order, kind=bond_kind)
                 bonds_added.add(bond_key)
 
-    # Set ports based on descriptors
-    # Use position_hint if available, otherwise assign sequentially
-    all_descriptors = stoch_obj.terminals.descriptors
+    # Set ports based on descriptors using anchor_atom
+    # All descriptors (from terminals and from repeat unit graph) should have anchor_atom set
+    all_descriptors = stoch_obj.terminals.descriptors + list(graph.descriptors)
 
-    if len(atoms) > 0 and all_descriptors:
-        # Separate descriptors by position hint
-        first_descriptors = [d for d in all_descriptors if d.position_hint == "first"]
-        last_descriptors = [d for d in all_descriptors if d.position_hint == "last"]
-        other_descriptors = [d for d in all_descriptors if d.position_hint is None]
-        
-        # Assign first descriptors to first atom(s)
-        for descriptor in first_descriptors:
-            if len(atoms) > 0 and atoms[0].get("port") is None:
-                port_name = descriptor_to_port_name(descriptor)
-                atoms[0]["port"] = port_name
-                from molpy.builder.polymer.port_utils import set_port_metadata
-                set_port_metadata(
-                    atoms[0],
-                    port_name,
-                    role="terminal",
-                    bond_kind="-",
-                    compat=set(),
-                    priority=0,
-                )
-        
-        # Assign last descriptors to last atom(s)
-        for descriptor in last_descriptors:
-            if len(atoms) > 0 and atoms[-1].get("port") is None:
-                port_name = descriptor_to_port_name(descriptor)
-                atoms[-1]["port"] = port_name
-                from molpy.builder.polymer.port_utils import set_port_metadata
-                set_port_metadata(
-                    atoms[-1],
-                    port_name,
-                    role="terminal",
-                    bond_kind="-",
-                    compat=set(),
-                    priority=0,
-                )
-        
-        # Assign other descriptors sequentially to available atoms
-        available_atom_indices = [i for i in range(len(atoms)) if atoms[i].get("port") is None]
-        for i, descriptor in enumerate(other_descriptors):
-            if i < len(available_atom_indices):
-                atom_idx = available_atom_indices[i]
-                port_name = descriptor_to_port_name(descriptor)
-                atoms[atom_idx]["port"] = port_name
-                from molpy.builder.polymer.port_utils import set_port_metadata
-                set_port_metadata(
-                    atoms[atom_idx],
-                    port_name,
-                    role="terminal",
-                    bond_kind="-",
-                    compat=set(),
-                    priority=0,
-                )
+    # Build mapping from SmilesAtomIR to Atomistic Atom
+    # atoms list is in same order as graph.atoms
+    atomir_to_atom: dict[int, Atom] = {
+        id(atom_ir): atoms[i] for i, atom_ir in enumerate(graph.atoms)
+    }
+
+    for descriptor in all_descriptors:
+        if descriptor.anchor_atom is None:
+            # No anchor atom - skip (shouldn't happen with proper parsing)
+            continue
+
+        # Find the corresponding Atomistic atom using anchor_atom
+        anchor_atomir_id = id(descriptor.anchor_atom)
+        if anchor_atomir_id not in atomir_to_atom:
+            # anchor_atom not found in mapping - skip
+            continue
+
+        atom = atomir_to_atom[anchor_atomir_id]
+        if atom.get("port") is not None:
+            # Already has a port - skip (shouldn't happen if descriptors are unique)
+            continue
+
+        port_name = descriptor_to_port_name(descriptor)
+        atom["port"] = port_name
+        atom["port_role"] = "terminal"
+        atom["port_bond_kind"] = "-"
+        atom["port_compat"] = set()
+        atom["port_priority"] = 0
 
     return struct
 
 
-def create_monomer_from_end_group(
-    end_group: "EndGroupIR", stoch_obj: StochasticObjectIR
-) -> Atomistic | None:
+def create_monomer_from_end_group(end_group: EndGroupIR) -> Atomistic | None:
     """Create Atomistic structure from EndGroupIR."""
     # Similar to create_monomer_from_repeat_unit but for end groups
     graph = end_group.graph
@@ -423,27 +360,7 @@ def create_monomer_from_end_group(
 
     # Add atoms and bonds (same logic as repeat unit)
     for atom_ir in graph.atoms:
-        from molpy.core.element import Element
-
-        symbol = atom_ir.element or "C"
-        if symbol and symbol.lower() == "c":
-            symbol = "C"
-
-        atomic_num = None
-        element_symbol = None
-        if symbol:
-            try:
-                element_symbol = symbol.upper()
-                atomic_num = Element(element_symbol).number
-            except (ValueError, AttributeError):
-                element_symbol = symbol
-
-        struct.def_atom(
-            symbol=symbol,
-            element=element_symbol,
-            atomic_num=atomic_num,
-            charge=atom_ir.charge,
-        )
+        struct.def_atom(**asdict(atom_ir))
 
     atoms = list(struct.atoms)
     bonds_added = set()
@@ -497,24 +414,8 @@ def create_monomer_from_unit(
 
     # Add atoms
     for atom_ir in unit.atoms:
-        from molpy.core.element import Element
 
-        symbol = atom_ir.element or "C"
-        atomic_num = None
-        element_symbol = None
-        if symbol:
-            try:
-                element_symbol = symbol.upper()
-                atomic_num = Element(element_symbol).number
-            except (ValueError, AttributeError):
-                element_symbol = symbol
-
-        struct.def_atom(
-            symbol=symbol,
-            element=element_symbol,
-            atomic_num=atomic_num,
-            charge=atom_ir.charge,
-        )
+        struct.def_atom(**asdict(atom_ir))
 
     # Add bonds
     atoms = list(struct.atoms)
@@ -653,24 +554,8 @@ def create_monomer_from_atom_class_ports(ir: SmilesGraphIR) -> Atomistic | None:
 
     # Add real atoms and store references immediately
     for atom_ir in real_atoms:
-        from molpy.core.element import Element
 
-        symbol = atom_ir.element or "C"
-        atomic_num = None
-        element_symbol = None
-        if symbol:
-            try:
-                element_symbol = symbol.upper()
-                atomic_num = Element(element_symbol).number
-            except (ValueError, AttributeError):
-                element_symbol = symbol
-
-        atom = struct.def_atom(
-            symbol=symbol,
-            element=element_symbol,
-            atomic_num=atomic_num,
-            charge=atom_ir.charge,
-        )
+        atom = struct.def_atom(**asdict(atom_ir))
         atomir_to_atom[id(atom_ir)] = atom
 
     # Add bonds using stored atom references

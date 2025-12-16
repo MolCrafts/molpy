@@ -207,7 +207,7 @@ class LBFGS(Optimizer[S]):
         dr_norm = np.linalg.norm(search_dir)
         if dr_norm < 1e-12:
             return 0.0  # Avoid division by zero
-        
+
         # If direction norm is larger than maxstep, scale it down
         # Otherwise, use damping as step size (LBFGS direction should already have correct scale)
         if dr_norm > self.maxstep:

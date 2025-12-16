@@ -233,4 +233,3 @@ def get_all_port_info(struct: Atomistic) -> dict[str, list[PortInfo]]:
                 ports[port_name] = []
             ports[port_name].append(PortInfo(port_name, atom, **metadata))
     return ports
-

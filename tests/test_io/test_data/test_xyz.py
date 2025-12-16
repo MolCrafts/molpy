@@ -49,4 +49,3 @@ class TestXYZReader:
         )
 
         pytest.approx(frame.metadata["ENERGY"], -2069.84934116)
-
