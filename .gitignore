@@ -80,7 +80,6 @@ instance/
 .scrapy
 
 # Sphinx documentation
-docs/_build/
 
 # PyBuilder
 target/
@@ -143,9 +142,8 @@ dmypy.json
 .DS_Store
 
 # Output files of docs
-docs/
-!docs/assets/
-!docs/**/*.py
+docs/**
+!docs/**/*.ipynb
 !docs/**/*.md
 
 # Demo Notebooks
