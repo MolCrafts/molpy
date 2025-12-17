@@ -7,14 +7,14 @@ using a context manager.
 
 Examples:
     >>> from molpy.core.config import config, Config
-    >>> 
+    >>>
     >>> # Access current config
     >>> print(config.log_level)
     'INFO'
-    >>> 
+    >>>
     >>> # Update config globally
     >>> Config.update(log_level='DEBUG', n_threads=4)
-    >>> 
+    >>>
     >>> # Temporary override
     >>> with Config.temporary(log_level='WARNING'):
     ...     print(config.log_level)  # 'WARNING'

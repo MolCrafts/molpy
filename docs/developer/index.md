@@ -38,4 +38,3 @@ Understand how releases are made: [Release Process](release-process.md)
 - **GitHub Issues**: Report bugs or ask questions
 - **GitHub Discussions**: Join community discussions
 - **Documentation**: Check the [User Guide](../user-guide/index.md)
-

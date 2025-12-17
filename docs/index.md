@@ -246,6 +246,7 @@ We welcome contributions from researchers, developers, and users! Here's how you
 - [numpy](https://github.com/numpy/numpy) — Numerical computing
 - [python-igraph](https://github.com/igraph/python-igraph) — Graph analysis
 - [lark](https://github.com/lark-parser/lark) — SMARTS/SMILES parsing
+- [h5py](https://www.h5py.org/) - Serialization
 
 ---
 

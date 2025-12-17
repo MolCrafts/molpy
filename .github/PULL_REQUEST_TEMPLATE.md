@@ -20,9 +20,9 @@ Closes #(issue number)
 
 ## Changes Made
 
-- 
-- 
-- 
+-
+-
+-
 
 ## Testing
 

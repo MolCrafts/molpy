@@ -24,6 +24,6 @@ Describe your goal or use case.
 
 ## Additional Information
 
-- **MolPy version:** 
-- **Python version:** 
+- **MolPy version:**
+- **Python version:**
 - **Related documentation:** (link if you've checked the docs)

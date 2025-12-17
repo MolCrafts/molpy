@@ -51,7 +51,6 @@ __all__ = [
     "ReacterConnector",
     "TableConnector",
     "TopologyConnector",
-
     # CGSmiles Builder
     "PolymerBuilder",
     # Sequence Generators

@@ -43,7 +43,9 @@ class TestSystemSize:
         """Test system size is parsed as correct value."""
         ir = parse_gbigsmiles(gbigsmiles)
 
-        assert isinstance(ir, GBigSmilesSystemIR), f"Expected GBigSmilesSystemIR for {name}"
+        assert isinstance(
+            ir, GBigSmilesSystemIR
+        ), f"Expected GBigSmilesSystemIR for {name}"
         assert ir.total_mass is not None, f"total_mass is None for {name}"
         assert abs(ir.total_mass - expected_size) < 0.01
 
@@ -232,7 +234,9 @@ class TestComplexExamples:
 
     def test_peo_ps_block_copolymer(self):
         """Test PEO-PS block copolymer from paper."""
-        gbigsmiles = "{[<]OCCOCCOCCOCCO[>]}{[<]CCc1ccccc1[>]}|schulz_zimm(1500, 3000)|[H].|1e4|"
+        gbigsmiles = (
+            "{[<]OCCOCCOCCOCCO[>]}{[<]CCc1ccccc1[>]}|schulz_zimm(1500, 3000)|[H].|1e4|"
+        )
         ir = parse_gbigsmiles(gbigsmiles)
 
         assert isinstance(ir, GBigSmilesSystemIR)

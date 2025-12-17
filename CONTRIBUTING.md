@@ -141,18 +141,18 @@ def process_frame(
     normalize: bool = True
 ) -> Optional[np.ndarray]:
     """Process a frame with optional normalization.
-    
+
     Args:
         frame: Input frame to process
         threshold: Threshold value for filtering
         normalize: Whether to normalize the output
-        
+
     Returns:
         Processed array or None if frame is empty
     """
     if frame.is_empty():
         return None
-    
+
     # Implementation here
     pass
 ```
@@ -164,19 +164,19 @@ Use Google-style docstrings:
 ```python
 def function_name(param1: type1, param2: type2) -> return_type:
     """Brief description.
-    
+
     Longer description if needed.
-    
+
     Args:
         param1: Description of param1
         param2: Description of param2
-        
+
     Returns:
         Description of return value
-        
+
     Raises:
         ValueError: When invalid input is provided
-        
+
     Examples:
         >>> result = function_name(value1, value2)
         >>> print(result)

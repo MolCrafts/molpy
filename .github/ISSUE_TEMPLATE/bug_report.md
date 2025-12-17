@@ -21,9 +21,9 @@ import molpy as mp
 ```
 
 **Steps:**
-1. 
-2. 
-3. 
+1.
+2.
+3.
 
 ## Expected Behavior
 
