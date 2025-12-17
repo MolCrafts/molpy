@@ -63,14 +63,14 @@ def rb_to_opls(C0, C1, C2, C3, C4, C5, *, units="kJ"):
     Note:
         **MD-Safe Conversion**: This converter preserves forces and relative energies
         exactly when C5 ≈ 0. The conversion uses only C1-C4 to compute F1-F4:
-        
+
         - F1-F4 are computed from C1-C4 only, preserving dV/dφ exactly
         - Any difference in C0 from the "ideal" C0' = F2 + 0.5*(F1+F3) represents
           a harmless constant energy offset
         - MD trajectories and thermodynamics (up to arbitrary reference energies)
           are unaffected by this constant offset
         - The only strict requirement is C5 ≈ 0 (cannot represent cos⁵φ term)
-        
+
         If C0 + C1 + C2 + C3 + C4 ≠ 0, this indicates a non-zero constant offset
         but does NOT affect MD correctness.
     """

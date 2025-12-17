@@ -1568,7 +1568,7 @@ class TestBigSmilesParser:
 
     def test_stochastic_object_requires_two_terminals(self):
         """Test that stochastic object requires two terminal descriptors per BigSMILES v1.1.
-        
+
         Per BigSMILES v1.1 syntax: { [terminal] repeat_units ; end_groups [terminal] }
         Both terminal descriptors are REQUIRED, even if empty [] (explicitly indicating
         no external connection). Empty [] must be explicitly written.
@@ -1580,7 +1580,9 @@ class TestBigSmilesParser:
         # Correct format: both terminals explicitly present (even if empty)
         ir = parse_bigsmiles("{[]CC[]}")
         assert len(ir.stochastic_objects) == 1
-        assert len(ir.stochastic_objects[0].terminals.descriptors) == 0  # Empty terminals
+        assert (
+            len(ir.stochastic_objects[0].terminals.descriptors) == 0
+        )  # Empty terminals
 
         # Correct format: both terminals explicitly present
         # Per BigSMILES v1.1: {[][<]CC[>][]} (empty terminals, descriptors in repeat unit)
@@ -1603,7 +1605,7 @@ class TestBigSmilesParser:
         # {CC} starts with C, not [, so grammar rejects it
         with pytest.raises((UnexpectedCharacters, VisitError)):
             parse_bigsmiles("{CC}")
-            
+
         # Incorrect format: missing second terminal (only one [])
         # {[]CC} has first terminal but only CC content, no second terminal
         with pytest.raises((UnexpectedCharacters, VisitError)):

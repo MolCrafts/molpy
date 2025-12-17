@@ -206,10 +206,14 @@ class TemplateReacter:
         # Step 2: Extract pre subgraph from reactants (creates deep copies)
         # CRITICAL: extract_subgraph should use anchor atoms, not port atoms!
         # Anchor atoms are the actual reaction sites, and radius is topological distance from anchors
-        anchor_L = self.reacter.anchor_selector_left(reactants, port_atoms_in_reactants[0])
-        anchor_R = self.reacter.anchor_selector_right(reactants, port_atoms_in_reactants[1])
+        anchor_L = self.reacter.anchor_selector_left(
+            reactants, port_atoms_in_reactants[0]
+        )
+        anchor_R = self.reacter.anchor_selector_right(
+            reactants, port_atoms_in_reactants[1]
+        )
         anchor_atoms_in_reactants = [anchor_L, anchor_R]
-        
+
         pre, pre_edge_entities = reactants.extract_subgraph(
             center_entities=anchor_atoms_in_reactants,
             radius=self.radius,

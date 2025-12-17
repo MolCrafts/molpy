@@ -74,7 +74,7 @@ class TestPortAssignment:
 
     def test_single_port_monomer(self):
         """Test single port monomer like {[][$]CCO[]}.
-        
+
         Note: Per BigSMILES v1.1, both terminals are required.
         Empty terminal [] means no external connection.
         """

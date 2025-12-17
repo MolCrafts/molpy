@@ -35,4 +35,3 @@ Complete API reference for all MolPy modules. This documentation is automaticall
 - **[Getting Started](../getting-started/quickstart.ipynb)**: Installation and quickstart
 - **[Tutorials](../tutorials/index.md)**: Hands-on examples
 - **[Developer Guide](../developer/index.md)**: Architecture and contributing
-
