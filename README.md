@@ -4,7 +4,6 @@
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-green)](./LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://molcrafts.github.io/molpy)
 [![CI](https://github.com/MolCrafts/molpy/workflows/CI/badge.svg)](https://github.com/MolCrafts/molpy/actions)
-[![ruff](https://img.shields.io/badge/style-ruff-black)](https://github.com/astral-sh/ruff)
 
 > **⚠️ MolPy is under active development.**
 > The API is evolving rapidly and may change between minor versions.
