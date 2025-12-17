@@ -87,6 +87,7 @@ plugins:
 nav:
   - Home: index.md
   - Getting Started:
+      - Overview: getting-started/index.md
       - Installation: getting-started/installation.ipynb
       - Quickstart: getting-started/quickstart.ipynb
       - Core Concepts: getting-started/core-concepts.ipynb

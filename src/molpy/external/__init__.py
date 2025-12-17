@@ -37,22 +37,37 @@ from .antechamber_wrapper import AntechamberWrapper
 
 # Adapter exports
 from .base import Adapter
-from .rdkit_adapter import MP_ID, RDKitAdapter
-from .rdkit_compute import Generate3D, OptimizeGeometry
+
+# RDKit is an optional dependency. Keep imports lazy/guarded so that
+# `import molpy` works without rdkit installed.
+try:  # pragma: no cover
+    from .rdkit_adapter import MP_ID, RDKitAdapter
+    from .rdkit_compute import Generate3D, OptimizeGeometry
+
+    _HAS_RDKIT = True
+except ModuleNotFoundError:  # rdkit missing
+    _HAS_RDKIT = False
+    MP_ID = None  # type: ignore[assignment]
+    RDKitAdapter = None  # type: ignore[assignment]
+    Generate3D = None  # type: ignore[assignment]
+    OptimizeGeometry = None  # type: ignore[assignment]
+
 from .tleap_wrapper import TLeapWrapper
 
 # Wrapper exports
 from .wrapper import Wrapper
 
 __all__ = [
-    # Adapters
     "Adapter",
-    "RDKitAdapter",
-    "MP_ID",
-    "Generate3D",
-    "OptimizeGeometry",
-    # Wrappers
     "Wrapper",
     "AntechamberWrapper",
     "TLeapWrapper",
 ]
+
+if _HAS_RDKIT:
+    __all__ += [
+        "RDKitAdapter",
+        "MP_ID",
+        "Generate3D",
+        "OptimizeGeometry",
+    ]
