@@ -14,7 +14,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 from molpy.compute.base import Compute
-from molpy.external.rdkit_adapter import MP_ID, RDKitAdapter
+from molpy.adapter.rdkit import MP_ID, RDKitAdapter
 
 
 @dataclass

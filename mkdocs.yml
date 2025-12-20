@@ -100,7 +100,7 @@ nav:
           - Simulation Box: tutorials/box.ipynb
           - Topology: tutorials/topology.ipynb
           - Selectors: tutorials/selector.ipynb
-          - Wrappers: tutorials/wrappers.ipynb
+      - External Tools: tutorials/wrapper-adapter.ipynb
       - Advanced Topics:
           - Force Field: tutorials/force-field.ipynb
           - Trajectory: tutorials/trajectory.ipynb

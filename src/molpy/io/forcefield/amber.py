@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from molpy.core.forcefield import ForceField
+from molpy.core.forcefield import AtomisticForcefield
 from molpy.core.frame import Frame
 
 
@@ -132,7 +132,7 @@ class AmberPrmtopReader:
         # def forcefield
         atoms["id"] = np.arange(meta["n_atoms"], dtype=int) + 1
         atoms["q"] = np.array(atoms["q"]) / 18.2223
-        ff = ForceField()
+        ff = AtomisticForcefield()
         ff.units = "real"
         atomstyle = ff.def_atomstyle("full")
         atomtype_map = {}  # atomtype id : atomtype
@@ -150,7 +150,7 @@ class AmberPrmtopReader:
             atom_i_type_name = atoms["type"][i - 1]
             atom_j_type_name = atoms["type"][j - 1]
             bond_name = "-".join(sorted([atom_i_type_name, atom_j_type_name]))
-            if bond_name not in bondstyle.types:
+            if bondstyle.get_type_by_name(bond_name) is None:
                 bondstyle.def_type(
                     atomtype_map[atom_i_type_name],
                     atomtype_map[atom_j_type_name],
@@ -175,7 +175,7 @@ class AmberPrmtopReader:
                 [atom_i_type_name, atom_k_type_name]
             )
             angle_name = f"{atom_i_type_name}-{atom_j_type_name}-{atom_k_type_name}"
-            if angle_name not in anglestyle.types:
+            if anglestyle.get_type_by_name(angle_name) is None:
                 anglestyle.def_type(
                     atomtype_map[atom_i_type_name],
                     atomtype_map[atom_j_type_name],
@@ -214,7 +214,7 @@ class AmberPrmtopReader:
                 atom_j_type_name, atom_k_type_name = atom_k_type_name, atom_j_type_name
                 atom_i_type_name, atom_l_type_name = atom_l_type_name, atom_i_type_name
             dihe_name = f"{atom_i_type_name}-{atom_j_type_name}-{atom_k_type_name}-{atom_l_type_name}"
-            if dihe_name not in dihedralstyle.types:
+            if dihedralstyle.get_type_by_name(dihe_name) is None:
                 dihedralstyle.def_type(
                     atomtype_map[atom_i_type_name],
                     atomtype_map[atom_j_type_name],

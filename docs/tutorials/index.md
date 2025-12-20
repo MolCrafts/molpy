@@ -163,22 +163,15 @@ selected = selector(atomistic)
 
 Extend MolPy with custom functionality.
 
-#### [Wrappers](wrappers.ipynb)
+#### [External Tools: Wrappers & Adapters](wrapper-adapter.ipynb)
 
-**Understand MolPy's wrapper system**
+**Learn MolPy's external integration layers**
 
-- Wrapper pattern for external libraries
-- RDKit integration example
-- Creating custom wrappers
+- `molpy.wrapper`: subprocess wrappers for external binaries/CLIs
+- `molpy.adapter`: data + file-artifact adapters (no subprocess execution)
+- Optional RDKit in-memory adapter (guarded)
 
-**Start here if:** You're integrating external tools or extending MolPy's capabilities.
-
-**Key concept:** Wrappers provide a consistent interface to external libraries while preserving MolPy's data model.
-
-**Example integrations:**
-- RDKit for cheminformatics
-- OpenBabel for format conversion
-- Custom molecular mechanics engines
+**Start here if:** You want to integrate AmberTools / RDKit-style tooling while keeping MolPy core structures stable.
 
 ---
 

@@ -43,6 +43,5 @@ from .core.script import Script, ScriptLanguage
 # Core topology class
 from .core.topology import Topology
 from .core.trajectory import Trajectory
-from .core.wrapper import Wrapper
 from .potential import *
 from .version import __version__, version

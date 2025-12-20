@@ -1,7 +1,7 @@
 <ForceField>
  <AtomTypes>
-  <Type name="tip3p-O" class="tip3p-O" element="O" mass="15.99943" def="[CH2]"/>
-  <Type name="tip3p-H" class="tip3p-H" element="H" mass="1.007947" />
+    <Type name="tip3p-O" class="tip3p-O" element="O" mass="15.99943" def="[O;X2]([H])[H]"/>
+    <Type name="tip3p-H" class="tip3p-H" element="H" mass="1.007947" def="[H][O]"/>
  </AtomTypes>
  <Residues>
   <Residue name="HOH">

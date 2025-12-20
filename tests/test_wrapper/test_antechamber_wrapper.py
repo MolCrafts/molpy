@@ -5,13 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
-from molpy.external import AntechamberWrapper
+from molpy.wrapper import AntechamberWrapper
 
 
 def test_antechamber_wrapper_initialization():
     """Test AntechamberWrapper initialization."""
+
     wrapper = AntechamberWrapper(name="antechamber", workdir=Path("tmp_ante"))
     assert wrapper.name == "antechamber"
     assert wrapper.exe == "antechamber"
@@ -20,12 +19,14 @@ def test_antechamber_wrapper_initialization():
 
 def test_antechamber_wrapper_default_exe():
     """Test that exe defaults to 'antechamber'."""
+
     wrapper = AntechamberWrapper(name="ante")
     assert wrapper.exe == "antechamber"
 
 
-def test_antechamber_wrapper_run_raw(tmp_path):
+def test_antechamber_wrapper_run_raw(tmp_path: Path):
     """Test run_raw() method."""
+
     wrapper = AntechamberWrapper(name="ante", workdir=tmp_path / "work")
 
     with patch("subprocess.run") as mock_run:
@@ -34,7 +35,7 @@ def test_antechamber_wrapper_run_raw(tmp_path):
         mock_run.return_value.stderr = ""
 
         args = ["-i", "lig.mol2", "-fi", "mol2", "-o", "out.mol2", "-fo", "mol2"]
-        proc = wrapper.run_raw(args=args)
+        wrapper.run_raw(args=args)
 
         mock_run.assert_called_once()
         call_args = mock_run.call_args[0][0]
@@ -51,8 +52,9 @@ def test_antechamber_wrapper_run_raw(tmp_path):
         ]
 
 
-def test_antechamber_wrapper_run_raw_with_cwd(tmp_path):
+def test_antechamber_wrapper_run_raw_with_cwd(tmp_path: Path):
     """Test run_raw() with cwd override."""
+
     wrapper = AntechamberWrapper(name="ante", workdir=tmp_path / "default")
     override_cwd = tmp_path / "override"
 

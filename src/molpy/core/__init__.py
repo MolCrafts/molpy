@@ -23,4 +23,3 @@ from .forcefield import (
 from .frame import Block, Frame
 from .script import Script, ScriptLanguage
 from .topology import Topology
-from .wrapper import Wrapper
