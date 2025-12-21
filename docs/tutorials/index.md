@@ -31,15 +31,28 @@ If you haven't already:
 
 Master MolPy's fundamental building blocks before diving into advanced features.
 
-#### [Frame & Block](frame-block.ipynb)
+#### [Block](block.ipynb)
 
-**Start here if:** You need to access data from chemical files and analyze results.
+**Start here if:** You need to understand MolPy’s columnar table container.
 
 **What you'll learn:**
 ```python
-frame = mp.io.read_lammps_data("data.lmp")
-frame["atoms"]["xyz"]
-frame["bonds"]["type"]
+atoms = mp.Block({"id": [1, 2], "x": [0.0, 1.0]})
+atoms["x"]
+atoms[0:1]
+```
+
+---
+
+#### [Frame](frame.ipynb)
+
+**Start here if:** You need to keep multiple tables (atoms/bonds/…) + metadata together.
+
+**What you'll learn:**
+```python
+frame = mp.Frame(blocks={"atoms": {"x": [0, 1]}})
+frame["atoms"]["x"]
+frame.metadata["timestep"] = 0
 ```
 
 ---
