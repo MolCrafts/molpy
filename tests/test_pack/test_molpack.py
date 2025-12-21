@@ -18,10 +18,11 @@ from molpy.pack.packer.packmol import Packmol
 # Check if packmol is available
 PACKMOL_AVAILABLE = shutil.which("packmol") is not None
 
-# Skip all tests if packmol is not available
-pytestmark = pytest.mark.skipif(
-    not PACKMOL_AVAILABLE, reason="Packmol executable not found in PATH"
-)
+# External-tool tests (packmol) + skip if not installed
+pytestmark = [
+    pytest.mark.external,
+    pytest.mark.skipif(not PACKMOL_AVAILABLE, reason="Packmol executable not found in PATH"),
+]
 
 
 @pytest.fixture

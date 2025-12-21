@@ -1,0 +1,2 @@
+recursive-include src/molpy/parser *.lark
+recursive-include src/molpy/data *
