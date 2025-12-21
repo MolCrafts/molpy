@@ -109,10 +109,10 @@ MolPy is designed for researchers and engineers who need **reliable**, **transpa
 <div class="grid" markdown>
 
 !!! tip "Getting Started"
-    New to MolPy? Start with our [Quick Start Guide](getting-started/quickstart.ipynb) to learn the basics.
+    New to MolPy? Start with our [Quick Start](getting-started/quickstart.ipynb) to learn the basics.
 
 !!! info "Documentation"
-    Explore comprehensive guides in our [User Guide](user-guide/index.md) with **31 detailed notebooks** covering all modules, plus [Tutorials](tutorials/index.md) for hands-on learning.
+    Explore comprehensive guides in our [User Guide](user-guide/index.md) and [Tutorials](tutorials/index.md) with runnable notebooks and end-to-end examples.
 
 !!! example "API Reference"
     Detailed API documentation is available in the [API Reference](api/index.md) section.
@@ -126,21 +126,21 @@ MolPy is designed for researchers and engineers who need **reliable**, **transpa
 
 ## Comprehensive Documentation
 
-MolPy features **31 detailed Jupyter notebooks** covering every module with runnable examples and complete API documentation.
+MolPy provides a growing collection of runnable Jupyter notebooks alongside generated API documentation.
 
 <div class="grid cards" markdown>
 
-- :books:{ .lg .middle } __31 Detailed Notebooks__
+- :books:{ .lg .middle } __Runnable Notebooks__
 
     ---
 
-    Complete coverage across **9 modules**: Parser, Reacter, Builder, Typifier, IO, Adapter, Potential, Compute, Developer
+    Practical examples across the core modules: Parser, Reacter, Builder, Typifier, IO, Adapter, Potential, and more.
 
-- :check_mark_button:{ .lg .middle } __100% API Coverage__
+- :check_mark_button:{ .lg .middle } __Extensive API Coverage__
 
     ---
 
-    All public APIs documented with parameters, return values, and usage examples. No undocumented functions.
+    Public APIs are documented with parameters, return values, and usage examples.
 
 - :school:{ .lg .middle } __Architecture Guides__
 

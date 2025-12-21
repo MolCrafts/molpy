@@ -16,7 +16,7 @@ MolPy follows [Semantic Versioning](https://semver.org/):
 
 ## Current Version
 
-**v0.1.0** (Beta)
+**v0.2.0** (Beta)
 
 - Core data structures (Frame, Block, Box, Trajectory)
 - Basic I/O support for common formats

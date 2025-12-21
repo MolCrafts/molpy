@@ -44,4 +44,4 @@ from .core.script import Script, ScriptLanguage
 from .core.topology import Topology
 from .core.trajectory import Trajectory
 from .potential import *
-from .version import __version__, version
+from .version import version, release_date

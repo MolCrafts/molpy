@@ -10,6 +10,16 @@ This document summarizes user‑visible changes between releases.
   reaction modeling, analysis tools, force fields, and simulation setup
   written and aligned with the current code.
 
+## 0.2.0
+
+_Placeholder for the first 0.2.x tagged release._
+
+When cutting a new release, add a short summary of:
+
+- New features
+- Bug fixes
+- Breaking changes (if any)
+
 ## 0.1.0
 
 _Placeholder for the first tagged release._

@@ -194,37 +194,6 @@ chain_gen = PolydisperseChainGenerator(seq, monomer_mass={"EO2": 44.0, "PS": 104
 planner = SystemPlanner(chain_gen, target_total_mass=5e5)
 plan = planner.plan_system(rng=random.Random(7))
 ```
-
-### ⚙️ [Simulation Preparation](06_simulation_preparation.ipynb)
-**Goal:** Prepare a system for molecular dynamics.
--   **Packing**: Creating dense simulation boxes (solvation).
--   **Typifier**: Assigning force field parameters (OPLS-AA, GAFF).
--   **Optimization**: Minimizing energy to remove overlaps.
--   **Export**: Writing ready-to-run LAMMPS data files.
-
-**Core APIs and Data Structures**
-Packing uses `Molpack`, which orchestrates `Target` objects (frame, copy count, spatial `Constraint`) and dispatches to the configured Packmol backend via `get_packer`. Constraints compose with logical `&`/`|` to encode complex regions, and per-target min-distance penalties prevent overlaps before MD. Typing relies on `TypifierBase` implementations such as `OplsAtomisticTypifier`, `OplsBondTypifier`, and the `LayeredTypingEngine`, which runs SMARTS patterns level-by-level while respecting dependency ordering and circular constraints detected by `DependencyAnalyzer`. Geometry relaxation typically goes through `optimize.LBFGS`, whose stepper enforces `maxstep` and stores curvature pairs (`s_history`, `y_history`) so convergence is predictable. Export paths are centralized in `molpy.io.writers`, letting you hand off the final `Frame` or `ForceField` to LAMMPS/GROMACS/HDF5 writers without duplicating formatting logic.
-
-**Design Notes**
-`Molpack.optimize` always creates its working directory and passes explicit seeds to Packmol, so results are reproducible when you set `seed`. Typifiers expect every atom to carry at least a `type` or `class_` tag; missing values raise immediately (`atomtype_matches` checks both), preventing partially typed structures from slipping into the force field writer. The `LBFGS` optimizer resets its history per-structure id, guaranteeing that successive optimization runs never leak curvature information from earlier systems.
-
-**Canonical Example**
-Minimal pipeline from packing to export:
-
-```python
-from pathlib import Path
-from molpy.core.frame import Frame
-from molpy.pack import Molpack, InsideBoxConstraint
-
-solvent_frame = Frame(blocks={"atoms": {"id": [1], "type": [1], "x": [0.0], "y": [0.0], "z": [0.0]}})
-packer = Molpack(workdir=Path("packing-demo"))
-constraint = InsideBoxConstraint(length=[20.0, 20.0, 20.0])
-target = packer.add_target(solvent_frame, number=25, constraint=constraint)
-# When Packmol is available, call: packed = packer.optimize(max_steps=500, seed=11)
-```
-
-
-
 ---
 
 ## Need API Basics?

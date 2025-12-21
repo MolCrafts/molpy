@@ -41,7 +41,7 @@ Whenever you fix a bug, add a regression test.
 Prefer:
 
 - Small, realistic molecules (water, methane, short polymers).
-- Lightweight example files checked into `tests/data/` when needed.
+- Lightweight example files checked into `tests/tests-data/` when needed.
 
 Avoid:
 
