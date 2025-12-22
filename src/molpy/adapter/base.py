@@ -92,9 +92,7 @@ class Adapter(ABC, Generic[InternalT, ExternalT]):
     def __repr__(self) -> str:
         internal_str = "set" if self.has_internal() else "None"
         external_str = "set" if self.has_external() else "None"
-        return (
-            f"<{self.__class__.__name__}(internal={internal_str}, external={external_str})>"
-        )
+        return f"<{self.__class__.__name__}(internal={internal_str}, external={external_str})>"
 
     def check(self) -> None:
         """Validate the adapter has enough state to do useful work.

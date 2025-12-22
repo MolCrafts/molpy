@@ -244,7 +244,9 @@ class Wrapper(ABC):
             if prefix is not None:
                 bin_dir = self._env_bin_dir(prefix)
                 existing = merged.get("PATH", "")
-                merged["PATH"] = str(bin_dir) + (os.pathsep + existing if existing else "")
+                merged["PATH"] = str(bin_dir) + (
+                    os.pathsep + existing if existing else ""
+                )
                 merged["VIRTUAL_ENV"] = str(prefix)
 
         merged.update(self.env_vars)

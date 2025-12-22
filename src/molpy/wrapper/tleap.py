@@ -47,5 +47,7 @@ def write_tleap_script(path: Path, script_text: str) -> None:
     path.write_text(script_text)
 
 
-def read_tleap_outputs(prmtop_path: Path, inpcrd_path: Path) -> tuple[Frame, ForceField]:
+def read_tleap_outputs(
+    prmtop_path: Path, inpcrd_path: Path
+) -> tuple[Frame, ForceField]:
     return read_amber_prmtop(prmtop_path, inpcrd_path)

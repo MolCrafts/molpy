@@ -28,7 +28,9 @@ def find_test_data() -> Path:
     return _DEFAULT_DIR
 
 
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
     """Mark tests requiring external software.
 
     We use the `external` marker for tests that depend on third-party software

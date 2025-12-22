@@ -93,7 +93,9 @@ def test_wrapper_run_with_cwd_override(tmp_path: Path):
 def test_wrapper_run_with_conda_env_name_prefixes_command():
     """If env/env_manager are set to a conda env name, wrapper.run() should use conda run -n."""
 
-    wrapper = MockWrapper(name="test", exe="echo", env="AmberTools25", env_manager="conda")
+    wrapper = MockWrapper(
+        name="test", exe="echo", env="AmberTools25", env_manager="conda"
+    )
 
     with patch("subprocess.run") as mock_run:
         mock_run.return_value.returncode = 0

@@ -443,7 +443,9 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
         if self._internal is None:
             atomistic = self._build_atomistic_from_mol(mol)
         else:
-            self._update_atomistic_from_mol(mol, self._internal, update_topology=update_topology)
+            self._update_atomistic_from_mol(
+                mol, self._internal, update_topology=update_topology
+            )
             atomistic = self._internal
 
         self._internal = atomistic

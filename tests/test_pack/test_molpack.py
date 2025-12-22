@@ -21,7 +21,9 @@ PACKMOL_AVAILABLE = shutil.which("packmol") is not None
 # External-tool tests (packmol) + skip if not installed
 pytestmark = [
     pytest.mark.external,
-    pytest.mark.skipif(not PACKMOL_AVAILABLE, reason="Packmol executable not found in PATH"),
+    pytest.mark.skipif(
+        not PACKMOL_AVAILABLE, reason="Packmol executable not found in PATH"
+    ),
 ]
 
 
