@@ -1,0 +1,52 @@
+// Base grammar shared by SMILES, BigSMILES, and GBigSMILES
+// Contains only genuinely shared components: atoms, bonds, basic structure
+
+// Element symbols
+ALIPHATIC_ORGANIC: "B" | "C" | "N" | "O" | "S" | "P" | "F" | "Cl" | "Br" | "I"
+AROMATIC_ORGANIC: "b" | "c" | "n" | "o" | "s" | "p"
+AROMATIC_SYM: AROMATIC_ORGANIC | "se" | "as"
+
+ELEMENT_SYM: "H" | "He" | "Li" | "Be" | "B" | "C" | "N" | "O" | "F" | "Ne"
+    | "Na" | "Mg" | "Al" | "Si" | "P" | "S" | "Cl" | "Ar" | "K" | "Ca"
+    | "Sc" | "Ti" | "V" | "Cr" | "Mn" | "Fe" | "Co" | "Ni" | "Cu" | "Zn"
+    | "Ga" | "Ge" | "As" | "Se" | "Br" | "Kr" | "Rb" | "Sr" | "Y" | "Zr"
+    | "Nb" | "Mo" | "Tc" | "Ru" | "Rh" | "Pd" | "Ag" | "Cd" | "In" | "Sn"
+    | "Sb" | "Te" | "I" | "Xe" | "Cs" | "Ba" | "Hf" | "Ta" | "W" | "Re"
+    | "Os" | "Ir" | "Pt" | "Au" | "Hg" | "Tl" | "Pb" | "Bi" | "Po" | "At"
+    | "Rn" | "Fr" | "Ra" | "Rf" | "Db" | "Sg" | "Bh" | "Hs" | "Mt" | "Ds"
+    | "Rg" | "Cn" | "Fl" | "Lv" | "La" | "Ce" | "Pr" | "Nd" | "Pm" | "Sm"
+    | "Eu" | "Gd" | "Tb" | "Dy" | "Ho" | "Er" | "Tm" | "Yb" | "Lu" | "Ac"
+    | "Th" | "Pa" | "U" | "Np" | "Pu" | "Am" | "Cm" | "Bk" | "Cf" | "Es"
+    | "Fm" | "Md" | "No" | "Lr"
+
+// Atom definitions
+ATOM_SYM: ELEMENT_SYM | AROMATIC_SYM | "*"
+
+// Bond symbols
+BOND_SYM: "-" | "=" | "#" | "$" | ":" | "/" | "\\"
+
+// Atom properties
+isotope: INT
+h_count: "H" | "H" INT
+atom_charge: "-" INT? | "+" INT? | "--" | "++"
+atom_class: ":" INT
+
+// Chirality tokens
+chiral: "@"
+      | "@@"
+      | "@TH1" | "@TH2"
+      | "@AL1" | "@AL2"
+      | "@SP1" | "@SP2" | "@SP3"
+      | "@TB" INT | "@OH" INT
+
+// Ring bond
+ring_bond: BOND_SYM? DIGIT
+         | BOND_SYM? "%" DIGIT? DIGIT
+
+// Common imports
+%import common.DIGIT
+%import common.INT
+%import common.NUMBER
+%import common.WS
+%import common.WS_INLINE
+%ignore WS

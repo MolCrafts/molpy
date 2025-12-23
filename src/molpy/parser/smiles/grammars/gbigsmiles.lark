@@ -1,0 +1,142 @@
+// GBigSMILES grammar - extends BigSMILES with generative annotations
+// Includes all BigSMILES constructs and adds GBigSMILES extensions
+
+%import .base (ALIPHATIC_ORGANIC, AROMATIC_ORGANIC, ELEMENT_SYM, ATOM_SYM, BOND_SYM, ring_bond, isotope, h_count, atom_charge, atom_class, chiral)
+%import common.INT
+%import common.NUMBER
+%import common.WS_INLINE
+%import common.WS
+%ignore WS
+
+// BigSMILES atom definition
+bracket_atom: "[" isotope? ATOM_SYM chiral? h_count? atom_charge? atom_class? "]"
+
+// BigSMILES atom (can include bond descriptors)
+atom: bracket_atom
+   | ALIPHATIC_ORGANIC
+   | AROMATIC_ORGANIC
+   | ELEMENT_SYM
+   | "*"
+   | bond_descriptor
+
+// Bond descriptor definitions
+bond_descriptor_symbol: "$" | ">" | "<"
+bond_descriptor_symbol_idx: bond_descriptor_symbol INT?
+
+bond_descriptor_generation: "|" WS_INLINE* NUMBER WS_INLINE* "|"
+    | "|" WS_INLINE* NUMBER _number_list_repeat* WS_INLINE* "|"
+
+inner_bond_descriptor: bond_descriptor_symbol_idx bond_descriptor_generation?
+inner_non_covalent_descriptor: bond_descriptor_symbol ":" INT? _non_covalent_context?
+inner_ambi_covalent_descriptor: inner_bond_descriptor | inner_non_covalent_descriptor
+
+simple_bond_descriptor: "[" inner_bond_descriptor "]"
+non_covalent_bond_descriptor: "[" inner_non_covalent_descriptor "]"
+ladder_bond_descriptor: "[" inner_ambi_covalent_descriptor simple_bond_descriptor INT? "]"
+    | "[" inner_ambi_covalent_descriptor non_covalent_bond_descriptor INT? "]"
+
+bond_descriptor: simple_bond_descriptor | ladder_bond_descriptor | non_covalent_bond_descriptor
+terminal_bond_descriptor: "[" bond_descriptor_symbol_idx? bond_descriptor_generation? "]"
+
+// Non-covalent context
+_printable_character: /['?'-Z]/ | /['^'-z]/ | /[!-']/ | /[*-;]/ | "~"
+_unary_index_operator: "!"
+_binary_index_operator: "~" | "&"
+_index_statement: INT | _branched_index_expression | _unbranched_index_expression
+_branched_index_expression: "(" WS_INLINE* _index_statement WS_INLINE* _binary_index_operator WS_INLINE* _index_statement WS_INLINE* ")"
+_unbranched_index_expression: _index_statement WS_INLINE* _binary_index_operator WS_INLINE* _index_statement
+_index_expression: _unary_index_operator? WS_INLINE* _index_statement
+_non_covalent_key_value_pair: WS_INLINE* "," WS_INLINE* _printable_character+ "=" _printable_character+ WS_INLINE*
+_non_covalent_context: WS_INLINE* "|" WS_INLINE* _index_expression _non_covalent_key_value_pair*
+
+_number_list_repeat.-1: WS_INLINE+ NUMBER
+
+// Stochastic distributions
+flory_schulz: "flory_schulz(" WS_INLINE* NUMBER WS_INLINE* ","? WS_INLINE* ")"
+schulz_zimm: "schulz_zimm(" WS_INLINE* NUMBER WS_INLINE* "," WS_INLINE* NUMBER WS_INLINE* ")"
+gauss: "gauss(" WS_INLINE* NUMBER WS_INLINE* "," WS_INLINE* NUMBER WS_INLINE* ")"
+uniform: "uniform(" WS_INLINE* NUMBER WS_INLINE* "," WS_INLINE* NUMBER WS_INLINE* ")"
+log_normal: "log_normal(" WS_INLINE* NUMBER WS_INLINE* "," WS_INLINE* NUMBER WS_INLINE* ")"
+poisson: "poisson(" WS_INLINE* NUMBER WS_INLINE* ","? WS_INLINE* ")"
+
+stochastic_distribution: flory_schulz
+  | schulz_zimm
+  | gauss
+  | uniform
+  | log_normal
+  | poisson
+
+stochastic_generation: "|" stochastic_distribution "|"
+
+// Atom stand-in
+_atom_stand_in: atom
+  | stochastic_object
+  | bond_descriptor
+
+// Branched atom
+branched_atom: _atom_stand_in ring_bond* branch*
+
+// Atom assembly
+atom_assembly: BOND_SYM? branched_atom
+
+// Chain
+chain: branched_atom atom_assembly*
+
+// Branch
+branch: "(" BOND_SYM? smiles ")"
+
+// SMILES molecule (used in branches and repeat units)
+// Note: This should NOT contain stochastic_object directly
+// For BigSMILES, use big_smiles_plain_smiles instead
+smiles: _big_smiles_plain_branched_atom atom_assembly*
+
+// Plain SMILES atom (cannot contain stochastic_object)
+_big_smiles_plain_atom_stand_in: atom
+  | bond_descriptor
+
+_big_smiles_plain_branched_atom: _big_smiles_plain_atom_stand_in ring_bond* branch*
+
+// BigSMILES plain SMILES (without stochastic_object)
+big_smiles_plain_smiles: _big_smiles_plain_branched_atom atom_assembly*
+
+// Repeat unit smiles (can include bond descriptors)
+repeat_unit_smiles: branched_atom atom_assembly*
+
+// Repeat unit item
+_repeat_unit_item: repeat_unit_smiles | big_smiles_chain
+
+// Repeat units list
+_repeat_units: _repeat_unit_item (_monomer_list)*
+_monomer_list: WS_INLINE* "," WS_INLINE* _repeat_unit_item
+
+// End groups
+_end_group.-1: ";" WS_INLINE* _repeat_unit_item (_monomer_list)*
+
+// Stochastic object
+stochastic_object: "{" WS_INLINE* terminal_bond_descriptor WS_INLINE* _repeat_units WS_INLINE* _end_group? WS_INLINE* terminal_bond_descriptor "}" stochastic_generation?
+
+// Repeat segment
+repeat_segment: stochastic_object+ big_smiles_plain_smiles?
+
+// BigSMILES chain element (can be plain SMILES or stochastic_object)
+big_smiles_chain_element: big_smiles_plain_smiles | stochastic_object
+
+// BigSMILES chain
+big_smiles_chain: big_smiles_chain_element+
+                | big_smiles_plain_smiles
+
+// GBigSMILES extensions
+// System size for generative BigSMILES (e.g., |5e5|)
+system_size: "|" WS_INLINE* NUMBER WS_INLINE* "|"
+
+// Dot generation (optional)
+dot: "."
+dot_system_size: "|" WS_INLINE* NUMBER WS_INLINE* "|"
+dot_generation: dot dot_system_size?
+
+// GBigSMILES molecule
+// Format: big_smiles_chain stochastic_generation? dot_generation? system_size? end_group?
+gbigsmiles_molecule: big_smiles_chain stochastic_generation? dot_generation? system_size? smiles?
+
+// Start rule
+?start: gbigsmiles_molecule

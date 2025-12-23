@@ -1,0 +1,65 @@
+// cgsmiles.lark
+// Grammar for CGSmiles (Coarse-Grained SMILES)
+// Based on specification from Grünwald et al., 2025
+
+start: cgsmiles
+
+// ---------- Top-level ----------
+
+cgsmiles: base_graph ( "." fragment_block )*
+
+base_graph: "{" graph? "}"
+fragment_block: "{" fragment_def ("," fragment_def)* "}"
+
+// ---------- Coarse-grained graph syntax ----------
+
+graph: chain
+
+chain: branched_atom (bond? branched_atom)*
+
+branched_atom: atom branch* repeat_op?
+
+atom: node ring_bond*
+
+bond: "." | "-" | "=" | "#" | "$"
+
+// [#PEO;q=1;foo=bar]
+node: "[" node_label node_annots? "]"
+
+node_label: "#" NAME
+
+node_annots: ";" annotation (";" annotation)*
+
+annotation: NAME "=" VALUE
+
+// ( ... )
+branch: "(" bond? chain ")"
+
+// |10  (after a branched_atom)
+repeat_op: "|" INT
+
+// ring closure: [#A]1[#B][#C]1
+// Support both single digit and % notation
+ring_bond: RING_BOND
+
+RING_BOND: ("." | "-" | "=" | "#" | "$")? INT
+         | ("." | "-" | "=" | "#" | "$")? "%" INT
+
+// ---------- Fragment syntax ----------
+// e.g. {#OH=[$]O,#PEO=[$]COC[$]}
+
+fragment_def: "#" NAME "=" fragment_body
+
+fragment_body: /[^,}]+/
+
+// ---------- Terminals ----------
+
+NAME: /[A-Za-z_][A-Za-z0-9_]*/
+
+// Annotation values: up to ';', ']', '[', or whitespace
+// Explicitly exclude '[' and ']' to avoid conflicts
+VALUE: /[^;\[\]\s]+/
+
+%import common.INT
+%import common.WS_INLINE
+%ignore WS_INLINE

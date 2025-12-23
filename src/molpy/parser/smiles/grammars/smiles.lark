@@ -1,0 +1,36 @@
+// Pure SMILES grammar - does NOT accept BigSMILES or GBigSMILES constructs
+
+%import .base (ALIPHATIC_ORGANIC, AROMATIC_ORGANIC, ELEMENT_SYM, ATOM_SYM, BOND_SYM, ring_bond, isotope, h_count, atom_charge, atom_class, chiral)
+%import common.INT
+%import common.WS
+%ignore WS
+
+// SMILES-specific atom definition
+bracket_atom: "[" isotope? ATOM_SYM chiral? h_count? atom_charge? atom_class? "]"
+
+atom: bracket_atom
+   | ALIPHATIC_ORGANIC
+   | AROMATIC_ORGANIC
+   | ELEMENT_SYM
+   | "*"
+
+// Branched atom
+branched_atom: atom ring_bond* branch*
+
+// Atom assembly
+atom_assembly: BOND_SYM? branched_atom
+
+// Chain (for branches)
+chain: branched_atom atom_assembly*
+
+// Branch
+branch: "(" BOND_SYM? smiles ")"
+
+// SMILES molecule
+smiles: branched_atom atom_assembly*
+
+// Dot-separated SMILES (mixture/disconnected components)
+smiles_mixture: smiles ("." smiles)*
+
+// Start rule
+?start: smiles_mixture

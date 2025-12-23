@@ -1,0 +1,133 @@
+[project]
+name = "molcrafts-molpy"
+version = "0.2.0"
+description = "Modern Python framework for molecular simulation and analysis"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "BSD-3-Clause"}
+
+authors = [
+    { name = "Roy Kid", email = "lijichen365@gmail.com" }
+]
+
+maintainers = [
+    { name = "MolCrafts Team", email = "molcrafts@example.com" }
+]
+
+keywords = [
+    "molecular-simulation",
+    "computational-chemistry",
+    "molecular-dynamics",
+    "force-fields",
+    "scientific-computing"
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+    'Operating System :: Microsoft :: Windows',
+    'Operating System :: POSIX',
+    'Operating System :: Unix',
+    'Operating System :: MacOS',
+]
+
+dependencies = [
+    "numpy>=2.0",
+    "python-igraph>=1.0.0",
+    "lark>=1.3.1",
+    "h5py"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0.0",
+    "pytest-cov>=3.0.0",
+    "pytest-mock>=3.10.0",
+    "pre-commit>=4.0.0"
+]
+doc = [
+    "mkdocs>=1.4.0",
+    "mkdocs-material>=9.7.0",
+    "mkdocstrings[python]>=0.24.0",
+    "mkdocs-jupyter==0.24.7",
+    "packmol",
+    "rdkit",
+    "matplotlib",
+    "scienceplots",
+]
+all = [
+    "molcrafts-molpy[dev,doc]"
+]
+
+[project.urls]
+Homepage = "https://github.com/MolCrafts/molpy"
+Documentation = "https://molcrafts.github.io/molpy"
+Repository = "https://github.com/MolCrafts/molpy.git"
+Issues = "https://github.com/MolCrafts/molpy/issues"
+Changelog = "https://molcrafts.github.io/molpy/changelog/"
+
+[build-system]
+requires = [
+    "setuptools>=42",
+    "wheel",
+    "ninja",
+    "numpy",
+]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"molpy.parser" = ["grammar/*.lark"]
+"molpy.parser.smiles" = ["grammars/*.lark"]
+"molpy.data" = ["README.md"]
+"molpy.data.forcefield" = ["*.xml"]
+
+[tool.black]
+line-length = 88
+target-version = ['py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.pytest.ini_options]
+markers = [
+    "external: tests requiring external network/resources or executables",
+]
