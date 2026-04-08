@@ -78,8 +78,8 @@ class TestTopReader:
         first_bond = bonds[0]
 
         # First bond in benzene.top: 1 2 1
-        assert int(first_bond["i"]) == 1
-        assert int(first_bond["j"]) == 2
+        assert int(first_bond["atomi"]) == 1
+        assert int(first_bond["atomj"]) == 2
 
     def test_read_bromobutane_all_sections(self, TEST_DATA_DIR: Path) -> None:
         """1-bromobutane has atoms, bonds, pairs, angles, and dihedrals."""
@@ -169,8 +169,8 @@ class TestTopWriter:
             "mass": np.array([12.011, 1.008]),
         }
         frame["bonds"] = {
-            "i": np.array([1]),
-            "j": np.array([2]),
+            "atomi": np.array([1]),
+            "atomj": np.array([2]),
             "type": np.array([1]),
         }
         return frame
@@ -233,15 +233,15 @@ class TestTopWriter:
         assert "bonds" in frame2
         assert frame2["bonds"].nrows == 1
         bond = frame2["bonds"][0]
-        assert int(bond["i"]) == 1
-        assert int(bond["j"]) == 2
+        assert int(bond["atomi"]) == 1
+        assert int(bond["atomj"]) == 2
 
     def test_write_pairs_section(self, tmp_path: Path) -> None:
         """TopWriter writes [ pairs ] section when present in frame."""
         frame = self._make_minimal_frame()
         frame["pairs"] = {
-            "i": np.array([1]),
-            "j": np.array([2]),
+            "atomi": np.array([1]),
+            "atomj": np.array([2]),
             "type": np.array([1]),
         }
         out_file = tmp_path / "out.top"
@@ -254,9 +254,9 @@ class TestTopWriter:
         """TopWriter writes [ angles ] section when present in frame."""
         frame = self._make_minimal_frame()
         frame["angles"] = {
-            "i": np.array([1]),
-            "j": np.array([2]),
-            "k": np.array([3]),
+            "atomi": np.array([1]),
+            "atomj": np.array([2]),
+            "atomk": np.array([3]),
             "type": np.array([1]),
         }
         out_file = tmp_path / "out.top"
@@ -269,10 +269,10 @@ class TestTopWriter:
         """TopWriter writes [ dihedrals ] section when present in frame."""
         frame = self._make_minimal_frame()
         frame["dihedrals"] = {
-            "i": np.array([1]),
-            "j": np.array([2]),
-            "k": np.array([3]),
-            "l": np.array([4]),
+            "atomi": np.array([1]),
+            "atomj": np.array([2]),
+            "atomk": np.array([3]),
+            "atoml": np.array([4]),
             "type": np.array([1]),
         }
         out_file = tmp_path / "out.top"

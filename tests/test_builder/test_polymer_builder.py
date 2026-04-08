@@ -29,9 +29,28 @@ def create_test_monomer(smiles: str) -> Atomistic:
     )
     adapter = generate_3d(adapter)
     monomer = adapter.get_internal()
-    monomer.get_topo(gen_angle=True, gen_dihe=True)
+    monomer = monomer.get_topo(gen_angle=True, gen_dihe=True)
 
     # Assign IDs
+    for idx, atom in enumerate(monomer.atoms):
+        atom["id"] = idx + 1
+
+    return monomer
+
+
+def create_test_monomer_multi_port(smiles: str) -> Atomistic:
+    """Helper to create a test monomer with $ ports (multi-connectable)."""
+    ir = parse_bigsmiles(f"{{[$]{smiles}[$]}}")
+    monomer = bigsmilesir_to_monomer(ir)
+
+    adapter = RDKitAdapter(internal=monomer)
+    generate_3d = Generate3D(
+        add_hydrogens=True, embed=True, optimize=False, update_internal=True
+    )
+    adapter = generate_3d(adapter)
+    monomer = adapter.get_internal()
+    monomer = monomer.get_topo(gen_angle=True, gen_dihe=True)
+
     for idx, atom in enumerate(monomer.atoms):
         atom["id"] = idx + 1
 
@@ -182,11 +201,29 @@ class TestPolymerBuilder:
         assert result.total_steps == 2  # Two connections for 3 monomers
 
     def test_build_branched_structure(self):
-        """Test building a branched structure."""
+        """Test building a branched structure.
+
+        Uses $ ports which can be consumed multiple times, unlike < and >.
+        The center monomer B has three $ ports for the three connections.
+        """
         from molpy.builder.polymer import PolymerBuilder, Connector
         from molpy.reacter import Reacter, form_single_bond
 
-        library = {"A": create_test_monomer("CC")}
+        import molpy as mp
+
+        # A: linear monomer with $ ports; B: 3-arm branch point with 3 $ ports
+        def _make(bs):
+            m = mp.parser.parse_monomer(bs)
+            m = mp.tool.generate_3d(m, add_hydrogens=True, optimize=False)
+            m = m.get_topo(gen_angle=True, gen_dihe=True)
+            for i, a in enumerate(m.atoms):
+                a["id"] = i + 1
+            return m
+
+        library = {
+            "A": _make("{[][$]CC[$][]}"),
+            "B": _make("{[]C(C[$])(C[$])C[$][]}"),
+        }
 
         reacter = Reacter(
             name="test",
@@ -196,16 +233,16 @@ class TestPolymerBuilder:
             leaving_selector_right=lambda a, anchor: [],
             bond_former=form_single_bond,
         )
-        port_map = {("A", "A"): (">", "<")}
-        connector = Connector(reacter=reacter, port_map=port_map)
+        rules = {(l, r): ("$", "$") for l in library for r in library}
+        connector = Connector(reacter=reacter, port_map=rules)
 
         builder = PolymerBuilder(library=library, connector=connector)
 
-        # Build branched: {[#A]([#A])[#A]}
-        result = builder.build("{[#A]([#A])[#A]}")
+        # Build branched: center B with three A arms
+        result = builder.build("{[#A][#B]([#A])[#A]}")
 
         assert result.polymer is not None
-        assert result.total_steps == 2  # Two connections for 3 monomers
+        assert result.total_steps == 3  # Three connections for 4 monomers
 
     def test_build_cyclic_structure(self):
         """Test building a cyclic structure."""
@@ -255,10 +292,10 @@ class TestPolymerBuilder:
         result = builder.build("{[#A][#A]}")
 
         assert len(result.connection_history) == 1
-        metadata = result.connection_history[0]
-        assert hasattr(metadata, "port_L")
-        assert hasattr(metadata, "port_R")
-        assert hasattr(metadata, "reaction_name")
+        rxn_result = result.connection_history[0]
+        assert hasattr(rxn_result, "product")
+        assert hasattr(rxn_result, "reaction_name")
+        assert rxn_result.reaction_name == "test"
 
 
 if __name__ == "__main__":

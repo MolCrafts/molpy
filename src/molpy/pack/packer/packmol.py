@@ -17,6 +17,7 @@ import molpy.io as mp_io
 from molpy.core.frame import Frame
 from molpy.core.script import Script
 
+from ..constraint import InsideBoxConstraint
 from ..target import Target
 from .base import Packer
 
@@ -59,6 +60,7 @@ class Packmol(Packer):
         workdir: Path | None = None,
         tolerance: float = 2.0,
         cleanup: bool = True,
+        pbc: np.ndarray | list[float] | None = None,
         **kwargs,
     ) -> Frame:
         """
@@ -71,6 +73,10 @@ class Packmol(Packer):
             workdir: Optional working directory (overrides default)
             tolerance: Distance tolerance in Angstroms
             cleanup: Whether to clean up intermediate files after success
+            pbc: Periodic boundary conditions. 3 values ``[lx, ly, lz]`` for
+                 a box with origin at zero, or 6 values
+                 ``[xmin, ymin, zmin, xmax, ymax, zmax]``.
+                 Requires Packmol >= 20.15.0.
             **kwargs: Additional arguments (ignored for now)
 
         Returns:
@@ -104,7 +110,7 @@ class Packmol(Packer):
         try:
             # Generate input file
             input_file = self._generate_input(
-                targets, max_steps, seed, tolerance, workdir
+                targets, max_steps, seed, tolerance, workdir, pbc=pbc
             )
 
             # Run Packmol
@@ -154,6 +160,7 @@ class Packmol(Packer):
         seed: int,
         tolerance: float,
         workdir: Path,
+        pbc: np.ndarray | list[float] | None = None,
     ) -> Script:
         """
         Generate Packmol input script as a Script object.
@@ -164,6 +171,7 @@ class Packmol(Packer):
             seed: Random seed
             tolerance: Distance tolerance
             workdir: Working directory
+            pbc: Periodic boundary conditions (3 or 6 floats), or None.
 
         Returns:
             Script object containing Packmol input
@@ -182,6 +190,11 @@ class Packmol(Packer):
         script.append("output .optimized.pdb")
         script.append(f"nloop {max_steps}")
         script.append(f"seed {seed}")
+        if pbc is not None:
+            pbc_vals = np.asarray(pbc, dtype=float).ravel()
+            if pbc_vals.size not in (3, 6):
+                raise ValueError(f"pbc must have 3 or 6 values, got {pbc_vals.size}")
+            script.append("pbc " + " ".join(f"{v:.6f}" for v in pbc_vals))
         script.append("")  # Empty line for readability
 
         # Write structure files and add to input
@@ -199,11 +212,15 @@ class Packmol(Packer):
             # Add structure block - use relative path (filename only) since packmol runs in workdir
             script.append(f"structure {struct_file.name}")
             script.append(f"  number {number}")
-            constraint_def = self._constraint_to_packmol(constraint)
-            if constraint_def:
-                # Handle multi-line constraints (e.g., AndConstraint)
-                for line in constraint_def.split("\n"):
-                    script.append(f"  {line}")
+            # When PBC is active, Packmol already confines molecules to the
+            # periodic box — skip redundant InsideBoxConstraint.  Other
+            # constraints (plane, sphere, …) are still written.
+            skip = pbc is not None and isinstance(constraint, InsideBoxConstraint)
+            if not skip:
+                constraint_def = self._constraint_to_packmol(constraint)
+                if constraint_def:
+                    for line in constraint_def.split("\n"):
+                        script.append(f"  {line}")
             script.append("end structure")
             script.append("")  # Empty line between structures
 
@@ -216,6 +233,7 @@ class Packmol(Packer):
         seed: int,
         tolerance: float,
         workdir: Path,
+        pbc: np.ndarray | list[float] | None = None,
     ) -> Path:
         """
         Generate Packmol input file.
@@ -226,12 +244,13 @@ class Packmol(Packer):
             seed: Random seed
             tolerance: Distance tolerance
             workdir: Working directory
+            pbc: Periodic boundary conditions (3 or 6 floats), or None.
 
         Returns:
             Path to generated input file
         """
         script = self._generate_input_script(
-            targets, max_steps, seed, tolerance, workdir
+            targets, max_steps, seed, tolerance, workdir, pbc=pbc
         )
 
         # Save script to file
@@ -396,7 +415,7 @@ class Packmol(Packer):
                 n = len(atoms.get("id", atoms.get("xyz", [])))
 
                 # Set molecule ID for this instance
-                atoms["mol"] = np.full(n, current_instance + 1, dtype=int)
+                atoms["mol_id"] = np.full(n, current_instance + 1, dtype=int)
 
                 # Reassign atom IDs sequentially (1-indexed)
                 if "id" in atoms:
@@ -415,14 +434,14 @@ class Packmol(Packer):
                 if "bonds" in target.frame:
                     bonds = target.frame["bonds"].copy()
 
-                    # Validate required atom index keys
-                    has_ij = "i" in bonds and "j" in bonds
-                    has_atom_ij = "atom_i" in bonds and "atom_j" in bonds
-                    if not has_ij and not has_atom_ij:
-                        # Force KeyError for legacy/unknown key names
-                        _ = bonds["i"]
+                    # Validate required atom index keys (standard: atomi/atomj)
+                    if "atomi" not in bonds or "atomj" not in bonds:
+                        raise KeyError(
+                            "Bond block must contain 'atomi' and 'atomj' columns. "
+                            f"Got: {list(bonds.keys())}"
+                        )
 
-                    m = len(bonds.get("id", bonds.get("i", bonds.get("atom_i", []))))
+                    m = len(bonds.get("id", bonds["atomi"]))
 
                     # Reassign bond IDs sequentially
                     if "id" in bonds:
@@ -432,16 +451,15 @@ class Packmol(Packer):
                         bond_id_counter += m
 
                     # Offset atom indices in bonds
-                    for end in ("i", "j", "atom_i", "atom_j"):
-                        if end in bonds:
-                            bonds[end] = bonds[end] + offset
+                    for end in ("atomi", "atomj"):
+                        bonds[end] = bonds[end] + offset
 
                     all_bonds.append(bonds)
 
                 # Expand angles block
                 if "angles" in target.frame:
                     angles = target.frame["angles"].copy()
-                    p = len(angles.get("id", angles.get("i", angles.get("atom_i", []))))
+                    p = len(angles.get("id", angles["atomi"]))
 
                     # Reassign angle IDs sequentially
                     if "id" in angles:
@@ -451,20 +469,15 @@ class Packmol(Packer):
                         angle_id_counter += p
 
                     # Offset atom indices in angles
-                    for end in ("i", "j", "k", "atom_i", "atom_j", "atom_k"):
-                        if end in angles:
-                            angles[end] = angles[end] + offset
+                    for end in ("atomi", "atomj", "atomk"):
+                        angles[end] = angles[end] + offset
 
                     all_angles.append(angles)
 
                 # Expand dihedrals block
                 if "dihedrals" in target.frame:
                     dihedrals = target.frame["dihedrals"].copy()
-                    q = len(
-                        dihedrals.get(
-                            "id", dihedrals.get("i", dihedrals.get("atom_i", []))
-                        )
-                    )
+                    q = len(dihedrals.get("id", dihedrals["atomi"]))
 
                     # Reassign dihedral IDs sequentially
                     if "id" in dihedrals:
@@ -476,29 +489,15 @@ class Packmol(Packer):
                         dihedral_id_counter += q
 
                     # Offset atom indices in dihedrals
-                    for end in (
-                        "i",
-                        "j",
-                        "k",
-                        "l",
-                        "atom_i",
-                        "atom_j",
-                        "atom_k",
-                        "atom_l",
-                    ):
-                        if end in dihedrals:
-                            dihedrals[end] = dihedrals[end] + offset
+                    for end in ("atomi", "atomj", "atomk", "atoml"):
+                        dihedrals[end] = dihedrals[end] + offset
 
                     all_dihedrals.append(dihedrals)
 
                 # Expand impropers block
                 if "impropers" in target.frame:
                     impropers = target.frame["impropers"].copy()
-                    r = len(
-                        impropers.get(
-                            "id", impropers.get("i", impropers.get("atom_i", []))
-                        )
-                    )
+                    r = len(impropers.get("id", impropers["atomi"]))
 
                     # Reassign improper IDs sequentially
                     if "id" in impropers:
@@ -510,46 +509,53 @@ class Packmol(Packer):
                         improper_id_counter += r
 
                     # Offset atom indices in impropers
-                    for end in (
-                        "i",
-                        "j",
-                        "k",
-                        "l",
-                        "atom_i",
-                        "atom_j",
-                        "atom_k",
-                        "atom_l",
-                    ):
-                        if end in impropers:
-                            impropers[end] = impropers[end] + offset
+                    for end in ("atomi", "atomj", "atomk", "atoml"):
+                        impropers[end] = impropers[end] + offset
 
                     all_impropers.append(impropers)
 
                 current_instance += 1
 
         # Step 3: Concatenate all expanded blocks
+        def _block_len(blk):
+            """Return the number of rows in a block dict."""
+            for v in blk.values():
+                return len(v)
+            return 0
+
         def concat_blocks(blocks):
             """Concatenate list of block dicts into a single block dict, preserving all fields."""
             if not blocks:
                 return {}
-            # Collect all keys from all blocks (in case some blocks have different fields)
+            # Collect all keys from all blocks (different molecule types may have different fields)
             all_keys = set()
             for blk in blocks:
                 all_keys.update(blk.keys())
 
+            # Find a reference block per key to determine dtype
+            ref_dtype = {}
+            for key in all_keys:
+                for blk in blocks:
+                    if key in blk:
+                        ref_dtype[key] = blk[key].dtype
+                        break
+
             combined = {}
             for key in all_keys:
-                # Concatenate arrays for this key from all blocks
                 arrays = []
                 for blk in blocks:
                     if key in blk:
                         arrays.append(blk[key])
                     else:
-                        # If a block doesn't have this key, use None or default value
-                        # This shouldn't happen if all blocks come from the same source
-                        raise ValueError(
-                            f"Inconsistent fields in blocks: key '{key}' missing in some blocks"
-                        )
+                        # Fill missing field with default values
+                        n = _block_len(blk)
+                        dtype = ref_dtype[key]
+                        if np.issubdtype(dtype, np.floating):
+                            arrays.append(np.full(n, np.nan, dtype=dtype))
+                        elif np.issubdtype(dtype, np.integer):
+                            arrays.append(np.zeros(n, dtype=dtype))
+                        else:
+                            arrays.append(np.full(n, None, dtype=object))
                 combined[key] = np.concatenate(arrays, axis=0)
             return combined
 

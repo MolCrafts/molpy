@@ -6,7 +6,7 @@ SMARTS-based atom typing and force field parameter assignment.
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `OplsTypifier` | Full OPLS-AA typing pipeline | OPLS force fields |
+| `OplsAtomisticTypifier` | Full OPLS-AA typing pipeline | OPLS force fields |
 | `GaffTypifier` | Full GAFF typing pipeline | GAFF / GAFF2 force fields |
 | `OplsAtomTypifier` | OPLS atom-only typing | When you only need atom types |
 | `GaffAtomTypifier` | GAFF atom-only typing | When you only need atom types |
@@ -21,10 +21,10 @@ SMARTS-based atom typing and force field parameter assignment.
 
 ```python
 import molpy as mp
-from molpy.typifier import OplsTypifier
+from molpy.typifier import OplsAtomisticTypifier
 
 ff = mp.io.read_xml_forcefield("oplsaa.xml")
-typifier = OplsTypifier(ff, strict_typing=True)
+typifier = OplsAtomisticTypifier(ff, strict_typing=True)
 typed_mol = typifier.typify(mol)  # returns NEW Atomistic
 ```
 

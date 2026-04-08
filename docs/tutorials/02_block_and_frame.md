@@ -88,6 +88,17 @@ print(list(atoms_with_r.keys()))   # ['element', 'x', 'y', 'z']
 ```
 
 
+## Renaming columns
+
+`Block.rename()` changes a column key in place. This is used internally by the I/O formatter system to translate between format-specific and canonical field names.
+
+```python
+b = mp.Block({"q": [0.1, -0.2], "x": [1.0, 2.0]})
+b.rename("q", "charge")
+print(list(b.keys()))   # ['x', 'charge']
+```
+
+
 ## Copy semantics matter
 
 `Block.copy()` is shallow: the mapping is copied, but the underlying NumPy arrays are shared. In-place mutation of an array affects both the original and the copy.
@@ -164,6 +175,22 @@ print(type(frame["tags"]))   # <class 'molpy.core.frame.Block'>
 del frame["tags"]
 print("tags" in frame)       # False
 ```
+
+
+## Box is a first-class attribute
+
+A periodic simulation cell is attached directly to `frame.box`, not stored in metadata. This ensures `Frame.copy()` preserves the box and I/O round-trips work correctly.
+
+```python
+frame.box = mp.Box.cubic(20.0)
+print(frame.box.lengths)   # [20. 20. 20.]
+
+# copy() preserves box
+frame2 = frame.copy()
+print(frame2.box.lengths)   # [20. 20. 20.]
+```
+
+`frame.box` is `None` when no box has been assigned (e.g., for isolated molecules).
 
 
 ## Serialization round-trips through dictionaries

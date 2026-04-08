@@ -228,12 +228,12 @@ class MolStore:
                 tg = fg.create_group(topo_name)
                 for key, arr in frame[topo_name]._vars.items():
                     data = np.asarray(arr)
-                    if key in ("i", "j", "k", "l"):
+                    if key in ("atomi", "atomj", "atomk", "atoml"):
                         data = data.astype(np.uint32)
                     tg.write_array(key, data)
 
         # ── simbox ─────────────────────────────────────────────────────
-        box = frame.metadata.get("box")
+        box = frame.box
         if box is not None:
             sb = fg.create_group("simbox")
             sb.write_array("h", np.asarray(box.matrix, dtype=np.float32))
@@ -276,11 +276,11 @@ class MolStore:
                 if "pbc" in sb.list_arrays()
                 else np.ones(3, dtype=bool)
             )
-            frame.metadata["box"] = Box(matrix=h, origin=origin, pbc=pbc.astype(bool))
+            frame.box = Box(matrix=h, origin=origin, pbc=pbc.astype(bool))
         elif fg.has("box"):
             # Backward compat: old format stored box/matrix
             matrix = fg["box"].read_array("matrix")
-            frame.metadata["box"] = Box(matrix=matrix)
+            frame.box = Box(matrix=matrix)
 
         return frame
 
@@ -601,7 +601,7 @@ class MolStore:
         if has_box:
             box_data = np.empty((T, 3, 3), dtype=np.float32)
             for t, f in enumerate(frames):
-                box = f.metadata.get("box")
+                box = f.box
                 if box is not None:
                     box_data[t] = np.asarray(box)
                 else:
@@ -666,7 +666,7 @@ class MolStore:
         # ── box_h ────────────────────────────────────────────────────
         if "box_h" in traj_arrays:
             box_arr = tg.read_array("box_h")
-            frame.metadata["box"] = Box(matrix=box_arr[index])
+            frame.box = Box(matrix=box_arr[index])
 
         # ── scalar observables ───────────────────────────────────────
         for key in _TRAJ_SCALAR_KEYS:

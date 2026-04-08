@@ -188,9 +188,9 @@ class TestHDF5Reader:
         for key in original_frame.metadata.keys():
             if key == "box":
                 # Box is a special object, check separately
-                if "box" in read_frame.metadata:
-                    orig_box = original_frame.metadata["box"]
-                    read_box = read_frame.metadata["box"]
+                if read_frame.box is not None:
+                    orig_box = original_frame.box
+                    read_box = read_frame.box
                     if orig_box is not None and read_box is not None:
                         np.testing.assert_array_almost_equal(
                             orig_box.matrix, read_box.matrix, decimal=6
@@ -218,8 +218,8 @@ class TestHDF5Reader:
         original_frame = read_lammps_data(test_files["molid"], atom_style="full")
 
         # Ensure box exists in metadata
-        assert "box" in original_frame.metadata
-        orig_box = original_frame.metadata["box"]
+        assert original_frame.box is not None
+        orig_box = original_frame.box
         assert orig_box is not None
 
         # Write to HDF5
@@ -230,8 +230,8 @@ class TestHDF5Reader:
         read_frame = read_h5(h5_file)
 
         # Check Box was correctly restored
-        assert "box" in read_frame.metadata
-        read_box = read_frame.metadata["box"]
+        assert read_frame.box is not None
+        read_box = read_frame.box
         assert read_box is not None
         assert isinstance(read_box, mp.Box)
 
@@ -285,14 +285,14 @@ class TestHDF5Reader:
         # Test in HDF5 context
         frame = mp.Frame()
         frame["atoms"] = {"x": [0.0, 1.0], "y": [0.0, 0.0], "z": [0.0, 0.0]}
-        frame.metadata["box"] = box
+        frame.box = box
         frame.metadata["timestep"] = 0
 
         h5_file = tmp_path / "test.h5"
         write_h5(h5_file, frame)
 
         read_frame = read_h5(h5_file)
-        read_box = read_frame.metadata["box"]
+        read_box = read_frame.box
 
         assert isinstance(read_box, Box), f"Expected Box, got {type(read_box)}"
         np.testing.assert_array_almost_equal(box.matrix, read_box.matrix, decimal=6)
@@ -312,13 +312,13 @@ class TestHDF5Reader:
 
         frame = mp.Frame()
         frame["atoms"] = {"x": [0.0], "y": [0.0], "z": [0.0]}
-        frame.metadata["box"] = box
+        frame.box = box
 
         h5_file = tmp_path / "test.h5"
         write_h5(h5_file, frame)
 
         read_frame = read_h5(h5_file)
-        read_box = read_frame.metadata["box"]
+        read_box = read_frame.box
 
         assert isinstance(read_box, Box)
         np.testing.assert_array_almost_equal(box.matrix, read_box.matrix, decimal=6)
@@ -341,13 +341,13 @@ class TestHDF5Reader:
 
         frame = mp.Frame()
         frame["atoms"] = {"x": [0.0], "y": [0.0], "z": [0.0]}
-        frame.metadata["box"] = box
+        frame.box = box
 
         h5_file = tmp_path / "test.h5"
         write_h5(h5_file, frame)
 
         read_frame = read_h5(h5_file)
-        read_box = read_frame.metadata["box"]
+        read_box = read_frame.box
 
         assert isinstance(read_box, Box)
         np.testing.assert_array_almost_equal(box.matrix, read_box.matrix, decimal=6)
@@ -385,13 +385,10 @@ class TestHDF5RoundTrip:
                 np.testing.assert_array_equal(orig_atoms[key], read_atoms[key])
 
         # Compare Box if present
-        if (
-            "box" in original_frame.metadata
-            and original_frame.metadata["box"] is not None
-        ):
-            assert "box" in read_frame.metadata
-            orig_box = original_frame.metadata["box"]
-            read_box = read_frame.metadata["box"]
+        if original_frame.box is not None and original_frame.box is not None:
+            assert read_frame.box is not None
+            orig_box = original_frame.box
+            read_box = read_frame.box
             assert read_box is not None
             assert isinstance(read_box, mp.Box)
             np.testing.assert_array_almost_equal(
@@ -435,13 +432,10 @@ class TestHDF5RoundTrip:
                     np.testing.assert_array_equal(orig_data, read_data)
 
         # Compare Box if present
-        if (
-            "box" in original_frame.metadata
-            and original_frame.metadata["box"] is not None
-        ):
-            assert "box" in read_frame.metadata
-            orig_box = original_frame.metadata["box"]
-            read_box = read_frame.metadata["box"]
+        if original_frame.box is not None and original_frame.box is not None:
+            assert read_frame.box is not None
+            orig_box = original_frame.box
+            read_box = read_frame.box
             assert read_box is not None
             assert isinstance(read_box, mp.Box)
             np.testing.assert_array_almost_equal(
@@ -593,16 +587,16 @@ class TestHDF5Compression:
         original_frame = read_lammps_data(test_files["molid"], atom_style="full")
 
         # Ensure box exists
-        assert "box" in original_frame.metadata
-        orig_box = original_frame.metadata["box"]
+        assert original_frame.box is not None
+        orig_box = original_frame.box
 
         # Test gzip with metadata
         h5_file_gzip = tmp_path / "test_gzip_metadata.h5"
         write_h5(h5_file_gzip, original_frame, compression="gzip", compression_opts=4)
 
         read_frame_gzip = read_h5(h5_file_gzip)
-        assert "box" in read_frame_gzip.metadata
-        read_box_gzip = read_frame_gzip.metadata["box"]
+        assert read_frame_gzip.box is not None
+        read_box_gzip = read_frame_gzip.box
         assert isinstance(read_box_gzip, mp.Box)
         np.testing.assert_array_almost_equal(
             orig_box.matrix, read_box_gzip.matrix, decimal=6
@@ -613,8 +607,8 @@ class TestHDF5Compression:
         write_h5(h5_file_lzf, original_frame, compression="lzf")
 
         read_frame_lzf = read_h5(h5_file_lzf)
-        assert "box" in read_frame_lzf.metadata
-        read_box_lzf = read_frame_lzf.metadata["box"]
+        assert read_frame_lzf.box is not None
+        read_box_lzf = read_frame_lzf.box
         assert isinstance(read_box_lzf, mp.Box)
         np.testing.assert_array_almost_equal(
             orig_box.matrix, read_box_lzf.matrix, decimal=6

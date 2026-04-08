@@ -13,7 +13,7 @@ If no path given, review all files modified in `git diff --name-only HEAD`.
 
 1. **Architecture** → invoke `/molpy-arch` on $ARGUMENTS
 2. **Performance** → invoke `/molpy-perf` on $ARGUMENTS
-3. **Documentation** → invoke `/molpy-docs` on $ARGUMENTS
+3. **Documentation** → invoke `/molpy-api-doc` on $ARGUMENTS
 4. **Scientific Correctness** (for potential/, compute/, typifier/, core/ops/):
    - Equations match cited paper
    - Units documented and consistent throughout

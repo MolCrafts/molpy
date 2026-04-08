@@ -97,12 +97,11 @@ class MCDCompute(Compute["Trajectory", MCDResult]):
             coords_list.append(coords)
             elems_list.append(atoms["type"])
 
-            # Get box from metadata
-            if "box" in frame.metadata:
-                box = frame.metadata["box"]
-                box_list.append(box)
+            # Get box
+            if frame.box is not None:
+                box_list.append(frame.box)
             else:
-                raise ValueError("Frame must contain box information in metadata")
+                raise ValueError("Frame must contain box information")
 
         coords_traj = np.array(coords_list)  # (n_frames, n_atoms, 3)
         elems_traj = np.array(elems_list)  # (n_frames, n_atoms)

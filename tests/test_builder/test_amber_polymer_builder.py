@@ -14,35 +14,31 @@ import pytest
 from molpy.builder.polymer.ambertools import (
     AmberBuildResult,
     AmberPolymerBuilder,
-    AmberPolymerBuilderConfig,
 )
 
 
-class TestAmberPolymerBuilderConfig:
-    """Unit tests for AmberPolymerBuilderConfig."""
+class TestAmberPolymerBuilderInit:
+    """Unit tests for AmberPolymerBuilder defaults."""
 
     def test_default_values(self):
-        """Test default configuration values."""
-        config = AmberPolymerBuilderConfig()
-
-        assert config.force_field == "gaff2"
-        assert config.charge_method == "bcc"
-        assert config.work_dir == Path("amber_work")
-        assert config.keep_intermediates is True
+        builder = AmberPolymerBuilder(library={})
+        assert builder.force_field == "gaff2"
+        assert builder.charge_method == "bcc"
+        assert builder.work_dir == Path("amber_work")
+        assert builder.keep_intermediates is True
 
     def test_custom_values(self, tmp_path: Path):
-        """Test custom configuration values."""
-        config = AmberPolymerBuilderConfig(
+        builder = AmberPolymerBuilder(
+            library={},
             force_field="gaff",
             charge_method="gas",
             work_dir=tmp_path / "custom_work",
             keep_intermediates=False,
         )
-
-        assert config.force_field == "gaff"
-        assert config.charge_method == "gas"
-        assert config.work_dir == tmp_path / "custom_work"
-        assert config.keep_intermediates is False
+        assert builder.force_field == "gaff"
+        assert builder.charge_method == "gas"
+        assert builder.work_dir == tmp_path / "custom_work"
+        assert builder.keep_intermediates is False
 
 
 class TestAmberBuildResult:
@@ -101,7 +97,7 @@ class TestAmberPolymerBuilderValidation:
 
         builder = AmberPolymerBuilder(library={"EO": mock_monomer})
 
-        with pytest.raises(ValueError, match="must have port annotations"):
+        with pytest.raises(ValueError, match="has no port annotations"):
             builder.build("{[#EO]|5}")
 
 

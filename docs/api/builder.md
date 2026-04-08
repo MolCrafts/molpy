@@ -24,7 +24,7 @@ from molpy.tool import polymer
 
 builder = PolymerBuilder(
     library={"EO": eo_template},
-    connector=Connector(rules={("EO","EO"): (">","<")}, reacter=rxn),
+    connector=Connector(port_map={("EO","EO"): (">","<")}, reacter=rxn),
     placer=Placer(separator=CovalentSeparator(buffer=-0.1),
                   orienter=LinearOrienter()),
 )

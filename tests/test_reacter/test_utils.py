@@ -24,10 +24,10 @@ class TestFindNeighbors:
     def test_find_all_neighbors(self):
         """Test finding all neighbors of an atom."""
         asm = Atomistic()
-        c = Atom(symbol="C")
-        h1 = Atom(symbol="H")
-        h2 = Atom(symbol="H")
-        o = Atom(symbol="O")
+        c = Atom(element="C")
+        h1 = Atom(element="H")
+        h2 = Atom(element="H")
+        o = Atom(element="O")
 
         asm.add_entity(c, h1, h2, o)
         asm.add_link(Bond(c, h1), Bond(c, h2), Bond(c, o))
@@ -42,10 +42,10 @@ class TestFindNeighbors:
     def test_find_neighbors_with_element_filter(self):
         """Test finding neighbors filtered by element."""
         asm = Atomistic()
-        c = Atom(symbol="C")
-        h1 = Atom(symbol="H")
-        h2 = Atom(symbol="H")
-        o = Atom(symbol="O")
+        c = Atom(element="C")
+        h1 = Atom(element="H")
+        h2 = Atom(element="H")
+        o = Atom(element="O")
 
         asm.add_entity(c, h1, h2, o)
         asm.add_link(Bond(c, h1), Bond(c, h2), Bond(c, o))
@@ -54,7 +54,7 @@ class TestFindNeighbors:
         h_neighbors = find_neighbors(asm, c, element="H")
 
         assert len(h_neighbors) == 2
-        assert all(n.get("symbol") == "H" for n in h_neighbors)
+        assert all(n.get("element") == "H" for n in h_neighbors)
         assert h1 in h_neighbors
         assert h2 in h_neighbors
         assert o not in h_neighbors
@@ -62,9 +62,9 @@ class TestFindNeighbors:
     def test_find_neighbors_with_element_filter_no_match(self):
         """Test finding neighbors with element filter that matches nothing."""
         asm = Atomistic()
-        c = Atom(symbol="C")
-        h1 = Atom(symbol="H")
-        h2 = Atom(symbol="H")
+        c = Atom(element="C")
+        h1 = Atom(element="H")
+        h2 = Atom(element="H")
 
         asm.add_entity(c, h1, h2)
         asm.add_link(Bond(c, h1), Bond(c, h2))
@@ -77,7 +77,7 @@ class TestFindNeighbors:
     def test_find_neighbors_no_neighbors(self):
         """Test finding neighbors of isolated atom."""
         asm = Atomistic()
-        c = Atom(symbol="C")
+        c = Atom(element="C")
         asm.add_entity(c)
 
         neighbors = find_neighbors(asm, c)
@@ -87,9 +87,9 @@ class TestFindNeighbors:
     def test_find_neighbors_multiple_bonds(self):
         """Test finding neighbors with multiple bonds to same atom."""
         asm = Atomistic()
-        c1 = Atom(symbol="C")
-        c2 = Atom(symbol="C")
-        h = Atom(symbol="H")
+        c1 = Atom(element="C")
+        c2 = Atom(element="C")
+        h = Atom(element="H")
 
         asm.add_entity(c1, c2, h)
         # Multiple bonds between c1 and c2 (shouldn't happen, but test robustness)
@@ -109,8 +109,8 @@ class TestGetBondBetween:
     def test_get_bond_between_exists(self):
         """Test getting bond between two atoms that are bonded."""
         asm = Atomistic()
-        c1 = Atom(symbol="C")
-        c2 = Atom(symbol="C")
+        c1 = Atom(element="C")
+        c2 = Atom(element="C")
 
         bond = Bond(c1, c2, order=1)
         asm.add_entity(c1, c2)
@@ -124,8 +124,8 @@ class TestGetBondBetween:
     def test_get_bond_between_reverse_order(self):
         """Test getting bond works in reverse order."""
         asm = Atomistic()
-        c1 = Atom(symbol="C")
-        c2 = Atom(symbol="C")
+        c1 = Atom(element="C")
+        c2 = Atom(element="C")
 
         bond = Bond(c1, c2, order=2)
         asm.add_entity(c1, c2)
@@ -139,9 +139,9 @@ class TestGetBondBetween:
     def test_get_bond_between_not_exists(self):
         """Test getting bond between atoms that are not bonded."""
         asm = Atomistic()
-        c1 = Atom(symbol="C")
-        c2 = Atom(symbol="C")
-        h = Atom(symbol="H")
+        c1 = Atom(element="C")
+        c2 = Atom(element="C")
+        h = Atom(element="H")
 
         asm.add_entity(c1, c2, h)
         asm.add_link(Bond(c1, h))  # c1-h bond, but no c1-c2 bond
@@ -153,8 +153,8 @@ class TestGetBondBetween:
     def test_get_bond_between_with_different_bond_orders(self):
         """Test getting bond with different bond orders."""
         asm = Atomistic()
-        c1 = Atom(symbol="C")
-        c2 = Atom(symbol="C")
+        c1 = Atom(element="C")
+        c2 = Atom(element="C")
 
         bond = Bond(c1, c2, order=2)
         asm.add_entity(c1, c2)
@@ -172,8 +172,8 @@ class TestCountBonds:
     def test_count_bonds_single(self):
         """Test counting bonds for atom with one bond."""
         asm = Atomistic()
-        c = Atom(symbol="C")
-        h = Atom(symbol="H")
+        c = Atom(element="C")
+        h = Atom(element="H")
 
         asm.add_entity(c, h)
         asm.add_link(Bond(c, h))
@@ -185,10 +185,10 @@ class TestCountBonds:
     def test_count_bonds_multiple(self):
         """Test counting bonds for atom with multiple bonds."""
         asm = Atomistic()
-        c = Atom(symbol="C")
-        h1 = Atom(symbol="H")
-        h2 = Atom(symbol="H")
-        h3 = Atom(symbol="H")
+        c = Atom(element="C")
+        h1 = Atom(element="H")
+        h2 = Atom(element="H")
+        h3 = Atom(element="H")
 
         asm.add_entity(c, h1, h2, h3)
         asm.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
@@ -200,7 +200,7 @@ class TestCountBonds:
     def test_count_bonds_zero(self):
         """Test counting bonds for isolated atom."""
         asm = Atomistic()
-        c = Atom(symbol="C")
+        c = Atom(element="C")
         asm.add_entity(c)
 
         count = count_bonds(asm, c)
@@ -210,9 +210,9 @@ class TestCountBonds:
     def test_count_bonds_with_double_bond(self):
         """Test counting bonds - double bond counts as one."""
         asm = Atomistic()
-        c1 = Atom(symbol="C")
-        c2 = Atom(symbol="C")
-        h = Atom(symbol="H")
+        c1 = Atom(element="C")
+        c2 = Atom(element="C")
+        h = Atom(element="H")
 
         asm.add_entity(c1, c2, h)
         asm.add_link(Bond(c1, c2, order=2), Bond(c1, h))
@@ -229,10 +229,10 @@ class TestRemoveDummyAtoms:
     def test_remove_dummy_atoms_by_symbol(self):
         """Test removing dummy atoms with symbol='*'."""
         asm = Atomistic()
-        c = Atom(symbol="C")
-        dummy1 = Atom(symbol="*")
-        dummy2 = Atom(symbol="*")
-        h = Atom(symbol="H")
+        c = Atom(element="C")
+        dummy1 = Atom(element="*")
+        dummy2 = Atom(element="*")
+        h = Atom(element="H")
 
         asm.add_entity(c, dummy1, dummy2, h)
         asm.add_link(Bond(c, dummy1), Bond(c, h))
@@ -256,7 +256,7 @@ class TestRemoveDummyAtoms:
         asm = Atomistic()
         c = Atom(symbol="C", element="C")
         dummy = Atom(symbol="X", element="*")  # element='*' but symbol is not
-        h = Atom(symbol="H")
+        h = Atom(element="H")
 
         asm.add_entity(c, dummy, h)
 
@@ -274,9 +274,9 @@ class TestRemoveDummyAtoms:
     def test_remove_dummy_atoms_none(self):
         """Test removing dummy atoms when none exist."""
         asm = Atomistic()
-        c = Atom(symbol="C")
-        h1 = Atom(symbol="H")
-        h2 = Atom(symbol="H")
+        c = Atom(element="C")
+        h1 = Atom(element="H")
+        h2 = Atom(element="H")
 
         asm.add_entity(c, h1, h2)
 
@@ -291,8 +291,8 @@ class TestRemoveDummyAtoms:
     def test_remove_dummy_atoms_drops_bonds(self):
         """Test that removing dummy atoms drops incident bonds."""
         asm = Atomistic()
-        c = Atom(symbol="C")
-        dummy = Atom(symbol="*")
+        c = Atom(element="C")
+        dummy = Atom(element="*")
 
         bond = Bond(c, dummy)
         asm.add_entity(c, dummy)

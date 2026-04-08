@@ -7,7 +7,7 @@ hide:
 
 # MolPy
 
-<p class="lead" markdown>Composable molecular modeling in Python.</p>
+<p class="lead" markdown>A composable, strongly typed toolkit for computational molecular modeling — from single-molecule parameterization to polydisperse polymer system construction.</p>
 
 <div class="badges" markdown>
   [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
@@ -25,103 +25,124 @@ hide:
 
 ---
 
-## See it work
+## Representative Workflows
 
-<div class="hero-code" markdown>
+=== "Small Molecule"
 
-```python
-import molpy as mp
+    Parameterize a small organic molecule from a SMILES string using the bundled OPLS-AA force field and export complete LAMMPS input files.
 
-# editable chemistry
-mol = mp.parser.parse_molecule("CCO")
-mol = mp.tool.generate_3d(mol)
-mol.get_topo(gen_angle=True, gen_dihe=True)
+    ```python
+    import molpy as mp
 
-# inspectable force field (OPLS-AA ships with MolPy)
-ff = mp.io.read_xml_forcefield("oplsaa.xml")
-typed = mp.typifier.OplsTypifier(ff).typify(mol)
+    mol   = mp.parser.parse_molecule("CCO")          # ethanol from SMILES
+    ff    = mp.io.read_xml_forcefield("oplsaa.xml")  # bundled OPLS-AA
+    typed = mp.typifier.OplsAtomisticTypifier(ff).typify(mol)
 
-# portable export
-mp.io.write_lammps_system("output/", typed.to_frame(), ff)
-```
+    mp.io.write_lammps_system("output/", typed.to_frame(), ff)
+    # → output/system.data  output/system.in
+    ```
+
+=== "Polymer Chain"
+
+    Specify a poly(ethylene oxide) chain via G-BigSMILES notation. MolPy generates three-dimensional coordinates and exports a simulation-ready topology.
+
+    ```python
+    import molpy as mp
+
+    # PEO chain, degree of polymerization = 10
+    peo = mp.tool.polymer("{[<]CCOCC[>]}|10|")
+
+    ff    = mp.io.read_xml_forcefield("oplsaa.xml")
+    typed = mp.typifier.OplsAtomisticTypifier(ff).typify(peo)
+    mp.io.write_lammps_system("output/", typed.to_frame(), ff)
+    ```
+
+=== "Polydisperse System"
+
+    Sample a Schulz–Zimm molecular-weight distribution, construct each chain atomistically, and pack the ensemble into a periodic simulation box.
+
+    ```python
+    import molpy as mp
+
+    # Mn = 1500 Da, Mw = 3000 Da, target total mass ≈ 500 kDa
+    chains = mp.tool.polymer_system(
+        "{[<]CCOCC[>]}|schulz_zimm(1500,3000)||5e5|",
+        random_seed=42,
+    )
+    print(f"Built {len(chains)} chains")
+
+    frames = [c.to_frame() for c in chains]
+    packed = mp.pack.pack(frames, box=[80, 80, 80])
+    mp.io.write_lammps_system("peo_bulk/", packed, ff)
+    ```
+
+=== "AmberTools Pipeline"
+
+    Prepare a monomer with partial charges via antechamber, assemble a chain with GAFF2 parameters via tleap, and retrieve AMBER topology files programmatically.
+
+    ```python
+    import molpy as mp
+
+    # BigSMILES → three-dimensional structure with port annotation
+    eo = mp.tool.PrepareMonomer().run("{[<]CCOCC[>]}")
+
+    # Assemble DP = 20 chain via AmberTools
+    result = mp.tool.polymer(
+        "{[#EO]|20}",
+        library={"EO": eo},
+        backend="amber",
+    )
+    # result.prmtop_path  result.inpcrd_path  result.pdb_path
+    ```
+
+---
+
+## Design Principles
+
+<div class="feature-list" markdown>
+
+- :material-graph: **[Explicit representational hierarchy](tutorials/01_atomistic_and_topology.md)** — Molecular graphs (`Atomistic`), numerical snapshots (`Frame`), and force field parameters (`ForceField`) occupy distinct layers with explicit conversion boundaries.
+
+- :material-text-search: **[Native support for polymer chemistry notations](user-guide/01_parsing_chemistry.ipynb)** — SMILES, BigSMILES, CGSmiles, and G-BigSMILES are parsed directly. A monomer, an architecture, or a polydisperse ensemble can each be expressed as a single string.
+
+- :material-chart-bell-curve: **[Statistical molecular-weight distributions](user-guide/05_polydisperse_systems.ipynb)** — Schulz–Zimm, Poisson, Flory–Schulz, and uniform distributions are implemented natively. Target number- and weight-average molecular weights are specified directly; reproducible chain populations are generated from a fixed random seed.
+
+- :material-database-search: **[Force fields as queryable data structures](tutorials/04_force_field.md)** — A `ForceField` object is an inspectable typed dictionary. Parameter completeness and type consistency are verifiable at the Python level before any file export occurs.
+
+- :material-vector-link: **[Programmatic reaction framework](user-guide/04_crosslinking.ipynb)** — Chemical reactions are expressed through composable anchor selectors and leaving-group selectors. Pre- and post-reaction topology templates for LAMMPS `fix bond/react` are generated automatically.
+
+- :material-puzzle: **[Modular, independently composable packages](api/index.md)** — The parser, builder, typifier, packer, and I/O subsystems share no hidden coupling. Each may be used independently or assembled into composite pipelines through explicit function calls.
 
 </div>
 
 ---
 
-## Why MolPy
+## External Integrations
 
-<div class="feature-rows" markdown>
+<div class="feature-list" markdown>
 
-<a class="feature-row" href="tutorials/index.md">
-<span class="feature-icon">:material-swap-horizontal:</span>
-<span class="feature-body">
-<strong>Explicit representations</strong>
-Chemistry editing, system snapshots, and force field data are separate objects with visible transitions.
-</span>
-<span class="feature-arrow">:octicons-arrow-right-24:</span>
-</a>
+- :material-atom: **[AmberTools](user-guide/07_ambertools_integration.ipynb)** — Antechamber (partial charge assignment), parmchk2 (missing parameter estimation), and tleap (topology assembly) are invoked programmatically with structured Python interfaces.
 
-<a class="feature-row" href="tutorials/04_force_field.md">
-<span class="feature-icon">:material-database-search:</span>
-<span class="feature-body">
-<strong>Force fields as data</strong>
-Parameters stay inspectable until you convert them to potentials. Catch errors before export.
-</span>
-<span class="feature-arrow">:octicons-arrow-right-24:</span>
-</a>
+- :material-flask: **[RDKit](api/adapter.md)** — `RDKitAdapter` provides bidirectional conversion between `Atomistic` and RDKit `Mol` objects, enabling three-dimensional embedding, conformer generation, and SMILES export.
 
-<a class="feature-row" href="api/index.md">
-<span class="feature-icon">:material-puzzle:</span>
-<span class="feature-body">
-<strong>Composable modules</strong>
-Parser, builder, typifier, packer, and I/O are independent. Use one alone or wire several together.
-</span>
-<span class="feature-arrow">:octicons-arrow-right-24:</span>
-</a>
+- :material-cube-outline: **[Packmol](api/pack.md)** — Molecule packing into periodic simulation boxes is managed through a typed constraint interface wrapping the Packmol executable.
+
+- :material-lightning-bolt: **[LAMMPS · CP2K](api/engine.md)** — Complete input decks are generated from MolPy data objects. The engine abstraction layer decouples system description from simulation-code-specific syntax.
 
 </div>
 
 ---
 
-## Learn MolPy
+## Documentation Structure
 
-<div class="feature-rows" markdown>
+<div class="feature-list" markdown>
 
-<a class="feature-row" href="getting-started/index.md">
-<span class="feature-icon">:material-rocket-launch:</span>
-<span class="feature-body">
-<strong>Getting Started</strong>
-Install, run one example, learn the core objects.
-</span>
-<span class="feature-arrow">:octicons-arrow-right-24:</span>
-</a>
+- :material-rocket-launch: **[Getting Started](getting-started/index.md)** — Installation, environment verification, and a five-minute end-to-end example establishing the `Atomistic → Frame → export` pipeline.
 
-<a class="feature-row" href="tutorials/index.md">
-<span class="feature-icon">:material-book-open-variant:</span>
-<span class="feature-body">
-<strong>Concepts</strong>
-Atomistic, Block, Frame, Box, Trajectory, ForceField.
-</span>
-<span class="feature-arrow">:octicons-arrow-right-24:</span>
-</a>
+- :material-book-open-variant: **[Concepts](tutorials/index.md)** — Systematic exposition of the core data model: `Atomistic`, `Block`, `Frame`, `Box`, `Trajectory`, `ForceField`, and their inter-relationships.
 
-<a class="feature-row" href="user-guide/index.md">
-<span class="feature-icon">:material-hammer-wrench:</span>
-<span class="feature-body">
-<strong>Guides</strong>
-Parse, build polymers, typify, export to LAMMPS.
-</span>
-<span class="feature-arrow">:octicons-arrow-right-24:</span>
-</a>
+- :material-hammer-wrench: **[Guides](user-guide/index.md)** — Task-oriented executable notebooks covering chemistry parsing, polymer construction, force field typification, and simulation file generation.
 
-<a class="feature-row" href="developer/index.md">
-<span class="feature-icon">:material-code-braces:</span>
-<span class="feature-body">
-<strong>Developer Guide</strong>
-Extend the tool layer or add new core types.
-</span>
-<span class="feature-arrow">:octicons-arrow-right-24:</span>
-</a>
+- :material-code-braces: **[Developer Guide](developer/index.md)** — Conventions, extension patterns, and internal architecture for contributors and library developers.
 
 </div>

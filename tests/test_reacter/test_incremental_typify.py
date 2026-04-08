@@ -126,7 +126,7 @@ class TestIncrementalTypify:
         )
 
         # All atoms in the product should have 'type' set
-        product = result.product_info.product
+        product = result.product
         for atom in product.atoms:
             assert atom.get("type") is not None, (
                 f"Atom {atom} should have 'type' after incremental typification"
@@ -160,9 +160,9 @@ class TestIncrementalTypify:
         )
 
         # Modified atoms (the two site atoms) should have pair params
-        _ = result.product_info.product  # access to verify it exists
-        site_L = result.product_info.site_L
-        site_R = result.product_info.site_R
+        _ = result.product  # access to verify it exists
+        site_L = result.anchor_L
+        site_R = result.anchor_R
 
         assert site_L is not None
         assert site_R is not None
@@ -215,4 +215,4 @@ class TestIncrementalTypify:
             typifier=typifier,
         )
 
-        assert result.product_info.product is not None
+        assert result.product is not None

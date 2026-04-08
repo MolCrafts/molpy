@@ -8,7 +8,7 @@ from molpy.builder.polymer.presets import (
 )
 from molpy.reacter.base import Reacter
 from molpy.reacter.selectors import select_hydrogens, select_self
-from molpy.reacter.transformers import form_single_bond
+from molpy.reacter.utils import form_single_bond
 
 
 class TestReactionPresetSpec:

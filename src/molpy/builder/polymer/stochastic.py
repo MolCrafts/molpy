@@ -53,7 +53,7 @@ import numpy as np
 from molpy.core.atomistic import Atomistic
 
 # Import from consolidated modules
-from .placer import PortInfo, get_all_ports
+from .port_utils import get_all_ports
 
 if TYPE_CHECKING:
     from .connectors import Connector
@@ -279,7 +279,7 @@ class GrowthKernel(Protocol):
     def choose_next_for_port(
         self,
         polymer: Atomistic,
-        port: PortInfo,
+        port: "Atom",
         candidates: Sequence[MonomerTemplate],
         rng: np.random.Generator | None = None,
     ) -> MonomerPlacement | None:
@@ -364,7 +364,7 @@ class ProbabilityTableKernel:
     def choose_next_for_port(
         self,
         polymer: Atomistic,
-        port: PortInfo,
+        port: "Atom",
         candidates: Sequence[MonomerTemplate],
         rng: np.random.Generator | None = None,
     ) -> MonomerPlacement | None:
@@ -424,36 +424,18 @@ class ProbabilityTableKernel:
             template=templates[idx], target_descriptor_id=target_descs[idx]
         )
 
-    def _get_descriptor_id(self, port: PortInfo) -> int:
-        """
-        Extract descriptor ID from port metadata.
+    def _get_descriptor_id(self, port: "Atom") -> int:
+        """Extract descriptor ID from port atom."""
+        desc_id = port.get("port_descriptor_id")
+        if desc_id is not None:
+            return desc_id
 
-        Args:
-            port: PortInfo object
-
-        Returns:
-            Descriptor ID (defaults to 0 if not found)
-
-        Example:
-            >>> port_info = PortInfo("left", atom, descriptor_id=5)
-            >>> kernel = ProbabilityTableKernel(tables={})
-            >>> desc_id = kernel._get_descriptor_id(port_info)
-            >>> desc_id
-            5
-        """
-        # Check for descriptor_id in port data
-        if "descriptor_id" in port.data:
-            return port.data["descriptor_id"]
-
-        # Fallback: try to infer from port name
-        # This is a temporary solution until parser sets descriptor_id
-        port_name = port.name
+        port_name = port.get("port", "")
         if port_name == "<":
             return 0
         elif port_name == ">":
             return 1
         else:
-            # For other ports, use hash of name
             return hash(port_name) % 1000
 
 
@@ -478,7 +460,7 @@ class StochasticChainGenerator:
 
     Example:
         >>> from molpy.builder.polymer.stochastic import StochasticChainGenerator
-        >>> from molpy.builder.polymer.system import UniformPolydisperse
+        >>> from molpy.builder.polymer.distributions import UniformPolydisperse
         >>>
         >>> # Create generator
         >>> distribution = UniformPolydisperse(dp_low=10, dp_high=20)
@@ -529,7 +511,7 @@ class StochasticChainGenerator:
         self.seed_template = seed_template or self.templates[0]
 
         # Import here to avoid circular dependency
-        from .system import MassDistribution
+        from .distributions import MassDistribution
 
         # Determine stopping criterion based on distribution capabilities
         self.use_mass_criterion = isinstance(distribution, MassDistribution)
@@ -572,7 +554,7 @@ class StochasticChainGenerator:
 
         # 3. Initialize active ports queue (BFS)
         # Track ports by identity to avoid duplicates
-        active_ports: deque[PortInfo] = deque()
+        active_ports: deque["Atom"] = deque()
         seen_port_targets: set[int] = set()
         for port_list in get_all_ports(polymer).values():
             for port_info in port_list:
@@ -616,12 +598,11 @@ class StochasticChainGenerator:
             target_port = new_monomer_ports[target_port_name][0]
 
             # Collect port targets from new monomer BEFORE connection
-            # These are the ports that will become active after merging
             new_port_targets: set[int] = set()
             for pname, plist in new_monomer_ports.items():
-                for pinfo in plist:
-                    if pinfo is not target_port:
-                        new_port_targets.add(id(pinfo.target))
+                for patom in plist:
+                    if patom is not target_port:
+                        new_port_targets.add(id(patom))
 
             # Apply reaction via Connector
             from .core import AssemblyError
@@ -632,14 +613,14 @@ class StochasticChainGenerator:
                     new_monomer,
                     left_type=self.seed_template.label,
                     right_type=placement.template.label,
-                    port_atom_L=port.target,
-                    port_atom_R=target_port.target,
+                    port_atom_L=port,
+                    port_atom_R=target_port,
                 )
             except AssemblyError as e:
                 logger.warning(
                     "Connection failed for %s at port %s: %s",
                     placement.template.label,
-                    port.name,
+                    port.get("port"),
                     e,
                 )
                 continue
@@ -650,18 +631,18 @@ class StochasticChainGenerator:
 
             # Add only NEW ports from the merged product to the queue
             for pname, plist in get_all_ports(polymer).items():
-                for pinfo in plist:
-                    port_id = id(pinfo.target)
+                for patom in plist:
+                    port_id = id(patom)
                     if port_id not in seen_port_targets:
                         seen_port_targets.add(port_id)
-                        active_ports.append(pinfo)
+                        active_ports.append(patom)
 
             growth_history.append(
                 {
                     "template": placement.template.label,
-                    "port_used": port.name,
+                    "port_used": port.get("port"),
                     "target_descriptor": placement.target_descriptor_id,
-                    "target_port": target_port.name,
+                    "target_port": target_port.get("port"),
                 }
             )
 

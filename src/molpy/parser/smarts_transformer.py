@@ -348,6 +348,58 @@ class SmartsTransformer(Transformer):
             return AtomPrimitiveIR(type="atom_class", value=name)
         return AtomPrimitiveIR(type="wildcard")
 
+    # ------------------------------------------------------------------
+    # Bare-H disambiguation
+    # ------------------------------------------------------------------
+    #
+    # In SMARTS the token ``H`` is overloaded:
+    #
+    #   [H]    → the hydrogen **element** (atomic number 1)
+    #   [CH]   → carbon with exactly 1 hydrogen neighbour  (= H1)
+    #   [C;H]  → same (weak-AND variant)
+    #   [!H]   → not a hydrogen atom
+    #   [CH2]  → carbon with exactly 2 hydrogen neighbours
+    #
+    # The Lark grammar always emits ``hydrogen_count`` for the ``H``
+    # token.  ``value=None`` means "bare H, no digit".  We fix the
+    # semantics here by inspecting the surrounding expression:
+    #
+    #   * ``hydrogen_count(None)`` with **no** element/symbol sibling
+    #     → rewrite to ``symbol('H')``  (hydrogen element)
+    #   * ``hydrogen_count(None)`` **with** an element/symbol sibling
+    #     → rewrite to ``hydrogen_count(1)``
+
+    @staticmethod
+    def _has_element(expr) -> bool:
+        """Return True if *expr* (or any descendant) contains a symbol
+        or atomic_num primitive."""
+        if isinstance(expr, AtomPrimitiveIR):
+            return expr.type in ("symbol", "atomic_num")
+        if isinstance(expr, AtomExpressionIR):
+            return any(SmartsTransformer._has_element(c) for c in expr.children)
+        return False
+
+    @staticmethod
+    def _rewrite_bare_h(expr, has_elem: bool):
+        """Recursively rewrite ``hydrogen_count(None)``."""
+        if isinstance(expr, AtomPrimitiveIR):
+            if expr.type == "hydrogen_count" and expr.value is None:
+                if has_elem:
+                    return AtomPrimitiveIR(type="hydrogen_count", value=1)
+                else:
+                    return AtomPrimitiveIR(type="symbol", value="H")
+            return expr
+        if isinstance(expr, AtomExpressionIR):
+            # For compound expressions, check element presence among
+            # siblings so that ``[CH]`` → symbol + H1, ``[!H]`` → !symbol.
+            elem_here = SmartsTransformer._has_element(expr)
+            new_children = [
+                SmartsTransformer._rewrite_bare_h(c, has_elem or elem_here)
+                for c in expr.children
+            ]
+            return AtomExpressionIR(op=expr.op, children=new_children)
+        return expr
+
     def atom(self, children: list) -> SmartsAtomIR:
         filtered = [
             c
@@ -365,6 +417,9 @@ class SmartsTransformer(Transformer):
 
         if isinstance(expression, AtomPrimitiveIR):
             expression = AtomExpressionIR(op="primitive", children=[expression])
+
+        # Disambiguate bare H (hydrogen_count=None)
+        expression = self._rewrite_bare_h(expression, self._has_element(expression))
 
         return SmartsAtomIR(expression=expression, label=label)
 

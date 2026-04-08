@@ -55,8 +55,8 @@ class Block(MutableMapping[str, np.ndarray]):
 
     Using boolean masks for filtering:
 
-    >>> blk = Block({"id": [1, 2, 3, 4, 5], "mol": [1, 1, 2, 2, 3]})
-    >>> mask = blk["mol"] < 3
+    >>> blk = Block({"id": [1, 2, 3, 4, 5], "mol_id": [1, 1, 2, 2, 3]})
+    >>> mask = blk["mol_id"] < 3
     >>> sub_blk = blk[mask]
     >>> sub_blk["id"]
     array([1, 2, 3, 4])
@@ -293,6 +293,20 @@ class Block(MutableMapping[str, np.ndarray]):
     def copy(self) -> "Block":
         """Shallow copy (arrays are **not** copied)."""
         return Block(self._vars.copy())  # type: ignore[arg-type]
+
+    def rename(self, old_key: str, new_key: str) -> None:
+        """Rename a column key in-place.
+
+        Args:
+            old_key: Existing column name.
+            new_key: New column name.
+
+        Raises:
+            KeyError: If *old_key* does not exist.
+        """
+        if old_key not in self._vars:
+            raise KeyError(f"Column '{old_key}' not found in Block")
+        self._vars[new_key] = self._vars.pop(old_key)
 
     def _sort(self, key: str, *, reverse: bool = False) -> dict[str, NDArray[Any]]:
         """Sort variables by a specific key and return sorted data.
@@ -574,7 +588,7 @@ class Frame:
 
         >>> frame = Frame(blocks={
         ...     "atoms": {"id": [1, 2, 3], "type": ["C", "H", "H"]},
-        ...     "bonds": {"i": [0, 0], "j": [1, 2]}
+        ...     "bonds": {"atomi": [0, 0], "atomj": [1, 2]}
         ... })
         >>> list(frame._blocks)
         ['atoms', 'bonds']
@@ -603,12 +617,12 @@ class Frame:
 
         >>> frame = Frame(blocks={
         ...     "atoms": {"id": [1, 2], "mass": [12.0, 1.0]},
-        ...     "bonds": {"i": [0], "j": [1]}
+        ...     "bonds": {"atomi": [0], "atomj": [1]}
         ... })
         >>> for block_name in frame._blocks:
         ...     print(f"{block_name}: {list(frame[block_name].keys())}")
         atoms: ['id', 'mass']
-        bonds: ['i', 'j']
+        bonds: ['atomi', 'atomj']
     """
 
     def __init__(
@@ -624,10 +638,13 @@ class Frame:
                 a Block. Defaults to None.
             **props (Any): Arbitrary keyword arguments stored in metadata.
         """
+        from molpy.core.box import Box
+
         # guarantee a root block even if none supplied
         self._blocks: dict[str, Block] = {}
         if blocks is not None:
             self._blocks = self._validate_and_convert_blocks(blocks)
+        self.box: Box | None = None
         self.metadata: dict[str, Any] = props
 
     def _validate_and_convert_blocks(
@@ -721,7 +738,7 @@ class Frame:
         Examples:
             >>> frame = Frame()
             >>> frame["atoms"] = Block({"x": [1, 2, 3]})
-            >>> frame["bonds"] = {"i": [0, 1], "j": [1, 2]}  # Auto-converted
+            >>> frame["bonds"] = {"atomi": [0, 1], "atomj": [1, 2]}  # Auto-converted
             >>> isinstance(frame["bonds"], Block)
             True
         """
@@ -774,9 +791,9 @@ class Frame:
             `frame._blocks.keys()`.
 
         Examples:
-            >>> frame = Frame(blocks={"atoms": {"x": [1]}, "bonds": {"i": [0]}})
+            >>> frame = Frame(blocks={"atoms": {"x": [1]}, "bonds": {"atomi": [0]}})
             >>> [b for b in frame.blocks]
-            [Block(x: shape=(1,), i: shape=(1,))]
+            [Block(x: shape=(1,), atomi: shape=(1,))]
         """
         return iter(self._blocks.values())
 
@@ -849,7 +866,8 @@ class Frame:
         new_blocks = {name: block.copy() for name, block in self._blocks.items()}
         # Create new frame
         new_frame = Frame(blocks=new_blocks)
-        # Copy metadata (shallow copy of dict)
+        # Copy box and metadata
+        new_frame.box = self.box
         new_frame.metadata = self.metadata.copy()
         return new_frame
 

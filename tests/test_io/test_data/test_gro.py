@@ -21,7 +21,7 @@ class TestGMXGroReader:
 
         # Check first atom data
         first_atom = atoms[0]  # Get first atom as dict
-        assert str(first_atom["res_number"]) == "1"
+        assert str(first_atom["res_id"]) == "1"
         assert str(first_atom["res_name"]) == "LIG"
         assert str(first_atom["name"]) == "S"
         assert int(first_atom["number"]) == 1
@@ -38,7 +38,7 @@ class TestGROReaderComprehensive:
         # Create test frame
         frame = mp.Frame()
         atoms_data = {
-            "res_number": [1, 1],
+            "res_id": [1, 1],
             "res_name": ["WAT", "WAT"],
             "name": ["OW", "HW1"],
             "number": [1, 2],
@@ -73,7 +73,7 @@ class TestGROReaderComprehensive:
         assert n_atoms == 81
 
         # Check required fields
-        assert "res_number" in atoms
+        assert "res_id" in atoms
         assert "res_name" in atoms
         assert "name" in atoms
         assert "number" in atoms
@@ -81,7 +81,7 @@ class TestGROReaderComprehensive:
 
         # Check first atom data
         first_atom = atoms[0]
-        assert "res_number" in first_atom
+        assert "res_id" in first_atom
         assert "res_name" in first_atom
         assert "name" in first_atom
         assert "number" in first_atom
@@ -184,11 +184,11 @@ class TestGROReaderComprehensive:
         atoms = frame["atoms"]
 
         # Check residue fields
-        assert "res_number" in atoms
+        assert "res_id" in atoms
         assert "res_name" in atoms
 
         # All should be non-empty
-        res_numbers = atoms["res_number"]
+        res_numbers = atoms["res_id"]
         res_names = atoms["res_name"]
 
         assert all(str(rn).strip() for rn in res_numbers)
@@ -204,7 +204,7 @@ class TestGROWriter:
         frame = mp.Frame()
 
         atoms_data = {
-            "res_number": [1, 1, 1],
+            "res_id": [1, 1, 1],
             "res_name": ["WAT", "WAT", "WAT"],
             "name": ["OW", "HW1", "HW2"],
             "number": [1, 2, 3],
@@ -269,7 +269,7 @@ class TestGROWriter:
         frame = mp.Frame()
 
         atoms_data = {
-            "res_number": [1],
+            "res_id": [1],
             "res_name": ["MOL"],
             "name": ["C"],
             "number": [1],

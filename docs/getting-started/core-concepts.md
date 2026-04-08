@@ -102,11 +102,11 @@ A `Frame` contains:
 ```python
 frame = mp.Frame()
 frame["atoms"] = atoms
-frame.metadata["box"] = mp.Box.cubic(10.0)
+frame.box = mp.Box.cubic(10.0)
 
 print("Has atoms block?", "atoms" in frame)
 print("Blocks:", list(frame.to_dict()["blocks"].keys()))
-print("Box:", frame.metadata["box"])
+print("Box:", frame.box)
 ```
 
 ## 3. Topology: derived interactions from bonds

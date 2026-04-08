@@ -55,7 +55,9 @@ markdown_extensions:
       permalink: true
   - pymdownx.superfences
   - pymdownx.details
-  - pymdownx.emoji
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span
@@ -70,6 +72,9 @@ markdown_extensions:
 
 plugins:
   - search
+  - mkdocs-jupyter:
+      execute: true
+      # include_source: true
   - mkdocstrings:
       handlers:
         python:
@@ -109,14 +114,14 @@ nav:
       - user-guide/index.md
       - Tool Layer: user-guide/tools.md
       - I/O: user-guide/io.md
-      - Parsing Chemistry: user-guide/01_parsing_chemistry.md
+      - Parsing Chemistry: user-guide/01_parsing_chemistry.ipynb
       - Building Polymers:
-          - Step by Step: user-guide/02_polymer_stepwise.md
-          - Topology-Driven Assembly: user-guide/03_polymer_topology.md
-          - Crosslinked Networks: user-guide/04_crosslinking.md
-          - Polydisperse Systems: user-guide/05_polydisperse_systems.md
-      - Force Field Typification: user-guide/06_typifier.md
-      - AmberTools Integration: user-guide/07_ambertools_integration.md
+          - Step by Step: user-guide/02_polymer_stepwise.ipynb
+          - Topology-Driven Assembly: user-guide/03_polymer_topology.ipynb
+          - Crosslinked Networks: user-guide/04_crosslinking.ipynb
+          - Polydisperse Systems: user-guide/05_polydisperse_systems.ipynb
+      - Force Field Typification: user-guide/06_typifier.ipynb
+      - AmberTools Integration: user-guide/07_ambertools_integration.ipynb
 
   - API Reference:
       - api/index.md

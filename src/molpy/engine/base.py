@@ -1,58 +1,73 @@
 """
 Engine base classes for molecular simulation engines.
 
-This module provides abstract base classes for running external computational
-chemistry programs like LAMMPS, CP2K, etc. It integrates with the core Script
-class for input file management.
+Provides :class:`Engine`, an abstract base for running external computational
+chemistry programs (LAMMPS, CP2K, OpenMM, …).  Each concrete engine handles
+command construction, file management, and subprocess execution for its
+specific program.
+
+The two supported usage modes are:
+
+1. **Generate-only** — write input files to disk without executing anything::
+
+       paths = engine.generate_inputs(frame, ff, config, "./output")
+
+2. **Execute** — write files *and* run the engine subprocess::
+
+       result = engine.run(script, workdir="./calc")
+
+MPI and job-scheduler launchers are supported via the ``launcher`` parameter::
+
+    engine = LAMMPSEngine("lmp", launcher=["mpirun", "-np", "16"])
+    engine = LAMMPSEngine("lmp", launcher=["srun", "--ntasks", "16"])
 """
 
+import os
 import shutil
 import subprocess
+import tempfile
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 from molpy.core.script import Script
 
 
 class Engine(ABC):
-    """
-    Abstract base class for computational chemistry engines.
+    """Abstract base class for computational chemistry engines.
 
-    Provides a common interface for running external programs like LAMMPS, CP2K, etc.
-    Each engine handles setup, execution, and output processing for its specific program.
-
-    The Engine class integrates with the core Script class for input file management.
-    Scripts can be created from text, loaded from files, or loaded from URLs.
+    Concrete subclasses implement :meth:`_execute` and
+    :meth:`_get_default_extension`.  The base class handles script
+    normalization, working-directory management, and command prefixing
+    (launcher + environment wrapper).
 
     Attributes:
-        executable: Path or command to the executable
-        work_dir: Working directory for calculations
-        scripts: List of Script objects for input files
-        input_script: Primary input script (first script or script with 'input' tag)
-        output_file: Primary output file from the calculation
+        executable: Path or command to the engine binary.
+        work_dir: Default working directory; ``None`` means a temporary
+            directory is created on each :meth:`run` call.
+        launcher: Optional MPI / scheduler prefix inserted before the
+            executable, e.g. ``["mpirun", "-np", "16"]`` or
+            ``["srun", "--ntasks", "16"]``.
+        env_vars: Extra environment variables forwarded to the subprocess.
+        env: Conda / virtual-environment name to activate before execution.
+        env_manager: Environment manager; currently ``"conda"`` is supported.
+        scripts: Scripts registered by the last :meth:`run` call (or ``[]``
+            before the first call).
+        input_script: Primary input script resolved by the last :meth:`run`
+            call (or ``None`` before the first call).
 
     Example:
         >>> from molpy.core.script import Script
         >>> from molpy.engine import LAMMPSEngine
         >>>
-        >>> # Create input script
         >>> script = Script.from_text(
         ...     name="input",
         ...     text="units real\\natom_style full\\n",
-        ...     language="other"
+        ...     language="other",
         ... )
-        >>>
-        >>> # Create engine and prepare
-        >>> engine = LAMMPSEngine(executable="lmp")
-        >>> engine.run(script, workdir="./calc", check=False)
-        >>>
-        >>> # Run calculation
-        >>> result = engine.run()
+        >>> engine = LAMMPSEngine(executable="lmp", check_executable=False)
+        >>> result = engine.run(script, workdir="./calc", check=False)
         >>> print(result.returncode)
         0
     """
@@ -62,111 +77,127 @@ class Engine(ABC):
         executable: str,
         *,
         workdir: str | Path | None = None,
+        launcher: list[str] | None = None,
         env_vars: dict[str, str] | None = None,
         env: str | None = None,
         env_manager: str | None = None,
         check_executable: bool = True,
-    ):
-        """
-        Initialize the engine.
+    ) -> None:
+        """Initialise the engine.
 
         Args:
-            executable: Path or command to the executable.
-            workdir: Default working directory for calculations.
-            env_vars: Environment variables to set during execution.
-            env: Conda/virtual environment name.
-            env_manager: Environment manager type (e.g. "conda").
-            check_executable: Whether to check if executable exists in PATH.
+            executable: Path or command to the engine binary (e.g. ``"lmp"``).
+            workdir: Default working directory.  ``None`` creates a temporary
+                directory on each :meth:`run` call.
+            launcher: MPI or scheduler prefix prepended before the executable,
+                e.g. ``["mpirun", "-np", "16"]`` or ``["srun", "--ntasks", "8"]``.
+            env_vars: Extra environment variables set for the subprocess.
+            env: Conda / virtual-environment name to activate.  Must be
+                provided together with *env_manager*.
+            env_manager: Environment manager type.  ``"conda"`` is currently
+                supported; activation uses ``conda run -n <env>``.
+            check_executable: Verify the executable is on PATH at construction
+                time.  Set to ``False`` in tests or when the binary is only
+                available on a remote node.
 
         Raises:
-            FileNotFoundError: If check_executable is True and executable not found.
-            ValueError: If env and env_manager are not both set or both None.
+            FileNotFoundError: If *check_executable* is ``True`` and the
+                executable is not found.
+            ValueError: If exactly one of *env* / *env_manager* is provided.
         """
+        if (env is None) != (env_manager is None):
+            raise ValueError(
+                "Both 'env' and 'env_manager' must be set together, or both omitted "
+                "(environment configuration is incomplete).  "
+                "Got env=%r, env_manager=%r." % (env, env_manager)
+            )
+
         self.executable = executable
         self.work_dir = Path(workdir) if workdir is not None else None
-        self.env_vars = env_vars or {}
+        self.launcher = launcher
+        self.env_vars: dict[str, str] = env_vars or {}
         self.env = env
         self.env_manager = env_manager
 
-        if (env is None) != (env_manager is None):
-            raise ValueError(
-                "Both 'env' and 'env_manager' must be set together, or both None. "
-                "Your environment configuration is incomplete."
-            )
+        # Initialised here so attribute access is always valid.
+        self.scripts: list[Script] = []
+        self.input_script: Script | None = None
 
         if check_executable:
             self.check_executable()
 
+    # ------------------------------------------------------------------
+    # Abstract interface
+    # ------------------------------------------------------------------
+
     @property
     @abstractmethod
     def name(self) -> str:
-        """Return the name of the engine."""
-        pass
+        """Human-readable engine name (e.g. ``"LAMMPS"``).
 
-    def check_executable(self) -> None:
+        Returns:
+            A short, stable identifier used for logging and ``__repr__``.
         """
-        Check if the executable is available in the system PATH.
+
+    @abstractmethod
+    def _get_default_extension(self) -> str:
+        """File extension used when saving an unnamed script to disk.
+
+        Returns:
+            Extension string including the leading dot (e.g. ``".lmp"``).
+        """
+
+    @abstractmethod
+    def _execute(
+        self,
+        run_dir: Path,
+        capture_output: bool = False,
+        check: bool = True,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess:
+        """Run the engine subprocess.
+
+        Called by :meth:`run` after scripts have been written to *run_dir*.
+        Subclasses build the concrete command and call :func:`subprocess.run`.
+        Use :meth:`_build_full_command` to obtain the correctly prefixed
+        command list (launcher + env wrapper + executable + engine flags).
+
+        Args:
+            run_dir: Directory where input files have been written; use as
+                ``cwd`` for the subprocess.
+            capture_output: Capture stdout/stderr into
+                ``CompletedProcess.stdout`` / ``.stderr``.
+            check: Raise :exc:`subprocess.CalledProcessError` on non-zero exit.
+            timeout: Timeout in seconds; raises
+                :exc:`subprocess.TimeoutExpired` when exceeded.
+            **kwargs: Additional engine-specific keyword arguments.
+
+        Returns:
+            :class:`subprocess.CompletedProcess` with execution results.
 
         Raises:
-            FileNotFoundError: If the executable is not found
+            RuntimeError: If no input script is found in *run_dir*.
+            subprocess.CalledProcessError: If *check* is ``True`` and the
+                process exits with a non-zero code.
+            subprocess.TimeoutExpired: If *timeout* is exceeded.
+        """
+
+    # ------------------------------------------------------------------
+    # Public methods
+    # ------------------------------------------------------------------
+
+    def check_executable(self) -> None:
+        """Verify the executable is available on PATH.
+
+        Raises:
+            FileNotFoundError: If the executable cannot be found.
         """
         if not shutil.which(self.executable):
             raise FileNotFoundError(
                 f"Executable '{self.executable}' not found in PATH. "
-                f"Please install the engine or set the correct executable path."
+                "Install the engine or provide the full path."
             )
-
-    def __repr__(self) -> str:
-        parts = [f"executable='{self.executable}'"]
-        if self.work_dir is not None:
-            parts.append(f"workdir='{self.work_dir}'")
-        if self.env is not None:
-            parts.append(f"env='{self.env}'")
-        if self.env_manager is not None:
-            parts.append(f"env_manager='{self.env_manager}'")
-        return f"<{self.__class__.__name__}({', '.join(parts)})>"
-
-    def _merged_env(self, extra: dict[str, str] | None = None) -> dict[str, str]:
-        """Merge base env_vars with optional extra vars.
-
-        Args:
-            extra: Additional environment variables to merge.
-
-        Returns:
-            Merged dict (base vars overridden by extra).
-        """
-        import os
-
-        merged = dict(os.environ)
-        merged.update(self.env_vars)
-        if extra:
-            merged.update(extra)
-        return merged
-
-    def _find_input_script(self) -> Script | None:
-        """
-        Find the primary input script.
-
-        Returns:
-            Script object with 'input' tag, or first script if no tag found
-        """
-        # Look for script with 'input' tag
-        for script in self.scripts:
-            if "input" in script.tags:
-                return script
-
-        # Return first script if no tag found
-        return self.scripts[0] if self.scripts else None
-
-    @abstractmethod
-    def _get_default_extension(self) -> str:
-        """
-        Get the default file extension for input files.
-
-        Returns:
-            Default file extension (e.g., '.inp', '.lmp')
-        """
-        pass
 
     def run(
         self,
@@ -175,54 +206,61 @@ class Engine(ABC):
         workdir: str | Path | None = None,
         capture_output: bool = False,
         check: bool = True,
+        timeout: float | None = None,
         **kwargs: Any,
     ) -> subprocess.CompletedProcess:
-        """Execute the engine calculation.
+        """Write scripts to disk and execute the engine.
 
-        Accepts scripts as Script objects, string content, Path to a file,
-        or a list of Scripts. If workdir is given, it overrides the default.
+        Accepts scripts as :class:`~molpy.core.script.Script` objects, raw
+        strings, :class:`~pathlib.Path` objects, or a list thereof.  If
+        *workdir* is given it is used for this call only — ``self.work_dir``
+        is **not** modified.
 
         Args:
-            scripts: Input script(s) — Script, str, Path, or list[Script].
-            workdir: Override working directory for this run.
+            scripts: Input script(s) to run.  If ``None``, previously
+                registered scripts (from the last call) are re-used.
+            workdir: Working directory for this run.  Overrides
+                ``self.work_dir`` for the duration of the call only.
             capture_output: Capture stdout/stderr.
             check: Raise on non-zero exit code.
-            **kwargs: Additional arguments for subclass run.
+            timeout: Timeout in seconds.
+            **kwargs: Forwarded to :meth:`_execute`.
 
         Returns:
-            CompletedProcess with execution results.
+            :class:`subprocess.CompletedProcess` with execution results.
 
         Raises:
-            ValueError: If no scripts provided and none previously prepared.
+            ValueError: If no scripts are provided and none were registered
+                previously.
         """
-        # Resolve workdir
+        # Resolve run directory (does NOT write back to self.work_dir)
         run_dir = Path(workdir) if workdir is not None else self.work_dir
         if run_dir is None:
-            import tempfile
-
             run_dir = Path(tempfile.mkdtemp())
         run_dir.mkdir(parents=True, exist_ok=True)
-        self.work_dir = run_dir
 
-        # Normalize scripts
+        # Normalise scripts argument
         if scripts is not None:
             if isinstance(scripts, str):
-                scripts = [Script.from_text("input", scripts)]
+                normalised: list[Script] = [Script.from_text("input", scripts)]
             elif isinstance(scripts, Path):
-                scripts = [Script.from_path(scripts)]
+                normalised = [Script.from_path(scripts)]
             elif isinstance(scripts, Script):
-                scripts = [scripts]
+                normalised = [scripts]
             else:
-                scripts = list(scripts)
+                normalised = list(scripts)
 
-            if not scripts:
-                raise ValueError("At least one script is required")
+            if not normalised:
+                raise ValueError("At least one script is required.")
 
-            self.scripts = scripts
-        elif not hasattr(self, "scripts") or not self.scripts:
-            raise ValueError("At least one script is required")
+            self.scripts = normalised
+        elif not self.scripts:
+            raise ValueError(
+                "At least one script is required.  Pass scripts to run() or "
+                "call generate_inputs() first."
+            )
 
-        # Save scripts to workdir
+        # Write scripts to run_dir
         for script in self.scripts:
             if script.path is not None:
                 script_path = run_dir / script.path.name
@@ -233,14 +271,89 @@ class Engine(ABC):
 
         self.input_script = self._find_input_script()
 
-        return self._execute(capture_output=capture_output, check=check, **kwargs)
+        return self._execute(
+            run_dir,
+            capture_output=capture_output,
+            check=check,
+            timeout=timeout,
+            **kwargs,
+        )
 
-    @abstractmethod
-    def _execute(
-        self,
-        capture_output: bool = False,
-        check: bool = True,
-        **kwargs: Any,
-    ) -> subprocess.CompletedProcess:
-        """Run the engine subprocess. Subclasses implement this."""
-        pass
+    # ------------------------------------------------------------------
+    # Protected helpers
+    # ------------------------------------------------------------------
+
+    def _build_full_command(self, engine_args: list[str]) -> list[str]:
+        """Build the complete command list for :func:`subprocess.run`.
+
+        The order is::
+
+            [env_wrapper...] [launcher...] executable [engine_args...]
+
+        where *env_wrapper* is only present when :attr:`env_manager` is set.
+        Currently ``"conda"`` activates the environment via
+        ``conda run --no-capture-output -n <env>``.
+
+        Args:
+            engine_args: Engine-specific flags that follow the executable,
+                e.g. ``["-in", "input.lmp", "-log", "log.lammps"]``.
+
+        Returns:
+            Full command list suitable for :func:`subprocess.run`.
+        """
+        cmd: list[str] = []
+        if self.env_manager == "conda":
+            cmd = ["conda", "run", "--no-capture-output", "-n", self.env]
+        cmd += self.launcher or []
+        cmd += [self.executable] + engine_args
+        return cmd
+
+    def _find_input_script(self) -> Script | None:
+        """Return the primary input script from :attr:`scripts`.
+
+        Prefers a script tagged ``"input"``; falls back to the first script.
+
+        Returns:
+            The primary :class:`~molpy.core.script.Script`, or ``None`` if
+            :attr:`scripts` is empty.
+        """
+        for script in self.scripts:
+            if "input" in script.tags:
+                return script
+        return self.scripts[0] if self.scripts else None
+
+    def _merged_env(self, extra: dict[str, str] | None = None) -> dict[str, str] | None:
+        """Build the environment dict for :func:`subprocess.run`.
+
+        Merge order (later entries win): ``os.environ`` → :attr:`env_vars`
+        → *extra*.
+
+        Returns ``None`` when both :attr:`env_vars` and *extra* are empty so
+        that the subprocess inherits the parent environment without an
+        unnecessary full copy.
+
+        Args:
+            extra: Additional variables to merge on top of :attr:`env_vars`.
+
+        Returns:
+            Merged environment dict, or ``None`` if nothing to override.
+        """
+        if not self.env_vars and not extra:
+            return None
+        merged = dict(os.environ)
+        merged.update(self.env_vars)
+        if extra:
+            merged.update(extra)
+        return merged
+
+    def __repr__(self) -> str:
+        parts = [f"executable='{self.executable}'"]
+        if self.work_dir is not None:
+            parts.append(f"workdir='{self.work_dir}'")
+        if self.launcher:
+            parts.append(f"launcher={self.launcher!r}")
+        if self.env is not None:
+            parts.append(f"env='{self.env}'")
+        if self.env_manager is not None:
+            parts.append(f"env_manager='{self.env_manager}'")
+        return f"<{self.__class__.__name__}({', '.join(parts)})>"

@@ -5,14 +5,13 @@ favour of the new declarative API documented in
 ``notebooks/reacter_polymerbuilder_integration.ipynb``.
 """
 
-from .polymer.ambertools import AmberPolymerBuilder, AmberPolymerBuilderConfig
+from .polymer.ambertools import AmberPolymerBuilder
 from .crystal import BlockRegion, CrystalBuilder, Lattice, Region, Site
 from .polymer import *
 
 __all__ = [
     # AmberTools builders
     "AmberPolymerBuilder",
-    "AmberPolymerBuilderConfig",
     # Crystal builders
     "BlockRegion",
     "CrystalBuilder",

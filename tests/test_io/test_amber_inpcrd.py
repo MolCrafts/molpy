@@ -279,3 +279,30 @@ def test_inpcrd_large_system(tmp_inpcrd_dir):
     # Check first and last atoms
     np.testing.assert_array_almost_equal(frame["atoms"]["x"][0], 0.0)
     np.testing.assert_array_almost_equal(frame["atoms"]["z"][9], 29.0)
+
+
+def test_inpcrd_fixed_width_no_whitespace(tmp_inpcrd_dir):
+    """Negative signs can abut the previous value in Fortran 6F12.7 format.
+
+    For example ``50.5413286-100.7101036`` must be split as two values
+    (50.5413286, -100.7101036) instead of raising a parse error.
+    """
+    tmp_inpcrd_dir.mkdir()
+    inpcrd_file = tmp_inpcrd_dir / "test_abutting.inpcrd"
+
+    # 2 atoms, 6 values, each 12 chars wide.
+    # Construct a line where negative signs touch the prior value.
+    content = (
+        "Abutting negatives\n"
+        "  2\n"
+        "  50.5413286-100.7101036  12.3456789 -44.5678901  88.8888888  -0.1234567\n"
+    )
+    inpcrd_file.write_text(content)
+
+    reader = AmberInpcrdReader(inpcrd_file)
+    frame = reader.read()
+
+    assert frame["atoms"].nrows == 2
+    np.testing.assert_allclose(frame["atoms"]["x"], [50.5413286, -44.5678901])
+    np.testing.assert_allclose(frame["atoms"]["y"], [-100.7101036, 88.8888888])
+    np.testing.assert_allclose(frame["atoms"]["z"], [12.3456789, -0.1234567])

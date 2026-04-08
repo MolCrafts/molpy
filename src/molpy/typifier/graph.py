@@ -317,12 +317,12 @@ class SMARTSGraph(Graph):
                 # Any bond
                 return True
             elif pat_bt == "implicit":
-                # Implicit bond: single or aromatic
-                return (
-                    (host_order == 1 and not host_aromatic)
-                    or host_aromatic
-                    or host_order == ":"
-                )
+                # In force-field SMARTS definitions, implicit bonds describe
+                # connectivity (any order).  Pure SMARTS would restrict this
+                # to single-or-aromatic, but FF patterns like
+                # [C;X3]([O;X1])([O;X2]) expect the implicit bond to match
+                # the C=O double bond as well.
+                return True
             elif pat_bt == "-":
                 # Explicit single bond (not aromatic)
                 return host_order == 1 and not host_aromatic

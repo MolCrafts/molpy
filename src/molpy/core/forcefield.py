@@ -363,7 +363,8 @@ class Style:
         Returns:
             This style instance (for chaining).
         """
-        self.params.args.extend(other.params.args)
+        if not self.params.args:
+            self.params.args.extend(other.params.args)
         self.params.kwargs.update(other.params.kwargs)
         for t in other.types.bucket(Type):
             self.types.add(t)

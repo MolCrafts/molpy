@@ -22,7 +22,7 @@ class TestPDBIO:
         frame = reader.read()
         atoms = frame["atoms"]
         assert atoms["name"].shape[0] == 3730
-        assert frame.metadata["box"] is not None
+        assert frame.box is not None
         # Bonds block exists and has correct shape
         bonds = frame["bonds"]
         assert bonds["atomi"].shape[0] == 7
@@ -36,7 +36,7 @@ class TestPDBIO:
         atoms = frame["atoms"]
         n_atoms = atoms["name"].shape[0]
         assert n_atoms > 1000
-        assert frame.metadata["box"] is not None
+        assert frame.box is not None
         # Check separate x, y, z fields
         assert "x" in atoms and "y" in atoms and "z" in atoms
         assert atoms["x"].shape[0] == n_atoms
@@ -59,4 +59,4 @@ class TestPDBIO:
         assert np.allclose(atoms1["x"], atoms2["x"])
         assert np.allclose(atoms1["y"], atoms2["y"])
         assert np.allclose(atoms1["z"], atoms2["z"])
-        assert frame2.metadata["box"] is not None
+        assert frame2.box is not None

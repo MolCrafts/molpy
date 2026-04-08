@@ -29,16 +29,16 @@ def _build_ethanol():
     """
     asm = Atomistic()
 
-    c0 = Atom(symbol="C")  # methyl carbon
-    c1 = Atom(symbol="C")  # methylene carbon
-    o2 = Atom(symbol="O")  # hydroxyl oxygen
+    c0 = Atom(element="C")  # methyl carbon
+    c1 = Atom(element="C")  # methylene carbon
+    o2 = Atom(element="O")  # hydroxyl oxygen
 
-    h3 = Atom(symbol="H")  # on C0
-    h4 = Atom(symbol="H")  # on C0
-    h5 = Atom(symbol="H")  # on C0
-    h6 = Atom(symbol="H")  # on C1
-    h7 = Atom(symbol="H")  # on C1
-    h8 = Atom(symbol="H")  # on O2 (hydroxyl)
+    h3 = Atom(element="H")  # on C0
+    h4 = Atom(element="H")  # on C0
+    h5 = Atom(element="H")  # on C0
+    h6 = Atom(element="H")  # on C1
+    h7 = Atom(element="H")  # on C1
+    h8 = Atom(element="H")  # on O2 (hydroxyl)
 
     asm.add_entity(c0, c1, o2, h3, h4, h5, h6, h7, h8)
 
@@ -79,8 +79,8 @@ def _build_benzene():
     carbons = []
     hydrogens = []
     for i in range(6):
-        c = Atom(symbol="C", is_aromatic=True)
-        h = Atom(symbol="H")
+        c = Atom(element="C", is_aromatic=True)
+        h = Atom(element="H")
         carbons.append(c)
         hydrogens.append(h)
         asm.add_entity(c, h)
@@ -151,7 +151,7 @@ class TestGaffAtomTypifier:
         asm, _ = _build_benzene()
         typed = gaff_atom_typifier.typify(asm)
 
-        carbons = [a for a in typed.atoms if a.get("symbol") == "C"]
+        carbons = [a for a in typed.atoms if a.get("element") == "C"]
         assert len(carbons) == 6
         for a in carbons:
             assert a.get("type") == "ca", f"Expected ca, got {a.get('type')}"
@@ -161,7 +161,7 @@ class TestGaffAtomTypifier:
         asm, _ = _build_benzene()
         typed = gaff_atom_typifier.typify(asm)
 
-        hydrogens = [a for a in typed.atoms if a.get("symbol") == "H"]
+        hydrogens = [a for a in typed.atoms if a.get("element") == "H"]
         assert len(hydrogens) == 6
         for a in hydrogens:
             assert a.get("type") == "ha", f"Expected ha, got {a.get('type')}"
@@ -203,12 +203,12 @@ class TestGaffAtomisticTypifier:
         typifier = GaffAtomisticTypifier(gaff_ff, strict_typing=False)
 
         asm, _ = _build_ethanol()
-        asm.get_topo(gen_angle=True, gen_dihe=True)
+        asm = asm.get_topo(gen_angle=True, gen_dihe=True)
         typed = typifier.typify(asm)
 
         # All atoms should have types
         for atom in typed.atoms:
-            assert atom.get("type") is not None, f"Atom {atom.get('symbol')} not typed"
+            assert atom.get("type") is not None, f"Atom {atom.get('element')} not typed"
 
 
 class TestGaffXmlLoading:

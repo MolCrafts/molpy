@@ -1,13 +1,7 @@
-"""Leaving group selector functions for polymer building.
-
-Most selectors have been consolidated into ``molpy.reacter.selectors``.
-This module retains builder-specific utilities and re-exports for
-backward compatibility.
-"""
+"""Builder-specific port marker utilities for polymer assembly."""
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
@@ -15,11 +9,6 @@ if TYPE_CHECKING:
 
 # Type alias — also available from molpy.reacter.selectors
 LeavingGroupSelector = Callable[["Atomistic", "Atom"], list["Atom"]]
-
-
-# ============================================================================
-# Port marker processing utilities  (builder-specific, stays here)
-# ============================================================================
 
 
 def process_port_markers(monomer: "Atomistic") -> "Atomistic":
@@ -36,20 +25,13 @@ def process_port_markers(monomer: "Atomistic") -> "Atomistic":
 
     Returns:
         Atomistic structure with port attributes on real atoms, wildcards removed
-
-    Example:
-        >>> from molpy.parser import parse_molecule
-        >>> monomer = parse_molecule("[>]CCOCC[<]")
-        >>> # parse_molecule handles IR conversion internally
-        >>> monomer = process_port_markers(monomer)
-        >>> # After processing: C - C - O - C - C (port on first and last C)
     """
     from molpy.core.atomistic import Atomistic as _Atomistic
 
     # Find wildcard atoms with port attribute
     port_markers: list[tuple["Atom", str]] = []
     for atom in monomer.atoms:
-        if atom.get("symbol") == "*" and atom.get("port"):
+        if atom.get("element") == "*" and atom.get("port"):
             port_markers.append((atom, atom.get("port")))
 
     if not port_markers:
@@ -75,7 +57,7 @@ def process_port_markers(monomer: "Atomistic") -> "Atomistic":
 
     atom_mapping = {}
     for atom in monomer.atoms:
-        if atom.get("symbol") != "*" or not atom.get("port"):
+        if atom.get("element") != "*" or not atom.get("port"):
             atom_data = dict(atom.items())
             new_atom = new_struct.def_atom(**atom_data)
             atom_mapping[atom] = new_atom
@@ -99,48 +81,3 @@ def process_port_markers(monomer: "Atomistic") -> "Atomistic":
             )
 
     return new_struct
-
-
-# ============================================================================
-# Deprecated re-exports — import from molpy.reacter.selectors instead
-# ============================================================================
-
-
-def _deprecated_reexport(name: str):
-    warnings.warn(
-        f"Importing {name} from molpy.builder.polymer.selectors is deprecated. "
-        f"Use molpy.reacter.selectors instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-
-def select_bonded_hydrogens(
-    monomer: "Atomistic", connection_atom: "Atom"
-) -> list["Atom"]:
-    """Deprecated: use ``select_hydrogens(n=None)`` from ``molpy.reacter.selectors``."""
-    _deprecated_reexport("select_bonded_hydrogens")
-    from molpy.reacter.selectors import select_hydrogens
-
-    return select_hydrogens(n=None)(monomer, connection_atom)
-
-
-def select_by_smarts(
-    smarts_pattern: str,
-    max_distance: int | None = None,
-) -> LeavingGroupSelector:
-    """Create a selector that matches atoms by SMARTS pattern (stub)."""
-    _deprecated_reexport("select_by_smarts")
-
-    def selector(monomer: "Atomistic", connection_atom: "Atom") -> list["Atom"]:
-        return []
-
-    return selector
-
-
-def get_port_atoms(monomer: "Atomistic") -> dict[str, "Atom"]:
-    """Deprecated: use ``get_ports`` from ``molpy.reacter.selectors``."""
-    _deprecated_reexport("get_port_atoms")
-    from molpy.reacter.selectors import get_ports
-
-    return get_ports(monomer)

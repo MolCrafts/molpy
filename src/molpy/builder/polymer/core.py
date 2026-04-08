@@ -108,41 +108,8 @@ class PositionMissingError(GeometryError):
     pass
 
 
-# ============================================================================
-# Type Definitions
-# ============================================================================
-
-
-@dataclass
-class ConnectionMetadata:
-    """Metadata about a single monomer connection step."""
-
-    port_L: str
-    port_R: str
-    reaction_name: str
-    formed_bonds: list[Any] = field(default_factory=list)
-    new_angles: list[Any] = field(default_factory=list)
-    new_dihedrals: list[Any] = field(default_factory=list)
-    modified_atoms: set[Atom] = field(default_factory=set)
-    requires_retype: bool = False
-    entity_maps: list[dict[Atom, Atom]] = field(default_factory=list)
-
-
-@dataclass
-class ConnectionResult:
-    """Result of connecting two monomers."""
-
-    product: Atomistic
-    metadata: ConnectionMetadata
-
-
-@dataclass
-class PolymerBuildResult:
-    """Result of building a polymer."""
-
-    polymer: Atomistic
-    connection_history: list[ConnectionMetadata] = field(default_factory=list)
-    total_steps: int = 0
+from molpy.reacter.base import ReactionResult
+from .polymer_builder import PolymerBuildResult
 
 
 # ============================================================================
@@ -210,6 +177,10 @@ class PolymerBuilder:
 
         polymer, history = self._build_from_graph(ir.base_graph)
 
+        from .port_utils import cleanup_build_markers
+
+        cleanup_build_markers(polymer)
+
         return PolymerBuildResult(
             polymer=polymer,
             connection_history=history,
@@ -236,7 +207,7 @@ class PolymerBuilder:
 
     def _build_from_graph(
         self, graph: CGSmilesGraphIR
-    ) -> tuple[Atomistic, list[ConnectionMetadata]]:
+    ) -> tuple[Atomistic, list[ReactionResult]]:
         """Build polymer from CGSmiles graph using iterative DFS traversal."""
         if not graph.nodes:
             raise ValueError("Cannot build from empty graph")
@@ -248,7 +219,7 @@ class PolymerBuilder:
         for node in graph.nodes:
             monomers[node.id] = self._create_monomer(node)
 
-        connection_history: list[ConnectionMetadata] = []
+        connection_history: list[ReactionResult] = []
         visited_edges: set[tuple[int, int]] = set()
 
         # Iterative DFS using explicit stack
@@ -351,7 +322,7 @@ class PolymerBuilder:
         left_node_id: int,
         right_node_id: int,
         bond_order: int,
-        connection_history: list[ConnectionMetadata],
+        connection_history: list[ReactionResult],
     ) -> Atomistic:
         """Connect two monomers using node IDs for precise port location."""
         from .connectors import ConnectorContext
@@ -380,26 +351,15 @@ class PolymerBuilder:
             self.connector.select_ports(left, right, left_ports, right_ports, ctx)
         )
 
-        left_port = left_ports[left_port_name][left_port_idx]
-        right_port = right_ports[right_port_name][right_port_idx]
+        left_port_atom = left_ports[left_port_name][left_port_idx]
+        right_port_atom = right_ports[right_port_name][right_port_idx]
 
         if self.placer is not None:
-            self.placer.place_monomer(left, right, left_port, right_port)
+            self.placer.place_monomer(left, right, left_port_atom, right_port_atom)
 
-        # Save port targets for transfer after reaction
-        left_port_targets: dict[str, list[Atom]] = {
-            name: [port.target for port in port_list]
-            for name, port_list in left_ports.items()
-        }
-        right_port_targets: dict[str, list[Atom]] = {
-            name: [port.target for port in port_list]
-            for name, port_list in right_ports.items()
-        }
-
-        from molpy.reacter.selectors import find_port
-
-        left_port_atom = find_port(left, left_port_name, node_id=left_node_id)
-        right_port_atom = find_port(right, right_port_name, node_id=right_node_id)
+        # Save port atoms for transfer after reaction
+        left_port_targets: dict[str, list[Atom]] = dict(left_ports)
+        right_port_targets: dict[str, list[Atom]] = dict(right_ports)
 
         connection_result = self.connector.connect(
             left,
@@ -412,10 +372,9 @@ class PolymerBuilder:
         )
 
         product = connection_result.product
-        metadata = connection_result.metadata
-        connection_history.append(metadata)
+        connection_history.append(connection_result)
 
-        entity_map = self._build_entity_map(metadata)
+        entity_map = self._build_entity_map(connection_result)
         self._transfer_unused_ports(
             product,
             entity_map,
@@ -428,16 +387,16 @@ class PolymerBuilder:
             left_node_id,
             right_node_id,
         )
-        self._preserve_node_ids(product, entity_map)
+        self._preserve_node_ids(product, entity_map, (left_node_id, right_node_id))
         self._cleanup_stale_ports(product)
 
         return product
 
-    def _build_entity_map(self, metadata: ConnectionMetadata) -> dict[Atom, Atom]:
-        """Build combined entity map from reaction metadata."""
+    def _build_entity_map(self, result: ReactionResult) -> dict[Atom, Atom]:
+        """Build combined entity map from reaction result."""
         entity_map: dict[Atom, Atom] = {}
-        if metadata.entity_maps:
-            for emap in metadata.entity_maps:
+        if result.entity_maps:
+            for emap in result.entity_maps:
                 entity_map.update(emap)
         return entity_map
 
@@ -479,8 +438,13 @@ class PolymerBuilder:
         self,
         product: Atomistic,
         entity_map: dict[Atom, Atom],
+        connected_node_ids: tuple[int, int],
     ) -> None:
-        """Preserve node IDs and ports from original atoms through entity map."""
+        """Preserve node IDs and ports from original atoms through entity map.
+
+        Ports for the two connected nodes are NOT restored here — they were
+        already handled (with consumed-port filtering) by _transfer_unused_ports.
+        """
         reverse_map: dict[Atom, Atom] = {v: k for k, v in entity_map.items()}
 
         for atom in product.atoms:
@@ -494,6 +458,8 @@ class PolymerBuilder:
 
             original_port = original_atom.get("port")
             if original_port and atom.get("port") is None:
+                if original_node_id in connected_node_ids:
+                    continue
                 atom["port"] = original_port
 
     def _cleanup_stale_ports(self, product: Atomistic) -> None:
@@ -501,7 +467,7 @@ class PolymerBuilder:
         from molpy.reacter.utils import find_neighbors as _find_neighbors
 
         for atom in product.atoms:
-            if atom.get("symbol") == "O" and atom.get("port"):
+            if atom.get("element") == "O" and atom.get("port"):
                 h_neighbors = _find_neighbors(product, atom, element="H")
                 if not h_neighbors:
                     del atom["port"]

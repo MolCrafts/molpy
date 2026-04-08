@@ -50,7 +50,7 @@ def _count_matches(smarts: str, mol_graph) -> int:
 def _build_linear_chain(n: int, symbol: str = "C") -> Atomistic:
     """Build a linear chain of n atoms."""
     asm = Atomistic()
-    atoms = [Atom(symbol=symbol) for _ in range(n)]
+    atoms = [Atom(element=symbol) for _ in range(n)]
     for a in atoms:
         asm.add_entity(a)
     for i in range(n - 1):
@@ -61,7 +61,7 @@ def _build_linear_chain(n: int, symbol: str = "C") -> Atomistic:
 def _build_ring(n: int, symbol: str = "C") -> Atomistic:
     """Build a ring of n atoms."""
     asm = Atomistic()
-    atoms = [Atom(symbol=symbol) for _ in range(n)]
+    atoms = [Atom(element=symbol) for _ in range(n)]
     for a in atoms:
         asm.add_entity(a)
     for i in range(n):
@@ -72,9 +72,9 @@ def _build_ring(n: int, symbol: str = "C") -> Atomistic:
 def _build_ethane() -> Atomistic:
     """Build ethane (C2H6)."""
     asm = Atomistic()
-    c1 = Atom(symbol="C")
-    c2 = Atom(symbol="C")
-    hs = [Atom(symbol="H") for _ in range(6)]
+    c1 = Atom(element="C")
+    c2 = Atom(element="C")
+    hs = [Atom(element="H") for _ in range(6)]
     asm.add_entity(c1, c2, *hs)
     asm.add_link(Bond(c1, c2))
     # 3 H on C1
@@ -89,16 +89,16 @@ def _build_ethane() -> Atomistic:
 def _build_propene() -> Atomistic:
     """Build propene (CH2=CH-CH3) with explicit hydrogens."""
     asm = Atomistic()
-    c1 = Atom(symbol="C")  # =CH2
-    c2 = Atom(symbol="C")  # =CH-
-    c3 = Atom(symbol="C")  # -CH3
+    c1 = Atom(element="C")  # =CH2
+    c2 = Atom(element="C")  # =CH-
+    c3 = Atom(element="C")  # -CH3
 
-    h1 = Atom(symbol="H")  # on C1
-    h2 = Atom(symbol="H")  # on C1
-    h3 = Atom(symbol="H")  # on C2
-    h4 = Atom(symbol="H")  # on C3
-    h5 = Atom(symbol="H")  # on C3
-    h6 = Atom(symbol="H")  # on C3
+    h1 = Atom(element="H")  # on C1
+    h2 = Atom(element="H")  # on C1
+    h3 = Atom(element="H")  # on C2
+    h4 = Atom(element="H")  # on C3
+    h5 = Atom(element="H")  # on C3
+    h6 = Atom(element="H")  # on C3
 
     asm.add_entity(c1, c2, c3, h1, h2, h3, h4, h5, h6)
 
@@ -126,8 +126,8 @@ def _build_propene() -> Atomistic:
 def _build_benzene() -> Atomistic:
     """Build benzene with aromatic flags."""
     asm = Atomistic()
-    carbons = [Atom(symbol="C", is_aromatic=True) for _ in range(6)]
-    hydrogens = [Atom(symbol="H") for _ in range(6)]
+    carbons = [Atom(element="C", is_aromatic=True) for _ in range(6)]
+    hydrogens = [Atom(element="H") for _ in range(6)]
 
     for c, h in zip(carbons, hydrogens):
         asm.add_entity(c, h)
@@ -148,9 +148,9 @@ def _build_naphthalene() -> Atomistic:
     """Build naphthalene (fused bicyclic ring)."""
     asm = Atomistic()
     # 10 carbons: c0-c9
-    carbons = [Atom(symbol="C", is_aromatic=True) for _ in range(10)]
+    carbons = [Atom(element="C", is_aromatic=True) for _ in range(10)]
     # 8 hydrogens
-    hydrogens = [Atom(symbol="H") for _ in range(8)]
+    hydrogens = [Atom(element="H") for _ in range(8)]
 
     for c in carbons:
         asm.add_entity(c)
@@ -189,8 +189,8 @@ def _build_naphthalene() -> Atomistic:
 def _build_cyclohexane() -> Atomistic:
     """Build cyclohexane (C6H12)."""
     asm = Atomistic()
-    carbons = [Atom(symbol="C") for _ in range(6)]
-    hydrogens = [Atom(symbol="H") for _ in range(12)]
+    carbons = [Atom(element="C") for _ in range(6)]
+    hydrogens = [Atom(element="H") for _ in range(12)]
 
     for c in carbons:
         asm.add_entity(c)
@@ -212,9 +212,9 @@ def _build_cyclohexane() -> Atomistic:
 def _build_water() -> Atomistic:
     """Build water (H2O)."""
     asm = Atomistic()
-    o = Atom(symbol="O")
-    h1 = Atom(symbol="H")
-    h2 = Atom(symbol="H")
+    o = Atom(element="O")
+    h1 = Atom(element="H")
+    h2 = Atom(element="H")
     asm.add_entity(o, h1, h2)
     asm.add_link(Bond(o, h1))
     asm.add_link(Bond(o, h2))
@@ -224,12 +224,12 @@ def _build_water() -> Atomistic:
 def _build_methanol() -> Atomistic:
     """Build methanol (CH3OH)."""
     asm = Atomistic()
-    c = Atom(symbol="C")
-    o = Atom(symbol="O")
-    h1 = Atom(symbol="H")
-    h2 = Atom(symbol="H")
-    h3 = Atom(symbol="H")
-    h4 = Atom(symbol="H")  # hydroxyl H
+    c = Atom(element="C")
+    o = Atom(element="O")
+    h1 = Atom(element="H")
+    h2 = Atom(element="H")
+    h3 = Atom(element="H")
+    h4 = Atom(element="H")  # hydroxyl H
     asm.add_entity(c, o, h1, h2, h3, h4)
     asm.add_link(Bond(c, o))
     asm.add_link(Bond(c, h1))
@@ -646,8 +646,8 @@ class TestImmutability:
         )
 
         asm = Atomistic()
-        c = Atom(symbol="C")
-        h = Atom(symbol="H")
+        c = Atom(element="C")
+        h = Atom(element="H")
         c.data["type"] = "CA"
         h.data["type"] = "HA"
         asm.add_entity(c, h)
@@ -793,7 +793,7 @@ class TestEndToEndGaffTyping:
         asm = _build_propene()
         result = typifier.typify(asm)
 
-        c_types = [a.get("type") for a in result.atoms if a.get("symbol") == "C"]
+        c_types = [a.get("type") for a in result.atoms if a.get("element") == "C"]
         # Should have sp2 and sp3 carbons
         assert "c3" in c_types, f"Expected c3 in {c_types}"
         assert any(t in ("c2", "ce", "cf") for t in c_types), (

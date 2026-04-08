@@ -166,20 +166,18 @@ print(buf.getvalue())
 ### GROMACS
 
 ```python
-import tempfile
-from pathlib import Path
 from molpy.io.forcefield.top import GromacsForceFieldWriter
 
-with tempfile.NamedTemporaryFile(suffix=".itp", mode="w", delete=False) as tmp:
-    tmp_path = Path(tmp.name)
-
-gro_writer = GromacsForceFieldWriter(tmp_path, precision=4)
-gro_writer.write(ff)
-print(tmp_path.read_text())
-tmp_path.unlink()
+GromacsForceFieldWriter("system.itp", precision=4).write(ff)
 ```
 
-XML export (`XMLForceFieldWriter`) is also available for force fields using standard harmonic styles.
+### XML
+
+```python
+from molpy.io.forcefield import XMLForceFieldWriter
+
+XMLForceFieldWriter("system.xml", precision=6).write(ff)
+```
 
 
 ## When to move beyond built-in styles

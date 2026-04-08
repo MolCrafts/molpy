@@ -62,6 +62,48 @@ except ModuleNotFoundError:  # rdkit missing
     OptimizeGeometry = None  # type: ignore[assignment]
 
 
+def prepare_monomer(
+    bigsmiles: str,
+    typifier=None,
+    *,
+    add_hydrogens: bool = True,
+    optimize: bool = True,
+    gen_angle: bool = True,
+    gen_dihe: bool = True,
+) -> "Atomistic":
+    """Parse, embed in 3D, augment topology, and optionally typify a monomer.
+
+    Bundles the four-step pattern that appears in every polymer-building
+    workflow::
+
+        m = mp.parser.parse_monomer(bigsmiles)
+        m = mp.tool.generate_3d(m, add_hydrogens=True, optimize=True)
+        m = m.get_topo(gen_angle=True, gen_dihe=True)
+        m = typifier.typify(m)
+
+    Args:
+        bigsmiles: BigSMILES string (e.g. ``"{[][<]OCCOCCOCCO[>][]}"``).
+        typifier: Optional typifier instance (e.g. ``OplsAtomisticTypifier``).
+            When provided, force-field types are assigned before returning.
+        add_hydrogens: Add implicit hydrogens during 3D generation.
+        optimize: Run force-field geometry optimisation after embedding.
+        gen_angle: Generate angle interactions from bonds.
+        gen_dihe: Generate dihedral interactions from bonds.
+
+    Returns:
+        Fully prepared Atomistic monomer ready for reactions or export.
+    """
+    from molpy.parser import parse_monomer
+
+    mol = parse_monomer(bigsmiles)
+    mol = generate_3d(mol, add_hydrogens=add_hydrogens, optimize=optimize)
+    if gen_angle or gen_dihe:
+        mol = mol.get_topo(gen_angle=gen_angle, gen_dihe=gen_dihe)
+    if typifier is not None:
+        mol = typifier.typify(mol)
+    return mol
+
+
 def generate_3d(
     mol: "Atomistic",
     add_hydrogens: bool = True,
@@ -116,6 +158,7 @@ __all__ = [
     "compute_acf",
     "displacement_correlation",
     "generate_3d",
+    "prepare_monomer",
     # Tool operations (polymer building)
     "PrepareMonomer",
     "BuildPolymer",

@@ -6,8 +6,6 @@ from molpy.builder.polymer.core import (
     AssemblyError,
     AmbiguousPortsError,
     BondKindConflictError,
-    ConnectionMetadata,
-    ConnectionResult,
     GeometryError,
     MissingConnectorRule,
     NoCompatiblePortsError,
@@ -78,29 +76,6 @@ class TestExceptionHierarchy:
 # ---- Type Definition Tests ----
 
 
-class TestConnectionMetadata:
-    def test_defaults(self):
-        meta = ConnectionMetadata(port_L=">", port_R="<", reaction_name="condense")
-        assert meta.port_L == ">"
-        assert meta.port_R == "<"
-        assert meta.reaction_name == "condense"
-        assert meta.formed_bonds == []
-        assert meta.new_angles == []
-        assert meta.new_dihedrals == []
-        assert meta.modified_atoms == set()
-        assert meta.requires_retype is False
-        assert meta.entity_maps == []
-
-
-class TestConnectionResult:
-    def test_construction(self):
-        polymer = Atomistic()
-        meta = ConnectionMetadata(port_L=">", port_R="<", reaction_name="r")
-        result = ConnectionResult(product=polymer, metadata=meta)
-        assert result.product is polymer
-        assert result.metadata is meta
-
-
 class TestPolymerBuildResult:
     def test_defaults(self):
         polymer = Atomistic()
@@ -108,17 +83,6 @@ class TestPolymerBuildResult:
         assert result.polymer is polymer
         assert result.connection_history == []
         assert result.total_steps == 0
-
-    def test_with_history(self):
-        polymer = Atomistic()
-        meta = ConnectionMetadata(port_L=">", port_R="<", reaction_name="r")
-        result = PolymerBuildResult(
-            polymer=polymer,
-            connection_history=[meta],
-            total_steps=1,
-        )
-        assert result.total_steps == 1
-        assert len(result.connection_history) == 1
 
 
 # ---- PolymerBuilder Init Tests ----

@@ -32,6 +32,9 @@ class MappedFile:
     def open_readonly(cls, path: "str | Path") -> "MappedFile":
         """Open *path* as a read-only memory-mapped file.
 
+        Gzip-compressed files (``.gz``) are transparently decompressed
+        into a temporary file before memory-mapping.
+
         Args:
             path: Path to file.
 
@@ -42,9 +45,26 @@ class MappedFile:
             FileNotFoundError: if the file does not exist.
             ValueError: if the file is empty.
         """
+        import gzip
+        import tempfile
+
         p = Path(path)
         if not p.exists():
             raise FileNotFoundError(f"File not found: {p}")
+
+        if p.suffix == ".gz":
+            tmp = tempfile.NamedTemporaryFile(suffix=p.stem, delete=False)
+            with gzip.open(p, "rb") as gz:
+                tmp.write(gz.read())
+            tmp.flush()
+            size = tmp.seek(0, 2)
+            if size == 0:
+                tmp.close()
+                raise ValueError(f"File is empty: {p}")
+            tmp.seek(0)
+            mm = mmap.mmap(tmp.fileno(), 0, access=mmap.ACCESS_READ)
+            return cls(tmp, mm)
+
         fd = open(p, "rb")  # noqa: SIM115
         size = fd.seek(0, 2)
         if size == 0:

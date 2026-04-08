@@ -4,10 +4,20 @@ import numpy as np
 
 from molpy.core.frame import Block
 from molpy.core.box import Box
+from molpy.core.fields import RES_ID, RES_NAME, FieldFormatter
 from molpy.core.frame import Frame
 from molpy.core.element import Element
 
 from .base import DataReader, DataWriter
+
+
+class GroFieldFormatter(FieldFormatter):
+    """GROMACS .gro field name translation."""
+
+    _field_formatters = {
+        "res_number": RES_ID,
+        "res_name": RES_NAME,
+    }
 
 
 class GroReader(DataReader):
@@ -248,7 +258,10 @@ class GroReader(DataReader):
         else:
             frame.box = Box()  # Default box
 
+        self._formatter.canonicalize_frame(frame)
         return frame
+
+    _formatter = GroFieldFormatter()
 
 
 class GroWriter(DataWriter):
@@ -370,8 +383,11 @@ class GroWriter(DataWriter):
 
         return atom_data
 
+    _formatter = GroFieldFormatter()
+
     def write(self, frame):
         """Write frame to GRO file."""
+        frame = self._formatter.localize_frame(frame)
 
         with open(self._path, "w") as f:
             # Write title line

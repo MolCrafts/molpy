@@ -1,7 +1,7 @@
 """MolPy — Composable molecular modeling in Python."""
 
 # Submodules
-from . import data, io, parser, potential, tool, typifier
+from . import data, engine, io, parser, potential, tool, typifier
 
 # Core
 from .core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral
@@ -38,6 +38,7 @@ from .version import release_date, version
 __all__ = [
     # Submodules
     "data",
+    "engine",
     "io",
     "parser",
     "potential",

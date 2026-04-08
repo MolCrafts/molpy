@@ -6,6 +6,8 @@ import numpy as np
 
 from molpy.core.forcefield import AtomisticForcefield
 from molpy.core.frame import Frame
+from molpy.potential.dihedral import DihedralFourierStyle
+from molpy.potential.pair import PairLJ126CoulLongStyle
 
 # AMBER stores charges multiplied by 18.2223 (sqrt of 332.0636 kcal*A/mol/e^2).
 CHARGE_CONVERSION_FACTOR = 18.2223
@@ -65,23 +67,23 @@ class AmberPrmtopReader:
         bonds = {
             "type_id": [],
             "type": [],
-            "i": [],
-            "j": [],
+            "atomi": [],
+            "atomj": [],
         }
         angles = {
             "type_id": [],
             "type": [],
-            "i": [],
-            "j": [],
-            "k": [],
+            "atomi": [],
+            "atomj": [],
+            "atomk": [],
         }
         dihedrals = {
             "type_id": [],
             "type": [],
-            "i": [],
-            "j": [],
-            "k": [],
-            "l": [],
+            "atomi": [],
+            "atomj": [],
+            "atomk": [],
+            "atoml": [],
         }
 
         for key, value in self.raw_data.items():
@@ -90,13 +92,16 @@ class AmberPrmtopReader:
                     self.meta["title"] = value[0]
 
                 case "POINTERS":
-                    self.meta = meta = self._read_pointers(self.raw_data[key])
+                    title = self.meta.get("title")
+                    self.meta = self._read_pointers(self.raw_data[key])
+                    if title is not None:
+                        self.meta["title"] = title
 
                 case "ATOM_NAME":
                     atoms["name"] = self._read_atom_name(value)
 
                 case "CHARGE":
-                    atoms["q"] = self.read_section(value, float)
+                    atoms["charge"] = self.read_section(value, float)
 
                 case "ATOMIC_NUMBER":
                     atoms["atomic_number"] = self.read_section(value, int)
@@ -108,7 +113,7 @@ class AmberPrmtopReader:
                     self.raw_data[key] = self.read_section(value, int)
 
                 case "AMBER_ATOM_TYPE":
-                    atoms["type"] = self.read_section(value, str)
+                    atoms["type"] = self._read_atom_name(value)
 
                 case (
                     "BOND_FORCE_CONSTANT"
@@ -134,9 +139,16 @@ class AmberPrmtopReader:
                 ):
                     self.raw_data[key] = self.read_section(value, int)
 
+        meta = self.meta
+        if "n_atoms" not in meta:
+            raise ValueError(
+                f"Invalid or empty prmtop file '{self.file}': POINTERS section missing. "
+                "This typically means the external tool (tleap) failed to create the file."
+            )
+
         # def forcefield
         atoms["id"] = np.arange(meta["n_atoms"], dtype=int) + 1
-        atoms["q"] = np.array(atoms["q"]) / 18.2223
+        atoms["charge"] = np.array(atoms["charge"]) / CHARGE_CONVERSION_FACTOR
         ff = AtomisticForcefield()
         ff.units = "real"
         atomstyle = ff.def_atomstyle("full")
@@ -160,14 +172,13 @@ class AmberPrmtopReader:
                     atomtype_map[atom_i_type_name],
                     atomtype_map[atom_j_type_name],
                     name=bond_name,
-                    force_constant=f,
-                    equil_value=r_min,
+                    k=f,
+                    r0=r_min,
                     id=bond_type,
-                    parms=[f, r_min],
-                )  # if multiply by 2
+                )
             bonds["type_id"].append(bond_type)
-            bonds["i"].append(i - 1)
-            bonds["j"].append(j - 1)
+            bonds["atomi"].append(i - 1)
+            bonds["atomj"].append(j - 1)
             bonds["type"].append(bond_name)
         bonds["id"] = np.arange(meta["n_bonds"], dtype=int) + 1
 
@@ -186,21 +197,20 @@ class AmberPrmtopReader:
                     atomtype_map[atom_j_type_name],
                     atomtype_map[atom_k_type_name],
                     name=angle_name,
-                    force_constant=f,
-                    equil_value=theta_min,
+                    k=f,
+                    theta0=theta_min,
                     id=angle_type,
-                    parms=[f, theta_min],
                 )
 
             angles["type_id"].append(angle_type)
-            angles["i"].append(i - 1)
-            angles["j"].append(j - 1)
-            angles["k"].append(k - 1)
+            angles["atomi"].append(i - 1)
+            angles["atomj"].append(j - 1)
+            angles["atomk"].append(k - 1)
             angles["type"].append(angle_name)
 
         angles["id"] = np.arange(meta["n_angles"], dtype=int) + 1
 
-        dihedralstyle = ff.def_dihedralstyle("charmmfsw")
+        dihedralstyle = ff.def_style(DihedralFourierStyle())
         for (
             dihe_type,
             i,
@@ -226,17 +236,17 @@ class AmberPrmtopReader:
                     atomtype_map[atom_k_type_name],
                     atomtype_map[atom_l_type_name],
                     name=dihe_name,
-                    force_constant=f,
-                    phase=phase,
-                    periodicity=periodicity,
+                    k1=f,
+                    k2=float(int(abs(periodicity))),
+                    k3=float(round(math.degrees(phase))),
+                    k4=0.5,
                     id=dihe_type,
-                    parms=[f, periodicity, int(phase), 0.5],
                 )
             dihedrals["type_id"].append(dihe_type)
-            dihedrals["i"].append(i - 1)
-            dihedrals["j"].append(j - 1)
-            dihedrals["k"].append(k - 1)
-            dihedrals["l"].append(l - 1)
+            dihedrals["atomi"].append(i - 1)
+            dihedrals["atomj"].append(j - 1)
+            dihedrals["atomk"].append(k - 1)
+            dihedrals["atoml"].append(l - 1)
             dihedrals["type"].append(dihe_name)
         dihedrals["id"] = np.arange(meta["n_dihedrals"], dtype=int) + 1
 
@@ -244,19 +254,15 @@ class AmberPrmtopReader:
             self.raw_data["RESIDUE_POINTER"], meta, atoms, bonds, angles, dihedrals
         )
 
-        pairstyle = ff.def_pairstyle("lj/charmmfsw/coul/charmmfsh", [2.5, 9.0])
-        for itype, rVdw, epsilon in self.parse_nonbond_params(atoms):
+        pairstyle = ff.def_style(PairLJ126CoulLongStyle(9.0, 10.0))
+        for itype, sigma, epsilon in self.parse_nonbond_params(atoms):
             atom_i_type_name = atoms["type"][itype - 1]
-            atom_j_type_name = atoms["type"][itype - 1]
-            pair_name = f"{atom_i_type_name}-{atom_j_type_name}"
+            pair_name = f"{atom_i_type_name}-{atom_i_type_name}"
             pairstyle.def_type(
                 atomtype_map[atom_i_type_name],
-                atomtype_map[atom_j_type_name],
-                name=pair_name,
-                parms=[epsilon, rVdw],
-                rVdw=rVdw,
                 epsilon=epsilon,
-                id=itype,
+                sigma=sigma,
+                name=pair_name,
             )
 
         # store in frame
@@ -338,33 +344,28 @@ class AmberPrmtopReader:
         # atom_residue_mask = np.repeat(np.arange(len(pointer)) + 1, segment_lengths)
         residue_slice = np.array(pointer, dtype=int) - 1
         segment_lengths = np.diff(residue_slice)
-        atom_residue_mask = np.repeat(
-            np.arange(len(segment_lengths - 1)), segment_lengths
-        )
+        atom_residue_mask = np.repeat(np.arange(len(segment_lengths)), segment_lengths)
 
-        # get bond mask: if both i and j in atom_mask, then bond is intra-residue and equal to atom mask in corresponding index, else inter-residue and -1
-        bond_i = bonds["i"]
-        bond_j = bonds["j"]
-        bond_residue_mask = np.zeros(len(bond_i), dtype=int)
+        # Bond residue assignment: intra-residue when both atoms share the same residue
+        bi = np.asarray(bonds["atomi"], dtype=int)
+        bj = np.asarray(bonds["atomj"], dtype=int)
+        bond_residue_mask = np.full(len(bi), -1, dtype=int)
         for residue in np.unique(atom_residue_mask):
-            atom_mask = atom_residue_mask == residue  # atoms' id in residue
-            bond_residue_mask[
-                np.where(np.isin(bond_i, atom_mask) & np.isin(bond_j, atom_mask))
-            ] = residue
+            in_res = atom_residue_mask == residue
+            bond_residue_mask[in_res[bi] & in_res[bj]] = residue
 
         atoms["residue"] = atom_residue_mask
         bonds["residue"] = bond_residue_mask
 
-        angle_i = angles["i"]
-        angle_j = angles["j"]
-        angle_k = angles["k"]
-        angle_residue_mask = np.where(
-            np.isin(angle_i, atom_residue_mask)
-            & np.isin(angle_j, atom_residue_mask)
-            & np.isin(angle_k, atom_residue_mask),
-            atom_residue_mask[angle_i],
-            -1,
-        )
+        # Angle residue assignment: intra-residue when all three atoms share the same residue
+        ai = np.asarray(angles["atomi"], dtype=int)
+        aj = np.asarray(angles["atomj"], dtype=int)
+        ak = np.asarray(angles["atomk"], dtype=int)
+        angle_residue_mask = np.full(len(ai), -1, dtype=int)
+        for residue in np.unique(atom_residue_mask):
+            in_res = atom_residue_mask == residue
+            if len(ai):
+                angle_residue_mask[in_res[ai] & in_res[aj] & in_res[ak]] = residue
 
         angles["residue"] = angle_residue_mask
 

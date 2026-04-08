@@ -343,9 +343,9 @@ class CoarseGrain(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
                 if "z" in bead.data:
                     atom_attrs["z"] = bead.data["z"]
 
-                # Copy type as symbol if available
+                # Copy type as element placeholder if available
                 if "type" in bead.data:
-                    atom_attrs["symbol"] = bead.data["type"]
+                    atom_attrs["element"] = bead.data["type"]
 
                 # Create atom
                 atom = result.def_atom(**atom_attrs)

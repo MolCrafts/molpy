@@ -284,9 +284,6 @@ def create_monomer_from_repeat_unit(
     # Add atoms
     for atom_ir in graph.atoms:
         atom_data = asdict(atom_ir)
-        # SmilesAtomIR has 'element' but not 'symbol', so copy element to symbol
-        if atom_data.get("element") and not atom_data.get("symbol"):
-            atom_data["symbol"] = atom_data["element"]
         # Promote chiral from extras to top-level for preservation
         extras = atom_data.get("extras", {})
         if "chiral" in extras:
@@ -349,10 +346,6 @@ def create_monomer_from_repeat_unit(
 
         port_name = descriptor_to_port_name(descriptor)
         atom["port"] = port_name
-        atom["port_role"] = "terminal"
-        atom["port_bond_kind"] = "-"
-        atom["port_compat"] = set()
-        atom["port_priority"] = 0
 
     return struct
 
@@ -524,9 +517,6 @@ def smilesir_to_atomistic(ir: SmilesGraphIR) -> Atomistic:
     # Add atoms using asdict pattern (same as create_monomer_from_unit)
     for atom_ir in ir.atoms:
         atom_data = asdict(atom_ir)
-        # SmilesAtomIR has 'element' but not 'symbol', so copy element to symbol
-        if atom_data.get("element") and not atom_data.get("symbol"):
-            atom_data["symbol"] = atom_data["element"]
         # Promote chiral from extras to top-level for preservation
         extras = atom_data.get("extras", {})
         if "chiral" in extras:

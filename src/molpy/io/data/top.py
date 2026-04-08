@@ -183,8 +183,8 @@ class TopReader(DataReader):
 
         try:
             return {
-                "i": int(parts[0]),
-                "j": int(parts[1]),
+                "atomi": int(parts[0]),
+                "atomj": int(parts[1]),
                 "type": int(parts[2]),
             }
         except (ValueError, IndexError):
@@ -213,8 +213,8 @@ class TopReader(DataReader):
 
         try:
             return {
-                "i": int(parts[0]),
-                "j": int(parts[1]),
+                "atomi": int(parts[0]),
+                "atomj": int(parts[1]),
                 "type": int(parts[2]),
             }
         except (ValueError, IndexError):
@@ -243,9 +243,9 @@ class TopReader(DataReader):
 
         try:
             return {
-                "i": int(parts[0]),
-                "j": int(parts[1]),
-                "k": int(parts[2]),
+                "atomi": int(parts[0]),
+                "atomj": int(parts[1]),
+                "atomk": int(parts[2]),
                 "type": int(parts[3]),
             }
         except (ValueError, IndexError):
@@ -274,10 +274,10 @@ class TopReader(DataReader):
 
         try:
             return {
-                "i": int(parts[0]),
-                "j": int(parts[1]),
-                "k": int(parts[2]),
-                "l": int(parts[3]),
+                "atomi": int(parts[0]),
+                "atomj": int(parts[1]),
+                "atomk": int(parts[2]),
+                "atoml": int(parts[3]),
                 "type": int(parts[4]),
             }
         except (ValueError, IndexError):
@@ -499,10 +499,12 @@ class TopWriter(DataWriter):
                 lines.append(f"  {vals}  {funct}")
             lines.append("")
 
-        _write_index_section("bonds", "bonds", ["i", "j"])
-        _write_index_section("pairs", "pairs", ["i", "j"])
-        _write_index_section("angles", "angles", ["i", "j", "k"])
-        _write_index_section("dihedrals", "dihedrals", ["i", "j", "k", "l"])
+        _write_index_section("bonds", "bonds", ["atomi", "atomj"])
+        _write_index_section("pairs", "pairs", ["atomi", "atomj"])
+        _write_index_section("angles", "angles", ["atomi", "atomj", "atomk"])
+        _write_index_section(
+            "dihedrals", "dihedrals", ["atomi", "atomj", "atomk", "atoml"]
+        )
 
         # [ system ]
         lines.append("[ system ]")

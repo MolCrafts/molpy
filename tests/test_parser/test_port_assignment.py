@@ -37,8 +37,8 @@ class TestPortAssignment:
 
         # Both ports should be on O atoms, not C
         for atom in port_atoms:
-            assert atom.get("symbol") == "O", (
-                f"Port should be on O atom, got {atom.get('symbol')}"
+            assert atom.get("element") == "O", (
+                f"Port should be on O atom, got {atom.get('element')}"
             )
 
     def test_ports_on_first_and_last_atoms(self):

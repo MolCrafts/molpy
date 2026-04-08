@@ -49,9 +49,9 @@ class TestLammpsDataReader:
 
         # Should have 12 atoms based on file content
         assert atoms.nrows == 12
-        assert "mol" in atoms  # molecule ID should be present
+        assert "mol_id" in atoms  # molecule ID (canonical name)
         assert "type" in atoms
-        assert "q" in atoms
+        assert "charge" in atoms  # charge (canonical name)
         assert "x" in atoms and "y" in atoms and "z" in atoms  # Separate coordinates
 
         # Check coordinate data
@@ -63,12 +63,12 @@ class TestLammpsDataReader:
         assert len(z) == 12
 
         # Check box dimensions (0-20 in each direction)
-        assert frame.metadata.get("box") is not None
-        box_lengths = frame.metadata["box"].lengths
+        assert frame.box is not None
+        box_lengths = frame.box.lengths
         np.testing.assert_array_almost_equal(box_lengths, [20.0, 20.0, 20.0])
 
         # Check that molecule IDs are in the data (should be 0-3 based on file)
-        mol_ids = atoms["mol"]
+        mol_ids = atoms["mol_id"]
         assert len(np.unique(mol_ids)) <= 4  # max 4 different molecules
 
         # Check metadata
@@ -94,7 +94,7 @@ class TestLammpsDataReader:
         np.testing.assert_array_almost_equal([x, y, z], [5.0, 5.0, 5.0])
 
         # Check box (should be 10x10x10)
-        box_lengths = frame.metadata["box"].lengths
+        box_lengths = frame.box.lengths
         np.testing.assert_array_almost_equal(box_lengths, [10.0, 10.0, 10.0])
 
     def test_triclinic_file(self, test_files):
@@ -104,8 +104,8 @@ class TestLammpsDataReader:
         frame = reader.read()
 
         # Should handle triclinic box
-        assert frame.metadata.get("box") is not None
-        box_lengths = frame.metadata["box"].lengths
+        assert frame.box is not None
+        box_lengths = frame.box.lengths
         np.testing.assert_array_almost_equal(box_lengths, [34.0, 34.0, 34.0])
 
         # Should have no atoms
@@ -161,9 +161,9 @@ class TestLammpsDataReader:
         frame = reader.read()
 
         atoms = frame["atoms"]
-        # Atomic style should not have mol or q columns
-        assert "mol" not in atoms
-        assert "q" not in atoms
+        # Atomic style should not have mol_id or charge columns
+        assert "mol_id" not in atoms
+        assert "charge" not in atoms
         assert "type" in atoms
         assert "x" in atoms and "y" in atoms and "z" in atoms
 
@@ -174,9 +174,9 @@ class TestLammpsDataReader:
         frame = reader.read()
 
         atoms = frame["atoms"]
-        # Charge style should have q but not mol
-        assert "mol" not in atoms
-        assert "q" in atoms
+        # Charge style should have charge but not mol_id
+        assert "mol_id" not in atoms
+        assert "charge" in atoms
         assert "type" in atoms
         assert "x" in atoms and "y" in atoms and "z" in atoms
 
@@ -238,7 +238,7 @@ class TestLammpsDataWriter:
         }
 
         frame["atoms"] = mp.Block(atoms_data)
-        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # Write to temporary file
         tmp_file = tmp_path / "test.data"
@@ -261,9 +261,9 @@ class TestLammpsDataWriter:
         # Create atoms with all fields
         atoms_data = {
             "id": np.array([1, 2, 3]),
-            "mol": np.array([1, 1, 2]),
+            "mol_id": np.array([1, 1, 2]),
             "type": np.array(["C", "C", "O"]),
-            "q": np.array([0.0, 0.0, -0.5]),
+            "charge": np.array([0.0, 0.0, -0.5]),
             "x": np.array([0.0, 1.0, 0.0]),
             "y": np.array([0.0, 0.0, 1.0]),
             "z": np.array([0.0, 0.0, 0.0]),
@@ -271,7 +271,7 @@ class TestLammpsDataWriter:
         }
 
         frame["atoms"] = mp.Block(atoms_data)
-        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # Add bonds
         bonds_data = {
@@ -311,7 +311,7 @@ class TestLammpsDataWriter:
             "mass": np.array([12.0, 16.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # Create a simple force field (empty for now)
         forcefield = mp.ForceField()
@@ -418,7 +418,7 @@ class TestForceFieldIntegration:
             "mass": np.array([12.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # Create a simple force field (empty for now)
         forcefield = mp.ForceField()
@@ -454,7 +454,7 @@ class TestMetadataTypeLabels:
             "mass": np.array([12.0, 1.0, 16.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         tmp_file = tmp_path / "test.data"
         writer = LammpsDataWriter(tmp_file, atom_style="atomic")
@@ -483,7 +483,7 @@ class TestMetadataTypeLabels:
             "mass": np.array([12.0, 1.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # Add metadata with additional type labels
         frame.metadata["type_labels"] = {
@@ -518,7 +518,7 @@ class TestMetadataTypeLabels:
             "mass": np.array([12.0, 1.0, 32.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # Add metadata with some type labels (missing S)
         frame.metadata["type_labels"] = {
@@ -563,7 +563,7 @@ class TestMetadataTypeLabels:
             "atomj": np.array([1, 2]),
         }
         frame["bonds"] = mp.Block(bonds_data)
-        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # Add metadata with additional bond types
         frame.metadata["type_labels"] = {
@@ -597,7 +597,7 @@ class TestMetadataTypeLabels:
             "mass": np.array([12.0, 1.0, 16.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.metadata["box"] = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # Add metadata with specific order
         frame.metadata["type_labels"] = {

@@ -1,3 +1,16 @@
+---
+jupyter:
+  jupytext:
+    cell_metadata_filter: -all
+    formats: md,ipynb
+    main_language: python
+    text_representation:
+      extension: .md
+      format_name: markdown
+      format_version: '1.3'
+      jupytext_version: 1.19.1
+---
+
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/molcrafts/molpy/blob/master/docs/user-guide/06_typifier.ipynb)
 
 # Force Field Typification
@@ -13,16 +26,16 @@ A molecular structure has atoms and bonds, but a simulation needs *types* — id
 
 **A Typifier examines the chemical environment of each atom via SMARTS pattern matching and assigns the corresponding force field type.**
 
-MolPy's `OplsTypifier` handles the full assignment in one call: atom types first, then pair parameters, then bond/angle/dihedral types derived from the atom type assignments.
+MolPy's `OplsAtomisticTypifier` handles the full assignment in one call: atom types first, then pair parameters, then bond/angle/dihedral types derived from the atom type assignments.
 
 
-## A complete example: typing ethanol
+## What typification looks like end to end
 
 The workflow is always the same: build the structure, load a force field, create a typifier, call `typify`.
 
 ```python
 import molpy as mp
-from molpy.typifier import OplsTypifier
+from molpy.typifier import OplsAtomisticTypifier
 
 # 1. Build the structure
 mol = mp.parser.parse_molecule("CCO")
@@ -33,24 +46,26 @@ print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")
 print(f"angles: {len(mol.angles)}, dihedrals: {len(mol.dihedrals)}")
 ```
 
+Loading the force field is a separate step from building the structure because the force field is an independent object — it can be shared across multiple molecules, swapped for a different variant, or inspected before any typification takes place. Once the force field is in hand, the typifier is constructed with it and `typify` is called on the molecule.
+
 ```python
 # 2. Load force field and typify
 # "oplsaa.xml" is bundled with MolPy — no separate download needed
 ff = mp.io.read_xml_forcefield("oplsaa.xml")
-typifier = OplsTypifier(ff, strict_typing=True)
+typifier = OplsAtomisticTypifier(ff, strict_typing=True)
 
 typed_mol = typifier.typify(mol)
 ```
 
-`typify` returns a *new* `Atomistic` — the original is not modified. Every atom in the returned structure carries a `type` key and associated parameters.
+`typify` modifies the structure in-place and returns it — atoms in the returned object carry a `type` key and associated parameters.
 
 ```python
 # 3. Inspect results
 for atom in typed_mol.atoms:
-    symbol = atom.get("symbol", "?")
+    element = atom.get("element", "?")
     atype = atom.get("type", "untyped")
     charge = atom.get("charge") or 0.0
-    print(f"  {symbol:2s} -> {atype:15s}  q={charge:+.4f}")
+    print(f"  {element:2s} -> {atype:15s}  q={charge:+.4f}")
 ```
 
 
@@ -61,6 +76,8 @@ The typifier reads SMARTS patterns from the force field XML. Each pattern define
 When multiple patterns match, priority and override rules in the force field resolve the conflict. This layered matching handles complex cases like aromatic vs. aliphatic nitrogen without manual intervention.
 
 When no pattern matches, MolPy does not perform implicit parameter estimation for unmatched environments. Instead, unmatched cases are explicitly reported, allowing users to inspect and extend the rule set as needed. This design separates parameter assignment from parameter development, ensuring that force field definitions remain transparent and reproducible.
+
+With atom types in place, the typifier has everything it needs to derive bonded types mechanically — a process described in the next section.
 
 
 ## How bonded typing works
@@ -75,15 +92,15 @@ In strict mode (`strict_typing=True`), any untyped atom raises an error immediat
 In non-strict mode (`strict_typing=False`), untyped atoms are silently skipped. Use this when you know some atoms will not match — for example, when using a general-purpose force field on a molecule with exotic functional groups.
 
 
-## Inspecting the full assignment
+## Every atom, bond, angle, and dihedral carries its assigned type
 
 After typification, you can iterate over bonds, angles, and dihedrals to see their assigned types.
 
 ```python
 # Bond types
 for bond in typed_mol.bonds[:3]:
-    i_sym = bond.itom.get("symbol")
-    j_sym = bond.jtom.get("symbol")
+    i_sym = bond.itom.get("element")
+    j_sym = bond.jtom.get("element")
     btype = bond.get("type", "untyped")
     print(f"  {i_sym}-{j_sym} -> {btype}")
 
@@ -95,45 +112,31 @@ for angle in typed_mol.angles[:3]:
 ```
 
 
-## Exporting a typed structure
+## A typed structure is ready for simulation export
 
 A typed structure is ready for simulation export. Convert to a `Frame`, attach a box, and write to LAMMPS or GROMACS format.
 
 ```python
 import numpy as np
-from molpy.io.data.lammps import LammpsDataWriter
-from molpy.io.forcefield.lammps import LAMMPSForceFieldWriter
+from pathlib import Path
 
 frame = typed_mol.to_frame()
-frame.metadata["box"] = mp.Box.cubic(30.0)
+frame.box = mp.Box.cubic(30.0)
 
-# Ensure required fields
+# mol_id is not set by typifier — add it for LAMMPS full atom style
 atoms = frame["atoms"]
-if "q" not in atoms and "charge" in atoms:
-    atoms["q"] = atoms["charge"]
-if "mol" not in atoms:
-    atoms["mol"] = np.ones(atoms.nrows, dtype=int)
-```
+if "mol_id" not in atoms:
+    atoms["mol_id"] = np.ones(atoms.nrows, dtype=int)
 
-The force field writer needs the set of types used in the structure.
+outdir = Path("06_output")
+outdir.mkdir(exist_ok=True)
 
-```python
-from pathlib import Path
-import tempfile
-
-# Collect types
-atom_types = {str(t) for t in frame["atoms"]["type"] if t}
-bond_types = {str(t) for t in frame["bonds"]["type"] if t} if "bonds" in frame else set()
-
-outdir = Path(tempfile.mkdtemp())
-
-LAMMPSForceFieldWriter(outdir / "ethanol.ff").write(
-    ff, atom_types=atom_types, bond_types=bond_types,
-)
-LammpsDataWriter(outdir / "ethanol.data", atom_style="full").write(frame)
+mp.io.write_lammps_system(outdir / "ethanol", frame, ff)
 
 print(f"exported to {outdir}")
 ```
+
+The `write_lammps_system` convenience function automatically filters the force field to only include types present in the frame, and translates canonical field names (`charge`, `mol_id`) to LAMMPS-specific names (`q`, `mol`) via the formatter system.
 
 
 ## Incremental re-typification at polymer junctions
@@ -142,7 +145,7 @@ When a `Reacter` forms a new bond between two monomers, the atoms at the junctio
 
 Rather than re-typifying the entire chain after each coupling step, MolPy performs **incremental re-typification** — it re-computes force field parameters only for the affected atoms and their neighbors.
 
-The `Reacter` records exactly which atoms were modified in `ReactionResult.topology_changes.modified_atoms`. When a typifier is passed to `Reacter.run()`, the internal `_incremental_typify()` method runs a six-step pipeline on just those atoms:
+The `Reacter` records exactly which atoms were modified in `ReactionResult.modified_atoms`. When a typifier is passed to `Reacter.run()`, the internal `_incremental_typify()` method runs a six-step pipeline on just those atoms:
 
 1. Clear `type` on modified atoms
 2. Re-run atom typing (SMARTS matching) on the full structure
@@ -155,12 +158,12 @@ For a 20-mer, each coupling step only re-types ~4 atoms and their neighbors — 
 
 To enable this in `PolymerBuilder`, pass the typifier at construction:
 
-```python
+```text
 builder = PolymerBuilder(
-    library={"EO": eo_typed},
+    library={"EO": eo_typed},       # pre-typed monomer
     connector=connector,
     placer=placer,
-    typifier=typifier,  # enables incremental re-typification
+    typifier=typifier,              # enables incremental re-typification
 )
 ```
 

@@ -580,6 +580,38 @@ class SmartsTransformer(Transformer):
             return AtomPrimitiveIR(type="atom_class", value=name)
         return AtomPrimitiveIR(type="wildcard")
 
+    # ------------------------------------------------------------------
+    # Bare-H disambiguation  (see SMARTS spec)
+    #
+    #   [H]  → hydrogen element     [CH] → C with 1 H neighbour
+    #   [!H] → not hydrogen         [C;H]→ same (weak-AND)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _has_element(expr) -> bool:
+        if isinstance(expr, AtomPrimitiveIR):
+            return expr.type in ("symbol", "atomic_num")
+        if isinstance(expr, AtomExpressionIR):
+            return any(SmartsTransformer._has_element(c) for c in expr.children)
+        return False
+
+    @staticmethod
+    def _rewrite_bare_h(expr, has_elem: bool):
+        if isinstance(expr, AtomPrimitiveIR):
+            if expr.type == "hydrogen_count" and expr.value is None:
+                if has_elem:
+                    return AtomPrimitiveIR(type="hydrogen_count", value=1)
+                return AtomPrimitiveIR(type="symbol", value="H")
+            return expr
+        if isinstance(expr, AtomExpressionIR):
+            elem_here = SmartsTransformer._has_element(expr)
+            new_children = [
+                SmartsTransformer._rewrite_bare_h(c, has_elem or elem_here)
+                for c in expr.children
+            ]
+            return AtomExpressionIR(op=expr.op, children=new_children)
+        return expr
+
     def atom(self, children: list) -> SmartsAtomIR:
         """
         Process complete atom: [expression] or bare_atom, with optional label.
@@ -606,6 +638,9 @@ class SmartsTransformer(Transformer):
         # Wrap primitive in expression if needed
         if isinstance(expression, AtomPrimitiveIR):
             expression = AtomExpressionIR(op="primitive", children=[expression])
+
+        # Disambiguate bare H (hydrogen_count=None)
+        expression = self._rewrite_bare_h(expression, self._has_element(expression))
 
         return SmartsAtomIR(expression=expression, label=label)
 

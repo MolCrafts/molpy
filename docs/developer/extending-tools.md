@@ -74,14 +74,14 @@ class ParameterizeMolecule(Tool):
 
     def run(self, smiles: str) -> Atomistic:
         import molpy as mp
-        from molpy.typifier import OplsTypifier
+        from molpy.typifier import OplsAtomisticTypifier
 
         mol = mp.parser.parse_molecule(smiles)
         mol = mp.tool.generate_3d(mol, add_hydrogens=self.add_hydrogens)
         mol.get_topo(gen_angle=True, gen_dihe=True)
 
         ff = mp.io.read_xml_forcefield(f"{self.force_field}.xml")
-        typifier = OplsTypifier(ff)
+        typifier = OplsAtomisticTypifier(ff)
         return typifier.typify(mol)
 ```
 

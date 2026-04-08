@@ -168,7 +168,7 @@ class LammpsTrajectoryReader(BaseTrajectoryReader):
             with contextlib.suppress(ValueError, TypeError):
                 frame["atoms"][col_name] = frame["atoms"][col_name].astype(dtype)
 
-        frame.metadata["box"] = box
+        frame.box = box
         return frame
 
 
@@ -198,7 +198,7 @@ class LammpsTrajectoryWriter(TrajectoryWriter):
 
         # Write box bounds
         # Get box from metadata
-        box = frame.metadata.get("box")
+        box = frame.box
         if box:
             matrix = box.matrix
             origin = box.origin

@@ -6,8 +6,18 @@ with force field types and charges.
 
 from pathlib import Path
 
+from molpy.core.fields import CHARGE, FieldFormatter
 from molpy.core.frame import Frame
 from molpy.core.element import Element
+
+
+class AcFieldFormatter(FieldFormatter):
+    """Antechamber .ac field name translation."""
+
+    _field_formatters = {
+        "q": CHARGE,
+    }
+
 
 from .base import DataReader
 
@@ -64,7 +74,10 @@ class AcReader(DataReader):
             keys = self.bonds[0].keys()
             frame["bonds"] = {k: [d[k] for d in self.bonds] for k in keys}
 
+        self._formatter.canonicalize_frame(frame)
         return frame
+
+    _formatter = AcFieldFormatter()
 
     def _parse_atom_section(self, line):
         """Parse ATOM line from .ac file."""

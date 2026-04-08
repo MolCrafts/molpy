@@ -11,11 +11,30 @@ from .base import DataReader
 # ---------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------
+def _parse_fixed_width(raw: str, width: int = 12) -> list[float]:
+    """Parse a line using fixed-width columns. Raises ValueError on failure."""
+    tokens = [raw[i : i + width].strip() for i in range(0, len(raw), width)]
+    return [float(t) for t in tokens if t]
+
+
 def _eat_section(lines: list[str]):
     """
-    Consume enough lines to collect 12-column floats from AMBER format.
+    Consume enough lines to collect floats from AMBER coordinate format.
+
+    AMBER inpcrd uses Fortran ``6F12.7`` — 12 characters per value, 6 values
+    per line.  Whitespace splitting fails when a negative sign abuts the
+    preceding value (e.g. ``50.5413286-100.7101036``).  We try fixed-width
+    parsing first and fall back to whitespace splitting if that fails.
     """
-    data = [float(x) for line in lines for x in line.strip().split() if x]
+    data: list[float] = []
+    for line in lines:
+        raw = line.rstrip("\n")
+        if not raw.strip():
+            continue
+        try:
+            data.extend(_parse_fixed_width(raw))
+        except ValueError:
+            data.extend(float(x) for x in raw.split() if x)
     return np.asarray(data).reshape(-1, 3)
 
 
@@ -79,7 +98,11 @@ class AmberInpcrdReader(DataReader):
         # ---------- box (optional) -------------------------------------
         box = Box()
         if cursor < len(raw_lines):
-            box_floats = [float(x) for x in raw_lines[cursor].strip().split() if x]
+            raw = raw_lines[cursor].rstrip("\n")
+            try:
+                box_floats = _parse_fixed_width(raw)
+            except ValueError:
+                box_floats = [float(x) for x in raw.split() if x]
             if len(box_floats) >= 3:
                 box = Box(matrix=np.diag(box_floats[:3]))
 

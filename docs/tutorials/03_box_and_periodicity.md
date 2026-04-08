@@ -138,6 +138,24 @@ print(distances)
 ```
 
 
+## Box on Frame
+
+A box is attached to a Frame as `frame.box`, not stored in metadata. This is the standard way to associate a simulation cell with molecular data.
+
+```python
+frame = mp.Frame(blocks={
+    "atoms": {"x": [1.0, 9.5], "y": [1.0, 9.5], "z": [1.0, 9.5]},
+})
+frame.box = mp.Box.cubic(10.0)
+
+# I/O readers set frame.box automatically
+frame = mp.io.read_lammps_data("system.data", atom_style="full")
+print(frame.box.lengths)   # from the data file header
+```
+
+All compute operators (MSD, RDF, etc.) read the box from `frame.box`.
+
+
 ## When the box matters
 
 Use `Box` as soon as your system is meant to be periodic. Do not wait for engine export to start thinking about it. The box determines how coordinates are interpreted — wrap, diff, and dist all depend on it. Any analysis on a periodic system that ignores the box is silently wrong.

@@ -1,21 +1,25 @@
 # Guides
 
-These pages solve concrete tasks from input to output. Each guide assumes you understand the [core concepts](../tutorials/index.md).
+Each guide in this section addresses a concrete modeling task from input specification to simulation-ready output. The notebooks are self-contained and executable; all required dependencies are specified within each notebook. Readers are assumed to be familiar with MolPy's core data model, as described in [Concepts](../tutorials/index.md).
 
-## Foundations
 
-- [Tool Layer](tools.md) — packaged recipes (`PrepareMonomer`, `polymer`, `polymer_system`) for common multi-step jobs
-- [I/O](io.md) — reading, writing, and extending file formats for data, trajectories, and force fields
-- [Parsing Chemistry](01_parsing_chemistry.md) — SMILES, SMARTS, BigSMILES, CGSmiles notation into MolPy structures
+## Foundational Subsystems
 
-## Polymer Workflows
+- [Tool Layer](tools.md) — packaged multi-step recipes (`PrepareMonomer`, `polymer`, `polymer_system`) for common preparation workflows
+- [I/O Subsystem](io.md) — reading, writing, and extending file format support for molecular data, trajectories, and force fields
+- [Chemistry Notation Parsing](01_parsing_chemistry.ipynb) — conversion of SMILES, SMARTS, BigSMILES, and CGSmiles strings into `Atomistic` structures
 
-- [Stepwise Polymer Construction](02_polymer_stepwise.md) — manual reaction, PolymerBuilder, and facade paths
-- [Topology-Driven Assembly](03_polymer_topology.md) — CGSmiles expressions for linear, ring, and branched architectures
-- [Crosslinked Networks](04_crosslinking.md) — template generation for LAMMPS `fix bond/react`
-- [Polydisperse Systems](05_polydisperse_systems.md) — distribution sampling, chain building, and packing
 
-## Parameterization and Integration
+## Polymer Construction Workflows
 
-- [Force Field Typification](06_typifier.md) — SMARTS-based atom typing and parameter assignment
-- [PEO-LiTFSI with AmberTools](07_ambertools_integration.md) — external tool integration for polymer electrolytes
+- [Stepwise Chain Construction](02_polymer_stepwise.ipynb) — explicit reaction-based monomer coupling, the `PolymerBuilder` interface, and high-level facade functions
+- [Topology-Driven Assembly](03_polymer_topology.ipynb) — specification of linear, cyclic, and branched polymer architectures via CGSmiles expressions
+- [Crosslinked Network Generation](04_crosslinking.ipynb) — template-based network formation and pre/post topology generation for LAMMPS `fix bond/react`
+- [Polydisperse System Construction](05_polydisperse_systems.ipynb) — molecular-weight distribution sampling, atomistic chain construction, and box packing
+
+
+## Parameterization and External Tool Integration
+
+- [Force Field Typification](06_typifier.ipynb) — SMARTS-based atom type assignment and force field parameter resolution
+- [PEO–LiTFSI Electrolyte via AmberTools](07_ambertools_integration.ipynb) — a complete polymer electrolyte system preparation workflow using the AmberTools integration
+- [Running MD Engines](engine.md) — generating input scripts and running LAMMPS, CP2K, and OpenMM directly from Python

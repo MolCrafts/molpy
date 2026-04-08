@@ -105,9 +105,8 @@ def select_dehydration_left(struct: Atomistic, port_atom: Atom) -> Atom:
     Returns:
         C atom as reaction site
     """
-    symbol = port_atom.get("symbol")
-
-    if symbol == "O":
+    elem = port_atom.get("element") or port_atom.get("symbol")
+    if elem == "O":
         c_neighbors = [
             a
             for a in find_neighbors(struct, port_atom, element="C")
@@ -133,9 +132,7 @@ def select_dehydration_right(struct: Atomistic, port_atom: Atom) -> Atom:
     Returns:
         O atom as reaction site
     """
-    symbol = port_atom.get("symbol")
-
-    if symbol == "O":
+    if (port_atom.get("element") or port_atom.get("symbol")) == "O":
         return port_atom
     else:  # C
         o_neighbors = [
@@ -208,7 +205,7 @@ def select_dummy_atoms(struct: Atomistic, reaction_site: Atom) -> list[Atom]:
     neighbors = [
         a for a in find_neighbors(struct, reaction_site) if isinstance(a, Atom)
     ]
-    return [n for n in neighbors if n.get("symbol") == "*"]
+    return [n for n in neighbors if (n.get("element") or n.get("symbol")) == "*"]
 
 
 def select_hydroxyl_group(struct: Atomistic, reaction_site: Atom) -> list[Atom]:
@@ -272,7 +269,7 @@ def select_hydroxyl_h_only(struct: Atomistic, reaction_site: Atom) -> list[Atom]
         [H] if found, otherwise []
     """
     # If reaction_site is O, look for H directly bonded
-    if reaction_site.get("symbol") == "O":
+    if reaction_site.get("element") == "O":
         h_neighbors = [
             a
             for a in find_neighbors(struct, reaction_site, element="H")

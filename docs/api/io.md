@@ -21,9 +21,9 @@ File readers and writers for molecular data, force fields, and trajectories.
 | Function | Format | Direction |
 |----------|--------|-----------|
 | `read_xml_forcefield` | OpenMM/OPLS XML | read |
+| `XMLForceFieldWriter` | OpenMM/OPLS XML | write |
 | `LAMMPSForceFieldWriter` | LAMMPS coefficients | write |
 | `GromacsForceFieldWriter` | GROMACS .itp | write |
-| `XMLForceFieldWriter` | XML | write |
 | `read_amber` | AMBER prmtop + inpcrd | read |
 
 ### Trajectories

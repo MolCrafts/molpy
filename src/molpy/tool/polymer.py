@@ -77,7 +77,7 @@ class PrepareMonomer(Tool):
         monomer = self._try_generate_3d(monomer)
 
         if self.gen_topology:
-            monomer.get_topo(gen_angle=True, gen_dihe=True)
+            monomer = monomer.get_topo(gen_angle=True, gen_dihe=True)
 
         return monomer
 
@@ -146,7 +146,7 @@ class BuildPolymer(Tool):
         reacter = ReactionPresets.get(self.reaction_preset)
 
         placer = None
-        if self.use_placer:
+        if self.use_placer and self._has_coords(library):
             placer = Placer(CovalentSeparator(), LinearOrienter())
 
         builder = PolymerBuilder(
@@ -161,6 +161,15 @@ class BuildPolymer(Tool):
             "total_steps": result.total_steps,
             "connection_history": result.connection_history,
         }
+
+    @staticmethod
+    def _has_coords(library: dict) -> bool:
+        """Check whether every monomer in library has 3D coordinates."""
+        for monomer in library.values():
+            for atom in monomer.atoms:
+                if "x" not in atom:
+                    return False
+        return True
 
 
 @dataclass(frozen=True)
@@ -214,7 +223,7 @@ class PlanSystem(Tool):
             Dict with ``"chains"`` (list of chain dicts), ``"total_mass"``,
             and ``"target_mass"``.
         """
-        from random import Random
+        import numpy as np
 
         from molpy.builder.polymer.distributions import create_polydisperse_from_ir
         from molpy.builder.polymer.sequences import WeightedSequenceGenerator
@@ -242,7 +251,7 @@ class PlanSystem(Tool):
             max_rel_error=max_rel_error,
         )
 
-        rng = Random(self.random_seed)
+        rng = np.random.default_rng(self.random_seed)
         plan = planner.plan_system(rng)
 
         return {
@@ -367,22 +376,17 @@ class BuildPolymerAmber(Tool):
         """
         from pathlib import Path
 
-        from molpy.builder.polymer.ambertools import (
-            AmberPolymerBuilder,
-            AmberPolymerBuilderConfig,
-        )
+        from molpy.builder.polymer.ambertools import AmberPolymerBuilder
 
-        config = AmberPolymerBuilderConfig(
+        builder = AmberPolymerBuilder(
+            library=library,
             force_field=self.force_field,  # type: ignore[arg-type]
             charge_method=self.charge_method,
             work_dir=Path(self.work_dir),
             reaction_preset=self.reaction_preset,
+            env=self.conda_env if self.conda_env is not None else None,
+            env_manager="conda" if self.conda_env is not None else None,
         )
-        if self.conda_env is not None:
-            config.env = self.conda_env
-            config.env_manager = "conda"
-
-        builder = AmberPolymerBuilder(library=library, config=config)
         result = builder.build(cgsmiles)
 
         return {
@@ -647,15 +651,15 @@ def _build_amber(
     amber_config: Any,
 ) -> Any:
     """Build polymer using the AmberTools backend."""
-    from molpy.builder.polymer.ambertools import (
-        AmberPolymerBuilder,
-        AmberPolymerBuilderConfig,
-    )
+    from molpy.builder.polymer.ambertools import AmberPolymerBuilder
 
-    if amber_config is None:
-        config = AmberPolymerBuilderConfig(reaction_preset=reaction_preset)
-    else:
-        config = amber_config
+    kwargs: dict = {"reaction_preset": reaction_preset}
+    if amber_config is not None:
+        # Accept dict-like overrides for backwards compat
+        if hasattr(amber_config, "__dict__"):
+            kwargs.update(
+                {k: v for k, v in amber_config.__dict__.items() if v is not None}
+            )
 
-    builder = AmberPolymerBuilder(library=library, config=config)
+    builder = AmberPolymerBuilder(library=library, **kwargs)
     return builder.build(spec)

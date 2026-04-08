@@ -67,7 +67,7 @@ class TestReaderResourceLifecycle:
                 "z": [0.0, 0.0],
             }
             frame.metadata["timestep"] = i * 100
-            frame.metadata["box"] = mp.Box(np.eye(3) * 10.0)
+            frame.box = mp.Box(np.eye(3) * 10.0)
             writer.write_frame(frame)
         writer.close()
 

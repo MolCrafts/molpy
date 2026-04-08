@@ -348,7 +348,7 @@ LAMMPSForceFieldWriter.register_formatter(
 )
 ```
 
-Registrations are **isolated per writer subclass** — adding a formatter to `LAMMPSForceFieldWriter` does not affect `XMLForceFieldWriter`. This isolation is enforced by `__init_subclass__` copying the registry.
+Registrations are **isolated per writer subclass** — adding a formatter to one writer does not affect another. This isolation is enforced by `__init_subclass__` copying the registry.
 
 `FormattedParams` carries two fields:
 

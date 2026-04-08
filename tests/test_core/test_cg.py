@@ -329,8 +329,8 @@ class TestToAtomisticConversion:
 
         assert len(atomistic.atoms) == 2
         atoms = list(atomistic.atoms)
-        assert atoms[0].get("symbol") == "A"
-        assert atoms[1].get("symbol") == "B"
+        assert atoms[0].get("element") == "A"
+        assert atoms[1].get("element") == "B"
 
     def test_convert_mapped_beads_to_atomistic(self):
         """Test beads with atomistic mapping expand to full structure."""

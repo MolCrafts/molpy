@@ -1625,7 +1625,7 @@ class TestSmilesIRToAtomistic:
         assert len(struct.bonds) == 2
 
         # Check elements
-        symbols = [atom.get("symbol") for atom in struct.atoms]
+        symbols = [atom.get("element") for atom in struct.atoms]
         assert "C" in symbols
         assert "O" in symbols
         assert symbols.count("C") == 2
@@ -1661,7 +1661,7 @@ class TestSmilesIRToAtomistic:
 
         assert len(struct.atoms) == 1
         atom = list(struct.atoms)[0]
-        assert atom.get("symbol") == "N"
+        assert atom.get("element") == "N"
         assert atom.get("charge") == -1
 
     def test_tfsi_molecule(self):
@@ -1679,7 +1679,7 @@ class TestSmilesIRToAtomistic:
         # Check composition
         from collections import Counter
 
-        elements = Counter(atom.get("symbol") for atom in struct.atoms)
+        elements = Counter(atom.get("element") for atom in struct.atoms)
         assert elements["C"] == 2
         assert elements["F"] == 6
         assert elements["S"] == 2
@@ -1691,7 +1691,7 @@ class TestSmilesIRToAtomistic:
         assert len(double_bonds) == 4  # 4 S=O bonds
 
         # Check charge on N
-        n_atoms = [a for a in struct.atoms if a.get("symbol") == "N"]
+        n_atoms = [a for a in struct.atoms if a.get("element") == "N"]
         assert len(n_atoms) == 1
         assert n_atoms[0].get("charge") == -1
 

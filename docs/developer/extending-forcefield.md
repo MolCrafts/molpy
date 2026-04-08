@@ -86,29 +86,23 @@ class MorseBondPotential(BondPotential):
 **Always validate** the potential against known values (energy at r0 should be zero, energy should increase monotonically away from r0).
 
 
-## Step 4: register formatters
+## Step 4: register param formatters
 
-Each export backend needs a style formatter (style-level metadata) and a type formatter (per-type parameters).
+Each export backend has a `ForceFieldFormatter` subclass that inherits from the format's `FieldFormatter` (for data field name mapping) and adds `_param_formatters` (for Style/Type parameter serialization).
+
+Register your custom Style's param formatter on the appropriate subclass:
 
 ```python
-from molpy.io.forcefield import LAMMPSForceFieldWriter
-from molpy.io.forcefield.base import FormattedParams
+from molpy.io.forcefield.lammps import LammpsForceFieldFormatter
 
-def format_morse_lammps_style(style) -> FormattedParams:
-    return FormattedParams()
+def _format_morse_bond(typ) -> list[float]:
+    """Format MorseBondType parameters for LAMMPS: D alpha r0"""
+    return [typ.params.kwargs["D"], typ.params.kwargs["alpha"], typ.params.kwargs["r0"]]
 
-def format_morse_lammps_type(typ, style) -> FormattedParams:
-    return FormattedParams(positional=[typ["D"], typ["alpha"], typ["r0"]])
-
-LAMMPSForceFieldWriter.register_style_formatter(
-    MorseBondStyle, format_morse_lammps_style, style_name="morse",
-)
-LAMMPSForceFieldWriter.register_formatter(
-    MorseBondStyle, format_morse_lammps_type, style_name="morse",
-)
+LammpsForceFieldFormatter.register_param_formatter(MorseBondStyle, _format_morse_bond)
 ```
 
-Repeat for each backend (GROMACS, XML). Registrations are **isolated per writer subclass** — adding a formatter to one writer does not affect others.
+Repeat for each backend. Registrations are **isolated per subclass** — adding a formatter to one backend does not affect others. This isolation is enforced by `__init_subclass__` copying the registry.
 
 
 ## Using the custom interaction

@@ -1,13 +1,13 @@
 # Concepts
 
-MolPy represents a molecular system differently at each stage of work. These pages introduce the core data structures in the order you will encounter them: editable chemistry first, then system snapshots, then periodic geometry, force fields, trajectories, selections, and external tool integration.
+MolPy employs distinct representations at each stage of a modeling workflow. This section provides a systematic account of the core data structures, ordered from the most editable (molecular graph) to the most numerical (columnar frame), and covering the auxiliary structures — periodic geometry, force field parameters, time-ordered sequences, and external tool boundaries — that complete the data model.
 
-Read them in order if you are new. Jump to a specific page if you already know what you need.
+These pages are self-contained and may be read in any order by readers already familiar with one or more concepts. New users are advised to proceed from the first page to the last.
 
 
-## How the pieces fit together
+## Representational Hierarchy
 
-The diagram below shows the typical data flow through a MolPy workflow. Each box is a core data structure; each arrow is a transformation step.
+The diagram below illustrates the standard data flow through a MolPy pipeline. Each node represents a core data structure; each edge represents an explicit transformation.
 
 ```text
                     ┌─────────────────────────┐
@@ -21,7 +21,7 @@ The diagram below shows the typical data flow through a MolPy workflow. Each box
                     ┌───────────▼─────────────┐
                     │  Typed Atomistic         │
                     │  (atoms carry type,      │
-                    │   charge, ff params)     │
+                    │   charge, ff parameters) │
                     └───────────┬─────────────┘
                                 │
                           .to_frame()
@@ -40,19 +40,23 @@ The diagram below shows the typical data flow through a MolPy workflow. Each box
                     └─────────────────────────┘
 ```
 
-- **Atomistic** is where you edit chemistry — add atoms, remove bonds, run reactions, build polymers.
-- **Frame** is where you do numerical work — vectorized distances, file I/O, engine export.
-- **ForceField** is a separate data structure that travels alongside the system — it is not stored inside the molecule.
-- **Box** defines the periodic cell and attaches to a Frame as metadata.
-- **Trajectory** is a time-ordered sequence of Frames.
+**`Atomistic`** is the primary editing surface. Atom addition and removal, bond formation, reaction execution, and polymer assembly all operate on this structure.
+
+**`Frame`** is the primary numerical surface. Vectorized distance computation, file I/O, and engine export all operate on `Frame` objects and their constituent `Block` tables.
+
+**`ForceField`** is an independent data structure that travels alongside a molecular system. Force field parameters are neither embedded in atoms nor derived implicitly; they are stored in a queryable typed dictionary.
+
+**`Box`** specifies the periodic simulation cell and attaches to a `Frame` as a first-class attribute, not as metadata.
+
+**`Trajectory`** is a time-ordered sequence of `Frame` objects providing lazy access patterns for large datasets.
 
 
-## Pages
+## Contents
 
-- [Atomistic and Topology](01_atomistic_and_topology.md) — editable molecular graph and derived connectivity
-- [Block and Frame](02_block_and_frame.md) — columnar tables and system snapshots
-- [Box and Periodicity](03_box_and_periodicity.md) — simulation cells and minimum-image distances
-- [Force Field](04_force_field.md) — parameter data, potentials, and multi-format export
-- [Trajectory](05_trajectory.md) — time-ordered frame sequences with lazy access
-- [Selector](06_selector.md) — composable atom filters over Block columns
-- [Wrapper and Adapter](07_wrapper_and_adapter.md) — execution boundaries and representation boundaries
+- [Atomistic and Topology](01_atomistic_and_topology.md) — the editable molecular graph and its derived connectivity relations
+- [Block and Frame](02_block_and_frame.md) — columnar data tables and system-level numerical snapshots
+- [Box and Periodicity](03_box_and_periodicity.md) — simulation cell geometry and minimum-image distance conventions
+- [Force Field](04_force_field.md) — the force field data model, potential kernels, and multi-format parameter export
+- [Trajectory](05_trajectory.md) — time-ordered frame sequences with lazy loading
+- [Selector](06_selector.md) — composable, predicate-based atom filters over `Block` columns
+- [Wrapper and Adapter](07_wrapper_and_adapter.md) — subprocess execution boundaries and in-memory representation bridges

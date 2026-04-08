@@ -159,7 +159,7 @@ def eo_monomer():
     gen3d = Generate3D(add_hydrogens=True, embed=True, optimize=False)
     adapter = gen3d(adapter)
     monomer = adapter.get_internal()
-    monomer.get_topo(gen_angle=True, gen_dihe=True)
+    monomer = monomer.get_topo(gen_angle=True, gen_dihe=True)
     for idx, atom in enumerate(monomer.atoms):
         atom["id"] = idx + 1
     return monomer

@@ -32,8 +32,8 @@ from molpy.reacter import (
 
 rxn = Reacter(
     name="dehydration",
-    site_selector_left=select_neighbor("C"),
-    site_selector_right=select_self,
+    anchor_selector_left=select_neighbor("C"),
+    anchor_selector_right=select_self,
     leaving_selector_left=my_leaving_selector,
     leaving_selector_right=select_hydrogens(1),
     bond_former=form_single_bond,
@@ -47,8 +47,8 @@ product = result.product_info.product
 
 ## Related
 
-- [Guide: Stepwise Polymer Construction](../user-guide/02_polymer_stepwise.md)
-- [Guide: Crosslinked Networks](../user-guide/04_crosslinking.md)
+- [Guide: Stepwise Polymer Construction](../user-guide/02_polymer_stepwise.ipynb)
+- [Guide: Crosslinked Networks](../user-guide/04_crosslinking.ipynb)
 
 ---
 
@@ -58,25 +58,13 @@ product = result.product_info.product
 
 ::: molpy.reacter.base
 
-### Connector
-
-::: molpy.reacter.connector
-
 ### Selectors
 
 ::: molpy.reacter.selectors
 
-### Template
-
-::: molpy.reacter.template
-
 ### Topology Detector
 
 ::: molpy.reacter.topology_detector
-
-### Transformers
-
-::: molpy.reacter.transformers
 
 ### Utils
 

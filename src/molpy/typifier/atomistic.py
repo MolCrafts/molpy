@@ -404,22 +404,17 @@ class ForceFieldAtomTypifier(TypifierBase["Atomistic"]):
 
     @override
     def typify(self, struct: "Atomistic") -> "Atomistic":
-        """Assign types to all atoms in Atomistic structure.
-
-        Returns a new Atomistic with types assigned; the input is not mutated.
-        """
+        """Return a new Atomistic with atom types assigned; input is not mutated."""
+        orig_atoms = list(struct.atoms)
         graph, vs_to_atomid, _atomid_to_vs = self._build_mol_graph(struct)
 
         result = self.engine.typify(graph, vs_to_atomid)
 
-        # Build a new Atomistic to avoid mutating the input
-        new_struct = Atomistic()
-        old_to_new: dict[int, "Atom"] = {}
+        new_struct = struct.copy()
+        new_atoms = list(new_struct.atoms)
 
-        for atom in struct.atoms:
-            # Copy atom data
-            new_atom = Atom(**dict(atom.data))
-            atom_id = id(atom)
+        for orig_atom, new_atom in zip(orig_atoms, new_atoms):
+            atom_id = id(orig_atom)
             if atom_id in result:
                 atomtype = result[atom_id]
                 new_atom.data["type"] = atomtype
@@ -428,24 +423,13 @@ class ForceFieldAtomTypifier(TypifierBase["Atomistic"]):
                 if atom_type_obj:
                     new_atom.data.update(**atom_type_obj.params.kwargs)
 
-            new_struct.add_entity(new_atom)
-            old_to_new[id(atom)] = new_atom
-
-        # Copy bonds and other links
-        for bond in struct.bonds:
-            new_itom = old_to_new.get(id(bond.itom))
-            new_jtom = old_to_new.get(id(bond.jtom))
-            if new_itom is not None and new_jtom is not None:
-                new_bond = Bond(new_itom, new_jtom, **dict(bond.data))
-                new_struct.add_link(new_bond)
-
         if self.strict:
             untyped_atoms = [
                 atom for atom in new_struct.atoms if atom.get("type") is None
             ]
             if untyped_atoms:
                 untyped_info = [
-                    f"{atom.get('symbol', '?')} (id={id(atom)})"
+                    f"{atom.get('element', '?')} (id={id(atom)})"
                     for atom in untyped_atoms[:10]
                 ]
                 error_msg = (
@@ -590,23 +574,19 @@ class ForceFieldAtomisticTypifier(TypifierBase[Atomistic]):
 
     @override
     def typify(self, struct: Atomistic) -> Atomistic:
-        """Assign types to all bonds, angles, dihedrals in Atomistic structure.
-
-        Returns a new Atomistic with types assigned; the input is not mutated.
-        """
+        """Return a new Atomistic with types assigned; input is not mutated."""
         if not self.skip_atom_typing:
-            typed_struct = self.atom_typifier.typify(struct)
+            new_struct = self.atom_typifier.typify(struct)
         else:
-            # Copy struct to avoid mutation
-            typed_struct = struct
+            new_struct = struct.copy()
 
         if not self.skip_pair_typing:
-            for atom in typed_struct.atoms:
+            for atom in new_struct.atoms:
                 if atom.get("type") is not None:
                     self.pair_typifier.typify(atom)
 
         if not self.skip_bond_typing:
-            for bond in typed_struct.bonds:
+            for bond in new_struct.bonds:
                 if (
                     bond.itom.get("type") is not None
                     and bond.jtom.get("type") is not None
@@ -614,20 +594,20 @@ class ForceFieldAtomisticTypifier(TypifierBase[Atomistic]):
                     self.bond_typifier.typify(bond)
 
         if not self.skip_angle_typing:
-            angles = typed_struct.links.bucket(Angle)
+            angles = new_struct.links.bucket(Angle)
             for angle in angles:
                 endpoints = angle.endpoints
                 if all(ep.get("type") is not None for ep in endpoints):
                     self.angle_typifier.typify(angle)
 
         if not self.skip_dihedral_typing:
-            dihedrals = typed_struct.links.bucket(Dihedral)
+            dihedrals = new_struct.links.bucket(Dihedral)
             for dihedral in dihedrals:
                 endpoints = dihedral.endpoints
                 if all(ep.get("type") is not None for ep in endpoints):
                     self.dihedral_typifier.typify(dihedral)
 
-        return typed_struct
+        return new_struct
 
 
 class OplsAtomisticTypifier(ForceFieldAtomisticTypifier):

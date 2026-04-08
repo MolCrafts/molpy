@@ -31,8 +31,8 @@ def _build_atomistic_from_graph(
 ) -> tuple[Atomistic, dict[int, Atom]]:
     """Build Atomistic structure from IR atoms and bonds.
 
-    Shared helper that handles atom creation with element->symbol copy
-    and bond creation using _convert_bond_order_to_kind.
+    Shared helper that handles atom creation and bond creation
+    using _convert_bond_order_to_kind.
 
     Args:
         atoms_ir: List of SmilesAtomIR from graph
@@ -52,8 +52,6 @@ def _build_atomistic_from_graph(
         if idx in skip:
             continue
         atom_data = asdict(atom_ir)
-        if atom_data.get("element") and not atom_data.get("symbol"):
-            atom_data["symbol"] = atom_data["element"]
         extras = atom_data.pop("extras", {}) or {}
         atom_data.update(extras)
         atom = struct.def_atom(**atom_data)
@@ -142,9 +140,6 @@ def smilesir_to_atomistic(ir: SmilesGraphIR) -> Atomistic:
             continue
 
         atom_data = asdict(atom_ir)
-        if atom_data.get("element") and not atom_data.get("symbol"):
-            atom_data["symbol"] = atom_data["element"]
-
         extras = atom_data.pop("extras", {}) or {}
         atom_data.update(extras)
 

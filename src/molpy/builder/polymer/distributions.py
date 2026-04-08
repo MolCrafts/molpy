@@ -235,9 +235,11 @@ class PoissonPolydisperse:
         return pmf
 
     def sample_dp(self, rng: np.random.Generator) -> int:
-        """Sample DP from Poisson distribution (>= 1)."""
-        dp = rng.poisson(self.lambda_param)
-        return max(1, int(dp))
+        """Sample DP from zero-truncated Poisson distribution (>= 1)."""
+        while True:
+            dp = int(rng.poisson(self.lambda_param))
+            if dp >= 1:
+                return dp
 
 
 class FlorySchulzPolydisperse:

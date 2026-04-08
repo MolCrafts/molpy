@@ -49,9 +49,11 @@ Run `pytest tests/test_<pkg>/ -v` — confirm tests PASS.
 Run `/molpy-review` on all modified files.
 
 **Phase 7 — Documentation**
-Use the `molpy-documenter` agent to add Google-style docstrings, unit annotations, Reference sections, and update `docs/` if needed.
+Run in parallel:
+- `/molpy-api-doc` on all modified source files — adds Google-style docstrings, unit annotations, type hints, and Raises sections.
+- `/molpy-tutorial` on the feature concept (if it introduces a new user-facing workflow) — writes or updates the User Guide page in `docs/user-guide/`.
 
 **Phase 8 — Final Verification**
-Run in parallel: `/molpy-arch`, `/molpy-test`, `/molpy-perf`, `/molpy-docs`.
+Run in parallel: `/molpy-arch`, `/molpy-test`, `/molpy-perf`, `/molpy-api-doc`.
 
 Report: files created/modified, test results, coverage, literature references, remaining TODOs.

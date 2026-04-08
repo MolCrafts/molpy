@@ -12,10 +12,8 @@ from typing import Protocol
 
 import numpy as np
 
-from molpy.core.atomistic import Atomistic
+from molpy.core.atomistic import Atom, Atomistic
 from molpy.core.element import Element
-
-from .port_utils import PortInfo
 
 __all__ = [
     "CovalentSeparator",
@@ -36,8 +34,8 @@ class Separator(Protocol):
         self,
         left_struct: Atomistic,
         right_struct: Atomistic,
-        left_port: PortInfo,
-        right_port: PortInfo,
+        left_port: Atom,
+        right_port: Atom,
     ) -> float:
         """
         Calculate separation distance between structures.
@@ -61,8 +59,8 @@ class Orienter(Protocol):
         self,
         left_struct: Atomistic,
         right_struct: Atomistic,
-        left_port: PortInfo,
-        right_port: PortInfo,
+        left_port: Atom,
+        right_port: Atom,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Calculate target position and orientation for right structure.
@@ -105,8 +103,8 @@ class VdWSeparator:
         self,
         left_struct: Atomistic,
         right_struct: Atomistic,
-        left_port: PortInfo,
-        right_port: PortInfo,
+        left_port: Atom,
+        right_port: Atom,
     ) -> float:
         """
         Calculate separation based on VdW radii.
@@ -121,8 +119,8 @@ class VdWSeparator:
             Separation distance = vdw_left + vdw_right + buffer
         """
         # Get port anchor atoms
-        left_anchor = left_port.target
-        right_anchor = right_port.target
+        left_anchor = left_port
+        right_anchor = right_port
 
         # Get element symbols
         left_symbol = left_anchor.get("symbol", "C")
@@ -183,8 +181,8 @@ class CovalentSeparator:
         self,
         left_struct: Atomistic,
         right_struct: Atomistic,
-        left_port: PortInfo,
-        right_port: PortInfo,
+        left_port: Atom,
+        right_port: Atom,
     ) -> float:
         """
         Calculate separation based on typical bond lengths.
@@ -199,8 +197,8 @@ class CovalentSeparator:
             Separation distance = typical_bond_length + buffer
         """
         # Get port anchor atoms
-        left_anchor = left_port.target
-        right_anchor = right_port.target
+        left_anchor = left_port
+        right_anchor = right_port
 
         # Get element symbols
         left_symbol = left_anchor.get("symbol", "C")
@@ -236,8 +234,8 @@ class LinearOrienter:
         self,
         left_struct: Atomistic,
         right_struct: Atomistic,
-        left_port: PortInfo,
-        right_port: PortInfo,
+        left_port: Atom,
+        right_port: Atom,
         separation: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -259,8 +257,8 @@ class LinearOrienter:
             Tuple of (translation_vector, rotation_matrix)
         """
         # Get port anchor atoms
-        left_anchor = left_port.target
-        right_anchor = right_port.target
+        left_anchor = left_port
+        right_anchor = right_port
 
         # Get positions from x/y/z fields
         left_anchor_pos = np.array(
@@ -299,7 +297,7 @@ class LinearOrienter:
 
         return translation, rotation
 
-    def _get_port_direction(self, struct: Atomistic, port: PortInfo) -> np.ndarray:
+    def _get_port_direction(self, struct: Atomistic, port: Atom) -> np.ndarray:
         """
         Calculate direction vector for a port.
 
@@ -314,7 +312,7 @@ class LinearOrienter:
         Returns:
             Normalized 3D direction vector
         """
-        anchor = port.target
+        anchor = port
         anchor_pos = np.array(
             [
                 anchor["x"],
@@ -437,8 +435,8 @@ class Placer:
         self,
         left_struct: Atomistic,
         right_struct: Atomistic,
-        left_port: PortInfo,
-        right_port: PortInfo,
+        left_port: Atom,
+        right_port: Atom,
     ) -> None:
         """
         Position right_struct relative to left_struct.
@@ -462,7 +460,7 @@ class Placer:
         )
 
         # Use right port anchor as pivot for rotation
-        right_anchor = right_port.target
+        right_anchor = right_port
         right_anchor_pos = np.array(
             [
                 right_anchor["x"],

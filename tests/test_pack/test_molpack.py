@@ -1,8 +1,8 @@
-"""
-Tests for Packmol packer and Molpack interface.
+"""Tests for Packmol packer and Molpack interface.
 
-These tests require packmol executable to be available in PATH.
-If packmol is not found, all tests will be skipped.
+Unit tests (TestPackmolUnit, TestMolpackUnit) run without any external binary.
+Integration tests (*Integration classes) require Packmol in PATH and are
+skipped automatically when unavailable.
 """
 
 import shutil
@@ -11,308 +11,402 @@ import numpy as np
 import pytest
 
 import molpy.pack as mpk
+from molpy import Script
 from molpy.core import Block, Frame
 from molpy.pack.molpack import Molpack
 from molpy.pack.packer.packmol import Packmol
 
-# Check if packmol is available
 PACKMOL_AVAILABLE = shutil.which("packmol") is not None
+needs_packmol = pytest.mark.skipif(
+    not PACKMOL_AVAILABLE, reason="Packmol executable not found in PATH"
+)
 
-# External-tool tests (packmol) + skip if not installed
-pytestmark = [
-    pytest.mark.external,
-    pytest.mark.skipif(
-        not PACKMOL_AVAILABLE, reason="Packmol executable not found in PATH"
-    ),
-]
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def simple_water_frame() -> Frame:
-    """Create a simple water molecule frame."""
+def water_frame() -> Frame:
+    """3-atom water molecule with id, element, and separate x/y/z columns."""
     xyz = np.array([[0.0, 0.0, 0.0], [0.96, 0.0, 0.0], [-0.24, 0.93, 0.0]])
-    atoms = Block(
+    return Frame(
         {
-            "element": np.array(["O", "H", "H"]),
-            "x": xyz[:, 0],
-            "y": xyz[:, 1],
-            "z": xyz[:, 2],
-            "xyz": xyz,  # Keep for backward compatibility
+            "atoms": Block(
+                {
+                    "id": np.array([1, 2, 3], dtype=int),
+                    "element": np.array(["O", "H", "H"]),
+                    "x": xyz[:, 0],
+                    "y": xyz[:, 1],
+                    "z": xyz[:, 2],
+                }
+            )
         }
     )
-    return Frame({"atoms": atoms})
 
 
 @pytest.fixture
-def simple_target(simple_water_frame):
-    """Create a simple packing target."""
-    box_constraint = mpk.InsideBoxConstraint(
-        length=np.array([10.0, 10.0, 10.0]), origin=np.array([0.0, 0.0, 0.0])
+def box20() -> mpk.InsideBoxConstraint:
+    """20 Å cubic box at origin."""
+    return mpk.InsideBoxConstraint(
+        length=np.array([20.0, 20.0, 20.0]),
+        origin=np.array([0.0, 0.0, 0.0]),
     )
-    return mpk.Target(frame=simple_water_frame, number=5, constraint=box_constraint)
 
 
-class TestPackmol:
-    """Test Packmol packer class."""
+@pytest.fixture
+def water_target(water_frame, box20) -> mpk.Target:
+    return mpk.Target(frame=water_frame, number=5, constraint=box20)
 
-    def test_init(self):
-        """Test Packmol initialization."""
-        packer = Packmol(executable="packmol")
-        assert packer.executable == "packmol"
-        assert packer.workdir is None
+
+def _fake_optimized(n_atoms: int) -> Frame:
+    """Fake Packmol output: linearly-spaced x/y/z coordinates."""
+    coords = np.arange(n_atoms * 3, dtype=float).reshape(n_atoms, 3)
+    return Frame(
+        {
+            "atoms": Block(
+                {
+                    "x": coords[:, 0],
+                    "y": coords[:, 1],
+                    "z": coords[:, 2],
+                }
+            )
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — no Packmol binary needed
+# ---------------------------------------------------------------------------
+
+
+class TestPackmolUnit:
+    # --- init ---------------------------------------------------------------
+
+    def test_init_defaults(self):
+        p = Packmol()
+        assert p.executable is None
+        assert p.workdir is None
 
     def test_init_with_workdir(self, tmp_path):
-        """Test Packmol initialization with workdir."""
-        packer = Packmol(workdir=tmp_path)
-        assert packer.workdir == tmp_path
+        p = Packmol(workdir=tmp_path)
+        assert p.workdir == tmp_path
 
-    def test_add_target(self, simple_target):
-        """Test adding targets."""
-        packer = Packmol()
-        packer.add_target(simple_target)
-        assert len(packer.targets) == 1
-        assert packer.targets[0] == simple_target
+    # --- target management --------------------------------------------------
 
-    def test_def_target(self, simple_water_frame):
-        """Test defining target via convenience method."""
-        packer = Packmol()
-        box_constraint = mpk.InsideBoxConstraint(
-            length=np.array([10.0, 10.0, 10.0]), origin=np.array([0.0, 0.0, 0.0])
+    def test_add_target(self, water_target):
+        p = Packmol()
+        p.add_target(water_target)
+        assert len(p.targets) == 1
+        assert p.targets[0] is water_target
+
+    def test_def_target(self, water_frame, box20):
+        p = Packmol()
+        t = p.def_target(frame=water_frame, number=10, constraint=box20)
+        assert len(p.targets) == 1
+        assert t.frame is water_frame
+        assert t.number == 10
+
+    def test_no_targets_raises(self):
+        with pytest.raises(ValueError, match="No targets"):
+            Packmol()()
+
+    # --- constraint formatting ----------------------------------------------
+
+    def test_constraint_inside_box(self, box20):
+        cmd = Packmol()._constraint_to_packmol(box20)
+        assert cmd.startswith("inside box")
+        assert "0.000000" in cmd
+        assert "20.000000" in cmd
+
+    def test_constraint_outside_box(self):
+        cmd = Packmol()._constraint_to_packmol(
+            mpk.OutsideBoxConstraint(
+                origin=np.array([0.0, 0.0, 0.0]),
+                lengths=np.array([5.0, 5.0, 5.0]),
+            )
         )
-        target = packer.def_target(
-            frame=simple_water_frame, number=10, constraint=box_constraint
+        assert cmd.startswith("outside box")
+
+    def test_constraint_inside_sphere(self):
+        cmd = Packmol()._constraint_to_packmol(
+            mpk.InsideSphereConstraint(radius=5.0, center=np.array([0.0, 0.0, 0.0]))
         )
-        assert len(packer.targets) == 1
-        assert target.frame == simple_water_frame
-        assert target.number == 10
+        assert cmd.startswith("inside sphere")
+        assert "5.000000" in cmd
 
-    def test_call_no_targets(self):
-        """Test that calling without targets raises error."""
-        packer = Packmol()
-        with pytest.raises(ValueError, match="No targets provided"):
-            packer()
-
-    def test_generate_input_script(self, simple_target, tmp_path):
-        """Test generate_input_script method returns Script object."""
-        packer = Packmol(workdir=tmp_path)
-        script = packer.generate_input_script(
-            targets=[simple_target], max_steps=1000, seed=42
+    def test_constraint_outside_sphere(self):
+        cmd = Packmol()._constraint_to_packmol(
+            mpk.OutsideSphereConstraint(radius=3.0, center=np.array([1.0, 1.0, 1.0]))
         )
+        assert cmd.startswith("outside sphere")
 
-        # Check it's a Script object
-        from molpy import Script
+    def test_constraint_min_distance(self):
+        cmd = Packmol()._constraint_to_packmol(mpk.MinDistanceConstraint(dmin=2.5))
+        assert "discale" in cmd
+        assert "2.500000" in cmd
 
+    def test_constraint_combined(self, box20):
+        combined = mpk.AndConstraint(
+            box20,
+            mpk.OutsideSphereConstraint(radius=2.0, center=np.array([5.0, 5.0, 5.0])),
+        )
+        cmd = Packmol()._constraint_to_packmol(combined)
+        assert "inside box" in cmd
+        assert "outside sphere" in cmd
+
+    # --- input script generation --------------------------------------------
+
+    def test_generate_input_script_content(self, water_target, tmp_path):
+        script = Packmol(workdir=tmp_path).generate_input_script(
+            targets=[water_target], max_steps=1000, seed=42
+        )
         assert isinstance(script, Script)
-        assert script.name == "packmol_input"
-        assert script.language == "other"
-
-        # Check content
         text = script.text
         assert "tolerance 2.0" in text
         assert "filetype pdb" in text
         assert "output .optimized.pdb" in text
         assert "nloop 1000" in text
         assert "seed 42" in text
-        assert "structure" in text
         assert "number 5" in text
         assert "inside box" in text
 
-        # Test preview
-        preview = script.preview(max_lines=10)
-        assert "tolerance" in preview
-        assert "structure" in preview
-
-    def test_generate_input_only(self, simple_target, tmp_path):
-        """Test generate_input_only method."""
-        packer = Packmol(workdir=tmp_path)
-        input_file = packer.generate_input_only(
-            targets=[simple_target], max_steps=1000, seed=42
+    def test_generate_input_only_creates_file(self, water_target, tmp_path):
+        inp = Packmol(workdir=tmp_path).generate_input_only(
+            targets=[water_target], max_steps=500, seed=7
         )
+        assert inp.exists()
+        content = inp.read_text()
+        assert "nloop 500" in content
+        assert "seed 7" in content
 
-        assert input_file.exists()
-        content = input_file.read_text()
-        assert "tolerance 2.0" in content
-        assert "filetype pdb" in content
-        assert "output .optimized.pdb" in content
-        assert "nloop 1000" in content
-        assert "seed 42" in content
-        assert "structure" in content
-        assert "number 5" in content
-        assert "inside box" in content
+    # --- _build_final_frame -------------------------------------------------
 
-    def test_constraint_to_packmol_box(self):
-        """Test constraint conversion for box constraints."""
-        packer = Packmol()
+    def test_build_final_frame_copies_optimized_coords(self, water_target):
+        n_total = 5 * 3  # 5 molecules × 3 atoms
+        optimized = _fake_optimized(n_total)
+        result = Packmol()._build_final_frame([water_target], optimized)
 
-        box_constraint = mpk.InsideBoxConstraint(
-            length=np.array([10.0, 10.0, 10.0]), origin=np.array([0.0, 0.0, 0.0])
-        )
-        cmd = packer._constraint_to_packmol(box_constraint)
-        assert "inside box" in cmd
-        assert "0.000000" in cmd
-        assert "10.000000" in cmd
+        assert isinstance(result, Frame)
+        assert len(result["atoms"]["x"]) == n_total
+        assert np.allclose(result["atoms"]["x"], optimized["atoms"]["x"])
+        assert np.allclose(result["atoms"]["y"], optimized["atoms"]["y"])
+        assert np.allclose(result["atoms"]["z"], optimized["atoms"]["z"])
 
-        outside_box = mpk.OutsideBoxConstraint(
-            origin=np.array([0.0, 0.0, 0.0]), lengths=np.array([5.0, 5.0, 5.0])
-        )
-        cmd = packer._constraint_to_packmol(outside_box)
-        assert "outside box" in cmd
-
-    def test_constraint_to_packmol_sphere(self):
-        """Test constraint conversion for sphere constraints."""
-        packer = Packmol()
-
-        sphere_constraint = mpk.InsideSphereConstraint(
-            radius=5.0, center=np.array([0.0, 0.0, 0.0])
-        )
-        cmd = packer._constraint_to_packmol(sphere_constraint)
-        assert "inside sphere" in cmd
-        assert "5.000000" in cmd
-
-        outside_sphere = mpk.OutsideSphereConstraint(
-            radius=3.0, center=np.array([1.0, 1.0, 1.0])
-        )
-        cmd = packer._constraint_to_packmol(outside_sphere)
-        assert "outside sphere" in cmd
-
-    def test_constraint_to_packmol_min_distance(self):
-        """Test constraint conversion for minimum distance constraint."""
-        packer = Packmol()
-
-        min_dist = mpk.MinDistanceConstraint(dmin=2.5)
-        cmd = packer._constraint_to_packmol(min_dist)
-        assert "discale" in cmd
-        assert "2.500000" in cmd
-
-    def test_constraint_to_packmol_combined(self):
-        """Test constraint conversion for combined constraints."""
-        packer = Packmol()
-
-        box = mpk.InsideBoxConstraint(length=np.array([10.0, 10.0, 10.0]))
-        sphere = mpk.OutsideSphereConstraint(
-            radius=2.0, center=np.array([5.0, 5.0, 5.0])
-        )
-        combined = mpk.AndConstraint(box, sphere)
-
-        cmd = packer._constraint_to_packmol(combined)
-        assert "inside box" in cmd
-        assert "outside sphere" in cmd
-
-    def test_build_final_frame(self, simple_target):
-        """Test building final frame from packing results."""
-        packer = Packmol()
-
-        # Create optimized frame with coordinates
-        n_atoms_total = 5 * 3  # 5 water molecules * 3 atoms
-        xyz = np.random.rand(n_atoms_total, 3) * 10.0
-        optimized_frame = Frame(
+    def test_build_final_frame_cumulative_bond_angle_offsets(self, box20):
+        """Index offsets in bonds/angles must accumulate across all instances."""
+        frame_a = Frame(
             {
                 "atoms": Block(
                     {
-                        "x": xyz[:, 0],
-                        "y": xyz[:, 1],
-                        "z": xyz[:, 2],
+                        "id": np.array([1, 2, 3], dtype=int),
+                        "x": np.zeros(3),
+                        "y": np.zeros(3),
+                        "z": np.zeros(3),
                     }
-                )
+                ),
+                "bonds": Block(
+                    {
+                        "id": np.array([1], dtype=int),
+                        "atomi": np.array([0], dtype=int),
+                        "atomj": np.array([1], dtype=int),
+                    }
+                ),
+                "angles": Block(
+                    {
+                        "id": np.array([1], dtype=int),
+                        "atomi": np.array([0], dtype=int),
+                        "atomj": np.array([1], dtype=int),
+                        "atomk": np.array([2], dtype=int),
+                    }
+                ),
             }
         )
+        frame_b = Frame(
+            {
+                "atoms": Block(
+                    {
+                        "id": np.array([1, 2], dtype=int),
+                        "x": np.zeros(2),
+                        "y": np.zeros(2),
+                        "z": np.zeros(2),
+                    }
+                ),
+                "bonds": Block(
+                    {
+                        "id": np.array([1], dtype=int),
+                        "atomi": np.array([0], dtype=int),
+                        "atomj": np.array([1], dtype=int),
+                    }
+                ),
+            }
+        )
+        # 2 × frame_a (3 atoms each) + 1 × frame_b (2 atoms) = 8 atoms
+        result = Packmol()._build_final_frame(
+            targets=[
+                mpk.Target(frame=frame_a, number=2, constraint=box20, name="A"),
+                mpk.Target(frame=frame_b, number=1, constraint=box20, name="B"),
+            ],
+            optimized_frame=_fake_optimized(8),
+        )
 
-        result = packer._build_final_frame([simple_target], optimized_frame)
+        # Atom IDs reassigned 1–8
+        np.testing.assert_array_equal(result["atoms"]["id"], np.arange(1, 9, dtype=int))
+        # Molecule IDs: three instances numbered 1, 2, 3
+        np.testing.assert_array_equal(
+            result["atoms"]["mol_id"], np.array([1, 1, 1, 2, 2, 2, 3, 3], dtype=int)
+        )
+        # Bonds: A-inst0 (0→1), A-inst1 (3→4), B-inst0 (6→7)
+        np.testing.assert_array_equal(
+            result["bonds"]["atomi"], np.array([0, 3, 6], dtype=int)
+        )
+        np.testing.assert_array_equal(
+            result["bonds"]["atomj"], np.array([1, 4, 7], dtype=int)
+        )
+        # Angles: only from frame_a instances → (0,1,2) and (3,4,5)
+        np.testing.assert_array_equal(
+            result["angles"]["atomi"], np.array([0, 3], dtype=int)
+        )
+        np.testing.assert_array_equal(
+            result["angles"]["atomj"], np.array([1, 4], dtype=int)
+        )
+        np.testing.assert_array_equal(
+            result["angles"]["atomk"], np.array([2, 5], dtype=int)
+        )
 
+    def test_build_final_frame_improper_offsets(self, box20):
+        frame = Frame(
+            {
+                "atoms": Block(
+                    {
+                        "id": np.array([1, 2, 3, 4], dtype=int),
+                        "x": np.zeros(4),
+                        "y": np.zeros(4),
+                        "z": np.zeros(4),
+                    }
+                ),
+                "impropers": Block(
+                    {
+                        "id": np.array([1], dtype=int),
+                        "atomi": np.array([0], dtype=int),
+                        "atomj": np.array([1], dtype=int),
+                        "atomk": np.array([2], dtype=int),
+                        "atoml": np.array([3], dtype=int),
+                    }
+                ),
+            }
+        )
+        result = Packmol()._build_final_frame(
+            targets=[mpk.Target(frame=frame, number=2, constraint=box20, name="X")],
+            optimized_frame=_fake_optimized(8),
+        )
+        np.testing.assert_array_equal(
+            result["impropers"]["atomi"], np.array([0, 4], dtype=int)
+        )
+        np.testing.assert_array_equal(
+            result["impropers"]["atoml"], np.array([3, 7], dtype=int)
+        )
+
+    def test_build_final_frame_rejects_legacy_bond_keys(self, box20):
+        """Bonds using legacy i/j keys (without 'atom' prefix) must raise KeyError."""
+        legacy = Frame(
+            {
+                "atoms": Block(
+                    {
+                        "id": np.array([1, 2], dtype=int),
+                        "x": np.zeros(2),
+                        "y": np.zeros(2),
+                        "z": np.zeros(2),
+                    }
+                ),
+                "bonds": Block(
+                    {
+                        "id": np.array([1], dtype=int),
+                        "i": np.array([0], dtype=int),
+                        "j": np.array([1], dtype=int),
+                    }
+                ),
+            }
+        )
+        with pytest.raises(KeyError):
+            Packmol()._build_final_frame(
+                targets=[mpk.Target(frame=legacy, number=1, constraint=box20)],
+                optimized_frame=_fake_optimized(2),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Molpack unit tests — no Packmol binary needed
+# ---------------------------------------------------------------------------
+
+
+class TestMolpackUnit:
+    def test_init(self, tmp_path):
+        mp = Molpack(workdir=tmp_path)
+        assert mp.workdir == tmp_path
+        assert len(mp.targets) == 0
+
+    def test_add_target(self, water_frame, box20, tmp_path):
+        mp = Molpack(workdir=tmp_path)
+        t = mp.add_target(water_frame, number=5, constraint=box20)
+        assert len(mp.targets) == 1
+        assert t.number == 5
+
+
+# ---------------------------------------------------------------------------
+# Integration tests — require Packmol executable
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.external
+@needs_packmol
+class TestPackmolIntegration:
+    def test_pack_single_target(self, water_target, tmp_path):
+        result = Packmol(workdir=tmp_path)(
+            targets=[water_target], max_steps=100, seed=42
+        )
         assert isinstance(result, Frame)
-        assert "atoms" in result
-        # Check x, y, z fields
-        assert len(result["atoms"]["x"]) == n_atoms_total
-        assert len(result["atoms"]["y"]) == n_atoms_total
-        assert len(result["atoms"]["z"]) == n_atoms_total
-        # Check that coordinates match
-        assert np.allclose(result["atoms"]["x"], xyz[:, 0])
-        assert np.allclose(result["atoms"]["y"], xyz[:, 1])
-        assert np.allclose(result["atoms"]["z"], xyz[:, 2])
+        assert len(result["atoms"]["x"]) == 15  # 5 molecules × 3 atoms
 
-    def test_real_packing_small(self, simple_target, tmp_path):
-        """Test real packing with packmol."""
-        packer = Packmol(workdir=tmp_path)
-
-        # Use small number of molecules and steps for quick test
-        result = packer(
-            targets=[simple_target],
-            max_steps=100,  # Small number for quick test
-            seed=42,
-            tolerance=2.0,
-        )
-
-        assert isinstance(result, Frame)
-        assert "atoms" in result
-        # Should have 5 molecules * 3 atoms = 15 atoms
-        assert len(result["atoms"]["xyz"]) == 15
-
-    def test_real_packing_multiple_targets(self, simple_water_frame, tmp_path):
-        """Test real packing with multiple targets."""
-        packer = Packmol(workdir=tmp_path)
-
-        # Create two different targets
-        box1 = mpk.InsideBoxConstraint(
-            length=np.array([5.0, 5.0, 5.0]), origin=np.array([0.0, 0.0, 0.0])
-        )
-        target1 = mpk.Target(frame=simple_water_frame, number=3, constraint=box1)
-
-        box2 = mpk.InsideBoxConstraint(
-            length=np.array([5.0, 5.0, 5.0]), origin=np.array([5.0, 5.0, 5.0])
-        )
-        target2 = mpk.Target(frame=simple_water_frame, number=2, constraint=box2)
-
-        result = packer(
-            targets=[target1, target2],
+    def test_pack_multiple_targets(self, water_frame, tmp_path):
+        result = Packmol(workdir=tmp_path)(
+            targets=[
+                mpk.Target(
+                    frame=water_frame,
+                    number=3,
+                    constraint=mpk.InsideBoxConstraint(
+                        length=np.array([5.0, 5.0, 5.0]),
+                        origin=np.array([0.0, 0.0, 0.0]),
+                    ),
+                ),
+                mpk.Target(
+                    frame=water_frame,
+                    number=2,
+                    constraint=mpk.InsideBoxConstraint(
+                        length=np.array([5.0, 5.0, 5.0]),
+                        origin=np.array([5.0, 5.0, 5.0]),
+                    ),
+                ),
+            ],
             max_steps=100,
             seed=42,
-            tolerance=2.0,
         )
+        assert len(result["atoms"]["x"]) == 15  # (3 + 2) × 3 atoms
 
+    def test_pack_method(self, water_target, tmp_path):
+        result = Packmol(workdir=tmp_path).pack(
+            targets=[water_target], max_steps=100, seed=42
+        )
         assert isinstance(result, Frame)
-        assert "atoms" in result
-        # Should have (3 + 2) * 3 = 15 atoms
-        assert len(result["atoms"]["xyz"]) == 15
+        assert len(result["atoms"]["x"]) == 15
 
-    def test_pack_method(self, simple_target, tmp_path):
-        """Test pack() method with real packmol."""
-        packer = Packmol(workdir=tmp_path)
-        result = packer.pack(targets=[simple_target], max_steps=100, seed=42)
 
+@pytest.mark.external
+@needs_packmol
+class TestMolpackIntegration:
+    def test_optimize(self, water_frame, box20, tmp_path):
+        mp = Molpack(workdir=tmp_path)
+        mp.add_target(water_frame, number=5, constraint=box20)
+        result = mp.optimize(max_steps=100, seed=42)
         assert isinstance(result, Frame)
-        assert "atoms" in result
-        assert len(result["atoms"]["xyz"]) == 15
-
-
-class TestMolpack:
-    """Test Molpack high-level interface."""
-
-    def test_init(self, tmp_path):
-        """Test Molpack initialization."""
-        packer = Molpack(workdir=tmp_path)
-        assert packer.workdir == tmp_path
-        assert len(packer.targets) == 0
-
-    def test_add_target(self, simple_water_frame, tmp_path):
-        """Test adding target via Molpack."""
-        packer = Molpack(workdir=tmp_path)
-        box_constraint = mpk.InsideBoxConstraint(
-            length=np.array([10.0, 10.0, 10.0]), origin=np.array([0.0, 0.0, 0.0])
-        )
-        target = packer.add_target(
-            simple_water_frame, number=5, constraint=box_constraint
-        )
-        assert len(packer.targets) == 1
-        assert target.number == 5
-
-    def test_optimize(self, simple_water_frame, tmp_path):
-        """Test optimize method with real packmol."""
-        packer = Molpack(workdir=tmp_path)
-        box_constraint = mpk.InsideBoxConstraint(
-            length=np.array([10.0, 10.0, 10.0]), origin=np.array([0.0, 0.0, 0.0])
-        )
-        packer.add_target(simple_water_frame, number=5, constraint=box_constraint)
-        result = packer.optimize(max_steps=100, seed=42)
-        assert isinstance(result, Frame)
-        assert "atoms" in result
-        assert len(result["atoms"]["xyz"]) == 15
+        assert len(result["atoms"]["x"]) == 15  # 5 molecules × 3 atoms

@@ -1,36 +1,36 @@
 """
-Engine module for molpy.
+Engine module for MolPy.
 
-Provides abstract base classes and implementations for running external
-computational chemistry programs like LAMMPS and CP2K.
+Provides :class:`~molpy.engine.base.Engine`, an abstract base for running
+external computational chemistry programs, together with concrete
+implementations for LAMMPS, CP2K, and OpenMM.
 
-The engine module integrates with the core Script class for input file
-management. Scripts can be created from text, loaded from files, or loaded
-from URLs.
+Two usage modes are supported:
 
-Example:
-    >>> from molpy.core.script import Script
-    >>> from molpy.engine import LAMMPSEngine
-    >>>
-    >>> # Create input script
-    >>> script = Script.from_text(
-    ...     name="input",
-    ...     text="units real\\natom_style full\\n",
-    ...     language="other"
-    ... )
-    >>>
-    >>> # Create engine and prepare
-    >>> engine = LAMMPSEngine(executable="lmp")
-    >>> engine.run(script, workdir="./calc", check=False)
-    >>>
-    >>> # Run calculation
-    >>> result = engine.run()
-    >>> print(result.returncode)
-    0
+* **Generate only** — write input files without executing::
+
+      paths = engine.generate_inputs(frame, ff, config, "./output")
+
+* **Generate and run** — write files then launch the subprocess::
+
+      result = engine.run(script, workdir="./calc")
+
+MPI and job-scheduler launchers are supported via the ``launcher`` parameter::
+
+    from molpy.engine import LAMMPSEngine
+    engine = LAMMPSEngine("lmp", launcher=["mpirun", "-np", "16"])
+    result = engine.run(script, workdir="./calc")
 """
 
 from .base import Engine
 from .cp2k import CP2KEngine
 from .lammps import LAMMPSEngine
+from .openmm import OpenMMEngine, OpenMMSimulationConfig
 
-__all__ = ["CP2KEngine", "Engine", "LAMMPSEngine"]
+__all__ = [
+    "CP2KEngine",
+    "Engine",
+    "LAMMPSEngine",
+    "OpenMMEngine",
+    "OpenMMSimulationConfig",
+]

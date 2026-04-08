@@ -242,7 +242,7 @@ class TestIndexPersistence:
                 "z": [0.0, 0.0],
             }
             frame.metadata["timestep"] = i * 100
-            frame.metadata["box"] = mp.Box(np.eye(3) * 10.0)
+            frame.box = mp.Box(np.eye(3) * 10.0)
             writer.write_frame(frame)
         writer.close()
 
@@ -285,7 +285,7 @@ class TestIndexPersistence:
                 "z": [0.0],
             }
             frame.metadata["timestep"] = i * 100
-            frame.metadata["box"] = mp.Box(np.eye(3) * 5.0)
+            frame.box = mp.Box(np.eye(3) * 5.0)
             writer.write_frame(frame)
         writer.close()
 
@@ -301,7 +301,7 @@ class TestIndexPersistence:
         frame = mp.Frame()
         frame["atoms"] = {"id": [0], "type": [1], "x": [0.0], "y": [0.0], "z": [0.0]}
         frame.metadata["timestep"] = 200
-        frame.metadata["box"] = mp.Box(np.eye(3) * 5.0)
+        frame.box = mp.Box(np.eye(3) * 5.0)
         writer.write_frame(frame)
         writer.close()
 

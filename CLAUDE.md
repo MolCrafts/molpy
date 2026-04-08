@@ -71,6 +71,12 @@ The foundation is three class hierarchies:
 
 **Block** and **Frame** are separate: tabular data (NumPy arrays) for fast computation.
 
+4. **Frame** (numerical container): Holds named Blocks + metadata + box
+   - `frame["atoms"]`, `frame["bonds"]` → Block objects
+   - `frame.box` → `Box | None` (first-class attribute, **not** in metadata)
+   - `frame.metadata` → arbitrary dict (timestep, format info, etc.)
+   - `Block.rename(old, new)` for in-place column key rename
+
 ### Typical Workflow
 
 ```
@@ -108,7 +114,36 @@ ForceFieldWriter (ABC)
   └─ ...
 ```
 
-**Formatter Registry**: Each writer carries `_formatters: dict[StyleType, Callable]` mapping Style classes to serialization functions. Register custom formatters via `Writer.register_formatter(StyleClass, fn)`. Registrations are isolated per subclass (copied in `__init_subclass__`).
+### Pattern: Formatter Hierarchy (`core.fields`)
+
+Canonical field names and I/O boundary translation are defined in `core/fields.py`:
+
+```
+FieldSpec                              — canonical field definition (key, dtype, shape, doc)
+    ↓
+FieldFormatter                         — data field mapping: {format_key: FieldSpec}
+    ↓                                     canonicalize() / localize() on Block
+ForceFieldFormatter(FieldFormatter)    — inherits field mapping + param formatters: {StyleType: Callable}
+```
+
+**Per-format subclasses live in their own I/O module** (not centralized):
+
+```python
+# io/data/lammps.py
+class LammpsFieldFormatter(FieldFormatter):
+    _field_formatters = {"q": CHARGE, "mol": MOL_ID}
+
+# io/forcefield/lammps.py
+class LammpsForceFieldFormatter(LammpsFieldFormatter, ForceFieldFormatter):
+    _param_formatters = {BondHarmonicStyle: _format_bond_harmonic, ...}
+```
+
+- Readers call `_formatter.canonicalize(block)` at exit (format → canonical)
+- Writers call `_formatter.localize_frame(frame)` at entry (canonical → format, on a copy)
+- `__init_subclass__` isolates registries per subclass
+- `register_field()` / `register_param_formatter()` for runtime extension
+
+**Canonical atom fields**: `charge` (not `q`), `mol_id` (not `mol`), `id`, `type`, `mass`, `x`/`y`/`z`, `element`, `symbol`, etc.
 
 ### Pattern: Immutable Data Flow
 
@@ -192,16 +227,17 @@ def test_adapter_fallback():
 
 ### `core.frame` and `core.block`
 
-- `Block`: Dict-like NumPy array container; auto-casts to ndarray; supports advanced indexing
-- `Frame`: Coordinates frame (one timestep); holds `Atomistic` structure + Block data
+- `Block`: Dict-like NumPy array container; auto-casts to ndarray; supports advanced indexing; `rename(old, new)` for column key rename
+- `Frame`: Numerical container with named Blocks + `box: Box | None` (first-class attribute) + `metadata: dict`; `copy()` preserves box
 - `Trajectory`: Sequence of Frames
+- **Box is on `frame.box`**, never in `frame.metadata["box"]`
 
 ### `io.forcefield` hierarchy
 
-- All writers carry `_formatters` registry (subclass-isolated)
-- Custom styles require formatter registration
-- Readers parse into `ForceField` objects
-- Writers serialize from `ForceField` to file format
+- `LammpsForceFieldFormatter` inherits `LammpsFieldFormatter` + `ForceFieldFormatter`
+- `_param_formatters` registry maps Style classes to serialization functions (subclass-isolated via `__init_subclass__`)
+- Custom styles: subclass the formatter and register via `register_param_formatter()`
+- Readers parse into `ForceField` objects; writers serialize via formatter dispatch
 
 ### `parser` module
 
@@ -240,8 +276,10 @@ From `docs/developer/coding-style.md`:
 1. **Optional imports**: If adding a new external tool, follow the adapter pattern and test graceful fallback.
 2. **Notebook output in git**: Pre-commit uses `nbstripout` to strip output; don't commit notebook output.
 3. **External tools**: Mark tests with `@pytest.mark.external` if they need LAMMPS, Packmol, or AmberTools.
-4. **ForceField Style registration**: Custom styles need formatters registered per writer; don't assume a format exists.
+4. **Formatter registration**: Custom styles need `_param_formatters` registered on the format's `ForceFieldFormatter` subclass. Custom data fields need `_field_formatters` on the `FieldFormatter` subclass.
 5. **Identity vs equality**: `Entity` and `Link` use identity-based hashing (`id(self)`), not value-based.
+6. **Box is `frame.box`**: Never store box in `frame.metadata["box"]`. Use `frame.box` directly.
+7. **Canonical field names**: Internal code uses `charge` (not `q`), `mol_id` (not `mol`). Readers/writers translate at the boundary via `FieldFormatter.canonicalize()`/`localize()`.
 
 ## Debugging Tips
 
@@ -254,7 +292,7 @@ From `docs/developer/coding-style.md`:
 
 ## Skills & Agents
 
-MolPy provides 8 skills (`.claude/skills/`) and 5 agents (`.claude/agents/`).
+MolPy provides 9 skills (`.claude/skills/`) and 5 agents (`.claude/agents/`).
 
 ### Skills (slash commands)
 
@@ -264,12 +302,15 @@ MolPy provides 8 skills (`.claude/skills/`) and 5 agents (`.claude/agents/`).
 /molpy-spec "natural language need"  # NL → technical spec with literature grounding (中文/English)
 /molpy-litrev "method or topic"      # Literature review before implementing physical models
 
+# Documentation
+/molpy-tutorial "concept or module"  # Write textbook-style User Guide page for human readers
+/molpy-api-doc [path]                # Audit/write agent-friendly docstrings, type hints, unit annotations
+
 # Validation
 /molpy-arch [path]                   # Architecture layer dependency validation
 /molpy-review [path]                 # Multi-dimensional code review (arch + perf + science + quality)
 /molpy-test [path]                   # Test coverage analysis and scientific test audit
 /molpy-perf [path]                   # Performance profiling and NumPy optimization review
-/molpy-docs [path]                   # Docstring completeness and unit annotation audit
 ```
 
 ### Agents (used by skills or directly)

@@ -151,3 +151,6 @@ docs/**
 
 # Demo Notebooks
 notebooks/
+
+# User-guide example output directories
+*_output/

@@ -433,79 +433,66 @@ html {
   }
 }
 
-/* ===== Full-Width Feature Rows ===== */
-.home-page .feature-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+/* ===== Feature List ===== */
+.home-page .feature-list {
   margin: 2rem 0;
 }
 
-.home-page .feature-row {
+.home-page .feature-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
   display: flex;
-  align-items: center;
-  gap: 1.25rem;
-  padding: 1.25rem 1.5rem;
-  border-radius: 12px;
-  text-decoration: none !important;
-  color: var(--md-typeset-color) !important;
-  transition: background 0.2s ease;
-  cursor: pointer;
+  flex-direction: column;
 }
 
-.home-page .feature-row:hover {
+.home-page .feature-list ul li {
+  margin: 0;
+  padding: 0;
+}
+
+.home-page .feature-list ul li p {
+  margin: 0;
+  padding: 1.1rem 1.5rem;
+  border-radius: 10px;
+  transition: background 0.2s ease;
+  line-height: 1.7;
+}
+
+.home-page .feature-list ul li p:hover {
   background: var(--molpy-glass-bg);
 }
 
-.home-page .feature-icon {
-  flex-shrink: 0;
-  font-size: 1.5rem;
-  width: 2.5rem;
-  text-align: center;
+/* Icon: inline, vertically centred with first line of text */
+.home-page .feature-list .twemoji,
+.home-page .feature-list .md-icon {
   color: var(--md-primary-fg-color);
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 0.4rem;
 }
 
-.home-page .feature-body {
-  flex: 1;
-  min-width: 0;
+/* Title link */
+.home-page .feature-list strong a {
+  color: var(--md-typeset-color) !important;
+  text-decoration: none !important;
 }
 
-.home-page .feature-body strong {
-  display: block;
-  font-size: 1.05rem;
-  margin-bottom: 0.2rem;
+.home-page .feature-list strong a:hover {
+  color: var(--md-primary-fg-color) !important;
+}
+
+/* Override gradient on strong inside feature-list */
+.home-page .feature-list strong {
   -webkit-text-fill-color: initial !important;
   background: none !important;
-}
-
-.home-page .feature-body {
-  font-size: 0.9rem;
-  opacity: 0.75;
-  line-height: 1.6;
-}
-
-.home-page .feature-arrow {
-  flex-shrink: 0;
-  opacity: 0;
-  transform: translateX(-4px);
-  transition: all 0.2s ease;
-  color: var(--md-primary-fg-color);
-}
-
-.home-page .feature-row:hover .feature-arrow {
-  opacity: 0.6;
-  transform: translateX(0);
+  font-size: 1rem;
 }
 
 @media screen and (max-width: 44.984375em) {
-  .home-page .feature-row {
-    padding: 1rem;
-    gap: 1rem;
-  }
-
-  .home-page .feature-icon {
-    font-size: 1.25rem;
-    width: 2rem;
+  .home-page .feature-list ul li p {
+    padding: 0.9rem 1rem;
+    flex-wrap: wrap;
   }
 }
 

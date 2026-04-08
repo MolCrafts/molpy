@@ -1022,3 +1022,295 @@ def read_oplsaa_forcefield(
     """
     reader = OPLSAAForceFieldReader(filepath)
     return reader.read(forcefield)
+
+
+# ============================================================================
+# Writer
+# ============================================================================
+
+
+class XMLForceFieldWriter:
+    """Write a ForceField to OpenMM-style XML.
+
+    The output is roundtrip-compatible with :class:`XMLForceFieldReader`.
+
+    Args:
+        filepath: Destination path.
+        precision: Number of decimal digits for floating-point values.
+    """
+
+    def __init__(self, filepath: str | Path, precision: int = 6) -> None:
+        self._file = Path(filepath)
+        self._prec = precision
+
+    # ------------------------------------------------------------------
+    # public
+    # ------------------------------------------------------------------
+
+    def write(self, forcefield: AtomisticForcefield) -> None:
+        """Serialize *forcefield* to XML."""
+        from molpy.core.forcefield import (
+            AngleStyle,
+            AtomStyle,
+            BondStyle,
+            DihedralStyle,
+            ForceField,
+            ImproperStyle,
+            PairStyle,
+        )
+
+        root = ET.Element("ForceField")
+        root.set("name", forcefield.name or "MolPy")
+
+        # AtomTypes
+        atom_types = forcefield.get_types(AtomType)
+        if atom_types:
+            self._write_atomtypes(root, atom_types)
+
+        # Bonds
+        for style in forcefield.get_styles(BondStyle):
+            if isinstance(style, BondHarmonicStyle):
+                self._write_harmonic_bonds(root, style)
+
+        # Angles
+        for style in forcefield.get_styles(AngleStyle):
+            if isinstance(style, AngleHarmonicStyle):
+                self._write_harmonic_angles(root, style)
+
+        # Dihedrals
+        for style in forcefield.get_styles(DihedralStyle):
+            if isinstance(style, DihedralOPLSStyle):
+                self._write_rb_torsions(root, style)
+            elif isinstance(style, DihedralPeriodicStyle):
+                self._write_periodic_torsions(root, style)
+
+        # Impropers
+        for style in forcefield.get_styles(ImproperStyle):
+            if isinstance(style, ImproperPeriodicStyle):
+                self._write_periodic_impropers(root, style)
+
+        # Nonbonded (pairs)
+        for style in forcefield.get_styles(PairStyle):
+            if isinstance(style, (PairLJ126CoulCutStyle, PairLJ126CoulLongStyle)):
+                self._write_nonbonded(root, style)
+
+        ET.indent(root)
+        tree = ET.ElementTree(root)
+        tree.write(str(self._file), encoding="unicode", xml_declaration=True)
+
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
+
+    def _fmt(self, v: float | int) -> str:
+        if isinstance(v, float):
+            return f"{v:.{self._prec}f}"
+        return str(v)
+
+    @staticmethod
+    def _atom_ident(at: AtomType, idx: int) -> dict[str, str]:
+        """Return ``typeN`` / ``classN`` XML attributes for *at*."""
+        attrs: dict[str, str] = {}
+        type_ = at.params.kwargs.get("type_", "*")
+        class_ = at.params.kwargs.get("class_", "*")
+        if type_ != "*":
+            attrs[f"type{idx}"] = type_
+        if class_ != "*":
+            attrs[f"class{idx}"] = class_
+        return attrs
+
+    # ------------------------------------------------------------------
+    # section writers
+    # ------------------------------------------------------------------
+
+    def _write_atomtypes(self, root: ET.Element, atom_types: list[AtomType]) -> None:
+        section = ET.SubElement(root, "AtomTypes")
+        for at in sorted(atom_types, key=lambda t: t.name):
+            kw = at.params.kwargs
+            attrs: dict[str, str] = {}
+            type_ = kw.get("type_", "*")
+            class_ = kw.get("class_", "*")
+            if type_ != "*":
+                attrs["name"] = type_
+            if class_ != "*":
+                attrs["class"] = class_
+            for xml_key, kw_key in [
+                ("element", "element"),
+                ("mass", "mass"),
+                ("def", "def_"),
+                ("desc", "desc"),
+                ("doi", "doi"),
+                ("overrides", "overrides"),
+            ]:
+                val = kw.get(kw_key)
+                if val is not None:
+                    attrs[xml_key] = (
+                        self._fmt(val) if isinstance(val, float) else str(val)
+                    )
+            elem = ET.SubElement(section, "Type")
+            for k, v in attrs.items():
+                elem.set(k, v)
+
+    def _write_harmonic_bonds(self, root: ET.Element, style: BondHarmonicStyle) -> None:
+        from molpy.core.forcefield import BondType
+
+        types = list(style.types.bucket(BondType))
+        if not types:
+            return
+        section = ET.SubElement(root, "HarmonicBondForce")
+        for bt in types:
+            attrs = {**self._atom_ident(bt.itom, 1), **self._atom_ident(bt.jtom, 2)}
+            kw = bt.params.kwargs
+            r0 = kw.get("r0", 0.0)
+            k = kw.get("k", 0.0)
+            attrs["length"] = self._fmt(r0)
+            attrs["k"] = self._fmt(k)
+            elem = ET.SubElement(section, "Bond")
+            for a, v in attrs.items():
+                elem.set(a, v)
+
+    def _write_harmonic_angles(
+        self, root: ET.Element, style: AngleHarmonicStyle
+    ) -> None:
+        from molpy.core.forcefield import AngleType
+
+        types = list(style.types.bucket(AngleType))
+        if not types:
+            return
+        section = ET.SubElement(root, "HarmonicAngleForce")
+        for at in types:
+            attrs = {
+                **self._atom_ident(at.itom, 1),
+                **self._atom_ident(at.jtom, 2),
+                **self._atom_ident(at.ktom, 3),
+            }
+            kw = at.params.kwargs
+            attrs["angle"] = self._fmt(kw.get("theta0", 0.0))
+            attrs["k"] = self._fmt(kw.get("k", 0.0))
+            elem = ET.SubElement(section, "Angle")
+            for a, v in attrs.items():
+                elem.set(a, v)
+
+    def _write_rb_torsions(self, root: ET.Element, style: DihedralOPLSStyle) -> None:
+        from molpy.core.forcefield import DihedralType
+
+        types = list(style.types.bucket(DihedralType))
+        if not types:
+            return
+        section = ET.SubElement(root, "RBTorsionForce")
+        for dt in types:
+            attrs = {
+                **self._atom_ident(dt.itom, 1),
+                **self._atom_ident(dt.jtom, 2),
+                **self._atom_ident(dt.ktom, 3),
+                **self._atom_ident(dt.ltom, 4),
+            }
+            kw = dt.params.kwargs
+            for ci in range(6):
+                attrs[f"c{ci}"] = self._fmt(kw.get(f"c{ci}", 0.0))
+            elem = ET.SubElement(section, "Proper")
+            for a, v in attrs.items():
+                elem.set(a, v)
+
+    def _write_periodic_torsions(
+        self, root: ET.Element, style: DihedralPeriodicStyle
+    ) -> None:
+        from molpy.core.forcefield import DihedralType
+
+        types = list(style.types.bucket(DihedralType))
+        if not types:
+            return
+        section = ET.SubElement(root, "PeriodicTorsionForce")
+        for dt in types:
+            attrs = {
+                **self._atom_ident(dt.itom, 1),
+                **self._atom_ident(dt.jtom, 2),
+                **self._atom_ident(dt.ktom, 3),
+                **self._atom_ident(dt.ltom, 4),
+            }
+            kw = dt.params.kwargs
+            for j in range(1, 10):
+                pk = f"periodicity{j}"
+                kk = f"k{j}"
+                phk = f"phase{j}"
+                if pk in kw and kk in kw and phk in kw:
+                    attrs[pk] = str(int(kw[pk]))
+                    attrs[kk] = self._fmt(kw[kk])
+                    attrs[phk] = self._fmt(kw[phk])
+                else:
+                    break
+            elem = ET.SubElement(section, "Proper")
+            for a, v in attrs.items():
+                elem.set(a, v)
+
+    def _write_periodic_impropers(
+        self, root: ET.Element, style: ImproperPeriodicStyle
+    ) -> None:
+        from molpy.core.forcefield import ImproperType
+
+        types = list(style.types.bucket(ImproperType))
+        if not types:
+            return
+        section = ET.SubElement(root, "PeriodicImproperForce")
+        for it in types:
+            attrs = {
+                **self._atom_ident(it.itom, 1),
+                **self._atom_ident(it.jtom, 2),
+                **self._atom_ident(it.ktom, 3),
+                **self._atom_ident(it.ltom, 4),
+            }
+            kw = it.params.kwargs
+            for j in range(1, 10):
+                pk = f"periodicity{j}"
+                kk = f"k{j}"
+                phk = f"phase{j}"
+                if pk in kw and kk in kw and phk in kw:
+                    attrs[pk] = str(int(kw[pk]))
+                    attrs[kk] = self._fmt(kw[kk])
+                    attrs[phk] = self._fmt(kw[phk])
+                else:
+                    break
+            elem = ET.SubElement(section, "Improper")
+            for a, v in attrs.items():
+                elem.set(a, v)
+
+    def _write_nonbonded(
+        self, root: ET.Element, style: PairLJ126CoulCutStyle | PairLJ126CoulLongStyle
+    ) -> None:
+        from molpy.core.forcefield import PairType
+
+        types = list(style.types.bucket(PairType))
+        if not types:
+            return
+        section = ET.SubElement(root, "NonbondedForce")
+        skw = style.params.kwargs
+        section.set("coulomb14scale", self._fmt(skw.get("coulomb14scale", 0.5)))
+        section.set("lj14scale", self._fmt(skw.get("lj14scale", 0.5)))
+
+        for pt in types:
+            kw = pt.params.kwargs
+            type_name = pt.itom.params.kwargs.get("type_", pt.itom.name)
+            if type_name == "*":
+                type_name = pt.itom.name
+            attrs: dict[str, str] = {"type": type_name}
+            for xml_key, kw_key in [
+                ("charge", "charge"),
+                ("sigma", "sigma"),
+                ("epsilon", "epsilon"),
+            ]:
+                val = kw.get(kw_key)
+                if val is not None:
+                    attrs[xml_key] = self._fmt(val)
+            elem = ET.SubElement(section, "Atom")
+            for a, v in attrs.items():
+                elem.set(a, v)
+
+
+def write_xml_forcefield(filepath: str | Path, forcefield: AtomisticForcefield) -> None:
+    """Convenience function to write a force field to XML.
+
+    Args:
+        filepath: Output path.
+        forcefield: Force field to serialize.
+    """
+    XMLForceFieldWriter(filepath).write(forcefield)

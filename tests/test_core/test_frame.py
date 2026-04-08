@@ -13,7 +13,7 @@ def simple_frame() -> Frame:
     f["atoms"]["xyz"] = np.arange(9).reshape(3, 3)
     f["atoms"]["charge"] = np.array([-1.0, 0.5, 0.5])
     f["bonds"] = Block()
-    f["bonds"]["i"] = np.arange(3)
+    f["bonds"]["atomi"] = np.arange(3)
     return f
 
 
@@ -615,7 +615,7 @@ Charlie,35,1.75"""
 class TestFrame:
     def test_set_and_get_variable(self, simple_frame):
         assert np.isclose(simple_frame["atoms"]["charge"][0], -1.0)
-        assert np.array_equal(simple_frame["bonds"]["i"], np.arange(3))
+        assert np.array_equal(simple_frame["bonds"]["atomi"], np.arange(3))
 
     def test_setitem_creates_block(self):
         f = Frame()
@@ -630,7 +630,7 @@ class TestFrame:
 
     def test_variables(self, simple_frame):
         assert set(simple_frame["atoms"].keys()) == {"xyz", "charge"}
-        assert set(simple_frame["bonds"].keys()) == {"i"}
+        assert set(simple_frame["bonds"].keys()) == {"atomi"}
 
     def test_blocks_iter_and_len(self, simple_frame):
         blocks = set(simple_frame._blocks)
@@ -663,7 +663,7 @@ class TestFrame:
     def test_frame_init_with_valid_blocks(self):
         """Test Frame initialization with valid dict[str, Block]."""
         atoms_block = Block({"x": [0, 1, 2], "y": [0, 0, 0], "z": [0, 0, 0]})
-        bonds_block = Block({"i": [0, 1], "j": [1, 2]})
+        bonds_block = Block({"atomi": [0, 1], "atomj": [1, 2]})
 
         valid_blocks = {"atoms": atoms_block, "bonds": bonds_block}
 
@@ -677,7 +677,7 @@ class TestFrame:
         """Test Frame initialization with nested dict that gets converted to Block."""
         nested_blocks = {
             "atoms": {"x": [0, 1, 2], "y": [0, 0, 0], "z": [0, 0, 0]},
-            "bonds": {"i": [0, 1], "j": [1, 2]},
+            "bonds": {"atomi": [0, 1], "atomj": [1, 2]},
         }
 
         frame = Frame(blocks=nested_blocks)
@@ -688,12 +688,12 @@ class TestFrame:
 
         # Verify data is preserved
         assert np.array_equal(frame["atoms"]["x"], np.array([0, 1, 2]))
-        assert np.array_equal(frame["bonds"]["i"], np.array([0, 1]))
+        assert np.array_equal(frame["bonds"]["atomi"], np.array([0, 1]))
 
     def test_frame_init_with_mixed_format(self):
         """Test Frame initialization with mixed Block and dict format."""
         atoms_block = Block({"x": [0, 1, 2], "y": [0, 0, 0]})  # Already Block
-        bonds_dict = {"i": [0, 1], "j": [1, 2]}  # Will be converted
+        bonds_dict = {"atomi": [0, 1], "atomj": [1, 2]}  # Will be converted
 
         mixed_blocks = {"atoms": atoms_block, "bonds": bonds_dict}
 
@@ -703,7 +703,7 @@ class TestFrame:
 
         # Verify data is preserved
         assert np.array_equal(frame["atoms"]["x"], np.array([0, 1, 2]))
-        assert np.array_equal(frame["bonds"]["i"], np.array([0, 1]))
+        assert np.array_equal(frame["bonds"]["atomi"], np.array([0, 1]))
 
     def test_frame_init_with_empty_blocks(self):
         """Test Frame initialization with no blocks."""
@@ -758,8 +758,8 @@ class TestFrame:
                 "mass": [12.01, 1.008, 1.008, 1.008],
                 "charge": [0.0, 0.0, 0.0, 0.0],
             },
-            "bonds": {"i": [0, 0, 0], "j": [1, 2, 3], "type": [1, 1, 1]},
-            "angles": {"i": [1, 1, 2], "j": [0, 0, 0], "k": [2, 3, 3]},
+            "bonds": {"atomi": [0, 0, 0], "atomj": [1, 2, 3], "type": [1, 1, 1]},
+            "angles": {"atomi": [1, 1, 2], "atomj": [0, 0, 0], "atomk": [2, 3, 3]},
         }
 
         frame = Frame(blocks=complex_blocks)
@@ -779,7 +779,7 @@ class TestFrame:
         assert frame["angles"].nrows == 3
 
         assert np.array_equal(frame["atoms"]["id"], np.array([1, 2, 3, 4]))
-        assert np.array_equal(frame["bonds"]["i"], np.array([0, 0, 0]))
+        assert np.array_equal(frame["bonds"]["atomi"], np.array([0, 0, 0]))
 
     def test_frame_init_preserves_metadata(self):
         """Test that Frame initialization preserves metadata."""
@@ -793,7 +793,7 @@ class TestFrame:
         frame = Frame(blocks={"atoms": {"x": [0, 1, 2], "y": [0, 0, 0]}})
 
         # Add another block
-        frame["bonds"] = {"i": [0, 1], "j": [1, 2]}
+        frame["bonds"] = {"atomi": [0, 1], "atomj": [1, 2]}
 
         # Verify all blocks are properly converted
         assert isinstance(frame["atoms"], Block)
@@ -801,4 +801,4 @@ class TestFrame:
 
         # Verify data access works
         assert np.array_equal(frame["atoms"]["x"], np.array([0, 1, 2]))
-        assert np.array_equal(frame["bonds"]["i"], np.array([0, 1]))
+        assert np.array_equal(frame["bonds"]["atomi"], np.array([0, 1]))

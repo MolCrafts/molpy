@@ -31,6 +31,32 @@ class DihedralPeriodicStyle(DihedralStyle):
     def __init__(self):
         super().__init__("periodic")
 
+
+class DihedralFourierStyle(DihedralStyle):
+    """LAMMPS *fourier* dihedral style for AMBER/GAFF force fields.
+
+    Parameters stored per type: k1=K, k2=n (int), k3=phase (degrees), k4=weight.
+    Written as: dihedral_coeff ID m K n phase  (m=1 for single-term AMBER dihedrals).
+    """
+
+    def __init__(self):
+        super().__init__("fourier")
+
+    def def_type(
+        self,
+        itom: AtomType,
+        jtom: AtomType,
+        ktom: AtomType,
+        ltom: AtomType,
+        name: str = "",
+        **kwargs,
+    ) -> DihedralPeriodicType:
+        if not name:
+            name = f"{itom.name}-{jtom.name}-{ktom.name}-{ltom.name}"
+        dt = DihedralPeriodicType(name, itom, jtom, ktom, ltom, **kwargs)
+        self.types.add(dt)
+        return dt
+
     def def_type(
         self,
         itom: AtomType,

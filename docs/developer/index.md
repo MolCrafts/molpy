@@ -1,38 +1,37 @@
 # Developer Guide
 
-This guide is for contributors and library developers. It covers conventions, extension patterns, and internal architecture.
+This guide addresses contributors and library developers. It covers the project's coding and testing conventions, the established extension points at the tool layer, and the deeper architectural patterns governing the core data model and force field hierarchy.
 
-## Part 1: Conventions
+## Part I: Project Conventions
 
-How the project works day-to-day.
+The following pages document day-to-day development practices.
 
-- [Development Setup](development-setup.md) — clone, install, run tests
-- [Contributing](contributing.md) — workflow, PR checklist
-- [Coding Style](coding-style.md) — naming, formatting, immutability rules
-- [Testing](testing.md) — pytest conventions, markers, coverage
-- [Release Process](release-process.md) — versioning, tagging, CI
+- [Development Setup](development-setup.md) — repository cloning, editable installation, and test execution
+- [Contributing](contributing.md) — the pull request workflow, commit message conventions, and the pre-commit hook suite
+- [Coding Style](coding-style.md) — naming conventions, formatting requirements, and the immutability constraint
+- [Testing](testing.md) — pytest conventions, test markers, coverage requirements, and the distinction between local and external tests
+- [Release Process](release-process.md) — semantic versioning, changelog maintenance, and CI-driven package publication
 
-## Part 2: Extending the Tool Layer
+## Part II: Extending the Tool Layer
 
-How to add new capabilities using MolPy's established extension points. These patterns have stable interfaces and clear contracts — you implement a subclass or register a handler.
+The extension points documented here present stable interfaces with explicit contracts. Contributing a new capability at this layer requires implementing a subclass or registering a handler; no modification of core internals is necessary.
 
-- [Adding a Tool or Compute Operation](extending-tools.md) — `Tool`, `Compute`, custom recipes
-- [Adding an I/O Format](extending-io.md) — readers, writers, force field formatters
-- [Adding a Wrapper or Adapter](extending-integration.md) — external CLI tools, in-memory bridges
+- [Adding a Tool or Compute Operation](extending-tools.md) — the `Tool` and `Compute` protocols, operator registration, and custom preparation recipes
+- [Adding an I/O Format](extending-io.md) — reader and writer base classes, the `FieldFormatter` canonicalization interface, and force field formatter registration
+- [Adding a Wrapper or Adapter](extending-integration.md) — subprocess wrapper conventions for external CLI tools and in-memory adapter patterns for third-party libraries
 
-## Part 3: Extending Core Structures
+## Part III: Extending Core Structures
 
-How to extend MolPy's foundational data model. These changes are deeper and require understanding the type bucket system, the force field hierarchy, and the potential dispatch chain.
+Modifications at this layer require a thorough understanding of MolPy's type bucket system, force field parameter hierarchy, and potential dispatch chain. Contributions should be discussed in a GitHub issue before implementation begins.
 
-- [Extending the Data Model](extending-core.md) — new Entity/Link types, custom Struct subclasses
-- [Extending the Force Field](extending-forcefield.md) — custom Style, Type, Potential, and formatter registration
+- [Extending the Data Model](extending-core.md) — new `Entity` and `Link` subtypes, custom `Struct` subclasses, and identity-based hashing invariants
+- [Extending the Force Field](extending-forcefield.md) — custom `Style`, `Type`, and `Potential` definitions, and `ForceFieldFormatter` registration for serialization
 
 ## Integrations
 
-- [MCP for LLM Agents](../user-guide/mcp.md) — exposing MolPy's source to LLM agents via Model Context Protocol
+- [MCP Server for LLM Agents](../user-guide/mcp.md) — exposing MolPy's source code and symbol index to large language model agents via the Model Context Protocol
 
+## Issue Tracking and Discussion
 
-## Support
-
-- Issues: <https://github.com/MolCrafts/molpy/issues>
-- Discussions: <https://github.com/MolCrafts/molpy/discussions>
+- Bug reports and feature requests: <https://github.com/MolCrafts/molpy/issues>
+- Design discussions: <https://github.com/MolCrafts/molpy/discussions>

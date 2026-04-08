@@ -303,10 +303,10 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                 )
             mp_id_int = int(mp_id)
 
-            element = atom.get("element") or atom.get("symbol")
+            element = atom.get("element")
             if element is None:
                 raise ValueError(
-                    f"Atom with {MP_ID}={mp_id_int} has neither 'element' nor 'symbol' attribute."
+                    f"Atom with {MP_ID}={mp_id_int} has no 'element' attribute."
                 )
 
             rd_atom = Chem.Atom(str(element))
@@ -402,7 +402,6 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
             symbol = rd_atom.GetSymbol()
             props: dict[str, Any] = {
                 "element": symbol,
-                "symbol": symbol,
                 "atomic_num": rd_atom.GetAtomicNum(),
                 "id": atom_id,
                 MP_ID: atom_id,
@@ -488,7 +487,6 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                 symbol = rd_atom.GetSymbol()
                 props: dict[str, Any] = {
                     "element": symbol,
-                    "symbol": symbol,
                     "atomic_num": rd_atom.GetAtomicNum(),
                     "id": atom_id,
                     MP_ID: atom_id,
@@ -507,7 +505,6 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
 
             symbol = rd_atom.GetSymbol()
             atom["element"] = symbol
-            atom["symbol"] = symbol
             atom["atomic_num"] = rd_atom.GetAtomicNum()
 
             if atom.get("id") is None:

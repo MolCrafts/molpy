@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 
 from molpy.core.frame import Block, Frame
+from molpy.io.data.lammps import LammpsFieldFormatter
 
 from .base import DataReader, DataWriter
 
@@ -24,14 +25,19 @@ class LammpsMoleculeReader(DataReader):
         super().__init__(Path(path))
         self.is_json = self._path.suffix.lower() == ".json"
 
+    _formatter = LammpsFieldFormatter()
+
     def read(self, frame: Frame | None = None) -> Frame:
         """Read LAMMPS molecule file into a Frame."""
         frame = frame or Frame()
 
         if self.is_json:
-            return self._read_json_format(frame)
+            frame = self._read_json_format(frame)
         else:
-            return self._read_native_format(frame)
+            frame = self._read_native_format(frame)
+
+        self._formatter.canonicalize_frame(frame)
+        return frame
 
     def _read_json_format(self, frame: Frame) -> Frame:
         """Read JSON format molecule file."""
@@ -626,8 +632,11 @@ class LammpsMoleculeWriter(DataWriter):
         if self.format_type == "json" and self._path.suffix.lower() != ".json":
             self._path = self._path.with_suffix(".json")
 
+    _formatter = LammpsFieldFormatter()
+
     def write(self, frame: Frame) -> None:
         """Write Frame to LAMMPS molecule file."""
+        frame = self._formatter.localize_frame(frame)
         if self.format_type == "json":
             self._write_json_format(frame)
         else:

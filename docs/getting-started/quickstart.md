@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import molpy as mp
 from molpy.io.forcefield import read_xml_forcefield
-from molpy.typifier import OplsTypifier
+from molpy.typifier import OplsAtomisticTypifier
 ```
 
 ## 1. Define a TIP3P Water Molecule
@@ -52,7 +52,7 @@ print('atom names:', [a.get('name') for a in water_template.atoms])
 
 ## 2. Assign TIP3P Types
 
-We load MolPy's built-in TIP3P force field file (`tip3p.xml`), then use `OplsTypifier` to assign:
+We load MolPy's built-in TIP3P force field file (`tip3p.xml`), then use `OplsAtomisticTypifier` to assign:
 - atom types
 - bonded types (bonds/angles)
 - nonbonded parameters (sigma/epsilon)
@@ -62,7 +62,7 @@ This is deterministic and uses only MolPy's built-in API + built-in force field 
 ```python
 ff = read_xml_forcefield('tip3p.xml')
 
-typifier = OplsTypifier(
+typifier = OplsAtomisticTypifier(
     ff,
     skip_atom_typing=False,
     skip_dihedral_typing=True,
@@ -167,6 +167,6 @@ print('wrote:', out_dir / 'water_box_tip3p.ff')
 
 - Built a TIP3P water molecule as an editable `Atomistic` graph.
 - Loaded TIP3P parameters from MolPy's built-in `tip3p.xml`.
-- Assigned TIP3P atom types and used `OplsTypifier` to assign bonded and nonbonded parameters.
+- Assigned TIP3P atom types and used `OplsAtomisticTypifier` to assign bonded and nonbonded parameters.
 - Placed many molecules on a deterministic grid in a periodic box.
 - Converted to a `Frame` and wrote LAMMPS data + force-field files.

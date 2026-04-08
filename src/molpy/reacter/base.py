@@ -5,90 +5,35 @@ This module defines the base Reacter class and ProductSet dataclass,
 providing the foundation for SMIRKS-style reaction semantics.
 """
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral
 from molpy.core.entity import Entity
 from molpy.reacter.topology_detector import TopologyDetector
+from molpy.reacter.utils import AnchorSelector, BondFormer, LeavingSelector
 from molpy.typifier.atomistic import TypifierBase
 
-# Callable type signatures for reaction components
-AnchorSelector = Callable[[Atomistic, Atom], Atom]
-"""
-Select **anchor atom** given a **port atom**.
-
-Port atoms are SMILES-marked connection sites (e.g. $, *, <, >) stored on
-atoms via the "port" / "ports" attributes. An *anchor* is the actual atom
-that participates in bond formation.
-
-The callable receives an ``Atomistic`` structure and a port ``Atom``,
-and returns the anchor ``Atom`` where the new bond should be formed.
-"""
-
-LeavingSelector = Callable[[Atomistic, Atom], list[Atom]]
-"""
-Select leaving group atoms given an **anchor atom**.
-
-The callable receives an ``Atomistic`` structure and an anchor ``Atom``,
-and returns a ``list[Atom]`` of entities to be removed.
-"""
-
-BondFormer = Callable[[Atomistic, Atom, Atom], Bond | None]
-"""
-Create or modify bonds between two **anchor atoms** in an assembly.
-
-The callable receives an ``Atomistic`` assembly and two anchor ``Atom``
-instances (*i* and *j*), forms or updates bonds, and returns the new
-``Bond`` or ``None``. As a side effect it modifies ``assembly.links``.
-"""
-
 
 @dataclass
-class ReactantInfo:
-    """Information about the reactants in a reaction.
+class ReactionResult:
+    """Result of a reaction execution.
 
-    Ports vs anchors:
-    - **Ports** are SMILES-marked connection atoms (e.g. $, *, <, >)
-    - **Anchors** are the actual atoms where bonds are formed
-
-    This dataclass tracks the merged reactants and the original **port atoms**
-    on each side before the reaction is executed.
+    Flat structure containing the product, reactant snapshot, topology
+    changes, and bookkeeping fields.
     """
 
-    merged_reactants: Atomistic
-    port_atom_L: Entity | None = None
-    port_atom_R: Entity | None = None
-
-
-@dataclass
-class ProductInfo:
-    """Information about the reaction product.
-
-    This captures the final product structure and the **anchor atoms**
-    where the new bond was formed.
-    """
-
+    # Product
     product: Atomistic
     anchor_L: Atom | None = None
     anchor_R: Atom | None = None
 
-    @property
-    def site_L(self) -> Atom | None:
-        """Alias for anchor_L (the left reaction site atom)."""
-        return self.anchor_L
+    # Reactant snapshot (before reaction, includes removed atoms)
+    reactants: Atomistic | None = None
+    port_atom_L: Entity | None = None
+    port_atom_R: Entity | None = None
 
-    @property
-    def site_R(self) -> Atom | None:
-        """Alias for anchor_R (the right reaction site atom)."""
-        return self.anchor_R
-
-
-@dataclass
-class TopologyChanges:
-    """Topology changes resulting from the reaction."""
-
+    # Topology changes
     new_bonds: list[Any] = field(default_factory=list)
     new_angles: list[Angle] = field(default_factory=list)
     new_dihedrals: list[Dihedral] = field(default_factory=list)
@@ -97,34 +42,11 @@ class TopologyChanges:
     removed_atoms: list[Atom] = field(default_factory=list)
     modified_atoms: set[Atom] = field(default_factory=set)
 
-
-@dataclass
-class ReactionMetadata:
-    """Metadata about the reaction."""
-
-    reaction_name: str
+    # Bookkeeping
+    reaction_name: str = ""
     requires_retype: bool = False
     entity_maps: list[dict[Entity, Entity]] = field(default_factory=list)
     intermediates: list[dict] = field(default_factory=list)
-
-
-@dataclass
-class ReactionResult:
-    """
-    Container for reaction products and metadata with organized structure.
-
-    This class organizes reaction information into logical groups:
-
-    - ``reactant_info``: Information about the reactants and their **port atoms**
-    - ``product_info``: Information about the product and the **anchor atoms**
-    - ``topology_changes``: All topology changes (bonds, angles, dihedrals)
-    - ``metadata``: Reaction metadata (name, retyping info, etc.)
-    """
-
-    reactant_info: ReactantInfo
-    product_info: ProductInfo
-    topology_changes: TopologyChanges
-    metadata: ReactionMetadata
 
 
 class Reacter:
@@ -140,7 +62,7 @@ class Reacter:
     original structures remain unchanged.
 
     **Port Selection Philosophy:**
-    Reacter does NOT handle port selection. The caller (e.g., MonomerLinker)
+    Reacter does NOT handle port selection. The caller
     must explicitly specify which ports to connect via port_L and port_R.
     Ports are marked directly on atoms using the "port" or "ports" attribute.
     This makes the reaction execution deterministic and explicit.
@@ -459,7 +381,7 @@ class Reacter:
 
         if record_intermediates:
             if compute_topology:
-                merged.get_topo(gen_angle=True, gen_dihe=True)
+                merged = merged.get_topo(gen_angle=True, gen_dihe=True)
             intermediates.append(
                 {
                     "step": "reactants",
@@ -480,7 +402,7 @@ class Reacter:
         if record_intermediates:
             product_copy = merged_copy.copy()
             if compute_topology:
-                product_copy.get_topo(gen_angle=True, gen_dihe=True)
+                product_copy = product_copy.get_topo(gen_angle=True, gen_dihe=True)
 
             intermediates.append(
                 {
@@ -520,16 +442,13 @@ class Reacter:
         requires_retype = bool(new_bond or removed_atoms)
 
         # Step 8: Build result structure
-        # Use merged reactants saved BEFORE reaction (with all atoms including removed_atoms)
-        reactant_info = ReactantInfo(
-            merged_reactants=merged_reactants_before_reaction,
+        result = ReactionResult(
+            product=merged,
+            anchor_L=anchor_L,
+            anchor_R=anchor_R,
+            reactants=merged_reactants_before_reaction,
             port_atom_L=port_atom_L,
             port_atom_R=port_atom_R,
-        )
-
-        product_info = ProductInfo(product=merged, anchor_L=anchor_L, anchor_R=anchor_R)
-
-        topology_changes = TopologyChanges(
             new_bonds=[new_bond] if new_bond else [],
             new_angles=new_angles,
             new_dihedrals=new_dihedrals,
@@ -537,25 +456,26 @@ class Reacter:
             removed_dihedrals=removed_dihedrals,
             removed_atoms=removed_atoms,
             modified_atoms=({anchor_L, anchor_R} if anchor_L and anchor_R else set()),
-        )
-
-        metadata = ReactionMetadata(
             reaction_name=self.name,
             requires_retype=requires_retype,
             entity_maps=[final_entity_map],
             intermediates=intermediates,
         )
 
-        result = ReactionResult(
-            reactant_info=reactant_info,
-            product_info=product_info,
-            topology_changes=topology_changes,
-            metadata=metadata,
-        )
-
-        # Step 9: Perform incremental typification if requested
+        # Step 9: Typification when typifier is provided.
         if typifier:
-            self._incremental_typify(merged, result, typifier)
+            if hasattr(typifier, "atom_typifier"):
+                # CompositeTypifier: use incremental path so atom typing
+                # runs before pair typing on the modified atoms.
+                # _incremental_typify operates on merged in-place.
+                self._incremental_typify(merged, result, typifier)
+                # result.product already points to merged (set above).
+            else:
+                # Simple typifier: regen full topology then typify.
+                product = merged.get_topo(gen_angle=True, gen_dihe=True)
+                product = typifier.typify(product)
+                result.product = product
+            result.requires_retype = False
 
         return result
 
@@ -578,16 +498,21 @@ class Reacter:
             reaction_result: Result from the reaction containing exact topology changes
             typifier: OPLS typifier for assigning types
         """
-        modified_atoms = reaction_result.topology_changes.modified_atoms
-        new_bonds = reaction_result.topology_changes.new_bonds
-        new_angles = reaction_result.topology_changes.new_angles
-        new_dihedrals = reaction_result.topology_changes.new_dihedrals
+        modified_atoms = reaction_result.modified_atoms
+        new_bonds = reaction_result.new_bonds
+        new_angles = reaction_result.new_angles
+        new_dihedrals = reaction_result.new_dihedrals
 
         # Step 1: Re-type modified atoms (port atoms where bonds were formed)
         if hasattr(typifier, "atom_typifier") and typifier.atom_typifier:
-            # Clear types from modified atoms so they can be re-typed
+            # Save old types before clearing so we can restore them if
+            # re-typification fails (e.g. SMARTS pattern has no match in the
+            # new bonding environment).  Keyed by id() because modified_atoms
+            # holds references into the live assembly.
+            saved_types: dict[int, str] = {}
             for atom in modified_atoms:
                 if "type" in atom.data:
+                    saved_types[id(atom)] = atom.data["type"]
                     del atom.data["type"]
 
             # Re-type all atoms (graph matching needs full structure).
@@ -604,6 +529,10 @@ class Reacter:
                     t = typed.data.get("type")
                     if t is not None:
                         orig.data["type"] = t
+                    elif id(orig) in saved_types:
+                        # Re-typification produced no match; keep the previous
+                        # type so the atom is never left with type=None.
+                        orig.data["type"] = saved_types[id(orig)]
 
         # Step 2: Update pair types (charge, sigma, epsilon) for modified atoms
         if hasattr(typifier, "pair_typifier") and typifier.pair_typifier:
@@ -617,10 +546,18 @@ class Reacter:
                         continue
                     typifier.pair_typifier.typify(atom)
 
+        # Helper: check whether all endpoint atoms carry a 'type'.
+        # In non-strict mode the atom typifier may leave some atoms
+        # untyped; bonded interactions involving those atoms cannot be
+        # typed either and must be skipped.
+        def _all_typed(endpoints) -> bool:
+            return all(a.get("type") is not None for a in endpoints)
+
         # Step 3: Type new bonds
         if hasattr(typifier, "bond_typifier") and typifier.bond_typifier:
             for bond in new_bonds:
-                typifier.bond_typifier.typify(bond)
+                if _all_typed(bond.endpoints):
+                    typifier.bond_typifier.typify(bond)
 
             # Re-type existing bonds involving modified atoms
             new_bonds_set = set(new_bonds)
@@ -630,12 +567,14 @@ class Reacter:
                 if bond.itom in modified_atoms or bond.jtom in modified_atoms:
                     if "type" in bond.data:
                         del bond.data["type"]
-                    typifier.bond_typifier.typify(bond)
+                    if _all_typed(bond.endpoints):
+                        typifier.bond_typifier.typify(bond)
 
         # Step 4: Type new angles
         if hasattr(typifier, "angle_typifier") and typifier.angle_typifier:
             for angle in new_angles:
-                typifier.angle_typifier.typify(angle)
+                if _all_typed(angle.endpoints):
+                    typifier.angle_typifier.typify(angle)
 
             # Re-type existing angles involving modified atoms
             new_angles_set = set(new_angles)
@@ -650,12 +589,14 @@ class Reacter:
                 ):
                     if "type" in angle.data:
                         del angle.data["type"]
-                    typifier.angle_typifier.typify(angle)
+                    if _all_typed(angle.endpoints):
+                        typifier.angle_typifier.typify(angle)
 
         # Step 5: Type new dihedrals
         if hasattr(typifier, "dihedral_typifier") and typifier.dihedral_typifier:
             for dihedral in new_dihedrals:
-                typifier.dihedral_typifier.typify(dihedral)
+                if _all_typed(dihedral.endpoints):
+                    typifier.dihedral_typifier.typify(dihedral)
 
             # Re-type existing dihedrals involving modified atoms
             new_dihedrals_set = set(new_dihedrals)
@@ -671,7 +612,8 @@ class Reacter:
                 ):
                     if "type" in dihedral.data:
                         del dihedral.data["type"]
-                    typifier.dihedral_typifier.typify(dihedral)
+                    if _all_typed(dihedral.endpoints):
+                        typifier.dihedral_typifier.typify(dihedral)
 
     def __repr__(self) -> str:
         return f"Reacter(name={self.name!r})"

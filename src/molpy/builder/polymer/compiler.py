@@ -308,9 +308,8 @@ class GBigSmilesCompiler:
         monomer sequence and delegates to PolymerBuilder.
         """
         from .core import PolymerBuilder
-        from .placer import CovalentSeparator, LinearOrienter, Placer
 
-        placer = Placer(CovalentSeparator(), LinearOrienter())
+        placer = self._make_placer(library)
 
         built_chains: list[Atomistic] = []
         for chain in plan.chains:
@@ -327,6 +326,17 @@ class GBigSmilesCompiler:
             built_chains.append(result.polymer)
 
         return built_chains
+
+    @staticmethod
+    def _make_placer(library: dict[str, Atomistic]):
+        """Create a Placer only if monomers have 3D coordinates."""
+        from .placer import CovalentSeparator, LinearOrienter, Placer
+
+        for monomer in library.values():
+            for atom in monomer.atoms:
+                if "x" not in atom:
+                    return None
+        return Placer(CovalentSeparator(), LinearOrienter())
 
     @staticmethod
     def _chain_to_cgsmiles(chain: Chain) -> str:

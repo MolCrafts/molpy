@@ -22,8 +22,8 @@ class Atom(Entity):
 
     def __repr__(self) -> str:
         identifier: str
-        if "symbol" in self.data:
-            identifier = str(self.data["symbol"])
+        if "element" in self.data:
+            identifier = str(self.data["element"])
         elif "type" in self.data:
             identifier = str(self.data["type"])
         else:
@@ -246,11 +246,11 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         """Element symbols for every atom in insertion order.
 
         Returns:
-            list[str]: List of element symbol strings (e.g., ``["C", "H", "H"]``).
-                Atoms without a ``"symbol"`` key produce an empty string.
+            list[str]: List of element strings (e.g., ``["C", "H", "H"]``).
+                Atoms without an ``"element"`` key produce an empty string.
         """
         atoms = list(self.atoms)
-        return [str(a.get("symbol", "")) for a in atoms]
+        return [str(a.get("element") or a.get("symbol") or "") for a in atoms]
 
     @property
     def xyz(self) -> np.ndarray:
@@ -292,10 +292,10 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         atoms = self.atoms
         bonds = self.bonds
 
-        # Count atoms by symbol
+        # Count atoms by element
         from collections import Counter
 
-        symbols = [a.get("symbol", "?") for a in atoms]
+        symbols = [a.get("element", "?") for a in atoms]
         symbol_counts = Counter(symbols)
 
         # Format composition
@@ -560,6 +560,30 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         """
         self.links.add(dihedral)
         return dihedral
+
+    # ========== Delete Methods (del_*: remove atoms / bonds) ==========
+
+    def del_atom(self, *atoms: Atom) -> None:
+        """Remove atoms and all their incident bonds, angles, and dihedrals.
+
+        Args:
+            *atoms: Atom instances to remove.
+
+        Related symbols:
+            def_atom, add_atom, remove_entity
+        """
+        self.remove_entity(*atoms)
+
+    def del_bond(self, *bonds: Bond) -> None:
+        """Remove bonds (and any dependent angles / dihedrals that reference them).
+
+        Args:
+            *bonds: Bond instances to remove.
+
+        Related symbols:
+            def_bond, add_bond, remove_link
+        """
+        self.remove_link(*bonds)
 
     # ========== Batch Factory Methods (def_*s: create and add multiple) ==========
 
@@ -908,25 +932,29 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         gen_angle: bool = False,
         gen_dihe: bool = False,
         clear_existing: bool = False,
-    ) -> "Topology":
+    ) -> "Atomistic | Topology":
         """Generate topology (angles and dihedrals) from bonds.
+
+        When ``gen_angle`` or ``gen_dihe`` is True, returns a **new** Atomistic
+        with the generated interactions added — the original is not mutated.
+        When both are False, falls through to the base-class method and returns
+        a :class:`Topology` graph (used internally for traversal).
 
         Args:
             entity_type: Entity type to include in topology (default: Atom)
             link_type: Link type to use for connections (default: Bond)
             gen_angle: Whether to generate angles
             gen_dihe: Whether to generate dihedrals
-            clear_existing: If True, clear existing angles/dihedrals before generating new ones.
-                          If False, only add angles/dihedrals that don't already exist.
+            clear_existing: If True, clear existing angles/dihedrals before
+                generating new ones.
 
         Returns:
-            Topology: Topology object with generated angles and dihedrals.
+            New Atomistic with angles/dihedrals added when gen_angle or
+            gen_dihe is True; Topology graph otherwise.
         """
-        # Use the generic ConnectivityMixin.get_topo method
-        topo = super().get_topo(entity_type=entity_type, link_type=link_type)
-
-        # Get the entity mapping from Topology
-        atoms = topo.idx_to_entity
+        if not gen_angle and not gen_dihe:
+            # Pure topology query used internally (get_topo_neighbors, etc.)
+            return super().get_topo(entity_type=entity_type, link_type=link_type)
 
         # gen_angle and gen_dihe only work with Atom entities
         if gen_angle and entity_type is not Atom:
@@ -934,62 +962,61 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         if gen_dihe and entity_type is not Atom:
             raise ValueError("gen_dihe=True requires entity_type=Atom")
 
+        # Work on a copy so the original is not mutated
+        new_struct = self.copy()
+
+        # Build the topology graph from the copy's bonds
+        from molpy.core.entity import ConnectivityMixin
+
+        topo = ConnectivityMixin.get_topo(
+            new_struct, entity_type=entity_type, link_type=link_type
+        )
+        atoms = topo.idx_to_entity
+
         if gen_angle:
             if clear_existing:
-                # Remove all existing angles
-                existing_angles = list(self.links.bucket(Angle))
+                existing_angles = list(new_struct.links.bucket(Angle))
                 if existing_angles:
-                    self.links.remove(*existing_angles)
+                    new_struct.links.remove(*existing_angles)
 
-            # Build set of existing angle endpoints for deduplication
             existing_angle_endpoints: set[tuple[Atom, Atom, Atom]] = set()
             if not clear_existing:
-                for angle in self.links.bucket(Angle):
+                for angle in new_struct.links.bucket(Angle):
                     existing_angle_endpoints.add((angle.itom, angle.jtom, angle.ktom))
 
-            # Add new angles, avoiding duplicates
             for angle in topo.angles:
                 angle_indices = angle.tolist()
                 itom = atoms[angle_indices[0]]
                 jtom = atoms[angle_indices[1]]
                 ktom = atoms[angle_indices[2]]
-
-                # Check if this angle already exists
                 if (itom, jtom, ktom) not in existing_angle_endpoints:
-                    new_angle = Angle(itom, jtom, ktom)
-                    self.links.add(new_angle)
+                    new_struct.links.add(Angle(itom, jtom, ktom))
                     existing_angle_endpoints.add((itom, jtom, ktom))
 
         if gen_dihe:
             if clear_existing:
-                # Remove all existing dihedrals
-                existing_dihedrals = list(self.links.bucket(Dihedral))
+                existing_dihedrals = list(new_struct.links.bucket(Dihedral))
                 if existing_dihedrals:
-                    self.links.remove(*existing_dihedrals)
+                    new_struct.links.remove(*existing_dihedrals)
 
-            # Build set of existing dihedral endpoints for deduplication
             existing_dihedral_endpoints: set[tuple[Atom, Atom, Atom, Atom]] = set()
             if not clear_existing:
-                for dihedral in self.links.bucket(Dihedral):
+                for dihedral in new_struct.links.bucket(Dihedral):
                     existing_dihedral_endpoints.add(
                         (dihedral.itom, dihedral.jtom, dihedral.ktom, dihedral.ltom)
                     )
 
-            # Add new dihedrals, avoiding duplicates
             for dihe in topo.dihedrals:
                 dihe_indices = dihe.tolist()
                 itom = atoms[dihe_indices[0]]
                 jtom = atoms[dihe_indices[1]]
                 ktom = atoms[dihe_indices[2]]
                 ltom = atoms[dihe_indices[3]]
-
-                # Check if this dihedral already exists
                 if (itom, jtom, ktom, ltom) not in existing_dihedral_endpoints:
-                    new_dihedral = Dihedral(itom, jtom, ktom, ltom)
-                    self.links.add(new_dihedral)
+                    new_struct.links.add(Dihedral(itom, jtom, ktom, ltom))
                     existing_dihedral_endpoints.add((itom, jtom, ktom, ltom))
 
-        return topo
+        return new_struct
 
     # ========== Conversion Methods ==========
 

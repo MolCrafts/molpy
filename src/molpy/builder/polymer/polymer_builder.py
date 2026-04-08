@@ -7,6 +7,8 @@ topologies (linear, branched, cyclic) directly from CGSmiles strings.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from collections.abc import Mapping
 
 from molpy.core.atomistic import Atomistic
@@ -21,13 +23,17 @@ from molpy.typifier.atomistic import TypifierBase
 from .connectors import ConnectorContext, Connector
 from .errors import NoCompatiblePortsError, SequenceError
 from .placer import Placer
-from .port_utils import (
-    get_all_port_info,
-    set_port_metadata,
-    PortInfo,
-    get_port_metadata,
-)
-from .types import ConnectionMetadata, PolymerBuildResult
+from .port_utils import get_ports_on_node
+from molpy.reacter.base import ReactionResult
+
+
+@dataclass
+class PolymerBuildResult:
+    """Result of building a polymer."""
+
+    polymer: Atomistic
+    connection_history: list[ReactionResult] = field(default_factory=list)
+    total_steps: int = 0
 
 
 class PolymerBuilder:
@@ -122,7 +128,7 @@ class PolymerBuilder:
 
     def _build_from_graph(
         self, graph: CGSmilesGraphIR
-    ) -> tuple[Atomistic, list[ConnectionMetadata]]:
+    ) -> tuple[Atomistic, list[ReactionResult]]:
         """
         Build polymer from CGSmiles graph using DFS traversal with node tracking.
 
@@ -145,7 +151,7 @@ class PolymerBuilder:
             monomers[node.id] = self._create_monomer(node)
 
         # Track connection state
-        connection_history: list[ConnectionMetadata] = []
+        connection_history: list[ReactionResult] = []
         visited_edges: set[tuple[int, int]] = set()
 
         # Start DFS from first node
@@ -203,32 +209,9 @@ class PolymerBuilder:
 
     def _find_ports_on_node(
         self, polymer: Atomistic, node_id: int
-    ) -> dict[str, list[PortInfo]]:
-        """Find all ports belonging to a specific node in a merged polymer.
-
-        This method searches through all atoms in the polymer and returns
-        only those ports that belong to the specified node_id. This is
-        essential for branch connections where we need to connect to a
-        specific node in an already-merged structure.
-
-        Args:
-            polymer: Merged polymer structure
-            node_id: ID of the node to find ports for
-
-        Returns:
-            Dictionary mapping port name -> list of PortInfo for ports on that node
-        """
-        ports: dict[str, list[PortInfo]] = {}
-        for atom in polymer.atoms:
-            # Only consider atoms that belong to the specified node
-            if atom.get("monomer_node_id") == node_id:
-                port_name = atom.get("port")
-                if port_name:
-                    metadata = get_port_metadata(atom, port_name)
-                    if port_name not in ports:
-                        ports[port_name] = []
-                    ports[port_name].append(PortInfo(port_name, atom, **metadata))
-        return ports
+    ) -> dict[str, list[Atom]]:
+        """Find all ports belonging to a specific node in a merged polymer."""
+        return get_ports_on_node(polymer, node_id)
 
     def _dfs_connect(
         self,
@@ -237,7 +220,7 @@ class PolymerBuilder:
         adjacency: dict[int, list[tuple[int, int]]],
         monomers: dict[int, Atomistic],
         visited_edges: set[tuple[int, int]],
-        connection_history: list[ConnectionMetadata],
+        connection_history: list[ReactionResult],
     ) -> None:
         """DFS traversal to connect all neighbors using node-based port lookup.
 
@@ -343,7 +326,7 @@ class PolymerBuilder:
         left_node_id: int,
         right_node_id: int,
         bond_order: int,
-        connection_history: list[ConnectionMetadata],
+        connection_history: list[ReactionResult],
     ) -> Atomistic:
         """Connect two monomers using node IDs for precise port location.
 
@@ -399,37 +382,19 @@ class PolymerBuilder:
             )
         )
 
-        # Get the specific port info from the lists using the indices
-        left_port = left_ports[left_port_name][left_port_idx]
-        right_port = right_ports[right_port_name][right_port_idx]
+        # Get the specific port atoms
+        left_port_atom = left_ports[left_port_name][left_port_idx]
+        right_port_atom = right_ports[right_port_name][right_port_idx]
 
         # Position monomer
         if self.placer is not None:
-            self.placer.place_monomer(
-                left,
-                right,
-                left_port,
-                right_port,
-            )
+            self.placer.place_monomer(left, right, left_port_atom, right_port_atom)
 
-        # Save port targets for transfer of unused ports after reaction
-        # We need to know which atoms had ports before, so we can transfer to product
-        left_port_targets: dict[str, list[Atom]] = {
-            name: [port.target for port in port_list]
-            for name, port_list in left_ports.items()
-        }
-        right_port_targets: dict[str, list[Atom]] = {
-            name: [port.target for port in port_list]
-            for name, port_list in right_ports.items()
-        }
+        # Save port atoms for transfer after reaction
+        left_port_targets: dict[str, list[Atom]] = dict(left_ports)
+        right_port_targets: dict[str, list[Atom]] = dict(right_ports)
 
-        # Find port atoms directly by node_id
-        from molpy.reacter.selectors import find_port_atom_by_node
-
-        left_port_atom = find_port_atom_by_node(left, left_port_name, left_node_id)
-        right_port_atom = find_port_atom_by_node(right, right_port_name, right_node_id)
-
-        # Execute connection with explicit port atoms
+        # Execute connection
         connection_result = self.connector.connect(
             left,
             right,
@@ -441,144 +406,61 @@ class PolymerBuilder:
         )
 
         product = connection_result.product
-        metadata = connection_result.metadata
+        connection_history.append(connection_result)
 
-        # Store metadata
-        connection_history.append(metadata)
-
-        # Transfer unused ports using entity map from reaction
-        # The entity_maps in metadata contain the mapping from original atoms to product atoms
+        # Build entity map (original atom → product atom)
         from molpy.core.atomistic import Atom
 
-        atoms_in_product = set(product.atoms)
-
-        # Build combined entity map from metadata
         entity_map: dict[Atom, Atom] = {}
-        if metadata.entity_maps:
-            for emap in metadata.entity_maps:
+        if connection_result.entity_maps:
+            for emap in connection_result.entity_maps:
                 entity_map.update(emap)
 
-        # Build reverse map for node ID preservation
-        reverse_entity_map: dict[Atom, Atom] = {}
-        for original_atom, product_atom in entity_map.items():
-            reverse_entity_map[product_atom] = original_atom
+        atoms_in_product = set(product.atoms)
+        reverse_entity_map: dict[Atom, Atom] = {v: k for k, v in entity_map.items()}
 
-        # Transfer unused left ports (only for the specific node)
+        # Transfer unused ports (port name only, no metadata needed)
         for port_name, original_targets in left_port_targets.items():
-            # Skip the port name that was used (but only the specific instance)
             for idx, original_target in enumerate(original_targets):
-                # Skip the specific port that was used
                 if port_name == left_port_name and idx == left_port_idx:
                     continue
-
-                # Find the corresponding atom in product using entity map
                 new_target = entity_map.get(original_target)
-
-                # Only add port if we found a valid target in product
                 if new_target is not None and new_target in atoms_in_product:
-                    # Preserve the node ID on the atom
                     new_target["monomer_node_id"] = left_node_id
-                    # Get original port metadata
-                    original_port = left_ports[port_name][idx]
-                    # Mark port on atom
                     new_target["port"] = port_name
-                    # Set port metadata
-                    set_port_metadata(
-                        new_target,
-                        port_name,
-                        role=original_port.role,
-                        bond_kind=original_port.bond_kind,
-                        compat=original_port.compat,
-                        priority=original_port.priority,
-                    )
 
-        # Transfer unused right ports (only for the specific node)
         for port_name, original_targets in right_port_targets.items():
-            # Skip the port name that was used (but only the specific instance)
             for idx, original_target in enumerate(original_targets):
-                # Skip the specific port that was used
                 if port_name == right_port_name and idx == right_port_idx:
                     continue
-
-                # Find the corresponding atom in product using entity map
                 new_target = entity_map.get(original_target)
-
-                # Only add port if we found a valid target in product
                 if new_target is not None and new_target in atoms_in_product:
-                    # Preserve the node ID on the atom
                     new_target["monomer_node_id"] = right_node_id
-                    # Get original port metadata
-                    original_port = right_ports[port_name][idx]
-                    # Mark port on atom
                     new_target["port"] = port_name
-                    # Set port metadata
-                    set_port_metadata(
-                        new_target,
-                        port_name,
-                        role=original_port.role,
-                        bond_kind=original_port.bond_kind,
-                        compat=original_port.compat,
-                        priority=original_port.priority,
-                    )
 
-        # Preserve node IDs for all atoms in the product
-        # Map atoms from left and right to their node IDs
-        for atom in product.atoms:
-            # Try to find original atom in reverse entity map
-            original_atom = reverse_entity_map.get(atom)
-            if original_atom is not None:
-                # Get node ID from original atom if available
-                original_node_id = original_atom.get("monomer_node_id")
-                if original_node_id is not None:
-                    atom["monomer_node_id"] = original_node_id
-            # If not found in entity map, check if it already has a node_id
-            # (from port transfer above)
-            elif atom.get("monomer_node_id") is None:
-                # This shouldn't happen for atoms from input structures,
-                # but if it does, we leave it unmarked
-                pass
-
-        # CRITICAL: Also preserve ports from OTHER nodes in merged structures
-        # The above loops only handle ports for left_node_id and right_node_id.
-        # When left/right are already merged polymers, we need to preserve
-        # ports from other nodes that weren't directly involved in this connection.
+        # Preserve node IDs and ports from other nodes in merged structures
         for atom in product.atoms:
             original_atom = reverse_entity_map.get(atom)
-            if original_atom is not None:
-                # Check if original atom had a port that wasn't already transferred
-                original_port = original_atom.get("port")
-                original_node_id = original_atom.get("monomer_node_id")
+            if original_atom is None:
+                continue
 
-                # Only transfer if port exists and isn't already set on product atom
-                if original_port and atom.get("port") is None:
-                    atom["port"] = original_port
-                    # Also transfer port metadata
-                    from molpy.builder.polymer.port_utils import get_port_metadata
+            original_node_id = original_atom.get("monomer_node_id")
+            if original_node_id is not None:
+                atom["monomer_node_id"] = original_node_id
 
-                    try:
-                        metadata = get_port_metadata(original_atom, original_port)
-                        set_port_metadata(
-                            atom,
-                            original_port,
-                            role=metadata.get("role"),
-                            bond_kind=metadata.get("bond_kind"),
-                            compat=metadata.get("compat", set()),
-                            priority=metadata.get("priority", 0),
-                        )
-                    except (KeyError, AttributeError):
-                        # If metadata not available, just set port name
-                        pass
+            original_port = original_atom.get("port")
+            if original_port and atom.get("port") is None:
+                if original_node_id in (left_node_id, right_node_id):
+                    continue
+                atom["port"] = original_port
 
-        # Post-process: Clear ports from O atoms that have no bonded H
-        # This handles dehydration-type reactions where -OH or -H is removed
-        # The port atom's H was consumed, so the port should not be reused
+        # Clear ports from O atoms that lost their H (consumed by reaction)
         from molpy.reacter.selectors import find_neighbors as _find_neighbors
 
         for atom in product.atoms:
-            if atom.get("symbol") == "O" and atom.get("port"):
+            if atom.get("element") == "O" and atom.get("port"):
                 h_neighbors = _find_neighbors(product, atom, element="H")
                 if not h_neighbors:
-                    # This O had its H consumed - clear the port
                     del atom["port"]
 
         return product

@@ -19,7 +19,7 @@ def _write_lammps_traj(path, n_frames=10):
             "z": [0.0, 0.0, 0.0],
         }
         frame.metadata["timestep"] = i * 100
-        frame.metadata["box"] = mp.Box(np.eye(3) * 10.0)
+        frame.box = mp.Box(np.eye(3) * 10.0)
         writer.write_frame(frame)
     writer.close()
 

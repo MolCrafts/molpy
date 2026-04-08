@@ -19,26 +19,26 @@ from molpy.core.atomistic import Atom, Atomistic, Bond
 # ---- Config tests ----
 
 
-class TestAmberPolymerBuilderConfig:
+class TestAmberPolymerBuilderInit:
     def test_default_no_preset(self):
-        from molpy.builder.polymer.ambertools import AmberPolymerBuilderConfig
+        from molpy.builder.polymer.ambertools import AmberPolymerBuilder
 
-        config = AmberPolymerBuilderConfig()
-        assert config.reaction_preset is None
-        assert config.force_field == "gaff2"
-        assert config.charge_method == "bcc"
+        builder = AmberPolymerBuilder(library={})
+        assert builder.reaction_preset is None
+        assert builder.force_field == "gaff2"
+        assert builder.charge_method == "bcc"
 
     def test_with_preset(self):
-        from molpy.builder.polymer.ambertools import AmberPolymerBuilderConfig
+        from molpy.builder.polymer.ambertools import AmberPolymerBuilder
 
-        config = AmberPolymerBuilderConfig(reaction_preset="dehydration")
-        assert config.reaction_preset == "dehydration"
+        builder = AmberPolymerBuilder(library={}, reaction_preset="dehydration")
+        assert builder.reaction_preset == "dehydration"
 
     def test_with_condensation_preset(self):
-        from molpy.builder.polymer.ambertools import AmberPolymerBuilderConfig
+        from molpy.builder.polymer.ambertools import AmberPolymerBuilder
 
-        config = AmberPolymerBuilderConfig(reaction_preset="condensation")
-        assert config.reaction_preset == "condensation"
+        builder = AmberPolymerBuilder(library={}, reaction_preset="condensation")
+        assert builder.reaction_preset == "condensation"
 
 
 # ---- Port utility integration tests ----
@@ -102,14 +102,10 @@ class TestAmberBuilderPortUtilities:
 class TestAmberBuilderLeavingGroups:
     def test_omit_hydrogens_fallback(self):
         """Without preset, auto-detects H atoms as leaving groups."""
-        from molpy.builder.polymer.ambertools.amber_builder import (
-            AmberPolymerBuilder,
-            AmberPolymerBuilderConfig,
-        )
+        from molpy.builder.polymer.ambertools.amber_builder import AmberPolymerBuilder
 
         monomer = _make_test_monomer()
-        config = AmberPolymerBuilderConfig(reaction_preset=None)
-        builder = AmberPolymerBuilder(library={"M": monomer}, config=config)
+        builder = AmberPolymerBuilder(library={"M": monomer}, reaction_preset=None)
 
         # Port "<" is on C1, which has H1 bonded
         omit = builder._get_omit_names(monomer, "<")
@@ -121,14 +117,12 @@ class TestAmberBuilderLeavingGroups:
 
     def test_omit_from_preset(self):
         """With preset, uses preset leaving selectors."""
-        from molpy.builder.polymer.ambertools.amber_builder import (
-            AmberPolymerBuilder,
-            AmberPolymerBuilderConfig,
-        )
+        from molpy.builder.polymer.ambertools.amber_builder import AmberPolymerBuilder
 
         monomer = _make_test_monomer()
-        config = AmberPolymerBuilderConfig(reaction_preset="dehydration")
-        builder = AmberPolymerBuilder(library={"M": monomer}, config=config)
+        builder = AmberPolymerBuilder(
+            library={"M": monomer}, reaction_preset="dehydration"
+        )
 
         # Dehydration: select_self as site, select_hydrogens(1) as leaving
         # Port "<" on C1 → site=C1, leaving=H1
@@ -210,10 +204,9 @@ class TestDSLBackendDispatch:
 class TestAmberExports:
     def test_builder_init_exports(self):
         """builder/__init__.py should export the ambertools version."""
-        from molpy.builder import AmberPolymerBuilder, AmberPolymerBuilderConfig
+        from molpy.builder import AmberPolymerBuilder
 
         assert AmberPolymerBuilder is not None
-        assert AmberPolymerBuilderConfig is not None
 
     def test_tool_exports_amber(self):
         """molpy.tool should export BuildPolymerAmber."""

@@ -111,18 +111,17 @@ def _extract_atom_attributes(atom: "Atom", structure: "Atomistic") -> dict[str, 
     attrs = {}
 
     # Element symbol
-    symbol = atom.get("symbol", atom.get("element", None))
-    if symbol:
-        attrs["element"] = str(symbol).upper()
+    element = atom.get("element") or atom.get("symbol")
+    if element:
+        attrs["element"] = str(element).upper()
 
         # Try to get atomic number
         try:
             from molpy.core.element import Element
 
-            elem = Element(symbol)
+            elem = Element(element)
             attrs["number"] = elem.number
         except:
-            # If element lookup fails, use symbol as-is
             attrs["number"] = None
     else:
         # Check for atomic number directly

@@ -117,10 +117,10 @@ class TestBuildMolGraph:
     def test_build_mol_graph_degree(self):
         """Test that degree is computed correctly."""
         asm = Atomistic()
-        c = Atom(symbol="C")
-        h1 = Atom(symbol="H")
-        h2 = Atom(symbol="H")
-        h3 = Atom(symbol="H")
+        c = Atom(element="C")
+        h1 = Atom(element="H")
+        h2 = Atom(element="H")
+        h3 = Atom(element="H")
         asm.add_entity(c, h1, h2, h3)
         asm.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 

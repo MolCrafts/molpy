@@ -9,9 +9,8 @@ from typing import Protocol, Sequence
 
 import numpy as np
 
-from molpy.core.atomistic import Atomistic
-from molpy.builder.polymer.port_utils import PortInfo
-from molpy.builder.polymer.types import MonomerPlacement, MonomerTemplate
+from molpy.core.atomistic import Atom, Atomistic
+from molpy.builder.polymer.stochastic import MonomerPlacement, MonomerTemplate
 
 
 class GrowthKernel(Protocol):
@@ -25,7 +24,7 @@ class GrowthKernel(Protocol):
     def choose_next_for_port(
         self,
         polymer: Atomistic,
-        port: PortInfo,
+        port: Atom,
         candidates: Sequence[MonomerTemplate],
         rng: np.random.Generator | None = None,
     ) -> MonomerPlacement | None:
@@ -70,7 +69,7 @@ class ProbabilityTableKernel:
     def choose_next_for_port(
         self,
         polymer: Atomistic,
-        port: PortInfo,
+        port: Atom,
         candidates: Sequence[MonomerTemplate],
         rng: np.random.Generator | None = None,
     ) -> MonomerPlacement | None:
@@ -117,26 +116,23 @@ class ProbabilityTableKernel:
             template=templates[idx], target_descriptor_id=target_descs[idx]
         )
 
-    def _get_descriptor_id(self, port: PortInfo) -> int:
-        """Extract descriptor ID from port metadata.
+    def _get_descriptor_id(self, port: Atom) -> int:
+        """Extract descriptor ID from port atom.
 
         Args:
-            port: PortInfo object
+            port: Atom with ``"port"`` and optionally ``"port_descriptor_id"``
 
         Returns:
             Descriptor ID (defaults to 0 if not found)
         """
-        # Check for descriptor_id in port data
-        if "descriptor_id" in port.data:
-            return port.data["descriptor_id"]
+        desc_id = port.get("port_descriptor_id")
+        if desc_id is not None:
+            return desc_id
 
-        # Fallback: try to infer from port name
-        # This is a temporary solution until parser sets descriptor_id
-        port_name = port.name
+        port_name = port.get("port", "")
         if port_name == "<":
             return 0
         elif port_name == ">":
             return 1
         else:
-            # For other ports, use hash of name
             return hash(port_name) % 1000

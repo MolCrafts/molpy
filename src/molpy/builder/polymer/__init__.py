@@ -9,51 +9,58 @@ from .connectors import (
     Connector,
     ConnectorContext,
 )
-from .growth_kernel import GrowthKernel, ProbabilityTableKernel
-from .polymer_builder import PolymerBuilder
-from .sequence_generator import SequenceGenerator, WeightedSequenceGenerator
-from .system import (
-    Chain,
+from .distributions import (
+    DPDistribution,
     FlorySchulzPolydisperse,
+    MassDistribution,
     PoissonPolydisperse,
-    PolydisperseChainGenerator,
     SchulzZimmPolydisperse,
-    SystemPlan,
-    SystemPlanner,
     UniformPolydisperse,
 )
-from .types import (
-    ConnectionMetadata,
-    ConnectionResult,
+from .growth_kernel import GrowthKernel, ProbabilityTableKernel
+from .placer import CovalentSeparator, LinearOrienter, Placer, VdWSeparator
+from .polymer_builder import PolymerBuilder, PolymerBuildResult
+from .sequences import SequenceGenerator, WeightedSequenceGenerator
+from .stochastic import (
     MonomerPlacement,
     MonomerTemplate,
-    PolymerBuildResult,
     PortDescriptor,
     StochasticChain,
+)
+from .system import (
+    Chain,
+    PolydisperseChainGenerator,
+    SystemPlan,
+    SystemPlanner,
 )
 
 __all__ = [
     # Connector
     "Connector",
     "ConnectorContext",
+    # Placer
+    "CovalentSeparator",
+    "LinearOrienter",
+    "Placer",
+    "VdWSeparator",
     # CGSmiles Builder
     "PolymerBuilder",
+    "PolymerBuildResult",
     # Sequence Generators
     "SequenceGenerator",
     "WeightedSequenceGenerator",
-    # System-level (new three-layer architecture)
-    "Chain",
+    # Distributions
+    "DPDistribution",
+    "MassDistribution",
     "FlorySchulzPolydisperse",
     "PoissonPolydisperse",
-    "PolydisperseChainGenerator",
     "SchulzZimmPolydisperse",
+    "UniformPolydisperse",
+    # System-level (three-layer architecture)
+    "Chain",
+    "PolydisperseChainGenerator",
     "SystemPlan",
     "SystemPlanner",
-    "UniformPolydisperse",
-    # Types
-    "ConnectionMetadata",
-    "ConnectionResult",
-    "PolymerBuildResult",
     # G-BigSMILES Stochastic Growth Types
     "MonomerTemplate",
     "PortDescriptor",

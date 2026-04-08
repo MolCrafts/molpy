@@ -11,13 +11,9 @@ The SequenceGenerator is the bottom layer in the three-layer architecture:
 
 from __future__ import annotations
 
-from random import Random
-from typing import Protocol, Union
+from typing import Protocol
 
 import numpy as np
-
-# Accept either stdlib Random or numpy Generator
-RNG = Union[Random, np.random.Generator]
 
 __all__ = [
     "SequenceGenerator",
@@ -31,12 +27,12 @@ class SequenceGenerator(Protocol):
     A sequence generator controls how monomers are arranged in a single chain.
     """
 
-    def generate_sequence(self, dp: int, rng: RNG) -> list[str]:
+    def generate_sequence(self, dp: int, rng: np.random.Generator) -> list[str]:
         """Generate a monomer sequence of specified degree of polymerization.
 
         Args:
             dp: Degree of polymerization (number of monomers)
-            rng: Random number generator (stdlib Random or numpy Generator)
+            rng: numpy random Generator
 
         Returns:
             List of monomer identifiers (strings)
@@ -71,26 +67,20 @@ class WeightedSequenceGenerator:
         self.monomer_ids = sorted(monomer_weights.keys())
         self.n_monomers = len(self.monomer_ids)
 
-    def generate_sequence(self, dp: int, rng: RNG) -> list[str]:
+    def generate_sequence(self, dp: int, rng: np.random.Generator) -> list[str]:
         """Generate a sequence of specified degree of polymerization.
 
         Args:
             dp: Degree of polymerization (number of monomers)
-            rng: Random number generator (stdlib Random or numpy Generator)
+            rng: numpy random Generator
 
         Returns:
             List of monomer identifiers
         """
-        weights = [self.monomer_weights[mid] for mid in self.monomer_ids]
-
-        if isinstance(rng, np.random.Generator):
-            total = sum(weights)
-            probs = np.array([w / total for w in weights])
-            indices = rng.choice(len(self.monomer_ids), size=dp, p=probs)
-            return [self.monomer_ids[i] for i in indices]
-
-        # stdlib Random
-        return rng.choices(self.monomer_ids, weights=weights, k=dp)
+        weights = np.array([self.monomer_weights[mid] for mid in self.monomer_ids])
+        probs = weights / weights.sum()
+        indices = rng.choice(len(self.monomer_ids), size=dp, p=probs)
+        return [self.monomer_ids[i] for i in indices]
 
     def expected_composition(self) -> dict[str, float]:
         """Return expected long-chain monomer fractions."""

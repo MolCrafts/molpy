@@ -65,7 +65,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 :   A marker on an atom (`<`, `>`, or `$`) indicating that it is a reactive connection point for polymerization.
 
 **Typifier**
-:   Assigns force field types to atoms, bonds, angles, and dihedrals via SMARTS pattern matching. Subclasses: `OplsTypifier`, `GaffTypifier`. See [Force Field Typification](../user-guide/06_typifier.md).
+:   Assigns force field types to atoms, bonds, angles, and dihedrals via SMARTS pattern matching. Subclasses: `OplsAtomisticTypifier`, `GaffTypifier`. See [Force Field Typification](../user-guide/06_typifier.md).
 
 **Selector**
 :   A composable predicate that filters atoms in a `Block` by element, type, coordinate range, or distance. Combinable with `&`, `|`, `~`. See [Selector](../tutorials/06_selector.md).

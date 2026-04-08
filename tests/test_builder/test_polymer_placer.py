@@ -1,4 +1,4 @@
-"""Unit tests for placer module: PortInfo, port utilities, and Placer components."""
+"""Unit tests for placer module: port utilities and Placer components."""
 
 import numpy as np
 import pytest
@@ -10,48 +10,46 @@ from molpy.builder.polymer.placer import (
     VdWSeparator,
 )
 from molpy.builder.polymer.port_utils import (
-    PortInfo,
     get_all_ports,
     get_port_atom,
-    get_port_info,
     get_ports,
     get_ports_on_node,
+    port_role,
+    ports_compatible,
 )
 from molpy.core.atomistic import Atomistic
 
 
-# ---- PortInfo Tests ----
+# ---- Port Role / Compatibility Tests ----
 
 
-class TestPortInfo:
-    def test_immutable(self):
-        struct = Atomistic()
-        atom = struct.def_atom(symbol="C")
-        port = PortInfo(name=">", target=atom)
-        with pytest.raises(AttributeError):
-            port.name = "<"  # type: ignore[misc]
+class TestPortRole:
+    def test_left(self):
+        assert port_role("<") == "left"
+        assert port_role("<1") == "left"
 
-    def test_connects_to_right_left(self):
-        struct = Atomistic()
-        a = struct.def_atom(symbol="C")
-        b = struct.def_atom(symbol="C")
-        assert PortInfo(">", a).connects_to(PortInfo("<", b))
-        assert PortInfo("<", b).connects_to(PortInfo(">", a))
+    def test_right(self):
+        assert port_role(">") == "right"
+        assert port_role(">2") == "right"
 
-    def test_connects_to_same_name(self):
-        struct = Atomistic()
-        a = struct.def_atom(symbol="C")
-        b = struct.def_atom(symbol="C")
-        assert PortInfo("$", a).connects_to(PortInfo("$", b))
-        assert PortInfo("$1", a).connects_to(PortInfo("$1", b))
+    def test_terminal(self):
+        assert port_role("$") == "terminal"
+        assert port_role("$1") == "terminal"
 
-    def test_does_not_connect_incompatible(self):
-        struct = Atomistic()
-        a = struct.def_atom(symbol="C")
-        b = struct.def_atom(symbol="C")
-        assert not PortInfo(">", a).connects_to(PortInfo(">", b))
-        assert not PortInfo("<", a).connects_to(PortInfo("<", b))
-        assert not PortInfo("$1", a).connects_to(PortInfo("$2", b))
+
+class TestPortsCompatible:
+    def test_right_left(self):
+        assert ports_compatible(">", "<")
+        assert ports_compatible("<", ">")
+
+    def test_same_name(self):
+        assert ports_compatible("$", "$")
+        assert ports_compatible("$1", "$1")
+
+    def test_incompatible(self):
+        assert not ports_compatible(">", ">")
+        assert not ports_compatible("<", "<")
+        assert not ports_compatible("$1", "$2")
 
 
 # ---- Port Utility Tests ----
@@ -83,30 +81,18 @@ class TestPortUtilities:
         struct = self._make_struct()
         assert get_port_atom(struct, "nonexistent") is None
 
-    def test_get_port_info(self):
-        struct = self._make_struct()
-        info = get_port_info(struct, ">")
-        assert info is not None
-        assert info.name == ">"
-        assert info.target.get("symbol") == "C"
-
-    def test_get_port_info_not_found(self):
-        struct = self._make_struct()
-        assert get_port_info(struct, "nope") is None
-
     def test_get_all_ports(self):
         struct = self._make_struct()
         all_ports = get_all_ports(struct)
         assert len(all_ports) == 2
-        for name, plist in all_ports.items():
-            for p in plist:
-                assert isinstance(p, PortInfo)
-                assert p.name == name
+        for name, atom_list in all_ports.items():
+            for atom in atom_list:
+                assert atom.get("port") == name
 
     def test_get_ports_on_node(self):
         struct = Atomistic()
-        a1 = struct.def_atom(symbol="C", port=">", monomer_node_id=0)
-        a2 = struct.def_atom(symbol="C", port="<", monomer_node_id=1)
+        struct.def_atom(symbol="C", port=">", monomer_node_id=0)
+        struct.def_atom(symbol="C", port="<", monomer_node_id=1)
 
         node0_ports = get_ports_on_node(struct, 0)
         assert ">" in node0_ports
@@ -138,10 +124,8 @@ class TestVdWSeparator:
         struct = Atomistic()
         a = struct.def_atom(symbol="C", x=0.0, y=0.0, z=0.0)
         b = struct.def_atom(symbol="C", x=1.0, y=0.0, z=0.0)
-        left_port = PortInfo(">", a)
-        right_port = PortInfo("<", b)
 
-        dist = sep.get_separation(struct, struct, left_port, right_port)
+        dist = sep.get_separation(struct, struct, a, b)
         assert dist > 0
 
     def test_buffer(self):
@@ -150,11 +134,9 @@ class TestVdWSeparator:
         struct = Atomistic()
         a = struct.def_atom(symbol="C", x=0.0, y=0.0, z=0.0)
         b = struct.def_atom(symbol="C", x=1.0, y=0.0, z=0.0)
-        lp = PortInfo(">", a)
-        rp = PortInfo("<", b)
 
-        d0 = sep0.get_separation(struct, struct, lp, rp)
-        d1 = sep1.get_separation(struct, struct, lp, rp)
+        d0 = sep0.get_separation(struct, struct, a, b)
+        d1 = sep1.get_separation(struct, struct, a, b)
         assert d1 == pytest.approx(d0 + 1.0)
 
 
@@ -164,10 +146,8 @@ class TestCovalentSeparator:
         struct = Atomistic()
         a = struct.def_atom(symbol="C", x=0.0, y=0.0, z=0.0)
         b = struct.def_atom(symbol="C", x=1.0, y=0.0, z=0.0)
-        lp = PortInfo(">", a)
-        rp = PortInfo("<", b)
 
-        dist = sep.get_separation(struct, struct, lp, rp)
+        dist = sep.get_separation(struct, struct, a, b)
         assert dist == pytest.approx(1.54, abs=0.01)
 
     def test_co_bond_length(self):
@@ -175,10 +155,8 @@ class TestCovalentSeparator:
         struct = Atomistic()
         a = struct.def_atom(symbol="C", x=0.0, y=0.0, z=0.0)
         b = struct.def_atom(symbol="O", x=1.0, y=0.0, z=0.0)
-        lp = PortInfo(">", a)
-        rp = PortInfo("<", b)
 
-        dist = sep.get_separation(struct, struct, lp, rp)
+        dist = sep.get_separation(struct, struct, a, b)
         assert dist == pytest.approx(1.43, abs=0.01)
 
     def test_buffer(self):
@@ -186,10 +164,8 @@ class TestCovalentSeparator:
         struct = Atomistic()
         a = struct.def_atom(symbol="C", x=0.0, y=0.0, z=0.0)
         b = struct.def_atom(symbol="C", x=1.0, y=0.0, z=0.0)
-        lp = PortInfo(">", a)
-        rp = PortInfo("<", b)
 
-        dist = sep.get_separation(struct, struct, lp, rp)
+        dist = sep.get_separation(struct, struct, a, b)
         assert dist == pytest.approx(1.54 - 0.1, abs=0.01)
 
     def test_unknown_elements_fallback(self):
@@ -197,10 +173,8 @@ class TestCovalentSeparator:
         struct = Atomistic()
         a = struct.def_atom(symbol="Xe", x=0.0, y=0.0, z=0.0)
         b = struct.def_atom(symbol="Kr", x=1.0, y=0.0, z=0.0)
-        lp = PortInfo(">", a)
-        rp = PortInfo("<", b)
 
-        dist = sep.get_separation(struct, struct, lp, rp)
+        dist = sep.get_separation(struct, struct, a, b)
         assert dist == pytest.approx(1.54, abs=0.01)  # Default C-C
 
 
@@ -213,7 +187,7 @@ class TestLinearOrienter:
         a = struct.def_atom(symbol="C", x=x, y=0.0, z=0.0, port=port_name)
         b = struct.def_atom(symbol="C", x=x - 1.0, y=0.0, z=0.0)
         struct.def_bond(a, b, order=1)
-        return struct, PortInfo(port_name, a)
+        return struct, a
 
     def test_orientation_returns_correct_shapes(self):
         orienter = LinearOrienter()
@@ -230,7 +204,6 @@ class TestLinearOrienter:
         right, rp = self._make_struct_with_port(5.0, "<")
 
         _, rotation = orienter.get_orientation(left, right, lp, rp, 1.5)
-        # R @ R^T should be identity
         identity = rotation @ rotation.T
         np.testing.assert_allclose(identity, np.eye(3), atol=1e-10)
 
@@ -250,18 +223,11 @@ class TestPlacer:
         right.def_atom(symbol="C", x=11.0, y=0.0, z=0.0)
         right.def_bond(list(right.atoms)[0], list(right.atoms)[1], order=1)
 
-        lp = PortInfo(">", la)
-        rp = PortInfo("<", ra)
-
         placer = Placer(
             separator=CovalentSeparator(buffer=0.0),
             orienter=LinearOrienter(),
         )
 
-        # Record original position
         orig_x = ra["x"]
-
-        placer.place_monomer(left, right, lp, rp)
-
-        # Position should have changed
+        placer.place_monomer(left, right, la, ra)
         assert ra["x"] != orig_x
