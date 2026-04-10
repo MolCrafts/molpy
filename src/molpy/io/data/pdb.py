@@ -214,9 +214,7 @@ class PDBReader(DataReader):
                 }
             )
 
-        frame.metadata["box"] = (
-            Box(matrix=box_matrix) if box_matrix is not None else Box()
-        )
+        frame.box = Box(matrix=box_matrix) if box_matrix is not None else Box()
         return frame
 
 
@@ -501,8 +499,8 @@ class PDBWriter(DataWriter):
             f.write(f"REMARK  {frame_name}\n")
 
             # Write CRYST1 record if box exists
-            if "box" in frame.metadata and frame.metadata["box"] is not None:
-                f.write(self._format_cryst1_line(frame.metadata["box"]) + "\n")
+            if frame.box is not None:
+                f.write(self._format_cryst1_line(frame.box) + "\n")
             else:
                 f.write(self._format_cryst1_line(None) + "\n")
 
@@ -560,8 +558,6 @@ class PDBWriter(DataWriter):
                     element = elements_list[i]
                 elif "element" in atoms and atoms["element"][i] is not None:
                     element = str(atoms["element"][i])
-                elif "symbol" in atoms and atoms["symbol"][i] is not None:
-                    element = str(atoms["symbol"][i]).upper()
                 else:
                     element = "X"  # Default unknown element
 

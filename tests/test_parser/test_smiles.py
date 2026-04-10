@@ -9,6 +9,7 @@ from molpy.parser.smiles import (
     StochasticObjectIR,
     parse_bigsmiles,
     parse_smiles,
+    smilesir_to_atomistic,
 )
 
 
@@ -1447,18 +1448,18 @@ class TestBigSmilesParser:
             pytest.skip("Test case skipped - needs special handling for descriptors")
         ir = parse_bigsmiles(smiles)
         # Use structural comparison to avoid ID mismatches
-        assert self._compare_bigsmiles_structure(
-            ir, expected
-        ), f"Structure mismatch for {smiles}"
+        assert self._compare_bigsmiles_structure(ir, expected), (
+            f"Structure mismatch for {smiles}"
+        )
 
     @pytest.mark.parametrize("bigsmiles,expected", simple_repeat_bigsmiles)
     def test_simple_repeat_units(self, bigsmiles, expected):
         """Test basic {} repeat unit parsing."""
         ir = parse_bigsmiles(bigsmiles)
         # Use structural comparison to avoid ID mismatches
-        assert self._compare_bigsmiles_structure(
-            ir, expected
-        ), f"Structure mismatch for {bigsmiles}"
+        assert self._compare_bigsmiles_structure(ir, expected), (
+            f"Structure mismatch for {bigsmiles}"
+        )
 
     @pytest.mark.parametrize("bigsmiles,expected", stochastic_copolymer_bigsmiles)
     def test_stochastic_copolymer(self, bigsmiles, expected):
@@ -1485,27 +1486,27 @@ class TestBigSmilesParser:
         """Test block copolymer with multiple {} segments."""
         ir = parse_bigsmiles(bigsmiles)
         # Use structural comparison to avoid ID mismatches
-        assert self._compare_bigsmiles_structure(
-            ir, expected
-        ), f"Structure mismatch for {bigsmiles}"
+        assert self._compare_bigsmiles_structure(ir, expected), (
+            f"Structure mismatch for {bigsmiles}"
+        )
 
     @pytest.mark.parametrize("bigsmiles,expected", mixed_bigsmiles)
     def test_mixed_with_smiles(self, bigsmiles, expected):
         """Test BigSMILES mixed with plain SMILES fragments."""
         ir = parse_bigsmiles(bigsmiles)
         # Use structural comparison to avoid ID mismatches
-        assert self._compare_bigsmiles_structure(
-            ir, expected
-        ), f"Structure mismatch for {bigsmiles}"
+        assert self._compare_bigsmiles_structure(ir, expected), (
+            f"Structure mismatch for {bigsmiles}"
+        )
 
     @pytest.mark.parametrize("bigsmiles,expected", indexed_descriptor_bigsmiles)
     def test_indexed_descriptors(self, bigsmiles, expected):
         """Test bond descriptors with indices."""
         ir = parse_bigsmiles(bigsmiles)
         # Use structural comparison to avoid ID mismatches
-        assert self._compare_bigsmiles_structure(
-            ir, expected
-        ), f"Structure mismatch for {bigsmiles}"
+        assert self._compare_bigsmiles_structure(ir, expected), (
+            f"Structure mismatch for {bigsmiles}"
+        )
 
     def _compare_bigsmiles_structure(self, ir1, ir2) -> bool:
         """Compare BigSMILES IR structures ignoring auto-generated IDs and descriptor placement."""
@@ -1610,3 +1611,117 @@ class TestBigSmilesParser:
         # {[]CC} has first terminal but only CC content, no second terminal
         with pytest.raises((UnexpectedCharacters, VisitError)):
             parse_bigsmiles("{[$]CC}")
+
+
+class TestSmilesIRToAtomistic:
+    """Test smilesir_to_atomistic conversion function."""
+
+    def test_simple_molecule(self):
+        """Test conversion of simple SMILES like CCO."""
+        ir = parse_smiles("CCO")
+        struct = smilesir_to_atomistic(ir)
+
+        assert len(struct.atoms) == 3
+        assert len(struct.bonds) == 2
+
+        # Check elements
+        symbols = [atom.get("element") for atom in struct.atoms]
+        assert "C" in symbols
+        assert "O" in symbols
+        assert symbols.count("C") == 2
+
+    def test_double_bond(self):
+        """Test conversion with double bond."""
+        ir = parse_smiles("C=O")
+        struct = smilesir_to_atomistic(ir)
+
+        assert len(struct.atoms) == 2
+        assert len(struct.bonds) == 1
+
+        bond = list(struct.bonds)[0]
+        assert bond.get("order") == 2.0
+        assert bond.get("kind") == "="
+
+    def test_triple_bond(self):
+        """Test conversion with triple bond."""
+        ir = parse_smiles("C#N")
+        struct = smilesir_to_atomistic(ir)
+
+        assert len(struct.atoms) == 2
+        assert len(struct.bonds) == 1
+
+        bond = list(struct.bonds)[0]
+        assert bond.get("order") == 3.0
+        assert bond.get("kind") == "#"
+
+    def test_charged_atom(self):
+        """Test conversion with charged atom."""
+        ir = parse_smiles("[N-]")
+        struct = smilesir_to_atomistic(ir)
+
+        assert len(struct.atoms) == 1
+        atom = list(struct.atoms)[0]
+        assert atom.get("element") == "N"
+        assert atom.get("charge") == -1
+
+    def test_tfsi_molecule(self):
+        """Test conversion of TFSI molecule."""
+        tfsi_smiles = "C(F)(F)(F)S(=O)(=O)[N-]S(=O)(=O)C(F)(F)F"
+        ir = parse_smiles(tfsi_smiles)
+        if isinstance(ir, list):
+            ir = ir[0]
+
+        struct = smilesir_to_atomistic(ir)
+
+        assert len(struct.atoms) == 15
+        assert len(struct.bonds) == 14
+
+        # Check composition
+        from collections import Counter
+
+        elements = Counter(atom.get("element") for atom in struct.atoms)
+        assert elements["C"] == 2
+        assert elements["F"] == 6
+        assert elements["S"] == 2
+        assert elements["O"] == 4
+        assert elements["N"] == 1
+
+        # Check double bonds (S=O)
+        double_bonds = [b for b in struct.bonds if b.get("order") == 2.0]
+        assert len(double_bonds) == 4  # 4 S=O bonds
+
+        # Check charge on N
+        n_atoms = [a for a in struct.atoms if a.get("element") == "N"]
+        assert len(n_atoms) == 1
+        assert n_atoms[0].get("charge") == -1
+
+    def test_branched_molecule(self):
+        """Test conversion of branched molecule."""
+        ir = parse_smiles("CC(C)O")
+        struct = smilesir_to_atomistic(ir)
+
+        assert len(struct.atoms) == 4
+        assert len(struct.bonds) == 3
+
+        # Check connectivity - central C should have 3 bonds
+        atoms = list(struct.atoms)
+        bonds_per_atom = {atom: 0 for atom in atoms}
+        for bond in struct.bonds:
+            bonds_per_atom[bond.itom] = bonds_per_atom.get(bond.itom, 0) + 1
+            bonds_per_atom[bond.jtom] = bonds_per_atom.get(bond.jtom, 0) + 1
+
+        # Central carbon (index 1) should have 3 bonds
+        central_c = atoms[1]
+        assert bonds_per_atom[central_c] == 3
+
+    def test_no_3d_coordinates(self):
+        """Test that converted structure has no 3D coordinates."""
+        ir = parse_smiles("CCO")
+        struct = smilesir_to_atomistic(ir)
+
+        # Check that positions are not set (or are zero)
+        for atom in struct.atoms:
+            pos = atom.get("pos")
+            if pos is not None:
+                # If positions exist, they should be zero or uninitialized
+                assert all(abs(x) < 1e-10 for x in pos) or pos is None

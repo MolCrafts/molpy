@@ -57,8 +57,8 @@ class TestSimpleAtoms:
         symbols = [a.expression.children[0].value for a in ir.atoms]
         assert symbols == ["C", "C", "O"]
 
-        # Check bonds
-        assert all(b.bond_type == "-" for b in ir.bonds)
+        # Check bonds (implicit bond = single or aromatic)
+        assert all(b.bond_type == "implicit" for b in ir.bonds)
 
 
 class TestBracketedAtoms:
@@ -431,8 +431,8 @@ class TestIRStructure:
         assert hasattr(bond, "itom")
         assert hasattr(bond, "jtom")
         assert hasattr(bond, "bond_type")
-        # Default bond type (implicit single bond)
-        assert bond.bond_type in ["-", None, ""]
+        # Default bond type (implicit: single or aromatic)
+        assert bond.bond_type == "implicit"
 
 
 # ===================================================================

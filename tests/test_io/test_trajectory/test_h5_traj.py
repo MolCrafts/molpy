@@ -244,14 +244,14 @@ class TestHDF5TrajectoryReader:
                 )
 
             # Check box
-            if "box" in orig_frame.metadata and orig_frame.metadata["box"] is not None:
-                assert "box" in read_frame.metadata
-                orig_box = orig_frame.metadata["box"]
-                read_box = read_frame.metadata["box"]
+            if orig_frame.box is not None:
+                assert read_frame.box is not None
+                orig_box = orig_frame.box
+                read_box = read_frame.box
                 assert read_box is not None, "Box should not be None"
-                assert isinstance(
-                    read_box, mp.Box
-                ), f"Expected Box, got {type(read_box)}"
+                assert isinstance(read_box, mp.Box), (
+                    f"Expected Box, got {type(read_box)}"
+                )
                 if orig_box is not None:
                     np.testing.assert_array_almost_equal(
                         orig_box.matrix, read_box.matrix, decimal=6
@@ -278,7 +278,7 @@ class TestHDF5TrajectoryReader:
         # Verify original frames have box
         boxes_found = 0
         for frame in original_frames:
-            if "box" in frame.metadata and frame.metadata["box"] is not None:
+            if frame.box is not None:
                 boxes_found += 1
         assert boxes_found > 0, "No boxes found in original frames"
 
@@ -294,15 +294,15 @@ class TestHDF5TrajectoryReader:
             orig_frame = original_frames[i]
             read_frame = read_reader.read_frame(i)
 
-            if "box" in orig_frame.metadata and orig_frame.metadata["box"] is not None:
-                assert "box" in read_frame.metadata, f"Box missing in frame {i}"
-                read_box = read_frame.metadata["box"]
+            if orig_frame.box is not None:
+                assert read_frame.box is not None, f"Box missing in frame {i}"
+                read_box = read_frame.box
                 assert read_box is not None, f"Box is None in frame {i}"
-                assert isinstance(
-                    read_box, mp.Box
-                ), f"Box type wrong in frame {i}: {type(read_box)}"
+                assert isinstance(read_box, mp.Box), (
+                    f"Box type wrong in frame {i}: {type(read_box)}"
+                )
 
-                orig_box = orig_frame.metadata["box"]
+                orig_box = orig_frame.box
                 np.testing.assert_array_almost_equal(
                     orig_box.matrix, read_box.matrix, decimal=6
                 )
@@ -789,10 +789,10 @@ class TestHDF5Downsample:
                 )
 
             # Check box
-            if "box" in orig_frame.metadata and orig_frame.metadata["box"] is not None:
-                assert "box" in read_frame.metadata
-                orig_box = orig_frame.metadata["box"]
-                read_box = read_frame.metadata["box"]
+            if orig_frame.box is not None:
+                assert read_frame.box is not None
+                orig_box = orig_frame.box
+                read_box = read_frame.box
                 assert isinstance(read_box, mp.Box)
                 np.testing.assert_array_almost_equal(
                     orig_box.matrix, read_box.matrix, decimal=6
@@ -865,9 +865,9 @@ class TestHDF5Roundtrip:
 
             for meta_key in orig_frame.metadata.keys():
                 if meta_key == "box":
-                    if orig_frame.metadata["box"] is not None:
-                        orig_box = orig_frame.metadata["box"]
-                        read_box = read_frame.metadata["box"]
+                    if orig_frame.box is not None:
+                        orig_box = orig_frame.box
+                        read_box = read_frame.box
                         assert isinstance(read_box, mp.Box)
                         np.testing.assert_array_almost_equal(
                             orig_box.matrix, read_box.matrix, decimal=6
@@ -1249,9 +1249,7 @@ class TestHDF5TrajectoryCompression:
                 break
 
         # Verify frames have box
-        boxes_found = sum(
-            1 for f in frames if "box" in f.metadata and f.metadata["box"] is not None
-        )
+        boxes_found = sum(1 for f in frames if f.box is not None)
         assert boxes_found > 0, "No boxes found in frames"
 
         # Test gzip with metadata
@@ -1265,10 +1263,10 @@ class TestHDF5TrajectoryCompression:
             orig_frame = frames[i]
             read_frame = read_reader_gzip.read_frame(i)
 
-            if "box" in orig_frame.metadata and orig_frame.metadata["box"] is not None:
-                assert "box" in read_frame.metadata
-                orig_box = orig_frame.metadata["box"]
-                read_box = read_frame.metadata["box"]
+            if orig_frame.box is not None:
+                assert read_frame.box is not None
+                orig_box = orig_frame.box
+                read_box = read_frame.box
                 assert isinstance(read_box, mp.Box)
                 np.testing.assert_array_almost_equal(
                     orig_box.matrix, read_box.matrix, decimal=6
@@ -1283,10 +1281,10 @@ class TestHDF5TrajectoryCompression:
             orig_frame = frames[i]
             read_frame = read_reader_lzf.read_frame(i)
 
-            if "box" in orig_frame.metadata and orig_frame.metadata["box"] is not None:
-                assert "box" in read_frame.metadata
-                orig_box = orig_frame.metadata["box"]
-                read_box = read_frame.metadata["box"]
+            if orig_frame.box is not None:
+                assert read_frame.box is not None
+                orig_box = orig_frame.box
+                read_box = read_frame.box
                 assert isinstance(read_box, mp.Box)
                 np.testing.assert_array_almost_equal(
                     orig_box.matrix, read_box.matrix, decimal=6

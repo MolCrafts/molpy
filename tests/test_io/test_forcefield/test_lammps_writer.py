@@ -60,7 +60,7 @@ def test_lammps_forcefield_writer_angle_radians_to_degrees():
     Force field stores angles internally in radians, but LAMMPS requires degrees.
     This test verifies the conversion is performed correctly.
     """
-    from molpy import AngleStyle, AtomStyle
+    from molpy import AtomStyle
     from molpy.potential.angle import AngleHarmonicStyle
     import re
 
@@ -106,6 +106,6 @@ def test_lammps_forcefield_writer_angle_radians_to_degrees():
         )
 
         # Also verify k is preserved
-        assert (
-            abs(written_k - 50.0) < 0.01
-        ), f"k value changed: expected 50.0, got {written_k}"
+        assert abs(written_k - 50.0) < 0.01, (
+            f"k value changed: expected 50.0, got {written_k}"
+        )

@@ -132,7 +132,7 @@ class XsfReader(DataReader):
             # For molecular structures, use free box
             box = Box()  # Free box for non-periodic molecules
 
-        frame.metadata["box"] = box
+        frame.box = box
 
         return frame
 
@@ -210,7 +210,7 @@ class XsfWriter(DataWriter):
         frame : Frame
             Frame containing atomic data and optional box information
         """
-        box: Box | None = frame.metadata.get("box", None)
+        box: Box | None = frame.box
 
         with open(self._file, "w") as f:
             # Write header comment

@@ -11,8 +11,8 @@ class TestReadLammpsTrajectory:
         frame = reader.read_frame(0)
 
         assert frame.metadata["timestep"] is not None
-        assert frame.metadata["box"] is not None
-        assert frame.metadata["box"].matrix.shape == (3, 3)
+        assert frame.box is not None
+        assert frame.box.matrix.shape == (3, 3)
         assert frame["atoms"].nrows > 0
 
     def test_read_frame_with_properties(self, TEST_DATA_DIR):
@@ -20,8 +20,8 @@ class TestReadLammpsTrajectory:
         frame = reader.read_frame(0)
 
         assert frame.metadata["timestep"] is not None
-        assert frame.metadata["box"] is not None
-        assert frame.metadata["box"].matrix.shape == (3, 3)
+        assert frame.box is not None
+        assert frame.box.matrix.shape == (3, 3)
         assert frame["atoms"].nrows > 0
 
         # Check that atoms block exists and has content
@@ -44,7 +44,7 @@ class TestReadLammpsTrajectory:
             assert isinstance(frame, mp.Frame)
             assert frame.metadata["timestep"] is not None
             assert "atoms" in frame
-            assert frame.metadata["box"] is not None
+            assert frame.box is not None
 
     def test_frame_properties(self, TEST_DATA_DIR):
         """Test that frames have correct properties."""
@@ -56,9 +56,9 @@ class TestReadLammpsTrajectory:
         assert isinstance(frame.metadata["timestep"], (int, np.integer))
 
         # Check box
-        assert frame.metadata["box"] is not None
-        assert hasattr(frame.metadata["box"], "matrix")
-        assert frame.metadata["box"].matrix.shape == (3, 3)
+        assert frame.box is not None
+        assert hasattr(frame.box, "matrix")
+        assert frame.box.matrix.shape == (3, 3)
 
     def test_context_manager(self, TEST_DATA_DIR):
         """Test using trajectory reader as context manager."""
@@ -112,7 +112,7 @@ class TestWriteLammpsTrajectory:
             }
             frame["atoms"] = atoms_data
             frame.metadata["timestep"] = i * 100
-            frame.metadata["box"] = mp.Box(np.eye(3) * 10.0)
+            frame.box = mp.Box(np.eye(3) * 10.0)
             frames.append(frame)
 
         # Write trajectory
@@ -151,7 +151,7 @@ class TestWriteLammpsTrajectory:
         }
         frame["atoms"] = atoms_data
         frame.metadata["timestep"] = 0
-        frame.metadata["box"] = mp.Box(np.eye(3) * 5.0)
+        frame.box = mp.Box(np.eye(3) * 5.0)
 
         tmp_file = tmp_path / "test.dump"
         with LammpsTrajectoryWriter(str(tmp_file)) as writer:
@@ -174,7 +174,7 @@ class TestWriteLammpsTrajectory:
         }
         frame["atoms"] = atoms_data
         frame.metadata["timestep"] = 1000
-        frame.metadata["box"] = mp.Box(np.diag([5.0, 5.0, 5.0]))
+        frame.box = mp.Box(np.diag([5.0, 5.0, 5.0]))
 
         tmp_file = tmp_path / "test.dump"
         # Write
@@ -195,10 +195,8 @@ class TestWriteLammpsTrajectory:
         assert atoms.nrows == 4
 
         # Verify box
-        assert frame_read.metadata["box"] is not None
-        assert np.allclose(
-            frame_read.metadata["box"].matrix.diagonal(), [5.0, 5.0, 5.0]
-        )
+        assert frame_read.box is not None
+        assert np.allclose(frame_read.box.matrix.diagonal(), [5.0, 5.0, 5.0])
 
 
 class TestErrorHandling:
@@ -278,7 +276,7 @@ class TestMultipleFilesTrajectory:
                 }
                 frame["atoms"] = atoms_data
                 frame.metadata["timestep"] = file_idx * 100 + frame_idx * 10
-                frame.metadata["box"] = mp.Box(np.eye(3) * 10.0)
+                frame.box = mp.Box(np.eye(3) * 10.0)
 
                 writer.write_frame(frame)
 
@@ -332,7 +330,7 @@ class TestMultipleFilesTrajectory:
         }
         frame["atoms"] = atoms_data
         frame.metadata["timestep"] = 0
-        frame.metadata["box"] = mp.Box(np.eye(3) * 10.0)
+        frame.box = mp.Box(np.eye(3) * 10.0)
 
         writer.write_frame(frame)
         writer.close()
@@ -356,7 +354,7 @@ class TestMultipleFilesTrajectory:
         }
         frame["atoms"] = atoms_data
         frame.metadata["timestep"] = 100
-        frame.metadata["box"] = mp.Box(np.eye(3) * 10.0)
+        frame.box = mp.Box(np.eye(3) * 10.0)
 
         writer.write_frame(frame)
         writer.close()
@@ -393,7 +391,7 @@ class TestTrajectoryIntegration:
         }
         frame["atoms"] = atoms_data
         frame.metadata["timestep"] = 0
-        frame.metadata["box"] = mp.Box(np.diag([10.0, 10.0, 10.0]))
+        frame.box = mp.Box(np.diag([10.0, 10.0, 10.0]))
 
         # Write as trajectory
         tmp_file = tmp_path / "test.dump"
@@ -407,7 +405,7 @@ class TestTrajectoryIntegration:
 
         assert frame_read.metadata["timestep"] is not None
         assert "atoms" in frame_read
-        assert frame_read.metadata["box"] is not None
+        assert frame_read.box is not None
 
     def test_multiple_formats_consistency(self, tmp_path):
         """Test that data and trajectory formats are consistent."""
@@ -424,7 +422,7 @@ class TestTrajectoryIntegration:
         }
         frame_original["atoms"] = atoms_data
         frame_original.metadata["timestep"] = 100
-        frame_original.metadata["box"] = mp.Box(np.eye(3) * 5.0)
+        frame_original.box = mp.Box(np.eye(3) * 5.0)
 
         # Write as trajectory and read back
         tmp_file = tmp_path / "test.dump"
@@ -438,11 +436,11 @@ class TestTrajectoryIntegration:
         # Both should have same basic structure
         assert frame_traj.metadata["timestep"] is not None
         assert "atoms" in frame_traj
-        assert frame_traj.metadata["box"] is not None
-        assert frame_original.metadata["box"] is not None
+        assert frame_traj.box is not None
+        assert frame_original.box is not None
 
         # Box dimensions should be similar
         assert np.allclose(
-            frame_traj.metadata["box"].matrix.diagonal(),
-            frame_original.metadata["box"].matrix.diagonal(),
+            frame_traj.box.matrix.diagonal(),
+            frame_original.box.matrix.diagonal(),
         )

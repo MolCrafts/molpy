@@ -1,7 +1,8 @@
 {
     "name": "MolCrafts - molpy",
-    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+    "image": "mcr.microsoft.com/devcontainers/python:3",
     "features": {
+        "ghcr.io/devcontainers/features/node:1": {},
         "ghcr.io/devcontainers/features/common-utils:2": {},
         "ghcr.io/devcontainers/features/anaconda:1": {}
     },

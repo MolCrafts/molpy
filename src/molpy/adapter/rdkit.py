@@ -303,10 +303,10 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                 )
             mp_id_int = int(mp_id)
 
-            element = atom.get("element") or atom.get("symbol")
+            element = atom.get("element")
             if element is None:
                 raise ValueError(
-                    f"Atom with {MP_ID}={mp_id_int} has neither 'element' nor 'symbol' attribute."
+                    f"Atom with {MP_ID}={mp_id_int} has no 'element' attribute."
                 )
 
             rd_atom = Chem.Atom(str(element))
@@ -402,7 +402,6 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
             symbol = rd_atom.GetSymbol()
             props: dict[str, Any] = {
                 "element": symbol,
-                "symbol": symbol,
                 "atomic_num": rd_atom.GetAtomicNum(),
                 "id": atom_id,
                 MP_ID: atom_id,
@@ -488,7 +487,6 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                 symbol = rd_atom.GetSymbol()
                 props: dict[str, Any] = {
                     "element": symbol,
-                    "symbol": symbol,
                     "atomic_num": rd_atom.GetAtomicNum(),
                     "id": atom_id,
                     MP_ID: atom_id,
@@ -507,7 +505,6 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
 
             symbol = rd_atom.GetSymbol()
             atom["element"] = symbol
-            atom["symbol"] = symbol
             atom["atomic_num"] = rd_atom.GetAtomicNum()
 
             if atom.get("id") is None:
@@ -592,6 +589,19 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
             atomistic = self._internal
 
         self._internal = atomistic
+
+    def copy(self) -> "RDKitAdapter":
+        """Return a new RDKitAdapter with copied internal and external state.
+
+        Both the Atomistic (internal) and Chem.Mol (external) are deep-copied
+        so that the returned adapter is fully independent of the original.
+
+        Returns:
+            A new RDKitAdapter instance with copied state.
+        """
+        new_internal = self._internal.copy() if self._internal is not None else None
+        new_external = Chem.Mol(self._external) if self._external is not None else None
+        return RDKitAdapter(internal=new_internal, external=new_external)
 
     def _rebuild_atom_mapper(self) -> None:
         if self._external is None:

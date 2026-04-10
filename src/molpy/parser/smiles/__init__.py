@@ -130,6 +130,7 @@ def parse_gbigsmiles(src: str) -> GBigSmilesSystemIR:
 from .converter import (
     bigsmilesir_to_monomer,
     bigsmilesir_to_polymerspec,
+    smilesir_to_atomistic,
     PolymerSpec,
     PolymerSegment,
 )
@@ -141,6 +142,7 @@ __all__ = [
     "parse_cgsmiles",
     "bigsmilesir_to_monomer",
     "bigsmilesir_to_polymerspec",
+    "smilesir_to_atomistic",
     "PolymerSpec",
     "PolymerSegment",
     # SMILES IR

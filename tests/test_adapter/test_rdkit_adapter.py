@@ -110,7 +110,6 @@ class TestElementSymbolConventions:
         assert len(asm.atoms) == 2
         for a in asm.atoms:
             assert a.get("element") in {"C", "H"}
-            assert a.get("symbol") in {"C", "H"}
 
 
 class TestConversionHelpers:

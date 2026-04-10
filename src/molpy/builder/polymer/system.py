@@ -9,86 +9,17 @@ The data flow is:
 - SystemPlanner keeps asking for chains from PolydisperseChainGenerator until total system mass is satisfied
 - PolydisperseChainGenerator keeps asking for monomer sequences from SequenceGenerator when building each chain
 - Each time SystemPlanner receives a chain, it updates the running total mass and decides whether to accept, stop, or trim
+
+Distribution implementations live in :mod:`molpy.builder.polymer.distributions`.
 """
 
 from __future__ import annotations
-import math
 from dataclasses import dataclass
-from random import Random
-from typing import Protocol, runtime_checkable
 
 import numpy as np
-from molpy.parser.smiles.gbigsmiles_ir import DistributionIR
 
-from .sequence_generator import SequenceGenerator
-
-# ============================================================================
-# Capability-Based Distribution Protocols
-# ============================================================================
-
-
-@runtime_checkable
-class DPDistribution(Protocol):
-    """Protocol for distributions that sample degree of polymerization directly.
-
-    Distributions implementing this protocol can sample DP values without
-    requiring monomer mass information. This is suitable for distributions
-    defined in DP space (e.g., Poisson, Uniform).
-    """
-
-    def sample_dp(self, rng: np.random.Generator) -> int:
-        """Sample degree of polymerization from distribution.
-
-        Args:
-            rng: NumPy random number generator
-
-        Returns:
-            Degree of polymerization (>= 1)
-        """
-        ...
-
-    def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
-        """Probability mass function for DP values.
-
-        Args:
-            dp_array: Array of DP values
-
-        Returns:
-            Array of probability mass values
-        """
-        ...
-
-
-@runtime_checkable
-class MassDistribution(Protocol):
-    """Protocol for distributions that sample molecular weight directly.
-
-    Distributions implementing this protocol sample mass values directly
-    from the distribution without converting through DP. This is suitable
-    for distributions defined in mass space (e.g., Schulz-Zimm, Flory-Schulz).
-    """
-
-    def sample_mass(self, rng: np.random.Generator) -> float:
-        """Sample molecular weight from distribution.
-
-        Args:
-            rng: NumPy random number generator
-
-        Returns:
-            Molecular weight (g/mol, > 0)
-        """
-        ...
-
-    def mass_pdf(self, mass_array: np.ndarray) -> np.ndarray:
-        """Probability density function for mass values.
-
-        Args:
-            mass_array: Array of mass values (g/mol)
-
-        Returns:
-            Array of probability density values
-        """
-        ...
+from .distributions import DPDistribution, MassDistribution
+from .sequences import SequenceGenerator
 
 
 @dataclass
@@ -161,12 +92,12 @@ class PolydisperseChainGenerator:
             raise ValueError("distribution must be provided")
         self.distribution = distribution
 
-    def sample_dp(self, rng: Random) -> int:
+    def sample_dp(self, rng: np.random.Generator) -> int:
         """
         Sample a degree of polymerization from the distribution.
 
         Args:
-            rng: Random number generator
+            rng: np.random.Generator number generator
 
         Returns:
             Degree of polymerization (>= 1)
@@ -174,29 +105,25 @@ class PolydisperseChainGenerator:
         if self.distribution is None:
             raise ValueError("distribution must be set")
 
-        # Convert Random to numpy Generator
-        seed = rng.randint(0, 2**31 - 1)
-        np_rng = np.random.Generator(np.random.PCG64(seed))
-
         # Determine what capabilities the distribution actually provides
         has_sample_dp = callable(getattr(self.distribution, "sample_dp", None))
         has_sample_mass = callable(getattr(self.distribution, "sample_mass", None))
 
         # DP-based distributions may only be used via sample_dp
         if has_sample_dp and not has_sample_mass:
-            return self.distribution.sample_dp(np_rng)
+            return self.distribution.sample_dp(rng)
         # Mass-distributions are not valid for DP sampling; caller should use sample_mass path.
         raise TypeError(
             f"Distribution {type(self.distribution).__name__} does not support 'sample_dp'. "
             "Use mass-based sampling via 'sample_mass' and the corresponding build_chain logic."
         )
 
-    def sample_mass(self, rng: Random) -> float:
+    def sample_mass(self, rng: np.random.Generator) -> float:
         """
         Sample a target chain mass from a mass-based distribution.
 
         Args:
-            rng: Random number generator
+            rng: np.random.Generator number generator
 
         Returns:
             Target chain mass in g/mol (>= 0)
@@ -211,17 +138,15 @@ class PolydisperseChainGenerator:
                 "Use DP-based sampling via 'sample_dp' instead."
             )
 
-        seed = rng.randint(0, 2**31 - 1)
-        np_rng = np.random.Generator(np.random.PCG64(seed))
-        target_mass = float(self.distribution.sample_mass(np_rng))
+        target_mass = float(self.distribution.sample_mass(rng))
         return max(0.0, target_mass)
 
-    def build_chain(self, rng: Random) -> Chain:
+    def build_chain(self, rng: np.random.Generator) -> Chain:
         """
         Sample DP, generate monomer sequence, and compute mass.
 
         Args:
-            rng: Random number generator
+            rng: np.random.Generator number generator
 
         Returns:
             Chain object with dp, monomers, and mass
@@ -297,456 +222,6 @@ class PolydisperseChainGenerator:
         return monomer_mass_sum + self.end_group_mass
 
 
-class SchulzZimmPolydisperse(MassDistribution):
-    """
-    Schulz-Zimm molecular weight distribution for polydisperse polymer chains.
-
-    Implements :class:`MassDistribution` - sampling is done directly in
-    molecular-weight (:math:`M`) space.
-
-    Following the notation in the paper, the probability density
-    (often also called “PMF” there) is
-
-    .. math::
-
-        \\operatorname{PMF}(M)
-        = \\frac{z^{z+1}}{\\Gamma(z+1)}
-          \\frac{M^{z-1}}{M_n^{z}}
-          \\exp\\left(-\\frac{z M}{M_n}\\right),
-
-    where
-
-    .. math::
-
-        z = \\frac{M_n}{M_w - M_n},
-
-    :math:`M_n` is the number-average molecular weight, and
-    :math:`M_w` is the weight-average molecular weight.
-
-    This expression is mathematically equivalent to a Gamma distribution
-    with shape :math:`z` and scale
-
-    .. math::
-
-        \\theta = \\frac{M_n}{z} = M_w - M_n,
-
-    which satisfies the prescribed :math:`M_n` and :math:`M_w` with
-    polydispersity index :math:`\\text{PDI} = M_w / M_n`.
-
-    Parameters
-    ----------
-    Mn:
-        Number-average molecular weight :math:`M_n` (g/mol).
-    Mw:
-        Weight-average molecular weight :math:`M_w` (g/mol), must satisfy
-        :math:`M_w > M_n`.
-    random_seed:
-        Optional random seed used when sampling.
-    """
-
-    def __init__(
-        self,
-        Mn: float,
-        Mw: float,
-        random_seed: int | None = None,
-    ):
-        """
-        Initialize Schulz-Zimm polydisperse distribution.
-
-        Args:
-            Mn: Number-average molecular weight (g/mol)
-            Mw: Weight-average molecular weight (g/mol)
-            random_seed: Random seed for reproducibility (optional)
-        """
-        if Mw <= Mn:
-            raise ValueError(
-                f"Mw ({Mw}) must be greater than Mn ({Mn}) for valid Schulz-Zimm distribution"
-            )
-
-        self.Mn = Mn
-        self.Mw = Mw
-        self.random_seed = random_seed
-
-        # Calculate Gamma-equivalent parameters.
-        # Using the paper's notation:
-        #   z = Mn / (Mw - Mn)
-        # and the Schulz-Zimm PDF can be written as a Gamma distribution
-        # with shape parameter z and scale theta = Mn / z = Mw - Mn.
-        self.z = Mn / (Mw - Mn)
-        self.theta = Mw - Mn
-        self.PDI = Mw / Mn
-
-    # MassDistribution protocol implementation
-    def sample_mass(self, rng: np.random.Generator) -> float:
-        """Sample molecular weight directly from Schulz-Zimm distribution.
-
-        Args:
-            rng: NumPy random number generator
-
-        Returns:
-            Molecular weight (g/mol)
-        """
-        # Schulz-Zimm samples from Gamma distribution directly
-        return rng.gamma(shape=self.z, scale=self.theta)
-
-    def mass_pdf(self, mass_array: np.ndarray) -> np.ndarray:
-        """Probability density function for mass values.
-
-        This implements the Gamma PDF described in the class docstring and
-        returns :math:`f(M)` evaluated at the entries of ``mass_array``.
-
-        Args
-        ----
-        mass_array:
-            Array of molecular weights :math:`M` (g/mol).
-
-        Returns
-        -------
-        numpy.ndarray
-            Array of probability density values with the same shape as
-            ``mass_array``.
-        """
-        M = np.asarray(mass_array, dtype=float)
-        if self.Mn <= 0 or self.Mw <= self.Mn:
-            return np.zeros_like(M)
-
-        z = self.z
-        theta = self.theta
-        out = np.zeros_like(M, dtype=float)
-
-        mask = M > 0
-        Ms = M[mask]
-
-        log_pdf = (
-            (z - 1.0) * np.log(Ms) - Ms / theta - z * np.log(theta) - math.lgamma(z)
-        )
-        out[mask] = np.exp(log_pdf)
-        return out
-
-
-class UniformPolydisperse(DPDistribution):
-    """
-    Uniform distribution over degree of polymerization (DP).
-
-    Implements :class:`DPDistribution` - sampling is done directly in
-    DP space.  All integer DP values between :math:`N_{\\min}` and
-    :math:`N_{\\max}` (inclusive) are equally likely.
-
-    The probability mass function (PMF) is
-
-    .. math::
-
-        P(N = k) =
-        \\begin{cases}
-            \\dfrac{1}{N_{\\max} - N_{\\min} + 1},
-                & N_{\\min} \\le k \\le N_{\\max}, \\\\
-            0, & \\text{otherwise},
-        \\end{cases}
-
-    where :math:`N` denotes the degree of polymerization.
-
-    Parameters
-    ----------
-    min_dp:
-        Lower bound :math:`N_{\\min}` for the degree of polymerization
-        (must be :math:`\\ge 1`).
-    max_dp:
-        Upper bound :math:`N_{\\max}` for the degree of polymerization
-        (must satisfy :math:`N_{\\max} \\ge N_{\\min}`).
-    random_seed:
-        Optional random seed used when sampling.
-    """
-
-    def __init__(
-        self,
-        min_dp: int,
-        max_dp: int,
-        random_seed: int | None = None,
-    ):
-        """
-        Initialize uniform DP distribution.
-
-        Args:
-            min_dp: Minimum degree of polymerization (must be >= 1)
-            max_dp: Maximum degree of polymerization (must be >= min_dp)
-            random_seed: Random seed for reproducible sampling (optional)
-
-        Raises:
-            ValueError: If min_dp < 1 or max_dp < min_dp
-        """
-        if min_dp < 1:
-            raise ValueError(f"min_dp must be >= 1, got {min_dp}")
-        if max_dp < min_dp:
-            raise ValueError(f"max_dp ({max_dp}) must be >= min_dp ({min_dp})")
-
-        self.min_dp = min_dp
-        self.max_dp = max_dp
-        self.random_seed = random_seed
-
-    def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
-        """
-        Compute the probability mass function (PMF) over DP values.
-
-        The PMF assigns equal probability to all integer DP values between
-        min_dp and max_dp (inclusive), and zero probability outside this range.
-
-        Args:
-            dp_array: Array of DP values (typically integer, but can be float)
-
-        Returns:
-            Array of PMF values, same shape as dp_array.
-            PMF[i] = 1 / (max_dp - min_dp + 1) if min_dp <= dp_array[i] <= max_dp,
-                    0 otherwise.
-        """
-        dp_array = np.asarray(dp_array, dtype=float)
-        pmf = np.zeros_like(dp_array, dtype=float)
-
-        # Count number of valid integer DP values in the range
-        n_valid = self.max_dp - self.min_dp + 1
-        uniform_prob = 1.0 / n_valid
-
-        # Assign probability to DP values within the valid range
-        # Use np.round to handle float DP values (rounds to nearest integer)
-        dp_rounded = np.round(dp_array).astype(int)
-        mask = (dp_rounded >= self.min_dp) & (dp_rounded <= self.max_dp)
-        pmf[mask] = uniform_prob
-
-        return pmf
-
-    # DPDistribution protocol implementation
-    def sample_dp(self, rng: np.random.Generator) -> int:
-        """Sample degree of polymerization from uniform distribution.
-
-        Args:
-            rng: NumPy random number generator
-
-        Returns:
-            Degree of polymerization (>= 1)
-        """
-        return int(rng.integers(self.min_dp, self.max_dp + 1))
-
-
-class PoissonPolydisperse(DPDistribution):
-    """
-    Poisson distribution for the degree of polymerization (DP).
-
-    Implements :class:`DPDistribution` - sampling is done directly in
-    DP space.  The number of repeat units is modeled as a Poisson process
-    with mean :math:`\\lambda`.
-
-    The (untruncated) Poisson probability mass function is
-
-    .. math::
-
-        P(N = k)
-        = \\frac{\\lambda^{k} e^{-\\lambda}}{k!},
-        \\qquad k = 0, 1, 2, \\dots
-
-    In this implementation we restrict to :math:`k \\ge 1` when sampling
-    chains, i.e. a sampled value :math:`k = 0` is mapped to :math:`k = 1`
-    so that every chain contains at least one monomer.
-
-    Parameters
-    ----------
-    lambda_param:
-        Mean :math:`\\lambda` of the Poisson distribution.
-    random_seed:
-        Optional random seed used when sampling.
-    """
-
-    def __init__(
-        self,
-        lambda_param: float,  # Mean of Poisson distribution
-        random_seed: int | None = None,
-    ):
-        """
-        Initialize Poisson DP distribution.
-
-        Args:
-            lambda_param: Mean (lambda) parameter of Poisson distribution
-            random_seed: Random seed for reproducibility (optional)
-        """
-        if lambda_param <= 0:
-            raise ValueError(f"lambda_param must be > 0, got {lambda_param}")
-
-        self.lambda_param = lambda_param
-        self.random_seed = random_seed
-
-    def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
-        """
-        Compute the probability mass function (PMF) over DP values.
-
-        Poisson PMF: P(k; λ) = (λ^k * e^(-λ)) / k! for k >= 1
-
-        Args:
-            dp_array: Array of DP values
-
-        Returns:
-            Array of PMF values
-        """
-        k = np.asarray(dp_array, dtype=int)
-        pmf = np.zeros_like(k, dtype=float)
-
-        lam = float(self.lambda_param)
-        if lam <= 0:
-            return pmf
-
-        mask = k >= 1
-        ks = k[mask]
-
-        # log P(k) = k log lam - lam - log(k!)
-        log_p = ks * np.log(lam) - lam - np.array([math.lgamma(int(x) + 1) for x in ks])
-        p = np.exp(log_p)
-
-        # zero-truncated normalization: divide by (1 - e^{-lam})
-        p /= 1.0 - np.exp(-lam)
-
-        pmf[mask] = p
-        return pmf
-
-    # DPDistribution protocol implementation
-    def sample_dp(self, rng: np.random.Generator) -> int:
-        """Sample degree of polymerization from Poisson distribution.
-
-        Args:
-            rng: NumPy random number generator
-
-        Returns:
-            Degree of polymerization (>= 1)
-        """
-        dp = rng.poisson(self.lambda_param)
-        return max(1, int(dp))
-
-
-class FlorySchulzPolydisperse(DPDistribution):
-    """
-    Flory-Schulz distribution for degree of polymerization (DP).
-
-    Implements :class:`DPDistribution` - sampling is done directly in DP
-    space.  In this formulation the Flory-Schulz distribution is a geometric
-    distribution over the chain length :math:`N`, commonly used for
-    step-growth polymerization.
-
-    The probability mass function (PMF) is
-
-    .. math::
-
-        P(N = k) = (1 - p)^{k-1} p, \\qquad k = 1, 2, \\dots,
-
-    where :math:`p \\in (0, 1)` is related to the extent of reaction.
-
-    Parameters
-    ----------
-    p:
-        Success probability :math:`p` in the geometric PMF above
-        (:math:`0 < p < 1`).
-    random_seed:
-        Optional random seed used when sampling.
-    """
-
-    def __init__(
-        self,
-        a: float,  # Success probability (0 < a < 1)
-        random_seed: int | None = None,
-    ):
-        """
-        Initialize Flory-Schulz DP distribution.
-
-        Args:
-            p: Success probability (0 < p < 1), related to extent of reaction
-            random_seed: Random seed for reproducibility (optional)
-        """
-        if not (0 < a < 1):
-            raise ValueError(f"a must be in (0, 1), got {a}")
-
-        self.a = a
-        self.random_seed = random_seed
-
-    def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
-        k = np.asarray(dp_array, dtype=int)
-        pmf = np.zeros_like(k, dtype=float)
-        mask = k >= 1
-        a = self.a
-        pmf[mask] = (a * a) * k[mask] * (1.0 - a) ** (k[mask] - 1)
-        return pmf
-
-    # DPDistribution protocol implementation
-    def sample_dp(self, rng: np.random.Generator) -> int:
-        """Sample degree of polymerization from Flory-Schulz distribution.
-
-        Args:
-            rng: NumPy random number generator
-
-        Returns:
-            Degree of polymerization (>= 1)
-        """
-        a = self.a
-        return max(1, int(rng.geometric(p=a) + rng.geometric(p=a) - 1))
-
-
-def create_polydisperse_from_ir(
-    distribution_ir: DistributionIR,
-    random_seed: int | None = None,
-) -> DPDistribution | MassDistribution:
-    """
-    Create a Polydisperse instance from DistributionIR.
-
-    Args:
-        distribution_ir: DistributionIR from parser
-        random_seed: Random seed for reproducibility
-
-    Returns:
-        Polydisperse instance
-
-    Raises:
-        ValueError: If distribution type is not supported or parameters are invalid
-    """
-    dist_name = distribution_ir.name
-    params = distribution_ir.params
-
-    if dist_name == "schulz_zimm":
-        if "p0" not in params or "p1" not in params:
-            raise ValueError(
-                f"schulz_zimm requires 'p0' (Mn) and 'p1' (Mw) parameters, got {params}"
-            )
-        Mn = float(params["p0"])
-        Mw = float(params["p1"])
-        return SchulzZimmPolydisperse(Mn=Mn, Mw=Mw, random_seed=random_seed)
-
-    elif dist_name == "uniform":
-        if "p0" not in params or "p1" not in params:
-            raise ValueError(
-                f"uniform requires 'p0' (min_dp) and 'p1' (max_dp) parameters, got {params}"
-            )
-        min_dp = int(params["p0"])
-        max_dp = int(params["p1"])
-        return UniformPolydisperse(
-            min_dp=min_dp,
-            max_dp=max_dp,
-            random_seed=random_seed,
-        )
-
-    elif dist_name == "poisson":
-        if "p0" not in params:
-            raise ValueError(f"poisson requires 'p0' (lambda) parameter, got {params}")
-        lambda_param = float(params["p0"])
-        return PoissonPolydisperse(
-            lambda_param=lambda_param,
-            random_seed=random_seed,
-        )
-
-    elif dist_name == "flory_schulz":
-        if "p0" not in params:
-            raise ValueError(f"flory_schulz requires 'p0' (a) parameter, got {params}")
-        a = float(params["p0"])
-        return FlorySchulzPolydisperse(a=a, random_seed=random_seed)
-
-    else:
-        raise ValueError(
-            f"Unsupported distribution type: {dist_name}. Supported types: schulz_zimm, uniform, poisson, flory_schulz"
-        )
-
-
 class SystemPlanner:
     """
     Top layer: System-level planner.
@@ -784,13 +259,13 @@ class SystemPlanner:
         self.max_chains = max_chains
         self.enable_trimming = enable_trimming
 
-    def plan_system(self, rng: Random) -> SystemPlan:
+    def plan_system(self, rng: np.random.Generator) -> SystemPlan:
         """
         Repeatedly ask chain_generator for new chains until accumulated mass
         reaches target_total_mass within max_rel_error.
 
         Args:
-            rng: Random number generator
+            rng: np.random.Generator number generator
 
         Returns:
             SystemPlan with all chains and total mass
@@ -831,7 +306,7 @@ class SystemPlanner:
         self,
         chain: Chain,
         remaining_mass: float,
-        rng: Random,
+        rng: np.random.Generator,
     ) -> Chain | None:
         """
         Optional trimming logic: reduce chain.dp, regenerate sequence,
@@ -842,7 +317,7 @@ class SystemPlanner:
         Args:
             chain: Original chain that would exceed the target
             remaining_mass: Remaining mass needed to reach target
-            rng: Random number generator
+            rng: np.random.Generator number generator
 
         Returns:
             Trimmed chain, or None if trimming is not possible

@@ -1,7 +1,9 @@
+"""Abstract base classes for force field readers and writers."""
+
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from molpy.core.system import FrameSystem
+from molpy.core.forcefield import ForceField
 
 PathLike = str | Path
 
@@ -9,27 +11,18 @@ PathLike = str | Path
 class ForceFieldReader(ABC):
     """Base class for force field file readers."""
 
-    def __init__(self, path: PathLike, system: FrameSystem | None = None) -> None:
-        """
-        Initialize force field reader.
-
-        Args:
-            path: Path to force field file
-            system: Optional existing FrameSystem to populate
-        """
+    def __init__(self, path: PathLike) -> None:
         self._path = Path(path)
-        self._system = system if system is not None else FrameSystem()
 
     @abstractmethod
-    def read(self, system: FrameSystem | None = None) -> FrameSystem:
-        """
-        Read force field data into a FrameSystem.
+    def read(self, forcefield: ForceField | None = None) -> ForceField:
+        """Read force field data from file.
 
         Args:
-            system: Optional existing FrameSystem to populate. If None, uses the one from __init__.
+            forcefield: Optional existing ForceField to populate.
 
         Returns:
-            The populated FrameSystem object
+            Populated ForceField object.
         """
         ...
 
@@ -37,21 +30,14 @@ class ForceFieldReader(ABC):
 class ForceFieldWriter(ABC):
     """Base class for force field file writers."""
 
-    def __init__(self, path: PathLike):
-        """
-        Initialize force field writer.
-
-        Args:
-            path: Path to output file
-        """
+    def __init__(self, path: PathLike) -> None:
         self._path = Path(path)
 
     @abstractmethod
-    def write(self, system: FrameSystem) -> None:
-        """
-        Write force field data from a FrameSystem.
+    def write(self, forcefield: ForceField) -> None:
+        """Write force field data to file.
 
         Args:
-            system: FrameSystem object containing force field data
+            forcefield: ForceField object to serialize.
         """
         ...

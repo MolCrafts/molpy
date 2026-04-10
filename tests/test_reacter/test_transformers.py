@@ -12,7 +12,7 @@ Tests cover:
 """
 
 from molpy import Atom, Atomistic, Bond
-from molpy.reacter.transformers import (
+from molpy.reacter.utils import (
     break_bond,
     create_bond_former,
     form_aromatic_bond,

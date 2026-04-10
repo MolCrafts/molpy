@@ -8,15 +8,15 @@ Tests cover:
 """
 
 import random
-from random import Random
+import numpy as np
 
 import pytest
 
-from molpy.builder.polymer.sequence_generator import WeightedSequenceGenerator
+from molpy.builder.polymer.distributions import SchulzZimmPolydisperse
+from molpy.builder.polymer.sequences import WeightedSequenceGenerator
 from molpy.builder.polymer.system import (
     Chain,
     PolydisperseChainGenerator,
-    SchulzZimmPolydisperse,
     SystemPlan,
     SystemPlanner,
 )
@@ -29,7 +29,7 @@ class TestSequenceGenerator:
         """Test basic sequence generation with monomer weights."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
 
-        rng = Random(42)
+        rng = np.random.default_rng(42)
         sequence = seq_gen.generate_sequence(dp=10, rng=rng)
 
         assert len(sequence) == 10
@@ -45,23 +45,14 @@ class TestSequenceGenerator:
         assert comp["B"] == pytest.approx(0.3, abs=0.01)
         assert sum(comp.values()) == pytest.approx(1.0, abs=0.01)
 
-    def test_weighted_sequence_generator_legacy_format(self):
-        """Test legacy format with weights dict and n_monomers."""
-        seq_gen = WeightedSequenceGenerator(weights={0: 0.7, 1: 0.3}, n_monomers=2)
-
-        rng = Random(42)
-        sequence = seq_gen.generate_sequence(dp=10, rng=rng)
-
-        assert len(sequence) == 10
-        assert all(m in ["0", "1"] for m in sequence)
-
     def test_weighted_sequence_generator_distribution(self):
         """Test that sequence generation follows weight distribution."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.8, "B": 0.2})
 
-        rng = Random(42)
+        rng = np.random.default_rng(42)
         sequences = [
-            seq_gen.generate_sequence(dp=100, rng=Random(i)) for i in range(10)
+            seq_gen.generate_sequence(dp=100, rng=np.random.default_rng(i))
+            for i in range(10)
         ]
 
         # Count occurrences across all sequences
@@ -91,7 +82,7 @@ class TestPolydisperseChainGenerator:
             distribution=dp_dist,
         )
 
-        rng = Random(42)
+        rng = np.random.default_rng(42)
         chain = chain_gen.build_chain(rng)
 
         assert isinstance(chain, Chain)
@@ -129,7 +120,7 @@ class TestPolydisperseChainGenerator:
             distribution=FixedDPDistribution(dp=10),
         )
 
-        rng = Random(42)
+        rng = np.random.default_rng(42)
         chain = chain_gen.build_chain(rng)
 
         # Mass should be 10 * 100.0 + 18.0 = 1018.0
@@ -167,8 +158,8 @@ class TestPolydisperseChainGenerator:
             distribution=dp_dist,
         )
 
-        rng = Random(42)
-        dps = [chain_gen.sample_dp(Random(i)) for i in range(100)]
+        rng = np.random.default_rng(42)
+        dps = [chain_gen.sample_dp(np.random.default_rng(i)) for i in range(100)]
 
         # Average DP should be approximately mean_dp = 15
         avg_dp = sum(dps) / len(dps)
@@ -197,7 +188,7 @@ class TestSystemPlanner:
             max_rel_error=0.02,
         )
 
-        rng = Random(42)
+        rng = np.random.default_rng(42)
         system_plan = planner.plan_system(rng)
 
         assert isinstance(system_plan, SystemPlan)
@@ -244,7 +235,7 @@ class TestSystemPlanner:
             max_rel_error=0.02,
         )
 
-        rng = Random(42)
+        rng = np.random.default_rng(42)
         system_plan = planner.plan_system(rng)
 
         # Should have approximately 5 chains
@@ -286,7 +277,7 @@ class TestSystemPlanner:
             max_chains=10,  # Limit to 10 chains
         )
 
-        rng = Random(42)
+        rng = np.random.default_rng(42)
         system_plan = planner.plan_system(rng)
 
         assert len(system_plan.chains) <= 10
@@ -323,7 +314,7 @@ class TestSystemPlanner:
             enable_trimming=True,
         )
 
-        rng = Random(42)
+        rng = np.random.default_rng(42)
         system_plan = planner.plan_system(rng)
 
         # Should have at least one chain (possibly trimmed)
@@ -367,7 +358,7 @@ class TestSystemPlanner:
             enable_trimming=False,
         )
 
-        rng = Random(42)
+        rng = np.random.default_rng(42)
         system_plan = planner.plan_system(rng)
 
         # Without trimming, should stop before adding a chain that would exceed target
@@ -400,7 +391,7 @@ class TestIntegration:
             max_rel_error=0.02,
         )
 
-        rng = Random(42)
+        rng = np.random.default_rng(42)
         system_plan = planner.plan_system(rng)
 
         # Verify the plan

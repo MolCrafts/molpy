@@ -33,10 +33,10 @@ class Topology(Graph):
         """Initialize Topology graph.
 
         Args:
-            *args: Arguments passed to igraph.Graph.__init__
-            entity_to_idx: Optional dictionary mapping entities to indices
-            idx_to_entity: Optional list mapping indices to entities
-            **kwargs: Keyword arguments passed to igraph.Graph.__init__
+            *args (Any): Arguments passed to igraph.Graph.__init__.
+            entity_to_idx: Optional dictionary mapping entities to indices.
+            idx_to_entity: Optional list mapping indices to entities.
+            **kwargs (Any): Keyword arguments passed to igraph.Graph.__init__.
         """
         super().__init__(*args, **kwargs)
         # Initialize bidirectional mapping members

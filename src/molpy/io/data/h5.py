@@ -20,7 +20,10 @@ HDF5 Structure:
     └── ...                 # Other metadata
 """
 
+from __future__ import annotations
+
 import json
+
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +71,7 @@ def frame_to_h5_group(
     """
     if h5py is None:
         raise ImportError(
-            "h5py is required for HDF5 support. " "Install it with: pip install h5py"
+            "h5py is required for HDF5 support. Install it with: pip install h5py"
         )
 
     if not frame._blocks:
@@ -128,6 +131,17 @@ def frame_to_h5_group(
             # Store dtype information as attribute for better reconstruction
             dataset.attrs["dtype"] = str(data.dtype)
 
+    # Write box as a dedicated group
+    if frame.box is not None:
+        box_group = h5_group.create_group("box")
+        box_group.create_dataset(
+            "matrix", data=np.asarray(frame.box.matrix, dtype=np.float64)
+        )
+        box_group.create_dataset(
+            "origin", data=np.asarray(frame.box.origin, dtype=np.float64)
+        )
+        box_group.create_dataset("pbc", data=np.asarray(frame.box.pbc, dtype=bool))
+
     # Write metadata
     if frame.metadata:
         metadata_group = h5_group.create_group("metadata")
@@ -151,7 +165,7 @@ def h5_group_to_frame(h5_group: "h5py.Group", frame: Frame | None = None) -> Fra
     """
     if h5py is None:
         raise ImportError(
-            "h5py is required for HDF5 support. " "Install it with: pip install h5py"
+            "h5py is required for HDF5 support. Install it with: pip install h5py"
         )
 
     frame = frame or Frame()
@@ -205,6 +219,17 @@ def h5_group_to_frame(h5_group: "h5py.Group", frame: Frame | None = None) -> Fra
                 block[var_name] = data
 
             frame[block_name] = block
+
+    # Read box
+    if "box" in h5_group:
+        from molpy.core.box import Box
+
+        box_grp = h5_group["box"]
+        frame.box = Box(
+            matrix=np.array(box_grp["matrix"]),
+            origin=np.array(box_grp["origin"]),
+            pbc=np.array(box_grp["pbc"]),
+        )
 
     # Read metadata
     if "metadata" in h5_group:
@@ -402,8 +427,7 @@ class HDF5Reader:
         """
         if h5py is None:
             raise ImportError(
-                "h5py is required for HDF5 support. "
-                "Install it with: pip install h5py"
+                "h5py is required for HDF5 support. Install it with: pip install h5py"
             )
         self._path = Path(path)
         self._open_kwargs = open_kwargs
@@ -464,8 +488,7 @@ class HDF5Writer:
         """
         if h5py is None:
             raise ImportError(
-                "h5py is required for HDF5 support. "
-                "Install it with: pip install h5py"
+                "h5py is required for HDF5 support. Install it with: pip install h5py"
             )
         self._path = Path(path)
         self._open_kwargs = open_kwargs

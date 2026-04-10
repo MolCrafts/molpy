@@ -19,6 +19,8 @@ HDF5 Trajectory Structure:
 └── metadata/               # Optional trajectory-level metadata
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -55,13 +57,12 @@ class HDF5TrajectoryReader:
         """Initialize HDF5 trajectory reader.
 
         Args:
-            path: Path to HDF5 trajectory file
-            **open_kwargs: Additional arguments passed to h5py.File
+            path: Path to HDF5 trajectory file.
+            **open_kwargs (Any): Additional arguments passed to h5py.File.
         """
         if h5py is None:
             raise ImportError(
-                "h5py is required for HDF5 support. "
-                "Install it with: pip install h5py"
+                "h5py is required for HDF5 support. Install it with: pip install h5py"
             )
         self._path = Path(path)
         if not self._path.exists():
@@ -240,12 +241,11 @@ class HDF5TrajectoryWriter(TrajectoryWriter):
             compression: Compression algorithm (None, 'gzip', 'lzf', 'szip').
                 Defaults to 'gzip'.
             compression_opts: Compression level (for gzip: 0-9). Defaults to 4.
-            **open_kwargs: Additional arguments passed to h5py.File
+            **open_kwargs (Any): Additional arguments passed to h5py.File.
         """
         if h5py is None:
             raise ImportError(
-                "h5py is required for HDF5 support. "
-                "Install it with: pip install h5py"
+                "h5py is required for HDF5 support. Install it with: pip install h5py"
             )
         self._path = Path(path)
         self._open_kwargs = open_kwargs

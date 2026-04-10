@@ -14,9 +14,11 @@ from molpy import (
     PairStyle,
     Style,
 )
+from molpy.core.fields import ForceFieldFormatter
+from molpy.io.data.lammps import LammpsFieldFormatter
 from molpy.potential.angle import AngleHarmonicStyle
 from molpy.potential.bond import BondHarmonicStyle
-from molpy.potential.dihedral import DihedralOPLSStyle
+from molpy.potential.dihedral import DihedralFourierStyle, DihedralOPLSStyle
 from molpy.potential.pair import PairLJ126CoulCutStyle, PairLJ126CoulLongStyle
 from molpy.version import version
 
@@ -598,7 +600,7 @@ class TypeFilter:
         """Check if a type should be included.
 
         Args:
-            type_obj: Type object to check
+            type_obj (Type): Type object to check.
 
         Returns:
             True if type should be included, False otherwise
@@ -681,6 +683,19 @@ def _format_dihedral_opls(typ) -> list[float]:
     ]
 
 
+def _format_dihedral_fourier(typ) -> list:
+    """Format DihedralFourierType for LAMMPS fourier style.
+
+    Stored kwargs: k1=K, k2=n (periodicity as float), k3=phase (degrees), k4=weight.
+    Output: [m, K, n, phase]  (m=1 for single-term AMBER dihedrals).
+    """
+    kwargs = typ.params.kwargs
+    k = float(kwargs.get("k1", 0.0))
+    n = int(kwargs.get("k2", 1))
+    phase = float(kwargs.get("k3", 0.0))
+    return [1, k, n, phase]
+
+
 def _format_pair_lj(typ) -> list[float]:
     """Format PairLJ126Type parameters: epsilon sigma"""
     from molpy.potential.pair import PairLJ126Type
@@ -736,20 +751,28 @@ def _format_generic_pair(typ) -> list[float]:
     return result
 
 
-# Parameter formatters registry: maps Style class to formatter function
-_PARAM_FORMATTERS: dict[type, callable] = {
-    # Specialized styles
-    BondHarmonicStyle: _format_bond_harmonic,
-    AngleHarmonicStyle: _format_angle_harmonic,
-    DihedralOPLSStyle: _format_dihedral_opls,
-    PairLJ126CoulCutStyle: _format_pair_lj,
-    PairLJ126CoulLongStyle: _format_pair_lj,
-    # Generic styles (fallback)
-    BondStyle: _format_generic_bond,
-    AngleStyle: _format_generic_angle,
-    DihedralStyle: _format_generic_dihedral,
-    PairStyle: _format_generic_pair,
-}
+class LammpsForceFieldFormatter(LammpsFieldFormatter, ForceFieldFormatter):
+    """LAMMPS force-field formatter.
+
+    Inherits LAMMPS field-name mapping (``q`` ↔ ``charge``, ``mol`` ↔ ``mol_id``)
+    from :class:`LammpsFieldFormatter` and adds parameter formatters for
+    serializing Style/Type objects to LAMMPS coefficient lines.
+    """
+
+    _param_formatters = {
+        # Specialized styles
+        BondHarmonicStyle: _format_bond_harmonic,
+        AngleHarmonicStyle: _format_angle_harmonic,
+        DihedralFourierStyle: _format_dihedral_fourier,
+        DihedralOPLSStyle: _format_dihedral_opls,
+        PairLJ126CoulCutStyle: _format_pair_lj,
+        PairLJ126CoulLongStyle: _format_pair_lj,
+        # Generic styles (fallback)
+        BondStyle: _format_generic_bond,
+        AngleStyle: _format_generic_angle,
+        DihedralStyle: _format_generic_dihedral,
+        PairStyle: _format_generic_pair,
+    }
 
 
 # ===================================================================
@@ -766,6 +789,8 @@ class LAMMPSForceFieldWriter:
     - Type filtering
     - Specialized Style and Type classes
     """
+
+    _formatter = LammpsForceFieldFormatter()
 
     def __init__(self, fpath: str | Path | TextIO, precision: int = 6):
         """
@@ -789,34 +814,9 @@ class LAMMPSForceFieldWriter:
     def _get_type_params(self, typ, style) -> list[float]:
         """Extract parameters from a Type object for LAMMPS coefficients.
 
-        Args:
-            typ: Type object (BondType, AngleType, etc.)
-            style: Style object that contains this type
-
-        Returns:
-            List of parameters in LAMMPS format
-
-        Raises:
-            ValueError: If no formatter is found and parameters cannot be extracted
+        Delegates to :meth:`LammpsForceFieldFormatter.format_params`.
         """
-        style_class = type(style)
-
-        # Try registered formatter first
-        if style_class in _PARAM_FORMATTERS:
-            formatter = _PARAM_FORMATTERS[style_class]
-            try:
-                return formatter(typ)
-            except (KeyError, TypeError) as e:
-                raise ValueError(
-                    f"Failed to format parameters for {style_class.__name__} "
-                    f"with type {type(typ).__name__}: {e}"
-                ) from e
-
-        # No formatter found - this is an error for specialized styles
-        raise ValueError(
-            f"No parameter formatter registered for style class {style_class.__name__}. "
-            f"Available formatters: {list(_PARAM_FORMATTERS.keys())}"
-        )
+        return self._formatter.format_params(typ, style)
 
     def _get_coeff_id(self, typ, style_type: str) -> str:
         """Get coefficient identifier for a type.
@@ -929,6 +929,7 @@ class LAMMPSForceFieldWriter:
         style: Style,
         style_type: str,
         type_filter: TypeFilter,
+        skip_header: bool = False,
     ) -> None:
         """Write a section for a single style (non-hybrid).
 
@@ -937,9 +938,11 @@ class LAMMPSForceFieldWriter:
             style: Style object
             style_type: Style type name
             type_filter: Filter to determine which types to include
+            skip_header: If True, omit the ``<style_type>_style`` header line.
         """
-        self._write_style_header(lines, style, style_type)
-        self._write_style_modify(lines, style, style_type)
+        if not skip_header:
+            self._write_style_header(lines, style, style_type)
+            self._write_style_modify(lines, style, style_type)
         self._write_type_coeffs(lines, style, style_type, type_filter)
 
     def _write_hybrid_style_section(
@@ -981,6 +984,7 @@ class LAMMPSForceFieldWriter:
         styles: list[Style],
         style_type: str,
         type_filter: TypeFilter,
+        skip_header: bool = False,
     ) -> None:
         """Write a complete style section.
 
@@ -989,12 +993,15 @@ class LAMMPSForceFieldWriter:
             styles: List of Style objects
             style_type: Style type name
             type_filter: Filter to determine which types to include
+            skip_header: If True, omit the ``<style_type>_style`` header line.
         """
         if not styles:
             return
 
         if len(styles) == 1:
-            self._write_single_style_section(lines, styles[0], style_type, type_filter)
+            self._write_single_style_section(
+                lines, styles[0], style_type, type_filter, skip_header=skip_header
+            )
         else:
             self._write_hybrid_style_section(lines, styles, style_type, type_filter)
 
@@ -1006,6 +1013,7 @@ class LAMMPSForceFieldWriter:
         angle_types: set[str] | None = None,
         dihedral_types: set[str] | None = None,
         improper_types: set[str] | None = None,
+        skip_pair_style: bool = False,
     ) -> None:
         """Write forcefield to LAMMPS format.
 
@@ -1017,6 +1025,8 @@ class LAMMPSForceFieldWriter:
             angle_types: Set of angle type names to include. If None, include all.
             dihedral_types: Set of dihedral type names to include. If None, include all.
             improper_types: Set of improper type names to include. If None, include all.
+            skip_pair_style: If True, omit the ``pair_style`` header line so the
+                calling input script can set ``pair_style`` independently.
         """
         lines = [f"# LAMMPS force field generated by molpy version {version}\n\n"]
 
@@ -1039,7 +1049,10 @@ class LAMMPSForceFieldWriter:
         ]
 
         for styles, style_type in style_configs:
-            self._write_style_section(lines, styles, style_type, filters[style_type])
+            skip = skip_pair_style and style_type == "pair"
+            self._write_style_section(
+                lines, styles, style_type, filters[style_type], skip_header=skip
+            )
 
         # Write to file
         if isinstance(self._fpath, (str, Path)):

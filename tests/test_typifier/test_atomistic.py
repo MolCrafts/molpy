@@ -553,8 +553,8 @@ class TestOplsAtomisticTypifier:
         # Typify
         result = typifier.typify(asm)
 
-        assert result is asm
-        assert bond.data.get("type") is not None
+        assert result is not asm
+        assert list(result.bonds)[0].data.get("type") is not None
 
     def test_atomistic_typifier_typify_all(self):
         """Test OplsAtomisticTypifier.typify() with all typing enabled."""
@@ -597,10 +597,10 @@ class TestOplsAtomisticTypifier:
         asm.add_link(bond1, bond2)
 
         # Generate topology
-        asm.get_topo(gen_angle=True, gen_dihe=False)
+        asm = asm.get_topo(gen_angle=True, gen_dihe=False)
 
         # Typify
         result = typifier.typify(asm)
 
-        assert result is asm
-        assert bond1.data.get("type") is not None
+        assert result is not asm
+        assert list(result.bonds)[0].data.get("type") is not None

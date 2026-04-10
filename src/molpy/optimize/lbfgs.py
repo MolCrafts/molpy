@@ -17,11 +17,11 @@ class LBFGS(Optimizer[S]):
     directions efficiently.
 
     Args:
-        potential: Potential with calc_energy/calc_forces methods
-        maxstep: Maximum step size (as displacement norm)
-        memory: Number of previous steps to store for Hessian approximation
-        damping: Damping factor for step size
-        entity_type: Type of entity to optimize
+        potential (Potential): Potential with calc_energy/calc_forces methods.
+        maxstep: Maximum step size (as displacement norm).
+        memory: Number of previous steps to store for Hessian approximation.
+        damping: Damping factor for step size.
+        entity_type (type[Entity]): Type of entity to optimize.
 
     Attributes:
         maxstep: Maximum allowed step size
@@ -85,13 +85,13 @@ class LBFGS(Optimizer[S]):
     def step(self, structure: S) -> tuple[float, float]:
         """Perform one L-BFGS optimization step.
 
-         Args:
-             structure: Structure to optimize (modified in-place)
+        Args:
+            structure: Structure to optimize (modified in-place).
 
         Returns:
-             (energy, fmax) tuple where:
-                 energy: potential energy after step
-                 fmax: maximum force component after step
+            tuple[float, float]: (energy, fmax) tuple where
+                energy is potential energy after step and
+                fmax is maximum force component after step.
         """
         # Reset state if this is a new structure
         self._reset_state(id(structure))

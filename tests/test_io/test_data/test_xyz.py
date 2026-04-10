@@ -29,15 +29,15 @@ class TestXYZReader:
         assert "x" in frame["atoms"]
         assert "y" in frame["atoms"]
         assert "z" in frame["atoms"]
-        assert frame["atoms"]["x"].shape == (
-            5,
-        ), "x-coordinates should be 1D array of length N"
-        assert frame["atoms"]["y"].shape == (
-            5,
-        ), "y-coordinates should be 1D array of length N"
-        assert frame["atoms"]["z"].shape == (
-            5,
-        ), "z-coordinates should be 1D array of length N"
+        assert frame["atoms"]["x"].shape == (5,), (
+            "x-coordinates should be 1D array of length N"
+        )
+        assert frame["atoms"]["y"].shape == (5,), (
+            "y-coordinates should be 1D array of length N"
+        )
+        assert frame["atoms"]["z"].shape == (5,), (
+            "z-coordinates should be 1D array of length N"
+        )
 
         # Check elements
         assert "element" in frame["atoms"]
@@ -127,9 +127,9 @@ class TestXYZReader:
         assert "number" in frame["atoms"]
         # Water molecules have O-H-H pattern
         num_values = frame["atoms"]["number"]
-        assert (
-            len(num_values) % 3 == 0
-        ), "Should have multiple of 3 atoms (water molecules)"
+        assert len(num_values) % 3 == 0, (
+            "Should have multiple of 3 atoms (water molecules)"
+        )
 
     def test_topology_xyz(self, xyz_test_dir):
         """Test reading topology.xyz file."""
@@ -176,9 +176,9 @@ class TestXYZReader:
         # Verify atomic numbers match elements
         for elem, num in zip(elements, num_values):
             expected_num = Element.get_atomic_number(elem)
-            assert (
-                num == expected_num
-            ), f"Element {elem} should have Z={expected_num}, got {num}"
+            assert num == expected_num, (
+                f"Element {elem} should have Z={expected_num}, got {num}"
+            )
 
     def test_coordinate_array_shape(self, xyz_test_dir):
         """Test that coordinates are stored as three separate 1D arrays."""
@@ -194,9 +194,9 @@ class TestXYZReader:
             assert x.ndim == 1, f"{filename}: x-coordinates should be 1D"
             assert y.ndim == 1, f"{filename}: y-coordinates should be 1D"
             assert z.ndim == 1, f"{filename}: z-coordinates should be 1D"
-            assert (
-                x.shape == y.shape == z.shape
-            ), f"{filename}: all coordinates should have same length"
+            assert x.shape == y.shape == z.shape, (
+                f"{filename}: all coordinates should have same length"
+            )
 
     def test_element_to_atomic_number_mapping(self, xyz_test_dir):
         """Test various element symbols are correctly mapped to atomic numbers."""

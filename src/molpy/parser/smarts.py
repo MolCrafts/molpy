@@ -32,6 +32,7 @@ class AtomPrimitiveIR:
         "symbol",
         "atomic_num",
         "neighbor_count",
+        "ring_connectivity",
         "ring_size",
         "ring_count",
         "has_label",
@@ -39,6 +40,14 @@ class AtomPrimitiveIR:
         "wildcard",
         "hydrogen_count",
         "implicit_hydrogen_count",
+        "degree",
+        "valence",
+        "charge",
+        "aromatic",
+        "aliphatic",
+        "chirality",
+        "isotope",
+        "atom_class",
     ]
     value: str | int | SmartsIR | None = None
     id: int = field(
@@ -119,7 +128,7 @@ class SmartsBondIR:
 
     itom: SmartsAtomIR
     jtom: SmartsAtomIR
-    bond_type: str = "-"  # default single bond, can be =, #, :, ~, @, etc.
+    bond_type: str = "implicit"  # default implicit bond (single or aromatic in SMARTS)
 
     def __repr__(self):
         expr_start = getattr(self.itom.expression, "value", str(self.itom.expression))
@@ -215,6 +224,64 @@ class SmartsTransformer(Transformer):
         """Extract label."""
         return children[0]
 
+    def ring_connectivity(self, children: list[int]) -> int:
+        """Extract ring connectivity."""
+        return children[0]
+
+    def degree(self, children: list[int]) -> int:
+        """Extract degree."""
+        return children[0] if children else None
+
+    def valence(self, children: list[int]) -> int:
+        """Extract valence."""
+        return children[0] if children else None
+
+    def charge(self, children: list) -> AtomPrimitiveIR:
+        """Extract charge (+ or -)."""
+        # children: [Token(CHARGE_SIGN), NUM?]
+        sign_token = next((c for c in children if isinstance(c, Token)), None)
+        num = next((c for c in children if isinstance(c, int)), 1)
+        if sign_token and sign_token.value == "-":
+            value = -num
+        else:
+            value = num
+        return AtomPrimitiveIR(type="charge", value=value)
+
+    def chirality(self, children: list) -> str:
+        """Extract chirality (@ or @@)."""
+        # The grammar rule is: chirality: "@@" | "@"
+        # Lark captures the literal tokens. With Earley, "@@" matches first.
+        # children contains Token objects for "@" characters
+        if len(children) >= 2:
+            return "@@"
+        return "@"
+
+    def isotope(self, children: list[int]) -> int:
+        """Extract isotope mass number."""
+        return children[0]
+
+    def atom_class(self, children: list[str]) -> str:
+        """Extract atom class name."""
+        return children[0] if children else None
+
+    def bond(self, children: list) -> str:
+        """Extract bond type (may be negated with !)."""
+        # children may contain "!" token followed by bond type
+        # e.g., "!:" means "not aromatic bond"
+        has_negation = False
+        bond_char = "-"
+
+        for token in children:
+            if isinstance(token, Token):
+                if token.value == "!":
+                    has_negation = True
+                else:
+                    bond_char = token.value
+
+        if has_negation:
+            return f"!{bond_char}"
+        return bond_char
+
     def matches_string(self, children: list) -> SmartsIR:
         """Extract recursive SMARTS pattern."""
         return children[0]
@@ -228,21 +295,86 @@ class SmartsTransformer(Transformer):
             - # + atomic_num (atomic number)
             - $( + SMARTS + ) (recursive SMARTS)
             - %label (has label)
-            - X + N (neighbor count)
-            - r + N (ring size)
-            - R + N (ring count)
+            - X + N? (neighbor count, optional number)
+            - x + N? (ring connectivity, optional number)
+            - r + N? (ring size, optional number)
+            - R + N? (ring count, optional number)
+            - H + N? (hydrogen count, optional number)
+            - h + N? (implicit hydrogen count, optional number)
+            - D + N? (degree, optional number)
+            - v + N? (valence, optional number)
+            - +/- + N? (charge)
+            - a (aromatic)
+            - A (aliphatic)
+            - @ / @@ (chirality)
+            - NUM + atom_symbol (isotope)
+            - atom_class (atom class reference)
         """
-        # Filter out operator tokens like #, X, r, R, H, h, $(, )
+        # Check the first token in original children to determine type
+        first_token = next((c for c in children if isinstance(c, Token)), None)
+
+        # Handle primitives that don't need values first
+        if first_token and first_token.value == "a":
+            return AtomPrimitiveIR(type="aromatic", value=True)
+
+        if first_token and first_token.value == "A":
+            return AtomPrimitiveIR(type="aliphatic", value=True)
+
+        # Handle charge specially - check for CHARGE_SIGN tokens
+        if first_token and first_token.type == "CHARGE_SIGN":
+            # Find the integer value (if any)
+            num = next((c for c in children if isinstance(c, int)), 1)
+            return AtomPrimitiveIR(
+                type="charge", value=num if first_token.value == "+" else -num
+            )
+
+        # Filter out operator tokens
         filtered = [
             c
             for c in children
             if not (
                 isinstance(c, Token)
-                and c.value in {"#", "X", "r", "R", "H", "h", "$(", ")", "$", "("}
+                and c.value
+                in {
+                    "#",
+                    "X",
+                    "x",
+                    "r",
+                    "R",
+                    "H",
+                    "h",
+                    "D",
+                    "v",
+                    "a",
+                    "A",
+                    "$(",
+                    ")",
+                    "$",
+                    "(",
+                }
             )
         ]
 
+        # If no filtered children, check what the first token was
         if not filtered:
+            if first_token:
+                # Handle primitives without numbers (X, x, r, R, H, h, D, v)
+                if first_token.value == "X":
+                    return AtomPrimitiveIR(type="neighbor_count", value=None)
+                elif first_token.value == "x":
+                    return AtomPrimitiveIR(type="ring_connectivity", value=None)
+                elif first_token.value == "r":
+                    return AtomPrimitiveIR(type="ring_size", value=None)
+                elif first_token.value == "R":
+                    return AtomPrimitiveIR(type="ring_count", value=None)
+                elif first_token.value == "H":
+                    return AtomPrimitiveIR(type="hydrogen_count", value=None)
+                elif first_token.value == "h":
+                    return AtomPrimitiveIR(type="implicit_hydrogen_count", value=None)
+                elif first_token.value == "D":
+                    return AtomPrimitiveIR(type="degree", value=None)
+                elif first_token.value == "v":
+                    return AtomPrimitiveIR(type="valence", value=None)
             return AtomPrimitiveIR(type="wildcard")
 
         child = filtered[0]
@@ -251,8 +383,17 @@ class SmartsTransformer(Transformer):
         if isinstance(child, AtomPrimitiveIR):
             return child
 
-        # Check the first token in original children to determine type
-        first_token = next((c for c in children if isinstance(c, Token)), None)
+        # Handle atom class (string)
+        if isinstance(child, str) and not (first_token and first_token.value == "%"):
+            # Could be atom class or label
+            if child.startswith("%"):
+                return AtomPrimitiveIR(type="has_label", value=child)
+            else:
+                # Check if it's a valid element symbol first
+                if len(child) <= 2 and child[0].isupper():
+                    return AtomPrimitiveIR(type="symbol", value=child)
+                else:
+                    return AtomPrimitiveIR(type="atom_class", value=child)
 
         if first_token and first_token.value == "#":
             # Atomic number (#N)
@@ -265,29 +406,44 @@ class SmartsTransformer(Transformer):
                 return AtomPrimitiveIR(type="matches_smarts", value=child)
 
         elif first_token and first_token.value == "X":
-            # Neighbor count (XN)
+            # Neighbor count (XN or X)
             if isinstance(child, int):
                 return AtomPrimitiveIR(type="neighbor_count", value=child)
 
+        elif first_token and first_token.value == "x":
+            # Ring connectivity (xN or x)
+            if isinstance(child, int):
+                return AtomPrimitiveIR(type="ring_connectivity", value=child)
+
         elif first_token and first_token.value == "r":
-            # Ring size (rN)
+            # Ring size (rN or r)
             if isinstance(child, int):
                 return AtomPrimitiveIR(type="ring_size", value=child)
 
         elif first_token and first_token.value == "R":
-            # Ring count (RN)
+            # Ring count (RN or R)
             if isinstance(child, int):
                 return AtomPrimitiveIR(type="ring_count", value=child)
 
         elif first_token and first_token.value == "H":
-            # Explicit hydrogen count (H2)
+            # Explicit hydrogen count (H, H0, H1, H2, etc.)
             if isinstance(child, int):
                 return AtomPrimitiveIR(type="hydrogen_count", value=child)
 
         elif first_token and first_token.value == "h":
-            # Implicit hydrogen count (h2)
+            # Implicit hydrogen count (h, h0, h1, h2, etc.)
             if isinstance(child, int):
                 return AtomPrimitiveIR(type="implicit_hydrogen_count", value=child)
+
+        elif first_token and first_token.value == "D":
+            # Degree (D, D1, D2, etc.)
+            if isinstance(child, int):
+                return AtomPrimitiveIR(type="degree", value=child)
+
+        elif first_token and first_token.value == "v":
+            # Valence (v, v1, v2, etc.)
+            if isinstance(child, int):
+                return AtomPrimitiveIR(type="valence", value=child)
 
         # Label (%label)
         if isinstance(child, str) and child.startswith("%"):
@@ -305,13 +461,52 @@ class SmartsTransformer(Transformer):
             return AtomExpressionIR(op="not", children=[])
         return AtomExpressionIR(op="not", children=[filtered[0]])
 
+    def isotope_atom(self, children: list) -> AtomPrimitiveIR:
+        """Process isotope-prefixed atom (e.g. 2H for deuterium)."""
+        isotope_val = None
+        symbol_child = None
+        for c in children:
+            if isinstance(c, int) and isotope_val is None:
+                isotope_val = c
+            if isinstance(c, AtomPrimitiveIR) and c.type == "symbol":
+                symbol_child = c
+        if isotope_val is not None and symbol_child is not None:
+            return AtomPrimitiveIR(
+                type="isotope", value=(isotope_val, symbol_child.value)
+            )
+        # Fallback
+        if symbol_child is not None:
+            return symbol_child
+        return AtomPrimitiveIR(type="wildcard")
+
+    def implicit_and(self, children: list) -> AtomExpressionIR | AtomPrimitiveIR:
+        """Process implicit AND: adjacent primitives without operator (e.g. #6X3r5)."""
+        filtered = [c for c in children if not isinstance(c, Token)]
+
+        if len(filtered) == 1:
+            child = filtered[0]
+            # Return primitive directly (don't wrap in expression)
+            # This preserves backward compatibility: [C] => AtomPrimitiveIR(symbol, "C")
+            if isinstance(child, AtomPrimitiveIR):
+                return child
+            return child
+
+        # Multiple adjacent primitives => implicit AND (same semantics as explicit &)
+        flat_children = []
+        for child in filtered:
+            if isinstance(child, AtomExpressionIR) and child.op == "and":
+                flat_children.extend(child.children)
+            else:
+                flat_children.append(child)
+
+        return AtomExpressionIR(op="and", children=flat_children)
+
     def and_expression(self, children: list) -> AtomExpressionIR:
         """Process high-priority AND expression (&)."""
         # Filter out operator tokens like &
         filtered = [c for c in children if not isinstance(c, Token)]
 
         if len(filtered) == 1:
-            # Single primitive, wrap it
             child = filtered[0]
             if isinstance(child, AtomPrimitiveIR):
                 return AtomExpressionIR(op="primitive", children=[child])
@@ -372,9 +567,54 @@ class SmartsTransformer(Transformer):
         """Extract atom label (numeric)."""
         return children[0]
 
+    def bare_atom(self, children: list) -> AtomPrimitiveIR:
+        """Process bare (unbracketed) atom: element symbol or atom class."""
+        if children and isinstance(children[0], AtomPrimitiveIR):
+            return children[0]
+        # atom_class case: children[0] is a string
+        if children and isinstance(children[0], str):
+            name = children[0]
+            # Check if it's a valid element symbol first
+            if len(name) <= 2 and name[0].isupper():
+                return AtomPrimitiveIR(type="symbol", value=name)
+            return AtomPrimitiveIR(type="atom_class", value=name)
+        return AtomPrimitiveIR(type="wildcard")
+
+    # ------------------------------------------------------------------
+    # Bare-H disambiguation  (see SMARTS spec)
+    #
+    #   [H]  → hydrogen element     [CH] → C with 1 H neighbour
+    #   [!H] → not hydrogen         [C;H]→ same (weak-AND)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _has_element(expr) -> bool:
+        if isinstance(expr, AtomPrimitiveIR):
+            return expr.type in ("symbol", "atomic_num")
+        if isinstance(expr, AtomExpressionIR):
+            return any(SmartsTransformer._has_element(c) for c in expr.children)
+        return False
+
+    @staticmethod
+    def _rewrite_bare_h(expr, has_elem: bool):
+        if isinstance(expr, AtomPrimitiveIR):
+            if expr.type == "hydrogen_count" and expr.value is None:
+                if has_elem:
+                    return AtomPrimitiveIR(type="hydrogen_count", value=1)
+                return AtomPrimitiveIR(type="symbol", value="H")
+            return expr
+        if isinstance(expr, AtomExpressionIR):
+            elem_here = SmartsTransformer._has_element(expr)
+            new_children = [
+                SmartsTransformer._rewrite_bare_h(c, has_elem or elem_here)
+                for c in expr.children
+            ]
+            return AtomExpressionIR(op=expr.op, children=new_children)
+        return expr
+
     def atom(self, children: list) -> SmartsAtomIR:
         """
-        Process complete atom: [expression] or symbol, with optional label.
+        Process complete atom: [expression] or bare_atom, with optional label.
 
         Returns:
             SmartsAtomIR
@@ -399,6 +639,9 @@ class SmartsTransformer(Transformer):
         if isinstance(expression, AtomPrimitiveIR):
             expression = AtomExpressionIR(op="primitive", children=[expression])
 
+        # Disambiguate bare H (hydrogen_count=None)
+        expression = self._rewrite_bare_h(expression, self._has_element(expression))
+
         return SmartsAtomIR(expression=expression, label=label)
 
     # ================== Chain Struct ==================
@@ -417,16 +660,32 @@ class SmartsTransformer(Transformer):
         return self._build_ir_from_children(children)
 
     def nonlastbranch(self, children: list) -> tuple:
-        """Process non-last branch: (branch_content)."""
-        # Filter parentheses and get branch IR
+        """Process non-last branch: (bond? branch_content)."""
+        # Filter parentheses
         filtered = [
             c
             for c in children
             if not (isinstance(c, Token) and c.type in {"LPAR", "RPAR"})
         ]
-        if filtered and isinstance(filtered[0], SmartsIR):
-            return ("branch", filtered[0], None)
-        return ("branch", SmartsIR(), None)
+
+        # Check if first item is a bond type (string)
+        bond_type = None
+        branch_ir = None
+
+        if filtered:
+            if isinstance(filtered[0], str):
+                # First item is bond type
+                bond_type = filtered[0]
+                if len(filtered) > 1 and isinstance(filtered[1], SmartsIR):
+                    branch_ir = filtered[1]
+            elif isinstance(filtered[0], SmartsIR):
+                # No bond type, just branch IR
+                branch_ir = filtered[0]
+
+        if branch_ir is None:
+            branch_ir = SmartsIR()
+
+        return ("branch", branch_ir, bond_type)
 
     def _string(self, children: list) -> SmartsIR:
         """
@@ -455,17 +714,25 @@ class SmartsTransformer(Transformer):
         return self._build_ir_from_children(children)
 
     def _build_ir_from_children(self, children: list) -> SmartsIR:
-        """Build SmartsIR from list of atoms and branches."""
+        """Build SmartsIR from list of atoms, bonds, and branches."""
         ir = SmartsIR()
         active_atom: SmartsAtomIR | None = None
+        pending_bond_type: str | None = None
 
         for item in children:
+            if isinstance(item, str):
+                # Bond type
+                pending_bond_type = item
+                continue
+
             if isinstance(item, SmartsAtomIR):
                 ir.atoms.append(item)
 
                 # Connect to previous atom in chain
                 if active_atom is not None:
-                    ir.bonds.append(SmartsBondIR(active_atom, item, "-"))
+                    bond_type = pending_bond_type if pending_bond_type else "implicit"
+                    ir.bonds.append(SmartsBondIR(active_atom, item, bond_type))
+                    pending_bond_type = None
 
                 # Handle ring closures
                 if item.label is not None:
@@ -474,12 +741,12 @@ class SmartsTransformer(Transformer):
                         # Close the ring
                         opening_atom, bond_type = self.ring_openings[label_str]
                         ir.bonds.append(
-                            SmartsBondIR(opening_atom, item, bond_type or "-")
+                            SmartsBondIR(opening_atom, item, bond_type or "implicit")
                         )
                         del self.ring_openings[label_str]
                     else:
                         # Open a new ring
-                        self.ring_openings[label_str] = (item, "-")
+                        self.ring_openings[label_str] = (item, "implicit")
 
                 active_atom = item
 
@@ -489,11 +756,13 @@ class SmartsTransformer(Transformer):
                     if active_atom is not None:
                         # Connect branch to current active atom
                         head_atom = branch_ir.atoms[0]
-                        ir.bonds.append(
-                            SmartsBondIR(
-                                active_atom, head_atom, branch_bond_type or "-"
-                            )
+                        bond_type = (
+                            pending_bond_type
+                            if pending_bond_type
+                            else (branch_bond_type or "implicit")
                         )
+                        ir.bonds.append(SmartsBondIR(active_atom, head_atom, bond_type))
+                        pending_bond_type = None
                     # Add all branch atoms and bonds
                     ir.atoms.extend(branch_ir.atoms)
                     ir.bonds.extend(branch_ir.bonds)
@@ -507,7 +776,13 @@ class SmartsTransformer(Transformer):
                         active_atom = item.atoms[-1]
                 else:
                     if active_atom is not None and item.atoms:
-                        ir.bonds.append(SmartsBondIR(active_atom, item.atoms[0], "-"))
+                        bond_type = (
+                            pending_bond_type if pending_bond_type else "implicit"
+                        )
+                        ir.bonds.append(
+                            SmartsBondIR(active_atom, item.atoms[0], bond_type)
+                        )
+                        pending_bond_type = None
                     ir.atoms.extend(item.atoms)
                     ir.bonds.extend(item.bonds)
                     if item.atoms:
@@ -631,11 +906,41 @@ def _ir_to_smarts_string(ir: SmartsIR) -> str:
             elif expr.type == "atomic_num":
                 return f"#{expr.value}"
             elif expr.type == "neighbor_count":
-                return f"X{expr.value}"
+                return f"X{expr.value}" if expr.value is not None else "X"
+            elif expr.type == "ring_connectivity":
+                return f"x{expr.value}" if expr.value is not None else "x"
             elif expr.type == "ring_size":
-                return f"r{expr.value}"
+                return f"r{expr.value}" if expr.value is not None else "r"
             elif expr.type == "ring_count":
-                return f"R{expr.value}"
+                return f"R{expr.value}" if expr.value is not None else "R"
+            elif expr.type == "hydrogen_count":
+                return f"H{expr.value}" if expr.value is not None else "H"
+            elif expr.type == "implicit_hydrogen_count":
+                return f"h{expr.value}" if expr.value is not None else "h"
+            elif expr.type == "degree":
+                return f"D{expr.value}" if expr.value is not None else "D"
+            elif expr.type == "valence":
+                return f"v{expr.value}" if expr.value is not None else "v"
+            elif expr.type == "charge":
+                v = expr.value
+                if v > 0:
+                    return f"+{v}" if v > 1 else "+"
+                elif v < 0:
+                    return f"{v}" if v < -1 else "-"
+                return "+0"
+            elif expr.type == "aromatic":
+                return "a"
+            elif expr.type == "aliphatic":
+                return "A"
+            elif expr.type == "chirality":
+                return str(expr.value)
+            elif expr.type == "isotope":
+                mass, sym = expr.value
+                return f"{mass}{sym}"
+            elif expr.type == "has_label":
+                return str(expr.value)
+            elif expr.type == "atom_class":
+                return str(expr.value)
             return str(expr.value)
 
         if expr.op == "primitive":

@@ -7,8 +7,6 @@ Tests cover:
 - Removed topology tracking (only topology involving removed atoms)
 """
 
-import pytest
-
 from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral
 from molpy.reacter.topology_detector import TopologyDetector
 
@@ -47,9 +45,9 @@ class TestTopologyDetector:
 
         # Original angles should still exist
         final_angles = len(list(struct.angles))
-        assert (
-            final_angles >= initial_angles
-        ), f"Angles were lost! Before: {initial_angles}, After: {final_angles}"
+        assert final_angles >= initial_angles, (
+            f"Angles were lost! Before: {initial_angles}, After: {final_angles}"
+        )
 
         # New angles around the new bond should be added
         assert len(new_angles) >= 1, "No new angles generated around new bond"
@@ -142,9 +140,9 @@ class TestTopologyDetector:
         )
 
         # Should generate dihedral: a-b-c-d
-        assert (
-            len(new_dihedrals) >= 1
-        ), f"Expected at least 1 new dihedral, got {len(new_dihedrals)}"
+        assert len(new_dihedrals) >= 1, (
+            f"Expected at least 1 new dihedral, got {len(new_dihedrals)}"
+        )
 
     def test_no_duplicate_topology_items(self):
         """Test that duplicate angles/dihedrals are not added."""
@@ -161,7 +159,7 @@ class TestTopologyDetector:
         existing_angle = Angle(a, b, c)
         struct.add_link(existing_angle)
 
-        initial_angle_count = len(list(struct.angles))
+        initial_angle_count = len(list(struct.angles))  # noqa: F841
 
         # Form a new bond (that doesn't create a-b-c angle since it already exists)
         new_bond = Bond(b, d)  # Creates b-c-d and a-b-d angles, not a-b-c
@@ -177,9 +175,9 @@ class TestTopologyDetector:
         for angle in struct.angles:
             tup = (angle.itom, angle.jtom, angle.ktom)
             rev_tup = (angle.ktom, angle.jtom, angle.itom)
-            assert (
-                tup not in angle_tuples and rev_tup not in angle_tuples
-            ), f"Duplicate angle found!"
+            assert tup not in angle_tuples and rev_tup not in angle_tuples, (
+                "Duplicate angle found!"
+            )
             angle_tuples.add(tup)
 
     def test_complex_reaction_topology_preservation(self):
@@ -215,15 +213,15 @@ class TestTopologyDetector:
 
         # All original angles should still exist
         final_angles = len(list(struct.angles))
-        assert (
-            final_angles >= initial_angles
-        ), f"Original angles lost! Before: {initial_angles}, After: {final_angles}"
+        assert final_angles >= initial_angles, (
+            f"Original angles lost! Before: {initial_angles}, After: {final_angles}"
+        )
 
         # All original dihedrals should still exist
         final_dihedrals = len(list(struct.dihedrals))
-        assert (
-            final_dihedrals >= initial_dihedrals
-        ), f"Original dihedrals lost! Before: {initial_dihedrals}, After: {final_dihedrals}"
+        assert final_dihedrals >= initial_dihedrals, (
+            f"Original dihedrals lost! Before: {initial_dihedrals}, After: {final_dihedrals}"
+        )
 
         # New angle d-e-f should be added
         assert len(new_angles) >= 1

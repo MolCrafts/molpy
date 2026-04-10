@@ -176,20 +176,20 @@ def extract_angle_data(frame: Frame) -> tuple[NDArray, NDArray, NDArray]:
     return r, angle_idx, angle_types
 
 
-def extract_pair_data(frame: Frame):
+def extract_pair_data(frame: Frame) -> tuple:
     """Extract pair interaction data from Frame.
 
     Generates all pairwise interactions between atoms and calculates
     displacement vectors and distances.
 
     Returns:
-        (dr, dr_norm, pair_types_i, pair_types_j, pair_idx, n_atoms) where:
-        - dr: displacement vectors (n_pairs, 3)
-        - dr_norm: pair distances (n_pairs,)
-        - pair_types_i: atom types for first atom in each pair (n_pairs,)
-        - pair_types_j: atom types for second atom in each pair (n_pairs,)
-        - pair_idx: pair indices (n_pairs, 2)
-        - n_atoms: number of atoms
+        tuple: A tuple ``(dr, dr_norm, pair_types_i, pair_types_j, pair_idx, n_atoms)`` where
+            dr is displacement vectors (n_pairs, 3),
+            dr_norm is pair distances (n_pairs,),
+            pair_types_i is atom types for first atom in each pair (n_pairs,),
+            pair_types_j is atom types for second atom in each pair (n_pairs,),
+            pair_idx is pair indices (n_pairs, 2),
+            and n_atoms is the number of atoms.
     """
     # Get coordinates from x, y, z fields
     x = frame["atoms"]["x"]

@@ -9,6 +9,7 @@ from molpy.core.forcefield import (
     BondType,
     DihedralType,
     ForceField,
+    ImproperType,
     PairType,
 )
 
@@ -51,19 +52,21 @@ class TypifierBase[T](ABC):
     def typify(self, elem: T) -> T: ...
 
 
-class OplsBondTypifier(TypifierBase[Bond]):
-    """Match bond type based on atom types at both ends of the bond.
+# ============================================================
+# Generic force field typifiers (shared by OPLS, GAFF, etc.)
+# ============================================================
 
-    Strategy: Build class_to_types table and manually compare each AtomType
-    """
 
-    def __init__(self, forcefield: ForceField) -> None:
+class ForceFieldBondTypifier(TypifierBase[Bond]):
+    """Match bond type based on atom types at both ends of the bond."""
+
+    def __init__(self, forcefield: ForceField, strict: bool = True) -> None:
         super().__init__(forcefield)
+        self.strict = strict
         self._build_table()
 
     def _build_table(self):
         """Build class_to_types table and bond table"""
-        # Build class -> types mapping
         self.class_to_types: dict[str, list[str]] = defaultdict(list)
         for at in self.ff.get_types(AtomType):
             at_type = at.params.kwargs.get("type_", "*")
@@ -74,7 +77,6 @@ class OplsBondTypifier(TypifierBase[Bond]):
                 else:
                     self.class_to_types[at_class].append(at_class)
 
-        # Build bond table
         self._bond_table = {}
         for bond in self.ff.get_types(BondType):
             self._bond_table[(bond.itom, bond.jtom)] = bond
@@ -90,7 +92,6 @@ class OplsBondTypifier(TypifierBase[Bond]):
 
         # Iterate through all bond types and match manually
         for (at1, at2), bond_type in self._bond_table.items():
-            # Try forward and reverse matching
             if (
                 atomtype_matches(at1, itom_type) and atomtype_matches(at2, jtom_type)
             ) or (
@@ -101,8 +102,6 @@ class OplsBondTypifier(TypifierBase[Bond]):
                 return bond
 
         # Not found, try class matching
-        # Find class for itom_type and jtom_type
-        # First get class from AtomType object
         itom_atomtype = None
         jtom_atomtype = None
         for at in self.ff.get_types(AtomType):
@@ -119,7 +118,6 @@ class OplsBondTypifier(TypifierBase[Bond]):
         )
 
         if itom_class and jtom_class and itom_class != "*" and jtom_class != "*":
-            # Try matching class of AtomType objects in bond_type
             for (at1, at2), bond_type in self._bond_table.items():
                 at1_class = (
                     at1.params.kwargs.get("class_", "*")
@@ -131,7 +129,6 @@ class OplsBondTypifier(TypifierBase[Bond]):
                     if hasattr(at2, "params")
                     else "*"
                 )
-                # Match class (support forward and reverse)
                 if (at1_class == itom_class and at2_class == jtom_class) or (
                     at1_class == jtom_class and at2_class == itom_class
                 ):
@@ -139,21 +136,24 @@ class OplsBondTypifier(TypifierBase[Bond]):
                     bond.data.update(**bond_type.params.kwargs)
                     return bond
 
+        if not self.strict:
+            return bond
+
         raise ValueError(
             f"No bond type found for atom types: {itom_type} - {jtom_type}"
         )
 
 
-class OplsAngleTypifier(TypifierBase[Angle]):
+class ForceFieldAngleTypifier(TypifierBase[Angle]):
     """Match angle type based on atom types of three atoms in Angle"""
 
-    def __init__(self, forcefield: ForceField) -> None:
+    def __init__(self, forcefield: ForceField, strict: bool = True) -> None:
         super().__init__(forcefield)
+        self.strict = strict
         self._build_table()
 
     def _build_table(self) -> None:
         """Build class_to_types table and angle table"""
-        # Build class -> types mapping
         self.class_to_types: dict[str, list[str]] = defaultdict(list)
         for at in self.ff.get_types(AtomType):
             at_type = at.params.kwargs.get("type_", "*")
@@ -164,7 +164,6 @@ class OplsAngleTypifier(TypifierBase[Angle]):
                 else:
                     self.class_to_types[at_class].append(at_class)
 
-        # Build angle table
         self._angle_table = {}
         for angle in self.ff.get_types(AngleType):
             self._angle_table[(angle.itom, angle.jtom, angle.ktom)] = angle
@@ -183,9 +182,7 @@ class OplsAngleTypifier(TypifierBase[Angle]):
         assert isinstance(jtom_type, str)
         assert isinstance(ktom_type, str)
 
-        # Iterate through all angle types and match manually
         for (at1, at2, at3), angle_type in self._angle_table.items():
-            # Try forward and reverse matching (center atom at2 unchanged)
             if (
                 atomtype_matches(at1, itom_type)
                 and atomtype_matches(at2, jtom_type)
@@ -226,21 +223,24 @@ class OplsAngleTypifier(TypifierBase[Angle]):
                     angle.data.update(**angle_type.params.kwargs)
                     return angle
 
+        if not self.strict:
+            return angle
+
         raise ValueError(
             f"No angle type found for atom types: {itom_type} - {jtom_type} - {ktom_type}"
         )
 
 
-class OplsDihedralTypifier(TypifierBase[Dihedral]):
+class ForceFieldDihedralTypifier(TypifierBase[Dihedral]):
     """Match dihedral type based on atom types of four atoms in Dihedral"""
 
-    def __init__(self, forcefield: ForceField) -> None:
+    def __init__(self, forcefield: ForceField, strict: bool = True) -> None:
         super().__init__(forcefield)
+        self.strict = strict
         self._build_table()
 
     def _build_table(self) -> None:
         """Build class_to_types table and dihedral list"""
-        # Build class -> types mapping
         self.class_to_types: dict[str, list[str]] = defaultdict(list)
         for at in self.ff.get_types(AtomType):
             at_type = at.params.kwargs.get("type_", "*")
@@ -251,7 +251,6 @@ class OplsDihedralTypifier(TypifierBase[Dihedral]):
                 else:
                     self.class_to_types[at_class].append(at_class)
 
-        # Build dihedral list (not dict! Multiple dihedrals may have same AtomType combination)
         self._dihedral_list: list[DihedralType] = list(self.ff.get_types(DihedralType))
 
     @override
@@ -270,7 +269,6 @@ class OplsDihedralTypifier(TypifierBase[Dihedral]):
         assert isinstance(ktom_type, str)
         assert isinstance(ltom_type, str)
 
-        # Iterate through all dihedral types and match manually
         for dihedral_type in self._dihedral_list:
             at1, at2, at3, at4 = (
                 dihedral_type.itom,
@@ -278,7 +276,6 @@ class OplsDihedralTypifier(TypifierBase[Dihedral]):
                 dihedral_type.ktom,
                 dihedral_type.ltom,
             )
-            # Try forward and reverse matching
             if (
                 atomtype_matches(at1, itom_type)
                 and atomtype_matches(at2, jtom_type)
@@ -332,19 +329,20 @@ class OplsDihedralTypifier(TypifierBase[Dihedral]):
                     dihedral.data.update(**dihedral_type.params.kwargs)
                     return dihedral
 
+        if not self.strict:
+            return dihedral
+
         raise ValueError(
             f"No dihedral type found for atom types: {itom_type} - {jtom_type} - {ktom_type} - {ltom_type}"
         )
 
 
 class PairTypifier(TypifierBase[Atom]):
-    """Assign nonbonded parameters (charge, sigma, epsilon) to atoms based on their types.
+    """Assign nonbonded parameters (charge, sigma, epsilon) to atoms based on their types."""
 
-    This typifier reads PairType parameters from the forcefield and assigns them to atoms.
-    """
-
-    def __init__(self, forcefield: ForceField) -> None:
+    def __init__(self, forcefield: ForceField, strict: bool = True) -> None:
         super().__init__(forcefield)
+        self.strict = strict
         self._build_pair_table()
 
     def _build_pair_table(self):
@@ -359,59 +357,109 @@ class PairTypifier(TypifierBase[Atom]):
         atom_type = atom.get("type", None)
 
         if atom_type is None:
-            raise ValueError(
-                f"Atom must have 'type' attribute before pair typification: {atom}"
-            )
+            if self.strict:
+                raise ValueError(
+                    f"Atom must have 'type' attribute before pair typification: {atom}"
+                )
+            return atom
 
-        # Find matching PairType
         pair_type = self._pair_table.get(atom_type)
 
         if pair_type:
             atom.update(**pair_type.params.kwargs)
-        else:
+        elif self.strict:
             raise ValueError(f"No pair type found for atom type: {atom_type}")
 
         return atom
 
 
-class OplsAtomTypifier(TypifierBase["Atomistic"]):
-    """Assign atom types using SMARTS matcher (support type references and dependency resolution)"""
+# ============================================================
+# SMARTS-based atom typifier base class
+# ============================================================
+
+
+class ForceFieldAtomTypifier(TypifierBase["Atomistic"]):
+    """Base class for SMARTS-based atom typifiers."""
 
     def __init__(
         self,
         forcefield: ForceField,
         strict: bool = False,
     ) -> None:
-        """
-        Initialize OPLS atom typifier.
-
-        Args:
-            forcefield: Force field to use for typing
-            strict: If True, raise error when atoms cannot be typed.
-                   If False (default), silently skip untyped atoms.
-        """
         super().__init__(forcefield)
         from .adapter import build_mol_graph
 
-        # Extract patterns from forcefield
         self.pattern_dict = self._extract_patterns()
         self._build_mol_graph = build_mol_graph
         self.strict = strict
 
-        # Use LayeredTypingEngine
         from .layered_engine import LayeredTypingEngine
 
         self.engine = LayeredTypingEngine(self.pattern_dict)
 
+    @abstractmethod
+    def _extract_patterns(self) -> dict:
+        """Extract SMARTS patterns from forcefield. Subclasses implement this."""
+        ...
+
+    @override
+    def typify(self, struct: "Atomistic") -> "Atomistic":
+        """Return a new Atomistic with atom types assigned; input is not mutated."""
+        orig_atoms = list(struct.atoms)
+        graph, vs_to_atomid, _atomid_to_vs = self._build_mol_graph(struct)
+
+        result = self.engine.typify(graph, vs_to_atomid)
+
+        new_struct = struct.copy()
+        new_atoms = list(new_struct.atoms)
+
+        for orig_atom, new_atom in zip(orig_atoms, new_atoms):
+            atom_id = id(orig_atom)
+            if atom_id in result:
+                atomtype = result[atom_id]
+                new_atom.data["type"] = atomtype
+
+                atom_type_obj = self._find_atomtype_by_name(atomtype)
+                if atom_type_obj:
+                    new_atom.data.update(**atom_type_obj.params.kwargs)
+
+        if self.strict:
+            untyped_atoms = [
+                atom for atom in new_struct.atoms if atom.get("type") is None
+            ]
+            if untyped_atoms:
+                untyped_info = [
+                    f"{atom.get('element', '?')} (id={id(atom)})"
+                    for atom in untyped_atoms[:10]
+                ]
+                error_msg = (
+                    f"Failed to assign types to {len(untyped_atoms)} atom(s). "
+                    f"Examples: {', '.join(untyped_info)}"
+                )
+                if len(untyped_atoms) > 10:
+                    error_msg += f" (and {len(untyped_atoms) - 10} more)"
+                raise ValueError(error_msg)
+
+        return new_struct
+
+    def _find_atomtype_by_name(self, name: str) -> AtomType | None:
+        """Find AtomType object by name"""
+        for at in self.ff.get_types(AtomType):
+            if at.name == name:
+                return at
+        return None
+
+
+# ============================================================
+# OPLS-specific typifiers
+# ============================================================
+
+
+class OplsAtomTypifier(ForceFieldAtomTypifier):
+    """Assign atom types using SMARTS matcher for OPLS-AA force field."""
+
     def _extract_patterns(self):
-        """Extract or construct SMARTS patterns from forcefield
-
-        Extract SMARTS definitions (def attribute) from OPLS forcefield AtomType and convert to SMARTSGraph objects.
-        Support overrides attribute to control priority and type references (%opls_XXX).
-
-        Returns:
-            Dictionary mapping atom type name to SMARTSGraph
-        """
+        """Extract SMARTS patterns from OPLS forcefield with overrides-based priority."""
         from molpy.parser.smarts import SmartsParser
 
         from .graph import SMARTSGraph
@@ -427,10 +475,9 @@ class OplsAtomTypifier(TypifierBase["Atomistic"]):
             if overrides_str:
                 overrides_map[at.name] = {s.strip() for s in overrides_str.split(",")}
 
-        # Calculate priority: based on overrides and priority attributes
+        # Calculate priority based on overrides
         type_priority = {}
         for at in atom_types:
-            # First use explicit priority (if available)
             explicit_priority = at.params.kwargs.get("priority")
             if explicit_priority is not None:
                 try:
@@ -439,23 +486,18 @@ class OplsAtomTypifier(TypifierBase["Atomistic"]):
                 except (ValueError, TypeError):
                     pass
 
-            # Otherwise calculate based on overrides
             priority = 0
-            # If this type is overridden by other types, lower priority
             for _overrider, overridden_set in overrides_map.items():
                 if at.name in overridden_set:
                     priority -= 1
-            # If this type overrides other types, increase priority
             if at.name in overrides_map:
                 priority += len(overrides_map[at.name])
             type_priority[at.name] = priority
 
-        # Extract SMARTS patterns
         for at in atom_types:
             smarts_str = at.params.kwargs.get("def_")
 
             if smarts_str:
-                # Parse SMARTS string using SMARTSGraph
                 try:
                     priority = type_priority.get(at.name, 0)
                     overrides = overrides_map.get(at.name, set())
@@ -467,11 +509,10 @@ class OplsAtomTypifier(TypifierBase["Atomistic"]):
                         priority=priority,
                         source=f"oplsaa:{at.name}",
                         overrides=overrides,
-                        target_vertices=[0],  # Only type the first atom in the pattern
+                        target_vertices=[0],
                     )
                     pattern_dict[at.name] = pattern
                 except Exception as e:
-                    # If parsing fails, log warning but continue
                     import warnings
 
                     warnings.warn(
@@ -481,58 +522,17 @@ class OplsAtomTypifier(TypifierBase["Atomistic"]):
 
         return pattern_dict
 
-    @override
-    def typify(self, struct: "Atomistic") -> "Atomistic":
-        """Assign types to all atoms in Atomistic structure (using dependency-aware layered matching)"""
-        # Convert molecule to graph
-        graph, vs_to_atomid, _atomid_to_vs = self._build_mol_graph(struct)
 
-        # Use LayeredTypingEngine for layered matching
-        result = self.engine.typify(graph, vs_to_atomid)
-
-        # Apply results to atoms
-        for atom in struct.atoms:
-            atom_id = id(atom)
-            if atom_id in result:
-                atomtype = result[atom_id]
-                atom.data["type"] = atomtype
-
-                # Get other parameters from forcefield AtomType
-                atom_type_obj = self._find_atomtype_by_name(atomtype)
-                if atom_type_obj:
-                    atom.data.update(**atom_type_obj.params.kwargs)
-
-        # Check for untyped atoms if strict mode is enabled
-        if self.strict:
-            untyped_atoms = [atom for atom in struct.atoms if atom.get("type") is None]
-            if untyped_atoms:
-                untyped_info = [
-                    f"{atom.get('symbol', '?')} (id={id(atom)})"
-                    for atom in untyped_atoms[:10]
-                ]
-                error_msg = (
-                    f"Failed to assign types to {len(untyped_atoms)} atom(s). "
-                    f"Examples: {', '.join(untyped_info)}"
-                )
-                if len(untyped_atoms) > 10:
-                    error_msg += f" (and {len(untyped_atoms) - 10} more)"
-                raise ValueError(error_msg)
-
-        return struct
-
-    def _find_atomtype_by_name(self, name: str) -> AtomType | None:
-        """Find AtomType object by name"""
-        for at in self.ff.get_types(AtomType):
-            if at.name == name:
-                return at
-        return None
+# ============================================================
+# Generic atomistic typifier orchestrator
+# ============================================================
 
 
-class OplsAtomisticTypifier(TypifierBase[Atomistic]):
-    """Assign all types (bond, angle, dihedral) to entire Atomistic structure
+class ForceFieldAtomisticTypifier(TypifierBase[Atomistic]):
+    """Base orchestrator that runs the full typing pipeline.
 
-    Note: This class assumes atoms are already assigned types. If you need to assign atom types simultaneously,
-    use OplsAtomTypifier first, or use skip_atom_typing=False parameter.
+    Subclasses can override to use different atom typifiers or add
+    additional typing steps (e.g., improper typing).
     """
 
     def __init__(
@@ -545,19 +545,6 @@ class OplsAtomisticTypifier(TypifierBase[Atomistic]):
         skip_dihedral_typing: bool = False,
         strict_typing: bool = True,
     ) -> None:
-        """
-        Initialize OPLS atomistic typifier.
-
-        Args:
-            forcefield: Force field to use for typing
-            skip_atom_typing: If True, skip atom type assignment
-            skip_pair_typing: If True, skip pair type assignment
-            skip_bond_typing: If True, skip bond type assignment
-            skip_angle_typing: If True, skip angle type assignment
-            skip_dihedral_typing: If True, skip dihedral type assignment
-            strict_typing: If True (default), raise error when atoms cannot be typed.
-                          If False, emit warnings for untyped atoms.
-        """
         super().__init__(forcefield)
         self.skip_atom_typing = skip_atom_typing
         self.skip_pair_typing = skip_pair_typing
@@ -566,68 +553,73 @@ class OplsAtomisticTypifier(TypifierBase[Atomistic]):
         self.skip_dihedral_typing = skip_dihedral_typing
         self.strict_typing = strict_typing
 
-        if not skip_atom_typing:
-            self.atom_typifier = OplsAtomTypifier(forcefield, strict=strict_typing)
-        if not skip_pair_typing:
-            self.pair_typifier = PairTypifier(forcefield)
-        if not skip_bond_typing:
-            self.bond_typifier = OplsBondTypifier(forcefield)
-        if not skip_angle_typing:
-            self.angle_typifier = OplsAngleTypifier(forcefield)
-        if not skip_dihedral_typing:
-            self.dihedral_typifier = OplsDihedralTypifier(forcefield)
+        self._init_typifiers()
+
+    def _init_typifiers(self) -> None:
+        """Initialize sub-typifiers. Subclasses override to customize."""
+        if not self.skip_pair_typing:
+            self.pair_typifier = PairTypifier(self.ff, strict=self.strict_typing)
+        if not self.skip_bond_typing:
+            self.bond_typifier = ForceFieldBondTypifier(
+                self.ff, strict=self.strict_typing
+            )
+        if not self.skip_angle_typing:
+            self.angle_typifier = ForceFieldAngleTypifier(
+                self.ff, strict=self.strict_typing
+            )
+        if not self.skip_dihedral_typing:
+            self.dihedral_typifier = ForceFieldDihedralTypifier(
+                self.ff, strict=self.strict_typing
+            )
 
     @override
     def typify(self, struct: Atomistic) -> Atomistic:
-        """
-        Assign types to all bonds, angles, dihedrals in Atomistic structure
-
-        Args:
-            struct: Atomistic structure
-
-        Prerequisites:
-            - If skip_atom_typing=True (default), all atoms must already have 'type' attribute
-            - If skip_atom_typing=False, will assign atom types first
-        """
-        # Optional: First assign atom types
+        """Return a new Atomistic with types assigned; input is not mutated."""
         if not self.skip_atom_typing:
-            self.atom_typifier.typify(struct)
+            new_struct = self.atom_typifier.typify(struct)
+        else:
+            new_struct = struct.copy()
 
-        # Assign pair types (nonbond parameters: charge, sigma, epsilon)
-        # Only type atoms that already have atom types assigned
         if not self.skip_pair_typing:
-            for atom in struct.atoms:
-                # Skip atoms without type (they may be skipped in non-strict mode)
+            for atom in new_struct.atoms:
                 if atom.get("type") is not None:
                     self.pair_typifier.typify(atom)
 
-        # Assign types to all bonds
-        # Only type bonds where both endpoints have atom types
         if not self.skip_bond_typing:
-            for bond in struct.bonds:
-                # Skip bonds where endpoints don't have types (may be skipped in non-strict mode)
+            for bond in new_struct.bonds:
                 if (
                     bond.itom.get("type") is not None
                     and bond.jtom.get("type") is not None
                 ):
                     self.bond_typifier.typify(bond)
 
-        # Assign types to all angles (if exist)
-        # Only type angles where all endpoints have atom types
         if not self.skip_angle_typing:
-            angles = struct.links.bucket(Angle)
+            angles = new_struct.links.bucket(Angle)
             for angle in angles:
                 endpoints = angle.endpoints
                 if all(ep.get("type") is not None for ep in endpoints):
                     self.angle_typifier.typify(angle)
 
-        # Assign types to all dihedrals (if exist)
-        # Only type dihedrals where all endpoints have atom types
         if not self.skip_dihedral_typing:
-            dihedrals = struct.links.bucket(Dihedral)
+            dihedrals = new_struct.links.bucket(Dihedral)
             for dihedral in dihedrals:
                 endpoints = dihedral.endpoints
                 if all(ep.get("type") is not None for ep in endpoints):
                     self.dihedral_typifier.typify(dihedral)
 
-        return struct
+        return new_struct
+
+
+class OplsAtomisticTypifier(ForceFieldAtomisticTypifier):
+    """OPLS-AA atomistic typifier orchestrator."""
+
+    def _init_typifiers(self) -> None:
+        if not self.skip_atom_typing:
+            self.atom_typifier = OplsAtomTypifier(self.ff, strict=self.strict_typing)
+        super()._init_typifiers()
+
+
+# Backward-compatible aliases
+OplsBondTypifier = ForceFieldBondTypifier
+OplsAngleTypifier = ForceFieldAngleTypifier
+OplsDihedralTypifier = ForceFieldDihedralTypifier

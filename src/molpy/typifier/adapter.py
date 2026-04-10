@@ -111,18 +111,17 @@ def _extract_atom_attributes(atom: "Atom", structure: "Atomistic") -> dict[str, 
     attrs = {}
 
     # Element symbol
-    symbol = atom.get("symbol", atom.get("element", None))
-    if symbol:
-        attrs["element"] = str(symbol).upper()
+    element = atom.get("element") or atom.get("symbol")
+    if element:
+        attrs["element"] = str(element).upper()
 
         # Try to get atomic number
         try:
             from molpy.core.element import Element
 
-            elem = Element(symbol)
+            elem = Element(element)
             attrs["number"] = elem.number
         except:
-            # If element lookup fails, use symbol as-is
             attrs["number"] = None
     else:
         # Check for atomic number directly
@@ -182,23 +181,32 @@ def _extract_bond_attributes(bond: "Bond", structure: "Atomistic") -> dict[str, 
 
     # Bond order
     order = bond.get("order", bond.get("bond_order", 1))
-    if isinstance(order, str):
-        # Handle aromatic bonds
-        if order in (":", "aromatic", "ar"):
-            attrs["order"] = ":"
-            attrs["is_aromatic"] = True
-        else:
-            try:
-                attrs["order"] = int(order)
-                attrs["is_aromatic"] = False
-            except ValueError:
-                attrs["order"] = 1
-                attrs["is_aromatic"] = False
+    kind = bond.get("kind", None)
+
+    # Check for aromatic bond indicators
+    is_aromatic_bond = False
+    if isinstance(order, str) and order in (":", "aromatic", "ar"):
+        is_aromatic_bond = True
+    elif isinstance(kind, str) and kind in (":", "aromatic", "ar"):
+        is_aromatic_bond = True
+    elif isinstance(order, (int, float)) and order == 1.5:
+        is_aromatic_bond = True
+    elif bond.get("is_aromatic", bond.get("aromatic", False)):
+        is_aromatic_bond = True
+
+    if is_aromatic_bond:
+        attrs["order"] = ":"
+        attrs["is_aromatic"] = True
+    elif isinstance(order, str):
+        try:
+            attrs["order"] = int(order)
+            attrs["is_aromatic"] = False
+        except ValueError:
+            attrs["order"] = 1
+            attrs["is_aromatic"] = False
     else:
         attrs["order"] = int(order)
-        attrs["is_aromatic"] = bool(
-            bond.get("is_aromatic", bond.get("aromatic", False))
-        )
+        attrs["is_aromatic"] = False
 
     # Ring membership (will be computed later)
     attrs["is_in_ring"] = False

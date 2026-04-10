@@ -24,7 +24,7 @@ class AmbiguousPortsError(AssemblyError):
 
 
 class MissingConnectorRule(AssemblyError):
-    """TableConnector has no rule for a given monomer pair."""
+    """No connector rule found for a given monomer pair."""
 
     pass
 

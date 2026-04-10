@@ -308,9 +308,54 @@ class SMARTSGraph(Graph):
 
         # Legacy mode (bond_type)
         if "bond_type" in pattern_edge.attributes():
-            # Simple bond type matching for now
-            # TODO: Implement full bond type matching logic
-            return True
+            pat_bt = pattern_edge["bond_type"]
+            host_order = host_edge.attributes().get("order", 1)
+            host_aromatic = host_edge.attributes().get("is_aromatic", False)
+            host_in_ring = host_edge.attributes().get("is_in_ring", False)
+
+            if pat_bt == "~":
+                # Any bond
+                return True
+            elif pat_bt == "implicit":
+                # In force-field SMARTS definitions, implicit bonds describe
+                # connectivity (any order).  Pure SMARTS would restrict this
+                # to single-or-aromatic, but FF patterns like
+                # [C;X3]([O;X1])([O;X2]) expect the implicit bond to match
+                # the C=O double bond as well.
+                return True
+            elif pat_bt == "-":
+                # Explicit single bond (not aromatic)
+                return host_order == 1 and not host_aromatic
+            elif pat_bt == "=":
+                return host_order == 2
+            elif pat_bt == "#":
+                return host_order == 3
+            elif pat_bt == ":":
+                return host_aromatic or host_order == ":"
+            elif pat_bt == "@":
+                # Ring bond: must be in a ring
+                return host_in_ring
+            elif pat_bt == "!:":
+                # Negated aromatic bond: not aromatic
+                return not host_aromatic and host_order != ":"
+            elif isinstance(pat_bt, str) and pat_bt.startswith("!"):
+                # Generic negated bond type
+                negated = pat_bt[1:]
+                if negated == ":":
+                    return not host_aromatic and host_order != ":"
+                elif negated == "-":
+                    return not (host_order == 1 and not host_aromatic)
+                elif negated == "=":
+                    return host_order != 2
+                elif negated == "#":
+                    return host_order != 3
+                elif negated == "@":
+                    return not host_in_ring
+                else:
+                    return True
+            else:
+                # Unknown bond type: match anything
+                return True
 
         # No constraints - match anything
         return True
@@ -372,9 +417,11 @@ class SMARTSGraph(Graph):
             else:
                 # Handle lowercase (aromatic) symbols
                 if symbol_val.islower():
-                    # Check both element and aromaticity
-                    # For now, just check element
-                    return atomic_num == Element(symbol_val.upper()).number
+                    # Must match both element and aromaticity
+                    is_aromatic = atom.attributes().get("is_aromatic", False)
+                    return (
+                        atomic_num == Element(symbol_val.upper()).number and is_aromatic
+                    )
                 return atomic_num == Element(symbol_val).number
         elif atom_primitive.type == "wildcard":
             return True
@@ -393,42 +440,121 @@ class SMARTSGraph(Graph):
                 vertex_type = vertex["type"] if "type" in vertex.attributes() else []
                 return label in vertex_type
         elif atom_primitive.type == "neighbor_count":
+            # X without number matches any connectivity
+            if atom_primitive.value is None:
+                return True
             assert isinstance(atom_primitive.value, int)
             return len(bond_partners) == atom_primitive.value
         elif atom_primitive.type == "ring_size":
-            assert isinstance(atom_primitive.value, int)
-            cycle_len = atom_primitive.value
             vertex = graph.vs[atom_idx]
             cycles = vertex["cycles"] if "cycles" in vertex.attributes() else []
+            # r without number matches any ring size
+            if atom_primitive.value is None:
+                return len(cycles) > 0
+            assert isinstance(atom_primitive.value, int)
+            cycle_len = atom_primitive.value
             return any(len(cycle) == cycle_len for cycle in cycles)
         elif atom_primitive.type == "ring_count":
-            assert isinstance(atom_primitive.value, int)
             vertex = graph.vs[atom_idx]
             cycles = vertex["cycles"] if "cycles" in vertex.attributes() else []
             n_cycles = len(cycles)
+            # R without number matches any ring membership (at least one ring)
+            if atom_primitive.value is None:
+                return n_cycles > 0
+            assert isinstance(atom_primitive.value, int)
             return n_cycles == atom_primitive.value
         elif atom_primitive.type == "hydrogen_count":
-            # Explicit hydrogen count (H2): count H atoms bonded to this atom
-            assert isinstance(atom_primitive.value, int)
+            # Explicit hydrogen count (H, H0, H2): count H atoms bonded to this atom
             h_count = 0
             for partner_idx in bond_partners:
                 partner_vertex = graph.vs[partner_idx]
-                partner_num = partner_vertex.get("number", None)
+                partner_num = partner_vertex.attributes().get("number", None)
                 if partner_num == 1:  # Hydrogen has atomic number 1
                     h_count += 1
+            # H without number matches any hydrogen count > 0
+            if atom_primitive.value is None:
+                return h_count > 0
+            assert isinstance(atom_primitive.value, int)
             return h_count == atom_primitive.value
         elif atom_primitive.type == "implicit_hydrogen_count":
-            # Implicit hydrogen count (h2): this is typically used for SMILES
+            # Implicit hydrogen count (h, h0, h2): this is typically used for SMILES
             # In SMARTS context, we treat it similarly to explicit hydrogen count
             # but this might need refinement based on actual usage
-            assert isinstance(atom_primitive.value, int)
             h_count = 0
             for partner_idx in bond_partners:
                 partner_vertex = graph.vs[partner_idx]
-                partner_num = partner_vertex.get("number", None)
+                partner_num = partner_vertex.attributes().get("number", None)
                 if partner_num == 1:  # Hydrogen has atomic number 1
                     h_count += 1
+            # h without number matches any hydrogen count > 0
+            if atom_primitive.value is None:
+                return h_count > 0
+            assert isinstance(atom_primitive.value, int)
             return h_count == atom_primitive.value
+        elif atom_primitive.type == "ring_connectivity":
+            # Ring connectivity: count of ring bonds on this atom
+            vertex = graph.vs[atom_idx]
+            # Count edges that are in rings
+            ring_bond_count = 0
+            for partner_idx in bond_partners:
+                eid = graph.get_eid(atom_idx, partner_idx, error=False)
+                if eid >= 0:
+                    edge = graph.es[eid]
+                    if edge.attributes().get("is_in_ring", False):
+                        ring_bond_count += 1
+            if atom_primitive.value is None:
+                return ring_bond_count > 0
+            assert isinstance(atom_primitive.value, int)
+            return ring_bond_count == atom_primitive.value
+        elif atom_primitive.type == "aliphatic":
+            # Aliphatic: not aromatic
+            is_aromatic = atom.attributes().get("is_aromatic", False)
+            return not is_aromatic
+        elif atom_primitive.type == "aromatic":
+            is_aromatic = atom.attributes().get("is_aromatic", False)
+            return is_aromatic
+        elif atom_primitive.type == "charge":
+            atom_charge = atom.attributes().get("charge", 0)
+            assert isinstance(atom_primitive.value, int)
+            return atom_charge == atom_primitive.value
+        elif atom_primitive.type == "degree":
+            if atom_primitive.value is None:
+                return True
+            assert isinstance(atom_primitive.value, int)
+            return len(bond_partners) == atom_primitive.value
+        elif atom_primitive.type == "valence":
+            # Valence: sum of bond orders
+            total_valence = 0
+            for partner_idx in bond_partners:
+                eid = graph.get_eid(atom_idx, partner_idx, error=False)
+                if eid >= 0:
+                    order = graph.es[eid].attributes().get("order", 1)
+                    if order == ":":
+                        total_valence += 1.5
+                    else:
+                        total_valence += int(order)
+                else:
+                    total_valence += 1
+            if atom_primitive.value is None:
+                return True
+            assert isinstance(atom_primitive.value, int)
+            return int(total_valence) == atom_primitive.value
+        elif atom_primitive.type == "isotope":
+            # Isotope matching - check mass number
+            mass, _symbol = atom_primitive.value
+            atom_mass = atom.attributes().get("isotope", None)
+            if atom_mass is None:
+                return False
+            return int(atom_mass) == int(mass)
+        elif atom_primitive.type == "chirality":
+            # Chirality matching - not implemented for GAFF (not needed)
+            return True
+        elif atom_primitive.type == "atom_class":
+            # Atom class matching - check against atom class attribute
+            atom_class_val = atom.attributes().get("atom_class", None)
+            if atom_class_val is None:
+                return False
+            return atom_class_val == atom_primitive.value
         elif atom_primitive.type == "matches_smarts":
             raise NotImplementedError(
                 "Recursive SMARTS (matches_smarts) is not yet implemented"
@@ -515,8 +641,8 @@ class SMARTSMatcher:
         edge_compat_fn = None
         if self.edge_match_fn is not None:
 
-            def edge_compat_fn(g1, g2, e1, e2):
-                return self.edge_match_fn(g1, g2, e1, e2)
+            def edge_compat_fn(g1, g2, e1, e2):  # type: ignore[misc]
+                return self.edge_match_fn(g1, g2, e1, e2)  # type: ignore[misc]
 
         matches = self.G1.get_subisomorphisms_vf2(
             self.G2, node_compat_fn=self.node_match_fn, edge_compat_fn=edge_compat_fn

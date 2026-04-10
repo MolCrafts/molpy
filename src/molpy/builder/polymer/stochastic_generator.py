@@ -11,11 +11,11 @@ from typing import Sequence
 import numpy as np
 
 from molpy.core.atomistic import Atomistic
-from molpy.builder.polymer.connectors import ReacterConnector
+from molpy.builder.polymer.connectors import Connector
 from molpy.builder.polymer.growth_kernel import GrowthKernel
-from molpy.builder.polymer.port_utils import get_all_port_info, PortInfo
-from molpy.builder.polymer.system import DPDistribution, MassDistribution
-from molpy.builder.polymer.types import MonomerTemplate, StochasticChain
+from molpy.builder.polymer.port_utils import get_all_ports
+from molpy.builder.polymer.distributions import DPDistribution, MassDistribution
+from molpy.builder.polymer.stochastic import MonomerTemplate, StochasticChain
 
 
 class StochasticChainGenerator:
@@ -36,7 +36,7 @@ class StochasticChainGenerator:
         self,
         growth_kernel: GrowthKernel,
         monomer_templates: Sequence[MonomerTemplate],
-        connector: ReacterConnector,
+        connector: Connector,
         distribution: DPDistribution | MassDistribution,
         seed_template: MonomerTemplate | None = None,
     ):
@@ -45,7 +45,7 @@ class StochasticChainGenerator:
         Args:
             growth_kernel: GrowthKernel for choosing next monomers
             monomer_templates: Available monomer templates
-            connector: ReacterConnector for applying reactions
+            connector: Connector for applying reactions
             distribution: Distribution for sampling target (DP or mass)
             seed_template: Template for seed monomer (uses first template if None)
         """
@@ -84,11 +84,10 @@ class StochasticChainGenerator:
         dp = 1
 
         # 3. Initialize active ports queue (BFS)
-        # get_all_port_info now returns dict[str, list[PortInfo]], so we need to flatten
-        active_ports: deque[PortInfo] = deque()
-        for port_list in get_all_port_info(polymer).values():
-            for port_info in port_list:
-                active_ports.append(port_info)
+        active_ports: deque = deque()
+        for port_list in get_all_ports(polymer).values():
+            for patom in port_list:
+                active_ports.append(patom)
 
         growth_history = []
 
@@ -124,13 +123,11 @@ class StochasticChainGenerator:
 
             # Find the actual port on the instantiated monomer
             target_port_name = target_descriptor.port_name
-            new_monomer_ports = get_all_port_info(new_monomer)
+            new_monomer_ports = get_all_ports(new_monomer)
 
             if target_port_name not in new_monomer_ports:
-                # Port not found on instantiated monomer, skip
                 continue
 
-            # Get the first port with this name (index 0)
             target_port = new_monomer_ports[target_port_name][0]
 
             # 6. Apply reaction via Connector
@@ -138,10 +135,10 @@ class StochasticChainGenerator:
                 result = self.connector.connect(
                     polymer,
                     new_monomer,
-                    left_label=self.seed_template.label,  # Placeholder
+                    left_label=self.seed_template.label,
                     right_label=placement.template.label,
-                    port_L=port.name,
-                    port_R=target_port.name,
+                    port_L=port.get("port"),
+                    port_R=target_port.get("port"),
                 )
 
                 polymer = result.product
@@ -149,22 +146,19 @@ class StochasticChainGenerator:
                 dp += 1
 
                 # 7. Add new active ports to queue (excluding used port)
-                new_ports = get_all_port_info(polymer)
-                for port_name, port_list in new_ports.items():
-                    for port_info in port_list:
-                        # Only add ports that weren't in the original polymer
-                        # and aren't the port we just used
-                        if port_name != target_port.name:
-                            # Check if this is a newly added port
-                            # (Simple heuristic: if it's from the new monomer)
-                            active_ports.append(port_info)
+                target_port_name_str = target_port.get("port")
+                new_ports = get_all_ports(polymer)
+                for pname, plist in new_ports.items():
+                    for patom in plist:
+                        if pname != target_port_name_str:
+                            active_ports.append(patom)
 
                 growth_history.append(
                     {
                         "template": placement.template.label,
-                        "port_used": port.name,
+                        "port_used": port.get("port"),
                         "target_descriptor": placement.target_descriptor_id,
-                        "target_port": target_port.name,
+                        "target_port": target_port.get("port"),
                     }
                 )
 

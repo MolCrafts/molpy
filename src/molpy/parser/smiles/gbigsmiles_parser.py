@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from molpy.parser.base import GrammarConfig, GrammarParserBase
 
-from .bigsmiles_ir import BigSmilesMoleculeIR, BondingDescriptorIR, StochasticObjectIR
+from .bigsmiles_ir import BigSmilesMoleculeIR, BondingDescriptorIR
 from .bigsmiles_parser import BigSmilesTransformer
 from .gbigsmiles_ir import (
     DistributionIR,
@@ -114,9 +114,9 @@ class GBigSmilesTransformer:
         # Apply chain-level distribution to first stochastic_object if present
         if self._chain_distribution is not None and structure.stochastic_objects:
             # Apply to first stochastic_object
-            structure.stochastic_objects[0].extras[
-                "distribution"
-            ] = self._chain_distribution
+            structure.stochastic_objects[0].extras["distribution"] = (
+                self._chain_distribution
+            )
 
         descriptor_weights = _build_descriptor_weights(structure)
         stochastic_metadata = _build_stochastic_metadata(structure)

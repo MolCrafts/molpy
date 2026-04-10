@@ -43,9 +43,9 @@ class TestSystemSize:
         """Test system size is parsed as correct value."""
         ir = parse_gbigsmiles(gbigsmiles)
 
-        assert isinstance(
-            ir, GBigSmilesSystemIR
-        ), f"Expected GBigSmilesSystemIR for {name}"
+        assert isinstance(ir, GBigSmilesSystemIR), (
+            f"Expected GBigSmilesSystemIR for {name}"
+        )
         assert ir.total_mass is not None, f"total_mass is None for {name}"
         assert abs(ir.total_mass - expected_size) < 0.01
 

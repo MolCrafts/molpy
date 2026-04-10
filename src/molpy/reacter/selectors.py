@@ -22,9 +22,14 @@ in a structure for use in reactions.
 - `reaction_site`: The atom where the bond will form
 """
 
+from collections.abc import Callable
+
 from molpy.core.atomistic import Atom, Atomistic
 
 from molpy.reacter.utils import find_neighbors, get_bond_between
+
+# Generic selector type alias used by presets and other modules.
+Selector = Callable[..., Atom | list[Atom]]
 
 # =============================================================================
 # Port Selectors - Transform port atom to reaction site
@@ -100,9 +105,8 @@ def select_dehydration_left(struct: Atomistic, port_atom: Atom) -> Atom:
     Returns:
         C atom as reaction site
     """
-    symbol = port_atom.get("symbol")
-
-    if symbol == "O":
+    elem = port_atom.get("element") or port_atom.get("symbol")
+    if elem == "O":
         c_neighbors = [
             a
             for a in find_neighbors(struct, port_atom, element="C")
@@ -128,9 +132,7 @@ def select_dehydration_right(struct: Atomistic, port_atom: Atom) -> Atom:
     Returns:
         O atom as reaction site
     """
-    symbol = port_atom.get("symbol")
-
-    if symbol == "O":
+    if (port_atom.get("element") or port_atom.get("symbol")) == "O":
         return port_atom
     else:  # C
         o_neighbors = [
@@ -203,7 +205,7 @@ def select_dummy_atoms(struct: Atomistic, reaction_site: Atom) -> list[Atom]:
     neighbors = [
         a for a in find_neighbors(struct, reaction_site) if isinstance(a, Atom)
     ]
-    return [n for n in neighbors if n.get("symbol") == "*"]
+    return [n for n in neighbors if (n.get("element") or n.get("symbol")) == "*"]
 
 
 def select_hydroxyl_group(struct: Atomistic, reaction_site: Atom) -> list[Atom]:
@@ -267,7 +269,7 @@ def select_hydroxyl_h_only(struct: Atomistic, reaction_site: Atom) -> list[Atom]
         [H] if found, otherwise []
     """
     # If reaction_site is O, look for H directly bonded
-    if reaction_site.get("symbol") == "O":
+    if reaction_site.get("element") == "O":
         h_neighbors = [
             a
             for a in find_neighbors(struct, reaction_site, element="H")
@@ -373,3 +375,99 @@ def find_port_atom_by_node(struct: Atomistic, port_name: str, node_id: int) -> A
             return atom
 
     raise ValueError(f"Port '{port_name}' not found for node {node_id}")
+
+
+def find_port(struct: Atomistic, port_name: str, *, node_id: int | None = None) -> Atom:
+    """Find a port atom, optionally filtering by node ID.
+
+    Convenience wrapper: delegates to find_port_atom or
+    find_port_atom_by_node depending on whether node_id is given.
+
+    Args:
+        struct: Atomistic structure containing ports.
+        port_name: Name of port to find.
+        node_id: If given, restrict search to atoms with this monomer_node_id.
+
+    Returns:
+        Atom with matching port.
+
+    Raises:
+        ValueError: If port not found.
+    """
+    if node_id is not None:
+        return find_port_atom_by_node(struct, port_name, node_id)
+    return find_port_atom(struct, port_name)
+
+
+# =============================================================================
+# High-level convenience selectors (used by presets and builder)
+# =============================================================================
+
+
+def select_self(struct: Atomistic, port_atom: Atom) -> Atom:
+    """
+    Identity anchor selector -- returns the port atom as the reaction site.
+
+    This is the simplest anchor selector: the port atom itself is where
+    the new bond will form.
+
+    Args:
+        struct: Atomistic structure (unused, kept for interface compatibility)
+        port_atom: The port atom entity
+
+    Returns:
+        The same port atom
+    """
+    return port_atom
+
+
+def select_hydrogens(n: int | None = None) -> Callable[[Atomistic, Atom], list[Atom]]:
+    """
+    Factory that returns a leaving selector picking *n* hydrogen neighbors.
+
+    Args:
+        n: Number of hydrogens to select.
+            ``None`` means all hydrogens bonded to the site.
+
+    Returns:
+        A leaving selector ``(struct, site) -> list[Atom]``
+    """
+
+    def _selector(struct: Atomistic, site: Atom) -> list[Atom]:
+        h_atoms = [
+            a for a in find_neighbors(struct, site, element="H") if isinstance(a, Atom)
+        ]
+        if n is None:
+            return h_atoms
+        return h_atoms[:n]
+
+    return _selector
+
+
+def select_neighbor(
+    element: str,
+) -> Callable[[Atomistic, Atom], Atom]:
+    """
+    Factory that returns an anchor selector picking a neighbor of a given element.
+
+    Args:
+        element: Element symbol to look for (e.g. ``"C"``, ``"O"``).
+
+    Returns:
+        An anchor selector ``(struct, port_atom) -> Atom``
+
+    Raises:
+        ValueError: If no neighbor with the requested element is found.
+    """
+
+    def _selector(struct: Atomistic, port_atom: Atom) -> Atom:
+        neighbors = [
+            a
+            for a in find_neighbors(struct, port_atom, element=element)
+            if isinstance(a, Atom)
+        ]
+        if not neighbors:
+            raise ValueError(f"No {element} neighbor found for atom {port_atom}")
+        return neighbors[0]
+
+    return _selector

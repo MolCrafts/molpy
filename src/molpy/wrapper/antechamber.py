@@ -8,6 +8,7 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 
@@ -30,10 +31,71 @@ class AntechamberWrapper(Wrapper):
         self,
         args: list[str],
         *,
-        cwd: Path | None = None,
         input_text: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        return self.run(args=args, cwd=cwd, input_text=input_text)
+        """Execute antechamber with raw arguments.
+
+        Args:
+            args: Command-line arguments (without 'antechamber').
+            input_text: Text to send to stdin.
+
+        Returns:
+            The completed process result.
+        """
+        return self.run(args=args, input_text=input_text)
+
+    def atomtype_assign(
+        self,
+        input_file: str | Path,
+        output_file: str | Path,
+        *,
+        input_format: Literal["pdb", "mol2", "ac"] = "pdb",
+        output_format: Literal["mol2", "ac"] = "mol2",
+        charge_method: Literal["gas", "bcc", "be3", "cm2", "esp"] = "bcc",
+        atom_type: Literal["gaff", "gaff2", "amber", "sybyl"] = "gaff2",
+        net_charge: int = 0,
+        formal_charges: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        """Perform atom type assignment and charge calculation.
+
+        This is the primary workflow for preparing ligands with antechamber:
+        assigning GAFF atom types and computing partial charges.
+
+        Args:
+            input_file: Input structure file.
+            output_file: Output structure file (with assigned atom types and charges).
+            input_format: Input file format.
+            output_format: Output file format.
+            charge_method: Method for charge calculation
+                (gas: Gasteiger; bcc: Bond charge correction; etc.).
+            atom_type: Atom type scheme (gaff, gaff2, amber, sybyl).
+            net_charge: Net charge of the molecule.
+            formal_charges: If True, use formal charges instead of computing them.
+
+        Returns:
+            The completed process result.
+        """
+        args = [
+            "-i",
+            str(input_file),
+            "-fi",
+            input_format,
+            "-o",
+            str(output_file),
+            "-fo",
+            output_format,
+            "-c",
+            charge_method,
+            "-at",
+            atom_type,
+            "-nc",
+            str(net_charge),
+        ]
+
+        if formal_charges:
+            args.extend(["-cf", "y"])
+
+        return self.run_raw(args=args)
 
 
 def write_antechamber_input_pdb(path: Path, atomistic: Atomistic) -> None:

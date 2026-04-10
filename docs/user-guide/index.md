@@ -1,58 +1,25 @@
-# User Guide
+# Guides
 
-Welcome to the MolPy User Guide! Here you will find practical workflows to help you accomplish your research tasks.
+Each guide in this section addresses a concrete modeling task from input specification to simulation-ready output. The notebooks are self-contained and executable; all required dependencies are specified within each notebook. Readers are assumed to be familiar with MolPy's core data model, as described in [Concepts](../tutorials/index.md).
 
-## 🧪 [Parsing Chemistry](01_parsing_chemistry.ipynb)
-**Goal:** Define molecules using strict syntax instead of manual construction.
-- Use **BigSMILES** for monomers with reactive ports.
-- Use **CGSmiles** for coarse-grained topology.
-- Use **GBigSMILES** for systems with distributions.
 
-```python
-from molpy.parser.smiles import parse_bigsmiles
-# Parse a stochastic object directly from string
-molecule_ir = parse_bigsmiles("{[<]CC[>]}[$]CO[$]")
-```
+## Foundational Subsystems
 
-## 🏗️ [Building Polymers](02_polymer_stepwise.ipynb)
-**Goal:** Assemble complex polymer architectures from monomer libraries.
-- Build linear, block, or star polymers.
-- Automatically connect reactive ports using graph rules.
+- [Tool Layer](tools.md) — packaged multi-step recipes (`PrepareMonomer`, `polymer`, `polymer_system`) for common preparation workflows
+- [I/O Subsystem](io.md) — reading, writing, and extending file format support for molecular data, trajectories, and force fields
+- [Chemistry Notation Parsing](01_parsing_chemistry.ipynb) — conversion of SMILES, SMARTS, BigSMILES, and CGSmiles strings into `Atomistic` structures
 
-```python
-# Simple linear polymer construction
-builder = PolymerBuilder(library=my_monomers, connector=my_connector)
-result = builder.build("{[#EO2][#PS]}")
-polymer = result.polymer
-```
 
-## 🔗 [Polymer SMILES](03_polymer_smiles.ipynb)
-**Goal:** Program chemical reactivity and mechanisms.
-- Define custom reactions with **Selectors**.
-- Execute reactions on specific ports or atoms.
+## Polymer Construction Workflows
 
-```python
-# Run a specific reaction on two fragments
-cc_coupling = Reacter(
-    name="C-C",
-    bond_former=form_single_bond,
-    # ... selectors ...
-)
-result = cc_coupling.run(fragments[0], fragments[1], port_atom_L=p1, port_atom_R=p2)
-```
+- [Stepwise Chain Construction](02_polymer_stepwise.ipynb) — explicit reaction-based monomer coupling, the `PolymerBuilder` interface, and high-level facade functions
+- [Topology-Driven Assembly](03_polymer_topology.ipynb) — specification of linear, cyclic, and branched polymer architectures via CGSmiles expressions
+- [Crosslinked Network Generation](04_crosslinking.ipynb) — template-based network formation and pre/post topology generation for LAMMPS `fix bond/react`
+- [Polydisperse System Construction](05_polydisperse_systems.ipynb) — molecular-weight distribution sampling, atomistic chain construction, and box packing
 
-## 🕸️ [Polymer Crosslinking](04_polymer_crosslinking.ipynb)
-**Goal:** Create 3D cross-linked networks and simulation templates.
-- Generate LAMMPS `fix bond/react` templates.
-- Build explicitly cross-linked networks in memory.
 
-## 📊 [Polydisperse Systems](05_polymer_polydisperse.ipynb)
-**Goal:** Model realistic material distributions and ensembles.
-- Generate chains following Poisson or Schulz-Zimm distributions.
-- Plan systems with target total mass and compositions.
+## Parameterization and External Tool Integration
 
----
-
-## Need API Basics?
-
-If you are looking for detailed explanations of core classes (like `Atomistic`, `Frame`, `Topology`), check out the **[Tutorials](../tutorials/index.md)** section.
+- [Force Field Typification](06_typifier.ipynb) — SMARTS-based atom type assignment and force field parameter resolution
+- [PEO–LiTFSI Electrolyte via AmberTools](07_ambertools_integration.ipynb) — a complete polymer electrolyte system preparation workflow using the AmberTools integration
+- [Running MD Engines](engine.md) — generating input scripts and running LAMMPS, CP2K, and OpenMM directly from Python

@@ -8,6 +8,8 @@ import random
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from molpy.core.frame import Frame
 
 from .packer import get_packer
@@ -62,18 +64,26 @@ class Molpack:
         self.packer.add_target(target)
         return target
 
-    def optimize(self, max_steps: int = 1000, seed: int | None = None) -> Frame:
+    def optimize(
+        self,
+        max_steps: int = 1000,
+        seed: int | None = None,
+        pbc: np.ndarray | list[float] | None = None,
+    ) -> Frame:
         """
         Run packing optimization.
 
         Args:
             max_steps: Maximum optimization steps
             seed: Random seed. If None, uses random seed.
+            pbc: Periodic boundary conditions. 3 values ``[lx, ly, lz]`` for
+                 a box with origin at zero, or 6 values
+                 ``[xmin, ymin, zmin, xmax, ymax, zmax]``.
+                 Requires Packmol >= 20.15.0.
 
         Returns:
             Packed Frame
         """
         if seed is None:
             seed = random.randint(1, 10000)
-        # Use __call__ method instead of legacy pack() method
-        return self.packer(self.targets, max_steps=max_steps, seed=seed)
+        return self.packer(self.targets, max_steps=max_steps, seed=seed, pbc=pbc)

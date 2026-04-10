@@ -2,39 +2,61 @@ start: _string
 
 // Rules
 _string: _chain nonlastbranch* _lastbranch?
-_chain: atom _chain | atom
-nonlastbranch: "(" branch ")"
-_lastbranch: branch
+_chain: atom bond? _chain | atom bond?
+nonlastbranch: "(" bond? branch ")"
+_lastbranch: bond? branch
 branch: _string
-atom: ("[" weak_and_expression "]" | atom_symbol) atom_label?
+bond: "!" BOND_TYPE | BOND_TYPE
+atom: ("[" weak_and_expression "]" | bare_atom) atom_label?
+bare_atom: atom_symbol
 atom_label: NUM
 ?weak_and_expression: (weak_and_expression ";")? or_expression
 ?or_expression: (or_expression ",")? and_expression
-?and_expression: (and_expression "&")? (atom_id | not_expression)
+// Explicit AND (&) between implicit AND groups
+?and_expression: (and_expression "&")? implicit_and
+// Implicit AND: adjacent primitives without any operator (e.g. #6X3r5)
+// isotope_atom must come first to greedily match NUM+SYMBOL at the start
+implicit_and: isotope_atom (not_expression | atom_id)* | (not_expression | atom_id)+
+isotope_atom: isotope atom_symbol
 not_expression: "!" atom_id
-atom_id: atom_symbol
-            | "#" atomic_num
+atom_id: "#" atomic_num
             | "$(" matches_string ")"
             | has_label
-            | "X" neighbor_count
-            | "r" ring_size
-            | "R" ring_count
-            | "H" hydrogen_count
-            | "h" implicit_hydrogen_count
+            | charge
+            | "H" hydrogen_count?
+            | "h" implicit_hydrogen_count?
+            | "X" neighbor_count?
+            | "x" ring_connectivity?
+            | "r" ring_size?
+            | "R" ring_count?
+            | "D" degree?
+            | "v" valence?
+            | "a"
+            | "A"
+            | atom_symbol
 atom_symbol: SYMBOL | STAR
 atomic_num: NUM
 matches_string: _string
 has_label: LABEL
 neighbor_count: NUM
+ring_connectivity: NUM
 ring_size: NUM
 ring_count: NUM
 hydrogen_count: NUM
 implicit_hydrogen_count: NUM
+degree: NUM
+valence: NUM
+charge: CHARGE_SIGN NUM?
+isotope: NUM
+atom_class: ATOM_CLASS_NAME
 
 // Terminals
 STAR: "*"
 NUM: /\d+/
 LABEL: /%[A-Za-z_0-9]+/
+ATOM_CLASS_NAME: /[a-z_][a-z0-9_]*/i
+BOND_TYPE: "-" | "=" | "#" | ":" | "~" | "@" | "/" | "\\"
+CHARGE_SIGN: "+" | "-"
 
 // Tokens for chemical elements and aromatic symbols
 SYMBOL: "C" | "c" | "N" | "n" | "O" | "o" | "S" | "s" | "P" | "p"

@@ -1,5 +1,6 @@
 from .atomistic import Angle, Atom, Atomistic, Bond, Dihedral
 from .box import Box
+from .cg import Bead, CGBond, CoarseGrain
 from .forcefield import (
     AngleStyle,
     AngleType,
@@ -23,3 +24,38 @@ from .forcefield import (
 from .frame import Block, Frame
 from .script import Script, ScriptLanguage
 from .topology import Topology
+
+__all__ = [
+    "Angle",
+    "Atom",
+    "Atomistic",
+    "Bond",
+    "Dihedral",
+    "Box",
+    "Bead",
+    "CGBond",
+    "CoarseGrain",
+    "AngleStyle",
+    "AngleType",
+    "AtomisticForcefield",
+    "AtomStyle",
+    "AtomType",
+    "BondStyle",
+    "BondType",
+    "DihedralStyle",
+    "DihedralType",
+    "ForceField",
+    "ImproperStyle",
+    "ImproperType",
+    "PairStyle",
+    "PairType",
+    "Parameters",
+    "Style",
+    "Type",
+    "TypeBucket",
+    "Block",
+    "Frame",
+    "Script",
+    "ScriptLanguage",
+    "Topology",
+]

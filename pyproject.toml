@@ -44,39 +44,51 @@ dependencies = [
     "numpy>=2.0",
     "python-igraph>=1.0.0",
     "lark>=1.3.1",
-    "h5py>=3.0.0"
 ]
 
 [tool.setuptools.dynamic]
 version = { attr = "molpy.version.version" }
 
 [project.optional-dependencies]
+hdf5 = [
+    "h5py>=3.0.0",
+]
+zarr = [
+    "zarr>=3.0",
+]
+mcp = [
+    "fastmcp>=2.0",
+]
 dev = [
     "pytest>=6.0.0",
     "pytest-cov>=3.0.0",
     "pytest-mock>=3.10.0",
-    "pre-commit>=4.0.0"
+    "pre-commit>=4.0.0",
+    "rdkit",
 ]
 doc = [
     "mkdocs>=1.4.0",
     "mkdocs-material>=9.7.0",
     "mkdocstrings[python]>=0.24.0",
-    "mkdocs-jupyter==0.24.7",
+    "mkdocs-jupyter>=0.24.0",
     "packmol",
     "rdkit",
     "matplotlib",
     "scienceplots",
 ]
 all = [
-    "molcrafts-molpy[dev,doc]"
+    "molcrafts-molpy[hdf5,zarr,dev,doc,mcp]",
 ]
+
+[project.scripts]
+molpy = "molpy.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/MolCrafts/molpy"
 Documentation = "https://molcrafts.github.io/molpy"
 Repository = "https://github.com/MolCrafts/molpy.git"
 Issues = "https://github.com/MolCrafts/molpy/issues"
-Changelog = "https://molcrafts.github.io/molpy/changelog/"
+Changelog = "https://github.com/MolCrafts/molpy/releases"
 
 [build-system]
 requires = [
@@ -126,7 +138,69 @@ force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
 
+# ruff linter — ignore rules that need gradual cleanup
+[tool.ruff.lint]
+ignore = [
+    "F401",   # unused imports (many are re-exports without __all__)
+    "F403",   # wildcard imports (used in __init__.py)
+    "F541",   # f-string without placeholders
+    "F811",   # redefinition of unused name
+    "F821",   # undefined name (forward refs, TYPE_CHECKING)
+    "F822",   # undefined name in __all__
+    "F841",   # unused variable (some are false positives)
+    "E402",   # import not at top (intentional lazy imports)
+    "E721",   # type comparison (use isinstance)
+    "E722",   # bare except
+    "E741",   # ambiguous variable name (I, l, O)
+    "E743",   # ambiguous function name
+]
+
+# ty type checker (Astral) — start lenient, tighten over time
+[tool.ty.environment]
+python-version = "3.12"
+root = ["./src"]
+
+[tool.ty.rules]
+all = "warn"
+
+# --- Ignored: untyped third-party stubs (igraph, lark, h5py, etc.) ---
+unresolved-import = "ignore"
+unresolved-attribute = "ignore"
+invalid-argument-type = "ignore"
+
+# --- Ignored: codebase not fully annotated yet (long-term fix) ---
+# TODO: fix these incrementally and promote to "warn"
+invalid-assignment = "ignore"        # 26 warnings: Optional imports, dict subscript
+invalid-method-override = "ignore"   # 20 warnings: subclass signature mismatches
+invalid-return-type = "ignore"       # 17 warnings: return type mismatches
+unresolved-reference = "ignore"      # 9 warnings: forward refs in TYPE_CHECKING
+unsupported-operator = "ignore"      # 7 warnings: operator type mismatches
+not-iterable = "ignore"              # 7 warnings: iteration over non-iterable
+unknown-argument = "ignore"          # 4 warnings: unknown kwargs
+invalid-type-arguments = "ignore"    # 4 warnings: generic type arg issues
+not-subscriptable = "ignore"         # 3 warnings: subscript on non-subscriptable
+index-out-of-bounds = "ignore"       # 3 warnings: tuple index (false positives)
+no-matching-overload = "ignore"      # 2 warnings: overload resolution
+missing-argument = "ignore"          # 2 warnings: missing required args
+division-by-zero = "ignore"          # 2 warnings: guarded by if (false positives)
+invalid-parameter-default = "ignore" # 2 warnings: default value type mismatch
+too-many-positional-arguments = "ignore"  # 1 warning
+invalid-type-form = "ignore"         # 1 warning
+call-non-callable = "ignore"         # 1 warning: reassigned variable (false positive)
+
+# --- Minor / informational ---
+unused-type-ignore-comment = "ignore"
+redundant-cast = "ignore"
+possibly-unresolved-reference = "ignore"
+
+[tool.ty.terminal]
+output-format = "full"
+
 [tool.pytest.ini_options]
+pythonpath = [
+    "src",
+]
 markers = [
     "external: tests requiring external network/resources or executables",
+    "mcp: tests requiring fastmcp",
 ]

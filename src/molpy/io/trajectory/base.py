@@ -14,6 +14,74 @@ logger = get_logger(__name__)
 PathLike = str | Path
 
 
+class MappedFile:
+    """Thin wrapper around ``mmap.mmap`` that keeps the file descriptor alive.
+
+    The stdlib ``mmap`` object does not own the fd, so if the caller
+    closes it the mapping becomes invalid.  ``MappedFile`` holds both
+    the open file object and the memory-mapped buffer.
+    """
+
+    __slots__ = ("mm", "_fd")
+
+    def __init__(self, fd, mm: mmap.mmap) -> None:  # noqa: D107
+        self._fd = fd
+        self.mm = mm
+
+    @classmethod
+    def open_readonly(cls, path: "str | Path") -> "MappedFile":
+        """Open *path* as a read-only memory-mapped file.
+
+        Gzip-compressed files (``.gz``) are transparently decompressed
+        into a temporary file before memory-mapping.
+
+        Args:
+            path: Path to file.
+
+        Returns:
+            ``MappedFile`` instance.
+
+        Raises:
+            FileNotFoundError: if the file does not exist.
+            ValueError: if the file is empty.
+        """
+        import gzip
+        import tempfile
+
+        p = Path(path)
+        if not p.exists():
+            raise FileNotFoundError(f"File not found: {p}")
+
+        if p.suffix == ".gz":
+            tmp = tempfile.NamedTemporaryFile(suffix=p.stem, delete=False)
+            with gzip.open(p, "rb") as gz:
+                tmp.write(gz.read())
+            tmp.flush()
+            size = tmp.seek(0, 2)
+            if size == 0:
+                tmp.close()
+                raise ValueError(f"File is empty: {p}")
+            tmp.seek(0)
+            mm = mmap.mmap(tmp.fileno(), 0, access=mmap.ACCESS_READ)
+            return cls(tmp, mm)
+
+        fd = open(p, "rb")  # noqa: SIM115
+        size = fd.seek(0, 2)
+        if size == 0:
+            fd.close()
+            raise ValueError(f"File is empty: {p}")
+        fd.seek(0)
+        mm = mmap.mmap(fd.fileno(), 0, access=mmap.ACCESS_READ)
+        return cls(fd, mm)
+
+    def close(self) -> None:
+        """Close the memory-mapped buffer and the underlying file descriptor."""
+        if self.mm is not None:
+            self.mm.close()
+        if self._fd is not None and not self._fd.closed:
+            self._fd.close()
+
+
 class FrameLocation(NamedTuple):
     """Location information for a frame."""
 
@@ -52,6 +120,7 @@ class BaseTrajectoryReader(ABC, Iterable["Frame"]):
 
         self._frame_locations: list[FrameLocation] = []  # location info for each frame
         self._mms: list[mmap.mmap] = []  # memory-mapped file objects for each file
+        self._mapped_files: list[MappedFile] = []  # MappedFile wrappers
         self._total_frames = 0
         self._index_files = self._get_index_file_paths()
         self._open_files()
@@ -69,6 +138,9 @@ class BaseTrajectoryReader(ABC, Iterable["Frame"]):
 
     def close(self):
         """Close all memory-mapped files."""
+        for mf in self._mapped_files:
+            mf.close()
+        self._mapped_files.clear()
         for mm in self._mms:
             if mm is not None:
                 mm.close()
@@ -183,47 +255,29 @@ class BaseTrajectoryReader(ABC, Iterable["Frame"]):
     def _open_files(self):
         """Open trajectory files with memory mapping and build global index."""
         self._mms = []
+        self._mapped_files = []
 
         # Try to load existing indexes first
         if self._load_indexes():
             print("Loaded existing indexes")
             # Still need to open memory-mapped files
             for file_index, fpath in enumerate(self.fpaths):
-                fp = open(fpath, "rb")
-                fp.seek(0, 2)
-                if fp.tell() == 0:
-                    raise ValueError(f"File is empty: {fpath}")
-                fp.seek(0)
-                mm = mmap.mmap(fp.fileno(), 0, access=mmap.ACCESS_READ)
-                self._mms.append(mm)
+                mf = MappedFile.open_readonly(fpath)
+                self._mapped_files.append(mf)
+                self._mms.append(mf.mm)
             return
 
         for file_index, fpath in enumerate(self.fpaths):
-            # Open file
-            fp = open(fpath, "rb")
-            try:
-                # Check if empty
-                fp.seek(0, 2)
-                if fp.tell() == 0:
-                    fp.close()
-                    raise ValueError(f"File is empty: {fpath}")
-                fp.seek(0)  # Seek back to beginning
+            mf = MappedFile.open_readonly(fpath)
+            self._mapped_files.append(mf)
+            self._mms.append(mf.mm)
 
-                mm = mmap.mmap(fp.fileno(), 0, access=mmap.ACCESS_READ)
-                self._mms.append(mm)
+            logger.info(f"Processing file {file_index + 1}/{len(self.fpaths)}: {fpath}")
+            self._parse_trajectory(file_index)
 
-                logger.info(
-                    f"Processing file {file_index + 1}/{len(self.fpaths)}: {fpath}"
-                )
-                self._parse_trajectory(file_index)
-
-                # Save index for this specific file after processing
-                self._save_index_for_file(file_index)
-                logger.info(f"Index saved for {fpath}")
-
-            finally:
-                # Always close the file handle
-                fp.close()
+            # Save index for this specific file after processing
+            self._save_index_for_file(file_index)
+            logger.info(f"Index saved for {fpath}")
 
     def _get_frame_location(self, index: int) -> FrameLocation:
         """Get location information for a frame."""
@@ -263,10 +317,15 @@ class BaseTrajectoryReader(ABC, Iterable["Frame"]):
                     frame_offsets[timestep] = loc.byte_offset
                     timestep += 1
 
+            # Store file size for staleness detection
+            fpath = self.fpaths[file_index]
+            file_size = fpath.stat().st_size if fpath.exists() else 0
+
             index_data = {
                 "trajectory_file": str(self.fpaths[file_index]),
                 "total_frames": len(frame_offsets),
                 "frame_offsets": frame_offsets,  # timestep: offset dictionary
+                "file_size": file_size,
             }
 
             index_file = self._index_files[file_index]
@@ -308,6 +367,16 @@ class BaseTrajectoryReader(ABC, Iterable["Frame"]):
                         f"Warning: Trajectory file path changed for {fpath}, rebuilding indexes"
                     )
                     return False
+
+                # Check file size for staleness detection
+                stored_size = index_data.get("file_size", None)
+                if stored_size is not None and fpath.exists():
+                    current_size = fpath.stat().st_size
+                    if current_size != stored_size:
+                        print(
+                            f"Warning: File size changed for {fpath}, rebuilding indexes"
+                        )
+                        return False
 
                 # Load frame offsets for this file
                 frame_offsets = index_data[

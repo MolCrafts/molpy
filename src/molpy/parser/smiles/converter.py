@@ -5,10 +5,8 @@ to MolPy Atomistic structures and PolymerSpec objects.
 """
 
 from dataclasses import dataclass, field, asdict
-from typing import TYPE_CHECKING
 
 from molpy.core.atomistic import Atom, Atomistic
-from molpy.core.element import Element
 
 from .bigsmiles_ir import (
     BigSmilesMoleculeIR,
@@ -109,7 +107,7 @@ def bigsmilesir_to_monomer(ir: BigSmilesMoleculeIR) -> Atomistic:
         )
 
     raise ValueError(
-        "BigSmilesMoleculeIR contains no repeat units. " "Use {[<]...[>]} format."
+        "BigSmilesMoleculeIR contains no repeat units. Use {[<]...[>]} format."
     )
 
 
@@ -286,9 +284,10 @@ def create_monomer_from_repeat_unit(
     # Add atoms
     for atom_ir in graph.atoms:
         atom_data = asdict(atom_ir)
-        # SmilesAtomIR has 'element' but not 'symbol', so copy element to symbol
-        if atom_data.get("element") and not atom_data.get("symbol"):
-            atom_data["symbol"] = atom_data["element"]
+        # Promote chiral from extras to top-level for preservation
+        extras = atom_data.get("extras", {})
+        if "chiral" in extras:
+            atom_data["chiral"] = extras["chiral"]
         struct.def_atom(**atom_data)
 
     # Add bonds
@@ -312,7 +311,11 @@ def create_monomer_from_repeat_unit(
             if bond_key not in bonds_added:
                 bond_order = bond_ir.order
                 bond_kind = _convert_bond_order_to_kind(bond_order)
-                struct.def_bond(atoms[i], atoms[j], order=bond_order, kind=bond_kind)
+                # Preserve stereo information from bond IR
+                bond_kwargs = dict(order=bond_order, kind=bond_kind)
+                if hasattr(bond_ir, "stereo") and bond_ir.stereo is not None:
+                    bond_kwargs["stereo"] = bond_ir.stereo
+                struct.def_bond(atoms[i], atoms[j], **bond_kwargs)
                 bonds_added.add(bond_key)
 
     # Set ports based on descriptors using anchor_atom
@@ -343,10 +346,6 @@ def create_monomer_from_repeat_unit(
 
         port_name = descriptor_to_port_name(descriptor)
         atom["port"] = port_name
-        atom["port_role"] = "terminal"
-        atom["port_bond_kind"] = "-"
-        atom["port_compat"] = set()
-        atom["port_priority"] = 0
 
     return struct
 
@@ -414,7 +413,6 @@ def create_monomer_from_unit(
 
     # Add atoms
     for atom_ir in unit.atoms:
-
         struct.def_atom(**asdict(atom_ir))
 
     # Add bonds
@@ -488,6 +486,79 @@ def descriptor_to_port_name(desc: BondingDescriptorIR) -> str:
     return symbol
 
 
+def smilesir_to_atomistic(ir: SmilesGraphIR) -> Atomistic:
+    """
+    Convert SmilesGraphIR to Atomistic structure (topology only, no 3D coordinates).
+
+    Single responsibility: IR → Atomistic conversion only.
+    Parsing should be done separately using parse_smiles().
+
+    This is a simple conversion function for pure SMILES (no BigSMILES features like
+    ports or descriptors). For BigSMILES with ports, use bigsmilesir_to_monomer() instead.
+
+    Args:
+        ir: SmilesGraphIR from parse_smiles()
+
+    Returns:
+        Atomistic structure with atoms and bonds (no 3D coordinates, no ports)
+
+    Examples:
+        >>> from molpy.parser.smiles import parse_smiles, smilesir_to_atomistic
+        >>> ir = parse_smiles("CCO")
+        >>> struct = smilesir_to_atomistic(ir)
+        >>> len(struct.atoms)
+        3
+        >>> len(struct.bonds)
+        2
+    """
+    # Create Atomistic structure (topology only, no positions)
+    struct = Atomistic()
+
+    # Add atoms using asdict pattern (same as create_monomer_from_unit)
+    for atom_ir in ir.atoms:
+        atom_data = asdict(atom_ir)
+        # Promote chiral from extras to top-level for preservation
+        extras = atom_data.get("extras", {})
+        if "chiral" in extras:
+            atom_data["chiral"] = extras["chiral"]
+        struct.def_atom(**atom_data)
+
+    # Add bonds using index-based mapping
+    atoms = list(struct.atoms)
+    bonds_added = set()
+
+    # Build atom mapping using id() for reliable matching
+    atom_ir_to_idx = {id(atom_ir): idx for idx, atom_ir in enumerate(ir.atoms)}
+
+    for bond_ir in ir.bonds:
+        # Use id() for reliable atom matching
+        i = atom_ir_to_idx.get(id(bond_ir.itom))
+        j = atom_ir_to_idx.get(id(bond_ir.jtom))
+
+        # Skip if atoms not found or same atom (by identity)
+        if i is None or j is None or i == j:
+            continue
+
+        if i < len(atoms) and j < len(atoms):
+            bond_key = tuple(sorted([i, j]))
+            if bond_key not in bonds_added:
+                # Set both order (numeric) and kind (symbol) for bond
+                bond_order = bond_ir.order
+                # Convert bond order to kind (same pattern as create_monomer_from_unit)
+                kind_map = {1: "-", 2: "=", 3: "#", 1.5: ":"}
+                bond_kind = kind_map.get(
+                    float(bond_order) if bond_order != "ar" else 1.5, "-"
+                )
+                # Preserve stereo information from bond IR
+                bond_kwargs = dict(order=bond_order, kind=bond_kind)
+                if bond_ir.stereo is not None:
+                    bond_kwargs["stereo"] = bond_ir.stereo
+                struct.def_bond(atoms[i], atoms[j], **bond_kwargs)
+                bonds_added.add(bond_key)
+
+    return struct
+
+
 def create_monomer_from_atom_class_ports(ir: SmilesGraphIR) -> Atomistic | None:
     """
     Create Atomistic structure from SmilesGraphIR with atom class notation as ports.
@@ -507,9 +578,9 @@ def create_monomer_from_atom_class_ports(ir: SmilesGraphIR) -> Atomistic | None:
         Atomistic structure with ports marked on atoms, or None if no ports found
     """
     # Find atoms with class_ attribute (atom class ports)
-    port_markers: dict[int, SmilesAtomIR] = (
-        {}
-    )  # class_ -> SmilesAtomIR (the [*:n] atom)
+    port_markers: dict[
+        int, SmilesAtomIR
+    ] = {}  # class_ -> SmilesAtomIR (the [*:n] atom)
     port_connections: dict[int, SmilesAtomIR] = {}  # class_ -> connected real atom
 
     for atom_ir in ir.atoms:
@@ -553,7 +624,6 @@ def create_monomer_from_atom_class_ports(ir: SmilesGraphIR) -> Atomistic | None:
 
     # Add real atoms and store references immediately
     for atom_ir in real_atoms:
-
         atom = struct.def_atom(**asdict(atom_ir))
         atomir_to_atom[id(atom_ir)] = atom
 

@@ -1,7 +1,24 @@
-"""
-CP2K quantum chemistry engine.
+"""CP2K quantum chemistry / molecular dynamics engine.
 
-This module provides the CP2KEngine class for running CP2K calculations.
+Wraps the `CP2K <https://www.cp2k.org>`_ program.  The engine writes an
+input script to the working directory and runs::
+
+    [launcher...] cp2k.psmp -i <input> -o cp2k.out
+
+Standard CP2K output (log) is redirected to *cp2k.out* via the ``-o`` flag;
+stdout is therefore empty, which avoids pipe-buffer deadlocks when the caller
+captures output.
+
+MPI and scheduler launchers are configured on the :class:`~molpy.engine.base.Engine`
+base class::
+
+    engine = CP2KEngine("cp2k.psmp", launcher=["mpirun", "-np", "32"])
+    engine = CP2KEngine("cp2k.psmp", launcher=["srun", "--ntasks=32"])
+
+Reference:
+    Kühne, T. D. et al. (2020). CP2K: An electronic structure and molecular
+    dynamics software package. *J. Chem. Phys.* **152**, 194103.
+    https://doi.org/10.1063/5.0007045
 """
 
 import subprocess
@@ -12,113 +29,101 @@ from .base import Engine
 
 
 class CP2KEngine(Engine):
-    """
-    CP2K quantum chemistry engine.
+    """CP2K quantum chemistry / molecular dynamics engine.
 
-    This engine runs CP2K calculations with input scripts.
+    Runs CP2K input scripts.  The typical executable name is ``cp2k.psmp``
+    (MPI + OpenMP build) or ``cp2k.popt`` (MPI only).
+
+    A minimal CP2K input must contain at least ``&GLOBAL``, ``&FORCE_EVAL``,
+    and ``&MOTION`` (or ``&ENERGY``) sections.
 
     Example:
         >>> from molpy.core.script import Script
         >>> from molpy.engine import CP2KEngine
         >>>
-        >>> # Create input script
-        >>> script = Script.from_text(
-        ...     name="input",
-        ...     text="&GLOBAL\\n  PROJECT water\\n&END GLOBAL\\n",
-        ...     language="other"
+        >>> inp = (
+        ...     "&GLOBAL\\n"
+        ...     "  PROJECT water\\n"
+        ...     "  RUN_TYPE ENERGY\\n"
+        ...     "&END GLOBAL\\n"
+        ...     "&FORCE_EVAL\\n"
+        ...     "  METHOD Quickstep\\n"
+        ...     "&END FORCE_EVAL\\n"
         ... )
-        >>>
-        >>> # Create engine and prepare
-        >>> engine = CP2KEngine(executable="cp2k.psmp")
-        >>> engine.prepare(work_dir="./calc", scripts=script)
-        >>>
-        >>> # Run calculation
-        >>> result = engine.run()
+        >>> script = Script.from_text(name="input", text=inp, language="other")
+        >>> engine = CP2KEngine(executable="cp2k.psmp", check_executable=False)
+        >>> result = engine.run(script, workdir="./calc", check=False)
         >>> print(result.returncode)
         0
+
+        MPI execution::
+
+            engine = CP2KEngine("cp2k.psmp", launcher=["mpirun", "-np", "32"])
+            result = engine.run(script, workdir="./calc")
     """
 
     @property
     def name(self) -> str:
-        """Return engine name."""
+        """Return ``"CP2K"``.
+
+        Returns:
+            Engine identifier string.
+        """
         return "CP2K"
 
     def _get_default_extension(self) -> str:
-        """Get default file extension for CP2K input files."""
+        """Return ``".inp"`` — the conventional CP2K input extension.
+
+        Returns:
+            ``".inp"``
+        """
         return ".inp"
 
-    def run(
+    def _execute(
         self,
-        input_file: str | Path | None = None,
-        output_file: str | Path | None = None,
+        run_dir: Path,
+        capture_output: bool = False,
+        check: bool = True,
+        timeout: float | None = None,
         **kwargs: Any,
     ) -> subprocess.CompletedProcess:
-        """
-        Execute CP2K calculation.
+        """Run CP2K in *run_dir*.
+
+        Builds the command::
+
+            [launcher...] cp2k.psmp -i <input_file> -o cp2k.out
+
+        The ``-o cp2k.out`` flag redirects CP2K's log output to a file,
+        keeping stdout empty and preventing pipe-buffer deadlocks.
 
         Args:
-            input_file: Name of the input file. If None, uses the input script
-                       from prepare() (default: None)
-            output_file: Name of the output file. If None, uses default "cp2k.out"
-                        (default: None)
-            **kwargs: Additional arguments passed to subprocess.run
-                     (e.g., capture_output, text, check, etc.)
+            run_dir: Directory containing the input files; used as ``cwd``.
+            capture_output: Capture stdout/stderr.
+            check: Raise :exc:`subprocess.CalledProcessError` on failure.
+            timeout: Timeout in seconds.
+            **kwargs: Ignored (reserved for future use).
 
         Returns:
-            CompletedProcess object with execution results
+            :class:`subprocess.CompletedProcess`.
 
         Raises:
-            RuntimeError: If engine is not prepared (prepare() not called)
+            RuntimeError: If no input script has been registered.
+            subprocess.CalledProcessError: If *check* is ``True`` and CP2K
+                exits with a non-zero code.
+            subprocess.TimeoutExpired: If *timeout* is exceeded.
         """
-        if not hasattr(self, "work_dir"):
-            raise RuntimeError("Engine not prepared. Call prepare() first.")
+        if self.input_script is None or self.input_script.path is None:
+            raise RuntimeError("No input script found.  Pass a script to run() first.")
 
-        # Use input script from prepare() if not specified
-        if input_file is None:
-            if (
-                not hasattr(self, "input_script")
-                or self.input_script is None
-                or self.input_script.path is None
-            ):
-                raise RuntimeError(
-                    "No input file specified and no input script found. "
-                    "Either specify input_file or ensure prepare() was called with a script."
-                )
-            input_file = self.input_script.path.name
-        else:
-            input_file = Path(input_file).name
+        input_file = self.input_script.path.name
+        command = self._build_full_command(["-i", input_file, "-o", "cp2k.out"])
 
-        # Default output file name
-        output_file = "cp2k.out" if output_file is None else Path(output_file).name
-
-        # Build command
-        command = [self.executable, "-i", str(input_file), "-o", str(output_file)]
-
-        # Default subprocess arguments
-        run_kwargs = {
-            "cwd": self.work_dir,
-            "capture_output": True,
-            "text": True,
-            "check": False,
-        }
-        run_kwargs.update(kwargs)
-
-        return subprocess.run(command, **run_kwargs)
-
-    def get_output_file(self, name: str | None = None) -> Path | None:
-        """
-        Get the CP2K output file path.
-
-        Args:
-            name: Name of the output file. If None, uses default "cp2k.out".
-
-        Returns:
-            Path to the output file or None if not found
-        """
-        if name is None:
-            name = "cp2k.out"
-
-        output_path = self.work_dir / name
-        if output_path.exists():
-            return output_path
-        return None
+        return subprocess.run(
+            command,
+            cwd=run_dir,
+            capture_output=capture_output,
+            text=True,
+            check=check,
+            timeout=timeout,
+            env=self._merged_env(),
+        )

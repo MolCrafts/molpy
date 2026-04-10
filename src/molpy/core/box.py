@@ -12,7 +12,40 @@ from .region import PeriodicBoundary
 
 
 class Box(PeriodicBoundary):
+    """Simulation box representing a periodic domain in 3D space.
+
+    The box is defined by a 3x3 upper-triangular matrix whose columns are
+    the lattice vectors, an origin point, and per-axis periodic boundary
+    flags.  Three styles are supported:
+
+    - **FREE** -- no boundaries (zero matrix).
+    - **ORTHOGONAL** -- axis-aligned cuboid (diagonal matrix).
+    - **TRICLINIC** -- general parallelepiped (upper-triangular matrix
+      with at least one nonzero off-diagonal element).
+
+    All length quantities are in Angstroms.  Angles are in degrees
+    unless stated otherwise.
+
+    Args:
+        matrix: A 3x3 upper-triangular box matrix with lattice vectors
+            as columns, shape ``(3, 3)``.  ``None`` or an all-zero matrix
+            produces a FREE box.  A 1-D array of shape ``(3,)`` is
+            promoted to a diagonal matrix.
+        pbc: Boolean periodic-boundary flags per axis, shape ``(3,)``.
+        origin: Cartesian origin of the box in Angstroms, shape ``(3,)``.
+    """
+
     class Style(Enum):
+        """Enumeration of simulation-box geometries.
+
+        Attributes:
+            FREE: No bounding box (vacuum / non-periodic).
+            ORTHOGONAL: Axis-aligned cuboid with three independent edge
+                lengths.
+            TRICLINIC: General parallelepiped described by three edge
+                lengths and three tilt factors (xy, xz, yz).
+        """
+
         FREE = 0
         ORTHOGONAL = 1
         TRICLINIC = 2
@@ -89,6 +122,18 @@ class Box(PeriodicBoundary):
         origin: ArrayLike = np.zeros(3),
         central: bool = False,
     ) -> "Box":
+        """Create a cubic box with equal edge lengths.
+
+        Args:
+            length: Edge length of the cube in Angstroms.
+            pbc: Periodic boundary flags per axis, shape ``(3,)``.
+            origin: Cartesian origin of the box in Angstroms, shape ``(3,)``.
+            central: If True, shift the origin so the box is centred at
+                the coordinate origin.
+
+        Returns:
+            A new cubic ``Box`` instance.
+        """
         if central:
             origin = np.full(3, -length / 2)
         return cls(np.diag(np.full(3, length)), pbc, origin)
@@ -101,6 +146,19 @@ class Box(PeriodicBoundary):
         origin: ArrayLike = np.zeros(3),
         central: bool = False,
     ) -> "Box":
+        """Create an orthogonal (axis-aligned cuboid) box.
+
+        Args:
+            lengths: Edge lengths ``[lx, ly, lz]`` in Angstroms,
+                shape ``(3,)``.
+            pbc: Periodic boundary flags per axis, shape ``(3,)``.
+            origin: Cartesian origin of the box in Angstroms, shape ``(3,)``.
+            central: If True, shift the origin so the box is centred at
+                the coordinate origin.
+
+        Returns:
+            A new orthogonal ``Box`` instance.
+        """
         if central:
             origin = np.zeros(3) - np.asarray(lengths) / 2
         return cls(np.diag(lengths), pbc, origin)
@@ -114,6 +172,21 @@ class Box(PeriodicBoundary):
         origin: ArrayLike = np.zeros(3),
         central: bool = False,
     ) -> "Box":
+        """Create a triclinic box from edge lengths and tilt factors.
+
+        Args:
+            lengths: Diagonal edge lengths ``[lx, ly, lz]`` in Angstroms,
+                shape ``(3,)``.
+            tilts: Off-diagonal tilt factors ``[xy, xz, yz]`` in Angstroms,
+                shape ``(3,)``.
+            pbc: Periodic boundary flags per axis, shape ``(3,)``.
+            origin: Cartesian origin of the box in Angstroms, shape ``(3,)``.
+            central: If True, shift the origin so the box is centred at
+                the coordinate origin.
+
+        Returns:
+            A new triclinic ``Box`` instance.
+        """
         if central:
             origin = np.asarray(lengths) / 2
         return cls(cls.calc_matrix_from_size_tilts(lengths, tilts), pbc, origin)
@@ -273,6 +346,11 @@ class Box(PeriodicBoundary):
 
     @property
     def origin(self) -> np.ndarray:
+        """Cartesian origin of the box in Angstroms.
+
+        Returns:
+            np.ndarray: Origin coordinates, shape ``(3,)``.
+        """
         return self._origin
 
     @origin.setter
@@ -337,6 +415,11 @@ class Box(PeriodicBoundary):
 
     @property
     def l_inv(self) -> np.ndarray:
+        """Reciprocal of the box edge lengths in inverse Angstroms.
+
+        Returns:
+            np.ndarray: ``1 / [lx, ly, lz]``, shape ``(3,)``.
+        """
         return 1 / self.l
 
     @property
@@ -355,6 +438,11 @@ class Box(PeriodicBoundary):
 
     @property
     def xz(self) -> float:
+        """Tilt factor between the x and z axes in Angstroms.
+
+        Returns:
+            float: The ``(0, 2)`` element of the box matrix.
+        """
         return self._matrix[0, 2]
 
     @xz.setter
@@ -363,6 +451,11 @@ class Box(PeriodicBoundary):
 
     @property
     def yz(self) -> float:
+        """Tilt factor between the y and z axes in Angstroms.
+
+        Returns:
+            float: The ``(1, 2)`` element of the box matrix.
+        """
         return self._matrix[1, 2]
 
     @yz.setter
@@ -371,18 +464,39 @@ class Box(PeriodicBoundary):
 
     @property
     def a(self) -> np.ndarray:
+        """First lattice vector of the box in Angstroms.
+
+        Returns:
+            np.ndarray: Column 0 of the box matrix, shape ``(3,)``.
+        """
         return self._matrix[:, 0]
 
     @property
     def b(self) -> np.ndarray:
+        """Second lattice vector of the box in Angstroms.
+
+        Returns:
+            np.ndarray: Column 1 of the box matrix, shape ``(3,)``.
+        """
         return self._matrix[:, 1]
 
     @property
     def c(self) -> np.ndarray:
+        """Third lattice vector of the box in Angstroms.
+
+        Returns:
+            np.ndarray: Column 2 of the box matrix, shape ``(3,)``.
+        """
         return self._matrix[:, 2]
 
     @property
     def periodic(self) -> bool:
+        """Whether the box is periodic in all three directions.
+
+        Returns:
+            bool: True if periodic boundary conditions are active along
+            every axis.
+        """
         return bool(self._pbc.all())
 
     @periodic.setter
@@ -395,6 +509,11 @@ class Box(PeriodicBoundary):
 
     @property
     def periodic_x(self) -> bool:
+        """Whether the box is periodic along the x-axis.
+
+        Returns:
+            bool: True if periodic in x.
+        """
         return self._pbc[0]
 
     @periodic_x.setter
@@ -403,6 +522,11 @@ class Box(PeriodicBoundary):
 
     @property
     def periodic_y(self) -> bool:
+        """Whether the box is periodic along the y-axis.
+
+        Returns:
+            bool: True if periodic in y.
+        """
         return self._pbc[1]
 
     @periodic_y.setter
@@ -411,6 +535,11 @@ class Box(PeriodicBoundary):
 
     @property
     def periodic_z(self) -> bool:
+        """Whether the box is periodic along the z-axis.
+
+        Returns:
+            bool: True if periodic in z.
+        """
         return self._pbc[2]
 
     @periodic_z.setter
@@ -419,6 +548,11 @@ class Box(PeriodicBoundary):
 
     @property
     def tilts(self) -> np.ndarray:
+        """Off-diagonal tilt factors of the box matrix in Angstroms.
+
+        Returns:
+            np.ndarray: ``[xy, xz, yz]``, shape ``(3,)``.
+        """
         return np.array([self.xy, self.xz, self.yz])
 
     @property
@@ -447,6 +581,14 @@ class Box(PeriodicBoundary):
 
     @property
     def lengths(self) -> np.ndarray:
+        """Lattice vector magnitudes ``[a, b, c]`` in Angstroms.
+
+        For a FREE box all lengths are zero.  For orthogonal and triclinic
+        boxes the lengths are computed from the box matrix.
+
+        Returns:
+            np.ndarray: Edge lengths, shape ``(3,)``.
+        """
         match self.style:
             case Box.Style.FREE:
                 return np.zeros(3)
@@ -463,6 +605,14 @@ class Box(PeriodicBoundary):
 
     @property
     def angles(self) -> np.ndarray:
+        """Lattice angles ``[alpha, beta, gamma]`` in degrees.
+
+        Alpha is the angle between lattice vectors **b** and **c**, beta
+        between **a** and **c**, and gamma between **a** and **b**.
+
+        Returns:
+            np.ndarray: Angles in degrees, shape ``(3,)``.
+        """
         return self.calc_lengths_angles_from_matrix(self._matrix)[1]
 
     @staticmethod
@@ -637,7 +787,7 @@ class Box(PeriodicBoundary):
             raise ValueError("Invalid box matrix")
 
     @classmethod
-    def from_lengths_angles(cls, lengths: ArrayLike, angles: ArrayLike):
+    def from_lengths_angles(cls, lengths: ArrayLike, angles: ArrayLike) -> "Box":
         """
         Get box matrix from lengths and angles
 
@@ -646,7 +796,7 @@ class Box(PeriodicBoundary):
             angles (np.ndarray): angles between box edges in degree
 
         Returns:
-            np.ndarray: box matrix
+            Box: Box instance constructed from lengths and angles.
         """
         return cls(cls.calc_matrix_from_lengths_angles(lengths, angles))
 
@@ -660,21 +810,63 @@ class Box(PeriodicBoundary):
         return self.calc_lengths_angles_from_matrix(self._matrix)
 
     def set_lengths(self, lengths: np.ndarray):
+        """Set the lattice vector magnitudes, preserving current angles.
+
+        Args:
+            lengths: New edge lengths ``[a, b, c]`` in Angstroms,
+                shape ``(3,)``.
+        """
         self._matrix = self.calc_matrix_from_lengths_angles(lengths, self.angles)
 
     def set_angles(self, angles: np.ndarray):
+        """Set the lattice angles, preserving current edge lengths.
+
+        Args:
+            angles: New angles ``[alpha, beta, gamma]`` in degrees,
+                shape ``(3,)``.
+        """
         self._matrix = self.calc_matrix_from_lengths_angles(self.lengths, angles)
 
     def set_matrix(self, matrix: np.ndarray):
+        """Replace the box matrix directly.
+
+        Args:
+            matrix: New 3x3 upper-triangular box matrix, shape ``(3, 3)``.
+        """
         self._matrix = matrix
 
     def set_lengths_angles(self, lengths: np.ndarray, angles: np.ndarray):
+        """Set both edge lengths and lattice angles simultaneously.
+
+        Args:
+            lengths: Edge lengths ``[a, b, c]`` in Angstroms, shape ``(3,)``.
+            angles: Angles ``[alpha, beta, gamma]`` in degrees, shape ``(3,)``.
+        """
         self._matrix = self.calc_matrix_from_lengths_angles(lengths, angles)
 
     def set_lengths_tilts(self, lengths: np.ndarray, tilts: np.ndarray):
+        """Set edge lengths and tilt factors simultaneously.
+
+        Args:
+            lengths: Diagonal edge lengths ``[lx, ly, lz]`` in Angstroms,
+                shape ``(3,)``.
+            tilts: Off-diagonal tilt factors ``[xy, xz, yz]`` in Angstroms,
+                shape ``(3,)``.
+        """
         self._matrix = self.calc_matrix_from_size_tilts(lengths, tilts)
 
     def get_distance_between_faces(self) -> np.ndarray:
+        """Perpendicular distances between opposite faces in Angstroms.
+
+        For an orthogonal box these equal the edge lengths.  For a
+        triclinic box the distances are computed by projecting each
+        lattice vector onto the normal of the plane spanned by the other
+        two vectors.
+
+        Returns:
+            np.ndarray: Distances ``[d_x, d_y, d_z]`` in Angstroms,
+                shape ``(3,)``.  All zeros for a FREE box.
+        """
         match self.style:
             case Box.Style.FREE:
                 return np.zeros(3)
@@ -695,6 +887,19 @@ class Box(PeriodicBoundary):
                 return np.array([np.dot(na, a), np.dot(nb, b), np.dot(nc, c)])
 
     def wrap(self, xyz: np.ndarray) -> np.ndarray:
+        """Wrap Cartesian coordinates into the primary image of the box.
+
+        Delegates to style-specific implementations (free, orthogonal,
+        or triclinic).
+
+        Args:
+            xyz: Cartesian positions in Angstroms, shape ``(N, 3)`` or
+                ``(3,)``.
+
+        Returns:
+            np.ndarray: Wrapped coordinates with the same shape as the
+                input, in Angstroms.
+        """
         xyz = np.asarray(xyz)
         match self.style:
             case Box.Style.FREE:

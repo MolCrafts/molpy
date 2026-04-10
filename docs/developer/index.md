@@ -1,71 +1,37 @@
 # Developer Guide
 
-Welcome to the MolPy Developer Guide! This section provides comprehensive information for contributors and developers who want to extend, modify, or contribute to MolPy.
+This guide addresses contributors and library developers. It covers the project's coding and testing conventions, the established extension points at the tool layer, and the deeper architectural patterns governing the core data model and force field hierarchy.
 
-## Quick Start
+## Part I: Project Conventions
 
-New to contributing? Start here:
+The following pages document day-to-day development practices.
 
-1. **[Contributing Guide](contributing.md)** - Learn how to contribute to MolPy
-2. **[Development Setup](development-setup.md)** - Set up your development environment
-3. **[Coding Style](coding-style.md)** - Follow MolPy's coding standards
-4. **[Testing](testing.md)** - Write and run tests
+- [Development Setup](development-setup.md) — repository cloning, editable installation, and test execution
+- [Contributing](contributing.md) — the pull request workflow, commit message conventions, and the pre-commit hook suite
+- [Coding Style](coding-style.md) — naming conventions, formatting requirements, and the immutability constraint
+- [Testing](testing.md) — pytest conventions, test markers, coverage requirements, and the distinction between local and external tests
+- [Release Process](release-process.md) — semantic versioning, changelog maintenance, and CI-driven package publication
 
-## Architecture & Design
+## Part II: Extending the Tool Layer
 
-Understand MolPy's internal architecture and design patterns:
+The extension points documented here present stable interfaces with explicit contracts. Contributing a new capability at this layer requires implementing a subclass or registering a handler; no modification of core internals is necessary.
 
-- **[Architecture Overview](architecture.md)** - Core design principles and package structure
-- **[Wrapper & Adapter Patterns](wrapper_adapter_layers.ipynb)** - Design patterns with examples
+- [Adding a Tool or Compute Operation](extending-tools.md) — the `Tool` and `Compute` protocols, operator registration, and custom preparation recipes
+- [Adding an I/O Format](extending-io.md) — reader and writer base classes, the `FieldFormatter` canonicalization interface, and force field formatter registration
+- [Adding a Wrapper or Adapter](extending-integration.md) — subprocess wrapper conventions for external CLI tools and in-memory adapter patterns for third-party libraries
 
-## Development Workflow
+## Part III: Extending Core Structures
 
-### Setting Up
+Modifications at this layer require a thorough understanding of MolPy's type bucket system, force field parameter hierarchy, and potential dispatch chain. Contributions should be discussed in a GitHub issue before implementation begins.
 
-Get your development environment ready:
+- [Extending the Data Model](extending-core.md) — new `Entity` and `Link` subtypes, custom `Struct` subclasses, and identity-based hashing invariants
+- [Extending the Force Field](extending-forcefield.md) — custom `Style`, `Type`, and `Potential` definitions, and `ForceFieldFormatter` registration for serialization
 
-- **[Development Setup](development-setup.md)** - Detailed setup instructions for all platforms
-- **[Tools](tools.md)** - Development tools and their configurations
+## Integrations
 
-### Writing Code
+- [MCP Server for LLM Agents](../user-guide/mcp.md) — exposing MolPy's source code and symbol index to large language model agents via the Model Context Protocol
 
-Follow these guidelines when writing code:
+## Issue Tracking and Discussion
 
-- **[Coding Style](coding-style.md)** - Style guide and best practices
-- **[Testing](testing.md)** - Testing guidelines and examples
-- **[Architecture](architecture.md)** - Understanding the codebase structure
-
-### Contributing
-
-Ready to submit your changes?
-
-- **[Contributing Guide](contributing.md)** - Contribution workflow and guidelines
-- **[Release Process](release-process.md)** - How releases are made
-
-## Core Principles
-
-MolPy is built on these principles:
-
-- **Predictable** - Clear data model with minimal surprises
-- **Well-tested** - Every feature backed by comprehensive tests
-- **Documented** - User-facing features have docs and examples
-- **Type-safe** - Full type hints throughout the codebase
-- **Composable** - Small, focused components that work together
-
-## Getting Help
-
-Need assistance?
-
-- **[GitHub Issues](https://github.com/MolCrafts/molpy/issues)** - Report bugs or request features
-- **[GitHub Discussions](https://github.com/MolCrafts/molpy/discussions)** - Ask questions and discuss ideas
-- **[Documentation](../index.md)** - Browse the full documentation
-
-## Recognition
-
-We value all contributions! Contributors are recognized in:
-
-- Project README
-- Release notes
-- Documentation credits
-
-Thank you for contributing to MolPy! 🎉
+- Bug reports and feature requests: <https://github.com/MolCrafts/molpy/issues>
+- Design discussions: <https://github.com/MolCrafts/molpy/discussions>

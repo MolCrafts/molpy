@@ -43,7 +43,6 @@ Basic Usage:
 """
 
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
@@ -63,7 +62,10 @@ from .data.base import DataReader, DataWriter
 from .data.gro import GroReader, GroWriter
 from .data.h5 import HDF5Reader, HDF5Writer
 from .data.lammps import LammpsDataReader, LammpsDataWriter
-from .data.lammps_molecule import LammpsMoleculeReader, LammpsMoleculeWriter
+from .data.lammps_molecule import (
+    LammpsMoleculeReader,
+    LammpsMoleculeWriter,
+)
 from .data.mol2 import Mol2Reader
 from .data.pdb import PDBReader, PDBWriter
 from .data.top import TopReader
@@ -90,11 +92,21 @@ from .readers import (
     read_xyz,
     read_xyz_trajectory,
 )
-from .trajectory.base import BaseTrajectoryReader, FrameLocation, TrajectoryWriter
+
+# Convenience alias: read_amber(prmtop, inpcrd=None, frame=None)
+read_amber = read_amber_prmtop
+from .trajectory.base import (
+    BaseTrajectoryReader,
+    FrameLocation,
+    TrajectoryWriter,
+)
 
 # 3. Trajectory Readers and Writers
 from .trajectory.h5 import HDF5TrajectoryReader, HDF5TrajectoryWriter
-from .trajectory.lammps import LammpsTrajectoryReader, LammpsTrajectoryWriter
+from .trajectory.lammps import (
+    LammpsTrajectoryReader,
+    LammpsTrajectoryWriter,
+)
 from .trajectory.xyz import XYZTrajectoryReader, XYZTrajectoryWriter
 from .writers import (
     write_gro,
@@ -103,9 +115,11 @@ from .writers import (
     write_lammps_data,
     write_lammps_forcefield,
     write_lammps_molecule,
+    write_lammps_bond_react_system,
     write_lammps_system,
     write_lammps_trajectory,
     write_pdb,
+    write_top,
     write_xsf,
     write_xyz_trajectory,
 )
@@ -117,6 +131,7 @@ __all__ = [
     # Core types
     "PathLike",
     # Factory functions - Readers
+    "read_amber",
     "read_amber_ac",
     "read_amber_inpcrd",
     "read_amber_prmtop",
@@ -141,9 +156,11 @@ __all__ = [
     "write_lammps_data",
     "write_lammps_forcefield",
     "write_lammps_molecule",
+    "write_lammps_bond_react_system",
     "write_lammps_system",
     "write_lammps_trajectory",
     "write_pdb",
+    "write_top",
     "write_xsf",
     "write_xyz_trajectory",
     # Utility functions

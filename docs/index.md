@@ -7,247 +7,142 @@ hide:
 
 # MolPy
 
-<div class="badges" markdown>
-  [![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-  [![License](https://img.shields.io/badge/license-BSD-green.svg)](https://github.com/MolCrafts/molpy/blob/master/LICENSE)
-  [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue.svg)](https://molcrafts.github.io/molpy)
-</div>
+<p class="lead" markdown>A composable, strongly typed toolkit for computational molecular modeling — from single-molecule parameterization to polydisperse polymer system construction.</p>
 
-<p class="lead" markdown>a LLM-ready toolkit for building molecular systems.</p>
+<div class="badges" markdown>
+  [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+  [![License: BSD](https://img.shields.io/badge/license-BSD-green.svg)](https://github.com/MolCrafts/molpy/blob/master/LICENSE)
+  [![Docs](https://img.shields.io/badge/docs-mkdocs-blue.svg)](https://molcrafts.github.io/molpy)
+  [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+  [![Type checked: ty](https://img.shields.io/badge/type%20checked-ty-blue.svg)](https://github.com/astral-sh/ty)
+</div>
 
 <div class="button-group" markdown>
-  [Quick Start](getting-started/quickstart.ipynb){ .md-button .md-button--primary }
-  [GitHub](https://github.com/MolCrafts/molpy){ .md-button }
+  [Get Started](getting-started/index.md){ .md-button .md-button--primary }
+  [Guides](user-guide/index.md){ .md-button }
+  [API Reference](api/index.md){ .md-button }
 </div>
 
 ---
 
-## Features
+## Representative Workflows
 
-<div class="grid cards" markdown>
+=== "Small Molecule"
 
-- :robot:{ .lg .middle } __LLM-Friendly__
+    Parameterize a small organic molecule from a SMILES string using the bundled OPLS-AA force field and export complete LAMMPS input files.
 
-    ---
+    ```python
+    import molpy as mp
 
-    Stateless functions, explicit types, zero global state. Every parameter is documented and visible, making it trivial for AI agents to read, understand, and generate correct code.
+    mol   = mp.parser.parse_molecule("CCO")          # ethanol from SMILES
+    ff    = mp.io.read_xml_forcefield("oplsaa.xml")  # bundled OPLS-AA
+    typed = mp.typifier.OplsAtomisticTypifier(ff).typify(mol)
 
-- :building_construction:{ .lg .middle } __Extensible__
+    mp.io.write_lammps_system("output/", typed.to_frame(), ff)
+    # → output/system.data  output/system.in
+    ```
 
-    ---
+=== "Polymer Chain"
 
-    Build custom workflows by composing functions and data structures. No inheritance hierarchies to navigate, just pure functions you can mix and match.
+    Specify a poly(ethylene oxide) chain via G-BigSMILES notation. MolPy generates three-dimensional coordinates and exports a simulation-ready topology.
 
-- :link:{ .lg .middle } __Interoperable__
+    ```python
+    import molpy as mp
 
-    ---
+    # PEO chain, degree of polymerization = 10
+    peo = mp.tool.polymer("{[<]CCOCC[>]}|10|")
 
-    Native adapters for industry-standard tools: AmberTools, LAMMPS, OpenMM, Packmol, RDKit. One-function export to simulation engines or analysis pipelines.
+    ff    = mp.io.read_xml_forcefield("oplsaa.xml")
+    typed = mp.typifier.OplsAtomisticTypifier(ff).typify(peo)
+    mp.io.write_lammps_system("output/", typed.to_frame(), ff)
+    ```
 
-- :gear:{ .lg .middle } __Modular Architecture__
+=== "Polydisperse System"
 
-    ---
+    Sample a Schulz–Zimm molecular-weight distribution, construct each chain atomistically, and pack the ensemble into a periodic simulation box.
 
-    Organized into domain-specific modules (builder, parser, typifier, adapter) around a unified `Frame`/`Block` data model. Use only what you need.
+    ```python
+    import molpy as mp
 
-- :bar_chart:{ .lg .middle } __Flexible Structures__
+    # Mn = 1500 Da, Mw = 3000 Da, target total mass ≈ 500 kDa
+    chains = mp.tool.polymer_system(
+        "{[<]CCOCC[>]}|schulz_zimm(1500,3000)||5e5|",
+        random_seed=42,
+    )
+    print(f"Built {len(chains)} chains")
 
-    ---
+    frames = [c.to_frame() for c in chains]
+    packed = mp.pack.pack(frames, box=[80, 80, 80])
+    mp.io.write_lammps_system("peo_bulk/", packed, ff)
+    ```
 
-    Lightweight `Frame` for single configurations, hierarchical `Block` for composed systems, memory-mapped `Trajectory` for multi-million atom simulations.
+=== "AmberTools Pipeline"
 
-- :wrench:{ .lg .middle } __Force-Field System__
+    Prepare a monomer with partial charges via antechamber, assemble a chain with GAFF2 parameters via tleap, and retrieve AMBER topology files programmatically.
 
-    ---
+    ```python
+    import molpy as mp
 
-    Rule-based atom typing with SMARTS/SMIRKS patterns. Store, validate, and export force field parameters to any simulation engine with full provenance tracking.
+    # BigSMILES → three-dimensional structure with port annotation
+    eo = mp.tool.PrepareMonomer().run("{[<]CCOCC[>]}")
 
-
-</div>
-
----
-
-## Why MolPy?
-
-MolPy is designed for researchers and engineers who need **reliable**, **transparent**, and **composable** molecular modeling workflows. Whether you're building simulation systems, designing force fields, or integrating ML/AI pipelines, MolPy provides the building blocks you need.
-
-<div class="grid cards" markdown>
-
-- :mag:{ .lg .middle } __Typical Use Cases__
-
-    ---
-
-    - **System preparation** – build polymer melts, solvated proteins, or crystal interfaces
-    - **Force field development** – define custom atom types with SMARTS/SMIRKS patterns
-    - **Simulation workflows** – export to LAMMPS, OpenMM, or GROMACS with one function call
-    - **LLM-driven research** – let AI agents write and run molecular modeling scripts
-
-- :bulb:{ .lg .middle } __Design Highlights__
-
-    ---
-
-    - **No global state** – all functions are pure and testable
-    - **Explicit over implicit** – every parameter is visible and documented
-    - **Composition over inheritance** – mix and match components freely
-    - **Memory efficiency** – lazy loading and memory-mapped trajectories for large systems
-
-- :rocket:{ .lg .middle } __When to Choose MolPy__
-
-    ---
-
-    - You need **type-safe APIs** for LLM integration or code generation
-    - You want **full control** without framework lock-in
-    - You're building **custom workflows** that don't fit traditional GUI tools
-    - You need **interoperability** between multiple simulation engines
-
-</div>
+    # Assemble DP = 20 chain via AmberTools
+    result = mp.tool.polymer(
+        "{[#EO]|20}",
+        library={"EO": eo},
+        backend="amber",
+    )
+    # result.prmtop_path  result.inpcrd_path  result.pdb_path
+    ```
 
 ---
 
-## Quick Links
+## Design Principles
 
-<div class="grid" markdown>
+<div class="feature-list" markdown>
 
-!!! info "Documentation"
-    New to MolPy? Start with our [Quick Start](getting-started/quickstart.ipynb). Explore comprehensive guides in our [User Guide](user-guide/index.md) and [Tutorials](tutorials/index.md) with runnable notebooks and end-to-end examples.
+- :material-graph: **[Explicit representational hierarchy](tutorials/01_atomistic_and_topology.md)** — Molecular graphs (`Atomistic`), numerical snapshots (`Frame`), and force field parameters (`ForceField`) occupy distinct layers with explicit conversion boundaries.
 
-!!! example "API Reference"
-    Detailed API documentation is available in the [API Reference](api/index.md) section.
+- :material-text-search: **[Native support for polymer chemistry notations](user-guide/01_parsing_chemistry.ipynb)** — SMILES, BigSMILES, CGSmiles, and G-BigSMILES are parsed directly. A monomer, an architecture, or a polydisperse ensemble can each be expressed as a single string.
 
-!!! question "Need Help?"
-    Check out our [FAQ](getting-started/faq.md) or open an issue on [GitHub](https://github.com/MolCrafts/molpy/issues).
+- :material-chart-bell-curve: **[Statistical molecular-weight distributions](user-guide/05_polydisperse_systems.ipynb)** — Schulz–Zimm, Poisson, Flory–Schulz, and uniform distributions are implemented natively. Target number- and weight-average molecular weights are specified directly; reproducible chain populations are generated from a fixed random seed.
+
+- :material-database-search: **[Force fields as queryable data structures](tutorials/04_force_field.md)** — A `ForceField` object is an inspectable typed dictionary. Parameter completeness and type consistency are verifiable at the Python level before any file export occurs.
+
+- :material-vector-link: **[Programmatic reaction framework](user-guide/04_crosslinking.ipynb)** — Chemical reactions are expressed through composable anchor selectors and leaving-group selectors. Pre- and post-reaction topology templates for LAMMPS `fix bond/react` are generated automatically.
+
+- :material-puzzle: **[Modular, independently composable packages](api/index.md)** — The parser, builder, typifier, packer, and I/O subsystems share no hidden coupling. Each may be used independently or assembled into composite pipelines through explicit function calls.
 
 </div>
 
 ---
 
-## Comprehensive Documentation
+## External Integrations
 
-MolPy provides a growing collection of runnable Jupyter notebooks alongside generated API documentation.
+<div class="feature-list" markdown>
 
-<div class="grid cards" markdown>
+- :material-atom: **[AmberTools](user-guide/07_ambertools_integration.ipynb)** — Antechamber (partial charge assignment), parmchk2 (missing parameter estimation), and tleap (topology assembly) are invoked programmatically with structured Python interfaces.
 
-- :books:{ .lg .middle } __Runnable Notebooks__
+- :material-flask: **[RDKit](api/adapter.md)** — `RDKitAdapter` provides bidirectional conversion between `Atomistic` and RDKit `Mol` objects, enabling three-dimensional embedding, conformer generation, and SMILES export.
 
-    ---
+- :material-cube-outline: **[Packmol](api/pack.md)** — Molecule packing into periodic simulation boxes is managed through a typed constraint interface wrapping the Packmol executable.
 
-    Practical examples across the core modules: Parser, Reacter, Builder, Typifier, IO, Adapter, Potential, and more.
-
-- :wrapped_gift:{ .lg .middle } __Extensive API Coverage__
-
-    ---
-
-    Public APIs are documented with parameters, return values, and usage examples.
-
-- :school:{ .lg .middle } __Architecture Guides__
-
-    ---
-
-    Developer documentation covering recipe system, design patterns, IR principles, and contribution guidelines.
-
-</div>
-
-[Explore the User Guide →](user-guide/index.md){ .md-button .md-button--primary }
-
----
-
-## Roadmap
-
-<div class="roadmap-grid" markdown>
-
-<div markdown>
-
-### Core Foundations
-- [x] Stabilize core data structures (`Frame`, `Block`, `Box`, `Trajectory`)
-- [x] Unify topology representation (bonds/angles/dihedrals)
-- [x] Improve I/O layer (XYZ, PDB, LAMMPS DATA)
-- [x] Strengthen typing, doctests, and basic documentation
-
-</div>
-
-<div markdown>
-
-### Modeling & Construction
-- [x] General lattice + crystal builder (SC/BCC/FCC/HCP + regions)
-- [x] Basic molecular builders (monomers, ports, polymer assembly)
-- [x] System assembly utilities (packing, placement, initialization)
-- [x] Core editing tools (add/remove atoms, merge fragments, simple reactions)
-
-</div>
-
-<div markdown>
-
-### Force Fields & Typing
-- [x] Force field container (atom types + bonded parameters)
-- [x] Typifier system (rule-based SMARTS-style typing)
-- [x] Parameter assignment and export for external engines
-- [x] Validation / consistency tools for typed systems
-
-</div>
-
-<div markdown>
-
-### Compute & Analysis
-- [x] Unified `Compute` + `Result` abstraction
-- [x] Common analysis functions (RDF, MSD, basic time series)
-- [ ] Optional shared context (neighbor lists, box info)
-- [ ] Export analysis results to arrays / DataFrames
-
-</div>
-
-<div markdown>
-
-### Performance & User Experience
-- [ ] Rust backend for performance-critical operations
-- [ ] Visualization integration with molvis
-
-</div>
+- :material-lightning-bolt: **[LAMMPS · CP2K](api/engine.md)** — Complete input decks are generated from MolPy data objects. The engine abstraction layer decouples system description from simulation-code-specific syntax.
 
 </div>
 
 ---
 
-## Ecosystem
+## Documentation Structure
 
-- **[MolVis](https://github.com/MolCrafts/molvis)** — Production-level visualization with WebGL acceleration and real-time manipulation
-- **[MolRS](https://github.com/MolCrafts/molrs)** — Rust backend for performance-critical operations
+<div class="feature-list" markdown>
 
-MolPy is the **core Python library** in the MolCrafts ecosystem. MolVis provides high-performance 3D visualization, while MolRS offers compiled speed for compute-intensive tasks. All three projects share a unified data model and can be used independently or together.
+- :material-rocket-launch: **[Getting Started](getting-started/index.md)** — Installation, environment verification, and a five-minute end-to-end example establishing the `Atomistic → Frame → export` pipeline.
 
----
+- :material-book-open-variant: **[Concepts](tutorials/index.md)** — Systematic exposition of the core data model: `Atomistic`, `Block`, `Frame`, `Box`, `Trajectory`, `ForceField`, and their inter-relationships.
 
-## Community & Contributing
+- :material-hammer-wrench: **[Guides](user-guide/index.md)** — Task-oriented executable notebooks covering chemistry parsing, polymer construction, force field typification, and simulation file generation.
 
-We welcome contributions from researchers, developers, and users. There are three main ways to get involved:
-
-<div class="grid" markdown>
-
-!!! abstract "Contribute Code"
-    Found a bug or have an idea for improvement? Read the [Contributing Guide](developer/contributing.md) and submit a pull request on
-    [GitHub](https://github.com/MolCrafts/molpy).
-
-!!! note "Share & Discuss"
-    Built something with MolPy or want to discuss workflows, design choices, or publications?
-    Join the conversation in [Discussions](https://github.com/MolCrafts/molpy/discussions).
-
-!!! question "Get Help & Request Features"
-    Need help or missing a feature? Start with the [FAQ](getting-started/faq.md), then open an issue or proposal on
-    [GitHub Issues](https://github.com/MolCrafts/molpy/issues) or [Discussions](https://github.com/MolCrafts/molpy/discussions).
+- :material-code-braces: **[Developer Guide](developer/index.md)** — Conventions, extension patterns, and internal architecture for contributors and library developers.
 
 </div>
-
-
----
-
-## Dependencies
-
-- [numpy](https://github.com/numpy/numpy) — Numerical computing
-- [python-igraph](https://github.com/igraph/python-igraph) — Graph analysis
-- [lark](https://github.com/lark-parser/lark) — SMARTS/SMILES parsing
-- [h5py](https://www.h5py.org/) - Serialization
-
----
-
-## License
-
-This project is licensed under the BSD-3-Clause License. See [LICENSE](https://github.com/MolCrafts/molpy/blob/master/LICENSE) for details.

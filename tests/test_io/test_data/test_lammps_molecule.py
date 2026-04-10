@@ -50,12 +50,12 @@ class TestLammpsMoleculeReader:
         assert "id" in atoms
         assert "type" in atoms
         assert "x" in atoms and "y" in atoms and "z" in atoms
-        assert "q" in atoms
+        assert "charge" in atoms
 
         # Check specific values
         np.testing.assert_array_equal(atoms["id"], [1, 2, 3])
         np.testing.assert_array_equal(atoms["type"], ["1", "2", "2"])
-        np.testing.assert_array_almost_equal(atoms["q"], [-0.834, 0.417, 0.417])
+        np.testing.assert_array_almost_equal(atoms["charge"], [-0.834, 0.417, 0.417])
 
         # Check coordinates
         expected_coords = np.array(
@@ -109,12 +109,12 @@ class TestLammpsMoleculeReader:
         assert "id" in atoms
         assert "type" in atoms
         assert "x" in atoms and "y" in atoms and "z" in atoms
-        assert "q" in atoms
+        assert "charge" in atoms
 
         # Check specific values
         np.testing.assert_array_equal(atoms["id"], [1, 2, 3])
         np.testing.assert_array_equal(atoms["type"], ["OW", "HO1", "HO1"])
-        np.testing.assert_array_almost_equal(atoms["q"], [-0.834, 0.417, 0.417])
+        np.testing.assert_array_almost_equal(atoms["charge"], [-0.834, 0.417, 0.417])
 
         # Check coordinates
         expected_coords = np.array(
@@ -168,9 +168,9 @@ class TestLammpsMoleculeReader:
         assert "id" in atoms
         assert "type" in atoms
         assert "x" in atoms and "y" in atoms and "z" in atoms
-        assert "q" in atoms
+        assert "charge" in atoms
         assert "mass" in atoms
-        assert "mol" in atoms
+        assert "mol_id" in atoms
 
         # Check masses
         expected_masses = np.array(
@@ -179,7 +179,7 @@ class TestLammpsMoleculeReader:
         np.testing.assert_array_almost_equal(atoms["mass"], expected_masses)
 
         # Check molecule IDs (all should be 1)
-        np.testing.assert_array_equal(atoms["mol"], np.ones(8, dtype=int))
+        np.testing.assert_array_equal(atoms["mol_id"], np.ones(8, dtype=int))
 
         # Check connectivity
         assert "bonds" in frame
@@ -271,7 +271,9 @@ class TestLammpsMoleculeWriter:
 
         # Check atom types and charges
         np.testing.assert_array_equal(frame2["atoms"]["type"], frame["atoms"]["type"])
-        np.testing.assert_array_almost_equal(frame2["atoms"]["q"], frame["atoms"]["q"])
+        np.testing.assert_array_almost_equal(
+            frame2["atoms"]["charge"], frame["atoms"]["charge"]
+        )
 
     def test_write_json_format(self, test_files, tmp_path):
         """Test writing in JSON format."""
@@ -295,7 +297,9 @@ class TestLammpsMoleculeWriter:
 
         # Check atom types and charges
         np.testing.assert_array_equal(frame2["atoms"]["type"], frame["atoms"]["type"])
-        np.testing.assert_array_almost_equal(frame2["atoms"]["q"], frame["atoms"]["q"])
+        np.testing.assert_array_almost_equal(
+            frame2["atoms"]["charge"], frame["atoms"]["charge"]
+        )
 
     def test_roundtrip_native_to_json(self, test_files, tmp_path):
         """Test roundtrip conversion from native to JSON format."""

@@ -1,10 +1,10 @@
-site_name: molpy
+site_name: MolPy
 site_url: https://molcrafts.github.io/molpy
 repo_url: https://github.com/MolCrafts/molpy
 repo_name: MolCrafts/molpy
-site_description: A fast, clean, and composable toolkit for molecular modeling.
+site_description: Composable molecular modeling in Python.
 
-copyright: Copyright © 2024 - 2025 MolCrafts Team
+copyright: Copyright &copy; 2024 - 2026 MolCrafts Team
 
 theme:
   name: material
@@ -24,12 +24,11 @@ theme:
         name: Switch to light mode
   features:
     - navigation.tabs
+    - navigation.indexes
     - navigation.instant
     - navigation.instant.progress
     - navigation.tracking
     - navigation.top
-    - navigation.sections
-    - navigation.expand
     - navigation.footer
     - toc.follow
     - content.code.copy
@@ -56,8 +55,12 @@ markdown_extensions:
       permalink: true
   - pymdownx.superfences
   - pymdownx.details
-  - pymdownx.emoji
-  - pymdownx.highlight
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
   - pymdownx.inlinehilite
   - pymdownx.tabbed:
       alternate_style: true
@@ -66,82 +69,101 @@ markdown_extensions:
   - pymdownx.snippets
   - pymdownx.arithmatex:
       generic: true
-  - codehilite
 
 plugins:
   - search
+  - mkdocs-jupyter:
+      execute: true
+      # include_source: true
   - mkdocstrings:
       handlers:
         python:
           paths: [src]
           options:
             docstring_style: google
-            show_source: true
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
             separate_signature: true
-            heading_level: 2
+            heading_level: 3
             merge_init_into_class: true
             filters: ["!^_"]
-  - mkdocs-jupyter:
-      execute: true
 
 nav:
   - Home: index.md
+
   - Getting Started:
-      - Overview: getting-started/index.md
-      - Installation: getting-started/installation.ipynb
-      - Quickstart: getting-started/quickstart.ipynb
-      - LLM-friendly usage: getting-started/llm_friendly.md
-      - Core Concepts: getting-started/core-concepts.ipynb
+      - getting-started/index.md
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+      - Core Concepts: getting-started/core-concepts.md
+      - Glossary: getting-started/glossary.md
       - FAQ: getting-started/faq.md
-  - Tutorials:
-      - Overview: tutorials/index.md
-      - Core Concepts:
-          - Atomistic: tutorials/atomistic.ipynb
-          - Block: tutorials/block.ipynb
-          - Frame: tutorials/frame.ipynb
-          - Simulation Box: tutorials/box.ipynb
-          - Topology: tutorials/topology.ipynb
-          - Selectors: tutorials/selector.ipynb
-          - External Tools: tutorials/wrapper-adapter.ipynb
-          - Force Field: tutorials/force-field.ipynb
-          - Trajectory: tutorials/trajectory.ipynb
-  - User Guide:
-      - Overview: user-guide/index.md
-      - 01 Parsing Chemistry: user-guide/01_parsing_chemistry.ipynb
-      - 02 Polymer Stepwise: user-guide/02_polymer_stepwise.ipynb
-      - 03 Polymer SMILES: user-guide/03_polymer_smiles.ipynb
-      - 04 Polymer Crosslinking: user-guide/04_polymer_crosslinking.ipynb
-      - 05 Polymer Polydisperse: user-guide/05_polymer_polydisperse.ipynb
+
+  - Concepts:
+      - tutorials/index.md
+      - Atomistic and Topology: tutorials/01_atomistic_and_topology.md
+      - Block and Frame: tutorials/02_block_and_frame.md
+      - Box and Periodicity: tutorials/03_box_and_periodicity.md
+      - Force Field: tutorials/04_force_field.md
+      - Trajectory: tutorials/05_trajectory.md
+      - Selector: tutorials/06_selector.md
+      - Wrapper and Adapter: tutorials/07_wrapper_and_adapter.md
+
+  - Guides:
+      - user-guide/index.md
+      - Tool Layer: user-guide/tools.md
+      - I/O: user-guide/io.md
+      - Parsing Chemistry: user-guide/01_parsing_chemistry.ipynb
+      - Building Polymers:
+          - Step by Step: user-guide/02_polymer_stepwise.ipynb
+          - Topology-Driven Assembly: user-guide/03_polymer_topology.ipynb
+          - Crosslinked Networks: user-guide/04_crosslinking.ipynb
+          - Polydisperse Systems: user-guide/05_polydisperse_systems.ipynb
+      - Force Field Typification: user-guide/06_typifier.ipynb
+      - AmberTools Integration: user-guide/07_ambertools_integration.ipynb
+
   - API Reference:
-      - Overview: api/index.md
+      - api/index.md
+      # Core data structures
       - Core: api/core.md
-      - IO: api/io.md
-      - Compute: api/compute.md
-      - Data: api/data.md
-      - Engine: api/engine.md
-      - Optimize: api/optimize.md
-      - Wrapper: api/wrapper.md
+      # Construction pipeline
       - Parser: api/parser.md
       - Reacter: api/reacter.md
       - Builder: api/builder.md
-      - Pack: api/pack.md
-      - Potential: api/potential.md
-      - Adapter: api/adapter.md
+      - Packing: api/pack.md
+      # Parameterization
       - Typifier: api/typifier.md
-      - Op: api/op.md
-  - Developer:
-      - Overview: developer/index.md
-      - Contributing: developer/contributing.md
-      - Development Setup: developer/development-setup.md
-      - Coding Style: developer/coding-style.md
-      - Testing: developer/testing.md
-      - Release Process: developer/release-process.md
-      - Architecture:
-          - Wrapper & Adapter: developer/wrapper_adapter_layers.ipynb
-          - Compute & Result: developer/compute.ipynb
-  - Changelog:
-      - Overview: changelog/index.md
-      - Releases: changelog/releases.md
+      - Potentials: api/potential.md
+      # I/O and integration
+      - I/O: api/io.md
+      - Adapter: api/adapter.md
+      - Wrapper: api/wrapper.md
+      # High-level operations
+      - Tool: api/tool.md
+      - Engine: api/engine.md
+      - Optimization: api/optimize.md
+
+  - Developer Guide:
+      - developer/index.md
+      - Conventions:
+          - Development Setup: developer/development-setup.md
+          - Contributing: developer/contributing.md
+          - Coding Style: developer/coding-style.md
+          - Naming Conventions: getting-started/naming-conventions.md
+          - Testing: developer/testing.md
+          - Release Process: developer/release-process.md
+      - Extending Tools:
+          - Tool and Compute: developer/extending-tools.md
+          - I/O Formats: developer/extending-io.md
+          - Wrappers and Adapters: developer/extending-integration.md
+      - Extending Core:
+          - Data Model: developer/extending-core.md
+          - Force Field: developer/extending-forcefield.md
+      - Integrations:
+          - MCP for LLM Agents: user-guide/mcp.md
+
+  - Release Notes: https://github.com/MolCrafts/molpy/releases
 
 extra_javascript:
   - assets/javascripts/mathjax.js
@@ -155,7 +177,3 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/MolCrafts/molpy
   generator: false
-
-watch:
-  - src
-  - docs/assets/overrides

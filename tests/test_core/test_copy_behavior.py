@@ -121,9 +121,9 @@ class TestAtomisticCopy:
                     orphan_bonds.append(bond)
                     break
 
-        assert (
-            len(orphan_bonds) == 0
-        ), f"Found {len(orphan_bonds)} orphan bonds after copy"
+        assert len(orphan_bonds) == 0, (
+            f"Found {len(orphan_bonds)} orphan bonds after copy"
+        )
 
     def test_copy_independence(self):
         """Test that modifications to copy don't affect original."""
@@ -221,9 +221,9 @@ class TestAtomisticCopyWithPorts:
                     orphan_bonds.append(bond)
                     break
 
-        assert (
-            len(orphan_bonds) == 0
-        ), f"Found {len(orphan_bonds)} orphan bonds in structure copy"
+        assert len(orphan_bonds) == 0, (
+            f"Found {len(orphan_bonds)} orphan bonds in structure copy"
+        )
 
     def test_copy_ports_remapped(self):
         """Test that port markers are correctly preserved on copied atoms."""

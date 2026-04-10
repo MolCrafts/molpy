@@ -17,9 +17,21 @@ except ModuleNotFoundError:  # rdkit missing
     MP_ID = None  # type: ignore[assignment]
     RDKitAdapter = None  # type: ignore[assignment]
 
+# Optional OpenBabel adapter
+try:  # pragma: no cover
+    from .openbabel import OpenBabelAdapter
+
+    _HAS_OPENBABEL = True
+except ImportError:  # openbabel missing
+    _HAS_OPENBABEL = False
+    OpenBabelAdapter = None  # type: ignore[assignment]
+
 __all__ = [
     "Adapter",
 ]
 
 if _HAS_RDKIT:
     __all__ += ["RDKitAdapter", "MP_ID"]
+
+if _HAS_OPENBABEL:
+    __all__ += ["OpenBabelAdapter"]

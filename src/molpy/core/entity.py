@@ -307,6 +307,17 @@ class Struct:
 
     # ---------- built-ins ----------
     def copy(self) -> Self:
+        """Create a deep copy of this struct.
+
+        All entities and links are deep-copied. Entity references
+        within links are remapped to the new copies.
+
+        Returns:
+            New Struct with independent copies of all entities and links.
+
+        Related:
+            - merge
+        """
         new = type(self)()
         # deep-copy entities
         emap: dict[Entity, Entity] = {}
@@ -391,6 +402,15 @@ class SpatialMixin:
     links: TypeBucket[Any]
 
     def move(self, delta: list[float], *, entity_type: type[Entity]) -> Self:
+        """Translate all entities of the given type by a displacement vector.
+
+        Args:
+            delta: Translation vector [dx, dy, dz] in Angstrom.
+            entity_type: Entity subclass to translate.
+
+        Returns:
+            Self for method chaining.
+        """
         for e in self.entities.bucket(entity_type):
             e["x"] = e["x"] + delta[0]
             e["y"] = e["y"] + delta[1]
@@ -405,6 +425,19 @@ class SpatialMixin:
         *,
         entity_type: type[Entity],
     ) -> Self:
+        """Rotate all entities of the given type around an axis.
+
+        Uses Rodrigues' rotation formula.
+
+        Args:
+            axis: Rotation axis [ax, ay, az] (will be normalized).
+            angle: Rotation angle in radians.
+            about: Center of rotation [x, y, z] in Angstrom. Defaults to origin.
+            entity_type: Entity subclass to rotate.
+
+        Returns:
+            Self for method chaining.
+        """
         k = _unit(axis)
         o = [0.0, 0.0, 0.0] if about is None else about
         for e in self.entities.bucket(entity_type):
@@ -422,6 +455,16 @@ class SpatialMixin:
         *,
         entity_type: type[Entity],
     ) -> Self:
+        """Scale positions of all entities of the given type.
+
+        Args:
+            factor: Scale factor (1.0 = no change).
+            about: Center of scaling [x, y, z] in Angstrom. Defaults to origin.
+            entity_type: Entity subclass to scale.
+
+        Returns:
+            Self for method chaining.
+        """
         o = [0.0, 0.0, 0.0] if about is None else about
         for e in self.entities.bucket(entity_type):
             xyz = [e["x"], e["y"], e["z"]]
@@ -442,6 +485,21 @@ class SpatialMixin:
         flip: bool = False,
         entity_type: type[Entity],
     ) -> Self:
+        """Align the struct so that entity a moves to entity b's position.
+
+        Optionally rotates so that direction a_dir aligns with b_dir.
+
+        Args:
+            a: Source entity (must have x, y, z keys).
+            b: Target entity (must have x, y, z keys).
+            a_dir: Direction vector at source.
+            b_dir: Direction vector at target.
+            flip: Negate b_dir before aligning.
+            entity_type: Entity subclass to transform.
+
+        Returns:
+            Self for method chaining.
+        """
         pa = [a["x"], a["y"], a["z"]]
         pb = [b["x"], b["y"], b["z"]]
         if not (
@@ -488,14 +546,31 @@ class MembershipMixin:
     links: TypeBucket[Any]
 
     def register_type(self, cls: type[Any]) -> None:
+        """Register an entity type so its bucket exists (even if empty).
+
+        Args:
+            cls: Entity subclass to register.
+        """
         self.entities._items.setdefault(cls, Entities())
 
     # Entities -------------------------------------------------------------
     def add_entity(self, *ents: Entity) -> None:
+        """Add one or more entities to this struct.
+
+        Args:
+            ents: Entity instances to add.
+        """
         for e in ents:
             self.entities.add(e)
 
     def remove_entity(self, *ents: Entity, drop_incident_links: bool = True) -> None:
+        """Remove entities from this struct.
+
+        Args:
+            ents: Entity instances to remove.
+            drop_incident_links: If True, also remove links that reference
+                the removed entities.
+        """
         to_remove = set(ents)
         # optionally drop incident links
         if drop_incident_links:
@@ -514,6 +589,13 @@ class MembershipMixin:
 
     # Links ----------------------------------------------------------------
     def add_link(self, *links: Link, include_endpoints: bool = True) -> None:
+        """Add one or more links to this struct.
+
+        Args:
+            links: Link instances to add.
+            include_endpoints: If True, also add the link's endpoint
+                entities if not already present.
+        """
         for l in links:
             self.links.add(l)
             if include_endpoints:
@@ -521,11 +603,22 @@ class MembershipMixin:
                     self.entities.add(ep)
 
     def remove_link(self, *links: Link) -> None:
+        """Remove one or more links from this struct.
+
+        Args:
+            links: Link instances to remove.
+        """
         for l in links:
             self.links.remove(l)
 
     # Normalize ------------------------------------------------------------
     def normalize(self, include_missing_endpoints: bool = False) -> None:
+        """Clean up orphan links whose endpoints are not in this struct.
+
+        Args:
+            include_missing_endpoints: If True, add missing endpoints
+                instead of removing the orphan links.
+        """
         present: set[Entity] = set()
         for ecls in self.entities.classes():
             present.update(self.entities.bucket(ecls))
@@ -546,12 +639,23 @@ class MembershipMixin:
 
 
 class ConnectivityMixin:
+    """Graph traversal operations for structs with entities and links."""
+
     entities: TypeBucket[Any]
     links: TypeBucket[Any]
 
     def get_neighbors(
         self, entity: Entity, link_type: type[Link] = Link
     ) -> list[Entity]:  # type: ignore[assignment]
+        """Find all entities connected to the given entity via links.
+
+        Args:
+            entity: Entity to find neighbors of.
+            link_type: Only consider links of this type.
+
+        Returns:
+            List of neighboring entities.
+        """
         neighbors: list[Entity] = []
         try:
             bucket = self.links.bucket(link_type)  # type: ignore[arg-type]

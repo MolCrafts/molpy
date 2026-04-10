@@ -208,10 +208,23 @@ class Wrapper(ABC):
         args: list[str] | None = None,
         *,
         input_text: str | None = None,
-        cwd: Path | None = None,
         capture_output: bool = True,
         check: bool = False,
     ) -> subprocess.CompletedProcess[str]:
+        """Execute the wrapper's command in the configured workdir.
+
+        Args:
+            args: Command-line arguments (without the executable name).
+            input_text: Text to send to stdin.
+            capture_output: Whether to capture stdout/stderr.
+            check: Whether to raise if returncode != 0.
+
+        Returns:
+            The completed process result.
+
+        Raises:
+            ValueError: If no workdir is set and required by the tool.
+        """
         prefix = self._conda_run_prefix()
 
         final_args = [self.exe]
@@ -221,7 +234,7 @@ class Wrapper(ABC):
         if prefix is not None:
             final_args = [*prefix, *final_args]
 
-        real_cwd = cwd or self.workdir
+        real_cwd = self.workdir
         if real_cwd is not None:
             real_cwd.mkdir(parents=True, exist_ok=True)
 

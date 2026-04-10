@@ -21,33 +21,45 @@ from .base import Wrapper
 class TLeapWrapper(Wrapper):
     exe: str = "tleap"
 
-    def run_script(
+    def run_from_script(
         self,
         script_text: str,
         *,
         script_name: str = "tleap.in",
-        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        real_cwd = cwd or self.workdir
-        if real_cwd is None:
-            raise ValueError(
-                "TLeapWrapper requires a working directory. Set workdir or provide cwd."
-            )
+        """Execute tleap from a script text.
 
-        real_cwd.mkdir(parents=True, exist_ok=True)
-        script_path = real_cwd / script_name
+        Args:
+            script_text: The tleap script content.
+            script_name: Name of the script file to create (in workdir).
 
-        write_tleap_script(script_path, script_text)
+        Returns:
+            The completed process result.
 
-        return self.run(args=["-f", script_name], cwd=real_cwd)
+        Raises:
+            ValueError: If no workdir is set.
+        """
+        if self.workdir is None:
+            raise ValueError("TLeapWrapper requires a working directory. Set workdir.")
 
+        self.workdir.mkdir(parents=True, exist_ok=True)
+        script_path = self.workdir / script_name
 
-def write_tleap_script(path: Path, script_text: str) -> None:
-    ensure_parent_dir(path)
-    path.write_text(script_text)
+        script_path.write_text(script_text)
+
+        return self.run(args=["-f", script_name])
 
 
 def read_tleap_outputs(
     prmtop_path: Path, inpcrd_path: Path
 ) -> tuple[Frame, ForceField]:
+    """Read tleap output files (prmtop and inpcrd) into Frame and ForceField.
+
+    Args:
+        prmtop_path: Path to the AMBER topology file (.prmtop).
+        inpcrd_path: Path to the AMBER coordinate file (.inpcrd).
+
+    Returns:
+        Tuple of (Frame, ForceField) objects.
+    """
     return read_amber_prmtop(prmtop_path, inpcrd_path)

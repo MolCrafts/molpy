@@ -99,10 +99,22 @@ MolPy focuses on construction and manipulation instead:
 
 ---
 
+### When NOT to use MolPy
+
+MolPy is a system construction and parameterization toolkit. It is not the right tool for every molecular modeling task:
+
+* **Heavy trajectory analysis** — use MDAnalysis or MDTraj. MolPy provides minimal analysis (MSD, basic correlations), but it is not designed for large-scale post-processing of multi-gigabyte trajectories.
+* **Quantum chemistry** — use PySCF, ASE with a QM calculator, or Gaussian/ORCA directly. MolPy does not perform electronic structure calculations.
+* **Cheminformatics** — use RDKit. MolPy delegates conformer generation, substructure search, and chemical informatics to RDKit via its adapter layer.
+* **High-throughput screening** — MolPy is designed for constructing individual systems with full control, not for screening thousands of molecules in a pipeline. Tools like OpenFF or CADD platforms are better suited.
+* **Running simulations** — MolPy can generate input files and launch engines, but it is not a simulation runner. Use the engine's own tools or workflow managers (Signac, AiiDA) for job management.
+
+---
+
 ### Why a New Ecosystem?
 
 MolPy is built on the idea that modern molecular modeling needs more than patched-together tools. Existing packages provide excellent functionality in isolated domains, but they rarely share data models, assumptions, or extension patterns. This makes workflows fragile, engine-dependent, and difficult to automate.
 
-MolPy introduces a modern, flexible, and extensible data structure that can adapt to diverse molecular systems—polymers, electrolytes, crystals, mixtures—without rewriting core logic. It minimizes external dependencies, avoids hidden conventions, and uses explicit, strongly typed APIs that are AI-friendly and reproducible.
+MolPy introduces a modern, flexible, and extensible data structure that can adapt to diverse molecular systems — polymers, electrolytes, crystals, mixtures — without rewriting core logic. It minimizes external dependencies, avoids hidden conventions, and uses explicit, strongly typed APIs that are reproducible and easy to automate.
 
 Instead of forcing users to juggle multiple incompatible libraries, MolPy offers a clean foundation that can grow with the complexity of the system and the workflow.

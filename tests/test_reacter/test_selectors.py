@@ -29,7 +29,7 @@ class TestPortAnchorSelector:
     def test_port_anchor_selector_basic(self):
         """Test selecting anchor from port."""
         struct = Atomistic()
-        c = Atom(symbol="C")
+        c = Atom(element="C")
         struct.add_entity(c)
 
         c["port"] = "1"
@@ -41,8 +41,8 @@ class TestPortAnchorSelector:
     def test_port_anchor_selector_different_port(self):
         """Test selecting anchor from different port."""
         struct = Atomistic()
-        c1 = Atom(symbol="C")
-        c2 = Atom(symbol="C")
+        c1 = Atom(element="C")
+        c2 = Atom(element="C")
         struct.add_entity(c1, c2)
 
         c1["port"] = "head"
@@ -55,7 +55,7 @@ class TestPortAnchorSelector:
     def test_port_anchor_selector_missing_port(self):
         """Test selecting anchor from non-existent port raises error."""
         struct = Atomistic()
-        c = Atom(symbol="C")
+        c = Atom(element="C")
         struct.add_entity(c)
 
         # Don't set port
@@ -70,8 +70,8 @@ class TestRemoveOneH:
     def test_remove_one_H_single(self):
         """Test removing one H when one exists."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        h = Atom(symbol="H")
+        c = Atom(element="C")
+        h = Atom(element="H")
         struct.add_entity(c, h)
         struct.add_link(Bond(c, h))
 
@@ -79,15 +79,15 @@ class TestRemoveOneH:
 
         assert len(leaving) == 1
         assert leaving[0] is h
-        assert leaving[0].get("symbol") == "H"
+        assert leaving[0].get("element") == "H"
 
     def test_remove_one_H_multiple(self):
         """Test removing one H when multiple exist."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        h1 = Atom(symbol="H")
-        h2 = Atom(symbol="H")
-        h3 = Atom(symbol="H")
+        c = Atom(element="C")
+        h1 = Atom(element="H")
+        h2 = Atom(element="H")
+        h3 = Atom(element="H")
         struct.add_entity(c, h1, h2, h3)
         struct.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
@@ -95,14 +95,14 @@ class TestRemoveOneH:
 
         # Should return only one H
         assert len(leaving) == 1
-        assert leaving[0].get("symbol") == "H"
+        assert leaving[0].get("element") == "H"
         assert leaving[0] in [h1, h2, h3]
 
     def test_remove_one_H_none(self):
         """Test removing one H when none exist."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        o = Atom(symbol="O")
+        c = Atom(element="C")
+        o = Atom(element="O")
         struct.add_entity(c, o)
         struct.add_link(Bond(c, o))
 
@@ -113,7 +113,7 @@ class TestRemoveOneH:
     def test_remove_one_H_no_neighbors(self):
         """Test removing one H from isolated atom."""
         struct = Atomistic()
-        c = Atom(symbol="C")
+        c = Atom(element="C")
         struct.add_entity(c)
 
         leaving = select_one_hydrogen(struct, c)
@@ -127,8 +127,8 @@ class TestRemoveAllH:
     def test_remove_all_H_single(self):
         """Test removing all H when one exists."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        h = Atom(symbol="H")
+        c = Atom(element="C")
+        h = Atom(element="H")
         struct.add_entity(c, h)
         struct.add_link(Bond(c, h))
 
@@ -140,17 +140,17 @@ class TestRemoveAllH:
     def test_remove_all_H_multiple(self):
         """Test removing all H when multiple exist."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        h1 = Atom(symbol="H")
-        h2 = Atom(symbol="H")
-        h3 = Atom(symbol="H")
+        c = Atom(element="C")
+        h1 = Atom(element="H")
+        h2 = Atom(element="H")
+        h3 = Atom(element="H")
         struct.add_entity(c, h1, h2, h3)
         struct.add_link(Bond(c, h1), Bond(c, h2), Bond(c, h3))
 
         leaving = select_all_hydrogens(struct, c)
 
         assert len(leaving) == 3
-        assert all(h.get("symbol") == "H" for h in leaving)
+        assert all(h.get("element") == "H" for h in leaving)
         assert h1 in leaving
         assert h2 in leaving
         assert h3 in leaving
@@ -158,8 +158,8 @@ class TestRemoveAllH:
     def test_remove_all_H_none(self):
         """Test removing all H when none exist."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        o = Atom(symbol="O")
+        c = Atom(element="C")
+        o = Atom(element="O")
         struct.add_entity(c, o)
         struct.add_link(Bond(c, o))
 
@@ -170,10 +170,10 @@ class TestRemoveAllH:
     def test_remove_all_H_mixed_neighbors(self):
         """Test removing all H when other neighbors exist."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        h1 = Atom(symbol="H")
-        h2 = Atom(symbol="H")
-        o = Atom(symbol="O")
+        c = Atom(element="C")
+        h1 = Atom(element="H")
+        h2 = Atom(element="H")
+        o = Atom(element="O")
         struct.add_entity(c, h1, h2, o)
         struct.add_link(Bond(c, h1), Bond(c, h2), Bond(c, o))
 
@@ -181,7 +181,7 @@ class TestRemoveAllH:
 
         # Should only return H atoms
         assert len(leaving) == 2
-        assert all(h.get("symbol") == "H" for h in leaving)
+        assert all(h.get("element") == "H" for h in leaving)
         assert o not in leaving
 
 
@@ -191,8 +191,8 @@ class TestRemoveDummyAtoms:
     def test_remove_dummy_atoms_single(self):
         """Test removing dummy atoms when one exists."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        dummy = Atom(symbol="*")
+        c = Atom(element="C")
+        dummy = Atom(element="*")
         struct.add_entity(c, dummy)
         struct.add_link(Bond(c, dummy))
 
@@ -200,29 +200,29 @@ class TestRemoveDummyAtoms:
 
         assert len(leaving) == 1
         assert leaving[0] is dummy
-        assert leaving[0].get("symbol") == "*"
+        assert leaving[0].get("element") == "*"
 
     def test_remove_dummy_atoms_multiple(self):
         """Test removing dummy atoms when multiple exist."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        dummy1 = Atom(symbol="*")
-        dummy2 = Atom(symbol="*")
+        c = Atom(element="C")
+        dummy1 = Atom(element="*")
+        dummy2 = Atom(element="*")
         struct.add_entity(c, dummy1, dummy2)
         struct.add_link(Bond(c, dummy1), Bond(c, dummy2))
 
         leaving = select_dummy_atoms(struct, c)
 
         assert len(leaving) == 2
-        assert all(d.get("symbol") == "*" for d in leaving)
+        assert all(d.get("element") == "*" for d in leaving)
         assert dummy1 in leaving
         assert dummy2 in leaving
 
     def test_remove_dummy_atoms_none(self):
         """Test removing dummy atoms when none exist."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        h = Atom(symbol="H")
+        c = Atom(element="C")
+        h = Atom(element="H")
         struct.add_entity(c, h)
         struct.add_link(Bond(c, h))
 
@@ -233,9 +233,9 @@ class TestRemoveDummyAtoms:
     def test_remove_dummy_atoms_mixed_neighbors(self):
         """Test removing dummy atoms when other neighbors exist."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        dummy = Atom(symbol="*")
-        h = Atom(symbol="H")
+        c = Atom(element="C")
+        dummy = Atom(element="*")
+        h = Atom(element="H")
         struct.add_entity(c, dummy, h)
         struct.add_link(Bond(c, dummy), Bond(c, h))
 
@@ -253,9 +253,9 @@ class TestRemoveOH:
     def test_remove_OH_complete(self):
         """Test removing complete OH group."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        o = Atom(symbol="O")
-        h = Atom(symbol="H")
+        c = Atom(element="C")
+        o = Atom(element="O")
+        h = Atom(element="H")
         struct.add_entity(c, o, h)
         struct.add_link(Bond(c, o, order=1), Bond(o, h, order=1))
 
@@ -268,8 +268,8 @@ class TestRemoveOH:
     def test_remove_OH_no_H(self):
         """Test removing OH when O has no H (just O)."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        o = Atom(symbol="O")
+        c = Atom(element="C")
+        o = Atom(element="O")
         struct.add_entity(c, o)
         struct.add_link(Bond(c, o, order=1))
         # O has no H
@@ -283,8 +283,8 @@ class TestRemoveOH:
     def test_remove_OH_no_O(self):
         """Test removing OH when no O neighbor exists."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        h = Atom(symbol="H")
+        c = Atom(element="C")
+        h = Atom(element="H")
         struct.add_entity(c, h)
         struct.add_link(Bond(c, h))
 
@@ -297,10 +297,10 @@ class TestRemoveOH:
     def test_remove_OH_multiple_O(self):
         """Test removing OH when multiple O neighbors exist."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        o1 = Atom(symbol="O")  # hydroxyl oxygen
-        o2 = Atom(symbol="O")  # carbonyl oxygen
-        h = Atom(symbol="H")
+        c = Atom(element="C")
+        o1 = Atom(element="O")  # hydroxyl oxygen
+        o2 = Atom(element="O")  # carbonyl oxygen
+        h = Atom(element="H")
         struct.add_entity(c, o1, o2, h)
         struct.add_link(
             Bond(c, o1, order=1),  # single bond = hydroxyl
@@ -323,8 +323,8 @@ class TestNoLeavingGroup:
     def test_no_leaving_group_always_empty(self):
         """Test that select_none always returns empty list."""
         struct = Atomistic()
-        c = Atom(symbol="C")
-        h = Atom(symbol="H")
+        c = Atom(element="C")
+        h = Atom(element="H")
         struct.add_entity(c, h)
         struct.add_link(Bond(c, h))
 
@@ -335,7 +335,7 @@ class TestNoLeavingGroup:
     def test_no_leaving_group_ignores_anchor(self):
         """Test that select_none ignores anchor parameter."""
         struct = Atomistic()
-        c = Atom(symbol="C")
+        c = Atom(element="C")
         struct.add_entity(c)
 
         # Should work even with None or different anchor

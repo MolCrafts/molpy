@@ -183,7 +183,12 @@ class DihedralOPLSType(DihedralType):
             jtom: Second atom type
             ktom: Third atom type
             ltom: Fourth atom type
-            c0-c5: OPLS Ryckaert-Bellemans coefficients
+            c0: OPLS Ryckaert-Bellemans coefficient c0.
+            c1: OPLS Ryckaert-Bellemans coefficient c1.
+            c2: OPLS Ryckaert-Bellemans coefficient c2.
+            c3: OPLS Ryckaert-Bellemans coefficient c3.
+            c4: OPLS Ryckaert-Bellemans coefficient c4.
+            c5: OPLS Ryckaert-Bellemans coefficient c5.
         """
         super().__init__(
             name,
@@ -232,7 +237,12 @@ class DihedralOPLSStyle(DihedralStyle):
             jtom: Second atom type
             ktom: Third atom type
             ltom: Fourth atom type
-            c0-c5: OPLS Ryckaert-Bellemans coefficients
+            c0: OPLS Ryckaert-Bellemans coefficient c0.
+            c1: OPLS Ryckaert-Bellemans coefficient c1.
+            c2: OPLS Ryckaert-Bellemans coefficient c2.
+            c3: OPLS Ryckaert-Bellemans coefficient c3.
+            c4: OPLS Ryckaert-Bellemans coefficient c4.
+            c5: OPLS Ryckaert-Bellemans coefficient c5.
             name: Optional name (defaults to itom-jtom-ktom-ltom)
 
         Returns:

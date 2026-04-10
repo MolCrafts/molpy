@@ -10,7 +10,7 @@ class TestAmberInpcrdReader:
 
         frame = mp.Frame()
         result = mp.io.read_amber_inpcrd(
-            inpcrd=TEST_DATA_DIR / "inpcrd/LiTFSI.inpcrd", frame=frame
+            inpcrd=TEST_DATA_DIR / "inpcrd" / "LiTFSI.inpcrd", frame=frame
         )
 
         assert isinstance(result, mp.Frame)

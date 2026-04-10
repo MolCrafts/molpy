@@ -116,7 +116,5 @@ class CGSmilesIR:
 
     def __repr__(self):
         return (
-            f"CGSmilesIR("
-            f"base_graph={self.base_graph}, "
-            f"fragments={len(self.fragments)})"
+            f"CGSmilesIR(base_graph={self.base_graph}, fragments={len(self.fragments)})"
         )

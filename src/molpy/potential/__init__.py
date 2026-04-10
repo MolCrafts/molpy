@@ -15,3 +15,11 @@ from .angle import *
 from .base import Potential, Potentials
 from .bond import *
 from .pair import *
+
+__all__ = [
+    "angle",
+    "bond",
+    "pair",
+    "Potential",
+    "Potentials",
+]

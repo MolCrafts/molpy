@@ -60,3 +60,34 @@ class GBigSmilesSystemIR:
 
     molecules: list[GBigSmilesComponentIR] = field(default_factory=list)
     total_mass: float | None = None
+
+
+def build_stochastic_metadata(
+    structure: BigSmilesMoleculeIR,
+) -> list[GBStochasticObjectIR]:
+    """Build stochastic metadata from BigSMILES structural IR.
+
+    Extracts distribution annotations from stochastic objects and wraps
+    them in ``GBStochasticObjectIR`` containers.
+
+    Args:
+        structure: Parsed BigSMILES molecule IR.
+
+    Returns:
+        List of generative stochastic-object wrappers.
+    """
+    metadata: list[GBStochasticObjectIR] = []
+    for sobj in structure.stochastic_objects:
+        distribution_data = sobj.extras.pop("distribution", None)
+        distribution = None
+        if distribution_data is not None:
+            distribution = DistributionIR(
+                name=str(distribution_data.get("name", "unknown")),
+                params={
+                    k: float(v) for k, v in distribution_data.get("params", {}).items()
+                },
+            )
+        metadata.append(
+            GBStochasticObjectIR(structural=sobj, distribution=distribution)
+        )
+    return metadata

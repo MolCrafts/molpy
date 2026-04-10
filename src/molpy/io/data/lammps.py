@@ -14,10 +14,26 @@ import numpy as np
 
 from molpy.core.frame import Block
 from molpy.core.box import Box
+from molpy.core.fields import CHARGE, MOL_ID, FieldFormatter
 from molpy.core.forcefield import ForceField
 from molpy.core.frame import Frame
 
 from .base import DataReader, DataWriter
+
+
+class LammpsFieldFormatter(FieldFormatter):
+    """LAMMPS-specific field name translation.
+
+    Maps LAMMPS atom_style column names to canonical field names::
+
+        "q"   → "charge"
+        "mol" → "mol_id"
+    """
+
+    _field_formatters = {
+        "q": CHARGE,
+        "mol": MOL_ID,
+    }
 
 
 class LammpsDataReader(DataReader):
@@ -37,7 +53,7 @@ class LammpsDataReader(DataReader):
 
         # Parse header and set up box
         header_info = self._parse_header(sections.get("header", []))
-        frame.metadata["box"] = self._create_box(header_info["box_bounds"])
+        frame.box = self._create_box(header_info["box_bounds"])
 
         # Parse masses if present
         masses = self._parse_masses(sections.get("Masses", []))
@@ -98,7 +114,12 @@ class LammpsDataReader(DataReader):
             }
         )
 
+        # Translate format-specific field names to canonical names
+        self._formatter.canonicalize_frame(frame)
+
         return frame
+
+    _formatter = LammpsFieldFormatter()
 
     def _read_lines(self) -> list[str]:
         """Read file and return non-empty, non-comment lines."""
@@ -512,6 +533,8 @@ class LammpsDataWriter(DataWriter):
         super().__init__(Path(path))
         self.atom_style = atom_style
 
+    _formatter = LammpsFieldFormatter()
+
     def write(self, frame: Frame) -> None:
         """Write Frame to LAMMPS data file.
 
@@ -522,6 +545,9 @@ class LammpsDataWriter(DataWriter):
         Raises:
             ValueError: If atoms are missing 'id' field.
         """
+        # Translate canonical field names to LAMMPS-specific names
+        frame = self._formatter.localize_frame(frame)
+
         lines = []
 
         # Header
@@ -774,8 +800,8 @@ class LammpsDataWriter(DataWriter):
 
     def _write_box_bounds(self, lines: list[str], frame: Frame) -> None:
         """Write box bounds."""
-        if frame.metadata.get("box") is not None:
-            box = frame.metadata["box"]
+        if frame.box is not None:
+            box = frame.box
             lines.append(
                 f"{box.origin[0]:.6f} {box.origin[0] + box.lengths[0]:.6f} xlo xhi"
             )

@@ -241,11 +241,23 @@ class BigSmilesTransformer(Transformer):
     def bond_descriptor_generation(self, children: list) -> list[float]:
         if not self.allow_generative:
             raise ValueError("Bond descriptor weight annotations require gBigSMILES")
-        floats = [
-            float(child) if isinstance(child, (int, float)) else _coerce_float(child)
-            for child in children
-            if not isinstance(child, Token)
-        ]
+        from lark import Tree
+
+        floats: list[float] = []
+        for child in children:
+            if isinstance(child, Token):
+                continue
+            if isinstance(child, (int, float)):
+                floats.append(float(child))
+            elif isinstance(child, Tree):
+                # Handle _number_list_repeat trees: extract NUMBER children
+                for sub in child.children:
+                    if isinstance(sub, (int, float)):
+                        floats.append(float(sub))
+                    elif isinstance(sub, Token) and sub.type == "NUMBER":
+                        floats.append(float(sub.value))
+            else:
+                floats.append(_coerce_float(child))
         return floats
 
     def inner_bond_descriptor(self, children: list) -> BondingDescriptorIR:
@@ -602,15 +614,23 @@ class BigSmilesTransformer(Transformer):
         - First terminal descriptors attach to first atom of first repeat unit
         - Last terminal descriptors attach to last atom of last repeat unit
         """
-        filtered = [child for child in children if not isinstance(child, Token)]
-        if len(filtered) < 2:
+        # Keep ";" tokens for end group detection, filter out other tokens like "{", "}"
+        filtered = [
+            child
+            for child in children
+            if not isinstance(child, Token) or child.value == ";"
+        ]
+        non_token_filtered = [
+            child for child in filtered if not isinstance(child, Token)
+        ]
+        if len(non_token_filtered) < 2:
             raise ValueError(
                 "Stochastic object requires two terminal descriptors (even if empty []). "
                 "Per BigSMILES v1.1: { [terminal] repeat_units ; end_groups [terminal] }"
             )
 
         # Collect all terminal descriptors (both first and last are REQUIRED per BigSMILES v1.1)
-        first_terminal = filtered[0]
+        first_terminal = non_token_filtered[0]
         if not isinstance(first_terminal, TerminalDescriptorIR):
             raise ValueError(
                 "Stochastic object must start with a terminal descriptor (even if empty []). "
@@ -618,25 +638,35 @@ class BigSmilesTransformer(Transformer):
             )
 
         # Last terminal descriptor is REQUIRED per BigSMILES v1.1 syntax
-        if not isinstance(filtered[-1], TerminalDescriptorIR):
+        if not isinstance(non_token_filtered[-1], TerminalDescriptorIR):
             raise ValueError(
                 "Stochastic object must end with a terminal descriptor (even if empty []). "
                 "Per BigSMILES v1.1: { [terminal] repeat_units ; end_groups [terminal] }"
                 " Example: {[]C(COCCO[>])(COCCO[>])COCCO[>][]} instead of "
                 "{C(COCCO[>])(COCCO[>])COCCO[>]}"
             )
-        last_terminal = filtered[-1]
-        body = filtered[1:-1]
+        last_terminal = non_token_filtered[-1]
+        # Build body from filtered list (includes ";" tokens), excluding first and last terminals
+        first_idx = filtered.index(first_terminal)
+        last_idx = len(filtered) - 1 - filtered[::-1].index(last_terminal)
+        body = filtered[first_idx + 1 : last_idx]
 
-        # Parse body content
+        # Parse body content, splitting on ";" to separate repeat units from end groups
         distribution = None
         repeat_items: list[Any] = []
         end_group_items: list[Any] = []
+        seen_semicolon = False
         for part in body:
+            if isinstance(part, Token) and part.value == ";":
+                seen_semicolon = True
+                continue
             if isinstance(part, dict) and part.get("__distribution__"):
                 distribution = part
             elif isinstance(part, tuple) and part and part[0] == "end_group":
                 end_group_items.extend(part[1])
+            elif seen_semicolon:
+                # Items after semicolon are end groups
+                end_group_items.append(part)
             elif isinstance(part, list):
                 repeat_items.extend(part)
             else:

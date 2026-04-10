@@ -75,21 +75,6 @@ def test_wrapper_run_with_workdir(tmp_path: Path):
         assert call_kwargs["cwd"] == str(workdir)
 
 
-def test_wrapper_run_with_cwd_override(tmp_path: Path):
-    """Test run() with cwd parameter overriding workdir."""
-
-    workdir = tmp_path / "default_workdir"
-    override_cwd = tmp_path / "override_workdir"
-    wrapper = MockWrapper(name="test", exe="echo", workdir=workdir)
-
-    with patch("subprocess.run") as mock_run:
-        mock_run.return_value.returncode = 0
-        wrapper.run(args=["test"], cwd=override_cwd)
-
-        call_kwargs = mock_run.call_args[1]
-        assert call_kwargs["cwd"] == str(override_cwd)
-
-
 def test_wrapper_run_with_conda_env_name_prefixes_command():
     """If env/env_manager are set to a conda env name, wrapper.run() should use conda run -n."""
 

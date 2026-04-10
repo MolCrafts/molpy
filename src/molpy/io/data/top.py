@@ -14,7 +14,7 @@ from molpy.core.frame import Block
 from molpy.core.frame import Frame
 from molpy.core.element import Element
 
-from .base import DataReader, PathLike
+from .base import DataReader, DataWriter, PathLike
 
 
 class TopReader(DataReader):
@@ -35,7 +35,7 @@ class TopReader(DataReader):
 
         Args:
             file: Path to GROMACS .top file
-            **open_kwargs: Additional arguments passed to file open
+            **open_kwargs (Any): Additional arguments passed to file open.
         """
         super().__init__(file, **open_kwargs)
         self._file = Path(file)
@@ -74,7 +74,9 @@ class TopReader(DataReader):
 
                 # Check for section header (must be on its own line)
                 if line.startswith("[") and line.endswith("]"):
-                    section = line.lower()
+                    # Normalize: "[ atoms ]", "[atoms]", "[ATOMS]" → "[ atoms ]"
+                    inner = line[1:-1].strip().lower()
+                    section = f"[ {inner} ]"
                     continue
 
                 # Skip comment-only lines
@@ -181,8 +183,8 @@ class TopReader(DataReader):
 
         try:
             return {
-                "i": int(parts[0]),
-                "j": int(parts[1]),
+                "atomi": int(parts[0]),
+                "atomj": int(parts[1]),
                 "type": int(parts[2]),
             }
         except (ValueError, IndexError):
@@ -211,8 +213,8 @@ class TopReader(DataReader):
 
         try:
             return {
-                "i": int(parts[0]),
-                "j": int(parts[1]),
+                "atomi": int(parts[0]),
+                "atomj": int(parts[1]),
                 "type": int(parts[2]),
             }
         except (ValueError, IndexError):
@@ -241,9 +243,9 @@ class TopReader(DataReader):
 
         try:
             return {
-                "i": int(parts[0]),
-                "j": int(parts[1]),
-                "k": int(parts[2]),
+                "atomi": int(parts[0]),
+                "atomj": int(parts[1]),
+                "atomk": int(parts[2]),
                 "type": int(parts[3]),
             }
         except (ValueError, IndexError):
@@ -272,10 +274,10 @@ class TopReader(DataReader):
 
         try:
             return {
-                "i": int(parts[0]),
-                "j": int(parts[1]),
-                "k": int(parts[2]),
-                "l": int(parts[3]),
+                "atomi": int(parts[0]),
+                "atomj": int(parts[1]),
+                "atomk": int(parts[2]),
+                "atoml": int(parts[3]),
                 "type": int(parts[4]),
             }
         except (ValueError, IndexError):
@@ -318,24 +320,19 @@ class TopReader(DataReader):
                 continue
 
             # Try to infer the best dtype
-            # Check if all non-None values are integers
             non_none_values = [v for v in values if v is not None]
             if non_none_values:
-                try:
-                    # Try integer first
-                    int_values = [int(v) for v in non_none_values]
-                    # If successful, create array with proper None handling
+                # Only use int if every value is already an int (not a float)
+                if all(isinstance(v, int) for v in non_none_values):
                     arr = np.array(
-                        [int(v) if v is not None else 0 for v in values], dtype=int
+                        [int(v) if v is not None else 0 for v in values],
+                        dtype=int,
                     )
                     result[key] = arr
                     continue
-                except (ValueError, TypeError):
-                    pass
 
                 # Try float
                 try:
-                    float_values = [float(v) for v in non_none_values]
                     arr = np.array(
                         [float(v) if v is not None else np.nan for v in values],
                         dtype=float,
@@ -424,3 +421,99 @@ class TopReader(DataReader):
                     pass
 
         return 0  # Unknown element
+
+
+class TopWriter(DataWriter):
+    """Write GROMACS topology files from Frame objects.
+
+    Produces a minimal ``.top`` file with ``[ moleculetype ]``,
+    ``[ atoms ]``, ``[ bonds ]``, and optional ``[ pairs ]``,
+    ``[ angles ]``, ``[ dihedrals ]`` sections, followed by
+    ``[ system ]`` and ``[ molecules ]``.
+
+    Examples:
+        >>> writer = TopWriter("molecule.top")
+        >>> writer.write(frame)
+    """
+
+    def __init__(self, file: PathLike, **open_kwargs):
+        super().__init__(file, **open_kwargs)
+        self._file = Path(file)
+
+    def write(self, frame: Frame) -> None:
+        """Write Frame to GROMACS topology file.
+
+        Args:
+            frame: Frame object containing ``"atoms"`` and optionally
+                ``"bonds"``, ``"pairs"``, ``"angles"``, ``"dihedrals"`` blocks.
+        """
+        mol_name = frame.metadata.get("name", "MOL")
+        lines: list[str] = []
+
+        # Header
+        lines.append("; Generated by MolPy TopWriter")
+        lines.append("")
+
+        # [ moleculetype ]
+        lines.append("[ moleculetype ]")
+        lines.append("; name  nrexcl")
+        lines.append(f"{mol_name}  3")
+        lines.append("")
+
+        # [ atoms ]
+        if "atoms" in frame:
+            atoms = frame["atoms"]
+            lines.append("[ atoms ]")
+            lines.append(";  nr  type  resnr  residu  atom  cgnr  charge  mass")
+            n_atoms = atoms.nrows
+            for i in range(n_atoms):
+                row = atoms[i]
+                aid = int(row.get("id", i + 1))
+                atype = str(row.get("type", "X"))
+                resnr = int(row.get("resnr", 1))
+                residu = str(row.get("residu", mol_name))
+                name = str(row.get("name", atype))
+                cgnr = int(row.get("cgnr", i + 1))
+                charge = float(row.get("charge", 0.0))
+                mass = float(row.get("mass", 0.0))
+                lines.append(
+                    f"  {aid}  {atype}  {resnr}  {residu}  {name}  "
+                    f"{cgnr}  {charge:.4f}  {mass:.3f}"
+                )
+            lines.append("")
+
+        # Helper for index-based sections
+        def _write_index_section(
+            section_name: str, key: str, columns: list[str]
+        ) -> None:
+            if key not in frame:
+                return
+            block = frame[key]
+            lines.append(f"[ {section_name} ]")
+            header = "  ".join(columns + ["funct"])
+            lines.append(f"; {header}")
+            for i in range(block.nrows):
+                row = block[i]
+                vals = "  ".join(str(int(row[c])) for c in columns)
+                funct = int(row.get("type", 1))
+                lines.append(f"  {vals}  {funct}")
+            lines.append("")
+
+        _write_index_section("bonds", "bonds", ["atomi", "atomj"])
+        _write_index_section("pairs", "pairs", ["atomi", "atomj"])
+        _write_index_section("angles", "angles", ["atomi", "atomj", "atomk"])
+        _write_index_section(
+            "dihedrals", "dihedrals", ["atomi", "atomj", "atomk", "atoml"]
+        )
+
+        # [ system ]
+        lines.append("[ system ]")
+        lines.append(mol_name)
+        lines.append("")
+
+        # [ molecules ]
+        lines.append("[ molecules ]")
+        lines.append(f"{mol_name}  1")
+        lines.append("")
+
+        self._file.write_text("\n".join(lines), encoding="utf-8")

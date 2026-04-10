@@ -15,16 +15,17 @@ def find_test_data() -> Path:
       Otherwise clone afresh.
     """
     if (_DEFAULT_DIR / ".git").exists():
-        subprocess.run(
-            ["git", "pull", "--ff-only"],
-            cwd=_DEFAULT_DIR,
-        )
+        subprocess.run(["git", "pull", "--ff-only"], cwd=_DEFAULT_DIR)
     else:
         _DEFAULT_DIR.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
+        result = subprocess.run(
             ["git", "clone", "--depth", "1", _REPO_URL, str(_DEFAULT_DIR)],
             cwd=_DEFAULT_DIR.parent,
         )
+        if result.returncode != 0:
+            pytest.skip(f"Cannot clone tests-data (exit {result.returncode})")
+    if not _DEFAULT_DIR.exists():
+        pytest.skip("tests-data directory not available")
     return _DEFAULT_DIR
 
 
@@ -50,4 +51,13 @@ def pytest_collection_modifyitems(
         if "test_adapter" in fspath.parts and "rdkit" in fspath.name:
             item.add_marker(pytest.mark.external)
         if "test_builder" in fspath.parts and fspath.name == "test_polymer_builder.py":
+            item.add_marker(pytest.mark.external)
+        # AmberTools-dependent tests
+        if "test_wrapper" in fspath.parts and fspath.name in (
+            "test_antechamber.py",
+            "test_parmchk2.py",
+            "test_tleap.py",
+        ):
+            item.add_marker(pytest.mark.external)
+        if "test_builder" in fspath.parts and "amber" in fspath.name:
             item.add_marker(pytest.mark.external)

@@ -45,7 +45,7 @@ class OptimizeGeometry(Compute[RDKitAdapter, RDKitAdapter]):
     update_internal: bool = True
     raise_on_failure: bool = False
 
-    def compute(self, input: RDKitAdapter) -> RDKitAdapter:
+    def _compute(self, input: RDKitAdapter) -> RDKitAdapter:
         """Execute geometry optimization.
 
         Args:
@@ -292,7 +292,7 @@ class Generate3D(Compute[RDKitAdapter, RDKitAdapter]):
 
     update_internal: bool = True
 
-    def compute(self, input: RDKitAdapter) -> RDKitAdapter:
+    def _compute(self, input: RDKitAdapter) -> RDKitAdapter:
         """Execute the 3D generation pipeline.
 
         Args:

@@ -18,65 +18,64 @@ class XYZTrajectoryReader(BaseTrajectoryReader):
 
         current_offset = 0
         while current_offset < len(mm):
-            # Find next frame start (number of atoms line)
+            # Skip any leading whitespace/newlines
+            while current_offset < len(mm) and mm[current_offset] in (
+                ord("\n"),
+                ord("\r"),
+                ord(" "),
+                ord("\t"),
+            ):
+                current_offset += 1
+
+            if current_offset >= len(mm):
+                break
+
             try:
-                # Look for a line that contains only a number (atom count)
-                line_start = current_offset
-                while line_start < len(mm):
-                    if mm[line_start] == ord("\n"):
-                        line_start += 1
-                        break
-                    line_start += 1
-
-                if line_start >= len(mm):
-                    break
-
-                # Read the atom count line
-                line_end = line_start
+                # Read the atom count line (first line of frame)
+                line_end = current_offset
                 while line_end < len(mm) and mm[line_end] != ord("\n"):
                     line_end += 1
 
-                if line_end >= len(mm):
-                    break
-
-                atom_count_line = mm[line_start:line_end].decode().strip()
-                try:
-                    n_atoms = int(atom_count_line)
-                except ValueError:
-                    # Not a valid atom count, skip
+                atom_count_line = mm[current_offset:line_end].decode().strip()
+                if not atom_count_line:
                     current_offset = line_end + 1
                     continue
 
-                # Calculate frame size: atom count + comment + atoms + 2 newlines
-                frame_size = len(atom_count_line) + 1  # atom count + newline
+                try:
+                    n_atoms = int(atom_count_line)
+                except ValueError:
+                    # Not a valid atom count, skip this line
+                    current_offset = line_end + 1
+                    continue
+
+                # Record frame location at the atom count line
+                frame_start = current_offset
+
+                # Skip past atom count line
+                pos = line_end + 1
 
                 # Skip comment line
-                comment_start = line_end + 1
-                comment_end = comment_start
-                while comment_end < len(mm) and mm[comment_end] != ord("\n"):
-                    comment_end += 1
-                frame_size += comment_end - comment_start + 1  # comment + newline
+                while pos < len(mm) and mm[pos] != ord("\n"):
+                    pos += 1
+                pos += 1  # skip newline
 
                 # Skip atom lines
-                atom_start = comment_end + 1
                 for _ in range(n_atoms):
-                    atom_end = atom_start
-                    while atom_end < len(mm) and mm[atom_end] != ord("\n"):
-                        atom_end += 1
-                    frame_size += atom_end - atom_start + 1  # atom line + newline
-                    atom_start = atom_end + 1
+                    while pos < len(mm) and mm[pos] != ord("\n"):
+                        pos += 1
+                    pos += 1  # skip newline
 
                 # Record frame location
                 self._frame_locations.append(
                     FrameLocation(
                         file_index=file_index,
-                        byte_offset=current_offset,
+                        byte_offset=frame_start,
                         file_path=fpath,
                     )
                 )
 
                 # Move to next potential frame
-                current_offset += frame_size
+                current_offset = pos
 
             except Exception:
                 # If parsing fails, move forward and try again
@@ -137,8 +136,8 @@ class XYZTrajectoryReader(BaseTrajectoryReader):
             z_coords = np.array([atom["z"] for atom in atoms_data])
             ids = np.array([atom["id"] for atom in atoms_data])
 
-            # Create block
-            Block(
+            # Create block and assign to frame
+            frame["atoms"] = Block(
                 {
                     "element": elements,
                     "x": x_coords,
@@ -169,7 +168,7 @@ class XYZTrajectoryWriter(TrajectoryWriter):
     def write_frame(self, frame: Frame):
         """Write a single frame to the XYZ file."""
         atoms = frame["atoms"]
-        box = frame.metadata.get("box", None)
+        box = frame.box
         n_atoms = len(atoms)
 
         self.fobj.write(f"{n_atoms}\n")

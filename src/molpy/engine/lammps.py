@@ -1,7 +1,23 @@
-"""
-LAMMPS molecular dynamics engine.
+"""LAMMPS molecular dynamics engine.
 
-This module provides the LAMMPSEngine class for running LAMMPS calculations.
+Wraps the `LAMMPS <https://www.lammps.org>`_ molecular dynamics code.
+The engine writes an input script to the working directory and runs::
+
+    [launcher...] lmp -in <input> -log log.lammps -screen none
+
+The ``-screen none`` flag suppresses duplicate stdout output; all
+per-timestep data is written exclusively to *log.lammps*.
+
+MPI and scheduler launchers are configured on the :class:`~molpy.engine.base.Engine`
+base class::
+
+    engine = LAMMPSEngine("lmp", launcher=["mpirun", "-np", "16"])
+    engine = LAMMPSEngine("lmp", launcher=["srun", "--ntasks=16"])
+
+Reference:
+    Thompson, A. P. et al. (2022). LAMMPS — A flexible simulation tool for
+    particle-based materials modeling. *Comput. Phys. Commun.* **271**, 108171.
+    https://doi.org/10.1016/j.cpc.2021.108171
 """
 
 import subprocess
@@ -12,107 +28,96 @@ from .base import Engine
 
 
 class LAMMPSEngine(Engine):
-    """
-    LAMMPS molecular dynamics engine.
+    """LAMMPS molecular dynamics engine.
 
-    This engine runs LAMMPS calculations with input scripts.
+    Runs LAMMPS input scripts.  The engine binary is typically named ``lmp``,
+    ``lmp_serial``, or ``lmp_mpi`` depending on the build.
 
     Example:
         >>> from molpy.core.script import Script
         >>> from molpy.engine import LAMMPSEngine
         >>>
-        >>> # Create input script
         >>> script = Script.from_text(
         ...     name="input",
-        ...     text="units real\\natom_style full\\n",
-        ...     language="other"
+        ...     text="units real\\natom_style full\\nrun 0\\n",
+        ...     language="other",
         ... )
-        >>>
-        >>> # Create engine and prepare
-        >>> engine = LAMMPSEngine(executable="lmp")
-        >>> engine.prepare(work_dir="./calc", scripts=script)
-        >>>
-        >>> # Run calculation
-        >>> result = engine.run()
+        >>> engine = LAMMPSEngine(executable="lmp", check_executable=False)
+        >>> result = engine.run(script, workdir="./calc", check=False)
         >>> print(result.returncode)
         0
+
+        MPI execution::
+
+            engine = LAMMPSEngine("lmp", launcher=["mpirun", "-np", "16"])
+            result = engine.run(script, workdir="./calc")
     """
 
     @property
     def name(self) -> str:
-        """Return engine name."""
+        """Return ``"LAMMPS"``.
+
+        Returns:
+            Engine identifier string.
+        """
         return "LAMMPS"
 
     def _get_default_extension(self) -> str:
-        """Get default file extension for LAMMPS input files."""
+        """Return ``".lmp"`` — the conventional LAMMPS input extension.
+
+        Returns:
+            ``".lmp"``
+        """
         return ".lmp"
 
-    def run(
+    def _execute(
         self,
-        input_file: str | Path | None = None,
-        log_file: str | Path | None = None,
+        run_dir: Path,
+        capture_output: bool = False,
+        check: bool = True,
+        timeout: float | None = None,
         **kwargs: Any,
     ) -> subprocess.CompletedProcess:
-        """
-        Execute LAMMPS calculation.
+        """Run LAMMPS in *run_dir*.
+
+        Builds the command::
+
+            [launcher...] lmp -in <input_file> -log log.lammps -screen none
+
+        ``-screen none`` prevents LAMMPS from writing timestep data to stdout
+        (it still goes to *log.lammps*), avoiding pipe-buffer deadlocks when
+        the caller captures output.
 
         Args:
-            input_file: Name of the input script file. If None, uses the input script
-                       from prepare() (default: None)
-            log_file: Name of the log file. If None, uses default "log.lammps"
-                     (default: None)
-            **kwargs: Additional arguments passed to subprocess.run
-                     (e.g., capture_output, text, check, etc.)
+            run_dir: Directory containing the input files; used as ``cwd``.
+            capture_output: Capture stdout/stderr.
+            check: Raise :exc:`subprocess.CalledProcessError` on failure.
+            timeout: Timeout in seconds.
+            **kwargs: Ignored (reserved for future use).
 
         Returns:
-            CompletedProcess object with execution results
+            :class:`subprocess.CompletedProcess`.
 
         Raises:
-            RuntimeError: If engine is not prepared (prepare() not called)
+            RuntimeError: If no input script has been registered.
+            subprocess.CalledProcessError: If *check* is ``True`` and LAMMPS
+                exits with a non-zero code.
+            subprocess.TimeoutExpired: If *timeout* is exceeded.
         """
-        if not hasattr(self, "work_dir"):
-            raise RuntimeError("Engine not prepared. Call prepare() first.")
+        if self.input_script is None or self.input_script.path is None:
+            raise RuntimeError("No input script found.  Pass a script to run() first.")
 
-        # Use input script from prepare() if not specified
-        if input_file is None:
-            if (
-                not hasattr(self, "input_script")
-                or self.input_script is None
-                or self.input_script.path is None
-            ):
-                raise RuntimeError(
-                    "No input file specified and no input script found. "
-                    "Either specify input_file or ensure prepare() was called with a script."
-                )
-            input_file = self.input_script.path.name
-        else:
-            input_file = Path(input_file).name
+        input_file = self.input_script.path.name
+        command = self._build_full_command(
+            ["-in", input_file, "-log", "log.lammps", "-screen", "none"]
+        )
 
-        # Default log file name
-        log_file = "log.lammps" if log_file is None else Path(log_file).name
-
-        # Build command
-        command = [self.executable, "-in", str(input_file), "-log", str(log_file)]
-
-        # Default subprocess arguments
-        run_kwargs = {
-            "cwd": self.work_dir,
-            "capture_output": True,
-            "text": True,
-            "check": False,
-        }
-        run_kwargs.update(kwargs)
-
-        return subprocess.run(command, **run_kwargs)
-
-    def get_log_file(self) -> Path | None:
-        """
-        Get the LAMMPS log file path.
-
-        Returns:
-            Path to the log file or None if not found
-        """
-        log_path = self.work_dir / "log.lammps"
-        if log_path.exists():
-            return log_path
-        return None
+        return subprocess.run(
+            command,
+            cwd=run_dir,
+            capture_output=capture_output,
+            text=True,
+            check=check,
+            timeout=timeout,
+            env=self._merged_env(),
+        )

@@ -96,7 +96,7 @@ class Config(BaseModel):
         Changes persist until reset() or another update().
 
         Args:
-            **kwargs: Configuration fields to update (log_level, n_threads, etc.)
+            **kwargs (Any): Configuration fields to update (log_level, n_threads, etc.).
 
         Examples:
             >>> Config.update(log_level='DEBUG', n_threads=4)
@@ -135,7 +135,7 @@ class Config(BaseModel):
         Useful for testing or temporary parameter changes.
 
         Args:
-            **overrides: Configuration fields to temporarily override
+            **overrides (Any): Configuration fields to temporarily override.
 
         Yields:
             None
