@@ -1,10 +1,10 @@
-# Tools: Packaged Recipes for Common Tasks
+# Tools: Packaged Workflows for Common Tasks
 
 ## Modularity costs keystrokes
 
 MolPy splits molecular modeling into focused modules — parser, adapter, builder, reacter, typifier — each owning one responsibility. This makes the library predictable and testable, but it also means that accomplishing a single task often requires importing from four or five packages, calling them in the right order, and handling edge cases like a missing RDKit installation or a failed 3D embedding. The boilerplate is identical every time. Only the inputs change.
 
-**A Tool is a packaged recipe that wires multiple MolPy modules together into a single callable for a common task.**
+**A Tool is a packaged workflow that wires multiple MolPy modules together into a single callable for a common task.**
 
 Tools are not low-level building blocks. They sit *above* the class layer (`PolymerBuilder`, `Connector`, `Reacter`) and make opinionated choices on your behalf — which connector to use, how to detect leaving groups, what fallback to apply when RDKit is absent. When those choices match your workflow, a Tool saves you from repeating the same five-step setup. When they do not, drop to the class layer and wire things yourself. Tools also differ from `Compute` operations (MSD, displacement correlations), which analyze trajectory data rather than orchestrate build workflows.
 
@@ -75,7 +75,7 @@ Tools cover the common path. Drop to the class layer when you need to change the
 
 In practice, most research workflows stay at the Tool level. The class layer is for library developers and unusual chemistry.
 
-## Defining your own recipe
+## Defining your own Tool
 
 If you find yourself repeating the same multi-module setup across scripts — parse, adapt, parameterize, export — that sequence is a candidate for a Tool. Inherit from `Tool`, declare configuration as frozen dataclass fields, and implement `run()`:
 
@@ -93,9 +93,9 @@ class ParameterizeMolecule(Tool):
         ...
 ```
 
-Because the dataclass is frozen, the configuration cannot drift between calls. The recipe is reproducible by construction. Once defined, your custom Tool works exactly like the built-in ones — create an instance with your configuration, then call `run()` with different inputs.
+Because the dataclass is frozen, the configuration cannot drift between calls. The workflow is reproducible by construction. Once defined, your custom Tool works exactly like the built-in ones — create an instance with your configuration, then call `run()` with different inputs.
 
 ## See Also
 
-- [API Reference: Tool](../api/tool.md) -- parameter details for all built-in recipes
-- [Polydisperse Systems](05_polydisperse_systems.md) -- end-to-end workflow from distribution design to LAMMPS export
+- [API Reference: Tool](../api/tool.md) -- parameter details for all built-in Tools
+- [Polydisperse Systems](../user-guide/05_polydisperse_systems.ipynb) -- end-to-end workflow from distribution design to LAMMPS export

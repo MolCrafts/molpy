@@ -1,8 +1,6 @@
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/molcrafts/molpy/blob/master/docs/tutorials/07_wrapper_and_adapter.ipynb)
-
 # Wrapper and Adapter
 
-After reading this page you will understand the difference between execution boundaries and representation boundaries, and be able to use both in your workflows.
+This page explains the distinction between execution boundaries and representation boundaries in MolPy, and how wrappers and adapters handle those two cases.
 
 ## Two kinds of external boundary
 
@@ -89,9 +87,9 @@ from molpy.adapter import RDKitAdapter
 from rdkit.Chem import AllChem
 
 mol = Atomistic()
-c1 = mol.def_atom(symbol="C", x=0.0, y=0.0, z=0.0)
-c2 = mol.def_atom(symbol="C", x=0.0, y=0.0, z=0.0)
-o  = mol.def_atom(symbol="O", x=0.0, y=0.0, z=0.0)
+c1 = mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
+c2 = mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
+o  = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
 mol.def_bond(c1, c2, order=1.0)
 mol.def_bond(c2, o, order=2.0)
 

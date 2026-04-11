@@ -1,12 +1,12 @@
 # Adding a Tool or Compute Operation
 
-This page shows how to add reusable recipes (`Tool`) and analysis operations (`Compute`) to MolPy.
+This page shows how to add reusable Tool workflows (`Tool`) and analysis operations (`Compute`) to MolPy.
 
 ## Which base class to use
 
 | Need | Base class | Example |
 |------|-----------|---------|
-| Reusable multi-step recipe with configuration | `Tool` | `PrepareMonomer`, `BuildPolymer` |
+| Reusable multi-step workflow with configuration | `Tool` | `PrepareMonomer`, `BuildPolymer` |
 | Reusable analysis on array data | `Compute` | `MSD`, `DisplacementCorrelation` |
 | One-off calculation with no config | plain function | `compute_msd(positions)` |
 
@@ -56,7 +56,7 @@ rg = RadiusOfGyration(use_masses=True)
 value = rg(positions, masses)   # __call__ delegates to run()
 ```
 
-## Adding a Tool recipe
+## Adding a custom Tool
 
 Same pattern, but for `Tool` subclasses.
 
@@ -97,7 +97,7 @@ Because the dataclass is frozen, the configuration cannot drift between calls. T
 
 ## Checklist
 
-- [ ] Subclass `Tool` (recipe) or `Compute` (analysis)
+- [ ] Subclass `Tool` or `Compute`
 - [ ] Add `@dataclass(frozen=True)` decorator
 - [ ] Implement `run()` with type hints
 - [ ] Write tests in `tests/test_tool/`

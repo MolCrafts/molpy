@@ -1,6 +1,6 @@
 # I/O: Reading, Writing, and Extending File Formats
 
-After reading this page you will be able to read and write molecular data, force fields, and trajectories in all supported formats, and know how to add a new format.
+This page describes how MolPy reads and writes molecular data, force fields, and trajectories, and how additional formats can be added through the reader and writer interfaces.
 
 MolPy's I/O system has three layers: **data** (single-frame structures), **trajectory** (multi-frame sequences), and **forcefield** (parameter files). Each layer has its own reader/writer base class and extension pattern.
 

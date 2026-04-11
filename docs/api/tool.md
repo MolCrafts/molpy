@@ -1,10 +1,10 @@
 # Tool
 
-High-level packaged recipes and analysis operations.
+High-level Tool workflows and analysis operations.
 
 ## Quick reference
 
-### Recipes (polymer building)
+### Tool workflows (polymer building)
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
@@ -53,8 +53,8 @@ msd_values = msd(unwrapped_positions)  # shape (max_lag,)
 
 ## Related
 
-- [Guide: Tool Layer](../user-guide/tools.md)
-- [Guide: Polydisperse Systems](../user-guide/05_polydisperse_systems.md)
+- [Concepts: Tool Layer](../tutorials/tools.md)
+- [Guide: Polydisperse Systems](../user-guide/05_polydisperse_systems.ipynb)
 
 ---
 

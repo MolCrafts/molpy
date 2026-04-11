@@ -42,10 +42,10 @@ class PolymerBuilder:
 
     This builder parses CGSmiles strings and constructs polymers using a graph-based
     approach, supporting:
-    - Linear chains: {[#A][#B][#C]}
-    - Branched structures: {[#A]([#B])[#C]}
-    - Cyclic structures: {[#A]1[#B][#C]1}
-    - Repeat operators: {[#A]|10}
+    - Linear chains: ``{[#A][#B][#C]}``
+    - Branched structures: ``{[#A]([#B])[#C]}``
+    - Cyclic structures: ``{[#A]1[#B][#C]1}``
+    - Repeat operators: ``{[#A]|10}``
 
     Example:
         >>> builder = PolymerBuilder(

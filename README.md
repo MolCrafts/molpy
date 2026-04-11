@@ -1,17 +1,23 @@
-# MolPy — Composable molecular modeling in Python
+# MolPy — A programmable toolkit for molecular simulation workflows
 
 [![Python](https://img.shields.io/badge/python-3.12+-blue)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-green)](./LICENSE)
-[![Docs](https://img.shields.io/badge/docs-online-blue)](https://molcrafts.github.io/molpy)
+[![Docs](https://img.shields.io/badge/docs-online-blue)](https://molpy.molcrafts.org/)
 [![CI](https://github.com/MolCrafts/molpy/workflows/CI/badge.svg)](https://github.com/MolCrafts/molpy/actions)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Type checked: ty](https://img.shields.io/badge/type%20checked-ty-blue.svg)](https://github.com/astral-sh/ty)
 
-> **MolPy is under active development.** The API evolves rapidly and may change between minor versions.
+> **MolPy is under active development.** Public APIs may change between minor releases.
 
-MolPy is a strongly typed Python toolkit for building, parameterizing, and exporting molecular systems — from a single small molecule to a polydisperse polymer melt with thousands of chains.
+MolPy is a Python toolkit for building, editing, typing, and exporting
+molecular systems. It keeps topology, force fields, numerical frames, and
+engine I/O explicit and composable in Python.
 
-## What it can do
+Polymer construction and reactive topology editing are core strengths, but
+MolPy is built for broader molecular simulation workflows, from system
+preparation and topology transformation to force-field assignment and export.
+
+## Representative Workflows
 
 **Small molecule — parse, type, export:**
 
@@ -72,21 +78,21 @@ result = mp.tool.polymer(
 
 ---
 
-## Features
+## Core Capabilities
 
-| Area | What MolPy provides |
-|------|---------------------|
-| **Parsers** | SMILES, BigSMILES, CGSmiles, G-BigSMILES natively |
-| **Polymer builders** | Linear, branched, cyclic topologies from CGSmiles strings |
-| **Polydispersity** | Schulz-Zimm, Poisson, Flory-Schulz, Uniform distributions |
-| **Reaction framework** | Anchor + leaving-group reactions; LAMMPS `fix bond/react` templates |
-| **Force field typing** | OPLS-AA, GAFF/GAFF2 via SMARTS/SMIRKS pattern matching |
-| **AmberTools integration** | Antechamber, parmchk2, prepgen, tleap — all from Python |
-| **Packing** | Packmol wrapper with density targets and typed constraints |
-| **I/O** | LAMMPS DATA, PDB, XYZ, AMBER prmtop/inpcrd, GRO, HDF5 |
-| **MD engines** | LAMMPS and CP2K input generation |
-| **Adapters** | RDKit (3D embedding, SMILES export), OpenBabel |
-| **Data model** | `Atomistic` graph · `Frame`/`Block` arrays · `ForceField` dict |
+| Area | Capability |
+|------|------------|
+| **Parsing** | Native support for SMILES, BigSMILES, CGSmiles, and G-BigSMILES |
+| **Polymer construction** | Linear, branched, and cyclic assembly from notation-driven specifications |
+| **Polydispersity** | Schulz-Zimm, Poisson, Flory-Schulz, and uniform chain-length distributions |
+| **Reactive topology editing** | Anchor and leaving-group selectors, bond-forming reactions, and LAMMPS `fix bond/react` template generation |
+| **Force-field assignment** | OPLS-AA and GAFF/GAFF2 typing through SMARTS/SMIRKS matching |
+| **External parameterization** | AmberTools interfaces for antechamber, parmchk2, prepgen, and tleap |
+| **Packing and export** | Packmol-based packing and export to LAMMPS, PDB, XYZ, AMBER, GRO, and HDF5 |
+| **Simulation interfaces** | Input generation for LAMMPS and CP2K |
+| **Interoperability** | RDKit and OpenBabel adapters for conversion and structure preparation |
+| **Explicit data model** | Distinct `Atomistic`, `Frame`/`Block`, and `ForceField` representations |
+| **Agent interface** | Optional MCP server exposing source symbols and documentation to large language model agents |
 
 ---
 
@@ -115,7 +121,7 @@ reacter        builder           ← reactions, polymer assembly
    pack          io / engine     ← Packmol packing; LAMMPS / CP2K / AMBER export
 ```
 
-Each boundary is an explicit function call. No hidden state, no monkey-patching.
+Each boundary is an explicit function call. State transitions remain visible throughout the workflow; no hidden coupling or monkey-patching is required.
 
 ---
 
@@ -141,7 +147,7 @@ pytest tests/ -m "not external"
 
 ## Documentation
 
-Full docs with interactive notebooks: **[https://molcrafts.github.io/molpy](https://molcrafts.github.io/molpy)**
+Full documentation, including executable notebooks: **[https://molcrafts.github.io/molpy](https://molcrafts.github.io/molpy)**
 
 - [Getting Started](https://molcrafts.github.io/molpy/getting-started/) — install and first example
 - [Guides](https://molcrafts.github.io/molpy/user-guide/) — task-oriented notebooks
@@ -155,18 +161,12 @@ Full docs with interactive notebooks: **[https://molcrafts.github.io/molpy](http
 | Project | Role |
 |---------|------|
 | **MolPy** | Python toolkit — this repo |
-| **MolRS** | Rust backend: typed array structures and fast compute kernels (native + WASM) |
 | **MolVis** | WebGL molecular visualization and interactive editing |
+| **MolRS** | Rust backend: typed array structures and fast compute kernels (native + WASM) |
 
 ---
 
 ## Contributing
-
-```bash
-pip install -e ".[dev]"
-pre-commit install
-pytest tests/ -m "not external" -q
-```
 
 Issues and pull requests are welcome. See [Contributing](https://molcrafts.github.io/molpy/developer/contributing/).
 

@@ -32,7 +32,7 @@ spec = mp.parser.parse_polymer("{[<]CC[>],[<]CC(C)[>]}") # PolymerSpec
 - `smilesir_to_atomistic` — SMILES IR → Atomistic
 - `bigsmilesir_to_monomer` — BigSMILES IR → Atomistic
 - `bigsmilesir_to_polymerspec` — BigSMILES IR → PolymerSpec
-- [Guide: Parsing Chemistry](../user-guide/01_parsing_chemistry.md)
+- [Guide: Parsing Chemistry](../user-guide/01_parsing_chemistry.ipynb)
 
 ---
 

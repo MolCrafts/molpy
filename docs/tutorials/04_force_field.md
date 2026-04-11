@@ -1,8 +1,6 @@
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/molcrafts/molpy/blob/master/docs/tutorials/04_force_field.ipynb)
-
 # Force Field
 
-After reading this page you will be able to define a force field as structured parameter data, inspect it before execution, convert it to numerical potentials, and export it for different simulation engines.
+This page explains how MolPy represents a force field as structured parameter data, inspects it before execution, converts it to numerical potentials, and exports it for different simulation engines.
 
 ## Why separate structure from parameters?
 

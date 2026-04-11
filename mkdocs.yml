@@ -2,7 +2,7 @@ site_name: MolPy
 site_url: https://molcrafts.github.io/molpy
 repo_url: https://github.com/MolCrafts/molpy
 repo_name: MolCrafts/molpy
-site_description: Composable molecular modeling in Python.
+site_description: A Python toolkit for reactive topology editing in polymer simulations.
 
 copyright: Copyright &copy; 2024 - 2026 MolCrafts Team
 
@@ -96,7 +96,9 @@ nav:
       - getting-started/index.md
       - Installation: getting-started/installation.md
       - Quickstart: getting-started/quickstart.md
+      - MCP Setup: getting-started/mcp.md
       - Core Concepts: getting-started/core-concepts.md
+      - Naming Conventions: getting-started/naming-conventions.md
       - Glossary: getting-started/glossary.md
       - FAQ: getting-started/faq.md
 
@@ -109,11 +111,12 @@ nav:
       - Trajectory: tutorials/05_trajectory.md
       - Selector: tutorials/06_selector.md
       - Wrapper and Adapter: tutorials/07_wrapper_and_adapter.md
+      - Engine: tutorials/engine.md
+      - I/O: tutorials/io.md
+      - Tool Layer: tutorials/tools.md
 
   - Guides:
       - user-guide/index.md
-      - Tool Layer: user-guide/tools.md
-      - I/O: user-guide/io.md
       - Parsing Chemistry: user-guide/01_parsing_chemistry.ipynb
       - Building Polymers:
           - Step by Step: user-guide/02_polymer_stepwise.ipynb
@@ -121,7 +124,7 @@ nav:
           - Crosslinked Networks: user-guide/04_crosslinking.ipynb
           - Polydisperse Systems: user-guide/05_polydisperse_systems.ipynb
       - Force Field Typification: user-guide/06_typifier.ipynb
-      - AmberTools Integration: user-guide/07_ambertools_integration.ipynb
+      - AmberTools Integration: user-guide/07_ambertools_integration.md
 
   - API Reference:
       - api/index.md
@@ -150,7 +153,6 @@ nav:
           - Development Setup: developer/development-setup.md
           - Contributing: developer/contributing.md
           - Coding Style: developer/coding-style.md
-          - Naming Conventions: getting-started/naming-conventions.md
           - Testing: developer/testing.md
           - Release Process: developer/release-process.md
       - Extending Tools:
@@ -160,8 +162,6 @@ nav:
       - Extending Core:
           - Data Model: developer/extending-core.md
           - Force Field: developer/extending-forcefield.md
-      - Integrations:
-          - MCP for LLM Agents: user-guide/mcp.md
 
   - Release Notes: https://github.com/MolCrafts/molpy/releases
 

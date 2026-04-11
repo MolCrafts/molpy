@@ -1,6 +1,6 @@
 # The Engine Module Bridges Python Data and MD Programs
 
-After reading this page you will understand how MolPy's `engine` module translates Python-level molecular data into engine-readable input files, and how to either hand those files to a job scheduler or execute the simulation directly from Python.
+This page describes how MolPy's `engine` module translates Python-level molecular data into engine-readable input files, and how those files can either be handed to an external scheduler or executed directly from Python.
 
 ---
 
@@ -207,5 +207,5 @@ class GromacsEngine(Engine):
 ## See also
 
 - [I/O Subsystem](io.md) — writing LAMMPS data files, force field coefficient files, PDB and GRO files; the engine assumes these files exist before it runs.
-- [PEO–LiTFSI Electrolyte via AmberTools](07_ambertools_integration.ipynb) — an end-to-end workflow that writes AMBER input files and invokes external tools, illustrating the same generate-then-run pattern applied to a different toolchain.
+- [PEO–LiTFSI Electrolyte via AmberTools](../user-guide/07_ambertools_integration.md) — an end-to-end workflow that writes AMBER input files and invokes external tools, illustrating the same generate-then-run pattern applied to a different toolchain.
 - API Reference: `molpy.engine`, `molpy.core.script.Script`.

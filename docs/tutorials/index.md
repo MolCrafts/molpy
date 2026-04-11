@@ -1,6 +1,6 @@
 # Concepts
 
-MolPy employs distinct representations at each stage of a modeling workflow. This section provides a systematic account of the core data structures, ordered from the most editable (molecular graph) to the most numerical (columnar frame), and covering the auxiliary structures — periodic geometry, force field parameters, time-ordered sequences, and external tool boundaries — that complete the data model.
+MolPy employs distinct representations at each stage of a modeling workflow. This section explains that design from the editable molecular graph to the numerical frame representation, and covers the auxiliary structures — periodic geometry, force-field parameters, time-ordered sequences, file-format boundaries, packaged workflows, and engine integration — that complete the data model.
 
 These pages are self-contained and may be read in any order by readers already familiar with one or more concepts. New users are advised to proceed from the first page to the last.
 
@@ -60,3 +60,6 @@ The diagram below illustrates the standard data flow through a MolPy pipeline. E
 - [Trajectory](05_trajectory.md) — time-ordered frame sequences with lazy loading
 - [Selector](06_selector.md) — composable, predicate-based atom filters over `Block` columns
 - [Wrapper and Adapter](07_wrapper_and_adapter.md) — subprocess execution boundaries and in-memory representation bridges
+- [I/O](io.md) — reading, writing, and extending molecular, trajectory, and force-field formats
+- [Tool Layer](tools.md) — packaged multi-step workflows built on top of MolPy's lower-level modules
+- [Engine](engine.md) — generation and execution of MD engine input files for LAMMPS, CP2K, and OpenMM

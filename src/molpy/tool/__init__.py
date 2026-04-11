@@ -1,6 +1,6 @@
 """Tools and compute operations for molecular modeling.
 
-Tools are packaged recipes that wrap multiple MolPy modules into
+Tools are high-level workflows that wrap multiple MolPy modules into
 single-call operations. Compute classes are analysis operations
 on trajectory data.
 
@@ -40,7 +40,7 @@ from .msd import MSD
 from .msd import msd as compute_msd_shorthand
 from .time_series import TimeAverage, TimeCache, compute_acf, compute_msd
 
-# Tool operations (polymer building recipes)
+# Tool operations (polymer-building workflows)
 from .polymer import (
     BuildPolymer,
     BuildPolymerAmber,

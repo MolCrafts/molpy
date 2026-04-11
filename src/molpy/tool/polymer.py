@@ -1,7 +1,7 @@
 """Polymer building tools.
 
-Recipes that wrap the parser, adapter, builder, and reacter modules
-into single-call operations for common polymer construction tasks.
+Tools that wrap the parser, adapter, builder, and reacter modules
+into single-call workflows for common polymer construction tasks.
 
 Tools (auto-registered in ToolRegistry):
 - ``PrepareMonomer`` — BigSMILES → 3D Atomistic with ports

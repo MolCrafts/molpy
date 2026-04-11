@@ -24,18 +24,27 @@ The following sections define the complete schema for Frame and Block structures
 
 #### Atomic Properties (`atoms`)
 
-The `atoms` namespace contains per-atom properties, including atomic numbers, positions, and optional velocity or charge data. All arrays within this Block have length `N`, where `N` is the number of atoms. Atomic positions are stored as three separate 1D arrays (`x`, `y`, `z`) of length `N`, which is the standard convention used by MolPy readers and expected by downstream code (e.g., potential energy calculations).
+The `atoms` namespace contains per-atom properties, including atomic numbers, positions, charges, and optional identifiers. All arrays within this Block have length `N`, where `N` is the number of atoms. Atomic positions are stored as three separate 1D arrays (`x`, `y`, `z`) of length `N`, which is the standard convention used by MolPy readers and expected by downstream code (e.g., potential energy calculations).
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `id` | int array | Atom IDs (1-indexed, optional) |
+| `mol_id` | int array | Molecule IDs (1-indexed, optional) |
 | `number` | int array | Atomic numbers (optional) |
 | `element` | string array | Element symbols (optional) |
+| `type` | int or string array | Atom types (optional) |
+| `mass` | float array | Atomic masses in amu (optional) |
+| `charge` | float array | Partial charges in elementary charge units (optional) |
 | `x` | float array (N) | Atomic x-coordinates |
 | `y` | float array (N) | Atomic y-coordinates |
 | `z` | float array (N) | Atomic z-coordinates |
-| `v` | float array (N×3) | Atomic velocities (optional) |
-| `q` | float array | Atomic charges (optional) |
-| `type` | int or string array | Atom types (optional) |
+| `vx` | float array (N) | Atomic x-velocities (optional) |
+| `vy` | float array (N) | Atomic y-velocities (optional) |
+| `vz` | float array (N) | Atomic z-velocities (optional) |
+| `res_id` | int array | Residue IDs (optional) |
+| `res_name` | string array | Residue names (optional) |
+
+Format-specific aliases such as LAMMPS `q` and `mol` exist only at the I/O boundary. Readers canonicalize them to `charge` and `mol_id`; writers localize them back when required by the target format.
 
 #### Bond Topology (`bonds`)
 
@@ -104,7 +113,7 @@ This parallel naming scheme ensures that the semantic role of each atom (first, 
 
 ### Why the convention exists
 
-The namespace and naming convention addresses two complementary problems: data organization and type safety. At the organization level, namespaces eliminate ambiguity about where a field belongs and what category of data it represents. Without explicit namespaces, field names must encode their semantic category through prefixes or suffixes, leading to inconsistent conventions such as `atom_z` versus `z_atom` versus `atomic_number` versus `element`. Namespaces make the category explicit and separate it from the field identity, so atomic numbers are always accessed as `frame["atoms"]["z"]` regardless of context.
+The namespace and naming convention addresses two complementary problems: data organization and type safety. At the organization level, namespaces eliminate ambiguity about where a field belongs and what category of data it represents. Without explicit namespaces, field names must encode their semantic category through prefixes or suffixes, leading to inconsistent conventions such as `atom_z` versus `z_atom` versus `atomic_number` versus `element`. Namespaces make the category explicit and separate it from the field identity, so atomic numbers are always accessed as `frame["atoms"]["number"]` regardless of context.
 
 At the type safety level, MolPy deliberately avoids using the same field name for both indices and references. While names such as `atom_i` or `atom1` are common in other libraries, they tend to blur the distinction between "position in a table" and "object in memory". By using `atomi` and `atomj` at the Frame level and `itom` and `jtom` at the Entity level, the code makes this distinction visible at the point of use and enforceable through type checking or runtime validation.
 

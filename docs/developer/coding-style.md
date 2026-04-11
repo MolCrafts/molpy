@@ -27,9 +27,9 @@ The `typify()` method returns a new `Atomistic`. The `Struct.copy()` method deep
 Keep functions under 50 lines and focused on one task. Keep files under 800 lines. If a module grows beyond that, extract cohesive groups into new files.
 
 
-## Naming
+## Code identifiers
 
-Use `snake_case` for functions and variables, `PascalCase` for classes, `UPPER_CASE` for constants. Use MolPy-specific terms precisely: `topology` means the bond graph (not "connections"), `atom type` means the force field identifier (not "kind"), `struct` refers to the MolPy `Struct` base class (not a generic "structure").
+Use `snake_case` for functions and variables, `PascalCase` for classes, `UPPER_CASE` for constants. Canonical data-field names such as `element`, `charge`, and `mol_id` are defined in [Naming Conventions](../getting-started/naming-conventions.md); do not introduce local variants in developer docs or extension examples. Use MolPy-specific terms precisely: `topology` means the bond graph (not "connections"), `atom type` means the force field identifier (not "kind"), `struct` refers to the MolPy `Struct` base class (not a generic "structure").
 
 
 ## Type hints
@@ -54,7 +54,7 @@ Use Google-style docstrings for public functions and classes. Include `Args`, `R
 
 ## Formatting
 
-Black is the single source of truth for formatting. No configuration overrides. Run `black src tests` before committing. Pre-commit hooks enforce this automatically.
+Ruff is the single source of truth for formatting and linting. Run `ruff format src tests` and `ruff check src` before committing. Pre-commit hooks enforce this automatically.
 
 
 ## Ready-to-commit checklist
@@ -66,5 +66,6 @@ A change is ready when:
 - [ ] No mutation of input objects
 - [ ] Tests cover the changed behavior
 - [ ] Public APIs have type hints and docstrings
-- [ ] `black --check src tests` passes
+- [ ] `ruff format --check src tests` passes
+- [ ] `ruff check src` passes
 - [ ] `pre-commit run --all-files` passes

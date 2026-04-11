@@ -1,8 +1,6 @@
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/molcrafts/molpy/blob/master/docs/tutorials/05_trajectory.ipynb)
-
 # Trajectory
 
-After reading this page you will be able to build a trajectory from frames, slice and iterate over it, and apply lazy transformations with `map`.
+This page explains how MolPy represents trajectories as ordered sequences of frames, and how lazy access and transformation are handled at that level.
 
 ## One frame is rarely enough
 

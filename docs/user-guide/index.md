@@ -1,12 +1,10 @@
 # Guides
 
-Each guide in this section addresses a concrete modeling task from input specification to simulation-ready output. The notebooks are self-contained and executable; all required dependencies are specified within each notebook. Readers are assumed to be familiar with MolPy's core data model, as described in [Concepts](../tutorials/index.md).
+Each guide in this section addresses a concrete modeling task, from input specification to simulation-ready output. The notebooks and worked examples are self-contained and emphasize workflows in polymer construction, reactive topology editing, force-field assignment, and file generation. Readers are assumed to be familiar with MolPy's core data model, as described in [Concepts](../tutorials/index.md).
 
 
 ## Foundational Subsystems
 
-- [Tool Layer](tools.md) — packaged multi-step recipes (`PrepareMonomer`, `polymer`, `polymer_system`) for common preparation workflows
-- [I/O Subsystem](io.md) — reading, writing, and extending file format support for molecular data, trajectories, and force fields
 - [Chemistry Notation Parsing](01_parsing_chemistry.ipynb) — conversion of SMILES, SMARTS, BigSMILES, and CGSmiles strings into `Atomistic` structures
 
 
@@ -21,5 +19,11 @@ Each guide in this section addresses a concrete modeling task from input specifi
 ## Parameterization and External Tool Integration
 
 - [Force Field Typification](06_typifier.ipynb) — SMARTS-based atom type assignment and force field parameter resolution
-- [PEO–LiTFSI Electrolyte via AmberTools](07_ambertools_integration.ipynb) — a complete polymer electrolyte system preparation workflow using the AmberTools integration
-- [Running MD Engines](engine.md) — generating input scripts and running LAMMPS, CP2K, and OpenMM directly from Python
+- [PEO–LiTFSI Electrolyte via AmberTools](07_ambertools_integration.md) — a complete polymer electrolyte system preparation workflow using the AmberTools integration
+
+
+## Related Concept Pages
+
+- [Tool Layer](../tutorials/tools.md) — how MolPy packages common multi-step workflows behind `Tool` interfaces
+- [I/O](../tutorials/io.md) — how `Frame` and `ForceField` objects are serialized to files and trajectories
+- [Engine](../tutorials/engine.md) — how generated structures and scripts are handed off to LAMMPS, CP2K, and OpenMM

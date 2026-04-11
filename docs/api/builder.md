@@ -38,8 +38,8 @@ chain = result.polymer
 
 ## Related
 
-- [Guide: Stepwise Polymer](../user-guide/02_polymer_stepwise.md)
-- [Guide: Topology-Driven Assembly](../user-guide/03_polymer_topology.md)
+- [Guide: Stepwise Polymer](../user-guide/02_polymer_stepwise.ipynb)
+- [Guide: Topology-Driven Assembly](../user-guide/03_polymer_topology.ipynb)
 
 ---
 

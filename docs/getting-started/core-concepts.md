@@ -1,16 +1,16 @@
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/molcrafts/molpy/blob/master/docs/getting-started/core-concepts.ipynb)
-
 # Core Concepts
 
-MolPy's design centers on a clear separation of concerns that keeps editing intuitive, data fast, and workflows reproducible.
+MolPy separates molecular editing, force-field assignment, and numerical representation into distinct layers. This section introduces that design and the data structures that support it.
 
-Design philosophy (why):
+Design philosophy:
+
 - Identity vs data: entities (atoms, links) are unique identities; bulk data lives in columnar arrays.
 - Graph → Arrays pipeline: build and edit as a graph (`Atomistic`), compute and export from arrays (`Frame`).
 - Derived topology: angles/dihedrals are derived from bonds to avoid stale caches and to keep logic explicit.
 - Parameters are separate: force-field typing is independent of structure to preserve portability and clarity.
 
-Core building blocks (what):
+Core building blocks:
+
 1. Entity & Link (graph model): `Atom`, `Bond`, `Angle`, `Dihedral`.
 2. Block & Frame (columnar data): tables of NumPy arrays keyed by block name (`atoms`, `bonds`, ...).
 3. Topology (connectivity engine): detects higher-order interactions and patterns.
@@ -24,7 +24,7 @@ MolPy uses a graph model for editing because molecular construction is fundament
 
 Two distinct layers matter:
 - **Identity**: "this specific atom instance" (unique object)
-- **Data**: attributes attached to it (`symbol`, `x/y/z`, `charge`, `type`, ...)
+- **Data**: attributes attached to it (`element`, `x/y/z`, `charge`, `type`, ...)
 
 This is why two atoms with identical data are still different entities: they can participate in different bonds, reactions, selections, and edits.
 
@@ -32,10 +32,10 @@ This is why two atoms with identical data are still different entities: they can
 import molpy as mp
 
 # Two atoms can have identical data but different identity
-a1 = mp.Atom(symbol="H", xyz=[0, 0, 0])
-a2 = mp.Atom(symbol="H", xyz=[0, 0, 0])
+a1 = mp.Atom(element="H", xyz=[0, 0, 0])
+a2 = mp.Atom(element="H", xyz=[0, 0, 0])
 
-print("Same symbol?", a1["symbol"] == a2["symbol"])
+print("Same element?", a1["element"] == a2["element"])
 print("Same identity?", a1 is a2)
 
 # Identity makes entities safe as keys in graphs / dicts
@@ -53,8 +53,8 @@ A `Link` connects entities but does not "own" them. This matters because you can
 Common link types: `Bond` (2), `Angle` (3), `Dihedral` (4).
 
 ```python
-c1 = mp.Atom(symbol="C")
-c2 = mp.Atom(symbol="C")
+c1 = mp.Atom(element="C")
+c2 = mp.Atom(element="C")
 
 bond = mp.Bond(c1, c2, order=1.0)
 print("Bond endpoints:", bond.endpoints)
@@ -83,7 +83,7 @@ atoms = Block(
         "x": np.array([0.0, 1.0, 2.0]),
         "y": np.array([0.0, 0.0, 0.0]),
         "z": np.array([0.0, 0.0, 0.0]),
-        "symbol": np.array(["O", "H", "H"], dtype=object),
+        "element": np.array(["O", "H", "H"], dtype=object),
     }
  )
 
