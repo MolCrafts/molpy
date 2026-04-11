@@ -359,7 +359,7 @@ class Generate3D(Compute[RDKitAdapter, RDKitAdapter]):
                 )
 
         if self.optimize:
-            # Use OptimizeGeometry recipe for optimization
+            # Use the OptimizeGeometry operation for geometry optimization
             optimizer = OptimizeGeometry(
                 max_opt_iters=self.max_opt_iters,
                 forcefield=self.forcefield,

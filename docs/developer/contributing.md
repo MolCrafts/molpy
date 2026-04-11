@@ -14,7 +14,8 @@ Fork the repository, clone your fork, and create a branch from `master`. Branch 
 Implement the change with tests. Run local checks before pushing:
 
 ```bash
-black --check src tests
+ruff format --check src tests
+ruff check src
 pytest tests/ -v -m "not external"
 ```
 

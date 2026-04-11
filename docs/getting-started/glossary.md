@@ -11,7 +11,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 :   Base class for atoms and beads. Dictionary-like: read and write properties with bracket notation. Uses identity-based hashing (`id(self)`), not value-based equality.
 
 **Atom**
-:   An `Entity` subclass representing one atom. Carries arbitrary key-value properties (symbol, charge, type, etc.).
+:   An `Entity` subclass representing one atom. Carries arbitrary key-value properties (`element`, `charge`, `type`, etc.).
 
 **Bead**
 :   An `Entity` subclass representing one coarse-grained site.
@@ -56,22 +56,22 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 ### Modules
 
 **Parser**
-:   Converts string notations (SMILES, SMARTS, BigSMILES, CGSmiles) into MolPy structures. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
+:   Converts string notations (SMILES, SMARTS, BigSMILES, CGSmiles) into MolPy structures. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.ipynb).
 
 **Reacter**
-:   Executes a chemical reaction by connecting two `Atomistic` objects at designated port atoms, removing leaving groups, and forming new bonds. See [Stepwise Polymer Construction](../user-guide/02_polymer_stepwise.md).
+:   Executes a chemical reaction by connecting two `Atomistic` objects at designated port atoms, removing leaving groups, and forming new bonds. See [Stepwise Polymer Construction](../user-guide/02_polymer_stepwise.ipynb).
 
 **Port**
 :   A marker on an atom (`<`, `>`, or `$`) indicating that it is a reactive connection point for polymerization.
 
 **Typifier**
-:   Assigns force field types to atoms, bonds, angles, and dihedrals via SMARTS pattern matching. Subclasses: `OplsAtomisticTypifier`, `GaffTypifier`. See [Force Field Typification](../user-guide/06_typifier.md).
+:   Assigns force field types to atoms, bonds, angles, and dihedrals via SMARTS pattern matching. Subclasses: `OplsAtomisticTypifier`, `GaffTypifier`. See [Force Field Typification](../user-guide/06_typifier.ipynb).
 
 **Selector**
 :   A composable predicate that filters atoms in a `Block` by element, type, coordinate range, or distance. Combinable with `&`, `|`, `~`. See [Selector](../tutorials/06_selector.md).
 
 **Tool**
-:   A packaged recipe that wires multiple MolPy modules into a single callable — for example, `PrepareMonomer`, `polymer()`. See [Tool Layer](../user-guide/tools.md).
+:   A high-level workflow interface that wires multiple MolPy modules into a single callable — for example, `PrepareMonomer`, `polymer()`. See [Tool Layer](../tutorials/tools.md).
 
 **Wrapper**
 :   Runs an external executable (antechamber, tleap, Packmol) as a subprocess and captures its results. Crosses an execution boundary. See [Wrapper and Adapter](../tutorials/07_wrapper_and_adapter.md).

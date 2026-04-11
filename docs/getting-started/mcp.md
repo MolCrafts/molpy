@@ -1,35 +1,38 @@
 # MCP: Letting LLM Agents Read MolPy's Source
 
-## Agents need to understand the library, not just call it
+## What MCP solves
 
-An LLM agent working with MolPy faces a fundamental problem: its training data may be outdated or incomplete. It can guess at API names and parameter types, but those guesses break whenever the library changes. Even when the guess is correct, the agent has no way to verify it — it cannot read the source code to confirm that a function exists, what it accepts, or what it returns.
+An LLM agent working with MolPy faces the same problem as any user relying on memory: API knowledge goes stale. A guessed function name, parameter list, or return type may look plausible and still be wrong.
 
-**MolPy's MCP server solves this by exposing the library's source code, docstrings, and signatures as structured tool calls over the Model Context Protocol.** Instead of guessing, the agent queries the server: "What symbols does `molpy.core.atomistic` export?" or "Show me the source of `Reacter.run`." The server returns accurate, up-to-date answers because it reads directly from the installed package.
+MolPy's MCP server fixes that by exposing the installed package as structured tools. Instead of guessing, the agent can ask what modules exist, which symbols a module exports, what a callable accepts, and how a function is implemented. The answers come from the local MolPy installation, not from the model's training data.
 
-This is not a remote execution server. The agent does not call `PrepareMonomer` through MCP. Instead, it uses MCP to *understand* MolPy's API, then writes Python code that calls the API directly. The MCP server is a documentation retrieval tool, not a computation engine.
+In practice, the workflow is simple:
 
-## Six tools for code exploration
+1. Discover modules and symbols.
+2. Read docstrings, signatures, and source when needed.
+3. Write normal Python code against the real MolPy API.
 
-The server exposes six tools. Together they let an agent navigate the package tree, understand any symbol, and search the codebase.
+!!! note "What MCP is not"
+    The server does not execute MolPy workflows for the agent. It helps the agent understand the library, then the agent writes Python code that calls MolPy directly.
 
-**`list_modules`** returns all importable module paths under a given prefix. An agent starting from scratch calls `list_modules("molpy")` to discover the package structure — `molpy.core.atomistic`, `molpy.tool.polymer`, `molpy.parser.smiles`, and so on.
+## The six tools
 
-**`list_symbols`** returns the public symbols exported by a module, each with a one-line summary from its docstring. This tells the agent what a module contains without reading the full source.
+The server exposes six tools. Together they let an agent navigate the package tree, inspect the public API, and read implementation details only when necessary.
 
-**`get_docstring`** retrieves the cleaned docstring of any module, class, or function. Since MolPy docstrings follow Google style with `Args`, `Returns`, `Preferred for`, and `Avoid when` sections, the agent gets structured usage guidance directly from the source.
+| Tool | Use it for |
+| --- | --- |
+| `list_modules` | Discover importable modules under a prefix such as `molpy` or `molpy.builder`. |
+| `list_symbols` | Inspect the public API of a module with one-line summaries. |
+| `get_docstring` | Read structured usage guidance from the source docstring. |
+| `get_signature` | Check parameter names, types, defaults, and return signatures. |
+| `get_source` | Inspect implementation details when docstrings are not enough. |
+| `search_source` | Search the codebase by substring, like a lightweight `grep`. |
 
-**`get_signature`** returns the call signature of a callable — parameter names, types, and defaults. Combined with the docstring, this gives the agent everything it needs to write a correct function call.
+Used together, these tools let an agent explore MolPy the same way a human developer would: browse, narrow, verify, then write code.
 
-**`get_source`** retrieves full source code when the agent needs to understand implementation details — for example, what steps `PrepareMonomer.run()` actually performs, or how `Connector` detects leaving groups.
+## Install and register the server
 
-**`search_source`** does a case-insensitive substring search across all `.py` files, returning file paths, line numbers, and matching lines. This is the agent's grep — useful for finding where a class is defined, where a function is called, or how an error message originates.
-
-When you ask an agent to explore MolPy, it uses these tools to read the source code just like a human would. It discovers the API structure, reads docstrings for usage guidance, checks signatures to call functions correctly, and searches the codebase to fill in any gaps.
-
-
-## Installation and adding the server
-
-MCP support requires the `fastmcp` dependency:
+First install MolPy with MCP support:
 
 ```bash
 pip install molpy[mcp]
@@ -37,26 +40,26 @@ pip install molpy[mcp]
 
 ### Claude Code
 
-One command registers the server. The `--scope` flag controls whether it applies to the current project or to all your projects:
+Register the server once. Use project scope unless you want it available in every repo:
 
 ```bash
-# Project-level (recommended) — adds to .mcp.json in the repo root
+# Project-level (recommended). Writes .mcp.json in the repo root.
 claude mcp add molpy --scope project -- molpy mcp
 
-# User-level — adds to ~/.claude/settings.json
+# User-level. Writes to ~/.claude/settings.json.
 claude mcp add molpy -- molpy mcp
 ```
 
-That's it. Start a new Claude Code session and the server is available. To verify, type `/mcp` in the prompt — you should see `molpy` with six tools listed.
+Start a new Claude Code session, then run `/mcp`. You should see `molpy` and its six tools.
 
 !!! tip "Virtual environments"
-    If MolPy is installed inside a virtual environment and `molpy` is not on the system PATH, pass the full path:
+    If `molpy` is not on your PATH, register the executable explicitly:
 
     ```bash
     claude mcp add molpy -- /path/to/venv/bin/molpy mcp
     ```
 
-    Or use `uv run` to handle activation automatically:
+    Or let `uv` launch it from a project directory:
 
     ```bash
     claude mcp add molpy -- uv run --directory /path/to/molpy molpy mcp
@@ -64,7 +67,7 @@ That's it. Start a new Claude Code session and the server is available. To verif
 
 ### Claude Desktop
 
-Claude Desktop reads from its own config file:
+Claude Desktop reads its own config file:
 
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
@@ -82,181 +85,276 @@ Add a `mcpServers` entry:
 }
 ```
 
-Restart Claude Desktop after saving. The MolPy tools appear in the tool picker (the hammer icon).
+Restart Claude Desktop after saving. The MolPy tools should appear in the tool picker.
 
 ## How MCP works
 
-MCP (Model Context Protocol) is a lightweight RPC layer between an LLM client and a tool server. Understanding the protocol helps you debug connection issues and reason about what the agent is doing.
-
-### The client-server model
-
-The MolPy MCP server is a **separate process** that the LLM client launches and communicates with. The data flow looks like this:
+The MolPy MCP server runs as a separate process. The client launches `molpy mcp`, asks which tools are available, and then sends tool calls over JSON-RPC.
 
 ```text
 ┌─────────────┐   stdin/stdout    ┌──────────────────┐
-│  LLM Client │ ◄──────────────► │  molpy mcp        │
-│  (Claude)   │   JSON-RPC msgs   │  (MCP Server)     │
+│  LLM Client │ ◄──────────────► │  molpy mcp       │
+│  (Claude)   │   JSON-RPC msgs   │  (MCP Server)    │
 └─────────────┘                   └──────────────────┘
-       │                                   │
-       │  "What tools do you have?"        │
-       │ ─────────────────────────────────►│
-       │                                   │
-       │  "list_modules, list_symbols, .." │
-       │ ◄─────────────────────────────────│
-       │                                   │
-       │  call list_modules("molpy.tool")  │
-       │ ─────────────────────────────────►│
-       │                                   │
-       │  ["molpy.tool", "molpy.tool.base",│
-       │   "molpy.tool.polymer", ...]      │
-       │ ◄─────────────────────────────────│
-```
-When the client starts, it sends a handshake request asking the server to list its capabilities. The server responds with six tool definitions — names, parameter schemas, and descriptions. The LLM sees these definitions as available tools, just like file reading or web search. When the LLM decides to call a tool, the client serializes the call as a JSON-RPC message, sends it to the server over stdin, and reads the result from stdout.
-
-The `stdio` transport is the default and works everywhere. The `streamable-http` and `sse` transports serve the same protocol over HTTP, which is useful for clients that cannot launch subprocesses. The primitive way to call mcp server via agent looks like this:
-
-```python
-"Please list all the modules included in molpy."
-  ┌─────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-  │     Package     │                                                         Description                                                         │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.adapter   │ Adapters for OpenBabel, RDKit                                                                                               │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.builder   │ Crystal and polymer builders (AmberTools integration, stochastic generation, sequences)                                     │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.cli       │ Command-line interface                                                                                                      │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.compute   │ Computations (MCD, PMSD, RDKit-based, time series)                                                                          │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.core      │ Core data structures — atomistic/CG models, box, element, entity, forcefield, frame, topology, trajectory, units, selectors │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.data      │ Data resources (forcefield data)                                                                                            │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.engine    │ Simulation engines (CP2K, LAMMPS)                                                                                           │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.io        │ I/O for data formats (AC, Amber, GRO, H5, LAMMPS, MOL2, PDB, TOP, XSF, XYZ), forcefields (Amber, frcmod, LAMMPS,            │
-  │                 │ Moltemplate, TOP, XML), trajectories (H5, LAMMPS, XYZ), and stores (H5, Zarr)                                               │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.op        │ Operations (geometry)                                                                                                       │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.optimize  │ Optimization (L-BFGS, potential wrappers)                                                                                   │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.pack      │ Packing (constraints, targets, Packmol integration)                                                                         │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.parser    │ Parsers for SMARTS and SMILES (including BigSMILES, cgSMILES, gBigSMILES)                                                   │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.potential │ Potentials — bond, angle, dihedral, improper, pair (LJ, Coulomb)                                                            │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.reacter   │ Reaction tools (connectors, selectors, templates, topology detection)                                                       │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.tool      │ Analysis tools (cross-correlation, MSD, polymer, RDKit, time series)                                                        │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.typifier  │ Force field typing (GAFF, OPLS, graph-based matching, layered engine)                                                       │
-  ├─────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ molpy.wrapper   │ External tool wrappers (antechamber, prepgen, tleap)                                                                        │
-  └─────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-
-  Total: 148 modules across 18 top-level packages.
-
 ```
 
-Writing effective prompts
+A typical exchange looks like this:
 
-The MCP server gives the agent access to MolPy’s API — but it does not guarantee a correct result. The difference between a working script and a broken one almost always comes down to how you phrase the prompt.
+1. The client starts the server and requests its capabilities.
+2. The server advertises tools such as `list_modules` and `get_signature`.
+3. The agent calls those tools to inspect MolPy before writing code.
 
-A good prompt makes the task fully specified and unambiguous. A bad prompt leaves the agent guessing.
+`stdio` is the default transport and works in most local setups. `streamable-http` and `sse` expose the same protocol over HTTP for clients that cannot launch subprocesses.
 
-Describe what you want to build — not how to build it
+For example, an agent asked to build a polymer workflow may inspect MolPy like this:
 
-Focus on the system, not the API.
+```text
+1. list_modules("molpy.builder")
+2. list_symbols("molpy.builder.polymer")
+3. get_signature("molpy.builder.polymer.ambertools.AmberPolymerBuilder.build")
+4. get_docstring("molpy.pack.Molpack")
+5. search_source("write_lammps_forcefield")
+```
 
-The agent can discover functions through MCP. If you tell it which function to call, you are bypassing that mechanism and increasing the chance of errors.
+That pattern is the point of MCP: inspect first, code second.
 
-Weak prompt	Better prompt
-Use polymer() to build a PEG chain	Build a PEG chain with 15 repeat units
-Call Molpack to pack molecules	Pack 15 chains into a 20 nm cubic box
-Use the Box class	Create a periodic simulation box for the system
+## Writing effective prompts
 
-👉 Rule of thumb:
-If your prompt mentions function names, it is probably too low-level.
+MCP gives the agent access to MolPy's API, but it does not replace a clear task description. The best prompts specify the system and constraints, then let the agent discover the implementation.
 
-Always include the key physical parameters
+### Describe the system, not the API
 
-Molecular systems are defined by numbers. If you omit them, the agent has to guess — and guesses are usually wrong.
+Tell the agent what you want to build. Do not tell it which function names to call.
+
+| Too low-level | Better |
+| --- | --- |
+| `Use polymer() to build a PEG chain` | `Build a PEG chain with 15 repeat units` |
+| `Call Molpack to pack molecules` | `Pack 15 chains into a 20 nm cubic box` |
+| `Use the Box class` | `Create a periodic simulation box for the system` |
+
+If your prompt names specific MolPy functions, it is usually too low-level.
+
+### Include the physical parameters
+
+Molecular workflows are defined by numbers. If you omit them, the agent has to guess.
 
 At minimum, specify:
 
-molecule type (e.g. PEG, PEO, polystyrene)
-chain length
-number of molecules
-box size or density
-output format (if needed)
+- molecule type
+- chain length or composition
+- number of molecules
+- box size or density
+- output format, if it matters
 
-Good example:
+For example:
 
-Generate a 20 × 20 × 20 nm box containing 15 PEG chains,
-each with a length of 15 monomers. Export to LAMMPS DATA format.
+```text
+Generate a 20 x 20 x 20 nm box containing 15 PEG chains, each with
+15 repeat units. Export to LAMMPS DATA format.
+```
 
-This prompt is complete. The agent can start immediately without asking questions.
+### Keep one prompt to one workflow
 
-Keep one prompt = one workflow
+Do not ask the agent to build a system, run MD, and analyze results in one step.
 
-Do not combine everything into one request.
+Instead, break the work into stages:
 
-❌ Bad:
+1. Build and pack the system.
+2. Prepare the simulation inputs.
+3. Run the analysis.
 
-Build a polymer system, run MD, and compute RDF.
+This matches how real modeling workflows are debugged and validated.
 
-✔ Better:
+### State constraints, then let the agent explore
 
-1. Build 15 PEG chains of length 15 and pack into a 20 nm box
-2. Set up a LAMMPS equilibration at 300 K
-3. Compute the radial distribution function
+Call out constraints that change the result, such as:
 
-👉 Think like a modeling workflow, not a single command.
+- `Use the Amber backend with GAFF2 parameters`
+- `Do not use RDKit`
 
-State constraints that affect the result
+After that, let the agent inspect the API through MCP. Avoid:
 
-If something changes how the system is built, say it explicitly.
+- forcing a specific function name
+- pasting remembered code snippets
+- over-specifying the implementation
 
-Examples:
+If the agent still fails after exploring, that is usually useful feedback about the API or documentation.
 
-Use the Amber backend with GAFF2 parameters
-Do not use RDKit
+### Quick checklist
 
-If you don’t specify constraints, the agent will pick defaults — which may not match your setup.
+Before sending a prompt, check:
 
-Let the agent explore (don’t over-guide it)
+- Does it describe the molecular system rather than API calls?
+- Are the important numbers present?
+- Is this one workflow rather than several?
+- Did I state the constraints that materially affect the result?
 
-The agent will call MCP tools like list_modules or get_signature to understand the API. This is expected.
+## Worked example: TIP3P water box
 
-Avoid:
+This first example is intentionally small. It uses only built-in MolPy data, so
+it is a good sanity check that MCP is connected and the agent is reading the
+local API instead of guessing from memory.
 
-telling it which function to use
-pasting code snippets from memory
-forcing a specific implementation
+### The prompt
 
-If it makes a mistake after exploring, that usually means:
+```text
+Use MolPy to build a small periodic TIP3P water box for LAMMPS. Create
+64 water molecules in a 4 x 4 x 4 grid with 0.32 nm spacing. Use MolPy's
+built-in tip3p.xml force field, assign atom, bond, and angle types, and
+write the result to quickstart-output/water_box_tip3p.data and
+quickstart-output/water_box_tip3p.ff.
+```
 
-the API is unclear, or
-the documentation needs improvement
+### Agent exploration
 
-That’s useful feedback.
+Claude first looks for force-field loading, typification, topology generation,
+and export.
 
-Quick checklist
+**Step 1 — find the main entry points**
 
-Before sending a prompt, ask yourself:
+```
+list_symbols("molpy.io")
+```
 
-Does this describe a real system, not API calls?
-Are all numbers specified?
-Is this one task, not three?
-Did I include constraints that matter?
+```
+read_xml_forcefield      Convenience function to read an XML force field file
+write_lammps_data        Write a Frame object to a LAMMPS data file
+write_lammps_forcefield  Write a ForceField object to a LAMMPS force field file
+```
 
-If yes, the agent will usually get it right on the first try.
+```
+list_symbols("molpy.typifier")
+```
+
+```
+OplsAtomisticTypifier    OPLS-AA atomistic typifier orchestrator
+```
+
+**Step 2 — confirm the built-in TIP3P file path**
+
+```
+get_signature("molpy.io.read_xml_forcefield")
+```
+
+```
+(filepath: str | Path, forcefield: AtomisticForcefield | None = None)
+    -> AtomisticForcefield
+```
+
+Claude reads the docstring and sees that passing `"tip3p.xml"` loads MolPy's
+built-in TIP3P force field from the package data directory.
+
+**Step 3 — verify the non-obvious topology step**
+
+```
+get_docstring("molpy.core.atomistic.Atomistic.get_topo")
+```
+
+The docstring makes one subtle point clear: when `gen_angle=True`,
+`get_topo()` returns a new `Atomistic` instead of mutating the existing one.
+Claude therefore writes `system = system.get_topo(...)` rather than calling it
+in place.
+
+**Step 4 — check the box and typing APIs**
+
+```
+get_signature("molpy.core.Box.orth")
+```
+
+```
+(lengths: ArrayLike, pbc: ArrayLike = ..., origin: ArrayLike = ...,
+ central: bool = False) -> Box
+```
+
+```
+get_signature("molpy.typifier.OplsAtomisticTypifier.__init__")
+```
+
+```
+(forcefield: ForceField, skip_atom_typing: bool = False,
+ skip_pair_typing: bool = False, skip_bond_typing: bool = False,
+ skip_angle_typing: bool = False, skip_dihedral_typing: bool = False,
+ strict_typing: bool = True)
+```
+
+With that information Claude writes the script below.
+
+### The generated script
+
+```python
+from pathlib import Path
+
+import numpy as np
+import molpy as mp
+from molpy.io import read_xml_forcefield, write_lammps_data, write_lammps_forcefield
+from molpy.typifier import OplsAtomisticTypifier
+
+theta = 1.82421813418
+r_oh = 0.09572  # nm
+
+water = mp.Atomistic(name="water_tip3p")
+o = water.def_atom(element="O", name="O", x=0.0, y=0.0, z=0.0, charge=-0.834)
+h1 = water.def_atom(element="H", name="H1", x=r_oh, y=0.0, z=0.0, charge=0.417)
+h2 = water.def_atom(
+    element="H",
+    name="H2",
+    x=r_oh * float(np.cos(theta)),
+    y=r_oh * float(np.sin(theta)),
+    z=0.0,
+    charge=0.417,
+)
+water.def_bond(o, h1, order=1)
+water.def_bond(o, h2, order=1)
+
+system = mp.Atomistic(name="water_box_tip3p")
+mol_id = 1
+for iz in range(4):
+    for iy in range(4):
+        for ix in range(4):
+            mol = water.copy()
+            mol.move(delta=[ix * 0.32, iy * 0.32, iz * 0.32])
+            for atom in mol.atoms:
+                atom["mol_id"] = mol_id
+            system.merge(mol)
+            mol_id += 1
+
+system = system.get_topo(gen_angle=True, gen_dihe=False)
+
+ff = read_xml_forcefield("tip3p.xml")
+typifier = OplsAtomisticTypifier(ff, skip_dihedral_typing=True, strict_typing=True)
+system = typifier.typify(system)
+
+frame = system.to_frame()
+frame.box = mp.Box.orth([1.28, 1.28, 1.28])
+frame["atoms"]["id"] = np.arange(1, frame["atoms"].nrows + 1, dtype=int)
+frame["atoms"]["mol_id"] = np.asarray(frame["atoms"]["mol_id"], dtype=int)
+frame["atoms"]["charge"] = np.asarray(frame["atoms"]["charge"], dtype=float)
+
+out_dir = Path("quickstart-output")
+out_dir.mkdir(parents=True, exist_ok=True)
+write_lammps_data(out_dir / "water_box_tip3p.data", frame, atom_style="full")
+write_lammps_forcefield(out_dir / "water_box_tip3p.ff", ff)
+```
+
+### Output
+
+```
+atoms 192
+bonds 128
+angles 64
+files ['water_box_tip3p.data', 'water_box_tip3p.ff']
+```
+
+This example stays completely local: no AmberTools, no Packmol, and no
+literature lookup. It is usually the fastest way to confirm that the MCP client
+can inspect MolPy, synthesize a correct script, and export a real simulation
+input.
 
 ## Worked example: polydisperse PEO/LiTFSI electrolyte
 
-The rest of this page shows a real session with Claude Code. The MolPy MCP server is connected; the user types a detailed prompt and Claude explores the API, writes a complete script, and reports what the system looks like.
+The next example is much larger. MolPy MCP is still doing the same job, but the
+agent also has to inspect AmberTools-facing builders, packing APIs, and
+force-field merge behavior before it can write the full workflow.
 
 ### The prompt
 
@@ -868,6 +966,6 @@ The sampled PDI (1.178) is slightly below the target (1.20) because with only N 
 
 ## See Also
 
-- [Tool Layer](tools.md) — what the Tool recipes do and when to use them
-- [Polydisperse Systems](05_polydisperse_systems.md) — end-to-end workflow from distribution to LAMMPS export
+- [Tool Layer](../tutorials/tools.md) — what the Tool workflows do and when to use them
+- [Polydisperse Systems](../user-guide/05_polydisperse_systems.ipynb) — end-to-end workflow from distribution to LAMMPS export
 - [API Reference: Tool](../api/tool.md) — full parameter documentation

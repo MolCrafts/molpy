@@ -52,8 +52,9 @@ pytest tests/ -v -k "lammps"              # only LAMMPS-related tests
 ## Common commands
 
 ```bash
-black --check src tests                   # check formatting
-black src tests                           # auto-format
+ruff format --check src tests             # check formatting
+ruff format src tests                     # auto-format
+ruff check src                            # lint source tree
 pytest tests/ -v -m "not external"        # local test suite
 pytest --cov=src/molpy tests/ -v          # with coverage
 pre-commit run --all-files                # all pre-commit hooks
@@ -63,4 +64,4 @@ mkdocs build                              # build static doc site
 
 ## Troubleshooting
 
-If imports fail after pulling new code, reinstall the editable package: `pip install -e ".[dev]"`. If notebook cells fail during doc build, install doc dependencies: `pip install -e ".[doc]"`. If formatting checks fail in CI, run `black src tests` locally before pushing.
+If imports fail after pulling new code, reinstall the editable package: `pip install -e ".[dev]"`. If notebook cells fail during doc build, install doc dependencies: `pip install -e ".[doc]"`. If formatting checks fail in CI, run `ruff format src tests` locally before pushing.

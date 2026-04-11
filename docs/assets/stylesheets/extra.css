@@ -33,15 +33,10 @@
 
 /* ===== Home Page Layout ===== */
 .home-page {
-  margin: 0;
-  padding: 0;
-  position: relative;
-}
-
-.home-page .md-content {
   max-width: 1200px;
   margin: 0 auto;
   padding: 3rem 2rem;
+  position: relative;
 }
 
 /* ===== Animated Background Gradient ===== */
@@ -85,24 +80,39 @@
   }
 }
 
-.home-page .lead {
-  font-size: 1.25rem;
+.home-page .hero-copy {
+  max-width: 760px;
+  margin: 0 auto 2.25rem;
   text-align: center;
-  color: var(--md-typeset-color);
-  opacity: 0.85;
-  margin-bottom: 2.5rem;
-  max-width: 700px;
+  animation: fadeInUp 0.8s ease-out 0.1s both;
+}
+
+.home-page .hero-copy > p {
   margin-left: auto;
   margin-right: auto;
+}
+
+.home-page .lead {
+  font-size: 1.35rem;
+  color: var(--md-typeset-color);
+  margin: 0 0 0.75rem;
   line-height: 1.7;
-  font-weight: 400;
-  animation: fadeInUp 0.8s ease-out 0.1s both;
+  font-weight: 500;
+}
+
+.home-page .tagline {
+  margin: 0;
+  max-width: 680px;
+  color: var(--md-typeset-color);
+  opacity: 0.78;
+  font-size: 1.05rem;
+  line-height: 1.75;
 }
 
 /* ===== Badges with Animation ===== */
 .badges {
   text-align: center;
-  margin: 2.5rem 0 3.5rem;
+  margin: 2rem 0 3.25rem;
   animation: fadeInUp 0.8s ease-out 0.2s both;
 }
 
@@ -356,7 +366,7 @@ html {
 
 /* ===== Responsive Design ===== */
 @media screen and (max-width: 76.1875em) {
-  .home-page .md-content {
+  .home-page {
     padding: 2.5rem 1.5rem;
   }
 
@@ -372,6 +382,10 @@ html {
 
   .home-page .lead {
     font-size: 1.1rem;
+  }
+
+  .home-page .tagline {
+    font-size: 1rem;
   }
 
   .home-page h2 {
@@ -395,7 +409,7 @@ html {
 }
 
 @media screen and (max-width: 44.984375em) {
-  .home-page .md-content {
+  .home-page {
     padding: 2rem 1rem;
   }
 
@@ -405,7 +419,12 @@ html {
   }
 
   .home-page .lead {
-    font-size: 1rem;
+    font-size: 1.02rem;
+    margin-bottom: 0.6rem;
+  }
+
+  .home-page .tagline {
+    font-size: 0.96rem;
   }
 
   .home-page h2 {

@@ -1,8 +1,6 @@
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/molcrafts/molpy/blob/master/docs/tutorials/02_block_and_frame.ipynb)
-
 # Block and Frame
 
-After reading this page you will be able to store molecular data in aligned tables, group those tables into complete snapshots, and serialize them for downstream use.
+This page explains how MolPy stores molecular data in aligned tables, groups those tables into complete snapshots, and uses them for export and downstream computation.
 
 ## Why two representations?
 

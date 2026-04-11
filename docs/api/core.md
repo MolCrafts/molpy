@@ -23,8 +23,8 @@ import molpy as mp
 
 # Atomistic: editable molecular graph
 mol = mp.Atomistic(name="water")
-o = mol.def_atom(symbol="O", x=0.0, y=0.0, z=0.0)
-h = mol.def_atom(symbol="H", x=0.957, y=0.0, z=0.0)
+o = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
+h = mol.def_atom(element="H", x=0.957, y=0.0, z=0.0)
 mol.def_bond(o, h)
 
 # Block + Frame: tabular snapshot

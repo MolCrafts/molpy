@@ -1,8 +1,6 @@
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/molcrafts/molpy/blob/master/docs/tutorials/01_atomistic_and_topology.ipynb)
-
 # Atomistic and Topology
 
-After reading this page you will be able to build a molecule from atoms and bonds, query its connectivity, and derive angles and dihedrals automatically.
+This page explains how MolPy represents a molecule as an editable graph, how connectivity is queried, and how higher-order topology is derived from bonds.
 
 ## Why a graph?
 
@@ -25,13 +23,13 @@ import molpy as mp
 mol = mp.Atomistic(name="ethanol")
 ```
 
-`def_atom` creates an atom and adds it to the graph. You pass whatever properties you need as keyword arguments — `symbol`, coordinates, `charge`, or anything else. There is no fixed schema.
+`def_atom` creates an atom and adds it to the graph. You pass whatever properties you need as keyword arguments — `element`, coordinates, `charge`, or anything else. There is no fixed schema.
 
 ```python
-c1 = mol.def_atom(symbol="C", name="C1", x=0.0, y=0.0, z=0.0)
-c2 = mol.def_atom(symbol="C", name="C2", x=1.54, y=0.0, z=0.0)
-o  = mol.def_atom(symbol="O", name="O1", x=2.0, y=1.4, z=0.0)
-h_o = mol.def_atom(symbol="H", name="HO", x=2.9, y=1.4, z=0.0)
+c1 = mol.def_atom(element="C", name="C1", x=0.0, y=0.0, z=0.0)
+c2 = mol.def_atom(element="C", name="C2", x=1.54, y=0.0, z=0.0)
+o  = mol.def_atom(element="O", name="O1", x=2.0, y=1.4, z=0.0)
+h_o = mol.def_atom(element="H", name="HO", x=2.9, y=1.4, z=0.0)
 ```
 
 `def_bond` connects two existing atoms. Like atoms, bonds accept arbitrary keyword attributes.
@@ -52,7 +50,7 @@ At this point `mol` holds the heavy-atom skeleton of ethanol. Atoms and bonds ar
 Every `Atom` and `Bond` is a dictionary-like object. You read and write properties with bracket notation or `.get()`.
 
 ```python
-print(c1["symbol"])       # "C"
+print(c1["element"])      # "C"
 print(c1.get("charge"))   # None — charge was never set
 
 c1["charge"] = -0.18
@@ -71,7 +69,7 @@ Because atoms are references, modifying an atom object immediately changes the g
 
 ```python
 for atom in mol.atoms:
-    if atom["symbol"] == "C":
+    if atom["element"] == "C":
         atom["hybridization"] = "sp3"
 
 print(c2["hybridization"])  # "sp3"
@@ -159,9 +157,9 @@ Two `Atomistic` objects can be merged with `+`. The result is a new object conta
 
 ```python
 water = mp.Atomistic(name="water")
-ow = water.def_atom(symbol="O", x=0.0, y=0.0, z=0.0)
-h1 = water.def_atom(symbol="H", x=0.957, y=0.0, z=0.0)
-h2 = water.def_atom(symbol="H", x=-0.239, y=0.927, z=0.0)
+ow = water.def_atom(element="O", x=0.0, y=0.0, z=0.0)
+h1 = water.def_atom(element="H", x=0.957, y=0.0, z=0.0)
+h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.0)
 water.def_bond(ow, h1)
 water.def_bond(ow, h2)
 
@@ -188,9 +186,9 @@ Let's see this on a fresh molecule where all the heavy atoms are still present.
 
 ```python
 propane = mp.Atomistic(name="propane")
-ca = propane.def_atom(symbol="C", name="C1", x=0.0, y=0.0, z=0.0)
-cb = propane.def_atom(symbol="C", name="C2", x=1.54, y=0.0, z=0.0)
-cc = propane.def_atom(symbol="C", name="C3", x=3.08, y=0.0, z=0.0)
+ca = propane.def_atom(element="C", name="C1", x=0.0, y=0.0, z=0.0)
+cb = propane.def_atom(element="C", name="C2", x=1.54, y=0.0, z=0.0)
+cc = propane.def_atom(element="C", name="C3", x=3.08, y=0.0, z=0.0)
 propane.def_bond(ca, cb)
 propane.def_bond(cb, cc)
 

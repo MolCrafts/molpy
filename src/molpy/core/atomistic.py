@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 class Atom(Entity):
-    """Atom entity (expects optional keys like {"type": "C", "xyz": [...]})"""
+    """Atom entity (common keys include {"element": "C", "xyz": [...]})"""
 
     def __repr__(self) -> str:
         identifier: str
@@ -327,7 +327,7 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         ``y``, ``z`` float fields on the created atom.
 
         Args:
-            **attrs: Atom attributes. Common keys include ``symbol`` (str),
+            **attrs: Atom attributes. Common keys include ``element`` (str),
                 ``type`` (str), ``charge`` (float, elementary charge units),
                 ``mass`` (float, g/mol), and ``xyz`` (sequence of 3 floats
                 in angstroms).

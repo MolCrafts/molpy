@@ -11,13 +11,6 @@ class GromacsTopReader:
     (e.g. ``atomtypes``, ``moleculetype``), mapping to the raw **content lines**
     (with inline comments stripped) that appear under that section in the order
     they occur.
-
-    Example
-    -------
-    >>> reader = GromacsTopReader('topol.top')
-    >>> sections = reader.read()
-    >>> sections['system']
-    ['My simulation box']
     """
 
     _SECTION_RE = re.compile(r"^\s*\[\s*([\w-]+)\s*]\s*$")

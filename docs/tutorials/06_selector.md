@@ -1,8 +1,6 @@
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/molcrafts/molpy/blob/master/docs/tutorials/06_selector.ipynb)
-
 # Selector
 
-After reading this page you will be able to filter atoms by element, type, coordinate range, or distance, and compose complex selections using logical operators.
+This page explains how MolPy expresses atom selections as composable predicates over `Block` columns, including filters by element, type, coordinate range, and distance.
 
 ## Selecting atoms without loops
 

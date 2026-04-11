@@ -23,7 +23,7 @@ All public symbols are documented on the package pages listed below. Docstrings 
 | Read and write molecular files (PDB, LAMMPS, GRO, …) | `read_pdb`, `write_lammps_data`, `read_xml_forcefield` | [I/O](io.md) |
 | Convert between MolPy and RDKit / OpenBabel objects | `RDKitAdapter`, `OpenBabelAdapter` | [Adapter](adapter.md) |
 | Invoke external CLI tools (antechamber, tleap) | `Wrapper`, `AntechamberWrapper` | [Wrapper](wrapper.md) |
-| Execute packaged multi-step preparation recipes | `PrepareMonomer`, `polymer`, `generate_3d` | [Tool](tool.md) |
+| Execute packaged multi-step preparation workflows | `PrepareMonomer`, `polymer`, `generate_3d` | [Tool](tool.md) |
 | Compute mean-squared displacement and correlations | `MSD`, `DisplacementCorrelation` | [Tool](tool.md) |
 | Generate LAMMPS or CP2K input decks | `LAMMPSEngine`, `CP2KEngine` | [Engine](engine.md) |
 
@@ -42,6 +42,6 @@ All public symbols are documented on the package pages listed below. Docstrings 
 | [I/O](io.md) | Format-specific readers and writers for molecular data, force fields, and trajectories |
 | [Adapter](adapter.md) | In-memory representation bridges to RDKit and OpenBabel |
 | [Wrapper](wrapper.md) | Subprocess interfaces for AmberTools command-line executables |
-| [Tool](tool.md) | High-level multi-step preparation recipes and analysis operators |
+| [Tool](tool.md) | High-level multi-step preparation workflows and analysis operators |
 | [Engine](engine.md) | Simulation engine abstractions for LAMMPS and CP2K |
 | [Optimization](optimize.md) | Potential wrappers for geometry optimization workflows |

@@ -37,7 +37,7 @@ typed_mol = typifier.typify(mol)  # returns NEW Atomistic
 
 ## Related
 
-- [Guide: Force Field Typification](../user-guide/06_typifier.md)
+- [Guide: Force Field Typification](../user-guide/06_typifier.ipynb)
 - [Concepts: Force Field](../tutorials/04_force_field.md)
 
 ---

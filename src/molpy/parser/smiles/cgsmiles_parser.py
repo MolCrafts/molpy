@@ -422,7 +422,7 @@ def parse_cgsmiles(src: str) -> CGSmilesIR:
     """Parse a CGSmiles string.
 
     Args:
-        src: CGSmiles string (e.g., "{[#PEO][#PMA]}.{#PEO=[$]COC[$]}")
+        src: CGSmiles string (e.g., ``"{[#PEO][#PMA]}.{#PEO=[$]COC[$]}"``)
 
     Returns:
         CGSmilesIR with base graph and fragment definitions

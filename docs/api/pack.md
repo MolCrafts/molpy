@@ -30,8 +30,8 @@ packed = packer.optimize(max_steps=10000, seed=42)
 
 ## Related
 
-- [Guide: Crosslinked Networks](../user-guide/04_crosslinking.md)
-- [Guide: Polydisperse Systems](../user-guide/05_polydisperse_systems.md)
+- [Guide: Crosslinked Networks](../user-guide/04_crosslinking.ipynb)
+- [Guide: Polydisperse Systems](../user-guide/05_polydisperse_systems.ipynb)
 
 ---
 

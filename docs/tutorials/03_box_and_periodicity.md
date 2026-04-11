@@ -1,8 +1,6 @@
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/molcrafts/molpy/blob/master/docs/tutorials/03_box_and_periodicity.ipynb)
-
 # Box and Periodicity
 
-After reading this page you will be able to create simulation cells, wrap coordinates into the primary image, and compute minimum-image distances.
+This page explains how MolPy represents simulation cells, wraps coordinates into the primary image, and computes minimum-image distances under periodic boundary conditions.
 
 ## Why periodicity matters
 

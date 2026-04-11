@@ -2,7 +2,7 @@
 
 # Quickstart
 
-This quickstart builds a small TIP3P water box end-to-end in MolPy: define a water molecule, assign TIP3P types, place many molecules into a periodic box, convert to a `Frame`, and export LAMMPS input files.
+This quickstart constructs a small TIP3P water box end to end in MolPy. It defines a water molecule, assigns TIP3P types, places multiple molecules in a periodic box, converts the result to a `Frame`, and exports LAMMPS input files.
 
 **Final output:**
 - A LAMMPS data file (`.data`) describing the typed system
@@ -29,15 +29,15 @@ water_template = mp.Atomistic(name='water_tip3p')
 theta = 1.82421813418  # rad (TIP3P H-O-H angle)
 r_oh = 0.09572  # nm (TIP3P O-H bond length)
 
-o = water_template.def_atom(element='O', name='O', x=0.0, y=0.0, z=0.0, q=-0.834)
-h1 = water_template.def_atom(element='H', name='H1', x=r_oh, y=0.0, z=0.0, q=0.417)
+o = water_template.def_atom(element='O', name='O', x=0.0, y=0.0, z=0.0, charge=-0.834)
+h1 = water_template.def_atom(element='H', name='H1', x=r_oh, y=0.0, z=0.0, charge=0.417)
 h2 = water_template.def_atom(
     element='H',
     name='H2',
     x=r_oh * float(np.cos(theta)),
     y=r_oh * float(np.sin(theta)),
     z=0.0,
-    q=0.417,
+    charge=0.417,
  )
 
 water_template.def_bond(o, h1, order=1)
@@ -112,7 +112,7 @@ for iz in range(nz):
             mol.rotate(axis=[0.0, 0.0, 1.0], angle=float(0.1 * idx), about=[0.0, 0.0, 0.0])
             mol.move(delta=[ix * spacing, iy * spacing, iz * spacing])
             for atom in mol.atoms:
-                atom['mol'] = mol_id
+                atom['mol_id'] = mol_id
             water_box_atomistic.merge(mol)
             mol_id += 1
             idx += 1
@@ -138,8 +138,8 @@ atoms = frame['atoms']
 n_atoms = atoms.nrows
 
 atoms['id'] = np.arange(1, n_atoms + 1, dtype=int)
-atoms['mol'] = np.asarray(atoms['mol'], dtype=int)
-atoms['q'] = np.asarray(atoms['q'], dtype=float)
+atoms['mol_id'] = np.asarray(atoms['mol_id'], dtype=int)
+atoms['charge'] = np.asarray(atoms['charge'], dtype=float)
 
 print('atoms rows:', frame['atoms'].nrows)
 print('bonds rows:', frame['bonds'].nrows)
