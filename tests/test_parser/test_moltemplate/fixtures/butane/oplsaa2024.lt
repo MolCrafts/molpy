@@ -1,0 +1,67 @@
+# Minimal OPLSAA stub for butane fixture tests.
+# Only includes parameters for atom types 54 (n-CH3 C), 57 (CH2 C), 60 (H alkanes).
+# Derived from the full oplsaa2024.lt distributed with the moltemplate package.
+
+OPLSAA {
+
+  write_once("Data Masses") {
+    @atom:54   12.011  # C  - CT   | n-CH3 all-atom C: alkanes
+    @atom:57   12.011  # C  - CT   | CH2 all-atom C: alkanes
+    @atom:60    1.008  # H  - HC   | H all-atom H: alkanes
+  }
+
+  write_once("In Charges") {
+    set type @atom:54   charge  -0.180  # C  - CT   | n-CH3 all-atom C: alkanes
+    set type @atom:57   charge  -0.120  # C  - CT   | CH2 all-atom C: alkanes
+    set type @atom:60   charge   0.060  # H  - HC   | H all-atom H: alkanes
+  }
+
+  write_once("In Init") {
+    units real
+    atom_style full
+    bond_style harmonic
+    angle_style harmonic
+    dihedral_style opls
+    improper_style cvff
+    pair_style lj/cut/coul/long 11.0 11.0
+    kspace_style pppm 0.0001
+  }
+
+  write_once("In Settings") {
+    # --- pair coefficients ---
+    pair_coeff @atom:54_bCT_aCT_dCT_iCT @atom:54_bCT_aCT_dCT_iCT 0.066 3.550
+    pair_coeff @atom:57_bCT_aCT_dCT_iCT @atom:57_bCT_aCT_dCT_iCT 0.066 3.510
+    pair_coeff @atom:60_bHC_aHC_dHC_iHC @atom:60_bHC_aHC_dHC_iHC 0.026 2.480
+    # --- bond coefficients ---
+    bond_coeff @bond:CT_CT  268.   1.529
+    bond_coeff @bond:CT_HC  340.   1.09
+    bond_coeff @bond:C£_CT  268.   1.529
+    bond_coeff @bond:C£_HC  340.   1.09
+    # --- angle coefficients ---
+    angle_coeff @angle:CT_CT_CT  58.35 112.7
+    angle_coeff @angle:CT_CT_HC  37.5  110.7
+    angle_coeff @angle:HC_CT_HC  33.   107.8
+    angle_coeff @angle:C£_CT_CT  63.0  115.6
+    angle_coeff @angle:C£_CT_HC  35.   109.5
+  }
+
+  write_once("Data Bonds By Type") {
+    @bond:CT_CT @atom:*_bCT*_a*_d*_i* @atom:*_bCT*_a*_d*_i*
+    @bond:CT_HC @atom:*_bCT*_a*_d*_i* @atom:*_bHC*_a*_d*_i*
+    @bond:C£_CT @atom:*_bC**_a*_d*_i* @atom:*_bCT*_a*_d*_i*
+    @bond:C£_HC @atom:*_bC**_a*_d*_i* @atom:*_bHC*_a*_d*_i*
+  }
+
+  write_once("Data Angles By Type") {
+    @angle:CT_CT_CT @atom:*_b*_aCT*_d*_i* @atom:*_b*_aCT*_d*_i* @atom:*_b*_aCT*_d*_i*
+    @angle:CT_CT_HC @atom:*_b*_aCT*_d*_i* @atom:*_b*_aCT*_d*_i* @atom:*_b*_aHC*_d*_i*
+    @angle:HC_CT_HC @atom:*_b*_aHC*_d*_i* @atom:*_b*_aCT*_d*_i* @atom:*_b*_aHC*_d*_i*
+    @angle:C£_CT_CT @atom:*_b*_aC**_d*_i* @atom:*_b*_aCT*_d*_i* @atom:*_b*_aCT*_d*_i*
+    @angle:C£_CT_HC @atom:*_b*_aC**_d*_i* @atom:*_b*_aCT*_d*_i* @atom:*_b*_aHC*_d*_i*
+  }
+
+} # OPLSAA
+
+replace{ @atom:54   @atom:54_bCT_aCT_dCT_iCT }
+replace{ @atom:57   @atom:57_bCT_aCT_dCT_iCT }
+replace{ @atom:60   @atom:60_bHC_aHC_dHC_iHC }
