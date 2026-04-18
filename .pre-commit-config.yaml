@@ -20,6 +20,22 @@ repos:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
 
+  - repo: local
+    hooks:
+      - id: ty
+        name: ty (type check)
+        entry: ty check src/molpy/
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: pytest
+        name: pytest (fast)
+        entry: pytest tests/ -x -q -m "not external" --ignore=tests/test_mcp --no-header -rN
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
   - repo: https://github.com/kynan/nbstripout
     rev: 0.8.2
     hooks:
