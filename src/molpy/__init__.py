@@ -4,7 +4,7 @@
 from . import data, engine, io, parser, potential, tool, typifier
 
 # Core
-from .core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral
+from .core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper
 from .core.box import Box
 from .core.cg import Bead, CGBond, CoarseGrain
 from .core.entity import Entity, Link, Struct
@@ -50,6 +50,7 @@ __all__ = [
     "Atomistic",
     "Bond",
     "Dihedral",
+    "Improper",
     "Box",
     "Bead",
     "CGBond",

@@ -203,4 +203,5 @@ pythonpath = [
 markers = [
     "external: tests requiring external network/resources or executables",
     "mcp: tests requiring fastmcp",
+    "slow: long-running end-to-end tests (e.g. whole-upstream moltemplate sweep)",
 ]

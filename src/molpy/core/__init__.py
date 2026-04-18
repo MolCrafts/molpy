@@ -1,4 +1,4 @@
-from .atomistic import Angle, Atom, Atomistic, Bond, Dihedral
+from .atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper
 from .box import Box
 from .cg import Bead, CGBond, CoarseGrain
 from .forcefield import (
@@ -31,6 +31,7 @@ __all__ = [
     "Atomistic",
     "Bond",
     "Dihedral",
+    "Improper",
     "Box",
     "Bead",
     "CGBond",

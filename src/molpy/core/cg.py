@@ -168,6 +168,75 @@ class CoarseGrain(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         self.links.add(bond)
         return bond
 
+    # ========== Delete Methods ==========
+
+    def del_bead(self, *beads: Bead) -> None:
+        """Remove beads and all their incident CG bonds."""
+        self.remove_entity(*beads)
+
+    def del_cgbond(self, *bonds: CGBond) -> None:
+        """Remove CG bonds from the structure."""
+        self.remove_link(*bonds)
+
+    # ========== Property / Type / Selection Editing ==========
+
+    def rename_type(self, old: str, new: str, *, kind: type = Bead) -> int:
+        """Rename all beads/bonds of ``kind`` whose ``type`` attribute equals ``old``.
+
+        Returns the number of items updated.
+        """
+        if issubclass(kind, Link):
+            items = self.links.bucket(kind)
+        else:
+            items = self.entities.bucket(kind)
+        count = 0
+        for item in items:
+            if item.get("type") == old:
+                item["type"] = new
+                count += 1
+        return count
+
+    def set_property(
+        self,
+        selector,
+        key: str,
+        value: Any,
+        *,
+        kind: type = Bead,
+    ) -> int:
+        """Set a property on every bead (or link) matching the callable ``selector``."""
+        if not callable(selector):
+            raise TypeError(
+                "selector must be a callable (bead) -> bool; "
+                "SMARTS-string selectors are not yet supported"
+            )
+        if issubclass(kind, Link):
+            items = self.links.bucket(kind)
+        else:
+            items = self.entities.bucket(kind)
+        count = 0
+        for item in items:
+            if selector(item):
+                item[key] = value
+                count += 1
+        return count
+
+    def select(self, predicate) -> "CoarseGrain":
+        """Return a new CoarseGrain containing only beads matching ``predicate``.
+
+        Bonds whose endpoints are fully inside the selection are carried over.
+        """
+        if not callable(predicate):
+            raise TypeError(
+                "predicate must be a callable (bead) -> bool; "
+                "SMARTS-string predicates are not yet supported"
+            )
+        selected = [b for b in self.beads if predicate(b)]
+        sub, _ = self.extract_subgraph(
+            selected, radius=0, entity_type=Bead, link_type=Link
+        )
+        return sub  # type: ignore[return-value]
+
     # ========== Batch Factory Methods (def_*s: create and add multiple) ==========
 
     def def_beads(self, beads_data: list[dict[str, Any]], /) -> list[Bead]:

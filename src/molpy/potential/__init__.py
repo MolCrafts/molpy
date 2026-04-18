@@ -10,15 +10,19 @@ call potential functions with the extracted data.
 """
 
 # Import all potential implementations to register them
-from . import angle, bond, pair
+from . import angle, bond, dihedral, improper, pair
 from .angle import *
 from .base import Potential, Potentials
 from .bond import *
+from .dihedral import *
+from .improper import *
 from .pair import *
 
 __all__ = [
     "angle",
     "bond",
+    "dihedral",
+    "improper",
     "pair",
     "Potential",
     "Potentials",

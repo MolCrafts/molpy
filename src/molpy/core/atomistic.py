@@ -163,6 +163,62 @@ class Dihedral(Link):
         return self.endpoints[3]
 
 
+class Improper(Link):
+    """Improper torsion between four atoms (``i`` is the central atom).
+
+    Impropers constrain out-of-plane geometry around a central atom ``i``
+    bonded to three substituents ``j``/``k``/``l``. They are topologically
+    distinct from proper :class:`Dihedral` terms — force fields assign
+    separate coefficients and LAMMPS/OpenMM/GROMACS all treat the two as
+    separate lists.
+
+    Related symbols:
+        Atom, Bond, Angle, Dihedral, Atomistic.def_improper
+    """
+
+    def __init__(self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any):
+        """Create an improper torsion between four atoms.
+
+        Args:
+            a: Central atom.
+            b: First substituent atom.
+            c: Second substituent atom.
+            d: Third substituent atom.
+            **attrs: Arbitrary improper attributes (e.g., ``type="C-C-C-C"``).
+
+        Raises:
+            AssertionError: If any argument is not an Atom instance.
+        """
+        assert isinstance(a, Atom), f"atom a must be an Atom instance, got {type(a)}"
+        assert isinstance(b, Atom), f"atom b must be an Atom instance, got {type(b)}"
+        assert isinstance(c, Atom), f"atom c must be an Atom instance, got {type(c)}"
+        assert isinstance(d, Atom), f"atom d must be an Atom instance, got {type(d)}"
+        super().__init__([a, b, c, d], **attrs)
+
+    def __repr__(self) -> str:
+        return f"<Improper: {self.itom} - {self.jtom} - {self.ktom} - {self.ltom}>"
+
+    @property
+    def itom(self) -> Atom:
+        """Central atom of the improper torsion."""
+        return self.endpoints[0]
+
+    @property
+    def jtom(self) -> Atom:
+        """First substituent atom."""
+        return self.endpoints[1]
+
+    @property
+    def ktom(self) -> Atom:
+        """Second substituent atom."""
+        return self.endpoints[2]
+
+    @property
+    def ltom(self) -> Atom:
+        """Third substituent atom."""
+        return self.endpoints[3]
+
+
 class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
     """All-atom molecular structure with full topological information.
 
@@ -204,6 +260,7 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         self.links.register_type(Bond)
         self.links.register_type(Angle)
         self.links.register_type(Dihedral)
+        self.links.register_type(Improper)
 
     @property
     def atoms(self) -> Entities[Atom]:
@@ -240,6 +297,15 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
             Entities[Dihedral]: Column-accessible list of Dihedral objects.
         """
         return self.links[Dihedral]  # type: ignore[return-value]
+
+    @property
+    def impropers(self) -> Entities[Improper]:  # type: ignore[type-var]
+        """All impropers in this structure.
+
+        Returns:
+            Entities[Improper]: Column-accessible list of Improper objects.
+        """
+        return self.links[Improper]  # type: ignore[return-value]
 
     @property
     def symbols(self) -> list[str]:
@@ -412,6 +478,28 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         self.links.add(dihedral)
         return dihedral
 
+    def def_improper(
+        self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any
+    ) -> Improper:
+        """Create a new Improper torsion and add it to the structure.
+
+        Args:
+            a: Central atom.
+            b: First substituent atom.
+            c: Second substituent atom.
+            d: Third substituent atom.
+            **attrs: Improper attributes (e.g., ``type="C-C-C-C"``).
+
+        Returns:
+            Improper: The newly created and registered improper.
+
+        Related symbols:
+            Improper, def_impropers, add_improper
+        """
+        improper = Improper(a, b, c, d, **attrs)
+        self.links.add(improper)
+        return improper
+
     def extract_subgraph(
         self,
         center_entities: Iterable[Atom],
@@ -485,6 +573,18 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
                 if not exists:
                     attrs = deepcopy(getattr(dihedral, "data", {}))
                     subgraph.def_dihedral(*subgraph_eps, **attrs)
+
+        # Copy impropers from original to subgraph
+        for improper in self.impropers:
+            endpoints = improper.endpoints
+            if all(ep in original_to_subgraph for ep in endpoints):
+                subgraph_eps = [original_to_subgraph[ep] for ep in endpoints]
+                exists = any(
+                    set(i.endpoints) == set(subgraph_eps) for i in subgraph.impropers
+                )
+                if not exists:
+                    attrs = deepcopy(getattr(improper, "data", {}))
+                    subgraph.def_improper(*subgraph_eps, **attrs)
 
         # Convert edge_entities to list of Atoms
         edge_atoms = [e for e in edge_entities if isinstance(e, Atom)]
@@ -584,6 +684,137 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
             def_bond, add_bond, remove_link
         """
         self.remove_link(*bonds)
+
+    def del_angle(self, *angles: Angle) -> None:
+        """Remove angles from the structure.
+
+        Args:
+            *angles: Angle instances to remove.
+
+        Related symbols:
+            def_angle, add_angle, remove_link
+        """
+        self.remove_link(*angles)
+
+    def del_dihedral(self, *dihedrals: Dihedral) -> None:
+        """Remove dihedrals from the structure.
+
+        Args:
+            *dihedrals: Dihedral instances to remove.
+
+        Related symbols:
+            def_dihedral, add_dihedral, remove_link
+        """
+        self.remove_link(*dihedrals)
+
+    def del_improper(self, *impropers: Improper) -> None:
+        """Remove impropers from the structure.
+
+        Args:
+            *impropers: Improper instances to remove.
+
+        Related symbols:
+            def_improper, add_improper, remove_link
+        """
+        self.remove_link(*impropers)
+
+    def add_improper(self, improper: Improper, /) -> Improper:
+        """Add an existing Improper object to the structure.
+
+        Args:
+            improper: Improper instance to register.
+
+        Returns:
+            Improper: The same improper passed in.
+
+        Related symbols:
+            Improper, def_improper
+        """
+        self.links.add(improper)
+        return improper
+
+    # ========== Property / Type / Selection Editing ==========
+
+    def rename_type(self, old: str, new: str, *, kind: type = Atom) -> int:
+        """Rename all entities/links of ``kind`` whose ``type`` attribute equals ``old``.
+
+        Args:
+            old: Existing type name.
+            new: Replacement type name.
+            kind: Entity or Link class to target (default: ``Atom``). Pass
+                ``Bond``, ``Angle``, ``Dihedral`` to rename those link types.
+
+        Returns:
+            Number of entities/links whose type was renamed.
+        """
+        count = 0
+        if issubclass(kind, Link):
+            items = self.links.bucket(kind)
+        else:
+            items = self.entities.bucket(kind)
+        for item in items:
+            if item.get("type") == old:
+                item["type"] = new
+                count += 1
+        return count
+
+    def set_property(
+        self,
+        selector,
+        key: str,
+        value: Any,
+        *,
+        kind: type = Atom,
+    ) -> int:
+        """Set a property on every atom (or link) matching ``selector``.
+
+        Args:
+            selector: Callable ``(atom) -> bool`` used to pick targets.
+            key: Property key to assign.
+            value: Value to store.
+            kind: Entity or Link class to iterate (default: ``Atom``).
+
+        Returns:
+            Number of items updated.
+        """
+        if not callable(selector):
+            raise TypeError(
+                "selector must be a callable (a, ...) -> bool; "
+                "SMARTS-string selectors are not yet supported"
+            )
+        if issubclass(kind, Link):
+            items = self.links.bucket(kind)
+        else:
+            items = self.entities.bucket(kind)
+        count = 0
+        for item in items:
+            if selector(item):
+                item[key] = value
+                count += 1
+        return count
+
+    def select(self, predicate) -> "Atomistic":
+        """Return a new Atomistic containing atoms matching ``predicate``.
+
+        All bonds/angles/dihedrals whose endpoints are fully contained in the
+        selection are carried over (deep-copied).
+
+        Args:
+            predicate: Callable ``(atom) -> bool``.
+
+        Returns:
+            New Atomistic with the selected atoms and their induced topology.
+        """
+        if not callable(predicate):
+            raise TypeError(
+                "predicate must be a callable (atom) -> bool; "
+                "SMARTS-string predicates are not yet supported"
+            )
+        selected = [a for a in self.atoms if predicate(a)]
+        sub, _ = self.extract_subgraph(
+            selected, radius=0, entity_type=Atom, link_type=Link
+        )
+        return sub  # type: ignore[return-value]
 
     # ========== Batch Factory Methods (def_*s: create and add multiple) ==========
 
@@ -1055,6 +1286,7 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         bonds_data = list(self.bonds)
         angles_data = list(self.angles)
         dihedrals_data = list(self.dihedrals)
+        impropers_data = list(self.impropers)
 
         # Build atoms Block - convert array of struct to struct of array
         # Determine which keys to extract
@@ -1211,5 +1443,31 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
 
             dihedral_dict_np = {k: np.array(v) for k, v in dihedral_dict.items()}
             frame["dihedrals"] = Block.from_dict(dihedral_dict_np)
+
+        # Build impropers Block - convert array of struct to struct of array
+        if impropers_data:
+            improper_dict = defaultdict(list)
+
+            all_improper_keys = set()
+            for improper in impropers_data:
+                all_improper_keys.update(improper.keys())
+
+            for improper_idx, improper in enumerate(impropers_data):
+                for label, atom in zip(
+                    ("atomi", "atomj", "atomk", "atoml"),
+                    (improper.itom, improper.jtom, improper.ktom, improper.ltom),
+                ):
+                    if id(atom) not in atom_id_to_index:
+                        raise ValueError(
+                            f"Improper {improper_idx + 1}: {label} "
+                            f"(id={id(atom)}) is not in atoms list."
+                        )
+                    improper_dict[label].append(atom_id_to_index[id(atom)])
+                for key in all_improper_keys:
+                    if key not in ("atomi", "atomj", "atomk", "atoml"):
+                        improper_dict[key].append(improper.get(key, None))
+
+            improper_dict_np = {k: np.array(v) for k, v in improper_dict.items()}
+            frame["impropers"] = Block.from_dict(improper_dict_np)
 
         return frame

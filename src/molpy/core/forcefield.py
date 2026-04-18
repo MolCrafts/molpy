@@ -560,6 +560,56 @@ class ForceField:
                 self.styles.add(other_style)
         return self
 
+    def rename_type(self, style_class: type[S], old: str, new: str) -> int:
+        """Rename every Type named ``old`` to ``new`` in matching styles.
+
+        After mutating the internal ``_name`` the type is removed and
+        re-added to its bucket so set-based hash lookups stay consistent.
+
+        Args:
+            style_class: Style subclass whose type bucket is targeted.
+            old: Existing type name.
+            new: Replacement type name.
+
+        Returns:
+            Number of Types renamed.
+        """
+        count = 0
+        for style in self.styles.bucket(style_class):
+            bucket = style.types
+            targets = [t for t in bucket.bucket(Type) if t.name == old]
+            for t in targets:
+                bucket.remove(t)
+                t._name = new
+                bucket.add(t)
+                count += 1
+        return count
+
+    def remove_type(self, style_class: type[S], name: str) -> int:
+        """Remove every Type named ``name`` from styles of ``style_class``.
+
+        Returns the number of Types removed.
+        """
+        count = 0
+        for style in self.styles.bucket(style_class):
+            bucket = style.types
+            targets = [t for t in bucket.bucket(Type) if t.name == name]
+            for t in targets:
+                bucket.remove(t)
+                count += 1
+        return count
+
+    def remove_style(self, style_class: type[S], name: str) -> bool:
+        """Remove a Style instance of ``style_class`` whose name matches.
+
+        Returns ``True`` if a style was removed.
+        """
+        for style in list(self.styles.bucket(style_class)):
+            if style.name == name:
+                self.styles.remove(style)
+                return True
+        return False
+
     def to_potentials(self) -> "Potentials":
         """Create Potential instances from all styles in ForceField.
 

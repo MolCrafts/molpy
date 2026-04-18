@@ -131,17 +131,25 @@ class TypeBucket[E: Entity]:
     def __init__(self) -> None:
         # Internal store uses Any for flexibility across entity types
         self._items: dict[type[Any], Entities[Any]] = {}
+        # Mirror the list contents as an identity-set for O(1) dedup.
+        self._ids: dict[type[Any], set[int]] = {}
 
     # ----- mutate -----
     def add(self, item: E) -> None:
-        """Add one object to the bucket for its nearest type."""
+        """Add one object to the bucket for its nearest type.
+
+        Dedup is by object identity (``id(item)``) so the same instance
+        is never stored twice. Both insertion and the identity check
+        are O(1).
+        """
         cls = get_nearest_type(item)  # type: ignore[arg-type]
         bucket = self._items.setdefault(cls, Entities())
-        # Check if item already exists (use identity check, not equality)
-        for existing in bucket:
-            if existing is item:
-                return  # Already in bucket, skip
+        idset = self._ids.setdefault(cls, set())
+        iid = id(item)
+        if iid in idset:
+            return
         bucket.append(item)
+        idset.add(iid)
 
     def add_many(self, items: Iterable[E]) -> None:
         """Add multiple objects."""
@@ -154,13 +162,16 @@ class TypeBucket[E: Entity]:
         bucket = self._items.get(cls)
         if not bucket:
             return False
-        # Use identity comparison (is) not equality (==)
-        # Find and remove the exact object instance
+        idset = self._ids.get(cls)
+        if idset is None or id(item) not in idset:
+            return False
         for i, obj in enumerate(bucket):
             if obj is item:
                 bucket.pop(i)
+                idset.discard(id(item))
                 if not bucket:
                     self._items.pop(cls, None)
+                    self._ids.pop(cls, None)
                 return True
         return False
 

@@ -125,6 +125,7 @@ nav:
           - Polydisperse Systems: user-guide/05_polydisperse_systems.ipynb
       - Force Field Typification: user-guide/06_typifier.ipynb
       - AmberTools Integration: user-guide/07_ambertools_integration.md
+      - Moltemplate CLI: user-guide/08_moltemplate_cli.md
 
   - API Reference:
       - api/index.md

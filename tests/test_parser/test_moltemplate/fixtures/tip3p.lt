@@ -1,0 +1,38 @@
+# TIP3P water model — minimal moltemplate-style fixture for MolPy tests.
+
+TIP3P {
+  write_once("Data Masses") {
+    @atom:O  15.9994
+    @atom:H  1.008
+  }
+
+  write_once("In Charges") {
+    set type @atom:O charge -0.834
+    set type @atom:H charge  0.417
+  }
+
+  write_once("In Settings") {
+    pair_coeff @atom:O @atom:O lj/cut/coul/long 0.1521 3.1507
+    pair_coeff @atom:H @atom:H lj/cut/coul/long 0.0000 0.0000
+    bond_coeff @bond:OH harmonic 450.0 0.9572
+    angle_coeff @angle:HOH harmonic 55.0 104.52
+  }
+
+  write("Data Atoms") {
+    $atom:O  $mol:. @atom:O  -0.834  0.0000  0.0000  0.0000
+    $atom:H1 $mol:. @atom:H   0.417  0.7570  0.5860  0.0000
+    $atom:H2 $mol:. @atom:H   0.417 -0.7570  0.5860  0.0000
+  }
+
+  write("Data Bonds") {
+    $bond:oh1 @bond:OH $atom:O $atom:H1
+    $bond:oh2 @bond:OH $atom:O $atom:H2
+  }
+
+  write("Data Angles") {
+    $angle:hoh @angle:HOH $atom:H1 $atom:O $atom:H2
+  }
+}
+
+w1 = new TIP3P
+w2 = new TIP3P.move(3.0, 0.0, 0.0)
