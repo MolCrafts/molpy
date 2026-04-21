@@ -421,7 +421,17 @@ class ForceFieldAtomTypifier(TypifierBase["Atomistic"]):
 
                 atom_type_obj = self._find_atomtype_by_name(atomtype)
                 if atom_type_obj:
-                    new_atom.data.update(**atom_type_obj.params.kwargs)
+                    # Don't overwrite existing atom fields with None kwargs from
+                    # the AtomType (e.g. [Li] in gaff.xml has no `element` attr
+                    # but the kwargs dict carries element=None, which would
+                    # clobber the real element set during parsing).
+                    new_atom.data.update(
+                        {
+                            k: v
+                            for k, v in atom_type_obj.params.kwargs.items()
+                            if v is not None
+                        }
+                    )
 
         if self.strict:
             untyped_atoms = [
