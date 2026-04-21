@@ -204,6 +204,41 @@ class Box(PeriodicBoundary):
         """
         return cls(box.matrix.copy(), box.pbc.copy(), box.origin.copy())
 
+    @classmethod
+    def from_bounds(
+        cls,
+        points: ArrayLike,
+        padding: float | ArrayLike = 0.0,
+        pbc: ArrayLike = np.zeros(3, dtype=bool),
+    ) -> "Box":
+        """Create an orthogonal box that encloses a set of points.
+
+        Args:
+            points: Point coordinates to enclose, shape ``(N, 3)``.
+            padding: Extra space added to each side of the bounding box,
+                in Angstroms. Either a scalar or a per-axis array of
+                shape ``(3,)``.
+            pbc: Periodic boundary flags per axis, shape ``(3,)``.
+                Defaults to non-periodic.
+
+        Returns:
+            A new orthogonal ``Box`` whose matrix and origin tightly fit
+            ``points`` with ``padding`` added on every side.
+
+        Raises:
+            ValueError: If ``points`` is empty or not ``(N, 3)``.
+        """
+        coords = np.asarray(points, dtype=float)
+        if coords.ndim != 2 or coords.shape[1] != 3:
+            raise ValueError(f"points must have shape (N, 3), got {coords.shape}")
+        if coords.shape[0] == 0:
+            raise ValueError("points must contain at least one coordinate")
+
+        pad = np.broadcast_to(np.asarray(padding, dtype=float), (3,))
+        mins = coords.min(axis=0) - pad
+        maxs = coords.max(axis=0) + pad
+        return cls(np.diag(maxs - mins), pbc=pbc, origin=mins)
+
     @property
     def xlo(self) -> float:
         """
