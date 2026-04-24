@@ -32,6 +32,7 @@ from .core.frame import Block, Frame
 from .core.script import Script, ScriptLanguage
 from .core.topology import Topology
 from .core.trajectory import Trajectory
+from .core.unit import UnitSystem
 from .potential import *  # noqa: F403
 from .version import release_date, version
 
@@ -84,6 +85,8 @@ __all__ = [
     "ScriptLanguage",
     "Topology",
     "Trajectory",
+    # Core units
+    "UnitSystem",
     # Version
     "version",
     "release_date",
