@@ -312,8 +312,9 @@ def _build_lj_context(
     ctx.add_transformation(
         "[energy]",
         "lj_epsilon",
-        lambda _reg, x, _e=epsilon: (x / _e).to_reduced_units().magnitude
-        * _reg.lj_epsilon,
+        lambda _reg, x, _e=epsilon: (
+            (x / _e).to_reduced_units().magnitude * _reg.lj_epsilon
+        ),
     )
     ctx.add_transformation(
         "lj_epsilon",
