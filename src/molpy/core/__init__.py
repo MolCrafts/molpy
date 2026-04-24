@@ -24,6 +24,7 @@ from .forcefield import (
 from .frame import Block, Frame
 from .script import Script, ScriptLanguage
 from .topology import Topology
+from .unit import UnitSystem
 
 __all__ = [
     "Angle",
@@ -59,4 +60,5 @@ __all__ = [
     "Script",
     "ScriptLanguage",
     "Topology",
+    "UnitSystem",
 ]
