@@ -108,6 +108,9 @@ from .trajectory.lammps import (
     LammpsTrajectoryWriter,
 )
 from .trajectory.xyz import XYZTrajectoryReader, XYZTrajectoryWriter
+
+# 4. Log Readers
+from .log.lammps import LAMMPSLog
 from .writers import (
     write_gro,
     write_h5,
@@ -208,6 +211,8 @@ __all__ = [
     "HDF5TrajectoryWriter",
     "LammpsTrajectoryWriter",
     "XYZTrajectoryWriter",
+    # Log Readers
+    "LAMMPSLog",
     # Utility Classes
     "ZipReader",
 ]
