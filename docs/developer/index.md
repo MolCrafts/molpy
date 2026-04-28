@@ -29,7 +29,7 @@ Modifications at this layer require a thorough understanding of MolPy's type buc
 
 ## Integrations
 
-- [MCP Server for LLM Agents](../getting-started/mcp.md) — exposing MolPy's source code and symbol index to large language model agents via the Model Context Protocol
+- [MCP Suite for LLM Agents](../getting-started/mcp.md) — exposing MolPy's source code and symbol index to large language model agents via the MolCrafts MCP suite
 
 ## Issue Tracking and Discussion
 

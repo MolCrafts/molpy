@@ -55,7 +55,7 @@ For each `CI_ONLY` gap reported by `molpy-ci-auditor`:
 ```yaml
     - id: pytest
       name: pytest (fast)
-      entry: pytest tests/ -x -q -m "not external" --ignore=tests/test_mcp --no-header -rN
+      entry: pytest tests/ -x -q -m "not external" --no-header -rN
       language: system
       pass_filenames: false
       stages: [pre-commit]

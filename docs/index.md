@@ -124,7 +124,7 @@ hide:
 
 <div class="feature-list" markdown>
 
-- :material-robot-outline: **[MCP interface for large language model agents](getting-started/mcp.md)** — MolPy can expose source symbols and documentation through the Model Context Protocol, supporting structured agent access without altering the core data model.
+- :material-robot-outline: **[MCP suite for large language model agents](getting-started/mcp.md)** — The MolCrafts MCP suite exposes MolPy's source symbols and documentation through the Model Context Protocol, supporting structured agent access without altering the core data model.
 
 - :material-atom: **[AmberTools](user-guide/07_ambertools_integration.md)** — Antechamber (partial charge assignment), parmchk2 (missing parameter estimation), and tleap (topology assembly) are invoked programmatically with structured Python interfaces.
 
