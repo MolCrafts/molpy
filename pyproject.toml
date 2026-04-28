@@ -58,7 +58,7 @@ zarr = [
     "zarr>=3.0",
 ]
 mcp = [
-    "fastmcp>=2.0",
+    "molcrafts-molmcp>=0.1",
 ]
 dev = [
     "pytest>=6.0.0",
@@ -83,6 +83,9 @@ all = [
 
 [project.scripts]
 molpy = "molpy.cli:main"
+
+[project.entry-points."molmcp.providers"]
+molpy = "molpy_mcp:MolPyProvider"
 
 [project.urls]
 Homepage = "https://github.com/MolCrafts/molpy"
