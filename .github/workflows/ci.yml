@@ -31,22 +31,6 @@ jobs:
       - name: Type check
         run: ty check src/molpy/
 
-  docs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: pip install -e ".[doc]"
-
-      - name: Build docs
-        run: mkdocs build
-
   test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -67,11 +51,13 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run tests
-        run: pytest tests/ -v -m "not external" --ignore=tests/test_mcp --cov=src/molpy --cov-report=xml --cov-report=term
+        run: pytest tests/ -v -m "not external" --cov=src/molpy --cov-report=xml --cov-report=term
 
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
-          file: ./coverage.xml
+          files: ./coverage.xml
+          slug: MolCrafts/molpy
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false

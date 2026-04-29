@@ -4,7 +4,7 @@
 
 An LLM agent working with MolPy faces the same problem as any user relying on memory: API knowledge goes stale. A guessed function name, parameter list, or return type may look plausible and still be wrong.
 
-MolPy's MCP server fixes that by exposing the installed package as structured tools. Instead of guessing, the agent can ask what modules exist, which symbols a module exports, what a callable accepts, and how a function is implemented. The answers come from the local MolPy installation, not from the model's training data.
+The MolCrafts MCP suite fixes that by exposing the installed packages as structured tools. Instead of guessing, the agent can ask what modules exist, which symbols a module exports, what a callable accepts, and how a function is implemented. The answers come from the local installation, not from the model's training data.
 
 In practice, the workflow is simple:
 
@@ -15,9 +15,15 @@ In practice, the workflow is simple:
 !!! note "What MCP is not"
     The server does not execute MolPy workflows for the agent. It helps the agent understand the library, then the agent writes Python code that calls MolPy directly.
 
-## The six tools
+## Where MCP support lives
 
-The server exposes six tools. Together they let an agent navigate the package tree, inspect the public API, and read implementation details only when necessary.
+MCP support for MolPy is provided by [`molmcp`](https://github.com/MolCrafts/molmcp), the shared MCP foundation that ships the Provider protocol, source-introspection tools, and safety middleware used across MolCrafts packages. The user-facing artifact is the `molmcp-gateway` app, which aggregates the MolCrafts plugins (`molmcp-molpy`, `molmcp-molexp`, `molmcp-lammps`) behind a single MCP endpoint.
+
+A single `molmcp-gateway` command starts a coordinated server that exposes MolPy (and any other installed MolCrafts packages) through the same MCP session. MCP code does **not** live in MolPy itself; this keeps the chemistry library focused on its own data model and lets a single MCP launcher stay consistent across the ecosystem.
+
+## The seven tools
+
+The suite exposes seven introspection tools. Together they let an agent navigate the package tree, inspect the public API, and read implementation details only when necessary.
 
 | Tool | Use it for |
 | --- | --- |
@@ -27,84 +33,153 @@ The server exposes six tools. Together they let an agent navigate the package tr
 | `get_signature` | Check parameter names, types, defaults, and return signatures. |
 | `get_source` | Inspect implementation details when docstrings are not enough. |
 | `search_source` | Search the codebase by substring, like a lightweight `grep`. |
+| `read_file` | Read a specific source file by line range. |
 
 Used together, these tools let an agent explore MolPy the same way a human developer would: browse, narrow, verify, then write code.
 
 ## Install and register the server
 
-First install MolPy with MCP support:
+You have two ways to use the gateway: a **local subprocess** that runs in your venv, or a **hosted endpoint** that requires nothing on your machine. Pick one.
 
-```bash
-pip install molpy[mcp]
+### Option A — Hosted gateway on Hugging Face Spaces
+
+The MolCrafts ecosystem publishes a public gateway on Hugging Face Spaces. Nothing to install — just point your MCP client at the URL:
+
+```
+https://molcrafts-molmcp-gateway.hf.space/mcp
 ```
 
-### Claude Code
+This endpoint exposes the same tools as the local server (introspection + molpy / molexp / lammps providers) over `streamable-http`.
 
-Register the server once. Use project scope unless you want it available in every repo:
+#### Claude Code
 
-```bash
-# Project-level (recommended). Writes .mcp.json in the repo root.
-claude mcp add molpy --scope project -- molpy mcp
-
-# User-level. Writes to ~/.claude/settings.json.
-claude mcp add molpy -- molpy mcp
-```
-
-Start a new Claude Code session, then run `/mcp`. You should see `molpy` and its six tools.
-
-!!! tip "Virtual environments"
-    If `molpy` is not on your PATH, register the executable explicitly:
-
-    ```bash
-    claude mcp add molpy -- /path/to/venv/bin/molpy mcp
-    ```
-
-    Or let `uv` launch it from a project directory:
-
-    ```bash
-    claude mcp add molpy -- uv run --directory /path/to/molpy molpy mcp
-    ```
-
-### Claude Desktop
-
-Claude Desktop reads its own config file:
-
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-Add a `mcpServers` entry:
+Add an entry to `.mcp.json` at your repo root:
 
 ```json
 {
   "mcpServers": {
-    "molpy": {
-      "command": "molpy",
-      "args": ["mcp"]
+    "molmcp": {
+      "type": "http",
+      "url": "https://molcrafts-molmcp-gateway.hf.space/mcp"
     }
   }
 }
 ```
 
-Restart Claude Desktop after saving. The MolPy tools should appear in the tool picker.
+Start a new Claude Code session, then run `/mcp`. You should see `molmcp` and its tools.
+
+#### Claude Desktop
+
+Claude Desktop's `mcpServers` block accepts the same shape:
+
+```json
+{
+  "mcpServers": {
+    "molmcp": {
+      "type": "http",
+      "url": "https://molcrafts-molmcp-gateway.hf.space/mcp"
+    }
+  }
+}
+```
+
+Config file location:
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+!!! warning "Cold starts and privacy"
+    The hosted Space sleeps after ~48 h idle. The first request after sleep takes 30–60 s while the container boots; subsequent requests are warm. The Space is also public — anyone with the URL can call its tools. For private use, run the local subprocess (Option B) or self-host the gateway as a private Space.
+
+### Option B — Local subprocess
+
+Install `molmcp` (and its workspace packages) from source. The gateway is not yet on PyPI:
+
+```bash
+pip install \
+    "git+https://github.com/MolCrafts/molmcp.git" \
+    "git+https://github.com/MolCrafts/molmcp.git#subdirectory=packages/molmcp-molpy" \
+    "git+https://github.com/MolCrafts/molmcp.git#subdirectory=packages/molmcp-molexp" \
+    "git+https://github.com/MolCrafts/molmcp.git#subdirectory=packages/molmcp-lammps" \
+    "git+https://github.com/MolCrafts/molmcp.git#subdirectory=apps/molmcp-gateway"
+```
+
+#### Claude Code
+
+```bash
+# Project-level (recommended). Writes .mcp.json in the repo root.
+claude mcp add molmcp --scope project -- molmcp-gateway
+
+# User-level.
+claude mcp add molmcp -- molmcp-gateway
+```
+
+!!! tip "Virtual environments"
+    If `molmcp-gateway` is not on your PATH, register the executable explicitly:
+
+    ```bash
+    claude mcp add molmcp -- /path/to/venv/bin/molmcp-gateway
+    ```
+
+    Or let `uv` launch it from a project directory:
+
+    ```bash
+    claude mcp add molmcp -- uv run --directory /path/to/project molmcp-gateway
+    ```
+
+#### Claude Desktop
+
+```json
+{
+  "mcpServers": {
+    "molmcp": {
+      "command": "molmcp-gateway"
+    }
+  }
+}
+```
+
+Restart Claude Desktop after saving. The MolCrafts tools should appear in the tool picker.
+
+### Customizing the launch
+
+`molmcp-gateway` exposes a few useful flags. Restrict introspection to MolPy alone, or expose additional roots:
+
+```bash
+molmcp-gateway --no-default-import-roots --import-root molpy
+molmcp-gateway --import-root molpy --import-root molexp --import-root your_package
+```
+
+Serve over HTTP instead of stdio, for clients that cannot launch subprocesses:
+
+```bash
+molmcp-gateway --transport streamable-http --host 127.0.0.1 --port 8787
+```
+
+Skip the introspection mount entirely (only domain tools):
+
+```bash
+molmcp-gateway --no-introspection
+```
 
 ## How MCP works
 
-The MolPy MCP server runs as a separate process. The client launches `molpy mcp`, asks which tools are available, and then sends tool calls over JSON-RPC.
+The server runs as a separate process (local subprocess) or a remote HTTP service (hosted gateway). The client connects, asks which tools are available, and then sends tool calls over JSON-RPC.
 
 ```text
-┌─────────────┐   stdin/stdout    ┌──────────────────┐
-│  LLM Client │ ◄──────────────► │  molpy mcp       │
-│  (Claude)   │   JSON-RPC msgs   │  (MCP Server)    │
-└─────────────┘                   └──────────────────┘
+┌─────────────┐   stdio  /  http   ┌──────────────────┐
+│  LLM Client │ ◄────────────────► │  molmcp-gateway  │
+│  (Claude)   │    JSON-RPC msgs   │   (MCP Server)   │
+└─────────────┘                    └──────────────────┘
 ```
 
 A typical exchange looks like this:
 
-1. The client starts the server and requests its capabilities.
-2. The server advertises tools such as `list_modules` and `get_signature`.
+1. The client connects to the gateway and requests its capabilities.
+2. The gateway advertises the seven introspection tools plus the domain tools registered by each provider (molpy, molexp, lammps).
 3. The agent calls those tools to inspect MolPy before writing code.
 
-`stdio` is the default transport and works in most local setups. `streamable-http` and `sse` expose the same protocol over HTTP for clients that cannot launch subprocesses.
+`stdio` is the default transport for local subprocesses. `streamable-http` and `sse` expose the same protocol over HTTP — used by the hosted gateway and by clients that cannot launch subprocesses.
 
 For example, an agent asked to build a polymer workflow may inspect MolPy like this:
 
@@ -170,7 +245,7 @@ This matches how real modeling workflows are debugged and validated.
 Call out constraints that change the result, such as:
 
 - `Use the Amber backend with GAFF2 parameters`
-- `Do not use RDKit`
+- `Use OPLS-AA typing`
 
 After that, let the agent inspect the API through MCP. Avoid:
 
@@ -352,8 +427,8 @@ input.
 
 ## Worked example: polydisperse PEO/LiTFSI electrolyte
 
-The next example is much larger. MolPy MCP is still doing the same job, but the
-agent also has to inspect AmberTools-facing builders, packing APIs, and
+The next example is much larger. The MCP server is still doing the same job,
+but the agent also has to inspect AmberTools-facing builders, packing APIs, and
 force-field merge behavior before it can write the full workflow.
 
 ### The prompt
@@ -552,420 +627,13 @@ Merge two ForceField objects.  Returns a new ForceField containing all styles
 and parameters from both.  Raises if incompatible styles are found.
 ```
 
-With this information Claude has everything it needs. It writes the script below.
+With this information Claude has everything it needs to assemble the script.
 
-### The generated script
-
-```python
-#!/usr/bin/env python3
-"""
-08_peo_litfsi_electrolyte.py
-============================
-End-to-end construction of a polydisperse PEO / LiTFSI polymer electrolyte
-system for molecular-dynamics simulation.
-
-Construction strategy
----------------------
-1.  TFSI⁻ parameterization — parse SMILES with RDKit, generate 3D, then run
-    the standard Amber pipeline: antechamber (GAFF2 + AM1-BCC, net charge = −1)
-    → parmchk2 (missing torsion/vdW parameters) → tleap (prmtop/inpcrd).
-
-2.  Li⁺ parameterization — write Åqvist (1990) frcmod/mol2 and build
-    prmtop/inpcrd with tleap (no antechamber needed for a mono-atomic ion).
-    Parameters: Rmin/2 = 1.137 Å, ε = 0.0183 kcal/mol.
-
-3.  Chain-length sampling — draw exactly 40 mass samples from a Schulz–Zimm
-    (Gamma) distribution parameterised by:
-        Mn = 20 × 44.053 = 881.06 g/mol   (DP_n = 20)
-        Mw = 1.20 × Mn   = 1057.27 g/mol  (PDI  = 1.20)
-        z  = 1/(PDI − 1) = 5.0
-    Each sample is rounded to the nearest integer DP (minimum 1).
-
-4.  PEO chain construction — build one representative chain per unique DP
-    using AmberPolymerBuilder (GAFF2 + AM1-BCC). The methyl-capped chain
-    is encoded as {[#MeH][#EO]|N[#MeT]} with:
-        MeH = {[][<]C[]}        — left methyl end-cap
-        EO  = {[][<]COC[>][]}   — −CH₂−O−CH₂− repeat unit (formula C₂H₄O)
-        MeT = {[]C[>][]}        — right methyl end-cap
-    A separate work_dir per DP avoids antechamber/tleap file conflicts.
-
-5.  Force-field merge — PEO GAFF2 FF (from the chain closest to DP_n = 20)
-    + TFSI⁻ GAFF2 FF + Li⁺ Åqvist FF.
-
-6.  LiTFSI count — N_LiTFSI = floor(Σ DP_i / 20), matching EO:Li = 20:1.
-
-7.  Box sizing — V (Å³) = m_total / (N_A × 0.10 g/cm³) × 10²⁴.
-
-8.  Packmol packing — 40 PEO + N_LiTFSI TFSI⁻ + N_LiTFSI Li⁺.
-
-9.  LAMMPS export — lammps.data (atom_style full) + system.ff (no pair_style).
-"""
-
-from __future__ import annotations
-
-import collections
-from pathlib import Path
-
-import numpy as np
-
-import molpy as mp
-from molpy.adapter import RDKitAdapter
-from molpy.builder.polymer.ambertools import AmberPolymerBuilder
-from molpy.builder.polymer.distributions import SchulzZimmPolydisperse
-from molpy.io import read_amber, write_lammps_forcefield
-from molpy.io.writers import write_pdb
-from molpy.pack import InsideBoxConstraint, Molpack
-from molpy.tool import Generate3D
-from molpy.wrapper import AntechamberWrapper, Parmchk2Wrapper, TLeapWrapper
-
-# ── Physical constants ─────────────────────────────────────────────────────────
-
-N_AVOGADRO = 6.02214076e23  # mol⁻¹
-
-# ── System parameters ──────────────────────────────────────────────────────────
-
-M_EO        = 44.053          # g/mol per −CH₂CH₂O− repeat unit
-DP_N_TARGET = 20
-PDI_TARGET  = 1.20
-M_N_TARGET  = DP_N_TARGET * M_EO       # 881.06 g/mol
-M_W_TARGET  = M_N_TARGET * PDI_TARGET  # 1057.27 g/mol
-Z_PARAM     = M_N_TARGET / (M_W_TARGET - M_N_TARGET)  # 5.0
-
-N_CHAINS    = 40
-EO_TO_LI    = 20
-RHO_TARGET  = 0.10   # g/cm³
-RANDOM_SEED = 42
-
-CONDA_ENV  = "AmberTools25"
-OUTPUT_DIR = Path("peo_litfsi_output")
-
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-def _parse_monomer_3d(bigsmiles: str):
-    mol = mp.parser.parse_monomer(bigsmiles)
-    adapter = RDKitAdapter(internal=mol)
-    adapter = Generate3D(
-        add_hydrogens=True, embed=True, optimize=True, update_internal=True
-    )(adapter)
-    return adapter.get_internal()
-
-
-# ── Stage 1: TFSI⁻ ────────────────────────────────────────────────────────────
-
-def stage1_tfsi(ions_dir):
-    print("\n── Stage 1: TFSI⁻ Parameterization ──────────────────────────")
-    tfsi = mp.parser.parse_molecule("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F")
-    adapter = RDKitAdapter(internal=tfsi)
-    adapter = Generate3D(
-        add_hydrogens=False, embed=True, optimize=True, update_internal=True
-    )(adapter)
-    tfsi = adapter.get_internal()
-    write_pdb(ions_dir / "tfsi.pdb", tfsi.to_frame())
-    print(f"  TFSI⁻  {len(tfsi.atoms)} heavy atoms  →  tfsi.pdb")
-
-    ac = AntechamberWrapper(name="antechamber", workdir=ions_dir,
-                            env=CONDA_ENV, env_manager="conda")
-    ac.atomtype_assign(
-        input_file=(ions_dir / "tfsi.pdb").absolute(),
-        output_file=(ions_dir / "tfsi.mol2").absolute(),
-        input_format="pdb", output_format="mol2",
-        charge_method="bcc", atom_type="gaff2", net_charge=-1,
-    )
-    Parmchk2Wrapper(name="parmchk2", workdir=ions_dir,
-                    env=CONDA_ENV, env_manager="conda").run(
-        args=["-i", "tfsi.mol2", "-o", "tfsi.frcmod", "-f", "mol2", "-s", "gaff2"]
-    )
-    (ions_dir / "tfsi_leap.in").write_text("""\
-source leaprc.gaff2
-TFSI = loadmol2 tfsi.mol2
-loadamberparams tfsi.frcmod
-saveamberparm TFSI tfsi.prmtop tfsi.inpcrd
-quit
-""")
-    TLeapWrapper(name="tleap", workdir=ions_dir,
-                 env=CONDA_ENV, env_manager="conda").run(args=["-f", "tfsi_leap.in"])
-    print("  tleap → tfsi.prmtop / tfsi.inpcrd")
-    return read_amber(ions_dir / "tfsi.prmtop", ions_dir / "tfsi.inpcrd")
-
-
-# ── Stage 2: Li⁺ (Åqvist 1990) ────────────────────────────────────────────────
-
-def stage2_li(ions_dir):
-    """
-    Reference: Åqvist, J. J. Phys. Chem. 1990, 94, 8021–8024.
-    Parameters: Rmin/2 = 1.137 Å, ε = 0.0183 kcal/mol
-    """
-    print("\n── Stage 2: Li⁺ Parameterization (Åqvist 1990) ──────────────")
-    R_MIN_HALF, EPS_LI = 1.137, 0.0183
-    (ions_dir / "li.frcmod").write_text(
-        f"Remark: Li+ Aqvist (1990) J.Phys.Chem. 94, 8021\n"
-        f"MASS\nLi  6.941\n\nNONBOND\n"
-        f"Li          {R_MIN_HALF:.4f}   {EPS_LI:.4f}\n"
-    )
-    (ions_dir / "li.mol2").write_text("""\
-@<TRIPOS>MOLECULE
-LI
- 1 0 0 0 0
-SMALL
-GASTEIGER
-
-@<TRIPOS>ATOM
-      1 Li1         0.0000    0.0000    0.0000 Li    1  LIG       1.0000
-@<TRIPOS>BOND
-""")
-    (ions_dir / "li_leap.in").write_text("""\
-source leaprc.gaff2
-loadamberparams li.frcmod
-LI = loadmol2 li.mol2
-saveamberparm LI li.prmtop li.inpcrd
-quit
-""")
-    TLeapWrapper(name="tleap", workdir=ions_dir,
-                 env=CONDA_ENV, env_manager="conda").run(args=["-f", "li_leap.in"])
-    print(f"  Rmin/2={R_MIN_HALF} Å, ε={EPS_LI} kcal/mol → li.prmtop")
-    return read_amber(ions_dir / "li.prmtop", ions_dir / "li.inpcrd")
-
-
-# ── Stage 3: Schulz–Zimm sampling ─────────────────────────────────────────────
-
-def stage3_sample_chains():
-    print("\n── Stage 3: Schulz–Zimm Chain-Length Sampling ────────────────")
-    print(f"  z = {Z_PARAM:.2f}, θ = {M_W_TARGET - M_N_TARGET:.2f} g/mol")
-
-    rng  = np.random.default_rng(RANDOM_SEED)
-    dist = SchulzZimmPolydisperse(Mn=M_N_TARGET, Mw=M_W_TARGET)
-    dps  = [max(1, round(dist.sample_mass(rng) / M_EO)) for _ in range(N_CHAINS)]
-
-    mass_arr = np.array(dps, dtype=float) * M_EO
-    Mn_s  = float(mass_arr.mean())
-    Mw_s  = float((mass_arr**2).sum() / mass_arr.sum())
-    stats = {"Mn": Mn_s, "Mw": Mw_s, "PDI": Mw_s / Mn_s,
-             "dp_min": min(dps), "dp_max": max(dps), "dp_mean": float(np.mean(dps))}
-
-    print(f"  Mn={Mn_s:.1f}  Mw={Mw_s:.1f}  PDI={stats['PDI']:.4f}"
-          f"  DP {min(dps)}–{max(dps)}")
-    dp_counts = collections.Counter(dps)
-    for dp in sorted(dp_counts):
-        print(f"    DP={dp:3d}  {dp_counts[dp]:2d}  {'▪' * dp_counts[dp]}")
-    return dps, stats
-
-
-# ── Stage 4: PEO chain construction ───────────────────────────────────────────
-
-def stage4_build_peo(dps, polymer_dir):
-    print("\n── Stage 4: PEO Chain Construction (AmberPolymerBuilder) ─────")
-    me_head  = _parse_monomer_3d("{[][<]C[]}")
-    eo_chain = _parse_monomer_3d("{[][<]COC[>][]}")
-    me_tail  = _parse_monomer_3d("{[]C[>][]}")
-
-    results = {}
-    for dp in sorted(set(dps)):
-        dp_dir = polymer_dir / f"dp_{dp:03d}"
-        dp_dir.mkdir(parents=True, exist_ok=True)
-        builder = AmberPolymerBuilder(
-            library={"MeH": me_head, "EO": eo_chain, "MeT": me_tail},
-            force_field="gaff2", charge_method="bcc",
-            work_dir=dp_dir, env=CONDA_ENV, env_manager="conda",
-        )
-        result = builder.build(f"{{[#MeH][#EO]|{dp}[#MeT]}}")
-        print(f"  DP={dp:3d} → {result.frame['atoms'].nrows} atoms")
-        results[dp] = result
-    return results
-
-
-# ── Stages 5–8: assemble, pack, export ────────────────────────────────────────
-
-def stages5_to_8(dps, peo_results, tfsi_frame, tfsi_ff,
-                 li_frame, li_ff, packmol_dir, lammps_dir):
-    dp_counts  = collections.Counter(dps)
-    total_eo   = sum(dps)
-    n_litfsi   = total_eo // EO_TO_LI
-
-    # Stage 5: merge force fields
-    print("\n── Stage 5: Force-Field Merge ────────────────────────────────")
-    ref_dp      = min(dp_counts, key=lambda dp: abs(dp - DP_N_TARGET))
-    combined_ff = peo_results[ref_dp].forcefield.merge(tfsi_ff).merge(li_ff)
-    print(f"  PEO (DP={ref_dp}) + TFSI⁻ + Li⁺ merged")
-
-    # Stage 6: box size
-    print("\n── Stage 6: System Sizing ────────────────────────────────────")
-    peo_mass   = sum(dp_counts[dp] * float(peo_results[dp].frame["atoms"]["mass"].sum())
-                     for dp in dp_counts)
-    total_mass = peo_mass + n_litfsi * (
-        float(tfsi_frame["atoms"]["mass"].sum()) +
-        float(li_frame["atoms"]["mass"].sum())
-    )
-    L = (total_mass / N_AVOGADRO / RHO_TARGET * 1e24) ** (1/3)
-    print(f"  {N_CHAINS} PEO + {n_litfsi} LiTFSI  |  "
-          f"mass={total_mass:.0f} g/mol  |  L={L:.2f} Å")
-    print(f"  EO:Li = {total_eo}/{n_litfsi} = {total_eo/n_litfsi:.1f}:1")
-
-    # Stage 7: Packmol
-    print("\n── Stage 7: Packmol Packing ──────────────────────────────────")
-    constraint = InsideBoxConstraint(length=np.array([L, L, L]))
-    packer     = Molpack(workdir=packmol_dir)
-    for dp in sorted(dp_counts):
-        packer.add_target(peo_results[dp].frame, number=dp_counts[dp],
-                          constraint=constraint)
-    packer.add_target(tfsi_frame, number=n_litfsi, constraint=constraint)
-    packer.add_target(li_frame,   number=n_litfsi, constraint=constraint)
-    packed = packer.optimize(max_steps=20000, seed=RANDOM_SEED)
-    packed.box = mp.Box.cubic(length=L)
-    if "mol_id" not in packed["atoms"]:
-        packed["atoms"]["mol_id"] = np.ones(packed["atoms"].nrows, dtype=int)
-    print(f"  Packed: {packed['atoms'].nrows} atoms in {L:.1f} Å cubic box")
-
-    # Stage 8: export
-    print("\n── Stage 8: LAMMPS Export ────────────────────────────────────")
-    lammps_dir.mkdir(parents=True, exist_ok=True)
-    mp.io.write_lammps_system(lammps_dir, packed, combined_ff)
-    write_lammps_forcefield(lammps_dir / "system.ff", combined_ff,
-                            skip_pair_style=True)
-    print(f"  lammps.data + system.ff written to {lammps_dir}")
-    return packed, n_litfsi, L, total_mass
-
-
-# ── Main ───────────────────────────────────────────────────────────────────────
-
-def main():
-    print("=" * 66)
-    print("  PEO / LiTFSI  Polydisperse Polymer Electrolyte Builder")
-    print("=" * 66)
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    ions_dir    = OUTPUT_DIR / "ions";    ions_dir.mkdir(exist_ok=True)
-    polymer_dir = OUTPUT_DIR / "polymer"; polymer_dir.mkdir(exist_ok=True)
-    packmol_dir = OUTPUT_DIR / "packmol"; packmol_dir.mkdir(exist_ok=True)
-    lammps_dir  = OUTPUT_DIR / "lammps";  lammps_dir.mkdir(exist_ok=True)
-
-    tfsi_frame, tfsi_ff = stage1_tfsi(ions_dir)
-    li_frame,   li_ff   = stage2_li(ions_dir)
-    dps, stats          = stage3_sample_chains()
-    peo_results         = stage4_build_peo(dps, polymer_dir)
-    packed, n_litfsi, L, total_mass = stages5_to_8(
-        dps, peo_results, tfsi_frame, tfsi_ff,
-        li_frame, li_ff, packmol_dir, lammps_dir,
-    )
-
-    total_eo = sum(dps)
-    print("\n" + "=" * 66)
-    print("  SYSTEM REPORT")
-    print("=" * 66)
-    print(f"  Distribution          Schulz–Zimm (z = {Z_PARAM:.1f})")
-    print(f"  PEO chains            {N_CHAINS}")
-    print(f"  Unique chain lengths  {len(set(dps))}")
-    print(f"  Sampled Mn            {stats['Mn']:.1f} g/mol  (target {M_N_TARGET:.1f})")
-    print(f"  Sampled Mw            {stats['Mw']:.1f} g/mol  (target {M_W_TARGET:.1f})")
-    print(f"  Sampled PDI           {stats['PDI']:.4f}        (target {PDI_TARGET:.2f})")
-    print(f"  DP range              {stats['dp_min']} – {stats['dp_max']}")
-    print(f"  Total EO units        {total_eo}")
-    print(f"  LiTFSI molecules      {n_litfsi}")
-    print(f"  EO:Li ratio           {total_eo/n_litfsi:.1f}:1  (target {EO_TO_LI}:1)")
-    print(f"  Total atoms           {packed['atoms'].nrows}")
-    print(f"  Box side length       {L:.2f} Å  ({L/10:.3f} nm)")
-    print(f"  Initial density       {RHO_TARGET} g/cm³")
-    print(f"  Total mass            {total_mass:.0f} g/mol")
-    print(f"  Output                {OUTPUT_DIR.resolve()}/lammps/")
-    print("=" * 66)
-
-
-if __name__ == "__main__":
-    main()
-```
-
-### Output
-
-```
-══════════════════════════════════════════════════════════════════
-  PEO / LiTFSI  Polydisperse Polymer Electrolyte Builder
-══════════════════════════════════════════════════════════════════
-
-── Stage 1: TFSI⁻ Parameterization ──────────────────────────
-  TFSI⁻  16 heavy atoms  →  tfsi.pdb
-  antechamber → tfsi.mol2
-  parmchk2 → tfsi.frcmod
-  tleap → tfsi.prmtop / tfsi.inpcrd
-
-── Stage 2: Li⁺ Parameterization (Åqvist 1990) ──────────────
-  Rmin/2=1.137 Å, ε=0.0183 kcal/mol → li.prmtop
-
-── Stage 3: Schulz–Zimm Chain-Length Sampling ────────────────
-  z = 5.00, θ = 176.21 g/mol
-  Mn=867.4  Mw=1021.6  PDI=1.1779  DP 8–34
-    DP=  8   1  ▪
-    DP= 11   1  ▪
-    DP= 13   2  ▪▪
-    DP= 14   1  ▪
-    DP= 15   3  ▪▪▪
-    DP= 16   3  ▪▪▪
-    DP= 17   4  ▪▪▪▪
-    DP= 18   4  ▪▪▪▪
-    DP= 19   4  ▪▪▪▪
-    DP= 20   4  ▪▪▪▪
-    DP= 21   3  ▪▪▪
-    DP= 22   3  ▪▪▪
-    DP= 23   3  ▪▪▪
-    DP= 24   2  ▪▪
-    DP= 25   1  ▪
-    DP= 27   1  ▪
-    DP= 34   1  ▪
-
-── Stage 4: PEO Chain Construction (AmberPolymerBuilder) ─────
-  DP=  8 →  59 atoms
-  DP= 11 →  80 atoms
-  DP= 13 →  95 atoms
-  ...
-  DP= 34 → 245 atoms
-
-── Stage 5: Force-Field Merge ────────────────────────────────
-  PEO (DP=20) + TFSI⁻ + Li⁺ merged
-
-── Stage 6: System Sizing ────────────────────────────────────
-  40 PEO + 39 LiTFSI  |  mass=47 318 g/mol  |  L=92.4 Å
-  EO:Li = 790/39 = 20.3:1
-
-── Stage 7: Packmol Packing ──────────────────────────────────
-  Packed: 9 847 atoms in 92.4 Å cubic box
-
-── Stage 8: LAMMPS Export ────────────────────────────────────
-  lammps.data + system.ff written to peo_litfsi_output/lammps
-
-══════════════════════════════════════════════════════════════════
-  SYSTEM REPORT
-══════════════════════════════════════════════════════════════════
-  Distribution          Schulz–Zimm (z = 5.0)
-  PEO chains            40
-  Unique chain lengths  17
-  Sampled Mn            867.4 g/mol  (target 881.1)
-  Sampled Mw            1021.6 g/mol  (target 1057.3)
-  Sampled PDI           1.1779        (target 1.20)
-  DP range              8 – 34
-  Total EO units        790
-  LiTFSI molecules      39
-  EO:Li ratio           20.3:1  (target 20:1)
-  Total atoms           9 847
-  Box side length       92.41 Å  (9.241 nm)
-  Initial density       0.10 g/cm³
-  Total mass            47 318 g/mol
-  Output                .../peo_litfsi_output/lammps/
-══════════════════════════════════════════════════════════════════
-```
-
-The sampled PDI (1.178) is slightly below the target (1.20) because with only N = 40 chains the sample variance of the gamma distribution is large — a sample of this size will typically land within ±0.05 of the target PDI. The EO:Li ratio is 20.3:1 (39 LiTFSI for 790 total EO units), satisfying the ≤ 20:1 floor-division constraint.
-
-!!! note "Running this script"
-    The script requires AmberTools and Packmol in a conda environment named `AmberTools25`. All external calls are wrapped by MolPy's wrapper classes, which activate the environment automatically. To run:
-
-    ```bash
-    conda activate AmberTools25   # only needed once per shell session
-    python 08_peo_litfsi_electrolyte.py
-    ```
-
-    The full script is at `docs/user-guide/08_peo_litfsi_electrolyte.py`.
-
+!!! note "The full generated script"
+    The full end-to-end script is at `docs/user-guide/08_peo_litfsi_electrolyte.py`. It runs antechamber/parmchk2/tleap for TFSI⁻, builds a Li⁺ frcmod from Åqvist parameters, samples 40 chain lengths from a Schulz–Zimm distribution, calls `AmberPolymerBuilder` per unique DP, merges the three force fields, packs with Packmol at 0.10 g/cm³, and exports a LAMMPS data file and `system.ff` to `peo_litfsi_output/lammps/`. Running it requires AmberTools and Packmol in a conda environment named `AmberTools25`.
 
 ## See Also
 
+- [molmcp](https://github.com/MolCrafts/molmcp) — the MCP foundation: Provider protocol, source-introspection tools, gateway app, and the hosted Space deployment
 - [Tool Layer](../tutorials/tools.md) — what the Tool workflows do and when to use them
 - [Polydisperse Systems](../user-guide/05_polydisperse_systems.ipynb) — end-to-end workflow from distribution to LAMMPS export
-- [API Reference: Tool](../api/tool.md) — full parameter documentation

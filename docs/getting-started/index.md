@@ -1,10 +1,10 @@
 # Getting Started
 
-This section establishes a working MolPy environment and introduces the explicit `Atomistic → Frame → export` workflow that underlies most tasks in polymer simulation setup. It also includes the MCP setup page for agent-assisted use, a dedicated naming-conventions page for canonical field names, and a compact glossary for MolPy-specific terminology. The pages below are intended to be read in sequence by new users; readers already familiar with MolPy's data model may proceed directly to any subsection.
+This section establishes a working MolPy environment and introduces the explicit `Atomistic → Frame → export` workflow that underlies most tasks in polymer simulation setup. It also covers the MolCrafts MCP suite for agent-assisted use, a dedicated naming-conventions page for canonical field names, and a compact glossary for MolPy-specific terminology. The pages below are intended to be read in sequence by new users; readers already familiar with MolPy's data model may proceed directly to any subsection.
 
 1. **[Installation](installation.md)** — dependency requirements, package installation, and environment verification
 2. **[Quickstart](quickstart.md)** — construction of a solvated system, force field assignment, and LAMMPS input generation
-3. **[MCP Setup](mcp.md)** — connect MolPy's source-aware MCP server for agent-assisted exploration and code generation
+3. **[MCP Setup](mcp.md)** — register the MolCrafts MCP suite for agent-assisted exploration and code generation
 4. **[Core Concepts](core-concepts.md)** — the `Atomistic → Typed Atomistic → Frame` pipeline and the roles of each representation
 5. **[Naming Conventions](naming-conventions.md)** — canonical field names and topology-key rules used across the data model
 6. **[Glossary](glossary.md)** — concise definitions for the core data structures and modules

@@ -57,9 +57,6 @@ hdf5 = [
 zarr = [
     "zarr>=3.0",
 ]
-mcp = [
-    "fastmcp>=2.0",
-]
 dev = [
     "pytest>=6.0.0",
     "pytest-cov>=3.0.0",
@@ -78,7 +75,7 @@ doc = [
     "scienceplots",
 ]
 all = [
-    "molcrafts-molpy[hdf5,zarr,dev,doc,mcp]",
+    "molcrafts-molpy[hdf5,zarr,dev,doc]",
 ]
 
 [project.scripts]
@@ -203,6 +200,5 @@ pythonpath = [
 ]
 markers = [
     "external: tests requiring external network/resources or executables",
-    "mcp: tests requiring fastmcp",
     "slow: long-running end-to-end tests (e.g. whole-upstream moltemplate sweep)",
 ]
