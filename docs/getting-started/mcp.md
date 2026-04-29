@@ -17,9 +17,9 @@ In practice, the workflow is simple:
 
 ## Where MCP support lives
 
-MCP support for MolPy is provided by [`molcrafts-mcp-suite`](https://github.com/MolCrafts/molcrafts-mcp-suite), the MCP integration layer for the MolCrafts ecosystem. The suite is built on `molmcp`, the shared MCP foundation that ships the Provider protocol, source-introspection tools, and safety middleware used across MolCrafts packages.
+MCP support for MolPy is provided by [`molmcp`](https://github.com/MolCrafts/molmcp), the shared MCP foundation that ships the Provider protocol, source-introspection tools, and safety middleware used across MolCrafts packages. The user-facing artifact is the `molmcp-gateway` app, which aggregates the MolCrafts plugins (`molmcp-molpy`, `molmcp-molexp`, `molmcp-lammps`) behind a single MCP endpoint.
 
-A single `molcrafts-mcp` command starts a coordinated server that exposes MolPy (and any other installed MolCrafts packages) through the same MCP session. MCP code does **not** live in MolPy itself; this keeps the chemistry library focused on its own data model and lets a single MCP launcher stay consistent across the ecosystem.
+A single `molmcp-gateway` command starts a coordinated server that exposes MolPy (and any other installed MolCrafts packages) through the same MCP session. MCP code does **not** live in MolPy itself; this keeps the chemistry library focused on its own data model and lets a single MCP launcher stay consistent across the ecosystem.
 
 ## The seven tools
 
@@ -39,53 +39,101 @@ Used together, these tools let an agent explore MolPy the same way a human devel
 
 ## Install and register the server
 
-Install the suite. It pulls in MolPy as a dependency, so a separate MolPy install is not required.
+You have two ways to use the gateway: a **local subprocess** that runs in your venv, or a **hosted endpoint** that requires nothing on your machine. Pick one.
 
-```bash
-pip install molcrafts-mcp-suite
+### Option A — Hosted gateway on Hugging Face Spaces
+
+The MolCrafts ecosystem publishes a public gateway on Hugging Face Spaces. Nothing to install — just point your MCP client at the URL:
+
+```
+https://molcrafts-molmcp-gateway.hf.space/mcp
 ```
 
-### Claude Code
+This endpoint exposes the same tools as the local server (introspection + molpy / molexp / lammps providers) over `streamable-http`.
 
-Register the server once. Use project scope unless you want it available in every repo:
+#### Claude Code
+
+Add an entry to `.mcp.json` at your repo root:
+
+```json
+{
+  "mcpServers": {
+    "molmcp": {
+      "type": "http",
+      "url": "https://molcrafts-molmcp-gateway.hf.space/mcp"
+    }
+  }
+}
+```
+
+Start a new Claude Code session, then run `/mcp`. You should see `molmcp` and its tools.
+
+#### Claude Desktop
+
+Claude Desktop's `mcpServers` block accepts the same shape:
+
+```json
+{
+  "mcpServers": {
+    "molmcp": {
+      "type": "http",
+      "url": "https://molcrafts-molmcp-gateway.hf.space/mcp"
+    }
+  }
+}
+```
+
+Config file location:
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+!!! warning "Cold starts and privacy"
+    The hosted Space sleeps after ~48 h idle. The first request after sleep takes 30–60 s while the container boots; subsequent requests are warm. The Space is also public — anyone with the URL can call its tools. For private use, run the local subprocess (Option B) or self-host the gateway as a private Space.
+
+### Option B — Local subprocess
+
+Install `molmcp` (and its workspace packages) from source. The gateway is not yet on PyPI:
+
+```bash
+pip install \
+    "git+https://github.com/MolCrafts/molmcp.git" \
+    "git+https://github.com/MolCrafts/molmcp.git#subdirectory=packages/molmcp-molpy" \
+    "git+https://github.com/MolCrafts/molmcp.git#subdirectory=packages/molmcp-molexp" \
+    "git+https://github.com/MolCrafts/molmcp.git#subdirectory=packages/molmcp-lammps" \
+    "git+https://github.com/MolCrafts/molmcp.git#subdirectory=apps/molmcp-gateway"
+```
+
+#### Claude Code
 
 ```bash
 # Project-level (recommended). Writes .mcp.json in the repo root.
-claude mcp add molcrafts --scope project -- molcrafts-mcp
+claude mcp add molmcp --scope project -- molmcp-gateway
 
-# User-level. Writes to ~/.claude/settings.json.
-claude mcp add molcrafts -- molcrafts-mcp
+# User-level.
+claude mcp add molmcp -- molmcp-gateway
 ```
 
-Start a new Claude Code session, then run `/mcp`. You should see `molcrafts` and the seven introspection tools.
-
 !!! tip "Virtual environments"
-    If `molcrafts-mcp` is not on your PATH, register the executable explicitly:
+    If `molmcp-gateway` is not on your PATH, register the executable explicitly:
 
     ```bash
-    claude mcp add molcrafts -- /path/to/venv/bin/molcrafts-mcp
+    claude mcp add molmcp -- /path/to/venv/bin/molmcp-gateway
     ```
 
     Or let `uv` launch it from a project directory:
 
     ```bash
-    claude mcp add molcrafts -- uv run --directory /path/to/project molcrafts-mcp
+    claude mcp add molmcp -- uv run --directory /path/to/project molmcp-gateway
     ```
 
-### Claude Desktop
-
-Claude Desktop reads its own config file:
-
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-Add a `mcpServers` entry:
+#### Claude Desktop
 
 ```json
 {
   "mcpServers": {
-    "molcrafts": {
-      "command": "molcrafts-mcp"
+    "molmcp": {
+      "command": "molmcp-gateway"
     }
   }
 }
@@ -93,45 +141,45 @@ Add a `mcpServers` entry:
 
 Restart Claude Desktop after saving. The MolCrafts tools should appear in the tool picker.
 
-### Inspecting and customizing the launch
+### Customizing the launch
 
-The suite exposes a couple of options that are occasionally useful. Inspect the resolved configuration without starting a server:
-
-```bash
-molcrafts-mcp --print-config
-```
-
-Restrict introspection to MolPy alone, or expose additional roots:
+`molmcp-gateway` exposes a few useful flags. Restrict introspection to MolPy alone, or expose additional roots:
 
 ```bash
-molcrafts-mcp --no-default-import-roots --import-root molpy
-molcrafts-mcp --import-root molpy --import-root molexp --import-root your_package
+molmcp-gateway --no-default-import-roots --import-root molpy
+molmcp-gateway --import-root molpy --import-root molexp --import-root your_package
 ```
 
 Serve over HTTP instead of stdio, for clients that cannot launch subprocesses:
 
 ```bash
-molcrafts-mcp --transport streamable-http --host 127.0.0.1 --port 8787
+molmcp-gateway --transport streamable-http --host 127.0.0.1 --port 8787
+```
+
+Skip the introspection mount entirely (only domain tools):
+
+```bash
+molmcp-gateway --no-introspection
 ```
 
 ## How MCP works
 
-The server runs as a separate process. The client launches `molcrafts-mcp`, asks which tools are available, and then sends tool calls over JSON-RPC.
+The server runs as a separate process (local subprocess) or a remote HTTP service (hosted gateway). The client connects, asks which tools are available, and then sends tool calls over JSON-RPC.
 
 ```text
-┌─────────────┐   stdin/stdout    ┌──────────────────┐
-│  LLM Client │ ◄──────────────► │  molcrafts-mcp   │
-│  (Claude)   │   JSON-RPC msgs   │  (MCP Server)    │
-└─────────────┘                   └──────────────────┘
+┌─────────────┐   stdio  /  http   ┌──────────────────┐
+│  LLM Client │ ◄────────────────► │  molmcp-gateway  │
+│  (Claude)   │    JSON-RPC msgs   │   (MCP Server)   │
+└─────────────┘                    └──────────────────┘
 ```
 
 A typical exchange looks like this:
 
-1. The client starts the server and requests its capabilities.
-2. The server advertises the seven introspection tools.
+1. The client connects to the gateway and requests its capabilities.
+2. The gateway advertises the seven introspection tools plus the domain tools registered by each provider (molpy, molexp, lammps).
 3. The agent calls those tools to inspect MolPy before writing code.
 
-`stdio` is the default transport and works in most local setups. `streamable-http` and `sse` expose the same protocol over HTTP for clients that cannot launch subprocesses.
+`stdio` is the default transport for local subprocesses. `streamable-http` and `sse` expose the same protocol over HTTP — used by the hosted gateway and by clients that cannot launch subprocesses.
 
 For example, an agent asked to build a polymer workflow may inspect MolPy like this:
 
@@ -586,6 +634,6 @@ With this information Claude has everything it needs to assemble the script.
 
 ## See Also
 
-- [molcrafts-mcp-suite](https://github.com/MolCrafts/molcrafts-mcp-suite) — install, command-line options, and provider auto-discovery
+- [molmcp](https://github.com/MolCrafts/molmcp) — the MCP foundation: Provider protocol, source-introspection tools, gateway app, and the hosted Space deployment
 - [Tool Layer](../tutorials/tools.md) — what the Tool workflows do and when to use them
 - [Polydisperse Systems](../user-guide/05_polydisperse_systems.ipynb) — end-to-end workflow from distribution to LAMMPS export

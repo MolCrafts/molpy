@@ -92,7 +92,7 @@ result = mp.tool.polymer(
 | **Simulation interfaces** | Input generation for LAMMPS and CP2K |
 | **Interoperability** | RDKit and OpenBabel adapters for conversion and structure preparation |
 | **Explicit data model** | Distinct `Atomistic`, `Frame`/`Block`, and `ForceField` representations |
-| **Agent interface** | Source-introspection MCP server provided by the [`molcrafts-mcp-suite`](https://github.com/MolCrafts/molcrafts-mcp-suite) launcher |
+| **Agent interface** | Source-introspection MCP server provided by the [`molmcp`](https://github.com/MolCrafts/molmcp) gateway (local or hosted) |
 
 ---
 
