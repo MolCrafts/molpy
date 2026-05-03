@@ -34,6 +34,12 @@ File readers and writers for molecular data, force fields, and trajectories.
 | `read_xyz_trajectory` | XYZ trajectory | read (lazy) |
 | `read_h5_trajectory` | HDF5 trajectory | read (lazy) |
 
+### Logs
+
+| Function | Format | Direction |
+|----------|--------|-----------|
+| `read_LAMMPS_log` | LAMMPS log | read |
+
 ## Canonical examples
 
 ```python
@@ -54,6 +60,11 @@ LAMMPSForceFieldWriter("system.ff").write(ff, atom_types={"CT", "HC"})
 traj = mp.io.read_lammps_trajectory("dump.lammpstrj")
 for frame in traj:
     process(frame)
+
+# Read LAMMPS run output
+log = mp.io.read_LAMMPS_log("log.lammps")
+thermo = log.runs[0].thermo
+print(thermo.columns)
 
 # Write full LAMMPS system (data + ff)
 mp.io.write_lammps_system("output_dir", frame, ff)
@@ -139,3 +150,8 @@ mp.io.write_lammps_system("output_dir", frame, ff)
 
 #### XYZ
 ::: molpy.io.trajectory.xyz
+
+### Log Modules
+
+#### LAMMPS
+::: molpy.io.log.lammps

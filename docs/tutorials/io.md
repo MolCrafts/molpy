@@ -124,6 +124,39 @@ mp.io.write_h5_trajectory("output.h5", frames)
 | HDF5 | `read_h5_trajectory` | `write_h5_trajectory` | Binary, compressed, fast |
 
 
+## Log files: simulation run metadata
+
+LAMMPS log files are different from data and trajectory files: they describe what LAMMPS did during each `run`, not where atoms were. MolPy preserves that structure. A parsed log contains the LAMMPS header, a tuple of `runs`, and raw text for anything that is not yet represented by a dedicated field.
+
+The key idea is: **use `read_LAMMPS_log` when you need run-level diagnostics such as thermo output, loop timing, load balance, neighbor statistics, or warnings.** The thermo table stays in a NumPy-backed dataclass so downstream analysis can use dynamic LAMMPS column names directly.
+
+In practice, each run is accessed in the same order it appears in the log:
+
+```python
+log = mp.io.read_LAMMPS_log("log.lammps")
+run = log.runs[0]
+
+print(run.thermo.columns)
+print(run.thermo.data["Temp"].mean())
+print(run.loop_time.seconds)
+print(run.neighbor_statistics.dangerous_builds)
+```
+
+The parser also keeps compatibility with older thermo-only code. `LAMMPSLog(path).read()` still supports `log["stages"]`, while new code should prefer `log.runs`.
+
+```python
+legacy = mp.io.LAMMPSLog("log.lammps").read()
+first_stage = legacy["stages"][0]
+print(first_stage["Step"][0])
+```
+
+### Supported log formats
+
+| Format | Read | Write | Notes |
+|--------|------|-------|-------|
+| LAMMPS log | `read_LAMMPS_log` | — | Returns nested dataclasses aligned with LAMMPS run output |
+
+
 ## Force field files: ForceField in, ForceField out
 
 Force field readers parse parameter files into `ForceField` objects. Force field writers serialize `ForceField` objects into engine-specific formats.
