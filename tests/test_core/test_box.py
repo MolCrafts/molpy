@@ -63,8 +63,11 @@ class TestBoxProperties:
         npt.assert_allclose(box.ly, 4)
         npt.assert_allclose(box.lz, 5)
         npt.assert_allclose(box.l_inv, [0.5, 0.25, 0.2])
-        box.xy = 2
-        npt.assert_allclose(box.xy, 2)
+        # tilts come back exactly as constructed (xy=1, xz=0, yz=0)
+        npt.assert_allclose(box.tilts, [1, 0, 0])
+        # Box is immutable post-molrs-inheritance — construct a new Box to change xy.
+        rebuilt = Box.tric([2, 4, 5], [2, 0, 0])
+        npt.assert_allclose(rebuilt.xy, 2)
 
     def test_bounds_and_volume(self):
         box = Box.orth([2, 3, 4])
@@ -76,10 +79,14 @@ class TestBoxProperties:
     def test_periodic_flags(self):
         box = Box.orth([1, 2, 3])
         assert box.periodic
-        box.periodic_x = False
-        assert not box.periodic
-        box.periodic = True
-        assert box.periodic
+        # Box is immutable; build new boxes for non-default PBC.
+        non_x = Box.orth([1, 2, 3], pbc=[False, True, True])
+        assert not non_x.periodic
+        assert not non_x.periodic_x
+        assert non_x.periodic_y
+        assert non_x.periodic_z
+        all_on = Box.orth([1, 2, 3], pbc=[True, True, True])
+        assert all_on.periodic
 
 
 class TestBoxOps:
