@@ -98,19 +98,90 @@ class TestLammpsDataReader:
         np.testing.assert_array_almost_equal(box_lengths, [10.0, 10.0, 10.0])
 
     def test_triclinic_file(self, test_files):
-        """Test reading triclinic-1.lmp - file with triclinic box."""
+        """triclinic-1.lmp — triclinic header with all-zero tilt factors
+        must produce an orthogonal-equivalent box."""
 
         reader = LammpsDataReader(test_files["triclinic_1"], atom_style="atomic")
         frame = reader.read()
 
-        # Should handle triclinic box
         assert frame.box is not None
-        box_lengths = frame.box.lengths
-        np.testing.assert_array_almost_equal(box_lengths, [34.0, 34.0, 34.0])
+        np.testing.assert_array_almost_equal(frame.box.lengths, [34.0, 34.0, 34.0])
+        np.testing.assert_array_almost_equal(frame.box.tilts, [0.0, 0.0, 0.0])
 
-        # Should have no atoms
         if "atoms" in frame:
             assert frame["atoms"].nrows == 0
+
+    def test_triclinic_2_file(self, test_files):
+        """triclinic-2.lmp — non-zero tilt factors (5 -8 3 xy xz yz) must
+        be captured in the box."""
+
+        reader = LammpsDataReader(test_files["triclinic_2"], atom_style="atomic")
+        frame = reader.read()
+
+        assert frame.box is not None
+        assert frame.box.style.name == "TRICLINIC"
+        np.testing.assert_array_almost_equal(frame.box.tilts, [5.0, -8.0, 3.0])
+        # Edge-vector norms reflect the tilt: |a|=lx, |b|=sqrt(xy^2+ly^2),
+        # |c|=sqrt(xz^2+yz^2+lz^2).
+        np.testing.assert_array_almost_equal(
+            frame.box.lengths,
+            [34.0, np.sqrt(5.0**2 + 34.0**2), np.sqrt(8.0**2 + 3.0**2 + 34.0**2)],
+        )
+
+    def test_solvated_file(self, test_files):
+        """solvated.lmp — large solvated system with full force field;
+        all header counts must be honored end-to-end."""
+
+        reader = LammpsDataReader(test_files["solvated"], atom_style="full")
+        frame = reader.read()
+
+        assert frame.box is not None
+        np.testing.assert_array_almost_equal(
+            frame.box.lengths,
+            [33.920998 - (-0.103), 33.957998 - (-0.066), 162.150494 - (-0.885501)],
+        )
+        np.testing.assert_array_almost_equal(
+            frame.box.origin, [-0.103, -0.066, -0.885501]
+        )
+
+        assert frame["atoms"].nrows == 7772
+        assert frame["bonds"].nrows == 6248
+        assert frame["angles"].nrows == 8100
+        assert frame["dihedrals"].nrows == 10720
+        assert frame["impropers"].nrows == 1376
+
+        assert frame.metadata["counts"]["atom_types"] == 11
+        assert frame.metadata["counts"]["bond_types"] == 8
+
+    def test_data_body_file(self, test_files):
+        """data.body — atom_style='body' must read 'bodyflag' and per-atom
+        'mass' columns, and a trailing 'Bodies' section must not leak into
+        the atoms block."""
+
+        reader = LammpsDataReader(test_files["data_body"], atom_style="body")
+        frame = reader.read()
+
+        assert frame.box is not None
+        np.testing.assert_array_almost_equal(
+            frame.box.lengths,
+            [
+                15.532224567 - (-15.532224567),
+                15.532224567 - (-15.532224567),
+                0.5 - (-0.5),
+            ],
+        )
+
+        atoms = frame["atoms"]
+        assert atoms.nrows == 100  # header says 100 atoms; not 277
+        for col in ("id", "type", "bodyflag", "mass", "x", "y", "z"):
+            assert col in atoms, f"body atom_style must expose {col!r}"
+        # First atom in the file: 1 1 1 6 -15.5322 -15.5322 0 1 2 0
+        assert int(atoms["bodyflag"][0]) == 1
+        assert float(atoms["mass"][0]) == 6.0
+        np.testing.assert_array_almost_equal(
+            [atoms["x"][0], atoms["y"][0], atoms["z"][0]],
+            [-15.5322, -15.5322, 0.0],
+        )
 
     def test_labelmap_file(self, test_files):
         """Test reading labelmap.lmp - file with type labels and connectivity."""
@@ -341,17 +412,60 @@ class TestErrorHandling:
             reader.read()
 
     def test_empty_file(self, tmp_path):
-        """Test reading empty file."""
+        """Empty files have no box and must raise rather than silently
+        falling back to a default box."""
         tmp_file = tmp_path / "test.data"
         with open(tmp_file, "w") as f:
             f.write("")
 
         reader = LammpsDataReader(tmp_file)
+        with pytest.raises(ValueError, match="missing box bounds"):
+            reader.read()
+
+    def test_missing_box_axis_raises(self, tmp_path):
+        """A header missing one axis must raise — no silent default."""
+        content = (
+            "# missing z\n"
+            "1 atoms\n"
+            "1 atom types\n"
+            "\n"
+            "0.0 10.0 xlo xhi\n"
+            "0.0 10.0 ylo yhi\n"
+            "\n"
+            "Atoms\n"
+            "\n"
+            "1 1 0.0 0.0 0.0\n"
+        )
+        tmp_file = tmp_path / "missing_z.data"
+        tmp_file.write_text(content)
+
+        reader = LammpsDataReader(tmp_file, atom_style="atomic")
+        with pytest.raises(ValueError, match=r"missing box bounds for axis \['z'\]"):
+            reader.read()
+
+    def test_float_box_bounds_parsed(self, tmp_path):
+        """Regression: float-valued box bounds must parse, not fall back to 10x10x10."""
+        content = (
+            "# float bounds\n"
+            "1 atoms\n"
+            "1 atom types\n"
+            "\n"
+            "0.0 25.0 xlo xhi\n"
+            "0.0 30.0 ylo yhi\n"
+            "0.0 35.0 zlo zhi\n"
+            "\n"
+            "Atoms\n"
+            "\n"
+            "1 1 0.0 0.0 0.0\n"
+        )
+        tmp_file = tmp_path / "float_box.data"
+        tmp_file.write_text(content)
+
+        reader = LammpsDataReader(tmp_file, atom_style="atomic")
         frame = reader.read()
 
-        # Should handle empty file gracefully
-        assert frame is not None
-        assert "atoms" not in frame
+        assert frame.box is not None
+        np.testing.assert_array_almost_equal(frame.box.lengths, [25.0, 30.0, 35.0])
 
     def test_malformed_header(self, tmp_path):
         """Test reading file with malformed header."""

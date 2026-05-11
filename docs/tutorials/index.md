@@ -60,6 +60,7 @@ The diagram below illustrates the standard data flow through a MolPy pipeline. E
 - [Trajectory](05_trajectory.md) — time-ordered frame sequences with lazy loading
 - [Selector](06_selector.md) — composable, predicate-based atom filters over `Block` columns
 - [Wrapper and Adapter](07_wrapper_and_adapter.md) — subprocess execution boundaries and in-memory representation bridges
+- [Coarse-Grained Structure](08_coarsegrain.md) — beads as a graph, the convention-key boundary, and user-defined AA→CG projection
 - [I/O](io.md) — reading, writing, and extending molecular, trajectory, and force-field formats
 - [Tool Layer](tools.md) — packaged multi-step workflows built on top of MolPy's lower-level modules
 - [Engine](engine.md) — generation and execution of MD engine input files for LAMMPS, CP2K, and OpenMM

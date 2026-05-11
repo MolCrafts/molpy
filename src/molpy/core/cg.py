@@ -1,9 +1,22 @@
+"""Coarse-grained molecular structure.
+
+Mirrors :mod:`molpy.core.atomistic` in shape and contract; see
+:doc:`../specs/cg-atomistic-mapping-redesign` for the design rationale.
+
+Conventional dict keys (none enforced):
+
+* ``bead["atoms"]`` — ``tuple[Atom, ...]`` of atom references this bead
+  represents (when projected from an :class:`Atomistic`). Required only by
+  :meth:`CoarseGrain.beads_of`.
+* ``bead["x"]``, ``bead["y"]``, ``bead["z"]`` — primary position; consumed by
+  :class:`SpatialMixin` for ``move`` / ``rotate`` / ``scale`` / ``align``.
+* ``bead["type"]``, ``bead["mass"]``, ``bead["charge"]`` — as needed.
+"""
+
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Iterable
-
-if TYPE_CHECKING:
-    from .atomistic import Atomistic
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from .entity import (
     ConnectivityMixin,
@@ -15,38 +28,21 @@ from .entity import (
     Struct,
 )
 
+if TYPE_CHECKING:
+    from .atomistic import Atom
+    from .frame import Frame
+
 
 class Bead(Entity):
-    """Coarse-grain bead entity.
+    """Coarse-grained bead.
 
-    A bead can optionally map to an Atomistic structure via the atomistic member.
-    Supports arbitrary attributes via dictionary interface.
+    Structurally identical to :class:`~molpy.core.atomistic.Atom`: a dict-like
+    :class:`Entity` with no mandatory fields. All bead state lives in the
+    underlying dict.
 
-    Attributes:
-        atomistic: Optional reference to an Atomistic structure this bead represents
+    See module docstring for the optional convention keys recognised by
+    :class:`CoarseGrain` and the spatial mixin.
     """
-
-    def __init__(
-        self, data_dict=None, /, atomistic: "Atomistic | None" = None, **attrs: Any
-    ):
-        # Handle being called with just a dict (for copy compatibility)
-        if data_dict is not None and isinstance(data_dict, dict):
-            super().__init__(**data_dict)
-            self.atomistic = None  # Will be set by __deepcopy__ if needed
-        else:
-            # Normal creation: data_dict is actually atomistic or None
-            if data_dict is not None:
-                atomistic = data_dict
-            super().__init__(**attrs)
-            self.atomistic = atomistic
-
-    def __deepcopy__(self, memo):
-        """Custom deep copy to handle atomistic member."""
-        from copy import deepcopy
-
-        # Create new bead with copied data and atomistic reference (not copy)
-        new_bead = Bead(atomistic=self.atomistic, **deepcopy(self.data, memo))
-        return new_bead
 
     def __repr__(self) -> str:
         identifier: str
@@ -60,11 +56,25 @@ class Bead(Entity):
 
 
 class CGBond(Link):
-    """Coarse-grained bond connecting two beads."""
+    """Coarse-grained bond between two beads.
 
-    def __init__(self, a: Bead, b: Bead, /, **attrs: Any):
-        assert isinstance(a, Bead), f"bead a must be a Bead instance, got {type(a)}"
-        assert isinstance(b, Bead), f"bead b must be a Bead instance, got {type(b)}"
+    Parallel to :class:`~molpy.core.atomistic.Bond`: a :class:`Link` carrying
+    two :class:`Bead` endpoints plus arbitrary attributes.
+    """
+
+    def __init__(self, a: Bead, b: Bead, /, **attrs: Any) -> None:
+        """Initialise a CG bond between two beads.
+
+        Args:
+            a: First bead endpoint.
+            b: Second bead endpoint.
+            **attrs: Additional bond attributes.
+
+        Raises:
+            AssertionError: If ``a`` or ``b`` is not a :class:`Bead` instance.
+        """
+        assert isinstance(a, Bead), f"a must be Bead, got {type(a)}"
+        assert isinstance(b, Bead), f"b must be Bead, got {type(b)}"
         super().__init__([a, b], **attrs)
 
     def __repr__(self) -> str:
@@ -82,17 +92,29 @@ class CGBond(Link):
 
 
 class CoarseGrain(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
-    """Coarse-grained molecular structure container.
+    """Coarse-grained molecular structure.
 
-    Similar to Atomistic but for coarse-grained representations using Beads and CGBonds.
-    Supports bidirectional conversion with Atomistic structures.
+    Public surface mirrors :class:`~molpy.core.atomistic.Atomistic` 1:1
+    except for the single extra method :meth:`beads_of`. The class makes no
+    assumption about the existence, source, or definition of bead positions,
+    masses, or atom-level provenance — those are dict-key conventions
+    documented at module level.
     """
 
-    def __init__(self, **props) -> None:
+    def __init__(self, **props: Any) -> None:
+        """Initialise an empty coarse-grained structure.
+
+        Registers buckets for :class:`Bead` and :class:`CGBond`. If the
+        concrete subclass defines a ``__post_init__`` method, it is called
+        with the same keyword arguments (template pattern, parallel to
+        :class:`Atomistic`).
+
+        Args:
+            **props: Arbitrary properties stored on the structure (e.g.,
+                ``name="POPC"``, ``model="martini3"``).
+        """
         super().__init__(**props)
-        # Call __post_init__ if it exists (for template pattern)
         if hasattr(self, "__post_init__"):
-            # Get the method from the actual class, not from parent
             for klass in type(self).__mro__:
                 if klass is CoarseGrain:
                     break
@@ -104,86 +126,198 @@ class CoarseGrain(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
 
     @property
     def beads(self) -> Entities[Bead]:
-        """Collection of all beads in the structure."""
+        """All beads registered in this structure."""
         return self.entities[Bead]
 
     @property
     def cgbonds(self) -> Entities[CGBond]:  # type: ignore[type-var]
-        """Collection of all CG bonds in the structure."""
+        """All CG bonds registered in this structure."""
         return self.links[CGBond]  # type: ignore[return-value]
 
     def __repr__(self) -> str:
-        """Return a concise representation of the coarse-grained structure."""
-        beads = self.beads
-        cgbonds = self.cgbonds
-
-        # Count beads by type
         from collections import Counter
 
-        types = [b.get("type", "?") for b in beads]
-        type_counts = Counter(types)
-
-        # Format composition
-        if len(type_counts) <= 5:
-            composition = " ".join(
-                f"{typ}:{cnt}" for typ, cnt in sorted(type_counts.items())
-            )
+        types = Counter(b.get("type", "?") for b in self.beads)
+        if len(types) <= 5:
+            comp = " ".join(f"{t}:{n}" for t, n in sorted(types.items()))
         else:
-            composition = f"{len(type_counts)} types"
+            comp = f"{len(types)} types"
+        return (
+            f"<CoarseGrain, {len(self.beads)} beads ({comp}), "
+            f"{len(self.cgbonds)} bonds>"
+        )
 
-        parts = ["CoarseGrain"]
-        parts.append(f"{len(beads)} beads ({composition})")
-        parts.append(f"{len(cgbonds)} bonds")
+    def __len__(self) -> int:
+        """Return the number of beads."""
+        return len(self.beads)
 
-        return f"<{', '.join(parts)}>"
+    # ========== Factory Methods (def_*: create + register) ==========
 
-    # ========== Factory Methods (def_*: create and add) ==========
-
-    def def_bead(self, /, atomistic: "Atomistic | None" = None, **attrs: Any) -> Bead:
-        """Create a new Bead and add it to the structure.
+    def def_bead(self, /, **attrs: Any) -> Bead:
+        """Create a new :class:`Bead` and register it.
 
         Args:
-            atomistic: Optional Atomistic structure this bead represents
-            **attrs: Bead attributes (x, y, z, type, etc.)
+            **attrs: Bead attributes (any keys; see module docstring for
+                conventional keys).
+
+        Returns:
+            The newly registered Bead.
         """
-        bead = Bead(atomistic=atomistic, **attrs)
+        bead = Bead(**attrs)
         self.entities.add(bead)
         return bead
 
     def def_cgbond(self, a: Bead, b: Bead, /, **attrs: Any) -> CGBond:
-        """Create a new CGBond between two beads and add it to the structure."""
+        """Create a new :class:`CGBond` between two beads and register it.
+
+        Args:
+            a: First bead endpoint.
+            b: Second bead endpoint.
+            **attrs: Additional bond attributes (e.g., ``type="A-B"``).
+
+        Returns:
+            The newly registered CG bond.
+        """
         bond = CGBond(a, b, **attrs)
         self.links.add(bond)
         return bond
 
-    # ========== Add Methods (add_*: add existing entities) ==========
-
     def add_bead(self, bead: Bead, /) -> Bead:
-        """Add an existing Bead object to the structure."""
+        """Register an existing :class:`Bead`.
+
+        Args:
+            bead: The bead to register.
+
+        Returns:
+            The same bead, after registration.
+        """
         self.entities.add(bead)
         return bead
 
     def add_cgbond(self, bond: CGBond, /) -> CGBond:
-        """Add an existing CGBond object to the structure."""
+        """Register an existing :class:`CGBond`.
+
+        Args:
+            bond: The CG bond to register.
+
+        Returns:
+            The same bond, after registration.
+        """
         self.links.add(bond)
         return bond
 
-    # ========== Delete Methods ==========
-
     def del_bead(self, *beads: Bead) -> None:
-        """Remove beads and all their incident CG bonds."""
+        """Remove beads (and their incident CG bonds).
+
+        Args:
+            *beads: One or more :class:`Bead` instances to remove. Each
+                bead is unregistered along with any :class:`CGBond` that
+                references it as an endpoint.
+        """
         self.remove_entity(*beads)
 
     def del_cgbond(self, *bonds: CGBond) -> None:
-        """Remove CG bonds from the structure."""
+        """Remove CG bonds.
+
+        Args:
+            *bonds: One or more :class:`CGBond` instances to remove.
+        """
         self.remove_link(*bonds)
+
+    def def_beads(self, beads_data: list[dict[str, Any]], /) -> list[Bead]:
+        """Create multiple beads from a list of attribute dicts.
+
+        Args:
+            beads_data: List of attribute dicts; each dict is forwarded as
+                ``**attrs`` to :meth:`def_bead`.
+
+        Returns:
+            List of newly registered beads, one per input dict.
+        """
+        return [self.def_bead(**a) for a in beads_data]
+
+    def def_cgbonds(
+        self,
+        bonds_data: list[tuple[Bead, Bead] | tuple[Bead, Bead, dict[str, Any]]],
+        /,
+    ) -> list[CGBond]:
+        """Create multiple CG bonds from ``(a, b)`` or ``(a, b, attrs)`` tuples.
+
+        Args:
+            bonds_data: Iterable of bond specifications. Each item is either
+                a 2-tuple ``(a, b)`` of bead endpoints or a 3-tuple
+                ``(a, b, attrs)`` where ``attrs`` is a dict forwarded as
+                ``**attrs`` to :meth:`def_cgbond`.
+
+        Returns:
+            List of newly registered CG bonds, one per input tuple.
+        """
+        out: list[CGBond] = []
+        for spec in bonds_data:
+            if len(spec) == 2:
+                a, b = spec  # type: ignore[misc]
+                attrs: dict[str, Any] = {}
+            else:
+                a, b, attrs = spec  # type: ignore[misc]
+            out.append(self.def_cgbond(a, b, **attrs))
+        return out
+
+    def add_beads(self, beads: list[Bead], /) -> list[Bead]:
+        """Register multiple existing beads.
+
+        Args:
+            beads: List of :class:`Bead` instances to register.
+
+        Returns:
+            The same list, after registration.
+        """
+        for bead in beads:
+            self.entities.add(bead)
+        return beads
+
+    def add_cgbonds(self, bonds: list[CGBond], /) -> list[CGBond]:
+        """Register multiple existing CG bonds.
+
+        Args:
+            bonds: List of :class:`CGBond` instances to register.
+
+        Returns:
+            The same list, after registration.
+        """
+        for bond in bonds:
+            self.links.add(bond)
+        return bonds
+
+    # ========== Reverse Lookup (the one extra core method) ==========
+
+    def beads_of(self, atom: "Atom") -> tuple[Bead, ...]:
+        """Return all beads whose ``bead["atoms"]`` contains ``atom``.
+
+        Justified as a core method by the same standard as :meth:`move`:
+        operates on a single conventional key (``"atoms"``) and has no
+        second reasonable implementation. Beads without an ``"atoms"``
+        key are skipped silently.
+
+        Args:
+            atom: The atom to look up.
+
+        Returns:
+            Tuple of beads referencing ``atom``. Empty if none; multiple
+            if the mapping has overlap.
+
+        Note:
+            O(N_beads × ⟨|atoms|⟩); no caching. Callers needing speed
+            should build their own ``id(atom) → list[Bead]`` index.
+        """
+        return tuple(b for b in self.beads if atom in b.get("atoms", ()))
 
     # ========== Property / Type / Selection Editing ==========
 
     def rename_type(self, old: str, new: str, *, kind: type = Bead) -> int:
-        """Rename all beads/bonds of ``kind`` whose ``type`` attribute equals ``old``.
+        """Rename all beads/bonds of ``kind`` whose ``type`` equals ``old``.
 
-        Returns the number of items updated.
+        Returns:
+            Number of items renamed.
         """
         if issubclass(kind, Link):
             items = self.links.bucket(kind)
@@ -198,13 +332,28 @@ class CoarseGrain(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
 
     def set_property(
         self,
-        selector,
+        selector: Callable[[Bead], bool],
         key: str,
         value: Any,
         *,
         kind: type = Bead,
     ) -> int:
-        """Set a property on every bead (or link) matching the callable ``selector``."""
+        """Set a property on every bead (or link) matching ``selector``.
+
+        Args:
+            selector: Callable ``(item) -> bool`` returning ``True`` for
+                items whose ``key`` should be set.
+            key: Attribute key to assign on matching items.
+            value: Value to assign.
+            kind: Item class to iterate over (default :class:`Bead`); pass a
+                :class:`Link` subclass to operate on bonds instead.
+
+        Returns:
+            Number of items modified.
+
+        Raises:
+            TypeError: If ``selector`` is not callable.
+        """
         if not callable(selector):
             raise TypeError(
                 "selector must be a callable (bead) -> bool; "
@@ -221,10 +370,20 @@ class CoarseGrain(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
                 count += 1
         return count
 
-    def select(self, predicate) -> "CoarseGrain":
-        """Return a new CoarseGrain containing only beads matching ``predicate``.
+    def select(self, predicate: Callable[[Bead], bool]) -> "CoarseGrain":
+        """Return a new CoarseGrain containing beads matching ``predicate``.
 
-        Bonds whose endpoints are fully inside the selection are carried over.
+        Bonds whose endpoints are both inside the selection are carried over.
+
+        Args:
+            predicate: Callable ``(bead) -> bool`` selecting beads to keep.
+
+        Returns:
+            A new :class:`CoarseGrain` containing the selected beads and the
+            bonds whose endpoints are entirely within the selection.
+
+        Raises:
+            TypeError: If ``predicate`` is not callable.
         """
         if not callable(predicate):
             raise TypeError(
@@ -237,51 +396,20 @@ class CoarseGrain(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         )
         return sub  # type: ignore[return-value]
 
-    # ========== Batch Factory Methods (def_*s: create and add multiple) ==========
-
-    def def_beads(self, beads_data: list[dict[str, Any]], /) -> list[Bead]:
-        """Create multiple Beads from a list of attribute dictionaries."""
-        beads = []
-        for attrs in beads_data:
-            bead = self.def_bead(**attrs)
-            beads.append(bead)
-        return beads
-
-    def def_cgbonds(
-        self, bonds_data: list[tuple[Bead, Bead] | tuple[Bead, Bead, dict[str, Any]]], /
-    ) -> list[CGBond]:
-        """Create multiple CGBonds from a list of (ibead, jbead) or (ibead, jbead, attrs) tuples."""
-        bonds = []
-        for bond_spec in bonds_data:
-            if len(bond_spec) == 2:
-                a, b = bond_spec
-                attrs = {}
-            else:
-                a, b, attrs = bond_spec
-            bond = self.def_cgbond(a, b, **attrs)
-            bonds.append(bond)
-        return bonds
-
-    # ========== Batch Add Methods (add_*s: add multiple existing entities) ==========
-
-    def add_beads(self, beads: list[Bead], /) -> list[Bead]:
-        """Add multiple existing Bead objects to the structure."""
-        for bead in beads:
-            self.entities.add(bead)
-        return beads
-
-    def add_cgbonds(self, bonds: list[CGBond], /) -> list[CGBond]:
-        """Add multiple existing CGBond objects to the structure."""
-        for bond in bonds:
-            self.links.add(bond)
-        return bonds
-
     # ========== Spatial Operations (return self for chaining) ==========
 
     def move(
         self, delta: list[float], *, entity_type: type[Entity] = Bead
     ) -> "CoarseGrain":
-        """Move all beads by delta. Returns self for chaining."""
+        """Translate every bead by ``delta``.
+
+        Args:
+            delta: Translation vector ``[dx, dy, dz]`` in Angstroms.
+            entity_type: Entity subclass to translate (default :class:`Bead`).
+
+        Returns:
+            ``self`` for method chaining.
+        """
         super().move(delta, entity_type=entity_type)
         return self
 
@@ -293,7 +421,18 @@ class CoarseGrain(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         *,
         entity_type: type[Entity] = Bead,
     ) -> "CoarseGrain":
-        """Rotate beads around axis. Returns self for chaining."""
+        """Rotate beads around ``axis`` by ``angle``.
+
+        Args:
+            axis: Rotation axis ``[ax, ay, az]`` (need not be unit length).
+            angle: Rotation angle in radians.
+            about: Optional pivot point ``[x, y, z]`` in Angstroms; defaults
+                to the origin.
+            entity_type: Entity subclass to rotate (default :class:`Bead`).
+
+        Returns:
+            ``self`` for method chaining.
+        """
         super().rotate(axis, angle, about=about, entity_type=entity_type)
         return self
 
@@ -304,7 +443,17 @@ class CoarseGrain(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         *,
         entity_type: type[Entity] = Bead,
     ) -> "CoarseGrain":
-        """Scale beads by factor. Returns self for chaining."""
+        """Scale bead positions by ``factor``.
+
+        Args:
+            factor: Uniform scaling factor (dimensionless).
+            about: Optional pivot point ``[x, y, z]`` in Angstroms; defaults
+                to the origin.
+            entity_type: Entity subclass to scale (default :class:`Bead`).
+
+        Returns:
+            ``self`` for method chaining.
+        """
         super().scale(factor, about=about, entity_type=entity_type)
         return self
 
@@ -318,7 +467,20 @@ class CoarseGrain(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
         flip: bool = False,
         entity_type: type[Entity] = Bead,
     ) -> "CoarseGrain":
-        """Align beads. Returns self for chaining."""
+        """Align beads via a vector pair.
+
+        Args:
+            a: Source entity defining the start of the alignment vector.
+            b: Target entity defining the end of the alignment vector.
+            a_dir: Optional source direction ``[x, y, z]``; if omitted, the
+                vector from ``a`` to ``b`` is used.
+            b_dir: Optional target direction ``[x, y, z]``.
+            flip: If ``True``, reverse the alignment direction.
+            entity_type: Entity subclass to transform (default :class:`Bead`).
+
+        Returns:
+            ``self`` for method chaining.
+        """
         super().align(
             a, b, a_dir=a_dir, b_dir=b_dir, flip=flip, entity_type=entity_type
         )
@@ -327,222 +489,141 @@ class CoarseGrain(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
     # ========== System Composition ==========
 
     def __iadd__(self, other: "CoarseGrain") -> "CoarseGrain":
-        """Merge another CoarseGrain into this one (in-place).
+        """Merge ``other`` into this structure in-place.
 
-        Example:
-            cg1 += cg2  # Merges cg2 into cg1
+        Args:
+            other: Source structure whose entities and links are transferred
+                into ``self``. After the call, ``other`` should not be used.
+
+        Returns:
+            ``self`` for method chaining (in-place merge).
         """
         self.merge(other)
         return self
 
     def __add__(self, other: "CoarseGrain") -> "CoarseGrain":
-        """Create a new CoarseGrain by merging two structures.
+        """Return a new structure that is the union of ``self`` and ``other``.
 
-        Example:
-            cg3 = cg1 + cg2  # Creates new structure
+        Args:
+            other: Right-hand operand whose contents are merged into a copy
+                of ``self``. Neither operand is modified.
+
+        Returns:
+            A new :class:`CoarseGrain` containing copies of all entities and
+            links from both structures.
         """
         result = self.copy()
         result.merge(other)
         return result
 
-    def replicate(self, n: int, transform=None) -> "CoarseGrain":
-        """Create n copies and merge them into a new system.
+    def replicate(
+        self,
+        n: int,
+        transform: Callable[["CoarseGrain", int], None] | None = None,
+    ) -> "CoarseGrain":
+        """Replicate ``self`` ``n`` times into a new structure.
 
         Args:
-            n: Number of copies to create.
-            transform (Callable | None): Optional callable(copy, index) -> None to transform each copy.
+            n: Number of copies.
+            transform: Optional callable ``(copy, index) -> None`` applied to
+                each replica before merging.
 
-        Example:
-            # Create 10 copies in a line
-            cg_line = cg.replicate(10, lambda mol, i: mol.move([i*5, 0, 0]))
+        Returns:
+            A new :class:`CoarseGrain` containing ``n`` merged replicas.
         """
-        result = type(self)()  # Empty system of same type
-
+        result = type(self)()
         for i in range(n):
             replica = self.copy()
             if transform is not None:
                 transform(replica, i)
             result.merge(replica)
-
         return result
 
-    def __len__(self) -> int:
-        """Return number of beads in the structure."""
-        return len(self.beads)
+    # ========== Tabular Conversion ==========
 
-    # ========== Conversion Methods ==========
+    def to_frame(self, bead_fields: list[str] | None = None) -> "Frame":
+        """Convert this CoarseGrain into a :class:`Frame`.
 
-    def to_atomistic(self) -> "Atomistic":
-        """Convert CoarseGrain structure to Atomistic representation.
-
-        Beads with atomistic member are expanded to their full atomistic structure.
-        Beads without atomistic mapping create a single atom at the bead position.
-        CGBonds are converted to atomistic bonds between representative atoms.
-
-        Returns:
-            Atomistic structure
-        """
-        from .atomistic import Atom, Atomistic, Bond
-
-        result = Atomistic()
-
-        # Map beads to their representative atoms (for bond creation)
-        bead_to_atom: dict[Bead, Atom] = {}
-
-        # Process each bead
-        for bead in self.beads:
-            if bead.atomistic is not None:
-                # Bead has atomistic mapping - use reference and merge
-                # Get first atom as representative for bond creation
-                atoms_list = list(bead.atomistic.atoms)
-                if atoms_list:
-                    bead_to_atom[bead] = atoms_list[0]
-
-                # Merge the referenced atomistic structure
-                result.merge(bead.atomistic)
-            else:
-                # No atomistic mapping - create single atom at bead position
-                atom_attrs = {}
-
-                # Copy position if available
-                if "x" in bead.data:
-                    atom_attrs["x"] = bead.data["x"]
-                if "y" in bead.data:
-                    atom_attrs["y"] = bead.data["y"]
-                if "z" in bead.data:
-                    atom_attrs["z"] = bead.data["z"]
-
-                # Copy type as element placeholder if available
-                if "type" in bead.data:
-                    atom_attrs["element"] = bead.data["type"]
-
-                # Create atom
-                atom = result.def_atom(**atom_attrs)
-                bead_to_atom[bead] = atom
-
-        # Convert CGBonds to atomistic bonds
-        for cgbond in self.cgbonds:
-            ibead = cgbond.ibead
-            jbead = cgbond.jbead
-
-            # Get representative atoms
-            if ibead in bead_to_atom and jbead in bead_to_atom:
-                iatom = bead_to_atom[ibead]
-                jatom = bead_to_atom[jbead]
-
-                # Create bond with attributes from CGBond
-                bond_attrs = dict(cgbond.data)
-                result.def_bond(iatom, jatom, **bond_attrs)
-
-        return result
-
-    @classmethod
-    def from_atomistic(
-        cls, atomistic: "Atomistic", bead_mask: "np.ndarray"
-    ) -> "CoarseGrain":
-        """Create CoarseGrain structure from Atomistic using a bead mask.
+        Mirrors :meth:`molpy.core.atomistic.Atomistic.to_frame`. Beads are
+        flattened into a ``"beads"`` :class:`Block` (struct-of-arrays);
+        CG bonds, when present, become a ``"cgbonds"`` block carrying
+        integer endpoint indices ``ibead`` / ``jbead`` plus any remaining
+        bond attributes.
 
         Args:
-            atomistic: Atomistic structure to convert
-            bead_mask: Numpy array where each element indicates which bead the atom belongs to.
-                      Can be boolean (True = bead 0) or integer indices.
+            bead_fields: Optional whitelist of bead dict keys to extract.
+                If ``None``, every key encountered on any bead is included.
+                Note: a bead may carry a ``"atoms"`` convention key whose
+                value is a tuple of :class:`Atom` references; including
+                that key produces an object-dtype column. Pass an explicit
+                whitelist to skip it when writing to numerical formats.
 
         Returns:
-            CoarseGrain structure with beads mapped to atomistic substructures
+            A :class:`Frame` with a ``"beads"`` block and (if any CG bonds
+            exist) a ``"cgbonds"`` block. The frame carries no
+            :class:`Box`; callers attach one as needed.
 
-        Example:
-            >>> atomistic = Atomistic()
-            >>> # ... create atoms and bonds ...
-            >>> # Group atoms: [0,1,2] -> bead 0, [3,4] -> bead 1
-            >>> mask = np.array([0, 0, 0, 1, 1])
-            >>> cg = CoarseGrain.from_atomistic(atomistic, mask)
+        Raises:
+            ValueError: If a CG bond references a bead that is not
+                registered in this structure.
         """
         import numpy as np
 
-        result = cls()
+        from .frame import Block, Frame
 
-        # Get atoms list
-        atoms_list = list(atomistic.atoms)
+        frame = Frame()
+        beads = list(self.beads)
+        cgbonds = list(self.cgbonds)
 
-        if len(atoms_list) != len(bead_mask):
-            raise ValueError(
-                f"Bead mask length ({len(bead_mask)}) must match number of atoms ({len(atoms_list)})"
-            )
+        # ---- beads block ----
+        if bead_fields is None:
+            keys: set[str] = set()
+            for bead in beads:
+                keys.update(bead.keys())
+        else:
+            keys = set(bead_fields)
 
-        # Group atoms by bead index
-        bead_indices = np.unique(bead_mask)
-        bead_to_atoms: dict[int, list] = {int(idx): [] for idx in bead_indices}
+        bead_dict: dict[str, list[Any]] = {k: [] for k in keys}
+        bead_index: dict[int, int] = {}
+        for bead in beads:
+            bead_index[id(bead)] = len(bead_index)
+            for key in keys:
+                bead_dict[key].append(bead.get(key, None))
 
-        for atom, bead_idx in zip(atoms_list, bead_mask):
-            bead_to_atoms[int(bead_idx)].append(atom)
+        bead_arrays = {
+            k: np.array(v, dtype=object) if k == "atoms" else np.array(v)
+            for k, v in bead_dict.items()
+        }
+        frame["beads"] = Block.from_dict(bead_arrays)
 
-        # Map bead index to Bead object
-        idx_to_bead: dict[int, Bead] = {}
+        # ---- cgbonds block ----
+        if cgbonds:
+            cgbond_dict: dict[str, list[Any]] = {"ibead": [], "jbead": []}
+            all_bond_keys: set[str] = set()
+            for bond in cgbonds:
+                all_bond_keys.update(bond.keys())
+            for key in all_bond_keys:
+                if key not in ("ibead", "jbead"):
+                    cgbond_dict[key] = []
 
-        # Create beads from atom groups
-        for bead_idx, atom_group in bead_to_atoms.items():
-            # Calculate center of mass for bead position
-            positions = []
-            for atom in atom_group:
-                x = atom.get("x", 0.0)
-                y = atom.get("y", 0.0)
-                z = atom.get("z", 0.0)
-                positions.append([x, y, z])
+            for k, bond in enumerate(cgbonds):
+                if id(bond.ibead) not in bead_index:
+                    raise ValueError(
+                        f"CGBond {k + 1}: ibead (id={id(bond.ibead)}) is not "
+                        f"registered in this CoarseGrain."
+                    )
+                if id(bond.jbead) not in bead_index:
+                    raise ValueError(
+                        f"CGBond {k + 1}: jbead (id={id(bond.jbead)}) is not "
+                        f"registered in this CoarseGrain."
+                    )
+                cgbond_dict["ibead"].append(bead_index[id(bond.ibead)])
+                cgbond_dict["jbead"].append(bead_index[id(bond.jbead)])
+                for key in all_bond_keys:
+                    if key not in ("ibead", "jbead"):
+                        cgbond_dict[key].append(bond.get(key, None))
 
-            positions_array = np.array(positions)
-            center = positions_array.mean(axis=0)
+            cgbond_arrays = {k: np.array(v) for k, v in cgbond_dict.items()}
+            frame["cgbonds"] = Block.from_dict(cgbond_arrays)
 
-            # Extract subgraph for this bead
-            from .atomistic import Atomistic
-
-            subgraph, _ = atomistic.extract_subgraph(
-                center_entities=atom_group,
-                radius=0,  # Only include atoms in the group
-                entity_type=type(atom_group[0]),
-                link_type=(
-                    type(list(atomistic.bonds)[0]) if len(atomistic.bonds) > 0 else None
-                ),
-            )
-
-            # Create bead with atomistic mapping (reference, not copy)
-            bead = result.def_bead(
-                atomistic=subgraph,
-                x=float(center[0]),
-                y=float(center[1]),
-                z=float(center[2]),
-            )
-
-            idx_to_bead[bead_idx] = bead
-
-        # Infer CGBonds from atomistic bonds crossing bead boundaries
-        bead_pairs: set[tuple[int, int]] = set()
-
-        for bond in atomistic.bonds:
-            # Find which beads the bond endpoints belong to
-            atom_i = bond.itom
-            atom_j = bond.jtom
-
-            # Find bead indices
-            try:
-                idx_i = atoms_list.index(atom_i)
-                idx_j = atoms_list.index(atom_j)
-            except ValueError:
-                continue  # Skip if atoms not found
-
-            bead_idx_i = int(bead_mask[idx_i])
-            bead_idx_j = int(bead_mask[idx_j])
-
-            # If atoms belong to different beads, create CGBond
-            if bead_idx_i != bead_idx_j:
-                # Ensure consistent ordering to avoid duplicates
-                pair = tuple(sorted([bead_idx_i, bead_idx_j]))
-                bead_pairs.add(pair)
-
-        # Create CGBonds
-        for bead_idx_i, bead_idx_j in bead_pairs:
-            if bead_idx_i in idx_to_bead and bead_idx_j in idx_to_bead:
-                bead_i = idx_to_bead[bead_idx_i]
-                bead_j = idx_to_bead[bead_idx_j]
-                result.def_cgbond(bead_i, bead_j)
-
-        return result
+        return frame

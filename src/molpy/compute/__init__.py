@@ -20,11 +20,14 @@ Example usage:
 
 from .base import Compute
 from .mcd import MCDCompute
+from .neighborlist import NeighborList
 from .pmsd import PMSDCompute
+from .rdf import RDF
 from .result import MCDResult, PMSDResult, Result, TimeSeriesResult
 from .time_series import TimeAverage, TimeCache, compute_acf, compute_msd
 
-# Optional RDKit compute nodes
+# Optional RDKit compute nodes (slated for removal in Phase 3 — replaced by
+# the molrs-backed embed pipeline).
 try:  # pragma: no cover
     from .rdkit import Generate3D, OptimizeGeometry
 
@@ -42,6 +45,8 @@ __all__ = [
     "PMSDResult",
     "MCDCompute",
     "PMSDCompute",
+    "NeighborList",
+    "RDF",
     "TimeCache",
     "TimeAverage",
     "compute_msd",

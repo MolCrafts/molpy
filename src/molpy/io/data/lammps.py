@@ -53,7 +53,9 @@ class LammpsDataReader(DataReader):
 
         # Parse header and set up box
         header_info = self._parse_header(sections.get("header", []))
-        frame.box = self._create_box(header_info["box_bounds"])
+        frame.box = self._create_box(
+            header_info["box_bounds"], header_info.get("tilts")
+        )
 
         # Parse masses if present
         masses = self._parse_masses(sections.get("Masses", []))
@@ -142,6 +144,11 @@ class LammpsDataReader(DataReader):
             "angles",
             "dihedrals",
             "impropers",
+            "bodies",
+            "velocities",
+            "ellipsoids",
+            "lines",
+            "triangles",
             "atom type labels",
             "bond type labels",
             "angle type labels",
@@ -183,73 +190,105 @@ class LammpsDataReader(DataReader):
     def _parse_header(self, header_lines: list[str]) -> dict[str, Any]:
         """Parse header information."""
         counts = {}
-        box_bounds = {}
+        box_bounds: dict[str, tuple[float, float]] = {}
+        tilts: tuple[float, float, float] | None = None
 
         for line in header_lines:
             parts = line.split()
             if len(parts) < 2:
                 continue
 
-            try:
-                count = int(parts[0])
-                if "atoms" in line.lower() and not line.lower().startswith("atoms"):
-                    counts["atoms"] = count
-                elif "bonds" in line.lower() and not line.lower().startswith("bonds"):
-                    counts["bonds"] = count
-                elif "angles" in line.lower() and not line.lower().startswith("angles"):
-                    counts["angles"] = count
-                elif "dihedrals" in line.lower() and not line.lower().startswith(
-                    "dihedrals"
-                ):
-                    counts["dihedrals"] = count
-                elif "impropers" in line.lower() and not line.lower().startswith(
-                    "impropers"
-                ):
-                    counts["impropers"] = count
-                elif "atom types" in line.lower():
-                    counts["atom_types"] = count
-                elif "bond types" in line.lower():
-                    counts["bond_types"] = count
-                elif "angle types" in line.lower():
-                    counts["angle_types"] = count
-                elif "dihedral types" in line.lower():
-                    counts["dihedral_types"] = count
-                elif "improper types" in line.lower():
-                    counts["improper_types"] = count
-                elif "xlo xhi" in line.lower():
-                    box_bounds["x"] = (float(parts[0]), float(parts[1]))
-                elif "ylo" in line.lower() and "yhi" in line.lower():
-                    box_bounds["y"] = (float(parts[0]), float(parts[1]))
-                elif "zlo zhi" in line.lower():
-                    box_bounds["z"] = (float(parts[0]), float(parts[1]))
-            except (ValueError, IndexError):
+            line_lower = line.lower()
+            tokens_lower = [p.lower() for p in parts]
+
+            # Box-bound lines have float values; parse them before the int-count branch.
+            if "xlo" in tokens_lower and "xhi" in tokens_lower:
+                box_bounds["x"] = self._parse_box_bound(parts, line)
+                continue
+            if "ylo" in tokens_lower and "yhi" in tokens_lower:
+                box_bounds["y"] = self._parse_box_bound(parts, line)
+                continue
+            if "zlo" in tokens_lower and "zhi" in tokens_lower:
+                box_bounds["z"] = self._parse_box_bound(parts, line)
                 continue
 
-        return {"counts": counts, "box_bounds": box_bounds if box_bounds else None}
+            # Triclinic tilt factors: "xy xz yz <value-x> <value-y> <value-z>"
+            # with values written first per LAMMPS convention.
+            if "xy" in tokens_lower and "xz" in tokens_lower and "yz" in tokens_lower:
+                try:
+                    tilts = (float(parts[0]), float(parts[1]), float(parts[2]))
+                except (ValueError, IndexError) as exc:
+                    raise ValueError(
+                        f"Failed to parse LAMMPS tilt factors line: {line!r}"
+                    ) from exc
+                continue
 
-    def _create_box(self, box_bounds: dict[str, tuple[float, float]] | None) -> Box:
-        """Create Box from bounds."""
-        if not box_bounds:
-            # Default box
-            return Box(np.array([10.0, 10.0, 10.0]))
+            try:
+                count = int(parts[0])
+            except ValueError:
+                continue
+
+            if "atoms" in line_lower and not line_lower.startswith("atoms"):
+                counts["atoms"] = count
+            elif "bonds" in line_lower and not line_lower.startswith("bonds"):
+                counts["bonds"] = count
+            elif "angles" in line_lower and not line_lower.startswith("angles"):
+                counts["angles"] = count
+            elif "dihedrals" in line_lower and not line_lower.startswith("dihedrals"):
+                counts["dihedrals"] = count
+            elif "impropers" in line_lower and not line_lower.startswith("impropers"):
+                counts["impropers"] = count
+            elif "atom types" in line_lower:
+                counts["atom_types"] = count
+            elif "bond types" in line_lower:
+                counts["bond_types"] = count
+            elif "angle types" in line_lower:
+                counts["angle_types"] = count
+            elif "dihedral types" in line_lower:
+                counts["dihedral_types"] = count
+            elif "improper types" in line_lower:
+                counts["improper_types"] = count
+
+        return {
+            "counts": counts,
+            "box_bounds": box_bounds if box_bounds else None,
+            "tilts": tilts,
+        }
+
+    @staticmethod
+    def _parse_box_bound(parts: list[str], line: str) -> tuple[float, float]:
+        """Parse a `lo hi <axis>lo <axis>hi` line into a (lo, hi) tuple."""
+        try:
+            return (float(parts[0]), float(parts[1]))
+        except (ValueError, IndexError) as exc:
+            raise ValueError(
+                f"Failed to parse LAMMPS box bounds line: {line!r}"
+            ) from exc
+
+    def _create_box(
+        self,
+        box_bounds: dict[str, tuple[float, float]] | None,
+        tilts: tuple[float, float, float] | None = None,
+    ) -> Box:
+        """Create Box from parsed bounds. Raises if any axis is missing."""
+        required_axes = ("x", "y", "z")
+        missing = (
+            list(required_axes)
+            if not box_bounds
+            else [axis for axis in required_axes if axis not in box_bounds]
+        )
+        if missing:
+            raise ValueError(
+                f"LAMMPS data file {self._path} is missing box bounds for axis "
+                f"{missing}. Required header lines: 'xlo xhi', 'ylo yhi', 'zlo zhi'."
+            )
 
         lengths = np.array(
-            [
-                box_bounds.get("x", (0.0, 10.0))[1]
-                - box_bounds.get("x", (0.0, 10.0))[0],
-                box_bounds.get("y", (0.0, 10.0))[1]
-                - box_bounds.get("y", (0.0, 10.0))[0],
-                box_bounds.get("z", (0.0, 10.0))[1]
-                - box_bounds.get("z", (0.0, 10.0))[0],
-            ]
+            [box_bounds[axis][1] - box_bounds[axis][0] for axis in required_axes]
         )
-        origin = np.array(
-            [
-                box_bounds.get("x", (0.0, 10.0))[0],
-                box_bounds.get("y", (0.0, 10.0))[0],
-                box_bounds.get("z", (0.0, 10.0))[0],
-            ]
-        )
+        origin = np.array([box_bounds[axis][0] for axis in required_axes])
+        if tilts is not None and any(t != 0.0 for t in tilts):
+            return Box.tric(lengths, tilts, origin=origin)
         return Box(lengths, origin=origin)
 
     def _parse_masses(self, mass_lines: list[str]) -> dict[str, float]:
@@ -409,16 +448,25 @@ class LammpsDataReader(DataReader):
             header = ["id", "mol", "type", "q", "x", "y", "z"]
         elif self.atom_style == "charge":
             header = ["id", "type", "q", "x", "y", "z"]
-        else:  # atomic
+        elif self.atom_style == "body":
+            header = ["id", "type", "bodyflag", "mass", "x", "y", "z"]
+        elif self.atom_style == "atomic":
             header = ["id", "type", "x", "y", "z"]
+        else:
+            raise ValueError(
+                f"Unsupported LAMMPS atom_style {self.atom_style!r}. "
+                "Supported: 'full', 'charge', 'atomic', 'body'."
+            )
 
         csv_lines.append(" ".join(header))
 
-        # Add data lines directly
+        # Add data lines, truncating any trailing image flags (ix iy iz) or
+        # body-specific extras so columns line up with the header.
+        n_cols = len(header)
         for line in atom_lines:
             parts = line.split()
-            if len(parts) >= len(header):
-                csv_lines.append(line)
+            if len(parts) >= n_cols:
+                csv_lines.append(" ".join(parts[:n_cols]))
 
         # Parse using Block.from_csv with space delimiter
         csv_string = "\n".join(csv_lines)
@@ -426,8 +474,11 @@ class LammpsDataReader(DataReader):
             StringIO(csv_string), delimiter=" ", skipinitialspace=True
         )
 
-        # Add mass information
-        if block.nrows > 0:
+        # Add mass information. atom_style="body" already carries per-atom
+        # mass in the atoms section; do not overwrite it from the (absent)
+        # Masses section. Other styles look mass up by atom type, falling
+        # back to 1.0 when the file has no Masses section.
+        if block.nrows > 0 and "mass" not in block:
             mass_values = []
             for type_str in block["type"]:
                 mass_values.append(masses.get(str(type_str), 1.0))

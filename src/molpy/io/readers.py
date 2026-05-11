@@ -6,7 +6,10 @@ All functions return Frame objects by populating an optional frame parameter.
 """
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .log.lammps import LAMMPSLog
 
 PathLike = str | Path
 
@@ -373,3 +376,23 @@ def read_h5_trajectory(file: PathLike) -> Any:
     from .trajectory.h5 import HDF5TrajectoryReader
 
     return HDF5TrajectoryReader(Path(file))
+
+
+# =============================================================================
+# Log Readers
+# =============================================================================
+
+
+def read_LAMMPS_log(file: PathLike) -> "LAMMPSLog":
+    """
+    Read a LAMMPS log file and return a nested dataclass result.
+
+    Args:
+        file: Path to LAMMPS log file
+
+    Returns:
+        Parsed ``LAMMPSLog`` object.
+    """
+    from .log.lammps import read_LAMMPS_log as _read_LAMMPS_log
+
+    return _read_LAMMPS_log(Path(file))

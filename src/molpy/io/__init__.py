@@ -80,6 +80,7 @@ from .readers import (
     read_gro,
     read_h5,
     read_h5_trajectory,
+    read_LAMMPS_log,
     read_lammps_data,
     read_lammps_forcefield,
     read_lammps_molecule,
@@ -110,7 +111,21 @@ from .trajectory.lammps import (
 from .trajectory.xyz import XYZTrajectoryReader, XYZTrajectoryWriter
 
 # 4. Log Readers
-from .log.lammps import LAMMPSLog
+from .log.lammps import (
+    LAMMPSCPUUse,
+    LAMMPSLoadBalance,
+    LAMMPSLog,
+    LAMMPSLogHeader,
+    LAMMPSLoopTime,
+    LAMMPSMemoryUsage,
+    LAMMPSNeighborStatistics,
+    LAMMPSPerformance,
+    LAMMPSRun,
+    LAMMPSThermo,
+    LAMMPSTimingBreakdown,
+    LAMMPSTimingRow,
+    LAMMPSWarning,
+)
 from .writers import (
     write_gro,
     write_h5,
@@ -140,6 +155,7 @@ __all__ = [
     "read_amber_prmtop",
     "read_gro",
     "read_h5",
+    "read_LAMMPS_log",
     "read_lammps_data",
     "read_lammps_forcefield",
     "read_lammps_molecule",
@@ -212,7 +228,19 @@ __all__ = [
     "LammpsTrajectoryWriter",
     "XYZTrajectoryWriter",
     # Log Readers
+    "LAMMPSCPUUse",
+    "LAMMPSLoadBalance",
     "LAMMPSLog",
+    "LAMMPSLogHeader",
+    "LAMMPSLoopTime",
+    "LAMMPSMemoryUsage",
+    "LAMMPSNeighborStatistics",
+    "LAMMPSPerformance",
+    "LAMMPSRun",
+    "LAMMPSThermo",
+    "LAMMPSTimingBreakdown",
+    "LAMMPSTimingRow",
+    "LAMMPSWarning",
     # Utility Classes
     "ZipReader",
 ]
