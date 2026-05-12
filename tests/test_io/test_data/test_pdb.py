@@ -1,7 +1,16 @@
+import importlib
+
 import numpy as np
 import pytest
 
-from molpy.io.data.pdb import PDBReader, PDBWriter
+
+@pytest.fixture(
+    scope="module",
+    params=["molpy.io.data.pdb", "molpy.io.experimental.data.pdb"],
+    ids=["molpy", "experimental"],
+)
+def pdb_backend(request):
+    return importlib.import_module(request.param)
 
 
 @pytest.fixture(scope="module")
@@ -15,10 +24,10 @@ def pdb_test_files(TEST_DATA_DIR):
 
 
 class TestPDBIO:
-    def test_read_1avg(self, pdb_test_files):
+    def test_read_1avg(self, pdb_test_files, pdb_backend):
         if "1avg.pdb" not in pdb_test_files:
             pytest.skip("1avg.pdb not found")
-        reader = PDBReader(pdb_test_files["1avg.pdb"])
+        reader = pdb_backend.PDBReader(pdb_test_files["1avg.pdb"])
         frame = reader.read()
         atoms = frame["atoms"]
         assert atoms["name"].shape[0] == 3730
@@ -28,10 +37,12 @@ class TestPDBIO:
         assert bonds["atomi"].shape[0] == 7
         assert bonds["atomj"].shape[0] == 7
 
-    def test_read_water(self, pdb_test_files):
+    def test_read_water(self, pdb_test_files, pdb_backend):
         if "water.pdb" not in pdb_test_files:
             pytest.skip("water.pdb not found")
-        reader = PDBReader(pdb_test_files["water.pdb"])
+        if "experimental" in pdb_backend.__name__:
+            pytest.xfail("molrs limitation: reads only first MODEL of multi-MODEL PDB")
+        reader = pdb_backend.PDBReader(pdb_test_files["water.pdb"])
         frame = reader.read()
         atoms = frame["atoms"]
         n_atoms = atoms["name"].shape[0]
@@ -43,15 +54,15 @@ class TestPDBIO:
         assert atoms["y"].shape[0] == n_atoms
         assert atoms["z"].shape[0] == n_atoms
 
-    def test_write_and_read_roundtrip(self, tmp_path, pdb_test_files):
+    def test_write_and_read_roundtrip(self, tmp_path, pdb_test_files, pdb_backend):
         if "1avg.pdb" not in pdb_test_files:
             pytest.skip("1avg.pdb not found")
-        reader = PDBReader(pdb_test_files["1avg.pdb"])
+        reader = pdb_backend.PDBReader(pdb_test_files["1avg.pdb"])
         frame = reader.read()
         out_path = tmp_path / "roundtrip.pdb"
-        writer = PDBWriter(out_path)
+        writer = pdb_backend.PDBWriter(out_path)
         writer.write(frame)
-        frame2 = PDBReader(out_path).read()
+        frame2 = pdb_backend.PDBReader(out_path).read()
         atoms1 = frame["atoms"]
         atoms2 = frame2["atoms"]
         assert atoms1["name"].shape == atoms2["name"].shape

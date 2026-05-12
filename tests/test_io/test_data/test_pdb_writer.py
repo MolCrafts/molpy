@@ -1,18 +1,26 @@
 """Unit tests for PDB writer focusing on required fields and None handling."""
 
+import importlib
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from molpy.core.frame import Block, Frame
-from molpy.io.data.pdb import PDBReader, PDBWriter
+
+
+@pytest.fixture(
+    params=["molpy.io.data.pdb", "molpy.io.experimental.data.pdb"],
+    ids=["molpy", "experimental"],
+)
+def pdb_backend(request):
+    return importlib.import_module(request.param)
 
 
 class TestPDBWriterRequiredFields:
     """Test that PDB writer correctly handles required fields and None values."""
 
-    def test_missing_required_field_x(self, tmp_path):
+    def test_missing_required_field_x(self, tmp_path, pdb_backend):
         """Test that missing 'x' field raises ValueError."""
         frame = Frame()
         atoms = Block(
@@ -23,11 +31,11 @@ class TestPDBWriterRequiredFields:
         )
         frame["atoms"] = atoms
 
-        writer = PDBWriter(tmp_path / "test.pdb")
+        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         with pytest.raises(ValueError, match="Required field 'x' is missing"):
             writer.write(frame)
 
-    def test_missing_required_field_y(self, tmp_path):
+    def test_missing_required_field_y(self, tmp_path, pdb_backend):
         """Test that missing 'y' field raises ValueError."""
         frame = Frame()
         atoms = Block(
@@ -38,11 +46,11 @@ class TestPDBWriterRequiredFields:
         )
         frame["atoms"] = atoms
 
-        writer = PDBWriter(tmp_path / "test.pdb")
+        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         with pytest.raises(ValueError, match="Required field 'y' is missing"):
             writer.write(frame)
 
-    def test_missing_required_field_z(self, tmp_path):
+    def test_missing_required_field_z(self, tmp_path, pdb_backend):
         """Test that missing 'z' field raises ValueError."""
         frame = Frame()
         atoms = Block(
@@ -53,11 +61,11 @@ class TestPDBWriterRequiredFields:
         )
         frame["atoms"] = atoms
 
-        writer = PDBWriter(tmp_path / "test.pdb")
+        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         with pytest.raises(ValueError, match="Required field 'z' is missing"):
             writer.write(frame)
 
-    def test_none_value_in_required_field(self, tmp_path):
+    def test_none_value_in_required_field(self, tmp_path, pdb_backend):
         """Test that None value in required field raises ValueError."""
         frame = Frame()
         atoms = Block(
@@ -69,11 +77,11 @@ class TestPDBWriterRequiredFields:
         )
         frame["atoms"] = atoms
 
-        writer = PDBWriter(tmp_path / "test.pdb")
+        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         with pytest.raises(ValueError, match="Required field 'x' contains None"):
             writer.write(frame)
 
-    def test_valid_minimal_frame(self, tmp_path):
+    def test_valid_minimal_frame(self, tmp_path, pdb_backend):
         """Test that minimal valid frame (only x, y, z) writes correctly."""
         frame = Frame()
         atoms = Block(
@@ -86,7 +94,7 @@ class TestPDBWriterRequiredFields:
         frame["atoms"] = atoms
         frame.metadata["elements"] = "C C H"
 
-        writer = PDBWriter(tmp_path / "test.pdb")
+        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         writer.write(frame)
 
         # Verify file was created and has correct structure
@@ -107,7 +115,7 @@ class TestPDBWriterRequiredFields:
                 assert abs(y - (4.0 + i)) < 0.001
                 assert abs(z - (7.0 + i)) < 0.001
 
-    def test_elements_from_metadata(self, tmp_path):
+    def test_elements_from_metadata(self, tmp_path, pdb_backend):
         """Test that elements are correctly extracted from metadata."""
         frame = Frame()
         atoms = Block(
@@ -121,7 +129,7 @@ class TestPDBWriterRequiredFields:
         frame["atoms"] = atoms
         frame.metadata["elements"] = "C O N H"
 
-        writer = PDBWriter(tmp_path / "test.pdb")
+        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         writer.write(frame)
 
         # Check PDB file content
@@ -134,7 +142,7 @@ class TestPDBWriterRequiredFields:
             elements = [line[76:78].strip() for line in atom_lines]
             assert elements == ["C", "O", "N", "H"]
 
-    def test_elements_from_atom_data(self, tmp_path):
+    def test_elements_from_atom_data(self, tmp_path, pdb_backend):
         """Test that elements are extracted from atom data if metadata not available."""
         frame = Frame()
         atoms = Block(
@@ -147,7 +155,7 @@ class TestPDBWriterRequiredFields:
         )
         frame["atoms"] = atoms
 
-        writer = PDBWriter(tmp_path / "test.pdb")
+        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         writer.write(frame)
 
         # Check elements in output
@@ -157,7 +165,7 @@ class TestPDBWriterRequiredFields:
             elements = [line[76:78].strip() for line in atom_lines]
             assert elements == ["C", "H"]
 
-    def test_optional_fields_none_ignored(self, tmp_path):
+    def test_optional_fields_none_ignored(self, tmp_path, pdb_backend):
         """Test that None values in optional fields are ignored."""
         frame = Frame()
         atoms = Block(
@@ -174,12 +182,12 @@ class TestPDBWriterRequiredFields:
         frame["atoms"] = atoms
         frame.metadata["elements"] = "X C"
 
-        writer = PDBWriter(tmp_path / "test.pdb")
+        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         writer.write(frame)  # Should not raise error
 
         assert (tmp_path / "test.pdb").exists()
 
-    def test_atom_ids_from_field(self, tmp_path):
+    def test_atom_ids_from_field(self, tmp_path, pdb_backend):
         """Test that atom IDs are correctly used from id field."""
         frame = Frame()
         atoms = Block(
@@ -193,7 +201,7 @@ class TestPDBWriterRequiredFields:
         frame["atoms"] = atoms
         frame.metadata["elements"] = "C H"
 
-        writer = PDBWriter(tmp_path / "test.pdb")
+        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         writer.write(frame)
 
         # Check atom serial numbers (columns 7-11)
@@ -203,7 +211,7 @@ class TestPDBWriterRequiredFields:
             serials = [int(line[6:11].strip()) for line in atom_lines]
             assert serials == [100, 200]
 
-    def test_atom_ids_default_to_index(self, tmp_path):
+    def test_atom_ids_default_to_index(self, tmp_path, pdb_backend):
         """Test that atom IDs default to index+1 if id field missing."""
         frame = Frame()
         atoms = Block(
@@ -216,7 +224,7 @@ class TestPDBWriterRequiredFields:
         frame["atoms"] = atoms
         frame.metadata["elements"] = "C C H"
 
-        writer = PDBWriter(tmp_path / "test.pdb")
+        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         writer.write(frame)
 
         # Check atom serial numbers default to 1, 2, 3
