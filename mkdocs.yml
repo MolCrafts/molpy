@@ -114,6 +114,7 @@ nav:
       - Engine: tutorials/engine.md
       - I/O: tutorials/io.md
       - Tool Layer: tutorials/tools.md
+      - Workflow: tutorials/workflow.md
 
   - Guides:
       - user-guide/index.md
