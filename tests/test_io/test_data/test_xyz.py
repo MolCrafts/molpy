@@ -2,14 +2,23 @@
 Tests for XYZReader and XYZWriter using chemfiles-testcases/xyz files.
 """
 
+import importlib
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from molpy.core import Box
-from molpy.io.data.xyz import XYZReader
 from molpy.core.element import Element
+
+
+@pytest.fixture(
+    scope="module",
+    params=["molpy.io.data.xyz", "molpy.io.experimental.data.xyz"],
+    ids=["molpy", "experimental"],
+)
+def xyz_backend(request):
+    return importlib.import_module(request.param)
 
 
 @pytest.fixture
@@ -20,9 +29,9 @@ def xyz_test_dir(TEST_DATA_DIR) -> Path:
 class TestXYZReader:
     """Test XYZ file reading with various formats."""
 
-    def test_standard_xyz_format(self, xyz_test_dir):
+    def test_standard_xyz_format(self, xyz_test_dir, xyz_backend):
         """Test reading standard XYZ format (methane)."""
-        reader = XYZReader(xyz_test_dir / "methane.xyz")
+        reader = xyz_backend.XYZReader(xyz_test_dir / "methane.xyz")
         frame = reader.read()
 
         # Check coordinates are stored as separate x, y, z arrays
@@ -50,9 +59,9 @@ class TestXYZReader:
         assert frame["atoms"]["number"][0] == 6, "Carbon should have Z=6"
         assert all(frame["atoms"]["number"][1:] == 1), "Hydrogen should have Z=1"
 
-    def test_extended_xyz_format(self, xyz_test_dir):
+    def test_extended_xyz_format(self, xyz_test_dir, xyz_backend):
         """Test reading extended XYZ format with Properties."""
-        reader = XYZReader(xyz_test_dir / "extended.xyz")
+        reader = xyz_backend.XYZReader(xyz_test_dir / "extended.xyz")
         frame = reader.read()
 
         # Check coordinates are stored as separate x, y, z arrays
@@ -88,9 +97,9 @@ class TestXYZReader:
         assert "number" in frame["atoms"]
         assert frame["atoms"]["number"].shape == (192,)
 
-    def test_extended_xyz_with_properties(self, xyz_test_dir):
+    def test_extended_xyz_with_properties(self, xyz_test_dir, xyz_backend):
         """Test extended XYZ with Properties specification parsing."""
-        reader = XYZReader(xyz_test_dir / "extended.xyz")
+        reader = xyz_backend.XYZReader(xyz_test_dir / "extended.xyz")
         frame = reader.read()
 
         # The extended.xyz has Properties=species:S:1:pos:R:3:CS:R:2
@@ -109,9 +118,9 @@ class TestXYZReader:
         assert "CS" in frame["atoms"]
         assert frame["atoms"]["CS"].shape == (192, 2)
 
-    def test_water_xyz(self, xyz_test_dir):
+    def test_water_xyz(self, xyz_test_dir, xyz_backend):
         """Test reading water.xyz file."""
-        reader = XYZReader(xyz_test_dir / "water.xyz")
+        reader = xyz_backend.XYZReader(xyz_test_dir / "water.xyz")
         frame = reader.read()
 
         # Water has 3 atoms per molecule
@@ -131,9 +140,9 @@ class TestXYZReader:
             "Should have multiple of 3 atoms (water molecules)"
         )
 
-    def test_topology_xyz(self, xyz_test_dir):
+    def test_topology_xyz(self, xyz_test_dir, xyz_backend):
         """Test reading topology.xyz file."""
-        reader = XYZReader(xyz_test_dir / "topology.xyz")
+        reader = xyz_backend.XYZReader(xyz_test_dir / "topology.xyz")
         frame = reader.read()
 
         # Check basic structure
@@ -148,9 +157,9 @@ class TestXYZReader:
         assert frame["atoms"]["y"].ndim == 1
         assert frame["atoms"]["z"].ndim == 1
 
-    def test_velocities_xyz(self, xyz_test_dir):
+    def test_velocities_xyz(self, xyz_test_dir, xyz_backend):
         """Test reading XYZ with velocities."""
-        reader = XYZReader(xyz_test_dir / "velocities.xyz")
+        reader = xyz_backend.XYZReader(xyz_test_dir / "velocities.xyz")
         frame = reader.read()
 
         # Check structure
@@ -165,9 +174,9 @@ class TestXYZReader:
         atoms = frame["atoms"]
         assert atoms["x"].ndim == 1
 
-    def test_atomic_number_generation(self, xyz_test_dir):
+    def test_atomic_number_generation(self, xyz_test_dir, xyz_backend):
         """Test that atomic numbers are correctly generated from element symbols."""
-        reader = XYZReader(xyz_test_dir / "methane.xyz")
+        reader = xyz_backend.XYZReader(xyz_test_dir / "methane.xyz")
         frame = reader.read()
 
         elements = frame["atoms"]["element"]
@@ -180,12 +189,12 @@ class TestXYZReader:
                 f"Element {elem} should have Z={expected_num}, got {num}"
             )
 
-    def test_coordinate_array_shape(self, xyz_test_dir):
+    def test_coordinate_array_shape(self, xyz_test_dir, xyz_backend):
         """Test that coordinates are stored as three separate 1D arrays."""
         test_files = ["methane.xyz", "water.xyz", "topology.xyz"]
 
         for filename in test_files:
-            reader = XYZReader(xyz_test_dir / filename)
+            reader = xyz_backend.XYZReader(xyz_test_dir / filename)
             frame = reader.read()
 
             x = frame["atoms"]["x"]
@@ -198,10 +207,10 @@ class TestXYZReader:
                 f"{filename}: all coordinates should have same length"
             )
 
-    def test_element_to_atomic_number_mapping(self, xyz_test_dir):
+    def test_element_to_atomic_number_mapping(self, xyz_test_dir, xyz_backend):
         """Test various element symbols are correctly mapped to atomic numbers."""
         # Create a test with known elements
-        reader = XYZReader(xyz_test_dir / "extended.xyz")
+        reader = xyz_backend.XYZReader(xyz_test_dir / "extended.xyz")
         frame = reader.read()
 
         # Check that all atomic numbers are valid (> 0)
@@ -215,9 +224,9 @@ class TestXYZReader:
                 expected_num = Element.get_atomic_number(str(elem))
                 assert num == expected_num
 
-    def test_metadata_extraction(self, xyz_test_dir):
+    def test_metadata_extraction(self, xyz_test_dir, xyz_backend):
         """Test that metadata from comment line is correctly extracted."""
-        reader = XYZReader(xyz_test_dir / "extended.xyz")
+        reader = xyz_backend.XYZReader(xyz_test_dir / "extended.xyz")
         frame = reader.read()
 
         # Check various metadata fields
@@ -229,9 +238,9 @@ class TestXYZReader:
         assert isinstance(frame.metadata["ENERGY"], (str, float))
         assert isinstance(frame.metadata["Natoms"], str)
 
-    def test_empty_comment_line(self, xyz_test_dir):
+    def test_empty_comment_line(self, xyz_test_dir, xyz_backend):
         """Test XYZ file with empty comment line."""
-        reader = XYZReader(xyz_test_dir / "methane.xyz")
+        reader = xyz_backend.XYZReader(xyz_test_dir / "methane.xyz")
         frame = reader.read()
 
         # Should still parse correctly even with empty comment
@@ -240,9 +249,9 @@ class TestXYZReader:
         assert "z" in frame["atoms"]
         assert "number" in frame["atoms"]
 
-    def test_spaces_in_xyz(self, xyz_test_dir):
+    def test_spaces_in_xyz(self, xyz_test_dir, xyz_backend):
         """Test XYZ file with various spacing."""
-        reader = XYZReader(xyz_test_dir / "spaces.xyz")
+        reader = xyz_backend.XYZReader(xyz_test_dir / "spaces.xyz")
         frame = reader.read()
 
         # Should handle various spacing correctly
