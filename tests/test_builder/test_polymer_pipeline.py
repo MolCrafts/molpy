@@ -13,6 +13,17 @@ import pytest
 from molpy.builder.polymer.port_utils import port_role, ports_compatible
 from molpy.tool.polymer import polymer
 
+try:
+    from rdkit import Chem  # noqa: F401
+
+    _HAS_RDKIT = True
+except ModuleNotFoundError:
+    _HAS_RDKIT = False
+
+rdkit_needed = pytest.mark.skipif(
+    not _HAS_RDKIT, reason="RDKit required for explicit hydrogen placement"
+)
+
 
 class TestPortRoleDerivation:
     def test_left_from_name(self):
@@ -41,6 +52,7 @@ class TestPortCompatibility:
         assert not ports_compatible(">", ">")
 
 
+@rdkit_needed
 class TestJunctionConnectivity:
     def test_peg_all_oxygens_are_ethers_or_terminal(self):
         """In PEG, every O is either an ether (C-O-C) or terminal (C-O-H)."""
@@ -104,6 +116,7 @@ class TestJunctionConnectivity:
             )
 
 
+@rdkit_needed
 class TestChemicalCorrectness:
     def test_atom_valence(self):
         """All atoms have correct valence in built PEG."""
@@ -119,6 +132,7 @@ class TestChemicalCorrectness:
             )
 
 
+@rdkit_needed
 class TestBuildCleanup:
     def test_no_port_markers_after_build(self):
         """Built polymer has no leftover port/monomer_node_id markers."""
@@ -133,6 +147,7 @@ class TestBuildCleanup:
             )
 
 
+@rdkit_needed
 class TestFullPipeline:
     def test_parse_build_typify_all_typed(self):
         """Parse → Build → Typify → all atoms have types."""
