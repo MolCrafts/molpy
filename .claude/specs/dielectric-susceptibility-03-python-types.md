@@ -1,6 +1,6 @@
 ---
 title: dielectric-susceptibility-03-python-types — Python data containers
-status: approved
+status: done
 created: 2026-05-13
 depends_on: [dielectric-susceptibility-01-molrs-signal, dielectric-susceptibility-02-molrs-dielectric]
 ---
@@ -81,14 +81,14 @@ Fields `results` values use `to_dict()` recursively in serialization.
 
 ## Tasks
 
-- [ ] Write failing tests for `ACFResult` and `SpectralResult` construction, field types, frozen immutability, defaults
-- [ ] Implement `ACFResult` and `SpectralResult` in `src/molpy/compute/result.py`
-- [ ] Write failing tests for `DielectricResult` construction, field types, frozen immutability, optional field defaults
-- [ ] Implement `DielectricResult` in `src/molpy/compute/result.py`
-- [ ] Write failing tests for `DielectricSusceptibilityResult` construction, nested `to_dict()`, frozen immutability
-- [ ] Implement `DielectricSusceptibilityResult` with `to_dict()` override for nested serialization
-- [ ] Export all 4 classes from `src/molpy/compute/__init__.py`
-- [ ] Run full check + test suite
+- [x] Write failing tests for `ACFResult` and `SpectralResult` construction, field types, frozen immutability, defaults
+- [x] Implement `ACFResult` and `SpectralResult` in `src/molpy/compute/result.py`
+- [x] Write failing tests for `DielectricResult` construction, field types, frozen immutability, optional field defaults
+- [x] Implement `DielectricResult` in `src/molpy/compute/result.py`
+- [x] Write failing tests for `DielectricSusceptibilityResult` construction, nested `to_dict()`, frozen immutability
+- [x] Implement `DielectricSusceptibilityResult` with `to_dict()` override for nested serialization
+- [x] Export all 4 classes from `src/molpy/compute/__init__.py`
+- [x] Run full check + test suite
 
 ## Testing strategy
 
