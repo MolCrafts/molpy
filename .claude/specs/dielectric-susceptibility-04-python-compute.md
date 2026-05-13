@@ -1,6 +1,6 @@
 ---
 title: dielectric-susceptibility-04-python-compute — Python Compute glue layer
-status: approved
+status: done
 created: 2026-05-13
 depends_on:
   - dielectric-susceptibility-01-molrs-signal

@@ -19,6 +19,7 @@ Example usage:
 """
 
 from .base import Compute
+from .dielectric import ACFAnalyzer, DielectricSusceptibility, SpectralAnalyzer
 from .mcd import MCDCompute
 from .neighborlist import NeighborList
 from .pmsd import PMSDCompute
