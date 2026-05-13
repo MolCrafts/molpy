@@ -4,6 +4,7 @@
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-green)](./LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://molpy.molcrafts.org/)
 [![CI](https://github.com/MolCrafts/molpy/workflows/CI/badge.svg)](https://github.com/MolCrafts/molpy/actions)
+[![Benchmark](https://img.shields.io/badge/benchmark-dashboard-blue)](https://molcrafts.github.io/bm-molrs-molpy/dev/bench/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Type checked: ty](https://img.shields.io/badge/type%20checked-ty-blue.svg)](https://github.com/astral-sh/ty)
 

@@ -122,6 +122,11 @@ class Box(molrs.Box):
         return np.asarray(self.h)
 
     @property
+    def is_free(self) -> bool:
+        """``True`` if this box is FREE (no periodicity, zero volume)."""
+        return self._is_free
+
+    @property
     def style(self) -> "Box.Style":
         """FREE / ORTHOGONAL / TRICLINIC depending on the matrix shape."""
         if self._is_free:

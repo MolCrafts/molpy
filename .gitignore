@@ -154,3 +154,4 @@ notebooks/
 
 # User-guide example output directories
 *_output/
+.claude/worktrees/

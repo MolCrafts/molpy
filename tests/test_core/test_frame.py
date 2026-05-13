@@ -163,13 +163,11 @@ Charlie,35,1.75"""
         block = Block.from_csv(csv_io)
 
         # Test type inference
-        assert block["id"].dtype == np.dtype("int64")  # Should be int
-        assert block["name"].dtype == np.dtype("<U7")  # Should be string
-        assert block["age"].dtype == np.dtype(
-            "int64"
-        )  # Should be int (25, 30, 35 are integers)
+        assert block["id"].dtype == np.dtype("int32")  # molrs native int
+        assert block["name"].dtype.kind == "U"  # Should be string
+        assert block["age"].dtype == np.dtype("int32")  # Should be int
         assert block["height"].dtype == np.dtype("float64")  # Should be float
-        assert block["active"].dtype == np.dtype("<U5")  # Should be string
+        assert block["active"].dtype.kind == "U"  # Should be string
 
         # Test values
         assert np.array_equal(block["id"], np.array([1, 2, 3]))
@@ -188,10 +186,10 @@ Charlie,35,1.75"""
         block = Block.from_csv(csv_io, header=["id", "name", "score", "active"])
 
         # Test type inference
-        assert block["id"].dtype == np.dtype("int64")  # Should be int
-        assert block["name"].dtype == np.dtype("<U7")  # Should be string
+        assert block["id"].dtype == np.dtype("int32")  # molrs native int
+        assert block["name"].dtype.kind == "U"  # Should be string
         assert block["score"].dtype == np.dtype("float64")  # Should be float
-        assert block["active"].dtype == np.dtype("<U5")  # Should be string
+        assert block["active"].dtype.kind == "U"  # Should be string
 
         # Test values
         assert np.array_equal(block["id"], np.array([1, 2, 3]))
@@ -273,15 +271,15 @@ Charlie,35,1.75"""
             blk.sort("y")
 
     def test_block_sort_length_mismatch(self):
-        """Test sorting with variables of different lengths."""
-        blk = Block(
-            {"x": np.array([1, 2, 3]), "y": np.array([10, 20])}  # Different length
-        )
+        """Test sorting with variables of different lengths.
 
-        with pytest.raises(
-            ValueError, match="Variable 'y' has different length than 'x'"
-        ):
-            blk.sort("x")
+        molrs validates column-length consistency at insert time,
+        so the error surfaces during construction, not at sort time.
+        """
+        with pytest.raises(ValueError):
+            Block(
+                {"x": np.array([1, 2, 3]), "y": np.array([10, 20])}  # Different length
+            )
 
     def test_block_sort_immutable(self):
         """Test that sorting doesn't modify the original block."""
@@ -355,15 +353,15 @@ Charlie,35,1.75"""
             blk.sort_("y")
 
     def test_block_sort_inplace_length_mismatch(self):
-        """Test in-place sorting with variables of different lengths."""
-        blk = Block(
-            {"x": np.array([1, 2, 3]), "y": np.array([10, 20])}  # Different length
-        )
+        """Test in-place sorting with variables of different lengths.
 
-        with pytest.raises(
-            ValueError, match="Variable 'y' has different length than 'x'"
-        ):
-            blk.sort_("x")
+        molrs validates column-length consistency at insert time,
+        so the error surfaces during construction.
+        """
+        with pytest.raises(ValueError):
+            Block(
+                {"x": np.array([1, 2, 3]), "y": np.array([10, 20])}  # Different length
+            )
 
     def test_block_sort_inplace_method_chaining(self):
         """Test method chaining with in-place sorting."""
@@ -642,8 +640,8 @@ class TestFrame:
         assert "charge" not in set(simple_frame["atoms"].keys())
 
     def test_delete_block(self, simple_frame):
-        del simple_frame._blocks["bonds"]
-        assert "bonds" not in set(simple_frame._blocks)
+        del simple_frame["bonds"]
+        assert "bonds" not in simple_frame
 
     def test_to_from_dict_roundtrip(self, simple_frame):
         dct = simple_frame.to_dict()
