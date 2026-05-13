@@ -23,7 +23,16 @@ from .mcd import MCDCompute
 from .neighborlist import NeighborList
 from .pmsd import PMSDCompute
 from .rdf import RDF
-from .result import MCDResult, PMSDResult, Result, TimeSeriesResult
+from .result import (
+    ACFResult,
+    DielectricResult,
+    DielectricSusceptibilityResult,
+    MCDResult,
+    PMSDResult,
+    Result,
+    SpectralResult,
+    TimeSeriesResult,
+)
 from .time_series import TimeAverage, TimeCache, compute_acf, compute_msd
 from .workflow import (
     Workflow,
