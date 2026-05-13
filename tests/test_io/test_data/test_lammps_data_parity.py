@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 import molpy.io as molpy_io
+import molpy.io.experimental as _experimental_io
 import molrs.io as molrs_io
 
 
@@ -36,9 +37,14 @@ def _molrs_read(path: Path, atom_style: str):
     return molrs_io.read_lammps_data(path, atom_style=atom_style)
 
 
+def _experimental_read(path: Path, atom_style: str):
+    return _experimental_io.read_lammps_data(path, atom_style=atom_style)
+
+
 READERS = [
     pytest.param(_molpy_read, id="molpy"),
     pytest.param(_molrs_read, id="molrs"),
+    pytest.param(_experimental_read, id="experimental"),
 ]
 
 

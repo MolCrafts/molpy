@@ -1,3 +1,25 @@
+<!-- mol-agent:bootstrap:managed begin -->
+---
+mol_project:
+  name: molcrafts-molpy
+  stage: experimental
+  arch:
+    style: layered
+    rules_section: "Architecture Overview"
+  docs:
+    style: google
+  science:
+    required: true
+  specs_path: .claude/specs
+  notes_path: .claude/notes
+  build:
+    format: ruff format src tests
+    check: ruff check src tests && ty check src/molpy/
+    test: pytest tests/ -m "not external" -v
+    test_single: pytest {} -v
+---
+<!-- mol-agent:bootstrap:managed end -->
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.

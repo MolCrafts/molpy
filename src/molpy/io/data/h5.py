@@ -83,7 +83,7 @@ def frame_to_h5_group(
         block_group = blocks_group.create_group(block_name)
 
         # Write each variable in the block
-        for var_name, var_data in block._vars.items():
+        for var_name, var_data in block._as_dict().items():
             # Ensure data is a numpy array
             data = np.asarray(var_data)
 

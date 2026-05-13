@@ -25,6 +25,13 @@ from .pmsd import PMSDCompute
 from .rdf import RDF
 from .result import MCDResult, PMSDResult, Result, TimeSeriesResult
 from .time_series import TimeAverage, TimeCache, compute_acf, compute_msd
+from .workflow import (
+    Workflow,
+    WorkflowCycleError,
+    WorkflowDuplicateNodeError,
+    WorkflowError,
+    WorkflowMissingInputError,
+)
 
 # Optional RDKit compute nodes (slated for removal in Phase 3 — replaced by
 # the molrs-backed embed pipeline).
@@ -49,6 +56,11 @@ __all__ = [
     "RDF",
     "TimeCache",
     "TimeAverage",
+    "Workflow",
+    "WorkflowCycleError",
+    "WorkflowDuplicateNodeError",
+    "WorkflowError",
+    "WorkflowMissingInputError",
     "compute_msd",
     "compute_acf",
 ]

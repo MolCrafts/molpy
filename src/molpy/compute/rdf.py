@@ -50,7 +50,7 @@ class RDF(Compute):
         copy any coordinate data — it just attaches the existing Box
         (which IS-A molrs.Box) to a fresh molrs.Frame.
         """
-        if frame.box is None:
+        if frame.box.is_free:
             raise ValueError("frame.box is required for RDF computation")
         mf = molrs.Frame()
         mf.simbox = frame.box

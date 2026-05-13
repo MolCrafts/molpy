@@ -216,7 +216,7 @@ class MolStore:
         # ── atoms ────────────────────────────────────────────────────
         if "atoms" in frame:
             ag = fg.create_group("atoms")
-            for key, arr in frame["atoms"]._vars.items():
+            for key, arr in frame["atoms"]._as_dict().items():
                 data = np.asarray(arr)
                 if key in ("x", "y", "z"):
                     data = data.astype(np.float32)
@@ -226,7 +226,7 @@ class MolStore:
         for topo_name in ("bonds", "angles", "dihedrals", "impropers"):
             if topo_name in frame:
                 tg = fg.create_group(topo_name)
-                for key, arr in frame[topo_name]._vars.items():
+                for key, arr in frame[topo_name]._as_dict().items():
                     data = np.asarray(arr)
                     if key in ("atomi", "atomj", "atomk", "atoml"):
                         data = data.astype(np.uint32)
@@ -584,7 +584,7 @@ class MolStore:
         if "atoms" not in first:
             return
 
-        atom_keys = list(first["atoms"]._vars.keys())
+        atom_keys = list(list(first["atoms"].keys()))
         N = first["atoms"].nrows
 
         keys_to_store = [k for k in atom_keys if k in _TRAJ_PERATOM_KEYS]
