@@ -22,7 +22,8 @@ class LammpsDataReader(DataReader):
         self.atom_style = atom_style
 
     def read(self, frame: Frame | None = None) -> Frame:
-        return molrs.io.read_lammps_data(self._path, self.atom_style, frame)
+        raw = molrs.io.read_lammps_data(self._path, self.atom_style, frame)
+        return Frame.from_molrs(raw)
 
 
 class LammpsDataWriter(DataWriter):

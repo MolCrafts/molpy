@@ -4,21 +4,25 @@ from io import StringIO
 from pathlib import Path
 from typing import Any, Self, overload
 
+import molrs
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from .selector import Selector
 
-
 type BlockLike = Mapping[str, ArrayLike]
 
 
 class Block(MutableMapping[str, np.ndarray]):
-    """
-    Lightweight container that maps variable names -> NumPy arrays.
+    """Lightweight container that maps variable names -> NumPy arrays.
+
+    Backed by ``molrs.Block`` (Rust FFI column store). All data lives in
+    the Rust Store; ``view()`` / ``insert()`` / ``remove()`` operate
+    directly on that memory. Python convenience methods (``sort``,
+    ``from_csv``, ``iterrows``, …) are built on top.
 
     • Behaves like a dict but auto-casts any assigned value to ndarray.
-    • All built-in `dict`/`MutableMapping` helpers work out of the box.
+    • All built-in ``dict``/``MutableMapping`` helpers work out of the box.
     • Supports advanced indexing: by key, by index/slice, by mask, by list of keys.
 
     Parameters
@@ -74,20 +78,33 @@ class Block(MutableMapping[str, np.ndarray]):
     array([1, 2, 3])
     """
 
-    __slots__ = ("_vars",)
+    __slots__ = ("_inner", "_objects")
 
     def __init__(self, vars_: BlockLike | None = None) -> None:
-        self._vars: dict[str, np.ndarray] = {k: np.asarray(v) for k, v in {}.items()}
+        self._inner = molrs.Block()
+        self._objects: dict[str, np.ndarray] = {}
         if vars_ is not None:
             if not isinstance(vars_, dict):
                 raise ValueError(f"vars_ must be a dict, got {type(vars_)}")
             for k, v in vars_.items():
                 try:
-                    self._vars[k] = np.asarray(v)
+                    self[k] = v
                 except Exception as e:
                     raise ValueError(
-                        f"Value must be a BlockLike, i.e. dict[str, np.ndarray], but got {type(v)} for key {k}"
+                        f"Value must be a BlockLike, i.e. dict[str, np.ndarray], "
+                        f"but got {type(v)} for key {k}"
                     ) from e
+
+    @classmethod
+    def from_molrs(cls, inner: molrs.Block) -> "Block":
+        """Wrap a ``molrs.Block`` as a ``molpy.Block`` (zero-copy).
+
+        The returned block shares the same Rust Store as *inner*.
+        """
+        block = cls.__new__(cls)
+        block._inner = inner
+        block._objects = {}
+        return block
 
     # --- core mapping API
 
@@ -107,82 +124,106 @@ class Block(MutableMapping[str, np.ndarray]):
     def __getitem__(self, key: Selector) -> "Block": ...  # type: ignore[override]
 
     def __getitem__(self, key):  # type: ignore[override]
-        if isinstance(key, (int, slice)):
-            # Return a new Block containing the selected rows.
-            # For integer indices, scalars are converted to ndarray via np.asarray
-            return Block(
-                {
-                    k: (
-                        v[key]
-                        if (isinstance(key, slice) or v[key].ndim > 0)
-                        else np.asarray(v[key].item())
-                    )
-                    for k, v in self._vars.items()
-                }
-            )
-        elif isinstance(key, str):
-            return self._vars[key]
+        if isinstance(key, str):
+            if key in self._objects:
+                return self._objects[key]
+            val = self._inner.view(key)
+            return np.asarray(val) if isinstance(val, list) else val
+        elif isinstance(key, int):
+            # Return a plain dict for single-row access (avoids molrs
+            # schema conflicts when 2D columns like "xyz" produce
+            # different-length rows than scalar columns).
+            return {
+                k: (v[key] if (v[key].ndim > 0) else v[key].item())
+                for k, v in self._as_dict().items()
+            }
+        elif isinstance(key, slice):
+            return Block({k: v[key] for k, v in self._as_dict().items()})
         elif isinstance(key, list):
-            # Handle list of column names for concatenation
             if not key:
                 raise KeyError("Empty list not allowed for indexing")
-
-            # Check if all keys exist
             for k in key:
-                if k not in self._vars:
+                if k not in self:
                     raise KeyError(f"Key '{k}' not found in Block")
-
-            # Get the arrays
-            arrays = [self._vars[k] for k in key]
-
-            # Check if all arrays have the same shape and dtype
-            if not arrays:
-                raise ValueError("No arrays to concatenate")
-
-            first_array = arrays[0]
+            arrays = [self._view_array(k) for k in key]
+            first = arrays[0]
             for i, arr in enumerate(arrays[1:], 1):
-                if arr.shape != first_array.shape:
+                if arr.shape != first.shape:
                     raise ValueError(
-                        f"Arrays must have the same shape. Array {key[0]} has shape {first_array.shape}, but array {key[i]} has shape {arr.shape}"
+                        f"Arrays must have the same shape. Array {key[0]} has shape "
+                        f"{first.shape}, but array {key[i]} has shape {arr.shape}"
                     )
-                if arr.dtype != first_array.dtype:
+                if arr.dtype != first.dtype:
                     raise ValueError(
-                        f"Arrays must have the same dtype. Array {key[0]} has dtype {first_array.dtype}, but array {key[i]} has dtype {arr.dtype}"
+                        f"Arrays must have the same dtype. Array {key[0]} has dtype "
+                        f"{first.dtype}, but array {key[i]} has dtype {arr.dtype}"
                     )
-
-            # Concatenate along the last axis
             return np.column_stack(arrays)
         elif isinstance(key, tuple):
             return np.array([self[k] for k in key])
         elif isinstance(key, np.ndarray):
-            return Block({k: v[key] for k, v in self._vars.items()})
+            return Block({k: self._view_array(k)[key] for k in self.keys()})
         elif isinstance(key, Selector):
             return key(self)
         else:
             raise KeyError(
-                f"Invalid key type: {type(key)}. Expected str, int, slice, list[str], or np.ndarray."
+                f"Invalid key type: {type(key)}. "
+                "Expected str, int, slice, list[str], or np.ndarray."
             )
 
     def __setitem__(self, key: str, value: Any) -> None:  # type: ignore[override]
-        self._vars[key] = np.asarray(value)
+        arr = np.asarray(value)
+        if arr.ndim == 0:
+            return  # skip scalar columns (molrs requires ≥1D)
+        if arr.dtype.kind == "O":
+            self._objects[key] = arr
+            return
+        if len(arr) == 0:
+            self._objects[key] = arr  # empty arrays go to Python-side storage
+            return
+        if key in self._inner.keys():
+            self._inner.remove(key)
+        self._objects.pop(key, None)
+        self._inner.insert(key, arr)
 
     def __delitem__(self, key: str) -> None:  # type: ignore[override]
-        del self._vars[key]
+        if key in self._objects:
+            del self._objects[key]
+        else:
+            self._inner.remove(key)
 
     def __iter__(self) -> Iterator[str]:  # type: ignore[override]
-        return iter(self._vars)
+        yield from self._inner.keys()
+        yield from self._objects
 
     def __len__(self) -> int:  # type: ignore[override]
-        return len(self._vars)
+        return len(list(self._inner.keys())) + len(self._objects)
 
-    def __contains__(self, key: str) -> bool:  # type: ignore[override]
-        """Check if a variable exists in this block."""
-        return key in self._vars
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, str):
+            return False
+        return key in self._inner.keys() or key in self._objects
 
     # ------------------------------------------------------------------ helpers
+
+    def _view_array(self, key: str) -> np.ndarray:
+        """Return column *key* always as an ndarray (convert list→array)."""
+        if key in self._objects:
+            return self._objects[key]
+        val = self._inner.view(key)
+        return np.asarray(val) if isinstance(val, list) else val
+
+    def _as_dict(self) -> dict[str, np.ndarray]:
+        """Return all columns as a dict of numpy arrays (views into Rust memory)."""
+        result = {k: self._view_array(k) for k in self._inner.keys()}
+        result.update(self._objects)
+        return result
+
     def to_dict(self) -> dict[str, np.ndarray]:
         """Return a JSON-serialisable copy (arrays -> Python lists)."""
-        return {k: v for k, v in self._vars.items()}
+        result = {k: np.asarray(self._view_array(k)) for k in self._inner.keys()}
+        result.update(self._objects)
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, np.ndarray]) -> "Block":
@@ -199,8 +240,7 @@ class Block(MutableMapping[str, np.ndarray]):
         header: list[str] | None = None,
         **kwargs,
     ) -> "Block":
-        """
-        Create a Block from a CSV file or StringIO.
+        """Create a Block from a CSV file or StringIO.
 
         Parameters
         ----------
@@ -242,7 +282,6 @@ class Block(MutableMapping[str, np.ndarray]):
         >>> block.nrows
         2
         """
-        # Determine type
         if isinstance(filepath, StringIO):
             csvfile = filepath
             csvfile.seek(0)
@@ -257,15 +296,12 @@ class Block(MutableMapping[str, np.ndarray]):
         try:
             reader = csv.reader(csvfile, delimiter=delimiter, **kwargs)
 
-            # Handle headers
             if header is None:
-                # Use first row as headers
                 try:
                     headers = next(reader)
                 except StopIteration:
                     raise ValueError("CSV file is empty")
             else:
-                # Use provided headers, no header row in CSV
                 headers = header
 
             raw_data = {h: [] for h in headers}
@@ -291,8 +327,13 @@ class Block(MutableMapping[str, np.ndarray]):
                 csvfile.close()
 
     def copy(self) -> "Block":
-        """Shallow copy (arrays are **not** copied)."""
-        return Block(self._vars.copy())  # type: ignore[arg-type]
+        """Deep copy (data is copied into a new Rust Store)."""
+        new = Block()
+        for k in self._inner.keys():
+            new[k] = np.asarray(self._view_array(k))
+        for k, v in self._objects.items():
+            new._objects[k] = v.copy()
+        return new
 
     def rename(self, old_key: str, new_key: str) -> None:
         """Rename a column key in-place.
@@ -304,41 +345,32 @@ class Block(MutableMapping[str, np.ndarray]):
         Raises:
             KeyError: If *old_key* does not exist.
         """
-        if old_key not in self._vars:
+        if old_key in self._objects:
+            self._objects[new_key] = self._objects.pop(old_key)
+        elif old_key in self._inner.keys():
+            arr = self._view_array(old_key)
+            self._inner.remove(old_key)
+            self._inner.insert(new_key, arr)
+        else:
             raise KeyError(f"Column '{old_key}' not found in Block")
-        self._vars[new_key] = self._vars.pop(old_key)
 
     def _sort(self, key: str, *, reverse: bool = False) -> dict[str, NDArray[Any]]:
-        """Sort variables by a specific key and return sorted data.
-
-        This is a private helper method that performs the actual sorting logic.
-
-        Args:
-            key: The variable name to sort by.
-            reverse: If True, sort in descending order. Defaults to False.
-
-        Returns:
-            Dictionary with sorted variable data.
-
-        Raises:
-            KeyError: If the key variable doesn't exist in the block.
-            ValueError: If any variable has different length than the key variable.
-        """
-        if not self._vars:
+        """Sort variables by a specific key and return sorted data."""
+        if self.nrows == 0:
             return {}
 
-        if key not in self._vars:
+        if key not in self:
             raise KeyError(f"Variable '{key}' not found in block")
 
-        # Get the sorting indices
-        sort_indices = np.argsort(self._vars[key])
+        sort_indices = np.argsort(self._view_array(key))
         if reverse:
             sort_indices = sort_indices[::-1]
 
-        # Create sorted data
+        nrows = self.nrows
         sorted_vars: dict[str, np.ndarray] = {}
-        for var_name, var_data in self._vars.items():
-            if len(var_data) != len(self._vars[key]):
+        for var_name in self.keys():
+            var_data = self._view_array(var_name)
+            if len(var_data) != nrows:
                 raise ValueError(
                     f"Variable '{var_name}' has different length than '{key}'"
                 )
@@ -362,17 +394,6 @@ class Block(MutableMapping[str, np.ndarray]):
         Raises:
             KeyError: If the key variable doesn't exist in the block.
             ValueError: If any variable has different length than the key variable.
-
-        Example:
-            >>> blk = Block({"x": [3, 1, 2], "y": [30, 10, 20]})
-            >>> sorted_blk = blk.sort("x")
-            >>> sorted_blk["x"]
-            array([1, 2, 3])
-            >>> sorted_blk["y"]
-            array([10, 20, 30])
-            >>> # Original block is unchanged
-            >>> blk["x"]
-            array([3, 1, 2])
         """
         sorted_vars = self._sort(key, reverse=reverse)
         return Block(sorted_vars)
@@ -393,101 +414,72 @@ class Block(MutableMapping[str, np.ndarray]):
         Raises:
             KeyError: If the key variable doesn't exist in the block.
             ValueError: If any variable has different length than the key variable.
-
-        Example:
-            >>> blk = Block({"x": [3, 1, 2], "y": [30, 10, 20]})
-            >>> _ = blk.sort_("x")  # Returns self for chaining
-            >>> blk["x"]
-            array([1, 2, 3])
-            >>> blk["y"]
-            array([10, 20, 30])
-            >>> # Original data is now sorted
         """
         sorted_vars = self._sort(key, reverse=reverse)
-        if sorted_vars:  # Only update if we have data to sort
-            self._vars.update(sorted_vars)
+        if sorted_vars:
+            for k, v in sorted_vars.items():
+                if k in self._objects:
+                    self._objects[k] = v
+                else:
+                    self._inner.remove(k)
+                    self._inner.insert(k, v)
         return self
 
     # ------------------------------------------------------------------ repr / str
+
     def __repr__(self) -> str:
-        contents = ", ".join(f"{k}: shape={v.shape}" for k, v in self._vars.items())
+        contents = ", ".join(
+            f"{k}: shape={self._view_array(k).shape}" for k in self.keys()
+        )
         return f"Block({contents})"
 
     @property
     def nrows(self) -> int:
-        """Return the number of rows in the first variable (if any)."""
-        if not self._vars:
-            return 0
-        return len(next(iter(self._vars.values())))
+        """Return the number of rows (0 if empty)."""
+        n = self._inner.nrows
+        if n is not None and n > 0:
+            return n
+        for arr in self._objects.values():
+            return len(arr)
+        return 0
 
     @property
     def shape(self) -> tuple[int, ...]:
-        """Return the shape of the first variable (if any)."""
-        if not self._vars:
+        """Return the shape (nrows, ncols) of the block."""
+        if self.nrows == 0:
             return ()
         return self.nrows, len(self)
 
     def iterrows(self, n: int | None = None) -> Iterator[tuple[int, dict[str, Any]]]:
-        """
-        Iterate over rows of the block.
+        """Iterate over rows of the block.
 
         Returns
         -------
         Iterator[tuple[int, dict[str, Any]]]
-            An iterator yielding (index, row_data) pairs where:
-            - index: int, the row index
-            - row_data: dict, mapping variable names to their values for this row
-
-        Examples
-        --------
-        >>> blk = Block({
-        ...     "id": [1, 2, 3],
-        ...     "type": ["C", "O", "N"],
-        ...     "x": [0.0, 1.0, 2.0],
-        ...     "y": [0.0, 0.0, 1.0],
-        ...     "z": [0.0, 0.0, 0.0]
-        ... })
-        >>> for index, row in blk.iterrows():  # doctest: +SKIP
-        ...     print(f"Row {index}: {row}")
-        Row 0: {'id': 1, 'type': 'C', 'x': 0.0, 'y': 0.0, 'z': 0.0}
-        Row 1: {'id': 2, 'type': 'O', 'x': 1.0, 'y': 0.0, 'z': 0.0}
-        Row 2: {'id': 3, 'type': 'N', 'x': 2.0, 'y': 1.0, 'z': 0.0}
-
-        Notes
-        -----
-        This method is similar to pandas DataFrame.iterrows() but returns
-        a dictionary for each row instead of a pandas Series.
+            An iterator yielding (index, row_data) pairs.
         """
-        if not self._vars:
-            return
-
-        # Get the number of rows from the first variable
         nrows = self.nrows if n is None else n
         if nrows == 0:
             return
 
-        # Get all variable names
-        var_names = list(self._vars.keys())
+        var_names = list(self.keys())
 
         for i in range(nrows):
             row_data = {}
             for var_name in var_names:
-                var_data = self._vars[var_name]
+                var_data = self._view_array(var_name)
                 if i < len(var_data):
-                    # Handle scalar values
                     if var_data.ndim == 0:
                         row_data[var_name] = var_data.item()
                     else:
                         row_data[var_name] = var_data[i]
                 else:
-                    # Handle case where variable has fewer rows
                     row_data[var_name] = None
 
             yield i, row_data
 
     def itertuples(self, index: bool = True, name: str = "Row") -> Iterator[Any]:
-        """
-        Iterate over rows of the block as named tuples.
+        """Iterate over rows of the block as named tuples.
 
         Parameters
         ----------
@@ -500,41 +492,15 @@ class Block(MutableMapping[str, np.ndarray]):
         -------
         Iterator[Any]
             An iterator yielding named tuples for each row
-
-        Examples
-        --------
-        >>> blk = Block({
-        ...     "id": [1, 2, 3],
-        ...     "type": ["C", "O", "N"],
-        ...     "x": [0.0, 1.0, 2.0]
-        ... })
-        >>> for row in blk.itertuples():
-        ...     print(f"Index: {row.Index}, ID: {row.id}, Type: {row.type}")
-        Index: 0, ID: 1, Type: C
-        Index: 1, ID: 2, Type: O
-        Index: 2, ID: 3, Type: N
-
-        Notes
-        -----
-        This method is similar to pandas DataFrame.itertuples().
         """
         from collections import namedtuple
 
-        if not self._vars:
-            return
-
-        # Get the number of rows from the first variable
         nrows = self.nrows
         if nrows == 0:
             return
 
-        # Get all variable names
-        var_names = list(self._vars.keys())
-
-        # Create field names for the named tuple
+        var_names = list(self.keys())
         field_names = ["Index", *var_names] if index else var_names
-
-        # Create the named tuple class
         RowTuple = namedtuple(name, field_names)
 
         for i in range(nrows):
@@ -543,15 +509,13 @@ class Block(MutableMapping[str, np.ndarray]):
                 row_values.append(i)
 
             for var_name in var_names:
-                var_data = self._vars[var_name]
+                var_data = self._view_array(var_name)
                 if i < len(var_data):
-                    # Handle scalar values
                     if var_data.ndim == 0:
                         row_values.append(var_data.item())
                     else:
                         row_values.append(var_data[i])
                 else:
-                    # Handle case where variable has fewer rows
                     row_values.append(None)
 
             yield RowTuple(*row_values)
@@ -560,18 +524,22 @@ class Block(MutableMapping[str, np.ndarray]):
 class Frame:
     """Hierarchical numerical data container with named blocks.
 
-    Frame stores multiple Block objects under string keys (e.g., "atoms", "bonds")
-    and allows arbitrary metadata to be attached. It's designed for molecular
-    simulation data where different entity types need separate tabular storage.
+    Backed by ``molrs.Frame`` (Rust FFI). Each ``Frame`` holds named
+    ``Block`` objects and ``metadata: dict[str, Any]`` for arbitrary
+    Python-side metadata.
+
+    The ``box`` property delegates to the underlying ``molrs.Frame.box``
+    (which accepts ``molpy.Box`` because ``molpy.Box`` inherits
+    ``molrs.Box``).
 
     Structure:
         Frame
-        ├─ blocks: dict[str, Block]     # Named data blocks
-        └─ metadata: dict[str, Any]     # Arbitrary metadata (box, timestep, etc.)
+        ├─ _inner: molrs.Frame          # Rust storage
+        ├─ metadata: dict[str, Any]     # Python-side metadata
+        └─ box (via _inner.box)
 
     Args:
-        blocks (dict[str, Block | dict] | None, optional): Initial blocks. If a
-            dict value is not a Block, it will be converted.
+        blocks (dict[str, Block | dict] | None, optional): Initial blocks.
         **props: Arbitrary keyword arguments stored in metadata.
 
     Examples:
@@ -604,102 +572,51 @@ class Frame:
         0
         >>> frame.metadata["description"]
         'Test system'
-
-        Chained access:
-
-        >>> frame = Frame(blocks={"atoms": {"x": [1, 2, 3], "y": [4, 5, 6]}})
-        >>> atoms = frame["atoms"]
-        >>> xyz_combined = atoms[["x", "y"]]
-        >>> xyz_combined.shape
-        (3, 2)
-
-        Iterate over all blocks and variables:
-
-        >>> frame = Frame(blocks={
-        ...     "atoms": {"id": [1, 2], "mass": [12.0, 1.0]},
-        ...     "bonds": {"atomi": [0], "atomj": [1]}
-        ... })
-        >>> for block_name in frame._blocks:
-        ...     print(f"{block_name}: {list(frame[block_name].keys())}")
-        atoms: ['id', 'mass']
-        bonds: ['atomi', 'atomj']
     """
+
+    __slots__ = ("_inner", "metadata", "_block_objects")
 
     def __init__(
         self,
         blocks: dict[str, Block | BlockLike] | None = None,
         **props: Any,
     ) -> None:
-        """Initialize a Frame with optional blocks and metadata.
-
-        Args:
-            blocks (dict[str, Block | BlockLike] | None, optional): Initial
-                blocks. If a dict value is not a Block, it will be converted to
-                a Block. Defaults to None.
-            **props (Any): Arbitrary keyword arguments stored in metadata.
-        """
-        from molpy.core.box import Box
-
-        # guarantee a root block even if none supplied
-        self._blocks: dict[str, Block] = {}
+        self._inner = molrs.Frame()
+        self.metadata: dict[str, Any] = dict(props)
+        self._block_objects: dict[str, dict[str, np.ndarray]] = {}
         if blocks is not None:
-            self._blocks = self._validate_and_convert_blocks(blocks)
-        self.box: Box | None = None
-        self.metadata: dict[str, Any] = props
+            if not isinstance(blocks, dict):
+                raise ValueError(f"blocks must be a dict, got {type(blocks)}")
+            for key, value in blocks.items():
+                if not isinstance(key, str):
+                    raise ValueError(
+                        f"Block keys must be strings, got {type(key)} for key {key}"
+                    )
+                if isinstance(value, Block):
+                    self[key] = value
+                elif isinstance(value, dict):
+                    self[key] = Block(value)
+                else:
+                    try:
+                        self[key] = Block(value)
+                    except Exception as e:
+                        raise ValueError(
+                            f"Failed to convert value to Block for key '{key}' "
+                            f"(type {type(value)}): {e}"
+                        )
 
-    def _validate_and_convert_blocks(
-        self, blocks: dict[str, Block | BlockLike | Any]
-    ) -> dict[str, Block]:
-        """Validate and convert input blocks to ensure all values are Block instances.
+    @classmethod
+    def from_molrs(cls, inner: molrs.Frame) -> "Frame":
+        """Wrap a ``molrs.Frame`` as a ``molpy.Frame`` (zero-copy).
 
-        This method recursively processes nested dictionaries and converts
-        all leaf values to Block instances.
-
-        Args:
-            blocks (dict[str, Block] | dict[str, dict] | dict[str, Any]): Input
-                blocks. Can be:
-                - dict[str, Block]: Already correct format
-                - dict[str, dict]: Nested dictionaries that will be converted to Block
-                - dict[str, Any]: Mixed format that will be validated and converted
-
-        Returns:
-            dict[str, Block]: Validated blocks where all values are Block instances.
-
-        Raises:
-            ValueError: If any leaf value cannot be converted to Block.
+        The returned frame shares the same Rust Store as *inner*.
+        ``inner.meta`` is copied into ``metadata``.
         """
-        if not isinstance(blocks, dict):
-            raise ValueError(f"blocks must be a dict, got {type(blocks)}")
-
-        validated_blocks = {}
-
-        for key, value in blocks.items():
-            if not isinstance(key, str):
-                raise ValueError(
-                    f"Block keys must be strings, got {type(key)} for key {key}"
-                )
-
-            if isinstance(value, Block):
-                # Already a Block, use as is
-                validated_blocks[key] = value
-            elif isinstance(value, dict):
-                # Nested dict, convert to Block
-                try:
-                    validated_blocks[key] = Block(value)
-                except Exception as e:
-                    raise ValueError(
-                        f"Failed to convert nested dict to Block for key '{key}': {e}"
-                    )
-            else:
-                # Try to convert to Block (e.g., list, array, etc.)
-                try:
-                    validated_blocks[key] = Block(value)
-                except Exception as e:
-                    raise ValueError(
-                        f"Failed to convert value to Block for key '{key}' (type {type(value)}): {e}"
-                    )
-
-        return validated_blocks
+        frame = cls.__new__(cls)
+        frame._inner = inner
+        frame.metadata = dict(inner.meta) if inner.meta else {}
+        frame._block_objects = {}
+        return frame
 
     # ---------- main get/set --------------------------------------------
 
@@ -710,171 +627,146 @@ class Frame:
             key (str): Name of the block to retrieve.
 
         Returns:
-            Block: The requested block.
+            Block: The requested block (wraps the molrs.Block zero-copy).
 
         Raises:
             KeyError: If the block name doesn't exist.
-
-        Examples:
-            >>> frame = Frame(blocks={"atoms": {"x": [1, 2], "y": [3, 4]}})
-            >>> atoms = frame["atoms"]
-            >>> atoms["x"]
-            array([1, 2])
-            >>> frame["nonexistent"]
-            Traceback (most recent call last):
-                ...
-            KeyError: 'nonexistent'
         """
-        return self._blocks[key]
+        block = Block.from_molrs(self._inner[key])
+        if key in self._block_objects:
+            block._objects.update(self._block_objects[key])
+        return block
 
     def __setitem__(self, key: str, value: BlockLike | Block) -> None:
         """Set a Block by name.
 
         Args:
             key (str): Name of the block to set.
-            value (Block | dict[str, ArrayLike]): Block to store, or dict-like
-                data that will be converted to Block.
-
-        Examples:
-            >>> frame = Frame()
-            >>> frame["atoms"] = Block({"x": [1, 2, 3]})
-            >>> frame["bonds"] = {"atomi": [0, 1], "atomj": [1, 2]}  # Auto-converted
-            >>> isinstance(frame["bonds"], Block)
-            True
+            value (Block | dict[str, ArrayLike]): Block to store.
         """
-        if not isinstance(value, Block):
-            value = Block(value)
-        self._blocks[key] = value
+        if isinstance(value, Block):
+            self._inner[key] = value._inner
+            if value._objects:
+                self._block_objects[key] = value._objects.copy()
+            elif key in self._block_objects:
+                del self._block_objects[key]
+        elif isinstance(value, molrs.Block):
+            self._inner[key] = value
+            self._block_objects.pop(key, None)
+        else:
+            blk = molrs.Block()
+            obj_cols: dict[str, np.ndarray] = {}
+            for k, v in value.items():
+                arr = np.asarray(v)
+                if arr.ndim == 0:
+                    continue
+                if arr.dtype.kind == "O" or len(arr) == 0:
+                    obj_cols[k] = arr
+                else:
+                    blk.insert(k, arr)
+            self._inner[key] = blk
+            if obj_cols:
+                self._block_objects[key] = obj_cols
+            elif key in self._block_objects:
+                del self._block_objects[key]
 
     def __delitem__(self, key: str) -> None:
-        """Delete a Block by name.
-
-        Args:
-            key (str): Name of the block to delete.
-
-        Examples:
-            >>> frame = Frame(blocks={"atoms": {"x": [1, 2]}})
-            >>> del frame["atoms"]
-            >>> "atoms" in frame
-            False
-        """
-        del self._blocks[key]
+        self._block_objects.pop(key, None)
+        del self._inner[key]
 
     def __contains__(self, key: str) -> bool:
-        """Check if a block exists.
+        return key in self._inner
 
-        Args:
-            key (str): Name of the block to check.
-
-        Returns:
-            bool: True if the block exists, False otherwise.
-
-        Examples:
-            >>> frame = Frame(blocks={"atoms": {"x": [1, 2]}})
-            >>> "atoms" in frame
-            True
-            >>> "bonds" in frame
-            False
-        """
-        return key in self._blocks
+    def keys(self):
+        """Return block names."""
+        return self._inner.keys()
 
     # ---------- helpers -------------------------------------------------
+
+    @property
+    def _blocks(self) -> dict[str, Block]:
+        """Return a snapshot dict of block names → Block objects."""
+        return {name: self[name] for name in self.keys()}
+
     @property
     def blocks(self) -> Iterator["Block"]:
-        """Iterate over stored Block objects.
-
-        Returns:
-            Iterator[Block]: Iterator over Block values stored in this Frame.
-
-        Note:
-            To iterate over block *names* use `for name in frame._blocks` or
-            `frame._blocks.keys()`.
-
-        Examples:
-            >>> frame = Frame(blocks={"atoms": {"x": [1]}, "bonds": {"atomi": [0]}})
-            >>> [b for b in frame.blocks]
-            [Block(x: shape=(1,), atomi: shape=(1,))]
-        """
+        """Iterate over stored Block objects."""
         return iter(self._blocks.values())
 
-    # NOTE: `variables` helper removed — use `frame[block_name].keys()` or
-    # `set(frame[block_name])` to iterate variable names.
+    @property
+    def box(self):
+        """The simulation Box (FREE box when unset)."""
+        raw = self._inner.box
+        if raw is None:
+            from molpy.core.box import Box
+
+            return Box()  # FREE
+        from molpy.core.box import Box
+
+        return Box(matrix=raw.matrix, pbc=raw.pbc, origin=raw.origin)
+
+    @box.setter
+    def box(self, value) -> None:
+        from molpy.core.box import Box
+
+        if value is None:
+            self._inner.box = None
+        elif isinstance(value, Box):
+            if getattr(value, "_is_free", False):
+                self._inner.box = None
+            else:
+                self._inner.box = value  # molpy.Box IS a molrs.Box
+        elif isinstance(value, molrs.Box):
+            self._inner.box = value
+        else:
+            raise TypeError(f"Expected Box or None, got {type(value)}")
 
     # ---------- (de)serialization --------------------------------------
+
     def to_dict(self) -> dict[str, Any]:
         """Convert Frame to a dictionary representation.
 
         Returns:
             dict[str, Any]: Dictionary containing "blocks" and "metadata" keys.
-                Blocks are converted to dictionaries via Block.to_dict().
-
-        Examples:
-            >>> frame = Frame(blocks={"atoms": {"x": [1, 2]}}, timestep=0)
-            >>> data = frame.to_dict()
-            >>> "blocks" in data
-            True
-            >>> "metadata" in data
-            True
         """
-        block_dict = {g: grp.to_dict() for g, grp in self._blocks.items()}
-        meta_dict = {k: v for k, v in self.metadata.items()}
-        return {"blocks": block_dict, "metadata": meta_dict}
+        block_dict = {name: self[name].to_dict() for name in self.keys()}
+        return {"blocks": block_dict, "metadata": dict(self.metadata)}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Frame":
-        """Create a Frame from a dictionary representation.
-
-        Args:
-            data (dict[str, Any]): Dictionary containing "blocks" and optionally
-                "metadata" keys.
-
-        Returns:
-            Frame: A new Frame instance reconstructed from the dictionary.
-
-        Examples:
-            >>> data = {
-            ...     "blocks": {"atoms": {"x": [1, 2, 3]}},
-            ...     "metadata": {"timestep": 0}
-            ... }
-            >>> frame = Frame.from_dict(data)
-            >>> frame["atoms"]["x"]
-            array([1, 2, 3])
-            >>> frame.metadata["timestep"]
-            0
-        """
-        blocks = {g: Block.from_dict(grp) for g, grp in data["blocks"].items()}
+        """Create a Frame from a dictionary representation."""
+        blocks = {name: Block.from_dict(blk) for name, blk in data["blocks"].items()}
         frame = cls(blocks=blocks)
         frame.metadata = data.get("metadata", {})
         return frame
 
     def copy(self) -> "Frame":
-        """Create a shallow copy of the Frame.
-
-        Blocks are copied (shallow), but the underlying numpy arrays are not.
+        """Create a deep copy of the Frame.
 
         Returns:
-            Frame: A new Frame instance with copied blocks and metadata.
-
-        Examples:
-            >>> frame = Frame(blocks={"atoms": {"x": [1, 2, 3]}}, timestep=0)
-            >>> frame_copy = frame.copy()
-            >>> frame_copy.metadata["timestep"] = 1
-            >>> frame.metadata["timestep"]  # Original unchanged
-            0
+            Frame: A new Frame with copied blocks and metadata.
         """
-        # Copy blocks (shallow copy of Block objects)
-        new_blocks = {name: block.copy() for name, block in self._blocks.items()}
-        # Create new frame
-        new_frame = Frame(blocks=new_blocks)
-        # Copy box and metadata
+        new_frame = Frame()
+        for name in self.keys():
+            new_frame[name] = self[name].copy()
         new_frame.box = self.box
         new_frame.metadata = self.metadata.copy()
         return new_frame
 
+    def to_molrs(self) -> molrs.Frame:
+        """Return the underlying ``molrs.Frame`` for compute API calls.
+
+        This is a zero-copy operation — the returned frame shares the same
+        Rust Store as this ``Frame``.
+        """
+        return self._inner
+
     # ---------- repr ----------------------------------------------------
+
     def __repr__(self) -> str:
         txt = ["Frame("]
-        for g, grp in self._blocks.items():
-            for k, v in grp._vars.items():
-                txt.append(f"  [{g}] {k}: shape={v.shape}")
+        for name in self.keys():
+            blk = self[name]
+            for k in blk.keys():
+                txt.append(f"  [{name}] {k}: shape={blk[k].shape}")
         return "\n".join(txt) + "\n)"

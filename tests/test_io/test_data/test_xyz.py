@@ -218,7 +218,7 @@ class TestXYZReader:
         assert all(num_values > 0), "All atomic numbers should be positive"
 
         # Check that elements and atomic numbers are consistent
-        if "element" in frame["atoms"]._vars:
+        if "element" in frame["atoms"]:
             elements = frame["atoms"]["element"]
             for elem, num in zip(elements, num_values):
                 expected_num = Element.get_atomic_number(str(elem))
