@@ -1,6 +1,6 @@
 ---
 title: dielectric-susceptibility-02-molrs-dielectric — molrs dielectric computation
-status: approved
+status: code-complete
 created: 2026-05-13
 depends_on: [dielectric-susceptibility-01-molrs-signal]
 ---
@@ -90,17 +90,17 @@ They do NOT reimplement FFT or window generation.
 
 ## Tasks
 
-- [ ] Create empty `dielectric.rs` module stubs returning `todo!()`; register `pub mod dielectric` in lib.rs; add `num-complex` dep
-- [ ] Write failing tests for `compute_dipole_moment` and `compute_current_density` in `test_dielectric.rs`
-- [ ] Implement `compute_dipole_moment` and `compute_current_density` in `dielectric.rs`
-- [ ] Write failing tests for `static_dielectric_constant` in `test_dielectric.rs`
-- [ ] Implement `static_dielectric_constant` in `dielectric.rs`
-- [ ] Write failing tests for `einstein_helfand_spectrum` and `green_kubo_spectrum` in `test_dielectric.rs`
-- [ ] Implement `einstein_helfand_spectrum` and `green_kubo_spectrum` in `dielectric.rs`
-- [ ] Write failing tests for `decompose_current` in `test_dielectric.rs`
-- [ ] Implement `decompose_current` in `dielectric.rs`
-- [ ] Create Python bindings in `molrs-python/src/dielectric.rs`; register in lib.rs; write Python tests
-- [ ] Run `cargo test --all-features -p molrs-compute && pytest molrs-python/tests/test_dielectric.py -v`
+- [x] Create empty `dielectric.rs` module stubs returning `todo!()`; register `pub mod dielectric` in lib.rs; add `num-complex` dep
+- [x] Write failing tests for `compute_dipole_moment` and `compute_current_density` in `test_dielectric.rs`
+- [x] Implement `compute_dipole_moment` and `compute_current_density` in `dielectric.rs`
+- [x] Write failing tests for `static_dielectric_constant` in `test_dielectric.rs`
+- [x] Implement `static_dielectric_constant` in `dielectric.rs`
+- [x] Write failing tests for `einstein_helfand_spectrum` and `green_kubo_spectrum` in `test_dielectric.rs`
+- [x] Implement `einstein_helfand_spectrum` and `green_kubo_spectrum` in `dielectric.rs`
+- [x] Write failing tests for `decompose_current` in `test_dielectric.rs`
+- [x] Implement `decompose_current` in `dielectric.rs`
+- [x] Create Python bindings in `molrs-python/src/dielectric.rs`; register in lib.rs; write Python tests
+- [x] Run `cargo test --all-features -p molrs-compute && pytest molrs-python/tests/test_dielectric.py -v`
 
 ## Testing strategy
 
