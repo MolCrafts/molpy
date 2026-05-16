@@ -1,6 +1,6 @@
 ---
 title: dielectric-susceptibility-05-validate — Domain validation
-status: approved
+status: code-complete
 created: 2026-05-13
 depends_on:
   - dielectric-susceptibility-01-molrs-signal
@@ -82,14 +82,14 @@ Each returns `{passed: bool, ...}` with relevant metrics.
 
 ## Tasks
 
-- [ ] Write failing Python tests for all 3 validation functions with synthetic arrays
-- [ ] Implement `kramers_kronig_check` in validate.rs; wire as `molrs.validate.kramers_kronig_check`
-- [ ] Implement `conductivity_sum_rule_check` in validate.rs; wire binding
-- [ ] Implement `route_agreement_check` in validate.rs; wire binding
-- [ ] Write `make_debye_dipole_timeseries` fixture and `compare_to_literature` helper in test file
-- [ ] Write end-to-end integration test: synthetic Debye → pipeline → all validations pass + literature comparison
-- [ ] Write route comparison test: EH vs GK agree within 10% in 0.1–10 THz
-- [ ] Run full check + test suite
+- [x] Write failing Python tests for all 3 validation functions with synthetic arrays
+- [x] Implement `kramers_kronig_check` in validate.rs; wire as `molrs.validate.kramers_kronig_check`
+- [x] Implement `conductivity_sum_rule_check` in validate.rs; wire binding
+- [x] Implement `route_agreement_check` in validate.rs; wire binding
+- [x] Write `make_debye_dipole_timeseries` fixture and `compare_to_literature` helper in test file
+- [x] Write end-to-end integration test: synthetic Debye → pipeline → all validations pass + literature comparison
+- [x] Write route comparison test: EH vs GK agree within 10% in 0.1–10 THz
+- [x] Run full check + test suite
 
 ## Testing strategy
 
