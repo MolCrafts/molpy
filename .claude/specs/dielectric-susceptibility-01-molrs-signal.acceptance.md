@@ -77,4 +77,5 @@ criteria:
     type: code
     pass_when: |
       Default features: molrs::signal not available. Feature "signal": molrs::signal available, all 3 functions callable from Rust.
-    status: pending
+    status: verified
+    last_checked: 2026-05-16
