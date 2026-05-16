@@ -12,7 +12,8 @@ criteria:
     type: code
     pass_when: |
       3-frame input → (3,3) output; row 0 is NaN; rows 1+ finite.
-    status: pending
+    status: verified
+    last_checked: 2026-05-16
   - id: ac-003
     summary: static_dielectric_constant returns epsilon_inf for zero fluctuation
     type: scientific
@@ -24,13 +25,15 @@ criteria:
     type: code
     pass_when: |
       `from molrs.dielectric import einstein_helfand_spectrum` succeeds.
-    status: pending
+    status: verified
+    last_checked: 2026-05-16
   - id: ac-005
     summary: green_kubo_spectrum importable from Rust and Python
     type: code
     pass_when: |
       `from molrs.dielectric import green_kubo_spectrum` succeeds.
-    status: pending
+    status: verified
+    last_checked: 2026-05-16
   - id: ac-006
     summary: decompose_current preserves total current
     type: scientific
@@ -42,19 +45,22 @@ criteria:
     type: runtime
     pass_when: |
       All six functions leave input arrays byte-identical.
-    status: pending
+    status: verified
+    last_checked: 2026-05-16
   - id: ac-008
     summary: All six functions reject dimension mismatches
     type: code
     pass_when: |
       Each function raises ComputeError::DimensionMismatch for wrong-shaped inputs.
-    status: pending
+    status: verified
+    last_checked: 2026-05-16
   - id: ac-009
     summary: Python bindings exist for all six functions
     type: code
     pass_when: |
       `dir(molrs.dielectric)` contains all six function names.
-    status: pending
+    status: verified
+    last_checked: 2026-05-16
   - id: ac-010
     summary: EH zero-frequency limit matches static dielectric constant
     type: scientific
@@ -66,4 +72,5 @@ criteria:
     type: code
     pass_when: |
       `cargo test --all-features -p molrs-compute && pytest molrs-python/tests/test_dielectric.py -v` exits 0.
-    status: pending
+    status: verified
+    last_checked: 2026-05-16
