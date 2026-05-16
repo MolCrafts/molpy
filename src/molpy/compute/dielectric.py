@@ -9,12 +9,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from numpy.typing import NDArray
 
 from molrs.dielectric import (
     compute_current_density,
-    compute_dipole_moment,
-    decompose_current,
     einstein_helfand_spectrum,
     green_kubo_spectrum,
     static_dielectric_constant,
@@ -77,22 +74,17 @@ class ACFAnalyzer(Compute["Trajectory", ACFResult]):
 
         # Extract and unwrap
         data = np.full((n_frames, n_atoms, n_dim), np.nan)
-        positions_prev = None
-        box_prev = None
         for i, frame in enumerate(trajectory):
             for d, col in enumerate(self.columns):
                 data[i, :, d] = frame["atoms"][col]
             if self.unwrap and i > 0:
                 for a in range(n_atoms):
-                    prev = np.array([positions_prev[d][a] for d in range(n_dim)])
-                    curr = np.array([data[i, a, d] for d in range(n_dim)])
-                    unwrapped = box_prev.diff_dr(prev, curr)
+                    dr = np.array(
+                        [data[i, a, d] - data[i - 1, a, d] for d in range(n_dim)]
+                    )
+                    unwrapped_dr = frame.box.diff_dr(dr)
                     for d in range(n_dim):
-                        data[i, a, d] = data[i - 1, a, d] + unwrapped[d]
-            positions_prev = {}
-            for d, col in enumerate(self.columns):
-                positions_prev[d] = frame["atoms"][col].copy()
-            box_prev = frame.box
+                        data[i, a, d] = data[i - 1, a, d] + unwrapped_dr[d]
 
         # Compute ACF per dimension, average, normalize
         max_lag = min(self.max_lag, n_frames - 1)
