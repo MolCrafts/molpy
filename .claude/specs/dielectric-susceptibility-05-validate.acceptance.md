@@ -6,19 +6,22 @@ criteria:
     type: code
     pass_when: |
       hasattr(molrs.validate, 'kramers_kronig_check'); returns dict with keys passed, mae, eps_real_recovered.
-    status: pending
+    status: verified
+    last_checked: 2026-05-16
   - id: ac-002
     summary: molrs.validate.conductivity_sum_rule_check callable
     type: code
     pass_when: |
       hasattr(molrs.validate, 'conductivity_sum_rule_check'); returns dict with passed, relative_error, integral, expected.
-    status: pending
+    status: verified
+    last_checked: 2026-05-16
   - id: ac-003
     summary: molrs.validate.route_agreement_check callable
     type: code
     pass_when: |
       hasattr(molrs.validate, 'route_agreement_check'); returns dict with passed, pairwise_rms.
-    status: pending
+    status: verified
+    last_checked: 2026-05-16
   - id: ac-004
     summary: kramers_kronig_check passes on Debye-derived spectra
     type: scientific
@@ -48,7 +51,8 @@ criteria:
     type: code
     pass_when: |
       compare_to_literature({"eps_0": 150, "tau_D": 100}, "spce") → passed=False with failures.
-    status: pending
+    status: verified
+    last_checked: 2026-05-16
   - id: ac-009
     summary: End-to-end pipeline — all 3 validations pass on Debye data
     type: scientific
@@ -67,4 +71,5 @@ criteria:
     type: runtime
     pass_when: |
       pytest tests/test_compute/test_dielectric_integration.py -v exits 0.
-    status: pending
+    status: verified
+    last_checked: 2026-05-16
