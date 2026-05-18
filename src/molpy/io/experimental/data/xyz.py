@@ -1,4 +1,4 @@
-"""Experimental XYZ file I/O — molrs-backed reader."""
+"""Experimental XYZ file I/O — molrs-backed reader and writer."""
 
 from pathlib import Path
 
@@ -8,7 +8,7 @@ import molrs.io
 
 from molpy.core.frame import Frame
 
-from . import DataReader
+from . import DataReader, DataWriter
 
 
 class XYZReader(DataReader):
@@ -21,9 +21,9 @@ class XYZReader(DataReader):
     def __init__(self, path: str | Path, **kwargs: object) -> None:
         super().__init__(Path(path), **kwargs)
 
-    def read(self, frame: Frame | None = None) -> Frame:
+    def read(self) -> Frame:
         raw = molrs.io.read_xyz(self._path)
-        molpy_frame = Frame.from_molrs(raw)
+        molpy_frame = Frame.from_dict(raw)
 
         # Post-process blocks to match molpy conventions
         for block_name in list(molpy_frame.keys()):
@@ -58,3 +58,17 @@ class XYZReader(DataReader):
                 block["number"] = np.array(z_list, dtype=np.int64)
 
         return molpy_frame
+
+
+class XYZWriter(DataWriter):
+    """Experimental. Write XYZ files via molrs backend.
+
+    .. deprecated::
+        Use :func:`molpy.io.write_xyz` for the stable implementation.
+    """
+
+    def __init__(self, path: str | Path, **kwargs: object) -> None:
+        super().__init__(Path(path), **kwargs)
+
+    def write(self, frame: Frame) -> None:
+        molrs.io.write_xyz(str(self._path), frame.to_molrs())

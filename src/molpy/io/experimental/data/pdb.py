@@ -21,9 +21,9 @@ class PDBReader(DataReader):
     def __init__(self, path: str | Path, **kwargs: object) -> None:
         super().__init__(Path(path), **kwargs)
 
-    def read(self, frame: Frame | None = None) -> Frame:
+    def read(self) -> Frame:
         raw = molrs.io.read_pdb(self._path)
-        molpy_frame = Frame.from_molrs(raw)
+        molpy_frame = Frame.from_dict(raw)
 
         # molrs PDB reader preserves all CONECT records (both directions);
         # molpy deduplicates. Deduplicate here for output parity.
@@ -58,20 +58,10 @@ class PDBReader(DataReader):
 
 
 class PDBWriter(DataWriter):
-    """Experimental. Write PDB files.
-
-    Currently delegates to the stable :class:`molpy.io.data.pdb.PDBWriter`.
-    Will switch to ``molrs.io.write_pdb`` once molrs gains Python-side
-    Frame construction APIs.
-
-    .. deprecated::
-        Use :func:`molpy.io.write_pdb` for the stable implementation.
-    """
+    """Experimental. Write PDB files via molrs backend."""
 
     def __init__(self, path: str | Path, **kwargs: object) -> None:
         super().__init__(Path(path), **kwargs)
 
     def write(self, frame: Frame) -> None:
-        from molpy.io.data.pdb import PDBWriter as _StablePDBWriter
-
-        _StablePDBWriter(self._path).write(frame)
+        molrs.io.write_pdb(str(self._path), frame.to_molrs())

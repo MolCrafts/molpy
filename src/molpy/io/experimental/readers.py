@@ -11,14 +11,6 @@ from typing import Any
 PathLike = str | Path
 
 
-def _ensure_frame(frame: Any) -> Any:
-    if frame is None:
-        from molpy.core.frame import Frame
-
-        return Frame()
-    return frame
-
-
 # =============================================================================
 # Data File Readers
 # =============================================================================
@@ -42,11 +34,20 @@ def read_pdb(file: PathLike, frame: Any = None) -> Any:
     .. deprecated::
         Use :func:`molpy.io.read_pdb` for the stable implementation.
     """
-    frame = _ensure_frame(frame)
     from .data.pdb import PDBReader
 
-    reader = PDBReader(Path(file))
-    return reader.read(frame)
+    return PDBReader(Path(file)).read()
+
+
+def read_gro(file: PathLike, frame: Any = None) -> Any:
+    """Experimental. Read GROMACS GRO file via molrs backend.
+
+    .. deprecated::
+        Use :func:`molpy.io.read_gro` for the stable implementation.
+    """
+    from .data.gro import GroReader
+
+    return GroReader(Path(file)).read()
 
 
 def read_xyz(file: PathLike, frame: Any = None) -> Any:
@@ -55,8 +56,6 @@ def read_xyz(file: PathLike, frame: Any = None) -> Any:
     .. deprecated::
         Use :func:`molpy.io.read_xyz` for the stable implementation.
     """
-    frame = _ensure_frame(frame)
     from .data.xyz import XYZReader
 
-    reader = XYZReader(Path(file))
-    return reader.read(frame)
+    return XYZReader(Path(file)).read()

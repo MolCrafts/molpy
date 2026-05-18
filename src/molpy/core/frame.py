@@ -95,17 +95,6 @@ class Block(MutableMapping[str, np.ndarray]):
                         f"but got {type(v)} for key {k}"
                     ) from e
 
-    @classmethod
-    def from_molrs(cls, inner: molrs.Block) -> "Block":
-        """Wrap a ``molrs.Block`` as a ``molpy.Block`` (zero-copy).
-
-        The returned block shares the same Rust Store as *inner*.
-        """
-        block = cls.__new__(cls)
-        block._inner = inner
-        block._objects = {}
-        return block
-
     # --- core mapping API
 
     @overload
@@ -197,12 +186,12 @@ class Block(MutableMapping[str, np.ndarray]):
         yield from self._objects
 
     def __len__(self) -> int:  # type: ignore[override]
-        return len(list(self._inner.keys())) + len(self._objects)
+        return len(self._inner.keys()) + len(self._objects)
 
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
             return False
-        return key in self._inner.keys() or key in self._objects
+        return key in self._inner or key in self._objects
 
     # ------------------------------------------------------------------ helpers
 
@@ -226,8 +215,17 @@ class Block(MutableMapping[str, np.ndarray]):
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, np.ndarray]) -> "Block":
-        """Inverse of :meth:`to_dict`."""
+    def from_dict(cls, data: dict[str, np.ndarray] | molrs.Block) -> "Block":
+        """Create a Block from a dict or wrap a ``molrs.Block`` (zero-copy view).
+
+        When *data* is a ``molrs.Block``, the returned block accesses arrays
+        via ``view()`` — no array data is copied.
+        """
+        if isinstance(data, molrs.Block):
+            block = cls.__new__(cls)
+            block._inner = data
+            block._objects = {}
+            return block
         return cls({k: np.asarray(v) for k, v in data.items()})
 
     @classmethod
@@ -605,19 +603,6 @@ class Frame:
                             f"(type {type(value)}): {e}"
                         )
 
-    @classmethod
-    def from_molrs(cls, inner: molrs.Frame) -> "Frame":
-        """Wrap a ``molrs.Frame`` as a ``molpy.Frame`` (zero-copy).
-
-        The returned frame shares the same Rust Store as *inner*.
-        ``inner.meta`` is copied into ``metadata``.
-        """
-        frame = cls.__new__(cls)
-        frame._inner = inner
-        frame.metadata = dict(inner.meta) if inner.meta else {}
-        frame._block_objects = {}
-        return frame
-
     # ---------- main get/set --------------------------------------------
 
     def __getitem__(self, key: str) -> Block:
@@ -632,7 +617,7 @@ class Frame:
         Raises:
             KeyError: If the block name doesn't exist.
         """
-        block = Block.from_molrs(self._inner[key])
+        block = Block.from_dict(self._inner[key])
         if key in self._block_objects:
             block._objects.update(self._block_objects[key])
         return block
@@ -733,8 +718,18 @@ class Frame:
         return {"blocks": block_dict, "metadata": dict(self.metadata)}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Frame":
-        """Create a Frame from a dictionary representation."""
+    def from_dict(cls, data: dict[str, Any] | molrs.Frame) -> "Frame":
+        """Create a Frame from a dict or wrap a ``molrs.Frame`` (zero-copy view).
+
+        When *data* is a ``molrs.Frame``, treats it as a nested dict of numpy
+        arrays — blocks are accessed via ``view()``.  No array data is copied.
+        """
+        if isinstance(data, molrs.Frame):
+            frame = cls.__new__(cls)
+            frame._inner = data
+            frame.metadata = dict(data.meta) if data.meta else {}
+            frame._block_objects = {}
+            return frame
         blocks = {name: Block.from_dict(blk) for name, blk in data["blocks"].items()}
         frame = cls(blocks=blocks)
         frame.metadata = data.get("metadata", {})
