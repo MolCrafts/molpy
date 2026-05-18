@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 import molpy
-import molrs
+from molrs.compute.density import RDFResult as _MolrsRDFResult
 from molpy.compute import RDF, NeighborList
 from molpy.compute.base import Compute
 from molpy.compute.workflow import (
@@ -241,8 +241,8 @@ def test_multi_input_node_rdf(simple_frame):
 
     assert "rdf" in results
     rdf_result = results["rdf"]
-    assert isinstance(rdf_result, molrs.RDFResult), (
-        f"Expected molrs.RDFResult, got {type(rdf_result)}"
+    assert isinstance(rdf_result, _MolrsRDFResult), (
+        f"Expected molrs.compute.density.RDFResult, got {type(rdf_result)}"
     )
     rdf_array = np.asarray(rdf_result.rdf)
     assert len(rdf_array) > 0

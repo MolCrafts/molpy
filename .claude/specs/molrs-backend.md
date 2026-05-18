@@ -250,11 +250,11 @@ molrs 以 `borrow_from_array` 形式回传。整个 molpy 侧**禁止**调用 `.
 > (b) `Compute` 子类实现 (c) 与 `molrs.<X>.compute(...)` 的 parity 测试
 > (d) 文档段落。
 
-- [ ] 暴露 `molrs.MSD` 为 `molpy.compute.MSD`。
-- [ ] 暴露 `molrs.Cluster` + `molrs.ClusterCenters` 为 `molpy.compute.Cluster` / `ClusterCenters`。
-- [ ] 暴露 `molrs.CenterOfMass` 为 `molpy.compute.CenterOfMass`。
-- [ ] 暴露 `molrs.GyrationTensor` / `InertiaTensor` / `RadiusOfGyration` 为对应 molpy 算子。
-- [ ] 暴露 `molrs.Pca2` 为 `molpy.compute.Pca`；暴露 `molrs.KMeans` 为 `molpy.compute.KMeans`。
+- [x] 暴露 `molrs.MSD` 为 `molpy.compute.MSD`。
+- [x] 暴露 `molrs.Cluster` + `molrs.ClusterCenters` 为 `molpy.compute.Cluster` / `ClusterCenters`。
+- [x] 暴露 `molrs.CenterOfMass` 为 `molpy.compute.CenterOfMass`。
+- [x] 暴露 `molrs.GyrationTensor` / `InertiaTensor` / `RadiusOfGyration` 为对应 molpy 算子。
+- [x] 暴露 `molrs.Pca2` 为 `molpy.compute.Pca`；暴露 `molrs.KMeans` 为 `molpy.compute.KMeans`。
 
 **Phase 6 — 文档与收尾**
 

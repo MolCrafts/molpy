@@ -77,13 +77,12 @@ class ACFResult(TimeSeriesResult):
 
 
 @dataclass
-class SpectralResult(TimeSeriesResult):
+class SpectralResult(Result):
     """Frequency-domain spectrum result.
 
     Attributes:
-        time: Frequency values (in THz)
-        frequency: Angular frequency grid, shape (n_freq,)
-        spectrum: Spectral density, shape (n_freq,)
+        frequency: Angular frequency grid omega, shape (n_freq,), units rad/ps.
+        spectrum: Spectral density at each frequency, shape (n_freq,).
     """
 
     frequency: NDArray[np.float64] = field(default_factory=lambda: np.array([]))
@@ -91,25 +90,27 @@ class SpectralResult(TimeSeriesResult):
 
 
 @dataclass
-class DielectricResult(TimeSeriesResult):
+class DielectricResult(Result):
     """Single-route dielectric susceptibility result.
 
     Attributes:
-        time: Frequency grid (in THz)
-        frequency: Angular frequencies, shape (n_freq,)
-        epsilon_real: Real part epsilon'(omega), shape (n_freq,)
-        epsilon_imag: Imaginary part epsilon''(omega), shape (n_freq,)
-        epsilon_static: Static dielectric constant epsilon(0)
-        epsilon_inf: High-frequency dielectric constant
-        route: Computation route ("einstein-helfand" or "green-kubo")
-        component: System component ("full", "water", "ion")
-        conductivity: Optional conductivity spectrum sigma(omega), shape (n_freq,)
+        frequency: Angular frequency grid omega, shape (n_freq,), units rad/ps.
+            Bin 0 is DC; bin 1 is Delta-omega = 2 * pi / (n_pad * dt).
+        epsilon_real: Real part epsilon'(omega), shape (n_freq,), dimensionless.
+        epsilon_imag: Loss spectrum epsilon''(omega), shape (n_freq,),
+            dimensionless, positive sign convention.
+        epsilon_static: Static dielectric constant epsilon(0), dimensionless.
+            May be `nan` if the route does not provide a static estimate.
+        epsilon_inf: High-frequency dielectric constant.
+        route: Computation route ("einstein-helfand" or "green-kubo").
+        component: System component ("full", "water", "ion").
+        conductivity: Optional conductivity spectrum sigma(omega), shape (n_freq,).
     """
 
     frequency: NDArray[np.float64] = field(default_factory=lambda: np.array([]))
     epsilon_real: NDArray[np.float64] = field(default_factory=lambda: np.array([]))
     epsilon_imag: NDArray[np.float64] = field(default_factory=lambda: np.array([]))
-    epsilon_static: float = 0.0
+    epsilon_static: float = float("nan")
     epsilon_inf: float = 1.0
     route: str = ""
     component: str = ""

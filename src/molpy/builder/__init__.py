@@ -5,17 +5,21 @@ favour of the new declarative API documented in
 ``notebooks/reacter_polymerbuilder_integration.ipynb``.
 """
 
-from .polymer.ambertools import AmberPolymerBuilder
-from .crystal import BlockRegion, CrystalBuilder, Lattice, Region, Site
+from molpy.core.region import BoxRegion, Cube, Region, SphereRegion
+
+from .crystal import Lattice, Site, build_crystal
 from .polymer import *
+from .polymer.ambertools import AmberPolymerBuilder
 
 __all__ = [
     # AmberTools builders
     "AmberPolymerBuilder",
     # Crystal builders
-    "BlockRegion",
-    "CrystalBuilder",
+    "BoxRegion",
+    "Cube",
     "Lattice",
     "Region",
     "Site",
+    "SphereRegion",
+    "build_crystal",
 ]
