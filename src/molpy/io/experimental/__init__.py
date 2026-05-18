@@ -9,13 +9,15 @@ be promoted to replace their counterparts in :mod:`molpy.io`, and this
 package will be deleted.
 """
 
-from .readers import read_lammps_data, read_pdb, read_xyz
-from .writers import write_lammps_data, write_pdb, write_xyz
+from .readers import read_gro, read_lammps_data, read_pdb, read_xyz
+from .writers import write_gro, write_lammps_data, write_pdb, write_xyz
 
 __all__ = [
+    "read_gro",
     "read_lammps_data",
     "read_pdb",
     "read_xyz",
+    "write_gro",
     "write_lammps_data",
     "write_pdb",
     "write_xyz",

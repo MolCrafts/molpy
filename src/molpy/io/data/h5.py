@@ -74,7 +74,7 @@ def frame_to_h5_group(
             "h5py is required for HDF5 support. Install it with: pip install h5py"
         )
 
-    if not frame._blocks:
+    if len(frame) == 0:
         raise ValueError("Cannot write empty frame (no blocks)")
 
     # Write blocks

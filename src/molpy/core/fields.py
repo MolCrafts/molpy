@@ -168,14 +168,14 @@ class FieldFormatter:
 
     def canonicalize_frame(self, frame: Frame) -> Frame:
         """Canonicalize all blocks in a Frame (in-place)."""
-        for key in list(frame._blocks):
+        for key in frame.keys():
             self.canonicalize(frame[key])
         return frame
 
     def localize_frame(self, frame: Frame) -> Frame:
         """Localize all blocks in a Frame copy (non-destructive)."""
         frame = frame.copy()
-        for key in list(frame._blocks):
+        for key in frame.keys():
             self.localize(frame[key])
         return frame
 
