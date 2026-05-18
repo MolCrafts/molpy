@@ -48,8 +48,12 @@ class TestSpectralResult:
     def test_is_dataclass(self):
         assert dataclasses.is_dataclass(SpectralResult)
 
-    def test_extends_timeseries_result(self):
-        assert issubclass(SpectralResult, TimeSeriesResult)
+    def test_extends_result(self):
+        # Frequency-domain results no longer inherit from TimeSeriesResult
+        # (the inherited `time` field was always populated with frequency
+        # values, which made the API misleading).
+        assert issubclass(SpectralResult, Result)
+        assert not issubclass(SpectralResult, TimeSeriesResult)
 
     def test_construct_with_values(self):
         freq = np.array([0.0, 1.0, 2.0])
@@ -63,8 +67,10 @@ class TestDielectricResult:
     def test_is_dataclass(self):
         assert dataclasses.is_dataclass(DielectricResult)
 
-    def test_extends_timeseries_result(self):
-        assert issubclass(DielectricResult, TimeSeriesResult)
+    def test_extends_result(self):
+        # See TestSpectralResult.test_extends_result.
+        assert issubclass(DielectricResult, Result)
+        assert not issubclass(DielectricResult, TimeSeriesResult)
 
     def test_construct_minimal(self):
         r = DielectricResult(

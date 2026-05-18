@@ -1,13 +1,15 @@
 """Radial distribution function g(r) — molrs-backed.
 
-Returns ``molrs.RDFResult`` directly (no molpy wrapper). The result is
-finalized eagerly inside ``molrs.RDF.compute``, so ``result.rdf`` is the
-normalized g(r) and not the raw histogram.
+Returns ``molrs.compute.density.RDFResult`` directly (no molpy wrapper).
+The result is finalized eagerly inside ``RDF.compute``, so ``result.rdf``
+is the normalized g(r) and not the raw histogram.
 """
 
 from __future__ import annotations
 
 import molrs
+from molrs.compute.density import RDF as _MolrsRDF
+from molrs.compute.density import RDFResult as _MolrsRDFResult
 
 from .base import Compute
 
@@ -34,9 +36,9 @@ class RDF(Compute):
 
     def __init__(self, n_bins: int, r_max: float, r_min: float = 0.0):
         super().__init__(n_bins=n_bins, r_max=r_max, r_min=r_min)
-        self._inner = molrs.RDF(n_bins, r_max, r_min)
+        self._inner = _MolrsRDF(n_bins, r_max, r_min)
 
-    def __call__(self, frames, neighbors) -> molrs.RDFResult:
+    def __call__(self, frames, neighbors) -> _MolrsRDFResult:
         molpy_frames = self._as_list(frames)
         molrs_frames = [self._molrs_frame_view(f) for f in molpy_frames]
         return self._inner.compute(molrs_frames, self._as_list(neighbors))
@@ -45,7 +47,7 @@ class RDF(Compute):
     def _molrs_frame_view(frame) -> molrs.Frame:
         """Build a molrs.Frame whose simbox is the molpy frame's box.
 
-        molrs.RDF.compute only reads ``simbox_ref()`` from the frame
+        ``RDF.compute`` only reads ``simbox_ref()`` from the frame
         (coordinates come from the NeighborList), so this view does not
         copy any coordinate data — it just attaches the existing Box
         (which IS-A molrs.Box) to a fresh molrs.Frame.

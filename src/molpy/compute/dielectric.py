@@ -1,7 +1,11 @@
 """Dielectric susceptibility Compute classes.
 
-Thin glue layers bridging molpy Trajectory to molrs computational functions.
-Zero NumPy physics computation in Python — all physics delegated to molrs.
+Thin glue layers bridging molpy `Trajectory` to molrs computational
+kernels. The Python side does only data extraction (positions, charges)
+and vectorized NumPy assembly (dipole moment via `einsum`, minimum-image
+unwrap via `Box.diff_dr`); all spectral physics — ACF, windowing, FFT,
+prefactors — is performed in Rust by `molrs.dielectric` and
+`molrs.signal`.
 """
 
 from __future__ import annotations
@@ -29,6 +33,11 @@ from .result import (
 if TYPE_CHECKING:
     from ..core.trajectory import Trajectory
 
+# Treat ACF lag-0 values below this threshold as numerical zero (would
+# otherwise blow up the normalization step). Same magnitude as the DC
+# cutoff used on the Rust side in `dielectric::green_kubo_spectrum`.
+_ACF_ZERO_LAG_EPSILON = 1e-30
+
 
 class ACFAnalyzer(Compute["Trajectory", ACFResult]):
     """Compute autocorrelation function from trajectory data.
@@ -54,12 +63,13 @@ class ACFAnalyzer(Compute["Trajectory", ACFResult]):
         self.unwrap = unwrap
 
     def _compute(self, trajectory: Trajectory) -> ACFResult:
-        n_frames = sum(1 for _ in trajectory)
+        # Materialize once: trajectories may be one-shot iterators.
+        frames = list(trajectory)
+        n_frames = len(frames)
         if n_frames < 2:
             raise ValueError(f"Need at least 2 frames, got {n_frames}")
 
-        # Validate first frame
-        frame0 = trajectory[0]
+        frame0 = frames[0]
         if self.unwrap and (frame0.box is None or frame0.box.is_free):
             raise ValueError(
                 "Trajectory frames must have a non-free Box when unwrap=True"
@@ -72,30 +82,28 @@ class ACFAnalyzer(Compute["Trajectory", ACFResult]):
         n_atoms = len(frame0["atoms"]["x"])
         dt = frame0.metadata.get("dt", 1.0)
 
-        # Extract and unwrap
-        data = np.full((n_frames, n_atoms, n_dim), np.nan)
-        for i, frame in enumerate(trajectory):
+        data = np.empty((n_frames, n_atoms, n_dim), dtype=np.float64)
+        for i, frame in enumerate(frames):
             for d, col in enumerate(self.columns):
                 data[i, :, d] = frame["atoms"][col]
-            if self.unwrap and i > 0:
-                for a in range(n_atoms):
-                    dr = np.array(
-                        [data[i, a, d] - data[i - 1, a, d] for d in range(n_dim)]
-                    )
-                    unwrapped_dr = frame.box.diff_dr(dr)
-                    for d in range(n_dim):
-                        data[i, a, d] = data[i - 1, a, d] + unwrapped_dr[d]
 
-        # Compute ACF per dimension, average, normalize
+        # Unwrap via minimum-image convention. Box.diff_dr accepts the
+        # whole (n_atoms, 3) displacement in one call, so the inner per-
+        # atom Python loop collapses to a single vectorized call per
+        # frame. Only meaningful for 3-component columns.
+        if self.unwrap and n_dim == 3:
+            for i in range(1, n_frames):
+                dr = data[i] - data[i - 1]
+                data[i] = data[i - 1] + frames[i].box.diff_dr(dr)
+
+        # Compute ACF per dimension, average, normalize.
         max_lag = min(self.max_lag, n_frames - 1)
         acf_sum = np.zeros(max_lag + 1)
         for d in range(n_dim):
             col_data = data[:, :, d].mean(axis=1)  # (n_frames,) average over atoms
-            acf_raw = acf_fft(col_data, max_lag)
-            acf_sum += acf_raw
+            acf_sum += acf_fft(col_data, max_lag)
         acf_sum /= n_dim
-        # Normalize: ACF[0] = 1.0
-        if acf_sum[0] > 1e-30:
+        if acf_sum[0] > _ACF_ZERO_LAG_EPSILON:
             acf_sum /= acf_sum[0]
 
         lag_times = np.arange(max_lag + 1, dtype=np.float64) * dt
@@ -131,17 +139,39 @@ class SpectralAnalyzer(Compute[ACFResult, SpectralResult]):
         n_fft = 2 * (n_lags - 1)
         freq = frequency_grid(n_fft, self.dt)
 
-        # Windowed ACF becomes the spectrum (time→frequency FT happens
-        # downstream in molrs.dielectric.{einstein_helfand,green_kubo}_spectrum)
-        return SpectralResult(time=freq, frequency=freq, spectrum=windowed)
+        # Windowed ACF — the actual time→frequency FT happens downstream
+        # in molrs.dielectric.{einstein_helfand,green_kubo}_spectrum.
+        return SpectralResult(frequency=freq, spectrum=windowed)
 
 
 class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityResult]):
-    """Compute dielectric susceptibility from MD trajectory.
+    """Frequency-dependent dielectric susceptibility from an MD trajectory.
 
-    Extracts positions, velocities, and charges from Trajectory frames,
-    delegates to molrs.dielectric for all physics computation, and assembles
-    results into a DielectricSusceptibilityResult.
+    Extracts atomic positions and charges per frame, unwraps coordinates
+    via minimum-image convention, builds the total dipole moment series,
+    and runs one or more spectral routes (Einstein-Helfand and/or
+    Green-Kubo) through `molrs.dielectric`. The static dielectric constant
+    is also computed once via Neumann's fluctuation formula and attached
+    to every result.
+
+    Args:
+        dt: Frame spacing in **ps**.
+        temperature: Temperature in **K**.
+        max_correlation_time: Longest ACF lag in **frames** (clamped to
+            `n_frames - 1`). Practical choice: ≤ n_frames / 10.
+        epsilon_inf: High-frequency (electronic) permittivity, dimensionless.
+            Use 1.0 for non-polarizable force fields.
+        window_type: `"hann"` or `"blackman"` window applied to the ACF
+            before FFT.
+        routes: Subset of `["einstein-helfand", "green-kubo"]`. Default
+            runs both.
+        volume: System volume in **Å³**. If `None`, uses `frame.box.volume`
+            from the first frame (assumes NVT/NVE).
+
+    Inputs:
+        Each frame's `atoms` block must contain canonical columns
+        `x`, `y`, `z` (**Å**) and `charge` (**e**). Frames must carry a
+        non-free `Box`.
     """
 
     def __init__(
@@ -191,29 +221,34 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
         n_atoms = len(frame0["atoms"]["x"])
         volume = self._volume or frame0.box.volume
 
-        # Extract positions and charges
-        positions = np.zeros((n_frames, n_atoms, 3))
-        charges = frame0["atoms"]["charge"].copy()
-
+        positions = np.empty((n_frames, n_atoms, 3), dtype=np.float64)
+        charges = np.asarray(frame0["atoms"]["charge"], dtype=np.float64)
         for i, frame in enumerate(frames):
-            for d, col in enumerate(["x", "y", "z"]):
-                positions[i, :, d] = frame["atoms"][col]
+            positions[i, :, 0] = frame["atoms"]["x"]
+            positions[i, :, 1] = frame["atoms"]["y"]
+            positions[i, :, 2] = frame["atoms"]["z"]
 
-        # Unwrap coordinates
+        # Vectorized minimum-image unwrap: Box.diff_dr takes the whole
+        # (n_atoms, 3) slice at once. Use frames[i-1].box to match prior
+        # semantics (relevant for NPT trajectories with per-frame boxes).
         for i in range(1, n_frames):
-            for a in range(n_atoms):
-                dr = positions[i, a, :] - positions[i - 1, a, :]
-                unwrapped_dr = frames[i - 1].box.diff_dr(dr)
-                positions[i, a, :] = positions[i - 1, a, :] + unwrapped_dr
+            dr = positions[i] - positions[i - 1]
+            positions[i] = positions[i - 1] + frames[i - 1].box.diff_dr(dr)
 
-        # Compute dipole moment time series
-        dipole_moments = np.zeros((n_frames, 3))
-        for i in range(n_frames):
-            for d in range(3):
-                dipole_moments[i, d] = np.dot(charges, positions[i, :, d])
+        # Dipole moment per frame: M[f, d] = Σ_a charges[a] · positions[f, a, d]
+        dipole_moments = np.einsum("a,fad->fd", charges, positions)
 
-        # Compute current density
-        current_density = compute_current_density(dipole_moments, self.dt, volume)
+        # Compute current density (only needed for the GK route)
+        current_density = None
+        if "green-kubo" in self.routes:
+            current_density = compute_current_density(dipole_moments, self.dt, volume)
+
+        # Static dielectric constant is route-independent — compute once so
+        # every result carries it (avoids the dual problem of the GK route
+        # returning a silent 0.0 fallback when EH was not requested).
+        eps_stat = static_dielectric_constant(
+            dipole_moments, volume, self.temperature, self.epsilon_inf
+        )
 
         results: dict[str, DielectricResult] = {}
 
@@ -228,11 +263,7 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
                     self.max_correlation_time,
                     self.window_type,
                 )
-                eps_stat = static_dielectric_constant(
-                    dipole_moments, volume, self.temperature, self.epsilon_inf
-                )
                 results["EH-full"] = DielectricResult(
-                    time=spec["frequencies"],
                     frequency=spec["frequencies"],
                     epsilon_real=spec["epsilon_real"],
                     epsilon_imag=spec["epsilon_imag"],
@@ -253,13 +284,10 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
                     self.window_type,
                 )
                 results["GK-full"] = DielectricResult(
-                    time=spec["frequencies"],
                     frequency=spec["frequencies"],
                     epsilon_real=spec["epsilon_real"],
                     epsilon_imag=spec["epsilon_imag"],
-                    epsilon_static=results.get(
-                        "EH-full", DielectricResult()
-                    ).epsilon_static,
+                    epsilon_static=eps_stat,
                     epsilon_inf=self.epsilon_inf,
                     route="green-kubo",
                     component="full",
