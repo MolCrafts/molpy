@@ -635,6 +635,12 @@ class TestFrame:
         assert blocks == {"atoms", "bonds"}
         assert len(list(simple_frame._blocks)) == 2
 
+    def test_frame_len_counts_blocks(self, simple_frame):
+        assert len(simple_frame) == 2
+        assert len(Frame()) == 0
+        del simple_frame["bonds"]
+        assert len(simple_frame) == 1
+
     def test_delete_variable(self, simple_frame):
         del simple_frame["atoms"]["charge"]
         assert "charge" not in set(simple_frame["atoms"].keys())

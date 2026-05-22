@@ -8,7 +8,15 @@ import molrs.io
 
 from molpy.core.frame import Frame
 
-from . import DataReader, DataWriter
+# The PDB writer needs molpy-side preparation — required-field validation,
+# element resolution from metadata or atom data, and atom-id handling — none of
+# which `molrs.io.write_pdb` performs. Re-export the stable writer (see this
+# module's docstring); the experimental namespace only swaps in a molrs reader.
+from molpy.io.data.pdb import PDBWriter
+
+from . import DataReader
+
+__all__ = ["PDBReader", "PDBWriter"]
 
 
 class PDBReader(DataReader):
@@ -55,13 +63,3 @@ class PDBReader(DataReader):
                 molpy_frame["bonds"] = new_bonds
 
         return molpy_frame
-
-
-class PDBWriter(DataWriter):
-    """Experimental. Write PDB files via molrs backend."""
-
-    def __init__(self, path: str | Path, **kwargs: object) -> None:
-        super().__init__(Path(path), **kwargs)
-
-    def write(self, frame: Frame) -> None:
-        molrs.io.write_pdb(str(self._path), frame.to_molrs())
