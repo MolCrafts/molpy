@@ -96,6 +96,7 @@ nav:
       - getting-started/index.md
       - Installation: getting-started/installation.md
       - Quickstart: getting-started/quickstart.md
+      - Example Gallery: getting-started/examples.md
       - MCP Setup: getting-started/mcp.md
       - Core Concepts: getting-started/core-concepts.md
       - Naming Conventions: getting-started/naming-conventions.md
