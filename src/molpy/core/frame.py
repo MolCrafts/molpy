@@ -662,6 +662,10 @@ class Frame:
     def __contains__(self, key: str) -> bool:
         return key in self._inner
 
+    def __len__(self) -> int:
+        """Return the number of blocks in the frame."""
+        return len(self._inner)
+
     def keys(self):
         """Return block names."""
         return self._inner.keys()
