@@ -41,8 +41,10 @@ pytest -k "pattern" -v                                 # Tests matching pattern
 pytest --cov=src/molpy tests/ -v --cov-report=html    # With coverage
 
 # Code quality
-black --check src tests           # Check formatting
-black src tests                   # Auto-format
+ruff format --check src tests     # Check formatting
+ruff format src tests             # Auto-format
+ruff check src tests              # Lint
+ty check src/molpy/               # Type check
 pre-commit run --all-files       # Run all pre-commit hooks
 
 # Documentation
@@ -55,16 +57,16 @@ mkdocs build                      # Build static site
 
 MolPy is a computational chemistry toolkit with explicit data flow and minimal magic. The core design philosophy:
 
-- **Explicit data flow**: No hidden side effects; transformations return new objects
-- **Strong typing**: Public APIs use type hints; mypy-compatible
+- **Explicit data flow**: Few hidden side effects; the core data-model API mutates in place and returns `self` for chaining, with `.copy()` as the explicit opt-in for an independent object
+- **Strong typing**: Public APIs use type hints; checked with `ty` (Astral)
 - **Modular packages**: Each module has clear responsibility with minimal coupling
 
 ### Core Packages
 
 | Package | Purpose |
 |---------|---------|
-| `core` | Data structures: `Entity`, `Link`, `Frame`, `Block`, `Atomistic`, `ForceField` |
-| `io` | File I/O: readers/writers for PDB, GRO, LAMMPS DATA, XYZ, JSON, HDF5 formats |
+| `core` | Data structures: `Entity`, `Link`, `Frame`, `Block`, `Atomistic`, `ForceField`. `Frame`/`Block` are backed by the molrs Rust column store (see below) |
+| `io` | File I/O: readers/writers for PDB, GRO, LAMMPS DATA, XYZ, MOL2, AMBER (prmtop/inpcrd/prep/ac), GROMACS TOP, XSF, HDF5 formats |
 | `parser` | Grammar-based parsing: SMILES, SMARTS, BigSMILES, GBigSMILES, CGSmiles |
 | `builder` | System assembly: polymer builders, AmberTools integration, residue management |
 | `typifier` | Atom typing: OPLS-AA, GAFF, custom SMARTS/SMIRKS-based typifiers |
@@ -74,6 +76,8 @@ MolPy is a computational chemistry toolkit with explicit data flow and minimal m
 | `engine` | MD abstractions: LAMMPS, CP2K, simulation management |
 | `wrapper` | External tools: Antechamber, Prepgen, command-line wrappers |
 | `adapter` | Format bridges: RDKit, OpenBabel, and other external libraries |
+
+> **Hard runtime dependency**: `molcrafts-molrs` (Rust extension) is a required dependency declared in `pyproject.toml`. `Frame` and `Block` wrap `molrs.Frame` / `molrs.Block` — `core/frame.py` does `import molrs` at module load and all tabular data lives in the Rust Store. molpy does not run without it.
 
 ### Data Model Layer
 
@@ -167,21 +171,29 @@ class LammpsForceFieldFormatter(LammpsFieldFormatter, ForceFieldFormatter):
 
 **Canonical atom fields**: `charge` (not `q`), `mol_id` (not `mol`), `id`, `type`, `mass`, `x`/`y`/`z`, `element`, `symbol`, etc.
 
-### Pattern: Immutable Data Flow
+### Pattern: Mutation-Based Data Model + Explicit `.copy()`
 
-**Critical**: Avoid mutation of input objects. Transformations return new objects:
+**Critical**: The core data-model API mutates in place. `Atomistic`/`Struct` methods
+`def_atom`, `def_bond`, `def_angle`, `def_dihedral`, `get_topo`, `move`, `rotate`,
+`scale`, and `merge` all modify the structure in place and return `self` (or the
+newly created entity) for method chaining. `.copy()` is the explicit opt-in for an
+independent deep copy.
 
 ```python
-# WRONG
-def add_hydrogens(mol):
-    mol.add_atoms(...)  # mutates input
+# Building / transforming mutates in place and chains:
+struct.def_atom(element="C", xyz=[0, 0, 0])   # adds atom, returns the Atom
+struct.move([1, 0, 0], entity_type=Atom)      # mutates, returns self
+struct.merge(other)                            # transfers other's entities into self
 
-# CORRECT
-def add_hydrogens(mol):
-    new_mol = mol.copy()  # or rebuild from scratch
-    # populate new_mol
-    return new_mol
+# When you need an independent object, copy explicitly:
+work = struct.copy()        # deep copy; entities/links remapped
+work.move([5, 0, 0], entity_type=Atom)   # struct is untouched
 ```
+
+For *higher-level helper functions* (in `op`, `builder`, `reacter`, etc.), prefer
+not mutating a caller-owned structure unexpectedly — `.copy()` first or build a new
+structure and return it. This is a coding guideline for helpers, **not** how the
+core `Atomistic`/`Struct`/`Frame` methods behave.
 
 ## Testing Guidelines
 
@@ -221,13 +233,23 @@ Run only local tests with: `pytest tests/ -m "not external"`
 
 ### Common Test Patterns
 
-**Immutability checks**:
+**In-place mutation + chaining checks** (core data-model API):
 ```python
-def test_operation_does_not_mutate():
-    original = Atomistic(...)
-    result = some_operation(original)
-    assert original is not result  # New object
-    assert len(original.atoms) == original_count
+def test_def_atom_mutates_and_returns_entity():
+    struct = Atomistic()
+    atom = struct.def_atom(element="C", xyz=[0, 0, 0])
+    assert atom in struct.atoms          # added in place
+    assert struct.move([1, 0, 0], entity_type=Atom) is struct  # returns self
+```
+
+**`.copy()` isolation checks** (when a helper must not mutate caller input):
+```python
+def test_helper_does_not_mutate_input():
+    original = Atomistic()
+    original.def_atom(element="C", xyz=[0, 0, 0])
+    result = some_helper(original)        # helper does original.copy() internally
+    assert result is not original         # independent object
+    assert len(list(original.atoms)) == 1 # input untouched
 ```
 
 **Adapter integration**:
@@ -249,8 +271,9 @@ def test_adapter_fallback():
 
 ### `core.frame` and `core.block`
 
-- `Block`: Dict-like NumPy array container; auto-casts to ndarray; supports advanced indexing; `rename(old, new)` for column key rename
-- `Frame`: Numerical container with named Blocks + `box: Box | None` (first-class attribute) + `metadata: dict`; `copy()` preserves box
+- **Backed by molrs**: `frame.py` does `import molrs` at module load. `Block` wraps `molrs.Block` and `Frame` wraps `molrs.Frame` (`_inner` attribute) — all column data lives in the Rust Store. `molcrafts-molrs` is a hard runtime dependency.
+- `Block`: Dict-like wrapper over a `molrs.Block` column store; columns are numpy arrays (views into Rust memory); supports advanced indexing; `rename(old, new)` for column key rename
+- `Frame`: Numerical container with named Blocks + `box: Box | None` (first-class attribute, delegates to the underlying `molrs.Frame.box`) + `metadata: dict`; `copy()` deep-copies into a new Rust Store and preserves box
 - `Trajectory`: Sequence of Frames
 - **Box is on `frame.box`**, never in `frame.metadata["box"]`
 
@@ -278,18 +301,19 @@ def test_adapter_fallback():
 From `docs/developer/coding-style.md`:
 
 - **Explicit over clever**: Clear behavior > shortcuts
-- **Avoid mutation**: Return new objects, don't modify inputs
+- **Predictable mutation**: The core data model mutates in place; in higher-level helpers, don't mutate caller-owned structures unexpectedly — `.copy()` first or build and return a new structure
 - **Small functions**: ~50 lines max; focused responsibility
 - **Type hints**: Required on public APIs
 - **Google-style docstrings**: For public functions/classes
-- **Black formatting**: Non-negotiable (enforced by pre-commit)
+- **Ruff formatting**: Non-negotiable (`ruff format`, enforced by pre-commit)
 
 ### Ready-to-commit checklist
 
-- [ ] Code passes `black --check`
+- [ ] Code passes `ruff format --check` and `ruff check`
+- [ ] Type check passes: `ty check src/molpy/`
 - [ ] Tests cover changed behavior
 - [ ] Public APIs have type hints and docstrings
-- [ ] No mutation of input objects
+- [ ] Helpers don't mutate caller-owned structures unexpectedly (`.copy()` when needed)
 - [ ] No hardcoded values (use config or constants)
 - [ ] Pre-commit hooks pass: `pre-commit run --all-files`
 
@@ -308,13 +332,13 @@ From `docs/developer/coding-style.md`:
 - **Import errors in tests**: Reinstall with `pip install -e ".[dev]"` to ensure editable mode
 - **Notebook doc build fails**: Run `pip install -e ".[doc]"` for doc deps
 - **LAMMPS/Packmol tests fail**: Expected if executable not installed; use `-m "not external"`
-- **Type checking**: No built-in mypy step yet; consider running locally: `mypy src/molpy`
+- **Type checking**: Run locally with `ty check src/molpy/` (Astral's `ty`, also run in CI); config under `[tool.ty]` in `pyproject.toml`
 
 ---
 
 ## Skills & Agents
 
-MolPy provides 9 skills (`.claude/skills/`) and 5 agents (`.claude/agents/`).
+MolPy provides 12 skills (`.claude/skills/`) and 7 agents (`.claude/agents/`).
 
 ### Skills (slash commands)
 
@@ -327,12 +351,17 @@ MolPy provides 9 skills (`.claude/skills/`) and 5 agents (`.claude/agents/`).
 # Documentation
 /molpy-tutorial "concept or module"  # Write textbook-style User Guide page for human readers
 /molpy-api-doc [path]                # Audit/write agent-friendly docstrings, type hints, unit annotations
+/molpy-docs [path]                   # Documentation audit/writing
 
 # Validation
 /molpy-arch [path]                   # Architecture layer dependency validation
 /molpy-review [path]                 # Multi-dimensional code review (arch + perf + science + quality)
 /molpy-test [path]                   # Test coverage analysis and scientific test audit
 /molpy-perf [path]                   # Performance profiling and NumPy optimization review
+
+# CI & release
+/molpy-ci-sync                       # Audit/fix CI and pre-commit parity
+/molpy-release                       # Pre-merge / release GO-NO-GO gate
 ```
 
 ### Agents (used by skills or directly)
@@ -344,6 +373,8 @@ MolPy provides 9 skills (`.claude/skills/`) and 5 agents (`.claude/agents/`).
 | `molpy-tester` | TDD workflow, test design, scientific validation | Read, Grep, Glob, Bash, Write, Edit |
 | `molpy-documenter` | Docstrings, unit annotations, scientific references | Read, Grep, Glob, Write, Edit |
 | `molpy-optimizer` | NumPy vectorization, memory, algorithm complexity | Read, Grep, Glob, Bash |
+| `molpy-ci-auditor` | CI / pre-commit parity auditing | Read, Grep, Glob, Bash |
+| `molpy-release-checker` | Pre-merge / release gating | Read, Grep, Glob, Bash |
 
 ### Quick Start
 

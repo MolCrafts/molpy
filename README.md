@@ -1,26 +1,98 @@
-# MolPy — A programmable toolkit for molecular simulation workflows
+<div align="center">
 
-[![Python](https://img.shields.io/badge/python-3.12+-blue)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-BSD--3--Clause-green)](./LICENSE)
-[![Docs](https://img.shields.io/badge/docs-online-blue)](https://molpy.molcrafts.org/)
-[![CI](https://github.com/MolCrafts/molpy/workflows/CI/badge.svg)](https://github.com/MolCrafts/molpy/actions)
-[![Benchmark](https://img.shields.io/badge/benchmark-dashboard-blue)](https://molcrafts.github.io/bm-molrs-molpy/dev/bench/)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![Type checked: ty](https://img.shields.io/badge/type%20checked-ty-blue.svg)](https://github.com/astral-sh/ty)
+<h1>
+  <img src=".github/assets/moko.svg" alt="" height="48" align="absmiddle">
+  &nbsp;molpy
+</h1>
 
-> **MolPy is under active development.** Public APIs may change between minor releases.
+<p><strong>A programmable toolkit for molecular simulation workflows</strong></p>
 
-MolPy is a Python toolkit for building, editing, typing, and exporting
-molecular systems. It keeps topology, force fields, numerical frames, and
-engine I/O explicit and composable in Python.
+<p>
+  <a href="https://github.com/MolCrafts/molpy/actions"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/MolCrafts/molpy/ci.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI"></a>
+  <a href="https://pypi.org/project/molcrafts-molpy/"><img alt="PyPI" src="https://img.shields.io/pypi/v/molcrafts-molpy?style=flat-square&logo=pypi&logoColor=white&label=PyPI"></a>
+  <a href="https://pypi.org/project/molcrafts-molpy/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/molcrafts-molpy?style=flat-square&logo=python&logoColor=white"></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-BSD--3--Clause-18432B?style=flat-square"></a>
+  <a href="https://github.com/astral-sh/ruff"><img alt="Ruff" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json&style=flat-square"></a>
+</p>
 
-Polymer construction and reactive topology editing are core strengths, but
-MolPy is built for broader molecular simulation workflows, from system
-preparation and topology transformation to force-field assignment and export.
+<p>
+  <a href="https://molcrafts.github.io/molpy/"><b>Documentation</b></a> &nbsp;&middot;&nbsp;
+  <a href="#quick-start"><b>Quick start</b></a> &nbsp;&middot;&nbsp;
+  <a href="https://molcrafts.github.io/molpy/getting-started/examples/"><b>Examples</b></a> &nbsp;&middot;&nbsp;
+  <a href="#molcrafts-ecosystem"><b>Ecosystem</b></a>
+</p>
 
-## Representative Workflows
+</div>
 
-**Small molecule — parse, type, export:**
+MolPy is a Python toolkit for the full molecular-system workflow — parsing,
+building, editing, typing, analyzing, packing, and reading/writing simulation
+formats.
+
+> **Under active development.** Public APIs may change between minor releases.
+
+## Vision
+
+Molecular modeling is fragmented. Every simulation code has its own file formats
+and conventions; every task — parsing, building, typing, analysis,
+visualization — lives in a separate library; and moving a system between them
+means writing throwaway glue.
+
+molpy aims to be the **common foundation** beneath that workflow: one explicit,
+programmable representation of a molecular system that every stage can share.
+Parse a structure into it, build on it, type and analyze it — then hand the
+*same object* onward, with no conversion step in between.
+
+That representation is meant to be built on, not just used. It is the data model
+the [MolCrafts ecosystem](#molcrafts-ecosystem) extends — visualization,
+experiment management, agent access — and it reads the same whether a human
+writes it or an agent calls it.
+
+## Capabilities
+
+Each row is one `src/molpy/` module — parse or build a structure, edit and type
+it, analyze or minimize it, then read and write it across formats.
+
+| Module | Capability |
+|---|---|
+| **`core`** | Explicit data model — editable `Atomistic` topology graph (atoms, bonds, angles, dihedrals), `Frame`/`Block` columnar arrays, `ForceField`, `Box` |
+| **`parser`** | Grammar-based parsing — SMILES, SMARTS, BigSMILES, G-BigSMILES, CGSmiles |
+| **`builder`** | System assembly — linear / branched / cyclic polymers, polydispersity sampling (Schulz-Zimm, Poisson, Flory-Schulz), residue management |
+| **`embed`** | 3D coordinate generation for parsed or built topologies |
+| **`op` · `reacter`** | Structure editing — geometric transforms; template-based reactions with leaving-group selectors and LAMMPS `fix bond/react` templates |
+| **`typifier`** | Atom typing — OPLS-AA, GAFF / GAFF2, custom SMARTS / SMIRKS typifiers |
+| **`potential` · `optimize`** | Energy & force potentials with L-BFGS minimization |
+| **`compute`** | Analysis — RDF, MSD, clustering, shape & gyration, dielectric, neighbor lists, custom operators |
+| **`pack`** | Packmol-based packing with density targets |
+| **`io`** | **Read and write** — PDB, GRO, LAMMPS data, XYZ, JSON, HDF5, force fields, and trajectories |
+| **`engine`** | MD input generation & run management — LAMMPS, CP2K |
+| **`wrapper` · `adapter`** | External CLIs (Antechamber, Prepgen) and library bridges (RDKit, OpenBabel) |
+
+## Install
+
+```bash
+pip install molcrafts-molpy
+```
+
+Core dependencies: NumPy, python-igraph, Lark, Pint, and
+[molrs](https://github.com/MolCrafts/molrs) (the Rust numerical core).
+Optional: RDKit (3D geometry), AmberTools (GAFF charges).
+
+<details>
+<summary>Install from source (development)</summary>
+
+```bash
+git clone https://github.com/MolCrafts/molpy.git
+cd molpy
+pip install -e ".[dev]"
+pre-commit install
+pytest tests/ -m "not external"
+```
+
+</details>
+
+## Quick start
+
+Parse a SMILES string, assign OPLS-AA types, and write LAMMPS input files:
 
 ```python
 import molpy as mp
@@ -33,146 +105,50 @@ mp.io.write_lammps_system("output/", typed.to_frame(), ff)
 # → output/system.data  output/system.in
 ```
 
-**Polymer chain — G-BigSMILES to LAMMPS in one call:**
-
-```python
-import molpy as mp
-
-# PEO chain with degree of polymerization = 10, built with 3D coordinates
-peo   = mp.tool.polymer("{[<]CCOCC[>]}|10|")
-ff    = mp.io.read_xml_forcefield("oplsaa.xml")
-typed = mp.typifier.OplsAtomisticTypifier(ff).typify(peo)
-mp.io.write_lammps_system("output/", typed.to_frame(), ff)
-```
-
-**Polydisperse melt — Schulz-Zimm distribution, fully atomistic:**
-
-```python
-import molpy as mp
-
-# Mn = 1500 Da, Mw = 3000 Da, total mass ≈ 500 kDa
-chains = mp.tool.polymer_system(
-    "{[<]CCOCC[>]}|schulz_zimm(1500,3000)||5e5|",
-    random_seed=42,
-)
-print(f"Built {len(chains)} chains")   # reproducible chain population
-
-frames = [c.to_frame() for c in chains]
-packed = mp.pack.pack(frames, box=[80, 80, 80])
-mp.io.write_lammps_system("peo_bulk/", packed, ff)
-```
-
-**AmberTools pipeline — GAFF2 parameters, partial charges, AMBER topology:**
-
-```python
-import molpy as mp
-
-eo = mp.tool.PrepareMonomer().run("{[<]CCOCC[>]}")  # BigSMILES → 3D + ports
-
-result = mp.tool.polymer(
-    "{[#EO]|20}",
-    library={"EO": eo},
-    backend="amber",   # runs antechamber + parmchk2 + tleap
-)
-# result.prmtop_path, result.inpcrd_path, result.pdb_path
-```
-
----
-
-## Core Capabilities
-
-| Area | Capability |
-|------|------------|
-| **Parsing** | Native support for SMILES, BigSMILES, CGSmiles, and G-BigSMILES |
-| **Polymer construction** | Linear, branched, and cyclic assembly from notation-driven specifications |
-| **Polydispersity** | Schulz-Zimm, Poisson, Flory-Schulz, and uniform chain-length distributions |
-| **Reactive topology editing** | Anchor and leaving-group selectors, bond-forming reactions, and LAMMPS `fix bond/react` template generation |
-| **Force-field assignment** | OPLS-AA and GAFF/GAFF2 typing through SMARTS/SMIRKS matching |
-| **External parameterization** | AmberTools interfaces for antechamber, parmchk2, prepgen, and tleap |
-| **Packing and export** | Packmol-based packing and export to LAMMPS, PDB, XYZ, AMBER, GRO, and HDF5 |
-| **Simulation interfaces** | Input generation for LAMMPS and CP2K |
-| **Interoperability** | RDKit and OpenBabel adapters for conversion and structure preparation |
-| **Explicit data model** | Distinct `Atomistic`, `Frame`/`Block`, and `ForceField` representations |
-| **Agent interface** | Source-introspection MCP server provided by [`molmcp`](https://github.com/MolCrafts/molmcp) (`pip install molcrafts-molmcp`) |
-
----
-
-## Architecture
-
-```
-SMILES / BigSMILES / CGSmiles / G-BigSMILES
-           │
-           ▼ parser
-      Atomistic                  ← editable graph: Atom, Bond, Angle, Dihedral
-      (topology graph)
-           │
-    ┌──────┴──────┐
-    ▼             ▼
-reacter        builder           ← reactions, polymer assembly
-    └──────┬──────┘
-           │
-           ▼ typifier
-    Typed Atomistic              ← SMARTS pattern matching assigns ForceField types
-           │
-           ▼ .to_frame()
-         Frame                   ← columnar NumPy arrays; Box; metadata
-           │
-    ┌──────┴──────┐
-    ▼             ▼
-   pack          io / engine     ← Packmol packing; LAMMPS / CP2K / AMBER export
-```
-
-Each boundary is an explicit function call. State transitions remain visible throughout the workflow; no hidden coupling or monkey-patching is required.
-
----
-
-## Installation
-
-```bash
-pip install molcrafts-molpy
-```
-
-Core dependencies: NumPy, igraph, Lark. Optional: RDKit (3D geometry), AmberTools (GAFF charges).
-
-For development:
-
-```bash
-git clone https://github.com/MolCrafts/molpy.git
-cd molpy
-pip install -e ".[dev]"
-pre-commit install
-pytest tests/ -m "not external"
-```
-
----
+More workflows — polymer chains, polydisperse melts, AmberTools
+parameterization — are in the
+**[Example Gallery](https://molcrafts.github.io/molpy/getting-started/examples/)**
+and the task-oriented [Guides](https://molcrafts.github.io/molpy/user-guide/).
 
 ## Documentation
 
-Full documentation, including executable notebooks: **[https://molcrafts.github.io/molpy](https://molcrafts.github.io/molpy)**
+Full documentation, including executable notebooks:
+**[molcrafts.github.io/molpy](https://molcrafts.github.io/molpy/)**
 
 - [Getting Started](https://molcrafts.github.io/molpy/getting-started/) — install and first example
+- [Example Gallery](https://molcrafts.github.io/molpy/getting-started/examples/) — short copy-paste workflows
 - [Guides](https://molcrafts.github.io/molpy/user-guide/) — task-oriented notebooks
 - [Concepts](https://molcrafts.github.io/molpy/tutorials/) — data model deep dives
 - [API Reference](https://molcrafts.github.io/molpy/api/) — full API
 
----
-
-## MolCrafts Ecosystem
+## MolCrafts ecosystem
 
 | Project | Role |
 |---------|------|
-| **MolPy** | Python toolkit — this repo |
-| **MolVis** | WebGL molecular visualization and interactive editing |
-| **MolRS** | Rust backend: typed array structures and fast compute kernels (native + WASM) |
-
----
+| **molpy** | Python toolkit — the shared molecular data model & workflow layer — this repo |
+| [molrs](https://github.com/MolCrafts/molrs)     | Rust core — molecular data structures & compute kernels (native + WASM) |
+| [molpack](https://github.com/MolCrafts/molpack) | Packmol-grade molecular packing (Rust + Python) |
+| [molvis](https://github.com/MolCrafts/molvis)   | WebGL molecular visualization & editing |
+| [molexp](https://github.com/MolCrafts/molexp)   | Workflow & experiment-management platform |
+| [molnex](https://github.com/MolCrafts/molnex)   | Molecular machine-learning framework |
+| [molq](https://github.com/MolCrafts/molq)       | Unified job queue — local / SLURM / PBS / LSF |
+| [molcfg](https://github.com/MolCrafts/molcfg)   | Layered configuration library |
+| [mollog](https://github.com/MolCrafts/mollog)   | Structured logging, stdlib-compatible |
+| [molhub](https://github.com/MolCrafts/molhub)   | Molecular dataset hub |
+| [molmcp](https://github.com/MolCrafts/molmcp)   | MCP server for the ecosystem |
+| [molrec](https://github.com/MolCrafts/molrec)   | Atomistic record specification |
 
 ## Contributing
 
-Issues and pull requests are welcome. See [Contributing](https://molcrafts.github.io/molpy/developer/contributing/).
-
----
+Issues and pull requests are welcome — see
+[Contributing](https://molcrafts.github.io/molpy/developer/contributing/).
 
 ## License
 
 BSD-3-Clause — see [LICENSE](LICENSE).
+
+<hr>
+
+<div align="center">
+<sub>Crafted with 💚 by <a href="https://github.com/MolCrafts">MolCrafts</a></sub>
+</div>
