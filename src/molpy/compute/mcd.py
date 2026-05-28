@@ -106,16 +106,18 @@ class MCDCompute(Compute["Trajectory", MCDResult]):
         coords_traj = np.array(coords_list)  # (n_frames, n_atoms, 3)
         elems_traj = np.array(elems_list)  # (n_frames, n_atoms)
 
-        # Unwrap coordinates using Box.diff_dr() directly
-        n_frames, n_atoms, n_dim = coords_traj.shape
+        # Unwrap coordinates via molrs Box.delta (minimum-image, Rust backend).
+        n_frames = coords_traj.shape[0]
         coords_unwrapped = np.zeros_like(coords_traj)
-        coords_unwrapped[0] = coords_traj[0].copy()
+        # Slice assignment writes values into the pre-allocated row (no alias),
+        # so no explicit copy is needed.
+        coords_unwrapped[0] = coords_traj[0]
 
         for i in range(1, n_frames):
             box = box_list[i]
-            # Compute displacement and apply minimum image convention
-            displacement = coords_traj[i] - coords_traj[i - 1]
-            displacement_mic = box.diff_dr(displacement)
+            displacement_mic = box.delta(
+                coords_traj[i - 1], coords_traj[i], minimum_image=True
+            )
             coords_unwrapped[i] = coords_unwrapped[i - 1] + displacement_mic
 
         # Apply center of mass correction if requested

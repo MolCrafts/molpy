@@ -11,7 +11,11 @@ from molpy.builder.polymer import PolymerBuilder
 from molpy.core.atomistic import Atomistic
 from molpy.parser.smiles import parse_bigsmiles, bigsmilesir_to_monomer
 from molpy.adapter import RDKitAdapter
-from molpy.compute import Generate3D
+
+# compute.Generate3D is now the molrs-backed trunk operator (Atomistic ->
+# Atomistic). This test exercises the optional RDKit adapter path explicitly,
+# so it uses the RDKit tool flavour (RDKitAdapter -> RDKitAdapter).
+from molpy.tool.rdkit import Generate3D
 
 
 def create_test_monomer(smiles: str) -> Atomistic:

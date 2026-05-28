@@ -5,9 +5,10 @@ Thin Python wrapper around the molrs Rust ``embed`` pipeline, exposed via the
 build, energy minimisation, rotor search, stereo guard — runs inside molrs;
 this module only marshals :class:`molpy.Atomistic` across that boundary.
 
-The existing RDKit adapter (:mod:`molpy.adapter.rdkit`) and the RDKit-based
-``Generate3D`` compute node (:mod:`molpy.compute.rdkit`) remain available
-as alternative backends and are unaffected by this module.
+The main-trunk ``molpy.compute.Generate3D`` is a thin :class:`Compute` wrapper
+over this function. The RDKit adapter (:mod:`molpy.adapter.rdkit`) and the
+RDKit tool (:mod:`molpy.tool.rdkit`) remain available as an optional external
+backend.
 """
 
 from __future__ import annotations
