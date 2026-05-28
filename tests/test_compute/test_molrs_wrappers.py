@@ -82,7 +82,7 @@ def test_msd_basic():
 def test_msd_parity_with_molrs_direct():
     frames = [_frame(40, 8.0, seed=i + 100) for i in range(3)]
     via_molpy = MSD()(frames)
-    via_molrs = molrs.compute.msd.MSD().compute([f.to_molrs() for f in frames])
+    via_molrs = molrs.compute.msd.MSD().compute(frames)
     np.testing.assert_array_equal(
         np.asarray(via_molpy.mean), np.asarray(via_molrs.mean)
     )

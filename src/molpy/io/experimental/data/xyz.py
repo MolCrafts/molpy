@@ -71,4 +71,4 @@ class XYZWriter(DataWriter):
         super().__init__(Path(path), **kwargs)
 
     def write(self, frame: Frame) -> None:
-        molrs.io.write_xyz(str(self._path), frame.to_molrs())
+        molrs.io.write_xyz(str(self._path), frame)
