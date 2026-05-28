@@ -165,7 +165,9 @@ nav:
       - Extending Core:
           - Data Model: developer/extending-core.md
           - Force Field: developer/extending-forcefield.md
+      - molrs Backend: developer/molrs-backend.md
 
+  - Changelog: changelog.md
   - Release Notes: https://github.com/MolCrafts/molpy/releases
 
 extra_javascript:

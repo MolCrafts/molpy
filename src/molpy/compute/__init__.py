@@ -34,9 +34,15 @@ Example: dielectric spectrum:
 """
 
 from .base import Compute
-from .cluster import Cluster, ClusterCenters
+from .cluster import Cluster, ClusterCenters, ClusterProperties
 from .decomposition import DescriptorRow, KMeans, Pca
 from .dielectric import ACFAnalyzer, DielectricSusceptibility, SpectralAnalyzer
+from .density import GaussianDensity, LocalDensity
+from .diffraction import StaticStructureFactorDebye
+from .embed import Generate3D
+from .environment import BondOrder
+from .order import Hexatic, Nematic, SolidLiquid, Steinhardt
+from .pmft import PMFTXY
 from .mcd import MCDCompute
 from .msd import MSD
 from .neighborlist import NeighborList
@@ -66,17 +72,6 @@ from .workflow import (
     WorkflowError,
     WorkflowMissingInputError,
 )
-
-# Optional RDKit compute nodes (slated for removal in Phase 3 — replaced by
-# the molrs-backed embed pipeline).
-try:  # pragma: no cover
-    from .rdkit import Generate3D, OptimizeGeometry
-
-    _HAS_RDKIT = True
-except ModuleNotFoundError:  # rdkit missing
-    _HAS_RDKIT = False
-    Generate3D = None  # type: ignore[assignment]
-    OptimizeGeometry = None  # type: ignore[assignment]
 
 __all__ = [
     "Compute",
@@ -114,7 +109,15 @@ __all__ = [
     "WorkflowMissingInputError",
     "compute_msd",
     "compute_acf",
+    "Generate3D",
+    "Steinhardt",
+    "Hexatic",
+    "Nematic",
+    "SolidLiquid",
+    "LocalDensity",
+    "GaussianDensity",
+    "StaticStructureFactorDebye",
+    "BondOrder",
+    "PMFTXY",
+    "ClusterProperties",
 ]
-
-if _HAS_RDKIT:
-    __all__ += ["Generate3D", "OptimizeGeometry"]

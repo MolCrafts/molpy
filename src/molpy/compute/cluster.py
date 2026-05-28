@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from molrs.compute.cluster import Cluster as _MolrsCluster
 from molrs.compute.cluster import ClusterCenters as _MolrsClusterCenters
+from molrs.compute.cluster import ClusterProperties as _MolrsClusterProperties
 
 from .base import Compute
 
@@ -51,4 +52,24 @@ class ClusterCenters(Compute):
     def _compute(self, input):  # pragma: no cover — use __call__
         raise NotImplementedError(
             "ClusterCenters takes two inputs (frames, clusters); call directly."
+        )
+
+
+class ClusterProperties(Compute):
+    """Per-cluster properties (sizes, centers, masses, gyration tensors, Rg).
+
+    Takes ``(frames, clusters)`` where ``clusters`` is the sequence of
+    ``ClusterResult`` returned by :class:`Cluster`. Returns one dict per frame.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._impl = _MolrsClusterProperties()
+
+    def __call__(self, frames, clusters):
+        return self._impl.compute(frames, clusters)
+
+    def _compute(self, input):  # pragma: no cover — use __call__
+        raise NotImplementedError(
+            "ClusterProperties takes two inputs (frames, clusters); call directly."
         )

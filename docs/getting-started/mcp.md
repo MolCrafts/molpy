@@ -2,61 +2,151 @@
 
 ## What MCP solves
 
-An LLM agent working with MolPy faces the same problem as any user relying on memory: API knowledge goes stale. A guessed function name, parameter list, or return type may look plausible and still be wrong.
+An LLM agent working with MolPy faces the same problem as any user relying on memory: API knowledge goes stale. A guessed function name, parameter list, or return type may look plausible and still be wrong — and the cost is a long debugging round trip on code that never had a chance to run.
 
-The MolCrafts MCP suite fixes that by exposing the installed packages as structured tools. Instead of guessing, the agent can ask what modules exist, which symbols a module exports, what a callable accepts, and how a function is implemented. The answers come from the local installation, not from the model's training data.
+The MolCrafts MCP suite fixes that by exposing MolPy's installed source as a **structured, graph-indexed view of the code**. Instead of guessing, the agent asks the indexed code graph: which symbol implements this capability, what is its signature, where is it called, what tests exercise it, what example uses it. Every answer is grounded in the MolPy source tree that is currently importable in the active Python environment — not in the model's training data.
 
 In practice, the workflow is simple:
 
-1. Discover modules and symbols.
-2. Read docstrings, signatures, and source when needed.
+1. Resolve a capability (or browse the package outline).
+2. Drill into the relevant symbol — signature, docstring, source, callers, tests.
 3. Write normal Python code against the real MolPy API.
 
 !!! note "What MCP is not"
-    The server does not execute MolPy workflows for the agent. It helps the agent understand the library, then the agent writes Python code that calls MolPy directly.
+    The server does not execute MolPy workflows for the agent. It is a *discovery layer*: it helps the agent understand the library, and the agent writes Python code that calls MolPy directly.
 
-## Where MCP support lives
+## Why a code graph
 
-MCP support for MolPy is provided by [`molmcp`](https://github.com/MolCrafts/molmcp), the shared MCP foundation for the MolCrafts ecosystem. `molmcp` ships:
+MolPy is not a flat list of functions. A real workflow — say, building a polymer, typifying it, and writing LAMMPS files — traverses *relationships*: `AmberPolymerBuilder` *contains* a `build` method that *calls* `tleap`, which *produces* a `Frame` whose `box` attribute is read by `write_lammps_data`. A grep on `"build"` cannot tell you any of that. A flat symbol table cannot either.
 
-- the seven source-introspection tools (described below), applied to any importable MolCrafts package — no per-package wiring required;
-- a `Provider` plugin contract for stateful queries (jobs DBs, workspace catalogs) that introspection cannot answer;
-- security middleware (path-traversal guard, response-size cap, mandatory tool annotations).
+The MCP server indexes MolPy into a **typed code graph** so the agent can ask graph-shaped questions:
 
-`molmcp` imports nothing from MolPy. The pattern is the inverse: a single `python -m molmcp` process inspects whichever of `{molpy, molpack, molrs, molq, molexp}` is importable in the active Python environment and exposes them to the agent. MCP code does **not** live in MolPy itself; this keeps the chemistry library focused on its own data model and keeps the MCP launcher consistent across the ecosystem.
+- "Which class implements a radial distribution function?" → search nodes by capability.
+- "What calls `Atomistic.get_topo`?" → walk `calls` edges in reverse.
+- "What tests exercise `ForceField.merge`?" → follow `tests` edges to pytest nodes.
+- "What examples show how to use `Box.orth`?" → follow `exemplifies` edges to extracted docstring examples.
+- "What breaks if I change `read_xml_forcefield`?" → multi-hop impact walk.
 
-## The seven tools
+This is the central capability the MCP server provides. The six tools described later are graph queries with different shapes; the rest of this section explains what is in the graph.
 
-The suite exposes seven introspection tools. Together they let an agent navigate the package tree, inspect the public API, and read implementation details only when necessary.
+### The pipeline that builds it
 
-| Tool | Use it for |
+```
+MolPy source ─► SourceResolver ─► Snapshot ─► Extractor ─► Resolver ─► GraphStore
+  pkg:molpy                       (immutable,  (phase 1)   (phase 2)   (SQLite
+  or local                         content-                            graph.db)
+  checkout                         hashed)
+```
+
+1. **Source resolution.** The MolPy source — either the installed `pkg:molpy` or a local checkout — resolves to an immutable `Snapshot`. The snapshot is keyed on a **content hash** of the files, never a branch name; a cached graph is therefore always tied to exact source.
+2. **Extraction (phase 1).** Each Python file is parsed with the stdlib `ast` module. The analyzer emits *nodes* — modules, classes, functions, methods, properties, fields, constants — with signatures, docstrings, decorators, and file/line spans, plus *unresolved references* for every call, base class, and import it sees.
+3. **Resolution (phase 2).** A resolver links those references to nodes already in the graph: relative imports are resolved, pytest tests are linked to the symbols they exercise, and *docstring code blocks are lifted into first-class `example` nodes*. References that are genuinely dynamic (e.g. `getattr(obj, name)()`) stay marked `unresolved` so they do not silently corrupt the graph.
+4. **Storage.** The graph is written to one SQLite `graph.db` per snapshot under `~/.cache/molmcp/discovery/`, with a derived FTS5 index for symbol search.
+
+### Nodes and edges
+
+Every analyzer emits the same schema, so a query that works on one source works on any.
+
+**Node kinds** carried in the graph:
+
+| Kind | What it represents |
 | --- | --- |
-| `list_modules` | Discover importable modules under a prefix such as `molpy` or `molpy.builder`. |
-| `list_symbols` | Inspect the public API of a module with one-line summaries. |
-| `get_docstring` | Read structured usage guidance from the source docstring. |
-| `get_signature` | Check parameter names, types, defaults, and return signatures. |
-| `get_source` | Inspect implementation details when docstrings are not enough. |
-| `search_source` | Search the codebase by substring, like a lightweight `grep`. |
-| `read_file` | Read a specific source file by line range. |
+| `package`, `module`, `file` | The package tree as importable units. |
+| `class`, `function`, `method`, `property`, `field`, `constant` | The MolPy public/private API surface. Each carries `qualname`, `signature`, `docstring`, file/line span. |
+| `example` | A code block lifted from a docstring — *real* usage that ships with the source. |
+| `test` | A pytest test function, with the test file/line it lives at. |
+| `capability` | A domain capability (e.g. "compute RDF") attached to one or more symbols via an overlay. |
 
-Used together, these tools let an agent explore MolPy the same way a human developer would: browse, narrow, verify, then write code.
+**Edges** carry the relationships you want to query:
+
+| Edge | Used to answer |
+| --- | --- |
+| `contains` | "What symbols live in `molpy.builder.polymer`?" |
+| `calls` | "What does `AmberPolymerBuilder.build` call?" — and reverse: "Who calls `tleap`?" |
+| `extends` | "What subclasses `Struct`?" |
+| `imports` | "Which modules import from `molpy.core.atomistic`?" |
+| `exemplifies` | "Show me a usage example of `Box.orth`." |
+| `tests` | "What pytest tests cover `ForceField.merge`?" |
+| `references` | "Where is `EPS_LI` mentioned?" |
+| `provides_capability` | "Which symbol implements *radial distribution function*?" |
+
+Each edge carries a `provenance` (`ast` / `heuristic` / `resolved`) so the agent — and you — can tell a confident structural fact from an inference.
+
+### Snapshots, freshness, incremental re-indexing
+
+A few practical properties fall out of the design:
+
+- **Local sources are always fresh.** They are re-resolved on every query; only the per-file extractor caches.
+- **Incremental re-indexing.** A content-addressed `ExtractCache` lets unchanged files skip the analyzer, so editing one MolPy file does not re-parse the package.
+- **Every tool response carries `snapshot`**, including a `freshness` flag, so the agent always knows which revision of MolPy it is looking at.
+- **The graph is plain SQLite.** Open `~/.cache/molmcp/discovery/snapshots/<slug>/graph.db` in any SQLite browser to inspect the `nodes`, `edges`, and `files` tables directly.
+
+## The six graph-query tools
+
+The MCP server exposes six composable, read-only tools (all `readOnlyHint=True`, so MCP clients can auto-approve them safely). They differ in the *shape* of the graph query they run.
+
+| Tool | Graph query | Use it for |
+| --- | --- | --- |
+| `molmcp_outline` | Walk `contains` edges from the package root. | Orient in MolPy — "where do I look?" |
+| `molmcp_find_capability` | Rank symbols by capability + FTS + structural signals. | Primary tool — describe a task, get ranked symbol matches with signature, summary, examples, tests, and callers. |
+| `molmcp_search_symbols` | FTS5 over names, qualnames, and summaries, optional `kind` filter. | Quick lookup when you already know the name. |
+| `molmcp_describe_symbol` | Read one node, optionally with full source. | Final-step detail: signature, cleaned docstring, file/line span, source. |
+| `molmcp_relations` | Walk one edge type from a symbol (`callers`, `callees`, `implementers`, `subclasses`, `implementations`, `references`, `examples`, `tests`, `impact` 1–4 hops). | The questions a flat index can't answer. |
+| `molmcp_refresh` | Force a new snapshot of a source. | Rare; local sources auto-refresh. |
+
+!!! tip "The qualname rule"
+    Resolve every qualname (`molpy.compute.rdf.RDF`, …) from a prior tool result — `molmcp_outline`, `molmcp_search_symbols`, or `molmcp_find_capability` — never guess. A wrong qualname returns a structured `{"error": …}` rather than a hallucinated payload, by design.
+
+### Typical traversal patterns
+
+The tools compose. A few patterns the agent uses repeatedly on MolPy:
+
+**"What's the right class for this task?"**
+
+```text
+molmcp_find_capability("compute a radial distribution function")
+  → matches: [molpy.compute.rdf.RDF, …]
+molmcp_describe_symbol("molpy.compute.rdf.RDF")
+  → signature + docstring
+```
+
+**"How is this actually used?"**
+
+```text
+molmcp_relations("molpy.core.Box.orth", relation="examples")
+  → docstring examples + tests that exercise it
+```
+
+**"What does my change break?"**
+
+```text
+molmcp_relations("molpy.io.read_xml_forcefield", relation="callers", depth=2)
+  → every site, two hops out, that depends on the function
+```
+
+**"Show me the structure of a subpackage."**
+
+```text
+molmcp_outline(path="molpy/builder/polymer")
+  → modules + classes + functions, scoped to one subtree
+```
+
+These are not search hits — they are graph walks. That is the point of indexing MolPy as a graph rather than a list.
 
 ## Install and register the server
 
-Install `molmcp` from PyPI. The Provider contract is alpha; pin to the 0.2 line:
+Install `molmcp` from PyPI. Pin to the 0.2 line:
 
 ```bash
 pip install "molcrafts-molmcp>=0.2,<0.3"
 ```
 
-Requires Python ≥ 3.12. The PyPI distribution is `molcrafts-molmcp`; the import name and CLI entry are both `molmcp`.
-
-`molmcp` auto-detects whichever of `{molpy, molpack, molrs, molq, molexp}` is importable in the active environment and registers source-introspection over each. Any first-party providers (`MolqProvider`, `MolexpProvider`) and third-party providers registered through the `molmcp.providers` entry-point group are discovered on top.
+Requires Python ≥ 3.12. The PyPI distribution is `molcrafts-molmcp`; the import name and CLI entry are both `molmcp`. The discovery engine adds no required runtime dependency — it uses the standard library.
 
 Start the server in stdio mode (what MCP clients expect):
 
 ```bash
-python -m molmcp
+python -m molmcp --source pkg:molpy
 ```
 
 ### Claude Code
@@ -64,7 +154,7 @@ python -m molmcp
 Project-level registration writes `.mcp.json` at the repository root:
 
 ```bash
-claude mcp add molcrafts --scope project -- python -m molmcp
+claude mcp add molpy --scope project -- python -m molmcp --source pkg:molpy
 ```
 
 Omit `--scope project` to register at user scope.
@@ -73,16 +163,16 @@ Omit `--scope project` to register at user scope.
     If `python` resolves to the wrong interpreter (or `molmcp` lives in a project-local venv), register the binary explicitly:
 
     ```bash
-    claude mcp add molcrafts -- /path/to/venv/bin/python -m molmcp
+    claude mcp add molpy -- /path/to/venv/bin/python -m molmcp --source pkg:molpy
     ```
 
     Or let `uv` pick the right environment from a project directory:
 
     ```bash
-    claude mcp add molcrafts -- uv run --directory /path/to/project python -m molmcp
+    claude mcp add molpy -- uv run --directory /path/to/molpy python -m molmcp --source pkg:molpy
     ```
 
-Start a new Claude Code session, then run `/mcp`. You should see `molcrafts` and its tools.
+Start a new Claude Code session, then run `/mcp`. You should see the server with tool names prefixed `mcp__molpy__molmcp_…`.
 
 ### Claude Desktop
 
@@ -91,9 +181,9 @@ Edit Claude Desktop's `mcpServers` block:
 ```json
 {
   "mcpServers": {
-    "molcrafts": {
+    "molpy": {
       "command": "python",
-      "args": ["-m", "molmcp"]
+      "args": ["-m", "molmcp", "--source", "pkg:molpy"]
     }
   }
 }
@@ -104,61 +194,31 @@ Config file location:
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-Restart Claude Desktop after saving. The MolCrafts tools should appear in the tool picker.
+Restart Claude Desktop after saving. MolPy's discovery tools should appear in the tool picker.
 
-### Customizing the launch
+### Indexing a local checkout
 
-The CLI exposes a handful of flags. Restrict introspection to MolPy alone, or expose additional roots (any explicit `--import-root` overrides the default auto-detection):
-
-```bash
-python -m molmcp --import-root molpy
-python -m molmcp --import-root molpy --import-root molexp --import-root your_package
-```
-
-Serve over HTTP instead of stdio, for clients that cannot launch subprocesses:
+Point `--source` at the working tree of a MolPy checkout to expose your in-progress edits — the graph is rebuilt incrementally on every query, so changes you make in your editor are visible to the agent within one tool call:
 
 ```bash
-python -m molmcp --transport streamable-http --host 127.0.0.1 --port 8787
+python -m molmcp --source /path/to/molpy
 ```
 
-Skip auto-discovery of third-party providers (introspection plus first-party providers only):
+### Verifying the server works
+
+`molmcp` ships a built-in self-check that indexes MolPy and prints counts, FTS status, and a sample query — exiting non-zero on failure, so it doubles as a CI/setup check:
 
 ```bash
-python -m molmcp --no-discover
+molmcp discovery verify pkg:molpy
 ```
 
-Pass `--name <id>` to change the server identifier advertised to clients (defaults to `molmcp`). See the [molmcp CLI reference](https://github.com/MolCrafts/molmcp#install) upstream for the full list.
+Inspect or rebuild the graph from the CLI without going through an MCP client:
 
-## How MCP works
-
-`python -m molmcp` runs as a subprocess of the MCP client (Claude Code, Claude Desktop, …). The client asks which tools are available and then sends tool calls over JSON-RPC.
-
-```text
-┌─────────────┐   stdio  /  http   ┌──────────────────┐
-│  LLM Client │ ◄────────────────► │      molmcp      │
-│  (Claude)   │    JSON-RPC msgs   │   (MCP server)   │
-└─────────────┘                    └──────────────────┘
+```bash
+molmcp discovery index pkg:molpy        # build the graph
+molmcp discovery outline pkg:molpy      # high-level map
+molmcp discovery query pkg:molpy "radial distribution function"
 ```
-
-A typical exchange looks like this:
-
-1. The client launches `python -m molmcp` and requests its capabilities.
-2. The server advertises the seven introspection tools (one set per importable MolCrafts package) plus any provider tools registered through the `molmcp.providers` entry-point group — e.g. `molq_list_jobs` from `MolqProvider`, `molexp_list_projects` / `molexp_list_runs` from `MolexpProvider`.
-3. The agent calls those tools to inspect MolPy before writing code.
-
-`stdio` is the default transport. `streamable-http` and `sse` expose the same protocol over HTTP, used by clients that cannot launch subprocesses.
-
-For example, an agent asked to build a polymer workflow may inspect MolPy like this:
-
-```text
-1. list_modules("molpy.builder")
-2. list_symbols("molpy.builder.polymer")
-3. get_signature("molpy.builder.polymer.ambertools.AmberPolymerBuilder.build")
-4. get_docstring("molpy.pack.Molpack")
-5. search_source("write_lammps_forcefield")
-```
-
-That pattern is the point of MCP: inspect first, code second.
 
 ## Writing effective prompts
 
@@ -174,7 +234,7 @@ Tell the agent what you want to build. Do not tell it which function names to ca
 | `Call Molpack to pack molecules` | `Pack 15 chains into a 20 nm cubic box` |
 | `Use the Box class` | `Create a periodic simulation box for the system` |
 
-If your prompt names specific MolPy functions, it is usually too low-level.
+If your prompt names specific MolPy functions, it is usually too low-level. The point of `molmcp_find_capability` is that the agent maps the *task* onto the right symbol — feeding it the symbol up front bypasses the strongest part of the pipeline.
 
 ### Include the physical parameters
 
@@ -249,58 +309,52 @@ quickstart-output/water_box_tip3p.ff.
 
 ### Agent exploration
 
-Claude first looks for force-field loading, typification, topology generation,
-and export.
+Claude first asks the graph for the capabilities the task needs: force-field
+loading, typification, topology generation, and LAMMPS export.
 
-**Step 1 — find the main entry points**
-
-```
-list_symbols("molpy.io")
-```
+**Step 1 — resolve capabilities by task**
 
 ```
-read_xml_forcefield      Convenience function to read an XML force field file
-write_lammps_data        Write a Frame object to a LAMMPS data file
-write_lammps_forcefield  Write a ForceField object to a LAMMPS force field file
+molmcp_find_capability("read an XML force field and write LAMMPS data + ff")
 ```
 
 ```
-list_symbols("molpy.typifier")
-```
-
-```
-OplsAtomisticTypifier    OPLS-AA atomistic typifier orchestrator
+matches:
+  • molpy.io.read_xml_forcefield        (function)
+  • molpy.io.write_lammps_data          (function)
+  • molpy.io.write_lammps_forcefield    (function)
+  • molpy.typifier.OplsAtomisticTypifier (class)
 ```
 
 **Step 2 — confirm the built-in TIP3P file path**
 
 ```
-get_signature("molpy.io.read_xml_forcefield")
+molmcp_describe_symbol("molpy.io.read_xml_forcefield")
 ```
 
 ```
-(filepath: str | Path, forcefield: AtomisticForcefield | None = None)
-    -> AtomisticForcefield
+signature: (filepath: str | Path, forcefield: AtomisticForcefield | None = None)
+           -> AtomisticForcefield
+docstring: Read an XML force field file. Relative filenames resolve against the
+           package data directory, so passing "tip3p.xml" loads the built-in
+           TIP3P force field.
 ```
-
-Claude reads the docstring and sees that passing `"tip3p.xml"` loads MolPy's
-built-in TIP3P force field from the package data directory.
 
 **Step 3 — verify the non-obvious topology step**
 
 ```
-get_docstring("molpy.core.atomistic.Atomistic.get_topo")
+molmcp_describe_symbol("molpy.core.atomistic.Atomistic.get_topo")
 ```
 
 The docstring makes one subtle point clear: when `gen_angle=True`,
-`get_topo()` returns a new `Atomistic` instead of mutating the existing one.
+`get_topo()` returns a *new* `Atomistic` instead of mutating the existing one.
 Claude therefore writes `system = system.get_topo(...)` rather than calling it
 in place.
 
 **Step 4 — check the box and typing APIs**
 
 ```
-get_signature("molpy.core.Box.orth")
+molmcp_describe_symbol("molpy.core.Box.orth")
 ```
 
 ```
@@ -309,7 +363,7 @@ get_signature("molpy.core.Box.orth")
 ```
 
 ```
-get_signature("molpy.typifier.OplsAtomisticTypifier.__init__")
+molmcp_describe_symbol("molpy.typifier.OplsAtomisticTypifier.__init__")
 ```
 
 ```
@@ -395,8 +449,9 @@ input.
 ## Worked example: polydisperse PEO/LiTFSI electrolyte
 
 The next example is much larger. The MCP server is still doing the same job,
-but the agent also has to inspect AmberTools-facing builders, packing APIs, and
-force-field merge behavior before it can write the full workflow.
+but the agent walks deeper into the graph — finding builders, packing classes,
+and the tests that pin down Li⁺ parameters — before it can write the full
+workflow.
 
 ### The prompt
 
@@ -419,15 +474,15 @@ and export coordinates and force-field files for downstream molecular dynamics.
 
 ### Agent exploration
 
-Claude starts by calling `list_modules` to orient itself, then drills into the modules it needs.
+Claude orients in the package, then drills into the symbols it needs.
 
-**Step 1 — discover the package structure**
+**Step 1 — orient in the package**
 
 ```
-list_modules("molpy")
+molmcp_outline()
 ```
 
-Returns 148 modules across 18 top-level packages (excerpt):
+Returns MolPy's top-level packages and modules (excerpt):
 
 ```
 molpy.builder   Crystal and polymer builders (AmberTools integration, stochastic generation)
@@ -440,7 +495,7 @@ molpy.wrapper   External tool wrappers (antechamber, parmchk2, prepgen, tleap)
 **Step 2 — find the distribution and polymer-builder classes**
 
 ```
-list_symbols("molpy.builder.polymer")
+molmcp_outline(path="molpy/builder/polymer")
 ```
 
 ```
@@ -457,90 +512,108 @@ PolymerBuilder            CGSmiles-based polymer builder with pluggable typifier
 **Step 3 — read the Schulz–Zimm signature and docstring**
 
 ```
-get_signature("molpy.builder.polymer.distributions.SchulzZimmPolydisperse.__init__")
-```
-```
-(Mn: float, Mw: float, random_seed: int | None = None)
+molmcp_describe_symbol(
+    "molpy.builder.polymer.distributions.SchulzZimmPolydisperse",
+    include_source=False,
+)
 ```
 
 ```
-get_docstring("molpy.builder.polymer.distributions.SchulzZimmPolydisperse")
-```
-```
-Schulz-Zimm molecular weight distribution for polydisperse polymer chains.
-Implements MassDistribution — sampling is done directly in molecular-weight space.
+signature: (Mn: float, Mw: float, random_seed: int | None = None)
+docstring:
+  Schulz-Zimm molecular weight distribution for polydisperse polymer chains.
+  Implements MassDistribution — sampling is done directly in molecular-weight space.
 
-The PDF is:
-    f(M) = z^(z+1)/Γ(z+1) · M^(z−1)/Mn^z · exp(−zM/Mn)
-where z = Mn/(Mw − Mn).  Equivalent to Gamma(shape=z, scale=Mw−Mn).
+  The PDF is:
+      f(M) = z^(z+1)/Γ(z+1) · M^(z−1)/Mn^z · exp(−zM/Mn)
+  where z = Mn/(Mw − Mn).  Equivalent to Gamma(shape=z, scale=Mw−Mn).
 
-Args:
-    Mn: Number-average molecular weight (g/mol).
-    Mw: Weight-average molecular weight (g/mol), must satisfy Mw > Mn.
+  Args:
+      Mn: Number-average molecular weight (g/mol).
+      Mw: Weight-average molecular weight (g/mol), must satisfy Mw > Mn.
 
-Methods:
-    sample_mass(rng) → float     draw one mass sample
-    mass_pdf(mass_array) → ndarray
+  Methods:
+      sample_mass(rng) → float     draw one mass sample
+      mass_pdf(mass_array) → ndarray
 ```
 
 Claude notes: z = 1/(PDI − 1) = 5.0 for PDI = 1.20.
 
-**Step 4 — understand AmberPolymerBuilder**
+**Step 4 — locate `AmberPolymerBuilder` by capability, then drill in**
 
 ```
-get_signature("molpy.builder.polymer.ambertools.AmberPolymerBuilder.__init__")
+molmcp_find_capability("build a polymer with AmberTools / GAFF parameters")
 ```
+
+picks out `molpy.builder.polymer.ambertools.AmberPolymerBuilder`. Claude then
+reads its constructor and `build` method:
+
 ```
-(library: dict[str, Atomistic],
- force_field: str = "gaff2",
- charge_method: str = "bcc",
- work_dir: Path = Path("amber_work"),
- env: str = "AmberTools25",
- env_manager: str = "conda")
+molmcp_describe_symbol("molpy.builder.polymer.ambertools.AmberPolymerBuilder")
 ```
 
 ```
-get_docstring("molpy.builder.polymer.ambertools.AmberPolymerBuilder.build")
-```
-```
-Build a polymer from a CGSmiles string.
-
-Args:
-    cgsmiles: CGSmiles notation, e.g. "{[#MeH][#EO]|10[#MeT]}"
-              |N means N repeat units of the preceding monomer.
-
-Returns:
-    AmberBuildResult with .frame (Frame) and .forcefield (ForceField).
-
-Pipeline (automatic):
-    antechamber  → GAFF atom types + BCC charges (mol2 + ac files)
-    parmchk2     → missing torsion/vdW parameters (frcmod)
-    prepgen      → HEAD / CHAIN / TAIL residue variants (prepi)
-    tleap        → build polymer and generate prmtop / inpcrd
+signature: (library: dict[str, Atomistic],
+            force_field: str = "gaff2",
+            charge_method: str = "bcc",
+            work_dir: Path = Path("amber_work"),
+            env: str = "AmberTools25",
+            env_manager: str = "conda")
 ```
 
-**Step 5 — check the Li⁺ parameter source**
-
-Claude does not guess at Li⁺ LJ parameters — it searches the codebase for the canonical reference:
-
 ```
-search_source("Aqvist")
-```
-```
-tests/test_e2e_peo_litfsi.py:147:    """Write Åqvist (1990) Li+ frcmod and build prmtop via tleap."""
-tests/test_e2e_peo_litfsi.py:149:    # σ = 2 * Rmin/2 / 2^(1/6); Rmin/2 = 1.137 Å → σ = 2.026 Å
-tests/test_e2e_peo_litfsi.py:150:    R_MIN_HALF = 1.137   # Å
-tests/test_e2e_peo_litfsi.py:151:    EPS_LI     = 0.0183  # kcal/mol
+molmcp_describe_symbol("molpy.builder.polymer.ambertools.AmberPolymerBuilder.build")
 ```
 
-This confirms the parameters: **Åqvist (1990), J. Phys. Chem. 94, 8021**.
-Rmin/2 = 1.137 Å, ε = 0.0183 kcal/mol. Claude writes these directly into a frcmod file.
+```
+docstring:
+  Build a polymer from a CGSmiles string.
+
+  Args:
+      cgsmiles: CGSmiles notation, e.g. "{[#MeH][#EO]|10[#MeT]}"
+                |N means N repeat units of the preceding monomer.
+
+  Returns:
+      AmberBuildResult with .frame (Frame) and .forcefield (ForceField).
+
+  Pipeline (automatic):
+      antechamber  → GAFF atom types + BCC charges (mol2 + ac files)
+      parmchk2     → missing torsion/vdW parameters (frcmod)
+      prepgen      → HEAD / CHAIN / TAIL residue variants (prepi)
+      tleap        → build polymer and generate prmtop / inpcrd
+```
+
+**Step 5 — pin Li⁺ parameters via the `tests` edge**
+
+Claude does not guess at Li⁺ LJ parameters. Instead of `grep`, it walks the
+graph: any reference to "Aqvist" is a node, and the `test` nodes around it tell
+Claude exactly which parameter values MolPy considers canonical:
+
+```
+molmcp_search_symbols("Aqvist")
+```
+
+```
+test_e2e_peo_litfsi.test_li_frcmod   (test, tests/test_e2e_peo_litfsi.py:147)
+    "Write Åqvist (1990) Li+ frcmod and build prmtop via tleap."
+```
+
+```
+molmcp_describe_symbol(
+    "test_e2e_peo_litfsi.test_li_frcmod", include_source=True
+)
+```
+
+reveals the canonical reference: **Åqvist (1990), J. Phys. Chem. 94, 8021** —
+Rmin/2 = 1.137 Å, ε = 0.0183 kcal/mol. Claude writes these directly into a
+frcmod file.
 
 **Step 6 — find the packing and export interfaces**
 
 ```
-list_symbols("molpy.pack")
+molmcp_outline(path="molpy/pack")
 ```
+
 ```
 Molpack                  High-level Packmol packing interface
 InsideBoxConstraint      Place molecules inside a rectangular box
@@ -551,23 +624,17 @@ Target                   One packing target (frame + count + constraint)
 ```
 
 ```
-get_signature("molpy.pack.Molpack.optimize")
+molmcp_describe_symbol("molpy.pack.Molpack.optimize")
 ```
+
 ```
 (max_steps: int = 20000, seed: int = 12345) → Frame
 ```
 
 ```
-search_source("write_lammps_forcefield")
-```
-```
-src/molpy/io/__init__.py:  from molpy.io.writers import write_lammps_forcefield
-src/molpy/io/writers.py:   def write_lammps_forcefield(path, forcefield, skip_pair_style=False)
+molmcp_describe_symbol("molpy.io.write_lammps_forcefield")
 ```
 
-```
-get_signature("molpy.io.write_lammps_forcefield")
-```
 ```
 (path: Path | str,
  forcefield: ForceField,
@@ -577,22 +644,38 @@ get_signature("molpy.io.write_lammps_forcefield")
 
 Claude notes: `skip_pair_style=True` is needed so the LAMMPS input script can control `kspace_style` independently.
 
-**Step 7 — confirm ForceField.merge**
+**Step 7 — confirm `ForceField.merge` with the `examples` edge**
 
 ```
-get_signature("molpy.core.forcefield.ForceField.merge")
-```
-```
-(other: ForceField) → ForceField
+molmcp_relations(
+    "molpy.core.forcefield.ForceField.merge", relation="examples"
+)
 ```
 
+returns the docstring example plus tests that exercise the method on real force
+fields, confirming the contract:
+
 ```
-get_docstring("molpy.core.forcefield.ForceField.merge")
+docstring:
+  Merge two ForceField objects.  Returns a new ForceField containing all
+  styles and parameters from both.  Raises if incompatible styles are found.
 ```
+
+**Step 8 — sanity-check impact before committing**
+
+Before writing the script, Claude does one final graph query — a multi-hop
+`impact` walk from the export functions it plans to call, to make sure it
+understands the dependencies it is about to wire together:
+
 ```
-Merge two ForceField objects.  Returns a new ForceField containing all styles
-and parameters from both.  Raises if incompatible styles are found.
+molmcp_relations(
+    "molpy.io.write_lammps_data", relation="impact", depth=2
+)
 ```
+
+confirms `write_lammps_data` ultimately reads `frame.box` and per-atom
+`charge`/`mol_id` columns — which is why the generated script explicitly fills
+those columns before exporting.
 
 With this information Claude has everything it needs to assemble the script.
 
@@ -601,7 +684,6 @@ With this information Claude has everything it needs to assemble the script.
 
 ## See Also
 
-- [molmcp](https://github.com/MolCrafts/molmcp) — the MCP foundation: introspection tools, Provider plugin contract, and security middleware shared across the MolCrafts ecosystem
-- [Writing a Provider](https://github.com/MolCrafts/molmcp#adding-domain-tools-for-molcrafts-packages) — extension point for adding domain tools to MolCrafts packages (stateful queries only; introspection covers the API surface)
 - [Tool Layer](../tutorials/tools.md) — what the Tool workflows do and when to use them
 - [Polydisperse Systems](../user-guide/05_polydisperse_systems.ipynb) — end-to-end workflow from distribution to LAMMPS export
+- [Discovery engine reference](https://molcrafts.github.io/molmcp/concepts/discovery/) — the full code-graph schema, snapshot/cache mechanics, and CLI for the curious

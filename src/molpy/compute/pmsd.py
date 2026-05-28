@@ -116,25 +116,27 @@ class PMSDCompute(Compute["Trajectory", PMSDResult]):
         coords_cations = coords_traj[:, cation_mask, :]
         coords_anions = coords_traj[:, anion_mask, :]
 
-        # Unwrap coordinates using Box.diff_dr() directly
+        # Unwrap coordinates via molrs Box.delta (minimum-image, Rust backend).
         n_frames = coords_traj.shape[0]
 
         # Unwrap cations
         coords_cations_unwrapped = np.zeros_like(coords_cations)
-        coords_cations_unwrapped[0] = coords_cations[0].copy()
+        coords_cations_unwrapped[0] = coords_cations[0]
         for i in range(1, n_frames):
-            displacement = coords_cations[i] - coords_cations[i - 1]
-            displacement_mic = box_list[i].diff_dr(displacement)
+            displacement_mic = box_list[i].delta(
+                coords_cations[i - 1], coords_cations[i], minimum_image=True
+            )
             coords_cations_unwrapped[i] = (
                 coords_cations_unwrapped[i - 1] + displacement_mic
             )
 
         # Unwrap anions
         coords_anions_unwrapped = np.zeros_like(coords_anions)
-        coords_anions_unwrapped[0] = coords_anions[0].copy()
+        coords_anions_unwrapped[0] = coords_anions[0]
         for i in range(1, n_frames):
-            displacement = coords_anions[i] - coords_anions[i - 1]
-            displacement_mic = box_list[i].diff_dr(displacement)
+            displacement_mic = box_list[i].delta(
+                coords_anions[i - 1], coords_anions[i], minimum_image=True
+            )
             coords_anions_unwrapped[i] = (
                 coords_anions_unwrapped[i - 1] + displacement_mic
             )

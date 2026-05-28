@@ -1,8 +1,8 @@
 ---
 slug: molrs-backend
-status: in-progress
+status: code-complete
 created: 2026-05-06
-revised: 2026-05-06
+revised: 2026-05-28
 ---
 
 # molrs-backend — molrs 作为 molpy 的默认计算后端
@@ -194,7 +194,7 @@ molrs 以 `borrow_from_array` 形式回传。整个 molpy 侧**禁止**调用 `.
 | `tests/test_compute/test_msd.py` etc. | 每个新暴露算子各一个 smoke + parity 测试 |
 | `tests/test_compute/test_embed_replacement.py` | 替换前后产物等价（构象 RMSD ≤ tol） |
 | `tests/test_core/test_box.py` | 现有 Box 测试需更新构造签名 |
-| `docs/user/compute/molrs-backend.md` | 安装、API 说明、与旧版差异 |
+| `docs/developer/molrs-backend.md` | 安装、API 说明、与旧版差异 |
 | `docs/changelog.md` | breaking change 条目 |
 | **molrs 侧（本 spec 显式纳入）** | |
 | `molrs/molrs-python/src/simbox.rs` | `#[pyclass(...)]` 加 `subclass` 标记 |
@@ -230,19 +230,26 @@ molrs 以 `borrow_from_array` 形式回传。整个 molpy 侧**禁止**调用 `.
 
 **Phase 3 — 替换 RDKit-based embed**
 
-- [ ] Write failing test `test_embed_replacement.py::test_generate3d_returns_3d_coords` against the new `compute/embed.py::Generate3D` (molrs-backed).
-- [ ] Implement `compute/embed.py::Generate3D` and `OptimizeGeometry` wrapping `molrs.generate_3d` / `molrs.EmbedOptions`; tests pass.
-- [ ] Write parity test `test_embed_replacement.py::test_old_vs_new_geometry_close` — for a small molecule set, RMSD between old RDKit-produced and new molrs-produced geometries within a documented tolerance (or, if not bit-comparable, both pass an independent geometry sanity check: bond lengths within 10% of literature values).
-- [ ] Delete `src/molpy/compute/rdkit.py`; remove `_HAS_RDKIT` from `compute/__init__.py`; remove `rdkit` extras from pyproject.
-- [ ] Update any docs / examples that referenced the old RDKit-backed names.
+> Operator decision (2026-05-28): keep the RDKit adapter (`adapter/rdkit.py`)
+> and the RDKit tool (`tool/rdkit.py`) as an OPTIONAL external backend; only
+> the **main trunk** compute operator switches to molrs. So `compute.Generate3D`
+> becomes molrs-backed (`Atomistic → Atomistic`); `_HAS_RDKIT` is removed from
+> `compute/` only (adapter/ + tool/ retain it); `rdkit` stays an optional extra
+> item (dev/doc), not removed.
+
+- [x] Write failing test `test_embed_replacement.py::test_generate3d_returns_3d_coords` against the new `compute/embed.py::Generate3D` (molrs-backed).
+- [x] Implement `compute/embed.py::Generate3D` wrapping `molpy.embed.generate_3d` (→ `molrs.generate_3d` / `molrs.EmbedOptions`); tests pass.  *(`OptimizeGeometry` omitted: molrs exposes only the full `generate_3d` pipeline — which already includes energy minimization — and no standalone "optimize existing coords" entry; a geometry-only optimizer remains in the optional RDKit tool.)*
+- [x] Geometry sanity test `test_embed_replacement.py::test_embed_replacement_physical_sanity` — water/methane/ethanol bond lengths within 10% of literature values (the acceptance criterion's non-bit-comparable alternative; old↔new RMSD parity is not meaningful since the backends use unrelated RNG paths).
+- [x] Delete `src/molpy/compute/rdkit.py`; remove `_HAS_RDKIT` from `compute/__init__.py` (kept `rdkit` as an optional extra item per the operator decision; only the standalone extras key was already absent).
+- [x] Update docs / examples / docstrings that referenced the old RDKit-backed names (no docs/examples refs found; fixed `embed/__init__.py` docstring; repointed `test_polymer_builder.py` to `tool.rdkit.Generate3D`).
 
 **Phase 4 — MCD / PMSD 内部改造**
 
 > 单行高层任务；每条在 `/mol:impl` 启动时拆为 (a) 改 PBC 距离调用 →
 > molrs.NeighborQuery (b) parity 测试 vs 旧实现 (c) 性能基准（可选）。
 
-- [ ] 把 `compute/mcd.py` 内部的 PBC 距离/邻居计算改调 molrs；公开签名保持不变。
-- [ ] 把 `compute/pmsd.py` 内部的 PBC 距离/邻居计算改调 molrs；公开签名保持不变。
+- [x] 把 `compute/mcd.py` 内部的 PBC 距离计算改调 molrs `Box.delta(minimum_image=True)`（替换 molpy 侧 `Box.diff_dr`）；公开签名保持不变。新增 `tests/test_compute/test_mcd.py`（signature + 跨周期边界 unwrap → MSD = (kΔ)² 解析解）。
+- [x] 把 `compute/pmsd.py` 内部 cation/anion unwrap 改调 molrs `Box.delta(minimum_image=True)`；公开签名保持不变。新增 `tests/test_compute/test_pmsd.py`（signature + 跨边界 PMSD = (kΔ)² 解析解）。  *(rewire 为行为保持的 refactor：先以现有 `diff_dr` 实现锚定 9 个特征测试为绿，再切换到 `delta`，确认数值逐元素一致。)*
 
 **Phase 5 — 暴露其它 molrs 分析**
 
@@ -258,9 +265,10 @@ molrs 以 `borrow_from_array` 形式回传。整个 molpy 侧**禁止**调用 `.
 
 **Phase 6 — 文档与收尾**
 
-- [ ] 写 `docs/user/compute/molrs-backend.md`：安装命令、Box 继承示例、NeighborList + RDF 最小例子、性能说明（一处 column_stack 拷贝及其原因）、其它分析的清单与示例。
-- [ ] 写 `docs/changelog.md` 的 breaking-change 段：molrs 由可选变必选；`compute.rdkit` 模块移除；最小 Python 兼容版本（如有变化）。
-- [ ] Run `pytest tests/ -v -m "not external"` 与 `pre-commit run --all-files`；都绿。
+- [x] 写 `docs/developer/molrs-backend.md`：安装命令、Box 继承示例（`class Box(molrs.Box)`）、NeighborList + RDF 最小例子、单处 column_stack 拷贝说明、MSD/Cluster/Gyration 等分析清单 + Generate3D 示例。已挂入 mkdocs nav（Guides）。
+- [x] 写 `docs/changelog.md` breaking-change 段：molrs 由可选变必选、`compute.rdkit` 移除（RDKit 降级为可选后端）、迁移指引。已挂入 mkdocs nav。
+- [x] Run `pytest tests/ -m "not external"`（1869 passed / 1 xfailed）、`ty check`、`pre-commit`（changed files：全部 Passed）、`compileall src tests`；都绿。
+- [x] Hygiene cleanup (`/mol:simplify`): janitor 发现 1 处 diff-scope dead locals（`mcd.py:110` 改写后 `n_atoms`/`n_dim` 未用），已删；2 处 pre-existing 越界项保留。批次后测试仍绿。
 
 ## Testing strategy
 
