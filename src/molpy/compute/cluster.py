@@ -14,7 +14,6 @@ from molrs.compute.cluster import Cluster as _MolrsCluster
 from molrs.compute.cluster import ClusterCenters as _MolrsClusterCenters
 
 from .base import Compute
-from .frame_view import to_molrs_frames
 
 
 class Cluster(Compute):
@@ -28,10 +27,10 @@ class Cluster(Compute):
 
     def __init__(self, min_cluster_size: int) -> None:
         super().__init__(min_cluster_size=min_cluster_size)
-        self._inner = _MolrsCluster(min_cluster_size)
+        self._impl = _MolrsCluster(min_cluster_size)
 
     def __call__(self, frames, neighbors):
-        return self._inner.compute(to_molrs_frames(frames), neighbors)
+        return self._impl.compute(frames, neighbors)
 
     def _compute(self, input):  # pragma: no cover — use __call__
         raise NotImplementedError(
@@ -44,10 +43,10 @@ class ClusterCenters(Compute):
 
     def __init__(self) -> None:
         super().__init__()
-        self._inner = _MolrsClusterCenters()
+        self._impl = _MolrsClusterCenters()
 
     def __call__(self, frames, clusters):
-        return self._inner.compute(to_molrs_frames(frames), clusters)
+        return self._impl.compute(frames, clusters)
 
     def _compute(self, input):  # pragma: no cover — use __call__
         raise NotImplementedError(

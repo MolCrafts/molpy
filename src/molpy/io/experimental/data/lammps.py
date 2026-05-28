@@ -34,4 +34,4 @@ class LammpsDataWriter(DataWriter):
         self.atom_style = atom_style
 
     def write(self, frame: Frame) -> None:
-        molrs.io.write_lammps_data(str(self._path), frame.to_molrs())
+        molrs.io.write_lammps_data(str(self._path), frame)

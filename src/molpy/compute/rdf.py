@@ -7,7 +7,6 @@ is the normalized g(r) and not the raw histogram.
 
 from __future__ import annotations
 
-import molrs
 from molrs.compute.density import RDF as _MolrsRDF
 from molrs.compute.density import RDFResult as _MolrsRDFResult
 
@@ -36,27 +35,16 @@ class RDF(Compute):
 
     def __init__(self, n_bins: int, r_max: float, r_min: float = 0.0):
         super().__init__(n_bins=n_bins, r_max=r_max, r_min=r_min)
-        self._inner = _MolrsRDF(n_bins, r_max, r_min)
+        self._rdf = _MolrsRDF(n_bins, r_max, r_min)
 
     def __call__(self, frames, neighbors) -> _MolrsRDFResult:
-        molpy_frames = self._as_list(frames)
-        molrs_frames = [self._molrs_frame_view(f) for f in molpy_frames]
-        return self._inner.compute(molrs_frames, self._as_list(neighbors))
-
-    @staticmethod
-    def _molrs_frame_view(frame) -> molrs.Frame:
-        """Build a molrs.Frame whose simbox is the molpy frame's box.
-
-        ``RDF.compute`` only reads ``simbox_ref()`` from the frame
-        (coordinates come from the NeighborList), so this view does not
-        copy any coordinate data — it just attaches the existing Box
-        (which IS-A molrs.Box) to a fresh molrs.Frame.
-        """
-        if frame.box.is_free:
-            raise ValueError("frame.box is required for RDF computation")
-        mf = molrs.Frame()
-        mf.simbox = frame.box
-        return mf
+        frame_list = self._as_list(frames)
+        for f in frame_list:
+            if f.box.is_free:
+                raise ValueError("frame.box is required for RDF computation")
+        # molpy.Frame IS-A molrs.Frame — passed through PyO3 downcast
+        # with no conversion / column copy.
+        return self._rdf.compute(frame_list, self._as_list(neighbors))
 
     def _compute(self, input):  # pragma: no cover — RDF uses __call__ directly
         raise NotImplementedError(

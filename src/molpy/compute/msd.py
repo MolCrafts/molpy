@@ -10,7 +10,6 @@ from molrs.compute.msd import MSD as _MolrsMSD
 from molrs.compute.msd import MSDTimeSeries as _MolrsMSDTimeSeries
 
 from .base import Compute
-from .frame_view import to_molrs_frames
 
 
 class MSD(Compute):
@@ -24,7 +23,8 @@ class MSD(Compute):
 
     def __init__(self) -> None:
         super().__init__()
-        self._inner = _MolrsMSD()
+        self._impl = _MolrsMSD()
 
     def _compute(self, frames) -> _MolrsMSDTimeSeries:
-        return self._inner.compute(to_molrs_frames(frames))
+        # molpy.Frame IS-A molrs.Frame; molrs accepts the list as-is.
+        return self._impl.compute(frames)

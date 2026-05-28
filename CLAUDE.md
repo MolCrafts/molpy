@@ -271,9 +271,9 @@ def test_adapter_fallback():
 
 ### `core.frame` and `core.block`
 
-- **Backed by molrs**: `frame.py` does `import molrs` at module load. `Block` wraps `molrs.Block` and `Frame` wraps `molrs.Frame` (`_inner` attribute) — all column data lives in the Rust Store. `molcrafts-molrs` is a hard runtime dependency.
-- `Block`: Dict-like wrapper over a `molrs.Block` column store; columns are numpy arrays (views into Rust memory); supports advanced indexing; `rename(old, new)` for column key rename
-- `Frame`: Numerical container with named Blocks + `box: Box | None` (first-class attribute, delegates to the underlying `molrs.Frame.box`) + `metadata: dict`; `copy()` deep-copies into a new Rust Store and preserves box
+- **Inherits molrs**: `frame.py` does `import molrs` at module load and defines `Block(molrs.Block, MutableMapping)` and `Frame(molrs.Frame)`. A `molpy.Frame` IS-A `molrs.Frame` and is accepted by every `molrs.*` API that takes a frame, with no `.to_molrs()` / `_inner` bridge. Same for `Block`. `molcrafts-molrs` is a hard runtime dependency.
+- `Block`: Dict-like view over its inherited `molrs.Block` slot. Numeric / bool / string-list columns live in the Rust slot; object-dtype columns (e.g. element symbols) live on the Python side in `self._objects` and are **invisible to the Rust side** by design. `Block.from_dict(molrs.Block)` returns a write-through view (the molpy block aliases the source via `self._source` so `frame[key][col] = arr` propagates back to frame storage).
+- `Frame`: Numerical container inheriting `molrs.Frame` + `metadata: dict` (Python-only annotations like timestep) + per-block object-column cache. The `frame.box` getter upgrades the underlying `molrs.Box` to `molpy.Box` so callers keep the enriched Box API. `copy()` deep-copies into a new Rust Store and preserves box.
 - `Trajectory`: Sequence of Frames
 - **Box is on `frame.box`**, never in `frame.metadata["box"]`
 

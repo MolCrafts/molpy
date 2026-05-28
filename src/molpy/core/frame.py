@@ -13,13 +13,16 @@ from .selector import Selector
 type BlockLike = Mapping[str, ArrayLike]
 
 
-class Block(MutableMapping[str, np.ndarray]):
+class Block(molrs.Block, MutableMapping[str, np.ndarray]):
     """Lightweight container that maps variable names -> NumPy arrays.
 
-    Backed by ``molrs.Block`` (Rust FFI column store). All data lives in
-    the Rust Store; ``view()`` / ``insert()`` / ``remove()`` operate
-    directly on that memory. Python convenience methods (``sort``,
-    ``from_csv``, ``iterrows``, …) are built on top.
+    Inherits ``molrs.Block`` directly, so a ``molpy.Block`` IS-A
+    ``molrs.Block`` and is accepted by every ``molrs.*`` API that takes a
+    block (``Frame.__setitem__``, IO writers, …) with no conversion.
+    All numeric / bool / string-list columns live in the Rust Store;
+    object-dtype columns (e.g. element symbols stored as
+    ``np.array(..., dtype=object)``) live on the Python side in
+    ``self._objects`` — they have no Rust representation.
 
     • Behaves like a dict but auto-casts any assigned value to ndarray.
     • All built-in ``dict``/``MutableMapping`` helpers work out of the box.
@@ -78,10 +81,23 @@ class Block(MutableMapping[str, np.ndarray]):
     array([1, 2, 3])
     """
 
-    __slots__ = ("_inner", "_objects")
+    # No ``__slots__`` — PyO3 base classes do not permit subclass slot
+    # layouts; the few Python-only attributes go on ``__dict__``.
+
+    def __new__(cls, vars_: BlockLike | None = None) -> "Block":
+        # molrs.Block's PyO3 #[new] takes no args; Python passes our
+        # subclass __init__ args through __new__ by default, so we
+        # intercept here and discard them.
+        return super().__new__(cls)
 
     def __init__(self, vars_: BlockLike | None = None) -> None:
-        self._inner = molrs.Block()
+        super().__init__()  # finalize molrs.Block initialization
+        # When set, all numeric storage operations route through this
+        # external ``molrs.Block`` (an alias into some ``molrs.Frame``'s
+        # store) rather than ``self``'s own Rust slot. Populated by
+        # ``Block.from_dict(molrs.Block)`` so that
+        # ``frame[key][col] = arr`` writes through to the frame storage.
+        self._source: "molrs.Block | None" = None
         self._objects: dict[str, np.ndarray] = {}
         if vars_ is not None:
             if not isinstance(vars_, dict):
@@ -94,6 +110,43 @@ class Block(MutableMapping[str, np.ndarray]):
                         f"Value must be a BlockLike, i.e. dict[str, np.ndarray], "
                         f"but got {type(v)} for key {k}"
                     ) from e
+
+    # --- write-through routing --------------------------------------------
+
+    def _backing(self) -> "molrs.Block":
+        """Return the ``molrs.Block`` numeric ops should target.
+
+        Returns ``self._source`` when set (live alias into a parent
+        ``Frame``'s storage, populated by ``from_dict(molrs.Block)``),
+        otherwise ``self`` (the inherited Rust slot).
+        """
+        return self._source if self._source is not None else self
+
+    def _as_storage(self) -> "molrs.Block":
+        """The molrs.Block to hand to ``molrs.Frame.__setitem__``.
+
+        When this block is a write-through view of a parent frame's
+        storage (``_source`` set), passing ``self`` would clone the
+        empty inherited Rust slot; pass the source instead.
+        """
+        return self._backing()
+
+    # --- molrs.Block method overrides routed through ``_backing()``
+    # so external callers (e.g. molrs's per-format ``localize``/
+    # ``canonicalize`` field renamers) see the live storage, not the
+    # inherited-but-unused Rust slot.
+
+    def view(self, key: str):  # type: ignore[override]
+        return molrs.Block.view(self._backing(), key)
+
+    def insert(self, key: str, array) -> None:  # type: ignore[override]
+        molrs.Block.insert(self._backing(), key, array)
+
+    def remove(self, key: str) -> None:  # type: ignore[override]
+        molrs.Block.remove(self._backing(), key)
+
+    def dtype(self, key: str) -> str:  # type: ignore[override]
+        return molrs.Block.dtype(self._backing(), key)
 
     # --- core mapping API
 
@@ -116,7 +169,7 @@ class Block(MutableMapping[str, np.ndarray]):
         if isinstance(key, str):
             if key in self._objects:
                 return self._objects[key]
-            val = self._inner.view(key)
+            val = molrs.Block.view(self._backing(), key)
             return np.asarray(val) if isinstance(val, list) else val
         elif isinstance(key, int):
             # Return a plain dict for single-row access (avoids molrs
@@ -170,28 +223,32 @@ class Block(MutableMapping[str, np.ndarray]):
         if len(arr) == 0:
             self._objects[key] = arr  # empty arrays go to Python-side storage
             return
-        if key in self._inner.keys():
-            self._inner.remove(key)
+        if key in molrs.Block.keys(self._backing()):
+            molrs.Block.remove(self._backing(), key)
         self._objects.pop(key, None)
-        self._inner.insert(key, arr)
+        molrs.Block.insert(self._backing(), key, arr)
 
     def __delitem__(self, key: str) -> None:  # type: ignore[override]
         if key in self._objects:
             del self._objects[key]
         else:
-            self._inner.remove(key)
+            molrs.Block.remove(self._backing(), key)
 
     def __iter__(self) -> Iterator[str]:  # type: ignore[override]
-        yield from self._inner.keys()
+        yield from molrs.Block.keys(self._backing())
         yield from self._objects
 
     def __len__(self) -> int:  # type: ignore[override]
-        return len(self._inner.keys()) + len(self._objects)
+        return len(molrs.Block.keys(self._backing())) + len(self._objects)
 
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
             return False
-        return key in self._inner or key in self._objects
+        return molrs.Block.__contains__(self._backing(), key) or key in self._objects
+
+    def keys(self) -> list[str]:  # type: ignore[override]
+        """All column names (Rust slot + Python-side object columns)."""
+        return [*molrs.Block.keys(self._backing()), *self._objects]
 
     # ------------------------------------------------------------------ helpers
 
@@ -199,32 +256,39 @@ class Block(MutableMapping[str, np.ndarray]):
         """Return column *key* always as an ndarray (convert list→array)."""
         if key in self._objects:
             return self._objects[key]
-        val = self._inner.view(key)
+        val = molrs.Block.view(self._backing(), key)
         return np.asarray(val) if isinstance(val, list) else val
 
     def _as_dict(self) -> dict[str, np.ndarray]:
         """Return all columns as a dict of numpy arrays (views into Rust memory)."""
-        result = {k: self._view_array(k) for k in self._inner.keys()}
+        result = {k: self._view_array(k) for k in molrs.Block.keys(self._backing())}
         result.update(self._objects)
         return result
 
     def to_dict(self) -> dict[str, np.ndarray]:
         """Return a JSON-serialisable copy (arrays -> Python lists)."""
-        result = {k: np.asarray(self._view_array(k)) for k in self._inner.keys()}
+        result = {
+            k: np.asarray(self._view_array(k))
+            for k in molrs.Block.keys(self._backing())
+        }
         result.update(self._objects)
         return result
 
     @classmethod
     def from_dict(cls, data: dict[str, np.ndarray] | molrs.Block) -> "Block":
-        """Create a Block from a dict or wrap a ``molrs.Block`` (zero-copy view).
+        """Create a Block from a dict or alias a ``molrs.Block``.
 
-        When *data* is a ``molrs.Block``, the returned block accesses arrays
-        via ``view()`` — no array data is copied.
+        When *data* is already a ``cls`` instance, it is returned as-is.
+        When *data* is a bare ``molrs.Block``, the returned block aliases
+        it: numeric read/write operations route through *data* (so this
+        is a live view of *data*'s storage — useful for the
+        ``frame[key][col] = arr`` write-through idiom).
         """
+        if isinstance(data, cls):
+            return data
         if isinstance(data, molrs.Block):
-            block = cls.__new__(cls)
-            block._inner = data
-            block._objects = {}
+            block = cls()
+            block._source = data
             return block
         return cls({k: np.asarray(v) for k, v in data.items()})
 
@@ -327,7 +391,7 @@ class Block(MutableMapping[str, np.ndarray]):
     def copy(self) -> "Block":
         """Deep copy (data is copied into a new Rust Store)."""
         new = Block()
-        for k in self._inner.keys():
+        for k in molrs.Block.keys(self._backing()):
             new[k] = np.asarray(self._view_array(k))
         for k, v in self._objects.items():
             new._objects[k] = v.copy()
@@ -345,10 +409,10 @@ class Block(MutableMapping[str, np.ndarray]):
         """
         if old_key in self._objects:
             self._objects[new_key] = self._objects.pop(old_key)
-        elif old_key in self._inner.keys():
+        elif old_key in molrs.Block.keys(self._backing()):
             arr = self._view_array(old_key)
-            self._inner.remove(old_key)
-            self._inner.insert(new_key, arr)
+            molrs.Block.remove(self._backing(), old_key)
+            molrs.Block.insert(self._backing(), new_key, arr)
         else:
             raise KeyError(f"Column '{old_key}' not found in Block")
 
@@ -419,8 +483,8 @@ class Block(MutableMapping[str, np.ndarray]):
                 if k in self._objects:
                     self._objects[k] = v
                 else:
-                    self._inner.remove(k)
-                    self._inner.insert(k, v)
+                    molrs.Block.remove(self._backing(), k)
+                    molrs.Block.insert(self._backing(), k, v)
         return self
 
     # ------------------------------------------------------------------ repr / str
@@ -432,9 +496,10 @@ class Block(MutableMapping[str, np.ndarray]):
         return f"Block({contents})"
 
     @property
-    def nrows(self) -> int:
+    def nrows(self) -> int:  # type: ignore[override]
         """Return the number of rows (0 if empty)."""
-        n = self._inner.nrows
+        backing = self._backing()
+        n = molrs.Block.nrows.__get__(backing, type(backing))  # type: ignore[attr-defined]
         if n is not None and n > 0:
             return n
         for arr in self._objects.values():
@@ -519,22 +584,24 @@ class Block(MutableMapping[str, np.ndarray]):
             yield RowTuple(*row_values)
 
 
-class Frame:
+class Frame(molrs.Frame):
     """Hierarchical numerical data container with named blocks.
 
-    Backed by ``molrs.Frame`` (Rust FFI). Each ``Frame`` holds named
-    ``Block`` objects and ``metadata: dict[str, Any]`` for arbitrary
-    Python-side metadata.
+    Inherits ``molrs.Frame`` directly: a ``molpy.Frame`` IS-A
+    ``molrs.Frame`` and is accepted by every ``molrs.*`` API that takes
+    a frame, with no conversion bridge.
 
-    The ``box`` property delegates to the underlying ``molrs.Frame.box``
-    (which accepts ``molpy.Box`` because ``molpy.Box`` inherits
-    ``molrs.Box``).
+    Python-only state lives on the subclass ``__dict__``:
 
-    Structure:
-        Frame
-        ├─ _inner: molrs.Frame          # Rust storage
-        ├─ metadata: dict[str, Any]     # Python-side metadata
-        └─ box (via _inner.box)
+    - ``metadata: dict[str, Any]`` — molpy-side annotations (``timestep``,
+      ``description``, …) invisible to the Rust slot.
+    - ``_block_objects: dict[str, dict[str, np.ndarray]]`` — per-block
+      cache of object-dtype columns (string arrays etc.) that have no
+      Rust representation; reattached on ``__getitem__``.
+
+    The ``box`` getter still upgrades ``molrs.Box`` → ``molpy.Box`` so
+    callers keep molpy's enriched Box API (factories, lengths/angles,
+    PBC helpers).
 
     Args:
         blocks (dict[str, Block | dict] | None, optional): Initial blocks.
@@ -572,14 +639,24 @@ class Frame:
         'Test system'
     """
 
-    __slots__ = ("_inner", "metadata", "_block_objects")
+    # No ``__slots__`` — PyO3 base classes do not permit subclass slot
+    # layouts; Python-only attributes go on ``__dict__``.
+
+    def __new__(
+        cls,
+        blocks: dict[str, "Block | BlockLike"] | None = None,
+        **props: Any,
+    ) -> "Frame":
+        # molrs.Frame's PyO3 #[new] takes no args; intercept here so our
+        # subclass __init__ args do not reach the Rust constructor.
+        return super().__new__(cls)
 
     def __init__(
         self,
         blocks: dict[str, Block | BlockLike] | None = None,
         **props: Any,
     ) -> None:
-        self._inner = molrs.Frame()
+        super().__init__()  # finalize molrs.Frame initialization
         self.metadata: dict[str, Any] = dict(props)
         self._block_objects: dict[str, dict[str, np.ndarray]] = {}
         if blocks is not None:
@@ -605,24 +682,26 @@ class Frame:
 
     # ---------- main get/set --------------------------------------------
 
-    def __getitem__(self, key: str) -> Block:
+    def __getitem__(self, key: str) -> Block:  # type: ignore[override]
         """Get a Block by name.
 
         Args:
             key (str): Name of the block to retrieve.
 
         Returns:
-            Block: The requested block (wraps the molrs.Block zero-copy).
+            Block: The requested block (upgraded to molpy.Block; object
+                columns reattached from the Python-side cache).
 
         Raises:
             KeyError: If the block name doesn't exist.
         """
-        block = Block.from_dict(self._inner[key])
+        rs_block = molrs.Frame.__getitem__(self, key)
+        block = Block.from_dict(rs_block)
         if key in self._block_objects:
             block._objects.update(self._block_objects[key])
         return block
 
-    def __setitem__(self, key: str, value: BlockLike | Block) -> None:
+    def __setitem__(self, key: str, value: BlockLike | Block) -> None:  # type: ignore[override]
         """Set a Block by name.
 
         Args:
@@ -630,45 +709,36 @@ class Frame:
             value (Block | dict[str, ArrayLike]): Block to store.
         """
         if isinstance(value, Block):
-            self._inner[key] = value._inner
-            if value._objects:
-                self._block_objects[key] = value._objects.copy()
-            elif key in self._block_objects:
-                del self._block_objects[key]
+            mblock = value
         elif isinstance(value, molrs.Block):
-            self._inner[key] = value
-            self._block_objects.pop(key, None)
+            mblock = Block.from_dict(value)
         else:
-            blk = molrs.Block()
-            obj_cols: dict[str, np.ndarray] = {}
-            for k, v in value.items():
-                arr = np.asarray(v)
-                if arr.ndim == 0:
-                    continue
-                if arr.dtype.kind == "O" or len(arr) == 0:
-                    obj_cols[k] = arr
-                else:
-                    blk.insert(k, arr)
-            self._inner[key] = blk
-            if obj_cols:
-                self._block_objects[key] = obj_cols
-            elif key in self._block_objects:
-                del self._block_objects[key]
+            mblock = Block(value)
 
-    def __delitem__(self, key: str) -> None:
+        # If ``mblock`` aliases an external molrs.Block via ``_source``,
+        # hand that to molrs (passing ``mblock`` itself would clone the
+        # empty inherited Rust slot instead of the live storage).
+        storage = mblock._as_storage()
+        molrs.Frame.__setitem__(self, key, storage)
+        if mblock._objects:
+            self._block_objects[key] = mblock._objects.copy()
+        elif key in self._block_objects:
+            del self._block_objects[key]
+
+    def __delitem__(self, key: str) -> None:  # type: ignore[override]
         self._block_objects.pop(key, None)
-        del self._inner[key]
+        molrs.Frame.__delitem__(self, key)
 
-    def __contains__(self, key: str) -> bool:
-        return key in self._inner
+    def __contains__(self, key: str) -> bool:  # type: ignore[override]
+        return molrs.Frame.__contains__(self, key)
 
-    def __len__(self) -> int:
+    def __len__(self) -> int:  # type: ignore[override]
         """Return the number of blocks in the frame."""
-        return len(self._inner)
+        return molrs.Frame.__len__(self)
 
-    def keys(self):
+    def keys(self):  # type: ignore[override]
         """Return block names."""
-        return self._inner.keys()
+        return molrs.Frame.keys(self)
 
     # ---------- helpers -------------------------------------------------
 
@@ -683,30 +753,31 @@ class Frame:
         return iter(self._blocks.values())
 
     @property
-    def box(self):
+    def box(self):  # type: ignore[override]
         """The simulation Box (FREE box when unset)."""
-        raw = self._inner.box
-        if raw is None:
-            from molpy.core.box import Box
-
-            return Box()  # FREE
+        raw = super().box  # molrs.Frame.box getter via MRO
         from molpy.core.box import Box
 
+        if raw is None:
+            return Box()  # FREE
         return Box(matrix=raw.matrix, pbc=raw.pbc, origin=raw.origin)
 
     @box.setter
     def box(self, value) -> None:
         from molpy.core.box import Box
 
+        # Resolve descriptor on the base class so subclass property
+        # assignment lands in the Rust slot.
+        rust_box_setter = molrs.Frame.box.__set__  # type: ignore[attr-defined]
         if value is None:
-            self._inner.box = None
+            rust_box_setter(self, None)
         elif isinstance(value, Box):
             if getattr(value, "_is_free", False):
-                self._inner.box = None
+                rust_box_setter(self, None)
             else:
-                self._inner.box = value  # molpy.Box IS a molrs.Box
+                rust_box_setter(self, value)  # molpy.Box IS-A molrs.Box
         elif isinstance(value, molrs.Box):
-            self._inner.box = value
+            rust_box_setter(self, value)
         else:
             raise TypeError(f"Expected Box or None, got {type(value)}")
 
@@ -723,16 +794,23 @@ class Frame:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | molrs.Frame) -> "Frame":
-        """Create a Frame from a dict or wrap a ``molrs.Frame`` (zero-copy view).
+        """Create a Frame from a dict or upgrade a ``molrs.Frame``.
 
-        When *data* is a ``molrs.Frame``, treats it as a nested dict of numpy
-        arrays — blocks are accessed via ``view()``.  No array data is copied.
+        When *data* is already a ``cls`` instance it is returned as-is.
+        When *data* is a bare ``molrs.Frame``, each block is copied into
+        a fresh ``cls`` instance; ``meta`` (if any) flows into
+        ``metadata``.
         """
+        if isinstance(data, cls):
+            return data
         if isinstance(data, molrs.Frame):
-            frame = cls.__new__(cls)
-            frame._inner = data
+            frame = cls()
+            for name in molrs.Frame.keys(data):
+                frame[name] = molrs.Frame.__getitem__(data, name)
+            raw_box = molrs.Frame.box.__get__(data, type(data))  # type: ignore[attr-defined]
+            if raw_box is not None:
+                frame.box = raw_box
             frame.metadata = dict(data.meta) if data.meta else {}
-            frame._block_objects = {}
             return frame
         blocks = {name: Block.from_dict(blk) for name, blk in data["blocks"].items()}
         frame = cls(blocks=blocks)
@@ -751,14 +829,6 @@ class Frame:
         new_frame.box = self.box
         new_frame.metadata = self.metadata.copy()
         return new_frame
-
-    def to_molrs(self) -> molrs.Frame:
-        """Return the underlying ``molrs.Frame`` for compute API calls.
-
-        This is a zero-copy operation — the returned frame shares the same
-        Rust Store as this ``Frame``.
-        """
-        return self._inner
 
     # ---------- repr ----------------------------------------------------
 

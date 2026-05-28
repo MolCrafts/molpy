@@ -20,7 +20,6 @@ from molrs.compute.cluster import (
 )
 
 from .base import Compute
-from .frame_view import to_molrs_frames
 
 
 def _as_masses(masses):
@@ -40,10 +39,10 @@ class CenterOfMass(Compute):
 
     def __init__(self, masses=None) -> None:
         super().__init__(masses=masses)
-        self._inner = _MolrsCenterOfMass(_as_masses(masses))
+        self._impl = _MolrsCenterOfMass(_as_masses(masses))
 
     def __call__(self, frames, clusters):
-        return self._inner.compute(to_molrs_frames(frames), clusters)
+        return self._impl.compute(frames, clusters)
 
     def _compute(self, input):  # pragma: no cover — use __call__
         raise NotImplementedError(
@@ -56,10 +55,10 @@ class GyrationTensor(Compute):
 
     def __init__(self) -> None:
         super().__init__()
-        self._inner = _MolrsGyrationTensor()
+        self._impl = _MolrsGyrationTensor()
 
     def __call__(self, frames, clusters, centers):
-        return self._inner.compute(to_molrs_frames(frames), clusters, centers)
+        return self._impl.compute(frames, clusters, centers)
 
     def _compute(self, input):  # pragma: no cover — use __call__
         raise NotImplementedError(
@@ -78,10 +77,10 @@ class InertiaTensor(Compute):
 
     def __init__(self, masses=None) -> None:
         super().__init__(masses=masses)
-        self._inner = _MolrsInertiaTensor(_as_masses(masses))
+        self._impl = _MolrsInertiaTensor(_as_masses(masses))
 
     def __call__(self, frames, clusters, com):
-        return self._inner.compute(to_molrs_frames(frames), clusters, com)
+        return self._impl.compute(frames, clusters, com)
 
     def _compute(self, input):  # pragma: no cover — use __call__
         raise NotImplementedError(
@@ -100,10 +99,10 @@ class RadiusOfGyration(Compute):
 
     def __init__(self, masses=None) -> None:
         super().__init__(masses=masses)
-        self._inner = _MolrsRadiusOfGyration(_as_masses(masses))
+        self._impl = _MolrsRadiusOfGyration(_as_masses(masses))
 
     def __call__(self, frames, clusters, com):
-        return self._inner.compute(to_molrs_frames(frames), clusters, com)
+        return self._impl.compute(frames, clusters, com)
 
     def _compute(self, input):  # pragma: no cover — use __call__
         raise NotImplementedError(

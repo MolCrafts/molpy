@@ -49,5 +49,4 @@ class GroWriter(DataWriter):
         super().__init__(Path(path), **kwargs)
 
     def write(self, frame: Frame) -> None:
-        molrs_frame = frame.to_molrs()
-        molrs.io.write_gro(self._path, molrs_frame)
+        molrs.io.write_gro(self._path, frame)

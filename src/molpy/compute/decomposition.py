@@ -24,10 +24,10 @@ class Pca(Compute):
 
     def __init__(self) -> None:
         super().__init__()
-        self._inner = _MolrsPca2()
+        self._impl = _MolrsPca2()
 
     def _compute(self, rows):
-        return self._inner.compute(rows)
+        return self._impl.compute(rows)
 
 
 class KMeans(Compute):
@@ -45,10 +45,10 @@ class KMeans(Compute):
 
     def __init__(self, k: int, max_iter: int = 100, seed: int = 0) -> None:
         super().__init__(k=k, max_iter=max_iter, seed=seed)
-        self._inner = _MolrsKMeans(k, max_iter, seed)
+        self._impl = _MolrsKMeans(k, max_iter, seed)
 
     def _compute(self, pca_result):
-        return self._inner.compute(pca_result)
+        return self._impl.compute(pca_result)
 
 
 __all__ = ["DescriptorRow", "Pca", "KMeans"]
