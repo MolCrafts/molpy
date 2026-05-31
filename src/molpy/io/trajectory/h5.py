@@ -21,9 +21,7 @@ HDF5 Trajectory Structure:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
@@ -35,11 +33,15 @@ except ImportError:
 from molpy.core import Frame
 
 from ..data.h5 import frame_to_h5_group, h5_group_to_frame
-from .base import PathLike, TrajectoryWriter
+from .base import BaseTrajectoryReader, PathLike, TrajectoryWriter
 
 
-class HDF5TrajectoryReader:
+class HDF5TrajectoryReader(BaseTrajectoryReader):
     """Read Trajectory objects from HDF5 files.
+
+    A binary, random-access :class:`BaseTrajectoryReader`: it implements only
+    ``read_frame`` + ``n_frames`` and inherits ``__iter__`` / ``__getitem__`` /
+    slicing / ``__len__`` from the pure base (no mmap).
 
     The HDF5 file structure should follow:
     - /frames/{frame_index}/blocks/ for data blocks
@@ -64,21 +66,20 @@ class HDF5TrajectoryReader:
             raise ImportError(
                 "h5py is required for HDF5 support. Install it with: pip install h5py"
             )
-        self._path = Path(path)
-        if not self._path.exists():
-            raise FileNotFoundError(f"HDF5 trajectory file not found: {self._path}")
+        super().__init__(path)  # BaseReader: normalize fpaths + validate existence
+        self._path = self.fpath
         self._open_kwargs = open_kwargs
         self._file: h5py.File | None = None
         self._n_frames: int | None = None
 
     def __enter__(self):
-        """Open HDF5 file."""
+        """Open the HDF5 file and cache the frame count."""
         self._file = h5py.File(self._path, mode="r", **self._open_kwargs)
         self._n_frames = self._get_n_frames()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Close HDF5 file."""
+    def close(self) -> None:
+        """Close the HDF5 file if open."""
         if self._file:
             self._file.close()
             self._file = None
@@ -172,44 +173,6 @@ class HDF5TrajectoryReader:
 
         frame_group = frames_group[frame_key]
         return h5_group_to_frame(frame_group)
-
-    def __iter__(self) -> Iterator[Frame]:
-        """Iterate over all frames lazily."""
-        if self.n_frames == 0:
-            return
-        with h5py.File(self._path, "r") as f:
-            if "frames" not in f:
-                return
-            frames_group = f["frames"]
-            # Get sorted frame indices
-            frame_indices = sorted(
-                (int(k) for k in frames_group.keys() if k.isdigit()),
-                key=int,
-            )
-            for index in frame_indices:
-                frame_group = frames_group[str(index)]
-                yield h5_group_to_frame(frame_group)
-
-    def __len__(self) -> int:
-        """Return number of frames."""
-        return self.n_frames
-
-    def __getitem__(self, index: int | slice) -> Frame | list[Frame]:
-        """Support indexing and slicing of frames.
-
-        Args:
-            index: Frame index or slice
-
-        Returns:
-            Frame or list of Frames
-        """
-        if isinstance(index, int):
-            return self.read_frame(index)
-        elif isinstance(index, slice):
-            start, stop, step = index.indices(self.n_frames)
-            return [self.read_frame(i) for i in range(start, stop, step)]
-        else:
-            raise TypeError("Index must be int or slice")
 
 
 class HDF5TrajectoryWriter(TrajectoryWriter):

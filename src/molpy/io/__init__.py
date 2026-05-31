@@ -96,9 +96,11 @@ from .readers import (
 
 # Convenience alias: read_amber(prmtop, inpcrd=None, frame=None)
 read_amber = read_amber_prmtop
+from .base import BaseReader
 from .trajectory.base import (
     BaseTrajectoryReader,
     FrameLocation,
+    MmapTrajectoryReader,
     TrajectoryWriter,
 )
 
@@ -217,7 +219,9 @@ __all__ = [
     "ForceFieldWriter",
     "LAMMPSForceFieldWriter",
     # Trajectory Readers
+    "BaseReader",
     "BaseTrajectoryReader",
+    "MmapTrajectoryReader",
     "FrameLocation",
     "HDF5TrajectoryReader",
     "LammpsTrajectoryReader",

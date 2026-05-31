@@ -2,10 +2,10 @@ from pathlib import Path
 
 from molpy.core import Block, Frame
 
-from .base import BaseTrajectoryReader, FrameLocation, TrajectoryWriter
+from .base import FrameLocation, MmapTrajectoryReader, TrajectoryWriter
 
 
-class XYZTrajectoryReader(BaseTrajectoryReader):
+class XYZTrajectoryReader(MmapTrajectoryReader):
     """Reader for XYZ trajectory files."""
 
     def _parse_trajectory(self, file_index: int):
@@ -169,7 +169,7 @@ class XYZTrajectoryWriter(TrajectoryWriter):
         """Write a single frame to the XYZ file."""
         atoms = frame["atoms"]
         box = frame.box
-        n_atoms = len(atoms)
+        n_atoms = atoms.nrows
 
         self.fobj.write(f"{n_atoms}\n")
 

@@ -1,21 +1,26 @@
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from pathlib import Path
 from typing import IO
 
 from molpy.core.frame import Frame
 
-PathLike = str | Path
+from ..base import BaseReader, PathLike
 
 
 # ─────────────────────────────────────────────────────────────────────
 # Shared context-manager boilerplate
 # ─────────────────────────────────────────────────────────────────────
-class FileBase(ABC):
-    """Common logic for Context-manager + lazy file handle."""
+class FileBase(BaseReader):
+    """Lazy text file handle on top of ``BaseReader``'s path/lifecycle.
+
+    Readers open lazily (no eager existence check — ``must_exist=False`` — so a
+    missing file surfaces on first read, preserving historical behavior);
+    writers create their target on open.
+    """
 
     def __init__(self, path: PathLike, mode: str, **open_kwargs):
-        self._path = Path(path)
+        super().__init__(path, must_exist=False)
+        self._path = self.fpath  # retained for subclasses that read self._path
         self._mode = mode
         self._open_kwargs = open_kwargs
         self._fh: IO[str] | None = None
@@ -26,6 +31,9 @@ class FileBase(ABC):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def close(self) -> None:
         if self._fh:
             self._fh.close()
             self._fh = None
