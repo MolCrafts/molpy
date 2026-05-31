@@ -6,4 +6,3 @@
 - [dielectric-susceptibility-02-molrs-dielectric](dielectric-susceptibility-02-molrs-dielectric.md) — molrs dielectric：dipole_moment + current_density + static_dielectric_constant + EH/GK spectra + decompose_current [approved]
 - [dielectric-susceptibility-05-validate](dielectric-susceptibility-05-validate.md) — 域验证：Kramers-Kronig + conductivity sum rule + route agreement (molrs) + 合成 Debye 集成测试 [approved]
 - [molrs-analyses-expose-02](molrs-analyses-expose-02.md) — 暴露剩余 molrs.compute 分析（Steinhardt/Hexatic/Nematic/SolidLiquid、LocalDensity/GaussianDensity、StaticStructureFactorDebye、BondOrder、PMFTXY、ClusterProperties）为 molpy 薄壳算子 [code-complete]
-- [frame-reader-hierarchy-02-reparent](frame-reader-hierarchy-02-reparent.md) — HDF5TrajectoryReader 改挂纯 BaseTrajectoryReader（删复制的迭代接口）+ 修 io/__init__ 与 trajectory/__init__ 导出；依赖 01（已 done）[approved]
