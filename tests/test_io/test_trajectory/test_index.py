@@ -296,7 +296,7 @@ class TestIndexPersistence:
 
         # Append a third frame (modifies file)
         writer = LammpsTrajectoryWriter.__new__(LammpsTrajectoryWriter)
-        writer.fpath = traj_file
+        writer.fpaths = [traj_file]  # `fpath` is now a read-only BaseReader property
         writer._fp = open(traj_file, "ab")
         frame = mp.Frame()
         frame["atoms"] = {"id": [0], "type": [1], "x": [0.0], "y": [0.0], "z": [0.0]}
