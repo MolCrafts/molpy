@@ -169,7 +169,7 @@ class XYZTrajectoryWriter(TrajectoryWriter):
         """Write a single frame to the XYZ file."""
         atoms = frame["atoms"]
         box = frame.box
-        n_atoms = len(atoms)
+        n_atoms = atoms.nrows
 
         self.fobj.write(f"{n_atoms}\n")
 
