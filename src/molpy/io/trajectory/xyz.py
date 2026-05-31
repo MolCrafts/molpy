@@ -2,10 +2,10 @@ from pathlib import Path
 
 from molpy.core import Block, Frame
 
-from .base import BaseTrajectoryReader, FrameLocation, TrajectoryWriter
+from .base import FrameLocation, MmapTrajectoryReader, TrajectoryWriter
 
 
-class XYZTrajectoryReader(BaseTrajectoryReader):
+class XYZTrajectoryReader(MmapTrajectoryReader):
     """Reader for XYZ trajectory files."""
 
     def _parse_trajectory(self, file_index: int):

@@ -1,6 +1,6 @@
 import json
 import mmap
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from collections.abc import Iterable, Iterator
 from logging import getLogger as get_logger
 from pathlib import Path
@@ -8,10 +8,75 @@ from typing import NamedTuple
 
 from molpy.core import Frame
 
+from ..base import BaseReader, PathLike
+
 logger = get_logger(__name__)
 
 
-PathLike = str | Path
+__all__ = [
+    "BaseTrajectoryReader",
+    "MmapTrajectoryReader",
+    "MappedFile",
+    "FrameLocation",
+    "TrajectoryWriter",
+    "PathLike",
+]
+
+
+class BaseTrajectoryReader(BaseReader, Iterable["Frame"]):
+    """Pure, storage-agnostic trajectory reader: a lazy ``Iterable[Frame]``.
+
+    Subclasses implement only ``read_frame(index)`` and the ``n_frames``
+    property; the random-access and iteration API (``__iter__``,
+    ``__getitem__``, slicing, ``read_frames`` / ``read_range`` / ``read_all``,
+    ``__len__``) is derived entirely from those two and involves no files.
+    """
+
+    @property
+    @abstractmethod
+    def n_frames(self) -> int:
+        """Total number of frames in the trajectory."""
+
+    @abstractmethod
+    def read_frame(self, index: int) -> "Frame":
+        """Read and return the frame at ``index`` (negative indices allowed)."""
+
+    def read_frames(self, indices: list[int]) -> list["Frame"]:
+        """Read the frames at ``indices``.
+
+        Args:
+            indices: Frame indices to read.
+
+        Returns:
+            The frames, in the order requested.
+        """
+        return [self.read_frame(i) for i in indices]
+
+    def read_range(self, start: int, stop: int, step: int = 1) -> list["Frame"]:
+        """Read frames ``start`` (inclusive) to ``stop`` (exclusive) by ``step``."""
+        return self.read_frames(list(range(start, stop, step)))
+
+    def read_all(self) -> list["Frame"]:
+        """Read every frame in the trajectory."""
+        return [self.read_frame(i) for i in range(self.n_frames)]
+
+    def __len__(self) -> int:
+        return self.n_frames
+
+    def __iter__(self) -> Iterator["Frame"]:
+        """Iterate over all frames lazily."""
+        for i in range(self.n_frames):
+            yield self.read_frame(i)
+
+    def __getitem__(self, index: int | slice) -> "Frame | list[Frame]":
+        """Support integer indexing and slicing of frames."""
+        if isinstance(index, int):
+            return self.read_frame(index)
+        elif isinstance(index, slice):
+            start, stop, step = index.indices(self.n_frames)
+            return self.read_range(start, stop, step)
+        else:
+            raise TypeError("Index must be int or slice")
 
 
 class MappedFile:
@@ -90,33 +155,21 @@ class FrameLocation(NamedTuple):
     file_path: Path
 
 
-class BaseTrajectoryReader(ABC, Iterable["Frame"]):
-    """
-    Base class for trajectory file readers that act as lazy-loading iterators.
+class MmapTrajectoryReader(BaseTrajectoryReader):
+    """Trajectory reader backed by memory-mapped, line-oriented text files.
 
-    This class provides memory-mapped file reading and directly returns Frame objects
-    without loading everything into memory. Supports reading from multiple files.
-
-    Implements Iterable[Frame] for lazy iteration over frames.
+    Implements the :class:`BaseTrajectoryReader` contract over one or more
+    memory-mapped files, with a persisted byte-offset index for fast seeking.
+    Format subclasses implement ``_parse_frame`` and ``_parse_trajectory``.
     """
 
     def __init__(self, fpath: PathLike | list[PathLike]):
-        """
-        Initialize the trajectory reader.
+        """Open the trajectory file(s) and build (or load) the frame index.
 
         Args:
-            fpath: Path to trajectory file or list of paths to multiple trajectory files
+            fpath: Path to a trajectory file or a list of paths.
         """
-        # Handle both single file and multiple files
-        if isinstance(fpath, (str, Path)):
-            self.fpaths = [Path(fpath)]
-        else:
-            self.fpaths = [Path(p) for p in fpath]
-
-        # Validate all files exist
-        for path in self.fpaths:
-            if not path.exists():
-                raise FileNotFoundError(f"File not found: {path}")
+        super().__init__(fpath)
 
         self._frame_locations: list[FrameLocation] = []  # location info for each frame
         self._mms: list[mmap.mmap] = []  # memory-mapped file objects for each file
@@ -129,12 +182,6 @@ class BaseTrajectoryReader(ABC, Iterable["Frame"]):
     def n_frames(self) -> int:
         """Number of frames in the trajectory."""
         return self._total_frames
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
 
     def close(self):
         """Close all memory-mapped files."""
@@ -185,37 +232,6 @@ class BaseTrajectoryReader(ABC, Iterable["Frame"]):
         # Parse the frame lines using the derived class implementation
         return self._parse_frame(frame_lines)
 
-    def read_frames(self, indices: list[int]) -> list["Frame"]:
-        """
-        Read multiple frames from the trajectory file.
-
-        Args:
-            indices: list of frame indices to read
-
-        Returns:
-            list of Frame objects
-        """
-        return [self.read_frame(i) for i in indices]
-
-    def read_range(self, start: int, stop: int, step: int = 1) -> list["Frame"]:
-        """
-        Read a range of frames from the trajectory file.
-
-        Args:
-            start: Starting frame index
-            stop: Stopping frame index (exclusive)
-            step: Step size
-
-        Returns:
-            list of Frame objects
-        """
-        indices = list(range(start, stop, step))
-        return self.read_frames(indices)
-
-    def read_all(self) -> list["Frame"]:
-        """Read all frames from the trajectory file."""
-        return [self.read_frame(i) for i in range(self._total_frames)]
-
     @abstractmethod
     def _parse_frame(self, frame_lines: list[str]) -> "Frame":
         """
@@ -233,24 +249,6 @@ class BaseTrajectoryReader(ABC, Iterable["Frame"]):
     def _parse_trajectory(self, file_index: int):
         """Parse trajectory file at given index, storing frame locations."""
         pass
-
-    def __len__(self) -> int:
-        return self._total_frames
-
-    def __iter__(self) -> Iterator["Frame"]:
-        """Iterate over all frames lazily."""
-        for i in range(self._total_frames):
-            yield self.read_frame(i)
-
-    def __getitem__(self, index: int | slice) -> "Frame | list[Frame]":
-        """Support indexing and slicing of frames."""
-        if isinstance(index, int):
-            return self.read_frame(index)
-        elif isinstance(index, slice):
-            start, stop, step = index.indices(self._total_frames)
-            return self.read_range(start, stop, step)
-        else:
-            raise TypeError("Index must be int or slice")
 
     def _open_files(self):
         """Open trajectory files with memory mapping and build global index."""
@@ -290,13 +288,6 @@ class BaseTrajectoryReader(ABC, Iterable["Frame"]):
         if file_index >= len(self._mms) or self._mms[file_index] is None:
             raise ValueError(f"File {file_index} is not properly opened")
         return self._mms[file_index]
-
-    @property
-    def fpath(self) -> Path:
-        """For backward compatibility - returns the first file path."""
-        if not self.fpaths:
-            raise ValueError("No files available")
-        return self.fpaths[0]
 
     def _get_index_file_paths(self) -> list[Path]:
         """Get the paths for individual index files."""
@@ -403,18 +394,12 @@ class BaseTrajectoryReader(ABC, Iterable["Frame"]):
             return False
 
 
-class TrajectoryWriter(ABC):
+class TrajectoryWriter(BaseReader):
     """Base class for all trajectory file writers."""
 
     def __init__(self, fpath: str | Path):
-        self.fpath = Path(fpath)
+        super().__init__(fpath, must_exist=False)
         self._fp = open(self.fpath, "w+b")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
 
     @abstractmethod
     def write_frame(self, frame: "Frame"):

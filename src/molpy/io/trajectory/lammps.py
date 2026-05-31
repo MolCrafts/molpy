@@ -7,7 +7,7 @@ import numpy as np
 
 from molpy.core import Block, Box, Frame
 
-from .base import BaseTrajectoryReader, FrameLocation, PathLike, TrajectoryWriter
+from .base import FrameLocation, MmapTrajectoryReader, PathLike, TrajectoryWriter
 
 column_type_mappings = {
     "id": int,
@@ -47,7 +47,7 @@ column_type_mappings = {
 }
 
 
-class LammpsTrajectoryReader(BaseTrajectoryReader):
+class LammpsTrajectoryReader(MmapTrajectoryReader):
     """Reader for LAMMPS trajectory files, supporting multiple files."""
 
     def __init__(
