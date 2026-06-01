@@ -47,6 +47,18 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Install Rust toolchain (to build molrs from source)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install molrs from source (dev branch)
+        # molpy's dev tracks unreleased molrs kernels (e.g. the
+        # einstein_helfand_conductivity used by IonicConductivity). Build molrs
+        # from its dev branch so CI matches local dev, where contributors run
+        # `maturin develop` against a molrs checkout. INTERIM: once molrs cuts a
+        # release carrying these kernels, drop this step and bump the
+        # molcrafts-molrs pin in pyproject.toml instead.
+        run: pip install "molcrafts-molrs @ git+https://github.com/Roy-Kid/molrs.git@dev#subdirectory=molrs-python"
+
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
@@ -114,11 +126,17 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install molrs from PyPI
+      - name: Install Rust toolchain (to build molrs from source)
+        if: steps.gate.outputs.run == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install molrs from source (dev branch)
+        # Match the test job: build molrs from dev so benchmark imports resolve
+        # the same unreleased kernels. INTERIM until molrs releases.
         if: steps.gate.outputs.run == 'true'
         run: |
           python -m pip install --upgrade pip
-          python -m pip install molcrafts-molrs
+          python -m pip install "molcrafts-molrs @ git+https://github.com/Roy-Kid/molrs.git@dev#subdirectory=molrs-python"
 
       - name: Install molpy (editable, the SHA under test)
         if: steps.gate.outputs.run == 'true'

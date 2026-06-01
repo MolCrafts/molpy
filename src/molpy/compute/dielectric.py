@@ -14,13 +14,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from molrs.dielectric import (
-    compute_current_density,
-    einstein_helfand_conductivity,
-    einstein_helfand_spectrum,
-    green_kubo_spectrum,
-    static_dielectric_constant,
-)
+from molrs.dielectric import Dielectric
 from molrs.signal import acf_fft, apply_window, frequency_grid
 
 from .base import Compute
@@ -243,12 +237,14 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
         # Compute current density (only needed for the GK route)
         current_density = None
         if "green-kubo" in self.routes:
-            current_density = compute_current_density(dipole_moments, self.dt, volume)
+            current_density = Dielectric.compute_current_density(
+                dipole_moments, self.dt, volume
+            )
 
         # Static dielectric constant is route-independent — compute once so
         # every result carries it (avoids the dual problem of the GK route
         # returning a silent 0.0 fallback when EH was not requested).
-        eps_stat = static_dielectric_constant(
+        eps_stat = Dielectric.static_dielectric_constant(
             dipole_moments, volume, self.temperature, self.epsilon_inf
         )
 
@@ -256,7 +252,7 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
 
         for route in self.routes:
             if route == "einstein-helfand":
-                spec = einstein_helfand_spectrum(
+                spec = Dielectric.einstein_helfand_spectrum(
                     dipole_moments,
                     self.dt,
                     volume,
@@ -276,7 +272,7 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
                 )
 
             if route == "green-kubo":
-                spec = green_kubo_spectrum(
+                spec = Dielectric.green_kubo_spectrum(
                     current_density,
                     self.dt,
                     volume,
@@ -313,7 +309,7 @@ class IonicConductivity(Compute["Trajectory", ConductivityResult]):
     trajectory (minimum-image unwrapped, same as
     :class:`DielectricSusceptibility`), then delegates the collective-MSD,
     linear fit, and S/m unit conversion to
-    ``molrs.dielectric.einstein_helfand_conductivity``:
+    ``molrs.dielectric.Dielectric.einstein_helfand_conductivity``:
 
         sigma = lim_{t->inf} (1 / (6 V k_B T)) d/dt <|M_J(t) - M_J(0)|^2>.
 
@@ -400,7 +396,7 @@ class IonicConductivity(Compute["Trajectory", ConductivityResult]):
         # Ionic translational dipole M_J[f, d] = sum_a charges[a] * pos[f, a, d].
         translational_dipole = np.einsum("a,fad->fd", charges, positions)
 
-        spec = einstein_helfand_conductivity(
+        spec = Dielectric.einstein_helfand_conductivity(
             translational_dipole,
             self.dt,
             volume,
