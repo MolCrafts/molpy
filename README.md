@@ -88,6 +88,24 @@ pre-commit install
 pytest tests/ -m "not external"
 ```
 
+`pip install -e ".[dev]"` pulls the published `molcrafts-molrs` wheel from
+PyPI. To develop molpy against a **local molrs checkout** (e.g. when changing
+the Rust core), build molrs editable first — molrs ships its Python bindings as
+a [maturin](https://www.maturin.rs/) project that needs the Rust toolchain via
+[`rustup`](https://rustup.rs/):
+
+```bash
+git clone https://github.com/MolCrafts/molrs.git
+cd molrs
+pip install maturin
+maturin develop -m molrs-python/Cargo.toml --release   # installs `molrs` editable
+cd ../molpy
+pip install -e ".[dev]"                                # resolves molrs from the local build
+```
+
+See [docs/developer/development-setup](https://molcrafts.github.io/molpy/developer/development-setup/)
+for the full workflow.
+
 </details>
 
 ## Quick start

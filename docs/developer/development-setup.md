@@ -25,6 +25,38 @@ pytest tests/ -v -m "not external"
 If all tests pass, the environment is ready.
 
 
+## Building molrs from source
+
+The quick setup above resolves [molrs](molrs-backend.md) — molpy's required
+Rust compute core — from the published `molcrafts-molrs` wheel on PyPI. That is
+the right path for most molpy development.
+
+If you are changing the Rust core *and* molpy together, build molrs editable
+from a local checkout instead. molrs ships its Python bindings as a
+[maturin](https://www.maturin.rs/) project, so this step needs the Rust
+toolchain — install it via [`rustup`](https://rustup.rs/); molrs pins the
+toolchain channel and components in its `rust-toolchain.toml`, so no manual
+component setup is required inside the checkout.
+
+```bash
+# in a sibling checkout next to molpy
+git clone https://github.com/MolCrafts/molrs.git
+cd molrs
+pip install maturin
+maturin develop -m molrs-python/Cargo.toml --release   # installs `molrs` editable into the venv
+
+# back in molpy, the editable install now resolves the local molrs
+cd ../molpy
+pip install -e ".[dev]"
+python -c "import molrs, molpy as mp; print(mp.Box.cubic(10.0), isinstance(mp.Box.cubic(10.0), molrs.Box))"
+```
+
+Re-run `maturin develop` after any change to the molrs Rust source to recompile
+the extension. See the
+[molrs build-from-source guide](https://molcrafts.github.io/molrs/getting-started/installation/)
+for the native-crate and WASM build targets.
+
+
 ## Documentation preview
 
 The doc site uses MkDocs with Material theme. Install the doc extras and start a local preview server.
