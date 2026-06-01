@@ -36,7 +36,12 @@ Example: dielectric spectrum:
 from .base import Compute
 from .cluster import Cluster, ClusterCenters, ClusterProperties
 from .decomposition import DescriptorRow, KMeans, Pca
-from .dielectric import ACFAnalyzer, DielectricSusceptibility, SpectralAnalyzer
+from .dielectric import (
+    ACFAnalyzer,
+    DielectricSusceptibility,
+    IonicConductivity,
+    SpectralAnalyzer,
+)
 from .density import GaussianDensity, LocalDensity
 from .diffraction import StaticStructureFactorDebye
 from .embed import Generate3D
@@ -50,6 +55,8 @@ from .pmsd import PMSDCompute
 from .rdf import RDF
 from .result import (
     ACFResult,
+    ConductivityResult,
+    DebyeFit,
     DielectricResult,
     DielectricSusceptibilityResult,
     MCDResult,
@@ -83,11 +90,14 @@ __all__ = [
     "SpectralResult",
     "DielectricResult",
     "DielectricSusceptibilityResult",
+    "ConductivityResult",
+    "DebyeFit",
     "MCDCompute",
     "PMSDCompute",
     "ACFAnalyzer",
     "SpectralAnalyzer",
     "DielectricSusceptibility",
+    "IonicConductivity",
     "NeighborList",
     "RDF",
     "MSD",

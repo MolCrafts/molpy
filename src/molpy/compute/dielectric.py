@@ -16,6 +16,7 @@ import numpy as np
 
 from molrs.dielectric import (
     compute_current_density,
+    einstein_helfand_conductivity,
     einstein_helfand_spectrum,
     green_kubo_spectrum,
     static_dielectric_constant,
@@ -25,6 +26,7 @@ from molrs.signal import acf_fft, apply_window, frequency_grid
 from .base import Compute
 from .result import (
     ACFResult,
+    ConductivityResult,
     DielectricResult,
     DielectricSusceptibilityResult,
     SpectralResult,
@@ -296,6 +298,125 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
         return DielectricSusceptibilityResult(
             results=results,
             metadata={
+                "dt": self.dt,
+                "temperature": self.temperature,
+                "n_frames": n_frames,
+                "volume": volume,
+            },
+        )
+
+
+class IonicConductivity(Compute["Trajectory", ConductivityResult]):
+    """Static ionic conductivity sigma via the Einstein-Helfand relation.
+
+    Builds the **ionic translational dipole** M_J(t) = sum_i q_i r_i(t) from the
+    trajectory (minimum-image unwrapped, same as
+    :class:`DielectricSusceptibility`), then delegates the collective-MSD,
+    linear fit, and S/m unit conversion to
+    ``molrs.dielectric.einstein_helfand_conductivity``:
+
+        sigma = lim_{t->inf} (1 / (6 V k_B T)) d/dt <|M_J(t) - M_J(0)|^2>.
+
+    Decomposition is the caller's responsibility and is done with selection,
+    not arithmetic: pass a trajectory whose ``charge`` column is non-zero **only
+    on the mobile ions** (e.g. via a :class:`~molpy.Selector` over the ion
+    atoms, or by zeroing solvent charges). Including the solvent rotational
+    dipole here would contaminate the translational MSD.
+
+    Args:
+        dt: Frame spacing in **ps**.
+        temperature: Temperature in **K**.
+        max_correlation_time: Longest MSD lag in **frames** (clamped to
+            ``n_frames - 1``). Practical choice: <= ``n_frames / 5``.
+        volume: System volume in **A^3**. If ``None``, uses ``frame.box.volume``
+            from the first frame (assumes NVT/NVE).
+        fit_start_frac, fit_end_frac: Fractions of ``max_lag`` bounding the
+            linear-fit window over the diffusive regime (default 0.1, 0.5).
+            ``sigma`` is window-sensitive for few-carrier systems; report a
+            range rather than a single digit.
+
+    Inputs:
+        Each frame's ``atoms`` block must contain ``x``, ``y``, ``z`` (**A**)
+        and ``charge`` (**e**); frames must carry a non-free ``Box``.
+    """
+
+    def __init__(
+        self,
+        dt: float,
+        temperature: float,
+        max_correlation_time: int,
+        *,
+        volume: float | None = None,
+        fit_start_frac: float = 0.1,
+        fit_end_frac: float = 0.5,
+        **config_kwargs,
+    ):
+        super().__init__(
+            dt=dt,
+            temperature=temperature,
+            max_correlation_time=max_correlation_time,
+            volume=volume,
+            fit_start_frac=fit_start_frac,
+            fit_end_frac=fit_end_frac,
+            **config_kwargs,
+        )
+        self.dt = dt
+        self.temperature = temperature
+        self.max_correlation_time = max_correlation_time
+        self._volume = volume
+        self.fit_start_frac = fit_start_frac
+        self.fit_end_frac = fit_end_frac
+
+    def _compute(self, trajectory: Trajectory) -> ConductivityResult:
+        frames = list(trajectory)
+        n_frames = len(frames)
+        if n_frames < 2:
+            raise ValueError(f"Need at least 2 frames, got {n_frames}")
+
+        frame0 = frames[0]
+        if frame0.box is None or frame0.box.is_free:
+            raise ValueError("Trajectory frames must have a non-free Box")
+
+        for col in ["x", "y", "z", "charge"]:
+            if col not in frame0["atoms"]:
+                raise ValueError(f"Missing column '{col}' in atoms block")
+
+        n_atoms = len(frame0["atoms"]["x"])
+        volume = self._volume or frame0.box.volume
+
+        positions = np.empty((n_frames, n_atoms, 3), dtype=np.float64)
+        charges = np.asarray(frame0["atoms"]["charge"], dtype=np.float64)
+        for i, frame in enumerate(frames):
+            positions[i, :, 0] = frame["atoms"]["x"]
+            positions[i, :, 1] = frame["atoms"]["y"]
+            positions[i, :, 2] = frame["atoms"]["z"]
+
+        # Vectorized minimum-image unwrap (same convention as
+        # DielectricSusceptibility): use frames[i-1].box for per-frame boxes.
+        for i in range(1, n_frames):
+            dr = positions[i] - positions[i - 1]
+            positions[i] = positions[i - 1] + frames[i - 1].box.diff_dr(dr)
+
+        # Ionic translational dipole M_J[f, d] = sum_a charges[a] * pos[f, a, d].
+        translational_dipole = np.einsum("a,fad->fd", charges, positions)
+
+        spec = einstein_helfand_conductivity(
+            translational_dipole,
+            self.dt,
+            volume,
+            self.temperature,
+            self.max_correlation_time,
+            self.fit_start_frac,
+            self.fit_end_frac,
+        )
+        return ConductivityResult(
+            time=spec["lag_times"],
+            msd=spec["msd"],
+            sigma=spec["sigma"],
+            slope=spec["slope"],
+            fit_start=spec["fit_start"],
+            fit_end=spec["fit_end"],
+            meta={
                 "dt": self.dt,
                 "temperature": self.temperature,
                 "n_frames": n_frames,

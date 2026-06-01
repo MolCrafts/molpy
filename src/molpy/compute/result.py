@@ -116,6 +116,117 @@ class DielectricResult(Result):
     component: str = ""
     conductivity: NDArray[np.float64] | None = None
 
+    def fit_debye(self) -> "DebyeFit":
+        """Fit a single Debye relaxation to this spectrum (NumPy only).
+
+        Uses the exact single-Debye identity
+        ``epsilon''(omega) / (epsilon'(omega) - epsilon_inf) = omega * tau``:
+        ``tau`` is the least-squares slope through the origin of that ratio
+        versus ``omega`` over the low-frequency rising branch (up to the loss
+        peak), with a loss-peak fallback ``tau = 1 / omega_peak``. The
+        relaxation strength is the static limit
+        ``delta_eps = epsilon(0) - epsilon_inf``.
+
+        No SciPy: the estimator is closed-form linear regression. For broadened
+        or skewed (Cole-Cole / Havriliak-Negami) line shapes do a nonlinear fit
+        in your analysis script using :meth:`DebyeFit.epsilon` as the model.
+
+        Returns:
+            DebyeFit with tau (ps), delta_eps, eps_inf, eps_static, omega_peak.
+        """
+        w = np.asarray(self.frequency, dtype=np.float64)
+        er = np.asarray(self.epsilon_real, dtype=np.float64)
+        ei = np.asarray(self.epsilon_imag, dtype=np.float64)
+        eps_inf = float(self.epsilon_inf)
+        eps_static = (
+            float(self.epsilon_static)
+            if np.isfinite(self.epsilon_static)
+            else float(er[0])
+        )
+        delta_eps = eps_static - eps_inf
+
+        # Loss peak, skipping the DC bin (index 0).
+        pk = int(np.argmax(ei[1:]) + 1) if ei.size > 2 else ei.size - 1
+        omega_peak = float(w[pk]) if w.size > pk else float("nan")
+
+        # Linear-ratio fit through the origin over the rising branch [1, pk].
+        hi = max(pk + 1, 2)
+        ws = w[1:hi]
+        ers = er[1:hi]
+        eis = ei[1:hi]
+        good = (ws > 0.0) & (ers - eps_inf > 1e-12)
+        tau = float("nan")
+        if np.any(good):
+            wg = ws[good]
+            ratio = eis[good] / (ers[good] - eps_inf)  # = omega * tau
+            denom = float(np.dot(wg, wg))
+            if denom > 0.0:
+                tau = float(np.dot(wg, ratio) / denom)
+        if not np.isfinite(tau) or tau <= 0.0:
+            tau = 1.0 / omega_peak if omega_peak > 0.0 else float("nan")
+
+        return DebyeFit(
+            tau=tau,
+            delta_eps=delta_eps,
+            eps_inf=eps_inf,
+            eps_static=eps_static,
+            omega_peak=omega_peak,
+        )
+
+
+@dataclass
+class DebyeFit:
+    """Single-Debye relaxation parameters fitted from a dielectric spectrum.
+
+    Attributes:
+        tau: Relaxation time (ps).
+        delta_eps: Relaxation strength epsilon(0) - epsilon_inf (dimensionless).
+        eps_inf: High-frequency permittivity used in the fit.
+        eps_static: Static permittivity epsilon(0) (dimensionless).
+        omega_peak: Angular frequency of the dielectric-loss peak (rad/ps).
+    """
+
+    tau: float = float("nan")
+    delta_eps: float = float("nan")
+    eps_inf: float = 1.0
+    eps_static: float = float("nan")
+    omega_peak: float = float("nan")
+
+    def epsilon(self, omega: NDArray[np.float64]) -> tuple[NDArray, NDArray]:
+        """Evaluate the fitted Debye model at angular frequencies ``omega``.
+
+        Returns:
+            ``(epsilon_real, epsilon_imag)`` under the positive-loss convention
+            ``epsilon* = epsilon' - i epsilon''``.
+        """
+        omega = np.asarray(omega, dtype=np.float64)
+        x = omega * self.tau
+        denom = 1.0 + x * x
+        eps_real = self.eps_inf + self.delta_eps / denom
+        eps_imag = self.delta_eps * x / denom
+        return eps_real, eps_imag
+
+
+@dataclass
+class ConductivityResult(TimeSeriesResult):
+    """Einstein-Helfand ionic-conductivity result.
+
+    Attributes:
+        time: MSD lag times tau (ps), shape (n_lags,).
+        msd: Collective MSD <|M_J(t+tau) - M_J(t)|^2> of the ionic
+            translational dipole, (e*A)^2, shape (n_lags,).
+        sigma: Static ionic conductivity sigma (S/m).
+        slope: Fitted MSD slope over the diffusive window, (e*A)^2/ps.
+        fit_start: First lag index used in the linear fit (inclusive).
+        fit_end: Last lag index used in the linear fit (exclusive).
+    """
+
+    msd: NDArray[np.float64] = field(default_factory=lambda: np.array([]))
+    sigma: float = float("nan")
+    slope: float = float("nan")
+    fit_start: int = 0
+    fit_end: int = 0
+
 
 @dataclass
 class DielectricSusceptibilityResult(Result):
