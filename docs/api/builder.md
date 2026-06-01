@@ -7,7 +7,7 @@ System assembly: polymer chain construction from CGSmiles topology and monomer l
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
 | `PolymerBuilder` | Build chains from CGSmiles + library + connector + placer | Full control over assembly |
-| `polymer(cgsmiles, ...)` | Tool: CGSmiles → chain in one call | Quick prototyping |
+| `polymer(cgsmiles, ...)` | CGSmiles → chain in one call | Quick prototyping |
 | `Connector` | Port selection rules + reaction binding | Defining which ports react |
 | `Placer` | Geometric placement (separator + orienter) | Controlling inter-monomer geometry |
 | `CovalentSeparator` | Covalent radii-based distance | Default monomer spacing |
@@ -31,7 +31,7 @@ builder = PolymerBuilder(
 result = builder.build("{[#EO]|10}")
 chain = result.polymer
 
-# Or use the tool function:
+# Or use the one-call entry function:
 result = polymer("{[#EO]|10}", library={"EO": eo_template}, reacter=rxn)
 chain = result.polymer
 ```

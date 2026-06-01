@@ -31,9 +31,10 @@ Build a polymer chain with 3D coordinates straight from a G-BigSMILES string.
 
 ```python
 import molpy as mp
+from molpy.builder import polymer
 
 # PEO chain with degree of polymerization = 10, built with 3D coordinates
-peo   = mp.tool.polymer("{[<]CCOCC[>]}|10|")
+peo   = polymer("{[<]CCOCC[>]}|10|")
 ff    = mp.io.read_xml_forcefield("oplsaa.xml")
 typed = mp.typifier.OplsAtomisticTypifier(ff).typify(peo)
 mp.io.write_lammps_system("output/", typed.to_frame(), ff)
@@ -48,9 +49,10 @@ pack it into a periodic box.
 
 ```python
 import molpy as mp
+from molpy.builder import polymer_system
 
 # Mn = 1500 Da, Mw = 3000 Da, total mass ≈ 500 kDa
-chains = mp.tool.polymer_system(
+chains = polymer_system(
     "{[<]CCOCC[>]}|schulz_zimm(1500,3000)||5e5|",
     random_seed=42,
 )
@@ -71,10 +73,11 @@ topology with GAFF2 parameters and partial charges.
 
 ```python
 import molpy as mp
+from molpy.builder import polymer, PrepareMonomer
 
-eo = mp.tool.PrepareMonomer().run("{[<]CCOCC[>]}")  # BigSMILES → 3D + ports
+eo = PrepareMonomer().run("{[<]CCOCC[>]}")  # BigSMILES → 3D + ports
 
-result = mp.tool.polymer(
+result = polymer(
     "{[#EO]|20}",
     library={"EO": eo},
     backend="amber",   # runs antechamber + parmchk2 + tleap

@@ -1,6 +1,6 @@
 # Developer Guide
 
-This guide addresses contributors and library developers working on MolPy as a research software library. It covers coding and testing conventions, the established extension points at the tool layer, and the architectural constraints governing the core data model and force-field hierarchy. Canonical field names and topology keys live in [Naming Conventions](../getting-started/naming-conventions.md); this section focuses on contributor workflow and extension points.
+This guide addresses contributors and library developers working on MolPy as a research software library. It covers coding and testing conventions, the established extension points for analysis and I/O, and the architectural constraints governing the core data model and force-field hierarchy. Canonical field names and topology keys live in [Naming Conventions](../getting-started/naming-conventions.md); this section focuses on contributor workflow and extension points.
 
 ## Part I: Project Conventions
 
@@ -12,11 +12,11 @@ The following pages document day-to-day development practices.
 - [Testing](testing.md) — pytest conventions, test markers, coverage requirements, and the distinction between local and external tests
 - [Release Process](release-process.md) — semantic versioning, changelog maintenance, and CI-driven package publication
 
-## Part II: Extending the Tool Layer
+## Part II: Extending Compute
 
 The extension points documented here present stable interfaces with explicit contracts. Contributing a new capability at this layer requires implementing a subclass or registering a handler; no modification of core internals is necessary.
 
-- [Adding a Tool or Compute Operation](extending-tools.md) — the `Tool` and `Compute` protocols, operator registration, and custom preparation workflows
+- [Adding a Compute Operation](extending-compute.md) — the `Compute` protocol for reusable analysis operations on array data
 - [Adding an I/O Format](extending-io.md) — reader and writer base classes, the `FieldFormatter` canonicalization interface, and force field formatter registration
 - [Adding a Wrapper or Adapter](extending-integration.md) — subprocess wrapper conventions for external CLI tools and in-memory adapter patterns for third-party libraries
 

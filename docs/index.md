@@ -51,9 +51,10 @@ hide:
 
     ```python
     import molpy as mp
+    from molpy.builder import polymer
 
     # PEO chain, degree of polymerization = 10
-    peo = mp.tool.polymer("{[<]CCOCC[>]}|10|")
+    peo = polymer("{[<]CCOCC[>]}|10|")
 
     ff    = mp.io.read_xml_forcefield("oplsaa.xml")
     typed = mp.typifier.OplsAtomisticTypifier(ff).typify(peo)
@@ -66,9 +67,10 @@ hide:
 
     ```python
     import molpy as mp
+    from molpy.builder import polymer_system
 
     # Mn = 1500 Da, Mw = 3000 Da, target total mass ≈ 500 kDa
-    chains = mp.tool.polymer_system(
+    chains = polymer_system(
         "{[<]CCOCC[>]}|schulz_zimm(1500,3000)||5e5|",
         random_seed=42,
     )
@@ -85,12 +87,13 @@ hide:
 
     ```python
     import molpy as mp
+    from molpy.builder import polymer, PrepareMonomer
 
     # BigSMILES → three-dimensional structure with port annotation
-    eo = mp.tool.PrepareMonomer().run("{[<]CCOCC[>]}")
+    eo = PrepareMonomer().run("{[<]CCOCC[>]}")
 
     # Assemble DP = 20 chain via AmberTools
-    result = mp.tool.polymer(
+    result = polymer(
         "{[#EO]|20}",
         library={"EO": eo},
         backend="amber",
@@ -144,7 +147,7 @@ hide:
 
 - :material-rocket-launch: **[Getting Started](getting-started/index.md)** — Installation, environment verification, MCP setup, and the core `Atomistic → Frame → export` workflow for first-time users.
 
-- :material-book-open-variant: **[Concepts](tutorials/index.md)** — Systematic exposition of the core data model plus the surrounding I/O, Tool, and engine boundaries that connect MolPy to external workflows.
+- :material-book-open-variant: **[Concepts](tutorials/index.md)** — Systematic exposition of the core data model plus the surrounding I/O, builder, and engine boundaries that connect MolPy to external workflows.
 
 - :material-hammer-wrench: **[Guides](user-guide/index.md)** — Task-oriented executable notebooks and worked examples covering chemistry parsing, polymer construction, force field typification, and AmberTools-based system preparation.
 

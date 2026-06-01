@@ -1,16 +1,15 @@
-# Adding a Tool or Compute Operation
+# Adding a Compute Operation
 
-This page shows how to add reusable Tool workflows (`Tool`) and analysis operations (`Compute`) to MolPy.
+This page shows how to add reusable analysis operations (`Compute`) to MolPy.
 
 ## Which base class to use
 
 | Need | Base class | Example |
 |------|-----------|---------|
-| Reusable multi-step workflow with configuration | `Tool` | `PrepareMonomer`, `BuildPolymer` |
 | Reusable analysis on array data | `Compute` | `MSD`, `DisplacementCorrelation` |
 | One-off calculation with no config | plain function | `compute_msd(positions)` |
 
-Both `Tool` and `Compute` are frozen dataclasses. Configuration is set at construction and cannot change. Execution goes through `run()` (or `__call__`).
+`Compute` is a frozen dataclass. Configuration is set at construction and cannot change. Execution goes through `run()` (or `__call__`).
 
 ## Adding a Compute operation
 
@@ -56,50 +55,17 @@ rg = RadiusOfGyration(use_masses=True)
 value = rg(positions, masses)   # __call__ delegates to run()
 ```
 
-## Adding a custom Tool
-
-Same pattern, but for `Tool` subclasses. `Tool` is the internal builder
-framework base, imported from `molpy.builder._tool` (it is not a public
-top-level export).
-
-```python
-from dataclasses import dataclass
-from molpy.builder._tool import Tool
-from molpy.core.atomistic import Atomistic
-
-@dataclass(frozen=True)
-class ParameterizeMolecule(Tool):
-    """Parse SMILES, generate 3D, typify, return typed structure."""
-
-    force_field: str = "oplsaa"
-    add_hydrogens: bool = True
-
-    def run(self, smiles: str) -> Atomistic:
-        import molpy as mp
-        from molpy.typifier import OplsAtomisticTypifier
-
-        mol = mp.parser.parse_molecule(smiles)
-        mol = mp.adapter.generate_3d(mol, add_hydrogens=self.add_hydrogens)
-        mol.get_topo(gen_angle=True, gen_dihe=True)
-
-        ff = mp.io.read_xml_forcefield(f"{self.force_field}.xml")
-        typifier = OplsAtomisticTypifier(ff)
-        return typifier.typify(mol)
-```
-
-Because the dataclass is frozen, the configuration cannot drift between calls. Two instances with different `force_field` values are two different protocols.
-
 ## Design rules
 
 1. **Configuration goes in fields** — set once at init, frozen forever
 2. **Runtime data goes through `run()`** — different inputs, same protocol
 3. **No mutation** — `run()` returns new objects, never modifies inputs
 4. **Keep `run()` focused** — one clear task, not a workflow engine
-5. **Test in isolation** — each Tool/Compute should be testable with synthetic data
+5. **Test in isolation** — each Compute should be testable with synthetic data
 
 ## Checklist
 
-- [ ] Subclass `Tool` or `Compute`
+- [ ] Subclass `Compute`
 - [ ] Add `@dataclass(frozen=True)` decorator
 - [ ] Implement `run()` with type hints
-- [ ] Write tests in `tests/test_tool/`
+- [ ] Write tests in `tests/test_compute/`

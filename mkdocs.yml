@@ -114,7 +114,6 @@ nav:
       - Wrapper and Adapter: tutorials/07_wrapper_and_adapter.md
       - Engine: tutorials/engine.md
       - I/O: tutorials/io.md
-      - Tool Layer: tutorials/tools.md
       - Workflow: tutorials/workflow.md
 
   - Guides:
@@ -163,8 +162,8 @@ nav:
           - Coding Style: developer/coding-style.md
           - Testing: developer/testing.md
           - Release Process: developer/release-process.md
-      - Extending Tools:
-          - Tool and Compute: developer/extending-tools.md
+      - Extending Compute:
+          - Adding a Compute Operation: developer/extending-compute.md
           - I/O Formats: developer/extending-io.md
           - Wrappers and Adapters: developer/extending-integration.md
       - Extending Core:

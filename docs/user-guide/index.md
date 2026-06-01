@@ -24,6 +24,5 @@ Each guide in this section addresses a concrete modeling task, from input specif
 
 ## Related Concept Pages
 
-- [Tool Layer](../tutorials/tools.md) — how MolPy packages common multi-step workflows behind `Tool` interfaces
 - [I/O](../tutorials/io.md) — how `Frame` and `ForceField` objects are serialized to files and trajectories
 - [Engine](../tutorials/engine.md) — how generated structures and scripts are handed off to LAMMPS, CP2K, and OpenMM

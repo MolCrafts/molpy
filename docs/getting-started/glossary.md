@@ -70,9 +70,6 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 **Selector**
 :   A composable predicate that filters atoms in a `Block` by element, type, coordinate range, or distance. Combinable with `&`, `|`, `~`. See [Selector](../tutorials/06_selector.md).
 
-**Tool**
-:   A high-level workflow interface that wires multiple MolPy modules into a single callable — for example, `PrepareMonomer`, `polymer()`. See [Tool Layer](../tutorials/tools.md).
-
 **Wrapper**
 :   Runs an external executable (antechamber, tleap, Packmol) as a subprocess and captures its results. Crosses an execution boundary. See [Wrapper and Adapter](../tutorials/07_wrapper_and_adapter.md).
 
