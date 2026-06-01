@@ -1,0 +1,24 @@
+name: notify-molcrafts
+
+# On push to master, ping the molcrafts aggregate repo to resync this library.
+# Skips silently until the dispatch token secret exists, so it never fails a
+# contributor's push. To activate: add a repo or org secret named
+# MOLCRAFTS_DISPATCH_TOKEN — a token with Contents: read-write (fine-grained)
+# or `repo` scope (classic) on MolCrafts/molcrafts.
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.MOLCRAFTS_DISPATCH_TOKEN != '' }}
+    steps:
+      - name: Dispatch molcrafts sync
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: token ${{ secrets.MOLCRAFTS_DISPATCH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/MolCrafts/molcrafts/dispatches \
+            -d '{"event_type":"sub-updated"}'
