@@ -1,3 +1,13 @@
+# Mirrors every check in .github/workflows/ci.yml. Any divergence is a bug —
+# when you add/modify a CI step, update this file in the same commit.
+#
+# Stages:
+#   pre-commit (default): fast checks (ruff format, ruff lint, ty). Every commit.
+#   pre-push:             the test suite (matches CI's test job). Before push only.
+#
+# Install both stages:  pre-commit install --hook-type pre-commit --hook-type pre-push
+default_install_hook_types: [pre-commit, pre-push]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -13,15 +23,20 @@ repos:
       - id: check-toml
       - id: check-json
 
+  # ─── ci.yml::lint — ruff format --check + ruff check src/ tests/ ──────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.12
+    rev: v0.15.13
     hooks:
       - id: ruff-format
+        args: [--check, src/, tests/]
+        pass_filenames: false
       - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
+        args: [src/, tests/]
+        pass_filenames: false
 
   - repo: local
     hooks:
+      # ─── ci.yml::lint — ty check src/molpy/ ──────────────────────────────
       - id: ty
         name: ty (type check)
         entry: ty check src/molpy/
@@ -29,12 +44,13 @@ repos:
         types: [python]
         pass_filenames: false
 
+      # ─── ci.yml::test — pytest tests/ -m "not external" (pre-push) ───────
       - id: pytest
-        name: pytest (fast)
-        entry: pytest tests/ -x -q -m "not external" --no-header -rN
+        name: pytest (mirrors CI test job)
+        entry: pytest tests/ -v -m "not external"
         language: system
         pass_filenames: false
-        stages: [pre-commit]
+        stages: [pre-push]
 
   - repo: https://github.com/kynan/nbstripout
     rev: 0.8.2
