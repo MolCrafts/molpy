@@ -33,7 +33,7 @@ The Amber workflow for small molecules is: antechamber (assign types + charges) 
 from pathlib import Path
 import molpy as mp
 from molpy.adapter import RDKitAdapter
-from molpy.tool import Generate3D
+from molpy.adapter import Generate3D
 from molpy.io.writers import write_pdb
 from molpy.wrapper import AntechamberWrapper, Parmchk2Wrapper, TLeapWrapper
 

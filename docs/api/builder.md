@@ -20,7 +20,7 @@ from molpy.builder.polymer import (
     PolymerBuilder, Connector, Placer,
     CovalentSeparator, LinearOrienter,
 )
-from molpy.tool import polymer
+from molpy.builder import polymer
 
 builder = PolymerBuilder(
     library={"EO": eo_template},
@@ -52,3 +52,18 @@ chain = result.polymer
 ### Polymer
 
 ::: molpy.builder.polymer
+
+### Polymer DSL tools
+
+High-level polymer-building tools and entry functions (`PrepareMonomer`,
+`BuildPolymer`, `PlanSystem`, `BuildSystem`, `BuildPolymerAmber`, `polymer`,
+`polymer_system`, `prepare_monomer`, `generate_3d`).
+
+::: molpy.builder.polymer.dsl
+
+### Tool framework
+
+`Tool` and `ToolRegistry` are the internal base classes that the builder
+DSL tools are built on. They are not public top-level exports.
+
+::: molpy.builder._tool

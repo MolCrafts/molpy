@@ -13,7 +13,7 @@
   (`Generate3D` / `OptimizeGeometry` over `RDKitAdapter`) is gone.
   `molpy.compute.Generate3D` is now the molrs-backed trunk operator, taking an
   `Atomistic` graph and returning a fresh 3D structure. The RDKit adapter
-  (`molpy.adapter.rdkit`) and tool (`molpy.tool.rdkit`) are retained as an
+  (`molpy.adapter.rdkit`) is retained as an
   **optional** external backend; `rdkit` remains an optional extra, not a
   required dependency.
 
@@ -37,6 +37,6 @@
 - Replace `pip install "molcrafts-molpy[molrs]"` with `pip install molcrafts-molpy`.
 - If you imported `from molpy.compute.rdkit import Generate3D`, switch to
   `from molpy.compute import Generate3D` (molrs-backed, `Atomistic -> Atomistic`)
-  or, for the RDKit adapter flow, `from molpy.tool.rdkit import Generate3D`.
+  or, for the RDKit adapter flow, `from molpy.adapter import Generate3D`.
 
 See [the molrs backend developer guide](developer/molrs-backend.md) for details.

@@ -21,7 +21,7 @@ In practice, you will interact with this split naturally. When you write `Prepar
 To see the difference, consider preparing a monomer. Without Tools, you need the parser to convert BigSMILES into an `Atomistic`, the RDKit adapter to bridge representations, the `Generate3D` operation to embed coordinates, a sync step back to internal format, and a topology call for angles and dihedrals. With `PrepareMonomer`, all of that collapses into a single call that also handles the fallback when RDKit is not installed:
 
 ```python
-from molpy.tool import PrepareMonomer
+from molpy.builder import PrepareMonomer
 
 prep = PrepareMonomer()
 eo = prep.run("{[<]CCO[>]}")
@@ -32,7 +32,7 @@ The returned `eo` is a fully prepared `Atomistic` struct — port atoms tagged w
 The same principle scales up. `polymer()` auto-detects notation (G-BigSMILES, CGSmiles, or CGSmiles with inline fragments) and dispatches to the right internal path — parser, monomer preparation, connector setup, chain assembly — so you do not need to know which classes are involved:
 
 ```python
-from molpy.tool import polymer
+from molpy.builder import polymer
 
 # G-BigSMILES — monomer structure + degree of polymerization in one string
 chain = polymer("{[<]CCO[>]}|10|")
@@ -49,7 +49,7 @@ All three notations produce the same result: a 10-unit PEO chain. The difference
 For polydisperse systems, `polymer_system()` adds distribution sampling and batch building on top of the same machinery. A single G-BigSMILES string encodes monomer structure, distribution type, distribution parameters, and target total mass:
 
 ```python
-from molpy.tool import polymer_system
+from molpy.builder import polymer_system
 
 chains = polymer_system(
     "{[<]CCO[>]}|schulz_zimm(1500,3000)||50000|",
@@ -62,7 +62,7 @@ This returns a `list[Atomistic]` — one struct per chain, with chain lengths sa
 When you need to inspect intermediate results — checking the system plan before committing to a build, or building chains one at a time with different settings — use the step-level Tools directly instead of the all-in-one `polymer_system()`. These expose the same workflow in finer granularity:
 
 ```python
-from molpy.tool import PrepareMonomer, BuildPolymer, PlanSystem
+from molpy.builder import PrepareMonomer, BuildPolymer, PlanSystem
 ```
 
 - `PrepareMonomer` — parse BigSMILES, generate 3D coordinates, compute topology
@@ -77,11 +77,11 @@ In practice, most research workflows stay at the Tool level. The class layer is 
 
 ## Defining your own Tool
 
-If you find yourself repeating the same multi-module setup across scripts — parse, adapt, parameterize, export — that sequence is a candidate for a Tool. Inherit from `Tool`, declare configuration as frozen dataclass fields, and implement `run()`:
+If you find yourself repeating the same multi-module setup across scripts — parse, adapt, parameterize, export — that sequence is a candidate for a Tool. Inherit from `Tool` — the internal builder framework base imported from `molpy.builder._tool` (it is not a public top-level export) — declare configuration as frozen dataclass fields, and implement `run()`:
 
 ```python
 from dataclasses import dataclass
-from molpy.tool import Tool
+from molpy.builder._tool import Tool
 
 @dataclass(frozen=True)
 class ParameterizeMolecule(Tool):
@@ -97,5 +97,5 @@ Because the dataclass is frozen, the configuration cannot drift between calls. T
 
 ## See Also
 
-- [API Reference: Tool](../api/tool.md) -- parameter details for all built-in Tools
+- [API Reference: Builder](../api/builder.md) -- parameter details for all built-in polymer-building tools
 - [Polydisperse Systems](../user-guide/05_polydisperse_systems.ipynb) -- end-to-end workflow from distribution design to LAMMPS export

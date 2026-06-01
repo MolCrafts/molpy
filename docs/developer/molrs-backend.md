@@ -159,6 +159,5 @@ mol = parse_molecule("CCO")          # ethanol, heavy-atom graph
 mol_3d = Generate3D(seed=42)(mol)    # fresh structure, input untouched
 ```
 
-The RDKit adapter (`molpy.adapter.rdkit`) and tool (`molpy.tool.rdkit`) remain
-available as an optional external backend, but the molrs pipeline is the
-default trunk.
+The RDKit adapter (`molpy.adapter.rdkit`) remains available as an optional
+external backend, but the molrs pipeline is the default trunk.

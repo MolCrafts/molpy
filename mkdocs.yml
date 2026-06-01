@@ -150,10 +150,10 @@ nav:
       - Adapter: api/adapter.md
       - Wrapper: api/wrapper.md
       # High-level operations
-      - Tool: api/tool.md
       - Engine: api/engine.md
       - Optimization: api/optimize.md
       - Compute: api/compute.md
+      - Legacy: api/legacy.md
 
   - Developer Guide:
       - developer/index.md

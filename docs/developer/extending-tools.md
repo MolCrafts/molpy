@@ -20,7 +20,7 @@ Subclass `Compute`, declare configuration as frozen dataclass fields, implement 
 from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
-from molpy.tool import Compute
+from molpy.compute import Compute
 
 @dataclass(frozen=True)
 class RadiusOfGyration(Compute):
@@ -58,11 +58,13 @@ value = rg(positions, masses)   # __call__ delegates to run()
 
 ## Adding a custom Tool
 
-Same pattern, but for `Tool` subclasses.
+Same pattern, but for `Tool` subclasses. `Tool` is the internal builder
+framework base, imported from `molpy.builder._tool` (it is not a public
+top-level export).
 
 ```python
 from dataclasses import dataclass
-from molpy.tool import Tool
+from molpy.builder._tool import Tool
 from molpy.core.atomistic import Atomistic
 
 @dataclass(frozen=True)
@@ -77,7 +79,7 @@ class ParameterizeMolecule(Tool):
         from molpy.typifier import OplsAtomisticTypifier
 
         mol = mp.parser.parse_molecule(smiles)
-        mol = mp.tool.generate_3d(mol, add_hydrogens=self.add_hydrogens)
+        mol = mp.adapter.generate_3d(mol, add_hydrogens=self.add_hydrogens)
         mol.get_topo(gen_angle=True, gen_dihe=True)
 
         ff = mp.io.read_xml_forcefield(f"{self.force_field}.xml")
