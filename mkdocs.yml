@@ -129,6 +129,10 @@ nav:
       - AmberTools Integration: user-guide/07_ambertools_integration.md
       - Moltemplate CLI: user-guide/08_moltemplate_cli.md
 
+  - Compute:
+      - compute/index.md
+      - Dielectric Spectroscopy: compute/dielectric.md
+
   - API Reference:
       - api/index.md
       # Core data structures
@@ -149,6 +153,7 @@ nav:
       - Tool: api/tool.md
       - Engine: api/engine.md
       - Optimization: api/optimize.md
+      - Compute: api/compute.md
 
   - Developer Guide:
       - developer/index.md
