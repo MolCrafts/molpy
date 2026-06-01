@@ -177,8 +177,7 @@ class GBigSmilesCompiler:
     def _try_generate_3d(self, monomer: Atomistic) -> Atomistic:
         """Attempt 3D generation via RDKit if available."""
         try:
-            from molpy.adapter.rdkit import RDKitAdapter
-            from molpy.tool.rdkit import Generate3D
+            from molpy.adapter.rdkit import Generate3D, RDKitAdapter
         except ImportError:
             return monomer
 

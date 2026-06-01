@@ -18,8 +18,7 @@ from numpy.typing import NDArray
 class TimeCache:
     """Cache previous N frames of trajectory data for correlation calculations.
 
-    This class maintains a rolling buffer of the most recent N frames of data,
-    which is essential for computing time-correlation functions like MSD and ACF.
+    Uses an in-place ring buffer for O(1) per update (no array allocation).
 
     Args:
         cache_size: Number of frames to cache (maximum time lag)
@@ -38,18 +37,19 @@ class TimeCache:
         self,
         cache_size: int,
         shape: tuple[int, ...],
-        dtype: np.dtype = np.float64,
+        dtype: np.dtype | type = np.float64,
         default_val: float = np.nan,
     ):
         self.cache_size = cache_size
         self.shape = shape
         self.dtype = dtype
-        # Initialize cache with default values
-        self.cache = np.full((cache_size, *shape), default_val, dtype=dtype)
+        self._default_val = default_val
+        self._buffer = np.full((cache_size, *shape), default_val, dtype=dtype)
+        self._head = 0  # next write position (points to oldest slot)
         self._count = 0
 
     def update(self, new_data: NDArray) -> None:
-        """Add new frame to cache, shifting older frames.
+        """Add new frame to cache (O(1) in-place write).
 
         Args:
             new_data: New data array to add (shape must match self.shape)
@@ -59,22 +59,32 @@ class TimeCache:
                 f"Data shape {new_data.shape} doesn't match cache shape {self.shape}"
             )
 
-        # Shift cache and add new data at front
-        new_val = np.expand_dims(new_data, 0)
-        self.cache = np.concatenate([new_val, self.cache], axis=0)[:-1]
+        # Write into the slot just before head (ring going backwards)
+        self._head = (self._head - 1) % self.cache_size
+        self._buffer[self._head] = new_data
         self._count += 1
 
+    @property
+    def cache(self) -> NDArray:
+        """Return data ordered newest-first (for backward compatibility)."""
+        return self.get()
+
     def get(self) -> NDArray:
-        """Get cached data array.
+        """Get cached data array, ordered newest-first.
 
         Returns:
             Cached data with shape (cache_size, *data_shape)
         """
-        return self.cache
+        if self._head == 0:
+            return self._buffer.copy()
+        return np.concatenate(
+            [self._buffer[self._head :], self._buffer[: self._head]], axis=0
+        )
 
     def reset(self) -> None:
         """Reset cache to initial state."""
-        self.cache.fill(np.nan)
+        self._buffer.fill(self._default_val)
+        self._head = 0
         self._count = 0
 
 
@@ -102,7 +112,7 @@ class TimeAverage:
     def __init__(
         self,
         shape: tuple[int, ...],
-        dtype: np.dtype = np.float64,
+        dtype: np.dtype | type = np.float64,
         dropnan: Literal["none", "partial", "all"] = "partial",
     ):
         self.shape = shape
@@ -228,7 +238,7 @@ def compute_acf(
 ) -> NDArray:
     """Compute autocorrelation function over trajectory.
 
-    Calculates: <v_i(0) · v_i(dt)>_{i,t}
+    Calculates: <v_i(0) . v_i(dt)>_{i,t}
 
     The particle dimension is averaged, and the time dimension is accumulated
     using a rolling cache to compute correlations at different time lags.

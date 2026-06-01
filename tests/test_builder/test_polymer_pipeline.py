@@ -11,7 +11,7 @@ Tests the full flow: parse → build → typify, verifying:
 import pytest
 
 from molpy.builder.polymer.port_utils import port_role, ports_compatible
-from molpy.tool.polymer import polymer
+from molpy.builder.polymer.dsl import polymer
 
 try:
     from rdkit import Chem  # noqa: F401

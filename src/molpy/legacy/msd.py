@@ -1,4 +1,4 @@
-"""Mean Squared Displacement computation.
+"""Mean Squared Displacement computation (legacy NumPy path).
 
 Operates on plain NDArrays — no trajectory coupling.
 """
@@ -6,11 +6,12 @@ Operates on plain NDArrays — no trajectory coupling.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from numpy.typing import NDArray
 
-from .base import Compute
-from .time_series import compute_msd as _compute_msd
+from molpy.compute.base import Compute
+from molpy.compute.time_series import compute_msd as _compute_msd
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,14 @@ class MSD(Compute):
                 f"got shape {positions.shape}"
             )
         return _compute_msd(positions, cache_size=self.max_lag)
+
+    def _compute(self, input: NDArray) -> NDArray:
+        """Compute hook for :class:`~molpy.compute.base.Compute`."""
+        return self.run(input)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Invoke :meth:`run` directly."""
+        return self.run(*args, **kwargs)
 
 
 def msd(positions: NDArray, *, max_lag: int) -> NDArray:

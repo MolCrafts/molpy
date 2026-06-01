@@ -1,10 +1,9 @@
-"""Base abstractions for computation and tool operations.
+"""Tool framework for executable builder operations.
 
 Provides:
 
-- ``Compute``: frozen-dataclass ABC for analysis operations (MSD, correlations)
-- ``Tool``: frozen-dataclass ABC for executable tools (builders, transforms)
 - ``ToolRegistry``: auto-discovery registry for ``Tool`` subclasses
+- ``Tool``: frozen-dataclass ABC for executable tools (builders, transforms)
 """
 
 from __future__ import annotations
@@ -41,44 +40,12 @@ class ToolRegistry:
 
 
 @dataclass(frozen=True)
-class Compute(ABC):
-    """Base class for analysis operations (MSD, correlations).
-
-    Duck-type compatible with pydantic-graph ``BaseNode``:
-
-    * Dataclass fields = configuration parameters (like Node fields).
-    * ``run()`` method = core logic (like ``Node.run()``).
-    * ``get_node_id()`` classmethod = unique identifier.
-
-    Usage::
-
-        msd = MSD(max_lag=3000)
-        result = msd(positions)          # __call__ delegates to run()
-    """
-
-    @abstractmethod
-    def run(self, *args: Any, **kwargs: Any) -> Any:
-        """Core computation logic. Subclasses must implement."""
-        ...
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        """Invoke run() directly."""
-        return self.run(*args, **kwargs)
-
-    @classmethod
-    def get_node_id(cls) -> str:
-        """Unique node identifier (pydantic-graph compatible)."""
-        return cls.__name__
-
-
-@dataclass(frozen=True)
 class Tool(ABC):
     """Base class for executable tools (builders, transforms).
 
     Concrete subclasses are auto-registered in ``ToolRegistry`` and
-    discovered by the MCP server.  Unlike ``Compute`` (analysis-only),
-    ``Tool`` is intended for molecular operations that produce or
-    transform structures.
+    discovered by the MCP server.  ``Tool`` is intended for molecular
+    operations that produce or transform structures.
 
     Usage::
 

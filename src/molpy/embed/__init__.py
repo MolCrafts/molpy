@@ -6,9 +6,9 @@ build, energy minimisation, rotor search, stereo guard — runs inside molrs;
 this module only marshals :class:`molpy.Atomistic` across that boundary.
 
 The main-trunk ``molpy.compute.Generate3D`` is a thin :class:`Compute` wrapper
-over this function. The RDKit adapter (:mod:`molpy.adapter.rdkit`) and the
-RDKit tool (:mod:`molpy.tool.rdkit`) remain available as an optional external
-backend.
+over this function. The RDKit adapter (:mod:`molpy.adapter.rdkit`), which also
+hosts the optional RDKit ``Generate3D`` / ``OptimizeGeometry`` operators,
+remains available as an optional external backend.
 """
 
 from __future__ import annotations

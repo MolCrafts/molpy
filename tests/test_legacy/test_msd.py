@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from molpy.tool.msd import MSD
+from molpy.legacy.msd import MSD
 
 
 class TestMSD:

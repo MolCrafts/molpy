@@ -1,4 +1,4 @@
-"""Cross-displacement correlation computation.
+"""Cross-displacement correlation computation (legacy NumPy path).
 
 Operates on plain NDArrays — no trajectory coupling.
 """
@@ -6,12 +6,13 @@ Operates on plain NDArrays — no trajectory coupling.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
-from .base import Compute
-from .time_series import TimeAverage, TimeCache
+from molpy.compute.base import Compute
+from molpy.compute.time_series import TimeAverage, TimeCache
 
 
 @dataclass(frozen=True)
@@ -120,6 +121,15 @@ class DisplacementCorrelation(Compute):
             avg.update(dr)
 
         return avg.get()
+
+    def _compute(self, input: tuple[NDArray, NDArray]) -> NDArray:
+        """Compute hook for :class:`~molpy.compute.base.Compute`."""
+        positions_a, positions_b = input
+        return self.run(positions_a, positions_b)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Invoke :meth:`run` directly."""
+        return self.run(*args, **kwargs)
 
 
 def displacement_correlation(

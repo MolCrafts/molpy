@@ -9,6 +9,17 @@ from .connectors import (
     Connector,
     ConnectorContext,
 )
+from .dsl import (
+    BuildPolymer,
+    BuildPolymerAmber,
+    BuildSystem,
+    PlanSystem,
+    PrepareMonomer,
+    generate_3d,
+    polymer,
+    polymer_system,
+    prepare_monomer,
+)
 from .distributions import (
     DPDistribution,
     FlorySchulzPolydisperse,
@@ -69,4 +80,14 @@ __all__ = [
     # G-BigSMILES Growth Kernel
     "GrowthKernel",
     "ProbabilityTableKernel",
+    # DSL tools and entry functions
+    "PrepareMonomer",
+    "BuildPolymer",
+    "PlanSystem",
+    "BuildSystem",
+    "BuildPolymerAmber",
+    "polymer",
+    "polymer_system",
+    "prepare_monomer",
+    "generate_3d",
 ]

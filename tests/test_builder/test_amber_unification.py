@@ -146,32 +146,32 @@ class TestAmberBuilderLeavingGroups:
 
 class TestBuildPolymerAmber:
     def test_is_tool_subclass(self):
-        from molpy.tool.polymer import BuildPolymerAmber
-        from molpy.tool.base import Tool
+        from molpy.builder.polymer.dsl import BuildPolymerAmber
+        from molpy.builder._tool import Tool
 
         assert issubclass(BuildPolymerAmber, Tool)
 
     def test_not_compute_subclass(self):
-        from molpy.tool.polymer import BuildPolymerAmber
-        from molpy.tool.base import Compute
+        from molpy.builder.polymer.dsl import BuildPolymerAmber
+        from molpy.compute.base import Compute
 
         assert not issubclass(BuildPolymerAmber, Compute)
 
     def test_registered_in_registry(self):
-        from molpy.tool.polymer import BuildPolymerAmber
-        from molpy.tool.base import ToolRegistry
+        from molpy.builder.polymer.dsl import BuildPolymerAmber
+        from molpy.builder._tool import ToolRegistry
 
         assert ToolRegistry.get("BuildPolymerAmber") is BuildPolymerAmber
 
     def test_frozen(self):
-        from molpy.tool.polymer import BuildPolymerAmber
+        from molpy.builder.polymer.dsl import BuildPolymerAmber
 
         tool = BuildPolymerAmber()
         with pytest.raises(AttributeError):
             tool.force_field = "gaff"
 
     def test_defaults(self):
-        from molpy.tool.polymer import BuildPolymerAmber
+        from molpy.builder.polymer.dsl import BuildPolymerAmber
 
         tool = BuildPolymerAmber()
         assert tool.reaction_preset == "dehydration"
@@ -184,14 +184,14 @@ class TestBuildPolymerAmber:
 
 class TestDSLBackendDispatch:
     def test_amber_backend_requires_library(self):
-        from molpy.tool.polymer import polymer
+        from molpy.builder.polymer.dsl import polymer
 
         with pytest.raises(TypeError, match="requires 'library'"):
             polymer("{[#EO]|10}", backend="amber")
 
     def test_default_backend_unchanged(self):
         """Verify default backend still works as before."""
-        from molpy.tool.polymer import _detect_notation
+        from molpy.builder.polymer.dsl import _detect_notation
 
         # These should still work regardless of backend param
         assert _detect_notation("{[#EO]|10}") == "cgsmiles"
@@ -209,8 +209,8 @@ class TestAmberExports:
         assert AmberPolymerBuilder is not None
 
     def test_tool_exports_amber(self):
-        """molpy.tool should export BuildPolymerAmber."""
-        from molpy.tool import BuildPolymerAmber
+        """molpy.builder should export BuildPolymerAmber."""
+        from molpy.builder import BuildPolymerAmber
 
         assert BuildPolymerAmber is not None
 

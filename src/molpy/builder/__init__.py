@@ -10,6 +10,17 @@ from molpy.core.region import BoxRegion, Cube, Region, SphereRegion
 from .crystal import Lattice, Site, build_crystal
 from .polymer import *
 from .polymer.ambertools import AmberPolymerBuilder
+from .polymer.dsl import (
+    BuildPolymer,
+    BuildPolymerAmber,
+    BuildSystem,
+    PlanSystem,
+    PrepareMonomer,
+    generate_3d,
+    polymer,
+    polymer_system,
+    prepare_monomer,
+)
 
 __all__ = [
     # AmberTools builders
@@ -22,4 +33,14 @@ __all__ = [
     "Site",
     "SphereRegion",
     "build_crystal",
+    # Polymer DSL tools and entry functions
+    "PrepareMonomer",
+    "BuildPolymer",
+    "PlanSystem",
+    "BuildSystem",
+    "BuildPolymerAmber",
+    "polymer",
+    "polymer_system",
+    "prepare_monomer",
+    "generate_3d",
 ]

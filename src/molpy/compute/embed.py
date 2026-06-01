@@ -7,15 +7,16 @@ heavy-atom graph and returns a fresh structure with generated coordinates;
 the input is never mutated.
 
 This replaces the former RDKit-backed ``compute/rdkit.py``. The RDKit adapter
-(:mod:`molpy.adapter.rdkit`) and the RDKit tool (:mod:`molpy.tool.rdkit`)
-remain available as an optional external backend, but molrs is the trunk.
+(:mod:`molpy.adapter.rdkit`), which also hosts the optional RDKit ``Generate3D``
+/ ``OptimizeGeometry`` operators, remains available as an external backend, but
+molrs is the trunk.
 
 Note
 ----
 molrs exposes only the full ``generate_3d`` pipeline (which already includes
 energy minimization); it does not expose a standalone "optimize an existing
 geometry" entry point. A geometry-only optimizer therefore lives in the
-optional RDKit tool, not here.
+optional RDKit adapter (:mod:`molpy.adapter.rdkit`), not here.
 """
 
 from __future__ import annotations

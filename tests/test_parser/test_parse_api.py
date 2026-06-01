@@ -151,9 +151,9 @@ class TestNamespaceExports:
         assert hasattr(mp.parser, "PolymerSpec")
 
     def test_tool_submodule_access(self):
-        """generate_3d lives under mp.tool, not mp.*."""
-        assert hasattr(mp.tool, "generate_3d")
-        assert callable(mp.tool.generate_3d)
+        """generate_3d lives under mp.adapter, not mp.*."""
+        assert hasattr(mp.adapter, "generate_3d")
+        assert callable(mp.adapter.generate_3d)
 
     def test_submodule_functions_work(self):
         mol = mp.parser.parse_molecule("CCO")
@@ -171,7 +171,7 @@ class TestNamespaceExports:
 
 
 class TestGenerateConvenience:
-    """Test mp.tool.generate_3d() convenience function."""
+    """Test mp.adapter.generate_3d() convenience function."""
 
     def test_generate_3d_returns_atomistic(self):
         pytest = __import__("pytest")
@@ -183,7 +183,7 @@ class TestGenerateConvenience:
             pytest.skip("RDKit not installed")
 
         mol = mp.parser.parse_molecule("CCO")
-        result = mp.tool.generate_3d(mol)
+        result = mp.adapter.generate_3d(mol)
         assert isinstance(result, Atomistic)
         # Should have atoms with 3D coordinates
         assert len(result.atoms) >= len(mol.atoms)
@@ -201,5 +201,5 @@ class TestGenerateConvenience:
             pytest.skip("RDKit not installed")
 
         mol = mp.parser.parse_molecule("C")
-        result = mp.tool.generate_3d(mol, add_hydrogens=False)
+        result = mp.adapter.generate_3d(mol, add_hydrogens=False)
         assert isinstance(result, Atomistic)

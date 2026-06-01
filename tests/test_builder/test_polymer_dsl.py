@@ -2,7 +2,7 @@
 
 import pytest
 
-from molpy.tool.polymer import (
+from molpy.builder.polymer.dsl import (
     _detect_notation,
     polymer,
     polymer_system,
@@ -37,8 +37,7 @@ class TestPolymerPureCGSmiles:
     def test_with_library(self):
         pytest.importorskip("rdkit", reason="RDKit required")
 
-        from molpy.adapter.rdkit import RDKitAdapter
-        from molpy.tool.rdkit import Generate3D
+        from molpy.adapter.rdkit import Generate3D, RDKitAdapter
         from molpy.parser.smiles import bigsmilesir_to_monomer, parse_bigsmiles
 
         ir = parse_bigsmiles("{[<]CCO[>]}")

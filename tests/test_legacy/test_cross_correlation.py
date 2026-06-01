@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from molpy.tool.cross_correlation import DisplacementCorrelation
+from molpy.legacy.cross_correlation import DisplacementCorrelation
 
 
 class TestDisplacementCorrelation:

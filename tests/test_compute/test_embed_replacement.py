@@ -3,8 +3,9 @@
 The main-trunk ``molpy.compute.Generate3D`` is now backed by the molrs
 ``generate_3d`` pipeline (distance geometry + minimization), operating on a
 :class:`molpy.Atomistic` graph and returning a fresh structure. The RDKit
-adapter (``molpy.adapter.rdkit``) and tool (``molpy.tool.rdkit``) remain
-available as an optional external backend, but are no longer the trunk.
+adapter (``molpy.adapter.rdkit``), which also hosts the optional RDKit
+``Generate3D`` / ``OptimizeGeometry`` operators, remains available as an
+external backend, but is no longer the trunk.
 """
 
 from __future__ import annotations

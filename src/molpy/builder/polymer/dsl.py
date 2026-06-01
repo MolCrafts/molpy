@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 from molpy.core.atomistic import Atomistic
 
-from .base import Tool
+from molpy.builder._tool import Tool
 
 # ---------------------------------------------------------------------------
 # Tool classes
@@ -84,8 +84,7 @@ class PrepareMonomer(Tool):
     def _try_generate_3d(self, monomer: Atomistic) -> Atomistic:
         """Attempt 3D generation via RDKit if available."""
         try:
-            from molpy.adapter.rdkit import RDKitAdapter
-            from molpy.tool.rdkit import Generate3D
+            from molpy.adapter.rdkit import Generate3D, RDKitAdapter
         except ImportError:
             return monomer
 
@@ -543,6 +542,80 @@ def polymer_system(
     )
     compiler = GBigSmilesCompiler(config)
     return compiler.compile_and_build(system_ir)
+
+
+def prepare_monomer(
+    bigsmiles: str,
+    typifier=None,
+    *,
+    add_hydrogens: bool = True,
+    optimize: bool = True,
+    gen_angle: bool = True,
+    gen_dihe: bool = True,
+) -> Atomistic:
+    """Parse, embed in 3D, augment topology, and optionally typify a monomer.
+
+    Bundles the four-step pattern that appears in every polymer-building
+    workflow::
+
+        m = mp.parser.parse_monomer(bigsmiles)
+        m = generate_3d(m, add_hydrogens=True, optimize=True)
+        m = m.get_topo(gen_angle=True, gen_dihe=True)
+        m = typifier.typify(m)
+
+    Args:
+        bigsmiles: BigSMILES string (e.g. ``"{[][<]OCCOCCOCCO[>][]}"``).
+        typifier: Optional typifier instance (e.g. ``OplsAtomisticTypifier``).
+            When provided, force-field types are assigned before returning.
+        add_hydrogens: Add implicit hydrogens during 3D generation.
+        optimize: Run force-field geometry optimisation after embedding.
+        gen_angle: Generate angle interactions from bonds.
+        gen_dihe: Generate dihedral interactions from bonds.
+
+    Returns:
+        Fully prepared Atomistic monomer ready for reactions or export.
+    """
+    from molpy.parser import parse_monomer
+
+    mol = parse_monomer(bigsmiles)
+    mol = generate_3d(mol, add_hydrogens=add_hydrogens, optimize=optimize)
+    if gen_angle or gen_dihe:
+        mol = mol.get_topo(gen_angle=gen_angle, gen_dihe=gen_dihe)
+    if typifier is not None:
+        mol = typifier.typify(mol)
+    return mol
+
+
+def generate_3d(
+    mol: Atomistic,
+    add_hydrogens: bool = True,
+    optimize: bool = True,
+) -> Atomistic:
+    """Generate 3D coordinates for a molecular structure via RDKit.
+
+    Thin re-export of :func:`molpy.adapter.rdkit.generate_3d` for use inside
+    polymer-building workflows.
+
+    Args:
+        mol: Atomistic structure (typically from parser.parse_molecule)
+        add_hydrogens: Add implicit hydrogens before embedding
+        optimize: Run force-field geometry optimization after embedding
+
+    Returns:
+        New Atomistic with 3D coordinates and (optionally) explicit hydrogens
+
+    Raises:
+        ImportError: if RDKit is not installed
+    """
+    try:
+        from molpy.adapter.rdkit import generate_3d as _rdkit_generate_3d
+    except ModuleNotFoundError as exc:  # pragma: no cover
+        raise ImportError(
+            "RDKit is required for 3D coordinate generation. "
+            "Install with: pip install rdkit"
+        ) from exc
+
+    return _rdkit_generate_3d(mol, add_hydrogens=add_hydrogens, optimize=optimize)
 
 
 # ---------------------------------------------------------------------------

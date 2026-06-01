@@ -2,13 +2,14 @@
 
 import pytest
 
-from molpy.tool.polymer import (
+from molpy.builder.polymer.dsl import (
     BuildPolymer,
     BuildSystem,
     PlanSystem,
     PrepareMonomer,
 )
-from molpy.tool.base import Compute, Tool, ToolRegistry
+from molpy.builder._tool import Tool, ToolRegistry
+from molpy.compute.base import Compute
 
 
 # ---- Basic tests (no RDKit needed) ----
@@ -149,8 +150,7 @@ def eo_monomer():
     """Create an EO monomer for integration tests."""
     rdkit = pytest.importorskip("rdkit", reason="RDKit required")
 
-    from molpy.adapter.rdkit import RDKitAdapter
-    from molpy.tool.rdkit import Generate3D
+    from molpy.adapter.rdkit import Generate3D, RDKitAdapter
     from molpy.parser.smiles import bigsmilesir_to_monomer, parse_bigsmiles
 
     ir = parse_bigsmiles("{[<]CCO[>]}")
