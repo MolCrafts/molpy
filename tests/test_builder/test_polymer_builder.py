@@ -218,7 +218,7 @@ class TestPolymerBuilder:
         # A: linear monomer with $ ports; B: 3-arm branch point with 3 $ ports
         def _make(bs):
             m = mp.parser.parse_monomer(bs)
-            m = mp.tool.generate_3d(m, add_hydrogens=True, optimize=False)
+            m = mp.adapter.generate_3d(m, add_hydrogens=True, optimize=False)
             m = m.get_topo(gen_angle=True, gen_dihe=True)
             for i, a in enumerate(m.atoms):
                 a["id"] = i + 1

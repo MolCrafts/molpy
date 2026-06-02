@@ -24,7 +24,7 @@ class TestAmberPolymerBuilderInit:
         builder = AmberPolymerBuilder(library={})
         assert builder.force_field == "gaff2"
         assert builder.charge_method == "bcc"
-        assert builder.work_dir == Path("amber_work")
+        assert builder.work_dir == Path("amber_work").resolve()
         assert builder.keep_intermediates is True
 
     def test_custom_values(self, tmp_path: Path):
