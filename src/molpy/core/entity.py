@@ -3,6 +3,8 @@ from collections.abc import Iterable, Iterator
 from copy import deepcopy
 from typing import Any, Protocol, Self, TypeVar, cast, overload
 
+import molrs
+
 from molpy.core.ops.geometry import (
     _cross,
     _dot,
@@ -14,6 +16,19 @@ from molpy.core.ops.geometry import (
     _vec_sub,
 )
 from molpy.core.utils import get_nearest_type
+
+
+def _snapshot_data(obj: Any) -> dict[str, Any]:
+    """Return a plain ``dict`` of an entity/link's attributes.
+
+    Works for both detached handles (``self.data`` is a real dict) and bound
+    handles (``self.data`` is a live graph proxy). Crucially this never returns
+    the proxy itself, so the backing molrs graph is never deepcopied/pickled.
+    """
+    data = getattr(obj, "data", None)
+    if data is None:
+        return {}
+    return dict(data)
 
 
 class EntityLike(Protocol):
@@ -30,8 +45,65 @@ class EntityLike(Protocol):
 class Entity(UserDict):
     """Dictionary-like base object for all structure elements.
 
-    Minimal by design; no IDs, no persistence, no global context.
+    Dual-mode (spec ``atomistic-cg-on-molrs-molgraph``, P1):
+
+    * **Detached** — created standalone (e.g. ``Atom(element="C")``). Behaves
+      exactly as a plain :class:`collections.UserDict`; ``self.data`` is an
+      ordinary dict it owns.
+    * **Bound** — once a :class:`Struct` adds it, :meth:`bind` swaps
+      ``self.data`` for a live :class:`~molpy.core._handle._AtomPropProxy` so
+      every ``UserDict`` operation proxies to the backing molrs graph node.
+
+    Identity is preserved across the transition: the same handle object stays
+    in the struct's bucket, so ``bond.itom is atom`` and ``id(atom)`` keyed
+    bookkeeping survive the migration.
     """
+
+    #: backing graph once bound, else ``None``.
+    _graph: Any = None
+    #: node index in the backing graph once bound (compacts on removal).
+    _index: int = -1
+
+    @property
+    def is_bound(self) -> bool:
+        """True once this entity is backed by a graph node."""
+        return self._graph is not None
+
+    def bind(self, graph: Any, index: int) -> None:
+        """Attach this entity to ``graph`` node ``index``, migrating ``data``.
+
+        The current ``self.data`` contents are written into the graph node's
+        property bag (D5: non int/float/str values stay in the proxy's Python
+        fallback), then ``self.data`` is replaced by the live proxy.
+        """
+        from molpy.core._handle import _AtomPropProxy
+
+        proxy = _AtomPropProxy(graph, self)
+        self._graph = graph
+        self._index = index
+        detached = dict(self.data)
+        # ``add_atom`` always seeds an ``element`` prop on the molrs node; drop
+        # it if this entity never carried one so reads stay faithful (e.g.
+        # crystal atoms keyed on ``symbol`` rather than ``element``).
+        if "element" not in detached and "element" in proxy._g_keys():
+            proxy._g_del("element")
+        # migrate existing detached attributes into the proxy
+        for k, v in detached.items():
+            proxy[k] = v
+        self.data = proxy
+
+    def __deepcopy__(self, memo: dict) -> "Entity":
+        """Deep-copy into a *detached* entity.
+
+        A bound entity's ``data`` is a live graph proxy holding the (unpicklable)
+        molrs graph. Deep-copying snapshots the visible attributes into a plain
+        dict and returns a fresh detached handle, so ``copy.deepcopy`` works and
+        the clone is independent of any graph.
+        """
+        clone = self.__class__()
+        memo[id(self)] = clone
+        clone.data = deepcopy(dict(self.data), memo)
+        return clone
 
     # Keep identity-based hashing/equality from UserDict's object semantics
     def __hash__(self) -> int:  # pragma: no cover - trivial identity
@@ -53,6 +125,18 @@ class LinkLike(Protocol):
 class Link[T: Entity](UserDict):
     """Connectivity object holding direct references to endpoint entities.
 
+    Dual-mode (spec ``atomistic-cg-on-molrs-molgraph``, P1), parallel to
+    :class:`Entity`:
+
+    * **Detached** — a plain :class:`collections.UserDict` owning ``self.data``.
+    * **Bound** — :meth:`bind` records a molrs link id (``_index``) and swaps
+      ``self.data`` for a live :class:`~molpy.core._handle._LinkPropProxy`
+      routing attribute reads/writes to the graph link's property bag.
+
+    ``endpoints`` always holds the (bound) endpoint :class:`Entity` handles, so
+    ``bond.itom``, ``angle.ktom``, :meth:`replace_endpoint`, and identity
+    semantics behave the same whether or not the link is graph-backed.
+
     Attributes
     ----------
     endpoints: tuple[Entity]
@@ -61,6 +145,12 @@ class Link[T: Entity](UserDict):
 
     endpoints: tuple[T, ...]
 
+    #: molrs link-kind tag — overridden per concrete subclass.
+    _link_kind: str = "bond"
+
+    _graph: Any = None
+    _index: int = -1
+
     def __init__(self, endpoints: Iterable[T], /, **attrs: Any):
         super().__init__()
         self.endpoints = tuple(endpoints)
@@ -68,9 +158,49 @@ class Link[T: Entity](UserDict):
         for k, v in attrs.items():
             self.data[k] = v
 
+    @property
+    def is_bound(self) -> bool:
+        """True once this link is backed by a graph link."""
+        return self._graph is not None
+
+    def bind(self, graph: Any, index: int) -> None:
+        """Attach this link to ``graph`` link ``index``, migrating ``data``."""
+        from molpy.core._handle import _LinkPropProxy
+
+        proxy = _LinkPropProxy(graph, self)
+        self._graph = graph
+        self._index = index
+        for k, v in list(self.data.items()):
+            proxy[k] = v
+        self.data = proxy
+
+    # ----- molrs link-kind dispatch (used by _LinkPropProxy) -----
+    def _kind_keys(self, graph: Any, idx: int) -> list[str]:
+        return list(getattr(graph, f"{self._link_kind}_keys")(idx))
+
+    def _kind_get(self, graph: Any, idx: int, key: str) -> Any:
+        return getattr(graph, f"get_{self._link_kind}_prop")(idx, key)
+
+    def _kind_set(self, graph: Any, idx: int, key: str, value: Any) -> None:
+        getattr(graph, f"set_{self._link_kind}_prop")(idx, key, value)
+
+    def _kind_del(self, graph: Any, idx: int, key: str) -> None:
+        getattr(graph, f"del_{self._link_kind}_prop")(idx, key)
+
     def replace_endpoint(self, old: T, new: T) -> None:
         """Replace one endpoint reference with another in-place."""
         self.endpoints = tuple(new if e is old else e for e in self.endpoints)
+
+    def __deepcopy__(self, memo: dict) -> "Link":
+        """Deep-copy into a *detached* link (see :meth:`Entity.__deepcopy__`)."""
+        clone = self.__class__.__new__(self.__class__)
+        memo[id(self)] = clone
+        clone._graph = None
+        clone._index = -1
+        clone.endpoints = tuple(deepcopy(ep, memo) for ep in self.endpoints)
+        UserDict.__init__(clone)
+        clone.data = deepcopy(dict(self.data), memo)
+        return clone
 
     def __hash__(self) -> int:  # pragma: no cover - trivial identity
         return id(self)
@@ -128,11 +258,17 @@ class TypeBucket[E: Entity]:
     Query methods return Entities[...] so you can do column-style access directly.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, binder: Any = None, unbinder: Any = None) -> None:
         # Internal store uses Any for flexibility across entity types
         self._items: dict[type[Any], Entities[Any]] = {}
         # Mirror the list contents as an identity-set for O(1) dedup.
         self._ids: dict[type[Any], set[int]] = {}
+        # Optional graph-binding hooks (set by an owning Struct). When present,
+        # ``add`` binds an item into the backing graph the first time it is
+        # registered, and ``remove`` detaches it. Standalone buckets (no owner)
+        # leave both ``None`` and behave as a plain identity-deduped container.
+        self._binder = binder
+        self._unbinder = unbinder
 
     # ----- mutate -----
     def add(self, item: E) -> None:
@@ -148,6 +284,8 @@ class TypeBucket[E: Entity]:
         iid = id(item)
         if iid in idset:
             return
+        if self._binder is not None:
+            self._binder(item)
         bucket.append(item)
         idset.add(iid)
 
@@ -167,6 +305,8 @@ class TypeBucket[E: Entity]:
             return False
         for i, obj in enumerate(bucket):
             if obj is item:
+                if self._unbinder is not None:
+                    self._unbinder(item)
                 bucket.pop(i)
                 idset.discard(id(item))
                 if not bucket:
@@ -248,6 +388,12 @@ class Struct:
     A Struct is a typed container that organizes entities (e.g., atoms, residues)
     and links (e.g., bonds, angles) into type-specific buckets for efficient
     access and manipulation.
+
+    Backing (P1, spec ``atomistic-cg-on-molrs-molgraph``): the concrete
+    containers (``Atomistic`` / ``CoarseGrain``) root on the molrs general graph
+    (:class:`molrs.Graph`) by listing it as their LAST base, so molpy's mixin
+    methods (e.g. ``SpatialMixin.rotate``) win in the MRO over the molrs base's
+    same-named methods. ``Struct`` itself stays mixin-friendly.
     """
 
     def __init__(self, **props: Any) -> None:
@@ -256,9 +402,109 @@ class Struct:
         Args:
             **props: Additional properties to store in the struct
         """
-        self.entities: TypeBucket[Any] = TypeBucket()
-        self.links: TypeBucket[Any] = TypeBucket()
+        # P1 (spec atomistic-cg-on-molrs-molgraph): the concrete subclass IS a
+        # molrs graph (it lists ``molrs.Graph`` as its last base). The buckets
+        # below are wired with binders so that registering an entity / link
+        # migrates its storage into ``self`` (the graph) and hands the handle a
+        # live property proxy. Identity / ordering still live in the buckets.
+        self.entities: TypeBucket[Any] = TypeBucket(
+            binder=self._bind_entity, unbinder=self._unbind_entity
+        )
+        self.links: TypeBucket[Any] = TypeBucket(
+            binder=self._bind_link, unbinder=self._unbind_link
+        )
         self._props: dict[str, Any] = dict(props)
+        # Insertion-ordered registries mirroring the molrs graph's compacting
+        # index spaces. The handle at position ``k`` here has molrs index ``k``.
+        # Keeping these explicit (rather than deriving from type-grouped
+        # buckets) keeps indices correct even with mixed Entity subclasses.
+        self._ordered_nodes: list[Entity] = []
+        self._ordered_links: dict[str, list[Link]] = {}
+
+    # ---------- graph binding hooks (P1) ----------
+    def _bind_entity(self, ent: "Entity") -> None:
+        """Add ``ent`` as a graph node and bind it to the backing graph.
+
+        No-op when ``self`` is not a molrs graph (defensive: a bare ``Struct``
+        instantiated directly has no graph backend, so handles stay detached
+        and the bucket degrades to a plain container).
+        """
+        if not isinstance(self, molrs.Graph):
+            return
+        if ent.is_bound:
+            return
+        # molrs ``add_atom`` requires a symbol; pass the real element when the
+        # entity has one, else a placeholder that ``Entity.bind`` strips back
+        # out. molpy overrides ``add_atom`` with an (atom)->atom helper, so
+        # reach the molrs node-creating method through the base class.
+        symbol = str(ent.data.get("element") or "X")
+        index = molrs.Graph.add_atom(self, symbol)
+        ent.bind(self, index)
+        self._ordered_nodes.append(ent)
+
+    def _unbind_entity(self, ent: "Entity") -> None:
+        if not getattr(ent, "is_bound", False):
+            return
+        graph = ent._graph
+        idx = ent._index
+        # snapshot BEFORE clearing the index (the proxy reads ``_index``)
+        snapshot = dict(ent.data)
+        ent._graph = None
+        ent._index = -1
+        ent.data = snapshot
+        molrs.Graph.remove_atom(graph, idx)
+        # molrs compacts node ids on removal: drop this handle and shift the
+        # index of every node that sat after it.
+        self._ordered_nodes.pop(idx)
+        for k in range(idx, len(self._ordered_nodes)):
+            self._ordered_nodes[k]._index = k
+
+    def _bind_link(self, link: "Link") -> None:
+        if not isinstance(self, molrs.Graph):
+            return
+        if link.is_bound:
+            return
+        # Orphan link: an endpoint is not registered in *this* struct's graph.
+        # Leave the link detached (it still lives in the bucket) so legacy
+        # orphan-link semantics survive — e.g. ``to_frame`` raising later.
+        if any(getattr(ep, "_graph", None) is not self for ep in link.endpoints):
+            return
+        idxs = [ep._index for ep in link.endpoints]
+        kind = link._link_kind
+        # reach molrs link-creating methods through the base class (molpy
+        # shadows the same names with (object)->object helpers).
+        if kind == "bond":
+            molrs.Graph.add_bond(self, idxs[0], idxs[1])
+            index = self.n_bonds - 1
+        elif kind == "angle":
+            index = molrs.Graph.add_angle(self, idxs[0], idxs[1], idxs[2])
+        elif kind == "dihedral":
+            index = molrs.Graph.add_dihedral(self, idxs[0], idxs[1], idxs[2], idxs[3])
+        elif kind == "improper":
+            index = molrs.Graph.add_improper(self, idxs[0], idxs[1], idxs[2], idxs[3])
+        else:  # pragma: no cover - defensive
+            return
+        link.bind(self, index)
+        self._ordered_links.setdefault(kind, []).append(link)
+
+    def _unbind_link(self, link: "Link") -> None:
+        if not getattr(link, "is_bound", False):
+            return
+        graph = link._graph
+        idx = link._index
+        kind = link._link_kind
+        # snapshot BEFORE clearing the index (the proxy reads ``_index``)
+        snapshot = dict(link.data)
+        link._graph = None
+        link._index = -1
+        link.data = snapshot
+        getattr(molrs.Graph, f"remove_{kind}")(graph, idx)
+        # per-kind link id space also compacts on removal.
+        order = self._ordered_links.get(kind, [])
+        if 0 <= idx < len(order):
+            order.pop(idx)
+            for k in range(idx, len(order)):
+                order[k]._index = k
 
     # ---------- dict-like access to props ----------
     def __getitem__(self, key: str) -> Any:
@@ -330,10 +576,11 @@ class Struct:
             - merge
         """
         new = type(self)()
-        # deep-copy entities
+        # deep-copy entities (snapshot graph-backed data to plain dicts so the
+        # backing molrs graph is never deepcopied/pickled)
         emap: dict[Entity, Entity] = {}
         for ent in self._iter_all_entities():
-            cloned = ent.__class__(deepcopy(getattr(ent, "data", None)))
+            cloned = ent.__class__(deepcopy(_snapshot_data(ent)))
             emap[ent] = cloned
             new.entities.add(cloned)
 
@@ -344,12 +591,12 @@ class Struct:
                 if ep not in emap:
                     # Edge case: endpoint not in entities bucket
                     # This shouldn't happen in well-formed assemblies
-                    cloned_ep = ep.__class__(deepcopy(getattr(ep, "data", None)))
+                    cloned_ep = ep.__class__(deepcopy(_snapshot_data(ep)))
                     emap[ep] = cloned_ep
                     new.entities.add(cloned_ep)
 
             mapped_eps = [emap[ep] for ep in link.endpoints]
-            attrs = deepcopy(getattr(link, "data", {}))
+            attrs = deepcopy(_snapshot_data(link))
             lcls: type[Link] = type(link)
             try:
                 new_link = lcls(*mapped_eps, **attrs)  # Endpoints as positional args
@@ -379,31 +626,50 @@ class Struct:
             >>> struct1.merge(struct2)  # Transfers struct2 into struct1
             >>> # struct2 should not be used after this!
         """
-        # Collect all entities from other
-        other_entities = set(other._iter_all_entities())
+        # Snapshot membership before mutating either side.
+        other_entity_list = list(other._iter_all_entities())
+        other_entities = set(other_entity_list)
+        other_links = list(other._iter_all_links())
 
-        # Transfer all entities directly (NO copy)
-        for ent in other_entities:
-            self.entities.add(ent)
-
-        # Transfer all links directly (NO copy)
-        for link in other._iter_all_links():
-            # Verify all endpoints are in entities
-            missing_endpoints = []
-            for ep in link.endpoints:
-                if ep not in other_entities:
-                    missing_endpoints.append(ep)
-
-            if missing_endpoints:
-                # This indicates a malformed struct with orphan links
+        # Validate links up front (orphan detection) before any transfer.
+        for link in other_links:
+            if any(ep not in other_entities for ep in link.endpoints):
                 raise ValueError(
                     "Found link with endpoints not in entities bucket. "
                     "This indicates orphan links in the struct."
                 )
 
-            self.links.add(link)
+        # Transfer entities: detach each handle from ``other``'s graph and
+        # rebind it into ``self``. The handle object is reused (so external
+        # references and link endpoints stay valid); ``other`` must not be
+        # used afterwards.
+        for ent in other_entity_list:
+            self._adopt_entity(ent, other)
+
+        # Transfer links similarly, rebinding onto the (now self-bound)
+        # endpoints.
+        for link in other_links:
+            self._adopt_link(link, other)
 
         return self
+
+    # ---------- merge helpers (P1) ----------
+    def _adopt_entity(self, ent: "Entity", other: "Struct") -> None:
+        """Detach ``ent`` from ``other`` and register it in ``self``."""
+        if getattr(ent, "is_bound", False):
+            snapshot = _snapshot_data(ent)
+            ent._graph = None
+            ent._index = -1
+            ent.data = snapshot
+        self.entities.add(ent)
+
+    def _adopt_link(self, link: "Link", other: "Struct") -> None:
+        if getattr(link, "is_bound", False):
+            snapshot = _snapshot_data(link)
+            link._graph = None
+            link._index = -1
+            link.data = snapshot
+        self.links.add(link)
 
 
 class SpatialMixin:
@@ -885,7 +1151,7 @@ class ConnectivityMixin:
         cloned_entities_list: list[Entity] = []
         for ent in selected_entities:
             # Deep copy entity
-            cloned_ent = ent.__class__(deepcopy(getattr(ent, "data", {})))
+            cloned_ent = ent.__class__(deepcopy(_snapshot_data(ent)))
             new_struct.entities.add(cloned_ent)
             entity_map[ent] = cloned_ent
             cloned_entities_list.append(cloned_ent)
@@ -898,7 +1164,7 @@ class ConnectivityMixin:
                 if all(ep in selected_entities_set for ep in endpoints):
                     # Create cloned link, mapping endpoints to new entities
                     cloned_eps = [entity_map[ep] for ep in endpoints]
-                    attrs = deepcopy(getattr(link, "data", {}))
+                    attrs = deepcopy(_snapshot_data(link))
                     lcls: type[Link] = type(link)
                     try:
                         new_link = lcls(*cloned_eps, **attrs)

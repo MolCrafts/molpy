@@ -18,6 +18,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+import molrs
+
 from .entity import (
     ConnectivityMixin,
     Entities,
@@ -62,6 +64,8 @@ class CGBond(Link):
     two :class:`Bead` endpoints plus arbitrary attributes.
     """
 
+    _link_kind = "bond"
+
     def __init__(self, a: Bead, b: Bead, /, **attrs: Any) -> None:
         """Initialise a CG bond between two beads.
 
@@ -91,7 +95,9 @@ class CGBond(Link):
         return self.endpoints[1]
 
 
-class CoarseGrain(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
+class CoarseGrain(
+    Struct, MembershipMixin, SpatialMixin, ConnectivityMixin, molrs.Graph
+):
     """Coarse-grained molecular structure.
 
     Public surface mirrors :class:`~molpy.core.atomistic.Atomistic` 1:1

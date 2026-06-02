@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Iterable, TYPE_CHECKING
 
+import molrs
+
 from .entity import (
     ConnectivityMixin,
     Entities,
@@ -40,6 +42,8 @@ class Bond(Link):
     Related symbols:
         Atom, Angle, Dihedral, Atomistic.def_bond
     """
+
+    _link_kind = "bond"
 
     def __init__(self, a: Atom, b: Atom, /, **attrs: Any):
         """Create a bond between two atoms.
@@ -81,6 +85,8 @@ class Angle(Link):
         Atom, Bond, Dihedral, Atomistic.def_angle
     """
 
+    _link_kind = "angle"
+
     def __init__(self, a: Atom, b: Atom, c: Atom, /, **attrs: Any):
         """Create an angle between three atoms.
 
@@ -119,6 +125,8 @@ class Angle(Link):
 
 class Dihedral(Link):
     """Dihedral (torsion) angle between four atoms"""
+
+    _link_kind = "dihedral"
 
     def __init__(self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any):
         """Create a dihedral angle between four atoms.
@@ -176,6 +184,8 @@ class Improper(Link):
         Atom, Bond, Angle, Dihedral, Atomistic.def_improper
     """
 
+    _link_kind = "improper"
+
     def __init__(self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any):
         """Create an improper torsion between four atoms.
 
@@ -219,7 +229,7 @@ class Improper(Link):
         return self.endpoints[3]
 
 
-class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
+class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin, molrs.Graph):
     """All-atom molecular structure with full topological information.
 
     Atomistic is the primary container for molecular systems in MolPy. It
@@ -558,7 +568,7 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
                     set(a.endpoints) == set(subgraph_eps) for a in subgraph.angles
                 )
                 if not exists:
-                    attrs = deepcopy(getattr(angle, "data", {}))
+                    attrs = deepcopy(_snapshot_data(angle))
                     subgraph.def_angle(*subgraph_eps, **attrs)
 
         # Copy dihedrals from original to subgraph
@@ -571,7 +581,7 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
                     set(d.endpoints) == set(subgraph_eps) for d in subgraph.dihedrals
                 )
                 if not exists:
-                    attrs = deepcopy(getattr(dihedral, "data", {}))
+                    attrs = deepcopy(_snapshot_data(dihedral))
                     subgraph.def_dihedral(*subgraph_eps, **attrs)
 
         # Copy impropers from original to subgraph
@@ -583,7 +593,7 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin):
                     set(i.endpoints) == set(subgraph_eps) for i in subgraph.impropers
                 )
                 if not exists:
-                    attrs = deepcopy(getattr(improper, "data", {}))
+                    attrs = deepcopy(_snapshot_data(improper))
                     subgraph.def_improper(*subgraph_eps, **attrs)
 
         # Convert edge_entities to list of Atoms
