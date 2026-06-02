@@ -37,6 +37,9 @@ periodic-image unwrapping, and vectorized assembly, then delegate the physics.
 | Time → frequency | `SpectralAnalyzer` | `SpectralResult` | windowed spectrum |
 | Mean displacement correlation | `MCDCompute` | `MCDResult` | diffusion / MSD per group |
 | Polarization MSD | `PMSDCompute` | `PMSDResult` | collective charge transport |
+| Onsager coefficients | `Onsager` | `OnsagerResult` | $L_{ij}$ collective displacement cross-correlation |
+| Current-ACF conductivity | `JACF` | `JACFResult` | $\sigma$ (S/m) via Green-Kubo $\langle J(0)\cdot J(t)\rangle$ |
+| Pair persistence | `Persist` | `PersistResult` | residence-time / survival $C(\tau)$ |
 | Radial distribution | `RDF` | structural $g(r)$ | pair structure |
 | Mean-squared displacement | `MSD` | time series | single-particle diffusion |
 | Shape descriptors | `RadiusOfGyration`, `GyrationTensor`, `InertiaTensor`, `CenterOfMass` | per-frame tensors/scalars | molecular shape |
@@ -45,14 +48,27 @@ periodic-image unwrapping, and vectorized assembly, then delegate the physics.
 Analyses can be chained into a directed graph with `Workflow` for multi-step
 pipelines (e.g. dipole → ACF → spectrum).
 
-## Featured guide
+## Featured guides
 
-- **[Dielectric Spectroscopy](dielectric.md)** — a complete, textbook-style
-  derivation of $\varepsilon^*(\omega)$ and the ionic conductivity $\sigma$ from
-  an MD trajectory: the fluctuation–dissipation basis, the Einstein–Helfand and
-  Green–Kubo routes, every numerical choice (windowing, FFT, unbiased ACF), the
-  electrolyte dipole decomposition, and the spectral fitting recipes
-  (Debye, Cole–Cole, Havriliak–Negami).
+These are complete, textbook-style derivations that build each method from first
+principles — read them to understand *why* the analyses work, not just how to
+call them.
+
+- **[Diffusion & Ionic Transport](transport.md)** — from the random walk and the
+  Einstein relation to the mean-squared displacement, self vs distinct diffusion
+  (MDC), the Onsager phenomenological coefficients, and the two equivalent
+  conductivity routes (PMSD / current ACF). Covers `MCDCompute`, `Onsager`,
+  `PMSDCompute`, `JACF`, and `IonicConductivity`.
+- **[Pair Persistence](persistence.md)** — residence-time correlation functions:
+  the survival indicator, continuous vs intermittent vs stable-states (SSP)
+  definitions, coordination numbers, and the link to pairing diffusion. Covers
+  `Persist`.
+- **[Dielectric Spectroscopy](dielectric.md)** — a complete derivation of
+  $\varepsilon^*(\omega)$ and the ionic conductivity $\sigma$: the
+  fluctuation–dissipation basis, the Einstein–Helfand and Green–Kubo routes,
+  every numerical choice (windowing, FFT, unbiased ACF), the electrolyte dipole
+  decomposition, and the spectral fitting recipes (Debye, Cole–Cole,
+  Havriliak–Negami).
 
 ## Related
 

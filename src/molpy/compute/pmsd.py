@@ -53,6 +53,14 @@ class PMSDCompute(Compute["Trajectory", PMSDResult]):
         >>> plt.xlabel("Time lag (ps)")
         >>> plt.ylabel("PMSD (Å²)")
         >>> plt.show()
+
+    Notes (tame-port audit):
+        This returns the PMSD curve only. The tame original
+        (``tame/recipes/pmsd.py``) additionally fits the long-time slope to a
+        conductivity via the Einstein relation ``sigma = slope / (6 V kB T)``.
+        That conductivity is provided here as a dedicated compute,
+        :class:`~molpy.compute.IonicConductivity` (Einstein-Helfand, S/m), with
+        the equivalent Green-Kubo route in :class:`~molpy.compute.JACF`.
     """
 
     def __init__(

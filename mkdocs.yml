@@ -130,6 +130,8 @@ nav:
 
   - Compute:
       - compute/index.md
+      - Diffusion & Ionic Transport: compute/transport.md
+      - Pair Persistence: compute/persistence.md
       - Dielectric Spectroscopy: compute/dielectric.md
 
   - API Reference:

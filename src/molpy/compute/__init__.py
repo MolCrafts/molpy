@@ -51,6 +51,9 @@ from .pmft import PMFTXY
 from .mcd import MCDCompute
 from .msd import MSD
 from .neighborlist import NeighborList
+from .onsager import Onsager
+from .jacf import JACF
+from .persist import Persist
 from .pmsd import PMSDCompute
 from .rdf import RDF
 from .result import (
@@ -59,7 +62,10 @@ from .result import (
     DebyeFit,
     DielectricResult,
     DielectricSusceptibilityResult,
+    JACFResult,
     MCDResult,
+    OnsagerResult,
+    PersistResult,
     PMSDResult,
     Result,
     SpectralResult,
@@ -86,6 +92,9 @@ __all__ = [
     "TimeSeriesResult",
     "MCDResult",
     "PMSDResult",
+    "OnsagerResult",
+    "JACFResult",
+    "PersistResult",
     "ACFResult",
     "SpectralResult",
     "DielectricResult",
@@ -94,6 +103,9 @@ __all__ = [
     "DebyeFit",
     "MCDCompute",
     "PMSDCompute",
+    "Onsager",
+    "JACF",
+    "Persist",
     "ACFAnalyzer",
     "SpectralAnalyzer",
     "DielectricSusceptibility",

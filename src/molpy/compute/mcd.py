@@ -52,6 +52,21 @@ class MCDCompute(Compute["Trajectory", MCDResult]):
         >>> mcd = MCDCompute(tags=["3,4"], max_dt=30.0, dt=0.01)
         >>> result = mcd(traj)
         >>> print(result.correlations["3,4"])  # Correlation values
+
+    Notes (tame-port audit):
+        - **Different-species distinct term.** This implementation uses the
+          collective cross-correlation ``<(sum_i Dr_i).(sum_j Dr_j)>``. The tame
+          original (``tame/recipes/mdc.py``) instead uses ``mean_i`` for the
+          reference species, i.e. ``(1/N_i)`` times this value — an inconsistent
+          normalization relative to its like-species and self terms (both
+          collective). The collective form here is the physically correct
+          Onsager cross term; for explicit, fully-normalized Onsager
+          coefficients use :class:`~molpy.compute.Onsager`.
+        - **Pair-resolved (SSP) tags.** tame's ``mdc`` also accepts a
+          ``"i,j:METHOD:r0,r1"`` form that splits the partner displacement into
+          surviving ("in") vs broken ("out") neighbours via ``tpairsurvive``.
+          That decomposition is not reproduced here; the pair-survival aspect is
+          available separately as :class:`~molpy.compute.Persist`.
     """
 
     def __init__(

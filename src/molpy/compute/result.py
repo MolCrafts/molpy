@@ -63,6 +63,55 @@ class PMSDResult(TimeSeriesResult):
 
 
 @dataclass
+class OnsagerResult(TimeSeriesResult):
+    """Results from an Onsager collective-displacement cross-correlation.
+
+    Attributes:
+        time: Time lag values (in ps), shape (n_time_lags,).
+        correlations: Mapping from tag ``"i,j"`` to the cross-correlation
+            ``L_ij(tau) = <DP_i(tau).DP_j(tau)>`` of the collective (summed)
+            species displacements, shape (n_time_lags,), units A^2. The
+            diagonal ``"i,i"`` is the collective MSD of species ``i``.
+    """
+
+    correlations: dict[str, NDArray[np.float64]] = field(default_factory=dict)
+
+
+@dataclass
+class JACFResult(TimeSeriesResult):
+    """Results from a Green-Kubo current-autocorrelation conductivity.
+
+    Attributes:
+        time: Time lag values (in ps), shape (n_time_lags,).
+        jacf: Current autocorrelation ``C(tau) = <J(0).J(tau)>``,
+            (e*A/ps)^2, shape (n_time_lags,).
+        sigma_running: Running Green-Kubo conductivity integral
+            ``sigma(tau) = 1/(3 V kB T) integral_0^tau C(t) dt`` (S/m),
+            shape (n_time_lags,).
+        sigma: DC ionic conductivity (S/m) — ``sigma_running`` at the final lag.
+    """
+
+    jacf: NDArray[np.float64] = field(default_factory=lambda: np.array([]))
+    sigma_running: NDArray[np.float64] = field(default_factory=lambda: np.array([]))
+    sigma: float = float("nan")
+
+
+@dataclass
+class PersistResult(TimeSeriesResult):
+    """Results from a pair-survival (persistence) correlation.
+
+    Attributes:
+        time: Time lag values (in ps), shape (n_time_lags,).
+        correlations: Mapping from tag ``"i,j:method:r0[,r1]"`` to the
+            persistence correlation ``C(tau)`` (mean surviving partners per
+            reference particle), shape (n_time_lags,). ``C(0)`` is the mean
+            coordination number.
+    """
+
+    correlations: dict[str, NDArray[np.float64]] = field(default_factory=dict)
+
+
+@dataclass
 class ACFResult(TimeSeriesResult):
     """Autocorrelation function result.
 

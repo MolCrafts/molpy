@@ -17,6 +17,9 @@ behind the dielectric classes.
 | `SpectralAnalyzer` | Windowed time→frequency transform | `SpectralResult` |
 | `MCDCompute` | Mean displacement correlation (diffusion) | `MCDResult` |
 | `PMSDCompute` | Polarization mean-squared displacement | `PMSDResult` |
+| `Onsager` | Onsager transport coefficients $L_{ij}$ (collective displacement cross-correlation) | `OnsagerResult` |
+| `JACF` | Green–Kubo conductivity $\sigma$ from the current ACF | `JACFResult` |
+| `Persist` | Pair-survival / residence-time correlation | `PersistResult` |
 | `RDF` | Radial distribution function $g(r)$ | structural result |
 | `MSD` | Single-particle mean-squared displacement | time series |
 | `RadiusOfGyration`, `GyrationTensor`, `InertiaTensor`, `CenterOfMass` | Molecular shape descriptors | per-frame values |
@@ -46,6 +49,18 @@ behind the dielectric classes.
 ### Polarization MSD
 
 ::: molpy.compute.pmsd
+
+### Onsager coefficients
+
+::: molpy.compute.onsager
+
+### Current-ACF conductivity (Green–Kubo)
+
+::: molpy.compute.jacf
+
+### Pair persistence
+
+::: molpy.compute.persist
 
 ### Radial distribution
 
