@@ -149,6 +149,14 @@ class AmberPrmtopReader:
         # def forcefield
         atoms["id"] = np.arange(meta["n_atoms"], dtype=int) + 1
         atoms["charge"] = np.array(atoms["charge"]) / CHARGE_CONVERSION_FACTOR
+        # Element symbols (from atomic number) so downstream consumers — packing,
+        # visualisation, mass lookup — don't have to re-derive them.
+        if "atomic_number" in atoms:
+            from molpy.core.element import Element
+
+            atoms["element"] = np.array(
+                Element.get_symbols([int(z) for z in atoms["atomic_number"]])
+            )
         ff = AtomisticForcefield()
         ff.units = "real"
         atomstyle = ff.def_atomstyle("full")

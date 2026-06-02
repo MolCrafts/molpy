@@ -29,6 +29,10 @@ class SmilesSegment:
     graph: SmilesGraphIR = field(default_factory=SmilesGraphIR)
     descriptors: list[BondingDescriptorIR] = field(default_factory=list)
     stochastic_objects: list[StochasticObjectIR] = field(default_factory=list)
+    # The last atom on the MAIN chain (branches don't advance it). This is the
+    # atom a trailing terminal descriptor ``[>]`` attaches to — distinct from the
+    # last atom overall when the segment ends in a branch, e.g. ``CC(...)(...C(F)(F)F)``.
+    main_tail: "SmilesAtomIR | None" = None
 
 
 def _token_text(value: Token | str | None) -> str:
@@ -494,6 +498,9 @@ class BigSmilesTransformer(Transformer):
                 segment.graph.bonds.extend(branch_segment.graph.bonds)
                 segment.descriptors.extend(branch_segment.descriptors)
                 segment.stochastic_objects.extend(branch_segment.stochastic_objects)
+        # active_atom only advanced on main-chain atoms above, so it is the
+        # main-chain tail — the correct anchor for a trailing ``[>]`` terminal.
+        segment.main_tail = active_atom
         return segment
 
     # ------------------------------------------------------------------
@@ -672,23 +679,34 @@ class BigSmilesTransformer(Transformer):
             else:
                 repeat_items.append(part)
 
-        # Collect all atoms from repeat units to link terminal descriptors
+        # Collect all atoms (and the segments) from repeat units to link
+        # terminal descriptors.
         all_atoms: list[SmilesAtomIR] = []
+        repeat_segments: list[SmilesSegment] = []
         for item in repeat_items:
             if isinstance(item, SmilesSegment):
                 all_atoms.extend(item.graph.atoms)
+                repeat_segments.append(item)
 
-        # Link first terminal descriptors to first atom
+        # Link first terminal descriptors to the main-chain head (first atom).
         if all_atoms and first_terminal.descriptors:
             for descriptor in first_terminal.descriptors:
                 if descriptor.anchor_atom is None:
                     descriptor.anchor_atom = all_atoms[0]
 
-        # Link last terminal descriptors to last atom
-        if all_atoms and last_terminal.descriptors:
+        # Link last terminal descriptors to the main-chain TAIL, not the last
+        # atom overall: when the repeat unit ends in a branch (e.g. a CF3 tail),
+        # ``all_atoms[-1]`` is a branch leaf, while ``main_tail`` is the backbone
+        # atom the chain actually continues from.
+        tail_anchor = None
+        if repeat_segments and repeat_segments[-1].main_tail is not None:
+            tail_anchor = repeat_segments[-1].main_tail
+        elif all_atoms:
+            tail_anchor = all_atoms[-1]
+        if tail_anchor is not None and last_terminal.descriptors:
             for descriptor in last_terminal.descriptors:
                 if descriptor.anchor_atom is None:
-                    descriptor.anchor_atom = all_atoms[-1]
+                    descriptor.anchor_atom = tail_anchor
 
         # Collect terminal symbols for pruning
         terminal_symbols = {

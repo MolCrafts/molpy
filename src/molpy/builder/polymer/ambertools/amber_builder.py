@@ -55,6 +55,7 @@ class AmberPolymerBuilder:
         env: str | Path | None = None,
         env_manager: str | None = None,
         reaction_preset: str | None = None,
+        net_charges: Mapping[str, int] | None = None,
     ):
         """Initialize the polymer builder.
 
@@ -69,10 +70,16 @@ class AmberPolymerBuilder:
             env: Conda environment name or path for AmberTools.
             env_manager: Environment manager type ("conda" for conda environments).
             reaction_preset: Named reaction preset for leaving group detection.
+            net_charges: Optional mapping from CGSmiles label to the formal net
+                charge of that monomer/residue, passed to antechamber's AM1-BCC
+                step. Defaults to 0 for any label not present. Required for
+                charged residues (e.g. cationic / anionic monomers) so the
+                computed partial charges sum to the correct integer.
         """
         self.library = library
         self.force_field = force_field
         self.charge_method = charge_method
+        self.net_charges = dict(net_charges or {})
         self.work_dir = (
             Path(work_dir) if work_dir is not None else Path("amber_work")
         ).resolve()
@@ -179,6 +186,7 @@ class AmberPolymerBuilder:
                 continue  # Already prepared
 
             monomer = self.library[label]
+            net_charge = self.net_charges.get(label, 0)
             monomer_dir = work_dir / "monomers" / label
             monomer_dir.mkdir(parents=True, exist_ok=True)
 
@@ -219,6 +227,7 @@ class AmberPolymerBuilder:
                 output_format="mol2",
                 charge_method=self.charge_method,
                 atom_type=self.force_field,
+                net_charge=net_charge,
             )
             if r.returncode != 0:
                 raise RuntimeError(
@@ -234,6 +243,7 @@ class AmberPolymerBuilder:
                 output_format="ac",
                 charge_method=self.charge_method,
                 atom_type=self.force_field,
+                net_charge=net_charge,
             )
             if r.returncode != 0:
                 raise RuntimeError(
@@ -315,6 +325,7 @@ class AmberPolymerBuilder:
                     head_name=None,
                     tail_name=head_tail_name,
                     omit_names=omit_tail if is_full else omit_head,
+                    charge=net_charge,
                 )
                 _run_prepgen(
                     "head", f"H{label}.prepi", f"{label}.head", f"H{label[:2].upper()}"
@@ -329,6 +340,7 @@ class AmberPolymerBuilder:
                     head_name=head_atom_name,
                     tail_name=tail_atom_name,
                     omit_names=omit_head + omit_tail,
+                    charge=net_charge,
                 )
                 _run_prepgen(
                     "chain", f"{label}.prepi", f"{label}.chain", label[:3].upper()
@@ -344,6 +356,7 @@ class AmberPolymerBuilder:
                     head_name=tail_head_name,
                     tail_name=None,
                     omit_names=omit_head if is_full else omit_tail,
+                    charge=net_charge,
                 )
                 _run_prepgen(
                     "tail", f"T{label}.prepi", f"{label}.tail", f"T{label[:2].upper()}"
@@ -421,62 +434,91 @@ class AmberPolymerBuilder:
         graph: CGSmilesGraphIR,
         output_prefix: str,
     ) -> AmberBuildResult:
-        """Generate tleap script and run tleap to build polymer."""
+        """Generate tleap script and run tleap to build polymer.
+
+        Uses a two-pass strategy so that *inter-residue* bonded parameters
+        (angles / torsions that span a residue junction, e.g. a cap's exotic
+        atom type bonded to a backbone carbon) are filled in. parmchk2 run on
+        each isolated monomer cannot see across junctions; GAFF base covers the
+        plain c3-c3 backbone link but not unusual end-group chemistries. So we
+        first assemble the unit and dump it to mol2, run parmchk2 on the whole
+        molecule to synthesise any missing junction parameters, then build the
+        final topology with that extra frcmod loaded.
+        """
         from molpy.wrapper.tleap import TLeapWrapper
+        from molpy.wrapper.prepgen import Parmchk2Wrapper
 
         work_dir = self.work_dir
         output_dir = work_dir / "output"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Generate tleap script
-        script_lines = []
-
-        # Source force field
         leaprc = f"leaprc.{self.force_field}"
-        script_lines.append(f"source {leaprc}")
-        script_lines.append("")
 
-        # Load frcmod and prepi files for each monomer type
-        # Use absolute paths so tleap finds them regardless of cwd.
+        # Reusable "load every residue's params + templates" block.
+        load_lines = [f"source {leaprc}", ""]
         used_labels = {node.label for node in graph.nodes}
         for label in sorted(used_labels):
             prep = self._prepared_monomers[label]
-            script_lines.append(f"loadamberparams {prep.frcmod_file}")
+            load_lines.append(f"loadamberparams {prep.frcmod_file}")
             if prep.head_prepi is not None:
-                script_lines.append(f"loadamberprep {prep.head_prepi}")
+                load_lines.append(f"loadamberprep {prep.head_prepi}")
             if prep.chain_prepi is not None:
-                script_lines.append(f"loadamberprep {prep.chain_prepi}")
+                load_lines.append(f"loadamberprep {prep.chain_prepi}")
             if prep.tail_prepi is not None:
-                script_lines.append(f"loadamberprep {prep.tail_prepi}")
-        script_lines.append("")
+                load_lines.append(f"loadamberprep {prep.tail_prepi}")
+        load_lines.append("")
 
-        # Build sequence
         sequence = self._build_sequence(graph)
-        script_lines.append(f"mol = sequence {{{sequence}}}")
-        script_lines.append("")
+        seq_line = f"mol = sequence {{{sequence}}}"
 
-        # Output files
         prmtop = output_dir / f"{output_prefix}.prmtop"
         inpcrd = output_dir / f"{output_prefix}.inpcrd"
         pdb = output_dir / f"{output_prefix}.pdb"
 
-        script_lines.append(f"savepdb mol {pdb}")
-        script_lines.append(f"saveamberparm mol {prmtop} {inpcrd}")
-        script_lines.append("quit")
+        tleap = TLeapWrapper(
+            name="tleap", workdir=work_dir, env=self.env, env_manager=self.env_manager
+        )
 
+        # --- Pass 1: assemble the unit and dump a typed mol2 (no params needed) ---
+        full_mol2 = work_dir / f"{output_prefix}_full.mol2"
+        pass1 = "\n".join(
+            load_lines + [seq_line, "", f"savemol2 mol {full_mol2} 1", "quit"]
+        )
+        (work_dir / f"{output_prefix}_pass1.in").write_text(pass1)
+        r = tleap.run_from_script(pass1)
+        interres_frcmod = None
+        if full_mol2.exists():
+            # --- Inter-residue parmchk2 pass over the whole assembled unit ---
+            interres_frcmod = work_dir / f"{output_prefix}_interres.frcmod"
+            parmchk2 = Parmchk2Wrapper(
+                name="parmchk2",
+                workdir=work_dir,
+                env=self.env,
+                env_manager=self.env_manager,
+            )
+            cr = parmchk2.generate_parameters(
+                input_file=full_mol2,
+                output_file=interres_frcmod,
+                force_field=self.force_field,
+            )
+            if cr.returncode != 0 or not interres_frcmod.exists():
+                interres_frcmod = None
+
+        # --- Pass 2: build final topology, loading the inter-residue frcmod ---
+        final_loads = list(load_lines)
+        if interres_frcmod is not None:
+            final_loads.insert(-1, f"loadamberparams {interres_frcmod}")
+        script_lines = final_loads + [
+            seq_line,
+            "",
+            f"savepdb mol {pdb}",
+            f"saveamberparm mol {prmtop} {inpcrd}",
+            "quit",
+        ]
         script = "\n".join(script_lines)
-
-        # Write script
         script_path = work_dir / f"{output_prefix}.in"
         script_path.write_text(script)
 
-        # Run tleap
-        tleap = TLeapWrapper(
-            name="tleap",
-            workdir=work_dir,
-            env=self.env,
-            env_manager=self.env_manager,
-        )
         r = tleap.run_from_script(script)
         if r.returncode != 0 or not prmtop.exists():
             raise RuntimeError(
