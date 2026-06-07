@@ -54,7 +54,9 @@ jobs:
       - name: Stamp dev version and rename distribution
         run: |
           set -euo pipefail
-          BASE=$(python -c "from molpy.version import version; print(version)")
+          # Parse the version straight from the source file — molpy is not
+          # installed at this point, so importing it would fail.
+          BASE=$(sed -n 's/^version = "\(.*\)"/\1/p' src/molpy/version.py | head -n1)
           DEV="${BASE}.dev$(date -u +%Y%m%d%H%M)"
           echo "Nightly version: $DEV"
           echo "NIGHTLY_VERSION=$DEV" >> "$GITHUB_ENV"
