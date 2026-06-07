@@ -1,0 +1,91 @@
+name: Nightly
+
+# Publishes a dev-versioned pre-release to the SEPARATE PyPI project
+# `molcrafts-molpy-nightly` (never touches the stable `molcrafts-molpy`).
+#
+# Trigger: every push to the `nightly` branch, plus manual dispatch.
+# Version: <current source version>.dev<UTC timestamp>  (PEP 440 dev release).
+#   Install with:  pip install --pre molcrafts-molpy-nightly
+#
+# The import package stays `molpy` — only the PyPI distribution NAME changes,
+# so `molcrafts-molpy` and `molcrafts-molpy-nightly` cannot be installed at the
+# same time (same as tensorflow vs tf-nightly). That is intentional.
+#
+# Prereq (one-time, PyPI account holder only): configure a Trusted Publisher
+# (pending publisher) for project `molcrafts-molpy-nightly`:
+#   Repository:  MolCrafts/molpy
+#   Workflow:    nightly.yml
+#   Environment: pypi-nightly        (no required reviewers — see below)
+# The `pypi-nightly` GitHub Environment must NOT have required reviewers, or
+# every nightly will block waiting for manual approval.
+
+on:
+  push:
+    branches: [nightly]
+  workflow_dispatch:
+
+jobs:
+  nightly:
+    # Repo guard: a fork that pushes `nightly` sees this workflow but the job is
+    # skipped, so nothing publishes from anywhere except the canonical repo.
+    if: github.repository == 'MolCrafts/molpy'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-nightly
+      url: https://pypi.org/p/molcrafts-molpy-nightly
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Stamp dev version and rename distribution
+        run: |
+          set -euo pipefail
+          BASE=$(python -c "from molpy.version import version; print(version)")
+          DEV="${BASE}.dev$(date -u +%Y%m%d%H%M)"
+          echo "Nightly version: $DEV"
+          echo "NIGHTLY_VERSION=$DEV" >> "$GITHUB_ENV"
+          # Stamp the dynamic version source (pyproject reads molpy.version.version).
+          python - "$DEV" <<'PY'
+          import re, sys, pathlib
+          dev = sys.argv[1]
+          p = pathlib.Path("src/molpy/version.py")
+          t = p.read_text()
+          t = re.sub(r'^version\s*=\s*".*?"', f'version = "{dev}"', t, count=1, flags=re.M)
+          p.write_text(t)
+          PY
+          # Rename the PyPI distribution to the nightly project.
+          python - <<'PY'
+          import re, pathlib
+          p = pathlib.Path("pyproject.toml")
+          t = p.read_text()
+          t = re.sub(r'^name\s*=\s*"molcrafts-molpy"',
+                     'name = "molcrafts-molpy-nightly"', t, count=1, flags=re.M)
+          p.write_text(t)
+          PY
+
+      - name: Build package
+        run: python -m build
+
+      - name: Check package
+        run: twine check dist/*
+
+      - name: Publish to PyPI (nightly)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          print-hash: true
+          skip-existing: true

@@ -77,6 +77,12 @@ Core dependencies: NumPy, python-igraph, Lark, Pint, and
 [molrs](https://github.com/MolCrafts/molrs) (the Rust numerical core).
 Optional: RDKit (3D geometry), AmberTools (GAFF charges).
 
+> **Nightly builds.** Bleeding-edge snapshots are published to the separate
+> project `molcrafts-molpy-nightly` (versioned `X.Y.Z.devN`) on every push to
+> the `nightly` branch. Install with `pip install --pre molcrafts-molpy-nightly`.
+> It imports as `molpy`, so it cannot be installed alongside the stable
+> `molcrafts-molpy` (same as `tensorflow` vs `tf-nightly`).
+
 <details>
 <summary>Install from source (development)</summary>
 

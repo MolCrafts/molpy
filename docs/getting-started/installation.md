@@ -18,6 +18,21 @@ MolPy keeps the core lightweight. Install extras when you need integrations or d
 | **Dev** | `pip install molcrafts-molpy[dev]` | Tests, coverage, tooling |
 | **Docs** | `pip install molcrafts-molpy[doc]` | Build documentation locally |
 
+## Nightly builds
+
+Bleeding-edge snapshots are published to a **separate** PyPI project,
+`molcrafts-molpy-nightly`, on every push to the `nightly` branch. Each build is
+versioned `X.Y.Z.devN` (a PEP 440 dev release), so you opt in with `--pre`:
+
+```bash
+pip install --pre molcrafts-molpy-nightly
+```
+
+The nightly package imports as `molpy`, exactly like the stable one — which means
+the two **cannot be installed at the same time** (the same trade-off as
+`tensorflow` vs `tf-nightly`). Uninstall `molcrafts-molpy` first, or use a
+dedicated virtual environment for nightly testing.
+
 ## Verify installation
 
 Run a tiny import check to confirm the package is available and see where it is installed.
