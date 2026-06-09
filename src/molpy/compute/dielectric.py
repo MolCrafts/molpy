@@ -233,9 +233,12 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
                 raise ValueError(f"Missing column '{col}' in atoms block")
 
         n_atoms = len(frame0["atoms"]["x"])
-        volume = self._volume or frame0.box.volume()
+        volume = self._volume if self._volume is not None else frame0.box.volume()
 
         positions = np.empty((n_frames, n_atoms, 3), dtype=np.float64)
+        # Charges are taken once from frame 0: the dipole / current formulas
+        # assume fixed per-atom charges (standard non-polarizable FF), so they
+        # are intentionally not re-read per frame.
         charges = np.asarray(frame0["atoms"]["charge"], dtype=np.float64)
         for i, frame in enumerate(frames):
             positions[i, :, 0] = frame["atoms"]["x"]
@@ -392,9 +395,12 @@ class IonicConductivity(Compute["Trajectory", ConductivityResult]):
                 raise ValueError(f"Missing column '{col}' in atoms block")
 
         n_atoms = len(frame0["atoms"]["x"])
-        volume = self._volume or frame0.box.volume()
+        volume = self._volume if self._volume is not None else frame0.box.volume()
 
         positions = np.empty((n_frames, n_atoms, 3), dtype=np.float64)
+        # Charges are taken once from frame 0: the dipole / current formulas
+        # assume fixed per-atom charges (standard non-polarizable FF), so they
+        # are intentionally not re-read per frame.
         charges = np.asarray(frame0["atoms"]["charge"], dtype=np.float64)
         for i, frame in enumerate(frames):
             positions[i, :, 0] = frame["atoms"]["x"]
