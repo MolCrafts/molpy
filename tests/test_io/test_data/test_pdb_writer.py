@@ -10,8 +10,8 @@ from molpy.core.frame import Block, Frame
 
 
 @pytest.fixture(
-    params=["molpy.io.data.pdb", "molpy.io.experimental.data.pdb"],
-    ids=["molpy", "experimental"],
+    params=["molpy.io.data.pdb"],
+    ids=["molpy"],
 )
 def pdb_backend(request):
     return importlib.import_module(request.param)

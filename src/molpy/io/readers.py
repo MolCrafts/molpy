@@ -357,6 +357,19 @@ def read_xyz_trajectory(file: PathLike) -> Any:
     return XYZTrajectoryReader(Path(file))
 
 
+def read_pdb_trajectory(file: PathLike) -> list:
+    """Read every model of a (multi-frame) PDB file as a list of Frames.
+
+    Each ``MODEL``/``END``-delimited block becomes one Frame. A single-model PDB
+    yields a one-element list. Backed by the molrs Rust reader.
+    """
+    import molrs.io
+
+    from molpy.core.frame import Frame
+
+    return [Frame.from_dict(f) for f in molrs.io.read_pdb_trajectory(str(file))]
+
+
 def read_h5_trajectory(file: PathLike) -> Any:
     """
     Read HDF5 trajectory file and return a trajectory reader.

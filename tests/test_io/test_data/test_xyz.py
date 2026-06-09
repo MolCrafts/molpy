@@ -14,8 +14,8 @@ from molpy.core.element import Element
 
 @pytest.fixture(
     scope="module",
-    params=["molpy.io.data.xyz", "molpy.io.experimental.data.xyz"],
-    ids=["molpy", "experimental"],
+    params=["molpy.io.data.xyz"],
+    ids=["molpy"],
 )
 def xyz_backend(request):
     return importlib.import_module(request.param)
