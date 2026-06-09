@@ -131,7 +131,7 @@ def remove_dummy_atoms(assembly: Atomistic) -> list[Entity]:
     """
     dummy_atoms: list[Entity] = []
 
-    for atom in assembly.entities.bucket(Atom):
+    for atom in assembly.atoms:
         if (atom.get("element") or atom.get("symbol") or "") == "*":
             dummy_atoms.append(atom)
 

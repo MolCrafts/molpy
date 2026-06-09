@@ -687,18 +687,19 @@ class TestCoarseGrainToFrame:
         # atoms key included as object array
         assert "atoms" in frame["beads"].keys()
 
-    def test_to_frame_raises_on_orphan_bond_endpoint(self):
+    def test_cross_world_bond_endpoint_rejected(self):
+        """Handle views are world-local: a bond over beads from another world
+        cannot be registered (molrs rejects the foreign node handles up front),
+        so the cross-world reference fails fast rather than surfacing later in
+        ``to_frame``."""
         cg = CoarseGrain()
         a = cg.def_bead(type="A")
         b = cg.def_bead(type="B")
         bond = CGBond(a, b)
-        # register a bond whose endpoints aren't in this cg
         cg2 = CoarseGrain()
-        cg2.add_cgbond(bond)
-        cg2.def_bead(type="X")  # unrelated bead
 
-        with pytest.raises(ValueError, match="not registered"):
-            cg2.to_frame()
+        with pytest.raises(ValueError):
+            cg2.add_cgbond(bond)
 
 
 if __name__ == "__main__":

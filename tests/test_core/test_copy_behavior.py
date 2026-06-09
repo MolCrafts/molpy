@@ -18,9 +18,9 @@ class TestAtomisticCopy:
         a2 = Atom(symbol="H")
         a3 = Atom(symbol="O")
 
-        asm.entities.add(a1)
-        asm.entities.add(a2)
-        asm.entities.add(a3)
+        asm.add_atom(a1)
+        asm.add_atom(a2)
+        asm.add_atom(a3)
 
         # Copy
         asm_copy = asm.copy()
@@ -38,15 +38,15 @@ class TestAtomisticCopy:
         a2 = Atom(symbol="H")
         a3 = Atom(symbol="O")
 
-        asm.entities.add(a1)
-        asm.entities.add(a2)
-        asm.entities.add(a3)
+        asm.add_atom(a1)
+        asm.add_atom(a2)
+        asm.add_atom(a3)
 
         b1 = Bond(a1, a2)
         b2 = Bond(a1, a3)
 
-        asm.links.add(b1)
-        asm.links.add(b2)
+        asm.add_bond(b1)
+        asm.add_bond(b2)
 
         # Copy
         asm_copy = asm.copy()
@@ -62,11 +62,11 @@ class TestAtomisticCopy:
         a1 = Atom(symbol="C")
         a2 = Atom(symbol="H")
 
-        asm.entities.add(a1)
-        asm.entities.add(a2)
+        asm.add_atom(a1)
+        asm.add_atom(a2)
 
         b1 = Bond(a1, a2)
-        asm.links.add(b1)
+        asm.add_bond(b1)
 
         # Copy
         asm_copy = asm.copy()
@@ -92,26 +92,23 @@ class TestAtomisticCopy:
         a2 = Atom(symbol="H")
         a3 = Atom(symbol="O")
 
-        asm.entities.add(a1)
-        asm.entities.add(a2)
-        asm.entities.add(a3)
+        asm.add_atom(a1)
+        asm.add_atom(a2)
+        asm.add_atom(a3)
 
         b1 = Bond(a1, a2)
         b2 = Bond(a1, a3)
         b3 = Bond(a2, a3)
 
-        asm.links.add(b1)
-        asm.links.add(b2)
-        asm.links.add(b3)
+        asm.add_bond(b1)
+        asm.add_bond(b2)
+        asm.add_bond(b3)
 
         # Copy
         asm_copy = asm.copy()
 
         # Get all entities in a set
-        entities_set = set()
-        for entity_type in asm_copy.entities.classes():
-            for entity in asm_copy.entities.bucket(entity_type):
-                entities_set.add(entity)
+        entities_set = set(asm_copy.atoms)
 
         # Check that all bond endpoints are in entities
         orphan_bonds = []
@@ -131,18 +128,18 @@ class TestAtomisticCopy:
         a1 = Atom(symbol="C")
         a2 = Atom(symbol="H")
 
-        asm.entities.add(a1)
-        asm.entities.add(a2)
+        asm.add_atom(a1)
+        asm.add_atom(a2)
 
         b1 = Bond(a1, a2)
-        asm.links.add(b1)
+        asm.add_bond(b1)
 
         # Copy
         asm_copy = asm.copy()
 
         # Modify copy
         a3 = Atom(symbol="O")
-        asm_copy.entities.add(a3)
+        asm_copy.add_atom(a3)
 
         # Check original is unchanged
         assert len(list(asm.atoms)) == 2
@@ -160,15 +157,15 @@ class TestAtomisticCopyWithPorts:
         c2 = Atom(symbol="C")
         h1 = Atom(symbol="H")
 
-        struct.entities.add(c1)
-        struct.entities.add(c2)
-        struct.entities.add(h1)
+        struct.add_atom(c1)
+        struct.add_atom(c2)
+        struct.add_atom(h1)
 
         b1 = Bond(c1, c2)
         b2 = Bond(c1, h1)
 
-        struct.links.add(b1)
-        struct.links.add(b2)
+        struct.add_bond(b1)
+        struct.add_bond(b2)
 
         # Copy
         struct_copy = struct.copy()
@@ -189,18 +186,18 @@ class TestAtomisticCopyWithPorts:
         o1 = Atom(symbol="O")
         h1 = Atom(symbol="H")
 
-        struct.entities.add(c1)
-        struct.entities.add(c2)
-        struct.entities.add(o1)
-        struct.entities.add(h1)
+        struct.add_atom(c1)
+        struct.add_atom(c2)
+        struct.add_atom(o1)
+        struct.add_atom(h1)
 
         b1 = Bond(c1, c2)
         b2 = Bond(c1, o1)
         b3 = Bond(o1, h1)
 
-        struct.links.add(b1)
-        struct.links.add(b2)
-        struct.links.add(b3)
+        struct.add_bond(b1)
+        struct.add_bond(b2)
+        struct.add_bond(b3)
 
         # Mark port on atom
         c1["port"] = "port_1"
@@ -209,10 +206,7 @@ class TestAtomisticCopyWithPorts:
         struct_copy = struct.copy()
 
         # Check for orphan bonds
-        entities_set = set()
-        for entity_type in struct_copy.entities.classes():
-            for entity in struct_copy.entities.bucket(entity_type):
-                entities_set.add(entity)
+        entities_set = set(struct_copy.atoms)
 
         orphan_bonds = []
         for bond in struct_copy.bonds:
@@ -232,11 +226,11 @@ class TestAtomisticCopyWithPorts:
         c1 = Atom(symbol="C")
         c2 = Atom(symbol="C")
 
-        struct.entities.add(c1)
-        struct.entities.add(c2)
+        struct.add_atom(c1)
+        struct.add_atom(c2)
 
         b1 = Bond(c1, c2)
-        struct.links.add(b1)
+        struct.add_bond(b1)
 
         # Mark port on atom
         c1["port"] = "port_1"
@@ -262,11 +256,11 @@ class TestAtomisticCopyWithPorts:
         c1 = Atom(symbol="C")
         h1 = Atom(symbol="H")
 
-        struct.entities.add(c1)
-        struct.entities.add(h1)
+        struct.add_atom(c1)
+        struct.add_atom(h1)
 
         b1 = Bond(c1, h1)
-        struct.links.add(b1)
+        struct.add_bond(b1)
 
         # Create multiple copies
         copy1 = struct.copy()
@@ -274,8 +268,8 @@ class TestAtomisticCopyWithPorts:
         copy3 = struct.copy()
 
         # Modify each copy
-        copy1.entities.add(Atom(symbol="O"))
-        copy2.entities.add(Atom(symbol="N"))
+        copy1.add_atom(Atom(symbol="O"))
+        copy2.add_atom(Atom(symbol="N"))
 
         # Check independence
         assert len(list(struct.atoms)) == 2

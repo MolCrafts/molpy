@@ -44,8 +44,8 @@ class OptimizationResult(Generic[S]):
 class Optimizer(ABC, Generic[S]):
     """Base class for structure optimizers.
 
-    Works with any StructLike (Struct, Atomistic, CoarseGrain, etc.) that:
-    - Has `.entities` (TypeBucket) containing entities with "xyz" field
+    Works with any structure leaf (Atomistic, CoarseGrain, etc.) that:
+    - Has `.atoms` (or `.beads`) yielding entity views with an "xyz" field
     - Has `.to_frame()` method to convert to Frame format
 
     The optimizer calls potential.calc_energy(frame) and potential.calc_forces(frame)
@@ -85,7 +85,7 @@ class Optimizer(ABC, Generic[S]):
         Returns:
             (N, 3) numpy array of positions
         """
-        entities = structure.entities.all()
+        entities = structure.atoms
         if not entities:
             return np.empty((0, 3), dtype=float)
 
@@ -106,7 +106,7 @@ class Optimizer(ABC, Generic[S]):
             structure: Structure to update
             positions: (N, 3) array of new positions
         """
-        entities = structure.entities.all()
+        entities = structure.atoms
         positions = positions.reshape(-1, 3)
         for i, entity in enumerate(entities):
             pos = positions[i]

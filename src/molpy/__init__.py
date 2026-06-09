@@ -7,7 +7,7 @@ from . import adapter, data, engine, io, legacy, parser, potential, typifier
 from .core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper
 from .core.box import Box
 from .core.cg import Bead, CGBond, CoarseGrain
-from .core.entity import Entity, Link, Struct
+from .core.entity import Entity, Link
 from .core.forcefield import (
     AngleStyle,
     AngleType,
@@ -59,7 +59,6 @@ __all__ = [
     "CoarseGrain",
     "Entity",
     "Link",
-    "Struct",
     # Core forcefield
     "AngleStyle",
     "AngleType",

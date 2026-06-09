@@ -1,62 +1,59 @@
+"""All-atom molecular structure as a handle-view over a molrs ``Atomistic``.
+
+``Atomistic(_GraphViews, molrs.Atomistic)`` IS a molrs world — it is accepted
+directly by every ``molrs.*`` system free function (no ``.to_molrs()`` bridge).
+:class:`Atom` / :class:`Bond` / :class:`Angle` / :class:`Dihedral` /
+:class:`Improper` are handle views interned per stable handle.
+"""
+
 from __future__ import annotations
 
-from collections import defaultdict
-from typing import Any, Iterable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Iterable, Self
+
+import numpy as np
 
 import molrs
 
-from .entity import (
-    ConnectivityMixin,
-    Entities,
-    Entity,
-    Link,
-    MembershipMixin,
-    SpatialMixin,
-    Struct,
+from molpy.core.ops.geometry import (
+    _cross,
+    _dot,
+    _norm,
+    _rodrigues_rotate,
+    _unit,
+    _vec_add,
+    _vec_scale,
+    _vec_sub,
 )
+
+from .entity import Entities, Entity, Link, _GraphViews
 
 if TYPE_CHECKING:
     from .frame import Frame
+    from .topology import Topology
+
+
+# ===================================================================
+#                       Handle view types
+# ===================================================================
 
 
 class Atom(Entity):
-    """Atom entity (common keys include {"element": "C", "xyz": [...]})"""
+    """Atom view: one node in a molrs ``Atomistic`` world (or pending)."""
+
+    __slots__ = ()
 
     def __repr__(self) -> str:
-        identifier: str
-        if "element" in self.data:
-            identifier = str(self.data["element"])
-        elif "type" in self.data:
-            identifier = str(self.data["type"])
-        else:
-            identifier = str(id(self))
-        return f"<Atom: {identifier}>"
+        ident = self.get("element") or self.get("symbol") or self.get("type")
+        return f"<Atom: {ident if ident is not None else id(self)}>"
 
 
-class Bond(Link):
-    """Covalent bond connecting two atoms.
+class Bond(Link[Atom]):
+    """Covalent bond between two atoms (molrs relation kind ``bonds``)."""
 
-    A Bond holds ordered references to exactly two Atom endpoints and optional
-    key-value attributes (e.g., bond order, force-field type).
+    __slots__ = ()
+    _kind = "bonds"
 
-    Related symbols:
-        Atom, Angle, Dihedral, Atomistic.def_bond
-    """
-
-    _link_kind = "bond"
-
-    def __init__(self, a: Atom, b: Atom, /, **attrs: Any):
-        """Create a bond between two atoms.
-
-        Args:
-            a: First atom endpoint.
-            b: Second atom endpoint.
-            **attrs: Arbitrary bond attributes (e.g., ``type="C-C"``,
-                ``order=2``).
-
-        Raises:
-            AssertionError: If either argument is not an Atom instance.
-        """
+    def __init__(self, a: Atom, b: Atom, /, **attrs: Any) -> None:
         assert isinstance(a, Atom), f"atom a must be an Atom instance, got {type(a)}"
         assert isinstance(b, Atom), f"atom b must be an Atom instance, got {type(b)}"
         super().__init__([a, b], **attrs)
@@ -66,42 +63,22 @@ class Bond(Link):
 
     @property
     def itom(self) -> Atom:
-        """First atom endpoint of the bond."""
         return self.endpoints[0]
 
     @property
     def jtom(self) -> Atom:
-        """Second atom endpoint of the bond."""
         return self.endpoints[1]
 
 
-class Angle(Link):
-    """Valence angle formed by three atoms (i--j--k).
+class Angle(Link[Atom]):
+    """Valence angle over three atoms i--j--k (kind ``angles``)."""
 
-    The central atom ``jtom`` is the vertex of the angle. Angle values are
-    measured in radians by convention throughout MolPy.
+    __slots__ = ()
+    _kind = "angles"
 
-    Related symbols:
-        Atom, Bond, Dihedral, Atomistic.def_angle
-    """
-
-    _link_kind = "angle"
-
-    def __init__(self, a: Atom, b: Atom, c: Atom, /, **attrs: Any):
-        """Create an angle between three atoms.
-
-        Args:
-            a: First atom (one arm of the angle).
-            b: Central/vertex atom.
-            c: Third atom (other arm of the angle).
-            **attrs: Arbitrary angle attributes (e.g., ``type="C-C-C"``).
-
-        Raises:
-            AssertionError: If any argument is not an Atom instance.
-        """
-        assert isinstance(a, Atom), f"atom a must be an Atom instance, got {type(a)}"
-        assert isinstance(b, Atom), f"atom b must be an Atom instance, got {type(b)}"
-        assert isinstance(c, Atom), f"atom c must be an Atom instance, got {type(c)}"
+    def __init__(self, a: Atom, b: Atom, c: Atom, /, **attrs: Any) -> None:
+        for x in (a, b, c):
+            assert isinstance(x, Atom), f"endpoint must be an Atom, got {type(x)}"
         super().__init__([a, b, c], **attrs)
 
     def __repr__(self) -> str:
@@ -109,42 +86,26 @@ class Angle(Link):
 
     @property
     def itom(self) -> Atom:
-        """First atom endpoint of the angle."""
         return self.endpoints[0]
 
     @property
     def jtom(self) -> Atom:
-        """Central (vertex) atom of the angle."""
         return self.endpoints[1]
 
     @property
     def ktom(self) -> Atom:
-        """Third atom endpoint of the angle."""
         return self.endpoints[2]
 
 
-class Dihedral(Link):
-    """Dihedral (torsion) angle between four atoms"""
+class Dihedral(Link[Atom]):
+    """Proper dihedral (torsion) over four atoms (kind ``dihedrals``)."""
 
-    _link_kind = "dihedral"
+    __slots__ = ()
+    _kind = "dihedrals"
 
-    def __init__(self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any):
-        """Create a dihedral angle between four atoms.
-
-        Args:
-            a: First atom.
-            b: Second atom (part of the central bond).
-            c: Third atom (part of the central bond).
-            d: Fourth atom.
-            **attrs: Arbitrary dihedral attributes (e.g., ``type="C-C-C-C"``).
-
-        Raises:
-            AssertionError: If any argument is not an Atom instance.
-        """
-        assert isinstance(a, Atom), f"atom a must be an Atom instance, got {type(a)}"
-        assert isinstance(b, Atom), f"atom b must be an Atom instance, got {type(b)}"
-        assert isinstance(c, Atom), f"atom c must be an Atom instance, got {type(c)}"
-        assert isinstance(d, Atom), f"atom d must be an Atom instance, got {type(d)}"
+    def __init__(self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any) -> None:
+        for x in (a, b, c, d):
+            assert isinstance(x, Atom), f"endpoint must be an Atom, got {type(x)}"
         super().__init__([a, b, c, d], **attrs)
 
     def __repr__(self) -> str:
@@ -152,57 +113,30 @@ class Dihedral(Link):
 
     @property
     def itom(self) -> Atom:
-        """First atom endpoint of the dihedral."""
         return self.endpoints[0]
 
     @property
     def jtom(self) -> Atom:
-        """Second atom (part of the central bond)."""
         return self.endpoints[1]
 
     @property
     def ktom(self) -> Atom:
-        """Third atom (part of the central bond)."""
         return self.endpoints[2]
 
     @property
     def ltom(self) -> Atom:
-        """Fourth atom endpoint of the dihedral."""
         return self.endpoints[3]
 
 
-class Improper(Link):
-    """Improper torsion between four atoms (``i`` is the central atom).
+class Improper(Link[Atom]):
+    """Improper torsion over four atoms, ``i`` central (kind ``impropers``)."""
 
-    Impropers constrain out-of-plane geometry around a central atom ``i``
-    bonded to three substituents ``j``/``k``/``l``. They are topologically
-    distinct from proper :class:`Dihedral` terms — force fields assign
-    separate coefficients and LAMMPS/OpenMM/GROMACS all treat the two as
-    separate lists.
+    __slots__ = ()
+    _kind = "impropers"
 
-    Related symbols:
-        Atom, Bond, Angle, Dihedral, Atomistic.def_improper
-    """
-
-    _link_kind = "improper"
-
-    def __init__(self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any):
-        """Create an improper torsion between four atoms.
-
-        Args:
-            a: Central atom.
-            b: First substituent atom.
-            c: Second substituent atom.
-            d: Third substituent atom.
-            **attrs: Arbitrary improper attributes (e.g., ``type="C-C-C-C"``).
-
-        Raises:
-            AssertionError: If any argument is not an Atom instance.
-        """
-        assert isinstance(a, Atom), f"atom a must be an Atom instance, got {type(a)}"
-        assert isinstance(b, Atom), f"atom b must be an Atom instance, got {type(b)}"
-        assert isinstance(c, Atom), f"atom c must be an Atom instance, got {type(c)}"
-        assert isinstance(d, Atom), f"atom d must be an Atom instance, got {type(d)}"
+    def __init__(self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any) -> None:
+        for x in (a, b, c, d):
+            assert isinstance(x, Atom), f"endpoint must be an Atom, got {type(x)}"
         super().__init__([a, b, c, d], **attrs)
 
     def __repr__(self) -> str:
@@ -210,305 +144,391 @@ class Improper(Link):
 
     @property
     def itom(self) -> Atom:
-        """Central atom of the improper torsion."""
         return self.endpoints[0]
 
     @property
     def jtom(self) -> Atom:
-        """First substituent atom."""
         return self.endpoints[1]
 
     @property
     def ktom(self) -> Atom:
-        """Second substituent atom."""
         return self.endpoints[2]
 
     @property
     def ltom(self) -> Atom:
-        """Third substituent atom."""
         return self.endpoints[3]
 
 
-class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin, molrs.Graph):
-    """All-atom molecular structure with full topological information.
+# ===================================================================
+#                          Atomistic leaf
+# ===================================================================
 
-    Atomistic is the primary container for molecular systems in MolPy. It
-    manages collections of atoms, bonds, angles, and dihedrals through
-    typed buckets, and provides factory methods for creating and adding
-    topology elements.
 
-    Supports spatial operations (move, rotate, scale, align), system
-    composition via ``+`` / ``+=``, and conversion to tabular Frame format
-    for I/O.
+class Atomistic(molrs.Atomistic, _GraphViews):
+    """All-atom molecular structure backed by a molrs ``Atomistic`` world.
 
-    Related symbols:
-        Atom, Bond, Angle, Dihedral, Struct, Frame
+    Note on base order: the pyo3 native ``molrs.Atomistic`` must be the first
+    base so the extension instance layout is initialised correctly (a pyo3
+    ``extends`` class cannot sit behind a plain-Python base). ``_GraphViews``
+    contributes only non-conflicting helpers, and the leaf's own methods win in
+    the MRO regardless of order, so this preserves the spec's intent.
     """
 
-    def __init__(self, **props) -> None:
-        """Initialize an empty atomistic structure.
+    _entity_cls = Atom
+    _link_classes = {
+        "bonds": Bond,
+        "angles": Angle,
+        "dihedrals": Dihedral,
+        "impropers": Improper,
+    }
 
-        Registers buckets for Atom, Bond, Angle, and Dihedral types.
-        If the concrete subclass defines a ``__post_init__`` method, it is
-        called automatically with the same keyword arguments.
-
-        Args:
-            **props (Any): Arbitrary properties stored on the structure (e.g.,
-                ``name="water"``, ``charge=0.0``).
-        """
-        super().__init__(**props)
-        # Call __post_init__ if it exists (for template pattern)
+    def __init__(self, **props: Any) -> None:
+        _GraphViews.__init__(self, **props)
         if hasattr(self, "__post_init__"):
-            # Get the method from the actual class, not from parent
             for klass in type(self).__mro__:
                 if klass is Atomistic:
                     break
                 if "__post_init__" in klass.__dict__:
                     klass.__dict__["__post_init__"](self, **props)
                     break
-        self.entities.register_type(Atom)
-        self.links.register_type(Bond)
-        self.links.register_type(Angle)
-        self.links.register_type(Dihedral)
-        self.links.register_type(Improper)
 
+    # ---------- collection views ----------
     @property
     def atoms(self) -> Entities[Atom]:
-        """All atoms in this structure.
-
-        Returns:
-            Entities[Atom]: Column-accessible list of Atom objects.
-        """
-        return self.entities[Atom]
+        return self._atom_views()  # type: ignore[return-value]
 
     @property
-    def bonds(self) -> Entities[Bond]:  # type: ignore[type-var]
-        """All bonds in this structure.
-
-        Returns:
-            Entities[Bond]: Column-accessible list of Bond objects.
-        """
-        return self.links[Bond]  # type: ignore[return-value]
+    def bonds(self) -> Entities[Bond]:
+        return self._link_views("bonds")  # type: ignore[return-value]
 
     @property
-    def angles(self) -> Entities[Angle]:  # type: ignore[type-var]
-        """All angles in this structure.
-
-        Returns:
-            Entities[Angle]: Column-accessible list of Angle objects.
-        """
-        return self.links[Angle]  # type: ignore[return-value]
+    def angles(self) -> Entities[Angle]:
+        return self._link_views("angles")  # type: ignore[return-value]
 
     @property
-    def dihedrals(self) -> Entities[Dihedral]:  # type: ignore[type-var]
-        """All dihedrals in this structure.
-
-        Returns:
-            Entities[Dihedral]: Column-accessible list of Dihedral objects.
-        """
-        return self.links[Dihedral]  # type: ignore[return-value]
+    def dihedrals(self) -> Entities[Dihedral]:
+        return self._link_views("dihedrals")  # type: ignore[return-value]
 
     @property
-    def impropers(self) -> Entities[Improper]:  # type: ignore[type-var]
-        """All impropers in this structure.
-
-        Returns:
-            Entities[Improper]: Column-accessible list of Improper objects.
-        """
-        return self.links[Improper]  # type: ignore[return-value]
+    def impropers(self) -> Entities[Improper]:
+        return self._link_views("impropers")  # type: ignore[return-value]
 
     @property
     def symbols(self) -> list[str]:
-        """Element symbols for every atom in insertion order.
-
-        Returns:
-            list[str]: List of element strings (e.g., ``["C", "H", "H"]``).
-                Atoms without an ``"element"`` key produce an empty string.
-        """
-        atoms = list(self.atoms)
-        return [str(a.get("element") or a.get("symbol") or "") for a in atoms]
+        return [str(a.get("element") or a.get("symbol") or "") for a in self.atoms]
 
     @property
     def xyz(self) -> np.ndarray:
-        """
-        Get atomic positions as numpy array.
-
-        Returns:
-            np.ndarray: Nx3 array of atomic coordinates, or list of lists if numpy not available.
-        """
         atoms = list(self.atoms)
-        positions = []
-        for atom in atoms:
-            x = atom.get("x", 0.0)
-            y = atom.get("y", 0.0)
-            z = atom.get("z", 0.0)
-            positions.append([x, y, z])
-
-        try:
-            import numpy as np
-
-            return np.array(positions)
-        except ImportError:
-            return positions
+        return np.array(
+            [[a.get("x", 0.0), a.get("y", 0.0), a.get("z", 0.0)] for a in atoms]
+        )
 
     @property
-    def positions(self):
-        """Alias for xyz property."""
+    def positions(self) -> np.ndarray:
         return self.xyz
 
     def __repr__(self) -> str:
-        """
-        Return a concise representation of the atomistic structure.
-
-        Shows:
-        - Number of atoms (with element composition)
-        - Number of bonds
-        - Bounding box if positions available
-        """
-        atoms = self.atoms
-        bonds = self.bonds
-
-        # Count atoms by element
         from collections import Counter
 
-        symbols = [a.get("element", "?") for a in atoms]
-        symbol_counts = Counter(symbols)
-
-        # Format composition
-        if len(symbol_counts) <= 5:
-            composition = " ".join(
-                f"{sym}:{cnt}" for sym, cnt in sorted(symbol_counts.items())
-            )
+        atoms = list(self.atoms)
+        comp = Counter(a.get("element") or a.get("symbol") or "?" for a in atoms)
+        if len(comp) <= 5:
+            composition = " ".join(f"{s}:{n}" for s, n in sorted(comp.items()))
         else:
-            composition = f"{len(symbol_counts)} types"
+            composition = f"{len(comp)} types"
+        return (
+            f"<Atomistic, {len(atoms)} atoms ({composition}), {len(self.bonds)} bonds>"
+        )
 
-        # Check if we have positions
-        has_coords = any("xyz" in a or "xyz" in a for a in atoms)
+    def __len__(self) -> int:
+        return len(self.atoms)
 
-        parts = ["Atomistic"]
-        parts.append(f"{len(atoms)} atoms ({composition})")
-        parts.append(f"{len(bonds)} bonds")
-
-        if has_coords:
-            parts.append("with coords")
-
-        return f"<{', '.join(parts)}>"
-
-    # ========== Factory Methods (def_*: create and add) ==========
-
-    def def_atom(self, **attrs: Any) -> Atom:
-        """Create a new Atom and add it to the structure.
-
-        If an ``xyz`` key is provided, it is expanded into separate ``x``,
-        ``y``, ``z`` float fields on the created atom.
-
-        Args:
-            **attrs: Atom attributes. Common keys include ``element`` (str),
-                ``type`` (str), ``charge`` (float, elementary charge units),
-                ``mass`` (float, g/mol), and ``xyz`` (sequence of 3 floats
-                in angstroms).
-
-        Returns:
-            Atom: The newly created and registered atom.
-
-        Preferred for:
-            Building structures atom-by-atom. Use ``add_atom`` instead when
-            the Atom object already exists.
-
-        Related symbols:
-            Atom, def_atoms, add_atom
-        """
-        # Convert xyz to x, y, z if provided
-        if "xyz" in attrs:
-            xyz = attrs.pop("xyz")
-            attrs["x"] = float(xyz[0])
-            attrs["y"] = float(xyz[1])
-            attrs["z"] = float(xyz[2])
-
-        atom = Atom(**attrs)
-        self.entities.add(atom)
-        return atom
+    # ---------- factory methods (def_*: create + register) ----------
+    def def_atom(self, mapping: Any = None, /, **attrs: Any) -> Atom:
+        atom = Atom(mapping, **attrs)
+        return self._spawn_entity(atom)  # type: ignore[return-value]
 
     def def_bond(self, a: Atom, b: Atom, /, **attrs: Any) -> Bond:
-        """Create a new Bond between two atoms and add it to the structure.
-
-        Args:
-            a: First atom endpoint.
-            b: Second atom endpoint.
-            **attrs: Bond attributes (e.g., ``type="C-C"``, ``order=1``).
-
-        Returns:
-            Bond: The newly created and registered bond.
-
-        Related symbols:
-            Bond, def_bonds, add_bond
-        """
         bond = Bond(a, b, **attrs)
-        self.links.add(bond)
-        return bond
+        return self._spawn_link("bonds", bond)  # type: ignore[return-value]
 
     def def_angle(self, a: Atom, b: Atom, c: Atom, /, **attrs: Any) -> Angle:
-        """Create a new Angle between three atoms and add it to the structure.
-
-        Args:
-            a: First atom (one arm of the angle).
-            b: Central/vertex atom.
-            c: Third atom (other arm of the angle).
-            **attrs: Angle attributes (e.g., ``type="C-C-C"``).
-
-        Returns:
-            Angle: The newly created and registered angle.
-
-        Related symbols:
-            Angle, def_angles, add_angle
-        """
         angle = Angle(a, b, c, **attrs)
-        self.links.add(angle)
-        return angle
+        return self._spawn_link("angles", angle)  # type: ignore[return-value]
 
     def def_dihedral(
         self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any
     ) -> Dihedral:
-        """Create a new Dihedral between four atoms and add it to the structure.
-
-        Args:
-            a: First atom.
-            b: Second atom (part of the central bond).
-            c: Third atom (part of the central bond).
-            d: Fourth atom.
-            **attrs: Dihedral attributes (e.g., ``type="C-C-C-C"``).
-
-        Returns:
-            Dihedral: The newly created and registered dihedral.
-
-        Related symbols:
-            Dihedral, def_dihedrals, add_dihedral
-        """
         dihedral = Dihedral(a, b, c, d, **attrs)
-        self.links.add(dihedral)
-        return dihedral
+        return self._spawn_link("dihedrals", dihedral)  # type: ignore[return-value]
 
     def def_improper(
         self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any
     ) -> Improper:
-        """Create a new Improper torsion and add it to the structure.
-
-        Args:
-            a: Central atom.
-            b: First substituent atom.
-            c: Second substituent atom.
-            d: Third substituent atom.
-            **attrs: Improper attributes (e.g., ``type="C-C-C-C"``).
-
-        Returns:
-            Improper: The newly created and registered improper.
-
-        Related symbols:
-            Improper, def_impropers, add_improper
-        """
         improper = Improper(a, b, c, d, **attrs)
-        self.links.add(improper)
-        return improper
+        return self._spawn_link("impropers", improper)  # type: ignore[return-value]
+
+    # ---------- add methods (add_*: register existing views) ----------
+    def add_atom(self, atom: Atom, /) -> Atom:
+        return self._spawn_entity(atom)  # type: ignore[return-value]
+
+    def add_bond(self, bond: Bond, /) -> Bond:
+        return self._spawn_link("bonds", bond)  # type: ignore[return-value]
+
+    def add_angle(self, angle: Angle, /) -> Angle:
+        return self._spawn_link("angles", angle)  # type: ignore[return-value]
+
+    def add_dihedral(self, dihedral: Dihedral, /) -> Dihedral:
+        return self._spawn_link("dihedrals", dihedral)  # type: ignore[return-value]
+
+    def add_improper(self, improper: Improper, /) -> Improper:
+        return self._spawn_link("impropers", improper)  # type: ignore[return-value]
+
+    def add_entity(self, *atoms: Atom) -> None:
+        for atom in atoms:
+            self._spawn_entity(atom)
+
+    def add_link(self, *links: Link, include_endpoints: bool = True) -> None:
+        for link in links:
+            if include_endpoints:
+                for ep in link.endpoints:
+                    if not ep.is_bound:
+                        self._spawn_entity(ep)
+            self._spawn_link(link._kind, link)
+
+    # ---------- batch factory / add ----------
+    def def_atoms(self, atoms_data: list[dict[str, Any]], /) -> list[Atom]:
+        return [self.def_atom(**a) for a in atoms_data]
+
+    def def_bonds(self, bonds_data: list[Any], /) -> list[Bond]:
+        out: list[Bond] = []
+        for spec in bonds_data:
+            if len(spec) == 2:
+                a, b = spec
+                attrs: dict[str, Any] = {}
+            else:
+                a, b, attrs = spec
+            out.append(self.def_bond(a, b, **attrs))
+        return out
+
+    def def_angles(self, angles_data: list[Any], /) -> list[Angle]:
+        out: list[Angle] = []
+        for spec in angles_data:
+            if len(spec) == 3:
+                a, b, c = spec
+                attrs: dict[str, Any] = {}
+            else:
+                a, b, c, attrs = spec
+            out.append(self.def_angle(a, b, c, **attrs))
+        return out
+
+    def def_dihedrals(self, dihedrals_data: list[Any], /) -> list[Dihedral]:
+        out: list[Dihedral] = []
+        for spec in dihedrals_data:
+            if len(spec) == 4:
+                a, b, c, d = spec
+                attrs: dict[str, Any] = {}
+            else:
+                a, b, c, d, attrs = spec
+            out.append(self.def_dihedral(a, b, c, d, **attrs))
+        return out
+
+    def add_atoms(self, atoms: list[Atom], /) -> list[Atom]:
+        for atom in atoms:
+            self._spawn_entity(atom)
+        return atoms
+
+    def add_bonds(self, bonds: list[Bond], /) -> list[Bond]:
+        for bond in bonds:
+            self._spawn_link("bonds", bond)
+        return bonds
+
+    def add_angles(self, angles: list[Angle], /) -> list[Angle]:
+        for angle in angles:
+            self._spawn_link("angles", angle)
+        return angles
+
+    def add_dihedrals(self, dihedrals: list[Dihedral], /) -> list[Dihedral]:
+        for dihedral in dihedrals:
+            self._spawn_link("dihedrals", dihedral)
+        return dihedrals
+
+    # ---------- delete ----------
+    def del_atom(self, *atoms: Atom) -> None:
+        for atom in atoms:
+            self._remove_atom(atom)
+
+    def remove_entity(self, *atoms: Atom, drop_incident_links: bool = True) -> None:
+        for atom in atoms:
+            self._remove_atom(atom)
+
+    def del_bond(self, *bonds: Bond) -> None:
+        for bond in bonds:
+            self._remove_link(bond)
+
+    def del_angle(self, *angles: Angle) -> None:
+        for angle in angles:
+            self._remove_link(angle)
+
+    def del_dihedral(self, *dihedrals: Dihedral) -> None:
+        for dihedral in dihedrals:
+            self._remove_link(dihedral)
+
+    def del_improper(self, *impropers: Improper) -> None:
+        for improper in impropers:
+            self._remove_link(improper)
+
+    def remove_link(self, *links: Link) -> None:
+        for link in links:
+            self._remove_link(link)
+
+    # ---------- property / type / selection editing ----------
+    def rename_type(self, old: str, new: str, *, kind: type = Atom) -> int:
+        items = self._items_of_kind(kind)
+        count = 0
+        for item in items:
+            if item.get("type") == old:
+                item["type"] = new
+                count += 1
+        return count
+
+    def set_property(
+        self, selector: Any, key: str, value: Any, *, kind: type = Atom
+    ) -> int:
+        if not callable(selector):
+            raise TypeError(
+                "selector must be a callable (a, ...) -> bool; "
+                "SMARTS-string selectors are not yet supported"
+            )
+        count = 0
+        for item in self._items_of_kind(kind):
+            if selector(item):
+                item[key] = value
+                count += 1
+        return count
+
+    def select(self, predicate: Any) -> "Atomistic":
+        if not callable(predicate):
+            raise TypeError(
+                "predicate must be a callable (atom) -> bool; "
+                "SMARTS-string predicates are not yet supported"
+            )
+        selected = [a for a in self.atoms if predicate(a)]
+        sub, _ = self.extract_subgraph(selected, radius=0)
+        return sub
+
+    def _items_of_kind(self, kind: type) -> Entities[Any]:
+        if isinstance(kind, type) and issubclass(kind, Link):
+            return self._link_views(kind._kind)
+        return self.atoms  # type: ignore[return-value]
+
+    # ---------- connectivity / topology ----------
+    def get_neighbors(self, atom: Atom, link_type: type[Link] = Bond) -> list[Atom]:
+        out: list[Atom] = []
+        for link in self._link_views(link_type._kind):
+            if any(ep is atom for ep in link.endpoints):
+                out.extend(ep for ep in link.endpoints if ep is not atom)
+        return out
+
+    def get_topo(
+        self,
+        entity_type: type[Atom] = Atom,
+        link_type: type[Link] = Bond,
+        gen_angle: bool = False,
+        gen_dihe: bool = False,
+        clear_existing: bool = False,
+    ) -> "Atomistic | Topology":
+        if not gen_angle and not gen_dihe:
+            return self._build_topology(link_type)
+
+        new_struct = self.copy()
+        topo = new_struct._build_topology(link_type)
+        atoms = topo.idx_to_entity
+
+        if gen_angle:
+            if clear_existing:
+                new_struct.del_angle(*list(new_struct.angles))
+            existing = {(ang.itom, ang.jtom, ang.ktom) for ang in new_struct.angles}
+            for angle in topo.angles:
+                i, j, k = angle.tolist()
+                triple = (atoms[i], atoms[j], atoms[k])
+                if triple not in existing:
+                    new_struct.def_angle(*triple)
+                    existing.add(triple)
+
+        if gen_dihe:
+            if clear_existing:
+                new_struct.del_dihedral(*list(new_struct.dihedrals))
+            existing_d = {
+                (d.itom, d.jtom, d.ktom, d.ltom) for d in new_struct.dihedrals
+            }
+            for dihe in topo.dihedrals:
+                i, j, k, l = dihe.tolist()
+                quad = (atoms[i], atoms[j], atoms[k], atoms[l])
+                if quad not in existing_d:
+                    new_struct.def_dihedral(*quad)
+                    existing_d.add(quad)
+
+        return new_struct
+
+    def _build_topology(self, link_type: type[Link] = Bond) -> "Topology":
+        from molpy.core.topology import Topology
+
+        atoms = list(self.atoms)
+        entity_to_idx = {a: i for i, a in enumerate(atoms)}
+        entity_set = set(atoms)
+        edges: list[tuple[int, int]] = []
+        for link in self._link_views(link_type._kind):
+            eps = link.endpoints
+            if len(eps) >= 2 and eps[0] in entity_set and eps[1] in entity_set:
+                i, j = entity_to_idx[eps[0]], entity_to_idx[eps[1]]
+                if i != j:
+                    edges.append((i, j))
+        return Topology(
+            n=len(atoms),
+            edges=edges,
+            directed=False,
+            entity_to_idx=entity_to_idx,
+            idx_to_entity=atoms,
+        )
+
+    def get_topo_neighbors(
+        self,
+        entity: Atom,
+        radius: int = 1,
+        entity_type: type[Atom] = Atom,
+        link_type: type[Link] = Bond,
+    ) -> list[Atom]:
+        topo = self._build_topology(link_type)
+        if entity not in topo.entity_to_idx:
+            return []
+        center = topo.entity_to_idx[entity]
+        distances = topo.distances(source=[center])[0]
+        idx_to_entity = topo.idx_to_entity
+        return [
+            idx_to_entity[i]
+            for i, d in enumerate(distances)
+            if d <= radius and d < float("inf")
+        ]
+
+    def get_topo_distances(
+        self,
+        source: Atom,
+        entity_type: type[Atom] = Atom,
+        link_type: type[Link] = Bond,
+    ) -> dict[Atom, int]:
+        topo = self._build_topology(link_type)
+        if source not in topo.entity_to_idx:
+            return {}
+        s = topo.entity_to_idx[source]
+        distances = topo.distances(source=[s])[0]
+        idx_to_entity = topo.idx_to_entity
+        return {
+            idx_to_entity[i]: int(d)
+            for i, d in enumerate(distances)
+            if d < float("inf")
+        }
 
     def extract_subgraph(
         self,
@@ -517,508 +537,130 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin, molrs.
         entity_type: type[Atom] = Atom,
         link_type: type[Link] = Bond,
     ) -> tuple["Atomistic", list[Atom]]:
-        """Extract subgraph preserving all topology (bonds, angles, dihedrals).
+        centers = list(center_entities)
+        topo = self._build_topology(link_type)
+        entity_to_idx = topo.entity_to_idx
+        idx_to_entity = topo.idx_to_entity
 
-        Overrides ConnectivityMixin.extract_subgraph to ensure all topology
-        types (bonds, angles, dihedrals) are preserved in the extracted subgraph.
+        center_idx = [entity_to_idx[c] for c in centers if c in entity_to_idx]
+        new_struct = type(self)()
+        new_struct._props = dict(self._props)
+        if not center_idx:
+            return new_struct, []
 
-        Args:
-            center_entities: Center atoms for extraction
-            radius: Topological radius
-            entity_type: Entity type (should be Atom)
-            link_type: Link type for topology calculation (should be Bond)
+        selected: set[int] = set()
+        for c in center_idx:
+            distances = topo.distances(source=[c])[0]
+            for i, d in enumerate(distances):
+                if d <= radius and d < float("inf"):
+                    selected.add(i)
 
-        Returns:
-            Tuple of (subgraph Atomistic, edge atoms)
-        """
-        from copy import deepcopy
+        selected_entities = [idx_to_entity[i] for i in sorted(selected)]
+        selected_set = set(selected_entities)
 
-        # Call parent method to extract subgraph with bonds
-        subgraph, edge_entities = super().extract_subgraph(
-            center_entities=center_entities,
-            radius=radius,
-            entity_type=entity_type,
-            link_type=link_type,
-        )
-
-        # Build mapping from original atoms to subgraph atoms (by react_id or id)
-        original_to_subgraph = {}
-        subgraph_atoms_set = set(subgraph.atoms)
-
-        for subgraph_atom in subgraph_atoms_set:
-            # Try to match by react_id first, then by id
-            subgraph_rid = subgraph_atom.get("react_id")
-            subgraph_id = subgraph_atom.get("id")
-
-            for orig_atom in self.atoms:
-                if subgraph_rid and orig_atom.get("react_id") == subgraph_rid:
-                    original_to_subgraph[orig_atom] = subgraph_atom
+        edge_idx: set[int] = set()
+        for i in selected:
+            for j in topo.neighbors(i):
+                if j not in selected:
+                    edge_idx.add(i)
                     break
-                elif subgraph_id and orig_atom.get("id") == subgraph_id:
-                    original_to_subgraph[orig_atom] = subgraph_atom
-                    break
+        edge_entities = [idx_to_entity[i] for i in sorted(edge_idx)]
 
-        # Copy angles from original to subgraph
-        for angle in self.angles:
-            endpoints = angle.endpoints
-            if all(ep in original_to_subgraph for ep in endpoints):
-                subgraph_eps = [original_to_subgraph[ep] for ep in endpoints]
-                # Check if angle already exists
-                exists = any(
-                    set(a.endpoints) == set(subgraph_eps) for a in subgraph.angles
-                )
-                if not exists:
-                    attrs = deepcopy(_snapshot_data(angle))
-                    subgraph.def_angle(*subgraph_eps, **attrs)
+        # clone selected atoms + induced topology into the new struct
+        entity_map: dict[Atom, Atom] = {}
+        for atom in selected_entities:
+            clone = new_struct.def_atom(dict(atom.data))
+            entity_map[atom] = clone
 
-        # Copy dihedrals from original to subgraph
-        for dihedral in self.dihedrals:
-            endpoints = dihedral.endpoints
-            if all(ep in original_to_subgraph for ep in endpoints):
-                subgraph_eps = [original_to_subgraph[ep] for ep in endpoints]
-                # Check if dihedral already exists
-                exists = any(
-                    set(d.endpoints) == set(subgraph_eps) for d in subgraph.dihedrals
-                )
-                if not exists:
-                    attrs = deepcopy(_snapshot_data(dihedral))
-                    subgraph.def_dihedral(*subgraph_eps, **attrs)
+        def _clone_links(views: Entities[Any], adder: Any) -> None:
+            for link in views:
+                eps = link.endpoints
+                if all(ep in selected_set for ep in eps):
+                    mapped = [entity_map[ep] for ep in eps]
+                    adder(*mapped, **dict(link.data))
 
-        # Copy impropers from original to subgraph
-        for improper in self.impropers:
-            endpoints = improper.endpoints
-            if all(ep in original_to_subgraph for ep in endpoints):
-                subgraph_eps = [original_to_subgraph[ep] for ep in endpoints]
-                exists = any(
-                    set(i.endpoints) == set(subgraph_eps) for i in subgraph.impropers
-                )
-                if not exists:
-                    attrs = deepcopy(_snapshot_data(improper))
-                    subgraph.def_improper(*subgraph_eps, **attrs)
+        _clone_links(self.bonds, new_struct.def_bond)
+        _clone_links(self.angles, new_struct.def_angle)
+        _clone_links(self.dihedrals, new_struct.def_dihedral)
+        _clone_links(self.impropers, new_struct.def_improper)
 
-        # Convert edge_entities to list of Atoms
-        edge_atoms = [e for e in edge_entities if isinstance(e, Atom)]
+        cloned_edges = [entity_map[e] for e in edge_entities if e in entity_map]
+        return new_struct, cloned_edges
 
-        return subgraph, edge_atoms
-        """Create a new Dihedral between four atoms and add it to the structure."""
-        dihedral = Dihedral(a, b, c, d, **attrs)
-        self.links.add(dihedral)
-        return dihedral
+    # ---------- copy / merge / adopt ----------
+    def copy(self) -> Self:
+        new = type(self)()
+        new._props = dict(self._props)
+        emap: dict[Atom, Atom] = {}
+        for atom in self.atoms:
+            emap[atom] = new.def_atom(dict(atom.data))
 
-    # ========== Add Methods (add_*: add existing entities) ==========
+        def _copy_links(views: Entities[Any], adder: Any) -> None:
+            for link in views:
+                mapped = [emap[ep] for ep in link.endpoints]
+                adder(*mapped, **dict(link.data))
 
-    def add_atom(self, atom: Atom, /) -> Atom:
-        """Add an existing Atom object to the structure.
+        _copy_links(self.bonds, new.def_bond)
+        _copy_links(self.angles, new.def_angle)
+        _copy_links(self.dihedrals, new.def_dihedral)
+        _copy_links(self.impropers, new.def_improper)
+        return new
 
-        Args:
-            atom: Atom instance to register.
+    def merge(self, other: "Atomistic") -> Self:
+        """Transfer ``other``'s atoms and topology into ``self`` in place.
 
-        Returns:
-            Atom: The same atom passed in (for chaining convenience).
-
-        Preferred for:
-            Re-using an Atom created elsewhere. Use ``def_atom`` to create
-            and add in one step.
-
-        Related symbols:
-            Atom, def_atom, add_atoms
+        The **same** view objects are reused (identity preserved): each of
+        ``other``'s atoms/links is detached and re-spawned onto ``self`` with a
+        fresh handle, so external references (e.g. a reacter's leaving-group
+        list) stay valid. ``other`` is emptied and must not be used afterwards.
         """
-        self.entities.add(atom)
-        return atom
+        atoms = list(other.atoms)
+        bonds = list(other.bonds)
+        angles = list(other.angles)
+        dihedrals = list(other.dihedrals)
+        impropers = list(other.impropers)
 
-    def add_bond(self, bond: Bond, /) -> Bond:
-        """Add an existing Bond object to the structure.
-
-        Args:
-            bond: Bond instance to register.
-
-        Returns:
-            Bond: The same bond passed in.
-
-        Related symbols:
-            Bond, def_bond, add_bonds
-        """
-        self.links.add(bond)
-        return bond
-
-    def add_angle(self, angle: Angle, /) -> Angle:
-        """Add an existing Angle object to the structure.
-
-        Args:
-            angle: Angle instance to register.
-
-        Returns:
-            Angle: The same angle passed in.
-
-        Related symbols:
-            Angle, def_angle, add_angles
-        """
-        self.links.add(angle)
-        return angle
-
-    def add_dihedral(self, dihedral: Dihedral, /) -> Dihedral:
-        """Add an existing Dihedral object to the structure.
-
-        Args:
-            dihedral: Dihedral instance to register.
-
-        Returns:
-            Dihedral: The same dihedral passed in.
-
-        Related symbols:
-            Dihedral, def_dihedral, add_dihedrals
-        """
-        self.links.add(dihedral)
-        return dihedral
-
-    # ========== Delete Methods (del_*: remove atoms / bonds) ==========
-
-    def del_atom(self, *atoms: Atom) -> None:
-        """Remove atoms and all their incident bonds, angles, and dihedrals.
-
-        Args:
-            *atoms: Atom instances to remove.
-
-        Related symbols:
-            def_atom, add_atom, remove_entity
-        """
-        self.remove_entity(*atoms)
-
-    def del_bond(self, *bonds: Bond) -> None:
-        """Remove bonds (and any dependent angles / dihedrals that reference them).
-
-        Args:
-            *bonds: Bond instances to remove.
-
-        Related symbols:
-            def_bond, add_bond, remove_link
-        """
-        self.remove_link(*bonds)
-
-    def del_angle(self, *angles: Angle) -> None:
-        """Remove angles from the structure.
-
-        Args:
-            *angles: Angle instances to remove.
-
-        Related symbols:
-            def_angle, add_angle, remove_link
-        """
-        self.remove_link(*angles)
-
-    def del_dihedral(self, *dihedrals: Dihedral) -> None:
-        """Remove dihedrals from the structure.
-
-        Args:
-            *dihedrals: Dihedral instances to remove.
-
-        Related symbols:
-            def_dihedral, add_dihedral, remove_link
-        """
-        self.remove_link(*dihedrals)
-
-    def del_improper(self, *impropers: Improper) -> None:
-        """Remove impropers from the structure.
-
-        Args:
-            *impropers: Improper instances to remove.
-
-        Related symbols:
-            def_improper, add_improper, remove_link
-        """
-        self.remove_link(*impropers)
-
-    def add_improper(self, improper: Improper, /) -> Improper:
-        """Add an existing Improper object to the structure.
-
-        Args:
-            improper: Improper instance to register.
-
-        Returns:
-            Improper: The same improper passed in.
-
-        Related symbols:
-            Improper, def_improper
-        """
-        self.links.add(improper)
-        return improper
-
-    # ========== Property / Type / Selection Editing ==========
-
-    def rename_type(self, old: str, new: str, *, kind: type = Atom) -> int:
-        """Rename all entities/links of ``kind`` whose ``type`` attribute equals ``old``.
-
-        Args:
-            old: Existing type name.
-            new: Replacement type name.
-            kind: Entity or Link class to target (default: ``Atom``). Pass
-                ``Bond``, ``Angle``, ``Dihedral`` to rename those link types.
-
-        Returns:
-            Number of entities/links whose type was renamed.
-        """
-        count = 0
-        if issubclass(kind, Link):
-            items = self.links.bucket(kind)
-        else:
-            items = self.entities.bucket(kind)
-        for item in items:
-            if item.get("type") == old:
-                item["type"] = new
-                count += 1
-        return count
-
-    def set_property(
-        self,
-        selector,
-        key: str,
-        value: Any,
-        *,
-        kind: type = Atom,
-    ) -> int:
-        """Set a property on every atom (or link) matching ``selector``.
-
-        Args:
-            selector: Callable ``(atom) -> bool`` used to pick targets.
-            key: Property key to assign.
-            value: Value to store.
-            kind: Entity or Link class to iterate (default: ``Atom``).
-
-        Returns:
-            Number of items updated.
-        """
-        if not callable(selector):
-            raise TypeError(
-                "selector must be a callable (a, ...) -> bool; "
-                "SMARTS-string selectors are not yet supported"
-            )
-        if issubclass(kind, Link):
-            items = self.links.bucket(kind)
-        else:
-            items = self.entities.bucket(kind)
-        count = 0
-        for item in items:
-            if selector(item):
-                item[key] = value
-                count += 1
-        return count
-
-    def select(self, predicate) -> "Atomistic":
-        """Return a new Atomistic containing atoms matching ``predicate``.
-
-        All bonds/angles/dihedrals whose endpoints are fully contained in the
-        selection are carried over (deep-copied).
-
-        Args:
-            predicate: Callable ``(atom) -> bool``.
-
-        Returns:
-            New Atomistic with the selected atoms and their induced topology.
-        """
-        if not callable(predicate):
-            raise TypeError(
-                "predicate must be a callable (atom) -> bool; "
-                "SMARTS-string predicates are not yet supported"
-            )
-        selected = [a for a in self.atoms if predicate(a)]
-        sub, _ = self.extract_subgraph(
-            selected, radius=0, entity_type=Atom, link_type=Link
-        )
-        return sub  # type: ignore[return-value]
-
-    # ========== Batch Factory Methods (def_*s: create and add multiple) ==========
-
-    def def_atoms(self, atoms_data: list[dict[str, Any]], /) -> list[Atom]:
-        """Create multiple Atoms from a list of attribute dictionaries.
-
-        Args:
-            atoms_data: Each dict is passed as ``**attrs`` to ``def_atom``.
-                See ``def_atom`` for supported keys.
-
-        Returns:
-            list[Atom]: Newly created atoms in the same order as input.
-
-        Related symbols:
-            def_atom, add_atoms
-        """
-        atoms = []
-        for attrs in atoms_data:
-            atom = self.def_atom(**attrs)
-            atoms.append(atom)
-        return atoms
-
-    def def_bonds(
-        self, bonds_data: list[tuple[Atom, Atom] | tuple[Atom, Atom, dict[str, Any]]], /
-    ) -> list[Bond]:
-        """Create multiple Bonds from a list of atom-pair tuples.
-
-        Args:
-            bonds_data: Each element is ``(itom, jtom)`` or
-                ``(itom, jtom, attrs_dict)``.
-
-        Returns:
-            list[Bond]: Newly created bonds in the same order as input.
-
-        Related symbols:
-            def_bond, add_bonds
-        """
-        bonds = []
-        for bond_spec in bonds_data:
-            if len(bond_spec) == 2:
-                a, b = bond_spec
-                attrs = {}
-            else:
-                a, b, attrs = bond_spec
-            bond = self.def_bond(a, b, **attrs)
-            bonds.append(bond)
-        return bonds
-
-    def def_angles(
-        self,
-        angles_data: list[
-            tuple[Atom, Atom, Atom] | tuple[Atom, Atom, Atom, dict[str, Any]]
-        ],
-        /,
-    ) -> list[Angle]:
-        """Create multiple Angles from a list of atom-triple tuples.
-
-        Args:
-            angles_data: Each element is ``(itom, jtom, ktom)`` or
-                ``(itom, jtom, ktom, attrs_dict)``.
-
-        Returns:
-            list[Angle]: Newly created angles in the same order as input.
-
-        Related symbols:
-            def_angle, add_angles
-        """
-        angles = []
-        for angle_spec in angles_data:
-            if len(angle_spec) == 3:
-                a, b, c = angle_spec
-                attrs = {}
-            else:
-                a, b, c, attrs = angle_spec
-            angle = self.def_angle(a, b, c, **attrs)
-            angles.append(angle)
-        return angles
-
-    def def_dihedrals(
-        self,
-        dihedrals_data: list[
-            tuple[Atom, Atom, Atom, Atom]
-            | tuple[Atom, Atom, Atom, Atom, dict[str, Any]]
-        ],
-        /,
-    ) -> list[Dihedral]:
-        """Create multiple Dihedrals from a list of atom-quadruple tuples.
-
-        Args:
-            dihedrals_data: Each element is ``(itom, jtom, ktom, ltom)`` or
-                ``(itom, jtom, ktom, ltom, attrs_dict)``.
-
-        Returns:
-            list[Dihedral]: Newly created dihedrals in the same order as input.
-
-        Related symbols:
-            def_dihedral, add_dihedrals
-        """
-        dihedrals = []
-        for dihe_spec in dihedrals_data:
-            if len(dihe_spec) == 4:
-                a, b, c, d = dihe_spec
-                attrs = {}
-            else:
-                a, b, c, d, attrs = dihe_spec
-            dihedral = self.def_dihedral(a, b, c, d, **attrs)
-            dihedrals.append(dihedral)
-        return dihedrals
-
-    # ========== Batch Add Methods (add_*s: add multiple existing entities) ==========
-
-    def add_atoms(self, atoms: list[Atom], /) -> list[Atom]:
-        """Add multiple existing Atom objects to the structure.
-
-        Args:
-            atoms: Atom instances to register.
-
-        Returns:
-            list[Atom]: The same list passed in.
-
-        Related symbols:
-            add_atom, def_atoms
-        """
         for atom in atoms:
-            self.entities.add(atom)
-        return atoms
+            atom._detach()
+            self._spawn_entity(atom)
 
-    def add_bonds(self, bonds: list[Bond], /) -> list[Bond]:
-        """Add multiple existing Bond objects to the structure.
+        def _transfer(links: list[Any], kind: str) -> None:
+            for link in links:
+                if all(ep._world is self for ep in link.endpoints):
+                    link._detach()
+                    self._spawn_link(kind, link)
 
-        Args:
-            bonds: Bond instances to register.
+        _transfer(bonds, "bonds")
+        _transfer(angles, "angles")
+        _transfer(dihedrals, "dihedrals")
+        _transfer(impropers, "impropers")
+        return self
 
-        Returns:
-            list[Bond]: The same list passed in.
+    @staticmethod
+    def adopt(graph: molrs.Atomistic) -> "Atomistic":
+        """Zero-copy take ownership of a molrs-produced ``Atomistic`` graph.
 
-        Related symbols:
-            add_bond, def_bonds
+        Uses the molrs zero-copy ``adopt`` to move ``graph``'s storage into a
+        fresh molpy ``Atomistic`` (``graph`` is left empty). Views over the
+        adopted nodes/relations are interned lazily on access.
         """
-        for bond in bonds:
-            self.links.add(bond)
-        return bonds
+        struct = Atomistic()
+        molrs.Atomistic.adopt(struct, graph)
+        # surface every relation handle so the link views enumerate. molrs
+        # relation handles are 1-based dense per kind after a fresh adopt.
+        for kind in struct.kinds():
+            n = struct.n_relations(kind)
+            struct._rel_handles[kind] = _relation_handles(struct, kind, n)
+        return struct
 
-    def add_angles(self, angles: list[Angle], /) -> list[Angle]:
-        """Add multiple existing Angle objects to the structure.
-
-        Args:
-            angles: Angle instances to register.
-
-        Returns:
-            list[Angle]: The same list passed in.
-
-        Related symbols:
-            add_angle, def_angles
-        """
-        for angle in angles:
-            self.links.add(angle)
-        return angles
-
-    def add_dihedrals(self, dihedrals: list[Dihedral], /) -> list[Dihedral]:
-        """Add multiple existing Dihedral objects to the structure.
-
-        Args:
-            dihedrals: Dihedral instances to register.
-
-        Returns:
-            list[Dihedral]: The same list passed in.
-
-        Related symbols:
-            add_dihedral, def_dihedrals
-        """
-        for dihedral in dihedrals:
-            self.links.add(dihedral)
-        return dihedrals
-
-    # ========== Spatial Operations (return self for chaining) ==========
-
+    # ---------- spatial operations ----------
     def move(
         self, delta: list[float], *, entity_type: type[Entity] = Atom
     ) -> "Atomistic":
-        """Translate all atoms by a displacement vector.
-
-        This is an in-place operation that returns ``self`` for method
-        chaining.
-
-        Args:
-            delta: Translation vector ``[dx, dy, dz]`` in angstroms.
-            entity_type: Entity type to translate (default: Atom).
-
-        Returns:
-            Atomistic: ``self``, for chaining (e.g.,
-                ``mol.move([1, 0, 0]).rotate(...)``).
-        """
-        super().move(delta, entity_type=entity_type)
+        for a in self.atoms:
+            a["x"] = a["x"] + delta[0]
+            a["y"] = a["y"] + delta[1]
+            a["z"] = a["z"] + delta[2]
         return self
 
     def rotate(
@@ -1029,23 +671,11 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin, molrs.
         *,
         entity_type: type[Entity] = Atom,
     ) -> "Atomistic":
-        """Rotate all atoms around an axis using the Rodrigues formula.
-
-        This is an in-place operation that returns ``self`` for method
-        chaining.
-
-        Args:
-            axis: Rotation axis ``[ax, ay, az]`` (will be normalised
-                internally).
-            angle: Rotation angle in radians.
-            about: Point ``[x, y, z]`` in angstroms to rotate around.
-                Defaults to the origin ``[0, 0, 0]``.
-            entity_type: Entity type to rotate (default: Atom).
-
-        Returns:
-            Atomistic: ``self``, for chaining.
-        """
-        super().rotate(axis, angle, about=about, entity_type=entity_type)
+        k = _unit(axis)
+        o = [0.0, 0.0, 0.0] if about is None else about
+        for a in self.atoms:
+            xyz = _rodrigues_rotate([a["x"], a["y"], a["z"]], k, angle, o)
+            a["x"], a["y"], a["z"] = xyz
         return self
 
     def scale(
@@ -1055,429 +685,150 @@ class Atomistic(Struct, MembershipMixin, SpatialMixin, ConnectivityMixin, molrs.
         *,
         entity_type: type[Entity] = Atom,
     ) -> "Atomistic":
-        """Scale all atom positions by a uniform factor.
-
-        This is an in-place operation that returns ``self`` for method
-        chaining.
-
-        Args:
-            factor: Multiplicative scale factor (dimensionless).
-            about: Center of scaling ``[x, y, z]`` in angstroms.
-                Defaults to the origin ``[0, 0, 0]``.
-            entity_type: Entity type to scale (default: Atom).
-
-        Returns:
-            Atomistic: ``self``, for chaining.
-        """
-        super().scale(factor, about=about, entity_type=entity_type)
+        o = [0.0, 0.0, 0.0] if about is None else about
+        for a in self.atoms:
+            xyz = _vec_add(o, _vec_scale(_vec_sub([a["x"], a["y"], a["z"]], o), factor))
+            a["x"], a["y"], a["z"] = xyz
         return self
 
     def align(
         self,
-        a: Entity,
-        b: Entity,
+        a: Atom,
+        b: Atom,
         *,
         a_dir: list[float] | None = None,
         b_dir: list[float] | None = None,
         flip: bool = False,
         entity_type: type[Entity] = Atom,
     ) -> "Atomistic":
-        """Align this structure so that atom ``a`` coincides with atom ``b``.
+        pa = [a["x"], a["y"], a["z"]]
+        pb = [b["x"], b["y"], b["z"]]
+        if a_dir is not None and b_dir is not None:
+            va = _unit(a_dir)
+            vb = _unit(b_dir)
+            if flip:
+                vb = _vec_scale(vb, -1.0)
+            axis = _cross(va, vb)
+            na = _norm(axis)
+            if na > 0:
+                from math import atan2
 
-        When direction vectors ``a_dir`` and ``b_dir`` are given, the
-        structure is first rotated to align the two directions, then
-        translated so that ``a`` lands on ``b``.
-
-        This is an in-place operation that returns ``self`` for method
-        chaining.
-
-        Args:
-            a: Source reference atom (in this structure).
-            b: Target reference atom (position to align to) with
-                coordinates in angstroms.
-            a_dir: Direction vector at ``a`` (will be normalised).
-            b_dir: Direction vector at ``b`` (will be normalised).
-            flip: If True, reverse ``b_dir`` before alignment.
-            entity_type: Entity type to transform (default: Atom).
-
-        Returns:
-            Atomistic: ``self``, for chaining.
-        """
-        super().align(
-            a, b, a_dir=a_dir, b_dir=b_dir, flip=flip, entity_type=entity_type
-        )
+                angle = atan2(na, _dot(va, vb))
+                for e in self.atoms:
+                    xyz = _rodrigues_rotate(
+                        [e["x"], e["y"], e["z"]], _vec_scale(axis, 1.0 / na), angle, pa
+                    )
+                    e["x"], e["y"], e["z"] = xyz
+        self.move(_vec_sub(pb, pa))
         return self
 
-    # ========== System Composition ==========
-
+    # ---------- composition ----------
     def __iadd__(self, other: "Atomistic") -> "Atomistic":
-        """
-        Merge another Atomistic into this one (in-place).
-
-        Example:
-            system = Water()
-            system += Water().move([5, 0, 0])
-            system += Methane().move([10, 0, 0])
-        """
         self.merge(other)
         return self
 
     def __add__(self, other: "Atomistic") -> "Atomistic":
-        """
-        Create a new Atomistic by merging two systems.
-
-        Example:
-            combined = water1 + water2
-        """
         result = self.copy()
         result.merge(other)
         return result
 
-    def replicate(self, n: int, transform=None) -> "Atomistic":
-        """Create n copies and merge them into a new system.
-
-        Each copy is independently deep-copied from ``self``, optionally
-        transformed, then merged into a single new Atomistic structure.
-
-        Args:
-            n: Number of copies to create.
-            transform (Callable | None): Optional callable ``(copy: Atomistic, index: int) -> None``
-                applied to each copy before merging. The callable receives
-                the deep-copied replica and its zero-based index.
-
-        Returns:
-            Atomistic: A new structure containing all replicas merged together.
-
-        Example:
-            >>> waters = Water().replicate(10, lambda mol, i: mol.move([i*5, 0, 0]))
-            >>> grid = Methane().replicate(9, lambda mol, i: mol.move([i%3*5, i//3*5, 0]))
-        """
-        result = type(self)()  # Empty system of same type
-
+    def replicate(self, n: int, transform: Any = None) -> "Atomistic":
+        result = type(self)()
         for i in range(n):
             replica = self.copy()
             if transform is not None:
                 transform(replica, i)
             result.merge(replica)
-
         return result
 
-    def __len__(self) -> int:
-        """Return the number of atoms in the structure."""
-        return len(self.atoms)
-
-    def get_topo(
-        self,
-        entity_type: type[Entity] = Atom,
-        link_type: type[Link] = Bond,
-        gen_angle: bool = False,
-        gen_dihe: bool = False,
-        clear_existing: bool = False,
-    ) -> "Atomistic | Topology":
-        """Generate topology (angles and dihedrals) from bonds.
-
-        When ``gen_angle`` or ``gen_dihe`` is True, returns a **new** Atomistic
-        with the generated interactions added — the original is not mutated.
-        When both are False, falls through to the base-class method and returns
-        a :class:`Topology` graph (used internally for traversal).
-
-        Args:
-            entity_type: Entity type to include in topology (default: Atom)
-            link_type: Link type to use for connections (default: Bond)
-            gen_angle: Whether to generate angles
-            gen_dihe: Whether to generate dihedrals
-            clear_existing: If True, clear existing angles/dihedrals before
-                generating new ones.
-
-        Returns:
-            New Atomistic with angles/dihedrals added when gen_angle or
-            gen_dihe is True; Topology graph otherwise.
-        """
-        if not gen_angle and not gen_dihe:
-            # Pure topology query used internally (get_topo_neighbors, etc.)
-            return super().get_topo(entity_type=entity_type, link_type=link_type)
-
-        # gen_angle and gen_dihe only work with Atom entities
-        if gen_angle and entity_type is not Atom:
-            raise ValueError("gen_angle=True requires entity_type=Atom")
-        if gen_dihe and entity_type is not Atom:
-            raise ValueError("gen_dihe=True requires entity_type=Atom")
-
-        # Work on a copy so the original is not mutated
-        new_struct = self.copy()
-
-        # Build the topology graph from the copy's bonds
-        from molpy.core.entity import ConnectivityMixin
-
-        topo = ConnectivityMixin.get_topo(
-            new_struct, entity_type=entity_type, link_type=link_type
-        )
-        atoms = topo.idx_to_entity
-
-        if gen_angle:
-            if clear_existing:
-                existing_angles = list(new_struct.links.bucket(Angle))
-                if existing_angles:
-                    new_struct.links.remove(*existing_angles)
-
-            existing_angle_endpoints: set[tuple[Atom, Atom, Atom]] = set()
-            if not clear_existing:
-                for angle in new_struct.links.bucket(Angle):
-                    existing_angle_endpoints.add((angle.itom, angle.jtom, angle.ktom))
-
-            for angle in topo.angles:
-                angle_indices = angle.tolist()
-                itom = atoms[angle_indices[0]]
-                jtom = atoms[angle_indices[1]]
-                ktom = atoms[angle_indices[2]]
-                if (itom, jtom, ktom) not in existing_angle_endpoints:
-                    new_struct.links.add(Angle(itom, jtom, ktom))
-                    existing_angle_endpoints.add((itom, jtom, ktom))
-
-        if gen_dihe:
-            if clear_existing:
-                existing_dihedrals = list(new_struct.links.bucket(Dihedral))
-                if existing_dihedrals:
-                    new_struct.links.remove(*existing_dihedrals)
-
-            existing_dihedral_endpoints: set[tuple[Atom, Atom, Atom, Atom]] = set()
-            if not clear_existing:
-                for dihedral in new_struct.links.bucket(Dihedral):
-                    existing_dihedral_endpoints.add(
-                        (dihedral.itom, dihedral.jtom, dihedral.ktom, dihedral.ltom)
-                    )
-
-            for dihe in topo.dihedrals:
-                dihe_indices = dihe.tolist()
-                itom = atoms[dihe_indices[0]]
-                jtom = atoms[dihe_indices[1]]
-                ktom = atoms[dihe_indices[2]]
-                ltom = atoms[dihe_indices[3]]
-                if (itom, jtom, ktom, ltom) not in existing_dihedral_endpoints:
-                    new_struct.links.add(Dihedral(itom, jtom, ktom, ltom))
-                    existing_dihedral_endpoints.add((itom, jtom, ktom, ltom))
-
-        return new_struct
-
-    # ========== Conversion Methods ==========
-
+    # ---------- tabular conversion ----------
     def to_frame(self, atom_fields: list[str] | None = None) -> "Frame":
-        """Convert to LAMMPS data Frame format.
-
-        Converts this Atomistic structure into a Frame suitable for writing
-        as a LAMMPS data file.
-
-        Args:
-            atom_fields (list[str] | None): List of atom fields to extract. If None, extracts all fields.
-
-        Returns:
-            Frame with atoms, bonds, angles, and dihedrals
-
-        Example:
-            >>> butane = CH3() + CH2() + CH3()
-            >>> # Extract all fields
-            >>> frame = butane.to_frame()
-            >>> # Extract specific fields only
-            >>> frame = butane.to_frame(
-            ...     atom_fields=['xyz', 'charge', 'element', 'type'],
-            ...     bond_fields=['itom', 'jtom', 'type'],
-            ... )
-            >>> writer = LammpsDataWriter("system.data")
-            >>> writer.write(frame)
-        """
-        import numpy as np
-
         from .frame import Block, Frame
 
         frame = Frame()
-
-        # Get all topology data
         atoms_data = list(self.atoms)
-        bonds_data = list(self.bonds)
-        angles_data = list(self.angles)
-        dihedrals_data = list(self.dihedrals)
-        impropers_data = list(self.impropers)
+        atom_index = {id(a): i for i, a in enumerate(atoms_data)}
 
-        # Build atoms Block - convert array of struct to struct of array
-        # Determine which keys to extract
         if atom_fields is None:
-            # Collect all keys from all atoms
-            all_keys = set()
+            keys: set[str] = set()
             for atom in atoms_data:
-                all_keys.update(atom.keys())
+                keys.update(atom.keys())
         else:
-            all_keys = set(atom_fields)
+            keys = set(atom_fields)
+        atom_dict = {k: [atom.get(k, None) for atom in atoms_data] for k in keys}
+        frame["atoms"] = Block.from_dict({k: np.array(v) for k, v in atom_dict.items()})
 
-        # Initialize dict for all keys
-        atom_dict = {key: [] for key in all_keys}
-
-        # Create atom ID to index mapping
-        atom_id_to_index = {}
-
-        # Convert: just iterate and append each key's value
-        for atom in atoms_data:
-            atom_id_to_index[id(atom)] = len(atom_id_to_index)
-
-            for key in all_keys:
-                atom_dict[key].append(atom.get(key, None))
-
-        # Convert to numpy arrays
-        atom_dict_np = {k: np.array(v) for k, v in atom_dict.items()}
-        frame["atoms"] = Block.from_dict(atom_dict_np)
-
-        # Build bonds Block - convert array of struct to struct of array
-        if bonds_data:
-            # Always include atom references
-            bond_dict = defaultdict(list)
-
-            # Collect all keys from all bonds first to ensure consistent fields
-            all_bond_keys = set()
-            for bond in bonds_data:
-                all_bond_keys.update(bond.keys())
-
-            for bond_idx, bond in enumerate(bonds_data):
-                # Atom references from properties
-                # Validate that atoms exist in atoms_data
-                if id(bond.itom) not in atom_id_to_index:
-                    raise ValueError(
-                        f"Bond {bond_idx + 1}: atomi (id={id(bond.itom)}) is not in atoms list. "
-                        f"This bond references an atom that was removed or is invalid."
-                    )
-                if id(bond.jtom) not in atom_id_to_index:
-                    raise ValueError(
-                        f"Bond {bond_idx + 1}: atomj (id={id(bond.jtom)}) is not in atoms list. "
-                        f"This bond references an atom that was removed or is invalid."
-                    )
-                bond_dict["atomi"].append(atom_id_to_index[id(bond.itom)])
-                bond_dict["atomj"].append(atom_id_to_index[id(bond.jtom)])
-                # Data fields - iterate over all keys to ensure consistent length
-                for key in all_bond_keys:
-                    if key not in [
-                        "atomi",
-                        "atomj",
-                    ]:  # Skip atom indices, already added
-                        value = bond.get(key, None)
-                        bond_dict[key].append(value)
-
-            bond_dict_np = {k: np.array(v) for k, v in bond_dict.items()}
-            frame["bonds"] = Block.from_dict(bond_dict_np)
-
-        # Build angles Block - convert array of struct to struct of array
-        if angles_data:
-            angle_dict = defaultdict(list)
-
-            # Collect all keys from all angles first to ensure consistent fields
-            all_angle_keys = set()
-            for angle in angles_data:
-                all_angle_keys.update(angle.keys())
-
-            for angle_idx, angle in enumerate(angles_data):
-                # Atom references from properties
-                # Validate that atoms exist in atoms_data
-                if id(angle.itom) not in atom_id_to_index:
-                    raise ValueError(
-                        f"Angle {angle_idx + 1}: atomi (id={id(angle.itom)}) is not in atoms list. "
-                        f"This angle references an atom that was removed or is invalid."
-                    )
-                if id(angle.jtom) not in atom_id_to_index:
-                    raise ValueError(
-                        f"Angle {angle_idx + 1}: atomj (id={id(angle.jtom)}) is not in atoms list. "
-                        f"This angle references an atom that was removed or is invalid."
-                    )
-                if id(angle.ktom) not in atom_id_to_index:
-                    raise ValueError(
-                        f"Angle {angle_idx + 1}: atomk (id={id(angle.ktom)}) is not in atoms list. "
-                        f"This angle references an atom that was removed or is invalid."
-                    )
-                angle_dict["atomi"].append(atom_id_to_index[id(angle.itom)])
-                angle_dict["atomj"].append(atom_id_to_index[id(angle.jtom)])
-                angle_dict["atomk"].append(atom_id_to_index[id(angle.ktom)])
-                # Data fields - iterate over all keys to ensure consistent length
-                for key in all_angle_keys:
-                    if key not in [
-                        "atomi",
-                        "atomj",
-                        "atomk",
-                    ]:  # Skip atom indices, already added
-                        value = angle.get(key, None)
-                        angle_dict[key].append(value)
-
-            angle_dict_np = {k: np.array(v) for k, v in angle_dict.items()}
-            frame["angles"] = Block.from_dict(angle_dict_np)
-        # Build dihedrals Block - convert array of struct to struct of array
-        if dihedrals_data:
-            dihedral_dict = defaultdict(list)
-
-            # Collect all keys from all dihedrals first to ensure consistent fields
-            all_dihedral_keys = set()
-            for dihedral in dihedrals_data:
-                all_dihedral_keys.update(dihedral.keys())
-
-            for dihedral_idx, dihedral in enumerate(dihedrals_data):
-                # Atom references from properties
-                # Validate that atoms exist in atoms_data
-                if id(dihedral.itom) not in atom_id_to_index:
-                    raise ValueError(
-                        f"Dihedral {dihedral_idx + 1}: atomi (id={id(dihedral.itom)}) is not in atoms list. "
-                        f"This dihedral references an atom that was removed or is invalid."
-                    )
-                if id(dihedral.jtom) not in atom_id_to_index:
-                    raise ValueError(
-                        f"Dihedral {dihedral_idx + 1}: atomj (id={id(dihedral.jtom)}) is not in atoms list. "
-                        f"This dihedral references an atom that was removed or is invalid."
-                    )
-                if id(dihedral.ktom) not in atom_id_to_index:
-                    raise ValueError(
-                        f"Dihedral {dihedral_idx + 1}: atomk (id={id(dihedral.ktom)}) is not in atoms list. "
-                        f"This dihedral references an atom that was removed or is invalid."
-                    )
-                if id(dihedral.ltom) not in atom_id_to_index:
-                    raise ValueError(
-                        f"Dihedral {dihedral_idx + 1}: atoml (id={id(dihedral.ltom)}) is not in atoms list. "
-                        f"This dihedral references an atom that was removed or is invalid."
-                    )
-                dihedral_dict["atomi"].append(atom_id_to_index[id(dihedral.itom)])
-                dihedral_dict["atomj"].append(atom_id_to_index[id(dihedral.jtom)])
-                dihedral_dict["atomk"].append(atom_id_to_index[id(dihedral.ktom)])
-                dihedral_dict["atoml"].append(atom_id_to_index[id(dihedral.ltom)])
-                # Data fields - iterate over all keys to ensure consistent length
-                for key in all_dihedral_keys:
-                    if key not in [
-                        "atomi",
-                        "atomj",
-                        "atomk",
-                        "atoml",
-                    ]:  # Skip atom indices, already added
-                        value = dihedral.get(key, None)
-                        dihedral_dict[key].append(value)
-
-            dihedral_dict_np = {k: np.array(v) for k, v in dihedral_dict.items()}
-            frame["dihedrals"] = Block.from_dict(dihedral_dict_np)
-
-        # Build impropers Block - convert array of struct to struct of array
-        if impropers_data:
-            improper_dict = defaultdict(list)
-
-            all_improper_keys = set()
-            for improper in impropers_data:
-                all_improper_keys.update(improper.keys())
-
-            for improper_idx, improper in enumerate(impropers_data):
-                for label, atom in zip(
-                    ("atomi", "atomj", "atomk", "atoml"),
-                    (improper.itom, improper.jtom, improper.ktom, improper.ltom),
-                ):
-                    if id(atom) not in atom_id_to_index:
-                        raise ValueError(
-                            f"Improper {improper_idx + 1}: {label} "
-                            f"(id={id(atom)}) is not in atoms list."
-                        )
-                    improper_dict[label].append(atom_id_to_index[id(atom)])
-                for key in all_improper_keys:
-                    if key not in ("atomi", "atomj", "atomk", "atoml"):
-                        improper_dict[key].append(improper.get(key, None))
-
-            improper_dict_np = {k: np.array(v) for k, v in improper_dict.items()}
-            frame["impropers"] = Block.from_dict(improper_dict_np)
-
+        self._links_to_block(frame, "bonds", self.bonds, ("atomi", "atomj"), atom_index)
+        self._links_to_block(
+            frame, "angles", self.angles, ("atomi", "atomj", "atomk"), atom_index
+        )
+        self._links_to_block(
+            frame,
+            "dihedrals",
+            self.dihedrals,
+            ("atomi", "atomj", "atomk", "atoml"),
+            atom_index,
+        )
+        self._links_to_block(
+            frame,
+            "impropers",
+            self.impropers,
+            ("atomi", "atomj", "atomk", "atoml"),
+            atom_index,
+        )
         return frame
+
+    @staticmethod
+    def _links_to_block(
+        frame: Any,
+        name: str,
+        links: Entities[Any],
+        index_labels: tuple[str, ...],
+        atom_index: dict[int, int],
+    ) -> None:
+        links = list(links)  # type: ignore[assignment]
+        if not links:
+            return
+        from .frame import Block
+
+        block: dict[str, list[Any]] = {lbl: [] for lbl in index_labels}
+        all_keys: set[str] = set()
+        for link in links:
+            all_keys.update(link.keys())
+        attr_keys = [k for k in all_keys if k not in index_labels]
+        for k in attr_keys:
+            block[k] = []
+        for n, link in enumerate(links):
+            for lbl, ep in zip(index_labels, link.endpoints):
+                if id(ep) not in atom_index:
+                    raise ValueError(
+                        f"{name} {n + 1}: {lbl} references an atom not in the "
+                        f"atoms list (removed or invalid)."
+                    )
+                block[lbl].append(atom_index[id(ep)])
+            for k in attr_keys:
+                block[k].append(link.get(k, None))
+        frame[name] = Block.from_dict({k: np.array(v) for k, v in block.items()})
+
+
+def _relation_handles(struct: molrs.Atomistic, kind: str, n: int) -> list[int]:
+    """Discover the live relation handles of ``kind`` after a fresh adopt.
+
+    molrs relation handles are opaque ``u64`` encoded as ``(generation<<32)|index``
+    with no enumeration API. A graph produced by SMILES / Conformer has never had
+    a relation removed, so its ``kind`` handles occupy the dense generation-1
+    range ``base+1 .. base+n``; probe that range and keep the resolvable handles.
+    """
+    handles: list[int] = []
+    base = 1 << 32
+    idx = 1
+    # probe a generous window past n to tolerate any sparse gaps
+    while len(handles) < n and idx <= n + 1024:
+        rh = base + idx
+        try:
+            struct.relation_nodes(kind, rh)
+            handles.append(rh)
+        except Exception:
+            pass
+        idx += 1
+    return handles

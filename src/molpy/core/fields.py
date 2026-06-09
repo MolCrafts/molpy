@@ -61,9 +61,24 @@ CHARGE = FieldSpec("charge", np.dtype(np.float64), "scalar", "partial charge (e)
 MASS = FieldSpec("mass", np.dtype(np.float64), "scalar", "atomic mass (amu)")
 MOL_ID = FieldSpec("mol_id", np.dtype(np.int64), "scalar", "molecule ID (1-indexed)")
 ELEMENT = FieldSpec("element", np.dtype("U4"), "scalar", "element symbol")
+SYMBOL = FieldSpec("symbol", np.dtype("U4"), "scalar", "atom/site symbol label")
+NAME = FieldSpec("name", np.dtype("U16"), "scalar", "human-readable name")
 POS_X = FieldSpec("x", np.dtype(np.float64), "scalar", "x coordinate (Angstrom)")
 POS_Y = FieldSpec("y", np.dtype(np.float64), "scalar", "y coordinate (Angstrom)")
 POS_Z = FieldSpec("z", np.dtype(np.float64), "scalar", "z coordinate (Angstrom)")
+XYZ = FieldSpec("xyz", np.dtype(np.float64), "vector3", "position vector (Angstrom)")
+ORDER = FieldSpec("order", np.dtype(np.float64), "scalar", "bond order")
+BEAD_TYPE = FieldSpec(
+    "bead_type", np.dtype("U64"), "scalar", "coarse-grained bead type"
+)
+
+# Aliases aligned 1:1 with molrs.keys string constants. molpy and molrs both
+# reference these canonical names; no scattered literals.
+X = POS_X
+Y = POS_Y
+Z = POS_Z
+TYPE = ATOM_TYPE
+ID = ATOM_ID
 VEL_X = FieldSpec("vx", np.dtype(np.float64), "scalar", "x velocity (Angstrom/fs)")
 VEL_Y = FieldSpec("vy", np.dtype(np.float64), "scalar", "y velocity (Angstrom/fs)")
 VEL_Z = FieldSpec("vz", np.dtype(np.float64), "scalar", "z velocity (Angstrom/fs)")
@@ -173,8 +188,13 @@ class FieldFormatter:
         return frame
 
     def localize_frame(self, frame: Frame) -> Frame:
-        """Localize all blocks in a Frame copy (non-destructive)."""
-        frame = frame.copy()
+        """Localize every block's columns in place (canonical → format).
+
+        A rename is just a column-key swap, so this mutates ``frame`` directly
+        rather than copying it — positional writers read the localized columns
+        and discard the frame. Callers that must preserve canonical names should
+        ``.copy()`` before writing.
+        """
         for key in frame.keys():
             self.localize(frame[key])
         return frame
