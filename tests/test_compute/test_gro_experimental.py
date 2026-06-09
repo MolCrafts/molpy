@@ -1,7 +1,5 @@
 """Parity tests: molpy experimental GRO I/O (molrs-backed) vs molpy native."""
 
-import os
-
 import numpy as np
 import pytest
 
@@ -11,27 +9,15 @@ from molpy.io.experimental import read_gro as exp_read_gro
 from molpy.io.experimental import write_gro as exp_write_gro
 
 
-def _gro_file(name="ubiquitin.gro"):
-    return os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "..",
-        "..",
-        "molrs",
-        "molrs-core",
-        "target",
-        "tests-data",
-        "gro",
-        name,
-    )
-
-
 @pytest.fixture
-def gro_path():
-    p = _gro_file("ubiquitin.gro")
-    if not os.path.exists(p):
+def gro_path(TEST_DATA_DIR):
+    # molpy ships its own test corpus (github.com/molcrafts/tests-data), cloned
+    # on demand by the session-scoped TEST_DATA_DIR fixture — no dependency on a
+    # sibling molrs checkout.
+    p = TEST_DATA_DIR / "gro" / "ubiquitin.gro"
+    if not p.exists():
         pytest.skip(f"GRO test file not found: {p}")
-    return p
+    return str(p)
 
 
 class TestGroReaderParity:
