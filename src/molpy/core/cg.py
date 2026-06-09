@@ -279,10 +279,9 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
     def move(
         self, delta: list[float], *, entity_type: type[Entity] = Bead
     ) -> "CoarseGrain":
-        for b in self.beads:
-            b["x"] = b["x"] + delta[0]
-            b["y"] = b["y"] + delta[1]
-            b["z"] = b["z"] + delta[2]
+        # Delegate to the molrs Rust kernel (vectorized over the dense
+        # coordinate columns) instead of a per-bead Python loop.
+        molrs.translate(self, [float(d) for d in delta])
         return self
 
     def rotate(
@@ -293,11 +292,8 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
         *,
         entity_type: type[Entity] = Bead,
     ) -> "CoarseGrain":
-        k = _unit(axis)
-        o = [0.0, 0.0, 0.0] if about is None else about
-        for b in self.beads:
-            xyz = _rodrigues_rotate([b["x"], b["y"], b["z"]], k, angle, o)
-            b["x"], b["y"], b["z"] = xyz
+        o = [0.0, 0.0, 0.0] if about is None else list(about)
+        molrs.rotate(self, _unit(axis), float(angle), o)
         return self
 
     def scale(

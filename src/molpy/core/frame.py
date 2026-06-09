@@ -175,10 +175,14 @@ class Block(molrs.Block, MutableMapping[str, np.ndarray]):
             # Return a plain dict for single-row access (avoids molrs
             # schema conflicts when 2D columns like "xyz" produce
             # different-length rows than scalar columns).
-            return {
-                k: (v[key] if (v[key].ndim > 0) else v[key].item())
-                for k, v in self._as_dict().items()
-            }
+            def _row(v):
+                item = v[key]
+                if np.ndim(item) > 0:  # 2D/vector column row -> keep array
+                    return item
+                # numpy scalar -> Python scalar; object scalars (e.g. str) as-is
+                return item.item() if hasattr(item, "item") else item
+
+            return {k: _row(v) for k, v in self._as_dict().items()}
         elif isinstance(key, slice):
             return Block({k: v[key] for k, v in self._as_dict().items()})
         elif isinstance(key, list):

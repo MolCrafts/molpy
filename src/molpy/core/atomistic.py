@@ -219,10 +219,12 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     @property
     def xyz(self) -> np.ndarray:
-        atoms = list(self.atoms)
-        return np.array(
-            [[a.get("x", 0.0), a.get("y", 0.0), a.get("z", 0.0)] for a in atoms]
-        )
+        # Read the dense molrs columns directly rather than a per-atom Python
+        # comprehension (~100x faster; column order matches self.atoms).
+        x = np.asarray(self.column("x"))
+        if x.size == 0:
+            return np.zeros((0, 3), dtype=float)
+        return np.stack([x, np.asarray(self.column("y")), np.asarray(self.column("z"))], axis=1)
 
     @property
     def positions(self) -> np.ndarray:
@@ -657,10 +659,9 @@ class Atomistic(molrs.Atomistic, _GraphViews):
     def move(
         self, delta: list[float], *, entity_type: type[Entity] = Atom
     ) -> "Atomistic":
-        for a in self.atoms:
-            a["x"] = a["x"] + delta[0]
-            a["y"] = a["y"] + delta[1]
-            a["z"] = a["z"] + delta[2]
+        # Delegate to the molrs Rust kernel (vectorized over the dense
+        # coordinate columns) instead of a per-atom Python loop.
+        molrs.translate(self, [float(d) for d in delta])
         return self
 
     def rotate(
@@ -671,11 +672,8 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         *,
         entity_type: type[Entity] = Atom,
     ) -> "Atomistic":
-        k = _unit(axis)
-        o = [0.0, 0.0, 0.0] if about is None else about
-        for a in self.atoms:
-            xyz = _rodrigues_rotate([a["x"], a["y"], a["z"]], k, angle, o)
-            a["x"], a["y"], a["z"] = xyz
+        o = [0.0, 0.0, 0.0] if about is None else list(about)
+        molrs.rotate(self, _unit(axis), float(angle), o)
         return self
 
     def scale(
