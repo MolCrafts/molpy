@@ -16,6 +16,14 @@
   (`molpy.adapter.rdkit`) is retained as an
   **optional** external backend; `rdkit` remains an optional extra, not a
   required dependency.
+- **`Frame` / `Block` are the canonical molrs types, not molpy subclasses.**
+  `molpy.core.frame.Frame is molrs.Frame` and `Block is molrs.Block` (thin
+  re-exports). The Python-side object-column overflow (`_objects`) is gone:
+  columns are **numpy-only** (float / int / bool / str). Assigning an
+  object / `None` / ragged column now raises `molrs.BlockDtypeError` at write
+  time instead of being silently stored on the Python side. `frame.box` returns
+  a `molrs.Box` (carrying `is_free` / `style` / `volume()`); molpy's richer box
+  geometry stays available as `molpy.Box`, upgradable via `Box.from_box(frame.box)`.
 
 ### Added
 
@@ -38,5 +46,12 @@
 - If you imported `from molpy.compute.rdkit import Generate3D`, switch to
   `from molpy.compute import Generate3D` (molrs-backed, `Atomistic -> Atomistic`)
   or, for the RDKit adapter flow, `from molpy.adapter import Generate3D`.
+- Build `Block` columns from numpy-representable data: replace
+  `np.array([...], dtype=object)` string columns with native `np.array([...])`
+  (numpy infers a `U` dtype). Sparse per-entity attributes can no longer be
+  `None`-filled into a column — use a typed default or omit the column.
+  `Atomistic.to_frame()` / `CoarseGrain.to_frame()` now drop columns that cannot
+  be numpy-represented (e.g. a CG bead's ragged `atoms` mapping) rather than
+  emitting object arrays.
 
 See [the molrs backend developer guide](developer/molrs-backend.md) for details.

@@ -83,7 +83,7 @@ atoms = Block(
         "x": np.array([0.0, 1.0, 2.0]),
         "y": np.array([0.0, 0.0, 0.0]),
         "z": np.array([0.0, 0.0, 0.0]),
-        "element": np.array(["O", "H", "H"], dtype=object),
+        "element": np.array(["O", "H", "H"]),
     }
  )
 

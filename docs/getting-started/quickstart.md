@@ -143,7 +143,11 @@ atoms['charge'] = np.asarray(atoms['charge'], dtype=float)
 
 print('atoms rows:', frame['atoms'].nrows)
 print('bonds rows:', frame['bonds'].nrows)
-print('angles rows:', frame['angles'].nrows)
+# `to_frame()` only emits a block for link kinds that exist. This TIP3P
+# template carries bonds but no explicit angle links, so there is no
+# 'angles' block — guard before accessing it.
+if 'angles' in frame:
+    print('angles rows:', frame['angles'].nrows)
 ```
 
 ## 6. Export to LAMMPS Files
