@@ -26,12 +26,14 @@ class TLeapWrapper(Wrapper):
         script_text: str,
         *,
         script_name: str = "tleap.in",
+        check: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         """Execute tleap from a script text.
 
         Args:
             script_text: The tleap script content.
             script_name: Name of the script file to create (in workdir).
+            check: If True, raise ``CalledProcessError`` on a non-zero exit.
 
         Returns:
             The completed process result.
@@ -47,7 +49,7 @@ class TLeapWrapper(Wrapper):
 
         script_path.write_text(script_text)
 
-        return self.run(args=["-f", script_name])
+        return self.run(args=["-f", script_name], check=check)
 
 
 def read_tleap_outputs(

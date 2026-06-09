@@ -382,8 +382,8 @@ class TestPolyelectrolytes:
         """{[$]CC(C(=O)[O-])[$]} — poly(acrylic acid, sodium salt) repeat."""
         ir = parse_bigsmiles("{[$]CC(C(=O)[O-])[$]}")
         struct = bigsmilesir_to_monomer(ir)
-        charged = [a for a in struct.atoms if a.get("charge")]
-        assert any(a.get("charge") == -1 for a in charged)
+        charged = [a for a in struct.atoms if a.get("formal_charge")]
+        assert any(a.get("formal_charge") == -1 for a in charged)
 
 
 # =====================================================================

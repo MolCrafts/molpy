@@ -45,7 +45,7 @@ def mk_smiles_ir(atom_specs, bond_tuples):
                 SmilesAtomIR(
                     element=element,
                     aromatic=aromatic,
-                    charge=a.get("charge"),
+                    formal_charge=a.get("charge"),
                     hydrogens=a.get("h_count"),
                     extras=extras,
                 )
@@ -1662,7 +1662,7 @@ class TestSmilesIRToAtomistic:
         assert len(struct.atoms) == 1
         atom = list(struct.atoms)[0]
         assert atom.get("element") == "N"
-        assert atom.get("charge") == -1
+        assert atom.get("formal_charge") == -1
 
     def test_tfsi_molecule(self):
         """Test conversion of TFSI molecule."""
@@ -1693,7 +1693,7 @@ class TestSmilesIRToAtomistic:
         # Check charge on N
         n_atoms = [a for a in struct.atoms if a.get("element") == "N"]
         assert len(n_atoms) == 1
-        assert n_atoms[0].get("charge") == -1
+        assert n_atoms[0].get("formal_charge") == -1
 
     def test_branched_molecule(self):
         """Test conversion of branched molecule."""

@@ -29,7 +29,7 @@ class SmilesAtomIR:
     id: int = field(default_factory=_generate_id, compare=False)
     element: str | None = None
     aromatic: bool = False
-    charge: int | None = None
+    formal_charge: int | None = None
     hydrogens: int | None = None
     extras: dict[str, Any] = field(default_factory=dict)
 
@@ -42,8 +42,8 @@ class SmilesAtomIR:
             attrs.append(f"element={self.element!r}")
         if self.aromatic:
             attrs.append("aromatic=True")
-        if self.charge is not None:
-            attrs.append(f"charge={self.charge}")
+        if self.formal_charge is not None:
+            attrs.append(f"formal_charge={self.formal_charge}")
         if self.hydrogens is not None:
             attrs.append(f"hydrogens={self.hydrogens}")
         if self.extras:

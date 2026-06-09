@@ -25,17 +25,19 @@ class Parmchk2Wrapper(Wrapper):
         args: list[str],
         *,
         input_text: str | None = None,
+        check: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         """Execute parmchk2 with raw arguments.
 
         Args:
             args: Command-line arguments (without 'parmchk2').
             input_text: Text to send to stdin.
+            check: If True, raise ``CalledProcessError`` on a non-zero exit.
 
         Returns:
             The completed process result.
         """
-        return self.run(args=args, input_text=input_text)
+        return self.run(args=args, input_text=input_text, check=check)
 
     def generate_parameters(
         self,
@@ -44,6 +46,7 @@ class Parmchk2Wrapper(Wrapper):
         *,
         input_format: Literal["mol2", "ac", "mol", "pdb"] = "mol2",
         force_field: Literal["gaff", "gaff2"] = "gaff2",
+        check: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         """Check and generate missing force field parameters.
 
@@ -56,6 +59,7 @@ class Parmchk2Wrapper(Wrapper):
             input_format: Input file format (mol2, ac, mol, pdb).
             force_field: Force field parameter set to use (``-s`` flag):
                 ``"gaff"`` for GAFF, ``"gaff2"`` for GAFF2 (default).
+            check: If True, raise ``CalledProcessError`` on a non-zero exit.
 
         Returns:
             The completed process result.
@@ -71,7 +75,7 @@ class Parmchk2Wrapper(Wrapper):
             force_field,
         ]
 
-        return self.run_raw(args=args)
+        return self.run_raw(args=args, check=check)
 
 
 @dataclass
@@ -98,17 +102,19 @@ class PrepgenWrapper(Wrapper):
         args: list[str],
         *,
         input_text: str | None = None,
+        check: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         """Execute prepgen with raw arguments.
 
         Args:
             args: Command-line arguments (without 'prepgen').
             input_text: Text to send to stdin.
+            check: If True, raise ``CalledProcessError`` on a non-zero exit.
 
         Returns:
             The completed process result.
         """
-        return self.run(args=args, input_text=input_text)
+        return self.run(args=args, input_text=input_text, check=check)
 
     def generate_residue(
         self,
@@ -118,6 +124,7 @@ class PrepgenWrapper(Wrapper):
         residue_name: str,
         *,
         output_format: Literal["prepi", "prepc"] = "prepi",
+        check: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         """Generate a residue template with connection points.
 
@@ -127,6 +134,7 @@ class PrepgenWrapper(Wrapper):
             control_file: Control file specifying HEAD_NAME, TAIL_NAME, OMIT_NAME.
             residue_name: Name for the residue (max 4 chars recommended).
             output_format: Output format (prepi or prepc).
+            check: If True, raise ``CalledProcessError`` on a non-zero exit.
 
         Returns:
             The completed process result.
@@ -153,7 +161,7 @@ class PrepgenWrapper(Wrapper):
             residue_name,
         ]
 
-        return self.run_raw(args=args)
+        return self.run_raw(args=args, check=check)
 
 
 def write_prepgen_control_file(

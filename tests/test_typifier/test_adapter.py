@@ -46,7 +46,7 @@ class TestBuildMolGraph:
         for v in graph.vs:
             assert "element" in v.attributes()
             assert "number" in v.attributes()
-            assert "charge" in v.attributes()
+            assert "formal_charge" in v.attributes()
             assert "degree" in v.attributes()
             assert "in_ring" in v.attributes()
 
@@ -80,12 +80,12 @@ class TestBuildMolGraph:
     def test_build_mol_graph_charge(self):
         """Test building graph with charged atoms."""
         asm = Atomistic()
-        n = Atom(symbol="N", charge=1)
+        n = Atom(symbol="N", formal_charge=1)
         asm.add_entity(n)
 
         graph, _vs_to_atomid, _atomid_to_vs = build_mol_graph(asm)
 
-        assert graph.vs[0]["charge"] == 1
+        assert graph.vs[0]["formal_charge"] == 1
 
     def test_build_mol_graph_bond_order(self):
         """Test building graph with different bond orders."""

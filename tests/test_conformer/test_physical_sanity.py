@@ -1,11 +1,9 @@
-"""Phase 3 — molrs-backed embed replaces the RDKit compute path.
+"""Physical sanity of molrs-backed conformer generation.
 
-The main-trunk ``molpy.compute.Generate3D`` is now backed by the molrs
-``generate_3d`` pipeline (distance geometry + minimization), operating on a
-:class:`molpy.Atomistic` graph and returning a fresh structure. The RDKit
-adapter (``molpy.adapter.rdkit``), which also hosts the optional RDKit
-``Generate3D`` / ``OptimizeGeometry`` operators, remains available as an
-external backend, but is no longer the trunk.
+``molpy.conformer.Conformer`` subclasses :class:`molrs.Conformer` (distance
+geometry + minimization), operating on a :class:`molpy.Atomistic` graph and
+returning a fresh structure. The RDKit adapter (``molpy.adapter.rdkit``) remains
+available as a separate external backend, but is not the trunk.
 """
 
 from __future__ import annotations
@@ -13,8 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from molpy.compute import Generate3D
-from molpy.compute.base import Compute
+from molpy.conformer import Conformer
 from molpy.parser import parse_molecule
 
 # Equilibrium bond lengths (Angstrom) from standard references
@@ -40,13 +37,9 @@ def _bond_lengths_by_pair(mol):
     return pairs
 
 
-def test_generate3d_is_compute_subclass():
-    assert issubclass(Generate3D, Compute)
-
-
-def test_generate3d_returns_3d_coords():
+def test_generate_returns_3d_coords():
     mol = parse_molecule("CCO")  # ethanol, heavy-atom graph
-    out = Generate3D(seed=42)(mol)
+    out, _ = Conformer(seed=42).generate(mol)
 
     atoms = list(out.atoms)
     assert len(atoms) >= 3  # hydrogens added by default
@@ -61,7 +54,7 @@ def test_input_molecule_immutable():
     n_before = len(list(mol.atoms))
     coords_before = [(a.get("x"), a.get("y"), a.get("z")) for a in mol.atoms]
 
-    out = Generate3D(seed=7)(mol)
+    out, _ = Conformer(seed=7).generate(mol)
 
     assert out is not mol
     assert len(list(mol.atoms)) == n_before  # no atoms added to input
@@ -73,10 +66,10 @@ def test_input_molecule_immutable():
     "smiles,name",
     [("O", "water"), ("C", "methane"), ("CCO", "ethanol")],
 )
-def test_embed_replacement_physical_sanity(smiles, name):
+def test_conformer_physical_sanity(smiles, name):
     """Generated geometries have bond lengths within 10% of literature."""
     mol = parse_molecule(smiles)
-    out = Generate3D(seed=42)(mol)
+    out, _ = Conformer(seed=42).generate(mol)
 
     pairs = _bond_lengths_by_pair(out)
     assert pairs, f"{name}: no bonds found"

@@ -44,7 +44,6 @@ from .dielectric import (
 )
 from .density import GaussianDensity, LocalDensity
 from .diffraction import StaticStructureFactorDebye
-from .embed import Generate3D
 from .environment import BondOrder
 from .order import Hexatic, Nematic, SolidLiquid, Steinhardt
 from .pmft import PMFTXY
@@ -131,7 +130,6 @@ __all__ = [
     "WorkflowMissingInputError",
     "compute_msd",
     "compute_acf",
-    "Generate3D",
     "Steinhardt",
     "Hexatic",
     "Nematic",

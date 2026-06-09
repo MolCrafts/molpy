@@ -514,7 +514,7 @@ class SMARTSGraph(Graph):
             is_aromatic = atom.attributes().get("is_aromatic", False)
             return is_aromatic
         elif atom_primitive.type == "charge":
-            atom_charge = atom.attributes().get("charge", 0)
+            atom_charge = atom.attributes().get("formal_charge", 0)
             assert isinstance(atom_primitive.value, int)
             return atom_charge == atom_primitive.value
         elif atom_primitive.type == "degree":

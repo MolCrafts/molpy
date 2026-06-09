@@ -160,7 +160,7 @@ class SmilesTransformer(Transformer):
         return SmilesAtomIR(
             element=element,
             aromatic=aromatic,
-            charge=charge,
+            formal_charge=charge,
             hydrogens=hydrogens,
             extras=extras,
         )

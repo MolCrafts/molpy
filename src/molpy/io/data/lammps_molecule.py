@@ -636,7 +636,8 @@ class LammpsMoleculeWriter(DataWriter):
 
     def write(self, frame: Frame) -> None:
         """Write Frame to LAMMPS molecule file."""
-        frame = self._formatter.localize_frame(frame)
+        # Sections are written by name (Charges/Molecules/…), so read canonical
+        # columns directly — no canonical→format rename, no frame mutation.
         if self.format_type == "json":
             self._write_json_format(frame)
         else:
@@ -688,11 +689,11 @@ class LammpsMoleculeWriter(DataWriter):
             data["coords"] = {"format": ["atom-id", "x", "y", "z"], "data": coords_data}
 
         # Charges section
-        if "q" in atoms:
+        if "charge" in atoms:
             charges_data = []
             for idx in range(atoms.nrows):
                 atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
-                charge = float(atoms["q"][idx])
+                charge = float(atoms["charge"][idx])
                 charges_data.append([atom_id, charge])
 
             data["charges"] = {"format": ["atom-id", "charge"], "data": charges_data}
@@ -708,11 +709,11 @@ class LammpsMoleculeWriter(DataWriter):
             data["masses"] = {"format": ["atom-id", "mass"], "data": masses_data}
 
         # Molecule IDs section
-        if "mol" in atoms:
+        if "mol_id" in atoms:
             molecule_data = []
             for idx in range(atoms.nrows):
                 atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
-                mol_id = int(atoms["mol"][idx])
+                mol_id = int(atoms["mol_id"][idx])
                 molecule_data.append([atom_id, mol_id])
 
             data["molecule"] = {
@@ -949,8 +950,8 @@ class LammpsMoleculeWriter(DataWriter):
 
         # Optional sections
         optional_sections = [
-            ("mol", "Molecules"),
-            ("q", "Charges"),
+            ("mol_id", "Molecules"),
+            ("charge", "Charges"),
             ("mass", "Masses"),
             ("diameter", "Diameters"),
         ]

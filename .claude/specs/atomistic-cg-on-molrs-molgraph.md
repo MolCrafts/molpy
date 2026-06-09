@@ -2,7 +2,7 @@
 
 | 字段   | 值                                                       |
 | ------ | -------------------------------------------------------- |
-| Status | Draft                                                    |
+| Status | **Superseded** by chain `molgraph-ecs`（01-core / 02-pybind / 03-molpy，2026-06-08：molrs 重构为 ECS world + 自由函数 system + 对齐列存；molpy 收成 world 上的句柄列视图，删镜像/拷贝/Struct+Mixin） |
 | Target | molpy 0.3.x（pre-1.0，允许 BREAKING）                    |
 | Owner  | core（atomistic / cg / entity / _molrs）+ molrs-python   |
 | Layers | core（单一存储改写）+ molrs-python（绑定扩面）+ molrs-core（impropers + 拓扑感知） |

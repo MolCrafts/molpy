@@ -29,7 +29,7 @@ def build_mol_graph(
         - element: str (e.g., "C", "N", "O")
         - number: int (atomic number)
         - is_aromatic: bool
-        - charge: int
+        - formal_charge: int
         - degree: int (number of bonds)
         - hyb: int | None (1=sp, 2=sp2, 3=sp3)
         - in_ring: bool
@@ -143,8 +143,10 @@ def _extract_atom_attributes(atom: "Atom", structure: "Atomistic") -> dict[str, 
     attrs["is_aromatic"] = bool(atom.get("is_aromatic", atom.get("aromatic", False)))
 
     # Charge
-    charge_val = atom.get("charge", atom.get("formal_charge", 0))
-    attrs["charge"] = int(charge_val) if charge_val is not None else 0
+    formal_charge_val = atom.get("formal_charge", 0)
+    attrs["formal_charge"] = (
+        int(formal_charge_val) if formal_charge_val is not None else 0
+    )
 
     # Hybridization
     hyb = atom.get("hyb", atom.get("hybridization", None))

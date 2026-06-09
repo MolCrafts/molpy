@@ -365,11 +365,11 @@ class TestFormalCharge:
             atoms_by_mp_id[mp_id] = rd_atom
 
         # Find atoms with charges
-        charged_atoms = [a for a in asm.atoms if a.get("charge") is not None]
+        charged_atoms = [a for a in asm.atoms if a.get("formal_charge") is not None]
         for atom in charged_atoms:
             mp_id = int(atom.get(MP_ID))
             rd_atom = atoms_by_mp_id[mp_id]
-            assert rd_atom.GetFormalCharge() == int(atom.get("charge"))
+            assert rd_atom.GetFormalCharge() == int(atom.get("formal_charge"))
 
     def test_mol_with_charge_syncs_to_atomistic(self):
         """Test that RDKit formal charges are transferred to Atomistic."""
@@ -392,8 +392,8 @@ class TestFormalCharge:
         atoms_by_id = {
             int(a.get(MP_ID)): a for a in asm.atoms if a.get(MP_ID) is not None
         }
-        assert atoms_by_id[1].get("charge") == 1
-        assert atoms_by_id[2].get("charge") == -1
+        assert atoms_by_id[1].get("formal_charge") == 1
+        assert atoms_by_id[2].get("formal_charge") == -1
 
 
 class TestUpdateBehavior:

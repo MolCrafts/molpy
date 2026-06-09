@@ -596,8 +596,9 @@ class LammpsDataWriter(DataWriter):
         Raises:
             ValueError: If atoms are missing 'id' field.
         """
-        # Translate canonical field names to LAMMPS-specific names
-        frame = self._formatter.localize_frame(frame)
+        # The LAMMPS data file is positional (``atom-ID mol-ID type q x y z``),
+        # so the writer reads canonical columns (``charge``, ``mol_id``) straight
+        # into the right slots — no canonical→format rename, hence no frame copy.
 
         lines = []
 
@@ -754,7 +755,7 @@ class LammpsDataWriter(DataWriter):
         Returns:
             Dict mapping type keys to sorted lists of type names
         """
-        metadata_type_labels = frame.metadata.get("type_labels")
+        metadata_type_labels = getattr(frame, "metadata", {}).get("type_labels")
         actual_types = self._collect_actual_types(frame)
 
         if metadata_type_labels is not None:
@@ -808,7 +809,7 @@ class LammpsDataWriter(DataWriter):
         Uses merged type labels from metadata (if present) or actual types.
         """
         merged_types = self._get_merged_type_labels(frame)
-        metadata_type_labels = frame.metadata.get("type_labels")
+        metadata_type_labels = getattr(frame, "metadata", {}).get("type_labels")
 
         # If metadata has type_labels, use merged types
         if metadata_type_labels is not None:
@@ -970,7 +971,7 @@ class LammpsDataWriter(DataWriter):
         self, lines: list[str], frame: Frame
     ) -> None:
         """Write force field coefficients sections."""
-        forcefield = frame.metadata.get("forcefield")
+        forcefield = getattr(frame, "metadata", {}).get("forcefield")
         if not forcefield:
             return
 
@@ -1110,13 +1111,13 @@ class LammpsDataWriter(DataWriter):
             z = float(atoms_data["z"][idx])
 
             if self.atom_style == "full":
-                mol_id = int(atoms_data["mol"][idx])
-                charge = float(atoms_data["q"][idx])
+                mol_id = int(atoms_data["mol_id"][idx])
+                charge = float(atoms_data["charge"][idx])
                 lines.append(
                     f"{atom_id} {mol_id} {atom_type} {charge:.6f} {x:.6f} {y:.6f} {z:.6f}"
                 )
             elif self.atom_style == "charge":
-                charge = float(atoms_data["q"][idx])
+                charge = float(atoms_data["charge"][idx])
                 lines.append(
                     f"{atom_id} {atom_type} {charge:.6f} {x:.6f} {y:.6f} {z:.6f}"
                 )

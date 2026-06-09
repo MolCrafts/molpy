@@ -220,7 +220,7 @@ class BigSmilesTransformer(Transformer):
             aromatic = symbol_text.islower()
             element = symbol_text.upper() if aromatic else symbol_text
             atom = SmilesAtomIR(element=element, aromatic=aromatic)
-        atom.charge = charge
+        atom.formal_charge = charge
         atom.hydrogens = hydrogens
         atom.extras.update(props)
         return atom

@@ -313,9 +313,9 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                 )
 
             rd_atom = Chem.Atom(str(element))
-            charge = atom.get("charge")
-            if charge is not None:
-                rd_atom.SetFormalCharge(int(charge))
+            formal_charge = atom.get("formal_charge")
+            if formal_charge is not None:
+                rd_atom.SetFormalCharge(int(formal_charge))
 
             rd_atom.SetIntProp(MP_ID, mp_id_int)
             idx = mol.AddAtom(rd_atom)
@@ -411,7 +411,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
             }
 
             if rd_atom.GetFormalCharge() != 0:
-                props["charge"] = rd_atom.GetFormalCharge()
+                props["formal_charge"] = rd_atom.GetFormalCharge()
 
             if conf is not None:
                 pos = conf.GetAtomPosition(rdkit_idx)
@@ -495,7 +495,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                     MP_ID: atom_id,
                 }
                 if rd_atom.GetFormalCharge() != 0:
-                    props["charge"] = rd_atom.GetFormalCharge()
+                    props["formal_charge"] = rd_atom.GetFormalCharge()
                 if conf is not None:
                     pos = conf.GetAtomPosition(rdkit_idx)
                     props["x"] = float(pos.x)
@@ -521,7 +521,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                 atom[MP_ID] = int(rd_atom.GetIntProp(MP_ID))
 
             if rd_atom.GetFormalCharge() != 0:
-                atom["charge"] = rd_atom.GetFormalCharge()
+                atom["formal_charge"] = rd_atom.GetFormalCharge()
 
             if conf is not None:
                 pos = conf.GetAtomPosition(rdkit_idx)
