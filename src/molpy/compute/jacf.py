@@ -103,7 +103,7 @@ class JACF(Compute["Trajectory", JACFResult]):
             current_list.append(j)
             if frame.box is None:
                 raise ValueError("Frame must contain box information")
-            volumes.append(float(frame.box.volume))
+            volumes.append(float(frame.box.volume()))
 
         current = np.asarray(current_list, dtype=np.float64)  # (F, 3)
         if current.shape[0] < 2:

@@ -174,7 +174,8 @@ class PDBReader(DataReader):
         """
         import molrs.io
 
-        molpy_frame = Frame.from_dict(molrs.io.read_pdb(self._path))
+        # molrs.io.read_pdb returns the canonical rich Frame directly.
+        molpy_frame = molrs.io.read_pdb(self._path)
 
         # molrs preserves both directions of each CONECT record; molpy keeps a
         # single bond per pair — deduplicate for parity.
@@ -495,16 +496,9 @@ class PDBWriter(DataWriter):
                     raise ValueError(
                         f"Required field '{field}' is missing in frame['atoms']"
                     )
-                # Check if any values are None
-                values = atoms[field]
-                if values is None:
-                    raise ValueError(f"Required field '{field}' contains None")
-                # Check for None in array (if object dtype)
-                if hasattr(values, "dtype") and values.dtype == object:
-                    if any(v is None for v in values):
-                        raise ValueError(
-                            f"Required field '{field}' contains None values"
-                        )
+                # No None-column check needed: the numpy-only Store rejects
+                # object / None columns at write time, so a present column is
+                # always a dense numpy array.
 
             # Build index -> id mapping for bonds
             index_to_id = {}

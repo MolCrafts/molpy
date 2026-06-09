@@ -52,7 +52,7 @@ class GroReader(DataReader):
         frames = molrs.io.read_gro(self._path)
         if not frames:
             raise OSError(f"no frames parsed from GRO file: {self._path}")
-        molpy_frame = Frame.from_dict(frames[0])
+        molpy_frame = frames[0]  # already a canonical rich Frame from molrs.io
 
         atoms = molpy_frame["atoms"]
         if "number" not in atoms and "id" in atoms:

@@ -676,7 +676,7 @@ class TestCoarseGrainToFrame:
         # atoms key was excluded
         assert "atoms" not in cols
 
-    def test_to_frame_with_atoms_key_default_includes_object_column(self):
+    def test_to_frame_drops_non_numpy_atoms_key(self):
         cg = CoarseGrain()
         ato = Atomistic()
         a = ato.def_atom(symbol="C")
@@ -684,8 +684,11 @@ class TestCoarseGrainToFrame:
         cg.def_bead(type="P4", atoms=(a, b))
 
         frame = cg.to_frame()
-        # atoms key included as object array
-        assert "atoms" in frame["beads"].keys()
+        # numpy-only Store: the ragged ``atoms`` mapping (tuple of Atom handles
+        # per bead) has no numpy representation and is dropped from the numeric
+        # frame — the bead→atom mapping lives on the CoarseGrain struct.
+        assert "atoms" not in frame["beads"].keys()
+        assert list(frame["beads"]["type"]) == ["P4"]
 
     def test_cross_world_bond_endpoint_rejected(self):
         """Handle views are world-local: a bond over beads from another world

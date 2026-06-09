@@ -365,9 +365,8 @@ def read_pdb_trajectory(file: PathLike) -> list:
     """
     import molrs.io
 
-    from molpy.core.frame import Frame
-
-    return [Frame.from_dict(f) for f in molrs.io.read_pdb_trajectory(str(file))]
+    # molrs.io.read_pdb_trajectory already returns canonical rich Frames.
+    return list(molrs.io.read_pdb_trajectory(str(file)))
 
 
 def read_h5_trajectory(file: PathLike) -> Any:

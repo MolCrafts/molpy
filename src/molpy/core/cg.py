@@ -363,6 +363,7 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
 
     # ---------- tabular conversion ----------
     def to_frame(self, bead_fields: list[str] | None = None) -> "Frame":
+        from ._columns import to_numpy_column
         from .frame import Block, Frame
 
         frame = Frame()
@@ -377,12 +378,16 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
         else:
             keys = set(bead_fields)
 
-        bead_dict = {k: [bead.get(k, None) for bead in beads] for k in keys}
-        bead_arrays = {
-            k: np.array(v, dtype=object) if k == "atoms" else np.array(v)
-            for k, v in bead_dict.items()
-        }
-        frame["beads"] = Block.from_dict(bead_arrays)
+        # numpy-only Store: skip columns that cannot be represented without an
+        # object dtype. The soft-convention ``atoms`` key (a ragged tuple of
+        # Atom handles per bead) has no numeric representation and is dropped
+        # from the numeric frame — the bead→atom mapping lives on the struct.
+        bead_cols: dict[str, np.ndarray] = {}
+        for k in keys:
+            col = to_numpy_column([bead.get(k, None) for bead in beads])
+            if col is not None:
+                bead_cols[k] = col
+        frame["beads"] = Block.from_dict(bead_cols)
 
         if cgbonds:
             block: dict[str, list[Any]] = {"ibead": [], "jbead": []}
@@ -402,8 +407,11 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
                     block[lbl].append(bead_index[id(ep)])
                 for k in attr_keys:
                     block[k].append(bond.get(k, None))
-            frame["cgbonds"] = Block.from_dict(
-                {k: np.array(v) for k, v in block.items()}
-            )
+            cgbond_cols: dict[str, np.ndarray] = {}
+            for k, v in block.items():
+                col = to_numpy_column(v)
+                if col is not None:
+                    cgbond_cols[k] = col
+            frame["cgbonds"] = Block.from_dict(cgbond_cols)
 
         return frame

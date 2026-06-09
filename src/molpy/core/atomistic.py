@@ -224,7 +224,9 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         x = np.asarray(self.column("x"))
         if x.size == 0:
             return np.zeros((0, 3), dtype=float)
-        return np.stack([x, np.asarray(self.column("y")), np.asarray(self.column("z"))], axis=1)
+        return np.stack(
+            [x, np.asarray(self.column("y")), np.asarray(self.column("z"))], axis=1
+        )
 
     @property
     def positions(self) -> np.ndarray:
@@ -752,6 +754,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     # ---------- tabular conversion ----------
     def to_frame(self, atom_fields: list[str] | None = None) -> "Frame":
+        from ._columns import to_numpy_column
         from .frame import Block, Frame
 
         frame = Frame()
@@ -764,8 +767,14 @@ class Atomistic(molrs.Atomistic, _GraphViews):
                 keys.update(atom.keys())
         else:
             keys = set(atom_fields)
-        atom_dict = {k: [atom.get(k, None) for atom in atoms_data] for k in keys}
-        frame["atoms"] = Block.from_dict({k: np.array(v) for k, v in atom_dict.items()})
+        # numpy-only Store: build a representable column per key, skipping any
+        # that cannot be expressed without an object dtype (ragged / all-None).
+        atom_cols: dict[str, np.ndarray] = {}
+        for k in keys:
+            col = to_numpy_column([atom.get(k, None) for atom in atoms_data])
+            if col is not None:
+                atom_cols[k] = col
+        frame["atoms"] = Block.from_dict(atom_cols)
 
         self._links_to_block(frame, "bonds", self.bonds, ("atomi", "atomj"), atom_index)
         self._links_to_block(
@@ -798,6 +807,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         links = list(links)  # type: ignore[assignment]
         if not links:
             return
+        from ._columns import to_numpy_column
         from .frame import Block
 
         block: dict[str, list[Any]] = {lbl: [] for lbl in index_labels}
@@ -817,7 +827,14 @@ class Atomistic(molrs.Atomistic, _GraphViews):
                 block[lbl].append(atom_index[id(ep)])
             for k in attr_keys:
                 block[k].append(link.get(k, None))
-        frame[name] = Block.from_dict({k: np.array(v) for k, v in block.items()})
+        # numpy-only Store: index columns are dense ints; skip attr columns that
+        # are not numpy-representable (ragged / all-None) rather than overflow.
+        cols: dict[str, np.ndarray] = {}
+        for k, v in block.items():
+            col = to_numpy_column(v)
+            if col is not None:
+                cols[k] = col
+        frame[name] = Block.from_dict(cols)
 
 
 def _relation_handles(struct: molrs.Atomistic, kind: str, n: int) -> list[int]:

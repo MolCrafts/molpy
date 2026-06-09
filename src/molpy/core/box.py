@@ -43,12 +43,18 @@ class Box(molrs.Box):
             to ``[0, 0, 0]``.
     """
 
-    class Style(Enum):
-        """Enumeration of simulation-box geometries."""
+    class Style(str, Enum):
+        """Enumeration of simulation-box geometries.
 
-        FREE = 0
-        ORTHOGONAL = 1
-        TRICLINIC = 2
+        Values are the canonical molrs style strings so a ``molpy.Box.Style``
+        member compares equal to the string returned by ``molrs.Box.style``
+        (e.g. ``Box.Style.ORTHOGONAL == "orthogonal"``), letting ``frame.box``
+        (a molrs box) interoperate with molpy style checks.
+        """
+
+        FREE = "free"
+        ORTHOGONAL = "orthogonal"
+        TRICLINIC = "triclinic"
 
     # FREE boxes need a non-singular placeholder for the molrs base
     # (which rejects det(h)==0). The Python-side ``_is_free`` flag
@@ -66,7 +72,14 @@ class Box(molrs.Box):
         origin: ArrayLike | None = None,
     ):
         is_free, h = cls._normalize_matrix(matrix)
-        pbc_arr = cls._normalize_pbc(pbc)
+        # A FREE box is non-periodic on every axis. Defaulting its pbc to
+        # all-False is what lets the molrs Store (which only keeps matrix /
+        # origin / pbc, not molpy's Python ``_is_free`` flag) reconstruct
+        # ``box.is_free`` / ``box.style == "free"`` after a round-trip.
+        if pbc is None and is_free:
+            pbc_arr = np.zeros(3, dtype=bool)
+        else:
+            pbc_arr = cls._normalize_pbc(pbc)
         origin_arr = cls._normalize_origin(origin)
         instance = super().__new__(cls, h, origin=origin_arr, pbc=pbc_arr)
         instance._is_free = is_free
@@ -249,8 +262,19 @@ class Box(molrs.Box):
 
     @classmethod
     def from_box(cls, box: "Box") -> "Box":
-        """Copy constructor."""
-        return cls(box.matrix.copy(), box._pbc.copy(), box._origin.copy())
+        """Copy / upgrade constructor.
+
+        Accepts a molpy ``Box`` or a bare ``molrs.Box`` (e.g. ``frame.box``),
+        reading only the public ``matrix`` / ``pbc`` / ``origin`` accessors so it
+        works across both. A free source box reconstructs a free molpy box.
+        """
+        if getattr(box, "is_free", False):
+            return cls()
+        return cls(
+            np.asarray(box.matrix).copy(),
+            np.asarray(box.pbc).copy(),
+            np.asarray(box.origin).copy(),
+        )
 
     @classmethod
     def from_bounds(

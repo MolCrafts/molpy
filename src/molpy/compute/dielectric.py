@@ -17,6 +17,7 @@ import numpy as np
 from molrs.dielectric import Dielectric
 from molrs.signal import acf_fft, apply_window, frequency_grid
 
+from ..core.box import Box
 from .base import Compute
 from .result import (
     ACFResult,
@@ -90,7 +91,7 @@ class ACFAnalyzer(Compute["Trajectory", ACFResult]):
         if self.unwrap and n_dim == 3:
             for i in range(1, n_frames):
                 dr = data[i] - data[i - 1]
-                data[i] = data[i - 1] + frames[i].box.diff_dr(dr)
+                data[i] = data[i - 1] + Box.from_box(frames[i].box).diff_dr(dr)
 
         # Compute ACF per dimension, average, normalize.
         max_lag = min(self.max_lag, n_frames - 1)
@@ -215,7 +216,7 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
                 raise ValueError(f"Missing column '{col}' in atoms block")
 
         n_atoms = len(frame0["atoms"]["x"])
-        volume = self._volume or frame0.box.volume
+        volume = self._volume or frame0.box.volume()
 
         positions = np.empty((n_frames, n_atoms, 3), dtype=np.float64)
         charges = np.asarray(frame0["atoms"]["charge"], dtype=np.float64)
@@ -229,7 +230,9 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
         # semantics (relevant for NPT trajectories with per-frame boxes).
         for i in range(1, n_frames):
             dr = positions[i] - positions[i - 1]
-            positions[i] = positions[i - 1] + frames[i - 1].box.diff_dr(dr)
+            positions[i] = positions[i - 1] + Box.from_box(frames[i - 1].box).diff_dr(
+                dr
+            )
 
         # Dipole moment per frame: M[f, d] = Σ_a charges[a] · positions[f, a, d]
         dipole_moments = np.einsum("a,fad->fd", charges, positions)
@@ -378,7 +381,7 @@ class IonicConductivity(Compute["Trajectory", ConductivityResult]):
                 raise ValueError(f"Missing column '{col}' in atoms block")
 
         n_atoms = len(frame0["atoms"]["x"])
-        volume = self._volume or frame0.box.volume
+        volume = self._volume or frame0.box.volume()
 
         positions = np.empty((n_frames, n_atoms, 3), dtype=np.float64)
         charges = np.asarray(frame0["atoms"]["charge"], dtype=np.float64)
@@ -391,7 +394,9 @@ class IonicConductivity(Compute["Trajectory", ConductivityResult]):
         # DielectricSusceptibility): use frames[i-1].box for per-frame boxes.
         for i in range(1, n_frames):
             dr = positions[i] - positions[i - 1]
-            positions[i] = positions[i - 1] + frames[i - 1].box.diff_dr(dr)
+            positions[i] = positions[i - 1] + Box.from_box(frames[i - 1].box).diff_dr(
+                dr
+            )
 
         # Ionic translational dipole M_J[f, d] = sum_a charges[a] * pos[f, a, d].
         translational_dipole = np.einsum("a,fad->fd", charges, positions)

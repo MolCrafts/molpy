@@ -5,6 +5,7 @@ Tests for XYZReader and XYZWriter using chemfiles-testcases/xyz files.
 import importlib
 from pathlib import Path
 
+import molrs
 import numpy as np
 import pytest
 
@@ -74,7 +75,7 @@ class TestXYZReader:
 
         # Check box from Lattice
         box = frame.box
-        assert isinstance(box, Box)
+        assert isinstance(box, molrs.Box)
         assert box.matrix.shape == (3, 3)
         assert np.allclose(
             box.matrix,

@@ -39,8 +39,9 @@ class XYZReader(DataReader):
         super().__init__(Path(path), **kwargs)
 
     def read(self, frame: Frame | None = None) -> Frame:
-        raw = molrs.io.read_xyz(self._path)
-        molpy_frame = Frame.from_dict(raw)
+        # molrs.io.read_xyz already returns the canonical rich Frame
+        # (molpy.Frame is molrs.Frame); no upgrade wrapping needed.
+        molpy_frame = molrs.io.read_xyz(self._path)
 
         for block_name in list(molpy_frame.keys()):
             block = molpy_frame[block_name]

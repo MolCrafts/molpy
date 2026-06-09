@@ -119,7 +119,7 @@ class TestLammpsDataReader:
         frame = reader.read()
 
         assert frame.box is not None
-        assert frame.box.style.name == "TRICLINIC"
+        assert frame.box.style == "triclinic"
         np.testing.assert_array_almost_equal(frame.box.tilts, [5.0, -8.0, 3.0])
         # Edge-vector norms reflect the tilt: |a|=lx, |b|=sqrt(xy^2+ly^2),
         # |c|=sqrt(xz^2+yz^2+lz^2).
