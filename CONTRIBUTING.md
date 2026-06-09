@@ -310,7 +310,7 @@ Before submitting, ensure:
 
 - **General questions:** [GitHub Discussions](https://github.com/MolCrafts/molpy/discussions)
 - **Bug reports:** [GitHub Issues](https://github.com/MolCrafts/molpy/issues)
-- **Documentation:** [MolPy Docs](https://molcrafts.github.io/molpy/)
+- **Documentation:** [MolPy Docs](https://molpy.molcrafts.org/)
 
 ## Recognition
 

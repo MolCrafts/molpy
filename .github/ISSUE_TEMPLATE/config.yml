@@ -4,8 +4,8 @@ contact_links:
     url: https://github.com/MolCrafts/molpy/discussions
     about: Ask questions and discuss ideas with the community
   - name: 📚 Documentation
-    url: https://molcrafts.github.io/molpy/
+    url: https://molpy.molcrafts.org/
     about: Read the comprehensive documentation
   - name: ❓ FAQ
-    url: https://molcrafts.github.io/molpy/getting-started/faq/
+    url: https://molpy.molcrafts.org/getting-started/faq/
     about: Check frequently asked questions

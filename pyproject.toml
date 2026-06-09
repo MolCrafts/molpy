@@ -84,7 +84,7 @@ molpy = "molpy.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/MolCrafts/molpy"
-Documentation = "https://molcrafts.github.io/molpy"
+Documentation = "https://molpy.molcrafts.org"
 Repository = "https://github.com/MolCrafts/molpy.git"
 Issues = "https://github.com/MolCrafts/molpy/issues"
 Changelog = "https://github.com/MolCrafts/molpy/releases"

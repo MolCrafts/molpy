@@ -1,5 +1,5 @@
 site_name: MolPy
-site_url: https://molcrafts.github.io/molpy
+site_url: https://molpy.molcrafts.org
 repo_url: https://github.com/MolCrafts/molpy
 repo_name: MolCrafts/molpy
 site_description: A Python toolkit for reactive topology editing in polymer simulations.

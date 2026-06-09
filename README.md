@@ -16,9 +16,9 @@
 </p>
 
 <p>
-  <a href="https://molcrafts.github.io/molpy/"><b>Documentation</b></a> &nbsp;&middot;&nbsp;
+  <a href="https://molpy.molcrafts.org/"><b>Documentation</b></a> &nbsp;&middot;&nbsp;
   <a href="#quick-start"><b>Quick start</b></a> &nbsp;&middot;&nbsp;
-  <a href="https://molcrafts.github.io/molpy/getting-started/examples/"><b>Examples</b></a> &nbsp;&middot;&nbsp;
+  <a href="https://molpy.molcrafts.org/getting-started/examples/"><b>Examples</b></a> &nbsp;&middot;&nbsp;
   <a href="#molcrafts-ecosystem"><b>Ecosystem</b></a>
 </p>
 
@@ -109,7 +109,7 @@ cd ../molpy
 pip install -e ".[dev]"                                # resolves molrs from the local build
 ```
 
-See [docs/developer/development-setup](https://molcrafts.github.io/molpy/developer/development-setup/)
+See [docs/developer/development-setup](https://molpy.molcrafts.org/developer/development-setup/)
 for the full workflow.
 
 </details>
@@ -131,19 +131,19 @@ mp.io.write_lammps_system("output/", typed.to_frame(), ff)
 
 More workflows — polymer chains, polydisperse melts, AmberTools
 parameterization — are in the
-**[Example Gallery](https://molcrafts.github.io/molpy/getting-started/examples/)**
-and the task-oriented [Guides](https://molcrafts.github.io/molpy/user-guide/).
+**[Example Gallery](https://molpy.molcrafts.org/getting-started/examples/)**
+and the task-oriented [Guides](https://molpy.molcrafts.org/user-guide/).
 
 ## Documentation
 
 Full documentation, including executable notebooks:
-**[molcrafts.github.io/molpy](https://molcrafts.github.io/molpy/)**
+**[molpy.molcrafts.org](https://molpy.molcrafts.org/)**
 
-- [Getting Started](https://molcrafts.github.io/molpy/getting-started/) — install and first example
-- [Example Gallery](https://molcrafts.github.io/molpy/getting-started/examples/) — short copy-paste workflows
-- [Guides](https://molcrafts.github.io/molpy/user-guide/) — task-oriented notebooks
-- [Concepts](https://molcrafts.github.io/molpy/tutorials/) — data model deep dives
-- [API Reference](https://molcrafts.github.io/molpy/api/) — full API
+- [Getting Started](https://molpy.molcrafts.org/getting-started/) — install and first example
+- [Example Gallery](https://molpy.molcrafts.org/getting-started/examples/) — short copy-paste workflows
+- [Guides](https://molpy.molcrafts.org/user-guide/) — task-oriented notebooks
+- [Concepts](https://molpy.molcrafts.org/tutorials/) — data model deep dives
+- [API Reference](https://molpy.molcrafts.org/api/) — full API
 
 ## MolCrafts ecosystem
 
@@ -165,7 +165,7 @@ Full documentation, including executable notebooks:
 ## Contributing
 
 Issues and pull requests are welcome — see
-[Contributing](https://molcrafts.github.io/molpy/developer/contributing/).
+[Contributing](https://molpy.molcrafts.org/developer/contributing/).
 
 ## License
 
