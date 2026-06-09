@@ -427,6 +427,17 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     # ---------- connectivity / topology ----------
     def get_neighbors(self, atom: Atom, link_type: type[Link] = Bond) -> list[Atom]:
+        # Bonds (arity-2) live in the molrs adjacency index, so resolve
+        # neighbours in O(degree) instead of scanning every link. Self-loops are
+        # excluded to match the scan's `ep is not atom` semantics.
+        if link_type is Bond:
+            h = atom.handle
+            return [
+                self._intern_atom(other)
+                for _, other in self.incident_relations(h, link_type._kind)
+                if other != h
+            ]
+        # Higher-arity link types are not in the adjacency index — fall back.
         out: list[Atom] = []
         for link in self._link_views(link_type._kind):
             if any(ep is atom for ep in link.endpoints):
