@@ -36,6 +36,27 @@ if TYPE_CHECKING:
 _ACF_ZERO_LAG_EPSILON = 1e-30
 
 
+def _unwrap_inplace(coords: np.ndarray, frames: list) -> None:
+    """Minimum-image unwrap of a ``(n_frames, n_atoms, 3)`` array, in place.
+
+    Frame 0 is kept; each later frame is rebuilt from the previous
+    (already-unwrapped) frame plus the minimum-image displacement, so a particle
+    crossing a periodic boundary stays continuous. Uses the previous frame's box
+    (NPT-correct) and caches the wrapped :class:`~molpy.core.box.Box` per unique
+    cell matrix, so a constant-cell (NVT) trajectory wraps the box exactly once
+    instead of once per frame.
+    """
+    cache: dict[bytes, Box] = {}
+    for i in range(1, len(frames)):
+        rs_box = frames[i - 1].box
+        key = np.asarray(rs_box.matrix).tobytes()
+        box = cache.get(key)
+        if box is None:
+            box = Box.from_box(rs_box)
+            cache[key] = box
+        coords[i] = coords[i - 1] + box.diff_dr(coords[i] - coords[i - 1])
+
+
 class ACFAnalyzer(Compute["Trajectory", ACFResult]):
     """Compute autocorrelation function from trajectory data.
 
@@ -84,14 +105,10 @@ class ACFAnalyzer(Compute["Trajectory", ACFResult]):
             for d, col in enumerate(self.columns):
                 data[i, :, d] = frame["atoms"][col]
 
-        # Unwrap via minimum-image convention. Box.diff_dr accepts the
-        # whole (n_atoms, 3) displacement in one call, so the inner per-
-        # atom Python loop collapses to a single vectorized call per
-        # frame. Only meaningful for 3-component columns.
+        # Unwrap via minimum-image convention (only meaningful for 3-component
+        # columns). Shared helper caches the box wrap across frames.
         if self.unwrap and n_dim == 3:
-            for i in range(1, n_frames):
-                dr = data[i] - data[i - 1]
-                data[i] = data[i - 1] + Box.from_box(frames[i].box).diff_dr(dr)
+            _unwrap_inplace(data, frames)
 
         # Compute ACF per dimension, average, normalize.
         max_lag = min(self.max_lag, n_frames - 1)
@@ -225,14 +242,8 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
             positions[i, :, 1] = frame["atoms"]["y"]
             positions[i, :, 2] = frame["atoms"]["z"]
 
-        # Vectorized minimum-image unwrap: Box.diff_dr takes the whole
-        # (n_atoms, 3) slice at once. Use frames[i-1].box to match prior
-        # semantics (relevant for NPT trajectories with per-frame boxes).
-        for i in range(1, n_frames):
-            dr = positions[i] - positions[i - 1]
-            positions[i] = positions[i - 1] + Box.from_box(frames[i - 1].box).diff_dr(
-                dr
-            )
+        # Minimum-image unwrap (shared helper; caches the box wrap per cell).
+        _unwrap_inplace(positions, frames)
 
         # Dipole moment per frame: M[f, d] = Σ_a charges[a] · positions[f, a, d]
         dipole_moments = np.einsum("a,fad->fd", charges, positions)
@@ -390,13 +401,8 @@ class IonicConductivity(Compute["Trajectory", ConductivityResult]):
             positions[i, :, 1] = frame["atoms"]["y"]
             positions[i, :, 2] = frame["atoms"]["z"]
 
-        # Vectorized minimum-image unwrap (same convention as
-        # DielectricSusceptibility): use frames[i-1].box for per-frame boxes.
-        for i in range(1, n_frames):
-            dr = positions[i] - positions[i - 1]
-            positions[i] = positions[i - 1] + Box.from_box(frames[i - 1].box).diff_dr(
-                dr
-            )
+        # Minimum-image unwrap (same convention as DielectricSusceptibility).
+        _unwrap_inplace(positions, frames)
 
         # Ionic translational dipole M_J[f, d] = sum_a charges[a] * pos[f, a, d].
         translational_dipole = np.einsum("a,fad->fd", charges, positions)
