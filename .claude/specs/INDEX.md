@@ -1,6 +1,5 @@
 # Specs
 
-- [builder-reacter-01-dead-code](builder-reacter-01-dead-code.md) — 纯删除/去重 builder+reacter 分叉：删旧 PolymerBuilder（PolymerBuildResult 入 core.py 并重定向导出）、删死 stochastic 子系统（stochastic.py+growth_kernel.py+stochastic_generator.py）、删 selectors.py、异常收敛到 errors.py 单源（修 GeometryError 基类分叉）、Amber 分叉二选一；净减 ~1100 行，零行为变更（chain 1/5） [approved]
 - [builder-reacter-02-template-io](builder-reacter-02-template-io.md) — REACTER 模板序列化下沉 io：废 BondReactTemplate.write()，新建 io/data/lammps_bond_react.py，write_lammps_bond_react_system 为唯一出口；消除 reacter→io 顶层 import molpy 与 io 戳 reacter 私有；golden-file 字节级保持（chain 2/5，依赖 01） [approved]
 - [builder-reacter-03-correctness](builder-reacter-03-correctness.md) — REACTER 模板科学正确性：post 模板补 improper 重建（HIGH bug）、edge 原子 pre/post type/charge 校验、InitiatorIDs 确定性顺序+恰好2断言、run() 拷贝前写 react_id 的可变性修复、电荷守恒检查（chain 3/5，依赖 01+02） [approved]
 - [builder-reacter-04-api-docs](builder-reacter-04-api-docs.md) — API 收口与文档：polymer()/polymer_system() 唯一入口、Tool 类移出用户 __init__、anchor/port 术语统一、ReactionPresets 导出、修三处崩溃文档示例（builder.md/reacter.md/base.py docstring）、文档示例 exec/doctest 冒烟测试、examples 脚本、Google docstring 补齐（chain 4/5，依赖 01-03） [approved]

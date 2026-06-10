@@ -4,6 +4,19 @@
 
 ### Breaking changes
 
+- **`BondReactTemplate.write()` / `write_map()` were removed.**
+  `BondReactTemplate` is now a pure data object; all fix bond/react
+  serialization lives in the io layer. Write a complete reactive system
+  (data + ff + templates, with type IDs unified across all files) with
+  `mp.io.write_lammps_bond_react_system(workdir, frame, ff, templates=...)`;
+  write just the `.map` file with `mp.io.write_bond_react_map(template, stem)`.
+  The single-template `write()` path produced template-local type IDs that
+  were inconsistent with the system data file and has no replacement.
+- **Importing a molpy subpackage no longer eagerly loads the rest.**
+  Top-level submodules (`molpy.io`, `molpy.engine`, `molpy.adapter`, …) are
+  now lazy (PEP 562): `import molpy.reacter` initializes only `core` (and
+  `potential`). `mp.io.…` attribute access and `import molpy.io` behave as
+  before.
 - **molrs is now a required dependency.** `molcrafts-molrs` moved from an
   optional extra into the core `dependencies`. The `molpy[molrs]` extra key was
   removed — installing molpy always installs molrs. `Frame`, `Block`, and `Box`

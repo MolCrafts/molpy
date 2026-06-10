@@ -11,12 +11,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, fields
-from pathlib import Path
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
-import numpy as np
-
-import molpy as mp
 from molpy.core.atomistic import Atom, Atomistic, Bond
 from molpy.core.entity import Entity
 from molpy.reacter.base import Reacter, ReactionResult
@@ -33,14 +29,18 @@ if TYPE_CHECKING:
 
 @dataclass
 class BondReactTemplate:
-    """LAMMPS fix bond/react template data.
+    """LAMMPS fix bond/react template data (pure data object).
 
-    Contains pre/post reaction subgraphs and atom mapping needed to
-    generate the three files required by ``fix bond/react``:
+    Contains pre/post reaction subgraphs and the atom mapping needed to
+    serialize the files required by ``fix bond/react``:
 
     - ``{name}_pre.mol`` — pre-reaction molecule template
     - ``{name}_post.mol`` — post-reaction molecule template
     - ``{name}.map`` — atom equivalence / edge / delete map
+
+    Serialization lives in the io layer: write a complete system with
+    :func:`molpy.io.write_lammps_bond_react_system`, or just the map
+    file with :func:`molpy.io.write_bond_react_map`.
 
     Attributes:
         pre: Pre-reaction subgraph (deep copy of local environment).
@@ -57,117 +57,21 @@ class BondReactTemplate:
 
     pre: Atomistic
     post: Atomistic
-    initiator_atoms: List[Atom]
-    edge_atoms: List[Atom]
-    deleted_atoms: List[Atom]
+    initiator_atoms: list[Atom]
+    edge_atoms: list[Atom]
+    deleted_atoms: list[Atom]
     pre_react_id_to_atom: dict
     post_react_id_to_atom: dict
 
-    def write(
-        self, base_path: str | Path, typifier: TypifierBase | None = None
-    ) -> None:
-        """Write pre.mol, post.mol, and .map files for ``fix bond/react``.
+    def assign_atom_ids(self) -> None:
+        """Assign deterministic 1-based ``id`` values to pre/post atoms.
 
-        This is a convenience method for standalone use. When writing a
-        complete fix bond/react system (data + ff + templates), prefer
-        :func:`molpy.io.write_lammps_bond_react_system` which ensures
-        type IDs are consistent across all files.
-
-        Args:
-            base_path: Stem for output files (e.g. ``"04_output/rxn1"``
-                produces ``rxn1_pre.mol``, ``rxn1_post.mol``, ``rxn1.map``).
-            typifier: Optional typifier to ensure atom/bond types are set.
+        Iterates ``self.pre.atoms`` and ``self.post.atoms`` in their
+        stable insertion order and assigns ``atom["id"] = i`` (1-based).
+        This ordering convention defines the template-local indices used
+        by the ``.map`` file, so io writers call this before serializing
+        templates.
         """
-        base_path = Path(base_path)
-
-        pre = self.pre
-        post = self.post
-
-        if typifier:
-            _ensure_typified(pre, typifier)
-            _ensure_typified(post, typifier)
-
-        self._assign_atom_ids()
-        self.write_map(base_path)
-
-        # Write .mol files with unified type mappings (pre/post only)
-        pre_frame = pre.to_frame()
-        post_frame = post.to_frame()
-        _unify_type_mappings(pre_frame, post_frame)
-
-        mp.io.write_lammps_molecule(Path(f"{base_path}_pre.mol"), pre_frame)
-        mp.io.write_lammps_molecule(Path(f"{base_path}_post.mol"), post_frame)
-
-    def write_map(self, base_path: str | Path) -> None:
-        """Write only the .map file for ``fix bond/react``.
-
-        The .map file contains atom equivalences, initiator IDs, edge IDs,
-        and delete IDs. It is purely topological and independent of type
-        numbering.
-
-        Args:
-            base_path: Stem path; produces ``{base_path}.map``.
-        """
-        self._assign_atom_ids()
-
-        pre_rid_to_idx = {
-            atom["react_id"]: i for i, atom in enumerate(self.pre.atoms, start=1)
-        }
-        post_rid_to_idx = {
-            atom["react_id"]: i for i, atom in enumerate(self.post.atoms, start=1)
-        }
-
-        pre_rids = set(pre_rid_to_idx)
-        post_rids = set(post_rid_to_idx)
-        if pre_rids != post_rids:
-            raise ValueError(
-                f"Pre and post have different atoms!\n"
-                f"  Missing in post: {pre_rids - post_rids}\n"
-                f"  Missing in pre: {post_rids - pre_rids}"
-            )
-
-        equiv = [(pre_rid_to_idx[rid], post_rid_to_idx[rid]) for rid in pre_rids]
-
-        initiator_rids = {a.get("react_id") for a in self.initiator_atoms}
-        initiator_ids = [
-            pre_rid_to_idx[rid]
-            for rid in initiator_rids
-            if rid and rid in pre_rid_to_idx
-        ]
-        edge_ids = [
-            pre_rid_to_idx[a.get("react_id")]
-            for a in self.edge_atoms
-            if a.get("react_id")
-            and a.get("react_id") in pre_rid_to_idx
-            and a.get("react_id") not in initiator_rids
-        ]
-        deleted_ids = [
-            pre_rid_to_idx[a.get("react_id")]
-            for a in self.deleted_atoms
-            if a.get("react_id") and a.get("react_id") in pre_rid_to_idx
-        ]
-
-        map_path = Path(f"{base_path}.map")
-        with map_path.open("w", encoding="utf-8") as f:
-            f.write("# auto-generated map file for fix bond/react\n\n")
-            f.write(f"{len(equiv)} equivalences\n")
-            f.write(f"{len(edge_ids)} edgeIDs\n")
-            f.write(f"{len(deleted_ids)} deleteIDs\n\n")
-            f.write("InitiatorIDs\n\n")
-            for idx in initiator_ids:
-                f.write(f"{idx}\n")
-            f.write("\nEdgeIDs\n\n")
-            for idx in edge_ids:
-                f.write(f"{idx}\n")
-            f.write("\nDeleteIDs\n\n")
-            for idx in deleted_ids:
-                f.write(f"{idx}\n")
-            f.write("\nEquivalences\n\n")
-            for pre_id, post_id in sorted(equiv):
-                f.write(f"{pre_id}   {post_id}\n")
-
-    def _assign_atom_ids(self) -> None:
-        """Assign 1-based atom IDs to pre and post atoms."""
         for i, atom in enumerate(self.pre.atoms, start=1):
             atom["id"] = i
         for i, atom in enumerate(self.post.atoms, start=1):
@@ -220,7 +124,9 @@ class BondReactReacter(Reacter):
         )
 
         result = reacter.run(left, right, port_L, port_R, compute_topology=True)
-        result.template.write("output/rxn1", typifier=typifier)
+        mp.io.write_lammps_bond_react_system(
+            "output", frame, forcefield, templates={"rxn1": result.template}
+        )
     """
 
     def __init__(
@@ -328,10 +234,10 @@ class BondReactReacter(Reacter):
             link_type=Bond,
         )
 
-        # Note: do NOT call _ensure_typified() here.  Atom types are
+        # Note: do NOT re-run the typifier here.  Atom types are
         # already set by _incremental_typify (product) and deep-copied
-        # by _build_post (post).  Re-running the typifier can reorder
-        # atoms inside the Atomistic, which breaks the equivalence map.
+        # by _build_post (post).  Re-typing can reorder atoms inside
+        # the Atomistic, which breaks the equivalence map.
 
         # Build pre react_id mapping
         pre_react_id_to_atom = {}
@@ -462,66 +368,3 @@ class BondReactReacter(Reacter):
             )
 
         return post, post_react_id_to_atom
-
-
-# ===================================================================
-#                       Internal helpers
-# ===================================================================
-
-
-def _unify_type_mappings(pre_frame, post_frame) -> None:
-    """Create unified type-to-ID mappings for both pre and post frames."""
-    all_atom_types = set()
-    for frame in [pre_frame, post_frame]:
-        if "atoms" in frame and "type" in frame["atoms"]:
-            for t in frame["atoms"]["type"]:
-                all_atom_types.add(str(t))
-
-    atom_type_to_id = {t: i + 1 for i, t in enumerate(sorted(all_atom_types))}
-
-    for frame in [pre_frame, post_frame]:
-        if "atoms" in frame and "type" in frame["atoms"]:
-            atoms = frame["atoms"]
-            atoms["type"] = np.array(
-                [
-                    atom_type_to_id[str(atoms["type"][idx])]
-                    for idx in range(atoms.nrows)
-                ],
-                dtype=np.int64,
-            )
-
-    for section in ["bonds", "angles", "dihedrals", "impropers"]:
-        all_types = set()
-        for frame in [pre_frame, post_frame]:
-            if (
-                section in frame
-                and frame[section].nrows > 0
-                and "type" in frame[section]
-            ):
-                for t in frame[section]["type"]:
-                    all_types.add(str(t))
-        if not all_types:
-            continue
-        type_to_id = {t: i + 1 for i, t in enumerate(sorted(all_types))}
-        for frame in [pre_frame, post_frame]:
-            if (
-                section in frame
-                and frame[section].nrows > 0
-                and "type" in frame[section]
-            ):
-                block = frame[section]
-                block["type"] = np.array(
-                    [type_to_id[str(block["type"][idx])] for idx in range(block.nrows)],
-                    dtype=np.int64,
-                )
-
-
-def _ensure_typified(struct: Atomistic, typifier) -> None:
-    """Ensure all atoms and topology in struct are typified."""
-    typifier.atom_typifier.typify(struct)
-    for bond in struct.bonds:
-        typifier.bond_typifier.typify(bond)
-    for angle in struct.angles:
-        typifier.angle_typifier.typify(angle)
-    for dihedral in struct.dihedrals:
-        typifier.dihedral_typifier.typify(dihedral)

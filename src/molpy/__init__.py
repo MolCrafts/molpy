@@ -1,7 +1,37 @@
-"""MolPy — Composable molecular modeling in Python."""
+"""MolPy — Composable molecular modeling in Python.
 
-# Submodules
-from . import adapter, data, engine, io, legacy, parser, potential, typifier
+Core data structures (``Atom``, ``Frame``, ``ForceField``, …) are imported
+eagerly. Heavier subpackages (``io``, ``engine``, ``parser``, …) are loaded
+lazily on first attribute access via module ``__getattr__`` (PEP 562), so
+``import molpy`` stays fast; ``molpy.io`` and ``import molpy.io`` work as
+usual.
+"""
+
+from importlib import import_module
+from types import ModuleType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from . import adapter, data, engine, io, legacy, parser, potential, typifier
+
+# Submodules are loaded lazily (PEP 562) so that importing a single
+# subpackage (e.g. ``molpy.reacter``) does not eagerly initialize the
+# whole io/engine/adapter surface. ``molpy.io`` et al. still work as
+# attribute accesses and ``import molpy.io`` works as usual.
+_LAZY_SUBMODULES = frozenset(
+    {"adapter", "data", "engine", "io", "legacy", "parser", "potential", "typifier"}
+)
+
+
+def __getattr__(name: str) -> ModuleType:
+    if name in _LAZY_SUBMODULES:
+        return import_module(f".{name}", __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | _LAZY_SUBMODULES)
+
 
 # Core
 from .core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper

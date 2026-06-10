@@ -513,11 +513,17 @@ class TestBondReactReacter:
                 f"Post has bond between deleted and non-deleted atom: {ep1_rid} - {ep2_rid}"
             )
 
-    def test_BondReactTemplate_write(self):
-        """Test BondReactTemplate_write function."""
-        # write is now a method on BondReactTemplate
+    def test_template_map_export_via_io(self):
+        """Map serialization goes through molpy.io.write_bond_react_map.
+
+        Replaces the removed ``BondReactTemplate.write()`` path; the
+        pre/post ``.mol`` outputs are covered by the golden-file test in
+        tests/test_io/test_data/test_lammps_bond_react.py.
+        """
         from pathlib import Path
         import tempfile
+
+        from molpy.io import write_bond_react_map
 
         struct_L = Atomistic()
         c_L = Atom(element="C")
@@ -566,15 +572,9 @@ class TestBondReactReacter:
         # Write to temporary directory
         with tempfile.TemporaryDirectory() as tmpdir:
             base_path = Path(tmpdir) / "test_rxn"
-            template.write(base_path, typifier=None)
+            write_bond_react_map(template, base_path)
 
-            # Check files exist
-            pre_mol = Path(f"{base_path}_pre.mol")
-            post_mol = Path(f"{base_path}_post.mol")
             map_file = Path(f"{base_path}.map")
-
-            assert pre_mol.exists()
-            assert post_mol.exists()
             assert map_file.exists()
 
             # Check map file format
@@ -708,13 +708,25 @@ class TestBondReactReacter:
             if "type" not in dihedral.data:
                 dihedral["type"] = "dihedral_type"
 
+        from molpy.io import write_lammps_molecule
+        from molpy.io.data.lammps_bond_react import apply_type_maps, collect_type_maps
+
         with tempfile.TemporaryDirectory() as tmpdir:
             base_path = Path(tmpdir) / "test_types"
-            template.write(base_path, typifier=None)
 
-            # Read back pre and post mol files
+            # Serialize via the io layer: unified string-type → ID maps
+            # across pre and post, applied to both frames.
+            template.assign_atom_ids()
+            pre_frame = template.pre.to_frame()
+            post_frame = template.post.to_frame()
+            _, type_maps = collect_type_maps([pre_frame, post_frame])
+            for tpl_frame in (pre_frame, post_frame):
+                apply_type_maps(tpl_frame, type_maps)
+
             pre_mol = Path(f"{base_path}_pre.mol")
             post_mol = Path(f"{base_path}_post.mol")
+            write_lammps_molecule(pre_mol, pre_frame)
+            write_lammps_molecule(post_mol, post_frame)
 
             with open(pre_mol) as f:
                 pre_content = f.read()

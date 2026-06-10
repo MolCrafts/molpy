@@ -5,14 +5,18 @@ This module defines the base Reacter class and ProductSet dataclass,
 providing the foundation for SMIRKS-style reaction semantics.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral
 from molpy.core.entity import Entity
 from molpy.reacter.topology_detector import TopologyDetector
 from molpy.reacter.utils import AnchorSelector, BondFormer, LeavingSelector
-from molpy.typifier.atomistic import TypifierBase
+
+if TYPE_CHECKING:
+    from molpy.typifier.atomistic import TypifierBase
 
 
 @dataclass
