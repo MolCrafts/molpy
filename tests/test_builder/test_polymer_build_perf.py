@@ -27,14 +27,25 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 
 
 def _inter_monomer_edges(struct: Atomistic) -> list[list[int]]:
-    """Sorted [min, max] node-id pairs of bonds crossing monomer nodes."""
-    edges: list[list[int]] = []
+    """Sorted, NORMALIZED node-id pairs of bonds crossing monomer nodes.
+
+    Raw ``monomer_node_id`` values come from a process-global parser
+    counter and therefore depend on how many parses ran earlier in the
+    process; they are relabeled here by order of first appearance so the
+    snapshot is test-order independent.
+    """
+    raw_edges: list[tuple[int, int]] = []
+    relabel: dict[int, int] = {}
     for bond in struct.bonds:
         node_i = bond.itom.get("monomer_node_id")
         node_j = bond.jtom.get("monomer_node_id")
         if node_i is None or node_j is None or node_i == node_j:
             continue
-        edges.append([min(node_i, node_j), max(node_i, node_j)])
+        for nid in sorted((node_i, node_j)):
+            if nid not in relabel:
+                relabel[nid] = len(relabel)
+        raw_edges.append((node_i, node_j))
+    edges = [sorted([relabel[node_i], relabel[node_j]]) for node_i, node_j in raw_edges]
     return sorted(edges)
 
 

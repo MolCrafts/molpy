@@ -21,20 +21,50 @@ LeavingSelector = Callable[[Atomistic, Atom], list[Atom]]
 BondFormer = Callable[[Atomistic, Atom, Atom], Bond | None]
 """Create or modify bonds between two anchor atoms in an assembly."""
 
+AdjacencyMap = dict[Entity, list[tuple[Entity, Bond]]]
+"""Atom → list of (neighbor, connecting bond) pairs; see build_adjacency."""
+
+
+def build_adjacency(assembly: Atomistic) -> AdjacencyMap:
+    """Build an atom → neighbors adjacency map in one pass over bonds.
+
+    Complexity: O(bonds) to build; afterwards neighbor queries through
+    :func:`find_neighbors` / :func:`get_bond_between` / :func:`count_bonds`
+    with ``adjacency=`` are O(degree) instead of O(bonds) per call.
+
+    Args:
+        assembly: Atomistic assembly to index.
+
+    Returns:
+        Mapping from each bonded atom to its ``(neighbor, bond)`` pairs.
+        Atoms without bonds are absent (queries fall back to empty).
+    """
+    adjacency: AdjacencyMap = {}
+    for bond in assembly.links.bucket(Bond):
+        i, j = bond.endpoints
+        adjacency.setdefault(i, []).append((j, bond))
+        adjacency.setdefault(j, []).append((i, bond))
+    return adjacency
+
 
 def find_neighbors(
     assembly: Atomistic,
     atom: Entity,
     *,
     element: str | None = None,
+    adjacency: AdjacencyMap | None = None,
 ) -> list[Entity]:
     """
     Find neighboring atoms of a given atom.
+
+    Complexity: O(bonds) full scan by default; O(degree) when a
+    prebuilt ``adjacency`` map (see :func:`build_adjacency`) is given.
 
     Args:
         assembly: Atomistic assembly containing the atom
         atom: Atom entity to find neighbors of
         element: Optional element symbol to filter by (e.g., 'H', 'C')
+        adjacency: Optional prebuilt adjacency map for O(degree) lookup
 
     Returns:
         List of neighboring atom entities
@@ -44,6 +74,16 @@ def find_neighbors(
         >>> all_neighbors = find_neighbors(asm, carbon_atom)
     """
     neighbors: list[Entity] = []
+
+    if adjacency is not None:
+        for neighbor, _bond in adjacency.get(atom, []):
+            if (
+                element is None
+                or neighbor.get("element") == element
+                or neighbor.get("symbol") == element
+            ):
+                neighbors.append(neighbor)
+        return neighbors
 
     # Look through all bonds
     for bond in assembly.links.bucket(Bond):
@@ -67,6 +107,8 @@ def get_bond_between(
     assembly: Atomistic,
     i: Entity,
     j: Entity,
+    *,
+    adjacency: AdjacencyMap | None = None,
 ) -> Bond | None:
     """
     Find existing bond between two atoms.
@@ -75,6 +117,7 @@ def get_bond_between(
         assembly: Atomistic assembly containing the atoms
         i: First atom entity
         j: Second atom entity
+        adjacency: Optional prebuilt adjacency map for O(degree) lookup
 
     Returns:
         Bond entity if found, None otherwise
@@ -84,6 +127,13 @@ def get_bond_between(
         >>> if bond:
         ...     print(f"Bond order: {bond.get('order', 1)}")
     """
+    if adjacency is not None:
+        for neighbor, bond in adjacency.get(i, []):
+            # i is j replicates the full-scan degenerate case: the first
+            # bond incident to the atom is returned.
+            if neighbor is j or i is j:
+                return bond
+        return None
     for bond in assembly.links.bucket(Bond):
         endpoints = bond.endpoints
         # Use identity check (is) not equality check (==)
@@ -92,13 +142,19 @@ def get_bond_between(
     return None
 
 
-def count_bonds(assembly: Atomistic, atom: Entity) -> int:
+def count_bonds(
+    assembly: Atomistic,
+    atom: Entity,
+    *,
+    adjacency: AdjacencyMap | None = None,
+) -> int:
     """
     Count the number of bonds connected to an atom.
 
     Args:
         assembly: Atomistic assembly containing the atom
         atom: Atom entity to count bonds for
+        adjacency: Optional prebuilt adjacency map for O(degree) lookup
 
     Returns:
         Number of bonds
@@ -107,6 +163,8 @@ def count_bonds(assembly: Atomistic, atom: Entity) -> int:
         >>> valence = count_bonds(asm, carbon_atom)
         >>> print(f"Carbon has {valence} bonds")
     """
+    if adjacency is not None:
+        return len(adjacency.get(atom, []))
     count = 0
     for bond in assembly.links.bucket(Bond):
         # Use identity check (is) not equality check (==)

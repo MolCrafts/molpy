@@ -11,7 +11,7 @@ from collections.abc import Collection
 
 from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper
 from molpy.core.entity import Entity
-from molpy.reacter.utils import find_neighbors
+from molpy.reacter.utils import AdjacencyMap, build_adjacency, find_neighbors
 
 
 class TopologyDetector:
@@ -39,6 +39,7 @@ class TopologyDetector:
     def _generate_impropers_around_atoms(
         assembly: Atomistic,
         atoms: Collection[Atom],
+        adjacency: AdjacencyMap | None = None,
     ) -> list[Improper]:
         """Generate improper candidates at atoms with exactly 3 neighbors.
 
@@ -50,13 +51,14 @@ class TopologyDetector:
         Args:
             assembly: The Atomistic structure.
             atoms: Candidate center atoms (typically the affected set).
+            adjacency: Optional prebuilt adjacency map for O(degree) lookups.
 
         Returns:
             List of new Improper objects (not yet added to assembly).
         """
         candidates: list[Improper] = []
         for atom in atoms:
-            neighbors = find_neighbors(assembly, atom)
+            neighbors = find_neighbors(assembly, atom, adjacency=adjacency)
             if len(neighbors) == 3:
                 candidates.append(Improper(atom, *neighbors))
         return candidates
@@ -94,6 +96,7 @@ class TopologyDetector:
     def _get_affected_atoms(
         assembly: Atomistic,
         new_bonds: Collection[Bond],
+        adjacency: AdjacencyMap | None = None,
     ) -> set[Atom]:
         """
         Identify all atoms affected by new bond formation.
@@ -103,6 +106,7 @@ class TopologyDetector:
         Args:
             assembly: The Atomistic structure
             new_bonds: List of newly formed bonds
+            adjacency: Optional prebuilt adjacency map for O(degree) lookups.
 
         Returns:
             Set of affected atoms
@@ -115,8 +119,8 @@ class TopologyDetector:
             affected.add(bond.jtom)
 
             # Add all neighbors of endpoints
-            neighbors_i = find_neighbors(assembly, bond.itom)
-            neighbors_j = find_neighbors(assembly, bond.jtom)
+            neighbors_i = find_neighbors(assembly, bond.itom, adjacency=adjacency)
+            neighbors_j = find_neighbors(assembly, bond.jtom, adjacency=adjacency)
 
             affected.update(neighbors_i)
             affected.update(neighbors_j)
@@ -185,6 +189,7 @@ class TopologyDetector:
     def _generate_angles_around_bond(
         assembly: Atomistic,
         bond: Bond,
+        adjacency: AdjacencyMap | None = None,
     ) -> list[Angle]:
         """
         Generate all angles that include the given bond as the middle edge.
@@ -194,6 +199,7 @@ class TopologyDetector:
         Args:
             assembly: The Atomistic structure
             bond: The bond to generate angles around
+            adjacency: Optional prebuilt adjacency map for O(degree) lookups.
 
         Returns:
             List of new Angle objects (not yet added to assembly)
@@ -203,11 +209,11 @@ class TopologyDetector:
         atom_j = bond.jtom
 
         # Find neighbors of atom_i (excluding atom_j)
-        neighbors_i = find_neighbors(assembly, atom_i)
+        neighbors_i = find_neighbors(assembly, atom_i, adjacency=adjacency)
         neighbors_i = [n for n in neighbors_i if n is not atom_j]
 
         # Find neighbors of atom_j (excluding atom_i)
-        neighbors_j = find_neighbors(assembly, atom_j)
+        neighbors_j = find_neighbors(assembly, atom_j, adjacency=adjacency)
         neighbors_j = [n for n in neighbors_j if n is not atom_i]
 
         # Angles of form (k, i, j) where k is neighbor of i
@@ -224,6 +230,7 @@ class TopologyDetector:
     def _generate_dihedrals_through_bond(
         assembly: Atomistic,
         bond: Bond,
+        adjacency: AdjacencyMap | None = None,
     ) -> list[Dihedral]:
         """
         Generate all dihedrals that include the given bond.
@@ -234,6 +241,7 @@ class TopologyDetector:
         Args:
             assembly: The Atomistic structure
             bond: The bond to generate dihedrals through
+            adjacency: Optional prebuilt adjacency map for O(degree) lookups.
 
         Returns:
             List of new Dihedral objects (not yet added to assembly)
@@ -243,11 +251,11 @@ class TopologyDetector:
         atom_j = bond.jtom
 
         # Find neighbors of atom_i (excluding atom_j)
-        neighbors_i = find_neighbors(assembly, atom_i)
+        neighbors_i = find_neighbors(assembly, atom_i, adjacency=adjacency)
         neighbors_i = [n for n in neighbors_i if n is not atom_j]
 
         # Find neighbors of atom_j (excluding atom_i)
-        neighbors_j = find_neighbors(assembly, atom_j)
+        neighbors_j = find_neighbors(assembly, atom_j, adjacency=adjacency)
         neighbors_j = [n for n in neighbors_j if n is not atom_i]
 
         # Dihedrals of form (k, i, j, l)
@@ -261,6 +269,7 @@ class TopologyDetector:
     def _generate_dihedrals_continuing_from_bond(
         assembly: Atomistic,
         bond: Bond,
+        adjacency: AdjacencyMap | None = None,
     ) -> list[Dihedral]:
         """
         Generate dihedrals that continue from the bond in both directions.
@@ -272,6 +281,7 @@ class TopologyDetector:
         Args:
             assembly: The Atomistic structure
             bond: The bond to extend from
+            adjacency: Optional prebuilt adjacency map for O(degree) lookups.
 
         Returns:
             List of new Dihedral objects
@@ -281,16 +291,16 @@ class TopologyDetector:
         atom_j = bond.jtom
 
         # Find neighbors
-        neighbors_i = find_neighbors(assembly, atom_i)
+        neighbors_i = find_neighbors(assembly, atom_i, adjacency=adjacency)
         neighbors_i = [n for n in neighbors_i if n is not atom_j]
 
-        neighbors_j = find_neighbors(assembly, atom_j)
+        neighbors_j = find_neighbors(assembly, atom_j, adjacency=adjacency)
         neighbors_j = [n for n in neighbors_j if n is not atom_i]
 
         # Dihedrals extending forward: (i, j, k, l)
         # where k is neighbor of j, l is neighbor of k
         for k in neighbors_j:
-            neighbors_k = find_neighbors(assembly, k)
+            neighbors_k = find_neighbors(assembly, k, adjacency=adjacency)
             neighbors_k = [n for n in neighbors_k if n not in (atom_i, atom_j)]
             for l in neighbors_k:
                 new_dihedrals.append(Dihedral(atom_i, atom_j, k, l))
@@ -298,7 +308,7 @@ class TopologyDetector:
         # Dihedrals extending backward: (l, k, i, j)
         # where k is neighbor of i, l is neighbor of k
         for k in neighbors_i:
-            neighbors_k = find_neighbors(assembly, k)
+            neighbors_k = find_neighbors(assembly, k, adjacency=adjacency)
             neighbors_k = [n for n in neighbors_k if n not in (atom_i, atom_j)]
             for l in neighbors_k:
                 new_dihedrals.append(Dihedral(l, k, atom_i, atom_j))
@@ -438,7 +448,11 @@ class TopologyDetector:
             cls._remove_topology_with_removed_atoms(assembly, removed_atoms)
         )
 
-        # Step 2: Generate new topology items based on new bonds
+        # Step 2: Generate new topology items based on new bonds.
+        # Build the adjacency map exactly once per call; every neighbor
+        # query below is O(degree) against it (no full-bond scans).
+        adjacency = build_adjacency(assembly)
+
         # Get existing topology items for deduplication
         existing_angles = list(assembly.links.bucket(Angle))
         existing_dihedrals = list(assembly.links.bucket(Dihedral))
@@ -450,25 +464,27 @@ class TopologyDetector:
         # Generate angles and dihedrals around each new bond
         for bond in new_bonds:
             # Angles around the bond
-            angles_around_bond = cls._generate_angles_around_bond(assembly, bond)
+            angles_around_bond = cls._generate_angles_around_bond(
+                assembly, bond, adjacency
+            )
             new_angles_candidates.extend(angles_around_bond)
 
             # Dihedrals through the bond
             dihedrals_through_bond = cls._generate_dihedrals_through_bond(
-                assembly, bond
+                assembly, bond, adjacency
             )
             new_dihedrals_candidates.extend(dihedrals_through_bond)
 
             # Dihedrals continuing from the bond
             dihedrals_continuing = cls._generate_dihedrals_continuing_from_bond(
-                assembly, bond
+                assembly, bond, adjacency
             )
             new_dihedrals_candidates.extend(dihedrals_continuing)
 
         # Improper candidates at affected atoms (sp2-like: exactly 3 neighbors)
-        affected_atoms = cls._get_affected_atoms(assembly, new_bonds)
+        affected_atoms = cls._get_affected_atoms(assembly, new_bonds, adjacency)
         new_impropers_candidates = cls._generate_impropers_around_atoms(
-            assembly, affected_atoms
+            assembly, affected_atoms, adjacency
         )
 
         # Step 3: Deduplicate and add new topology items

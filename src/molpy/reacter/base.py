@@ -123,6 +123,11 @@ class Reacter:
         6
     """
 
+    #: Subclasses that need ``ReactionResult.reactants`` (a full copy of
+    #: the merged assembly taken before the reaction) set this to True.
+    #: The base Reacter skips that copy and returns ``reactants=None``.
+    _needs_reactants_snapshot: bool = False
+
     def __init__(
         self,
         name: str,
@@ -350,10 +355,20 @@ class Reacter:
             typifier: Optional typifier for incremental retypification
 
         Returns:
-            ReactionResult containing product and metadata
+            ReactionResult containing product and metadata.
 
         Raises:
             ValueError: If port atoms invalid
+
+        Copy semantics:
+            Caller-owned ``left``/``right`` are copied once each and never
+            mutated. With ``record_intermediates=False`` the merged
+            assembly is not copied at all by the base Reacter
+            (``result.reactants`` is None); subclasses with
+            ``_needs_reactants_snapshot = True`` (e.g. BondReactReacter)
+            take exactly one pre-reaction snapshot so templates can be
+            generated. ``record_intermediates=True`` adds copies for the
+            recorded intermediate states.
         """
         intermediates: list[dict] = []
 
@@ -409,11 +424,16 @@ class Reacter:
             # Merge structures
             merged = self._merge_structures(left_copy, right_copy)
 
-        # Save merged reactants BEFORE reaction (for template generation)
-        merged_reactants_before_reaction = merged.copy()
-        merged_copy = merged.copy()
+        # Save merged reactants BEFORE reaction only when a subclass needs
+        # the snapshot for template generation (copy gating: the base
+        # Reacter never pays this O(N) copy).
+        merged_reactants_before_reaction = (
+            merged.copy() if self._needs_reactants_snapshot else None
+        )
 
+        merged_copy: Atomistic | None = None
         if record_intermediates:
+            merged_copy = merged.copy()
             if compute_topology:
                 merged = merged.get_topo(gen_angle=True, gen_dihe=True)
             intermediates.append(
@@ -434,6 +454,7 @@ class Reacter:
         )
 
         if record_intermediates:
+            assert merged_copy is not None
             product_copy = merged_copy.copy()
             if compute_topology:
                 product_copy = product_copy.get_topo(gen_angle=True, gen_dihe=True)

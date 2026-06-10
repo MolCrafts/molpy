@@ -269,6 +269,10 @@ class BondReactReacter(Reacter):
         )
     """
 
+    #: Template generation reads result.reactants, so BondReactReacter
+    #: keeps the single pre-reaction snapshot of the merged assembly.
+    _needs_reactants_snapshot: bool = True
+
     def __init__(
         self,
         name: str,
