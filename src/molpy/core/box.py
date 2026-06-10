@@ -619,15 +619,27 @@ class Box(molrs.Box):
         return np.linalg.norm(dr, axis=-1)
 
     def make_fractional(self, xyz: np.ndarray) -> np.ndarray:
-        return (xyz - self._origin) @ self.get_inv().T
+        # Cartesian -> fractional via the inherited molrs Rust kernel (to_frac);
+        # the free-box placeholder-identity matrix gives the same result as the
+        # former NumPy ``(xyz - origin) @ inv(matrix).T``.
+        arr = np.asarray(xyz, dtype=float)
+        if arr.ndim == 1:
+            return self.to_frac(arr.reshape(1, 3))[0]
+        return self.to_frac(arr)
 
     def make_absolute(self, xyz: np.ndarray) -> np.ndarray:
-        return xyz @ self._matrix.T + self._origin
+        # Fractional -> Cartesian via the inherited molrs Rust kernel (to_cart).
+        arr = np.asarray(xyz, dtype=float)
+        if arr.ndim == 1:
+            return self.to_cart(arr.reshape(1, 3))[0]
+        return self.to_cart(arr)
 
     def isin(self, xyz: np.ndarray):
-        xyz = np.asarray(xyz)
-        fractional = self.make_fractional(xyz)
-        return np.all((fractional >= 0) & (fractional < 1), axis=-1)
+        # Inside-primary-cell test via the inherited molrs Rust kernel.
+        arr = np.asarray(xyz, dtype=float)
+        if arr.ndim == 1:
+            return bool(molrs.Box.isin(self, arr.reshape(1, 3))[0])
+        return molrs.Box.isin(self, arr)
 
     def merge(self, other: "Box") -> "Box":
         return Box(matrix=other.matrix)
