@@ -1,11 +1,8 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
-from typing import TYPE_CHECKING, overload
+from typing import Any, overload
 
 from .frame import Frame
-
-if TYPE_CHECKING:
-    from .topology import Topology
 
 
 class Trajectory:
@@ -19,8 +16,8 @@ class Trajectory:
         _frames (Iterable[Frame]): The underlying frame sequence. Can be a
             Sequence (list, tuple) for random access, or an Iterable (generator)
             for lazy loading.
-        _topology (Topology | None): Optional topology information shared across
-            all frames in the trajectory.
+        _topology: Optional connectivity/topology object shared across all
+            frames in the trajectory (stored and passed through unchanged).
 
     Examples:
         Create from a list of frames:
@@ -62,9 +59,7 @@ class Trajectory:
         >>> centered_traj = traj.map(center_frame)
     """
 
-    def __init__(
-        self, frames: Iterable[Frame], topology: "Topology | None" = None
-    ) -> None:
+    def __init__(self, frames: Iterable[Frame], topology: Any | None = None) -> None:
         """Initialize trajectory with frames.
 
         Args:
@@ -72,8 +67,9 @@ class Trajectory:
                 If a Sequence is provided, the trajectory supports length and
                 indexing. If an Iterable (e.g., generator) is provided, only
                 iteration is supported.
-            topology (Topology | None, optional): Optional topology information
-                for the trajectory. Defaults to None.
+            topology (optional): Optional connectivity/topology object carried
+                alongside the frames (stored and passed through unchanged).
+                Defaults to None.
         """
         self._frames = frames
         self._topology = topology

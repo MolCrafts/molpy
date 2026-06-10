@@ -29,7 +29,6 @@ from .entity import Entities, Entity, Link, _GraphViews
 
 if TYPE_CHECKING:
     from .frame import Frame
-    from .topology import Topology
 
 
 # ===================================================================
@@ -494,15 +493,14 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         gen_angle: bool = False,
         gen_dihe: bool = False,
         clear_existing: bool = False,
-    ) -> "Atomistic | Topology":
-        if not gen_angle and not gen_dihe:
-            return self._build_topology(link_type)
+    ) -> "Atomistic":
+        """Return a copy with angle/dihedral relations perceived from the bonds.
 
-        # Angle/dihedral perception is a molrs-native graph operation (2-edge /
-        # 3-edge paths over the bond graph, via the petgraph-backed Topology).
-        # Delegate to the Rust kernel on a copy instead of re-detecting through
-        # the Python-side igraph Topology. It is idempotent; ``clear_existing``
-        # wipes the existing angle/dihedral relations first.
+        Angle/dihedral perception (2-edge / 3-edge paths over the bond graph) is
+        a molrs-native graph operation; this delegates to that Rust kernel on a
+        copy. With no ``gen_*`` flags it is a plain copy. Always returns an
+        :class:`Atomistic` (never a bare topology graph).
+        """
         new_struct = self.copy()
         new_struct.generate_topology(
             gen_angle=gen_angle,
@@ -510,27 +508,6 @@ class Atomistic(molrs.Atomistic, _GraphViews):
             clear_existing=clear_existing,
         )
         return new_struct
-
-    def _build_topology(self, link_type: type[Link] = Bond) -> "Topology":
-        from molpy.core.topology import Topology
-
-        atoms = list(self.atoms)
-        entity_to_idx = {a: i for i, a in enumerate(atoms)}
-        entity_set = set(atoms)
-        edges: list[tuple[int, int]] = []
-        for link in self._link_views(link_type._kind):
-            eps = link.endpoints
-            if len(eps) >= 2 and eps[0] in entity_set and eps[1] in entity_set:
-                i, j = entity_to_idx[eps[0]], entity_to_idx[eps[1]]
-                if i != j:
-                    edges.append((i, j))
-        return Topology(
-            n=len(atoms),
-            edges=edges,
-            directed=False,
-            entity_to_idx=entity_to_idx,
-            idx_to_entity=atoms,
-        )
 
     def get_topo_neighbors(
         self,

@@ -33,7 +33,6 @@ from .forcefield import (
 )
 from .frame import Block, Frame
 from .script import Script, ScriptLanguage
-from .topology import Topology
 from .unit import UnitSystem
 
 __all__ = [
@@ -72,6 +71,5 @@ __all__ = [
     "Frame",
     "Script",
     "ScriptLanguage",
-    "Topology",
     "UnitSystem",
 ]
