@@ -2,7 +2,6 @@
 
 - [builder-reacter-02-template-io](builder-reacter-02-template-io.md) — REACTER 模板序列化下沉 io：废 BondReactTemplate.write()，新建 io/data/lammps_bond_react.py，write_lammps_bond_react_system 为唯一出口；消除 reacter→io 顶层 import molpy 与 io 戳 reacter 私有；golden-file 字节级保持（chain 2/5，依赖 01） [approved]
 - [builder-reacter-03-correctness](builder-reacter-03-correctness.md) — REACTER 模板科学正确性：post 模板补 improper 重建（HIGH bug）、edge 原子 pre/post type/charge 校验、InitiatorIDs 确定性顺序+恰好2断言、run() 拷贝前写 react_id 的可变性修复、电荷守恒检查（chain 3/5，依赖 01+02） [approved]
-- [builder-reacter-04-api-docs](builder-reacter-04-api-docs.md) — API 收口与文档：polymer()/polymer_system() 唯一入口、Tool 类移出用户 __init__、anchor/port 术语统一、ReactionPresets 导出、修三处崩溃文档示例（builder.md/reacter.md/base.py docstring）、文档示例 exec/doctest 冒烟测试、examples 脚本、Google docstring 补齐（chain 4/5，依赖 01-03） [approved]
 - [builder-reacter-05-perf](builder-reacter-05-perf.md) — 构建循环 O(N²)→线性：Reacter.run 无条件全链深拷贝门控、find_neighbors 全键扫描改邻接表、port 查询/实体映射局部化、_build_from_graph union-find、_apply_transform 向量化；零行为变更（chain 5/5，依赖 01+03） [approved]
 - [molgraph-ecs-03-molpy](molgraph-ecs-03-molpy.md) — molpy 收成 molrs ECS world 上的句柄列视图：Atomistic(_GraphViews, molrs.Atomistic) IS-A 无桥；删 Struct+3 Mixin + _ordered_* 镜像 + from_molrs_graph 拷贝 + _MOLRS_KIND；属性走零拷贝 component 列；system 即自由函数；零硬编码字段=引用 fields 约定+错即报错（chain molgraph-ecs 3/3，依赖 molrs 01+02；supersedes atomistic-cg-on-molrs-molgraph + molgraph-views-02） [draft]
 - [cg-atomistic-mapping-redesign](cg-atomistic-mapping-redesign.md) — 简化 CoarseGrain 至与 Atomistic 对称 [draft]
