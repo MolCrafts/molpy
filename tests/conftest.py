@@ -50,8 +50,6 @@ def pytest_collection_modifyitems(
         # RDKit-dependent tests
         if "test_adapter" in fspath.parts and "rdkit" in fspath.name:
             item.add_marker(pytest.mark.external)
-        if "test_builder" in fspath.parts and fspath.name == "test_polymer_builder.py":
-            item.add_marker(pytest.mark.external)
         # AmberTools-dependent tests
         if "test_wrapper" in fspath.parts and fspath.name in (
             "test_antechamber.py",

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from molpy.core.atomistic import Atom, Atomistic
 from molpy.parser.smiles import parse_cgsmiles
@@ -17,6 +17,36 @@ from molpy.parser.smiles.cgsmiles_ir import (
     CGSmilesIR,
     CGSmilesNodeIR,
 )
+from molpy.reacter.base import ReactionResult
+
+from .errors import (
+    AmbiguousPortsError,
+    AssemblyError,
+    BondKindConflictError,
+    GeometryError,
+    MissingConnectorRule,
+    NoCompatiblePortsError,
+    OrientationUnavailableError,
+    PortReuseError,
+    PositionMissingError,
+    SequenceError,
+)
+
+__all__ = [
+    "AmbiguousPortsError",
+    "AssemblyError",
+    "BondKindConflictError",
+    "GeometryError",
+    "MissingConnectorRule",
+    "NoCompatiblePortsError",
+    "OrientationUnavailableError",
+    "PolymerBuilder",
+    "PolymerBuildResult",
+    "PortReuseError",
+    "PositionMissingError",
+    "SequenceError",
+    "TypifierProtocol",
+]
 
 # ============================================================================
 # Type Protocol
@@ -44,72 +74,17 @@ class TypifierProtocol(Protocol):
 
 
 # ============================================================================
-# Exception Classes
+# Build Result
 # ============================================================================
 
 
-class AssemblyError(Exception):
-    """Base exception for polymer assembly errors."""
+@dataclass
+class PolymerBuildResult:
+    """Result of building a polymer."""
 
-    pass
-
-
-class SequenceError(AssemblyError):
-    """Invalid sequence (e.g., too short, unknown labels)."""
-
-    pass
-
-
-class AmbiguousPortsError(AssemblyError):
-    """Cannot uniquely determine which ports to connect."""
-
-    pass
-
-
-class MissingConnectorRule(AssemblyError):
-    """No connector rule found for a given monomer pair."""
-
-    pass
-
-
-class NoCompatiblePortsError(AssemblyError):
-    """No compatible port pair found between two monomers."""
-
-    pass
-
-
-class BondKindConflictError(AssemblyError):
-    """Conflicting bond kind specifications."""
-
-    pass
-
-
-class PortReuseError(AssemblyError):
-    """Attempt to reuse a consumed port (multiplicity = 0)."""
-
-    pass
-
-
-class GeometryError(AssemblyError):
-    """Base exception for geometry-related errors."""
-
-    pass
-
-
-class OrientationUnavailableError(GeometryError):
-    """Cannot infer orientation for a port (no neighbors, no role info)."""
-
-    pass
-
-
-class PositionMissingError(GeometryError):
-    """Entity is missing required 3D position data."""
-
-    pass
-
-
-from molpy.reacter.base import ReactionResult
-from .polymer_builder import PolymerBuildResult
+    polymer: Atomistic
+    connection_history: list[ReactionResult] = field(default_factory=list)
+    total_steps: int = 0
 
 
 # ============================================================================

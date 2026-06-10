@@ -53,7 +53,7 @@ def get_ports(struct: Atomistic) -> dict[str, list[Atom]]:
     return ports
 
 
-# Alias used by stochastic modules
+# Backwards-compat alias for get_ports
 get_all_ports = get_ports
 
 

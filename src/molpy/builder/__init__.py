@@ -1,8 +1,8 @@
 """Convenience exports for the builder subpackage.
 
-The legacy ``PolymerBuilder`` class and bulk builders have been removed in
-favour of the new declarative API documented in
-``notebooks/reacter_polymerbuilder_integration.ipynb``.
+Polymer construction goes through the declarative ``polymer()`` and
+``polymer_system()`` entry points (see ``molpy.builder.polymer.dsl``);
+``PolymerBuilder`` remains available for direct graph-based assembly.
 """
 
 from molpy.core.region import BoxRegion, Cube, Region, SphereRegion
