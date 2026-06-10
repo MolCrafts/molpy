@@ -106,3 +106,38 @@ _Generated 2026-06-10 by /mol:map._
 - **Declarative builder DSL**: `polymer()`/`polymer_system()` entry points over a three-layer (Chain → SystemPlanner → BuildSystem) architecture; `PolymerBuilder` retained for direct graph assembly.
 
 <!-- mol:map:managed end -->
+
+## Import-direction rules (custom annotation — preserved across /mol:map runs)
+
+Migrated 2026-06-10 from the former local `molpy-arch` skill / `molpy-architect`
+agent. Enforced by `/mol:review --axis=arch` (the `architect` agent). Lower
+layers cannot import from higher layers; **`core/` imports nothing from molpy**.
+
+```
+ALLOWED (→ = may be imported by):
+  core/              → everything inside molpy
+  parser/            → io, typifier, builder, reacter
+  io/                → builder, pack, engine
+  typifier/          → builder
+  compute/           → (application code only)
+  builder/           → pack
+  reacter/           → builder
+  pack/              → (application code only)
+  engine/            → (application code only)
+  wrapper/, adapter/ → builder, pack, engine
+```
+
+Per-package constraints from the same source:
+
+- `potential/` may import only `core` and numpy.
+- `parser/` must not import from io, compute, builder, wrapper.
+- `io/` readers/writers must not import from builder, compute, engine, wrapper.
+- `builder/` may import core, parser, io, typifier; not compute, engine, wrapper
+  (except specific adapters).
+- `adapter/` does data sync only (no subprocess); `wrapper/` does subprocess only.
+- No `from module import *` outside `__init__.py`; no module-level side effects
+  beyond imports and class definitions; circular imports (A→B→A) are violations.
+
+> Caveat: this table predates the `conformer`, `optimize`, `op`, `legacy`, `cli`,
+> and `data` packages (see "Layer roles" above for their stage placement) — extend
+> rather than blindly enforce when those packages are involved.
