@@ -624,19 +624,20 @@ class ForceField:
 
         potentials = Potentials()
 
-        # Iterate over all styles and try to create corresponding potentials
+        # Iterate over all styles and create corresponding potentials.
         for style in self.styles.bucket(Style):
-            # Check if style has to_potential method
-            if hasattr(style, "to_potential"):
-                try:
-                    # mypy cannot infer that 'style' has to_potential, so cast
-                    potential = cast(Any, style).to_potential()
-                    if potential is not None:
-                        potentials.append(potential)
-                except (ValueError, AttributeError):
-                    # Skip if creation fails (e.g. missing parameters or Potential class not found)
-                    # Could log warnings, but silently skip for now
-                    pass
+            # Styles without a to_potential() (e.g. AtomStyle) carry no kernel.
+            if not hasattr(style, "to_potential"):
+                continue
+            # A style with no types defined contributes no potential — that is a
+            # legitimately empty case, skipped explicitly. Any *other* failure
+            # (unknown kernel, a defined type missing required parameters) is a
+            # real error and is allowed to propagate rather than being swallowed.
+            if not cast(Any, style).types.bucket(Type):
+                continue
+            potential = cast(Any, style).to_potential()
+            if potential is not None:
+                potentials.append(potential)
 
         return potentials
 

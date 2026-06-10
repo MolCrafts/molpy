@@ -651,8 +651,26 @@ class TestForceFieldToPotentials:
         # Convert to potentials
         potentials = ff.to_potentials()
 
-        # Should only have bond potential
+        # Should only have bond potential (the empty angle style is skipped,
+        # not an error)
         assert len(potentials) == 1
+
+    def test_forcefield_to_potentials_raises_on_missing_params(self):
+        """A *defined* type missing required params is a real error, not skipped.
+
+        Previously to_potentials() swallowed ValueError/AttributeError, silently
+        dropping a style that failed to build. Now only legitimately-empty styles
+        are skipped; a genuine build failure propagates.
+        """
+        import pytest
+
+        ff = AtomisticForcefield(name="TestFF")
+        bstyle = ff.def_bondstyle("harmonic")
+        # Define a bond type but omit the required r0 parameter.
+        bstyle.def_type(AtomType("CA"), AtomType("CB"), k=1000.0)
+
+        with pytest.raises(ValueError, match="missing required parameters"):
+            ff.to_potentials()
 
 
 class TestTypeCopy:

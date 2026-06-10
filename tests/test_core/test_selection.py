@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from molpy import Block
 from molpy.core.selector import AtomIndexSelector, AtomTypeSelector
@@ -217,3 +218,31 @@ class TestBooleanComposition:
         assert np.array_equal(filtered_block["type"], expected_types)
         assert np.array_equal(filtered_block["id"], expected_ids)
         assert filtered_block["xyz"].shape == (2, 3)
+
+
+class TestSelectorFailFast:
+    """Selectors raise on a missing column instead of silently selecting nothing.
+
+    Previously a typo'd / absent field made ``mask`` return an all-False array,
+    so a reference to a column that does not exist silently matched zero atoms
+    rather than surfacing the mistake.
+    """
+
+    def test_element_selector_missing_field_raises(self):
+        from molpy.core.selector import ElementSelector
+
+        block = Block({"x": np.array([0.0, 1.0])})  # no "element" column
+        with pytest.raises(KeyError, match="ElementSelector"):
+            ElementSelector("C").mask(block)
+
+    def test_atom_index_selector_missing_field_raises(self):
+        block = Block({"x": np.array([0.0, 1.0])})  # no "id" column
+        with pytest.raises(KeyError, match="AtomIndexSelector"):
+            AtomIndexSelector([1, 2]).mask(block)
+
+    def test_distance_selector_missing_coords_raises(self):
+        from molpy.core.selector import DistanceSelector
+
+        block = Block({"x": np.array([0.0, 1.0])})  # missing y, z
+        with pytest.raises(KeyError, match="DistanceSelector"):
+            DistanceSelector([0.0, 0.0, 0.0], 5.0).mask(block)

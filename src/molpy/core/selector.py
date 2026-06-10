@@ -84,7 +84,10 @@ class AtomIndexSelector(MaskPredicate):
 
     def mask(self, block: "Block") -> np.ndarray:
         if self.id_field not in block:
-            return np.zeros(block.nrows, dtype=bool)
+            raise KeyError(
+                f"AtomIndexSelector: block has no '{self.id_field}' column "
+                f"(available: {list(block.keys())})"
+            )
         return np.isin(block[self.id_field], self.indices)
 
 
@@ -106,7 +109,10 @@ class ElementSelector(MaskPredicate):
 
     def mask(self, block: "Block") -> np.ndarray:
         if self.field not in block:
-            return np.zeros(block.nrows, dtype=bool)
+            raise KeyError(
+                f"ElementSelector: block has no '{self.field}' column "
+                f"(available: {list(block.keys())})"
+            )
         return block[self.field] == self.element
 
 
@@ -139,7 +145,10 @@ class CoordinateRangeSelector(MaskPredicate):
 
     def mask(self, block: "Block") -> np.ndarray:
         if self.axis not in block:
-            return np.zeros(block.nrows, dtype=bool)
+            raise KeyError(
+                f"CoordinateRangeSelector: block has no '{self.axis}' column "
+                f"(available: {list(block.keys())})"
+            )
 
         values = block[self.axis]
         mask = np.ones(block.nrows, dtype=bool)
@@ -195,8 +204,12 @@ class DistanceSelector(MaskPredicate):
 
     def mask(self, block: "Block") -> np.ndarray:
         required_fields = ["x", "y", "z"]
-        if not all(field in block for field in required_fields):
-            return np.zeros(block.nrows, dtype=bool)
+        missing = [field for field in required_fields if field not in block]
+        if missing:
+            raise KeyError(
+                f"DistanceSelector: block is missing coordinate column(s) {missing} "
+                f"(available: {list(block.keys())})"
+            )
 
         positions = np.column_stack([block["x"], block["y"], block["z"]])
         distances = np.linalg.norm(positions - self.center, axis=1)
