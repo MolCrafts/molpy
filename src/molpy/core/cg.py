@@ -3,13 +3,14 @@
 Mirrors :mod:`molpy.core.atomistic`: ``CoarseGrain(_GraphViews, molrs.CoarseGrain)``
 IS a molrs world; :class:`Bead` / :class:`CGBond` are interned handle views.
 
-Conventional dict keys (none enforced):
+Dict keys:
 
-* ``bead["atoms"]`` — ``tuple[Atom, ...]`` of atom references this bead
-  represents (an arbitrary object value → Python overflow store). Required only
-  by :meth:`CoarseGrain.beads_of`.
+* ``bead["atoms"]`` — ``tuple[Atom, ...]`` of atom views this bead groups. This
+  is the bead's **membership**, owned by the molrs ``CoarseGrain`` as opaque atom
+  handles (not a scalar component) and resolved back to views through the source
+  all-atom world. Drives :meth:`CoarseGrain.beads_of`.
 * ``bead["x"]`` / ``bead["y"]`` / ``bead["z"]`` — position (molrs columns).
-* ``bead["type"]`` / ``bead["mass"]`` / ``bead["charge"]`` — as needed.
+* ``bead["type"]`` / ``bead["mass"]`` / ``bead["charge"]`` — molrs columns.
 """
 
 from __future__ import annotations
@@ -40,9 +41,31 @@ if TYPE_CHECKING:
 
 
 class Bead(Entity):
-    """Coarse-grained bead view: one node in a molrs ``CoarseGrain`` world."""
+    """Coarse-grained bead view: one node in a molrs ``CoarseGrain`` world.
+
+    The ``"atoms"`` key is not a scalar component: it is the bead's **membership**
+    (the underlying atom views it groups), owned by the molrs ``CoarseGrain`` as
+    opaque atom handles and resolved back to views through the source world. It
+    is intercepted here so ``bead["atoms"]`` / ``bead.get("atoms")`` keep working
+    over the membership store rather than the component columns.
+    """
 
     __slots__ = ()
+
+    def __getitem__(self, key: str) -> Any:
+        if key == "atoms" and self.is_bound:
+            return self._world._resolve_bead_atoms(self._handle)
+        return super().__getitem__(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key == "atoms" and self.is_bound:
+            return self._world._resolve_bead_atoms(self._handle)
+        return super().get(key, default)
+
+    def __contains__(self, key: object) -> bool:
+        if key == "atoms" and self.is_bound:
+            return bool(self._world._resolve_bead_atoms(self._handle))
+        return super().__contains__(key)
 
     def __repr__(self) -> str:
         ident = self.get("type") or self.get("name")
@@ -84,6 +107,10 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
 
     def __init__(self, **props: Any) -> None:
         _GraphViews.__init__(self, **props)
+        # Source all-atom world that bead membership handles resolve against
+        # (set on the first ``def_bead(atoms=...)``); membership itself lives in
+        # the molrs ``CoarseGrain`` as opaque handles.
+        self._member_world: Any = None
         if hasattr(self, "__post_init__"):
             for klass in type(self).__mro__:
                 if klass is CoarseGrain:
@@ -116,8 +143,43 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
 
     # ---------- factory / add ----------
     def def_bead(self, mapping: Any = None, /, **attrs: Any) -> Bead:
-        bead = Bead(mapping, **attrs)
-        return self._spawn_entity(bead)  # type: ignore[return-value]
+        # "atoms" is membership (a tuple of atom views), not a scalar component:
+        # split it out before the bead is spawned so it never hits a column.
+        atoms = attrs.pop("atoms", None)
+        if mapping is not None and "atoms" in mapping:
+            mapping = dict(mapping)
+            atoms = mapping.pop("atoms")
+        bead = self._spawn_entity(Bead(mapping, **attrs))
+        if atoms is not None:
+            self._set_bead_atoms(bead, tuple(atoms))
+        return bead  # type: ignore[return-value]
+
+    # ---------- bead → atom membership (molrs-owned handle store) ----------
+    def _set_bead_atoms(self, bead: Bead, atoms: tuple["Atom", ...]) -> None:
+        """Record a bead's atom membership in the molrs world (by handle)."""
+        handles: list[int] = []
+        for a in atoms:
+            world = getattr(a, "_world", None)
+            if world is None:
+                raise ValueError(
+                    "bead membership requires bound atoms (each must belong to a "
+                    "source Atomistic world); got an unbound atom"
+                )
+            if self._member_world is None:
+                self._member_world = world
+            elif world is not self._member_world:
+                raise ValueError(
+                    "bead membership atoms must all come from the same source world"
+                )
+            handles.append(a.handle)
+        molrs.CoarseGrain.set_bead_members(self, bead.handle, handles)
+
+    def _resolve_bead_atoms(self, bead_handle: int) -> tuple["Atom", ...]:
+        """Resolve a bead's stored membership handles back to atom views."""
+        handles = molrs.CoarseGrain.bead_members(self, bead_handle)
+        if not handles or self._member_world is None:
+            return ()
+        return tuple(self._member_world._intern_atom(h) for h in handles)
 
     def def_cgbond(self, a: Bead, b: Bead, /, **attrs: Any) -> CGBond:
         bond = CGBond(a, b, **attrs)
@@ -175,7 +237,9 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
 
     # ---------- reverse lookup ----------
     def beads_of(self, atom: "Atom") -> tuple[Bead, ...]:
-        return tuple(b for b in self.beads if atom in b.get("atoms", ()))
+        """Beads whose membership includes ``atom`` (molrs reverse lookup)."""
+        handles = molrs.CoarseGrain.beads_of_atom(self, atom.handle)
+        return tuple(self._intern_atom(h) for h in handles)  # type: ignore[misc]
 
     # ---------- property / type / selection editing ----------
     def rename_type(self, old: str, new: str, *, kind: type = Bead) -> int:
@@ -266,13 +330,9 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
     @staticmethod
     def adopt(graph: molrs.CoarseGrain) -> "CoarseGrain":
         """Zero-copy take ownership of a molrs-produced ``CoarseGrain`` graph."""
-        from .atomistic import _relation_handles
-
         struct = CoarseGrain()
         molrs.CoarseGrain.adopt(struct, graph)
-        for kind in struct.kinds():
-            n = struct.n_relations(kind)
-            struct._rel_handles[kind] = _relation_handles(struct, kind, n)
+        # Link views enumerate live relations from molrs via relation_ids().
         return struct
 
     # ---------- spatial ----------
@@ -363,55 +423,21 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
 
     # ---------- tabular conversion ----------
     def to_frame(self, bead_fields: list[str] | None = None) -> "Frame":
-        from ._columns import to_numpy_column
-        from .frame import Block, Frame
+        """Export to a tabular :class:`Frame` (``beads`` + ``cgbonds`` blocks).
 
-        frame = Frame()
-        beads = list(self.beads)
-        cgbonds = list(self.cgbonds)
-        bead_index = {id(b): i for i, b in enumerate(beads)}
+        Delegates straight to the molrs world's native ``to_frame``: the Rust
+        column store yields dense numpy columns and applies the CG-domain block /
+        column labels (``beads`` / ``cgbonds`` / ``ibead`` / ``jbead``) itself, so
+        there is zero Python-side conversion. ``bead_fields`` optionally restricts
+        the beads block columns.
+        """
+        from .frame import Frame
 
-        if bead_fields is None:
-            keys: set[str] = set()
-            for bead in beads:
-                keys.update(bead.keys())
-        else:
-            keys = set(bead_fields)
-
-        # numpy-only Store: skip columns that cannot be represented without an
-        # object dtype. The soft-convention ``atoms`` key (a ragged tuple of
-        # Atom handles per bead) has no numeric representation and is dropped
-        # from the numeric frame — the bead→atom mapping lives on the struct.
-        bead_cols: dict[str, np.ndarray] = {}
-        for k in keys:
-            col = to_numpy_column([bead.get(k, None) for bead in beads])
-            if col is not None:
-                bead_cols[k] = col
-        frame["beads"] = Block.from_dict(bead_cols)
-
-        if cgbonds:
-            block: dict[str, list[Any]] = {"ibead": [], "jbead": []}
-            all_keys: set[str] = set()
-            for bond in cgbonds:
-                all_keys.update(bond.keys())
-            attr_keys = [k for k in all_keys if k not in ("ibead", "jbead")]
-            for k in attr_keys:
-                block[k] = []
-            for n, bond in enumerate(cgbonds):
-                for lbl, ep in zip(("ibead", "jbead"), bond.endpoints):
-                    if id(ep) not in bead_index:
-                        raise ValueError(
-                            f"CGBond {n + 1}: {lbl} (id={id(ep)}) is not "
-                            f"registered in this CoarseGrain."
-                        )
-                    block[lbl].append(bead_index[id(ep)])
-                for k in attr_keys:
-                    block[k].append(bond.get(k, None))
-            cgbond_cols: dict[str, np.ndarray] = {}
-            for k, v in block.items():
-                col = to_numpy_column(v)
-                if col is not None:
-                    cgbond_cols[k] = col
-            frame["cgbonds"] = Block.from_dict(cgbond_cols)
-
+        # Upgrade the bare pyo3 frame to the rich ``Frame`` callers expect.
+        frame = Frame.from_dict(molrs.CoarseGrain.to_frame(self))
+        if bead_fields is not None and "beads" in frame:
+            keep = set(bead_fields)
+            beads = frame["beads"]
+            for col in [k for k in beads.keys() if k not in keep]:
+                del beads[col]
         return frame

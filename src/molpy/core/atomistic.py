@@ -702,11 +702,8 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         """
         struct = Atomistic()
         molrs.Atomistic.adopt(struct, graph)
-        # surface every relation handle so the link views enumerate. molrs
-        # relation handles are 1-based dense per kind after a fresh adopt.
-        for kind in struct.kinds():
-            n = struct.n_relations(kind)
-            struct._rel_handles[kind] = _relation_handles(struct, kind, n)
+        # Link views enumerate live relations straight from molrs via
+        # relation_ids(); no Python-side handle shadow to populate.
         return struct
 
     # ---------- spatial operations ----------
@@ -795,107 +792,22 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     # ---------- tabular conversion ----------
     def to_frame(self, atom_fields: list[str] | None = None) -> "Frame":
-        from ._columns import to_numpy_column
-        from .frame import Block, Frame
+        """Export to a tabular :class:`Frame` (atoms + bonds/angles/dihedrals/
+        impropers blocks).
 
-        frame = Frame()
-        atoms_data = list(self.atoms)
-        atom_index = {id(a): i for i, a in enumerate(atoms_data)}
+        Delegates straight to the molrs world's native ``to_frame``: the Rust
+        column store already holds every component as a dense, row-aligned
+        column, so each block is materialized as numpy with zero Python-side
+        conversion. ``atom_fields`` optionally restricts the atoms block columns.
+        """
+        from .frame import Frame
 
-        if atom_fields is None:
-            keys: set[str] = set()
-            for atom in atoms_data:
-                keys.update(atom.keys())
-        else:
-            keys = set(atom_fields)
-        # numpy-only Store: build a representable column per key, skipping any
-        # that cannot be expressed without an object dtype (ragged / all-None).
-        atom_cols: dict[str, np.ndarray] = {}
-        for k in keys:
-            col = to_numpy_column([atom.get(k, None) for atom in atoms_data])
-            if col is not None:
-                atom_cols[k] = col
-        frame["atoms"] = Block.from_dict(atom_cols)
-
-        self._links_to_block(frame, "bonds", self.bonds, ("atomi", "atomj"), atom_index)
-        self._links_to_block(
-            frame, "angles", self.angles, ("atomi", "atomj", "atomk"), atom_index
-        )
-        self._links_to_block(
-            frame,
-            "dihedrals",
-            self.dihedrals,
-            ("atomi", "atomj", "atomk", "atoml"),
-            atom_index,
-        )
-        self._links_to_block(
-            frame,
-            "impropers",
-            self.impropers,
-            ("atomi", "atomj", "atomk", "atoml"),
-            atom_index,
-        )
+        # ``molrs.Atomistic.to_frame`` yields the bare pyo3 frame; upgrade it to
+        # the rich ``Frame`` (metadata, box, rich Blocks) callers expect.
+        frame = Frame.from_dict(molrs.Atomistic.to_frame(self))
+        if atom_fields is not None and "atoms" in frame:
+            keep = set(atom_fields)
+            atoms = frame["atoms"]
+            for col in [k for k in atoms.keys() if k not in keep]:
+                del atoms[col]
         return frame
-
-    @staticmethod
-    def _links_to_block(
-        frame: Any,
-        name: str,
-        links: Entities[Any],
-        index_labels: tuple[str, ...],
-        atom_index: dict[int, int],
-    ) -> None:
-        links = list(links)  # type: ignore[assignment]
-        if not links:
-            return
-        from ._columns import to_numpy_column
-        from .frame import Block
-
-        block: dict[str, list[Any]] = {lbl: [] for lbl in index_labels}
-        all_keys: set[str] = set()
-        for link in links:
-            all_keys.update(link.keys())
-        attr_keys = [k for k in all_keys if k not in index_labels]
-        for k in attr_keys:
-            block[k] = []
-        for n, link in enumerate(links):
-            for lbl, ep in zip(index_labels, link.endpoints):
-                if id(ep) not in atom_index:
-                    raise ValueError(
-                        f"{name} {n + 1}: {lbl} references an atom not in the "
-                        f"atoms list (removed or invalid)."
-                    )
-                block[lbl].append(atom_index[id(ep)])
-            for k in attr_keys:
-                block[k].append(link.get(k, None))
-        # numpy-only Store: index columns are dense ints; skip attr columns that
-        # are not numpy-representable (ragged / all-None) rather than overflow.
-        cols: dict[str, np.ndarray] = {}
-        for k, v in block.items():
-            col = to_numpy_column(v)
-            if col is not None:
-                cols[k] = col
-        frame[name] = Block.from_dict(cols)
-
-
-def _relation_handles(struct: molrs.Atomistic, kind: str, n: int) -> list[int]:
-    """Discover the live relation handles of ``kind`` after a fresh adopt.
-
-    molrs relation handles are opaque ``u64`` encoded as ``(generation<<32)|index``
-    with no enumeration API. A graph produced by SMILES / Conformer has never had
-    a relation removed, so its ``kind`` handles occupy the dense generation-1
-    range ``base+1 .. base+n``; probe that range and keep the resolvable handles.
-    """
-    handles: list[int] = []
-    base = 1 << 32
-    idx = 1
-    # probe a generous window past n to tolerate any sparse gaps
-    while len(handles) < n and idx <= n + 1024:
-        rh = base + idx
-        try:
-            struct.relation_nodes(kind, rh)
-            handles.append(rh)
-        except Exception:
-            pass
-        idx += 1
-    return handles
