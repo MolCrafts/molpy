@@ -115,27 +115,30 @@ def _extract_atom_attributes(atom: "Atom", structure: "Atomistic") -> dict[str, 
     if element:
         attrs["element"] = str(element).upper()
 
-        # Try to get atomic number
-        try:
-            from molpy.core.element import Element
+        # Resolve the atomic number; a provided-but-unknown element symbol is a
+        # malformed spec, not a wildcard — fail fast.
+        from molpy.core.element import Element
 
-            elem = Element(element)
-            attrs["number"] = elem.number
-        except:
-            attrs["number"] = None
+        try:
+            attrs["number"] = Element(element).number
+        except Exception as e:
+            raise ValueError(f"unknown element symbol {element!r} in atom spec") from e
     else:
         # Check for atomic number directly
         number = atom.get("number", atom.get("atomic_number", None))
         if number is not None:
             attrs["number"] = int(number)
-            try:
-                from molpy.core.element import Element
+            from molpy.core.element import Element
 
-                elem = Element(number)
-                attrs["element"] = elem.symbol
-            except:
-                attrs["element"] = "*"
+            try:
+                attrs["element"] = Element(number).symbol
+            except Exception as e:
+                raise ValueError(
+                    f"invalid atomic number {number!r} in atom spec"
+                ) from e
         else:
+            # No element and no atomic number given: a genuine "match any atom"
+            # wildcard (SMARTS ``*``), distinct from an invalid spec above.
             attrs["element"] = "*"
             attrs["number"] = None
 

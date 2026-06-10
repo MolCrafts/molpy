@@ -526,12 +526,13 @@ class _OplsAtomTypifier(ForceFieldAtomTypifier):
                     )
                     pattern_dict[at.name] = pattern
                 except Exception as e:
-                    import warnings
-
-                    warnings.warn(
-                        f"Failed to parse SMARTS for {at.name}: {smarts_str}, error: {e}",
-                        stacklevel=2,
-                    )
+                    # A SMARTS pattern that fails to parse means this atom type
+                    # would silently never match — a broken force-field
+                    # definition. Fail fast instead of warning and dropping it.
+                    raise ValueError(
+                        f"Failed to parse SMARTS for atom type {at.name!r}: "
+                        f"{smarts_str!r} ({e})"
+                    ) from e
 
         return pattern_dict
 
