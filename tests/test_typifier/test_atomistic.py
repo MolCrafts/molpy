@@ -3,22 +3,22 @@
 
 Tests cover:
 - atomtype_matches function
-- OplsBondTypifier
-- OplsAngleTypifier
-- OplsDihedralTypifier
-- OplsAtomTypifier
-- OplsAtomisticTypifier
+- ForceFieldBondTypifier
+- ForceFieldAngleTypifier
+- ForceFieldDihedralTypifier
+- _OplsAtomTypifier
+- OplsTypifier
 """
 
 import pytest
 
 from molpy import Angle, Atom, Atomistic, AtomisticForcefield, AtomType, Bond, Dihedral
 from molpy.typifier.atomistic import (
-    OplsAngleTypifier,
-    OplsAtomisticTypifier,
-    OplsAtomTypifier,
-    OplsBondTypifier,
-    OplsDihedralTypifier,
+    ForceFieldAngleTypifier,
+    OplsTypifier,
+    _OplsAtomTypifier,
+    ForceFieldBondTypifier,
+    ForceFieldDihedralTypifier,
     atomtype_matches,
 )
 
@@ -56,11 +56,11 @@ class TestAtomtypeMatches:
         assert atomtype_matches(at, "CT") is True
 
 
-class TestOplsBondTypifier:
-    """Test OplsBondTypifier class."""
+class TestForceFieldBondTypifier:
+    """Test ForceFieldBondTypifier class."""
 
     def test_bond_typifier_initialization(self):
-        """Test OplsBondTypifier initialization."""
+        """Test ForceFieldBondTypifier initialization."""
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")
@@ -69,14 +69,14 @@ class TestOplsBondTypifier:
         bstyle = ff.def_bondstyle("harmonic")
         bstyle.def_type(at1, at2, k=1000.0, r0=1.08)
 
-        typifier = OplsBondTypifier(ff)
+        typifier = ForceFieldBondTypifier(ff)
 
         assert typifier.ff is ff
         assert hasattr(typifier, "_bond_table")
         assert hasattr(typifier, "class_to_types")
 
     def test_bond_typifier_typify(self):
-        """Test OplsBondTypifier.typify()."""
+        """Test ForceFieldBondTypifier.typify()."""
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")
@@ -85,7 +85,7 @@ class TestOplsBondTypifier:
         bstyle = ff.def_bondstyle("harmonic")
         bond_type = bstyle.def_type(at1, at2, k=1000.0, r0=1.08)
 
-        typifier = OplsBondTypifier(ff)
+        typifier = ForceFieldBondTypifier(ff)
 
         # Create bond with typed atoms
         asm = Atomistic()
@@ -116,7 +116,7 @@ class TestOplsBondTypifier:
         bstyle = ff.def_bondstyle("harmonic")
         bond_type = bstyle.def_type(at1, at2, k=1000.0, r0=1.08)
 
-        typifier = OplsBondTypifier(ff)
+        typifier = ForceFieldBondTypifier(ff)
 
         # Create bond with reverse order
         asm = Atomistic()
@@ -138,7 +138,7 @@ class TestOplsBondTypifier:
     def test_bond_typifier_typify_missing_type(self):
         """Test bond typifier raises error when atoms lack type."""
         ff = AtomisticForcefield()
-        typifier = OplsBondTypifier(ff)
+        typifier = ForceFieldBondTypifier(ff)
 
         asm = Atomistic()
         c = Atom(symbol="C")
@@ -162,7 +162,7 @@ class TestOplsBondTypifier:
         bstyle = ff.def_bondstyle("harmonic")
         bstyle.def_type(at1, at2, k=1000.0, r0=1.08)
 
-        typifier = OplsBondTypifier(ff)
+        typifier = ForceFieldBondTypifier(ff)
 
         # Create bond with types that don't match
         asm = Atomistic()
@@ -193,7 +193,7 @@ class TestOplsBondTypifier:
         bstyle = ff.def_bondstyle("harmonic")
         bond_type = bstyle.def_type(at1, at2, k=1000.0, r0=1.08)
 
-        typifier = OplsBondTypifier(ff)
+        typifier = ForceFieldBondTypifier(ff)
 
         # Create bond with different types but same classes
         asm = Atomistic()
@@ -212,11 +212,11 @@ class TestOplsBondTypifier:
         assert bond.data["type"] == bond_type.name
 
 
-class TestOplsAngleTypifier:
-    """Test OplsAngleTypifier class."""
+class TestForceFieldAngleTypifier:
+    """Test ForceFieldAngleTypifier class."""
 
     def test_angle_typifier_initialization(self):
-        """Test OplsAngleTypifier initialization."""
+        """Test ForceFieldAngleTypifier initialization."""
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("HA", type_="HA", class_="HC")
@@ -226,14 +226,14 @@ class TestOplsAngleTypifier:
         anglestyle = ff.def_anglestyle("harmonic")
         anglestyle.def_type(at1, at2, at3, k=500.0, theta0=120.0)
 
-        typifier = OplsAngleTypifier(ff)
+        typifier = ForceFieldAngleTypifier(ff)
 
         assert typifier.ff is ff
         assert hasattr(typifier, "_angle_table")
         assert hasattr(typifier, "class_to_types")
 
     def test_angle_typifier_typify(self):
-        """Test OplsAngleTypifier.typify()."""
+        """Test ForceFieldAngleTypifier.typify()."""
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("HA", type_="HA", class_="HC")
@@ -243,7 +243,7 @@ class TestOplsAngleTypifier:
         anglestyle = ff.def_anglestyle("harmonic")
         angle_type = anglestyle.def_type(at1, at2, at3, k=500.0, theta0=120.0)
 
-        typifier = OplsAngleTypifier(ff)
+        typifier = ForceFieldAngleTypifier(ff)
 
         # Create angle with typed atoms
         asm = Atomistic()
@@ -277,7 +277,7 @@ class TestOplsAngleTypifier:
         anglestyle = ff.def_anglestyle("harmonic")
         angle_type = anglestyle.def_type(at1, at2, at3, k=500.0, theta0=120.0)
 
-        typifier = OplsAngleTypifier(ff)
+        typifier = ForceFieldAngleTypifier(ff)
 
         # Create angle with reverse order
         asm = Atomistic()
@@ -301,7 +301,7 @@ class TestOplsAngleTypifier:
     def test_angle_typifier_typify_missing_type(self):
         """Test angle typifier raises error when atoms lack type."""
         ff = AtomisticForcefield()
-        typifier = OplsAngleTypifier(ff)
+        typifier = ForceFieldAngleTypifier(ff)
 
         asm = Atomistic()
         h1 = Atom(symbol="H")
@@ -327,7 +327,7 @@ class TestOplsAngleTypifier:
         anglestyle = ff.def_anglestyle("harmonic")
         anglestyle.def_type(at1, at2, at3, k=500.0, theta0=120.0)
 
-        typifier = OplsAngleTypifier(ff)
+        typifier = ForceFieldAngleTypifier(ff)
 
         # Create angle with types that don't match
         asm = Atomistic()
@@ -346,11 +346,11 @@ class TestOplsAngleTypifier:
             typifier.typify(angle)
 
 
-class TestOplsDihedralTypifier:
-    """Test OplsDihedralTypifier class."""
+class TestForceFieldDihedralTypifier:
+    """Test ForceFieldDihedralTypifier class."""
 
     def test_dihedral_typifier_initialization(self):
-        """Test OplsDihedralTypifier initialization."""
+        """Test ForceFieldDihedralTypifier initialization."""
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")
@@ -361,14 +361,14 @@ class TestOplsDihedralTypifier:
         dihedralstyle = ff.def_dihedralstyle("opls")
         dihedralstyle.def_type(at1, at2, at3, at4, c0=1.0, c1=2.0)
 
-        typifier = OplsDihedralTypifier(ff)
+        typifier = ForceFieldDihedralTypifier(ff)
 
         assert typifier.ff is ff
         assert hasattr(typifier, "_dihedral_list")
         assert hasattr(typifier, "class_to_types")
 
     def test_dihedral_typifier_typify(self):
-        """Test OplsDihedralTypifier.typify()."""
+        """Test ForceFieldDihedralTypifier.typify()."""
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")
@@ -379,7 +379,7 @@ class TestOplsDihedralTypifier:
         dihedralstyle = ff.def_dihedralstyle("opls")
         dihedral_type = dihedralstyle.def_type(at1, at2, at3, at4, c0=1.0, c1=2.0)
 
-        typifier = OplsDihedralTypifier(ff)
+        typifier = ForceFieldDihedralTypifier(ff)
 
         # Create dihedral with typed atoms
         asm = Atomistic()
@@ -416,7 +416,7 @@ class TestOplsDihedralTypifier:
         dihedralstyle = ff.def_dihedralstyle("opls")
         dihedral_type = dihedralstyle.def_type(at1, at2, at3, at4, c0=1.0, c1=2.0)
 
-        typifier = OplsDihedralTypifier(ff)
+        typifier = ForceFieldDihedralTypifier(ff)
 
         # Create dihedral with reverse order
         asm = Atomistic()
@@ -442,7 +442,7 @@ class TestOplsDihedralTypifier:
     def test_dihedral_typifier_typify_missing_type(self):
         """Test dihedral typifier raises error when atoms lack type."""
         ff = AtomisticForcefield()
-        typifier = OplsDihedralTypifier(ff)
+        typifier = ForceFieldDihedralTypifier(ff)
 
         asm = Atomistic()
         c1 = Atom(symbol="C")
@@ -472,7 +472,7 @@ class TestOplsDihedralTypifier:
         dihedralstyle = ff.def_dihedralstyle("opls")
         dihedralstyle.def_type(at1, at2, at3, at4, c0=1.0, c1=2.0)
 
-        typifier = OplsDihedralTypifier(ff)
+        typifier = ForceFieldDihedralTypifier(ff)
 
         # Create dihedral with types that don't match
         asm = Atomistic()
@@ -493,13 +493,13 @@ class TestOplsDihedralTypifier:
             typifier.typify(dihedral)
 
 
-class TestOplsAtomisticTypifier:
-    """Test OplsAtomisticTypifier class."""
+class TestOplsTypifier:
+    """Test OplsTypifier class."""
 
     def test_atomistic_typifier_initialization_default(self):
-        """Test OplsAtomisticTypifier initialization with defaults."""
+        """Test OplsTypifier initialization with defaults."""
         ff = AtomisticForcefield()
-        typifier = OplsAtomisticTypifier(ff)
+        typifier = OplsTypifier(ff)
 
         assert typifier.ff is ff
         assert typifier.skip_atom_typing is False
@@ -513,16 +513,16 @@ class TestOplsAtomisticTypifier:
         assert hasattr(typifier, "dihedral_typifier")
 
     def test_atomistic_typifier_initialization_with_atom_typing(self):
-        """Test OplsAtomisticTypifier initialization with atom typing enabled."""
+        """Test OplsTypifier initialization with atom typing enabled."""
         ff = AtomisticForcefield()
-        typifier = OplsAtomisticTypifier(ff, skip_atom_typing=False)
+        typifier = OplsTypifier(ff, skip_atom_typing=False)
 
         assert typifier.skip_atom_typing is False
         assert hasattr(typifier, "atom_typifier")
-        assert isinstance(typifier.atom_typifier, OplsAtomTypifier)
+        assert isinstance(typifier.atom_typifier, _OplsAtomTypifier)
 
     def test_atomistic_typifier_typify_bonds_only(self):
-        """Test OplsAtomisticTypifier.typify() with bonds only."""
+        """Test OplsTypifier.typify() with bonds only."""
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", **{"type": "CA", "class": "CT"})
@@ -531,7 +531,7 @@ class TestOplsAtomisticTypifier:
         bstyle = ff.def_bondstyle("harmonic")
         bstyle.def_type(at1, at2, k=1000.0, r0=1.08)
 
-        typifier = OplsAtomisticTypifier(
+        typifier = OplsTypifier(
             ff,
             skip_atom_typing=True,
             skip_angle_typing=True,
@@ -557,7 +557,7 @@ class TestOplsAtomisticTypifier:
         assert list(result.bonds)[0].data.get("type") is not None
 
     def test_atomistic_typifier_typify_all(self):
-        """Test OplsAtomisticTypifier.typify() with all typing enabled."""
+        """Test OplsTypifier.typify() with all typing enabled."""
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("HA", type_="HA", class_="HC")
@@ -575,7 +575,7 @@ class TestOplsAtomisticTypifier:
         pairstyle.def_type(at2, at2, c0=1.0, c1=2.0)
         pairstyle.def_type(at3, at3, c0=1.0, c1=2.0)
 
-        typifier = OplsAtomisticTypifier(
+        typifier = OplsTypifier(
             ff,
             skip_atom_typing=True,  # Skip atom typing for simplicity
             skip_angle_typing=False,

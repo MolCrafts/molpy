@@ -15,10 +15,10 @@ def gaff_ff():
 
 @pytest.fixture(scope="module")
 def gaff_atom_typifier(gaff_ff):
-    """Create a GaffAtomTypifier."""
-    from molpy.typifier.gaff import GaffAtomTypifier
+    """Create a _GaffAtomTypifier."""
+    from molpy.typifier.gaff import _GaffAtomTypifier
 
-    return GaffAtomTypifier(gaff_ff, strict=False)
+    return _GaffAtomTypifier(gaff_ff, strict=False)
 
 
 def _build_ethanol():
@@ -103,7 +103,7 @@ class TestGaffAtomTypifier:
     """Test GAFF atom type assignment."""
 
     def test_init(self, gaff_atom_typifier):
-        """Test GaffAtomTypifier initializes with patterns."""
+        """Test _GaffAtomTypifier initializes with patterns."""
         assert len(gaff_atom_typifier.pattern_dict) > 100
 
     def test_ethanol_carbon_types(self, gaff_atom_typifier):
@@ -167,21 +167,21 @@ class TestGaffAtomTypifier:
             assert a.get("type") == "ha", f"Expected ha, got {a.get('type')}"
 
 
-class TestGaffAtomisticTypifier:
+class TestGaffTypifier:
     """Test GAFF full typing pipeline."""
 
     def test_init(self, gaff_ff):
-        """Test GaffAtomisticTypifier initializes."""
-        from molpy.typifier.gaff import GaffAtomisticTypifier
+        """Test GaffTypifier initializes."""
+        from molpy.typifier.gaff import GaffTypifier
 
-        typifier = GaffAtomisticTypifier(gaff_ff, strict_typing=False)
+        typifier = GaffTypifier(gaff_ff, strict_typing=False)
         assert typifier is not None
 
     def test_ethanol_bond_typing(self, gaff_ff):
         """Test bond parameter assignment for ethanol."""
-        from molpy.typifier.gaff import GaffAtomisticTypifier
+        from molpy.typifier.gaff import GaffTypifier
 
-        typifier = GaffAtomisticTypifier(
+        typifier = GaffTypifier(
             gaff_ff,
             skip_pair_typing=True,
             skip_angle_typing=True,
@@ -198,9 +198,9 @@ class TestGaffAtomisticTypifier:
 
     def test_ethanol_full_pipeline(self, gaff_ff):
         """Test full GAFF typing pipeline on ethanol."""
-        from molpy.typifier.gaff import GaffAtomisticTypifier
+        from molpy.typifier.gaff import GaffTypifier
 
-        typifier = GaffAtomisticTypifier(gaff_ff, strict_typing=False)
+        typifier = GaffTypifier(gaff_ff, strict_typing=False)
 
         asm, _ = _build_ethanol()
         asm = asm.get_topo(gen_angle=True, gen_dihe=True)

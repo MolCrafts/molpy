@@ -465,8 +465,11 @@ class ForceFieldAtomTypifier(TypifierBase["Atomistic"]):
 # ============================================================
 
 
-class OplsAtomTypifier(ForceFieldAtomTypifier):
-    """Assign atom types using SMARTS matcher for OPLS-AA force field."""
+class _OplsAtomTypifier(ForceFieldAtomTypifier):
+    """Assign atom types using SMARTS matcher for OPLS-AA force field.
+
+    Internal helper for :class:`OplsTypifier`; not part of the public API.
+    """
 
     def _extract_patterns(self):
         """Extract SMARTS patterns from OPLS forcefield with overrides-based priority."""
@@ -538,7 +541,7 @@ class OplsAtomTypifier(ForceFieldAtomTypifier):
 # ============================================================
 
 
-class ForceFieldAtomisticTypifier(TypifierBase[Atomistic]):
+class ForceFieldTypifier(TypifierBase[Atomistic]):
     """Base orchestrator that runs the full typing pipeline.
 
     Subclasses can override to use different atom typifiers or add
@@ -620,16 +623,10 @@ class ForceFieldAtomisticTypifier(TypifierBase[Atomistic]):
         return new_struct
 
 
-class OplsAtomisticTypifier(ForceFieldAtomisticTypifier):
-    """OPLS-AA atomistic typifier orchestrator."""
+class OplsTypifier(ForceFieldTypifier):
+    """OPLS-AA full typing orchestrator: atom → pair → bond → angle → dihedral."""
 
     def _init_typifiers(self) -> None:
         if not self.skip_atom_typing:
-            self.atom_typifier = OplsAtomTypifier(self.ff, strict=self.strict_typing)
+            self.atom_typifier = _OplsAtomTypifier(self.ff, strict=self.strict_typing)
         super()._init_typifiers()
-
-
-# Backward-compatible aliases
-OplsBondTypifier = ForceFieldBondTypifier
-OplsAngleTypifier = ForceFieldAngleTypifier
-OplsDihedralTypifier = ForceFieldDihedralTypifier

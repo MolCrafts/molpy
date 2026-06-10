@@ -186,7 +186,7 @@ def prepare_monomer(
 
     Args:
         bigsmiles: BigSMILES string (e.g. ``"{[][<]OCCOCCOCCO[>][]}"``).
-        typifier: Optional typifier instance (e.g. ``OplsAtomisticTypifier``).
+        typifier: Optional typifier instance (e.g. ``OplsTypifier``).
             When provided, force-field types are assigned before returning.
         add_hydrogens: Add implicit hydrogens during 3D generation.
         optimize: Run force-field geometry optimisation after embedding.

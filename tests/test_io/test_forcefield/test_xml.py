@@ -702,7 +702,7 @@ class TestXMLForceFieldReader:
         which requires wildcard AtomTypes to be created during parsing.
         """
         from molpy import Atom, Atomistic, Bond
-        from molpy.typifier.atomistic import OplsBondTypifier
+        from molpy.typifier.atomistic import ForceFieldBondTypifier
 
         xml_file = TEST_DATA_DIR / "xml" / "oplsaa.xml"
         assert xml_file.exists(), f"Test file not found: {xml_file}"
@@ -721,7 +721,7 @@ class TestXMLForceFieldReader:
         asm.add_link(bond)
 
         # Typify bond
-        typifier = OplsBondTypifier(ff)
+        typifier = ForceFieldBondTypifier(ff)
         typifier.typify(bond)
 
         # Should have a type assigned
