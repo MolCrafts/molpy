@@ -113,10 +113,10 @@ class TestReacter:
         )
 
         # Run reaction
-        from molpy.reacter.selectors import find_port_atom
+        from molpy.reacter.selectors import find_port
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -171,10 +171,10 @@ class TestReacter:
             bond_former=form_double_bond,
         )
 
-        from molpy.reacter.selectors import find_port_atom
+        from molpy.reacter.selectors import find_port
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -212,10 +212,10 @@ class TestReacter:
             bond_former=form_triple_bond,
         )
 
-        from molpy.reacter.selectors import find_port_atom
+        from molpy.reacter.selectors import find_port
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -249,10 +249,10 @@ class TestReacter:
             bond_former=form_single_bond,
         )
 
-        from molpy.reacter.selectors import find_port_atom
+        from molpy.reacter.selectors import find_port
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -294,10 +294,10 @@ class TestReacter:
             bond_former=form_single_bond,
         )
 
-        from molpy.reacter.selectors import find_port_atom
+        from molpy.reacter.selectors import find_port
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -336,10 +336,10 @@ class TestReacter:
             bond_former=form_single_bond,
         )
 
-        from molpy.reacter.selectors import find_port_atom
+        from molpy.reacter.selectors import find_port
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = reacter.run(
             struct_L,
             struct_R,
@@ -378,10 +378,10 @@ class TestReacter:
             bond_former=form_single_bond,
         )
 
-        from molpy.reacter.selectors import find_port_atom
+        from molpy.reacter.selectors import find_port
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = reacter.run(
             struct_L,
             struct_R,
@@ -420,10 +420,10 @@ class TestReacter:
             bond_former=form_single_bond,
         )
 
-        from molpy.reacter.selectors import find_port_atom
+        from molpy.reacter.selectors import find_port
 
         with pytest.raises(ValueError, match="Port '1' not found"):
-            port_atom_L = find_port_atom(struct_L, "1")  # noqa: F841
+            port_atom_L = find_port(struct_L, "1")  # noqa: F841
 
     def test_reacter_run_missing_port_right(self):
         """Test Reacter.run() raises error when right port is missing."""
@@ -446,7 +446,7 @@ class TestReacter:
             bond_former=form_single_bond,
         )
 
-        from molpy.reacter.selectors import find_port_atom
+        from molpy.reacter.selectors import find_port
 
         with pytest.raises(ValueError, match="Port '2' not found"):
-            port_atom_R = find_port_atom(struct_R, "2")  # noqa: F841
+            port_atom_R = find_port(struct_R, "2")  # noqa: F841

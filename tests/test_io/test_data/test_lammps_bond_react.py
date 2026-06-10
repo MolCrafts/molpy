@@ -32,7 +32,7 @@ from molpy.core.atomistic import Atomistic
 from molpy.core.entity import Link
 from molpy.reacter import (
     BondReactReacter,
-    find_port_atom,
+    find_port,
     form_single_bond,
     select_one_hydrogen,
     select_port,
@@ -142,8 +142,8 @@ def _build_reaction() -> tuple[BondReactTemplate, Atomistic]:
         bond_former=form_single_bond,
         radius=2,
     )
-    port_l = find_port_atom(left, ">")
-    port_r = find_port_atom(right, "<")
+    port_l = find_port(left, ">")
+    port_r = find_port(right, "<")
     result = reacter.run(
         left, right, port_atom_L=port_l, port_atom_R=port_r, compute_topology=True
     )

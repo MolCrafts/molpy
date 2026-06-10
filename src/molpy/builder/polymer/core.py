@@ -97,17 +97,29 @@ class PolymerBuilder:
 
     This builder parses CGSmiles strings and constructs polymers using a graph-based
     approach, supporting:
+
     - Linear chains: ``{[#A][#B][#C]}``
     - Branched structures: ``{[#A]([#B])[#C]}``
     - Cyclic structures: ``{[#A]1[#B][#C]1}``
     - Repeat operators: ``{[#A]|10}``
 
-    Example:
-        >>> builder = PolymerBuilder(
-        ...     library={"EO": eo_monomer},
-        ...     connector=Connector(rules={("EO", "EO"): (">", "<")}, reacter=rxn),
-        ... )
-        >>> result = builder.build("{[#EO]|10}")
+    Attributes:
+        library: Mapping from monomer label to port-annotated Atomistic
+            template.
+        connector: :class:`Connector` choosing ports and reactions between
+            adjacent monomers.
+        typifier: Optional typifier applied during assembly.
+        placer: Optional :class:`Placer` for geometric placement (distances
+            in Å).
+
+    Example::
+
+        builder = PolymerBuilder(
+            library={"EO": eo_monomer},
+            connector=Connector(port_map={("EO", "EO"): (">", "<")}, reacter=rxn),
+        )
+        result = builder.build("{[#EO]|10}")
+        chain = result.polymer
     """
 
     def __init__(

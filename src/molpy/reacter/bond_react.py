@@ -224,6 +224,11 @@ class BondReactReacter(Reacter):
     The ``radius`` parameter controls how many bonds away from the anchor
     atoms the extracted subgraph extends.
 
+    Attributes:
+        radius: Subgraph extraction radius in bond counts (default 4).
+        name: Reaction name (inherited from :class:`Reacter`), used as the
+            template stem.
+
     Generated templates are validated against the REACTER protocol
     (Gissinger et al., Polymer 128 (2017) 211-217,
     DOI: 10.1016/j.polymer.2017.06.038; Gissinger et al., Macromolecules
@@ -240,6 +245,11 @@ class BondReactReacter(Reacter):
       their planarity terms;
     - total charge conserved within :data:`CHARGE_CONSERVATION_TOL`
       (warning on violation).
+
+    Terminology note: the molpy API consistently says *anchor* for the
+    bond-forming atoms; the word "initiator" survives only in the LAMMPS
+    map-file dialect (the ``InitiatorIDs`` section and the
+    ``initiator_atoms`` template field that feeds it).
 
     Example::
 

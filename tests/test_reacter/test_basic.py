@@ -62,15 +62,15 @@ def test_merge_simple():
 
 
 def test_port_anchor_selector():
-    """Test selecting anchor from port using find_port_atom."""
-    from molpy.reacter.selectors import find_port_atom
+    """Test selecting anchor from port using find_port."""
+    from molpy.reacter.selectors import find_port
 
     struct = Atomistic()
     c = Atom(element="C")
     struct.add_entity(c)
     c["port"] = "1"
 
-    port_atom = find_port_atom(struct, "1")
+    port_atom = find_port(struct, "1")
     assert port_atom is c
 
 
@@ -169,10 +169,10 @@ def test_simple_cc_coupling():
         bond_former=form_single_bond,
     )
 
-    from molpy.reacter.selectors import find_port_atom
+    from molpy.reacter.selectors import find_port
 
-    port_atom_L = find_port_atom(struct_L, "1")
-    port_atom_R = find_port_atom(struct_R, "2")
+    port_atom_L = find_port(struct_L, "1")
+    port_atom_R = find_port(struct_R, "2")
     result = cc_coupling.run(
         struct_L,
         struct_R,
@@ -226,10 +226,10 @@ def test_asymmetric_reaction():
         bond_former=form_double_bond,  # Make C=C
     )
 
-    from molpy.reacter.selectors import find_port_atom
+    from molpy.reacter.selectors import find_port
 
-    port_atom_L = find_port_atom(struct_L, "1")
-    port_atom_R = find_port_atom(struct_R, "2")
+    port_atom_L = find_port(struct_L, "1")
+    port_atom_R = find_port(struct_R, "2")
     result = reacter.run(
         struct_L,
         struct_R,
@@ -269,10 +269,10 @@ def test_addition_reaction():
         bond_former=form_single_bond,
     )
 
-    from molpy.reacter.selectors import find_port_atom
+    from molpy.reacter.selectors import find_port
 
-    port_atom_L = find_port_atom(struct_L, "1")
-    port_atom_R = find_port_atom(struct_R, "2")
+    port_atom_L = find_port(struct_L, "1")
+    port_atom_R = find_port(struct_R, "2")
     result = addition.run(
         struct_L,
         struct_R,

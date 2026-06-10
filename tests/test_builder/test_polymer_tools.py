@@ -2,7 +2,7 @@
 
 import pytest
 
-from molpy.builder.polymer.dsl import (
+from molpy.builder.polymer.tools import (
     BuildPolymer,
     BuildSystem,
     PlanSystem,

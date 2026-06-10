@@ -68,10 +68,12 @@ class Reacter:
     original structures remain unchanged.
 
     **Port Selection Philosophy:**
-    Reacter does NOT handle port selection. The caller
-    must explicitly specify which ports to connect via port_L and port_R.
-    Ports are marked directly on atoms using the "port" or "ports" attribute.
-    This makes the reaction execution deterministic and explicit.
+    Reacter does NOT handle port selection. The caller must explicitly
+    specify which port atoms to connect via ``port_atom_L`` and
+    ``port_atom_R`` (locate them with :func:`molpy.reacter.find_port`).
+    Ports are marked directly on atoms using the "port" or "ports"
+    attribute. This makes the reaction execution deterministic and
+    explicit.
 
     Attributes:
         name: Descriptive name for this reaction type
@@ -82,25 +84,43 @@ class Reacter:
         bond_former: Function to create bond between anchor atoms
 
     Example:
-        >>> from molpy.reacter import Reacter, select_port_atom, select_one_hydrogen, form_single_bond
-        >>> from molpy import Atomistic
-        >>>
-        >>> # Mark ports on atoms
-        >>> atom_a["port"] = "1"
-        >>> atom_b["port"] = "2"
-        >>>
+        >>> from molpy.core.atomistic import Atom, Atomistic, Bond
+        >>> from molpy.reacter import (
+        ...     Reacter,
+        ...     find_port,
+        ...     form_single_bond,
+        ...     select_hydrogens,
+        ...     select_self,
+        ... )
+        >>> def methane_fragment(port):
+        ...     struct = Atomistic()
+        ...     carbon = Atom(element="C")
+        ...     hydrogens = [Atom(element="H") for _ in range(3)]
+        ...     struct.add_entity(carbon, *hydrogens)
+        ...     for hydrogen in hydrogens:
+        ...         struct.add_link(Bond(carbon, hydrogen))
+        ...     carbon["port"] = port
+        ...     return struct
+        >>> left = methane_fragment(">")
+        >>> right = methane_fragment("<")
         >>> cc_coupling = Reacter(
         ...     name="C-C_coupling_with_H_loss",
-        ...     port_selector_left=select_port_atom,
-        ...     port_selector_right=select_port_atom,
-        ...     leaving_selector_left=select_one_hydrogen,
-        ...     leaving_selector_right=select_one_hydrogen,
+        ...     anchor_selector_left=select_self,
+        ...     anchor_selector_right=select_self,
+        ...     leaving_selector_left=select_hydrogens(1),
+        ...     leaving_selector_right=select_hydrogens(1),
         ...     bond_former=form_single_bond,
         ... )
-        >>>
-        >>> # Port selection is explicit!
-        >>> product = cc_coupling.run(structA, structB, port_L="1", port_R="2")
-        >>> print(product.removed_atoms)  # [H1, H2]
+        >>> result = cc_coupling.run(
+        ...     left,
+        ...     right,
+        ...     port_atom_L=find_port(left, ">"),
+        ...     port_atom_R=find_port(right, "<"),
+        ... )
+        >>> len(result.removed_atoms)
+        2
+        >>> len(list(result.product.atoms))  # 8 atoms in, 2 H removed
+        6
     """
 
     def __init__(
@@ -309,7 +329,7 @@ class Reacter:
         Execute the reaction between two Atomistic structures.
 
         **IMPORTANT: port_atom_L and port_atom_R must be explicit Atom objects.**
-        Use find_port_atom() or find_port_atom_by_node() to get them first.
+        Use find_port() or find_port_atom_by_node() to get them first.
 
         Workflow:
         1. Transform port atoms to reaction sites via port selectors

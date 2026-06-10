@@ -1,8 +1,16 @@
-"""Convenience exports for the builder subpackage.
+"""System assembly — start here.
 
-Polymer construction goes through the declarative ``polymer()`` and
-``polymer_system()`` entry points (see ``molpy.builder.polymer.dsl``);
-``PolymerBuilder`` remains available for direct graph-based assembly.
+Polymer construction goes through the declarative entry functions:
+
+- :func:`polymer` — build a single chain in one call
+- :func:`polymer_system` — build a polydisperse multi-chain system
+- :func:`prepare_monomer` — BigSMILES → 3D monomer with ports
+
+Advanced, step-by-step assembly lives in :mod:`molpy.builder.polymer`
+(``PolymerBuilder``, ``Connector``, placers, ``ReactionPresets``).
+Crystal construction goes through :func:`build_crystal` with
+:class:`Lattice` / :class:`Site`. AmberTools-backed polymer builds use
+:class:`AmberPolymerBuilder` (or ``polymer(..., backend="amber")``).
 """
 
 from molpy.core.region import BoxRegion, Cube, Region, SphereRegion
@@ -11,11 +19,6 @@ from .crystal import Lattice, Site, build_crystal
 from .polymer import *
 from .polymer.ambertools import AmberPolymerBuilder
 from .polymer.dsl import (
-    BuildPolymer,
-    BuildPolymerAmber,
-    BuildSystem,
-    PlanSystem,
-    PrepareMonomer,
     generate_3d,
     polymer,
     polymer_system,
@@ -33,12 +36,7 @@ __all__ = [
     "Site",
     "SphereRegion",
     "build_crystal",
-    # Polymer DSL tools and entry functions
-    "PrepareMonomer",
-    "BuildPolymer",
-    "PlanSystem",
-    "BuildSystem",
-    "BuildPolymerAmber",
+    # Polymer entry functions
     "polymer",
     "polymer_system",
     "prepare_monomer",

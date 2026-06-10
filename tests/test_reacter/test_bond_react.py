@@ -23,7 +23,7 @@ from molpy.reacter import (
     select_none,
     select_one_hydrogen,
 )
-from molpy.reacter.selectors import find_port_atom
+from molpy.reacter.selectors import find_port
 from molpy.reacter.bond_react import (
     BondReactReacter,
     BondReactResult,
@@ -100,8 +100,8 @@ def _run_sp2_reaction(radius: int = 4) -> BondReactResult:
     left = _build_sp2_left()
     right = _build_sp2_right()
     reacter = _make_sp2_reacter(radius)
-    port_l = find_port_atom(left, ">")
-    port_r = find_port_atom(right, "<")
+    port_l = find_port(left, ">")
+    port_r = find_port(right, "<")
     return reacter.run(left, right, port_atom_L=port_l, port_atom_R=port_r)
 
 
@@ -215,8 +215,8 @@ class TestBondReactReacter:
         )
 
         # Run reaction with template
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -268,8 +268,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
 
         # Check react_ids are assigned before reaction
         bond_react_reacter._assign_react_ids(struct_L)
@@ -305,8 +305,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -346,8 +346,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L,
             struct_R,
@@ -387,8 +387,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -430,8 +430,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -478,8 +478,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -536,8 +536,8 @@ class TestBondReactReacter:
             radius=1,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result1 = bond_react_reacter_1.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -557,8 +557,8 @@ class TestBondReactReacter:
         # Reset structures
         struct_L2 = struct_L.copy()
         struct_R2 = struct_R.copy()
-        port_atom_L2 = find_port_atom(struct_L2, "1")
-        port_atom_R2 = find_port_atom(struct_R2, "2")
+        port_atom_L2 = find_port(struct_L2, "1")
+        port_atom_R2 = find_port(struct_R2, "2")
 
         result2 = bond_react_reacter_3.run(
             struct_L2, struct_R2, port_atom_L=port_atom_L2, port_atom_R=port_atom_R2
@@ -623,8 +623,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -679,8 +679,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")
-        port_atom_R = find_port_atom(struct_R, "2")
+        port_atom_L = find_port(struct_L, "1")
+        port_atom_R = find_port(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -758,8 +758,8 @@ class TestBondReactReacter:
             radius=3,
         )
 
-        port_L = find_port_atom(struct_L, ">")
-        port_R = find_port_atom(struct_R, "<")
+        port_L = find_port(struct_L, ">")
+        port_R = find_port(struct_R, "<")
         result = bond_react_reacter.run(struct_L, struct_R, port_L, port_R)
         template = result.template
 
@@ -808,8 +808,8 @@ class TestBondReactReacter:
             radius=2,
         )
 
-        port_L = find_port_atom(struct_L, ">")
-        port_R = find_port_atom(struct_R, "<")
+        port_L = find_port(struct_L, ">")
+        port_R = find_port(struct_R, "<")
         result = bond_react_reacter.run(struct_L, struct_R, port_L, port_R)
         template = result.template
 
@@ -927,8 +927,8 @@ class TestBondReactReacter:
             radius=2,
         )
 
-        port_L = find_port_atom(struct_L, ">")
-        port_R = find_port_atom(struct_R, "<")
+        port_L = find_port(struct_L, ">")
+        port_R = find_port(struct_R, "<")
         result = bond_react_reacter.run(struct_L, struct_R, port_L, port_R)
         template = result.template
 
@@ -981,8 +981,8 @@ class TestBondReactReacter:
             radius=2,
         )
 
-        port_L = find_port_atom(struct_L, ">")
-        port_R = find_port_atom(struct_R, "<")
+        port_L = find_port(struct_L, ">")
+        port_R = find_port(struct_R, "<")
         result = bond_react_reacter.run(struct_L, struct_R, port_L, port_R)
         template = result.template
 
@@ -1107,8 +1107,8 @@ class TestInitiatorValidation:
         """Anchor sitting on the template edge (radius too small) raises."""
         left = _build_sp2_left()
         right = _build_sp2_right()
-        port_l = find_port_atom(left, ">")
-        port_r = find_port_atom(right, "<")
+        port_l = find_port(left, ">")
+        port_r = find_port(right, "<")
 
         with pytest.raises(ValueError, match="radius"):
             reacter = _make_sp2_reacter(radius=0)
@@ -1192,8 +1192,8 @@ class TestMutationHygiene:
         left = _build_sp2_left()
         right = _build_sp2_right()
         reacter = _make_sp2_reacter(radius=4)
-        port_l = find_port_atom(left, ">")
-        port_r = find_port_atom(right, "<")
+        port_l = find_port(left, ">")
+        port_r = find_port(right, "<")
 
         reacter.run(left, right, port_atom_L=port_l, port_atom_R=port_r)
 
@@ -1215,8 +1215,8 @@ class TestMutationHygiene:
         left_count = len(list(left.atoms))
         right_count = len(list(right.atoms))
         reacter = _make_sp2_reacter(radius=4)
-        port_l = find_port_atom(left, ">")
-        port_r = find_port_atom(right, "<")
+        port_l = find_port(left, ">")
+        port_r = find_port(right, "<")
 
         reacter.run(left, right, port_atom_L=port_l, port_atom_R=port_r)
 

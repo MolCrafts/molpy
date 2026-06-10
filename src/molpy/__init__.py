@@ -12,14 +12,40 @@ from types import ModuleType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from . import adapter, data, engine, io, legacy, parser, potential, typifier
+    from . import (
+        adapter,
+        builder,
+        compute,
+        data,
+        engine,
+        io,
+        legacy,
+        pack,
+        parser,
+        potential,
+        reacter,
+        typifier,
+    )
 
 # Submodules are loaded lazily (PEP 562) so that importing a single
 # subpackage (e.g. ``molpy.reacter``) does not eagerly initialize the
 # whole io/engine/adapter surface. ``molpy.io`` et al. still work as
 # attribute accesses and ``import molpy.io`` works as usual.
 _LAZY_SUBMODULES = frozenset(
-    {"adapter", "data", "engine", "io", "legacy", "parser", "potential", "typifier"}
+    {
+        "adapter",
+        "builder",
+        "compute",
+        "data",
+        "engine",
+        "io",
+        "legacy",
+        "pack",
+        "parser",
+        "potential",
+        "reacter",
+        "typifier",
+    }
 )
 
 
@@ -69,12 +95,16 @@ from .version import release_date, version
 __all__ = [
     # Submodules
     "adapter",
+    "builder",
+    "compute",
     "data",
     "engine",
     "io",
     "legacy",
+    "pack",
     "parser",
     "potential",
+    "reacter",
     "typifier",
     # Core atomistic
     "Angle",
