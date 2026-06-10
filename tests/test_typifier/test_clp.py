@@ -5,9 +5,9 @@ implemented by inheritance from the OPLS-AA typifier with its own clp.xml data.
 Reference values are transcribed from the authoritative paduagroup/clandp il.ff
 distribution into ``fixtures/clp_ilff_reference.json``.
 
-The tests below check atom typing and nonbonded (charge/LJ) parameters, so they
-construct ``ClpTypifier`` with the bonded-term passes skipped (those are not
-under test and the bare ion fragments lack full bonded/improper coverage).
+The ion fragments are built with explicit connectivity, ``get_topo`` generates
+their angle/dihedral topology, and the full ``ClpTypifier`` pipeline (atom ->
+pair -> bond -> angle -> dihedral, strict) types them end to end.
 """
 
 import json
@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from molpy import Atom, Atomistic, Bond
+from molpy.core.atomistic import Angle, Dihedral
 from molpy.data.forcefield import get_forcefield_path, list_forcefields
 from molpy.io.forcefield.xml import read_xml_forcefield
 from molpy.typifier import ClpTypifier, OplsTypifier
@@ -36,7 +37,7 @@ def _build(elements, edges):
     asm.add_entity(*atoms)
     for i, j in edges:
         asm.add_link(Bond(atoms[i], atoms[j]))
-    return asm, atoms
+    return asm.get_topo(gen_angle=True, gen_dihe=True)
 
 
 def _c4c1im():
@@ -130,6 +131,16 @@ def _dca():
     return _build(["N", "C", "N", "C", "N"], [(0, 1), (1, 2), (0, 3), (3, 4)])
 
 
+def _assert_fully_typed(struct):
+    """Every atom and every bonded term carries a force-field type."""
+    assert all(a.get("type") is not None for a in struct.atoms)
+    assert all(b.get("type") is not None for b in struct.bonds)
+    for angle in struct.links.bucket(Angle):
+        assert angle.get("type") is not None
+    for dihedral in struct.links.bucket(Dihedral):
+        assert dihedral.get("type") is not None
+
+
 # --------------------------------------------------------------------------
 # ac-001: ClpTypifier importable and subclass of OplsTypifier
 # --------------------------------------------------------------------------
@@ -179,13 +190,7 @@ def test_no_dedicated_clp_reader_class():
 # ac-005: imidazolium ring atoms CR vs CW vs NA discriminated on [C4C1im]+
 # --------------------------------------------------------------------------
 def test_imidazolium_ring_discrimination():
-    asm, _ = _c4c1im()
-    out = ClpTypifier(
-        skip_bond_typing=True,
-        skip_angle_typing=True,
-        skip_dihedral_typing=True,
-        strict_typing=False,
-    ).typify(asm)
+    out = ClpTypifier().typify(_c4c1im())
     types = [a.get("type") for a in out.atoms]
     # ring: NA(0) CR(1) NA(2) CW(3) CW(4), HCR(6), HCW(8,9)
     assert types[0] == "NA" and types[2] == "NA"
@@ -195,19 +200,12 @@ def test_imidazolium_ring_discrimination():
     assert types[8] == "HCW" and types[9] == "HCW"
 
 
-def test_c4c1im_fully_typed():
-    asm, _ = _c4c1im()
-    out = ClpTypifier(
-        skip_bond_typing=True,
-        skip_angle_typing=True,
-        skip_dihedral_typing=True,
-        strict_typing=False,
-    ).typify(asm)
-    assert all(a.get("type") is not None for a in out.atoms)
+def test_c4c1im_full_pipeline():
+    _assert_fully_typed(ClpTypifier().typify(_c4c1im()))
 
 
 # --------------------------------------------------------------------------
-# ac-006: the four anions typify without error, every atom gets a type
+# ac-006: the four anions type end to end, every atom gets the expected type
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "builder,expected",
@@ -218,40 +216,25 @@ def test_c4c1im_fully_typed():
         (_dca, {"N3A", "CZA", "NZA"}),
     ],
 )
-def test_anion_typing(builder, expected):
-    asm, _ = builder()
-    out = ClpTypifier(
-        skip_bond_typing=True,
-        skip_angle_typing=True,
-        skip_dihedral_typing=True,
-        strict_typing=False,
-    ).typify(asm)
-    types = {a.get("type") for a in out.atoms}
-    assert None not in types
-    assert types == expected
+def test_anion_full_pipeline(builder, expected):
+    out = ClpTypifier().typify(builder())
+    assert {a.get("type") for a in out.atoms} == expected
+    _assert_fully_typed(out)
 
 
 # --------------------------------------------------------------------------
 # ac-007: assigned charges / LJ match il.ff reference within tolerance
 # --------------------------------------------------------------------------
-def test_charges_and_lj_match_ilff_reference():
-    typ = ClpTypifier(
-        skip_bond_typing=True,
-        skip_angle_typing=True,
-        skip_dihedral_typing=True,
-        strict_typing=False,
-    )
-    for builder in (_c4c1im, _ntf2, _dca):
-        asm, _ = builder()
-        out = typ.typify(asm)
-        for atom in out.atoms:
-            t = atom.get("type")
-            if t not in REF:
-                continue
-            ref = REF[t]
-            assert atom.get("charge") == pytest.approx(ref["charge"], abs=1e-4)
-            assert atom.get("sigma") == pytest.approx(ref["sigma_A"], rel=1e-4)
-            assert atom.get("epsilon") == pytest.approx(ref["epsilon_kcal"], rel=1e-4)
+@pytest.mark.parametrize("builder", [_c4c1im, _ntf2, _dca])
+def test_charges_and_lj_match_ilff_reference(builder):
+    out = ClpTypifier().typify(builder())
+    for atom in out.atoms:
+        ref = REF.get(atom.get("type"))
+        if ref is None:
+            continue
+        assert atom.get("charge") == pytest.approx(ref["charge"], abs=1e-4)
+        assert atom.get("sigma") == pytest.approx(ref["sigma_A"], rel=1e-4)
+        assert atom.get("epsilon") == pytest.approx(ref["epsilon_kcal"], rel=1e-4)
 
 
 # --------------------------------------------------------------------------
@@ -262,13 +245,7 @@ def test_charges_and_lj_match_ilff_reference():
     [(_c4c1im, 1.0), (_bf4, -1.0), (_pf6, -1.0), (_ntf2, -1.0), (_dca, -1.0)],
 )
 def test_integer_ion_charge(builder, total):
-    asm, _ = builder()
-    out = ClpTypifier(
-        skip_bond_typing=True,
-        skip_angle_typing=True,
-        skip_dihedral_typing=True,
-        strict_typing=False,
-    ).typify(asm)
+    out = ClpTypifier().typify(builder())
     q = sum(a.get("charge") for a in out.atoms)
     assert q == pytest.approx(total, abs=1e-6)
 
