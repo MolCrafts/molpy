@@ -1,8 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-06-10
 
-### Breaking changes
+This release lands the **molrs Rust backend** as the foundation of `Frame` /
+`Block` / `Box` / `compute`, and a five-stage **builder/reacter overhaul**
+(dead-code consolidation, fix bond/react serialization moved into the io layer,
+REACTER template scientific-correctness fixes, a consolidated public API with
+executable docs, and a behavior-preserving build-loop performance pass).
+Requires `molcrafts-molrs == 0.1.0`.
+
+### Builder / Reacter
 
 - **`BondReactTemplate.write()` / `write_map()` were removed.**
   `BondReactTemplate` is now a pure data object; all fix bond/react
@@ -16,7 +23,22 @@
   Top-level submodules (`molpy.io`, `molpy.engine`, `molpy.adapter`, …) are
   now lazy (PEP 562): `import molpy.reacter` initializes only `core` (and
   `potential`). `mp.io.…` attribute access and `import molpy.io` behave as
-  before.
+  before. `molpy.builder` / `reacter` / `pack` / `compute` are reachable as
+  lazy top-level attributes (`mp.builder.…`).
+- **Builder/reacter terminology and API consolidation.**
+  `polymer()` / `polymer_system()` are the documented one-call entry points;
+  `PolymerBuilder` + `Connector` remain the step-by-step API. Agent-only Tool
+  classes moved to `molpy.builder.polymer.tools` (out of the user `__all__`);
+  `ReactionPresets` / `ReactionPresetSpec` are now public extension points.
+  `ReactionPresetSpec.site_selector_*` → `anchor_selector_*`;
+  `molpy.reacter.find_port_atom` → `find_port`. No deprecation shims
+  (experimental stage); see the repo-root `CHANGELOG.md`.
+- **REACTER template correctness.** `BondReactReacter` post templates now carry
+  impropers (sp2 planarity terms survive `fix bond/react`), `InitiatorIDs` are
+  deterministic and validated (exactly 2, never on the template boundary), edge
+  atoms are checked for identical pre/post type and charge, total charge is
+  checked for conservation (`CHARGE_CONSERVATION_TOL = 1e-6` e), and `run()` no
+  longer mutates caller-owned `left` / `right` structures.
 - **molrs is now a required dependency.** `molcrafts-molrs` moved from an
   optional extra into the core `dependencies`. The `molpy[molrs]` extra key was
   removed — installing molpy always installs molrs. `Frame`, `Block`, and `Box`
