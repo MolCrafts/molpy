@@ -24,6 +24,12 @@ from .polymer.dsl import (
     polymer_system,
     prepare_monomer,
 )
+from .virtualsite import (
+    DrudeBuilder,
+    Tip4pBuilder,
+    VirtualSiteBuilder,
+    load_polarizability,
+)
 
 __all__ = [
     # AmberTools builders
@@ -41,4 +47,9 @@ __all__ = [
     "polymer_system",
     "prepare_monomer",
     "generate_3d",
+    # Virtual-site augmentation
+    "VirtualSiteBuilder",
+    "DrudeBuilder",
+    "Tip4pBuilder",
+    "load_polarizability",
 ]

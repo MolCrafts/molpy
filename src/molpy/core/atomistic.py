@@ -46,6 +46,47 @@ class Atom(Entity):
         ident = self.get("element") or self.get("symbol") or self.get("type")
         return f"<Atom: {ident if ident is not None else id(self)}>"
 
+    @property
+    def is_virtual(self) -> bool:
+        """True if this node carries a virtual-site marker (``vsite`` field).
+
+        The marker is a stored data field, not the Python class: molrs
+        re-materialises nodes as plain :class:`Atom`, so identity must be read
+        from the persisted ``vsite`` field rather than ``isinstance``.
+        """
+        return self.get("vsite") is not None
+
+
+class VirtualSite(Atom):
+    """A massless / rule-placed auxiliary particle. Data only — no energy.
+
+    Carries a persistent ``vsite`` marker field (set on construction) plus the
+    usual atom data. Subclasses set the marker value via ``_vsite_kind``.
+    Identity after a molrs round-trip is read from the ``vsite`` field
+    (:attr:`Atom.is_virtual`), since the Python subclass is not preserved.
+    """
+
+    __slots__ = ()
+    _vsite_kind = "virtual"
+
+    def __init__(self, mapping: Any = None, /, **attrs: Any) -> None:
+        attrs.setdefault("vsite", self._vsite_kind)
+        super().__init__(mapping, **attrs)
+
+
+class DrudeParticle(VirtualSite):
+    """Polarizable Drude shell: co-located with its core, spring-bound."""
+
+    __slots__ = ()
+    _vsite_kind = "drude"
+
+
+class MasslessSite(VirtualSite):
+    """Rigid geometric site (e.g. TIP4P M-site, lone pair); no spring."""
+
+    __slots__ = ()
+    _vsite_kind = "massless"
+
 
 class Bond(Link[Atom]):
     """Covalent bond between two atoms (molrs relation kind ``bonds``)."""

@@ -60,7 +60,17 @@ def __dir__() -> list[str]:
 
 
 # Core
-from .core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper
+from .core.atomistic import (
+    Angle,
+    Atom,
+    Atomistic,
+    Bond,
+    Dihedral,
+    DrudeParticle,
+    Improper,
+    MasslessSite,
+    VirtualSite,
+)
 from .core.box import Box
 from .core.cg import Bead, CGBond, CoarseGrain
 from .core.entity import Entity, Link
@@ -109,6 +119,9 @@ __all__ = [
     # Core atomistic
     "Angle",
     "Atom",
+    "VirtualSite",
+    "DrudeParticle",
+    "MasslessSite",
     "Atomistic",
     "Bond",
     "Dihedral",
