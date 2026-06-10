@@ -1,204 +1,19 @@
-"""Canonical field definitions and I/O boundary formatters.
+"""Canonical field registry — re-exported from molrs (single source of truth).
 
-This module defines:
-
-- ``FieldSpec``: canonical field metadata (key, dtype, shape, doc).
-- ``FieldFormatter``: base class for per-format field name translation.
-- ``ForceFieldFormatter``: extends ``FieldFormatter`` with FF parameter formatting.
-
-Architecture::
-
-    FieldSpec                         — canonical field definition
-        ↓
-    FieldFormatter                    — data field mapping registry
-        ↓                               canonicalize() / localize() on Block
-    ForceFieldFormatter(FieldFormatter) — inherits field mapping + adds param formatters
-
-Each I/O format defines its own ``FieldFormatter`` subclass in its own module.
-ForceField writers inherit from the corresponding data formatter to share
-field mappings.
+The canonical field names and :class:`FieldSpec`/:class:`FieldFormatter` types now
+live in :mod:`molrs.fields`, whose keys are sourced from the Rust ``molrs.keys``
+constants. molpy re-exports them wholesale so existing
+``from molpy.core.fields import …`` call sites keep resolving, and adds only the
+force-field-specific :class:`ForceFieldFormatter` on top (until FF I/O is sunk
+into molrs-io).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import Callable
 
-import numpy as np
-
-if TYPE_CHECKING:
-    from molpy.core.frame import Block, Frame
-
-# ===================================================================
-#                       FieldSpec
-# ===================================================================
-
-
-@dataclass(frozen=True)
-class FieldSpec:
-    """Specification of a canonical field in the internal data model.
-
-    Attributes:
-        key: Canonical field name used internally.
-        dtype: NumPy dtype for this field's array.
-        shape: Dimensionality hint (``"scalar"``, ``"vector3"``, ...).
-        doc: Human-readable description with unit.
-    """
-
-    key: str
-    dtype: np.dtype
-    shape: str
-    doc: str
-
-
-# ===================================================================
-#               Canonical Atom Fields
-# ===================================================================
-
-ATOM_ID = FieldSpec("id", np.dtype(np.int64), "scalar", "atom ID (1-indexed)")
-ATOM_TYPE = FieldSpec("type", np.dtype("U64"), "scalar", "force field type label")
-CHARGE = FieldSpec("charge", np.dtype(np.float64), "scalar", "partial charge (e)")
-MASS = FieldSpec("mass", np.dtype(np.float64), "scalar", "atomic mass (amu)")
-MOL_ID = FieldSpec("mol_id", np.dtype(np.int64), "scalar", "molecule ID (1-indexed)")
-ELEMENT = FieldSpec("element", np.dtype("U4"), "scalar", "element symbol")
-SYMBOL = FieldSpec("symbol", np.dtype("U4"), "scalar", "atom/site symbol label")
-NAME = FieldSpec("name", np.dtype("U16"), "scalar", "human-readable name")
-POS_X = FieldSpec("x", np.dtype(np.float64), "scalar", "x coordinate (Angstrom)")
-POS_Y = FieldSpec("y", np.dtype(np.float64), "scalar", "y coordinate (Angstrom)")
-POS_Z = FieldSpec("z", np.dtype(np.float64), "scalar", "z coordinate (Angstrom)")
-XYZ = FieldSpec("xyz", np.dtype(np.float64), "vector3", "position vector (Angstrom)")
-ORDER = FieldSpec("order", np.dtype(np.float64), "scalar", "bond order")
-BEAD_TYPE = FieldSpec(
-    "bead_type", np.dtype("U64"), "scalar", "coarse-grained bead type"
-)
-
-# Aliases aligned 1:1 with molrs.keys string constants. molpy and molrs both
-# reference these canonical names; no scattered literals.
-X = POS_X
-Y = POS_Y
-Z = POS_Z
-TYPE = ATOM_TYPE
-ID = ATOM_ID
-VEL_X = FieldSpec("vx", np.dtype(np.float64), "scalar", "x velocity (Angstrom/fs)")
-VEL_Y = FieldSpec("vy", np.dtype(np.float64), "scalar", "y velocity (Angstrom/fs)")
-VEL_Z = FieldSpec("vz", np.dtype(np.float64), "scalar", "z velocity (Angstrom/fs)")
-RES_ID = FieldSpec("res_id", np.dtype(np.int64), "scalar", "residue ID")
-RES_NAME = FieldSpec("res_name", np.dtype("U8"), "scalar", "residue name")
-
-# ===================================================================
-#               Canonical Bond Fields
-# ===================================================================
-
-BOND_TYPE = FieldSpec("type", np.dtype("U64"), "scalar", "bond type label")
-BOND_ATOMI = FieldSpec(
-    "atomi", np.dtype(np.int64), "scalar", "first atom index (0-indexed)"
-)
-BOND_ATOMJ = FieldSpec(
-    "atomj", np.dtype(np.int64), "scalar", "second atom index (0-indexed)"
-)
-
-# ===================================================================
-#               Canonical Angle Fields
-# ===================================================================
-
-ANGLE_TYPE = FieldSpec("type", np.dtype("U64"), "scalar", "angle type label")
-ANGLE_ATOMI = FieldSpec(
-    "atomi", np.dtype(np.int64), "scalar", "first atom index (0-indexed)"
-)
-ANGLE_ATOMJ = FieldSpec(
-    "atomj", np.dtype(np.int64), "scalar", "vertex atom index (0-indexed)"
-)
-ANGLE_ATOMK = FieldSpec(
-    "atomk", np.dtype(np.int64), "scalar", "third atom index (0-indexed)"
-)
-
-# ===================================================================
-#               Canonical Dihedral Fields
-# ===================================================================
-
-DIHEDRAL_TYPE = FieldSpec("type", np.dtype("U64"), "scalar", "dihedral type label")
-DIHEDRAL_ATOMI = FieldSpec(
-    "atomi", np.dtype(np.int64), "scalar", "first atom index (0-indexed)"
-)
-DIHEDRAL_ATOMJ = FieldSpec(
-    "atomj", np.dtype(np.int64), "scalar", "second atom index (0-indexed)"
-)
-DIHEDRAL_ATOMK = FieldSpec(
-    "atomk", np.dtype(np.int64), "scalar", "third atom index (0-indexed)"
-)
-DIHEDRAL_ATOML = FieldSpec(
-    "atoml", np.dtype(np.int64), "scalar", "fourth atom index (0-indexed)"
-)
-
-
-# ===================================================================
-#                       FieldFormatter
-# ===================================================================
-
-
-class FieldFormatter:
-    """Translates between format-specific and canonical field names.
-
-    Subclasses define ``_field_formatters`` as a class-level registry mapping
-    format-native column names to :class:`FieldSpec` objects.  Registrations
-    are isolated per subclass via ``__init_subclass__``.
-
-    Example::
-
-        class LammpsFieldFormatter(FieldFormatter):
-            _field_formatters = {
-                "q":   CHARGE,   # LAMMPS "q" → canonical "charge"
-                "mol": MOL_ID,   # LAMMPS "mol" → canonical "mol_id"
-            }
-    """
-
-    _field_formatters: dict[str, FieldSpec] = {}
-
-    def __init_subclass__(cls, **kwargs: object) -> None:
-        super().__init_subclass__(**kwargs)
-        cls._field_formatters = dict(cls._field_formatters)
-
-    @classmethod
-    def register_field(cls, format_key: str, spec: FieldSpec) -> None:
-        """Register a field mapping at runtime."""
-        cls._field_formatters[format_key] = spec
-
-    # ── Block-level translation ──────────────────────────────────
-
-    def canonicalize(self, block: Block) -> Block:
-        """Reader exit: rename format-specific keys to canonical."""
-        for fmt_key, spec in self._field_formatters.items():
-            if fmt_key in block and spec.key not in block:
-                block.rename(fmt_key, spec.key)
-        return block
-
-    def localize(self, block: Block) -> Block:
-        """Writer entry: rename canonical keys to format-specific."""
-        for fmt_key, spec in self._field_formatters.items():
-            if spec.key in block and fmt_key not in block:
-                block.rename(spec.key, fmt_key)
-        return block
-
-    # ── Frame-level convenience ──────────────────────────────────
-
-    def canonicalize_frame(self, frame: Frame) -> Frame:
-        """Canonicalize all blocks in a Frame (in-place)."""
-        for key in frame.keys():
-            self.canonicalize(frame[key])
-        return frame
-
-    def localize_frame(self, frame: Frame) -> Frame:
-        """Localize every block's columns in place (canonical → format).
-
-        A rename is just a column-key swap, so this mutates ``frame`` directly
-        rather than copying it — positional writers read the localized columns
-        and discard the frame. Callers that must preserve canonical names should
-        ``.copy()`` before writing.
-        """
-        for key in frame.keys():
-            self.localize(frame[key])
-        return frame
-
+from molrs.fields import *  # noqa: F401,F403  (re-export canonical registry)
+from molrs.fields import FieldFormatter, FieldSpec, __all__ as _MOLRS_FIELDS_ALL
 
 # ===================================================================
 #                    ForceFieldFormatter
@@ -208,9 +23,9 @@ class FieldFormatter:
 class ForceFieldFormatter(FieldFormatter):
     """Extends :class:`FieldFormatter` with force-field parameter formatting.
 
-    Inherits all field-name mapping from ``FieldFormatter``.  Adds a
+    Inherits all field-name mapping from ``FieldFormatter``. Adds a
     ``_param_formatters`` registry that maps Style classes to serialization
-    functions, following the same dispatch pattern.
+    functions, following the same per-subclass dispatch pattern.
 
     Example::
 
@@ -259,3 +74,6 @@ class ForceFieldFormatter(FieldFormatter):
             f"No param formatter registered for {style_class.__name__}. "
             f"Available: {[c.__name__ for c in self._param_formatters]}"
         )
+
+
+__all__ = [*_MOLRS_FIELDS_ALL, "ForceFieldFormatter"]
