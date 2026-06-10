@@ -1,5 +1,6 @@
 from .dependency_analyzer import DependencyAnalyzer
 from .atomistic import OplsTypifier, PairTypifier
+from .clp import ClpTypifier
 from .gaff import GaffTypifier
 from .layered_engine import LayeredTypingEngine
 
@@ -9,4 +10,5 @@ __all__ = [
     "PairTypifier",
     "OplsTypifier",
     "GaffTypifier",
+    "ClpTypifier",
 ]

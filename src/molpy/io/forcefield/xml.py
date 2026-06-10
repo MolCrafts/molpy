@@ -741,9 +741,9 @@ def read_xml_forcefield(
         >>> from pathlib import Path
         >>> ff = read_xml_forcefield(Path("/path/to/custom.xml"))
     """
-    # Check if this is oplsaa.xml and use specialized reader
-    filepath_obj = Path(filepath)
-    if filepath_obj.name == "oplsaa.xml" or str(filepath).endswith("oplsaa.xml"):
+    # oplsaa.xml and clp.xml share the OPLS-AA functional form and units, so
+    # both are read through the specialized OPLS reader (kJ->kcal, nm->A).
+    if str(filepath).endswith(("oplsaa.xml", "clp.xml")):
         return read_oplsaa_forcefield(filepath, forcefield)
 
     reader = XMLForceFieldReader(filepath)

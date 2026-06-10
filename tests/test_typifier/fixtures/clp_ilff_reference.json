@@ -1,0 +1,101 @@
+{
+  "_source": "paduagroup/clandp il.ff (CL&P, Canongia Lopes & Padua, JPCB 108 (2004) 2038, DOI 10.1021/jp0362133)",
+  "_units": "charge in e; sigma in Angstrom; epsilon in kcal/mol (il.ff kJ/mol / 4.184), i.e. the values a typified atom carries after OPLSAAForceFieldReader unit conversion",
+  "atom_types": {
+    "NA": {
+      "charge": 0.15,
+      "sigma_A": 3.25,
+      "epsilon_kcal": 0.17
+    },
+    "CR": {
+      "charge": -0.11,
+      "sigma_A": 3.55,
+      "epsilon_kcal": 0.07
+    },
+    "CW": {
+      "charge": -0.13,
+      "sigma_A": 3.55,
+      "epsilon_kcal": 0.07
+    },
+    "HCR": {
+      "charge": 0.21,
+      "sigma_A": 2.42,
+      "epsilon_kcal": 0.03
+    },
+    "HCW": {
+      "charge": 0.21,
+      "sigma_A": 2.42,
+      "epsilon_kcal": 0.03
+    },
+    "C1": {
+      "charge": -0.17,
+      "sigma_A": 3.5,
+      "epsilon_kcal": 0.065999
+    },
+    "H1": {
+      "charge": 0.13,
+      "sigma_A": 2.5,
+      "epsilon_kcal": 0.03
+    },
+    "C2": {
+      "charge": 0.01,
+      "sigma_A": 3.5,
+      "epsilon_kcal": 0.065999
+    },
+    "CS": {
+      "charge": -0.12,
+      "sigma_A": 3.5,
+      "epsilon_kcal": 0.065999
+    },
+    "CT": {
+      "charge": -0.18,
+      "sigma_A": 3.5,
+      "epsilon_kcal": 0.065999
+    },
+    "HC": {
+      "charge": 0.06,
+      "sigma_A": 2.5,
+      "epsilon_kcal": 0.03
+    },
+    "CBT": {
+      "charge": 0.35,
+      "sigma_A": 3.5,
+      "epsilon_kcal": 0.065999
+    },
+    "SBT": {
+      "charge": 1.02,
+      "sigma_A": 3.55,
+      "epsilon_kcal": 0.25
+    },
+    "NBT": {
+      "charge": -0.66,
+      "sigma_A": 3.25,
+      "epsilon_kcal": 0.17
+    },
+    "OBT": {
+      "charge": -0.53,
+      "sigma_A": 3.15,
+      "epsilon_kcal": 0.200134
+    },
+    "F1": {
+      "charge": -0.16,
+      "sigma_A": 3.118,
+      "epsilon_kcal": 0.061042
+    },
+    "N3A": {
+      "charge": -0.76,
+      "sigma_A": 3.25,
+      "epsilon_kcal": 0.17
+    },
+    "CZA": {
+      "charge": 0.64,
+      "sigma_A": 3.3,
+      "epsilon_kcal": 0.065999
+    },
+    "NZA": {
+      "charge": -0.76,
+      "sigma_A": 3.2,
+      "epsilon_kcal": 0.17
+    }
+  }
+}
