@@ -539,16 +539,13 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         entity_type: type[Atom] = Atom,
         link_type: type[Link] = Bond,
     ) -> list[Atom]:
-        topo = self._build_topology(link_type)
-        if entity not in topo.entity_to_idx:
-            return []
-        center = topo.entity_to_idx[entity]
-        distances = topo.distances(source=[center])[0]
-        idx_to_entity = topo.idx_to_entity
+        # BFS over the bond graph via the molrs Rust kernel (single source);
+        # unreachable atoms are already excluded. Matches the prior semantics
+        # (the source itself, at distance 0, is within any radius >= 0).
         return [
-            idx_to_entity[i]
-            for i, d in enumerate(distances)
-            if d <= radius and d < float("inf")
+            self._intern_atom(h)
+            for h, d in self.topo_distances(entity.handle)
+            if d <= radius
         ]
 
     def get_topo_distances(
@@ -557,16 +554,8 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         entity_type: type[Atom] = Atom,
         link_type: type[Link] = Bond,
     ) -> dict[Atom, int]:
-        topo = self._build_topology(link_type)
-        if source not in topo.entity_to_idx:
-            return {}
-        s = topo.entity_to_idx[source]
-        distances = topo.distances(source=[s])[0]
-        idx_to_entity = topo.idx_to_entity
         return {
-            idx_to_entity[i]: int(d)
-            for i, d in enumerate(distances)
-            if d < float("inf")
+            self._intern_atom(h): int(d) for h, d in self.topo_distances(source.handle)
         }
 
     def extract_subgraph(
@@ -577,33 +566,31 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         link_type: type[Link] = Bond,
     ) -> tuple["Atomistic", list[Atom]]:
         centers = list(center_entities)
-        topo = self._build_topology(link_type)
-        entity_to_idx = topo.entity_to_idx
-        idx_to_entity = topo.idx_to_entity
-
-        center_idx = [entity_to_idx[c] for c in centers if c in entity_to_idx]
         new_struct = type(self)()
         new_struct._props = dict(self._props)
-        if not center_idx:
+        if not centers:
             return new_struct, []
 
-        selected: set[int] = set()
-        for c in center_idx:
-            distances = topo.distances(source=[c])[0]
-            for i, d in enumerate(distances):
-                if d <= radius and d < float("inf"):
-                    selected.add(i)
+        # BFS radius ball around every center over the bond graph (molrs kernel).
+        # A center not in this structure contributes nothing (empty distances).
+        selected_handles: set[int] = set()
+        for c in centers:
+            selected_handles.update(
+                h for h, d in self.topo_distances(c.handle) if d <= radius
+            )
+        if not selected_handles:
+            return new_struct, []
 
-        selected_entities = [idx_to_entity[i] for i in sorted(selected)]
+        # Deterministic (row) order over the selection.
+        selected_entities = [a for a in self.atoms if a.handle in selected_handles]
         selected_set = set(selected_entities)
 
-        edge_idx: set[int] = set()
-        for i in selected:
-            for j in topo.neighbors(i):
-                if j not in selected:
-                    edge_idx.add(i)
-                    break
-        edge_entities = [idx_to_entity[i] for i in sorted(edge_idx)]
+        # Boundary atoms: a selected atom with a bond-neighbor outside the ball.
+        edge_entities = [
+            a
+            for a in selected_entities
+            if any(nb not in selected_set for nb in self.get_neighbors(a))
+        ]
 
         # clone selected atoms + induced topology into the new struct
         entity_map: dict[Atom, Atom] = {}
