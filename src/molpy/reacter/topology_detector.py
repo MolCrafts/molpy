@@ -1,27 +1,94 @@
 """
 Topology detection and update for chemical reactions.
 
-This module provides intelligent detection and updating of angles and dihedrals
-after bond formation in reactions. It identifies affected old topology items
-and replaces them with new ones based on the updated bond structure.
+This module provides intelligent detection and updating of angles, dihedrals,
+and impropers after bond formation in reactions. It identifies affected old
+topology items and replaces them with new ones based on the updated bond
+structure.
 """
 
 from collections.abc import Collection
 
-from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral
+from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper
 from molpy.core.entity import Entity
 from molpy.reacter.utils import find_neighbors
 
 
 class TopologyDetector:
-    """
-    Detects and updates angles and dihedrals after reaction bond formation.
+    """Detects and updates bonded topology after reaction bond formation.
 
-    This class implements intelligent topology detection that:
-    1. Identifies atoms affected by new bonds
-    2. Removes old topology items (angles/dihedrals) involving affected atoms
-    3. Generates new topology items based on current bond structure
+    Implements the topology bookkeeping required by REACTER-style template
+    generation (Gissinger et al., Polymer 128 (2017) 211-217,
+    DOI: 10.1016/j.polymer.2017.06.038; Gissinger et al., Macromolecules 53
+    (2020) 9953-9961, DOI: 10.1021/acs.macromol.0c02012; LAMMPS
+    ``fix bond/react``: https://docs.lammps.org/fix_bond_react.html):
+
+    1. Identifies atoms affected by new bonds (endpoints + first shell)
+    2. Removes topology items (angles/dihedrals/impropers) involving
+       removed atoms
+    3. Generates new angles/dihedrals around new bonds and improper
+       candidates at affected sp2-like centers (exactly 3 bonded
+       neighbors), deduplicated against existing topology
+
+    Impropers matter physically: OPLS-AA and GAFF use them to keep sp2
+    centers planar, so a post-reaction template that lost impropers would
+    let planar groups pyramidalize.
     """
+
+    @staticmethod
+    def _generate_impropers_around_atoms(
+        assembly: Atomistic,
+        atoms: Collection[Atom],
+    ) -> list[Improper]:
+        """Generate improper candidates at atoms with exactly 3 neighbors.
+
+        For each atom with exactly three bonded neighbors, emits
+        ``Improper(center, n1, n2, n3)`` with the center atom in the i
+        position (molpy convention, see :class:`molpy.core.atomistic.Improper`).
+        Atoms with two or four+ neighbors yield no candidates.
+
+        Args:
+            assembly: The Atomistic structure.
+            atoms: Candidate center atoms (typically the affected set).
+
+        Returns:
+            List of new Improper objects (not yet added to assembly).
+        """
+        candidates: list[Improper] = []
+        for atom in atoms:
+            neighbors = find_neighbors(assembly, atom)
+            if len(neighbors) == 3:
+                candidates.append(Improper(atom, *neighbors))
+        return candidates
+
+    @staticmethod
+    def _deduplicate_impropers(
+        impropers: list[Improper],
+        existing_impropers: Collection[Improper],
+    ) -> list[Improper]:
+        """Remove duplicate impropers (same center, same unordered neighbors).
+
+        Args:
+            impropers: Candidate impropers.
+            existing_impropers: Impropers already present in the assembly.
+
+        Returns:
+            List of unique new impropers.
+        """
+
+        def _key(improper: Improper) -> tuple[Atom, frozenset[Atom]]:
+            endpoints = improper.endpoints
+            return (endpoints[0], frozenset(endpoints[1:]))
+
+        existing_keys = {_key(imp) for imp in existing_impropers}
+        unique: list[Improper] = []
+        seen: set[tuple[Atom, frozenset[Atom]]] = set()
+        for improper in impropers:
+            key = _key(improper)
+            if key not in existing_keys and key not in seen:
+                unique.append(improper)
+                seen.add(key)
+        return unique
 
     @staticmethod
     def _get_affected_atoms(
@@ -57,88 +124,24 @@ class TopologyDetector:
         return affected
 
     @staticmethod
-    def _remove_angles_involving_atoms(
-        assembly: Atomistic,
-        atoms: set[Atom],
-    ) -> list[Angle]:
-        """
-        Remove all angles that involve any of the given atoms.
-
-        Args:
-            assembly: The Atomistic structure
-            atoms: Set of atoms to check against
-
-        Returns:
-            List of removed angles
-        """
-        removed = []
-        angles_to_remove = []
-
-        # Find all angles involving affected atoms
-        for angle in assembly.links.bucket(Angle):
-            if angle.itom in atoms or angle.jtom in atoms or angle.ktom in atoms:
-                angles_to_remove.append(angle)
-
-        # Remove them from the structure
-        if angles_to_remove:
-            assembly.remove_link(*angles_to_remove)
-            removed.extend(angles_to_remove)
-
-        return removed
-
-    @staticmethod
-    def _remove_dihedrals_involving_atoms(
-        assembly: Atomistic,
-        atoms: set[Atom],
-    ) -> list[Dihedral]:
-        """
-        Remove all dihedrals that involve any of the given atoms.
-
-        Args:
-            assembly: The Atomistic structure
-            atoms: Set of atoms to check against
-
-        Returns:
-            List of removed dihedrals
-        """
-        removed = []
-        dihedrals_to_remove = []
-
-        # Find all dihedrals involving affected atoms
-        for dihedral in assembly.links.bucket(Dihedral):
-            if (
-                dihedral.itom in atoms
-                or dihedral.jtom in atoms
-                or dihedral.ktom in atoms
-                or dihedral.ltom in atoms
-            ):
-                dihedrals_to_remove.append(dihedral)
-
-        # Remove them from the structure
-        if dihedrals_to_remove:
-            assembly.remove_link(*dihedrals_to_remove)
-            removed.extend(dihedrals_to_remove)
-
-        return removed
-
-    @staticmethod
     def _remove_topology_with_removed_atoms(
         assembly: Atomistic,
         removed_atoms: Collection[Entity],
-    ) -> tuple[list[Angle], list[Dihedral]]:
+    ) -> tuple[list[Angle], list[Dihedral], list[Improper]]:
         """
-        Remove all angles and dihedrals involving removed atoms.
+        Remove all angles, dihedrals, and impropers involving removed atoms.
 
         Args:
             assembly: The Atomistic structure
             removed_atoms: Collection of atoms that were removed
 
         Returns:
-            Tuple of (removed_angles, removed_dihedrals)
+            Tuple of (removed_angles, removed_dihedrals, removed_impropers)
         """
         removed_atoms_set = set(removed_atoms)
         removed_angles = []
         removed_dihedrals = []
+        removed_impropers = []
 
         angles_to_remove = []
         for angle in assembly.links.bucket(Angle):
@@ -159,6 +162,11 @@ class TopologyDetector:
             ):
                 dihedrals_to_remove.append(dihedral)
 
+        impropers_to_remove = []
+        for improper in assembly.links.bucket(Improper):
+            if any(ep in removed_atoms_set for ep in improper.endpoints):
+                impropers_to_remove.append(improper)
+
         if angles_to_remove:
             assembly.remove_link(*angles_to_remove)
             removed_angles.extend(angles_to_remove)
@@ -167,7 +175,11 @@ class TopologyDetector:
             assembly.remove_link(*dihedrals_to_remove)
             removed_dihedrals.extend(dihedrals_to_remove)
 
-        return removed_angles, removed_dihedrals
+        if impropers_to_remove:
+            assembly.remove_link(*impropers_to_remove)
+            removed_impropers.extend(impropers_to_remove)
+
+        return removed_angles, removed_dihedrals, removed_impropers
 
     @staticmethod
     def _generate_angles_around_bond(
@@ -389,13 +401,22 @@ class TopologyDetector:
         assembly: Atomistic,
         new_bonds: list[Bond],
         removed_atoms: Collection[Entity],
-    ) -> tuple[list[Angle], list[Dihedral], list[Angle], list[Dihedral]]:
+    ) -> tuple[
+        list[Angle],
+        list[Dihedral],
+        list[Improper],
+        list[Angle],
+        list[Dihedral],
+        list[Improper],
+    ]:
         """
         Detect and update topology structure after reaction.
 
         This method:
-        1. Removes topology items involving removed atoms
-        2. Generates new topology items based on new bonds
+        1. Removes topology items (angles/dihedrals/impropers) involving
+           removed atoms
+        2. Generates new angles/dihedrals around new bonds and improper
+           candidates at affected atoms with exactly 3 bonded neighbors
         3. Adds new topology items (deduplicated with existing)
 
         Note: We do NOT remove topology involving "affected atoms" (bond endpoints
@@ -409,17 +430,19 @@ class TopologyDetector:
             removed_atoms: List of atoms that were removed from the structure
 
         Returns:
-            Tuple of (new_angles, new_dihedrals, removed_angles, removed_dihedrals)
+            Tuple of (new_angles, new_dihedrals, new_impropers,
+            removed_angles, removed_dihedrals, removed_impropers)
         """
         # Step 1: Remove topology items involving removed atoms ONLY
-        removed_angles, removed_dihedrals = cls._remove_topology_with_removed_atoms(
-            assembly, removed_atoms
+        removed_angles, removed_dihedrals, removed_impropers = (
+            cls._remove_topology_with_removed_atoms(assembly, removed_atoms)
         )
 
         # Step 2: Generate new topology items based on new bonds
         # Get existing topology items for deduplication
         existing_angles = list(assembly.links.bucket(Angle))
         existing_dihedrals = list(assembly.links.bucket(Dihedral))
+        existing_impropers = list(assembly.links.bucket(Improper))
 
         new_angles_candidates = []
         new_dihedrals_candidates = []
@@ -442,6 +465,12 @@ class TopologyDetector:
             )
             new_dihedrals_candidates.extend(dihedrals_continuing)
 
+        # Improper candidates at affected atoms (sp2-like: exactly 3 neighbors)
+        affected_atoms = cls._get_affected_atoms(assembly, new_bonds)
+        new_impropers_candidates = cls._generate_impropers_around_atoms(
+            assembly, affected_atoms
+        )
+
         # Step 3: Deduplicate and add new topology items
         unique_new_angles = cls._deduplicate_angles(
             new_angles_candidates, existing_angles
@@ -449,16 +478,23 @@ class TopologyDetector:
         unique_new_dihedrals = cls._deduplicate_dihedrals(
             new_dihedrals_candidates, existing_dihedrals
         )
+        unique_new_impropers = cls._deduplicate_impropers(
+            new_impropers_candidates, existing_impropers
+        )
 
         # Add new items to assembly
         if unique_new_angles:
             assembly.add_link(*unique_new_angles)
         if unique_new_dihedrals:
             assembly.add_link(*unique_new_dihedrals)
+        if unique_new_impropers:
+            assembly.add_link(*unique_new_impropers)
 
         return (
             unique_new_angles,
             unique_new_dihedrals,
+            unique_new_impropers,
             removed_angles,
             removed_dihedrals,
+            removed_impropers,
         )

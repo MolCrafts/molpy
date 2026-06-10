@@ -3,14 +3,20 @@
 
 Tests cover:
 - BondReactReacter initialization (with Reacter constructor parameters)
-- run_with_template() method
+- run() template generation (BondReactResult.template)
 - react_id assignment
 - Pre/post template consistency
 - BondReactTemplate structure
 - Error handling
 """
 
-from molpy.core.atomistic import Atom, Atomistic, Bond
+import logging
+from pathlib import Path
+
+import pytest
+
+from molpy.core.atomistic import Atom, Atomistic, Bond, Improper
+from molpy.io import write_bond_react_map
 from molpy.reacter import (
     form_single_bond,
     select_port,
@@ -23,6 +29,127 @@ from molpy.reacter.bond_react import (
     BondReactResult,
     BondReactTemplate,
 )
+
+
+# ── shared fixture builders / helpers ────────────────────────────────
+#
+# sp2-like reaction fixture: a left chain whose middle carbon (c1) has
+# exactly 3 bonded neighbors and carries a pre-existing Improper, plus a
+# right ethyl-like fragment.  C-C coupling between the port carbons each
+# eliminates one hydrogen, so the anchors end with exactly 3 neighbors.
+
+
+def _build_sp2_left() -> Atomistic:
+    """Left reactant: h01-c0-c1(-h1)-c2(>)(h21)(h22), improper on c1."""
+    struct = Atomistic()
+    c0 = Atom(element="C", type="CT", charge=-0.18)
+    h01 = Atom(element="H", type="HC", charge=0.06)
+    c1 = Atom(element="C", type="CM", charge=-0.12)
+    h1 = Atom(element="H", type="HC", charge=0.06)
+    c2 = Atom(element="C", type="CT", charge=-0.18)
+    h21 = Atom(element="H", type="HC", charge=0.06)
+    h22 = Atom(element="H", type="HC", charge=0.06)
+    struct.add_entity(c0, h01, c1, h1, c2, h21, h22)
+    struct.add_link(
+        Bond(c0, h01),
+        Bond(c0, c1),
+        Bond(c1, h1),
+        Bond(c1, c2),
+        Bond(c2, h21),
+        Bond(c2, h22),
+    )
+    # c1 has exactly 3 bonded neighbors (c0, h1, c2): sp2-like center
+    struct.add_link(Improper(c1, c0, c2, h1))
+    c2["port"] = ">"
+    return struct
+
+
+def _build_sp2_right() -> Atomistic:
+    """Right reactant: c3(<)(h31)(h32)-c4-h41."""
+    struct = Atomistic()
+    c3 = Atom(element="C", type="CT", charge=-0.18)
+    h31 = Atom(element="H", type="HC", charge=0.06)
+    h32 = Atom(element="H", type="HC", charge=0.06)
+    c4 = Atom(element="C", type="CT", charge=-0.18)
+    h41 = Atom(element="H", type="HC", charge=0.06)
+    struct.add_entity(c3, h31, h32, c4, h41)
+    struct.add_link(
+        Bond(c3, h31),
+        Bond(c3, h32),
+        Bond(c3, c4),
+        Bond(c4, h41),
+    )
+    c3["port"] = "<"
+    return struct
+
+
+def _make_sp2_reacter(radius: int) -> BondReactReacter:
+    return BondReactReacter(
+        name="sp2_growth",
+        anchor_selector_left=select_port,
+        anchor_selector_right=select_port,
+        leaving_selector_left=select_one_hydrogen,
+        leaving_selector_right=select_one_hydrogen,
+        bond_former=form_single_bond,
+        radius=radius,
+    )
+
+
+def _run_sp2_reaction(radius: int = 4) -> BondReactResult:
+    """Run the sp2 fixture reaction on freshly built inputs."""
+    left = _build_sp2_left()
+    right = _build_sp2_right()
+    reacter = _make_sp2_reacter(radius)
+    port_l = find_port_atom(left, ">")
+    port_r = find_port_atom(right, "<")
+    return reacter.run(left, right, port_atom_L=port_l, port_atom_R=port_r)
+
+
+def _make_manual_template_with_one_initiator() -> BondReactTemplate:
+    """Hand-built template with only 1 initiator atom (invalid)."""
+    pre = Atomistic()
+    a_pre = pre.def_atom(element="C", type="CT", charge=0.0, react_id=1)
+    b_pre = pre.def_atom(element="C", type="CT", charge=0.0, react_id=2)
+    pre.def_bond(a_pre, b_pre, type="CT-CT")
+
+    post = Atomistic()
+    a_post = post.def_atom(element="C", type="CT", charge=0.0, react_id=1)
+    b_post = post.def_atom(element="C", type="CT", charge=0.0, react_id=2)
+    post.def_bond(a_post, b_post, type="CT-CT")
+
+    return BondReactTemplate(
+        pre=pre,
+        post=post,
+        initiator_atoms=[a_pre],
+        edge_atoms=[],
+        deleted_atoms=[],
+        pre_react_id_to_atom={1: a_pre, 2: b_pre},
+        post_react_id_to_atom={1: a_post, 2: b_post},
+    )
+
+
+def _improper_key(improper: Improper) -> tuple[int, frozenset[int]]:
+    """Equivalence key: (center react_id, unordered neighbor react_ids)."""
+    rids = [int(ep["react_id"]) for ep in improper.endpoints]
+    return rids[0], frozenset(rids[1:])
+
+
+def _parse_map_sections(map_path: Path) -> dict[str, list[list[int]]]:
+    """Parse a fix bond/react ``.map`` file into {section: rows of ints}."""
+    section_names = {"InitiatorIDs", "EdgeIDs", "DeleteIDs", "Equivalences"}
+    sections: dict[str, list[list[int]]] = {}
+    current: str | None = None
+    for raw_line in map_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line in section_names:
+            current = line
+            sections[current] = []
+            continue
+        if current is not None:
+            sections[current].append([int(token) for token in line.split()])
+    return sections
 
 
 class TestBondReactReacter:
@@ -88,8 +215,8 @@ class TestBondReactReacter:
         )
 
         # Run reaction with template
-        port_atom_L = find_port_atom(struct_L, "1")  # noqa: F841
-        port_atom_R = find_port_atom(struct_R, "2")  # noqa: F841
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -141,8 +268,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")  # noqa: F841
-        port_atom_R = find_port_atom(struct_R, "2")  # noqa: F841
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
 
         # Check react_ids are assigned before reaction
         bond_react_reacter._assign_react_ids(struct_L)
@@ -178,8 +305,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")  # noqa: F841
-        port_atom_R = find_port_atom(struct_R, "2")  # noqa: F841
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -219,8 +346,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")  # noqa: F841
-        port_atom_R = find_port_atom(struct_R, "2")  # noqa: F841
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L,
             struct_R,
@@ -260,18 +387,22 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")  # noqa: F841
-        port_atom_R = find_port_atom(struct_R, "2")  # noqa: F841
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
         template = result.template
 
-        # Check init_atoms
+        # Check init_atoms. Caller-owned atoms are never stamped with
+        # react_id (mutation hygiene); the resolved internal copies are
+        # exposed on the result.
         assert len(template.initiator_atoms) == 2
         init_rids = {a["react_id"] for a in template.initiator_atoms}
-        assert port_atom_L["react_id"] in init_rids
-        assert port_atom_R["react_id"] in init_rids
+        assert result.port_atom_L["react_id"] in init_rids
+        assert result.port_atom_R["react_id"] in init_rids
+        assert "react_id" not in port_atom_L.data
+        assert "react_id" not in port_atom_R.data
 
     def test_run_with_template_removed_atoms_tracked(self):
         """Test that removed atoms are correctly tracked in template."""
@@ -299,8 +430,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")  # noqa: F841
-        port_atom_R = find_port_atom(struct_R, "2")  # noqa: F841
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -347,8 +478,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")  # noqa: F841
-        port_atom_R = find_port_atom(struct_R, "2")  # noqa: F841
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -405,8 +536,8 @@ class TestBondReactReacter:
             radius=1,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")  # noqa: F841
-        port_atom_R = find_port_atom(struct_R, "2")  # noqa: F841
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
         result1 = bond_react_reacter_1.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -492,8 +623,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")  # noqa: F841
-        port_atom_R = find_port_atom(struct_R, "2")  # noqa: F841
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -548,8 +679,8 @@ class TestBondReactReacter:
             bond_former=form_single_bond,
         )
 
-        port_atom_L = find_port_atom(struct_L, "1")  # noqa: F841
-        port_atom_R = find_port_atom(struct_R, "2")  # noqa: F841
+        port_atom_L = find_port_atom(struct_L, "1")
+        port_atom_R = find_port_atom(struct_R, "2")
         result = bond_react_reacter.run(
             struct_L, struct_R, port_atom_L=port_atom_L, port_atom_R=port_atom_R
         )
@@ -876,3 +1007,332 @@ class TestBondReactReacter:
                     f"Coordinate mismatch for react_id {rid}: "
                     f"pre={pre_c}, post={post_c}"
                 )
+
+
+class TestImproperPropagation:
+    """Impropers cloned into pre must survive into the post template."""
+
+    def test_untouched_improper_present_in_post(self) -> None:
+        """Every pre improper not touching deleted atoms has a post match."""
+        result = _run_sp2_reaction(radius=4)
+        template = result.template
+        assert template is not None
+
+        deleted_rids = {a["react_id"] for a in template.deleted_atoms}
+        untouched_pre = [
+            imp
+            for imp in template.pre.impropers
+            if not any(ep["react_id"] in deleted_rids for ep in imp.endpoints)
+        ]
+        # Fixture sanity: the c1 improper survives (no deleted endpoint)
+        assert len(untouched_pre) >= 1, (
+            "Fixture broken: expected at least one untouched improper in pre"
+        )
+
+        post_keys = {_improper_key(imp) for imp in template.post.impropers}
+        for imp in untouched_pre:
+            assert _improper_key(imp) in post_keys, (
+                f"Pre improper {_improper_key(imp)} lost in post template "
+                f"(post has {sorted(post_keys)})"
+            )
+
+    def test_untouched_improper_count_equal_pre_vs_post(self) -> None:
+        """Count of untouched impropers matches between pre and post."""
+        result = _run_sp2_reaction(radius=4)
+        template = result.template
+        assert template is not None
+
+        deleted_rids = {a["react_id"] for a in template.deleted_atoms}
+        untouched_pre_keys = {
+            _improper_key(imp)
+            for imp in template.pre.impropers
+            if not any(ep["react_id"] in deleted_rids for ep in imp.endpoints)
+        }
+        matched_post = [
+            imp
+            for imp in template.post.impropers
+            if _improper_key(imp) in untouched_pre_keys
+        ]
+        assert len(matched_post) == len(untouched_pre_keys), (
+            f"Untouched improper count mismatch: pre={len(untouched_pre_keys)}, "
+            f"post matches={len(matched_post)}"
+        )
+
+
+class TestMapDeterminism:
+    """The written .map must be deterministic, with ordered InitiatorIDs."""
+
+    def test_map_file_deterministic_across_runs(self, tmp_path: Path) -> None:
+        """Two equivalent runs write byte-identical .map files."""
+        result1 = _run_sp2_reaction(radius=2)
+        result2 = _run_sp2_reaction(radius=2)
+        assert result1.template is not None
+        assert result2.template is not None
+
+        write_bond_react_map(result1.template, tmp_path / "run1")
+        write_bond_react_map(result2.template, tmp_path / "run2")
+
+        bytes1 = (tmp_path / "run1.map").read_bytes()
+        bytes2 = (tmp_path / "run2.map").read_bytes()
+        assert bytes1 == bytes2, "Map files differ between equivalent runs"
+
+    def test_map_determinism_initiator_order_left_anchor_first(
+        self, tmp_path: Path
+    ) -> None:
+        """InitiatorIDs has exactly 2 entries; first is the LEFT anchor."""
+        result = _run_sp2_reaction(radius=2)
+        template = result.template
+        assert template is not None
+
+        write_bond_react_map(template, tmp_path / "rxn")
+        sections = _parse_map_sections(tmp_path / "rxn.map")
+
+        initiator_ids = [row[0] for row in sections["InitiatorIDs"]]
+        assert len(initiator_ids) == 2
+
+        rid_to_idx = {
+            a["react_id"]: i for i, a in enumerate(template.pre.atoms, start=1)
+        }
+        left_anchor_idx = rid_to_idx[template.initiator_atoms[0]["react_id"]]
+        assert initiator_ids[0] == left_anchor_idx, (
+            f"InitiatorIDs not in template.initiator_atoms order: "
+            f"first written={initiator_ids[0]}, left anchor={left_anchor_idx}"
+        )
+
+
+class TestInitiatorValidation:
+    """Templates must have exactly 2 initiators, never on the boundary."""
+
+    def test_initiator_on_template_boundary_raises_radius_error(self) -> None:
+        """Anchor sitting on the template edge (radius too small) raises."""
+        left = _build_sp2_left()
+        right = _build_sp2_right()
+        port_l = find_port_atom(left, ">")
+        port_r = find_port_atom(right, "<")
+
+        with pytest.raises(ValueError, match="radius"):
+            reacter = _make_sp2_reacter(radius=0)
+            reacter.run(left, right, port_atom_L=port_l, port_atom_R=port_r)
+
+    def test_initiator_count_must_be_two_in_validation(self) -> None:
+        """validate_bond_react_template rejects a 1-initiator template."""
+        from molpy.reacter.bond_react import validate_bond_react_template
+
+        template = _make_manual_template_with_one_initiator()
+        with pytest.raises(ValueError, match="(?i)initiator|anchor"):
+            validate_bond_react_template(template)
+
+    def test_initiator_count_must_be_two_in_map_writer(self, tmp_path: Path) -> None:
+        """write_bond_react_map rejects a 1-initiator template."""
+        template = _make_manual_template_with_one_initiator()
+        with pytest.raises(ValueError):
+            write_bond_react_map(template, tmp_path / "bad")
+
+
+class TestEdgeConsistency:
+    """Edge atoms must keep identical type and charge in pre and post."""
+
+    def test_edge_consistent_template_passes_validation(self) -> None:
+        """A real-flow template with untouched edge atoms validates cleanly."""
+        from molpy.reacter.bond_react import validate_bond_react_template
+
+        result = _run_sp2_reaction(radius=2)
+        template = result.template
+        assert template is not None
+        # Fixture sanity: radius=2 leaves a genuine boundary (c0 is an edge)
+        assert len(template.edge_atoms) >= 1
+
+        assert validate_bond_react_template(template) is None
+
+    def test_edge_atom_type_mismatch_raises(self) -> None:
+        """Mutated post edge atom type -> ValueError naming both values."""
+        from molpy.reacter.bond_react import validate_bond_react_template
+
+        result = _run_sp2_reaction(radius=2)
+        template = result.template
+        assert template is not None
+        assert len(template.edge_atoms) >= 1
+
+        edge_rid = template.edge_atoms[0]["react_id"]
+        pre_type = str(template.pre_react_id_to_atom[edge_rid]["type"])
+        post_atom = template.post_react_id_to_atom[edge_rid]
+        post_atom["type"] = "XX"
+
+        with pytest.raises(ValueError, match="radius") as excinfo:
+            validate_bond_react_template(template)
+        message = str(excinfo.value)
+        assert pre_type in message
+        assert "XX" in message
+
+    def test_edge_atom_charge_mismatch_raises(self) -> None:
+        """Mutated post edge atom charge -> ValueError naming both values."""
+        from molpy.reacter.bond_react import validate_bond_react_template
+
+        result = _run_sp2_reaction(radius=2)
+        template = result.template
+        assert template is not None
+        assert len(template.edge_atoms) >= 1
+
+        edge_rid = template.edge_atoms[0]["react_id"]
+        post_atom = template.post_react_id_to_atom[edge_rid]
+        post_atom["charge"] = 0.75  # pre charge is -0.18
+
+        with pytest.raises(ValueError, match="radius") as excinfo:
+            validate_bond_react_template(template)
+        message = str(excinfo.value)
+        assert "0.18" in message
+        assert "0.75" in message
+
+
+class TestMutationHygiene:
+    """run() must not mutate the caller's left/right structures."""
+
+    def test_run_does_not_mutate_caller_atoms_with_react_id(self) -> None:
+        """No caller atom carries react_id after run()."""
+        left = _build_sp2_left()
+        right = _build_sp2_right()
+        reacter = _make_sp2_reacter(radius=4)
+        port_l = find_port_atom(left, ">")
+        port_r = find_port_atom(right, "<")
+
+        reacter.run(left, right, port_atom_L=port_l, port_atom_R=port_r)
+
+        stamped_left = [a for a in left.atoms if "react_id" in a.data]
+        stamped_right = [a for a in right.atoms if "react_id" in a.data]
+        assert stamped_left == [], (
+            f"run() mutated caller's left: {len(stamped_left)} atoms stamped "
+            f"with react_id"
+        )
+        assert stamped_right == [], (
+            f"run() mutated caller's right: {len(stamped_right)} atoms stamped "
+            f"with react_id"
+        )
+
+    def test_run_does_not_mutate_caller_atom_counts(self) -> None:
+        """Caller atom counts are unchanged after run()."""
+        left = _build_sp2_left()
+        right = _build_sp2_right()
+        left_count = len(list(left.atoms))
+        right_count = len(list(right.atoms))
+        reacter = _make_sp2_reacter(radius=4)
+        port_l = find_port_atom(left, ">")
+        port_r = find_port_atom(right, "<")
+
+        reacter.run(left, right, port_atom_L=port_l, port_atom_R=port_r)
+
+        assert len(list(left.atoms)) == left_count
+        assert len(list(right.atoms)) == right_count
+
+
+class TestChargeConservation:
+    """Template generation must check total charge pre vs post."""
+
+    def test_charge_conservation_tolerance_constant(self) -> None:
+        """CHARGE_CONSERVATION_TOL is exported and equals 1e-6."""
+        from molpy.reacter.bond_react import CHARGE_CONSERVATION_TOL
+
+        assert CHARGE_CONSERVATION_TOL == 1e-6
+
+    def test_charge_imbalance_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Post total charge off by 1.0 -> WARNING on the module logger."""
+        from molpy.reacter.bond_react import validate_bond_react_template
+
+        result = _run_sp2_reaction(radius=4)
+        template = result.template
+        assert template is not None
+
+        # Perturb a non-edge atom (the left anchor) in post only
+        anchor_rid = template.initiator_atoms[0]["react_id"]
+        post_atom = template.post_react_id_to_atom[anchor_rid]
+        post_atom["charge"] = float(post_atom["charge"]) + 1.0
+
+        with caplog.at_level(logging.WARNING, logger="molpy.reacter.bond_react"):
+            validate_bond_react_template(template)
+
+        warning_records = [
+            r
+            for r in caplog.records
+            if r.name == "molpy.reacter.bond_react" and r.levelno >= logging.WARNING
+        ]
+        assert len(warning_records) >= 1, (
+            "Expected a charge-conservation WARNING on logger "
+            "'molpy.reacter.bond_react'"
+        )
+
+    def test_charge_conserving_template_logs_no_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Untouched real-flow template logs no charge warning."""
+        from molpy.reacter.bond_react import validate_bond_react_template
+
+        result = _run_sp2_reaction(radius=4)
+        template = result.template
+        assert template is not None
+
+        with caplog.at_level(logging.WARNING, logger="molpy.reacter.bond_react"):
+            validate_bond_react_template(template)
+
+        warning_records = [
+            r
+            for r in caplog.records
+            if r.name == "molpy.reacter.bond_react" and r.levelno >= logging.WARNING
+        ]
+        assert warning_records == []
+
+
+class TestReacterMapInvariants:
+    """Structural invariants of the written .map file."""
+
+    def test_map_invariant_equivalences_are_bijection(self, tmp_path: Path) -> None:
+        """Equivalences: unique pre IDs, unique post IDs, count == atom count."""
+        result = _run_sp2_reaction(radius=2)
+        template = result.template
+        assert template is not None
+
+        write_bond_react_map(template, tmp_path / "rxn")
+        sections = _parse_map_sections(tmp_path / "rxn.map")
+
+        equivalences = sections["Equivalences"]
+        pre_ids = [row[0] for row in equivalences]
+        post_ids = [row[1] for row in equivalences]
+        n_atoms = len(list(template.pre.atoms))
+
+        assert len(equivalences) == n_atoms
+        assert len(set(pre_ids)) == n_atoms, "Duplicate pre IDs in Equivalences"
+        assert len(set(post_ids)) == n_atoms, "Duplicate post IDs in Equivalences"
+
+    def test_map_invariant_initiators_and_edges_disjoint(self, tmp_path: Path) -> None:
+        """Exactly 2 InitiatorIDs and EdgeIDs do not overlap them."""
+        result = _run_sp2_reaction(radius=2)
+        template = result.template
+        assert template is not None
+
+        write_bond_react_map(template, tmp_path / "rxn")
+        sections = _parse_map_sections(tmp_path / "rxn.map")
+
+        initiator_ids = {row[0] for row in sections["InitiatorIDs"]}
+        edge_ids = {row[0] for row in sections["EdgeIDs"]}
+
+        assert len(initiator_ids) == 2
+        assert initiator_ids & edge_ids == set()
+
+    def test_map_invariant_deleted_atoms_in_delete_ids(self, tmp_path: Path) -> None:
+        """Every deleted atom's pre index appears in DeleteIDs."""
+        result = _run_sp2_reaction(radius=2)
+        template = result.template
+        assert template is not None
+
+        write_bond_react_map(template, tmp_path / "rxn")
+        sections = _parse_map_sections(tmp_path / "rxn.map")
+
+        rid_to_idx = {
+            a["react_id"]: i for i, a in enumerate(template.pre.atoms, start=1)
+        }
+        expected = {rid_to_idx[a["react_id"]] for a in template.deleted_atoms}
+        delete_ids = {row[0] for row in sections["DeleteIDs"]}
+
+        # Fixture sanity: one hydrogen leaves from each side
+        assert len(expected) == 2
+        assert expected <= delete_ids

@@ -9,6 +9,7 @@ See: https://docs.lammps.org/fix_bond_react.html
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING
@@ -20,6 +21,15 @@ from molpy.reacter.utils import AnchorSelector, BondFormer, LeavingSelector
 
 if TYPE_CHECKING:
     from molpy.typifier.atomistic import TypifierBase
+
+logger = logging.getLogger(__name__)
+
+#: Tolerance for the pre/post total-charge conservation check, in
+#: elementary charge units (e). Fixed point-charge force fields assign
+#: charges per type, so a reaction template never redistributes total
+#: charge; a difference beyond this tolerance indicates an inconsistent
+#: template and is logged as a warning (not raised).
+CHARGE_CONSERVATION_TOL: float = 1e-6
 
 
 # ===================================================================
@@ -78,6 +88,107 @@ class BondReactTemplate:
             atom["id"] = i
 
 
+def validate_bond_react_template(template: BondReactTemplate) -> None:
+    """Validate REACTER map invariants on a bond/react template.
+
+    Enforces the template requirements of LAMMPS ``fix bond/react``
+    (https://docs.lammps.org/fix_bond_react.html) and the REACTER
+    protocol (Gissinger et al., Polymer 128 (2017) 211-217,
+    DOI: 10.1016/j.polymer.2017.06.038; Gissinger et al.,
+    Macromolecules 53 (2020) 9953-9961,
+    DOI: 10.1021/acs.macromol.0c02012):
+
+    - exactly 2 initiator atoms (the bond-forming anchors);
+    - no initiator may sit on the template boundary (edge atom) — its
+      first neighbor shell must be inside the template;
+    - edge atoms must be identical pre vs post in ``type`` and
+      ``charge`` (fix bond/react rejects maps otherwise);
+    - total charge (elementary charge units, e) should be conserved
+      within :data:`CHARGE_CONSERVATION_TOL`; violations are logged as
+      a warning, not raised, since fixed point-charge force fields
+      assign charge per type and templates never redistribute it.
+
+    Args:
+        template: The template to validate.
+
+    Raises:
+        ValueError: On initiator-count, initiator-on-edge, or edge
+            pre/post mismatch violations. The message names the
+            offending atom and suggests increasing ``radius``.
+    """
+    initiators = template.initiator_atoms
+    if len(initiators) != 2:
+        names = [
+            f"react_id={a.get('react_id')}, element={a.get('element')}"
+            for a in initiators
+        ]
+        raise ValueError(
+            f"fix bond/react requires exactly 2 initiator atoms, got "
+            f"{len(initiators)} ({names}). An anchor may have fallen outside "
+            f"the template radius; increase the reacter's radius."
+        )
+
+    edge_rids = {a.get("react_id") for a in template.edge_atoms}
+    for anchor in initiators:
+        rid = anchor.get("react_id")
+        if rid in edge_rids:
+            raise ValueError(
+                f"Initiator atom (react_id={rid}, "
+                f"element={anchor.get('element')}) lies on the template "
+                f"boundary (edge atom), so its first neighbor shell is not "
+                f"contained in the template; increase the reacter's radius."
+            )
+
+    for edge_atom in template.edge_atoms:
+        rid = edge_atom.get("react_id")
+        pre_atom = template.pre_react_id_to_atom.get(rid)
+        post_atom = template.post_react_id_to_atom.get(rid)
+        if pre_atom is None or post_atom is None:
+            # Pre/post atom-set mismatches are reported by the map writer.
+            continue
+        for field_name in ("type", "charge"):
+            pre_value = pre_atom.get(field_name)
+            post_value = post_atom.get(field_name)
+            if pre_value != post_value:
+                raise ValueError(
+                    f"Edge atom (react_id={rid}, "
+                    f"element={pre_atom.get('element')}) differs between pre "
+                    f"and post in {field_name!r}: pre={pre_value!r}, "
+                    f"post={post_value!r}. fix bond/react requires edge atoms "
+                    f"to be identical; increase the reacter's radius so the "
+                    f"retyped shell is inside the template."
+                )
+
+    def _total_charge(atoms: list[Atom]) -> tuple[float, int]:
+        total = 0.0
+        missing = 0
+        for atom in atoms:
+            charge = atom.get("charge")
+            if charge is None:
+                missing += 1
+            else:
+                total += float(charge)
+        return total, missing
+
+    pre_q, pre_missing = _total_charge(list(template.pre.atoms))
+    post_q, post_missing = _total_charge(list(template.post.atoms))
+    delta = post_q - pre_q
+    if abs(delta) > CHARGE_CONSERVATION_TOL:
+        missing_note = ""
+        if pre_missing or post_missing:
+            missing_note = (
+                f" (atoms without a 'charge' field treated as 0: "
+                f"{pre_missing} pre, {post_missing} post)"
+            )
+        logger.warning(
+            "Charge not conserved in bond/react template: "
+            "sum(q_post) - sum(q_pre) = %.6g e exceeds tolerance %.1g e%s.",
+            delta,
+            CHARGE_CONSERVATION_TOL,
+            missing_note,
+        )
+
+
 # ===================================================================
 #                       BondReactResult
 # ===================================================================
@@ -105,11 +216,30 @@ class BondReactReacter(Reacter):
     Extends :class:`Reacter` with:
 
     1. ``react_id`` assignment for atom tracking across reactions
+       (stamped on internal copies only — caller-owned inputs are never
+       mutated)
     2. Subgraph extraction around the reaction site
     3. Pre/post template generation attached to :attr:`ReactionResult.template`
 
     The ``radius`` parameter controls how many bonds away from the anchor
     atoms the extracted subgraph extends.
+
+    Generated templates are validated against the REACTER protocol
+    (Gissinger et al., Polymer 128 (2017) 211-217,
+    DOI: 10.1016/j.polymer.2017.06.038; Gissinger et al., Macromolecules
+    53 (2020) 9953-9961, DOI: 10.1021/acs.macromol.0c02012) and the
+    LAMMPS ``fix bond/react`` contract
+    (https://docs.lammps.org/fix_bond_react.html):
+
+    - Equivalences are a pre→post bijection over template atoms;
+    - exactly 2 ordered initiator atoms (left anchor first), never on
+      the template boundary;
+    - edge atoms identical pre vs post in type and charge (elementary
+      charge units, e);
+    - impropers propagate into the post template so sp2 centers keep
+      their planarity terms;
+    - total charge conserved within :data:`CHARGE_CONSERVATION_TOL`
+      (warning on violation).
 
     Example::
 
@@ -162,16 +292,39 @@ class BondReactReacter(Reacter):
     ) -> BondReactResult:
         """Run reaction and generate bond/react template.
 
+        Caller-owned ``left``/``right`` are never mutated: ``react_id``
+        markers are stamped on internal copies only (port atoms are
+        resolved into the copies positionally, mirroring
+        ``Reacter._prepare_reactants``).
+
         Returns :class:`BondReactResult` with ``template`` populated.
         """
-        # 1. Assign react_ids before reaction
-        self._assign_react_ids(left)
-        self._assign_react_ids(right)
+        # 1. Copy caller inputs and resolve port atoms into the copies,
+        #    so react_id stamping never touches caller-owned structures.
+        is_ring_closure = left is right
+        left_work = left.copy()
+        left_map: dict[Entity, Entity] = dict(
+            zip(list(left.atoms), list(left_work.atoms))
+        )
+        if is_ring_closure:
+            right_work = left_work
+            right_map = left_map
+        else:
+            right_work = right.copy()
+            right_map = dict(zip(list(right.atoms), list(right_work.atoms)))
 
-        # 2. Run the base reaction
+        port_atom_L = left_map.get(port_atom_L, port_atom_L)
+        port_atom_R = right_map.get(port_atom_R, port_atom_R)
+
+        # 2. Assign react_ids on the working copies, then run the base
+        #    reaction (its internal copy deep-copies data, so react_id
+        #    survives into reactants/product).
+        self._assign_react_ids(left_work)
+        self._assign_react_ids(right_work)
+
         base_result = super().run(
-            left,
-            right,
+            left_work,
+            right_work,
             port_atom_L,
             port_atom_R,
             compute_topology=compute_topology,
@@ -267,7 +420,7 @@ class BondReactReacter(Reacter):
             if rid in pre_react_id_to_atom:
                 initiator_atoms.append(pre_react_id_to_atom[rid])
 
-        return BondReactTemplate(
+        template = BondReactTemplate(
             pre=pre,
             post=post,
             initiator_atoms=initiator_atoms,
@@ -276,6 +429,8 @@ class BondReactReacter(Reacter):
             pre_react_id_to_atom=pre_react_id_to_atom,
             post_react_id_to_atom=post_react_id_to_atom,
         )
+        validate_bond_react_template(template)
+        return template
 
     def _find_atoms_by_react_id(
         self, struct: Atomistic, react_ids: list[int]
@@ -293,6 +448,36 @@ class BondReactReacter(Reacter):
         pre: Atomistic,
         reactants: Atomistic | None = None,
     ) -> tuple[Atomistic, dict]:
+        """Build the post-reaction template in pre atom order.
+
+        Atoms are emitted in ``pre_react_ids_ordered`` order so the
+        pre→post equivalence map is positional, as required by the
+        REACTER protocol (Gissinger et al., Polymer 128 (2017) 211-217,
+        DOI: 10.1016/j.polymer.2017.06.038; Gissinger et al.,
+        Macromolecules 53 (2020) 9953-9961,
+        DOI: 10.1021/acs.macromol.0c02012). Bonds, angles, dihedrals,
+        AND impropers are copied from both ``reactants`` (topology
+        untouched by the reaction) and ``product`` (topology rebuilt by
+        TopologyDetector) — post-side impropers are required because
+        LAMMPS ``fix bond/react``
+        (https://docs.lammps.org/fix_bond_react.html) replaces pre
+        topology with post topology, so any improper missing here would
+        be physically deleted from the simulation. Topology whose
+        endpoints include deleted atoms is skipped (deleted atoms stay
+        in the template but carry no post topology).
+
+        Args:
+            pre_react_ids_ordered: react_ids in pre-template atom order.
+            pre_react_ids: Set view of the same ids.
+            product: Post-reaction assembly.
+            removed_atoms: Atoms deleted by the reaction.
+            removed_react_ids: Their react_ids.
+            pre: The pre template.
+            reactants: Reactant snapshot (defaults to ``pre``).
+
+        Returns:
+            Tuple of (post template, react_id → post atom mapping).
+        """
         if reactants is None:
             reactants = pre
 
@@ -339,6 +524,15 @@ class BondReactReacter(Reacter):
                 ):
                     post.def_dihedral(*post_eps, **data)
                     return True
+            elif item_type == "improper":
+                # Impropers compare by center (i position) + unordered wings
+                if not any(
+                    imp.endpoints[0] is post_eps[0]
+                    and set(imp.endpoints[1:]) == set(post_eps[1:])
+                    for imp in post.impropers
+                ):
+                    post.def_improper(*post_eps, **data)
+                    return True
             return False
 
         for bond in reactants.bonds:
@@ -353,6 +547,12 @@ class BondReactReacter(Reacter):
                 dihedral.data,
                 "dihedral",
             )
+        for improper in reactants.impropers:
+            _add_topo(
+                [ep.get("react_id") for ep in improper.endpoints],
+                improper.data,
+                "improper",
+            )
 
         for bond in product.bonds:
             _add_topo([ep.get("react_id") for ep in bond.endpoints], bond.data, "bond")
@@ -365,6 +565,12 @@ class BondReactReacter(Reacter):
                 [ep.get("react_id") for ep in dihedral.endpoints],
                 dihedral.data,
                 "dihedral",
+            )
+        for improper in product.impropers:
+            _add_topo(
+                [ep.get("react_id") for ep in improper.endpoints],
+                improper.data,
+                "improper",
             )
 
         return post, post_react_id_to_atom

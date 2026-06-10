@@ -164,10 +164,24 @@ def write_bond_react_map(template: BondReactTemplate, base_path: str | Path) -> 
 
     equiv = [(pre_rid_to_idx[rid], post_rid_to_idx[rid]) for rid in pre_rids]
 
+    # InitiatorIDs preserve template order (left anchor first) — never a
+    # set, so the .map output is deterministic across runs.
+    initiator_ids: list[int] = []
+    for anchor in template.initiator_atoms:
+        rid = anchor.get("react_id")
+        if rid is None or rid not in pre_rid_to_idx:
+            raise ValueError(
+                f"Initiator atom (react_id={rid!r}, "
+                f"element={anchor.get('element')}) is not resolvable in the "
+                f"pre template; increase the reacter's radius."
+            )
+        initiator_ids.append(pre_rid_to_idx[rid])
+    if len(initiator_ids) != 2:
+        raise ValueError(
+            f"fix bond/react requires exactly 2 initiator atoms, got "
+            f"{len(initiator_ids)}."
+        )
     initiator_rids = {a.get("react_id") for a in template.initiator_atoms}
-    initiator_ids = [
-        pre_rid_to_idx[rid] for rid in initiator_rids if rid and rid in pre_rid_to_idx
-    ]
     edge_ids = [
         pre_rid_to_idx[a.get("react_id")]
         for a in template.edge_atoms
