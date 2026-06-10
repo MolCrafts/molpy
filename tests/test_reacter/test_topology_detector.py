@@ -7,6 +7,8 @@ Tests cover:
 - Removed topology tracking (only topology involving removed atoms)
 """
 
+import pytest
+
 from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper
 from molpy.reacter.topology_detector import TopologyDetector
 
@@ -395,3 +397,83 @@ class TestImproperDetection:
         # Added to the assembly, not just returned
         assert len(list(struct.impropers)) == 1
         assert removed_impropers == []
+
+
+class TestAdjacencySingleBuild:
+    """detect_and_update_topology builds the adjacency exactly once.
+
+    Planned perf API (spec builder-reacter-05-perf): the detector calls
+    ``build_adjacency`` once per invocation and threads it through every
+    internal neighbor query — no full-bond-scan fallback calls.
+    """
+
+    @staticmethod
+    def _ten_atom_structure_with_new_bond() -> tuple[Atomistic, Bond]:
+        """Two 5-atom chains a0..a4 / b0..b4 joined by one new bond a4-b0."""
+        struct = Atomistic()
+        chain_a = [Atom(symbol="C") for _ in range(5)]
+        chain_b = [Atom(symbol="C") for _ in range(5)]
+        struct.add_entity(*chain_a, *chain_b)
+        for i in range(4):
+            struct.add_link(Bond(chain_a[i], chain_a[i + 1]))
+            struct.add_link(Bond(chain_b[i], chain_b[i + 1]))
+        new_bond = Bond(chain_a[4], chain_b[0])
+        struct.add_link(new_bond)
+        return struct, new_bond
+
+    def test_adjacency_built_exactly_once_per_detect_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """build_adjacency is invoked exactly once per detector call."""
+        import molpy.reacter.topology_detector as td_mod
+        import molpy.reacter.utils as utils_mod
+
+        struct, new_bond = self._ten_atom_structure_with_new_bond()
+
+        build_calls = {"n": 0}
+        real_build = utils_mod.build_adjacency
+
+        def counting_build(assembly, *args, **kwargs):
+            build_calls["n"] += 1
+            return real_build(assembly, *args, **kwargs)
+
+        monkeypatch.setattr(utils_mod, "build_adjacency", counting_build)
+        if hasattr(td_mod, "build_adjacency"):
+            monkeypatch.setattr(td_mod, "build_adjacency", counting_build)
+
+        TopologyDetector.detect_and_update_topology(struct, [new_bond], [])
+
+        assert build_calls["n"] == 1, (
+            f"build_adjacency called {build_calls['n']} times; expected "
+            f"exactly 1 per detect_and_update_topology invocation"
+        )
+
+    def test_adjacency_passed_to_all_queries_no_fallback_scans(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No find_neighbors call inside one detect runs in fallback mode."""
+        import molpy.reacter.topology_detector as td_mod
+        import molpy.reacter.utils as utils_mod
+
+        struct, new_bond = self._ten_atom_structure_with_new_bond()
+
+        fallback_calls = {"n": 0}
+        real_find = utils_mod.find_neighbors
+
+        def counting_find(assembly, atom, *args, **kwargs):
+            if kwargs.get("adjacency") is None:
+                fallback_calls["n"] += 1
+            return real_find(assembly, atom, *args, **kwargs)
+
+        # topology_detector imports find_neighbors by name; patch both
+        # the source module attribute and the imported reference.
+        monkeypatch.setattr(utils_mod, "find_neighbors", counting_find)
+        monkeypatch.setattr(td_mod, "find_neighbors", counting_find)
+
+        TopologyDetector.detect_and_update_topology(struct, [new_bond], [])
+
+        assert fallback_calls["n"] == 0, (
+            f"{fallback_calls['n']} find_neighbors calls ran in fallback "
+            f"(adjacency=None) mode during one detect_and_update_topology "
+            f"invocation; expected 0"
+        )
