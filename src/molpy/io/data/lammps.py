@@ -15,7 +15,7 @@ import numpy as np
 from molpy.core.frame import Block
 from molpy.core.box import Box
 from molpy.core.fields import CHARGE, MOL_ID, FieldFormatter
-from molpy.core.forcefield import ForceField
+from molpy.core.forcefield import AtomisticForcefield, ForceField, Type
 from molpy.core.frame import Frame
 
 from .base import DataReader, DataWriter
@@ -336,97 +336,74 @@ class LammpsDataReader(DataReader):
         return type_labels
 
     def _parse_force_field(self, sections: dict[str, list[str]]) -> ForceField:
-        """Parse force field parameters into ForceField."""
-        forcefield = ForceField()
+        """Parse LAMMPS ``*Coeffs`` sections into a :class:`ForceField`.
 
-        # Parse pair coefficients
-        if "PairCoeffs" in sections:
-            forcefield.def_pairstyle("lj/cut")
-            for line in sections["PairCoeffs"]:
-                parts = line.split()
-                if len(parts) >= 3:
-                    try:
-                        int(parts[0])
-                        float(parts[1])
-                        float(parts[2])
-                        # TODO: Fix force field implementation
-                        # pair_type = pair_style.def_type(type_name)
-                        # pair_type["epsilon"] = epsilon
-                        # pair_type["sigma"] = sigma
-                    except (ValueError, IndexError):
-                        continue
+        Each coefficient line is keyed by its 1-indexed numeric type id and the
+        per-type parameters are stored on a :class:`Type` named ``"<cat>_<id>"``
+        — the exact shape :class:`LammpsDataWriter` reads back, so read→write
+        round-trips the parameters instead of silently dropping them.
 
-        # Parse bond coefficients
-        if "BondCoeffs" in sections:
-            forcefield.def_bondstyle("harmonic")
-            for line in sections["BondCoeffs"]:
-                parts = line.split()
-                if len(parts) >= 3:
-                    try:
-                        int(parts[0])
-                        float(parts[1])
-                        float(parts[2])
-                        # TODO: Fix force field implementation
-                        # bond_type = bond_style.def_type(type_name)
-                        # bond_type["k"] = k
-                        # bond_type["r0"] = r0
-                    except (ValueError, IndexError):
-                        continue
+        Malformed (non-numeric / too-short) lines raise ``ValueError`` rather
+        than being swallowed; reading is total.
+        """
+        forcefield = AtomisticForcefield()
 
-        # Parse angle coefficients
-        if "AngleCoeffs" in sections:
-            forcefield.def_anglestyle("harmonic")
-            for line in sections["AngleCoeffs"]:
-                parts = line.split()
-                if len(parts) >= 3:
-                    try:
-                        int(parts[0])
-                        float(parts[1])
-                        float(parts[2])
-                        # TODO: Fix force field implementation
-                        # angle_type = angle_style.def_type(type_name)
-                        # angle_type["k"] = k
-                        # angle_type["theta0"] = theta0
-                    except (ValueError, IndexError):
-                        continue
+        # (section, category, def_style, canonical param names). LAMMPS coeff
+        # arity is style-dependent and not declared in the data file, so the
+        # names are applied positionally to however many params each line
+        # carries (a 2-param harmonic improper and a 3-param cvff improper both
+        # parse). The leading column is always the integer type id.
+        coeff_specs = [
+            (
+                "PairCoeffs",
+                "pair",
+                lambda: forcefield.def_pairstyle("lj/cut"),
+                ["epsilon", "sigma"],
+            ),
+            (
+                "BondCoeffs",
+                "bond",
+                lambda: forcefield.def_bondstyle("harmonic"),
+                ["k", "r0"],
+            ),
+            (
+                "AngleCoeffs",
+                "angle",
+                lambda: forcefield.def_anglestyle("harmonic"),
+                ["k", "theta0"],
+            ),
+            (
+                "DihedralCoeffs",
+                "dihedral",
+                lambda: forcefield.def_dihedralstyle("harmonic"),
+                ["k", "d", "n"],
+            ),
+            (
+                "ImproperCoeffs",
+                "improper",
+                lambda: forcefield.def_improperstyle("harmonic"),
+                ["k", "d", "n"],
+            ),
+        ]
 
-        # Parse dihedral coefficients
-        if "DihedralCoeffs" in sections:
-            forcefield.def_dihedralstyle("harmonic")
-            for line in sections["DihedralCoeffs"]:
+        for section, category, make_style, param_names in coeff_specs:
+            if section not in sections:
+                continue
+            style = make_style()
+            for line in sections[section]:
+                if not line.strip():
+                    continue
                 parts = line.split()
-                if len(parts) >= 4:
-                    try:
-                        int(parts[0])
-                        float(parts[1])
-                        int(parts[2])
-                        int(parts[3])
-                        # TODO: Fix force field implementation
-                        # dihedral_type = dihedral_style.def_type(type_name)
-                        # dihedral_type["k"] = k
-                        # dihedral_type["d"] = d
-                        # dihedral_type["n"] = n
-                    except (ValueError, IndexError):
-                        continue
-
-        # Parse improper coefficients
-        if "ImproperCoeffs" in sections:
-            forcefield.def_improperstyle("harmonic")
-            for line in sections["ImproperCoeffs"]:
-                parts = line.split()
-                if len(parts) >= 4:
-                    try:
-                        int(parts[0])
-                        float(parts[1])
-                        int(parts[2])
-                        int(parts[3])
-                        # TODO: Fix force field implementation
-                        # improper_type = improper_style.def_type(type_name)
-                        # improper_type["k"] = k
-                        # improper_type["d"] = d
-                        # improper_type["n"] = n
-                    except (ValueError, IndexError):
-                        continue
+                try:
+                    type_id = int(parts[0])
+                    values = [float(x) for x in parts[1:]]
+                except (ValueError, IndexError) as e:
+                    raise ValueError(
+                        f"malformed {section} line {line!r}: expected an integer "
+                        f"type id followed by numeric parameters ({e})"
+                    ) from e
+                params = dict(zip(param_names, values))
+                style.types.add(Type(f"{category}_{type_id}", **params))
 
         return forcefield
 
