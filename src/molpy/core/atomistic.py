@@ -498,34 +498,17 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         if not gen_angle and not gen_dihe:
             return self._build_topology(link_type)
 
+        # Angle/dihedral perception is a molrs-native graph operation (2-edge /
+        # 3-edge paths over the bond graph, via the petgraph-backed Topology).
+        # Delegate to the Rust kernel on a copy instead of re-detecting through
+        # the Python-side igraph Topology. It is idempotent; ``clear_existing``
+        # wipes the existing angle/dihedral relations first.
         new_struct = self.copy()
-        topo = new_struct._build_topology(link_type)
-        atoms = topo.idx_to_entity
-
-        if gen_angle:
-            if clear_existing:
-                new_struct.del_angle(*list(new_struct.angles))
-            existing = {(ang.itom, ang.jtom, ang.ktom) for ang in new_struct.angles}
-            for angle in topo.angles:
-                i, j, k = angle.tolist()
-                triple = (atoms[i], atoms[j], atoms[k])
-                if triple not in existing:
-                    new_struct.def_angle(*triple)
-                    existing.add(triple)
-
-        if gen_dihe:
-            if clear_existing:
-                new_struct.del_dihedral(*list(new_struct.dihedrals))
-            existing_d = {
-                (d.itom, d.jtom, d.ktom, d.ltom) for d in new_struct.dihedrals
-            }
-            for dihe in topo.dihedrals:
-                i, j, k, l = dihe.tolist()
-                quad = (atoms[i], atoms[j], atoms[k], atoms[l])
-                if quad not in existing_d:
-                    new_struct.def_dihedral(*quad)
-                    existing_d.add(quad)
-
+        new_struct.generate_topology(
+            gen_angle=gen_angle,
+            gen_dihedral=gen_dihe,
+            clear_existing=clear_existing,
+        )
         return new_struct
 
     def _build_topology(self, link_type: type[Link] = Bond) -> "Topology":
