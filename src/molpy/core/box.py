@@ -56,9 +56,11 @@ class Box(molrs.Box):
         ORTHOGONAL = "orthogonal"
         TRICLINIC = "triclinic"
 
-    # FREE boxes need a non-singular placeholder for the molrs base
-    # (which rejects det(h)==0). The Python-side ``_is_free`` flag
-    # restores zero-volume / zero-matrix semantics for FREE.
+    # FREE boxes carry an identity placeholder cell so the molrs base (which
+    # rejects det(h)==0) can hold them and its geometry ops degrade to no-ops.
+    # Their "no-cell" nature is recorded in the molrs base as
+    # ``cell_defined=False`` (the single source of truth) — there is no
+    # Python-side ``_is_free`` shadow.
     _PLACEHOLDER_H: np.ndarray = np.eye(3)
 
     # ────────────────────────────────────────────────────────────────────
@@ -72,18 +74,18 @@ class Box(molrs.Box):
         origin: ArrayLike | None = None,
     ):
         is_free, h = cls._normalize_matrix(matrix)
-        # A FREE box is non-periodic on every axis. Defaulting its pbc to
-        # all-False is what lets the molrs Store (which only keeps matrix /
-        # origin / pbc, not molpy's Python ``_is_free`` flag) reconstruct
-        # ``box.is_free`` / ``box.style == "free"`` after a round-trip.
+        # A FREE box defaults to non-periodic on every axis (pbc all-False), in
+        # addition to being marked cell_defined=False below.
         if pbc is None and is_free:
             pbc_arr = np.zeros(3, dtype=bool)
         else:
             pbc_arr = cls._normalize_pbc(pbc)
         origin_arr = cls._normalize_origin(origin)
-        instance = super().__new__(cls, h, origin=origin_arr, pbc=pbc_arr)
-        instance._is_free = is_free
-        return instance
+        # ``cell_defined=False`` records the FREE (no-cell) nature in the molrs
+        # base; ``is_free`` / ``style`` / ``volume`` read it back from there.
+        return super().__new__(
+            cls, h, origin=origin_arr, pbc=pbc_arr, cell_defined=not is_free
+        )
 
     def __init__(
         self,
@@ -130,26 +132,30 @@ class Box(molrs.Box):
     @property
     def matrix(self) -> np.ndarray:
         """Box matrix with lattice vectors as columns, shape ``(3, 3)``."""
-        if self._is_free:
+        if self.is_free:
             return np.zeros((3, 3))
         return np.asarray(self.h)
 
     @property
     def is_free(self) -> bool:
-        """``True`` if this box is FREE (no periodicity, zero volume)."""
-        return self._is_free
+        """``True`` if this box is FREE (no defined cell, zero volume).
+
+        Derived from the molrs base's ``cell_defined`` flag — the single source
+        of truth — not a Python-side shadow.
+        """
+        return not self.cell_defined
 
     @property
     def style(self) -> "Box.Style":
         """FREE / ORTHOGONAL / TRICLINIC depending on the matrix shape."""
-        if self._is_free:
+        if self.is_free:
             return Box.Style.FREE
         return self.calc_style_from_matrix(self.matrix)
 
     @property
     def volume(self) -> float:
         """Box volume in Angstroms³ (zero for FREE)."""
-        if self._is_free:
+        if self.is_free:
             return 0.0
         return float(np.abs(np.linalg.det(self.matrix)))
 
@@ -428,7 +434,7 @@ class Box(molrs.Box):
 
         Returns zeros for FREE.
         """
-        if self._is_free:
+        if self.is_free:
             return np.zeros(3)
         return self.calc_lengths_angles_from_matrix(self.matrix)[0]
 
