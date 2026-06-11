@@ -123,13 +123,16 @@ def _def_style(ff, kind: str, style_name: str):
 
 
 def _def_coeff(style, atom_types: list, params: list[float], *, name: str | None = None) -> None:
-    """Invoke ``style.def_type`` with a best-effort positional unpack."""
-    kwargs = {"name": name} if name is not None else {}
-    try:
-        style.def_type(*atom_types, *params, **kwargs)
-    except TypeError:
-        # Fall back: drop the name kwarg for styles that don't accept it.
-        style.def_type(*atom_types, *params)
+    """Invoke ``style.def_type`` with positional coeff values.
+
+    The moltemplate coeff line carries only positional numbers (the param names
+    are kernel-specific and not present in the source), so they are passed as
+    generic ``p0, p1, ...`` keyword params — enough to round-trip the topology.
+    """
+    kwargs = {f"p{i}": v for i, v in enumerate(params)}
+    if name is not None:
+        kwargs["name"] = name
+    style.def_type(*atom_types, **kwargs)
 '''
 
 _MAIN_BLOCK = """\
@@ -140,7 +143,7 @@ def main() -> None:
           f"{len(list(atomistic.angles))} angles, "
           f"{len(list(atomistic.dihedrals))} dihedrals, "
           f"{len(list(atomistic.impropers))} impropers")
-    print(f"force field: {sum(1 for _ in ff.styles.bucket(mp.Style))} styles")
+    print(f"force field: {sum(1 for _ in ff.styles)} styles")
 
 
 if __name__ == "__main__":

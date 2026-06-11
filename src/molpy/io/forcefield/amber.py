@@ -4,10 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
-from molpy.core.forcefield import AtomisticForcefield
+from molpy.core.forcefield import AtomisticForcefield, DihedralFourierStyle
 from molpy.core.frame import Frame
-from molpy.potential.dihedral import DihedralFourierStyle
-from molpy.potential.pair import PairLJ126CoulLongStyle
 
 # AMBER stores charges multiplied by 18.2223 (sqrt of 332.0636 kcal*A/mol/e^2).
 CHARGE_CONVERSION_FACTOR = 18.2223
@@ -262,7 +260,9 @@ class AmberPrmtopReader:
             self.raw_data["RESIDUE_POINTER"], meta, atoms, bonds, angles, dihedrals
         )
 
-        pairstyle = ff.def_style(PairLJ126CoulLongStyle(9.0, 10.0))
+        pairstyle = ff.def_pairstyle(
+            "lj/cut/coul/long", cutoff_lj=9.0, cutoff_coul=10.0
+        )
         for itype, sigma, epsilon in self.parse_nonbond_params(atoms):
             atom_i_type_name = atoms["type"][itype - 1]
             pair_name = f"{atom_i_type_name}-{atom_i_type_name}"

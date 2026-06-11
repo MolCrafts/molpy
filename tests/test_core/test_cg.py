@@ -450,30 +450,39 @@ class TestGeneralImplementation:
 
         assert len(cg.beads) == 3
 
-    def test_arbitrary_bond_attributes(self):
-        """CGBonds support arbitrary attributes."""
+    def test_arbitrary_scalar_bond_attributes(self):
+        """CGBonds accept any numpy-representable scalar attribute."""
         cg = CoarseGrain()
         b1 = cg.def_bead(type="A")
         b2 = cg.def_bead(type="B")
 
-        bond = cg.def_cgbond(
-            b1, b2, custom_attr="value", strength=100.0, another_field=[1, 2, 3]
-        )
+        bond = cg.def_cgbond(b1, b2, custom_attr="value", strength=100.0)
 
         assert bond.get("custom_attr") == "value"
         assert bond.get("strength") == 100.0
-        assert bond.get("another_field") == [1, 2, 3]
 
-    def test_arbitrary_bead_attributes(self):
-        """Beads support arbitrary attributes."""
+    def test_non_representable_bond_attribute_raises(self):
+        """A non-numpy attribute (list) is rejected fail-fast, not stashed."""
         cg = CoarseGrain()
-        bead = cg.def_bead(
-            type="Custom", mass=50.0, charge=-1.5, metadata={"key": "value"}
-        )
+        b1 = cg.def_bead(type="A")
+        b2 = cg.def_bead(type="B")
+
+        with pytest.raises(TypeError):
+            cg.def_cgbond(b1, b2, another_field=[1, 2, 3])
+
+    def test_arbitrary_scalar_bead_attributes(self):
+        """Beads accept any numpy-representable scalar attribute."""
+        cg = CoarseGrain()
+        bead = cg.def_bead(type="Custom", mass=50.0, charge=-1.5)
 
         assert bead.get("mass") == 50.0
         assert bead.get("charge") == -1.5
-        assert bead.get("metadata") == {"key": "value"}
+
+    def test_non_representable_bead_attribute_raises(self):
+        """A non-numpy attribute (dict) is rejected fail-fast, not stashed."""
+        cg = CoarseGrain()
+        with pytest.raises(TypeError):
+            cg.def_bead(type="Custom", metadata={"key": "value"})
 
 
 # ---------------------------------------------------------------------------

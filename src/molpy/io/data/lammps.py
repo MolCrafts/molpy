@@ -15,7 +15,7 @@ import numpy as np
 from molpy.core.frame import Block
 from molpy.core.box import Box
 from molpy.core.fields import CHARGE, MOL_ID, FieldFormatter
-from molpy.core.forcefield import AtomisticForcefield, ForceField, Type
+from molpy.core.forcefield import AtomisticForcefield, ForceField
 from molpy.core.frame import Frame
 
 from .base import DataReader, DataWriter
@@ -353,40 +353,50 @@ class LammpsDataReader(DataReader):
         # names are applied positionally to however many params each line
         # carries (a 2-param harmonic improper and a 3-param cvff improper both
         # parse). The leading column is always the integer type id.
+        # arity = number of atom-type endpoints molrs requires in the dash-form
+        # type name for each category. LAMMPS data coeff sections are keyed only
+        # by an integer type id (no atom-type names), so a synthetic dash name
+        # ``"<id>-<id>..."`` of the right arity is used; :class:`LammpsDataWriter`
+        # reads the id back via ``name.split("-")[0]``.
         coeff_specs = [
             (
                 "PairCoeffs",
                 "pair",
                 lambda: forcefield.def_pairstyle("lj/cut"),
                 ["epsilon", "sigma"],
+                1,
             ),
             (
                 "BondCoeffs",
                 "bond",
                 lambda: forcefield.def_bondstyle("harmonic"),
                 ["k", "r0"],
+                2,
             ),
             (
                 "AngleCoeffs",
                 "angle",
                 lambda: forcefield.def_anglestyle("harmonic"),
                 ["k", "theta0"],
+                3,
             ),
             (
                 "DihedralCoeffs",
                 "dihedral",
                 lambda: forcefield.def_dihedralstyle("harmonic"),
                 ["k", "d", "n"],
+                4,
             ),
             (
                 "ImproperCoeffs",
                 "improper",
                 lambda: forcefield.def_improperstyle("harmonic"),
                 ["k", "d", "n"],
+                4,
             ),
         ]
 
-        for section, category, make_style, param_names in coeff_specs:
+        for section, category, make_style, param_names, arity in coeff_specs:
             if section not in sections:
                 continue
             style = make_style()
@@ -403,7 +413,8 @@ class LammpsDataReader(DataReader):
                         f"type id followed by numeric parameters ({e})"
                     ) from e
                 params = dict(zip(param_names, values))
-                style.types.add(Type(f"{category}_{type_id}", **params))
+                type_name = "-".join([str(type_id)] * arity)
+                forcefield.def_type(category, style.name, type_name, params)
 
         return forcefield
 
@@ -959,7 +970,6 @@ class LammpsDataWriter(DataWriter):
             DihedralStyle,
             ImproperStyle,
             PairStyle,
-            Type,
         )
 
         # Write pair coefficients
@@ -968,8 +978,8 @@ class LammpsDataWriter(DataWriter):
             lines.append("Pair Coeffs")
             lines.append("")
             for style in pair_styles:
-                for type_obj in style.types.bucket(Type):
-                    type_id = int(type_obj.name.split("_")[1])
+                for type_obj in style.types:
+                    type_id = int(type_obj.name.split("-")[0])
                     epsilon = type_obj.get("epsilon", 0.0)
                     sigma = type_obj.get("sigma", 1.0)
                     lines.append(f"{type_id} {epsilon:.6f} {sigma:.6f}")
@@ -981,8 +991,8 @@ class LammpsDataWriter(DataWriter):
             lines.append("Bond Coeffs")
             lines.append("")
             for style in bond_styles:
-                for type_obj in style.types.bucket(Type):
-                    type_id = int(type_obj.name.split("_")[1])
+                for type_obj in style.types:
+                    type_id = int(type_obj.name.split("-")[0])
                     k = type_obj.get("k", 0.0)
                     r0 = type_obj.get("r0", 1.0)
                     lines.append(f"{type_id} {k:.6f} {r0:.6f}")
@@ -994,8 +1004,8 @@ class LammpsDataWriter(DataWriter):
             lines.append("Angle Coeffs")
             lines.append("")
             for style in angle_styles:
-                for type_obj in style.types.bucket(Type):
-                    type_id = int(type_obj.name.split("_")[1])
+                for type_obj in style.types:
+                    type_id = int(type_obj.name.split("-")[0])
                     k = type_obj.get("k", 0.0)
                     theta0 = type_obj.get("theta0", 0.0)
                     lines.append(f"{type_id} {k:.6f} {theta0:.6f}")
@@ -1007,8 +1017,8 @@ class LammpsDataWriter(DataWriter):
             lines.append("Dihedral Coeffs")
             lines.append("")
             for style in dihedral_styles:
-                for type_obj in style.types.bucket(Type):
-                    type_id = int(type_obj.name.split("_")[1])
+                for type_obj in style.types:
+                    type_id = int(type_obj.name.split("-")[0])
                     k = type_obj.get("k", 0.0)
                     d = type_obj.get("d", 1)
                     n = type_obj.get("n", 1)
@@ -1021,8 +1031,8 @@ class LammpsDataWriter(DataWriter):
             lines.append("Improper Coeffs")
             lines.append("")
             for style in improper_styles:
-                for type_obj in style.types.bucket(Type):
-                    type_id = int(type_obj.name.split("_")[1])
+                for type_obj in style.types:
+                    type_id = int(type_obj.name.split("-")[0])
                     k = type_obj.get("k", 0.0)
                     d = type_obj.get("d", 1)
                     n = type_obj.get("n", 1)

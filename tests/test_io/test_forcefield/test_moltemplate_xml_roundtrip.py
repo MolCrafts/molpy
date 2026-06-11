@@ -44,8 +44,8 @@ def test_xml_atomtypes_named(tip3p_xml):
 
 def test_xml_reparse_recovers_styles(tip3p_xml):
     ff2 = read_xml_forcefield(tip3p_xml)
-    astyle = ff2.get_style_by_name("full", AtomStyle)
+    astyle = ff2.get_style("atom", "full")
     assert astyle is not None
-    by_name = {t.name: t for t in astyle.types.bucket(AtomType)}
+    by_name = {t.name: t for t in astyle.get_types(AtomType)}
     assert "O" in by_name
     assert "H" in by_name

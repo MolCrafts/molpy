@@ -22,7 +22,6 @@ if TYPE_CHECKING:
         legacy,
         pack,
         parser,
-        potential,
         reacter,
         typifier,
     )
@@ -42,7 +41,6 @@ _LAZY_SUBMODULES = frozenset(
         "legacy",
         "pack",
         "parser",
-        "potential",
         "reacter",
         "typifier",
     }
@@ -98,7 +96,6 @@ from .core.frame import Block, Frame
 from .core.script import Script, ScriptLanguage
 from .core.trajectory import Trajectory
 from .core.unit import UnitSystem
-from .potential import *  # noqa: F403
 from .version import release_date, version
 
 __all__ = [
@@ -112,7 +109,6 @@ __all__ = [
     "legacy",
     "pack",
     "parser",
-    "potential",
     "reacter",
     "typifier",
     # Core atomistic

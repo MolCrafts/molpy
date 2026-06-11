@@ -762,12 +762,12 @@ class TestForceFieldCoeffs:
         pair = {
             t.name: (t.get("epsilon"), t.get("sigma"))
             for s in ff.get_styles(mp.PairStyle)
-            for t in s.types.bucket(mp.Type)
+            for t in s.get_types(mp.Type)
         }
         bond = {
             t.name: (t.get("k"), t.get("r0"))
             for s in ff.get_styles(mp.BondStyle)
-            for t in s.types.bucket(mp.Type)
+            for t in s.get_types(mp.Type)
         }
         assert pair, "pair coefficients were dropped"
         assert bond, "bond coefficients were dropped"
@@ -781,7 +781,7 @@ class TestForceFieldCoeffs:
             return {
                 t.name: tuple(t.get(k) for k in keys)
                 for s in ff.get_styles(style_cls)
-                for t in s.types.bucket(mp.Type)
+                for t in s.get_types(mp.Type)
             }
 
         pair_in = grab(fr.metadata["forcefield"], mp.PairStyle, ["epsilon", "sigma"])

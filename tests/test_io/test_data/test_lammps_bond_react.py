@@ -161,22 +161,22 @@ def _build_forcefield(template: BondReactTemplate, product: Atomistic) -> mp.For
         dihedral_names.update(str(d["type"]) for d in struct.dihedrals)
 
     ff = mp.ForceField("bond_react_test", units="real")
-    atom_style = ff.def_style(mp.AtomStyle("full"))
+    atom_style = ff.def_style(mp.AtomStyle(name="full"))
     atom_types = {
         "c3": atom_style.def_type("c3", mass=12.011),
         "hc": atom_style.def_type("hc", mass=1.008),
     }
-    bond_style = ff.def_style(mp.BondStyle("harmonic"))
+    bond_style = ff.def_style(mp.BondStyle(name="harmonic"))
     for name in sorted(bond_names):
         i, j = name.split("-")
         bond_style.def_type(atom_types[i], atom_types[j], name=name, k=300.0, r0=1.53)
-    angle_style = ff.def_style(mp.AngleStyle("harmonic"))
+    angle_style = ff.def_style(mp.AngleStyle(name="harmonic"))
     for name in sorted(angle_names):
         i, j, k = name.split("-")
         angle_style.def_type(
             atom_types[i], atom_types[j], atom_types[k], name=name, k=50.0, theta0=110.0
         )
-    dihedral_style = ff.def_style(mp.DihedralStyle("opls"))
+    dihedral_style = ff.def_style(mp.DihedralStyle(name="opls"))
     for name in sorted(dihedral_names):
         endpoint_types = [atom_types[p] for p in name.split("-")]
         dihedral_style.def_type(

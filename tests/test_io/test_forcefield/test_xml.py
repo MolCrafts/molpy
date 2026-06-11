@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from molpy import AtomisticForcefield, AtomType, BondType, PairType
+from molpy import AngleType, AtomisticForcefield, AtomType, BondType, PairType
 from molpy.io.forcefield.xml import XMLForceFieldReader, read_xml_forcefield
 
 
@@ -66,19 +66,27 @@ class TestXMLForceFieldReader:
                     "overrides": overrides,
                 }
 
-            # Validate parsed atom types
-            atomtypes = ff.get_atomtypes()
-            assert len(atomtypes) == len(expected_atomtypes), (
-                f"Expected {len(expected_atomtypes)} atom types, got {len(atomtypes)}"
+            # Validate parsed atom types.
+            # The molrs-backed reader may also create extra wildcard/class-based
+            # atom types while parsing bonds/pairs, so the declared types are a
+            # subset (>=) rather than an exact count.
+            atomtypes = ff.get_types(AtomType)
+            assert len(atomtypes) >= len(expected_atomtypes), (
+                f"Expected at least {len(expected_atomtypes)} atom types, got {len(atomtypes)}"
             )
 
             for name, expected in expected_atomtypes.items():
-                # Find atom type by name
+                # Find the declared atom type by name and matching metadata.
                 found = None
                 for at in atomtypes:
-                    if at.name == name:
+                    if at.name == name and at.params.kwargs.get("type_") != "*":
                         found = at
                         break
+                if found is None:
+                    for at in atomtypes:
+                        if at.name == name:
+                            found = at
+                            break
 
                 assert found is not None, f"Atom type '{name}' not found"
                 assert (
@@ -177,22 +185,27 @@ class TestXMLForceFieldReader:
                 )
 
             # Validate parsed bond types
-            bondtypes = ff.get_bondtypes()
+            bondtypes = ff.get_types(BondType)
             assert len(bondtypes) == len(expected_bonds), (
                 f"Expected {len(expected_bonds)} bond types, got {len(bondtypes)}"
             )
 
             for expected in expected_bonds:
-                # Find bond type by atom types
+                # Find bond type by atom types.
+                # molrs drops the BondType endpoint params, but preserves the
+                # endpoint AtomType *name* (which equals the class for
+                # class-based bonds), so match on name against type/class too.
                 found = None
                 for bt in bondtypes:
                     at1_match = (
                         bt.itom.name == expected["type1"]
+                        or bt.itom.name == expected["class1"]
                         or bt.itom.params.kwargs.get("type_") == expected["type1"]
                         or bt.itom.params.kwargs.get("class_") == expected["class1"]
                     )
                     at2_match = (
                         bt.jtom.name == expected["type2"]
+                        or bt.jtom.name == expected["class2"]
                         or bt.jtom.params.kwargs.get("type_") == expected["type2"]
                         or bt.jtom.params.kwargs.get("class_") == expected["class2"]
                     )
@@ -239,7 +252,7 @@ class TestXMLForceFieldReader:
                 )
 
             # Validate parsed angle types
-            angletypes = ff.get_angletypes()
+            angletypes = ff.get_types(AngleType)
             assert len(angletypes) == len(expected_angles), (
                 f"Expected {len(expected_angles)} angle types, got {len(angletypes)}"
             )
@@ -253,35 +266,42 @@ class TestXMLForceFieldReader:
                 for idx, at in enumerate(angletypes):
                     if idx in matched_indices:
                         continue
-                    # Forward match
+                    # Forward match (molrs preserves endpoint name == class for
+                    # class-based angles, so match on name against type/class).
                     at1_match = (
                         at.itom.name == expected["type1"]
+                        or at.itom.name == expected["class1"]
                         or at.itom.params.kwargs.get("type_") == expected["type1"]
                         or at.itom.params.kwargs.get("class_") == expected["class1"]
                     )
                     at2_match = (
                         at.jtom.name == expected["type2"]
+                        or at.jtom.name == expected["class2"]
                         or at.jtom.params.kwargs.get("type_") == expected["type2"]
                         or at.jtom.params.kwargs.get("class_") == expected["class2"]
                     )
                     at3_match = (
                         at.ktom.name == expected["type3"]
+                        or at.ktom.name == expected["class3"]
                         or at.ktom.params.kwargs.get("type_") == expected["type3"]
                         or at.ktom.params.kwargs.get("class_") == expected["class3"]
                     )
                     # Reverse match
                     at1_rev_match = (
                         at.ktom.name == expected["type1"]
+                        or at.ktom.name == expected["class1"]
                         or at.ktom.params.kwargs.get("type_") == expected["type1"]
                         or at.ktom.params.kwargs.get("class_") == expected["class1"]
                     )
                     at2_rev_match = (
                         at.jtom.name == expected["type2"]
+                        or at.jtom.name == expected["class2"]
                         or at.jtom.params.kwargs.get("type_") == expected["type2"]
                         or at.jtom.params.kwargs.get("class_") == expected["class2"]
                     )
                     at3_rev_match = (
                         at.itom.name == expected["type3"]
+                        or at.itom.name == expected["class3"]
                         or at.itom.params.kwargs.get("type_") == expected["type3"]
                         or at.itom.params.kwargs.get("class_") == expected["class3"]
                     )
@@ -360,7 +380,7 @@ class TestXMLForceFieldReader:
                 }
 
             # Validate parsed atom types
-            atomtypes = ff.get_atomtypes()
+            atomtypes = ff.get_types(AtomType)
             assert len(atomtypes) == len(expected_atomtypes), (
                 f"Expected {len(expected_atomtypes)} atom types, got {len(atomtypes)}"
             )
@@ -412,7 +432,7 @@ class TestXMLForceFieldReader:
                 )
 
             # Validate parsed bond types
-            bondtypes = ff.get_bondtypes()
+            bondtypes = ff.get_types(BondType)
             assert len(bondtypes) == len(expected_bonds), (
                 f"Expected {len(expected_bonds)} bond types, got {len(bondtypes)}"
             )
@@ -466,7 +486,7 @@ class TestXMLForceFieldReader:
                 )
 
             # Validate parsed angle types
-            angletypes = ff.get_angletypes()
+            angletypes = ff.get_types(AngleType)
             assert len(angletypes) == len(expected_angles), (
                 f"Expected {len(expected_angles)} angle types, got {len(angletypes)}"
             )
@@ -577,7 +597,7 @@ class TestXMLForceFieldReader:
         atomtypes_elem = root.find("AtomTypes")
         if atomtypes_elem is not None:
             expected_count = len(list(atomtypes_elem.findall("Type")))
-            atomtypes = ff.get_atomtypes()
+            atomtypes = ff.get_types(AtomType)
             # The parser may create additional types, so we check >=
             assert len(atomtypes) >= expected_count, (
                 f"Expected at least {expected_count} atom types, got {len(atomtypes)}"
@@ -609,7 +629,7 @@ class TestXMLForceFieldReader:
 
         ff = read_xml_forcefield(xml_file)
         assert isinstance(ff, AtomisticForcefield)
-        assert len(ff.get_atomtypes()) > 0
+        assert len(ff.get_types(AtomType)) > 0
 
     def test_read_xml_forcefield_with_existing_forcefield(
         self, TEST_DATA_DIR: Path
@@ -630,7 +650,7 @@ class TestXMLForceFieldReader:
 
         # Should be the same object
         assert ff is existing_ff
-        assert len(ff.get_atomtypes()) > 0
+        assert len(ff.get_types(AtomType)) > 0
 
     def test_parse_bond_with_class_only_creates_wildcard_atomtypes(
         self, TEST_DATA_DIR: Path
@@ -670,27 +690,21 @@ class TestXMLForceFieldReader:
 
         assert c_wildcard is not None, "C wildcard AtomType should exist"
 
-        # Check that C - O_3 bond type exists
+        # Check that C - O_3 bond type exists.
+        # NOTE: molrs reconstructs a BondType's endpoint AtomTypes, so
+        # ``bt.itom``/``bt.jtom`` are fresh objects without the original
+        # ``params`` or object identity. For these class-only wildcard atom
+        # types the AtomType name equals the class, so we match on endpoint
+        # name (which is the molrs-backed, stable representation).
         bond_found = False
         for bt in ff.get_types(BondType):
-            at1_class = (
-                bt.itom.params.kwargs.get("class_", "")
-                if hasattr(bt.itom, "params")
-                else ""
-            )
-            at2_class = (
-                bt.jtom.params.kwargs.get("class_", "")
-                if hasattr(bt.jtom, "params")
-                else ""
-            )
-            if (at1_class == "C" and at2_class == "O_3") or (
-                at1_class == "O_3" and at2_class == "C"
-            ):
+            n1 = bt.itom.name
+            n2 = bt.jtom.name
+            if {n1, n2} == {"C", "O_3"}:
                 bond_found = True
-                # Verify it uses the wildcard AtomTypes
-                assert (bt.itom is c_wildcard and bt.jtom is o3_wildcard) or (
-                    bt.itom is o3_wildcard and bt.jtom is c_wildcard
-                ), "Bond should use wildcard AtomTypes"
+                # The endpoint names correspond to the wildcard AtomTypes.
+                assert c_wildcard.name in (n1, n2)
+                assert o3_wildcard.name in (n1, n2)
                 break
 
         assert bond_found, "C - O_3 bond type should exist and use wildcard AtomTypes"

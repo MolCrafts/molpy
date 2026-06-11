@@ -284,10 +284,10 @@ def create_monomer_from_repeat_unit(
     # Add atoms
     for atom_ir in graph.atoms:
         atom_data = asdict(atom_ir)
-        # Promote chiral from extras to top-level for preservation
-        extras = atom_data.get("extras", {})
-        if "chiral" in extras:
-            atom_data["chiral"] = extras["chiral"]
+        # Flatten extras into top-level scalar attributes; the structure's
+        # component store holds only numpy-representable scalars (no dict).
+        extras = atom_data.pop("extras", {}) or {}
+        atom_data.update(extras)
         struct.def_atom(**atom_data)
 
     # Add bonds
@@ -517,10 +517,10 @@ def smilesir_to_atomistic(ir: SmilesGraphIR) -> Atomistic:
     # Add atoms using asdict pattern (same as create_monomer_from_unit)
     for atom_ir in ir.atoms:
         atom_data = asdict(atom_ir)
-        # Promote chiral from extras to top-level for preservation
-        extras = atom_data.get("extras", {})
-        if "chiral" in extras:
-            atom_data["chiral"] = extras["chiral"]
+        # Flatten extras into top-level scalar attributes; the structure's
+        # component store holds only numpy-representable scalars (no dict).
+        extras = atom_data.pop("extras", {}) or {}
+        atom_data.update(extras)
         struct.def_atom(**atom_data)
 
     # Add bonds using index-based mapping

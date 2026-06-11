@@ -129,7 +129,7 @@ def scale_lj(
         multiplied by k_ij. Intra-fragment pairs, sigma, and charges are
         untouched.
     """
-    from molpy.core.forcefield import PairType
+    from molpy.core.forcefield import ForceField, PairType
 
     if frag_data is None:
         frag_data = load_fragment_scaling_data()
@@ -145,7 +145,10 @@ def scale_lj(
             if t is not None:
                 type_to_frag[t] = label
 
-    new_ff = copy.deepcopy(ff)
+    # molrs ForceField is not deep-copyable; clone by merging into a fresh,
+    # empty force field (an independent copy of all styles/types).
+    new_ff = ForceField(name=ff.name, units=ff.units)
+    new_ff.merge(ff)
     for pt in new_ff.get_types(PairType):
         fi = type_to_frag.get(pt.itom.name)
         fj = type_to_frag.get(pt.jtom.name)
@@ -155,7 +158,7 @@ def scale_lj(
         k = compute_k_ij(frag_data[fi], frag_data[fj], r)
         eps = pt.get("epsilon")
         if eps is not None:
-            pt.params.kwargs["epsilon"] = eps * k
+            pt["epsilon"] = eps * k
         if scale_sigma and pt.get("sigma") is not None:
-            pt.params.kwargs["sigma"] = pt.get("sigma") * SIGMA_SCALE
+            pt["sigma"] = pt.get("sigma") * SIGMA_SCALE
     return new_ff

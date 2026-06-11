@@ -1,10 +1,29 @@
 """
 Unit tests for forcefield core functionality.
 
-Tests the ForceField, AtomisticForcefield, and related classes.
+molpy's old parallel ForceField hierarchy is DELETED; ``molpy.core.forcefield``
+now re-exports molrs's native classes. These tests exercise that molrs-backed
+surface through molpy's public re-exports.
+
+Key facts about the molrs-backed API (verified against the installed wheel):
+
+* Types are NEVER constructed standalone. They are always created through a
+  style: ``atomtype = atomstyle.def_type("CA", mass=12.0)`` and bond/angle/etc.
+  types take previously-defined AtomType handles as endpoints.
+* ``Parameters`` is keyword-only: ``Parameters({...})``; ``.args`` is always
+  ``[]`` and ``.kwargs`` is the supplied mapping.
+* ``style.types`` / ``ff.styles`` are plain lists; query via
+  ``style.get_types(cls)`` / ``ff.get_styles(cls)`` / ``ff.get_types(cls)``.
+* ``ff.to_potentials()`` with no frame is a *deferred* ``Potentials``
+  (``len()==0``, not iterable). To evaluate you must pass a typed ``Frame``.
+* ``TypeBucket`` remains a generic container (``molpy.core.utils``); it is
+  tested here directly with plain Python objects.
 """
 
+import numpy as np
 import pytest
+
+import molrs
 
 from molpy import (
     AngleStyle,
@@ -26,244 +45,303 @@ from molpy import (
 
 
 class TestParameters:
-    """Test Parameters class functionality."""
+    """Test Parameters class functionality (molrs, keyword-only)."""
 
     def test_parameters_creation(self):
-        """Test creating parameters with args and kwargs."""
-        params = Parameters(1.0, 2.0, k=3.0, theta=4.0)
-        assert params.args == [1.0, 2.0]
+        """Parameters takes a mapping; args is always empty, kwargs is it."""
+        params = Parameters({"k": 3.0, "theta": 4.0})
+        assert params.args == []
         assert params.kwargs == {"k": 3.0, "theta": 4.0}
+
+    def test_parameters_getitem(self):
+        """Parameters supports keyword item access."""
+        params = Parameters({"k": 2.0})
+        assert params["k"] == 2.0
+        assert "k" in params
 
     def test_parameters_repr(self):
         """Test parameters string representation."""
-        params = Parameters(1.0, k=2.0)
+        params = Parameters({"k": 2.0})
         assert "Parameters" in repr(params)
-        assert "args" in repr(params)
         assert "kwargs" in repr(params)
 
 
 class TestType:
-    """Test Type base class functionality."""
+    """Test the Type surface via styles (standalone construction is gone)."""
 
     def test_type_creation(self):
-        """Test creating a type with name and parameters."""
-        t = Type("test_type", sigma=0.3, epsilon=0.5)
+        """An atom type carries name and keyword params."""
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        t = astyle.def_type("test_type", sigma=0.3, epsilon=0.5)
         assert t.name == "test_type"
         assert t.params.kwargs["sigma"] == 0.3
         assert t.params.kwargs["epsilon"] == 0.5
+        assert isinstance(t, Type)
 
     def test_type_equality(self):
-        """Test type equality based on class and name."""
-        t1 = Type("type1")
-        t2 = Type("type1")
-        t3 = Type("type2")
-        assert t1 == t2
+        """Types compare equal by category + name."""
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        t1 = astyle.def_type("type1")
+        t1_again = astyle.get_type_by_name("type1", AtomType)
+        t3 = astyle.def_type("type2")
+        assert t1 == t1_again
         assert t1 != t3
 
     def test_type_hashing(self):
-        """Test that types can be hashed and used in sets."""
-        t1 = Type("type1")
-        t2 = Type("type1")
-        t3 = Type("type2")
-        type_set = {t1, t2, t3}
+        """Types can be hashed and used in sets; equal types collapse."""
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        t1 = astyle.def_type("type1")
+        t1_again = astyle.get_type_by_name("type1", AtomType)
+        t3 = astyle.def_type("type2")
+        type_set = {t1, t1_again, t3}
         assert len(type_set) == 2
 
-    def test_type_repr(self):
-        """Test type string representation."""
-        t = Type("test_type")
-        assert "Type" in repr(t)
-        assert "test_type" in repr(t)
+    def test_type_param_access(self):
+        """Types support dict-style param access ``t['k']``."""
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        t = astyle.def_type("CA", mass=12.011)
+        assert t["mass"] == 12.011
 
 
 class TestAtomType:
-    """Test AtomType class functionality."""
+    """Test AtomType created through an atom style."""
 
     def test_atomtype_creation(self):
-        """Test creating an atom type."""
-        at = AtomType("CA", element="C", mass=12.011)
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        at = astyle.def_type("CA", element="C", mass=12.011)
         assert at.name == "CA"
         assert at.params.kwargs["element"] == "C"
         assert at.params.kwargs["mass"] == 12.011
 
     def test_atomtype_is_type(self):
-        """Test that AtomType is a subclass of Type."""
-        at = AtomType("CA")
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        at = astyle.def_type("CA")
         assert isinstance(at, Type)
+        assert isinstance(at, AtomType)
 
     def test_atomtype_equality(self):
-        """Test atom type equality."""
-        at1 = AtomType("CA", mass=12.011)
-        at2 = AtomType("CA", mass=12.011)
-        at3 = AtomType("CB", mass=12.011)
-        assert at1 == at2
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        at1 = astyle.def_type("CA", mass=12.011)
+        at1_again = astyle.get_type_by_name("CA", AtomType)
+        at3 = astyle.def_type("CB", mass=12.011)
+        assert at1 == at1_again
         assert at1 != at3
 
 
 class TestBondType:
-    """Test BondType class functionality."""
+    """Test BondType created through a bond style with AtomType endpoints."""
 
     def test_bondtype_creation(self):
-        """Test creating a bond type."""
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        bt = BondType("CA-CB", at1, at2, k=1000.0, r0=1.5)
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        at1 = astyle.def_type("CA")
+        at2 = astyle.def_type("CB")
+        bstyle = ff.def_bondstyle("harmonic")
+        bt = bstyle.def_type(at1, at2, name="CA-CB", k=1000.0, r0=1.5)
         assert bt.name == "CA-CB"
-        assert bt.itom == at1
-        assert bt.jtom == at2
+        assert bt.itom.name == at1.name
+        assert bt.jtom.name == at2.name
         assert bt.params.kwargs["k"] == 1000.0
         assert bt.params.kwargs["r0"] == 1.5
 
+    def test_bondtype_auto_name(self):
+        """Endpoint atom-type names are joined to form the bond type name."""
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        at1 = astyle.def_type("CA")
+        at2 = astyle.def_type("CB")
+        bstyle = ff.def_bondstyle("harmonic")
+        bt = bstyle.def_type(at1, at2, k=1000.0, r0=1.5)
+        assert bt.name == "CA-CB"
+
 
 class TestAngleType:
-    """Test AngleType class functionality."""
+    """Test AngleType created through an angle style."""
 
     def test_angletype_creation(self):
-        """Test creating an angle type."""
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        at3 = AtomType("CC")
-        angle = AngleType("CA-CB-CC", at1, at2, at3, k=500.0, theta0=120.0)
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        at1 = astyle.def_type("CA")
+        at2 = astyle.def_type("CB")
+        at3 = astyle.def_type("CC")
+        anglestyle = ff.def_anglestyle("harmonic")
+        angle = anglestyle.def_type(
+            at1, at2, at3, name="CA-CB-CC", k=500.0, theta0=120.0
+        )
         assert angle.name == "CA-CB-CC"
-        assert angle.itom == at1
-        assert angle.jtom == at2
-        assert angle.ktom == at3
+        assert angle.itom.name == at1.name
+        assert angle.jtom.name == at2.name
+        assert angle.ktom.name == at3.name
         assert angle.params.kwargs["k"] == 500.0
         assert angle.params.kwargs["theta0"] == 120.0
 
+    def test_angletype_auto_name(self):
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        at1 = astyle.def_type("CA")
+        at2 = astyle.def_type("CB")
+        at3 = astyle.def_type("CC")
+        anglestyle = ff.def_anglestyle("harmonic")
+        angle = anglestyle.def_type(at1, at2, at3, k=500.0)
+        assert angle.name == "CA-CB-CC"
+
 
 class TestTypeBucket:
-    """Test TypeBucket class functionality."""
+    """Test the generic TypeBucket container directly with plain objects.
+
+    TypeBucket is a back-compat generic container (``molpy.core.utils``); it is
+    no longer used for style storage. These tests exercise it with plain Python
+    classes, independent of the molrs FF hierarchy.
+    """
+
+    class _Foo:
+        def __init__(self, name):
+            self.name = name
+
+    class _Bar:
+        def __init__(self, name):
+            self.name = name
 
     def test_typebucket_add_and_bucket(self):
-        """Test adding types and retrieving them by class."""
-        tb = TypeBucket[Type]()
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        bt1 = BondType("CA-CB", at1, at2)
+        tb = TypeBucket()
+        f1 = self._Foo("a")
+        f2 = self._Foo("b")
+        b1 = self._Bar("c")
+        tb.add(f1)
+        tb.add(f2)
+        tb.add(b1)
 
-        tb.add(at1)
-        tb.add(at2)
-        tb.add(bt1)
+        foos = tb.bucket(self._Foo)
+        bars = tb.bucket(self._Bar)
 
-        atom_types = tb.bucket(AtomType)
-        bond_types = tb.bucket(BondType)
-        all_types = tb.bucket(Type)
-
-        # bucket() now returns Entities
-        assert len(atom_types) == 2
-        assert len(bond_types) == 1
-        assert len(all_types) == 3
-
-        # Verify they contain the right instances
-        assert at1 in atom_types
-        assert at2 in atom_types
-        assert bt1 in bond_types
+        assert len(foos) == 2
+        assert len(bars) == 1
+        assert f1 in foos
+        assert f2 in foos
+        assert b1 in bars
+        assert len(tb) == 3
 
     def test_typebucket_remove(self):
-        """Test removing types from bucket."""
-        tb = TypeBucket[Type]()
-        at = AtomType("CA")
-        tb.add(at)
-        assert len(tb.bucket(AtomType)) == 1
-        tb.remove(at)
-        assert len(tb.bucket(AtomType)) == 0
+        tb = TypeBucket()
+        f = self._Foo("a")
+        tb.add(f)
+        assert len(tb.bucket(self._Foo)) == 1
+        assert tb.remove(f) is True
+        assert len(tb.bucket(self._Foo)) == 0
 
     def test_typebucket_classes(self):
-        """Test getting all type classes in bucket."""
-        tb = TypeBucket[Type]()
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        tb.add(at1)
-        tb.add(BondType("CA-CB", at1, at2))
+        tb = TypeBucket()
+        tb.add(self._Foo("a"))
+        tb.add(self._Bar("b"))
         classes = list(tb.classes())
-        assert AtomType in classes
-        assert BondType in classes
+        assert self._Foo in classes
+        assert self._Bar in classes
+
+    def test_typebucket_exact_bucket_and_all(self):
+        tb = TypeBucket()
+        f = self._Foo("a")
+        b = self._Bar("b")
+        tb.add(f)
+        tb.add(b)
+        assert tb.exact_bucket(self._Foo) == [f]
+        assert set(tb.all()) == {f, b}
 
 
 class TestStyle:
-    """Test Style base class functionality."""
+    """Test the Style surface through a ForceField."""
 
     def test_style_creation(self):
-        """Test creating a style."""
-        style = Style("harmonic", k_unit="kcal/mol")
+        """A bound style exposes its name and category."""
+        ff = ForceField()
+        style = ff.def_bondstyle("harmonic")
         assert style.name == "harmonic"
-        assert style.params.kwargs["k_unit"] == "kcal/mol"
+        assert style.category == "bond"
 
     def test_style_equality(self):
-        """Test style equality."""
-        s1 = Style("harmonic")
-        s2 = Style("harmonic")
-        s3 = Style("morse")
-        assert s1 == s2
+        """Styles compare equal by category + name."""
+        ff = ForceField()
+        s1 = ff.def_bondstyle("harmonic")
+        s1_again = ff.get_style("bond", "harmonic")
+        s3 = ff.def_bondstyle("morse")
+        assert s1 == s1_again
         assert s1 != s3
 
-    def test_style_merge(self):
-        """Test merging styles."""
-        s1 = Style("harmonic", k=1.0)
-        s2 = Style("harmonic", r0=1.5)
-        s1.types.add(AtomType("CA"))
-        s2.types.add(AtomType("CB"))
-
-        s1.merge(s2)
-        assert s1.params.kwargs["k"] == 1.0
-        assert s1.params.kwargs["r0"] == 1.5
-        assert len(s1.types.bucket(AtomType)) == 2
+    def test_style_def_type_chaining(self):
+        """def_type adds to the style and is queryable via get_types."""
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        astyle.def_type("CA")
+        astyle.def_type("CB")
+        assert len(astyle.get_types(AtomType)) == 2
 
 
 class TestAtomStyle:
-    """Test AtomStyle class functionality."""
+    """Test AtomStyle.def_type."""
 
     def test_atomstyle_def_type(self):
-        """Test defining atom types in atom style."""
-        astyle = AtomStyle("full")
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
         at = astyle.def_type("CA", element="C", mass=12.011)
         assert isinstance(at, AtomType)
         assert at.name == "CA"
-        assert len(astyle.types.bucket(AtomType)) == 1
+        assert len(astyle.get_types(AtomType)) == 1
 
 
 class TestBondStyle:
-    """Test BondStyle class functionality."""
+    """Test BondStyle.def_type."""
 
     def test_bondstyle_def_type(self):
-        """Test defining bond types in bond style."""
-        bstyle = BondStyle("harmonic")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        at1 = astyle.def_type("CA")
+        at2 = astyle.def_type("CB")
+        bstyle = ff.def_bondstyle("harmonic")
         bt = bstyle.def_type(at1, at2, name="CA-CB", k=1000.0, r0=1.5)
         assert isinstance(bt, BondType)
         assert bt.name == "CA-CB"
-        assert len(bstyle.types.bucket(BondType)) == 1
+        assert len(bstyle.get_types(BondType)) == 1
 
     def test_bondstyle_def_type_auto_name(self):
-        """Test automatic naming of bond types."""
-        bstyle = BondStyle("harmonic")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        at1 = astyle.def_type("CA")
+        at2 = astyle.def_type("CB")
+        bstyle = ff.def_bondstyle("harmonic")
         bt = bstyle.def_type(at1, at2, k=1000.0, r0=1.5)
         assert bt.name == "CA-CB"
 
 
 class TestAngleStyle:
-    """Test AngleStyle class functionality."""
+    """Test AngleStyle.def_type."""
 
     def test_anglestyle_def_type(self):
-        """Test defining angle types in angle style."""
-        astyle = AngleStyle("harmonic")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        at3 = AtomType("CC")
-        angle = astyle.def_type(at1, at2, at3, name="CA-CB-CC", k=500.0, theta0=120.0)
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        at1 = astyle.def_type("CA")
+        at2 = astyle.def_type("CB")
+        at3 = astyle.def_type("CC")
+        anglestyle = ff.def_anglestyle("harmonic")
+        angle = anglestyle.def_type(
+            at1, at2, at3, name="CA-CB-CC", k=500.0, theta0=120.0
+        )
         assert isinstance(angle, AngleType)
         assert angle.name == "CA-CB-CC"
 
     def test_anglestyle_def_type_auto_name(self):
-        """Test automatic naming of angle types."""
-        astyle = AngleStyle("harmonic")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        at3 = AtomType("CC")
-        angle = astyle.def_type(at1, at2, at3, k=500.0)
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        at1 = astyle.def_type("CA")
+        at2 = astyle.def_type("CB")
+        at3 = astyle.def_type("CC")
+        anglestyle = ff.def_anglestyle("harmonic")
+        angle = anglestyle.def_type(at1, at2, at3, k=500.0)
         assert angle.name == "CA-CB-CC"
 
 
@@ -271,30 +349,30 @@ class TestForceField:
     """Test ForceField base class functionality."""
 
     def test_forcefield_creation(self):
-        """Test creating a force field."""
         ff = ForceField(name="TestFF", units="real")
         assert ff.name == "TestFF"
         assert ff.units == "real"
 
     def test_forcefield_def_style(self):
-        """Test defining styles in force field."""
+        """def_style registers an unbound style and returns a bound handle."""
         ff = ForceField()
-        style = ff.def_style(Style("test_style", param1=1.0))
+        style = ff.def_style(molrs.BondHarmonicStyle())
         assert isinstance(style, Style)
-        assert style.name == "test_style"
+        assert style.name == "harmonic"
+        assert style.category == "bond"
 
     def test_forcefield_def_style_idempotent(self):
-        """Test that defining the same style twice returns the same instance."""
+        """Re-registering the same (category, name) returns an equal handle."""
         ff = ForceField()
-        style1 = ff.def_style(Style("test_style", param1=1.0))
-        style2 = ff.def_style(Style("test_style", param2=2.0))
-        assert style1 is style2
+        style1 = ff.def_style(molrs.BondHarmonicStyle())
+        style2 = ff.def_style(molrs.BondHarmonicStyle())
+        assert style1 == style2
+        assert len(ff.get_styles(Style)) == 1
 
     def test_forcefield_get_styles(self):
-        """Test getting styles from force field."""
         ff = ForceField()
-        ff.def_style(AtomStyle("full"))
-        ff.def_style(BondStyle("harmonic"))
+        ff.def_atomstyle("full")
+        ff.def_bondstyle("harmonic")
 
         atom_styles = ff.get_styles(AtomStyle)
         bond_styles = ff.get_styles(BondStyle)
@@ -305,9 +383,8 @@ class TestForceField:
         assert len(all_styles) == 2
 
     def test_forcefield_get_types(self):
-        """Test getting types from force field."""
         ff = ForceField()
-        astyle = ff.def_style(AtomStyle("full"))
+        astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", mass=12.011)
         at2 = astyle.def_type("CB", mass=12.011)
 
@@ -317,476 +394,221 @@ class TestForceField:
         assert at2 in atom_types
 
     def test_forcefield_merge(self):
-        """Test merging force fields."""
         ff1 = ForceField(name="FF1")
         ff2 = ForceField(name="FF2")
 
-        astyle1 = ff1.def_style(AtomStyle("full"))
+        astyle1 = ff1.def_atomstyle("full")
         astyle1.def_type("CA", mass=12.011)
 
-        astyle2 = ff2.def_style(AtomStyle("full"))
+        astyle2 = ff2.def_atomstyle("full")
         astyle2.def_type("CB", mass=12.011)
 
         ff1.merge(ff2)
         atom_types = ff1.get_types(AtomType)
         assert len(atom_types) == 2
 
+    def test_forcefield_get_style(self):
+        """get_style(category, name) returns the matching style or None."""
+        ff = ForceField()
+        ff.def_atomstyle("full")
+        ff.def_bondstyle("harmonic")
+
+        atom_style = ff.get_style("atom", "full")
+        assert atom_style is not None
+        assert isinstance(atom_style, AtomStyle)
+        assert atom_style.name == "full"
+
+        bond_style = ff.get_style("bond", "harmonic")
+        assert bond_style is not None
+        assert isinstance(bond_style, BondStyle)
+        assert bond_style.name == "harmonic"
+
+        assert ff.get_style("atom", "nonexistent") is None
+
 
 class TestAtomisticForcefield:
-    """Test AtomisticForcefield class functionality."""
+    """``AtomisticForcefield`` is an alias of the native ``ForceField``."""
+
+    def test_atomistic_ff_is_forcefield(self):
+        assert AtomisticForcefield is ForceField
 
     def test_atomistic_ff_creation(self):
-        """Test creating an atomistic force field."""
         ff = AtomisticForcefield(name="OPLS-AA", units="real")
         assert ff.name == "OPLS-AA"
         assert ff.units == "real"
 
     def test_def_atomstyle(self):
-        """Test defining atom style."""
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
         assert isinstance(astyle, AtomStyle)
         assert astyle.name == "full"
 
     def test_def_bondstyle(self):
-        """Test defining bond style."""
         ff = AtomisticForcefield()
         bstyle = ff.def_bondstyle("harmonic")
         assert isinstance(bstyle, BondStyle)
         assert bstyle.name == "harmonic"
 
     def test_def_anglestyle(self):
-        """Test defining angle style."""
         ff = AtomisticForcefield()
         astyle = ff.def_anglestyle("harmonic")
         assert isinstance(astyle, AngleStyle)
         assert astyle.name == "harmonic"
 
     def test_def_dihedralstyle(self):
-        """Test defining dihedral style."""
         ff = AtomisticForcefield()
         dstyle = ff.def_dihedralstyle("opls")
         assert isinstance(dstyle, DihedralStyle)
         assert dstyle.name == "opls"
 
     def test_def_improperstyle(self):
-        """Test defining improper style."""
         ff = AtomisticForcefield()
         istyle = ff.def_improperstyle("cvff")
         assert isinstance(istyle, ImproperStyle)
         assert istyle.name == "cvff"
 
     def test_def_pairstyle(self):
-        """Test defining pair style."""
         ff = AtomisticForcefield()
         pstyle = ff.def_pairstyle("lj/cut")
         assert isinstance(pstyle, PairStyle)
         assert pstyle.name == "lj/cut"
 
     def test_get_atomtypes(self):
-        """Test getting atom types from atomistic force field."""
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", mass=12.011)
         at2 = astyle.def_type("CB", mass=12.011)
 
-        atom_types = ff.get_atomtypes()
+        atom_types = ff.get_types(AtomType)
         assert len(atom_types) == 2
         assert at1 in atom_types
         assert at2 in atom_types
 
     def test_get_bondtypes(self):
-        """Test getting bond types from atomistic force field."""
         ff = AtomisticForcefield()
+        astyle = ff.def_atomstyle("full")
+        at1 = astyle.def_type("CA")
+        at2 = astyle.def_type("CB")
         bstyle = ff.def_bondstyle("harmonic")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
         bt = bstyle.def_type(at1, at2, k=1000.0, r0=1.5)
 
-        bond_types = ff.get_bondtypes()
+        bond_types = ff.get_types(BondType)
         assert len(bond_types) == 1
         assert bt in bond_types
 
     def test_get_angletypes(self):
-        """Test getting angle types from atomistic force field."""
         ff = AtomisticForcefield()
-        astyle = ff.def_anglestyle("harmonic")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        at3 = AtomType("CC")
-        angle = astyle.def_type(at1, at2, at3, k=500.0, theta0=120.0)
+        astyle = ff.def_atomstyle("full")
+        at1 = astyle.def_type("CA")
+        at2 = astyle.def_type("CB")
+        at3 = astyle.def_type("CC")
+        anglestyle = ff.def_anglestyle("harmonic")
+        angle = anglestyle.def_type(at1, at2, at3, k=500.0, theta0=120.0)
 
-        angle_types = ff.get_angletypes()
+        angle_types = ff.get_types(AngleType)
         assert len(angle_types) == 1
         assert angle in angle_types
 
     def test_complete_workflow(self):
-        """Test a complete workflow of building a force field."""
+        """Build a full force field through styles and verify type queries."""
         ff = AtomisticForcefield(name="TestFF", units="real")
 
-        # Define atom style and types
         astyle = ff.def_atomstyle("full")
         ca = astyle.def_type("CA", element="C", mass=12.011, sigma=0.355, epsilon=0.293)
         ha = astyle.def_type("HA", element="H", mass=1.008, sigma=0.242, epsilon=0.126)
 
-        # Define bond style and types
         bstyle = ff.def_bondstyle("harmonic")
         ca_ha_bond = bstyle.def_type(ca, ha, k=1000.0, r0=1.08)
 
-        # Define angle style and types
         anglestyle = ff.def_anglestyle("harmonic")
         ha_ca_ha_angle = anglestyle.def_type(ha, ca, ha, k=500.0, theta0=120.0)
 
-        # Verify everything
-        assert len(ff.get_atomtypes()) == 2
-        assert len(ff.get_bondtypes()) == 1
-        assert len(ff.get_angletypes()) == 1
-        assert ca in ff.get_atomtypes()
-        assert ha in ff.get_atomtypes()
-        assert ca_ha_bond in ff.get_bondtypes()
-        assert ha_ca_ha_angle in ff.get_angletypes()
+        assert len(ff.get_types(AtomType)) == 2
+        assert len(ff.get_types(BondType)) == 1
+        assert len(ff.get_types(AngleType)) == 1
+        assert ca in ff.get_types(AtomType)
+        assert ha in ff.get_types(AtomType)
+        assert ca_ha_bond in ff.get_types(BondType)
+        assert ha_ca_ha_angle in ff.get_types(AngleType)
 
 
-class TestStyleToPotential:
-    """Test converting Style to Potential instances."""
+def _build_bonded_frame(bond_type_name: str) -> molrs.Frame:
+    """Build a minimal two-atom, one-bond frame for potential evaluation."""
+    frame = molrs.Frame()
+    atoms = molrs.Block()
+    atoms.insert("x", np.array([0.0, 2.0]))
+    atoms.insert("y", np.array([0.0, 0.0]))
+    atoms.insert("z", np.array([0.0, 0.0]))
+    frame["atoms"] = atoms
 
-    def test_bondstyle_to_potential(self):
-        """Test converting BondStyle to Potential."""
-        ff = AtomisticForcefield(name="TestFF")
-        bstyle = ff.def_bondstyle("harmonic")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        bstyle.def_type(at1, at2, k=1000.0, r0=1.5)
-
-        # Convert to potential
-        potential = bstyle.to_potential()
-
-        # Verify potential is created
-        assert potential is not None
-        assert hasattr(potential, "calc_energy")
-        assert hasattr(potential, "calc_forces")
-        assert hasattr(potential, "k")
-        assert hasattr(potential, "r0")
-
-        # Verify parameters
-
-        assert len(potential.k) == 1
-        assert len(potential.r0) == 1
-        assert potential.k[0] == 1000.0
-        assert potential.r0[0] == 1.5
-
-    def test_bondstyle_to_potential_multiple_types(self):
-        """Test converting BondStyle with multiple types to Potential."""
-        ff = AtomisticForcefield(name="TestFF")
-        bstyle = ff.def_bondstyle("harmonic")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        at3 = AtomType("CC")
-        bstyle.def_type(at1, at2, k=1000.0, r0=1.5)
-        bstyle.def_type(at2, at3, k=800.0, r0=1.4)
-
-        # Convert to potential
-        potential = bstyle.to_potential()
-
-        # Verify parameters (order may vary, so check both values are present)
-
-        assert len(potential.k) == 2
-        assert len(potential.r0) == 2
-        assert set(potential.k.values.flatten()) == {1000.0, 800.0}
-        assert set(potential.r0.values.flatten()) == {1.5, 1.4}
-
-    def test_bondstyle_to_potential_missing_parameters(self):
-        """Test that missing parameters raise ValueError."""
-        ff = AtomisticForcefield(name="TestFF")
-        bstyle = ff.def_bondstyle("harmonic")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        # Missing r0 parameter
-        bstyle.def_type(at1, at2, k=1000.0)
-
-        # Should raise ValueError
-        with pytest.raises(ValueError, match="missing required parameters"):
-            bstyle.to_potential()
-
-    def test_anglestyle_to_potential(self):
-        """Test converting AngleStyle to Potential."""
-        ff = AtomisticForcefield(name="TestFF")
-        astyle = ff.def_anglestyle("harmonic")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        at3 = AtomType("CC")
-        astyle.def_type(at1, at2, at3, k=500.0, theta0=120.0)
-
-        # Convert to potential
-        potential = astyle.to_potential()
-
-        # Verify potential is created
-        assert potential is not None
-        assert hasattr(potential, "calc_energy")
-        assert hasattr(potential, "calc_forces")
-        assert hasattr(potential, "k")
-        assert hasattr(potential, "theta0")
-
-        # Verify parameters
-
-        assert len(potential.k) == 1
-        assert len(potential.theta0) == 1
-        assert potential.k[0] == 500.0
-        assert potential.theta0[0] == 120.0
-
-    def test_pairstyle_to_potential(self):
-        """Test converting PairStyle to Potential."""
-        ff = AtomisticForcefield(name="TestFF")
-        pstyle = ff.def_pairstyle("lj126/cut")
-        at1 = AtomType("CA")
-        pstyle.def_type(at1, epsilon=0.293, sigma=0.355)
-
-        # Convert to potential
-        potential = pstyle.to_potential()
-
-        # Verify potential is created
-        assert potential is not None
-        assert hasattr(potential, "calc_energy")
-        assert hasattr(potential, "calc_forces")
-        assert hasattr(potential, "epsilon")
-        assert hasattr(potential, "sigma")
-
-        # Verify parameters
-
-        assert len(potential.epsilon) == 1
-        assert len(potential.sigma) == 1
-        assert potential.epsilon[0] == 0.293
-        assert potential.sigma[0] == 0.355
-
-    def test_pairstyle_to_potential_multiple_types(self):
-        """Test converting PairStyle with multiple types to Potential."""
-        ff = AtomisticForcefield(name="TestFF")
-        pstyle = ff.def_pairstyle("lj126/cut")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        pstyle.def_type(at1, epsilon=0.293, sigma=0.355)
-        pstyle.def_type(at2, epsilon=0.126, sigma=0.242)
-
-        # Convert to potential
-        potential = pstyle.to_potential()
-
-        # Verify parameters (order may vary, so check both values are present)
-
-        assert len(potential.epsilon) == 2
-        assert len(potential.sigma) == 2
-        # Get values - handle both numpy arrays and TypeIndexedArray
-        eps_values = getattr(potential.epsilon, "values", potential.epsilon)
-        sig_values = getattr(potential.sigma, "values", potential.sigma)
-        assert set(eps_values.flatten()) == {0.293, 0.126}
-        assert set(sig_values.flatten()) == {0.355, 0.242}
-
-    def test_pairstyle_to_potential_missing_parameters(self):
-        """Test that missing parameters raise ValueError."""
-        ff = AtomisticForcefield(name="TestFF")
-        pstyle = ff.def_pairstyle("lj126/cut")
-        at1 = AtomType("CA")
-        # Missing sigma parameter
-        pstyle.def_type(at1, epsilon=0.293)
-
-        # Should raise ValueError
-        with pytest.raises(ValueError, match="missing required parameters"):
-            pstyle.to_potential()
+    bonds = molrs.Block()
+    bonds.insert("atomi", np.array([0], dtype=np.uint32))
+    bonds.insert("atomj", np.array([1], dtype=np.uint32))
+    bonds.insert("type", np.array([bond_type_name], dtype=str))
+    frame["bonds"] = bonds
+    return frame
 
 
 class TestForceFieldToPotentials:
-    """Test converting ForceField to Potentials collection."""
+    """Test ``ForceField.to_potentials`` (deferred + frame-evaluated)."""
 
-    def test_forcefield_to_potentials(self):
-        """Test converting ForceField to Potentials."""
-        ff = AtomisticForcefield(name="TestFF")
+    def test_to_potentials_no_frame_is_deferred(self):
+        """Without a frame, to_potentials returns a deferred Potentials.
 
-        # Define bond style and types
-        bstyle = ff.def_bondstyle("harmonic")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        bstyle.def_type(at1, at2, k=1000.0, r0=1.5)
-
-        # Define angle style and types
-        astyle = ff.def_anglestyle("harmonic")
-        at3 = AtomType("CC")
-        astyle.def_type(at1, at2, at3, k=500.0, theta0=120.0)
-
-        # Define pair style and types
-        pstyle = ff.def_pairstyle("lj126/cut")
-        pstyle.def_type(at1, epsilon=0.293, sigma=0.355)
-
-        # Convert to potentials
-        potentials = ff.to_potentials()
-
-        # Verify potentials collection
-        assert len(potentials) == 3
-        assert all(hasattr(p, "calc_energy") for p in potentials)
-        assert all(hasattr(p, "calc_forces") for p in potentials)
-
-    def test_forcefield_to_potentials_empty_styles(self):
-        """Test converting ForceField with no types to Potentials."""
-        ff = AtomisticForcefield(name="TestFF")
-        ff.def_bondstyle("harmonic")
-        ff.def_anglestyle("harmonic")
-
-        # Convert to potentials (should return empty collection)
-        potentials = ff.to_potentials()
-
-        # Should return empty collection since no types are defined
-        assert len(potentials) == 0
-
-    def test_forcefield_to_potentials_partial_types(self):
-        """Test converting ForceField with some styles missing types."""
-        ff = AtomisticForcefield(name="TestFF")
-
-        # Define bond style with types
-        bstyle = ff.def_bondstyle("harmonic")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        bstyle.def_type(at1, at2, k=1000.0, r0=1.5)
-
-        # Define angle style without types
-        ff.def_anglestyle("harmonic")
-
-        # Convert to potentials
-        potentials = ff.to_potentials()
-
-        # Should only have bond potential (the empty angle style is skipped,
-        # not an error)
-        assert len(potentials) == 1
-
-    def test_forcefield_to_potentials_raises_on_missing_params(self):
-        """A *defined* type missing required params is a real error, not skipped.
-
-        Previously to_potentials() swallowed ValueError/AttributeError, silently
-        dropping a style that failed to build. Now only legitimately-empty styles
-        are skipped; a genuine build failure propagates.
+        ``len() == 0`` and iteration raises (it is not iterable).
         """
-        import pytest
-
         ff = AtomisticForcefield(name="TestFF")
+        astyle = ff.def_atomstyle("full")
+        at1 = astyle.def_type("CT")
+        at2 = astyle.def_type("CT2")
         bstyle = ff.def_bondstyle("harmonic")
-        # Define a bond type but omit the required r0 parameter.
-        bstyle.def_type(AtomType("CA"), AtomType("CB"), k=1000.0)
+        bstyle.def_type(at1, at2, k=1000.0, r0=1.5)
 
-        with pytest.raises(ValueError, match="missing required parameters"):
-            ff.to_potentials()
+        potentials = ff.to_potentials()
+        assert len(potentials) == 0
+        with pytest.raises(TypeError):
+            list(potentials)
 
+    def test_to_potentials_evaluates_harmonic_bond(self):
+        """A frame-bound harmonic bond yields the closed-form energy.
 
-class TestTypeCopy:
-    """Test Type.copy() method."""
+        Two atoms 2.0 apart, k=300, r0=1.5 -> 0.5*k*(r-r0)^2 = 37.5.
+        """
+        ff = molrs.ForceField("bond-only")
+        ff.def_bondtype("harmonic", "CT", "CT", {"k": 300.0, "r0": 1.5})
 
-    def test_atomtype_copy(self):
-        """Test copying an AtomType."""
-        at = AtomType("CA", element="C", mass=12.011, sigma=0.355, epsilon=0.293)
-        at_copy = at.copy()
+        frame = _build_bonded_frame("CT-CT")
+        pots = ff.to_potentials(frame)
+        assert len(pots) == 1
 
-        assert at_copy is not at
-        assert at_copy.name == at.name
-        assert at_copy.params.kwargs == at.params.kwargs
-        assert at_copy["element"] == "C"
-        assert at_copy["mass"] == 12.011
+        energy = pots.calc_energy(molrs.extract_coords(frame))
+        assert energy == pytest.approx(37.5)
 
-    def test_bondtype_copy(self):
-        """Test copying a BondType."""
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        bt = BondType("CA-CB", at1, at2, k=1000.0, r0=1.5)
-        bt_copy = bt.copy()
+    def test_to_potentials_raises_on_missing_params(self):
+        """A defined bond type missing a required param raises at eval time.
 
-        assert bt_copy is not bt
-        assert bt_copy.name == bt.name
-        assert bt_copy.itom == bt.itom
-        assert bt_copy.jtom == bt.jtom
-        assert bt_copy["k"] == 1000.0
-        assert bt_copy["r0"] == 1.5
+        molrs raises ``ValueError`` (message names the missing param) when the
+        frame-bound potential is built from a type lacking ``r0``.
+        """
+        ff = AtomisticForcefield(name="TestFF")
+        astyle = ff.def_atomstyle("full")
+        ca = astyle.def_type("CA")
+        cb = astyle.def_type("CB")
+        bstyle = ff.def_bondstyle("harmonic")
+        # Omit the required r0 parameter.
+        bstyle.def_type(ca, cb, k=1000.0)
 
-    def test_angletype_copy(self):
-        """Test copying an AngleType."""
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
-        at3 = AtomType("CC")
-        angle = AngleType("CA-CB-CC", at1, at2, at3, k=500.0, theta0=120.0)
-        angle_copy = angle.copy()
-
-        assert angle_copy is not angle
-        assert angle_copy.name == angle.name
-        assert angle_copy.itom == angle.itom
-        assert angle_copy.jtom == angle.jtom
-        assert angle_copy.ktom == angle.ktom
-        assert angle_copy["k"] == 500.0
-        assert angle_copy["theta0"] == 120.0
-
-
-class TestStyleCopy:
-    """Test Style.copy() method."""
-
-    def test_style_copy(self):
-        """Test copying a Style."""
-        style = Style("harmonic", k_unit="kcal/mol", r_unit="angstrom")
-        style_copy = style.copy()
-
-        assert style_copy is not style
-        assert style_copy.name == style.name
-        assert style_copy.params.kwargs == style.params.kwargs
-        # Types should not be copied
-        assert len(style_copy.types.bucket(Type)) == 0
-
-    def test_atomstyle_copy(self):
-        """Test copying an AtomStyle."""
-        astyle = AtomStyle("full")
-        astyle.def_type("CA", mass=12.011)
-        astyle_copy = astyle.copy()
-
-        assert astyle_copy is not astyle
-        assert astyle_copy.name == astyle.name
-        # Types should not be copied
-        assert len(astyle_copy.types.bucket(AtomType)) == 0
-
-
-class TestForceFieldGetStyleByName:
-    """Test ForceField.get_style_by_name() method."""
-
-    def test_get_style_by_name(self):
-        """Test getting a style by name."""
-        ff = ForceField()
-        ff.def_style(AtomStyle("full"))
-        ff.def_style(BondStyle("harmonic"))
-
-        atom_style = ff.get_style_by_name("full", AtomStyle)
-        assert atom_style is not None
-        assert isinstance(atom_style, AtomStyle)
-        assert atom_style.name == "full"
-
-        bond_style = ff.get_style_by_name("harmonic", BondStyle)
-        assert bond_style is not None
-        assert isinstance(bond_style, BondStyle)
-        assert bond_style.name == "harmonic"
-
-    def test_get_style_by_name_not_found(self):
-        """Test getting a style that doesn't exist."""
-        ff = ForceField()
-        ff.def_style(AtomStyle("full"))
-
-        result = ff.get_style_by_name("nonexistent", AtomStyle)
-        assert result is None
-
-    def test_get_style_by_name_default_class(self):
-        """Test getting a style by name with default Style class."""
-        ff = ForceField()
-        style = ff.def_style(Style("test_style"))
-
-        result = ff.get_style_by_name("test_style")
-        assert result is not None
-        assert result.name == "test_style"
+        frame = _build_bonded_frame("CA-CB")
+        with pytest.raises(ValueError, match="r0"):
+            ff.to_potentials(frame)
 
 
 class TestStyleGetTypes:
-    """Test Style.get_types() method."""
+    """Test ``Style.get_types`` / ``Style.get_type_by_name``."""
 
     def test_get_types(self):
-        """Test getting types from a style."""
-        astyle = AtomStyle("full")
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", mass=12.011)
         at2 = astyle.def_type("CB", mass=12.011)
 
@@ -796,29 +618,25 @@ class TestStyleGetTypes:
         assert at2 in atom_types
 
     def test_get_types_empty(self):
-        """Test getting types from an empty style."""
-        astyle = AtomStyle("full")
-        atom_types = astyle.get_types(AtomType)
-        assert len(atom_types) == 0
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        assert len(astyle.get_types(AtomType)) == 0
 
     def test_get_types_bond(self):
-        """Test getting bond types from a bond style."""
-        bstyle = BondStyle("harmonic")
-        at1 = AtomType("CA")
-        at2 = AtomType("CB")
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
+        at1 = astyle.def_type("CA")
+        at2 = astyle.def_type("CB")
+        bstyle = ff.def_bondstyle("harmonic")
         bt = bstyle.def_type(at1, at2, k=1000.0, r0=1.5)
 
         bond_types = bstyle.get_types(BondType)
         assert len(bond_types) == 1
         assert bt in bond_types
 
-
-class TestStyleGetTypeByName:
-    """Test Style.get_type_by_name() method."""
-
     def test_get_type_by_name(self):
-        """Test getting a type by name."""
-        astyle = AtomStyle("full")
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", mass=12.011)
         at2 = astyle.def_type("CB", mass=12.011)
 
@@ -832,18 +650,15 @@ class TestStyleGetTypeByName:
         assert result == at2
 
     def test_get_type_by_name_not_found(self):
-        """Test getting a type that doesn't exist."""
-        astyle = AtomStyle("full")
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
         astyle.def_type("CA", mass=12.011)
-
-        result = astyle.get_type_by_name("nonexistent", AtomType)
-        assert result is None
+        assert astyle.get_type_by_name("nonexistent", AtomType) is None
 
     def test_get_type_by_name_default_class(self):
-        """Test getting a type by name with default Type class."""
-        astyle = AtomStyle("full")
+        ff = ForceField()
+        astyle = ff.def_atomstyle("full")
         at = astyle.def_type("CA", mass=12.011)
-
         result = astyle.get_type_by_name("CA")
         assert result is not None
         assert result == at

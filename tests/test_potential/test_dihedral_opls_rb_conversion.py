@@ -2,7 +2,7 @@
 
 import pytest
 
-from molpy.potential.dihedral.opls import format_lammps_dihedral_coeff, rb_to_opls
+from molpy.io.forcefield._rb_opls import format_lammps_dihedral_coeff, rb_to_opls
 
 
 def test_rb_to_opls_exact_conversion():

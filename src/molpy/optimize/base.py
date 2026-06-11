@@ -56,10 +56,9 @@ class Optimizer(ABC, Generic[S]):
         entity_type: Type of entity to optimize (default: Entity for all)
 
     Example:
-        >>> from molpy.optimize import LBFGS
-        >>> from molpy.potential.bond import Harmonic
+        >>> from molpy.optimize import LBFGS, ForceFieldPotential
         >>>
-        >>> potential = Harmonic(k=100.0, r0=1.5)
+        >>> potential = ForceFieldPotential(forcefield)  # molrs ForceField
         >>> opt = LBFGS(potential, maxstep=0.04, memory=20)
         >>> result = opt.run(struct, fmax=0.01, steps=500)
     """

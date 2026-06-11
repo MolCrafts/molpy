@@ -47,10 +47,10 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 :   An interaction family within a force field — for example, "harmonic" bonds or "lj126/cut" pairs. Defines which parameters are expected. Subclasses: `BondStyle`, `AngleStyle`, `DihedralStyle`, `PairStyle`.
 
 **Type**
-:   One concrete parameter record within a style. For example, a bond type "CT-OH" with `k0=320.0` and `r0=1.41`. Subclasses: `AtomType`, `BondType`, `AngleType`, `DihedralType`, `PairType`.
+:   One concrete parameter record within a style. For example, a bond type "CT-OH" with `k=320.0` and `r0=1.41`. Subclasses: `AtomType`, `BondType`, `AngleType`, `DihedralType`, `PairType`.
 
 **Potential**
-:   The numerical realization of a style's types — arrays of parameters ready for energy/force computation. Produced by `style.to_potential()`. See [Force Field](../tutorials/04_force_field.md).
+:   The numerical realization of a force field's styles and types, ready for energy/force computation. Produced by `ff.to_potentials()` (a deferred `Potentials`) and evaluated against a typed `Frame` via `pots.calc_energy(frame)` / `pots.calc_forces(frame)`; the kernels run in the molrs Rust extension. See [Force Field](../tutorials/04_force_field.md).
 
 
 ### Modules

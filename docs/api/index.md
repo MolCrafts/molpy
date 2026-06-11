@@ -19,7 +19,7 @@ All public symbols are documented on the package pages listed below. Docstrings 
 | Assemble polymer chains from CGSmiles | `PolymerBuilder`, `Connector`, `Placer` | [Builder](builder.md) |
 | Pack molecules into a periodic simulation box | `Molpack`, `InsideBoxConstraint` | [Pack](pack.md) |
 | Assign force field atom types via SMARTS matching | `OplsAtomisticTypifier`, `GaffTypifier` | [Typifier](typifier.md) |
-| Evaluate bond, angle, and pair potentials | `BondHarmonic`, `LJ126` | [Potential](potential.md) |
+| Evaluate bond, angle, and pair potentials | `BondHarmonicStyle`, `LJ126Style`, `Potentials` | [Potential](potential.md) |
 | Read and write molecular files (PDB, LAMMPS, GRO, …) | `read_pdb`, `write_lammps_data`, `read_xml_forcefield` | [I/O](io.md) |
 | Convert between MolPy and RDKit / OpenBabel objects | `RDKitAdapter`, `OpenBabelAdapter` | [Adapter](adapter.md) |
 | Invoke external CLI tools (antechamber, tleap) | `Wrapper`, `AntechamberWrapper` | [Wrapper](wrapper.md) |

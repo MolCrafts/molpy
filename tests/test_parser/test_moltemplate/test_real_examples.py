@@ -42,11 +42,9 @@ class TestButane:
 
     def test_ff_has_harmonic_styles(self, build):
         _, ff = build
-        from molpy.potential.angle import AngleHarmonicStyle
-        from molpy.potential.bond import BondHarmonicStyle
 
-        assert ff.get_style_by_name("harmonic", BondHarmonicStyle) is not None
-        assert ff.get_style_by_name("harmonic", AngleHarmonicStyle) is not None
+        assert ff.get_style("bond", "harmonic") is not None
+        assert ff.get_style("angle", "harmonic") is not None
 
 
 # ---------- OPLSAA alkane_chain_single — 50-monomer chain, nested classes.

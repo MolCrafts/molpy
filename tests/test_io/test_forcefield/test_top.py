@@ -50,7 +50,7 @@ class TestGMXTopReader:
         atomstyles = ff.get_styles(AtomStyle)
         assert len(atomstyles) > 0
         atomstyle = atomstyles[0]
-        atomtypes = atomstyle.types.bucket(AtomType)
+        atomtypes = atomstyle.get_types(AtomType)
         assert len(atomtypes) > 0  # At least some atom types should be parsed
 
         # Test specific atom type (if available)
@@ -64,25 +64,25 @@ class TestGMXTopReader:
         # Test bond style and types
         bondstyles = ff.get_styles(BondStyle)
         assert len(bondstyles) > 0
-        bondtypes = bondstyles[0].types.bucket(BondType)
+        bondtypes = bondstyles[0].get_types(BondType)
         assert len(bondtypes) > 0  # At least some bond types should be parsed
 
         # Test angle style and types
         anglestyles = ff.get_styles(AngleStyle)
         assert len(anglestyles) > 0
-        angletypes = anglestyles[0].types.bucket(AngleType)
+        angletypes = anglestyles[0].get_types(AngleType)
         assert len(angletypes) > 0  # At least some angle types should be parsed
 
         # Test dihedral style and types
         dihedralstyles = ff.get_styles(DihedralStyle)
         assert len(dihedralstyles) > 0
-        dihedraltypes = dihedralstyles[0].types.bucket(DihedralType)
+        dihedraltypes = dihedralstyles[0].get_types(DihedralType)
         assert len(dihedraltypes) > 0  # At least some dihedral types should be parsed
 
         # Test pair style and types
         pairstyles = ff.get_styles(PairStyle)
         assert len(pairstyles) > 0
-        pairtypes = pairstyles[0].types.bucket(PairType)
+        pairtypes = pairstyles[0].get_types(PairType)
         assert len(pairtypes) > 0  # At least some pair types should be parsed
 
     def test_read_nonexistent_file(self) -> None:
@@ -120,7 +120,7 @@ class TestGMXTopReader:
         # Test that atom types contain expected fields
         atomstyles = ff.get_styles(AtomStyle)
         if len(atomstyles) > 0:
-            atomtypes = atomstyles[0].types.bucket(AtomType)
+            atomtypes = atomstyles[0].get_types(AtomType)
             if len(atomtypes) > 0:
                 # Check that first atom type has required fields
                 first_type = atomtypes[0]
@@ -131,7 +131,7 @@ class TestGMXTopReader:
         # Test that bond types are properly structured
         bondstyles = ff.get_styles(BondStyle)
         if len(bondstyles) > 0:
-            bondtypes = bondstyles[0].types.bucket(BondType)
+            bondtypes = bondstyles[0].get_types(BondType)
             if len(bondtypes) > 0:
                 # Bond types should exist and be accessible
                 first_bond = bondtypes[0]
@@ -140,7 +140,7 @@ class TestGMXTopReader:
         # Test that angle types are properly structured
         anglestyles = ff.get_styles(AngleStyle)
         if len(anglestyles) > 0:
-            angletypes = anglestyles[0].types.bucket(AngleType)
+            angletypes = anglestyles[0].get_types(AngleType)
             if len(angletypes) > 0:
                 # Angle types should exist
                 assert len(angletypes) > 0

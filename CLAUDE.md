@@ -271,9 +271,9 @@ def test_adapter_fallback():
 
 ### `core.frame` and `core.block`
 
-- **Inherits molrs**: `frame.py` does `import molrs` at module load and defines `Block(molrs.Block, MutableMapping)` and `Frame(molrs.Frame)`. A `molpy.Frame` IS-A `molrs.Frame` and is accepted by every `molrs.*` API that takes a frame, with no `.to_molrs()` / `_inner` bridge. Same for `Block`. `molcrafts-molrs` is a hard runtime dependency.
-- `Block`: Dict-like view over its inherited `molrs.Block` slot. Numeric / bool / string-list columns live in the Rust slot; object-dtype columns (e.g. element symbols) live on the Python side in `self._objects` and are **invisible to the Rust side** by design. `Block.from_dict(molrs.Block)` returns a write-through view (the molpy block aliases the source via `self._source` so `frame[key][col] = arr` propagates back to frame storage).
-- `Frame`: Numerical container inheriting `molrs.Frame` + `metadata: dict` (Python-only annotations like timestep) + per-block object-column cache. The `frame.box` getter upgrades the underlying `molrs.Box` to `molpy.Box` so callers keep the enriched Box API. `copy()` deep-copies into a new Rust Store and preserves box.
+- **Re-exported from molrs**: `frame.py` is a thin `from molrs import Block, Frame` re-export — `molpy.core.frame.Frame IS molrs.Frame` and `Block IS molrs.Block` (the rich Python layer in molrs over the Rust core). No molpy subclass, no `.to_molrs()` / `_inner` / `_source` bridge. `molcrafts-molrs` is a hard runtime dependency.
+- `Block`: **numpy-only** typed columns (float / int / bool / str) in the Rust Store, exposed as zero-copy numpy views. There is **no Python-side object-column overflow** — a non-representable column (object / None / ragged) is rejected fail-fast at write (`molrs.BlockDtypeError` / `TypeError`).
+- `Frame`: container of named Blocks + `metadata: dict` (Python-only annotations like timestep) + `box`. Built from a molrs world via the world's native `to_frame()` (e.g. `Atomistic.to_frame()` delegates to `molrs.Atomistic.to_frame()` and wraps the bare pyo3 frame with `Frame.from_dict` — zero Python-side densify/conversion).
 - `Trajectory`: Sequence of Frames
 - **Box is on `frame.box`**, never in `frame.metadata["box"]`
 
