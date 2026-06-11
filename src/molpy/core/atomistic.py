@@ -18,9 +18,7 @@ from molpy.core.ops.geometry import (
     _cross,
     _dot,
     _norm,
-    _rodrigues_rotate,
     _unit,
-    _vec_add,
     _vec_scale,
     _vec_sub,
 )
@@ -681,10 +679,8 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         *,
         entity_type: type[Entity] = Atom,
     ) -> "Atomistic":
-        o = [0.0, 0.0, 0.0] if about is None else about
-        for a in self.atoms:
-            xyz = _vec_add(o, _vec_scale(_vec_sub([a["x"], a["y"], a["z"]], o), factor))
-            a["x"], a["y"], a["z"] = xyz
+        o = [0.0, 0.0, 0.0] if about is None else list(about)
+        molrs.scale(self, [factor, factor, factor], o)
         return self
 
     def align(
@@ -710,11 +706,9 @@ class Atomistic(molrs.Atomistic, _GraphViews):
                 from math import atan2
 
                 angle = atan2(na, _dot(va, vb))
-                for e in self.atoms:
-                    xyz = _rodrigues_rotate(
-                        [e["x"], e["y"], e["z"]], _vec_scale(axis, 1.0 / na), angle, pa
-                    )
-                    e["x"], e["y"], e["z"] = xyz
+                # Rotate about pa via the molrs Rust kernel (was a per-atom
+                # Rodrigues loop reimplementing molrs.rotate).
+                molrs.rotate(self, _vec_scale(axis, 1.0 / na), angle, pa)
         self.move(_vec_sub(pb, pa))
         return self
 

@@ -157,7 +157,9 @@ class Box(molrs.Box):
         """Box volume in Angstroms³ (zero for FREE)."""
         if self.is_free:
             return 0.0
-        return float(np.abs(np.linalg.det(self.matrix)))
+        # Delegate to the inherited molrs Rust kernel (the FREE placeholder
+        # matrix has no meaningful volume, hence the guard above).
+        return float(molrs.Box.volume(self))
 
     # ── backward-compat private aliases ────────────────────────────────
     # Internal methods (wrap / diff / make_fractional / transform / …)
@@ -398,7 +400,10 @@ class Box(molrs.Box):
 
     @property
     def tilts(self) -> np.ndarray:
-        return np.array([self.xy, self.xz, self.yz])
+        if self.is_free:
+            return np.array([self.xy, self.xz, self.yz])
+        # Inherited molrs Rust kernel (returns [xy, xz, yz]).
+        return np.asarray(super().tilts)
 
     # ────────────────────────────────────────────────────────────────────
     # PBC flags
@@ -436,7 +441,8 @@ class Box(molrs.Box):
         """
         if self.is_free:
             return np.zeros(3)
-        return self.calc_lengths_angles_from_matrix(self.matrix)[0]
+        # Inherited molrs Rust kernel (FREE placeholder has no lattice).
+        return np.asarray(super().lengths)
 
     @property
     def angles(self) -> np.ndarray:
@@ -577,14 +583,12 @@ class Box(molrs.Box):
         return xyz
 
     def wrap_orthogonal(self, xyz: np.ndarray) -> np.ndarray:
-        lengths = self.lengths
-        return xyz - np.floor(xyz / lengths) * lengths
+        # Inherited molrs Rust kernel (PBC-aware, per-axis).
+        return molrs.Box.wrap(self, np.asarray(xyz))
 
     def wrap_triclinic(self, xyz: np.ndarray) -> np.ndarray:
-        xyz = np.atleast_2d(xyz)
-        frac = self.make_fractional(xyz)
-        frac_wrapped = frac - np.floor(frac)
-        return self.make_absolute(frac_wrapped)
+        # Inherited molrs Rust kernel (fractional wrap via to_frac/to_cart).
+        return molrs.Box.wrap(self, np.asarray(xyz))
 
     def unwrap(self, xyz: np.ndarray, image: np.ndarray) -> np.ndarray:
         return xyz + image @ self._matrix.T
@@ -597,13 +601,17 @@ class Box(molrs.Box):
         return np.linalg.inv(self._matrix)
 
     def diff_dr(self, dr: np.ndarray) -> np.ndarray:
-        match self.style:
-            case Box.Style.FREE:
-                return dr
-            case Box.Style.ORTHOGONAL | Box.Style.TRICLINIC:
-                fractional = self.make_fractional(dr)
-                fractional -= np.round(fractional)
-                return np.dot(self._matrix, fractional.T).T
+        dr = np.asarray(dr, dtype=float)
+        if self.style is Box.Style.FREE:
+            return dr
+        # Minimum-image displacement via the inherited molrs Rust kernel:
+        # ``delta(a, b)`` is ``minimum_image(b - a)``, so ``delta(0, dr)`` is
+        # ``minimum_image(dr)``.
+        if dr.ndim == 1:
+            return molrs.Box.delta(
+                self, np.zeros((1, 3)), dr.reshape(1, 3), minimum_image=True
+            )[0]
+        return molrs.Box.delta(self, np.zeros_like(dr), dr, minimum_image=True)
 
     def diff(self, r1: np.ndarray, r2: np.ndarray) -> np.ndarray:
         return self.diff_dr(r1 - r2)
