@@ -101,18 +101,15 @@ read_amber = read_amber_prmtop
 from .base import BaseReader
 from .trajectory.base import (
     BaseTrajectoryReader,
-    FrameLocation,
-    MmapTrajectoryReader,
     TrajectoryWriter,
 )
 
 # 3. Trajectory Readers and Writers
 from .trajectory.h5 import HDF5TrajectoryReader, HDF5TrajectoryWriter
 from .trajectory.lammps import (
-    LammpsTrajectoryReader,
     LammpsTrajectoryWriter,
 )
-from .trajectory.xyz import XYZTrajectoryReader, XYZTrajectoryWriter
+from .trajectory.xyz import XYZTrajectoryWriter
 
 # 4. Log Readers
 from .log.lammps import (
@@ -225,11 +222,7 @@ __all__ = [
     # Trajectory Readers
     "BaseReader",
     "BaseTrajectoryReader",
-    "MmapTrajectoryReader",
-    "FrameLocation",
     "HDF5TrajectoryReader",
-    "LammpsTrajectoryReader",
-    "XYZTrajectoryReader",
     # Trajectory Writers
     "TrajectoryWriter",
     "HDF5TrajectoryWriter",

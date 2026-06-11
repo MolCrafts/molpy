@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from ..core.trajectory import Trajectory
 
 
-class PMSDCompute(Compute["Trajectory", PMSDResult]):
+class PMSDCompute(Compute):
     """Compute Polarization Mean Square Displacement for ionic systems.
 
     This class computes the PMSD which measures polarization fluctuations in
@@ -79,7 +79,7 @@ class PMSDCompute(Compute["Trajectory", PMSDResult]):
         self.dt = dt
         self.n_cache = int(max_dt / dt)
 
-    def _compute(self, trajectory: "Trajectory") -> PMSDResult:
+    def __call__(self, trajectory: "Trajectory") -> PMSDResult:
         """Compute PMSD from trajectory.
 
         Args:

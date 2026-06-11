@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from ..core.trajectory import Trajectory
 
 
-class MCDCompute(Compute["Trajectory", MCDResult]):
+class MCDCompute(Compute):
     """Compute Mean Displacement Correlations (MSD) for diffusion analysis.
 
     This class implements the MCD method which computes time correlation functions
@@ -83,7 +83,7 @@ class MCDCompute(Compute["Trajectory", MCDResult]):
         self.center_of_mass = center_of_mass
         self.n_cache = int(max_dt / dt)
 
-    def _compute(self, input: "Trajectory") -> MCDResult:
+    def __call__(self, input: "Trajectory") -> MCDResult:
         """Compute MCD from trajectory.
 
         Args:

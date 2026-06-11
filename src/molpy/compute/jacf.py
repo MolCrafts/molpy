@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from ..core.trajectory import Trajectory
 
 
-class JACF(Compute["Trajectory", JACFResult]):
+class JACF(Compute):
     """Green-Kubo ionic conductivity from the charge-current autocorrelation.
 
     Args:
@@ -84,7 +84,7 @@ class JACF(Compute["Trajectory", JACFResult]):
         self.volume = volume
         self.n_cache = int(max_dt / dt)
 
-    def _compute(self, trajectory: "Trajectory") -> JACFResult:
+    def __call__(self, trajectory: "Trajectory") -> JACFResult:
         current_list: list[NDArray] = []
         volumes: list[float] = []
 

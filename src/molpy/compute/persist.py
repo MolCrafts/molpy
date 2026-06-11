@@ -55,7 +55,7 @@ def _parse_tag(tag: str) -> tuple[int, int, str, float, float]:
     return t1, t2, method, r0, r1
 
 
-class Persist(Compute["Trajectory", PersistResult]):
+class Persist(Compute):
     """Compute pair-survival (persistence) time-correlation functions.
 
     Args:
@@ -82,7 +82,7 @@ class Persist(Compute["Trajectory", PersistResult]):
         self.dt = dt
         self.n_cache = int(max_dt / dt)
 
-    def _compute(self, trajectory: "Trajectory") -> PersistResult:
+    def __call__(self, trajectory: "Trajectory") -> PersistResult:
         coords_list: list[NDArray] = []
         box_len_list: list[NDArray] = []
         elems: NDArray | None = None

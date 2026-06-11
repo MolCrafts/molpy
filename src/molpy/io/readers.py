@@ -330,31 +330,36 @@ def read_lammps_trajectory(traj: PathLike, frame: Any = None) -> Any:
     """
     Read LAMMPS trajectory file and return a trajectory reader.
 
+    Backed by the molrs Rust lazy reader.
+
     Args:
         traj: Path to LAMMPS trajectory file
-        frame: Optional reference Frame for topology
+        frame: Unused; retained for backward compatibility. molrs handles the
+            canonical fields, so no reference Frame is needed.
 
     Returns:
-        LammpsTrajectoryReader object
+        molrs ``TrajectoryReader`` object
     """
-    from .trajectory.lammps import LammpsTrajectoryReader
+    import molrs.io
 
-    return LammpsTrajectoryReader(Path(traj), frame)
+    return molrs.io.read_lammps_trajectory(str(traj))
 
 
 def read_xyz_trajectory(file: PathLike) -> Any:
     """
     Read XYZ trajectory file and return a trajectory reader.
 
+    Backed by the molrs Rust lazy reader.
+
     Args:
         file: Path to XYZ trajectory file
 
     Returns:
-        XYZTrajectoryReader object
+        molrs ``TrajectoryReader`` object
     """
-    from .trajectory.xyz import XYZTrajectoryReader
+    import molrs.io
 
-    return XYZTrajectoryReader(Path(file))
+    return molrs.io.read_xyz_trajectory(str(file))
 
 
 def read_pdb_trajectory(file: PathLike) -> list:

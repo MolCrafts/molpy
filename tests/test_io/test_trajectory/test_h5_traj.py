@@ -237,11 +237,12 @@ class TestHDF5TrajectoryReader:
             orig_frame = original_frames[i]
             read_frame = read_reader.read_frame(i)
 
-            # Check timestep
+            # Check timestep (molrs reader emits it as a string; the h5 path
+            # round-trips it as an int — compare numerically).
             if "timestep" in orig_frame.metadata:
                 assert "timestep" in read_frame.metadata
-                assert (
-                    orig_frame.metadata["timestep"] == read_frame.metadata["timestep"]
+                assert int(orig_frame.metadata["timestep"]) == int(
+                    read_frame.metadata["timestep"]
                 )
 
             # Check box
@@ -782,11 +783,12 @@ class TestHDF5Downsample:
         for i, orig_frame in enumerate(downsampled_frames):
             read_frame = read_reader.read_frame(i)
 
-            # Check timestep
+            # Check timestep (molrs reader emits it as a string; the h5 path
+            # round-trips it as an int — compare numerically).
             if "timestep" in orig_frame.metadata:
                 assert "timestep" in read_frame.metadata
-                assert (
-                    orig_frame.metadata["timestep"] == read_frame.metadata["timestep"]
+                assert int(orig_frame.metadata["timestep"]) == int(
+                    read_frame.metadata["timestep"]
                 )
 
             # Check box
@@ -877,6 +879,11 @@ class TestHDF5Roundtrip:
                         np.testing.assert_array_almost_equal(
                             orig_box.origin, read_box.origin, decimal=6
                         )
+                elif meta_key == "timestep":
+                    # molrs reader emits timestep as str; h5 round-trips as int.
+                    assert int(orig_frame.metadata[meta_key]) == int(
+                        read_frame.metadata[meta_key]
+                    )
                 else:
                     assert (
                         orig_frame.metadata[meta_key] == read_frame.metadata[meta_key]
@@ -969,6 +976,9 @@ class TestHDF5Roundtrip:
                     np.testing.assert_array_almost_equal(
                         orig_value, read_value, decimal=6
                     )
+                elif key == "timestep":
+                    # molrs reader emits timestep as str; h5 round-trips as int.
+                    assert int(orig_value) == int(read_value)
                 else:
                     assert orig_value == read_value
 

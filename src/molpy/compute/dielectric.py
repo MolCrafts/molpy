@@ -57,7 +57,7 @@ def _unwrap_inplace(coords: np.ndarray, frames: list) -> None:
         coords[i] = coords[i - 1] + box.diff_dr(coords[i] - coords[i - 1])
 
 
-class ACFAnalyzer(Compute["Trajectory", ACFResult]):
+class ACFAnalyzer(Compute):
     """Compute autocorrelation function from trajectory data.
 
     Extracts per-atom columns from each frame, optionally unwraps coordinates
@@ -80,7 +80,7 @@ class ACFAnalyzer(Compute["Trajectory", ACFResult]):
         self.max_lag = max_lag
         self.unwrap = unwrap
 
-    def _compute(self, trajectory: Trajectory) -> ACFResult:
+    def __call__(self, trajectory: Trajectory) -> ACFResult:
         # Materialize once: trajectories may be one-shot iterators.
         frames = list(trajectory)
         n_frames = len(frames)
@@ -124,7 +124,7 @@ class ACFAnalyzer(Compute["Trajectory", ACFResult]):
         return ACFResult(time=lag_times, acf=acf_sum, n_lags=max_lag + 1)
 
 
-class SpectralAnalyzer(Compute[ACFResult, SpectralResult]):
+class SpectralAnalyzer(Compute):
     """Convert time-domain ACF to frequency-domain spectrum.
 
     Applies a window function, generates the frequency grid, and performs
@@ -142,7 +142,7 @@ class SpectralAnalyzer(Compute[ACFResult, SpectralResult]):
         self.dt = dt
         self.window_type = window_type
 
-    def _compute(self, acf_result: ACFResult) -> SpectralResult:
+    def __call__(self, acf_result: ACFResult) -> SpectralResult:
         acf = acf_result.acf
         n_lags = len(acf)
 
@@ -158,7 +158,7 @@ class SpectralAnalyzer(Compute[ACFResult, SpectralResult]):
         return SpectralResult(frequency=freq, spectrum=windowed)
 
 
-class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityResult]):
+class DielectricSusceptibility(Compute):
     """Frequency-dependent dielectric susceptibility from an MD trajectory.
 
     Extracts atomic positions and charges per frame, unwraps coordinates
@@ -218,7 +218,7 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
         self.routes = routes or ["einstein-helfand", "green-kubo"]
         self._volume = volume
 
-    def _compute(self, trajectory: Trajectory) -> DielectricSusceptibilityResult:
+    def __call__(self, trajectory: Trajectory) -> DielectricSusceptibilityResult:
         frames = list(trajectory)
         n_frames = len(frames)
         if n_frames < 2:
@@ -319,7 +319,7 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
         )
 
 
-class IonicConductivity(Compute["Trajectory", ConductivityResult]):
+class IonicConductivity(Compute):
     """Static ionic conductivity sigma via the Einstein-Helfand relation.
 
     Builds the **ionic translational dipole** M_J(t) = sum_i q_i r_i(t) from the
@@ -380,7 +380,7 @@ class IonicConductivity(Compute["Trajectory", ConductivityResult]):
         self.fit_start_frac = fit_start_frac
         self.fit_end_frac = fit_end_frac
 
-    def _compute(self, trajectory: Trajectory) -> ConductivityResult:
+    def __call__(self, trajectory: Trajectory) -> ConductivityResult:
         frames = list(trajectory)
         n_frames = len(frames)
         if n_frames < 2:
