@@ -1,0 +1,69 @@
+name: Bench
+
+# Runs the molpy core benchmark suite (benchmarks/ — Box, Atomistic topology,
+# Frame) and tracks it over time via github-action-benchmark (pytest-benchmark
+# JSON). The suite measures molpy's thin Python facade over the molrs kernels.
+#
+# Kept off the per-PR path (benchmarks are slow + noisy on shared runners);
+# tracks perf on canonical pushes + on demand. The normal `pytest tests/` run
+# does not pick up benchmarks/.
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write      # push results to the gh-pages dashboard
+  deployments: write   # github-action-benchmark uses deployment status
+
+jobs:
+  bench:
+    name: molpy core (pytest-benchmark)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Rust toolchain (to build molrs from source)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install molrs from source
+        # Matches ci.yml: molpy benches exercise unreleased molrs kernels.
+        # Once molrs cuts a release carrying them, drop this and rely on the
+        # molcrafts-molrs pin in pyproject.toml.
+        run: pip install "molcrafts-molrs @ git+https://github.com/Roy-Kid/molrs.git@dev#subdirectory=molrs-python"
+
+      - name: Install molpy + bench deps
+        run: pip install -e ".[dev]"
+
+      - name: Run core benchmarks
+        run: |
+          pytest benchmarks/ \
+            --benchmark-json=benchmark-result.json \
+            --benchmark-columns=min,mean,median,stddev,rounds
+
+      - name: Upload raw benchmark JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: molpy-core-bench-${{ github.run_id }}
+          path: benchmark-result.json
+          if-no-files-found: error
+
+      - name: Publish benchmark history
+        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: 'pytest'
+          output-file-path: benchmark-result.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: '150%'
+          comment-on-alert: true
+          fail-on-alert: false
