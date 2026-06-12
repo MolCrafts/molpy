@@ -17,17 +17,19 @@
   <Type name="CT" class="CT" element="C" mass="12.01100" def="[C;X4]([H])([H])([H])[C;X4]" desc="alkyl terminal CH3" doi="10.1021/jp0362133"/>
   <Type name="HC" class="HC" element="H" mass="1.00800" def="[H][C;X4]" desc="alkyl H" doi="10.1021/jp0362133"/>
   <Type name="B" class="B" element="B" mass="10.81100" def="[B]([F])([F])([F])[F]" desc="tetrafluoroborate B" doi="10.1021/jp0362133"/>
-  <Type name="FB" class="F" element="F" mass="18.99800" def="[F][B]" desc="tetrafluoroborate F" doi="10.1021/jp0362133"/>
+  <Type name="FBF" class="F" element="F" mass="18.99800" def="[F][B]" desc="tetrafluoroborate F" doi="10.1021/jp0362133"/>
   <Type name="P" class="P" element="P" mass="30.97400" def="[P]([F])([F])([F])([F])([F])[F]" desc="hexafluorophosphate P" doi="10.1021/jp0362133"/>
   <Type name="FP" class="F" element="F" mass="18.99800" def="[F][P]" desc="hexafluorophosphate F" doi="10.1021/jp0362133"/>
   <Type name="NBT" class="NB" element="N" mass="14.00000" def="[N]([S])[S]" desc="NTf2 imide N" doi="10.1021/jp0362133"/>
-  <Type name="SBT" class="SB" element="S" mass="32.06600" def="[S]([N])([C])([O])[O]" desc="NTf2 sulfonyl S" doi="10.1021/jp0362133"/>
+  <Type name="SBT" class="SB" element="S" mass="32.06600" def="[S]([N])([O])[O]" desc="sulfonylimide S (NTf2 / FSI)" doi="10.1021/jp0362133"/>
   <Type name="CBT" class="CF" element="C" mass="12.01100" def="[C]([S])([F])([F])[F]" desc="NTf2 CF3 carbon" doi="10.1021/jp0362133"/>
   <Type name="OBT" class="OB" element="O" mass="15.99900" def="[O][S]" desc="NTf2 sulfonyl O" doi="10.1021/jp0362133"/>
   <Type name="F1" class="FB" element="F" mass="18.99800" def="[F][C][S]" desc="NTf2 CF3 fluorine" doi="10.1021/jp0362133"/>
+  <Type name="FSI" class="FB" element="F" mass="18.99800" def="[F][S]" desc="FSI S-bonded fluorine (bis(fluorosulfonyl)imide)" doi="10.1021/jp0362133"/>
   <Type name="N3A" class="N3" element="N" mass="14.00000" def="[N;X2]([C])[C]" desc="dicyanamide central amide N" doi="10.1021/jp0362133"/>
   <Type name="CZA" class="CZ" element="C" mass="12.01100" def="[C;X2]([N])[N]" desc="dicyanamide nitrile C" doi="10.1021/jp0362133"/>
   <Type name="NZA" class="NZ" element="N" mass="14.00100" def="[N;X1][C]" desc="dicyanamide nitrile N" doi="10.1021/jp0362133"/>
+  <Type name="Na" class="Na" element="Na" mass="22.98977" def="[Na]" desc="sodium cation" doi="10.1021/jp0362133"/>
  </AtomTypes>
  <NonbondedForce coulomb14scale="0.5" lj14scale="0.5">
   <Atom type="CR" charge="-0.1100" sigma="0.35500" epsilon="0.29288"/>
@@ -43,7 +45,7 @@
   <Atom type="CT" charge="-0.1800" sigma="0.35000" epsilon="0.27614"/>
   <Atom type="HC" charge="0.0600" sigma="0.25000" epsilon="0.12552"/>
   <Atom type="B" charge="0.9600" sigma="0.35800" epsilon="0.39750"/>
-  <Atom type="FB" charge="-0.4900" sigma="0.31200" epsilon="0.25520"/>
+  <Atom type="FBF" charge="-0.4900" sigma="0.31200" epsilon="0.25520"/>
   <Atom type="P" charge="1.3400" sigma="0.37400" epsilon="0.83680"/>
   <Atom type="FP" charge="-0.3900" sigma="0.31200" epsilon="0.25520"/>
   <Atom type="NBT" charge="-0.6600" sigma="0.32500" epsilon="0.71128"/>
@@ -51,9 +53,11 @@
   <Atom type="CBT" charge="0.3500" sigma="0.35000" epsilon="0.27614"/>
   <Atom type="OBT" charge="-0.5300" sigma="0.31500" epsilon="0.83736"/>
   <Atom type="F1" charge="-0.1600" sigma="0.31180" epsilon="0.25540"/>
+  <Atom type="FSI" charge="-0.1300" sigma="0.31180" epsilon="0.25540"/>
   <Atom type="N3A" charge="-0.7600" sigma="0.32500" epsilon="0.71128"/>
   <Atom type="CZA" charge="0.6400" sigma="0.33000" epsilon="0.27614"/>
   <Atom type="NZA" charge="-0.7600" sigma="0.32000" epsilon="0.71128"/>
+  <Atom type="Na" charge="1.0000" sigma="0.33300" epsilon="0.01160"/>
  </NonbondedForce>
  <HarmonicBondForce>
   <Bond class1="HC" class2="CT" length="0.10900" k="284500.0"/>

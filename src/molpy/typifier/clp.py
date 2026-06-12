@@ -28,8 +28,16 @@ class ClpTypifier(OplsTypifier):
 
     @staticmethod
     def load_forcefield() -> ForceField:
-        """Load the built-in CL&P force field (``clp.xml``)."""
-        from molpy.data.forcefield import get_forcefield_path
-        from molpy.io.forcefield.xml import read_xml_forcefield
+        """Load the built-in CL&P force field as an OPLS-AA overlay.
 
-        return read_xml_forcefield(get_forcefield_path("clp.xml"))
+        CL&P *extends* OPLS-AA, so the base ``oplsaa.xml`` is read first and
+        ``clp.xml`` is layered on top (``layer=1``). CL&P atom types therefore
+        override OPLS-AA wherever their SMARTS match (ionic-liquid atoms), while
+        OPLS-AA stays the fallback for any atom CL&P does not specifically cover
+        (e.g. molecular co-solvents in a mixed electrolyte).
+        """
+        from molpy.data.forcefield import get_forcefield_path
+        from molpy.io.forcefield.xml import read_oplsaa_forcefield, read_xml_forcefield
+
+        ff = read_oplsaa_forcefield("oplsaa.xml")
+        return read_xml_forcefield(get_forcefield_path("clp.xml"), ff, layer=1)

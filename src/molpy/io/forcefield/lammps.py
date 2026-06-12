@@ -20,8 +20,10 @@ from molpy.core.forcefield import (
     BondHarmonicStyle,
     DihedralFourierStyle,
     DihedralOPLSStyle,
+    PairCoulTTStyle,
     PairLJ126CoulCutStyle,
     PairLJ126CoulLongStyle,
+    PairTholeStyle,
 )
 from molpy.io.data.lammps import LammpsFieldFormatter
 from molpy.version import version
@@ -738,6 +740,32 @@ def _format_generic_pair(typ) -> list[float]:
     return result
 
 
+def _format_pair_thole(typ) -> list[float]:
+    """Format a Thole pair type's parameters: alpha a_thole.
+
+    CL&Pol Thole core–shell screening (LAMMPS ``pair_style thole``). The
+    per-atom-type polarizability ``alpha`` (Å³) and Thole width ``a_thole``
+    drive the screened dipole interaction; the charge is written per-atom in the
+    data file, not in the pair coefficient. Dispatch is by style name
+    (``thole``).
+    """
+    kwargs = typ.params.kwargs
+    return [kwargs.get("alpha", 0.0), kwargs.get("a_thole", 2.6)]
+
+
+def _format_pair_coul_tt(typ) -> list[float]:
+    """Format a Tang−Toennies pair type's parameters: b n c.
+
+    CL&Pol Tang−Toennies charge–dipole damping (LAMMPS ``pair_style coul/tt``).
+    The damping parameters ``b`` (1/Å), ``n`` and ``c`` are global to the style
+    in molrs; when a type carries them they are emitted per pair, otherwise the
+    Tang−Toennies defaults (b=4.5, n=4, c=1.0) are written. The charge is in the
+    data file. Dispatch is by style name (``coul/tt``).
+    """
+    kwargs = typ.params.kwargs
+    return [kwargs.get("b", 4.5), kwargs.get("n", 4), kwargs.get("c", 1.0)]
+
+
 class LammpsForceFieldFormatter(LammpsFieldFormatter, ForceFieldFormatter):
     """LAMMPS force-field formatter.
 
@@ -754,6 +782,9 @@ class LammpsForceFieldFormatter(LammpsFieldFormatter, ForceFieldFormatter):
         DihedralOPLSStyle: _format_dihedral_opls,
         PairLJ126CoulCutStyle: _format_pair_lj,
         PairLJ126CoulLongStyle: _format_pair_lj,
+        # CL&Pol damping potentials
+        PairTholeStyle: _format_pair_thole,
+        PairCoulTTStyle: _format_pair_coul_tt,
         # Generic styles (fallback)
         BondStyle: _format_generic_bond,
         AngleStyle: _format_generic_angle,

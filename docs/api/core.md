@@ -11,7 +11,6 @@ Foundational data structures for molecular systems. All available via `import mo
 | `Frame` | Named collection of Blocks + metadata | System snapshots, file I/O | Editing individual atoms |
 | `Box` | Periodic simulation cell (3×3 matrix + PBC) | Wrapping, minimum-image distances | Non-periodic systems |
 | `Trajectory` | Ordered sequence of Frames (eager or lazy) | Time-series analysis, streaming I/O | Single-snapshot work |
-| `Topology` | igraph-based bond graph → derived angles/dihedrals | Graph algorithms, connectivity queries | Storing atom properties |
 | `CoarseGrain` | CG molecular graph (beads + CG bonds) | Coarse-grained modelling; mirrors `Atomistic` | All-atom work (use `Atomistic`) |
 | `Config` | Thread-safe global configuration singleton | Logging level, thread count settings | Per-run overrides (use `Config.temporary`) |
 | `AtomisticForcefield` | Force field container (styles → types → potentials) | Defining parameters before execution | Direct numerical computation |
@@ -69,10 +68,6 @@ ct = style.def_type("CT", mass=12.011)
 ### Frame
 
 ::: molpy.core.frame
-
-### Topology
-
-::: molpy.core.topology
 
 ### Trajectory
 

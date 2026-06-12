@@ -143,21 +143,35 @@ class XMLForceFieldReader:
         # overrides mapping: type -> overridden_type
         # Example: opls_961 overrides opls_962
         self._overrides: dict[str, str] = {}
+        # overlay layer for this read: 0 = base force field, >0 = overlay that
+        # extends/overrides the base. Atom types created during the read are
+        # tagged with this layer so the SMARTS typifier can give overlay
+        # patterns strictly higher priority than base ones (CL&P/CL&Pol over
+        # OPLS-AA). See _OplsAtomTypifier._extract_patterns.
+        self._layer: int = 0
 
         self._ff: AtomisticForcefield | None = None
 
     def read(
-        self, forcefield: AtomisticForcefield | None = None
+        self,
+        forcefield: AtomisticForcefield | None = None,
+        layer: int = 0,
     ) -> AtomisticForcefield:
         """
         Read and parse the XML force field file.
 
         Args:
             forcefield: Optional existing force field to populate. If None, creates new one.
+            layer: Overlay level for this read. ``0`` (default) is the base
+                force field; a positive value marks every atom type parsed here
+                as an overlay that overrides the base during SMARTS typing
+                (higher layer wins). Used to stack ``oplsaa.xml`` (layer 0) →
+                ``clp.xml`` (layer 1) → ``clpol.xml`` (layer 2).
 
         Returns:
             Populated AtomisticForcefield object
         """
+        self._layer = layer
         if not self._file.exists():
             raise FileNotFoundError(f"Force field file not found: {self._file}")
 
@@ -262,6 +276,12 @@ class XMLForceFieldReader:
         # Normalize input
         type_ = _normalize_to_wildcard(type_)
         class_ = _normalize_to_wildcard(class_)
+
+        # Tag overlay-layer types so the typifier can rank them above the base.
+        # Only set when reading an overlay (layer > 0) to keep base atom types
+        # byte-for-byte identical to the pre-layer behavior.
+        if self._layer:
+            kwargs.setdefault("layer", self._layer)
 
         # Normalize class (resolve aliases)
         # If class not in _class_to_atomtype, try alias resolution
@@ -727,7 +747,9 @@ class XMLForceFieldReader:
 
 
 def read_xml_forcefield(
-    filepath: str | Path, forcefield: AtomisticForcefield | None = None
+    filepath: str | Path,
+    forcefield: AtomisticForcefield | None = None,
+    layer: int = 0,
 ) -> AtomisticForcefield:
     """
     Convenience function to read an XML force field file.
@@ -736,6 +758,9 @@ def read_xml_forcefield(
         filepath: Path to the XML force field file, or filename for built-in files
                  (e.g., "oplsaa.xml" will load from molpy/data/forcefield/)
         forcefield: Optional existing force field to populate
+        layer: Overlay level (0 = base, >0 = overlay that overrides the base
+            during SMARTS typing). Pass ``layer=1`` when stacking ``clp.xml``
+            onto an already-loaded ``oplsaa.xml`` so CL&P types win conflicts.
 
     Returns:
         Populated AtomisticForcefield object
@@ -744,17 +769,16 @@ def read_xml_forcefield(
         >>> # Load built-in OPLS-AA force field
         >>> ff = read_xml_forcefield("oplsaa.xml")
         >>>
-        >>> # Load custom force field from path
-        >>> from pathlib import Path
-        >>> ff = read_xml_forcefield(Path("/path/to/custom.xml"))
+        >>> # Overlay CL&P on top of OPLS-AA (CL&P overrides where it matches)
+        >>> ff = read_xml_forcefield("clp.xml", ff, layer=1)
     """
     # oplsaa.xml and clp.xml share the OPLS-AA functional form and units, so
     # both are read through the specialized OPLS reader (kJ->kcal, nm->A).
-    if str(filepath).endswith(("oplsaa.xml", "clp.xml")):
-        return read_oplsaa_forcefield(filepath, forcefield)
+    if str(filepath).endswith(("oplsaa.xml", "clp.xml", "clpol.xml")):
+        return read_oplsaa_forcefield(filepath, forcefield, layer=layer)
 
     reader = XMLForceFieldReader(filepath)
-    return reader.read(forcefield)
+    return reader.read(forcefield, layer=layer)
 
 
 class OPLSAAForceFieldReader(XMLForceFieldReader):
@@ -1012,7 +1036,9 @@ class OPLSAAForceFieldReader(XMLForceFieldReader):
 
 
 def read_oplsaa_forcefield(
-    filepath: str | Path, forcefield: AtomisticForcefield | None = None
+    filepath: str | Path,
+    forcefield: AtomisticForcefield | None = None,
+    layer: int = 0,
 ) -> AtomisticForcefield:
     """
     Read OPLS-AA force field with proper unit conversions for LAMMPS.
@@ -1033,7 +1059,7 @@ def read_oplsaa_forcefield(
         >>> ff = read_oplsaa_forcefield("oplsaa.xml")
     """
     reader = OPLSAAForceFieldReader(filepath)
-    return reader.read(forcefield)
+    return reader.read(forcefield, layer=layer)
 
 
 # ============================================================================

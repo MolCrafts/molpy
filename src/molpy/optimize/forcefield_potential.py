@@ -37,5 +37,4 @@ class ForceFieldPotential:
     def calc_forces(self, frame: molrs.Frame) -> np.ndarray:
         """Return the per-atom forces for *frame* as an ``(N, 3)`` array."""
         pots = self.forcefield.to_potentials(frame)
-        forces = np.asarray(pots.calc_forces(molrs.extract_coords(frame)), dtype=float)
-        return forces.reshape(-1, 3)
+        return np.asarray(pots.calc_forces(molrs.extract_coords(frame)), dtype=float)

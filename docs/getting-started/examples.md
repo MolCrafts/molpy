@@ -16,7 +16,7 @@ import molpy as mp
 
 mol   = mp.parser.parse_molecule("CCO")          # ethanol from SMILES
 ff    = mp.io.read_xml_forcefield("oplsaa.xml")  # bundled OPLS-AA
-typed = mp.typifier.OplsAtomisticTypifier(ff).typify(mol)
+typed = mp.typifier.OplsTypifier(ff).typify(mol)
 
 mp.io.write_lammps_system("output/", typed.to_frame(), ff)
 # → output/system.data  output/system.in
@@ -36,7 +36,7 @@ from molpy.builder import polymer
 # PEO chain with degree of polymerization = 10, built with 3D coordinates
 peo   = polymer("{[<]CCOCC[>]}|10|")
 ff    = mp.io.read_xml_forcefield("oplsaa.xml")
-typed = mp.typifier.OplsAtomisticTypifier(ff).typify(peo)
+typed = mp.typifier.OplsTypifier(ff).typify(peo)
 mp.io.write_lammps_system("output/", typed.to_frame(), ff)
 ```
 

@@ -13,6 +13,87 @@ from molpy.core.forcefield import (
     PairType,
 )
 
+# Priority stride between force-field overlay layers. An overlay type (layer L)
+# adds L * stride to its priority so it strictly outranks every lower-layer
+# candidate in the SMARTS matcher regardless of specificity score. The stride
+# is far larger than any realistic specificity score (pattern size) or
+# overrides-based delta, so a single CL&P/CL&Pol type always wins over OPLS-AA
+# where it matches, while OPLS-AA remains the fallback where it does not.
+_LAYER_PRIORITY_STRIDE = 1000
+
+
+def _build_type_class_layer(
+    ff: ForceField,
+) -> tuple[dict[str, str], dict[str, int]]:
+    """Map each atom-type *name* to its class and each class to its overlay layer.
+
+    Bond/angle/dihedral types in OPLS-style force fields are stored with their
+    class pair living only in the component *name* (e.g. ``"OW"``/``"HW"``); the
+    atomtype objects carry no class. To match a bonded term we therefore resolve
+    each atom's type to its class here and compare against those names.
+
+    ``class_to_layer`` records the highest overlay layer of any atom type
+    carrying a class, so a CL&P/CL&Pol class (layer ≥ 1) outranks a bare OPLS
+    class (layer 0) when two parameter sets would otherwise tie.
+    """
+    type_to_class: dict[str, str] = {}
+    class_to_layer: dict[str, int] = {}
+    for at in ff.get_types(AtomType):
+        at_type = at.params.kwargs.get("type_", "*")
+        cls = at.params.kwargs.get("class_", "*")
+        layer = int(at.params.kwargs.get("layer") or 0)
+        # Only real atom types (those an atom is actually assigned) define the
+        # type->class map. Skip the wildcard class-placeholder atomtypes the
+        # reader creates for class-keyed bond endpoints (type_="*", name==class):
+        # their name can collide with a real type (e.g. CL&P "FB" is both a BF4
+        # fluorine type of class F AND the class of the NTf2/FSI fluorines).
+        if at_type != "*":
+            type_to_class[at.name] = cls
+        if cls and cls != "*":
+            class_to_layer[cls] = max(class_to_layer.get(cls, 0), layer)
+    return type_to_class, class_to_layer
+
+
+def _end_score(
+    pattern_name: str | None, atom_type: str, atom_class: str | None
+) -> int | None:
+    """Specificity of one force-field type-component against one atom.
+
+    Returns ``None`` if it does not match; otherwise higher is more specific:
+    exact atom-type match (3) > class match (1) > wildcard ``*`` (0).
+    """
+    if pattern_name is None or pattern_name == "*":
+        return 0
+    if pattern_name == atom_type:
+        return 3
+    if atom_class is not None and pattern_name == atom_class:
+        return 1
+    return None
+
+
+def _sequence_score(
+    pattern_names: tuple[str, ...], atoms: list[tuple[str, str | None]]
+) -> int | None:
+    """Best specificity of a bonded-term pattern against an ordered atom list.
+
+    Tries the term both forwards and reversed (bonded terms are symmetric under
+    end-for-end reversal). ``atoms`` is ``[(type, class), ...]``. Returns the
+    summed specificity of the best-matching orientation, or ``None``.
+    """
+    best: int | None = None
+    for order in (atoms, atoms[::-1]):
+        total = 0
+        ok = True
+        for pname, (at_type, at_class) in zip(pattern_names, order):
+            s = _end_score(pname, at_type, at_class)
+            if s is None:
+                ok = False
+                break
+            total += s
+        if ok and (best is None or total > best):
+            best = total
+    return best
+
 
 def atomtype_matches(atomtype: AtomType, type_str: str) -> bool:
     """
@@ -66,79 +147,51 @@ class ForceFieldBondTypifier(TypifierBase[Bond]):
         self._build_table()
 
     def _build_table(self):
-        """Build class_to_types table and bond table"""
-        self.class_to_types: dict[str, list[str]] = defaultdict(list)
-        for at in self.ff.get_types(AtomType):
-            at_type = at.params.kwargs.get("type_", "*")
-            at_class = at.params.kwargs.get("class_", "*")
-            if at_class != "*":
-                if at_type != "*":
-                    self.class_to_types[at_class].append(at_type)
-                else:
-                    self.class_to_types[at_class].append(at_class)
-
-        self._bond_table = {}
-        for bond in self.ff.get_types(BondType):
-            self._bond_table[(bond.itom, bond.jtom)] = bond
+        """Build the bond table plus type->class / class->layer maps."""
+        self._type_to_class, self._class_to_layer = _build_type_class_layer(self.ff)
+        self._bond_table = [
+            ((bond.itom.name, bond.jtom.name), bond)
+            for bond in self.ff.get_types(BondType)
+        ]
 
     @override
     def typify(self, bond: Bond) -> Bond:
-        """Assign type to bond"""
+        """Assign the most specific (and highest-layer) matching bond type.
+
+        Matches by resolving each atom's type to its class and comparing against
+        the bond type's class pair (stored as the component *names*). Among all
+        matches the most specific wins; ties break toward the higher overlay
+        layer so CL&P/CL&Pol bonds override OPLS-AA.
+        """
         itom_type = bond.itom.get("type", None)
         jtom_type = bond.jtom.get("type", None)
-
         if itom_type is None or jtom_type is None:
             raise ValueError(f"Bond atoms must have 'type' attribute: {bond}")
 
-        # Iterate through all bond types and match manually
-        for (at1, at2), bond_type in self._bond_table.items():
-            if (
-                atomtype_matches(at1, itom_type) and atomtype_matches(at2, jtom_type)
-            ) or (
-                atomtype_matches(at1, jtom_type) and atomtype_matches(at2, itom_type)
-            ):
-                bond.data["type"] = bond_type.name
-                bond.data.update(**bond_type.params.kwargs)
-                return bond
+        atoms = [
+            (itom_type, self._type_to_class.get(itom_type)),
+            (jtom_type, self._type_to_class.get(jtom_type)),
+        ]
+        best_key: tuple[int, int] | None = None
+        best_bt = None
+        for (n1, n2), bond_type in self._bond_table:
+            score = _sequence_score((n1, n2), atoms)
+            if score is None:
+                continue
+            layer = max(
+                self._class_to_layer.get(n1, 0), self._class_to_layer.get(n2, 0)
+            )
+            key = (score, layer)
+            if best_key is None or key > best_key:
+                best_key, best_bt = key, bond_type
 
-        # Not found, try class matching
-        itom_atomtype = None
-        jtom_atomtype = None
-        for at in self.ff.get_types(AtomType):
-            if at.name == itom_type:
-                itom_atomtype = at
-            if at.name == jtom_type:
-                jtom_atomtype = at
-
-        itom_class = (
-            itom_atomtype.params.kwargs.get("class_", "*") if itom_atomtype else None
-        )
-        jtom_class = (
-            jtom_atomtype.params.kwargs.get("class_", "*") if jtom_atomtype else None
-        )
-
-        if itom_class and jtom_class and itom_class != "*" and jtom_class != "*":
-            for (at1, at2), bond_type in self._bond_table.items():
-                at1_class = (
-                    at1.params.kwargs.get("class_", "*")
-                    if hasattr(at1, "params")
-                    else "*"
-                )
-                at2_class = (
-                    at2.params.kwargs.get("class_", "*")
-                    if hasattr(at2, "params")
-                    else "*"
-                )
-                if (at1_class == itom_class and at2_class == jtom_class) or (
-                    at1_class == jtom_class and at2_class == itom_class
-                ):
-                    bond.data["type"] = bond_type.name
-                    bond.data.update(**bond_type.params.kwargs)
-                    return bond
+        if best_bt is not None:
+            bond.data["type"] = best_bt.name
+            bond.data.update(**best_bt.params.kwargs)
+            return bond
 
         if not self.strict:
             return bond
-
         raise ValueError(
             f"No bond type found for atom types: {itom_type} - {jtom_type}"
         )
@@ -153,24 +206,16 @@ class ForceFieldAngleTypifier(TypifierBase[Angle]):
         self._build_table()
 
     def _build_table(self) -> None:
-        """Build class_to_types table and angle table"""
-        self.class_to_types: dict[str, list[str]] = defaultdict(list)
-        for at in self.ff.get_types(AtomType):
-            at_type = at.params.kwargs.get("type_", "*")
-            at_class = at.params.kwargs.get("class_", "*")
-            if at_class != "*":
-                if at_type != "*":
-                    self.class_to_types[at_class].append(at_type)
-                else:
-                    self.class_to_types[at_class].append(at_class)
-
-        self._angle_table = {}
-        for angle in self.ff.get_types(AngleType):
-            self._angle_table[(angle.itom, angle.jtom, angle.ktom)] = angle
+        """Build the angle table plus type->class / class->layer maps."""
+        self._type_to_class, self._class_to_layer = _build_type_class_layer(self.ff)
+        self._angle_table = [
+            ((angle.itom.name, angle.jtom.name, angle.ktom.name), angle)
+            for angle in self.ff.get_types(AngleType)
+        ]
 
     @override
     def typify(self, angle: Angle) -> Angle:
-        """Assign type to angle"""
+        """Assign the most specific (highest-layer) matching angle type."""
         itom_type = angle.itom.get("type", None)
         jtom_type = angle.jtom.get("type", None)
         ktom_type = angle.ktom.get("type", None)
@@ -182,50 +227,29 @@ class ForceFieldAngleTypifier(TypifierBase[Angle]):
         assert isinstance(jtom_type, str)
         assert isinstance(ktom_type, str)
 
-        for (at1, at2, at3), angle_type in self._angle_table.items():
-            if (
-                atomtype_matches(at1, itom_type)
-                and atomtype_matches(at2, jtom_type)
-                and atomtype_matches(at3, ktom_type)
-            ) or (
-                atomtype_matches(at1, ktom_type)
-                and atomtype_matches(at2, jtom_type)
-                and atomtype_matches(at3, itom_type)
-            ):
-                angle.data["type"] = angle_type.name
-                angle.data.update(**angle_type.params.kwargs)
-                return angle
+        atoms = [
+            (itom_type, self._type_to_class.get(itom_type)),
+            (jtom_type, self._type_to_class.get(jtom_type)),
+            (ktom_type, self._type_to_class.get(ktom_type)),
+        ]
+        best_key: tuple[int, int] | None = None
+        best_at = None
+        for names, angle_type in self._angle_table:
+            score = _sequence_score(names, atoms)
+            if score is None:
+                continue
+            layer = max(self._class_to_layer.get(n, 0) for n in names)
+            key = (score, layer)
+            if best_key is None or key > best_key:
+                best_key, best_at = key, angle_type
 
-        # Not found, try class matching
-        itom_class = None
-        jtom_class = None
-        ktom_class = None
-        for cls, types in self.class_to_types.items():
-            if itom_type in types:
-                itom_class = cls
-            if jtom_type in types:
-                jtom_class = cls
-            if ktom_type in types:
-                ktom_class = cls
-
-        if itom_class and jtom_class and ktom_class:
-            for (at1, at2, at3), angle_type in self._angle_table.items():
-                if (
-                    atomtype_matches(at1, itom_class)
-                    and atomtype_matches(at2, jtom_class)
-                    and atomtype_matches(at3, ktom_class)
-                ) or (
-                    atomtype_matches(at1, ktom_class)
-                    and atomtype_matches(at2, jtom_class)
-                    and atomtype_matches(at3, itom_class)
-                ):
-                    angle.data["type"] = angle_type.name
-                    angle.data.update(**angle_type.params.kwargs)
-                    return angle
+        if best_at is not None:
+            angle.data["type"] = best_at.name
+            angle.data.update(**best_at.params.kwargs)
+            return angle
 
         if not self.strict:
             return angle
-
         raise ValueError(
             f"No angle type found for atom types: {itom_type} - {jtom_type} - {ktom_type}"
         )
@@ -240,22 +264,21 @@ class ForceFieldDihedralTypifier(TypifierBase[Dihedral]):
         self._build_table()
 
     def _build_table(self) -> None:
-        """Build class_to_types table and dihedral list"""
-        self.class_to_types: dict[str, list[str]] = defaultdict(list)
-        for at in self.ff.get_types(AtomType):
-            at_type = at.params.kwargs.get("type_", "*")
-            at_class = at.params.kwargs.get("class_", "*")
-            if at_class != "*":
-                if at_type != "*":
-                    self.class_to_types[at_class].append(at_type)
-                else:
-                    self.class_to_types[at_class].append(at_class)
-
-        self._dihedral_list: list[DihedralType] = list(self.ff.get_types(DihedralType))
+        """Build the dihedral table plus type->class / class->layer maps."""
+        self._type_to_class, self._class_to_layer = _build_type_class_layer(self.ff)
+        self._dihedral_table = [
+            ((d.itom.name, d.jtom.name, d.ktom.name, d.ltom.name), d)
+            for d in self.ff.get_types(DihedralType)
+        ]
 
     @override
     def typify(self, dihedral: Dihedral) -> Dihedral:
-        """Assign type to dihedral"""
+        """Assign the most specific (highest-layer) matching dihedral type.
+
+        OPLS dihedrals routinely use wildcard end atoms (``X-CT-CT-X``); the
+        specificity score makes a fully-resolved pattern win over a partially
+        wildcard one, and the layer tiebreak lets CL&P/CL&Pol override OPLS-AA.
+        """
         itom_type = dihedral.itom.get("type", None)
         jtom_type = dihedral.jtom.get("type", None)
         ktom_type = dihedral.ktom.get("type", None)
@@ -269,69 +292,30 @@ class ForceFieldDihedralTypifier(TypifierBase[Dihedral]):
         assert isinstance(ktom_type, str)
         assert isinstance(ltom_type, str)
 
-        for dihedral_type in self._dihedral_list:
-            at1, at2, at3, at4 = (
-                dihedral_type.itom,
-                dihedral_type.jtom,
-                dihedral_type.ktom,
-                dihedral_type.ltom,
-            )
-            if (
-                atomtype_matches(at1, itom_type)
-                and atomtype_matches(at2, jtom_type)
-                and atomtype_matches(at3, ktom_type)
-                and atomtype_matches(at4, ltom_type)
-            ) or (
-                atomtype_matches(at1, ltom_type)
-                and atomtype_matches(at2, ktom_type)
-                and atomtype_matches(at3, jtom_type)
-                and atomtype_matches(at4, itom_type)
-            ):
-                dihedral.data["type"] = dihedral_type.name
-                dihedral.data.update(**dihedral_type.params.kwargs)
-                return dihedral
+        atoms = [
+            (itom_type, self._type_to_class.get(itom_type)),
+            (jtom_type, self._type_to_class.get(jtom_type)),
+            (ktom_type, self._type_to_class.get(ktom_type)),
+            (ltom_type, self._type_to_class.get(ltom_type)),
+        ]
+        best_key: tuple[int, int] | None = None
+        best_dt = None
+        for names, dihedral_type in self._dihedral_table:
+            score = _sequence_score(names, atoms)
+            if score is None:
+                continue
+            layer = max(self._class_to_layer.get(n, 0) for n in names)
+            key = (score, layer)
+            if best_key is None or key > best_key:
+                best_key, best_dt = key, dihedral_type
 
-        # Not found, try class matching
-        itom_class = None
-        jtom_class = None
-        ktom_class = None
-        ltom_class = None
-        for cls, types in self.class_to_types.items():
-            if itom_type in types:
-                itom_class = cls
-            if jtom_type in types:
-                jtom_class = cls
-            if ktom_type in types:
-                ktom_class = cls
-            if ltom_type in types:
-                ltom_class = cls
-
-        if itom_class and jtom_class and ktom_class and ltom_class:
-            for dihedral_type in self._dihedral_list:
-                at1, at2, at3, at4 = (
-                    dihedral_type.itom,
-                    dihedral_type.jtom,
-                    dihedral_type.ktom,
-                    dihedral_type.ltom,
-                )
-                if (
-                    atomtype_matches(at1, itom_class)
-                    and atomtype_matches(at2, jtom_class)
-                    and atomtype_matches(at3, ktom_class)
-                    and atomtype_matches(at4, ltom_class)
-                ) or (
-                    atomtype_matches(at1, ltom_class)
-                    and atomtype_matches(at2, ktom_class)
-                    and atomtype_matches(at3, jtom_class)
-                    and atomtype_matches(at4, itom_class)
-                ):
-                    dihedral.data["type"] = dihedral_type.name
-                    dihedral.data.update(**dihedral_type.params.kwargs)
-                    return dihedral
+        if best_dt is not None:
+            dihedral.data["type"] = best_dt.name
+            dihedral.data.update(**best_dt.params.kwargs)
+            return dihedral
 
         if not self.strict:
             return dihedral
-
         raise ValueError(
             f"No dihedral type found for atom types: {itom_type} - {jtom_type} - {ktom_type} - {ltom_type}"
         )
@@ -505,6 +489,13 @@ class _OplsAtomTypifier(ForceFieldAtomTypifier):
                     priority -= 1
             if at.name in overrides_map:
                 priority += len(overrides_map[at.name])
+            # Overlay layers (CL&P, CL&Pol read on top of OPLS-AA) outrank the
+            # base force field: a type tagged layer=L beats every lower-layer
+            # type regardless of specificity, while intra-layer overrides
+            # ordering is preserved by adding (not replacing) the boost.
+            layer = at.params.kwargs.get("layer")
+            if layer:
+                priority += int(layer) * _LAYER_PRIORITY_STRIDE
             type_priority[at.name] = priority
 
         for at in atom_types:

@@ -33,7 +33,8 @@ criteria:
       Thole damping factor at sampled r equals
       1 - (1 + s_ij*r/2)*exp(-s_ij*r) with s_ij = a_ij/(alpha_i*alpha_j)^(1/6),
       a_ij=(a_i+a_j)/2, default a=2.6, within abs tol 1e-10.
-    status: pending
+    status: verified
+    last_checked: 2026-06-11
   - id: ac-005
     summary: Tang-Toennies f_n reproduces closed-form damping at sample r
     type: scientific
@@ -42,28 +43,31 @@ criteria:
       TangToennies damping factor at sampled r equals
       1 - c*exp(-b*r)*sum_{k=0..4}(b*r)^k/k! with n=4, b=4.5, c=1.0,
       within abs tol 1e-10.
-    status: pending
+    status: verified
+    last_checked: 2026-06-11
   - id: ac-006
     summary: Analytic force equals finite-difference of energy for both
     type: scientific
     pass_when: |
       For both Thole and TangToennies, calc_forces matches the central
       finite-difference gradient of calc_energy within rel tol 1e-5.
-    status: pending
+    status: verified
+    last_checked: 2026-06-11
   - id: ac-007
     summary: Damping factors approach 1 at long range
     type: scientific
     pass_when: |
       As r -> infinity, Thole T_ij -> 1 and TT f_n -> 1 (no damping),
       verified at large r within abs tol 1e-6.
-    status: pending
+    status: verified
+    last_checked: 2026-06-11
   - id: ac-008
     summary: Damping is strong at short range
     type: scientific
     pass_when: |
       As r -> 0, both Thole T_ij and TT f_n are well below 1 and decrease
       monotonically toward strong damping over a sampled short-range grid.
-    status: pending
+    status: verified
   - id: ac-009
     summary: Full check + test suite passes
     type: runtime

@@ -180,7 +180,7 @@ print(f"{len(box.atoms)} atoms")  # 12
 
 Molecular dynamics needs more than bonds. It needs angles (three-atom sequences) and dihedrals (four-atom sequences). Maintaining those by hand is error-prone — every time you add or remove a bond, every angle and dihedral list would need updating.
 
-MolPy treats topology as a *derived view*. You call `get_topo` on an `Atomistic` object, and it reads the current bond graph to produce the full set of angles and dihedrals. If the graph changes, you re-derive.
+MolPy treats topology as a *derived view*. You call `get_topo` on an `Atomistic` object, and it reads the current bond graph to produce a **new** `Atomistic` carrying the full set of angles and dihedrals (the original is left untouched). If the graph changes, you re-derive. The perception itself (2-edge and 3-edge paths over the bond graph) runs in the molrs Rust kernels.
 
 Let's see this on a fresh molecule where all the heavy atoms are still present.
 
@@ -195,7 +195,7 @@ propane.def_bond(cb, cc)
 print(f"Before: {len(propane.angles)} angles, {len(propane.dihedrals)} dihedrals")
 # Before: 0 angles, 0 dihedrals
 
-propane.get_topo(gen_angle=True, gen_dihe=True)
+propane = propane.get_topo(gen_angle=True, gen_dihe=True)
 
 print(f"After:  {len(propane.angles)} angles, {len(propane.dihedrals)} dihedrals")
 # After:  1 angles, 0 dihedrals
@@ -211,29 +211,20 @@ for angle in propane.angles:
 ```
 
 
-## The Topology object exposes graph algorithms
+## Graph queries on the bond graph
 
-`get_topo` also returns a `Topology` object — a thin wrapper around an igraph graph. This gives you access to shortest paths, connected components, degree queries, and subgraph matching without leaving MolPy.
-
-```python
-topo = propane.get_topo()
-
-print(f"atoms: {topo.n_atoms}, bonds: {topo.n_bonds}")
-print(f"angles: {topo.n_angles}, dihedrals: {topo.n_dihedrals}")
-```
-
-Because `Topology` inherits from `igraph.Graph`, standard graph algorithms are available directly.
+There is no separate topology object — `get_topo` always returns an `Atomistic`, and graph queries run directly on the structure via the molrs Rust kernels. `get_topo_neighbors` collects every atom within a bond-count radius, and `get_topo_distances` returns the bond-graph (BFS) distance from a source atom to every reachable atom.
 
 ```python
-print(f"connected: {topo.is_connected()}")
-print(f"degrees:   {topo.degree()}")
+print("within 1 bond of C2:", [a["name"] for a in propane.get_topo_neighbors(cb, radius=1)])
+# within 1 bond of C2: ['C1', 'C2', 'C3']
 
-path = topo.get_shortest_paths(0, topo.n_atoms - 1)[0]
-print(f"shortest path 0→2: {path}")
-# [0, 1, 2]
+dists = propane.get_topo_distances(ca)
+print({a["name"]: d for a, d in dists.items()})
+# {'C1': 0, 'C2': 1, 'C3': 2}
 ```
 
-For a larger molecule the same tools scale naturally: finding ring systems, checking connectivity after a bond deletion, or measuring topological distances between functional groups all reduce to standard graph queries on the `Topology` object.
+For a larger molecule the same tools scale naturally: checking connectivity after a bond deletion or measuring topological distances between functional groups reduce to k-hop queries on the `Atomistic` itself.
 
 
 ## When to stay here, when to move on

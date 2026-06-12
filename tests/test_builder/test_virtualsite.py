@@ -101,6 +101,25 @@ def _drude_bonds(struct):
     return [b for b in struct.bonds if b.get("style") == "drude"]
 
 
+def test_drude_shell_is_typed_from_core():
+    """Each Drude shell gets its own atom type ``D<core-type>`` (no untyped site)."""
+    out = DrudeBuilder().apply(_c4c1im_typed())
+    shells = _drudes(out)
+    assert shells
+    assert all(s.get("type") and s.get("type").startswith("D") for s in shells)
+    # The shell type is the core type with the prefix.
+    for bond in _drude_bonds(out):
+        core, shell = bond.itom, bond.jtom
+        if core.get("vsite") == "drude":
+            core, shell = shell, core
+        assert shell.get("type") == "D" + core.get("type")
+
+
+def test_drude_shell_prefix_is_configurable():
+    out = DrudeBuilder(drude_prefix="DP_").apply(_c4c1im_typed())
+    assert all(s.get("type").startswith("DP_") for s in _drudes(out))
+
+
 # --- ac-009: data file --------------------------------------------------------
 def test_alpha_ff_resolves_and_loads():
     path = get_forcefield_path("alpha.ff")

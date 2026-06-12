@@ -210,7 +210,7 @@ def test_c4c1im_full_pipeline():
 @pytest.mark.parametrize(
     "builder,expected",
     [
-        (_bf4, {"B", "FB"}),
+        (_bf4, {"B", "FBF"}),
         (_pf6, {"P", "FP"}),
         (_ntf2, {"CBT", "SBT", "NBT", "OBT", "F1"}),
         (_dca, {"N3A", "CZA", "NZA"}),

@@ -80,7 +80,7 @@ class TestForceFieldBondTypifier:
 
         assert typifier.ff is ff
         assert hasattr(typifier, "_bond_table")
-        assert hasattr(typifier, "class_to_types")
+        assert hasattr(typifier, "_type_to_class")
 
     def test_bond_typifier_typify(self):
         """Test ForceFieldBondTypifier.typify()."""
@@ -159,19 +159,13 @@ class TestForceFieldBondTypifier:
         with pytest.raises(ValueError, match="Bond atoms must have 'type' attribute"):
             typifier.typify(bond)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Blocked by molrs: BondType endpoint AtomTypes are reconstructed "
-            "with empty params, so the typifier's atomtype_matches() reads them "
-            "as wildcards (type_='*', class_='*') and matches any atom types — "
-            "the 'No bond type found' branch is unreachable. Needs molrs to "
-            "preserve endpoint type_/class_ params (or the typifier to match by "
-            "endpoint name)."
-        ),
-    )
     def test_bond_typifier_typify_no_match(self):
-        """Test bond typifier raises error when no match found."""
+        """Test bond typifier raises error when no match found.
+
+        Resolved: the typifier now matches by endpoint *name* (class), so a bond
+        whose classes are absent from the force field no longer wildcard-matches
+        the first type — the strict no-match branch is reachable.
+        """
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")
@@ -197,33 +191,37 @@ class TestForceFieldBondTypifier:
             typifier.typify(bond)
 
     def test_bond_typifier_class_matching(self):
-        """Test bond typifier matches by class when type doesn't match."""
+        """Bond typifier matches by class when the atom type differs.
+
+        As in real OPLS-style XML, the bond type is keyed by *class* endpoints
+        (``CT``/``HC``); distinct atom types sharing those classes (CB/HB) must
+        match it. molrs drops the endpoint class, so matching is by endpoint
+        name — which for class-keyed bonds is the class.
+        """
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
-        at1 = astyle.def_type("CA", type_="CA", class_="CT")
-        at2 = astyle.def_type("HA", type_="HA", class_="HC")
-
-        # Add atom types with matching classes for class-based matching
+        # Real atom types an atom is assigned, sharing classes CT / HC.
         astyle.def_type("CB", type_="CB", class_="CT")
         astyle.def_type("HB", type_="HB", class_="HC")
+        # Class-keyed bond endpoints (name == class), as OPLS XML defines bonds.
+        ct = astyle.def_type("CT", type_="*", class_="CT")
+        hc = astyle.def_type("HC", type_="*", class_="HC")
 
-        # Create bond type using classes
         bstyle = ff.def_bondstyle("harmonic")
-        bond_type = bstyle.def_type(at1, at2, k=1000.0, r0=1.08)
+        bond_type = bstyle.def_type(ct, hc, k=1000.0, r0=1.08)
 
         typifier = ForceFieldBondTypifier(ff)
 
-        # Create bond with different types but same classes
         asm = Atomistic()
         c = Atom(symbol="C")
         h = Atom(symbol="H")
-        c.data["type"] = "CB"  # Different type, but should match by class
-        h.data["type"] = "HB"  # Different type, but should match by class
+        c.data["type"] = "CB"  # class CT -> matches the CT endpoint
+        h.data["type"] = "HB"  # class HC -> matches the HC endpoint
+        asm.add_entity(c, h)
 
         bond = Bond(c, h)
         asm.add_link(bond)
 
-        # Should match by class
         result = typifier.typify(bond)
 
         assert result is bond
@@ -248,7 +246,7 @@ class TestForceFieldAngleTypifier:
 
         assert typifier.ff is ff
         assert hasattr(typifier, "_angle_table")
-        assert hasattr(typifier, "class_to_types")
+        assert hasattr(typifier, "_type_to_class")
 
     def test_angle_typifier_typify(self):
         """Test ForceFieldAngleTypifier.typify()."""
@@ -334,17 +332,12 @@ class TestForceFieldAngleTypifier:
         with pytest.raises(ValueError, match="Angle atoms must have 'type' attribute"):
             typifier.typify(angle)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Blocked by molrs: AngleType endpoint AtomTypes are reconstructed "
-            "with empty params, so atomtype_matches() treats them as wildcards "
-            "and matches any atom types — the 'No angle type found' branch is "
-            "unreachable. Needs molrs to preserve endpoint type_/class_ params."
-        ),
-    )
     def test_angle_typifier_typify_no_match(self):
-        """Test angle typifier raises error when no match found."""
+        """Test angle typifier raises error when no match found.
+
+        Resolved: name/class-based matching makes the strict no-match branch
+        reachable (no more wildcard match of the first angle type).
+        """
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("HA", type_="HA", class_="HC")
@@ -391,8 +384,8 @@ class TestForceFieldDihedralTypifier:
         typifier = ForceFieldDihedralTypifier(ff)
 
         assert typifier.ff is ff
-        assert hasattr(typifier, "_dihedral_list")
-        assert hasattr(typifier, "class_to_types")
+        assert hasattr(typifier, "_dihedral_table")
+        assert hasattr(typifier, "_type_to_class")
 
     def test_dihedral_typifier_typify(self):
         """Test ForceFieldDihedralTypifier.typify()."""
@@ -487,17 +480,12 @@ class TestForceFieldDihedralTypifier:
         ):
             typifier.typify(dihedral)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Blocked by molrs: DihedralType endpoint AtomTypes are reconstructed "
-            "with empty params, so atomtype_matches() treats them as wildcards "
-            "and matches any atom types — the 'No dihedral type found' branch is "
-            "unreachable. Needs molrs to preserve endpoint type_/class_ params."
-        ),
-    )
     def test_dihedral_typifier_typify_no_match(self):
-        """Test dihedral typifier raises error when no match found."""
+        """Test dihedral typifier raises error when no match found.
+
+        Resolved: name/class-based matching makes the strict no-match branch
+        reachable (no more wildcard match of the first dihedral type).
+        """
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")

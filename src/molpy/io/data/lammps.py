@@ -5,6 +5,7 @@ This module provides a clean, imperative approach to reading and writing
 LAMMPS data files using the Block.from_csv functionality.
 """
 
+import warnings
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
@@ -594,6 +595,12 @@ class LammpsDataWriter(DataWriter):
         lines.append(
             f"# LAMMPS data file written by molpy on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
+        # CL&Pol Drude systems: emit the fix-drude flag string here, where the
+        # atom-type → ID ordering is known. Ready to paste into the input script.
+        drude_flags = self._drude_flag_string(frame)
+        if drude_flags:
+            lines.append(f"# CL&Pol Drude — paste into input script:")
+            lines.append(f"#   fix DRUDE all drude {drude_flags}")
         lines.append("")
 
         # Count sections
@@ -639,19 +646,37 @@ class LammpsDataWriter(DataWriter):
         with open(self._path, "w") as f:
             f.write("\n".join(lines))
 
+    #: Connectivity blocks whose entries each carry a force-field type id.
+    _CONNECTIVITY = ("bonds", "angles", "dihedrals", "impropers")
+
     def _get_counts(self, frame: Frame) -> dict[str, int]:
-        """Get counts from frame."""
+        """Get section counts from frame.
+
+        A connectivity block that has entries but no ``type`` column is untyped
+        topology — a relation kind the force field never parameterized (e.g.
+        OPLS-AA defines no improper typifier). LAMMPS cannot represent untyped
+        connectivity, so such a block is omitted from the data file (and from the
+        header count, so the declared count matches the emitted section) with a
+        warning. A *present* ``type`` column holding bad values is a real error,
+        caught later in :meth:`_collect_actual_types`.
+        """
         counts = {}
         if "atoms" in frame:
             counts["atoms"] = frame["atoms"].nrows
-        if "bonds" in frame:
-            counts["bonds"] = frame["bonds"].nrows
-        if "angles" in frame:
-            counts["angles"] = frame["angles"].nrows
-        if "dihedrals" in frame:
-            counts["dihedrals"] = frame["dihedrals"].nrows
-        if "impropers" in frame:
-            counts["impropers"] = frame["impropers"].nrows
+        for name in self._CONNECTIVITY:
+            if name not in frame:
+                continue
+            block = frame[name]
+            if block.nrows > 0 and "type" not in block:
+                warnings.warn(
+                    f"{name!r} block has {block.nrows} entries but no 'type' "
+                    f"column; these are untyped topology (a relation kind the "
+                    f"force field does not parameterize) and are omitted from the "
+                    f"LAMMPS data file.",
+                    stacklevel=2,
+                )
+                continue
+            counts[name] = block.nrows
         return counts
 
     def _collect_actual_types(self, frame: Frame) -> dict[str, set[str]]:
@@ -674,6 +699,11 @@ class LammpsDataWriter(DataWriter):
 
         for block_name, type_key in mapping.items():
             if block_name in frame and frame[block_name].nrows > 0:
+                # Untyped connectivity (no 'type' column) is omitted from the
+                # data file — see _get_counts. Skip here so it contributes no
+                # type labels rather than crashing on the missing column.
+                if "type" not in frame[block_name]:
+                    continue
                 types = frame[block_name]["type"]
                 # Check for empty strings or None values - these are errors
                 for t in types:
@@ -760,10 +790,53 @@ class LammpsDataWriter(DataWriter):
             }
             for block_name, type_key in type_key_mapping.items():
                 if block_name in frame and frame[block_name].nrows > 0:
+                    # Skip untyped connectivity (no 'type' column) — omitted from
+                    # the data file, see _get_counts.
+                    if "type" not in frame[block_name]:
+                        continue
                     types = frame[block_name]["type"]
                     if self._needs_type_labels(types):
                         merged_types[type_key] = sorted(list(actual_types[type_key]))
             return merged_types
+
+    def _drude_flag_string(self, frame: Frame) -> str | None:
+        """Build the ``fix drude`` C/D/N flag string, or None if not Drude.
+
+        Emits one flag per atom type in the file's (sorted) type-ID order — the
+        ordering the LAMMPS DRUDE package's ``fix drude`` consumes: ``D`` for a
+        Drude shell type (element ``D``), ``C`` for a polarizable core (an atom
+        joined to a shell by a ``drude`` spring bond), ``N`` otherwise.
+        """
+        if "atoms" not in frame:
+            return None
+        atoms = frame["atoms"]
+        if "element" not in atoms or "type" not in atoms:
+            return None
+        elements = np.asarray(atoms["element"]).astype(str)
+        if not np.any(elements == "D"):
+            return None  # no Drude particles → ordinary system
+
+        types = np.asarray(atoms["type"]).astype(str)
+        shell_types = set(types[elements == "D"].tolist())
+
+        core_types: set[str] = set()
+        bonds = frame["bonds"] if "bonds" in frame else None
+        if bonds is not None and bonds.nrows > 0 and "style" in bonds:
+            b_style = np.asarray(bonds["style"]).astype(str)
+            b_i = np.asarray(bonds["atomi"]).astype(int)
+            b_j = np.asarray(bonds["atomj"]).astype(int)
+            for k in np.flatnonzero(b_style == "drude"):
+                i, j = int(b_i[k]), int(b_j[k])
+                core = i if elements[i] != "D" else j
+                core_types.add(str(types[core]))
+
+        merged = self._get_merged_type_labels(frame)
+        ordered = merged.get("atom_types") or sorted(set(types.tolist()))
+        flags = [
+            "D" if t in shell_types else "C" if t in core_types else "N"
+            for t in ordered
+        ]
+        return " ".join(flags)
 
     def _get_type_to_id_mapping(self, type_list: list[str] | None) -> dict[str, int]:
         """Get mapping from type name to type ID (1-based).
@@ -822,19 +895,35 @@ class LammpsDataWriter(DataWriter):
                 unique_types = np.unique(frame["atoms"]["type"])
                 lines.append(f"{len(unique_types)} atom types")
 
-            if "bonds" in frame and frame["bonds"].nrows > 0:
+            if (
+                "bonds" in frame
+                and frame["bonds"].nrows > 0
+                and "type" in frame["bonds"]
+            ):
                 unique_types = np.unique(frame["bonds"]["type"])
                 lines.append(f"{len(unique_types)} bond types")
 
-            if "angles" in frame and frame["angles"].nrows > 0:
+            if (
+                "angles" in frame
+                and frame["angles"].nrows > 0
+                and "type" in frame["angles"]
+            ):
                 unique_types = np.unique(frame["angles"]["type"])
                 lines.append(f"{len(unique_types)} angle types")
 
-            if "dihedrals" in frame and frame["dihedrals"].nrows > 0:
+            if (
+                "dihedrals" in frame
+                and frame["dihedrals"].nrows > 0
+                and "type" in frame["dihedrals"]
+            ):
                 unique_types = np.unique(frame["dihedrals"]["type"])
                 lines.append(f"{len(unique_types)} dihedral types")
 
-            if "impropers" in frame and frame["impropers"].nrows > 0:
+            if (
+                "impropers" in frame
+                and frame["impropers"].nrows > 0
+                and "type" in frame["impropers"]
+            ):
                 unique_types = np.unique(frame["impropers"]["type"])
                 lines.append(f"{len(unique_types)} improper types")
 
@@ -891,7 +980,12 @@ class LammpsDataWriter(DataWriter):
                 from molpy.core.element import Element
 
                 element_symbol = atoms_data["element"][mask][0]
-                mass = Element(element_symbol).mass
+                try:
+                    mass = Element(element_symbol).mass
+                except KeyError:
+                    # Non-physical element (e.g. a Drude shell "D") has no
+                    # periodic-table entry; use the stored per-atom mass.
+                    mass = atoms_data["mass"][mask][0] if "mass" in atoms_data else 1.0
             elif "mass" in atoms_data:
                 mass = atoms_data["mass"][mask][0]
             else:

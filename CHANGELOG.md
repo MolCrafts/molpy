@@ -3,7 +3,34 @@
 The full user-facing changelog lives in [docs/changelog.md](docs/changelog.md).
 This file records API renames and breaking changes at the repository root.
 
-## Unreleased
+## 0.4.0 - 2026-06-11
+
+### Removed (no deprecation shims — project is in the experimental stage)
+
+- `molpy.Topology` / `molpy.core.Topology` (the parallel igraph engine was
+  deleted); `Atomistic.get_topo()` now always returns an `Atomistic`.
+- Python potential kernels under `molpy.potential` (now a facade over molrs
+  Styles); `potential.base.Potential`; `optimize.potential_wrappers` →
+  `ForceFieldPotential`. Parameter `k0` → `k`; `def_type` params keyword-only.
+- `Compute.execute()` / `input_key` / `output_key` / `_compute` hook /
+  `Compute[InT, OutT]` generic — `Compute` is a plain `__init__` + `__call__`
+  class.
+- molpy's own LAMMPS/XYZ trajectory readers and mmap-index infrastructure
+  (`Trajectory` is a `molrs.Trajectory` subclass; parsing lives in molrs).
+- The `molpy.op` package (dead geometry helpers).
+- Typifier surface: `ForceFieldAtomisticTypifier` → `ForceFieldTypifier`;
+  `Opls{Bond,Angle,Dihedral}Typifier` and the public atom-only typifiers
+  removed (`_OplsAtomTypifier` / `_GaffAtomTypifier` are private);
+  `GaffAtomisticTypifier` alias dropped — use `OplsTypifier` / `GaffTypifier`.
+
+### Behavior changes (fail-fast)
+
+- Selectors raise `KeyError` on a missing column instead of matching nothing.
+- The typifier raises on malformed SMARTS / invalid element instead of
+  silently skipping or wildcarding.
+- `ForceField.to_potentials()` raises on broken styles instead of dropping them.
+- The LAMMPS data reader retains force-field coeffs and raises `ValueError`
+  on malformed coeff lines.
 
 ### Renames (no deprecation shims — project is in the experimental stage)
 

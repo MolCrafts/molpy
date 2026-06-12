@@ -57,14 +57,16 @@ criteria:
       alpha.ff input alpha for that CL&P type within relative tolerance 1e-6
       (4*pi*eps0 = 0.0007197587 e^2/(kJ/mol*A); the molpy-units form of
       alpha = q_D^2/k_D).
-    status: pending
+    status: verified
+    last_checked: 2026-06-11
   - id: ac-007
     summary: Ion net charge stays the original integer after augmentation
     type: scientific
     pass_when: |
       For each ion, sum of (core charge + shell charge) over its atoms
       equals the original integer ionic charge (+-1) within 1e-9.
-    status: pending
+    status: verified
+    last_checked: 2026-06-11
   - id: ac-008
     summary: Tip4pBuilder emits a MasslessSite on the bisector with O charge moved to M, no spring
     type: code

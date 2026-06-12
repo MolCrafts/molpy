@@ -3,11 +3,13 @@
 from molpy.core.forcefield import (
     PairBuckStyle,
     PairCoulLongStyle,
+    PairCoulTTStyle,
     PairLJ126CoulCutStyle,
     PairLJ126CoulLongStyle,
     PairLJ126Style,
     PairLJClass2Style,
     PairMorseStyle,
+    PairTholeStyle,
 )
 
 __all__ = [
@@ -18,4 +20,6 @@ __all__ = [
     "PairBuckStyle",
     "PairMorseStyle",
     "PairLJClass2Style",
+    "PairTholeStyle",
+    "PairCoulTTStyle",
 ]

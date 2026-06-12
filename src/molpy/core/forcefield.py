@@ -174,6 +174,38 @@ class PairLJClass2Style(PairStyle):
         return "lj/class2"
 
 
+class PairTholeStyle(PairStyle):
+    """Pair ``thole`` — Thole damped dipole-dipole / core-shell Coulomb style.
+
+    Per-atom-type parameters: ``charge`` (e), ``alpha`` (Å³),
+    ``a_thole`` (dimensionless Thole damping width, default 2.6).
+    Damping: ``T(r) = 1 − (1 + s·r/2)·exp(−s·r)`` where
+    ``s = a_ij / (α_i·α_j)^(1/6)``, ``a_ij = (a_i + a_j)/2``.
+
+    Reference: Thole, *Chem. Phys.* **59** (1981) 341,
+    :doi:`10.1016/0301-0104(81)85176-2`.
+    """
+
+    def _name_default(self) -> str:
+        return "thole"
+
+
+class PairCoulTTStyle(PairStyle):
+    """Pair ``coul/tt`` — Tang−Toennies damped charge−dipole Coulomb style.
+
+    Style-level parameters: ``b`` (1/Å, default 4.5), ``n`` (default 4),
+    ``c`` (default 1.0).
+    Per-atom-type parameter: ``charge`` (e).
+    Damping: ``f_n(r) = 1 − c·exp(−b·r)·Σ_{k=0}^n (b·r)^k/k!``.
+
+    Reference: Tang & Toennies, *J. Chem. Phys.* **80** (1984) 3726,
+    :doi:`10.1063/1.447150`.
+    """
+
+    def _name_default(self) -> str:
+        return "coul/tt"
+
+
 __all__ = [
     # Core molrs hierarchy
     "ForceField",
@@ -219,6 +251,8 @@ __all__ = [
     "PairBuckStyle",
     "PairMorseStyle",
     "PairLJClass2Style",
+    "PairTholeStyle",
+    "PairCoulTTStyle",
     # Back-compat container utilities
     "TypeBucket",
     "get_nearest_type",

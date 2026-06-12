@@ -100,11 +100,20 @@ class DrudeBuilder(VirtualSiteBuilder):
     """
 
     def __init__(
-        self, polarizability: dict[str, dict[str, float]] | None = None
+        self,
+        polarizability: dict[str, dict[str, float]] | None = None,
+        *,
+        drude_prefix: str = "D",
     ) -> None:
         self.alpha = (
             polarizability if polarizability is not None else load_polarizability()
         )
+        # Prefix for the Drude shell atom type, derived from the core type
+        # (e.g. core ``NBT`` → shell ``DNBT``). Each polarizable core type thus
+        # gets its own shell type, as the LAMMPS DRUDE package expects.
+        self.drude_prefix = drude_prefix
+        # All core–shell springs share one harmonic bond type.
+        self.drude_bond_type = "DRUDE"
 
     def _is_polarizable(self, atom: Atom) -> bool:
         params = self.alpha.get(atom.get("type"))
@@ -125,6 +134,11 @@ class DrudeBuilder(VirtualSiteBuilder):
             "k_D": k_d,
             "alpha": alpha,
         }
+        # Give the shell its own force-field type, derived from the core type, so
+        # the structure is fully typed before export (no untyped particles).
+        core_type = host.get("type")
+        if core_type is not None:
+            attrs["type"] = f"{self.drude_prefix}{core_type}"
         # Co-locate with the core if the host carries coordinates.
         for axis in ("x", "y", "z"):
             if host.get(axis) is not None:
@@ -140,8 +154,19 @@ class DrudeBuilder(VirtualSiteBuilder):
         if host.get("mass") is not None:
             host.data["mass"] = host.get("mass") - shell.get("mass", 0.0)
         struct.add_atom(shell)
-        # Spring constant is the host type's k_D (data-driven, from alpha.ff).
-        struct.add_bond(Bond(host, shell, k=shell.get("k_D"), r0=0.0, style="drude"))
+        # Spring constant is the host type's k_D (data-driven, from alpha.ff). The
+        # spring carries its own bond type so the augmented structure is fully
+        # typed (every core–shell spring shares the one ``DRUDE`` bond type).
+        struct.add_bond(
+            Bond(
+                host,
+                shell,
+                k=shell.get("k_D"),
+                r0=0.0,
+                style="drude",
+                type=self.drude_bond_type,
+            )
+        )
 
 
 class Tip4pBuilder(VirtualSiteBuilder):

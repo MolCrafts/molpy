@@ -40,7 +40,8 @@ criteria:
     pass_when: |
       compute_k_ij for a fixture fragment pair (known q, mu, alpha, r) equals
       1/(1 + 0.254952*r^2*q^2/alpha + 0.106906*mu^2/alpha) within rtol 1e-6.
-    status: pending
+    status: verified
+    last_checked: 2026-06-11
   - id: ac-006
     summary: mu^2 term carries no r^2 prefactor
     type: scientific
@@ -48,7 +49,8 @@ criteria:
       Holding q, mu, alpha fixed and varying r, the mu^2/alpha contribution to
       the denominator of k_ij stays constant while only the q^2 term scales
       with r^2 (asserted by comparing two r values within rtol 1e-9).
-    status: pending
+    status: verified
+    last_checked: 2026-06-11
   - id: ac-007
     summary: clandpol reference epsilon scaling matches for a known case
     type: scientific
@@ -57,7 +59,10 @@ criteria:
       For a fully-nonpolarizable->polarizable fragment pair transcribed from
       clandpol fragment.ff, scaled epsilon matches the clandpol scaleLJ
       reference value within rtol 1e-4 (if reference obtainable).
-    status: pending
+    status: skipped
+    note: clandpol reference epsilon values not obtainable; closed-form k_ij
+      verification (ac-005) and code-level invariants (ac-006) provide
+      sufficient scientific coverage.
   - id: ac-008
     summary: fragment scaling data file committed and loadable
     type: code

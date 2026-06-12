@@ -63,21 +63,24 @@ criteria:
       For [C4C1im][NTf2] and [C4C1im][DCA], per-atom CL&P type, partial charge,
       and LJ sigma/epsilon match the il.ff reference fixture (charge atol 1e-4,
       sigma/epsilon rtol 1e-4).
-    status: pending
+    status: verified
+    last_checked: 2026-06-11
   - id: ac-008
     summary: each ion summed partial charge equals integer ±1
     type: scientific
     pass_when: |
       Sum of partial charges over each typified ion equals +1 (cation) or
       -1 (anion) within atol 1e-6.
-    status: pending
+    status: verified
+    last_checked: 2026-06-11
   - id: ac-009
     summary: produced ForceField records geometric combining + 0.5/0.5 1-4 scaling
     type: scientific
     pass_when: |
       The ForceField from clp.xml reports geometric combining rule and
       1-4 scaling factors of 0.5 (electrostatic) and 0.5 (LJ).
-    status: pending
+    status: verified
+    last_checked: 2026-06-11
   - id: ac-010
     summary: lint and type check clean
     type: code
