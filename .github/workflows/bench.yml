@@ -30,16 +30,9 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Rust toolchain (to build molrs from source)
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install molrs from source
-        # Matches ci.yml: molpy benches exercise unreleased molrs kernels.
-        # Once molrs cuts a release carrying them, drop this and rely on the
-        # molcrafts-molrs pin in pyproject.toml.
-        run: pip install "molcrafts-molrs @ git+https://github.com/Roy-Kid/molrs.git@dev#subdirectory=molrs-python"
-
       - name: Install molpy + bench deps
+        # molrs (molcrafts-molrs==0.1.0, pinned in pyproject.toml) installs as a
+        # wheel from PyPI.
         run: pip install -e ".[dev]"
 
       - name: Run core benchmarks
