@@ -61,7 +61,7 @@ def write_moltemplate(
     text = ltemplify(atomistic, ff, class_name=class_name)
     dest_path = Path(dest)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    dest_path.write_text(text)
+    dest_path.write_text(text, encoding="utf-8")
     return dest_path.resolve()
 
 

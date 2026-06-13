@@ -64,7 +64,7 @@ def emit_python(
     out = _emit_document(doc)
     dest_path = Path(dest)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    dest_path.write_text(out)
+    dest_path.write_text(out, encoding="utf-8")
     return dest_path.resolve()
 
 

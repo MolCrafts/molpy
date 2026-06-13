@@ -154,7 +154,9 @@ def _cmd_parse(args: argparse.Namespace) -> int:
 
     doc = parse_file(args.script)
     if args.json:
-        args.json.write_text(json.dumps(_ir_to_jsonable(doc), indent=2))
+        args.json.write_text(
+            json.dumps(_ir_to_jsonable(doc), indent=2), encoding="utf-8"
+        )
         print(f"IR written to {args.json}")
         return 0
     # Default: print a summary

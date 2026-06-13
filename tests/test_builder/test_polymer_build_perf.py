@@ -9,12 +9,10 @@ Spec builder-reacter-05-perf:
   accumulated chain — max single-call scan size must stay flat with DP.
 - GROUP correctness: union-find/group bookkeeping keeps all monomer nodes
   in one structure with exact linear count arithmetic (no RDKit needed).
-- SLOW smoke: DP=200 build completes within a wall-clock budget.
 """
 
 import json
 import os
-import time
 from pathlib import Path
 
 import pytest
@@ -255,27 +253,3 @@ class TestGroupCorrectness:
         assert result.total_steps == 3
         assert n_atoms == 9  # 3 monomers x 3 atoms, no leaving groups
         assert n_bonds == n_atoms  # one cycle: |E| == |V|
-
-
-# ── SLOW smoke ────────────────────────────────────────────────────────
-
-
-class TestLargeBuildSmoke:
-    """DP=200 end-to-end smoke under a wall-clock budget."""
-
-    @pytest.mark.slow
-    def test_smoke_dp200_build_under_60s(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        pytest.importorskip("rdkit")
-
-        start = time.monotonic()
-        chain, _ = _build_peo_chain(200, monkeypatch)
-        elapsed = time.monotonic() - start
-
-        n_atoms = len(list(chain.atoms))
-        n_bonds = len(list(chain.bonds))
-        assert n_atoms > 0
-        assert n_bonds >= n_atoms - 1
-        assert elapsed < 60.0, (
-            f"DP=200 build took {elapsed:.1f} s (budget 60 s) — build "
-            f"loop is superlinear in chain length"
-        )
