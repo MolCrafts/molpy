@@ -166,3 +166,26 @@ class TestBuildMolGraph:
         assert graph.ecount() == 0
         assert graph.vs[0]["degree"] == 0
         assert graph.vs[1]["degree"] == 0
+
+
+class TestAdapterFailFast:
+    """A provided-but-invalid element/atomic-number is a malformed spec and
+    must raise, not silently degrade to None / wildcard ``*`` (the legitimate
+    wildcard is reserved for an atom with no element and no number)."""
+
+    def test_unknown_element_symbol_raises(self):
+        from molpy.typifier.adapter import _extract_atom_attributes
+
+        asm = Atomistic()
+        atom = asm.def_atom(element="Zz", x=0.0, y=0.0, z=0.0)
+        with pytest.raises(ValueError, match="unknown element symbol"):
+            _extract_atom_attributes(atom, asm)
+
+    def test_no_element_or_number_is_wildcard(self):
+        from molpy.typifier.adapter import _extract_atom_attributes
+
+        asm = Atomistic()
+        atom = asm.def_atom(x=0.0, y=0.0, z=0.0)  # no element / number
+        attrs = _extract_atom_attributes(atom, asm)
+        assert attrs["element"] == "*"
+        assert attrs["number"] is None

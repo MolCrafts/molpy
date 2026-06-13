@@ -5,14 +5,18 @@ This module defines the base Reacter class and ProductSet dataclass,
 providing the foundation for SMIRKS-style reaction semantics.
 """
 
-from dataclasses import dataclass, field
-from typing import Any
+from __future__ import annotations
 
-from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper
 from molpy.core.entity import Entity
 from molpy.reacter.topology_detector import TopologyDetector
 from molpy.reacter.utils import AnchorSelector, BondFormer, LeavingSelector
-from molpy.typifier.atomistic import TypifierBase
+
+if TYPE_CHECKING:
+    from molpy.typifier.atomistic import TypifierBase
 
 
 @dataclass
@@ -37,8 +41,10 @@ class ReactionResult:
     new_bonds: list[Any] = field(default_factory=list)
     new_angles: list[Angle] = field(default_factory=list)
     new_dihedrals: list[Dihedral] = field(default_factory=list)
+    new_impropers: list[Improper] = field(default_factory=list)
     removed_angles: list[Angle] = field(default_factory=list)
     removed_dihedrals: list[Dihedral] = field(default_factory=list)
+    removed_impropers: list[Improper] = field(default_factory=list)
     removed_atoms: list[Atom] = field(default_factory=list)
     modified_atoms: set[Atom] = field(default_factory=set)
 
@@ -62,10 +68,12 @@ class Reacter:
     original structures remain unchanged.
 
     **Port Selection Philosophy:**
-    Reacter does NOT handle port selection. The caller
-    must explicitly specify which ports to connect via port_L and port_R.
-    Ports are marked directly on atoms using the "port" or "ports" attribute.
-    This makes the reaction execution deterministic and explicit.
+    Reacter does NOT handle port selection. The caller must explicitly
+    specify which port atoms to connect via ``port_atom_L`` and
+    ``port_atom_R`` (locate them with :func:`molpy.reacter.find_port`).
+    Ports are marked directly on atoms using the "port" or "ports"
+    attribute. This makes the reaction execution deterministic and
+    explicit.
 
     Attributes:
         name: Descriptive name for this reaction type
@@ -76,26 +84,49 @@ class Reacter:
         bond_former: Function to create bond between anchor atoms
 
     Example:
-        >>> from molpy.reacter import Reacter, select_port_atom, select_one_hydrogen, form_single_bond
-        >>> from molpy import Atomistic
-        >>>
-        >>> # Mark ports on atoms
-        >>> atom_a["port"] = "1"
-        >>> atom_b["port"] = "2"
-        >>>
+        >>> from molpy.core.atomistic import Atom, Atomistic, Bond
+        >>> from molpy.reacter import (
+        ...     Reacter,
+        ...     find_port,
+        ...     form_single_bond,
+        ...     select_hydrogens,
+        ...     select_self,
+        ... )
+        >>> def methane_fragment(port):
+        ...     struct = Atomistic()
+        ...     carbon = Atom(element="C")
+        ...     hydrogens = [Atom(element="H") for _ in range(3)]
+        ...     struct.add_entity(carbon, *hydrogens)
+        ...     for hydrogen in hydrogens:
+        ...         struct.add_link(Bond(carbon, hydrogen))
+        ...     carbon["port"] = port
+        ...     return struct
+        >>> left = methane_fragment(">")
+        >>> right = methane_fragment("<")
         >>> cc_coupling = Reacter(
         ...     name="C-C_coupling_with_H_loss",
-        ...     port_selector_left=select_port_atom,
-        ...     port_selector_right=select_port_atom,
-        ...     leaving_selector_left=select_one_hydrogen,
-        ...     leaving_selector_right=select_one_hydrogen,
+        ...     anchor_selector_left=select_self,
+        ...     anchor_selector_right=select_self,
+        ...     leaving_selector_left=select_hydrogens(1),
+        ...     leaving_selector_right=select_hydrogens(1),
         ...     bond_former=form_single_bond,
         ... )
-        >>>
-        >>> # Port selection is explicit!
-        >>> product = cc_coupling.run(structA, structB, port_L="1", port_R="2")
-        >>> print(product.removed_atoms)  # [H1, H2]
+        >>> result = cc_coupling.run(
+        ...     left,
+        ...     right,
+        ...     port_atom_L=find_port(left, ">"),
+        ...     port_atom_R=find_port(right, "<"),
+        ... )
+        >>> len(result.removed_atoms)
+        2
+        >>> len(list(result.product.atoms))  # 8 atoms in, 2 H removed
+        6
     """
+
+    #: Subclasses that need ``ReactionResult.reactants`` (a full copy of
+    #: the merged assembly taken before the reaction) set this to True.
+    #: The base Reacter skips that copy and returns ``reactants=None``.
+    _needs_reactants_snapshot: bool = False
 
     def __init__(
         self,
@@ -233,7 +264,14 @@ class Reacter:
         assembly: Atomistic,
         new_bonds: list[Bond],
         removed_atoms: list[Atom],
-    ) -> tuple[list[Angle], list[Dihedral], list[Angle], list[Dihedral]]:
+    ) -> tuple[
+        list[Angle],
+        list[Dihedral],
+        list[Improper],
+        list[Angle],
+        list[Dihedral],
+        list[Improper],
+    ]:
         """
         Detect and update topology changes using TopologyDetector.
 
@@ -243,7 +281,8 @@ class Reacter:
             removed_atoms: List of removed atoms
 
         Returns:
-            Tuple of (new_angles, new_dihedrals, removed_angles, removed_dihedrals)
+            Tuple of (new_angles, new_dihedrals, new_impropers,
+            removed_angles, removed_dihedrals, removed_impropers)
         """
         return TopologyDetector.detect_and_update_topology(
             assembly, new_bonds, removed_atoms
@@ -295,7 +334,7 @@ class Reacter:
         Execute the reaction between two Atomistic structures.
 
         **IMPORTANT: port_atom_L and port_atom_R must be explicit Atom objects.**
-        Use find_port_atom() or find_port_atom_by_node() to get them first.
+        Use find_port() or find_port_atom_by_node() to get them first.
 
         Workflow:
         1. Transform port atoms to reaction sites via port selectors
@@ -303,7 +342,7 @@ class Reacter:
         3. Select leaving groups from reaction sites
         4. Create bond between reaction sites
         5. Remove leaving groups
-        6. (Optional) Compute new angles/dihedrals
+        6. (Optional) Compute new angles/dihedrals/impropers
         7. Return ReactionResult
 
         Args:
@@ -311,15 +350,25 @@ class Reacter:
             right: Right reactant Atomistic structure
             port_atom_L: Port atom from left structure (the atom with port marker)
             port_atom_R: Port atom from right structure (the atom with port marker)
-            compute_topology: If True, compute new angles/dihedrals (default True)
+            compute_topology: If True, compute new angles/dihedrals/impropers (default True)
             record_intermediates: If True, record intermediate states
             typifier: Optional typifier for incremental retypification
 
         Returns:
-            ReactionResult containing product and metadata
+            ReactionResult containing product and metadata.
 
         Raises:
             ValueError: If port atoms invalid
+
+        Copy semantics:
+            Caller-owned ``left``/``right`` are copied once each and never
+            mutated. With ``record_intermediates=False`` the merged
+            assembly is not copied at all by the base Reacter
+            (``result.reactants`` is None); subclasses with
+            ``_needs_reactants_snapshot = True`` (e.g. BondReactReacter)
+            take exactly one pre-reaction snapshot so templates can be
+            generated. ``record_intermediates=True`` adds copies for the
+            recorded intermediate states.
         """
         intermediates: list[dict] = []
 
@@ -375,11 +424,16 @@ class Reacter:
             # Merge structures
             merged = self._merge_structures(left_copy, right_copy)
 
-        # Save merged reactants BEFORE reaction (for template generation)
-        merged_reactants_before_reaction = merged.copy()
-        merged_copy = merged.copy()
+        # Save merged reactants BEFORE reaction only when a subclass needs
+        # the snapshot for template generation (copy gating: the base
+        # Reacter never pays this O(N) copy).
+        merged_reactants_before_reaction = (
+            merged.copy() if self._needs_reactants_snapshot else None
+        )
 
+        merged_copy: Atomistic | None = None
         if record_intermediates:
+            merged_copy = merged.copy()
             if compute_topology:
                 merged = merged.get_topo(gen_angle=True, gen_dihe=True)
             intermediates.append(
@@ -400,6 +454,7 @@ class Reacter:
         )
 
         if record_intermediates:
+            assert merged_copy is not None
             product_copy = merged_copy.copy()
             if compute_topology:
                 product_copy = product_copy.get_topo(gen_angle=True, gen_dihe=True)
@@ -425,13 +480,20 @@ class Reacter:
         # Step 5: Detect and update topology if requested
         new_angles: list[Angle] = []
         new_dihedrals: list[Dihedral] = []
+        new_impropers: list[Improper] = []
         removed_angles: list[Angle] = []
         removed_dihedrals: list[Dihedral] = []
+        removed_impropers: list[Improper] = []
 
         if compute_topology and new_bond:
-            new_angles, new_dihedrals, removed_angles, removed_dihedrals = (
-                self._detect_and_update_topology(merged, [new_bond], removed_atoms)
-            )
+            (
+                new_angles,
+                new_dihedrals,
+                new_impropers,
+                removed_angles,
+                removed_dihedrals,
+                removed_impropers,
+            ) = self._detect_and_update_topology(merged, [new_bond], removed_atoms)
 
         # Step 6: Build entity maps
         final_entity_map = self._build_entity_maps(
@@ -452,8 +514,10 @@ class Reacter:
             new_bonds=[new_bond] if new_bond else [],
             new_angles=new_angles,
             new_dihedrals=new_dihedrals,
+            new_impropers=new_impropers,
             removed_angles=removed_angles,
             removed_dihedrals=removed_dihedrals,
+            removed_impropers=removed_impropers,
             removed_atoms=removed_atoms,
             modified_atoms=({anchor_L, anchor_R} if anchor_L and anchor_R else set()),
             reaction_name=self.name,
@@ -536,8 +600,6 @@ class Reacter:
 
         # Step 2: Update pair types (charge, sigma, epsilon) for modified atoms
         if hasattr(typifier, "pair_typifier") and typifier.pair_typifier:
-            from molpy.core.atomistic import Atom
-
             for atom in modified_atoms:
                 if isinstance(atom, Atom):
                     # Guard: skip atoms that still lack a 'type' attribute
@@ -578,14 +640,13 @@ class Reacter:
 
             # Re-type existing angles involving modified atoms
             new_angles_set = set(new_angles)
-            modified_atoms_set = modified_atoms
             for angle in assembly.angles:
                 if angle in new_angles_set:
                     continue  # Already typed above
                 if (
-                    angle.itom in modified_atoms_set
-                    or angle.jtom in modified_atoms_set
-                    or angle.ktom in modified_atoms_set
+                    angle.itom in modified_atoms
+                    or angle.jtom in modified_atoms
+                    or angle.ktom in modified_atoms
                 ):
                     if "type" in angle.data:
                         del angle.data["type"]
@@ -600,20 +661,39 @@ class Reacter:
 
             # Re-type existing dihedrals involving modified atoms
             new_dihedrals_set = set(new_dihedrals)
-            modified_atoms_set = modified_atoms
             for dihedral in assembly.dihedrals:
                 if dihedral in new_dihedrals_set:
                     continue  # Already typed above
                 if (
-                    dihedral.itom in modified_atoms_set
-                    or dihedral.jtom in modified_atoms_set
-                    or dihedral.ktom in modified_atoms_set
-                    or dihedral.ltom in modified_atoms_set
+                    dihedral.itom in modified_atoms
+                    or dihedral.jtom in modified_atoms
+                    or dihedral.ktom in modified_atoms
+                    or dihedral.ltom in modified_atoms
                 ):
                     if "type" in dihedral.data:
                         del dihedral.data["type"]
                     if _all_typed(dihedral.endpoints):
                         typifier.dihedral_typifier.typify(dihedral)
+
+        # Step 6: Type new impropers (optional — typifiers without an
+        # improper_typifier leave improper data copied through unchanged)
+        improper_typifier = getattr(typifier, "improper_typifier", None)
+        if improper_typifier:
+            new_impropers = reaction_result.new_impropers
+            for improper in new_impropers:
+                if _all_typed(improper.endpoints):
+                    improper_typifier.typify(improper)
+
+            # Re-type existing impropers involving modified atoms
+            new_impropers_set = set(new_impropers)
+            for improper in assembly.impropers:
+                if improper in new_impropers_set:
+                    continue  # Already typed above
+                if any(ep in modified_atoms for ep in improper.endpoints):
+                    if "type" in improper.data:
+                        del improper.data["type"]
+                    if _all_typed(improper.endpoints):
+                        improper_typifier.typify(improper)
 
     def __repr__(self) -> str:
         return f"Reacter(name={self.name!r})"

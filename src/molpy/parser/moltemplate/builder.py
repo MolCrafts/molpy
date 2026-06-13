@@ -246,21 +246,13 @@ _IMPR_IDENT_RE = re.compile(r"@improper:(\S+)")
 
 
 def _ensure_atomtype(ff: ForceField, name: str) -> AtomType:
-    style = ff.get_style_by_name("full", AtomStyle)
+    style = ff.get_style("atom", "full")
     if style is None:
-        style = ff.def_style(AtomStyle("full"))
-    # Fast path: per-style dict cache to avoid O(n) scans. Lives as a
-    # private attribute on the AtomStyle instance; refreshed lazily.
-    cache: dict[str, AtomType] = getattr(style, "_mt_type_cache", None)
-    if cache is None:
-        cache = {t.name: t for t in style.types.bucket(AtomType)}
-        style._mt_type_cache = cache  # type: ignore[attr-defined]
-    existing = cache.get(name)
+        style = ff.def_atomstyle("full")
+    existing = style.get_type_by_name(name, AtomType)
     if existing is not None:
         return existing
-    at = style.def_type(name=name, mass=0.0, charge=0.0, type_=name)
-    cache[name] = at
-    return at
+    return style.def_type(name=name, mass=0.0, charge=0.0, type_=name)
 
 
 def _split_line(line: str) -> list[str]:
@@ -294,13 +286,6 @@ def _parse_data_charges(ff: ForceField, lines: list[str]) -> None:
 
 
 def _parse_in_settings(ff: ForceField, lines: list[str]) -> None:
-    from molpy.potential import angle as _a  # registers styles
-    from molpy.potential import bond as _b
-    from molpy.potential import dihedral as _d
-    from molpy.potential import improper as _i
-    from molpy.potential import pair as _p
-    # Access _kernel_registry via ForceField
-
     for raw in lines:
         m = _COEFF_RE.match(raw)
         if not m:
@@ -419,8 +404,9 @@ def _get_or_def_style(
     ff: ForceField, kind: str, style_name: str | None
 ) -> Style | None:
     name = style_name or _DEFAULTS[kind]
-    registry = ForceField._kernel_registry.get(kind, {})
-    if name not in registry:
+    _init_style_registry()
+    known = {n for (k, n) in _STYLE_REGISTRY if k == kind}
+    if name not in known:
         return None
     # Find a style class: we need the matching Style subclass, not the Potential.
     # Convention: BondHarmonicStyle, BondMorseStyle, etc. — search by registering
@@ -435,25 +421,57 @@ def _get_or_def_style(
         return ff.def_style(style_cls())
 
 
+# Positional coefficient order per (kind, style_name). molrs ``def_type``
+# takes params as keyword args, so moltemplate's positional ``*_coeff`` tail
+# must be mapped onto these canonical names.
+_PARAM_NAMES: dict[tuple[str, str], list[str]] = {
+    ("bond", "harmonic"): ["k", "r0"],
+    ("bond", "morse"): ["d0", "alpha", "r0"],
+    ("angle", "harmonic"): ["k", "theta0"],
+    ("dihedral", "opls"): ["c1", "c2", "c3", "c4"],
+    ("dihedral", "periodic"): ["k", "n", "phi0"],
+    ("dihedral", "charmm"): ["k", "n", "phi0", "weight"],
+    ("dihedral", "multi/harmonic"): ["a1", "a2", "a3", "a4", "a5"],
+    ("improper", "harmonic"): ["k", "chi0"],
+    ("improper", "periodic"): ["k", "n", "phi0"],
+    ("improper", "cvff"): ["k", "d", "n"],
+    ("pair", "lj/cut/coul/cut"): ["epsilon", "sigma"],
+    ("pair", "lj/cut/coul/long"): ["epsilon", "sigma"],
+    ("pair", "buck"): ["a", "rho", "c"],
+    ("pair", "morse"): ["d0", "alpha", "r0"],
+}
+
+
 def _call_def_type(
     style: Style, kind: str, *args, type_name: str | None = None
 ) -> Type | None:
-    """Invoke ``style.def_type`` with a best-effort positional unpack.
+    """Invoke ``style.def_type`` with positional params mapped to keywords.
 
     ``args`` ends with a ``list[float]`` of numeric params; everything before
-    it is AtomTypes. If ``type_name`` is set it's passed as the ``name=`` kwarg.
+    it is AtomTypes. molrs ``def_type`` accepts params only as keyword args, so
+    the positional coefficient tail is mapped onto the canonical names for the
+    owning ``(kind, style.name)`` kernel. If ``type_name`` is set it's passed
+    as the ``name=`` kwarg.
     """
-    params = args[-1]
+    params = list(args[-1])
     atom_types = args[:-1]
     kwargs: dict[str, Any] = {}
     if type_name is not None:
         kwargs["name"] = type_name
-    try:
-        return style.def_type(*atom_types, *params, **kwargs)
-    except TypeError:
-        # Style expects keyword params — map positional to common names.
-        # Best-effort: just attach as params kwargs dict by convention.
-        return None
+
+    names = _PARAM_NAMES.get((kind, getattr(style, "name", "")))
+    if names is not None:
+        for name, value in zip(names, params):
+            kwargs[name] = value
+        # Preserve any extra coefficients beyond the named set positionally.
+        for i, value in enumerate(params[len(names) :]):
+            kwargs[f"p{len(names) + i}"] = value
+    else:
+        # Unknown kernel: fall back to generic positional ``pN`` names.
+        for i, value in enumerate(params):
+            kwargs[f"p{i}"] = value
+
+    return style.def_type(*atom_types, **kwargs)
 
 
 # Static lookup table of Style subclasses keyed by (kind, name).
@@ -464,31 +482,26 @@ _STYLE_REGISTRY: dict[tuple[str, str], type] = {}
 def _init_style_registry() -> None:
     if _STYLE_REGISTRY:
         return
-    from molpy.potential.angle import AngleHarmonicStyle, AngleClass2Style
-    from molpy.potential.bond import (
+    from molpy.core.forcefield import (
+        AngleClass2Style,
+        AngleHarmonicStyle,
+        BondClass2Style,
         BondHarmonicStyle,
         BondMorseStyle,
-        BondClass2Style,
-    )
-    from molpy.potential.dihedral import (
+        DihedralCharmmStyle,
+        DihedralClass2Style,
+        DihedralMultiHarmonicStyle,
         DihedralOPLSStyle,
         DihedralPeriodicStyle,
-        DihedralCharmmStyle,
-        DihedralMultiHarmonicStyle,
-        DihedralClass2Style,
-    )
-    from molpy.potential.improper import (
-        ImproperPeriodicStyle,
-        ImproperHarmonicStyle,
-        ImproperCvffStyle,
         ImproperClass2Style,
-    )
-    from molpy.potential.pair import (
+        ImproperCvffStyle,
+        ImproperHarmonicStyle,
+        ImproperPeriodicStyle,
+        PairBuckStyle,
         PairLJ126CoulCutStyle,
         PairLJ126CoulLongStyle,
-        PairBuckStyle,
-        PairMorseStyle,
         PairLJClass2Style,
+        PairMorseStyle,
     )
 
     _STYLE_REGISTRY.update(

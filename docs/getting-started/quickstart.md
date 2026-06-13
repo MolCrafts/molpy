@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import molpy as mp
 from molpy.io.forcefield import read_xml_forcefield
-from molpy.typifier import OplsAtomisticTypifier
+from molpy.typifier import OplsTypifier
 ```
 
 ## 1. Define a TIP3P Water Molecule
@@ -43,7 +43,8 @@ h2 = water_template.def_atom(
 water_template.def_bond(o, h1, order=1)
 water_template.def_bond(o, h2, order=1)
 
-water_template.get_topo(gen_angle=True, gen_dihe=False)
+# get_topo perceives angles/dihedrals on a *copy* (non-mutating) — capture it
+water_template = water_template.get_topo(gen_angle=True, gen_dihe=False)
 
 print('atoms:', len(water_template.atoms), 'bonds:', len(water_template.bonds))
 print('angles:', len(list(water_template.links.bucket(mp.Angle))))
@@ -52,7 +53,7 @@ print('atom names:', [a.get('name') for a in water_template.atoms])
 
 ## 2. Assign TIP3P Types
 
-We load MolPy's built-in TIP3P force field file (`tip3p.xml`), then use `OplsAtomisticTypifier` to assign:
+We load MolPy's built-in TIP3P force field file (`tip3p.xml`), then use `OplsTypifier` to assign:
 - atom types
 - bonded types (bonds/angles)
 - nonbonded parameters (sigma/epsilon)
@@ -62,7 +63,7 @@ This is deterministic and uses only MolPy's built-in API + built-in force field 
 ```python
 ff = read_xml_forcefield('tip3p.xml')
 
-typifier = OplsAtomisticTypifier(
+typifier = OplsTypifier(
     ff,
     skip_atom_typing=False,
     skip_dihedral_typing=True,
@@ -126,13 +127,13 @@ print('box atoms:', len(water_box_atomistic.atoms), 'box bonds:', len(water_box_
 
 ## 5. Convert `Atomistic` to `Frame`
 
-`Frame` is MolPy's columnar container (named tables like `atoms`, `bonds`, ...) plus metadata such as the simulation box and force field.
+`Frame` is MolPy's columnar container (named tables like `atoms`, `bonds`, ...) plus the simulation box (`frame.box`) and a free-form `metadata` dict.
 
 Writers operate on `Frame`, so this is the boundary where your edited graph becomes exportable tables.
 
 ```python
 frame = water_box_atomistic.to_frame()
-frame.metadata['box'] = box
+frame.box = box  # box is a first-class Frame attribute; writers read frame.box
 
 atoms = frame['atoms']
 n_atoms = atoms.nrows
@@ -143,7 +144,11 @@ atoms['charge'] = np.asarray(atoms['charge'], dtype=float)
 
 print('atoms rows:', frame['atoms'].nrows)
 print('bonds rows:', frame['bonds'].nrows)
-print('angles rows:', frame['angles'].nrows)
+# `to_frame()` only emits a block for link kinds that exist. This TIP3P
+# template carries bonds but no explicit angle links, so there is no
+# 'angles' block — guard before accessing it.
+if 'angles' in frame:
+    print('angles rows:', frame['angles'].nrows)
 ```
 
 ## 6. Export to LAMMPS Files
@@ -167,6 +172,6 @@ print('wrote:', out_dir / 'water_box_tip3p.ff')
 
 - Built a TIP3P water molecule as an editable `Atomistic` graph.
 - Loaded TIP3P parameters from MolPy's built-in `tip3p.xml`.
-- Assigned TIP3P atom types and used `OplsAtomisticTypifier` to assign bonded and nonbonded parameters.
+- Assigned TIP3P atom types and used `OplsTypifier` to assign bonded and nonbonded parameters.
 - Placed many molecules on a deterministic grid in a periodic box.
 - Converted to a `Frame` and wrote LAMMPS data + force-field files.

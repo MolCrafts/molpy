@@ -64,15 +64,6 @@ class LammpsEmitter:
             "atom_style " + atom_style,
             "boundary p p p",
         ]
-        pair_styles = {
-            s.name
-            for s in ff.styles.bucket(
-                type(ff.styles.bucket(object)[0])
-                if ff.styles.bucket(object)
-                else object
-            )
-            if False
-        }
         # pair_style / bond_style / angle_style / ... derived from ff
         for kind, cmd in [
             ("bond", "bond_style"),

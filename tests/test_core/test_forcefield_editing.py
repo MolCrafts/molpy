@@ -7,7 +7,7 @@ from molpy.core.forcefield import AtomStyle, AtomType, ForceField
 
 def _simple_ff() -> ForceField:
     ff = ForceField(name="test", units="real")
-    astyle = ff.def_style(AtomStyle("full"))
+    astyle = ff.def_style(AtomStyle(name="full"))
     astyle.def_type(name="CT", mass=12.011, charge=-0.18, element="C")
     astyle.def_type(name="HC", mass=1.008, charge=0.06, element="H")
     return ff
@@ -40,7 +40,7 @@ class TestRemoveStyle:
     def test_remove_style_by_name(self):
         ff = _simple_ff()
         assert ff.remove_style(AtomStyle, "full") is True
-        assert ff.get_style_by_name("full", AtomStyle) is None
+        assert ff.get_style("atom", "full") is None
 
     def test_remove_style_missing_is_false(self):
         ff = _simple_ff()

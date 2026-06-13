@@ -181,7 +181,7 @@ class GromacsTopReader:
         """
         from molpy.core.forcefield import AtomStyle
 
-        atomstyle = ff.def_style(AtomStyle("full"))
+        atomstyle = ff.def_style(AtomStyle(name="full"))
 
         header = [
             "nr",
@@ -539,9 +539,7 @@ class GromacsForceFieldWriter:
     @staticmethod
     def _find_style_name(forcefield: ForceField, style_class: type, typ: object) -> str:
         """Find the style name that contains *typ*."""
-        from molpy.core.forcefield import Type
-
         for style in forcefield.get_styles(style_class):
-            if typ in style.types.bucket(Type):
+            if typ in style.types:
                 return style.name
         return "harmonic"

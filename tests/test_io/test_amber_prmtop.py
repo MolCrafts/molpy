@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from molpy import AngleType, AtomType, BondType
 from molpy.core.frame import Frame
 from molpy.io import read_amber
 from molpy.io.forcefield.amber import AmberPrmtopReader, CHARGE_CONVERSION_FACTOR
@@ -292,15 +293,15 @@ def test_prmtop_forcefield_structure(litfsi_prmtop):
     assert ff.styles is not None
 
     # Check that we can get atom types
-    atomtypes = ff.get_atomtypes()
+    atomtypes = ff.get_types(AtomType)
     assert len(atomtypes) > 0
 
     # Check that we can get bond types
-    bondtypes = ff.get_bondtypes()
+    bondtypes = ff.get_types(BondType)
     assert len(bondtypes) > 0
 
     # Check that we can get angle types
-    angletypes = ff.get_angletypes()
+    angletypes = ff.get_types(AngleType)
     assert len(angletypes) > 0
 
 

@@ -130,15 +130,15 @@ class TestGROReaderComprehensive:
         # Should have non-zero off-diagonal elements for triclinic
 
     def test_read_malformed_gro(self, TEST_DATA_DIR):
-        """Test handling of malformed GRO files."""
-        # Test truncated file
+        """molrs backend rejects truncated atom records (fail-fast); a missing
+        final box line still parses."""
+        # Truncated atom record -> strict error from the Rust reader
         fpath = TEST_DATA_DIR / "gro/truncated.gro"
         if fpath.exists():
-            frame = mp.io.read_gro(fpath, frame=mp.Frame())
-            # Should handle gracefully, possibly with fewer atoms
-            assert "atoms" in frame
+            with pytest.raises(OSError):
+                mp.io.read_gro(fpath, frame=mp.Frame())
 
-        # Test file without final line
+        # Missing final (box) line is tolerated
         fpath = TEST_DATA_DIR / "gro/no-final-line.gro"
         if fpath.exists():
             frame = mp.io.read_gro(fpath, frame=mp.Frame())
@@ -147,17 +147,15 @@ class TestGROReaderComprehensive:
     def test_read_gro_error_handling(self, tmp_path):
         """Test error handling for various edge cases."""
 
-        # Test non-existent file
-        with pytest.raises(FileNotFoundError):
+        # Non-existent file -> molrs raises OSError (FileNotFoundError's base)
+        with pytest.raises(OSError):
             mp.io.read_gro(Path("nonexistent.gro"), frame=mp.Frame())
 
-        # Test empty file
+        # Empty file has no frames -> rejected fail-fast
         tmp_file = tmp_path / "empty.gro"
-        tmp_file.write_text("")  # Empty file
-
-        # Should handle empty file gracefully
-        frame = mp.io.read_gro(tmp_file, frame=mp.Frame())
-        assert "atoms" in frame
+        tmp_file.write_text("")
+        with pytest.raises(OSError):
+            mp.io.read_gro(tmp_file, frame=mp.Frame())
 
     def test_gro_coordinate_precision(self, TEST_DATA_DIR):
         """Test that coordinate precision is maintained."""

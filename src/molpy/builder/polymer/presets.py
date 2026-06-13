@@ -1,6 +1,6 @@
 """Reaction preset registry for common polymerization reactions.
 
-Provides named presets that bundle site selectors, leaving selectors,
+Provides named presets that bundle anchor selectors, leaving selectors,
 and bond formers into ready-to-use Reacter instances.
 
 Built-in presets:
@@ -24,17 +24,17 @@ class ReactionPresetSpec:
     Attributes:
         name: Unique preset name
         description: Human-readable description
-        site_selector_left: Maps left port atom to site atom
-        site_selector_right: Maps right port atom to site atom
+        anchor_selector_left: Maps left port atom to anchor atom
+        anchor_selector_right: Maps right port atom to anchor atom
         leaving_selector_left: Identifies left leaving group
         leaving_selector_right: Identifies right leaving group
-        bond_former: Creates bond between site atoms
+        bond_former: Creates bond between anchor atoms
     """
 
     name: str
     description: str
-    site_selector_left: Selector
-    site_selector_right: Selector
+    anchor_selector_left: Selector
+    anchor_selector_right: Selector
     leaving_selector_left: Selector
     leaving_selector_right: Selector
     bond_former: BondFormer
@@ -42,6 +42,17 @@ class ReactionPresetSpec:
 
 class ReactionPresets:
     """Class-level registry of named reaction presets.
+
+    The public extension point for custom polymerization chemistry:
+    :meth:`register` a :class:`ReactionPresetSpec` once, then refer to it
+    by name everywhere a ``reaction_preset`` keyword is accepted
+    (``polymer()``, ``polymer_system()``, builders).
+
+    Attributes:
+        _presets: Class-level registry mapping preset name to
+            :class:`ReactionPresetSpec` (managed via :meth:`register`;
+            built-ins ``"dehydration"`` and ``"condensation"`` are
+            pre-registered).
 
     Example::
 
@@ -89,8 +100,8 @@ class ReactionPresets:
         spec = cls._presets[name]
         return Reacter(
             name=spec.name,
-            anchor_selector_left=spec.site_selector_left,
-            anchor_selector_right=spec.site_selector_right,
+            anchor_selector_left=spec.anchor_selector_left,
+            anchor_selector_right=spec.anchor_selector_right,
             leaving_selector_left=spec.leaving_selector_left,
             leaving_selector_right=spec.leaving_selector_right,
             bond_former=spec.bond_former,
@@ -137,9 +148,9 @@ def _register_builtins() -> None:
     ReactionPresets.register(
         ReactionPresetSpec(
             name="dehydration",
-            description="Dehydration condensation: remove one H from each site, form single bond",
-            site_selector_left=select_self,
-            site_selector_right=select_self,
+            description="Dehydration condensation: remove one H from each anchor, form single bond",
+            anchor_selector_left=select_self,
+            anchor_selector_right=select_self,
             leaving_selector_left=select_hydrogens(1),
             leaving_selector_right=select_hydrogens(1),
             bond_former=form_single_bond,
@@ -150,9 +161,9 @@ def _register_builtins() -> None:
     ReactionPresets.register(
         ReactionPresetSpec(
             name="condensation",
-            description="Condensation: site via C neighbor, remove one H from each side",
-            site_selector_left=select_neighbor("C"),
-            site_selector_right=select_self,
+            description="Condensation: anchor via C neighbor, remove one H from each side",
+            anchor_selector_left=select_neighbor("C"),
+            anchor_selector_right=select_self,
             leaving_selector_left=select_hydrogens(1),
             leaving_selector_right=select_hydrogens(1),
             bond_former=form_single_bond,

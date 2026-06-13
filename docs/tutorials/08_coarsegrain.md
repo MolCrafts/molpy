@@ -133,7 +133,9 @@ You can select a subset of beads by predicate, rename bead types in bulk, or att
 ```python
 cg.select(lambda b: b.get("type") == "P4")
 cg.rename_type("P4", "Q4")
-cg.set_property(lambda b: b["x"] > 0, "region", "right")
+# Use .get so beads without an "x" coordinate (e.g. mapping-only beads) are
+# simply not tagged, rather than raising KeyError.
+cg.set_property(lambda b: b.get("x", 0.0) > 0, "region", "right")
 ```
 
 These methods carry no implicit assumptions about what a "type" means, what a "region" is, or how positions relate to physical space. They are graph operations on a graph whose nodes happen to be beads.

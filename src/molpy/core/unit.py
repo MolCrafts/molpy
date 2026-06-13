@@ -237,8 +237,41 @@ class UnitSystem(pint.UnitRegistry):
 
     @classmethod
     def preset_names(cls) -> tuple[str, ...]:
-        """Names of all built-in presets."""
+        """Names of all registered presets (built-in and custom)."""
         return tuple(_LAMMPS_PRESETS)
+
+    @classmethod
+    def register_preset(
+        cls,
+        name: str,
+        base_units: dict[str, str],
+        *,
+        overwrite: bool = False,
+    ) -> None:
+        """Register a custom unit-system preset, usable via :meth:`preset`.
+
+        Lets downstream code add unit styles without editing molpy (the preset
+        table is an extension point, not a closed set). ``base_units`` maps a
+        dimension name to a unit string, the same shape as the built-in
+        presets, e.g. ``{"length": "nm", "time": "ps", "energy": "kJ/mol"}``.
+
+        Args:
+            name: Preset name to register.
+            base_units: ``{dimension: unit}`` mapping for the preset.
+            overwrite: Replace an existing preset of the same name instead of
+                raising.
+
+        Raises:
+            TypeError: If ``base_units`` is not a non-empty ``dict``.
+            ValueError: If ``name`` already exists and ``overwrite`` is False.
+        """
+        if not isinstance(base_units, dict) or not base_units:
+            raise TypeError("base_units must be a non-empty dict[str, str]")
+        if name in _LAMMPS_PRESETS and not overwrite:
+            raise ValueError(
+                f"preset {name!r} already exists; pass overwrite=True to replace it"
+            )
+        _LAMMPS_PRESETS[name] = dict(base_units)
 
     @classmethod
     def lj(

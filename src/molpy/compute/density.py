@@ -30,9 +30,6 @@ class LocalDensity(Compute):
     def __call__(self, frames, nlists):
         return self._inner.compute(frames, nlists)
 
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError("LocalDensity takes (frames, nlists); call directly")
-
 
 class GaussianDensity(Compute):
     """Gaussian-smeared number density on a 3-D grid.
@@ -51,6 +48,3 @@ class GaussianDensity(Compute):
 
     def __call__(self, frames):
         return self._inner.compute(frames)
-
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError("GaussianDensity takes (frames); call directly")

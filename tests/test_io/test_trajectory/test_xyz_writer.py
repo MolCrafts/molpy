@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 import molpy
-from molpy.io import XYZTrajectoryReader, write_xyz_trajectory
+from molpy.io import read_xyz_trajectory, write_xyz_trajectory
 
 
 def _frame(n: int) -> molpy.Frame:
@@ -40,6 +40,6 @@ def test_roundtrips_through_reader(tmp_path):
     path = tmp_path / "traj.xyz"
     write_xyz_trajectory(path, [_frame(2), _frame(3)])
 
-    reader = XYZTrajectoryReader(path)
-    frames = reader.read_all()
+    reader = read_xyz_trajectory(path)
+    frames = list(reader)
     assert [f["atoms"].nrows for f in frames] == [2, 3]

@@ -18,9 +18,7 @@ from molpy.core.ops.geometry import (
     _cross,
     _dot,
     _norm,
-    _rodrigues_rotate,
     _unit,
-    _vec_add,
     _vec_scale,
     _vec_sub,
 )
@@ -29,7 +27,6 @@ from .entity import Entities, Entity, Link, _GraphViews
 
 if TYPE_CHECKING:
     from .frame import Frame
-    from .topology import Topology
 
 
 # ===================================================================
@@ -45,6 +42,47 @@ class Atom(Entity):
     def __repr__(self) -> str:
         ident = self.get("element") or self.get("symbol") or self.get("type")
         return f"<Atom: {ident if ident is not None else id(self)}>"
+
+    @property
+    def is_virtual(self) -> bool:
+        """True if this node carries a virtual-site marker (``vsite`` field).
+
+        The marker is a stored data field, not the Python class: molrs
+        re-materialises nodes as plain :class:`Atom`, so identity must be read
+        from the persisted ``vsite`` field rather than ``isinstance``.
+        """
+        return self.get("vsite") is not None
+
+
+class VirtualSite(Atom):
+    """A massless / rule-placed auxiliary particle. Data only — no energy.
+
+    Carries a persistent ``vsite`` marker field (set on construction) plus the
+    usual atom data. Subclasses set the marker value via ``_vsite_kind``.
+    Identity after a molrs round-trip is read from the ``vsite`` field
+    (:attr:`Atom.is_virtual`), since the Python subclass is not preserved.
+    """
+
+    __slots__ = ()
+    _vsite_kind = "virtual"
+
+    def __init__(self, mapping: Any = None, /, **attrs: Any) -> None:
+        attrs.setdefault("vsite", self._vsite_kind)
+        super().__init__(mapping, **attrs)
+
+
+class DrudeParticle(VirtualSite):
+    """Polarizable Drude shell: co-located with its core, spring-bound."""
+
+    __slots__ = ()
+    _vsite_kind = "drude"
+
+
+class MasslessSite(VirtualSite):
+    """Rigid geometric site (e.g. TIP4P M-site, lone pair); no spring."""
+
+    __slots__ = ()
+    _vsite_kind = "massless"
 
 
 class Bond(Link[Atom]):
@@ -219,9 +257,13 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     @property
     def xyz(self) -> np.ndarray:
-        atoms = list(self.atoms)
-        return np.array(
-            [[a.get("x", 0.0), a.get("y", 0.0), a.get("z", 0.0)] for a in atoms]
+        # Read the dense molrs columns directly rather than a per-atom Python
+        # comprehension (~100x faster; column order matches self.atoms).
+        x = np.asarray(self.column("x"))
+        if x.size == 0:
+            return np.zeros((0, 3), dtype=float)
+        return np.stack(
+            [x, np.asarray(self.column("y")), np.asarray(self.column("z"))], axis=1
         )
 
     @property
@@ -425,6 +467,17 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     # ---------- connectivity / topology ----------
     def get_neighbors(self, atom: Atom, link_type: type[Link] = Bond) -> list[Atom]:
+        # Bonds (arity-2) live in the molrs adjacency index, so resolve
+        # neighbours in O(degree) instead of scanning every link. Self-loops are
+        # excluded to match the scan's `ep is not atom` semantics.
+        if link_type is Bond:
+            h = atom.handle
+            return [
+                self._intern_atom(other)
+                for _, other in self.incident_relations(h, link_type._kind)
+                if other != h
+            ]
+        # Higher-arity link types are not in the adjacency index — fall back.
         out: list[Atom] = []
         for link in self._link_views(link_type._kind):
             if any(ep is atom for ep in link.endpoints):
@@ -438,60 +491,21 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         gen_angle: bool = False,
         gen_dihe: bool = False,
         clear_existing: bool = False,
-    ) -> "Atomistic | Topology":
-        if not gen_angle and not gen_dihe:
-            return self._build_topology(link_type)
+    ) -> "Atomistic":
+        """Return a copy with angle/dihedral relations perceived from the bonds.
 
+        Angle/dihedral perception (2-edge / 3-edge paths over the bond graph) is
+        a molrs-native graph operation; this delegates to that Rust kernel on a
+        copy. With no ``gen_*`` flags it is a plain copy. Always returns an
+        :class:`Atomistic` (never a bare topology graph).
+        """
         new_struct = self.copy()
-        topo = new_struct._build_topology(link_type)
-        atoms = topo.idx_to_entity
-
-        if gen_angle:
-            if clear_existing:
-                new_struct.del_angle(*list(new_struct.angles))
-            existing = {(ang.itom, ang.jtom, ang.ktom) for ang in new_struct.angles}
-            for angle in topo.angles:
-                i, j, k = angle.tolist()
-                triple = (atoms[i], atoms[j], atoms[k])
-                if triple not in existing:
-                    new_struct.def_angle(*triple)
-                    existing.add(triple)
-
-        if gen_dihe:
-            if clear_existing:
-                new_struct.del_dihedral(*list(new_struct.dihedrals))
-            existing_d = {
-                (d.itom, d.jtom, d.ktom, d.ltom) for d in new_struct.dihedrals
-            }
-            for dihe in topo.dihedrals:
-                i, j, k, l = dihe.tolist()
-                quad = (atoms[i], atoms[j], atoms[k], atoms[l])
-                if quad not in existing_d:
-                    new_struct.def_dihedral(*quad)
-                    existing_d.add(quad)
-
-        return new_struct
-
-    def _build_topology(self, link_type: type[Link] = Bond) -> "Topology":
-        from molpy.core.topology import Topology
-
-        atoms = list(self.atoms)
-        entity_to_idx = {a: i for i, a in enumerate(atoms)}
-        entity_set = set(atoms)
-        edges: list[tuple[int, int]] = []
-        for link in self._link_views(link_type._kind):
-            eps = link.endpoints
-            if len(eps) >= 2 and eps[0] in entity_set and eps[1] in entity_set:
-                i, j = entity_to_idx[eps[0]], entity_to_idx[eps[1]]
-                if i != j:
-                    edges.append((i, j))
-        return Topology(
-            n=len(atoms),
-            edges=edges,
-            directed=False,
-            entity_to_idx=entity_to_idx,
-            idx_to_entity=atoms,
+        new_struct.generate_topology(
+            gen_angle=gen_angle,
+            gen_dihedral=gen_dihe,
+            clear_existing=clear_existing,
         )
+        return new_struct
 
     def get_topo_neighbors(
         self,
@@ -500,16 +514,13 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         entity_type: type[Atom] = Atom,
         link_type: type[Link] = Bond,
     ) -> list[Atom]:
-        topo = self._build_topology(link_type)
-        if entity not in topo.entity_to_idx:
-            return []
-        center = topo.entity_to_idx[entity]
-        distances = topo.distances(source=[center])[0]
-        idx_to_entity = topo.idx_to_entity
+        # BFS over the bond graph via the molrs Rust kernel (single source);
+        # unreachable atoms are already excluded. Matches the prior semantics
+        # (the source itself, at distance 0, is within any radius >= 0).
         return [
-            idx_to_entity[i]
-            for i, d in enumerate(distances)
-            if d <= radius and d < float("inf")
+            self._intern_atom(h)
+            for h, d in self.topo_distances(entity.handle)
+            if d <= radius
         ]
 
     def get_topo_distances(
@@ -518,16 +529,8 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         entity_type: type[Atom] = Atom,
         link_type: type[Link] = Bond,
     ) -> dict[Atom, int]:
-        topo = self._build_topology(link_type)
-        if source not in topo.entity_to_idx:
-            return {}
-        s = topo.entity_to_idx[source]
-        distances = topo.distances(source=[s])[0]
-        idx_to_entity = topo.idx_to_entity
         return {
-            idx_to_entity[i]: int(d)
-            for i, d in enumerate(distances)
-            if d < float("inf")
+            self._intern_atom(h): int(d) for h, d in self.topo_distances(source.handle)
         }
 
     def extract_subgraph(
@@ -538,33 +541,31 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         link_type: type[Link] = Bond,
     ) -> tuple["Atomistic", list[Atom]]:
         centers = list(center_entities)
-        topo = self._build_topology(link_type)
-        entity_to_idx = topo.entity_to_idx
-        idx_to_entity = topo.idx_to_entity
-
-        center_idx = [entity_to_idx[c] for c in centers if c in entity_to_idx]
         new_struct = type(self)()
         new_struct._props = dict(self._props)
-        if not center_idx:
+        if not centers:
             return new_struct, []
 
-        selected: set[int] = set()
-        for c in center_idx:
-            distances = topo.distances(source=[c])[0]
-            for i, d in enumerate(distances):
-                if d <= radius and d < float("inf"):
-                    selected.add(i)
+        # BFS radius ball around every center over the bond graph (molrs kernel).
+        # A center not in this structure contributes nothing (empty distances).
+        selected_handles: set[int] = set()
+        for c in centers:
+            selected_handles.update(
+                h for h, d in self.topo_distances(c.handle) if d <= radius
+            )
+        if not selected_handles:
+            return new_struct, []
 
-        selected_entities = [idx_to_entity[i] for i in sorted(selected)]
+        # Deterministic (row) order over the selection.
+        selected_entities = [a for a in self.atoms if a.handle in selected_handles]
         selected_set = set(selected_entities)
 
-        edge_idx: set[int] = set()
-        for i in selected:
-            for j in topo.neighbors(i):
-                if j not in selected:
-                    edge_idx.add(i)
-                    break
-        edge_entities = [idx_to_entity[i] for i in sorted(edge_idx)]
+        # Boundary atoms: a selected atom with a bond-neighbor outside the ball.
+        edge_entities = [
+            a
+            for a in selected_entities
+            if any(nb not in selected_set for nb in self.get_neighbors(a))
+        ]
 
         # clone selected atoms + induced topology into the new struct
         entity_map: dict[Atom, Atom] = {}
@@ -646,21 +647,17 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         """
         struct = Atomistic()
         molrs.Atomistic.adopt(struct, graph)
-        # surface every relation handle so the link views enumerate. molrs
-        # relation handles are 1-based dense per kind after a fresh adopt.
-        for kind in struct.kinds():
-            n = struct.n_relations(kind)
-            struct._rel_handles[kind] = _relation_handles(struct, kind, n)
+        # Link views enumerate live relations straight from molrs via
+        # relation_ids(); no Python-side handle shadow to populate.
         return struct
 
     # ---------- spatial operations ----------
     def move(
         self, delta: list[float], *, entity_type: type[Entity] = Atom
     ) -> "Atomistic":
-        for a in self.atoms:
-            a["x"] = a["x"] + delta[0]
-            a["y"] = a["y"] + delta[1]
-            a["z"] = a["z"] + delta[2]
+        # Delegate to the molrs Rust kernel (vectorized over the dense
+        # coordinate columns) instead of a per-atom Python loop.
+        molrs.translate(self, [float(d) for d in delta])
         return self
 
     def rotate(
@@ -671,11 +668,8 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         *,
         entity_type: type[Entity] = Atom,
     ) -> "Atomistic":
-        k = _unit(axis)
-        o = [0.0, 0.0, 0.0] if about is None else about
-        for a in self.atoms:
-            xyz = _rodrigues_rotate([a["x"], a["y"], a["z"]], k, angle, o)
-            a["x"], a["y"], a["z"] = xyz
+        o = [0.0, 0.0, 0.0] if about is None else list(about)
+        molrs.rotate(self, _unit(axis), float(angle), o)
         return self
 
     def scale(
@@ -685,10 +679,8 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         *,
         entity_type: type[Entity] = Atom,
     ) -> "Atomistic":
-        o = [0.0, 0.0, 0.0] if about is None else about
-        for a in self.atoms:
-            xyz = _vec_add(o, _vec_scale(_vec_sub([a["x"], a["y"], a["z"]], o), factor))
-            a["x"], a["y"], a["z"] = xyz
+        o = [0.0, 0.0, 0.0] if about is None else list(about)
+        molrs.scale(self, [factor, factor, factor], o)
         return self
 
     def align(
@@ -714,11 +706,9 @@ class Atomistic(molrs.Atomistic, _GraphViews):
                 from math import atan2
 
                 angle = atan2(na, _dot(va, vb))
-                for e in self.atoms:
-                    xyz = _rodrigues_rotate(
-                        [e["x"], e["y"], e["z"]], _vec_scale(axis, 1.0 / na), angle, pa
-                    )
-                    e["x"], e["y"], e["z"] = xyz
+                # Rotate about pa via the molrs Rust kernel (was a per-atom
+                # Rodrigues loop reimplementing molrs.rotate).
+                molrs.rotate(self, _vec_scale(axis, 1.0 / na), angle, pa)
         self.move(_vec_sub(pb, pa))
         return self
 
@@ -743,92 +733,22 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     # ---------- tabular conversion ----------
     def to_frame(self, atom_fields: list[str] | None = None) -> "Frame":
-        from .frame import Block, Frame
+        """Export to a tabular :class:`Frame` (atoms + bonds/angles/dihedrals/
+        impropers blocks).
 
-        frame = Frame()
-        atoms_data = list(self.atoms)
-        atom_index = {id(a): i for i, a in enumerate(atoms_data)}
+        Delegates straight to the molrs world's native ``to_frame``: the Rust
+        column store already holds every component as a dense, row-aligned
+        column, so each block is materialized as numpy with zero Python-side
+        conversion. ``atom_fields`` optionally restricts the atoms block columns.
+        """
+        from .frame import Frame
 
-        if atom_fields is None:
-            keys: set[str] = set()
-            for atom in atoms_data:
-                keys.update(atom.keys())
-        else:
-            keys = set(atom_fields)
-        atom_dict = {k: [atom.get(k, None) for atom in atoms_data] for k in keys}
-        frame["atoms"] = Block.from_dict({k: np.array(v) for k, v in atom_dict.items()})
-
-        self._links_to_block(frame, "bonds", self.bonds, ("atomi", "atomj"), atom_index)
-        self._links_to_block(
-            frame, "angles", self.angles, ("atomi", "atomj", "atomk"), atom_index
-        )
-        self._links_to_block(
-            frame,
-            "dihedrals",
-            self.dihedrals,
-            ("atomi", "atomj", "atomk", "atoml"),
-            atom_index,
-        )
-        self._links_to_block(
-            frame,
-            "impropers",
-            self.impropers,
-            ("atomi", "atomj", "atomk", "atoml"),
-            atom_index,
-        )
+        # ``molrs.Atomistic.to_frame`` yields the bare pyo3 frame; upgrade it to
+        # the rich ``Frame`` (metadata, box, rich Blocks) callers expect.
+        frame = Frame.from_dict(molrs.Atomistic.to_frame(self))
+        if atom_fields is not None and "atoms" in frame:
+            keep = set(atom_fields)
+            atoms = frame["atoms"]
+            for col in [k for k in atoms.keys() if k not in keep]:
+                del atoms[col]
         return frame
-
-    @staticmethod
-    def _links_to_block(
-        frame: Any,
-        name: str,
-        links: Entities[Any],
-        index_labels: tuple[str, ...],
-        atom_index: dict[int, int],
-    ) -> None:
-        links = list(links)  # type: ignore[assignment]
-        if not links:
-            return
-        from .frame import Block
-
-        block: dict[str, list[Any]] = {lbl: [] for lbl in index_labels}
-        all_keys: set[str] = set()
-        for link in links:
-            all_keys.update(link.keys())
-        attr_keys = [k for k in all_keys if k not in index_labels]
-        for k in attr_keys:
-            block[k] = []
-        for n, link in enumerate(links):
-            for lbl, ep in zip(index_labels, link.endpoints):
-                if id(ep) not in atom_index:
-                    raise ValueError(
-                        f"{name} {n + 1}: {lbl} references an atom not in the "
-                        f"atoms list (removed or invalid)."
-                    )
-                block[lbl].append(atom_index[id(ep)])
-            for k in attr_keys:
-                block[k].append(link.get(k, None))
-        frame[name] = Block.from_dict({k: np.array(v) for k, v in block.items()})
-
-
-def _relation_handles(struct: molrs.Atomistic, kind: str, n: int) -> list[int]:
-    """Discover the live relation handles of ``kind`` after a fresh adopt.
-
-    molrs relation handles are opaque ``u64`` encoded as ``(generation<<32)|index``
-    with no enumeration API. A graph produced by SMILES / Conformer has never had
-    a relation removed, so its ``kind`` handles occupy the dense generation-1
-    range ``base+1 .. base+n``; probe that range and keep the resolvable handles.
-    """
-    handles: list[int] = []
-    base = 1 << 32
-    idx = 1
-    # probe a generous window past n to tolerate any sparse gaps
-    while len(handles) < n and idx <= n + 1024:
-        rh = base + idx
-        try:
-            struct.relation_nodes(kind, rh)
-            handles.append(rh)
-        except Exception:
-            pass
-        idx += 1
-    return handles

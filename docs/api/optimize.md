@@ -6,9 +6,10 @@ Geometry optimization using potential energy functions.
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
+| `Optimizer` | Base class driving any `calc_energy(frame)` / `calc_forces(frame)` potential | Custom optimizers |
+| `OptimizationResult` | Result record (final frame, energy, convergence info) | Inspecting outcomes |
 | `LBFGS` | Limited-memory BFGS optimizer | Geometry relaxation of small/medium structures |
-| `BondPotentialWrapper` | Adapts bond potentials to Frame interface | Optimizer integration |
-| `AnglePotentialWrapper` | Adapts angle potentials to Frame interface | Optimizer integration |
+| `ForceFieldPotential` | Wraps a molrs `ForceField` (via `ff.to_potentials(frame)`) as an optimizer potential | Optimizing with force-field energies/forces |
 
 ## Related
 
@@ -26,6 +27,6 @@ Geometry optimization using potential energy functions.
 
 ::: molpy.optimize.lbfgs
 
-### Potential Wrappers
+### ForceField Potential
 
-::: molpy.optimize.potential_wrappers
+::: molpy.optimize.forcefield_potential

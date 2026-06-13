@@ -33,12 +33,11 @@ class LBFGS(Optimizer[S]):
 
     Example:
         >>> from molpy.core.atomistic import Atomistic
-        >>> from molpy.potential.bond import Harmonic
-        >>> from molpy.optimize import LBFGS
+        >>> from molpy.optimize import LBFGS, ForceFieldPotential
         >>>
         >>> struct = Atomistic()
         >>> # ... add atoms and bonds ...
-        >>> potential = Harmonic(k=100.0, r0=1.5)
+        >>> potential = ForceFieldPotential(forcefield)  # molrs ForceField
         >>> opt = LBFGS(potential, maxstep=0.04, memory=20)
         >>> result = opt.run(struct, fmax=0.01, steps=500)
     """

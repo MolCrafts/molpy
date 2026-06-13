@@ -4,8 +4,7 @@
 frame. ``ClusterCenters`` takes (frames, clusters) and returns the
 geometric centers per cluster.
 
-Both wrappers expose two inputs and therefore override ``__call__``
-(not the single-input ``_compute`` hook) — mirroring the ``RDF`` pattern.
+Both wrappers take two data inputs — mirroring the ``RDF`` pattern.
 """
 
 from __future__ import annotations
@@ -33,11 +32,6 @@ class Cluster(Compute):
     def __call__(self, frames, neighbors):
         return self._impl.compute(frames, neighbors)
 
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError(
-            "Cluster takes two inputs (frames, neighbors); call directly."
-        )
-
 
 class ClusterCenters(Compute):
     """Geometric centers per cluster (unweighted)."""
@@ -48,11 +42,6 @@ class ClusterCenters(Compute):
 
     def __call__(self, frames, clusters):
         return self._impl.compute(frames, clusters)
-
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError(
-            "ClusterCenters takes two inputs (frames, clusters); call directly."
-        )
 
 
 class ClusterProperties(Compute):
@@ -68,8 +57,3 @@ class ClusterProperties(Compute):
 
     def __call__(self, frames, clusters):
         return self._impl.compute(frames, clusters)
-
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError(
-            "ClusterProperties takes two inputs (frames, clusters); call directly."
-        )

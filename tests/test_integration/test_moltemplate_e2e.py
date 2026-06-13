@@ -63,9 +63,9 @@ def test_convert_and_reparse_round_trip(tmp_path, water_script):
     from molpy.io.forcefield.xml import read_xml_forcefield
 
     ff = read_xml_forcefield(out_xml)
-    astyle = ff.get_style_by_name("full", AtomStyle)
+    astyle = ff.get_style("atom", "full")
     assert astyle is not None
-    names = {t.name for t in astyle.types.bucket(AtomType)}
+    names = {t.name for t in astyle.get_types(AtomType)}
     assert {"O", "H"} <= names
 
 

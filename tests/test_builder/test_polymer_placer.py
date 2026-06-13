@@ -231,3 +231,75 @@ class TestPlacer:
         orig_x = ra["x"]
         placer.place_monomer(left, right, la, ra)
         assert ra["x"] != orig_x
+
+
+# ---- _apply_transform Equivalence Tests (builder-reacter-05-perf) ----
+
+
+class TestApplyTransformEquivalence:
+    """_apply_transform must equal the per-atom reference loop.
+
+    Locks the vectorization target ``(coords - pivot) @ R.T + pivot + t``
+    as numerically identical to the current per-atom implementation.
+    """
+
+    _COORDS = [
+        (0.0, 0.0, 0.0),
+        (1.5, 0.0, 0.0),
+        (1.5, 1.2, 0.0),
+        (0.3, 0.4, 2.2),
+        (-1.1, 0.7, 0.5),
+    ]
+
+    # 90 degrees about z
+    _ROTATION = np.array(
+        [
+            [0.0, -1.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    _TRANSLATION = np.array([0.5, -1.0, 2.0])
+
+    def _make_struct(self) -> Atomistic:
+        struct = Atomistic()
+        for x, y, z in self._COORDS:
+            struct.def_atom(symbol="C", x=x, y=y, z=z)
+        return struct
+
+    @staticmethod
+    def _make_placer() -> Placer:
+        return Placer(separator=CovalentSeparator(), orienter=LinearOrienter())
+
+    @classmethod
+    def _reference_positions(cls, pivot: np.ndarray) -> np.ndarray:
+        """Per-atom reference: rotate about pivot, then translate."""
+        expected = []
+        for xyz in cls._COORDS:
+            pos = np.asarray(xyz, dtype=float)
+            expected.append(cls._ROTATION @ (pos - pivot) + pivot + cls._TRANSLATION)
+        return np.array(expected)
+
+    @staticmethod
+    def _actual_positions(struct: Atomistic) -> np.ndarray:
+        return np.array([[a["x"], a["y"], a["z"]] for a in struct.atoms])
+
+    def test_transform_matches_reference_with_explicit_pivot(self) -> None:
+        struct = self._make_struct()
+        pivot = np.array([1.0, 2.0, 3.0])
+        expected = self._reference_positions(pivot)
+
+        self._make_placer()._apply_transform(
+            struct, self._TRANSLATION, self._ROTATION, pivot=pivot
+        )
+
+        np.testing.assert_allclose(self._actual_positions(struct), expected, atol=1e-10)
+
+    def test_transform_matches_reference_with_default_centroid_pivot(self) -> None:
+        struct = self._make_struct()
+        centroid = np.mean(np.array(self._COORDS, dtype=float), axis=0)
+        expected = self._reference_positions(centroid)
+
+        self._make_placer()._apply_transform(struct, self._TRANSLATION, self._ROTATION)
+
+        np.testing.assert_allclose(self._actual_positions(struct), expected, atol=1e-10)

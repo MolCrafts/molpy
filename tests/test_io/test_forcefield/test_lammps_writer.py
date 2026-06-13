@@ -10,22 +10,27 @@ def test_lammps_forcefield_writer_full():
     from molpy import AngleStyle, AtomStyle, BondStyle, DihedralStyle, PairStyle
 
     ff = mp.ForceField("testff")
-    atomstyle = ff.def_style(AtomStyle("full"))
+    atomstyle = ff.def_style(AtomStyle(name="full"))
     atomtype_C = atomstyle.def_type("C", mass=12.01)
     atomtype_H = atomstyle.def_type("H", mass=1.008)
 
-    bondstyle = ff.def_style(BondStyle("harmonic"))
+    bondstyle = ff.def_style(BondStyle(name="harmonic"))
     bondstyle.def_type(atomtype_C, atomtype_H, k=100.0, r0=1.09)
 
-    anglestyle = ff.def_style(AngleStyle("harmonic"))
-    anglestyle.def_type(atomtype_C, atomtype_H, atomtype_C, k=50.0, theta0=109.5)
-
-    dihedralstyle = ff.def_style(DihedralStyle("opls"))
-    dihedralstyle.def_type(
-        atomtype_C, atomtype_H, atomtype_C, atomtype_H, k1=0.5, k2=1.0, k3=0.0, k4=0.0
+    anglestyle = ff.def_style(AngleStyle(name="harmonic"))
+    # theta0 is stored internally in radians; the LAMMPS writer converts it to
+    # degrees, so 109.5 deg is supplied as radians here.
+    anglestyle.def_type(
+        atomtype_C, atomtype_H, atomtype_C, k=50.0, theta0=math.radians(109.5)
     )
 
-    pairstyle = ff.def_style(PairStyle("lj/cut"))
+    dihedralstyle = ff.def_style(DihedralStyle(name="opls"))
+    # OPLS dihedral coefficients are stored as c1-c4 (RB/OPLS convention).
+    dihedralstyle.def_type(
+        atomtype_C, atomtype_H, atomtype_C, atomtype_H, c1=0.5, c2=1.0, c3=0.0, c4=0.0
+    )
+
+    pairstyle = ff.def_style(PairStyle(name="lj/cut"))
     pairstyle.def_type(atomtype_C, atomtype_C, epsilon=0.2, sigma=3.4)
     pairstyle.def_type(atomtype_H, atomtype_H, epsilon=0.05, sigma=2.5)
     pairstyle.def_type(atomtype_C, atomtype_H, epsilon=0.1, sigma=3.0)
@@ -61,11 +66,11 @@ def test_lammps_forcefield_writer_angle_radians_to_degrees():
     This test verifies the conversion is performed correctly.
     """
     from molpy import AtomStyle
-    from molpy.potential.angle import AngleHarmonicStyle
+    from molpy.core.forcefield import AngleHarmonicStyle
     import re
 
     ff = mp.ForceField("test_angle_units")
-    atomstyle = ff.def_style(AtomStyle("full"))
+    atomstyle = ff.def_style(AtomStyle(name="full"))
     atomtype_C = atomstyle.def_type("C", mass=12.01)
     atomtype_O = atomstyle.def_type("O", mass=16.00)
 

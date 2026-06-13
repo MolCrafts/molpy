@@ -1,0 +1,179 @@
+<ForceField>
+  <!-- CL&P ionic-liquid force field (subset: 1,3-dialkylimidazolium + BF4/PF6/NTf2/dca).
+       Source: paduagroup/clandp il.ff (Canongia Lopes & Padua, JPCB 108 (2004) 2038,
+       DOI 10.1021/jp0362133). Units match oplsaa.xml (sigma nm, epsilon kJ/mol);
+       read via OPLSAAForceFieldReader. SMARTS def patterns authored for molpy. -->
+ <AtomTypes>
+  <Type name="CR" class="CR" element="C" mass="12.01100" def="[C;r5]([N;r5])[N;r5]" desc="imidazolium ring C between the two N" doi="10.1021/jp0362133"/>
+  <Type name="CW" class="CW" element="C" mass="12.01100" def="[C;r5]([N;r5])[C;r5]" desc="imidazolium ring back C (C4/C5)" doi="10.1021/jp0362133"/>
+  <Type name="NA" class="NA" element="N" mass="14.00700" def="[N;r5;X3]([C;r5])[C;r5]" desc="imidazolium ring N" doi="10.1021/jp0362133"/>
+  <Type name="HCR" class="HA" element="H" mass="1.00800" def="[H][C;r5]([N;r5])[N;r5]" desc="H on imidazolium CR" doi="10.1021/jp0362133"/>
+  <Type name="HCW" class="HA" element="H" mass="1.00800" def="[H][C;r5]([N;r5])[C;r5]" desc="H on imidazolium CW" doi="10.1021/jp0362133"/>
+  <Type name="C1" class="CT" element="C" mass="12.01100" def="[C;X4][N;r5]" overrides="C2,CE,CS,CT" desc="first alkyl C bonded to ring N" doi="10.1021/jp0362133"/>
+  <Type name="C2" class="CT" element="C" mass="12.01100" def="[C;X4][C;X4][N;r5]" overrides="CE,CS,CT" desc="second alkyl C (bonded to C1)" doi="10.1021/jp0362133"/>
+  <Type name="CE" class="CT" element="C" mass="12.01100" def="[C;X4]([H])([H])([H])[C;X4][N;r5]" overrides="CS,CT" desc="ethyl terminal CH3" doi="10.1021/jp0362133"/>
+  <Type name="H1" class="HC" element="H" mass="1.00800" def="[H][C;X4][N;r5]" overrides="HC" desc="H on C1" doi="10.1021/jp0362133"/>
+  <Type name="CS" class="CT" element="C" mass="12.01100" def="[C;X4]([C;X4])[C;X4]" overrides="CT" desc="alkyl CH2" doi="10.1021/jp0362133"/>
+  <Type name="CT" class="CT" element="C" mass="12.01100" def="[C;X4]([H])([H])([H])[C;X4]" desc="alkyl terminal CH3" doi="10.1021/jp0362133"/>
+  <Type name="HC" class="HC" element="H" mass="1.00800" def="[H][C;X4]" desc="alkyl H" doi="10.1021/jp0362133"/>
+  <Type name="B" class="B" element="B" mass="10.81100" def="[B]([F])([F])([F])[F]" desc="tetrafluoroborate B" doi="10.1021/jp0362133"/>
+  <Type name="FBF" class="F" element="F" mass="18.99800" def="[F][B]" desc="tetrafluoroborate F" doi="10.1021/jp0362133"/>
+  <Type name="P" class="P" element="P" mass="30.97400" def="[P]([F])([F])([F])([F])([F])[F]" desc="hexafluorophosphate P" doi="10.1021/jp0362133"/>
+  <Type name="FP" class="F" element="F" mass="18.99800" def="[F][P]" desc="hexafluorophosphate F" doi="10.1021/jp0362133"/>
+  <Type name="NBT" class="NB" element="N" mass="14.00000" def="[N]([S])[S]" desc="NTf2 imide N" doi="10.1021/jp0362133"/>
+  <Type name="SBT" class="SB" element="S" mass="32.06600" def="[S]([N])([O])[O]" desc="sulfonylimide S (NTf2 / FSI)" doi="10.1021/jp0362133"/>
+  <Type name="CBT" class="CF" element="C" mass="12.01100" def="[C]([S])([F])([F])[F]" desc="NTf2 CF3 carbon" doi="10.1021/jp0362133"/>
+  <Type name="OBT" class="OB" element="O" mass="15.99900" def="[O][S]" desc="NTf2 sulfonyl O" doi="10.1021/jp0362133"/>
+  <Type name="F1" class="FB" element="F" mass="18.99800" def="[F][C][S]" desc="NTf2 CF3 fluorine" doi="10.1021/jp0362133"/>
+  <Type name="FSI" class="FB" element="F" mass="18.99800" def="[F][S]" desc="FSI S-bonded fluorine (bis(fluorosulfonyl)imide)" doi="10.1021/jp0362133"/>
+  <Type name="N3A" class="N3" element="N" mass="14.00000" def="[N;X2]([C])[C]" desc="dicyanamide central amide N" doi="10.1021/jp0362133"/>
+  <Type name="CZA" class="CZ" element="C" mass="12.01100" def="[C;X2]([N])[N]" desc="dicyanamide nitrile C" doi="10.1021/jp0362133"/>
+  <Type name="NZA" class="NZ" element="N" mass="14.00100" def="[N;X1][C]" desc="dicyanamide nitrile N" doi="10.1021/jp0362133"/>
+  <Type name="Na" class="Na" element="Na" mass="22.98977" def="[Na]" desc="sodium cation" doi="10.1021/jp0362133"/>
+ </AtomTypes>
+ <NonbondedForce coulomb14scale="0.5" lj14scale="0.5">
+  <Atom type="CR" charge="-0.1100" sigma="0.35500" epsilon="0.29288"/>
+  <Atom type="CW" charge="-0.1300" sigma="0.35500" epsilon="0.29288"/>
+  <Atom type="NA" charge="0.1500" sigma="0.32500" epsilon="0.71128"/>
+  <Atom type="HCR" charge="0.2100" sigma="0.24200" epsilon="0.12552"/>
+  <Atom type="HCW" charge="0.2100" sigma="0.24200" epsilon="0.12552"/>
+  <Atom type="C1" charge="-0.1700" sigma="0.35000" epsilon="0.27614"/>
+  <Atom type="C2" charge="0.0100" sigma="0.35000" epsilon="0.27614"/>
+  <Atom type="CE" charge="-0.0500" sigma="0.35000" epsilon="0.27614"/>
+  <Atom type="H1" charge="0.1300" sigma="0.25000" epsilon="0.12552"/>
+  <Atom type="CS" charge="-0.1200" sigma="0.35000" epsilon="0.27614"/>
+  <Atom type="CT" charge="-0.1800" sigma="0.35000" epsilon="0.27614"/>
+  <Atom type="HC" charge="0.0600" sigma="0.25000" epsilon="0.12552"/>
+  <Atom type="B" charge="0.9600" sigma="0.35800" epsilon="0.39750"/>
+  <Atom type="FBF" charge="-0.4900" sigma="0.31200" epsilon="0.25520"/>
+  <Atom type="P" charge="1.3400" sigma="0.37400" epsilon="0.83680"/>
+  <Atom type="FP" charge="-0.3900" sigma="0.31200" epsilon="0.25520"/>
+  <Atom type="NBT" charge="-0.6600" sigma="0.32500" epsilon="0.71128"/>
+  <Atom type="SBT" charge="1.0200" sigma="0.35500" epsilon="1.04600"/>
+  <Atom type="CBT" charge="0.3500" sigma="0.35000" epsilon="0.27614"/>
+  <Atom type="OBT" charge="-0.5300" sigma="0.31500" epsilon="0.83736"/>
+  <Atom type="F1" charge="-0.1600" sigma="0.31180" epsilon="0.25540"/>
+  <Atom type="FSI" charge="-0.1300" sigma="0.31180" epsilon="0.25540"/>
+  <Atom type="N3A" charge="-0.7600" sigma="0.32500" epsilon="0.71128"/>
+  <Atom type="CZA" charge="0.6400" sigma="0.33000" epsilon="0.27614"/>
+  <Atom type="NZA" charge="-0.7600" sigma="0.32000" epsilon="0.71128"/>
+  <Atom type="Na" charge="1.0000" sigma="0.33300" epsilon="0.01160"/>
+ </NonbondedForce>
+ <HarmonicBondForce>
+  <Bond class1="HC" class2="CT" length="0.10900" k="284500.0"/>
+  <Bond class1="CT" class2="CT" length="0.15290" k="224200.0"/>
+  <Bond class1="CR" class2="HA" length="0.10800" k="284500.0"/>
+  <Bond class1="CW" class2="HA" length="0.10800" k="284500.0"/>
+  <Bond class1="CR" class2="NA" length="0.13150" k="399200.0"/>
+  <Bond class1="CW" class2="NA" length="0.13780" k="357400.0"/>
+  <Bond class1="CW" class2="CW" length="0.13410" k="435200.0"/>
+  <Bond class1="NA" class2="CT" length="0.14660" k="282000.0"/>
+  <Bond class1="HA" class2="NA" length="0.10100" k="363200.0"/>
+  <Bond class1="CR" class2="CT" length="0.15100" k="265300.0"/>
+  <Bond class1="CT" class2="CF" length="0.15290" k="224260.0"/>
+  <Bond class1="F" class2="CF" length="0.13320" k="307110.0"/>
+  <Bond class1="CF" class2="CF" length="0.15290" k="224260.0"/>
+  <Bond class1="B" class2="F" length="0.13940" k="323500.0"/>
+  <Bond class1="P" class2="F" length="0.16060" k="310000.0"/>
+  <Bond class1="FB" class2="CF" length="0.13230" k="369800.0"/>
+  <Bond class1="CF" class2="SB" length="0.18180" k="195000.0"/>
+  <Bond class1="SB" class2="OB" length="0.14370" k="533100.0"/>
+  <Bond class1="NB" class2="SB" length="0.15700" k="313700.0"/>
+  <Bond class1="FB" class2="SB" length="0.15750" k="187900.0"/>
+  <Bond class1="N3" class2="CZ" length="0.13100" k="420600.0"/>
+  <Bond class1="CZ" class2="NZ" length="0.11570" k="543920.0"/>
+ </HarmonicBondForce>
+ <HarmonicAngleForce>
+  <Angle class1="CT" class2="CT" class3="CT" angle="1.966986" k="488.3000"/>
+  <Angle class1="CT" class2="CT" class3="HC" angle="1.932079" k="313.8000"/>
+  <Angle class1="HC" class2="CT" class3="HC" angle="1.881465" k="276.1000"/>
+  <Angle class1="CW" class2="NA" class3="CR" angle="1.884956" k="585.8000"/>
+  <Angle class1="CW" class2="NA" class3="CT" angle="2.192134" k="585.8000"/>
+  <Angle class1="CR" class2="NA" class3="CT" angle="2.206096" k="585.8000"/>
+  <Angle class1="NA" class2="CR" class3="HA" angle="2.183407" k="292.9000"/>
+  <Angle class1="NA" class2="CR" class3="NA" angle="1.916372" k="585.8000"/>
+  <Angle class1="NA" class2="CW" class3="CW" angle="1.869248" k="585.8000"/>
+  <Angle class1="NA" class2="CW" class3="HA" angle="2.129302" k="292.9000"/>
+  <Angle class1="CW" class2="CW" class3="HA" angle="2.284636" k="292.9000"/>
+  <Angle class1="NA" class2="CT" class3="HC" angle="1.932079" k="313.8000"/>
+  <Angle class1="NA" class2="CT" class3="CT" angle="1.966986" k="488.3000"/>
+  <Angle class1="CR" class2="NA" class3="HA" angle="2.188643" k="292.9000"/>
+  <Angle class1="CW" class2="NA" class3="HA" angle="2.209587" k="292.9000"/>
+  <Angle class1="CT" class2="CR" class3="NA" angle="2.195624" k="585.8000"/>
+  <Angle class1="CR" class2="CT" class3="HC" angle="1.932079" k="313.8000"/>
+  <Angle class1="HC" class2="CT" class3="CF" angle="1.932079" k="313.8000"/>
+  <Angle class1="F" class2="CF" class3="CT" angle="1.911136" k="418.4000"/>
+  <Angle class1="CT" class2="CF" class3="CF" angle="1.966986" k="488.3000"/>
+  <Angle class1="CT" class2="CT" class3="CF" angle="1.966986" k="488.3000"/>
+  <Angle class1="F" class2="CF" class3="F" angle="1.904154" k="644.3000"/>
+  <Angle class1="F" class2="CF" class3="CF" angle="1.911136" k="418.4000"/>
+  <Angle class1="CF" class2="CF" class3="CF" angle="1.966986" k="488.3000"/>
+  <Angle class1="F" class2="B" class3="F" angle="1.911136" k="669.5000"/>
+  <Angle class1="F" class2="P" class3="F" angle="1.570796" k="1165.0000"/>
+  <Angle class1="FB" class2="CF" class3="FB" angle="1.869248" k="781.0000"/>
+  <Angle class1="FB" class2="CF" class3="SB" angle="1.949533" k="694.0000"/>
+  <Angle class1="OB" class2="SB" class3="OB" angle="2.068215" k="969.0000"/>
+  <Angle class1="CF" class2="SB" class3="OB" angle="1.790708" k="870.0000"/>
+  <Angle class1="NB" class2="SB" class3="OB" angle="1.982694" k="789.0000"/>
+  <Angle class1="NB" class2="SB" class3="CF" angle="1.806416" k="764.0000"/>
+  <Angle class1="SB" class2="NB" class3="SB" angle="2.192134" k="671.0000"/>
+  <Angle class1="SB" class2="CF" class3="CF" angle="2.022837" k="418.4000"/>
+  <Angle class1="FB" class2="CF" class3="CF" angle="1.911136" k="418.4000"/>
+  <Angle class1="FB" class2="SB" class3="OB" angle="1.816888" k="1077.0000"/>
+  <Angle class1="FB" class2="SB" class3="NB" angle="1.797689" k="902.0000"/>
+  <Angle class1="CZ" class2="N3" class3="CZ" angle="2.068215" k="362.0000"/>
+  <Angle class1="N3" class2="CZ" class3="NZ" angle="3.057817" k="425.0000"/>
+ </HarmonicAngleForce>
+ <PeriodicTorsionForce>
+  <Proper class1="HC" class2="CT" class3="CT" class4="HC" c0="0.0" c1="0.0" c2="1.2552" c3="0.0"/>
+  <Proper class1="CT" class2="CT" class3="CT" class4="HC" c0="0.0" c1="0.0" c2="1.2552" c3="0.0"/>
+  <Proper class1="CT" class2="CT" class3="CT" class4="CT" c0="5.4392" c1="-0.2092" c2="0.8368" c3="0.0"/>
+  <Proper class1="CW" class2="NA" class3="CR" class4="NA" c0="0.0" c1="19.46" c2="0.0" c3="0.0"/>
+  <Proper class1="CW" class2="NA" class3="CR" class4="HA" c0="0.0" c1="19.46" c2="0.0" c3="0.0"/>
+  <Proper class1="CT" class2="NA" class3="CR" class4="NA" c0="0.0" c1="19.46" c2="0.0" c3="0.0"/>
+  <Proper class1="CT" class2="NA" class3="CR" class4="HA" c0="0.0" c1="19.46" c2="0.0" c3="0.0"/>
+  <Proper class1="CR" class2="NA" class3="CW" class4="CW" c0="0.0" c1="12.552" c2="0.0" c3="0.0"/>
+  <Proper class1="CR" class2="NA" class3="CW" class4="HA" c0="0.0" c1="12.552" c2="0.0" c3="0.0"/>
+  <Proper class1="CT" class2="NA" class3="CW" class4="CW" c0="0.0" c1="12.552" c2="0.0" c3="0.0"/>
+  <Proper class1="CT" class2="NA" class3="CW" class4="HA" c0="0.0" c1="12.552" c2="0.0" c3="0.0"/>
+  <Proper class1="NA" class2="CW" class3="CW" class4="NA" c0="0.0" c1="44.98" c2="0.0" c3="0.0"/>
+  <Proper class1="NA" class2="CW" class3="CW" class4="HA" c0="0.0" c1="44.98" c2="0.0" c3="0.0"/>
+  <Proper class1="HA" class2="CW" class3="CW" class4="HA" c0="0.0" c1="44.98" c2="0.0" c3="0.0"/>
+  <Proper class1="CW" class2="NA" class3="CT" class4="HC" c0="0.0" c1="0.0" c2="0.519" c3="0.0"/>
+  <Proper class1="CR" class2="NA" class3="CT" class4="HC" c0="0.0" c1="0.0" c2="0.0" c3="0.0"/>
+  <Proper class1="CW" class2="NA" class3="CT" class4="CT" c0="-7.1535" c1="6.1064" c2="0.7939" c3="0.0"/>
+  <Proper class1="CR" class2="NA" class3="CT" class4="CT" c0="-5.2691" c1="0.0" c2="0.0" c3="0.0"/>
+  <Proper class1="NA" class2="CT" class3="CT" class4="CT" c0="-7.4797" c1="3.1642" c2="-1.2026" c3="0.0"/>
+  <Proper class1="NA" class2="CT" class3="CT" class4="HC" c0="0.0" c1="0.0" c2="0.367" c3="0.0"/>
+  <Proper class1="HA" class2="NA" class3="CR" class4="NA" c0="0.0" c1="19.46" c2="0.0" c3="0.0"/>
+  <Proper class1="HA" class2="NA" class3="CR" class4="HA" c0="0.0" c1="19.46" c2="0.0" c3="0.0"/>
+  <Proper class1="HA" class2="NA" class3="CW" class4="CW" c0="0.0" c1="12.55" c2="0.0" c3="0.0"/>
+  <Proper class1="HA" class2="NA" class3="CW" class4="HA" c0="0.0" c1="12.55" c2="0.0" c3="0.0"/>
+  <Proper class1="CW" class2="NA" class3="CR" class4="CT" c0="0.0" c1="19.46" c2="0.0" c3="0.0"/>
+  <Proper class1="CT" class2="NA" class3="CR" class4="CT" c0="0.0" c1="19.46" c2="0.0" c3="0.0"/>
+  <Proper class1="NA" class2="CR" class3="CT" class4="HC" c0="0.0" c1="0.0" c2="0.0" c3="0.0"/>
+  <Proper class1="F" class2="CF" class3="CT" class4="HC" c0="0.0" c1="0.0" c2="1.2134" c3="0.0"/>
+  <Proper class1="F" class2="CF" class3="CT" class4="CT" c0="0.0" c1="0.0" c2="1.9372" c3="0.0"/>
+  <Proper class1="F" class2="CF" class3="CF" class4="CT" c0="0.0" c1="0.0" c2="2.7656" c3="0.0"/>
+  <Proper class1="HC" class2="CT" class3="CT" class4="CF" c0="0.0" c1="0.0" c2="0.5565" c3="0.0"/>
+  <Proper class1="HC" class2="CT" class3="CF" class4="CF" c0="0.0" c1="0.0" c2="0.7573" c3="0.0"/>
+  <Proper class1="CF" class2="CF" class3="CF" class4="CT" c0="14.675" c1="-0.9179" c2="-2.898" c3="-2.0174"/>
+  <Proper class1="CF" class2="CF" class3="CT" class4="CT" c0="-0.5881" c1="-0.7642" c2="-0.317" c3="-0.3179"/>
+  <Proper class1="CF" class2="CT" class3="CT" class4="NA" c0="0.0" c1="0.0" c2="0.0" c3="0.0"/>
+  <Proper class1="F" class2="CF" class3="CF" class4="F" c0="-10.46" c1="0.0" c2="1.046" c3="0.0"/>
+  <Proper class1="F" class2="CF" class3="CF" class4="CF" c0="1.2552" c1="0.0" c2="1.6736" c3="0.0"/>
+  <Proper class1="CF" class2="CF" class3="CF" class4="CF" c0="27.7064" c1="3.9664" c2="-5.8074" c3="-8.8617"/>
+  <Proper class1="OB" class2="SB" class3="CF" class4="FB" c0="0.0" c1="0.0" c2="1.451" c3="0.0"/>
+  <Proper class1="NB" class2="SB" class3="CF" class4="FB" c0="0.0" c1="0.0" c2="1.322" c3="0.0"/>
+  <Proper class1="OB" class2="SB" class3="NB" class4="SB" c0="0.0" c1="0.0" c2="-0.015" c3="0.0"/>
+  <Proper class1="SB" class2="NB" class3="SB" class4="CF" c0="32.773" c1="-10.42" c2="-3.195" c3="0.0"/>
+  <Proper class1="F" class2="CF" class3="CF" class4="FB" c0="-10.46" c1="0.0" c2="1.046" c3="0.0"/>
+  <Proper class1="SB" class2="CF" class3="CF" class4="FB" c0="0.0" c1="0.0" c2="1.453" c3="0.0"/>
+  <Proper class1="SB" class2="CF" class3="CF" class4="F" c0="0.0" c1="0.0" c2="1.453" c3="0.0"/>
+  <Proper class1="OB" class2="SB" class3="CF" class4="CF" c0="0.0" c1="0.0" c2="-0.74" c3="0.0"/>
+  <Proper class1="NB" class2="SB" class3="CF" class4="CF" c0="-3.094" c1="0.0" c2="0.0" c3="0.0"/>
+  <Proper class1="SB" class2="CF" class3="CF" class4="CF" c0="50.09" c1="0.0" c2="-4.626" c3="-4.008"/>
+  <Proper class1="FB" class2="SB" class3="NB" class4="SB" c0="11.445" c1="-15.186" c2="-3.212" c3="0.0"/>
+  <Proper class1="NZ" class2="CZ" class3="N3" class4="CZ" c0="0.0" c1="0.0" c2="0.0" c3="0.0"/>
+ </PeriodicTorsionForce>
+</ForceField>

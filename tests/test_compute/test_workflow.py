@@ -61,9 +61,6 @@ class _MockCompute(Compute):
         self._return_value = return_value
         self.call_count = 0
 
-    def _compute(self, input):
-        raise NotImplementedError("use __call__ directly")
-
     def __call__(self, **kwargs):
         self.call_count += 1
         if self._transform is not None:
@@ -87,9 +84,6 @@ class _CountingCompute(Compute):
         super().__init__()
         self._return_value = return_value
         self.call_count = 0
-
-    def _compute(self, input):
-        raise NotImplementedError("use __call__ directly")
 
     def __call__(self, **kwargs):
         self.call_count += 1
@@ -232,8 +226,8 @@ def test_multi_input_node_rdf(simple_frame):
     rdf_compute = RDF(n_bins=100, r_max=10.0)
 
     wf = Workflow()
-    # NeighborList: __call__ parameter is "input" (from Compute base class)
-    wf.add("nlist", nlist, inputs={"input": "frame"})
+    # NeighborList: __call__ parameter is "frame"
+    wf.add("nlist", nlist, inputs={"frame": "frame"})
     # RDF: __call__ parameters are "frames" and "neighbors"
     wf.add("rdf", rdf_compute, inputs={"frames": "frame", "neighbors": "nlist"})
 

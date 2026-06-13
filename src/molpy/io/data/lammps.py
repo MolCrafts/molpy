@@ -5,6 +5,7 @@ This module provides a clean, imperative approach to reading and writing
 LAMMPS data files using the Block.from_csv functionality.
 """
 
+import warnings
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
@@ -15,7 +16,7 @@ import numpy as np
 from molpy.core.frame import Block
 from molpy.core.box import Box
 from molpy.core.fields import CHARGE, MOL_ID, FieldFormatter
-from molpy.core.forcefield import ForceField
+from molpy.core.forcefield import AtomisticForcefield, ForceField
 from molpy.core.frame import Frame
 
 from .base import DataReader, DataWriter
@@ -336,97 +337,85 @@ class LammpsDataReader(DataReader):
         return type_labels
 
     def _parse_force_field(self, sections: dict[str, list[str]]) -> ForceField:
-        """Parse force field parameters into ForceField."""
-        forcefield = ForceField()
+        """Parse LAMMPS ``*Coeffs`` sections into a :class:`ForceField`.
 
-        # Parse pair coefficients
-        if "PairCoeffs" in sections:
-            forcefield.def_pairstyle("lj/cut")
-            for line in sections["PairCoeffs"]:
-                parts = line.split()
-                if len(parts) >= 3:
-                    try:
-                        int(parts[0])
-                        float(parts[1])
-                        float(parts[2])
-                        # TODO: Fix force field implementation
-                        # pair_type = pair_style.def_type(type_name)
-                        # pair_type["epsilon"] = epsilon
-                        # pair_type["sigma"] = sigma
-                    except (ValueError, IndexError):
-                        continue
+        Each coefficient line is keyed by its 1-indexed numeric type id and the
+        per-type parameters are stored on a :class:`Type` named ``"<cat>_<id>"``
+        — the exact shape :class:`LammpsDataWriter` reads back, so read→write
+        round-trips the parameters instead of silently dropping them.
 
-        # Parse bond coefficients
-        if "BondCoeffs" in sections:
-            forcefield.def_bondstyle("harmonic")
-            for line in sections["BondCoeffs"]:
-                parts = line.split()
-                if len(parts) >= 3:
-                    try:
-                        int(parts[0])
-                        float(parts[1])
-                        float(parts[2])
-                        # TODO: Fix force field implementation
-                        # bond_type = bond_style.def_type(type_name)
-                        # bond_type["k"] = k
-                        # bond_type["r0"] = r0
-                    except (ValueError, IndexError):
-                        continue
+        Malformed (non-numeric / too-short) lines raise ``ValueError`` rather
+        than being swallowed; reading is total.
+        """
+        forcefield = AtomisticForcefield()
 
-        # Parse angle coefficients
-        if "AngleCoeffs" in sections:
-            forcefield.def_anglestyle("harmonic")
-            for line in sections["AngleCoeffs"]:
-                parts = line.split()
-                if len(parts) >= 3:
-                    try:
-                        int(parts[0])
-                        float(parts[1])
-                        float(parts[2])
-                        # TODO: Fix force field implementation
-                        # angle_type = angle_style.def_type(type_name)
-                        # angle_type["k"] = k
-                        # angle_type["theta0"] = theta0
-                    except (ValueError, IndexError):
-                        continue
+        # (section, category, def_style, canonical param names). LAMMPS coeff
+        # arity is style-dependent and not declared in the data file, so the
+        # names are applied positionally to however many params each line
+        # carries (a 2-param harmonic improper and a 3-param cvff improper both
+        # parse). The leading column is always the integer type id.
+        # arity = number of atom-type endpoints molrs requires in the dash-form
+        # type name for each category. LAMMPS data coeff sections are keyed only
+        # by an integer type id (no atom-type names), so a synthetic dash name
+        # ``"<id>-<id>..."`` of the right arity is used; :class:`LammpsDataWriter`
+        # reads the id back via ``name.split("-")[0]``.
+        coeff_specs = [
+            (
+                "PairCoeffs",
+                "pair",
+                lambda: forcefield.def_pairstyle("lj/cut"),
+                ["epsilon", "sigma"],
+                1,
+            ),
+            (
+                "BondCoeffs",
+                "bond",
+                lambda: forcefield.def_bondstyle("harmonic"),
+                ["k", "r0"],
+                2,
+            ),
+            (
+                "AngleCoeffs",
+                "angle",
+                lambda: forcefield.def_anglestyle("harmonic"),
+                ["k", "theta0"],
+                3,
+            ),
+            (
+                "DihedralCoeffs",
+                "dihedral",
+                lambda: forcefield.def_dihedralstyle("harmonic"),
+                ["k", "d", "n"],
+                4,
+            ),
+            (
+                "ImproperCoeffs",
+                "improper",
+                lambda: forcefield.def_improperstyle("harmonic"),
+                ["k", "d", "n"],
+                4,
+            ),
+        ]
 
-        # Parse dihedral coefficients
-        if "DihedralCoeffs" in sections:
-            forcefield.def_dihedralstyle("harmonic")
-            for line in sections["DihedralCoeffs"]:
+        for section, category, make_style, param_names, arity in coeff_specs:
+            if section not in sections:
+                continue
+            style = make_style()
+            for line in sections[section]:
+                if not line.strip():
+                    continue
                 parts = line.split()
-                if len(parts) >= 4:
-                    try:
-                        int(parts[0])
-                        float(parts[1])
-                        int(parts[2])
-                        int(parts[3])
-                        # TODO: Fix force field implementation
-                        # dihedral_type = dihedral_style.def_type(type_name)
-                        # dihedral_type["k"] = k
-                        # dihedral_type["d"] = d
-                        # dihedral_type["n"] = n
-                    except (ValueError, IndexError):
-                        continue
-
-        # Parse improper coefficients
-        if "ImproperCoeffs" in sections:
-            forcefield.def_improperstyle("harmonic")
-            for line in sections["ImproperCoeffs"]:
-                parts = line.split()
-                if len(parts) >= 4:
-                    try:
-                        int(parts[0])
-                        float(parts[1])
-                        int(parts[2])
-                        int(parts[3])
-                        # TODO: Fix force field implementation
-                        # improper_type = improper_style.def_type(type_name)
-                        # improper_type["k"] = k
-                        # improper_type["d"] = d
-                        # improper_type["n"] = n
-                    except (ValueError, IndexError):
-                        continue
+                try:
+                    type_id = int(parts[0])
+                    values = [float(x) for x in parts[1:]]
+                except (ValueError, IndexError) as e:
+                    raise ValueError(
+                        f"malformed {section} line {line!r}: expected an integer "
+                        f"type id followed by numeric parameters ({e})"
+                    ) from e
+                params = dict(zip(param_names, values))
+                type_name = "-".join([str(type_id)] * arity)
+                forcefield.def_type(category, style.name, type_name, params)
 
         return forcefield
 
@@ -606,6 +595,12 @@ class LammpsDataWriter(DataWriter):
         lines.append(
             f"# LAMMPS data file written by molpy on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
+        # CL&Pol Drude systems: emit the fix-drude flag string here, where the
+        # atom-type → ID ordering is known. Ready to paste into the input script.
+        drude_flags = self._drude_flag_string(frame)
+        if drude_flags:
+            lines.append(f"# CL&Pol Drude — paste into input script:")
+            lines.append(f"#   fix DRUDE all drude {drude_flags}")
         lines.append("")
 
         # Count sections
@@ -651,19 +646,37 @@ class LammpsDataWriter(DataWriter):
         with open(self._path, "w") as f:
             f.write("\n".join(lines))
 
+    #: Connectivity blocks whose entries each carry a force-field type id.
+    _CONNECTIVITY = ("bonds", "angles", "dihedrals", "impropers")
+
     def _get_counts(self, frame: Frame) -> dict[str, int]:
-        """Get counts from frame."""
+        """Get section counts from frame.
+
+        A connectivity block that has entries but no ``type`` column is untyped
+        topology — a relation kind the force field never parameterized (e.g.
+        OPLS-AA defines no improper typifier). LAMMPS cannot represent untyped
+        connectivity, so such a block is omitted from the data file (and from the
+        header count, so the declared count matches the emitted section) with a
+        warning. A *present* ``type`` column holding bad values is a real error,
+        caught later in :meth:`_collect_actual_types`.
+        """
         counts = {}
         if "atoms" in frame:
             counts["atoms"] = frame["atoms"].nrows
-        if "bonds" in frame:
-            counts["bonds"] = frame["bonds"].nrows
-        if "angles" in frame:
-            counts["angles"] = frame["angles"].nrows
-        if "dihedrals" in frame:
-            counts["dihedrals"] = frame["dihedrals"].nrows
-        if "impropers" in frame:
-            counts["impropers"] = frame["impropers"].nrows
+        for name in self._CONNECTIVITY:
+            if name not in frame:
+                continue
+            block = frame[name]
+            if block.nrows > 0 and "type" not in block:
+                warnings.warn(
+                    f"{name!r} block has {block.nrows} entries but no 'type' "
+                    f"column; these are untyped topology (a relation kind the "
+                    f"force field does not parameterize) and are omitted from the "
+                    f"LAMMPS data file.",
+                    stacklevel=2,
+                )
+                continue
+            counts[name] = block.nrows
         return counts
 
     def _collect_actual_types(self, frame: Frame) -> dict[str, set[str]]:
@@ -686,6 +699,11 @@ class LammpsDataWriter(DataWriter):
 
         for block_name, type_key in mapping.items():
             if block_name in frame and frame[block_name].nrows > 0:
+                # Untyped connectivity (no 'type' column) is omitted from the
+                # data file — see _get_counts. Skip here so it contributes no
+                # type labels rather than crashing on the missing column.
+                if "type" not in frame[block_name]:
+                    continue
                 types = frame[block_name]["type"]
                 # Check for empty strings or None values - these are errors
                 for t in types:
@@ -772,10 +790,53 @@ class LammpsDataWriter(DataWriter):
             }
             for block_name, type_key in type_key_mapping.items():
                 if block_name in frame and frame[block_name].nrows > 0:
+                    # Skip untyped connectivity (no 'type' column) — omitted from
+                    # the data file, see _get_counts.
+                    if "type" not in frame[block_name]:
+                        continue
                     types = frame[block_name]["type"]
                     if self._needs_type_labels(types):
                         merged_types[type_key] = sorted(list(actual_types[type_key]))
             return merged_types
+
+    def _drude_flag_string(self, frame: Frame) -> str | None:
+        """Build the ``fix drude`` C/D/N flag string, or None if not Drude.
+
+        Emits one flag per atom type in the file's (sorted) type-ID order — the
+        ordering the LAMMPS DRUDE package's ``fix drude`` consumes: ``D`` for a
+        Drude shell type (element ``D``), ``C`` for a polarizable core (an atom
+        joined to a shell by a ``drude`` spring bond), ``N`` otherwise.
+        """
+        if "atoms" not in frame:
+            return None
+        atoms = frame["atoms"]
+        if "element" not in atoms or "type" not in atoms:
+            return None
+        elements = np.asarray(atoms["element"]).astype(str)
+        if not np.any(elements == "D"):
+            return None  # no Drude particles → ordinary system
+
+        types = np.asarray(atoms["type"]).astype(str)
+        shell_types = set(types[elements == "D"].tolist())
+
+        core_types: set[str] = set()
+        bonds = frame["bonds"] if "bonds" in frame else None
+        if bonds is not None and bonds.nrows > 0 and "style" in bonds:
+            b_style = np.asarray(bonds["style"]).astype(str)
+            b_i = np.asarray(bonds["atomi"]).astype(int)
+            b_j = np.asarray(bonds["atomj"]).astype(int)
+            for k in np.flatnonzero(b_style == "drude"):
+                i, j = int(b_i[k]), int(b_j[k])
+                core = i if elements[i] != "D" else j
+                core_types.add(str(types[core]))
+
+        merged = self._get_merged_type_labels(frame)
+        ordered = merged.get("atom_types") or sorted(set(types.tolist()))
+        flags = [
+            "D" if t in shell_types else "C" if t in core_types else "N"
+            for t in ordered
+        ]
+        return " ".join(flags)
 
     def _get_type_to_id_mapping(self, type_list: list[str] | None) -> dict[str, int]:
         """Get mapping from type name to type ID (1-based).
@@ -834,19 +895,35 @@ class LammpsDataWriter(DataWriter):
                 unique_types = np.unique(frame["atoms"]["type"])
                 lines.append(f"{len(unique_types)} atom types")
 
-            if "bonds" in frame and frame["bonds"].nrows > 0:
+            if (
+                "bonds" in frame
+                and frame["bonds"].nrows > 0
+                and "type" in frame["bonds"]
+            ):
                 unique_types = np.unique(frame["bonds"]["type"])
                 lines.append(f"{len(unique_types)} bond types")
 
-            if "angles" in frame and frame["angles"].nrows > 0:
+            if (
+                "angles" in frame
+                and frame["angles"].nrows > 0
+                and "type" in frame["angles"]
+            ):
                 unique_types = np.unique(frame["angles"]["type"])
                 lines.append(f"{len(unique_types)} angle types")
 
-            if "dihedrals" in frame and frame["dihedrals"].nrows > 0:
+            if (
+                "dihedrals" in frame
+                and frame["dihedrals"].nrows > 0
+                and "type" in frame["dihedrals"]
+            ):
                 unique_types = np.unique(frame["dihedrals"]["type"])
                 lines.append(f"{len(unique_types)} dihedral types")
 
-            if "impropers" in frame and frame["impropers"].nrows > 0:
+            if (
+                "impropers" in frame
+                and frame["impropers"].nrows > 0
+                and "type" in frame["impropers"]
+            ):
                 unique_types = np.unique(frame["impropers"]["type"])
                 lines.append(f"{len(unique_types)} improper types")
 
@@ -903,7 +980,12 @@ class LammpsDataWriter(DataWriter):
                 from molpy.core.element import Element
 
                 element_symbol = atoms_data["element"][mask][0]
-                mass = Element(element_symbol).mass
+                try:
+                    mass = Element(element_symbol).mass
+                except KeyError:
+                    # Non-physical element (e.g. a Drude shell "D") has no
+                    # periodic-table entry; use the stored per-atom mass.
+                    mass = atoms_data["mass"][mask][0] if "mass" in atoms_data else 1.0
             elif "mass" in atoms_data:
                 mass = atoms_data["mass"][mask][0]
             else:
@@ -982,7 +1064,6 @@ class LammpsDataWriter(DataWriter):
             DihedralStyle,
             ImproperStyle,
             PairStyle,
-            Type,
         )
 
         # Write pair coefficients
@@ -991,8 +1072,8 @@ class LammpsDataWriter(DataWriter):
             lines.append("Pair Coeffs")
             lines.append("")
             for style in pair_styles:
-                for type_obj in style.types.bucket(Type):
-                    type_id = int(type_obj.name.split("_")[1])
+                for type_obj in style.types:
+                    type_id = int(type_obj.name.split("-")[0])
                     epsilon = type_obj.get("epsilon", 0.0)
                     sigma = type_obj.get("sigma", 1.0)
                     lines.append(f"{type_id} {epsilon:.6f} {sigma:.6f}")
@@ -1004,8 +1085,8 @@ class LammpsDataWriter(DataWriter):
             lines.append("Bond Coeffs")
             lines.append("")
             for style in bond_styles:
-                for type_obj in style.types.bucket(Type):
-                    type_id = int(type_obj.name.split("_")[1])
+                for type_obj in style.types:
+                    type_id = int(type_obj.name.split("-")[0])
                     k = type_obj.get("k", 0.0)
                     r0 = type_obj.get("r0", 1.0)
                     lines.append(f"{type_id} {k:.6f} {r0:.6f}")
@@ -1017,8 +1098,8 @@ class LammpsDataWriter(DataWriter):
             lines.append("Angle Coeffs")
             lines.append("")
             for style in angle_styles:
-                for type_obj in style.types.bucket(Type):
-                    type_id = int(type_obj.name.split("_")[1])
+                for type_obj in style.types:
+                    type_id = int(type_obj.name.split("-")[0])
                     k = type_obj.get("k", 0.0)
                     theta0 = type_obj.get("theta0", 0.0)
                     lines.append(f"{type_id} {k:.6f} {theta0:.6f}")
@@ -1030,8 +1111,8 @@ class LammpsDataWriter(DataWriter):
             lines.append("Dihedral Coeffs")
             lines.append("")
             for style in dihedral_styles:
-                for type_obj in style.types.bucket(Type):
-                    type_id = int(type_obj.name.split("_")[1])
+                for type_obj in style.types:
+                    type_id = int(type_obj.name.split("-")[0])
                     k = type_obj.get("k", 0.0)
                     d = type_obj.get("d", 1)
                     n = type_obj.get("n", 1)
@@ -1044,8 +1125,8 @@ class LammpsDataWriter(DataWriter):
             lines.append("Improper Coeffs")
             lines.append("")
             for style in improper_styles:
-                for type_obj in style.types.bucket(Type):
-                    type_id = int(type_obj.name.split("_")[1])
+                for type_obj in style.types:
+                    type_id = int(type_obj.name.split("-")[0])
                     k = type_obj.get("k", 0.0)
                     d = type_obj.get("d", 1)
                     n = type_obj.get("n", 1)

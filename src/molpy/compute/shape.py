@@ -44,11 +44,6 @@ class CenterOfMass(Compute):
     def __call__(self, frames, clusters):
         return self._impl.compute(frames, clusters)
 
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError(
-            "CenterOfMass takes two inputs (frames, clusters); call directly."
-        )
-
 
 class GyrationTensor(Compute):
     """Gyration tensor per cluster (unweighted)."""
@@ -59,11 +54,6 @@ class GyrationTensor(Compute):
 
     def __call__(self, frames, clusters, centers):
         return self._impl.compute(frames, clusters, centers)
-
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError(
-            "GyrationTensor takes three inputs (frames, clusters, centers); call directly."
-        )
 
 
 class InertiaTensor(Compute):
@@ -82,11 +72,6 @@ class InertiaTensor(Compute):
     def __call__(self, frames, clusters, com):
         return self._impl.compute(frames, clusters, com)
 
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError(
-            "InertiaTensor takes three inputs (frames, clusters, com); call directly."
-        )
-
 
 class RadiusOfGyration(Compute):
     """Radius of gyration per cluster.
@@ -103,8 +88,3 @@ class RadiusOfGyration(Compute):
 
     def __call__(self, frames, clusters, com):
         return self._impl.compute(frames, clusters, com)
-
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError(
-            "RadiusOfGyration takes three inputs (frames, clusters, com); call directly."
-        )

@@ -1,77 +1,68 @@
-"""Verify ``molpy.Block`` truly inherits from ``molrs.Block``.
+"""Verify ``molpy.Block`` collapses onto the canonical ``molrs.Block``.
 
-These are contract tests for the inheritance refactor: after the change,
-``molpy.Block`` must satisfy ``isinstance(b, molrs.Block)`` so any
-``molrs.*`` API that takes a ``Block`` accepts a molpy block directly.
-
-Python-only column state (object-dtype columns like string symbols)
-stays on the Python ``__dict__`` and must stay invisible to the Rust
-side — confirmed by round-tripping through a ``molrs.Frame``.
+After the ``frame-block-sink`` cutover, ``molpy.core.frame.Block is
+molrs.Block`` — there is no molpy subclass and no Python-side object-column
+overflow. All columns (numeric / bool / string) live in the Rust Store and are
+visible to every ``molrs.*`` API; object / None / ragged columns are rejected
+fail-fast.
 """
 
 import molrs
 import numpy as np
+import pytest
 
-import molpy
 from molpy.core.frame import Block
 
 
-class TestBlockInheritance:
-    """``molpy.Block`` IS-A ``molrs.Block``."""
+class TestBlockIdentityCollapse:
+    """``molpy.Block`` IS ``molrs.Block``."""
 
-    def test_molpy_block_is_a_molrs_block(self):
-        b = Block()
-        assert isinstance(b, molrs.Block)
-        assert isinstance(b, Block)
+    def test_block_is_molrs_block(self):
+        assert Block is molrs.Block
 
-    def test_subclass_relation_holds_at_type_level(self):
-        assert issubclass(Block, molrs.Block)
+    def test_instance_is_molrs_block(self):
+        assert isinstance(Block(), molrs.Block)
 
-    def test_molpy_block_directly_accepted_by_molrs_frame(self):
-        """A ``molpy.Block`` must extract through PyO3's ``Block``
-        downcast — no copying, no conversion shim."""
-        b = Block({"x": np.array([1.0, 2.0], dtype=np.float32)})
+    def test_block_accepted_by_molrs_frame(self):
+        b = Block({"x": np.array([1.0, 2.0], dtype=np.float64)})
         frame = molrs.Frame()
-        frame["atoms"] = b  # would raise TypeError pre-refactor
+        frame["atoms"] = b
         assert "atoms" in frame
         assert frame["atoms"].nrows == 2
 
 
-class TestObjectColumnsInvisibleToMolrs:
-    """Object-dtype columns live on the Python side only.
+class TestStringColumnsLiveInStore:
+    """String columns are stored natively and ARE visible to molrs (no overflow)."""
 
-    The Rust ``molrs.Block`` schema is numeric / bool / string-list
-    only — Python ``object`` dtype has no Rust representation. We
-    keep those columns on the Python ``__dict__`` (the historical
-    ``_objects`` cache) and confirm a round-trip through a
-    ``molrs.Frame`` does not surface them on the Rust side.
-    """
-
-    def test_object_columns_stored_python_side(self):
+    def test_string_column_round_trips_through_molrs_frame(self):
         b = Block(
             {
-                "x": np.array([1.0, 2.0], dtype=np.float32),
-                "symbol": np.array(["H", "O"], dtype=object),
+                "x": np.array([1.0, 2.0], dtype=np.float64),
+                "symbol": np.array(["H", "O"]),  # native str -> molrs str column
             }
         )
-        # Python side sees both columns
-        assert "x" in b
-        assert "symbol" in b
-        assert b["symbol"].tolist() == ["H", "O"]
-
-    def test_object_columns_invisible_to_molrs_roundtrip(self):
-        b = Block(
-            {
-                "x": np.array([1.0, 2.0], dtype=np.float32),
-                "symbol": np.array(["H", "O"], dtype=object),
-            }
-        )
-        # Hand the molpy block to a molrs.Frame — PyO3 only sees the
-        # Rust slot (the numeric columns).
         mf = molrs.Frame()
         mf["atoms"] = b
-        # Retrieving from the molrs.Frame yields a bare molrs.Block,
-        # which knows only what the Rust slot stored.
         rs_block = mf["atoms"]
+        # Both columns survive — strings are first-class in the Store now.
         assert "x" in rs_block
-        assert "symbol" not in rs_block
+        assert "symbol" in rs_block
+        assert list(rs_block["symbol"]) == ["H", "O"]
+
+
+class TestNumpyOnlyRejection:
+    """Object / None columns are rejected (no _objects overflow)."""
+
+    def test_object_column_rejected(self):
+        b = Block()
+        with pytest.raises(molrs.BlockDtypeError):
+            b["symbol"] = np.array(["H", "O"], dtype=object)
+
+    def test_none_bearing_column_rejected(self):
+        b = Block()
+        with pytest.raises(molrs.BlockDtypeError):
+            b["c"] = np.array([1.0, None])
+
+    def test_no_objects_overflow_attribute(self):
+        b = Block({"x": np.array([1.0, 2.0], dtype=np.float64)})
+        assert not hasattr(b, "_objects")

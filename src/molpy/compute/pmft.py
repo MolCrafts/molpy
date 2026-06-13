@@ -31,8 +31,3 @@ class PMFTXY(Compute):
 
     def __call__(self, frames, nlists, orientations=None):
         return self._inner.compute(frames, nlists, orientations)
-
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError(
-            "PMFTXY takes (frames, nlists, orientations=None); call directly"
-        )

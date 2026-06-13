@@ -139,6 +139,56 @@ class TestPolymerBuilderInit:
         assert builder.typifier is typifier
 
 
+# ---- Dead-Code Consolidation Regression Tests (builder-reacter-01) ----
+
+
+class TestPolymerModuleConsolidation:
+    """Regression tests: single exception hierarchy + live core re-exports.
+
+    Guards against the duplicated exception hierarchies (core.py vs errors.py)
+    and the stale polymer_builder.py fork shadowing core.PolymerBuilder.
+    """
+
+    def test_exported_polymer_builder_is_core_implementation(self):
+        """Public PolymerBuilder export must be the live core implementation."""
+        from molpy.builder.polymer import PolymerBuilder, core
+
+        assert PolymerBuilder is core.PolymerBuilder
+
+    def test_exported_build_result_is_core_build_result(self):
+        """Public PolymerBuildResult export must be the core dataclass."""
+        from molpy.builder.polymer import PolymerBuildResult, core
+
+        assert PolymerBuildResult is core.PolymerBuildResult
+
+    def test_errors_module_geometry_error_is_assembly_error(self):
+        """errors.GeometryError must derive from errors.AssemblyError."""
+        from molpy.builder.polymer.errors import AssemblyError, GeometryError
+
+        assert issubclass(GeometryError, AssemblyError)
+
+    def test_connector_exception_catchable_via_public_assembly_error(self):
+        """errors.AmbiguousPortsError (raised by connectors) must be caught
+        via core.AssemblyError -- one hierarchy, not two."""
+        from molpy.builder.polymer.core import AssemblyError
+        from molpy.builder.polymer.errors import AmbiguousPortsError
+
+        with pytest.raises(AssemblyError):
+            raise AmbiguousPortsError("ambiguous")
+
+    def test_errors_orientation_and_position_catchable_as_assembly_error(self):
+        """errors geometry subclasses must be catchable via errors.AssemblyError."""
+        from molpy.builder.polymer import errors
+
+        exceptions = [
+            errors.OrientationUnavailableError("no orientation"),
+            errors.PositionMissingError("no position"),
+        ]
+        for exc in exceptions:
+            with pytest.raises(errors.AssemblyError):
+                raise exc
+
+
 # ---- Validation Tests ----
 
 
@@ -156,3 +206,114 @@ class TestPolymerBuilderValidation:
         builder = PolymerBuilder(library={"A": Atomistic()}, reacter=MagicMock())
         with pytest.raises(SequenceError, match="not found in library"):
             builder.build("{[#UNKNOWN]|3}")
+
+
+# ---- Build Behavior Tests (RDKit-dependent, absorbed from the removed
+# ---- test_polymer_builder.py fork suite) ----
+
+
+def _make_reacter():
+    from molpy.reacter import Reacter, form_single_bond
+
+    return Reacter(
+        name="test",
+        anchor_selector_left=lambda a, port_atom: port_atom,
+        anchor_selector_right=lambda a, port_atom: port_atom,
+        leaving_selector_left=lambda a, anchor: [],
+        leaving_selector_right=lambda a, anchor: [],
+        bond_former=form_single_bond,
+    )
+
+
+def _make_monomer(bigsmiles: str) -> Atomistic:
+    """Build a 3D test monomer from a BigSMILES string (requires RDKit)."""
+    from molpy.adapter import RDKitAdapter
+    from molpy.adapter.rdkit import Generate3D
+    from molpy.parser.smiles import bigsmilesir_to_monomer, parse_bigsmiles
+
+    ir = parse_bigsmiles(bigsmiles)
+    monomer = bigsmilesir_to_monomer(ir)
+
+    adapter = RDKitAdapter(internal=monomer)
+    generate_3d = Generate3D(
+        add_hydrogens=True, embed=True, optimize=False, update_internal=True
+    )
+    adapter = generate_3d(adapter)
+    monomer = adapter.get_internal()
+    monomer = monomer.get_topo(gen_angle=True, gen_dihe=True)
+
+    for idx, atom in enumerate(monomer.atoms):
+        atom["id"] = idx + 1
+
+    return monomer
+
+
+@pytest.mark.external
+class TestPolymerBuilderBehavior:
+    """End-to-end build behavior of the live core.PolymerBuilder."""
+
+    @pytest.fixture(autouse=True)
+    def _require_rdkit(self):
+        pytest.importorskip("rdkit", reason="RDKit is not installed")
+
+    def _builder(self, library, port_map):
+        from molpy.builder.polymer import Connector
+
+        connector = Connector(reacter=_make_reacter(), port_map=port_map)
+        return PolymerBuilder(library=library, connector=connector)
+
+    def test_build_linear_chain(self):
+        library = {"A": _make_monomer("{[<]CC[>]}")}
+        builder = self._builder(library, {("A", "A"): (">", "<")})
+
+        result = builder.build("{[#A][#A][#A]}")
+
+        assert result.polymer is not None
+        assert result.total_steps == 2  # Two connections for 3 monomers
+        assert len(result.connection_history) == 2
+
+    def test_build_with_repeat_operator(self):
+        library = {"A": _make_monomer("{[<]CC[>]}")}
+        builder = self._builder(library, {("A", "A"): (">", "<")})
+
+        result = builder.build("{[#A]|3}")
+
+        assert result.polymer is not None
+        assert result.total_steps == 2  # Two connections for 3 monomers
+
+    def test_build_branched_structure(self):
+        # A: linear monomer with $ ports; B: 3-arm branch point with 3 $ ports
+        library = {
+            "A": _make_monomer("{[][$]CC[$][]}"),
+            "B": _make_monomer("{[]C(C[$])(C[$])C[$][]}"),
+        }
+        rules = {(li, r): ("$", "$") for li in library for r in library}
+        builder = self._builder(library, rules)
+
+        result = builder.build("{[#A][#B]([#A])[#A]}")
+
+        assert result.polymer is not None
+        assert result.total_steps == 3  # Three connections for 4 monomers
+
+    def test_build_cyclic_structure(self):
+        # Ring closure consumes a second port pair per monomer, so the
+        # monomers need multi-connectable $ ports.
+        library = {"A": _make_monomer("{[][$]CC[$][]}")}
+        builder = self._builder(library, {("A", "A"): ("$", "$")})
+
+        result = builder.build("{[#A]1[#A][#A]1}")
+
+        assert result.polymer is not None
+        assert result.total_steps == 3  # Three connections for 3 monomers in ring
+
+    def test_connection_history_tracking(self):
+        library = {"A": _make_monomer("{[<]CC[>]}")}
+        builder = self._builder(library, {("A", "A"): (">", "<")})
+
+        result = builder.build("{[#A][#A]}")
+
+        assert len(result.connection_history) == 1
+        rxn_result = result.connection_history[0]
+        assert hasattr(rxn_result, "product")
+        assert hasattr(rxn_result, "reaction_name")
+        assert rxn_result.reaction_name == "test"

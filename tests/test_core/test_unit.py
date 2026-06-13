@@ -261,3 +261,42 @@ class TestPublicExports:
     def test_no_preset_names_leaked(self):
         for leaked in ("real", "metal", "si", "cgs", "electron", "micro", "nano"):
             assert not hasattr(molpy, leaked), f"molpy.{leaked} leaked"
+
+
+class TestRegisterPreset:
+    """Custom presets can be registered (the preset table is an extension point)."""
+
+    def test_register_and_use_custom_preset(self):
+        from molpy import UnitSystem
+
+        UnitSystem.register_preset(
+            "test_custom_md", {"length": "nm", "time": "ps", "energy": "kJ/mol"}
+        )
+        assert "test_custom_md" in UnitSystem.preset_names()
+        u = UnitSystem.preset("test_custom_md")
+        assert str(u.base_units["length"]) == "nanometer"
+
+    def test_duplicate_without_overwrite_raises(self):
+        import pytest
+
+        from molpy import UnitSystem
+
+        with pytest.raises(ValueError, match="already exists"):
+            UnitSystem.register_preset("real", {"length": "angstrom"})
+
+    def test_overwrite_replaces(self):
+        from molpy import UnitSystem
+
+        UnitSystem.register_preset("test_overwrite_md", {"length": "nm"})
+        UnitSystem.register_preset("test_overwrite_md", {"length": "m"}, overwrite=True)
+        assert (
+            str(UnitSystem.preset("test_overwrite_md").base_units["length"]) == "meter"
+        )
+
+    def test_empty_base_units_raises(self):
+        import pytest
+
+        from molpy import UnitSystem
+
+        with pytest.raises(TypeError):
+            UnitSystem.register_preset("test_bad", {})

@@ -271,9 +271,9 @@ def test_adapter_fallback():
 
 ### `core.frame` and `core.block`
 
-- **Inherits molrs**: `frame.py` does `import molrs` at module load and defines `Block(molrs.Block, MutableMapping)` and `Frame(molrs.Frame)`. A `molpy.Frame` IS-A `molrs.Frame` and is accepted by every `molrs.*` API that takes a frame, with no `.to_molrs()` / `_inner` bridge. Same for `Block`. `molcrafts-molrs` is a hard runtime dependency.
-- `Block`: Dict-like view over its inherited `molrs.Block` slot. Numeric / bool / string-list columns live in the Rust slot; object-dtype columns (e.g. element symbols) live on the Python side in `self._objects` and are **invisible to the Rust side** by design. `Block.from_dict(molrs.Block)` returns a write-through view (the molpy block aliases the source via `self._source` so `frame[key][col] = arr` propagates back to frame storage).
-- `Frame`: Numerical container inheriting `molrs.Frame` + `metadata: dict` (Python-only annotations like timestep) + per-block object-column cache. The `frame.box` getter upgrades the underlying `molrs.Box` to `molpy.Box` so callers keep the enriched Box API. `copy()` deep-copies into a new Rust Store and preserves box.
+- **Re-exported from molrs**: `frame.py` is a thin `from molrs import Block, Frame` re-export — `molpy.core.frame.Frame IS molrs.Frame` and `Block IS molrs.Block` (the rich Python layer in molrs over the Rust core). No molpy subclass, no `.to_molrs()` / `_inner` / `_source` bridge. `molcrafts-molrs` is a hard runtime dependency.
+- `Block`: **numpy-only** typed columns (float / int / bool / str) in the Rust Store, exposed as zero-copy numpy views. There is **no Python-side object-column overflow** — a non-representable column (object / None / ragged) is rejected fail-fast at write (`molrs.BlockDtypeError` / `TypeError`).
+- `Frame`: container of named Blocks + `metadata: dict` (Python-only annotations like timestep) + `box`. Built from a molrs world via the world's native `to_frame()` (e.g. `Atomistic.to_frame()` delegates to `molrs.Atomistic.to_frame()` and wraps the bare pyo3 frame with `Frame.from_dict` — zero Python-side densify/conversion).
 - `Trajectory`: Sequence of Frames
 - **Box is on `frame.box`**, never in `frame.metadata["box"]`
 
@@ -338,55 +338,50 @@ From `docs/developer/coding-style.md`:
 
 ## Skills & Agents
 
-MolPy provides 12 skills (`.claude/skills/`) and 7 agents (`.claude/agents/`).
+Workflow skills and review agents come from the **`mol` plugin** (molcrafts
+claude-plugin marketplace). The former project-local `.claude/skills/` and
+`.claude/agents/` were removed in favor of the plugin; project-specific knowledge
+they carried now lives in `.claude/notes/` (architecture.md, performance.md,
+testing.md, docs-style.md, ci.md).
 
 ### Skills (slash commands)
 
 ```bash
 # Implementation workflow
-/molpy-impl "feature description"    # Full TDD workflow: litrev → spec → arch → test → code → review → docs
-/molpy-spec "natural language need"  # NL → technical spec with literature grounding (中文/English)
-/molpy-litrev "method or topic"      # Literature review before implementing physical models
+/mol:spec "natural language need"   # NL → spec + binding acceptance contract (中文/English)
+/mol:impl <spec>                    # TDD implementation from an approved spec (spec → tests → code → verify)
+/mol:litrev "method or topic"       # Literature review before implementing physical models
 
 # Documentation
-/molpy-tutorial "concept or module"  # Write textbook-style User Guide page for human readers
-/molpy-api-doc [path]                # Audit/write agent-friendly docstrings, type hints, unit annotations
-/molpy-docs [path]                   # Documentation audit/writing
+/mol:docs [path]                    # Docstring audit/writing + narrative tutorials
 
 # Validation
-/molpy-arch [path]                   # Architecture layer dependency validation
-/molpy-review [path]                 # Multi-dimensional code review (arch + perf + science + quality)
-/molpy-test [path]                   # Test coverage analysis and scientific test audit
-/molpy-perf [path]                   # Performance profiling and NumPy optimization review
+/mol:review [path]                  # Multi-axis code review (arch + perf + science + quality)
+/mol:review --axis=arch             # Architecture layer dependency validation
+/mol:review --axis=perf             # Performance / NumPy optimization review
+/mol:test [path]                    # Test run, coverage analysis, scientific test audit
 
 # CI & release
-/molpy-ci-sync                       # Audit/fix CI and pre-commit parity
-/molpy-release                       # Pre-merge / release GO-NO-GO gate
+/mol:ci-sync                        # Audit/fix CI and pre-commit parity
+/mol:ship merge                     # Pre-merge / release gate (PROCEED / BLOCK verdict)
 ```
 
-### Agents (used by skills or directly)
+### Agents
 
-| Agent | Domain | Tools |
-|-------|--------|-------|
-| `molpy-architect` | Layer dependencies, module design, pattern enforcement | Read, Grep, Glob, Bash |
-| `molpy-scientist` | Equations, units, force field parameters, literature | Read, Grep, Glob, Bash, WebSearch, WebFetch |
-| `molpy-tester` | TDD workflow, test design, scientific validation | Read, Grep, Glob, Bash, Write, Edit |
-| `molpy-documenter` | Docstrings, unit annotations, scientific references | Read, Grep, Glob, Write, Edit |
-| `molpy-optimizer` | NumPy vectorization, memory, algorithm complexity | Read, Grep, Glob, Bash |
-| `molpy-ci-auditor` | CI / pre-commit parity auditing | Read, Grep, Glob, Bash |
-| `molpy-release-checker` | Pre-merge / release gating | Read, Grep, Glob, Bash |
+Review agents are provided by the mol plugin (`mol:architect`, `mol:scientist`,
+`mol:tester`, `mol:documenter`, `mol:optimizer`, `mol:ci-guard`, …) and are
+invoked through skills like `/mol:review`; release gating is handled by `/mol:ship`.
 
 ### Quick Start
 
 ```bash
 # Implement a feature (full workflow)
-/molpy-impl "Add Morse bond potential"
+/mol:spec "Add Morse bond potential"   # then: /mol:impl <spec>
 
 # Start from vague requirements
-/molpy-spec "需要一个支持周期性边界条件的RDF计算器"
+/mol:spec "需要一个支持周期性边界条件的RDF计算器"
 
 # Pre-PR validation
-/molpy-review --diff
-/molpy-arch
-/molpy-test
+/mol:review
+/mol:test
 ```

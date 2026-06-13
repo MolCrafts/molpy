@@ -494,32 +494,20 @@ class Placer:
             pivot: Optional pivot point for rotation (default: centroid)
         """
         atoms = list(struct.atoms)
+        if not atoms:
+            return
 
-        # Calculate centroid if no pivot given
+        # Single (N, 3) read; vectorized rigid transform; single write-back.
+        # (coords - pivot) @ R.T + pivot + t is identical to the per-atom
+        # R @ (x - pivot) + pivot + t.
+        coords = np.array([[atom["x"], atom["y"], atom["z"]] for atom in atoms])
+
         if pivot is None:
-            positions = [np.array([atom["x"], atom["y"], atom["z"]]) for atom in atoms]
-            pivot = np.mean(positions, axis=0)
+            pivot = coords.mean(axis=0)
 
-        # Transform each atom
-        for atom in atoms:
-            # Get current position from x/y/z fields
-            xyz = np.array(
-                [
-                    atom["x"],
-                    atom["y"],
-                    atom["z"],
-                ]
-            )
+        transformed = (coords - pivot) @ rotation.T + pivot + translation
 
-            # Rotate around pivot, then translate
-            # 1. Move to origin
-            pos_centered = xyz - pivot
-            # 2. Rotate
-            pos_rotated = rotation @ pos_centered
-            # 3. Move back and translate
-            new_pos = pos_rotated + pivot + translation
-
-            # Update position to x/y/z fields
+        for atom, new_pos in zip(atoms, transformed, strict=True):
             atom["x"] = float(new_pos[0])
             atom["y"] = float(new_pos[1])
             atom["z"] = float(new_pos[2])

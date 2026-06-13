@@ -17,6 +17,7 @@ import numpy as np
 from molrs.dielectric import Dielectric
 from molrs.signal import acf_fft, apply_window, frequency_grid
 
+from ..core.box import Box
 from .base import Compute
 from .result import (
     ACFResult,
@@ -35,7 +36,28 @@ if TYPE_CHECKING:
 _ACF_ZERO_LAG_EPSILON = 1e-30
 
 
-class ACFAnalyzer(Compute["Trajectory", ACFResult]):
+def _unwrap_inplace(coords: np.ndarray, frames: list) -> None:
+    """Minimum-image unwrap of a ``(n_frames, n_atoms, 3)`` array, in place.
+
+    Frame 0 is kept; each later frame is rebuilt from the previous
+    (already-unwrapped) frame plus the minimum-image displacement, so a particle
+    crossing a periodic boundary stays continuous. Uses the previous frame's box
+    (NPT-correct) and caches the wrapped :class:`~molpy.core.box.Box` per unique
+    cell matrix, so a constant-cell (NVT) trajectory wraps the box exactly once
+    instead of once per frame.
+    """
+    cache: dict[bytes, Box] = {}
+    for i in range(1, len(frames)):
+        rs_box = frames[i - 1].box
+        key = np.asarray(rs_box.matrix).tobytes()
+        box = cache.get(key)
+        if box is None:
+            box = Box.from_box(rs_box)
+            cache[key] = box
+        coords[i] = coords[i - 1] + box.diff_dr(coords[i] - coords[i - 1])
+
+
+class ACFAnalyzer(Compute):
     """Compute autocorrelation function from trajectory data.
 
     Extracts per-atom columns from each frame, optionally unwraps coordinates
@@ -58,7 +80,7 @@ class ACFAnalyzer(Compute["Trajectory", ACFResult]):
         self.max_lag = max_lag
         self.unwrap = unwrap
 
-    def _compute(self, trajectory: Trajectory) -> ACFResult:
+    def __call__(self, trajectory: Trajectory) -> ACFResult:
         # Materialize once: trajectories may be one-shot iterators.
         frames = list(trajectory)
         n_frames = len(frames)
@@ -83,14 +105,10 @@ class ACFAnalyzer(Compute["Trajectory", ACFResult]):
             for d, col in enumerate(self.columns):
                 data[i, :, d] = frame["atoms"][col]
 
-        # Unwrap via minimum-image convention. Box.diff_dr accepts the
-        # whole (n_atoms, 3) displacement in one call, so the inner per-
-        # atom Python loop collapses to a single vectorized call per
-        # frame. Only meaningful for 3-component columns.
+        # Unwrap via minimum-image convention (only meaningful for 3-component
+        # columns). Shared helper caches the box wrap across frames.
         if self.unwrap and n_dim == 3:
-            for i in range(1, n_frames):
-                dr = data[i] - data[i - 1]
-                data[i] = data[i - 1] + frames[i].box.diff_dr(dr)
+            _unwrap_inplace(data, frames)
 
         # Compute ACF per dimension, average, normalize.
         max_lag = min(self.max_lag, n_frames - 1)
@@ -106,7 +124,7 @@ class ACFAnalyzer(Compute["Trajectory", ACFResult]):
         return ACFResult(time=lag_times, acf=acf_sum, n_lags=max_lag + 1)
 
 
-class SpectralAnalyzer(Compute[ACFResult, SpectralResult]):
+class SpectralAnalyzer(Compute):
     """Convert time-domain ACF to frequency-domain spectrum.
 
     Applies a window function, generates the frequency grid, and performs
@@ -124,7 +142,7 @@ class SpectralAnalyzer(Compute[ACFResult, SpectralResult]):
         self.dt = dt
         self.window_type = window_type
 
-    def _compute(self, acf_result: ACFResult) -> SpectralResult:
+    def __call__(self, acf_result: ACFResult) -> SpectralResult:
         acf = acf_result.acf
         n_lags = len(acf)
 
@@ -140,7 +158,7 @@ class SpectralAnalyzer(Compute[ACFResult, SpectralResult]):
         return SpectralResult(frequency=freq, spectrum=windowed)
 
 
-class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityResult]):
+class DielectricSusceptibility(Compute):
     """Frequency-dependent dielectric susceptibility from an MD trajectory.
 
     Extracts atomic positions and charges per frame, unwraps coordinates
@@ -200,7 +218,7 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
         self.routes = routes or ["einstein-helfand", "green-kubo"]
         self._volume = volume
 
-    def _compute(self, trajectory: Trajectory) -> DielectricSusceptibilityResult:
+    def __call__(self, trajectory: Trajectory) -> DielectricSusceptibilityResult:
         frames = list(trajectory)
         n_frames = len(frames)
         if n_frames < 2:
@@ -215,21 +233,20 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
                 raise ValueError(f"Missing column '{col}' in atoms block")
 
         n_atoms = len(frame0["atoms"]["x"])
-        volume = self._volume or frame0.box.volume
+        volume = self._volume if self._volume is not None else frame0.box.volume()
 
         positions = np.empty((n_frames, n_atoms, 3), dtype=np.float64)
+        # Charges are taken once from frame 0: the dipole / current formulas
+        # assume fixed per-atom charges (standard non-polarizable FF), so they
+        # are intentionally not re-read per frame.
         charges = np.asarray(frame0["atoms"]["charge"], dtype=np.float64)
         for i, frame in enumerate(frames):
             positions[i, :, 0] = frame["atoms"]["x"]
             positions[i, :, 1] = frame["atoms"]["y"]
             positions[i, :, 2] = frame["atoms"]["z"]
 
-        # Vectorized minimum-image unwrap: Box.diff_dr takes the whole
-        # (n_atoms, 3) slice at once. Use frames[i-1].box to match prior
-        # semantics (relevant for NPT trajectories with per-frame boxes).
-        for i in range(1, n_frames):
-            dr = positions[i] - positions[i - 1]
-            positions[i] = positions[i - 1] + frames[i - 1].box.diff_dr(dr)
+        # Minimum-image unwrap (shared helper; caches the box wrap per cell).
+        _unwrap_inplace(positions, frames)
 
         # Dipole moment per frame: M[f, d] = Σ_a charges[a] · positions[f, a, d]
         dipole_moments = np.einsum("a,fad->fd", charges, positions)
@@ -302,7 +319,7 @@ class DielectricSusceptibility(Compute["Trajectory", DielectricSusceptibilityRes
         )
 
 
-class IonicConductivity(Compute["Trajectory", ConductivityResult]):
+class IonicConductivity(Compute):
     """Static ionic conductivity sigma via the Einstein-Helfand relation.
 
     Builds the **ionic translational dipole** M_J(t) = sum_i q_i r_i(t) from the
@@ -363,7 +380,7 @@ class IonicConductivity(Compute["Trajectory", ConductivityResult]):
         self.fit_start_frac = fit_start_frac
         self.fit_end_frac = fit_end_frac
 
-    def _compute(self, trajectory: Trajectory) -> ConductivityResult:
+    def __call__(self, trajectory: Trajectory) -> ConductivityResult:
         frames = list(trajectory)
         n_frames = len(frames)
         if n_frames < 2:
@@ -378,20 +395,20 @@ class IonicConductivity(Compute["Trajectory", ConductivityResult]):
                 raise ValueError(f"Missing column '{col}' in atoms block")
 
         n_atoms = len(frame0["atoms"]["x"])
-        volume = self._volume or frame0.box.volume
+        volume = self._volume if self._volume is not None else frame0.box.volume()
 
         positions = np.empty((n_frames, n_atoms, 3), dtype=np.float64)
+        # Charges are taken once from frame 0: the dipole / current formulas
+        # assume fixed per-atom charges (standard non-polarizable FF), so they
+        # are intentionally not re-read per frame.
         charges = np.asarray(frame0["atoms"]["charge"], dtype=np.float64)
         for i, frame in enumerate(frames):
             positions[i, :, 0] = frame["atoms"]["x"]
             positions[i, :, 1] = frame["atoms"]["y"]
             positions[i, :, 2] = frame["atoms"]["z"]
 
-        # Vectorized minimum-image unwrap (same convention as
-        # DielectricSusceptibility): use frames[i-1].box for per-frame boxes.
-        for i in range(1, n_frames):
-            dr = positions[i] - positions[i - 1]
-            positions[i] = positions[i - 1] + frames[i - 1].box.diff_dr(dr)
+        # Minimum-image unwrap (same convention as DielectricSusceptibility).
+        _unwrap_inplace(positions, frames)
 
         # Ionic translational dipole M_J[f, d] = sum_a charges[a] * pos[f, a, d].
         translational_dipole = np.einsum("a,fad->fd", charges, positions)
