@@ -24,7 +24,7 @@ All public symbols are documented on the package pages listed below. Docstrings 
 | Convert between MolPy and RDKit / OpenBabel objects | `RDKitAdapter`, `OpenBabelAdapter` | [Adapter](adapter.md) |
 | Invoke external CLI tools (antechamber, tleap) | `Wrapper`, `AntechamberWrapper` | [Wrapper](wrapper.md) |
 | Execute packaged multi-step preparation workflows | `PrepareMonomer`, `polymer`, `generate_3d` | [Builder](builder.md) |
-| Compute mean-squared displacement and correlations | `MSD`, `DisplacementCorrelation` | [Legacy](legacy.md) |
+| Compute mean-squared displacement, correlations, RDF, clustering | `MSD`, `MCDCompute`, `RDF` | [Compute](compute.md) |
 | Generate LAMMPS or CP2K input decks | `LAMMPSEngine`, `CP2KEngine` | [Engine](engine.md) |
 
 
@@ -44,4 +44,4 @@ All public symbols are documented on the package pages listed below. Docstrings 
 | [Wrapper](wrapper.md) | Subprocess interfaces for AmberTools command-line executables |
 | [Engine](engine.md) | Simulation engine abstractions for LAMMPS and CP2K |
 | [Optimization](optimize.md) | Potential wrappers for geometry optimization workflows |
-| [Legacy](legacy.md) | Pure-NumPy MSD and displacement-correlation operators for direct array workflows |
+| [Compute](compute.md) | Trajectory analysis: MSD, displacement correlation, RDF, clustering, and custom compute operators |
