@@ -48,7 +48,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        # molrs (molcrafts-molrs==0.1.0, pinned in pyproject.toml) installs as a
+        # molrs (molcrafts-molrs==0.1.2, pinned in pyproject.toml) installs as a
         # wheel from PyPI — no Rust toolchain / source build needed.
         run: pip install -e ".[dev]"
 

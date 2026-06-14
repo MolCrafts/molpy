@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.1 - 2026-06-14
+
+Maintenance release on top of `0.4.0`. Requires `molcrafts-molrs == 0.1.2`.
+
+### Removed
+
+- **`molpy.legacy` is gone.** The pure-NumPy `MSD` / `DisplacementCorrelation`
+  operators (and the `molpy.legacy` submodule) were removed. Use the
+  molrs-backed trunk in `molpy.compute` instead — `molpy.compute.MSD` and
+  `molpy.compute.MCDCompute`.
+
+### Fixed
+
+- **AMBER prmtop reader.** Atom-connectivity index columns
+  (`atomi`/`atomj`/`atomk`/`atoml`/`id` on bonds/angles/dihedrals and the atom
+  `id`) are now emitted as unsigned `uint32` to match molrs's `UInt` index
+  columns (`get_uint`); mask/sentinel columns that use `-1` stay signed.
+
+### Internal
+
+- Pinned `molcrafts-molrs == 0.1.2` (was `0.1.1`); kept the CI install comment in
+  sync.
+- Collapsed the three near-identical PDB-writer required-field tests into a
+  single parametrized test.
+
 ## 0.4.0 - 2026-06-11
 
 This release lands the **molrs Rust backend** as the foundation of `Frame` /
