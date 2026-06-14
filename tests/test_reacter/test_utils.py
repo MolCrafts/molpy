@@ -6,6 +6,7 @@ Tests cover:
 - get_bond_between
 - count_bonds
 - remove_dummy_atoms
+- build_adjacency + adjacency-accelerated query equivalence
 """
 
 from molpy import Atom, Atomistic, Bond
@@ -305,3 +306,108 @@ class TestRemoveDummyAtoms:
         # Bond should be removed
         bonds = list(asm.bonds)
         assert len(bonds) == 0
+
+
+class TestAdjacencyQueries:
+    """build_adjacency + adjacency= fast paths match the full-scan fallback.
+
+    Planned perf API (spec builder-reacter-05-perf): ``build_adjacency``
+    maps each atom to ``[(neighbor, bond), ...]`` in one pass over bonds;
+    ``find_neighbors`` / ``get_bond_between`` / ``count_bonds`` accept an
+    ``adjacency=`` keyword for O(degree) lookups, with ``None`` falling
+    back to the current full bond scan.
+    """
+
+    def _make_ethanol(self) -> tuple[Atomistic, dict[str, Atom]]:
+        """8-atom ethanol-like structure: H3C-CH2-O-H."""
+        asm = Atomistic()
+        atoms = {
+            "c1": Atom(element="C"),
+            "c2": Atom(element="C"),
+            "o": Atom(element="O"),
+            "h11": Atom(element="H"),
+            "h12": Atom(element="H"),
+            "h13": Atom(element="H"),
+            "h21": Atom(element="H"),
+            "ho": Atom(element="H"),
+        }
+        asm.add_entity(*atoms.values())
+        asm.add_link(
+            Bond(atoms["c1"], atoms["c2"]),
+            Bond(atoms["c1"], atoms["h11"]),
+            Bond(atoms["c1"], atoms["h12"]),
+            Bond(atoms["c1"], atoms["h13"]),
+            Bond(atoms["c2"], atoms["h21"]),
+            Bond(atoms["c2"], atoms["o"]),
+            Bond(atoms["o"], atoms["ho"]),
+        )
+        return asm, atoms
+
+    def test_build_adjacency_maps_atoms_to_neighbor_bond_pairs(self):
+        """build_adjacency yields (neighbor, bond) pairs per atom."""
+        from molpy.reacter.utils import build_adjacency
+
+        asm, atoms = self._make_ethanol()
+        adjacency = build_adjacency(asm)
+
+        c1_entries = adjacency[atoms["c1"]]
+        assert len(c1_entries) == 4
+        bonds_in_asm = list(asm.bonds)
+        for neighbor, bond in c1_entries:
+            assert any(neighbor is n for n in find_neighbors(asm, atoms["c1"]))
+            assert any(bond is b for b in bonds_in_asm)
+            assert any(ep is atoms["c1"] for ep in bond.endpoints)
+            assert any(ep is neighbor for ep in bond.endpoints)
+
+    def test_find_neighbors_with_adjacency_matches_fallback(self):
+        """adjacency= lookup returns the same neighbor objects as full scan."""
+        from molpy.reacter.utils import build_adjacency
+
+        asm, atoms = self._make_ethanol()
+        adjacency = build_adjacency(asm)
+
+        for atom in atoms.values():
+            fallback = find_neighbors(asm, atom)
+            fast = find_neighbors(asm, atom, adjacency=adjacency)
+            assert len(fast) == len(fallback)
+            assert {id(n) for n in fast} == {id(n) for n in fallback}
+
+    def test_find_neighbors_with_adjacency_element_filter_matches_fallback(self):
+        """element= filter behaves identically with and without adjacency."""
+        from molpy.reacter.utils import build_adjacency
+
+        asm, atoms = self._make_ethanol()
+        adjacency = build_adjacency(asm)
+
+        for atom in atoms.values():
+            for element in ("H", "C", "O", "N"):
+                fallback = find_neighbors(asm, atom, element=element)
+                fast = find_neighbors(asm, atom, element=element, adjacency=adjacency)
+                assert {id(n) for n in fast} == {id(n) for n in fallback}, (
+                    f"element={element!r} filter diverged for "
+                    f"{atom.get('element')} atom"
+                )
+
+    def test_get_bond_between_with_adjacency_matches_fallback(self):
+        """adjacency= returns the identical Bond object (or None)."""
+        from molpy.reacter.utils import build_adjacency
+
+        asm, atoms = self._make_ethanol()
+        adjacency = build_adjacency(asm)
+
+        atom_list = list(atoms.values())
+        for i in atom_list:
+            for j in atom_list:
+                fallback = get_bond_between(asm, i, j)
+                fast = get_bond_between(asm, i, j, adjacency=adjacency)
+                assert fast is fallback
+
+    def test_count_bonds_with_adjacency_matches_fallback(self):
+        """adjacency= bond counts equal full-scan counts for every atom."""
+        from molpy.reacter.utils import build_adjacency
+
+        asm, atoms = self._make_ethanol()
+        adjacency = build_adjacency(asm)
+
+        for atom in atoms.values():
+            assert count_bonds(asm, atom, adjacency=adjacency) == count_bonds(asm, atom)

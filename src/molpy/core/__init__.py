@@ -1,4 +1,14 @@
-from .atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper
+from .atomistic import (
+    Angle,
+    Atom,
+    Atomistic,
+    Bond,
+    Dihedral,
+    DrudeParticle,
+    Improper,
+    MasslessSite,
+    VirtualSite,
+)
 from .box import Box
 from .cg import Bead, CGBond, CoarseGrain
 from .forcefield import (
@@ -23,7 +33,6 @@ from .forcefield import (
 )
 from .frame import Block, Frame
 from .script import Script, ScriptLanguage
-from .topology import Topology
 from .unit import UnitSystem
 
 __all__ = [
@@ -33,6 +42,9 @@ __all__ = [
     "Bond",
     "Dihedral",
     "Improper",
+    "VirtualSite",
+    "DrudeParticle",
+    "MasslessSite",
     "Box",
     "Bead",
     "CGBond",
@@ -59,6 +71,5 @@ __all__ = [
     "Frame",
     "Script",
     "ScriptLanguage",
-    "Topology",
     "UnitSystem",
 ]

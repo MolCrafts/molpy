@@ -323,7 +323,7 @@ matches:
   • molpy.io.read_xml_forcefield        (function)
   • molpy.io.write_lammps_data          (function)
   • molpy.io.write_lammps_forcefield    (function)
-  • molpy.typifier.OplsAtomisticTypifier (class)
+  • molpy.typifier.OplsTypifier (class)
 ```
 
 **Step 2 — confirm the built-in TIP3P file path**
@@ -363,7 +363,7 @@ molmcp_describe_symbol("molpy.core.Box.orth")
 ```
 
 ```
-molmcp_describe_symbol("molpy.typifier.OplsAtomisticTypifier.__init__")
+molmcp_describe_symbol("molpy.typifier.OplsTypifier.__init__")
 ```
 
 ```
@@ -383,7 +383,7 @@ from pathlib import Path
 import numpy as np
 import molpy as mp
 from molpy.io import read_xml_forcefield, write_lammps_data, write_lammps_forcefield
-from molpy.typifier import OplsAtomisticTypifier
+from molpy.typifier import OplsTypifier
 
 theta = 1.82421813418
 r_oh = 0.09572  # nm
@@ -417,7 +417,7 @@ for iz in range(4):
 system = system.get_topo(gen_angle=True, gen_dihe=False)
 
 ff = read_xml_forcefield("tip3p.xml")
-typifier = OplsAtomisticTypifier(ff, skip_dihedral_typing=True, strict_typing=True)
+typifier = OplsTypifier(ff, skip_dihedral_typing=True, strict_typing=True)
 system = typifier.typify(system)
 
 frame = system.to_frame()

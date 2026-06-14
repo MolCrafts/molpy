@@ -6,25 +6,28 @@ SMARTS-based atom typing and force field parameter assignment.
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `OplsAtomisticTypifier` | Full OPLS-AA typing pipeline | OPLS force fields |
+| `OplsTypifier` | Full OPLS-AA typing pipeline | OPLS force fields |
 | `GaffTypifier` | Full GAFF typing pipeline | GAFF / GAFF2 force fields |
-| `OplsAtomTypifier` | OPLS atom-only typing | When you only need atom types |
-| `GaffAtomTypifier` | GAFF atom-only typing | When you only need atom types |
-| `BondTypifier` | Bond type assignment from atom types | Standalone bonded typing |
-| `AngleTypifier` | Angle type assignment from atom types | Standalone bonded typing |
-| `DihedralTypifier` | Dihedral type assignment from atom types | Standalone bonded typing |
+| `ClpTypifier` | Full CL&P typing pipeline (OPLS engine + built-in `clp.xml`) | Ionic-liquid force fields |
 | `PairTypifier` | Pair (LJ) parameter assignment | Standalone nonbonded typing |
-| `TypifierBase` | ABC for all typifiers | Custom typifier implementations |
+| `LayeredTypingEngine` | Dependency-aware SMARTS matching engine | Custom typing engines |
+| `DependencyAnalyzer` | Computes SMARTS pattern dependency levels | Custom typing engines |
 | `.typify(struct)` | Assign all types (atom → pair → bond → angle → dihedral) | One-call complete typing |
+
+Each force-field typifier is a single orchestrator class: one `typify()` call
+runs atom typing, then pair parameters, then bond/angle/dihedral types derived
+from the atom assignments. Individual stages can be disabled with the
+`skip_*_typing` constructor flags — there are no separate public
+atom-only or bond/angle/dihedral typifier classes.
 
 ## Canonical example
 
 ```python
 import molpy as mp
-from molpy.typifier import OplsAtomisticTypifier
+from molpy.typifier import OplsTypifier
 
 ff = mp.io.read_xml_forcefield("oplsaa.xml")
-typifier = OplsAtomisticTypifier(ff, strict_typing=True)
+typifier = OplsTypifier(ff, strict_typing=True)
 typed_mol = typifier.typify(mol)  # returns NEW Atomistic
 ```
 
@@ -44,41 +47,29 @@ typed_mol = typifier.typify(mol)  # returns NEW Atomistic
 
 ## Full API
 
-### Base
+### Force-Field Typifiers (OPLS, base orchestrator, pair)
 
-::: molpy.typifier.base
-
-### OPLS Typifier
-
-::: molpy.typifier.opls
+::: molpy.typifier.atomistic
 
 ### GAFF Typifier
 
 ::: molpy.typifier.gaff
 
-### Bond Typifier
+### CL&P Typifier
 
-::: molpy.typifier.bond
+::: molpy.typifier.clp
 
-### Angle Typifier
+### Layered Typing Engine
 
-::: molpy.typifier.angle
-
-### Dihedral Typifier
-
-::: molpy.typifier.dihedral
-
-### Pair Typifier
-
-::: molpy.typifier.pair
-
-### Adapter
-
-::: molpy.typifier.adapter
+::: molpy.typifier.layered_engine
 
 ### Dependency Analyzer
 
 ::: molpy.typifier.dependency_analyzer
+
+### Adapter
+
+::: molpy.typifier.adapter
 
 ### Graph
 

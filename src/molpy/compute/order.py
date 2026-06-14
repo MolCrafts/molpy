@@ -2,8 +2,7 @@
 
 Thin ``Compute`` shells over ``molrs.compute.order.*``. Each forwards verbatim
 to the Rust kernel and returns the molrs native result; molpy adds no wrapping
-and copies nothing. Like ``compute.RDF``, these take two inputs, so the real
-work lives in ``__call__`` and ``_compute`` raises.
+and copies nothing. Like ``compute.RDF``, these take two data inputs.
 
 References
 ----------
@@ -21,8 +20,6 @@ from collections.abc import Sequence
 import molrs
 
 from .base import Compute
-
-_TWO_INPUT = "takes (frames, nlists); call the operator directly"
 
 
 class Steinhardt(Compute):
@@ -53,9 +50,6 @@ class Steinhardt(Compute):
     def __call__(self, frames, nlists):
         return self._inner.compute(frames, nlists)
 
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError(f"Steinhardt {_TWO_INPUT}")
-
 
 class Hexatic(Compute):
     """Two-dimensional :math:`\\psi_k` hexatic bond-orientational order.
@@ -73,9 +67,6 @@ class Hexatic(Compute):
     def __call__(self, frames, nlists):
         return self._inner.compute(frames, nlists)
 
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError(f"Hexatic {_TWO_INPUT}")
-
 
 class Nematic(Compute):
     """Nematic order parameter and Q-tensor from per-particle directors.
@@ -90,9 +81,6 @@ class Nematic(Compute):
 
     def __call__(self, frames, directors):
         return self._inner.compute(frames, directors)
-
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError("Nematic takes (frames, directors); call directly")
 
 
 class SolidLiquid(Compute):
@@ -114,6 +102,3 @@ class SolidLiquid(Compute):
 
     def __call__(self, frames, nlists):
         return self._inner.compute(frames, nlists)
-
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError(f"SolidLiquid {_TWO_INPUT}")

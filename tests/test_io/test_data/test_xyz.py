@@ -5,6 +5,7 @@ Tests for XYZReader and XYZWriter using chemfiles-testcases/xyz files.
 import importlib
 from pathlib import Path
 
+import molrs
 import numpy as np
 import pytest
 
@@ -14,8 +15,8 @@ from molpy.core.element import Element
 
 @pytest.fixture(
     scope="module",
-    params=["molpy.io.data.xyz", "molpy.io.experimental.data.xyz"],
-    ids=["molpy", "experimental"],
+    params=["molpy.io.data.xyz"],
+    ids=["molpy"],
 )
 def xyz_backend(request):
     return importlib.import_module(request.param)
@@ -74,7 +75,7 @@ class TestXYZReader:
 
         # Check box from Lattice
         box = frame.box
-        assert isinstance(box, Box)
+        assert isinstance(box, molrs.Box)
         assert box.matrix.shape == (3, 3)
         assert np.allclose(
             box.matrix,

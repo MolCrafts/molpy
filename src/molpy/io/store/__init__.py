@@ -508,41 +508,30 @@ class MolStore:
     @staticmethod
     def _read_bonded_coeff(cg, style, label, get_atom_type):
         """Read bond/angle/dihedral/improper coefficient table."""
-        from molpy.core.forcefield import (
-            AngleType,
-            BondType,
-            DihedralType,
-            ImproperType,
-        )
-
         param_names = cg.read_array("param_names")
         params = cg.read_array("params")
         type_ids = cg.read_array("type")
 
         ph = get_atom_type(-1)  # returns _placeholder
 
-        type_cls_map = {
-            "bond": (BondType, lambda name, **kw: BondType(name, ph, ph, **kw)),
-            "angle": (AngleType, lambda name, **kw: AngleType(name, ph, ph, ph, **kw)),
-            "dihedral": (
-                DihedralType,
-                lambda name, **kw: DihedralType(name, ph, ph, ph, ph, **kw),
-            ),
-            "improper": (
-                ImproperType,
-                lambda name, **kw: ImproperType(name, ph, ph, ph, ph, **kw),
-            ),
+        # Number of endpoint (placeholder) atom types each kind expects.
+        endpoint_counts = {
+            "bond": 2,
+            "angle": 3,
+            "dihedral": 4,
+            "improper": 4,
         }
-
-        _, factory = type_cls_map[label]
+        n_atoms = endpoint_counts[label]
 
         for r in range(len(type_ids)):
             kwargs = {
                 str(param_names[c]): float(params[r, c]) for c in range(params.shape[1])
             }
             type_name = f"{label}_type_{int(type_ids[r])}"
-            t = factory(type_name, **kwargs)
-            style.types.add(t)
+            # Register through the style, which routes the type into the
+            # owning ForceField (``style.types`` is a read-only snapshot, so
+            # appending to it would be a no-op).
+            style.def_type(*([ph] * n_atoms), name=type_name, **kwargs)
 
     # ─────────────────────────────────────────────────────────────────
     # trajectory — stored under trajectory/ group

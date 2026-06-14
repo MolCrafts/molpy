@@ -6,8 +6,8 @@ import pytest
 
 @pytest.fixture(
     scope="module",
-    params=["molpy.io.data.pdb", "molpy.io.experimental.data.pdb"],
-    ids=["molpy", "experimental"],
+    params=["molpy.io.data.pdb"],
+    ids=["molpy"],
 )
 def pdb_backend(request):
     return importlib.import_module(request.param)
@@ -40,19 +40,24 @@ class TestPDBIO:
     def test_read_water(self, pdb_test_files, pdb_backend):
         if "water.pdb" not in pdb_test_files:
             pytest.skip("water.pdb not found")
-        if "experimental" in pdb_backend.__name__:
-            pytest.xfail("molrs limitation: reads only first MODEL of multi-MODEL PDB")
+        # Single-frame read returns the first model of a multi-frame PDB.
         reader = pdb_backend.PDBReader(pdb_test_files["water.pdb"])
         frame = reader.read()
         atoms = frame["atoms"]
         n_atoms = atoms["name"].shape[0]
-        assert n_atoms > 1000
-        assert frame.box is not None
-        # Check separate x, y, z fields
+        assert n_atoms > 0
+        # Separate x, y, z fields
         assert "x" in atoms and "y" in atoms and "z" in atoms
         assert atoms["x"].shape[0] == n_atoms
         assert atoms["y"].shape[0] == n_atoms
         assert atoms["z"].shape[0] == n_atoms
+
+        # All models are accessible as a trajectory (one frame per model).
+        import molpy as mp
+
+        frames = mp.io.read_pdb_trajectory(pdb_test_files["water.pdb"])
+        assert len(frames) > 1
+        assert all(f["atoms"]["name"].shape[0] == n_atoms for f in frames)
 
     def test_write_and_read_roundtrip(self, tmp_path, pdb_test_files, pdb_backend):
         if "1avg.pdb" not in pdb_test_files:

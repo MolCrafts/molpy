@@ -1,21 +1,19 @@
-"""Dihedral potentials."""
+"""Dihedral potential styles (facade over molrs)."""
 
-from .charmm import DihedralCharmm, DihedralCharmmStyle
-from .class2 import DihedralClass2, DihedralClass2Style
-from .multi_harmonic import DihedralMultiHarmonic, DihedralMultiHarmonicStyle
-from .opls import DihedralOPLSStyle, DihedralOPLSType
-from .periodic import DihedralFourierStyle, DihedralPeriodicStyle, DihedralPeriodicType
+from molpy.core.forcefield import (
+    DihedralCharmmStyle,
+    DihedralClass2Style,
+    DihedralFourierStyle,
+    DihedralMultiHarmonicStyle,
+    DihedralOPLSStyle,
+    DihedralPeriodicStyle,
+)
 
 __all__ = [
-    "DihedralFourierStyle",
     "DihedralOPLSStyle",
-    "DihedralOPLSType",
-    "DihedralPeriodicStyle",
-    "DihedralPeriodicType",
-    "DihedralCharmm",
     "DihedralCharmmStyle",
-    "DihedralMultiHarmonic",
     "DihedralMultiHarmonicStyle",
-    "DihedralClass2",
     "DihedralClass2Style",
+    "DihedralPeriodicStyle",
+    "DihedralFourierStyle",
 ]

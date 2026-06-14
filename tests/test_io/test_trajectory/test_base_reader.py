@@ -1,11 +1,9 @@
-"""Contract tests for spec frame-reader-hierarchy-01-split.
+"""Contract tests for the reader hierarchy.
 
-These tests encode the reader-hierarchy refactor contract. They MUST fail now
-(RED) because the target symbols do not exist yet:
+These tests encode the reader-hierarchy contract:
 
   - molpy.io.base.BaseReader
   - molpy.io.trajectory.base.BaseTrajectoryReader (pure, mmap-free)
-  - molpy.io.trajectory.base.MmapTrajectoryReader / FrameLocation / MappedFile
 
 No external resources are used; everything is in-memory or tmp_path.
 """
@@ -299,34 +297,3 @@ def test_ac004_getitem_bad_type_raises(reader) -> None:
     """(ac-004) non int/slice key raises TypeError."""
     with pytest.raises(TypeError):
         _ = reader[object()]
-
-
-# ---------------------------------------------------------------------------
-# ac-005 — MmapTrajectoryReader owns the mmap machinery (still abstract)
-# ---------------------------------------------------------------------------
-
-
-def test_ac005_mmap_symbols_import_cleanly() -> None:
-    """(ac-005) MmapTrajectoryReader, FrameLocation, MappedFile import cleanly."""
-    from molpy.io.trajectory.base import (  # noqa: F401
-        FrameLocation,
-        MappedFile,
-        MmapTrajectoryReader,
-    )
-
-
-def test_ac005_mmap_reader_subclasses_base_trajectory_reader() -> None:
-    """(ac-005) MmapTrajectoryReader is a BaseTrajectoryReader."""
-    from molpy.io.trajectory.base import (
-        BaseTrajectoryReader,
-        MmapTrajectoryReader,
-    )
-
-    assert issubclass(MmapTrajectoryReader, BaseTrajectoryReader)
-
-
-def test_ac005_mmap_reader_is_abstract() -> None:
-    """(ac-005) MmapTrajectoryReader remains abstract (_parse_frame/_parse_trajectory)."""
-    from molpy.io.trajectory.base import MmapTrajectoryReader
-
-    assert inspect.isabstract(MmapTrajectoryReader)

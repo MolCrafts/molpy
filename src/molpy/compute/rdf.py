@@ -27,10 +27,7 @@ class RDF(Compute):
 
     Notes
     -----
-    RDF takes two inputs (frames + neighbor lists) and therefore overrides
-    ``__call__`` rather than ``_compute``. It is not directly compatible
-    with single-input molexp workflows; chain via an explicit dataflow node
-    if needed.
+    RDF takes two data inputs (frames + neighbor lists).
     """
 
     def __init__(self, n_bins: int, r_max: float, r_min: float = 0.0):
@@ -45,12 +42,6 @@ class RDF(Compute):
         # molpy.Frame IS-A molrs.Frame — passed through PyO3 downcast
         # with no conversion / column copy.
         return self._rdf.compute(frame_list, self._as_list(neighbors))
-
-    def _compute(self, input):  # pragma: no cover — RDF uses __call__ directly
-        raise NotImplementedError(
-            "RDF takes two inputs (frames, neighbors); call directly or use "
-            "RDF.__call__(frames, neighbors)."
-        )
 
     @staticmethod
     def _as_list(x):

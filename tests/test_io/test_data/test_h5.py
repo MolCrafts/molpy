@@ -7,6 +7,7 @@ real-world molecular data structures.
 
 from pathlib import Path
 
+import molrs
 import numpy as np
 import pytest
 
@@ -233,7 +234,7 @@ class TestHDF5Reader:
         assert read_frame.box is not None
         read_box = read_frame.box
         assert read_box is not None
-        assert isinstance(read_box, mp.Box)
+        assert isinstance(read_box, molrs.Box)
 
         # Compare Box properties
         np.testing.assert_array_almost_equal(
@@ -294,7 +295,7 @@ class TestHDF5Reader:
         read_frame = read_h5(h5_file)
         read_box = read_frame.box
 
-        assert isinstance(read_box, Box), f"Expected Box, got {type(read_box)}"
+        assert isinstance(read_box, molrs.Box), f"Expected Box, got {type(read_box)}"
         np.testing.assert_array_almost_equal(box.matrix, read_box.matrix, decimal=6)
         np.testing.assert_array_almost_equal(box.pbc, read_box.pbc)
         np.testing.assert_array_almost_equal(box.origin, read_box.origin, decimal=6)
@@ -320,7 +321,7 @@ class TestHDF5Reader:
         read_frame = read_h5(h5_file)
         read_box = read_frame.box
 
-        assert isinstance(read_box, Box)
+        assert isinstance(read_box, molrs.Box)
         np.testing.assert_array_almost_equal(box.matrix, read_box.matrix, decimal=6)
         np.testing.assert_array_equal(box.pbc, read_box.pbc)
         np.testing.assert_array_almost_equal(box.origin, read_box.origin, decimal=6)
@@ -349,7 +350,7 @@ class TestHDF5Reader:
         read_frame = read_h5(h5_file)
         read_box = read_frame.box
 
-        assert isinstance(read_box, Box)
+        assert isinstance(read_box, molrs.Box)
         np.testing.assert_array_almost_equal(box.matrix, read_box.matrix, decimal=6)
 
 
@@ -390,7 +391,7 @@ class TestHDF5RoundTrip:
             orig_box = original_frame.box
             read_box = read_frame.box
             assert read_box is not None
-            assert isinstance(read_box, mp.Box)
+            assert isinstance(read_box, molrs.Box)
             np.testing.assert_array_almost_equal(
                 orig_box.matrix, read_box.matrix, decimal=6
             )
@@ -437,7 +438,7 @@ class TestHDF5RoundTrip:
             orig_box = original_frame.box
             read_box = read_frame.box
             assert read_box is not None
-            assert isinstance(read_box, mp.Box)
+            assert isinstance(read_box, molrs.Box)
             np.testing.assert_array_almost_equal(
                 orig_box.matrix, read_box.matrix, decimal=6
             )
@@ -597,7 +598,7 @@ class TestHDF5Compression:
         read_frame_gzip = read_h5(h5_file_gzip)
         assert read_frame_gzip.box is not None
         read_box_gzip = read_frame_gzip.box
-        assert isinstance(read_box_gzip, mp.Box)
+        assert isinstance(read_box_gzip, molrs.Box)
         np.testing.assert_array_almost_equal(
             orig_box.matrix, read_box_gzip.matrix, decimal=6
         )
@@ -609,7 +610,7 @@ class TestHDF5Compression:
         read_frame_lzf = read_h5(h5_file_lzf)
         assert read_frame_lzf.box is not None
         read_box_lzf = read_frame_lzf.box
-        assert isinstance(read_box_lzf, mp.Box)
+        assert isinstance(read_box_lzf, molrs.Box)
         np.testing.assert_array_almost_equal(
             orig_box.matrix, read_box_lzf.matrix, decimal=6
         )

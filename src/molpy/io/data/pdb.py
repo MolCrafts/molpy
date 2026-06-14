@@ -167,55 +167,37 @@ class PDBReader(DataReader):
 
     # ------------------------------------------------------------------ public read()
     def read(self, frame: Frame | None = None) -> Frame:
-        frame = frame or Frame()
+        """Read a single PDB model via the molrs Rust backend.
 
-        atoms_data: dict[str, list[Any]] = defaultdict(list)
-        coords: list[np.ndarray] = []
-        unique_bonds: set[tuple[int, int]] = set()
-        box_matrix: np.ndarray | None = None
+        Multi-MODEL / multi-frame PDBs are read one model at a time; use
+        :func:`molpy.io.read_pdb_trajectory` for all models.
+        """
+        import molrs.io
 
-        for raw in self:
-            if raw.startswith("CRYST1"):
-                box_matrix = self._parse_cryst1(raw)
-            elif raw.startswith(("ATOM  ", "HETATM")):
-                info, xyz = self._parse_atom(raw)
-                for k, v in info.items():
-                    atoms_data[k].append(v)
-                coords.append(xyz)
-            elif raw.startswith("CONECT"):
-                unique_bonds.update(self._parse_conect(raw))
+        # molrs.io.read_pdb returns the canonical rich Frame directly.
+        molpy_frame = molrs.io.read_pdb(self._path)
 
-        # ---------- commit to frame ------------------------------------
-        if coords:
-            # Store coordinates as separate x, y, z fields only
-            coords_array = np.array(coords)
-            atoms_data["x"] = coords_array[:, 0]
-            atoms_data["y"] = coords_array[:, 1]
-            atoms_data["z"] = coords_array[:, 2]
-            frame["atoms"] = _dict_to_block(atoms_data)
+        # molrs preserves both directions of each CONECT record; molpy keeps a
+        # single bond per pair — deduplicate for parity.
+        bonds = molpy_frame["bonds"] if "bonds" in molpy_frame else None
+        if bonds is not None and "atomi" in bonds and "atomj" in bonds:
+            atomi = np.asarray(bonds["atomi"])
+            atomj = np.asarray(bonds["atomj"])
+            seen: set[tuple[int, int]] = set()
+            keep: list[int] = []
+            for idx in range(len(atomi)):
+                a, b = int(atomi[idx]), int(atomj[idx])
+                canonical = (a, b) if a < b else (b, a)
+                if canonical not in seen:
+                    seen.add(canonical)
+                    keep.append(idx)
+            if len(keep) < len(atomi):
+                new_bonds = Block()
+                for col in bonds.keys():
+                    new_bonds[col] = np.asarray(bonds[col])[keep]
+                molpy_frame["bonds"] = new_bonds
 
-        if unique_bonds:
-            # Map 1-based atom IDs to 0-based indices
-            # First, build id -> index mapping from atoms_data
-            id_to_idx = {atom_id: idx for idx, atom_id in enumerate(atoms_data["id"])}
-
-            # Convert bonds
-            atomi_list = []
-            atomj_list = []
-            for id1, id2 in sorted(unique_bonds):
-                if id1 in id_to_idx and id2 in id_to_idx:
-                    atomi_list.append(id_to_idx[id1])
-                    atomj_list.append(id_to_idx[id2])
-
-            frame["bonds"] = Block(
-                {
-                    "atomi": np.array(atomi_list, dtype=int),
-                    "atomj": np.array(atomj_list, dtype=int),
-                }
-            )
-
-        frame.box = Box(matrix=box_matrix) if box_matrix is not None else Box()
-        return frame
+        return molpy_frame
 
 
 class PDBWriter(DataWriter):
@@ -514,16 +496,9 @@ class PDBWriter(DataWriter):
                     raise ValueError(
                         f"Required field '{field}' is missing in frame['atoms']"
                     )
-                # Check if any values are None
-                values = atoms[field]
-                if values is None:
-                    raise ValueError(f"Required field '{field}' contains None")
-                # Check for None in array (if object dtype)
-                if hasattr(values, "dtype") and values.dtype == object:
-                    if any(v is None for v in values):
-                        raise ValueError(
-                            f"Required field '{field}' contains None values"
-                        )
+                # No None-column check needed: the numpy-only Store rejects
+                # object / None columns at write time, so a present column is
+                # always a dense numpy array.
 
             # Build index -> id mapping for bonds
             index_to_id = {}

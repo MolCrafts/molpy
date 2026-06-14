@@ -83,7 +83,7 @@ atoms = Block(
         "x": np.array([0.0, 1.0, 2.0]),
         "y": np.array([0.0, 0.0, 0.0]),
         "z": np.array([0.0, 0.0, 0.0]),
-        "element": np.array(["O", "H", "H"], dtype=object),
+        "element": np.array(["O", "H", "H"]),
     }
  )
 
@@ -123,18 +123,28 @@ Important: MolPy treats many interactions as **derived** rather than manually st
 
 This is why the Quickstart doesn't teach "loop over angles and manually manage them": that's a maintenance trap.
 
+There is no standalone topology class: the bond graph lives on `Atomistic`
+itself, and graph operations run in the molrs Rust kernels. `get_topo()`
+returns a new `Atomistic` with angles/dihedrals perceived from the bonds, and
+k-hop queries go through `get_topo_neighbors()` / `get_topo_distances()`.
+
 ```python
-from molpy.core.topology import Topology
+import molpy as mp
 
-# Simple chain: 0-1-2-3
-topo = Topology()
-topo.add_atoms(4)
-topo.add_bonds([(0, 1), (1, 2), (2, 3)])
+# Simple chain: C0-C1-C2-C3
+chain = mp.Atomistic(name="chain")
+atoms = [chain.def_atom(name=f"C{i}", element="C") for i in range(4)]
+for a, b in zip(atoms, atoms[1:]):
+    chain.def_bond(a, b)
 
-print("atoms:", topo.n_atoms, "bonds:", topo.n_bonds)
-print("angles:", topo.n_angles, "dihedrals:", topo.n_dihedrals)
-print("connected?", topo.is_connected())
-print("shortest path 0->3:", topo.get_shortest_paths(0, 3)[0])
+# Derive angles/dihedrals from the bond graph (returns a NEW Atomistic)
+topo = chain.get_topo(gen_angle=True, gen_dihe=True)
+print("angles:", len(topo.links.bucket(mp.Angle)))
+print("dihedrals:", len(topo.links.bucket(mp.Dihedral)))
+
+# Graph queries on the bond graph
+print("within 2 bonds of C0:", [a.get("name") for a in chain.get_topo_neighbors(atoms[0], radius=2)])
+print("bond distances from C0:", {a.get("name"): d for a, d in chain.get_topo_distances(atoms[0]).items()})
 ```
 
 ## 4. ForceField & Typifier: parameters are not structure
@@ -165,7 +175,7 @@ print("BondTypes:", [t.name for t in ff.get_types(mp.BondType)])
 ## Summary: choosing the right layer
 
 - Use `Atomistic` when you need to **build and edit** (graph CRUD).
-- Use topology helpers (`get_topo` / `Topology`) when you need **derived interactions** and graph queries.
+- Use the topology helpers (`get_topo` / `get_topo_neighbors` / `get_topo_distances`) when you need **derived interactions** and graph queries.
 - Use `Frame` when you need **I/O and fast array operations**.
 - Use `ForceField` + `Typifier` when you need **reproducible parameters**.
 

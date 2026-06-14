@@ -61,7 +61,7 @@ def write_moltemplate(
     text = ltemplify(atomistic, ff, class_name=class_name)
     dest_path = Path(dest)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    dest_path.write_text(text)
+    dest_path.write_text(text, encoding="utf-8")
     return dest_path.resolve()
 
 
@@ -138,8 +138,8 @@ def _is_synthetic(name: str) -> bool:
 def _render_in_settings(ff: ForceField) -> list[str]:
     lines: list[str] = ['  write_once("In Settings") {']
     any_line = False
-    for style in ff.styles.bucket(PairStyle):
-        for pt in style.types.bucket(PairType):
+    for style in ff.get_styles(PairStyle):
+        for pt in style.get_types(PairType):
             toks = _pair_coeff_tokens(pt)
             if toks is None:
                 continue
@@ -148,22 +148,22 @@ def _render_in_settings(ff: ForceField) -> list[str]:
                 f"{style.name} {toks}"
             )
             any_line = True
-    for style in ff.styles.bucket(BondStyle):
-        for bt in style.types.bucket(BondType):
+    for style in ff.get_styles(BondStyle):
+        for bt in style.get_types(BondType):
             params = _param_tokens(bt)
             if params is None:
                 continue
             lines.append(f"    bond_coeff @bond:{bt.name} {style.name} {params}")
             any_line = True
-    for style in ff.styles.bucket(AngleStyle):
-        for at in style.types.bucket(AngleType):
+    for style in ff.get_styles(AngleStyle):
+        for at in style.get_types(AngleType):
             params = _param_tokens(at)
             if params is None:
                 continue
             lines.append(f"    angle_coeff @angle:{at.name} {style.name} {params}")
             any_line = True
-    for style in ff.styles.bucket(DihedralStyle):
-        for dt in style.types.bucket(DihedralType):
+    for style in ff.get_styles(DihedralStyle):
+        for dt in style.get_types(DihedralType):
             params = _param_tokens(dt)
             if params is None:
                 continue
@@ -171,8 +171,8 @@ def _render_in_settings(ff: ForceField) -> list[str]:
                 f"    dihedral_coeff @dihedral:{dt.name} {style.name} {params}"
             )
             any_line = True
-    for style in ff.styles.bucket(ImproperStyle):
-        for it in style.types.bucket(ImproperType):
+    for style in ff.get_styles(ImproperStyle):
+        for it in style.get_types(ImproperType):
             params = _param_tokens(it)
             if params is None:
                 continue
@@ -347,8 +347,8 @@ def _render_data_impropers(atomistic: Atomistic) -> list[str]:
 
 def _collect_atomtypes(ff: ForceField) -> list[AtomType]:
     seen: dict[str, AtomType] = {}
-    for style in ff.styles.bucket(AtomStyle):
-        for at in style.types.bucket(AtomType):
+    for style in ff.get_styles(AtomStyle):
+        for at in style.get_types(AtomType):
             if at.name not in seen:
                 seen[at.name] = at
     return list(seen.values())

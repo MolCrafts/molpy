@@ -1,10 +1,10 @@
 """Tests for Amber builder unification with the standard polymer API.
 
 Tests verify:
-- AmberPolymerBuilderConfig accepts reaction_preset
+- amber_config attribute-overrides accept reaction_preset
 - AmberPolymerBuilder uses port utilities for validation
 - AmberPolymerBuilder uses preset leaving selectors
-- BuildPolymerAmber Compute class basics
+- BuildPolymerAmber Tool basics (agent-only, lives in builder.polymer.tools)
 - DSL backend="amber" dispatch
 
 Note: Tests that require actual AmberTools executables are marked
@@ -146,32 +146,32 @@ class TestAmberBuilderLeavingGroups:
 
 class TestBuildPolymerAmber:
     def test_is_tool_subclass(self):
-        from molpy.builder.polymer.dsl import BuildPolymerAmber
+        from molpy.builder.polymer.tools import BuildPolymerAmber
         from molpy.builder._tool import Tool
 
         assert issubclass(BuildPolymerAmber, Tool)
 
     def test_not_compute_subclass(self):
-        from molpy.builder.polymer.dsl import BuildPolymerAmber
+        from molpy.builder.polymer.tools import BuildPolymerAmber
         from molpy.compute.base import Compute
 
         assert not issubclass(BuildPolymerAmber, Compute)
 
     def test_registered_in_registry(self):
-        from molpy.builder.polymer.dsl import BuildPolymerAmber
+        from molpy.builder.polymer.tools import BuildPolymerAmber
         from molpy.builder._tool import ToolRegistry
 
         assert ToolRegistry.get("BuildPolymerAmber") is BuildPolymerAmber
 
     def test_frozen(self):
-        from molpy.builder.polymer.dsl import BuildPolymerAmber
+        from molpy.builder.polymer.tools import BuildPolymerAmber
 
         tool = BuildPolymerAmber()
         with pytest.raises(AttributeError):
             tool.force_field = "gaff"
 
     def test_defaults(self):
-        from molpy.builder.polymer.dsl import BuildPolymerAmber
+        from molpy.builder.polymer.tools import BuildPolymerAmber
 
         tool = BuildPolymerAmber()
         assert tool.reaction_preset == "dehydration"
@@ -209,10 +209,12 @@ class TestAmberExports:
         assert AmberPolymerBuilder is not None
 
     def test_tool_exports_amber(self):
-        """molpy.builder should export BuildPolymerAmber."""
-        from molpy.builder import BuildPolymerAmber
+        """BuildPolymerAmber is agent-only: lives in tools, not in builder exports."""
+        import molpy.builder as builder_pkg
+        from molpy.builder.polymer.tools import BuildPolymerAmber
 
         assert BuildPolymerAmber is not None
+        assert "BuildPolymerAmber" not in builder_pkg.__all__
 
     def test_no_old_amber_in_polymer_all(self):
         """Old AmberPolymerBuilder should NOT be in polymer.__all__."""

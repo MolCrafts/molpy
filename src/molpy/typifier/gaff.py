@@ -7,13 +7,15 @@ from molpy.core.atomistic import Atomistic
 from molpy.core.forcefield import AtomType, ForceField
 
 from .atomistic import (
-    ForceFieldAtomisticTypifier,
     ForceFieldAtomTypifier,
+    ForceFieldTypifier,
 )
 
 
-class GaffAtomTypifier(ForceFieldAtomTypifier):
+class _GaffAtomTypifier(ForceFieldAtomTypifier):
     """Assign atom types using SMARTS matcher for GAFF force field.
+
+    Internal helper for :class:`GaffTypifier`; not part of the public API.
 
     Key differences from OPLS:
     - Last-match-wins priority (later rules in the file override earlier ones)
@@ -118,8 +120,8 @@ class GaffAtomTypifier(ForceFieldAtomTypifier):
         return definitions
 
 
-class GaffAtomisticTypifier(ForceFieldAtomisticTypifier):
-    """GAFF atomistic typifier orchestrator.
+class GaffTypifier(ForceFieldTypifier):
+    """GAFF full typing orchestrator.
 
     Runs the full typing pipeline:
     atom typing -> pair typing -> bond typing -> angle typing -> dihedral typing
@@ -127,9 +129,5 @@ class GaffAtomisticTypifier(ForceFieldAtomisticTypifier):
 
     def _init_typifiers(self) -> None:
         if not self.skip_atom_typing:
-            self.atom_typifier = GaffAtomTypifier(self.ff, strict=self.strict_typing)
+            self.atom_typifier = _GaffAtomTypifier(self.ff, strict=self.strict_typing)
         super()._init_typifiers()
-
-
-# Backward-compatible alias
-GaffTypifier = GaffAtomisticTypifier

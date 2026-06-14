@@ -23,7 +23,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 :   Base class that aggregates entities and links into a container. Subclasses: `Atomistic`, `CoarseGrain`.
 
 **Topology**
-:   A thin wrapper around an igraph graph, derived from the bond list of an `Atomistic`. Provides graph algorithms (shortest paths, connected components, ring detection). See [Atomistic and Topology](../tutorials/01_atomistic_and_topology.md).
+:   The derived view of an `Atomistic`'s bond graph, computed by the molrs Rust kernels. `get_topo()` returns a new `Atomistic` with angles/dihedrals perceived from the bonds; `get_topo_neighbors()` / `get_topo_distances()` answer k-hop graph queries. There is no standalone topology class. See [Atomistic and Topology](../tutorials/01_atomistic_and_topology.md).
 
 **Block**
 :   A columnar table mapping string keys to NumPy arrays. All columns share the same row count. Used inside `Frame` to store atoms, bonds, angles, etc. See [Block and Frame](../tutorials/02_block_and_frame.md).
@@ -47,10 +47,10 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 :   An interaction family within a force field — for example, "harmonic" bonds or "lj126/cut" pairs. Defines which parameters are expected. Subclasses: `BondStyle`, `AngleStyle`, `DihedralStyle`, `PairStyle`.
 
 **Type**
-:   One concrete parameter record within a style. For example, a bond type "CT-OH" with `k0=320.0` and `r0=1.41`. Subclasses: `AtomType`, `BondType`, `AngleType`, `DihedralType`, `PairType`.
+:   One concrete parameter record within a style. For example, a bond type "CT-OH" with `k=320.0` and `r0=1.41`. Subclasses: `AtomType`, `BondType`, `AngleType`, `DihedralType`, `PairType`.
 
 **Potential**
-:   The numerical realization of a style's types — arrays of parameters ready for energy/force computation. Produced by `style.to_potential()`. See [Force Field](../tutorials/04_force_field.md).
+:   The numerical realization of a force field's styles and types, ready for energy/force computation. Produced by `ff.to_potentials()` (a deferred `Potentials`) and evaluated against a typed `Frame` via `pots.calc_energy(frame)` / `pots.calc_forces(frame)`; the kernels run in the molrs Rust extension. See [Force Field](../tutorials/04_force_field.md).
 
 
 ### Modules
@@ -65,7 +65,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 :   A marker on an atom (`<`, `>`, or `$`) indicating that it is a reactive connection point for polymerization.
 
 **Typifier**
-:   Assigns force field types to atoms, bonds, angles, and dihedrals via SMARTS pattern matching. Subclasses: `OplsAtomisticTypifier`, `GaffTypifier`. See [Force Field Typification](../user-guide/06_typifier.ipynb).
+:   Assigns force field types to atoms, bonds, angles, and dihedrals via SMARTS pattern matching. Subclasses: `OplsTypifier`, `GaffTypifier`, `ClpTypifier`. See [Force Field Typification](../user-guide/06_typifier.ipynb).
 
 **Selector**
 :   A composable predicate that filters atoms in a `Block` by element, type, coordinate range, or distance. Combinable with `&`, `|`, `~`. See [Selector](../tutorials/06_selector.md).

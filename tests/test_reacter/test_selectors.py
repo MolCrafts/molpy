@@ -14,7 +14,7 @@ import pytest
 
 from molpy.core.atomistic import Atom, Atomistic, Bond
 from molpy.reacter.selectors import (
-    find_port_atom,
+    find_port,
     select_all_hydrogens,
     select_dummy_atoms,
     select_hydroxyl_group,
@@ -34,7 +34,7 @@ class TestPortAnchorSelector:
 
         c["port"] = "1"
 
-        port_atom = find_port_atom(struct, "1")
+        port_atom = find_port(struct, "1")
 
         assert port_atom is c
 
@@ -48,7 +48,7 @@ class TestPortAnchorSelector:
         c1["port"] = "head"
         c2["port"] = "tail"
 
-        port_atom = find_port_atom(struct, "tail")
+        port_atom = find_port(struct, "tail")
 
         assert port_atom is c2
 
@@ -61,7 +61,7 @@ class TestPortAnchorSelector:
         # Don't set port
 
         with pytest.raises(ValueError, match="Port '1' not found"):
-            find_port_atom(struct, "1")
+            find_port(struct, "1")
 
 
 class TestRemoveOneH:

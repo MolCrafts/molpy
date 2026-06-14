@@ -34,11 +34,25 @@ class Connector:
     """Select ports and execute reactions between adjacent monomers.
 
     Port selection strategy (applied in order):
+
     1. Explicit port_map lookup for (left_label, right_label)
     2. Compatibility: ``>`` on left pairs with ``<`` on right
     3. Single-port: each side has exactly one unconsumed port
     4. Common name: both sides share a port name (for ``$`` ports)
     5. Raise AmbiguousPortsError
+
+    Args:
+        reacter: Default :class:`molpy.reacter.Reacter` executed at every
+            connection.
+        port_map: Optional explicit mapping
+            ``{(left_label, right_label): (left_port, right_port)}``.
+        overrides: Optional per-pair reacter overrides keyed like
+            ``port_map``.
+
+    Attributes:
+        default: The default reacter.
+        port_map: Explicit port mapping (may be empty).
+        overrides: Per-pair reacter overrides (may be empty).
     """
 
     def __init__(

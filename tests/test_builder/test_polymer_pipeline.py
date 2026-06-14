@@ -153,11 +153,11 @@ class TestFullPipeline:
         """Parse → Build → Typify → all atoms have types."""
         from molpy.data import get_forcefield_path
         from molpy.io.forcefield.xml import XMLForceFieldReader
-        from molpy.typifier import OplsAtomisticTypifier
+        from molpy.typifier import OplsTypifier
 
         peg = polymer("{[<]CCOCCO[>]}|5|", optimize=True)
         opls_ff = XMLForceFieldReader(get_forcefield_path("oplsaa.xml")).read()
-        typed = OplsAtomisticTypifier(opls_ff, strict_typing=False).typify(peg)
+        typed = OplsTypifier(opls_ff, strict_typing=False).typify(peg)
 
         untyped = [a for a in typed.atoms if a.get("type") is None]
         assert untyped == [], f"{len(untyped)} atoms untyped"

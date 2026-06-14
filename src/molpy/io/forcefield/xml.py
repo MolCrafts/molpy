@@ -5,13 +5,17 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-from molpy.core.forcefield import AtomisticForcefield, AtomType
-from molpy.potential.angle import AngleHarmonicStyle
-from molpy.potential.bond import BondHarmonicStyle
-from molpy.potential.dihedral import DihedralOPLSStyle
-from molpy.potential.dihedral.periodic import DihedralPeriodicStyle
-from molpy.potential.improper.periodic import ImproperPeriodicStyle
-from molpy.potential.pair import PairLJ126CoulCutStyle, PairLJ126CoulLongStyle
+from molpy.core.forcefield import (
+    AngleHarmonicStyle,
+    AtomisticForcefield,
+    AtomType,
+    BondHarmonicStyle,
+    DihedralOPLSStyle,
+    DihedralPeriodicStyle,
+    ImproperPeriodicStyle,
+    PairLJ126CoulCutStyle,
+    PairLJ126CoulLongStyle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,21 +143,35 @@ class XMLForceFieldReader:
         # overrides mapping: type -> overridden_type
         # Example: opls_961 overrides opls_962
         self._overrides: dict[str, str] = {}
+        # overlay layer for this read: 0 = base force field, >0 = overlay that
+        # extends/overrides the base. Atom types created during the read are
+        # tagged with this layer so the SMARTS typifier can give overlay
+        # patterns strictly higher priority than base ones (CL&P/CL&Pol over
+        # OPLS-AA). See _OplsAtomTypifier._extract_patterns.
+        self._layer: int = 0
 
         self._ff: AtomisticForcefield | None = None
 
     def read(
-        self, forcefield: AtomisticForcefield | None = None
+        self,
+        forcefield: AtomisticForcefield | None = None,
+        layer: int = 0,
     ) -> AtomisticForcefield:
         """
         Read and parse the XML force field file.
 
         Args:
             forcefield: Optional existing force field to populate. If None, creates new one.
+            layer: Overlay level for this read. ``0`` (default) is the base
+                force field; a positive value marks every atom type parsed here
+                as an overlay that overrides the base during SMARTS typing
+                (higher layer wins). Used to stack ``oplsaa.xml`` (layer 0) →
+                ``clp.xml`` (layer 1) → ``clpol.xml`` (layer 2).
 
         Returns:
             Populated AtomisticForcefield object
         """
+        self._layer = layer
         if not self._file.exists():
             raise FileNotFoundError(f"Force field file not found: {self._file}")
 
@@ -258,6 +276,12 @@ class XMLForceFieldReader:
         # Normalize input
         type_ = _normalize_to_wildcard(type_)
         class_ = _normalize_to_wildcard(class_)
+
+        # Tag overlay-layer types so the typifier can rank them above the base.
+        # Only set when reading an overlay (layer > 0) to keep base atom types
+        # byte-for-byte identical to the pre-layer behavior.
+        if self._layer:
+            kwargs.setdefault("layer", self._layer)
 
         # Normalize class (resolve aliases)
         # If class not in _class_to_atomtype, try alias resolution
@@ -455,7 +479,7 @@ class XMLForceFieldReader:
             k = float(k_str) if k_str else 0.0
 
             # Define bond type
-            bondstyle.def_type(at1, at2, k, r0)
+            bondstyle.def_type(at1, at2, k=k, r0=r0)
             count += 1
 
         logger.info(f"Parsed {count} bond types")
@@ -504,7 +528,7 @@ class XMLForceFieldReader:
             k = float(k_str) if k_str else 0.0
 
             # Define angle type (theta0 in radians)
-            anglestyle.def_type(at1, at2, at3, k, theta0)
+            anglestyle.def_type(at1, at2, at3, k=k, theta0=theta0)
             count += 1
 
         logger.info(f"Parsed {count} angle types")
@@ -554,7 +578,9 @@ class XMLForceFieldReader:
             c5 = float(dihedral_elem.get("c5", "0.0"))
 
             # Use standard API to define dihedral type
-            dihedralstyle.def_type(at1, at2, at3, at4, c0, c1, c2, c3, c4, c5)
+            dihedralstyle.def_type(
+                at1, at2, at3, at4, c0=c0, c1=c1, c2=c2, c3=c3, c4=c4, c5=c5
+            )
             count += 1
 
         logger.info(f"Parsed {count} dihedral types")
@@ -674,11 +700,10 @@ class XMLForceFieldReader:
         coulomb14scale = element.get("coulomb14scale", "0.5")
         lj14scale = element.get("lj14scale", "0.5")
 
-        pairstyle = self._ff.def_style(
-            PairLJ126CoulCutStyle(
-                coulomb14scale=float(coulomb14scale),
-                lj14scale=float(lj14scale),
-            )
+        pairstyle = self._ff.def_pairstyle(
+            "lj/cut/coul/cut",
+            coulomb14scale=float(coulomb14scale),
+            lj14scale=float(lj14scale),
         )
         count = 0
 
@@ -713,14 +738,18 @@ class XMLForceFieldReader:
 
             # Define pair parameters (self-interaction)
             # If atomtype exists, update its params; else create new pair type
-            pairstyle.def_type(atomtype, atomtype, epsilon, sigma, charge)
+            pairstyle.def_type(
+                atomtype, atomtype, epsilon=epsilon, sigma=sigma, charge=charge
+            )
             count += 1
 
         logger.info(f"Parsed {count} nonbonded parameters")
 
 
 def read_xml_forcefield(
-    filepath: str | Path, forcefield: AtomisticForcefield | None = None
+    filepath: str | Path,
+    forcefield: AtomisticForcefield | None = None,
+    layer: int = 0,
 ) -> AtomisticForcefield:
     """
     Convenience function to read an XML force field file.
@@ -729,6 +758,9 @@ def read_xml_forcefield(
         filepath: Path to the XML force field file, or filename for built-in files
                  (e.g., "oplsaa.xml" will load from molpy/data/forcefield/)
         forcefield: Optional existing force field to populate
+        layer: Overlay level (0 = base, >0 = overlay that overrides the base
+            during SMARTS typing). Pass ``layer=1`` when stacking ``clp.xml``
+            onto an already-loaded ``oplsaa.xml`` so CL&P types win conflicts.
 
     Returns:
         Populated AtomisticForcefield object
@@ -737,17 +769,16 @@ def read_xml_forcefield(
         >>> # Load built-in OPLS-AA force field
         >>> ff = read_xml_forcefield("oplsaa.xml")
         >>>
-        >>> # Load custom force field from path
-        >>> from pathlib import Path
-        >>> ff = read_xml_forcefield(Path("/path/to/custom.xml"))
+        >>> # Overlay CL&P on top of OPLS-AA (CL&P overrides where it matches)
+        >>> ff = read_xml_forcefield("clp.xml", ff, layer=1)
     """
-    # Check if this is oplsaa.xml and use specialized reader
-    filepath_obj = Path(filepath)
-    if filepath_obj.name == "oplsaa.xml" or str(filepath).endswith("oplsaa.xml"):
-        return read_oplsaa_forcefield(filepath, forcefield)
+    # oplsaa.xml and clp.xml share the OPLS-AA functional form and units, so
+    # both are read through the specialized OPLS reader (kJ->kcal, nm->A).
+    if str(filepath).endswith(("oplsaa.xml", "clp.xml", "clpol.xml")):
+        return read_oplsaa_forcefield(filepath, forcefield, layer=layer)
 
     reader = XMLForceFieldReader(filepath)
-    return reader.read(forcefield)
+    return reader.read(forcefield, layer=layer)
 
 
 class OPLSAAForceFieldReader(XMLForceFieldReader):
@@ -815,7 +846,7 @@ class OPLSAAForceFieldReader(XMLForceFieldReader):
             )  # kJ/mol/nm² to kcal/mol/Å² (accounting for 0.5 factor difference)
 
             # Define bond type
-            bondstyle.def_type(at1, at2, k, r0)
+            bondstyle.def_type(at1, at2, k=k, r0=r0)
             count += 1
 
         logger.info(f"Parsed {count} bond types (OPLS-AA with unit conversion)")
@@ -871,7 +902,7 @@ class OPLSAAForceFieldReader(XMLForceFieldReader):
             )  # kJ/mol/rad² to kcal/mol/rad² (accounting for 0.5 factor difference)
 
             # Define angle type (theta0 in radians)
-            anglestyle.def_type(at1, at2, at3, k, theta0)
+            anglestyle.def_type(at1, at2, at3, k=k, theta0=theta0)
             count += 1
 
         logger.info(f"Parsed {count} angle types (OPLS-AA with unit conversion)")
@@ -924,7 +955,7 @@ class OPLSAAForceFieldReader(XMLForceFieldReader):
             # Convert RB format to OPLS format (F1-F4) for LAMMPS
             # LAMMPS OPLS dihedral: E = 0.5*(F1*(1+cos(phi)) + F2*(1-cos(2*phi)) + F3*(1+cos(3*phi)) + F4*(1-cos(4*phi)))
             # Conversion formula: F1 = -2*C1 - 3/2*C3, F2 = -C2 - C4, F3 = -1/2*C3, F4 = -1/4*C4
-            from molpy.potential.dihedral.opls import rb_to_opls
+            from molpy.io.forcefield._rb_opls import rb_to_opls
 
             k1, k2, k3, k4 = rb_to_opls(c0, c1, c2, c3, c4, c5, units="kJ")
             # k1-k4 are now in kcal/mol (LAMMPS format)
@@ -950,11 +981,10 @@ class OPLSAAForceFieldReader(XMLForceFieldReader):
         lj14scale = element.get("lj14scale", "0.5")
 
         # Use lj/cut/coul/long instead of lj/cut/coul/cut for OPLS-AA
-        pairstyle = self._ff.def_style(
-            PairLJ126CoulLongStyle(
-                coulomb14scale=float(coulomb14scale),
-                lj14scale=float(lj14scale),
-            )
+        pairstyle = self._ff.def_pairstyle(
+            "lj/cut/coul/long",
+            coulomb14scale=float(coulomb14scale),
+            lj14scale=float(lj14scale),
         )
         count = 0
 
@@ -991,7 +1021,13 @@ class OPLSAAForceFieldReader(XMLForceFieldReader):
             sigma_lammps = sigma_opls * 10.0  # nm to Angstrom
 
             # Define pair parameters (self-interaction)
-            pairstyle.def_type(atomtype, atomtype, epsilon_lammps, sigma_lammps, charge)
+            pairstyle.def_type(
+                atomtype,
+                atomtype,
+                epsilon=epsilon_lammps,
+                sigma=sigma_lammps,
+                charge=charge,
+            )
             count += 1
 
         logger.info(
@@ -1000,7 +1036,9 @@ class OPLSAAForceFieldReader(XMLForceFieldReader):
 
 
 def read_oplsaa_forcefield(
-    filepath: str | Path, forcefield: AtomisticForcefield | None = None
+    filepath: str | Path,
+    forcefield: AtomisticForcefield | None = None,
+    layer: int = 0,
 ) -> AtomisticForcefield:
     """
     Read OPLS-AA force field with proper unit conversions for LAMMPS.
@@ -1021,7 +1059,7 @@ def read_oplsaa_forcefield(
         >>> ff = read_oplsaa_forcefield("oplsaa.xml")
     """
     reader = OPLSAAForceFieldReader(filepath)
-    return reader.read(forcefield)
+    return reader.read(forcefield, layer=layer)
 
 
 # ============================================================================
@@ -1067,31 +1105,32 @@ class XMLForceFieldWriter:
         if atom_types:
             self._write_atomtypes(root, atom_types)
 
-        # Bonds
+        # Bonds — molrs returns styles as their base category class, so dispatch
+        # on the style's kernel name, not its (unavailable) specialized class.
         for style in forcefield.get_styles(BondStyle):
-            if isinstance(style, BondHarmonicStyle):
+            if style.name == "harmonic":
                 self._write_harmonic_bonds(root, style)
 
         # Angles
         for style in forcefield.get_styles(AngleStyle):
-            if isinstance(style, AngleHarmonicStyle):
+            if style.name == "harmonic":
                 self._write_harmonic_angles(root, style)
 
         # Dihedrals
         for style in forcefield.get_styles(DihedralStyle):
-            if isinstance(style, DihedralOPLSStyle):
+            if style.name == "opls":
                 self._write_rb_torsions(root, style)
-            elif isinstance(style, DihedralPeriodicStyle):
+            elif style.name == "periodic":
                 self._write_periodic_torsions(root, style)
 
         # Impropers
         for style in forcefield.get_styles(ImproperStyle):
-            if isinstance(style, ImproperPeriodicStyle):
+            if style.name == "periodic":
                 self._write_periodic_impropers(root, style)
 
         # Nonbonded (pairs)
         for style in forcefield.get_styles(PairStyle):
-            if isinstance(style, (PairLJ126CoulCutStyle, PairLJ126CoulLongStyle)):
+            if style.name in ("lj/cut/coul/cut", "lj/cut/coul/long"):
                 self._write_nonbonded(root, style)
 
         ET.indent(root)
@@ -1154,7 +1193,7 @@ class XMLForceFieldWriter:
     def _write_harmonic_bonds(self, root: ET.Element, style: BondHarmonicStyle) -> None:
         from molpy.core.forcefield import BondType
 
-        types = list(style.types.bucket(BondType))
+        types = list(style.get_types(BondType))
         if not types:
             return
         section = ET.SubElement(root, "HarmonicBondForce")
@@ -1174,7 +1213,7 @@ class XMLForceFieldWriter:
     ) -> None:
         from molpy.core.forcefield import AngleType
 
-        types = list(style.types.bucket(AngleType))
+        types = list(style.get_types(AngleType))
         if not types:
             return
         section = ET.SubElement(root, "HarmonicAngleForce")
@@ -1194,7 +1233,7 @@ class XMLForceFieldWriter:
     def _write_rb_torsions(self, root: ET.Element, style: DihedralOPLSStyle) -> None:
         from molpy.core.forcefield import DihedralType
 
-        types = list(style.types.bucket(DihedralType))
+        types = list(style.get_types(DihedralType))
         if not types:
             return
         section = ET.SubElement(root, "RBTorsionForce")
@@ -1217,7 +1256,7 @@ class XMLForceFieldWriter:
     ) -> None:
         from molpy.core.forcefield import DihedralType
 
-        types = list(style.types.bucket(DihedralType))
+        types = list(style.get_types(DihedralType))
         if not types:
             return
         section = ET.SubElement(root, "PeriodicTorsionForce")
@@ -1248,7 +1287,7 @@ class XMLForceFieldWriter:
     ) -> None:
         from molpy.core.forcefield import ImproperType
 
-        types = list(style.types.bucket(ImproperType))
+        types = list(style.get_types(ImproperType))
         if not types:
             return
         section = ET.SubElement(root, "PeriodicImproperForce")
@@ -1279,11 +1318,11 @@ class XMLForceFieldWriter:
     ) -> None:
         from molpy.core.forcefield import PairType
 
-        types = list(style.types.bucket(PairType))
+        types = list(style.get_types(PairType))
         if not types:
             return
         section = ET.SubElement(root, "NonbondedForce")
-        skw = style.params.kwargs
+        skw = style._ff.style_params(style.category, style.name) or {}
         section.set("coulomb14scale", self._fmt(skw.get("coulomb14scale", 0.5)))
         section.set("lj14scale", self._fmt(skw.get("lj14scale", 0.5)))
 

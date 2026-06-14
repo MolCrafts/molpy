@@ -33,8 +33,3 @@ class StaticStructureFactorDebye(Compute):
 
     def __call__(self, frames):
         return self._inner.compute(frames)
-
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError(
-            "StaticStructureFactorDebye takes (frames); call directly"
-        )
