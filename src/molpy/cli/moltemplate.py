@@ -154,7 +154,9 @@ def _cmd_parse(args: argparse.Namespace) -> int:
 
     doc = parse_file(args.script)
     if args.json:
-        args.json.write_text(json.dumps(_ir_to_jsonable(doc), indent=2))
+        args.json.write_text(
+            json.dumps(_ir_to_jsonable(doc), indent=2), encoding="utf-8"
+        )
         print(f"IR written to {args.json}")
         return 0
     # Default: print a summary
@@ -168,19 +170,19 @@ def _cmd_parse(args: argparse.Namespace) -> int:
 
 
 def _cmd_info(args: argparse.Namespace) -> int:
-    from molpy.core.forcefield import AtomStyle, AtomType
+    from molpy.core.forcefield import AtomType
     from molpy.io.forcefield.moltemplate import read_moltemplate_system
 
     atomistic, ff = read_moltemplate_system(args.script)
-    astyle = ff.get_style_by_name("full", AtomStyle)
-    n_atomtypes = len(astyle.types.bucket(AtomType)) if astyle else 0
+    astyle = ff.get_style("atom", "full")
+    n_atomtypes = len(astyle.get_types(AtomType)) if astyle else 0
     print(f"{args.script}:")
     print(f"  atom types: {n_atomtypes}")
     print(f"  atoms:      {len(list(atomistic.atoms))}")
     print(f"  bonds:      {len(list(atomistic.bonds))}")
     print(f"  angles:     {len(list(atomistic.angles))}")
     print(f"  dihedrals:  {len(list(atomistic.dihedrals))}")
-    print(f"  ff styles:  {len(list(ff.styles.bucket(object)))}")
+    print(f"  ff styles:  {len(list(ff.styles))}")
     return 0
 
 

@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from ..core.trajectory import Trajectory
 
 
-class JACF(Compute["Trajectory", JACFResult]):
+class JACF(Compute):
     """Green-Kubo ionic conductivity from the charge-current autocorrelation.
 
     Args:
@@ -84,7 +84,7 @@ class JACF(Compute["Trajectory", JACFResult]):
         self.volume = volume
         self.n_cache = int(max_dt / dt)
 
-    def _compute(self, trajectory: "Trajectory") -> JACFResult:
+    def __call__(self, trajectory: "Trajectory") -> JACFResult:
         current_list: list[NDArray] = []
         volumes: list[float] = []
 
@@ -101,9 +101,12 @@ class JACF(Compute["Trajectory", JACFResult]):
             a_mask = elems == self.anion_type
             j = np.sum(vel[c_mask], axis=0) - np.sum(vel[a_mask], axis=0)  # (3,)
             current_list.append(j)
-            if frame.box is None:
-                raise ValueError("Frame must contain box information")
-            volumes.append(float(frame.box.volume))
+            if frame.box is None or frame.box.is_free:
+                raise ValueError(
+                    "Frame must carry a non-free Box (volume is required for the "
+                    "Green-Kubo conductivity prefactor)."
+                )
+            volumes.append(float(frame.box.volume()))
 
         current = np.asarray(current_list, dtype=np.float64)  # (F, 3)
         if current.shape[0] < 2:

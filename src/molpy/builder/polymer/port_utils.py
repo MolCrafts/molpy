@@ -41,6 +41,10 @@ def ports_compatible(a: str, b: str) -> bool:
 def get_ports(struct: Atomistic) -> dict[str, list[Atom]]:
     """Get all ports from an Atomistic structure.
 
+    Complexity: O(atoms) full scan — intended for the initial
+    per-monomer scan; the build loop keeps a port registry instead of
+    rescanning grown structures.
+
     Returns a dictionary mapping port names to lists of atoms with those ports.
     """
     ports: dict[str, list[Atom]] = {}
@@ -53,7 +57,7 @@ def get_ports(struct: Atomistic) -> dict[str, list[Atom]]:
     return ports
 
 
-# Alias used by stochastic modules
+# Backwards-compat alias for get_ports
 get_all_ports = get_ports
 
 
@@ -66,7 +70,11 @@ def get_port_atom(struct: Atomistic, port_name: str) -> Atom | None:
 
 
 def get_ports_on_node(struct: Atomistic, node_id: int) -> dict[str, list[Atom]]:
-    """Get all ports on atoms belonging to a specific monomer_node_id."""
+    """Get all ports on atoms belonging to a specific monomer_node_id.
+
+    Complexity: O(atoms) full scan — used for the initial per-monomer
+    scan only; connections read live ports from the build registry.
+    """
     ports: dict[str, list[Atom]] = {}
     for atom in struct.atoms:
         if atom.get("monomer_node_id") != node_id:

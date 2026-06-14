@@ -16,8 +16,8 @@ class TestReactionPresetSpec:
         spec = ReactionPresetSpec(
             name="test",
             description="test desc",
-            site_selector_left=select_self,
-            site_selector_right=select_self,
+            anchor_selector_left=select_self,
+            anchor_selector_right=select_self,
             leaving_selector_left=select_hydrogens(1),
             leaving_selector_right=select_hydrogens(1),
             bond_former=form_single_bond,
@@ -29,8 +29,8 @@ class TestReactionPresetSpec:
         spec = ReactionPresetSpec(
             name="my_preset",
             description="My preset",
-            site_selector_left=select_self,
-            site_selector_right=select_self,
+            anchor_selector_left=select_self,
+            anchor_selector_right=select_self,
             leaving_selector_left=select_hydrogens(1),
             leaving_selector_right=select_hydrogens(1),
             bond_former=form_single_bond,
@@ -63,15 +63,15 @@ class TestReactionPresets:
         spec = ReactionPresets.get_spec("dehydration")
         assert isinstance(spec, ReactionPresetSpec)
         assert spec.name == "dehydration"
-        assert spec.site_selector_left is select_self
+        assert spec.anchor_selector_left is select_self
         assert spec.bond_former is form_single_bond
 
     def test_register_custom(self):
         custom_spec = ReactionPresetSpec(
             name="_test_custom_preset",
             description="Custom test preset",
-            site_selector_left=select_self,
-            site_selector_right=select_self,
+            anchor_selector_left=select_self,
+            anchor_selector_right=select_self,
             leaving_selector_left=select_hydrogens(1),
             leaving_selector_right=select_hydrogens(1),
             bond_former=form_single_bond,
@@ -92,8 +92,8 @@ class TestReactionPresets:
                 ReactionPresetSpec(
                     name="dehydration",
                     description="duplicate",
-                    site_selector_left=select_self,
-                    site_selector_right=select_self,
+                    anchor_selector_left=select_self,
+                    anchor_selector_right=select_self,
                     leaving_selector_left=select_hydrogens(1),
                     leaving_selector_right=select_hydrogens(1),
                     bond_former=form_single_bond,

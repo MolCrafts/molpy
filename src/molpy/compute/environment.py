@@ -29,6 +29,3 @@ class BondOrder(Compute):
 
     def __call__(self, frames, nlists):
         return self._inner.compute(frames, nlists)
-
-    def _compute(self, input):  # pragma: no cover — use __call__
-        raise NotImplementedError("BondOrder takes (frames, nlists); call directly")

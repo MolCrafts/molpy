@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from ..core.trajectory import Trajectory
 
 
-class Onsager(Compute["Trajectory", OnsagerResult]):
+class Onsager(Compute):
     """Compute Onsager collective-displacement cross-correlations.
 
     Args:
@@ -73,7 +73,7 @@ class Onsager(Compute["Trajectory", OnsagerResult]):
         self.center_of_mass = center_of_mass
         self.n_cache = int(max_dt / dt)
 
-    def _compute(self, trajectory: "Trajectory") -> OnsagerResult:
+    def __call__(self, trajectory: "Trajectory") -> OnsagerResult:
         coords_list: list[NDArray] = []
         elems_list: list[NDArray] = []
         boxes: list = []

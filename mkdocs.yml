@@ -74,6 +74,11 @@ plugins:
   - search
   - mkdocs-jupyter:
       execute: true
+      # 04_crosslinking runs a real LAMMPS bond/react simulation (needs the
+      # `lmp_serial` executable). Render it without executing so the docs build
+      # in environments without LAMMPS installed.
+      execute_ignore:
+        - "user-guide/04_crosslinking.ipynb"
       # include_source: true
   - mkdocstrings:
       handlers:
@@ -154,7 +159,6 @@ nav:
       - Engine: api/engine.md
       - Optimization: api/optimize.md
       - Compute: api/compute.md
-      - Legacy: api/legacy.md
 
   - Developer Guide:
       - developer/index.md

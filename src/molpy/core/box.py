@@ -43,16 +43,24 @@ class Box(molrs.Box):
             to ``[0, 0, 0]``.
     """
 
-    class Style(Enum):
-        """Enumeration of simulation-box geometries."""
+    class Style(str, Enum):
+        """Enumeration of simulation-box geometries.
 
-        FREE = 0
-        ORTHOGONAL = 1
-        TRICLINIC = 2
+        Values are the canonical molrs style strings so a ``molpy.Box.Style``
+        member compares equal to the string returned by ``molrs.Box.style``
+        (e.g. ``Box.Style.ORTHOGONAL == "orthogonal"``), letting ``frame.box``
+        (a molrs box) interoperate with molpy style checks.
+        """
 
-    # FREE boxes need a non-singular placeholder for the molrs base
-    # (which rejects det(h)==0). The Python-side ``_is_free`` flag
-    # restores zero-volume / zero-matrix semantics for FREE.
+        FREE = "free"
+        ORTHOGONAL = "orthogonal"
+        TRICLINIC = "triclinic"
+
+    # FREE boxes carry an identity placeholder cell so the molrs base (which
+    # rejects det(h)==0) can hold them and its geometry ops degrade to no-ops.
+    # Their "no-cell" nature is recorded in the molrs base as
+    # ``cell_defined=False`` (the single source of truth) — there is no
+    # Python-side ``_is_free`` shadow.
     _PLACEHOLDER_H: np.ndarray = np.eye(3)
 
     # ────────────────────────────────────────────────────────────────────
@@ -66,11 +74,18 @@ class Box(molrs.Box):
         origin: ArrayLike | None = None,
     ):
         is_free, h = cls._normalize_matrix(matrix)
-        pbc_arr = cls._normalize_pbc(pbc)
+        # A FREE box defaults to non-periodic on every axis (pbc all-False), in
+        # addition to being marked cell_defined=False below.
+        if pbc is None and is_free:
+            pbc_arr = np.zeros(3, dtype=bool)
+        else:
+            pbc_arr = cls._normalize_pbc(pbc)
         origin_arr = cls._normalize_origin(origin)
-        instance = super().__new__(cls, h, origin=origin_arr, pbc=pbc_arr)
-        instance._is_free = is_free
-        return instance
+        # ``cell_defined=False`` records the FREE (no-cell) nature in the molrs
+        # base; ``is_free`` / ``style`` / ``volume`` read it back from there.
+        return super().__new__(
+            cls, h, origin=origin_arr, pbc=pbc_arr, cell_defined=not is_free
+        )
 
     def __init__(
         self,
@@ -117,28 +132,34 @@ class Box(molrs.Box):
     @property
     def matrix(self) -> np.ndarray:
         """Box matrix with lattice vectors as columns, shape ``(3, 3)``."""
-        if self._is_free:
+        if self.is_free:
             return np.zeros((3, 3))
         return np.asarray(self.h)
 
     @property
     def is_free(self) -> bool:
-        """``True`` if this box is FREE (no periodicity, zero volume)."""
-        return self._is_free
+        """``True`` if this box is FREE (no defined cell, zero volume).
+
+        Derived from the molrs base's ``cell_defined`` flag — the single source
+        of truth — not a Python-side shadow.
+        """
+        return not self.cell_defined
 
     @property
     def style(self) -> "Box.Style":
         """FREE / ORTHOGONAL / TRICLINIC depending on the matrix shape."""
-        if self._is_free:
+        if self.is_free:
             return Box.Style.FREE
         return self.calc_style_from_matrix(self.matrix)
 
     @property
     def volume(self) -> float:
         """Box volume in Angstroms³ (zero for FREE)."""
-        if self._is_free:
+        if self.is_free:
             return 0.0
-        return float(np.abs(np.linalg.det(self.matrix)))
+        # Delegate to the inherited molrs Rust kernel (the FREE placeholder
+        # matrix has no meaningful volume, hence the guard above).
+        return float(molrs.Box.volume(self))
 
     # ── backward-compat private aliases ────────────────────────────────
     # Internal methods (wrap / diff / make_fractional / transform / …)
@@ -249,8 +270,19 @@ class Box(molrs.Box):
 
     @classmethod
     def from_box(cls, box: "Box") -> "Box":
-        """Copy constructor."""
-        return cls(box.matrix.copy(), box._pbc.copy(), box._origin.copy())
+        """Copy / upgrade constructor.
+
+        Accepts a molpy ``Box`` or a bare ``molrs.Box`` (e.g. ``frame.box``),
+        reading only the public ``matrix`` / ``pbc`` / ``origin`` accessors so it
+        works across both. A free source box reconstructs a free molpy box.
+        """
+        if getattr(box, "is_free", False):
+            return cls()
+        return cls(
+            np.asarray(box.matrix).copy(),
+            np.asarray(box.pbc).copy(),
+            np.asarray(box.origin).copy(),
+        )
 
     @classmethod
     def from_bounds(
@@ -368,7 +400,10 @@ class Box(molrs.Box):
 
     @property
     def tilts(self) -> np.ndarray:
-        return np.array([self.xy, self.xz, self.yz])
+        if self.is_free:
+            return np.array([self.xy, self.xz, self.yz])
+        # Inherited molrs Rust kernel (returns [xy, xz, yz]).
+        return np.asarray(super().tilts)
 
     # ────────────────────────────────────────────────────────────────────
     # PBC flags
@@ -404,9 +439,10 @@ class Box(molrs.Box):
 
         Returns zeros for FREE.
         """
-        if self._is_free:
+        if self.is_free:
             return np.zeros(3)
-        return self.calc_lengths_angles_from_matrix(self.matrix)[0]
+        # Inherited molrs Rust kernel (FREE placeholder has no lattice).
+        return np.asarray(super().lengths)
 
     @property
     def angles(self) -> np.ndarray:
@@ -547,14 +583,12 @@ class Box(molrs.Box):
         return xyz
 
     def wrap_orthogonal(self, xyz: np.ndarray) -> np.ndarray:
-        lengths = self.lengths
-        return xyz - np.floor(xyz / lengths) * lengths
+        # Inherited molrs Rust kernel (PBC-aware, per-axis).
+        return molrs.Box.wrap(self, np.asarray(xyz))
 
     def wrap_triclinic(self, xyz: np.ndarray) -> np.ndarray:
-        xyz = np.atleast_2d(xyz)
-        frac = self.make_fractional(xyz)
-        frac_wrapped = frac - np.floor(frac)
-        return self.make_absolute(frac_wrapped)
+        # Inherited molrs Rust kernel (fractional wrap via to_frac/to_cart).
+        return molrs.Box.wrap(self, np.asarray(xyz))
 
     def unwrap(self, xyz: np.ndarray, image: np.ndarray) -> np.ndarray:
         return xyz + image @ self._matrix.T
@@ -567,13 +601,17 @@ class Box(molrs.Box):
         return np.linalg.inv(self._matrix)
 
     def diff_dr(self, dr: np.ndarray) -> np.ndarray:
-        match self.style:
-            case Box.Style.FREE:
-                return dr
-            case Box.Style.ORTHOGONAL | Box.Style.TRICLINIC:
-                fractional = self.make_fractional(dr)
-                fractional -= np.round(fractional)
-                return np.dot(self._matrix, fractional.T).T
+        dr = np.asarray(dr, dtype=float)
+        if self.style is Box.Style.FREE:
+            return dr
+        # Minimum-image displacement via the inherited molrs Rust kernel:
+        # ``delta(a, b)`` is ``minimum_image(b - a)``, so ``delta(0, dr)`` is
+        # ``minimum_image(dr)``.
+        if dr.ndim == 1:
+            return molrs.Box.delta(
+                self, np.zeros((1, 3)), dr.reshape(1, 3), minimum_image=True
+            )[0]
+        return molrs.Box.delta(self, np.zeros_like(dr), dr, minimum_image=True)
 
     def diff(self, r1: np.ndarray, r2: np.ndarray) -> np.ndarray:
         return self.diff_dr(r1 - r2)
@@ -595,15 +633,27 @@ class Box(molrs.Box):
         return np.linalg.norm(dr, axis=-1)
 
     def make_fractional(self, xyz: np.ndarray) -> np.ndarray:
-        return (xyz - self._origin) @ self.get_inv().T
+        # Cartesian -> fractional via the inherited molrs Rust kernel (to_frac);
+        # the free-box placeholder-identity matrix gives the same result as the
+        # former NumPy ``(xyz - origin) @ inv(matrix).T``.
+        arr = np.asarray(xyz, dtype=float)
+        if arr.ndim == 1:
+            return self.to_frac(arr.reshape(1, 3))[0]
+        return self.to_frac(arr)
 
     def make_absolute(self, xyz: np.ndarray) -> np.ndarray:
-        return xyz @ self._matrix.T + self._origin
+        # Fractional -> Cartesian via the inherited molrs Rust kernel (to_cart).
+        arr = np.asarray(xyz, dtype=float)
+        if arr.ndim == 1:
+            return self.to_cart(arr.reshape(1, 3))[0]
+        return self.to_cart(arr)
 
     def isin(self, xyz: np.ndarray):
-        xyz = np.asarray(xyz)
-        fractional = self.make_fractional(xyz)
-        return np.all((fractional >= 0) & (fractional < 1), axis=-1)
+        # Inside-primary-cell test via the inherited molrs Rust kernel.
+        arr = np.asarray(xyz, dtype=float)
+        if arr.ndim == 1:
+            return bool(molrs.Box.isin(self, arr.reshape(1, 3))[0])
+        return molrs.Box.isin(self, arr)
 
     def merge(self, other: "Box") -> "Box":
         return Box(matrix=other.matrix)

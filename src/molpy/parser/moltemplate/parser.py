@@ -619,7 +619,7 @@ def parse_file(path: str | Path) -> Document:
         key = None
     if key is not None and key in _PARSE_CACHE:
         return _PARSE_CACHE[key]
-    doc = parse_string(p.read_text())
+    doc = parse_string(p.read_text(encoding="utf-8"))
     if key is not None:
         _PARSE_CACHE[key] = doc
     return doc

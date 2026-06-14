@@ -26,7 +26,7 @@ class Pca(Compute):
         super().__init__()
         self._impl = _MolrsPca2()
 
-    def _compute(self, rows):
+    def __call__(self, rows):
         return self._impl.compute(rows)
 
 
@@ -47,7 +47,7 @@ class KMeans(Compute):
         super().__init__(k=k, max_iter=max_iter, seed=seed)
         self._impl = _MolrsKMeans(k, max_iter, seed)
 
-    def _compute(self, pca_result):
+    def __call__(self, pca_result):
         return self._impl.compute(pca_result)
 
 

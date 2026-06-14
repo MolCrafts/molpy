@@ -1,86 +1,84 @@
-"""Verify ``molpy.Frame`` truly inherits from ``molrs.Frame``.
+"""Verify ``molpy.Frame`` collapses onto the canonical ``molrs.Frame``.
 
-These tests guarantee:
+After the ``frame-block-sink`` cutover, molpy no longer subclasses the molrs
+column store. These tests pin the new contract:
 
-1. ``molpy.Frame`` IS-A ``molrs.Frame`` so any ``molrs.*`` API that takes
-   a frame accepts a molpy frame without a ``.to_molrs()`` / ``._inner``
-   bridge.
-2. Python-only state (``metadata`` dict, object-dtype block columns) is
-   invisible to the Rust slot — molrs kernels only see what they
-   already understood.
-3. ``frame.box`` getter still returns a ``molpy.Box`` (which itself
-   inherits ``molrs.Box``), preserving molpy's enriched Box API.
+1. ``molpy.core.frame.Frame is molrs.Frame`` — identity, not a subclass.
+2. The frame carries the rich molrs API (metadata dict, blocks, to_dict) and is
+   accepted directly by every ``molrs.*`` API.
+3. ``frame.box`` returns the molrs box carrying the enriched accessors that were
+   sunk into molrs (``is_free`` / ``style`` / ``volume``).
+4. Object / None columns are rejected fail-fast (numpy-only Store contract).
 """
 
 import molrs
 import numpy as np
+import pytest
 
-import molpy
 from molpy.core.frame import Block, Frame
 
 
-class TestFrameInheritance:
-    """``molpy.Frame`` IS-A ``molrs.Frame``."""
+class TestFrameIdentityCollapse:
+    """``molpy.Frame`` IS ``molrs.Frame`` (no intermediate subclass)."""
 
-    def test_molpy_frame_is_a_molrs_frame(self):
-        f = Frame()
-        assert isinstance(f, molrs.Frame)
-        assert isinstance(f, Frame)
+    def test_frame_is_molrs_frame(self):
+        assert Frame is molrs.Frame
 
-    def test_subclass_relation_holds_at_type_level(self):
-        assert issubclass(Frame, molrs.Frame)
+    def test_instance_is_molrs_frame(self):
+        assert isinstance(Frame(), molrs.Frame)
 
-    def test_frame_directly_accepted_by_molrs_api(self, tmp_path):
-        """A ``molpy.Frame`` must extract through PyO3's ``Frame`` downcast
-        — exercised via ``molrs.write_xyz`` which signature takes
-        ``Frame``."""
+    def test_frame_accepted_by_molrs_api(self, tmp_path):
         f = Frame()
         atoms = Block()
-        atoms["symbol"] = np.array(["H"], dtype=object)
-        atoms["x"] = np.array([0.0], dtype=np.float32)
-        atoms["y"] = np.array([0.0], dtype=np.float32)
-        atoms["z"] = np.array([0.0], dtype=np.float32)
+        atoms["symbol"] = np.array(["H"])  # native str column (numpy-only)
+        atoms["x"] = np.array([0.0], dtype=np.float64)
+        atoms["y"] = np.array([0.0], dtype=np.float64)
+        atoms["z"] = np.array([0.0], dtype=np.float64)
         f["atoms"] = atoms
-
         out = tmp_path / "from_molpy.xyz"
         molrs.write_xyz(str(out), f)
         assert out.exists()
 
 
-class TestPythonOnlyStateIsolation:
-    """``metadata`` and object-dtype columns are invisible to Rust kernels."""
+class TestRichFrameSurface:
+    """The collapsed Frame exposes the molrs rich API."""
 
-    def test_metadata_lives_on_python_side(self):
+    def test_metadata(self):
         f = Frame(timestep=42, description="water box")
         assert f.metadata["timestep"] == 42
         assert f.metadata["description"] == "water box"
 
     def test_metadata_survives_molrs_roundtrip(self, tmp_path):
-        """metadata must persist on the Python side even after the frame
-        passes through a molrs API call. The molrs API only touches the
-        Rust slot — metadata is invisible there and untouched."""
         f = Frame(timestep=7)
         atoms = Block()
-        atoms["x"] = np.array([1.0], dtype=np.float32)
-        atoms["y"] = np.array([0.0], dtype=np.float32)
-        atoms["z"] = np.array([0.0], dtype=np.float32)
-        atoms["symbol"] = np.array(["He"], dtype=object)
+        atoms["x"] = np.array([1.0], dtype=np.float64)
+        atoms["y"] = np.array([0.0], dtype=np.float64)
+        atoms["z"] = np.array([0.0], dtype=np.float64)
+        atoms["symbol"] = np.array(["He"])
         f["atoms"] = atoms
-
-        # Round-trip through a molrs writer; metadata stays put.
-        out = tmp_path / "rt.xyz"
-        molrs.write_xyz(str(out), f)
+        molrs.write_xyz(str(tmp_path / "rt.xyz"), f)
         assert f.metadata["timestep"] == 7
 
 
-class TestBoxGetterStillUpgrades:
-    """``frame.box`` still surfaces a ``molpy.Box`` (not bare ``molrs.Box``)."""
+class TestBoxEnrichmentSunkIntoMolrs:
+    """``frame.box`` is the molrs box, now carrying is_free / style / volume."""
 
-    def test_box_getter_returns_molpy_box(self):
-        from molpy.core.box import Box
-
+    def test_box_is_molrs_box_with_enriched_api(self):
         f = Frame()
-        f.box = Box.cubic(10.0)
+        f.box = molrs.Box.cube(10.0)
         b = f.box
-        assert isinstance(b, Box)
         assert isinstance(b, molrs.Box)
+        assert b.is_free is False
+        assert b.style == "orthogonal"
+        assert b.volume() == pytest.approx(1000.0, abs=1.0)
+
+
+class TestNumpyOnlyContract:
+    """Object / None columns are rejected at write time."""
+
+    def test_object_column_rejected(self):
+        f = Frame()
+        atoms = Block()
+        with pytest.raises(molrs.BlockDtypeError):
+            atoms["bad"] = np.array(["a", 1, None], dtype=object)
+        f["atoms"] = atoms

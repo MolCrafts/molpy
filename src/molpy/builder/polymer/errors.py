@@ -47,7 +47,7 @@ class PortReuseError(AssemblyError):
     pass
 
 
-class GeometryError(Exception):
+class GeometryError(AssemblyError):
     """Base exception for geometry-related errors."""
 
     pass

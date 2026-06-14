@@ -6,7 +6,10 @@ All functions write Frame or ForceField objects to files.
 """
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 PathLike = str | Path
 
@@ -349,7 +352,11 @@ def write_lammps_bond_react_system(
             templates={"rxn1": template},
         )
     """
-    import numpy as np
+    from .data.lammps_bond_react import (
+        apply_type_maps,
+        collect_type_maps,
+        write_bond_react_map,
+    )
 
     workdir_path = Path(workdir)
     workdir_path.mkdir(parents=True, exist_ok=True)
@@ -362,7 +369,7 @@ def write_lammps_bond_react_system(
     tpl_frames: list[tuple[str, Any, Any, Any]] = []
     for name, tpl in templates.items():
         # Assign 1-based atom IDs before converting to frames
-        tpl._assign_atom_ids()
+        tpl.assign_atom_ids()
         tpl_frames.append((name, tpl, tpl.pre.to_frame(), tpl.post.to_frame()))
 
     # -- Build unified type maps from ALL frames --
@@ -370,27 +377,7 @@ def write_lammps_bond_react_system(
     for _, _, pre_f, post_f in tpl_frames:
         all_frames.extend([pre_f, post_f])
 
-    sections = {
-        "atom_types": "atoms",
-        "bond_types": "bonds",
-        "angle_types": "angles",
-        "dihedral_types": "dihedrals",
-        "improper_types": "impropers",
-    }
-    unified: dict[str, list[str]] = {}
-    type_maps: dict[str, dict[str, int]] = {}
-
-    for label_key, section in sections.items():
-        all_types: set[str] = set()
-        for f in all_frames:
-            if section in f and f[section].nrows > 0 and "type" in f[section]:
-                for t in f[section]["type"]:
-                    s = str(t)
-                    if s and s != "None" and not s.isdigit():
-                        all_types.add(s)
-        sorted_types = sorted(all_types)
-        unified[label_key] = sorted_types
-        type_maps[section] = {name: idx + 1 for idx, name in enumerate(sorted_types)}
+    unified, type_maps = collect_type_maps(all_frames)
 
     # -- Inject unified type labels so LammpsDataWriter uses them --
     frame.metadata["type_labels"] = unified
@@ -415,36 +402,11 @@ def write_lammps_bond_react_system(
         # Convert pre/post string types → unified numeric IDs,
         # dropping rows with None type (boundary topology).
         for tpl_frame in [pre_frame, post_frame]:
-            for section, tmap in type_maps.items():
-                if section not in tpl_frame or tpl_frame[section].nrows == 0:
-                    continue
-                block = tpl_frame[section]
-                if "type" not in block:
-                    continue
-                # Keep only rows with a valid type
-                keep = [i for i in range(block.nrows) if str(block["type"][i]) in tmap]
-                if len(keep) < block.nrows:
-                    import warnings
-
-                    dropped = block.nrows - len(keep)
-                    warnings.warn(
-                        f"Dropped {dropped} {section} entries with "
-                        f"unrecognized types from template '{name}'. "
-                        f"Ensure all template topology is typed "
-                        f"(pass typifier to reacter.run()).",
-                        stacklevel=2,
-                    )
-                    for key in list(block.keys()):
-                        block[key] = block[key][keep]
-                # Map to numeric IDs
-                block["type"] = np.array(
-                    [tmap[str(block["type"][i])] for i in range(block.nrows)],
-                    dtype=np.int64,
-                )
+            apply_type_maps(tpl_frame, type_maps, template_name=name)
 
         write_lammps_molecule(workdir_path / f"{name}_pre.mol", pre_frame)
         write_lammps_molecule(workdir_path / f"{name}_post.mol", post_frame)
-        tpl.write_map(workdir_path / name)
+        write_bond_react_map(tpl, workdir_path / name)
 
 
 def write_top(file: PathLike, frame: Any) -> None:

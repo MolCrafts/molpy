@@ -6,9 +6,10 @@ molpy's structure containers (:class:`~molpy.core.atomistic.Atomistic`,
 source of truth. There is no mirror, no index shifting, no ``Struct`` container.
 
 * **Entity / Link are handle views** holding ``(world, handle)``. Property reads
-  and writes route through the molrs component columns (scalar hot path) plus a
-  per-handle Python *overflow* dict for arbitrary objects, decomposing ``"xyz"``
-  to the ``x`` / ``y`` / ``z`` columns. See :mod:`molpy.core._handle`.
+  and writes route straight through the molrs component columns via the
+  :class:`_NodeProxy` / :class:`_LinkProxy` live mappings below, decomposing
+  ``"xyz"`` to the ``x`` / ``y`` / ``z`` columns. There is no Python-side storage:
+  a value molrs cannot represent (not bool/int/float/str) raises at the boundary.
 * **Identity is preserved by interning**: a :class:`weakref.WeakValueDictionary`
   keyed by handle returns the same view object for the same handle, so
   ``bond.itom is atom``, ``atom in s.atoms`` and ``hash(atom)`` hold while a
@@ -16,14 +17,14 @@ source of truth. There is no mirror, no index shifting, no ``Struct`` container.
 * **Removal is stable**: ``world.despawn(handle)`` plus intern eviction; no
   reindex, surviving handles and relations stay valid.
 
-The shared base :class:`_GraphViews` provides interning, the overflow store, the
-``def_*`` skeleton and the ``.atoms`` / ``.bonds`` view surface. The atomistic /
-CG leaves add their domain view types.
+The shared base :class:`_GraphViews` provides interning, the ``def_*`` skeleton
+and the ``.atoms`` / ``.bonds`` view surface. The atomistic / CG leaves add their
+domain view types.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, MutableMapping
 from copy import deepcopy
 from typing import Any, Protocol, Self, overload
 from weakref import WeakValueDictionary
@@ -31,7 +32,7 @@ from weakref import WeakValueDictionary
 import molrs
 import numpy as np
 
-from molpy.core._handle import _LinkProxy, _NodeProxy
+from molpy.core import fields
 
 
 # ===================================================================
@@ -54,9 +55,9 @@ class _DictView:
     """Common dict-style surface shared by :class:`Entity` and :class:`Link`.
 
     ``self.data`` is either a plain ``dict`` (pending, no world yet) or a live
-    :class:`~molpy.core._handle._NodeProxy` / ``_LinkProxy`` (bound). Every dict
-    operation funnels through ``self.data`` so the same surface works in both
-    states. Identity-based hashing/equality is kept (views are interned).
+    :class:`_NodeProxy` / :class:`_LinkProxy` (bound). Every dict operation
+    funnels through ``self.data`` so the same surface works in both states.
+    Identity-based hashing/equality is kept (views are interned).
     """
 
     data: Any
@@ -114,6 +115,148 @@ class _DictView:
 
     def __ne__(self, other: object) -> bool:
         return self is not other
+
+
+# ===================================================================
+#            Live handle proxies (Entity/Link .data backing)
+# ===================================================================
+
+# Component keys that compose the decomposed coordinate vector.
+_XYZ_KEYS = (fields.POS_X.key, fields.POS_Y.key, fields.POS_Z.key)
+_XYZ = fields.XYZ.key
+
+
+class _NodeProxy(MutableMapping):
+    """Live ``MutableMapping`` over one molrs node's component columns.
+
+    Holds ``(world, handle)`` and routes every read/write straight onto the
+    molrs world by stable handle. No Python-side storage and no field-dtype
+    policy: a value molrs cannot represent (not bool/int/float/str) raises at the
+    boundary, canonical fields are coerced to their dtype by molrs itself, and
+    key enumeration comes from molrs (``world.node_keys``), not a shadow set.
+    """
+
+    __slots__ = ("_world", "_handle")
+
+    def __init__(self, world: Any, handle: int) -> None:
+        self._world = world
+        self._handle = handle
+
+    # ----- molrs column accessors (overridden by _LinkProxy) -----
+    def _col_keys(self) -> list[str]:
+        return list(self._world.node_keys(self._handle))
+
+    def _col_has(self, key: str) -> bool:
+        return self._world.has(self._handle, key)
+
+    def _col_get(self, key: str) -> Any:
+        return self._world.get(self._handle, key)
+
+    def _col_set(self, key: str, value: Any) -> None:
+        self._world.set(self._handle, key, value)
+
+    def _col_del(self, key: str) -> None:
+        self._world.delete(self._handle, key)
+
+    # ----- MutableMapping protocol -----
+    def __getitem__(self, key: str) -> Any:
+        if key == _XYZ:
+            return self._get_xyz()
+        if self._col_has(key):
+            return self._col_get(key)
+        raise KeyError(key)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        if key == _XYZ:
+            self._set_xyz(value)
+            return
+        if value is None:
+            # ``None`` is the absence marker in a sparse component store, not a
+            # storable value: setting it clears the key (no Python-side stash).
+            if self._col_has(key):
+                self._col_del(key)
+            return
+        # molrs coerces canonical fields to their dtype and raises if ``value``
+        # is not numpy-representable.
+        self._col_set(key, value)
+
+    def __delitem__(self, key: str) -> None:
+        if not self._col_has(key):
+            raise KeyError(key)
+        self._col_del(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._col_keys())
+
+    def __len__(self) -> int:
+        return len(self._col_keys())
+
+    def __contains__(self, key: object) -> bool:
+        if key == _XYZ:
+            return all(self._col_has(k) for k in _XYZ_KEYS)
+        return isinstance(key, str) and self._col_has(key)
+
+    # ----- derived "xyz" vector over the x/y/z columns -----
+    def _get_xyz(self) -> list[float]:
+        return [self._col_get(k) for k in _XYZ_KEYS]
+
+    def _set_xyz(self, value: Any) -> None:
+        if len(value) != 3:
+            raise ValueError(f"xyz must be a 3-vector, got {value!r}")
+        for k, v in zip(_XYZ_KEYS, value):
+            self._col_set(k, float(v))
+
+    def __repr__(self) -> str:
+        return repr(dict(self))
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, (MutableMapping, dict)):
+            return dict(self) == dict(other)
+        return NotImplemented
+
+    def __ne__(self, other: object) -> bool:
+        result = self.__eq__(other)
+        if result is NotImplemented:
+            return result
+        return not result
+
+    __hash__ = None  # type: ignore[assignment]
+
+    def copy(self) -> dict[str, Any]:
+        return dict(self)
+
+    def __deepcopy__(self, memo: dict) -> dict[str, Any]:
+        """Snapshot to a plain ``dict`` (never deep-copy the molrs world)."""
+        import copy as _copy
+
+        return {
+            _copy.deepcopy(k, memo): _copy.deepcopy(v, memo) for k, v in self.items()
+        }
+
+
+class _LinkProxy(_NodeProxy):
+    """Live ``MutableMapping`` over one molrs relation's property columns."""
+
+    __slots__ = ("_kind",)
+
+    def __init__(self, world: Any, kind: str, handle: int) -> None:
+        super().__init__(world, handle)
+        self._kind = kind
+
+    def _col_keys(self) -> list[str]:
+        return list(self._world.relation_keys(self._kind, self._handle))
+
+    def _col_has(self, key: str) -> bool:
+        return self._world.get_relation_prop(self._kind, self._handle, key) is not None
+
+    def _col_get(self, key: str) -> Any:
+        return self._world.get_relation_prop(self._kind, self._handle, key)
+
+    def _col_set(self, key: str, value: Any) -> None:
+        self._world.set_relation_prop(self._kind, self._handle, key, value)
+
+    def _col_del(self, key: str) -> None:
+        self._world.delete_relation_prop(self._kind, self._handle, key)
 
 
 class Entity(_DictView):
@@ -308,38 +451,6 @@ class _GraphViews:
         self._props: dict[str, Any] = dict(props)
         self._atom_intern: WeakValueDictionary[int, Entity] = WeakValueDictionary()
         self._link_intern: dict[str, WeakValueDictionary[int, Link]] = {}
-        self._overflow: dict[int, dict[str, Any]] = {}
-        self._rel_overflow: dict[tuple[str, int], dict[str, Any]] = {}
-        self._column_keys: set[str] = set()
-        self._rel_keys: dict[tuple[str, int], set[str]] = {}
-        # strong, insertion-ordered registry of live relation handles per kind
-        # (the WeakValueDictionary interns drop GC'd views, so the molrs-side
-        # relations are tracked here to enumerate links reliably).
-        self._rel_handles: dict[str, list[int]] = {}
-
-    # ---------- overflow / column-key bookkeeping (used by proxies) ----------
-    def _overflow_for(self, handle: int) -> dict[str, Any]:
-        return self._overflow.setdefault(handle, {})
-
-    def _overflow_for_relation(self, kind: str, rh: int) -> dict[str, Any]:
-        return self._rel_overflow.setdefault((kind, rh), {})
-
-    def _node_keys(self, handle: int) -> list[str]:
-        return [k for k in self._column_keys if self.has(handle, k)]
-
-    def _relation_keys(self, kind: str, rh: int) -> list[str]:
-        return list(self._rel_keys.get((kind, rh), ()))
-
-    def _track_relation_key(self, kind: str, rh: int, key: str) -> None:
-        self._rel_keys.setdefault((kind, rh), set()).add(key)
-
-    def _untrack_relation_key(self, kind: str, rh: int, key: str) -> None:
-        keys = self._rel_keys.get((kind, rh))
-        if keys is not None:
-            keys.discard(key)
-
-    def _note_column_key(self, key: str) -> None:
-        self._column_keys.add(key)
 
     # ---------- props (struct-level dict surface) ----------
     def __getitem__(self, key: str) -> Any:
@@ -401,7 +512,6 @@ class _GraphViews:
         rh = self.add_relation(kind, handles)
         view._attach(self, rh, view.endpoints)
         self._link_intern.setdefault(kind, WeakValueDictionary())[rh] = view
-        self._rel_handles.setdefault(kind, []).append(rh)
         return view
 
     # ---------- iteration views ----------
@@ -418,8 +528,11 @@ class _GraphViews:
         return Entities(self._intern_atom(h) for h in self._node_handles())
 
     def _link_views(self, kind: str) -> Entities[Link]:
-        handles = self._rel_handles.get(kind, ())
-        return Entities(self._intern_link(kind, rh) for rh in handles)
+        # molrs is the single source of truth for live relation handles
+        # (enumerated in row order). Unregistered kinds simply have no links.
+        if kind not in self.kinds():
+            return Entities()
+        return Entities(self._intern_link(kind, rh) for rh in self.relation_ids(kind))
 
     def _all_link_views(self) -> Entities[Link]:
         out: Entities[Link] = Entities()
@@ -439,9 +552,10 @@ class _GraphViews:
     # ---------- removal ----------
     def _remove_atom(self, view: Entity) -> None:
         h = view.handle
-        # drop incident relations first so their interned views/overflow clear
-        for kind in list(self._rel_handles):
-            for rh in list(self._rel_handles[kind]):
+        # drop incident relations first so their interned views clear
+        # (snapshot the handles since _remove_link mutates the molrs relations)
+        for kind in self.kinds():
+            for rh in list(self.relation_ids(kind)):
                 if h in self.relation_nodes(kind, rh):
                     self._remove_link(self._intern_link(kind, rh))
         # snapshot the view's data to a plain dict so a caller holding a
@@ -449,7 +563,6 @@ class _GraphViews:
         view._detach()
         self.despawn(h)
         self._atom_intern.pop(h, None)
-        self._overflow.pop(h, None)
 
     def _remove_link(self, view: Link) -> None:
         kind = view._kind
@@ -459,11 +572,6 @@ class _GraphViews:
         table = self._link_intern.get(kind)
         if table is not None:
             table.pop(rh, None)
-        handles = self._rel_handles.get(kind)
-        if handles is not None and rh in handles:
-            handles.remove(rh)
-        self._rel_overflow.pop((kind, rh), None)
-        self._rel_keys.pop((kind, rh), None)
 
 
 # ===================================================================

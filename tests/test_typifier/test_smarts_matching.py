@@ -600,12 +600,12 @@ class TestImmutability:
     """Test that typifiers do not mutate input objects."""
 
     def test_gaff_atom_typifier_immutable(self):
-        """GaffAtomTypifier.typify() must not mutate input."""
+        """_GaffAtomTypifier.typify() must not mutate input."""
         from molpy.io.forcefield.xml import XMLForceFieldReader
-        from molpy.typifier.gaff import GaffAtomTypifier
+        from molpy.typifier.gaff import _GaffAtomTypifier
 
         ff = XMLForceFieldReader("src/molpy/data/forcefield/gaff.xml").read()
-        typifier = GaffAtomTypifier(ff, strict=False)
+        typifier = _GaffAtomTypifier(ff, strict=False)
 
         asm = _build_ethane()
         original_atom_data = [dict(atom.data) for atom in asm.atoms]
@@ -627,7 +627,7 @@ class TestImmutability:
         """OplsTypifier returns new struct without mutating input."""
         from molpy import AtomisticForcefield
 
-        from molpy.typifier.opls import OplsTypifier
+        from molpy.typifier import OplsTypifier
 
         ff = AtomisticForcefield()
         astyle = ff.def_atomstyle("full")
@@ -701,9 +701,9 @@ class TestEndToEndGaffTyping:
 
     def test_ethane_all_atoms_typed(self, gaff_ff):
         """All atoms in ethane should be typed."""
-        from molpy.typifier.gaff import GaffAtomTypifier
+        from molpy.typifier.gaff import _GaffAtomTypifier
 
-        typifier = GaffAtomTypifier(gaff_ff, strict=False)
+        typifier = _GaffAtomTypifier(gaff_ff, strict=False)
 
         asm = _build_ethane()
         result = typifier.typify(asm)
@@ -713,9 +713,9 @@ class TestEndToEndGaffTyping:
 
     def test_ethane_type_counts(self, gaff_ff):
         """Ethane: 2 c3 carbons, 6 hc hydrogens."""
-        from molpy.typifier.gaff import GaffAtomTypifier
+        from molpy.typifier.gaff import _GaffAtomTypifier
 
-        typifier = GaffAtomTypifier(gaff_ff, strict=False)
+        typifier = _GaffAtomTypifier(gaff_ff, strict=False)
 
         asm = _build_ethane()
         result = typifier.typify(asm)
@@ -726,9 +726,9 @@ class TestEndToEndGaffTyping:
 
     def test_benzene_type_counts(self, gaff_ff):
         """Benzene: 6 ca carbons, 6 ha hydrogens."""
-        from molpy.typifier.gaff import GaffAtomTypifier
+        from molpy.typifier.gaff import _GaffAtomTypifier
 
-        typifier = GaffAtomTypifier(gaff_ff, strict=False)
+        typifier = _GaffAtomTypifier(gaff_ff, strict=False)
 
         asm = _build_benzene()
         result = typifier.typify(asm)
@@ -739,9 +739,9 @@ class TestEndToEndGaffTyping:
 
     def test_water_types(self, gaff_ff):
         """Water: 1 ow oxygen, 2 hw hydrogens."""
-        from molpy.typifier.gaff import GaffAtomTypifier
+        from molpy.typifier.gaff import _GaffAtomTypifier
 
-        typifier = GaffAtomTypifier(gaff_ff, strict=False)
+        typifier = _GaffAtomTypifier(gaff_ff, strict=False)
 
         asm = _build_water()
         result = typifier.typify(asm)
@@ -754,9 +754,9 @@ class TestEndToEndGaffTyping:
 
     def test_methanol_types(self, gaff_ff):
         """Methanol: c3, oh, hc*3, ho."""
-        from molpy.typifier.gaff import GaffAtomTypifier
+        from molpy.typifier.gaff import _GaffAtomTypifier
 
-        typifier = GaffAtomTypifier(gaff_ff, strict=False)
+        typifier = _GaffAtomTypifier(gaff_ff, strict=False)
 
         asm = _build_methanol()
         result = typifier.typify(asm)
@@ -786,9 +786,9 @@ class TestEndToEndGaffTyping:
 
     def test_propene_sp2_sp3_distinction(self, gaff_ff):
         """Propene correctly distinguishes sp2 (c2) and sp3 (c3) carbons."""
-        from molpy.typifier.gaff import GaffAtomTypifier
+        from molpy.typifier.gaff import _GaffAtomTypifier
 
-        typifier = GaffAtomTypifier(gaff_ff, strict=False)
+        typifier = _GaffAtomTypifier(gaff_ff, strict=False)
 
         asm = _build_propene()
         result = typifier.typify(asm)

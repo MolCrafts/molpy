@@ -119,7 +119,7 @@ class TestLammpsDataReader:
         frame = reader.read()
 
         assert frame.box is not None
-        assert frame.box.style.name == "TRICLINIC"
+        assert frame.box.style == "triclinic"
         np.testing.assert_array_almost_equal(frame.box.tilts, [5.0, -8.0, 3.0])
         # Edge-vector norms reflect the tilt: |a|=lx, |b|=sqrt(xy^2+ly^2),
         # |c|=sqrt(xz^2+yz^2+lz^2).
@@ -741,3 +741,67 @@ class TestMetadataTypeLabels:
         # The actual atom types in the atoms section should reference
         # the correct type IDs from the type labels section
         assert atoms is not None
+
+
+class TestForceFieldCoeffs:
+    """The reader no longer silently drops ``*Coeffs`` parameters (P1-B fix).
+
+    Previously every coefficient line was parsed for validation only and then
+    discarded behind a commented-out ``def_type`` and an ``except: continue``
+    swallow, so a LAMMPS data file's force-field parameters were lost on read.
+    They are now stored on the metadata ForceField in the shape the writer
+    reads back, and malformed lines raise instead of being swallowed.
+    """
+
+    @pytest.fixture
+    def ff_file(self, TEST_DATA_DIR) -> Path:
+        return TEST_DATA_DIR / "lammps-ff" / "peptide.data"
+
+    def test_coeffs_are_extracted(self, ff_file):
+        ff = LammpsDataReader(ff_file, atom_style="full").read().metadata["forcefield"]
+        pair = {
+            t.name: (t.get("epsilon"), t.get("sigma"))
+            for s in ff.get_styles(mp.PairStyle)
+            for t in s.get_types(mp.Type)
+        }
+        bond = {
+            t.name: (t.get("k"), t.get("r0"))
+            for s in ff.get_styles(mp.BondStyle)
+            for t in s.get_types(mp.Type)
+        }
+        assert pair, "pair coefficients were dropped"
+        assert bond, "bond coefficients were dropped"
+        # values are real numbers, not None
+        assert all(e is not None and s is not None for e, s in pair.values())
+
+    def test_coeffs_round_trip(self, ff_file, tmp_path):
+        fr = LammpsDataReader(ff_file, atom_style="full").read()
+
+        def grab(ff, style_cls, keys):
+            return {
+                t.name: tuple(t.get(k) for k in keys)
+                for s in ff.get_styles(style_cls)
+                for t in s.get_types(mp.Type)
+            }
+
+        pair_in = grab(fr.metadata["forcefield"], mp.PairStyle, ["epsilon", "sigma"])
+        bond_in = grab(fr.metadata["forcefield"], mp.BondStyle, ["k", "r0"])
+
+        out = tmp_path / "round_trip.data"
+        LammpsDataWriter(out, atom_style="full").write(fr)
+        ff2 = LammpsDataReader(out, atom_style="full").read().metadata["forcefield"]
+
+        assert grab(ff2, mp.PairStyle, ["epsilon", "sigma"]) == pair_in
+        assert grab(ff2, mp.BondStyle, ["k", "r0"]) == bond_in
+
+    def test_malformed_coeff_line_raises(self, tmp_path):
+        data = tmp_path / "bad.data"
+        data.write_text(
+            "bad\n\n2 atoms\n1 atom types\n"
+            "0 1 xlo xhi\n0 1 ylo yhi\n0 1 zlo zhi\n\n"
+            "Masses\n\n1 1.0\n\n"
+            "Pair Coeffs\n\n1 notanumber 3.5\n\n"
+            "Atoms\n\n1 1 1 0.0 0.0 0.0 0.0\n2 1 1 0.0 0.5 0.0 0.0\n"
+        )
+        with pytest.raises(ValueError, match="malformed PairCoeffs"):
+            LammpsDataReader(data, atom_style="full").read()

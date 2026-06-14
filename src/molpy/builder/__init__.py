@@ -1,8 +1,16 @@
-"""Convenience exports for the builder subpackage.
+"""System assembly — start here.
 
-The legacy ``PolymerBuilder`` class and bulk builders have been removed in
-favour of the new declarative API documented in
-``notebooks/reacter_polymerbuilder_integration.ipynb``.
+Polymer construction goes through the declarative entry functions:
+
+- :func:`polymer` — build a single chain in one call
+- :func:`polymer_system` — build a polydisperse multi-chain system
+- :func:`prepare_monomer` — BigSMILES → 3D monomer with ports
+
+Advanced, step-by-step assembly lives in :mod:`molpy.builder.polymer`
+(``PolymerBuilder``, ``Connector``, placers, ``ReactionPresets``).
+Crystal construction goes through :func:`build_crystal` with
+:class:`Lattice` / :class:`Site`. AmberTools-backed polymer builds use
+:class:`AmberPolymerBuilder` (or ``polymer(..., backend="amber")``).
 """
 
 from molpy.core.region import BoxRegion, Cube, Region, SphereRegion
@@ -11,15 +19,16 @@ from .crystal import Lattice, Site, build_crystal
 from .polymer import *
 from .polymer.ambertools import AmberPolymerBuilder
 from .polymer.dsl import (
-    BuildPolymer,
-    BuildPolymerAmber,
-    BuildSystem,
-    PlanSystem,
-    PrepareMonomer,
     generate_3d,
     polymer,
     polymer_system,
     prepare_monomer,
+)
+from .virtualsite import (
+    DrudeBuilder,
+    Tip4pBuilder,
+    VirtualSiteBuilder,
+    load_polarizability,
 )
 
 __all__ = [
@@ -33,14 +42,14 @@ __all__ = [
     "Site",
     "SphereRegion",
     "build_crystal",
-    # Polymer DSL tools and entry functions
-    "PrepareMonomer",
-    "BuildPolymer",
-    "PlanSystem",
-    "BuildSystem",
-    "BuildPolymerAmber",
+    # Polymer entry functions
     "polymer",
     "polymer_system",
     "prepare_monomer",
     "generate_3d",
+    # Virtual-site augmentation
+    "VirtualSiteBuilder",
+    "DrudeBuilder",
+    "Tip4pBuilder",
+    "load_polarizability",
 ]

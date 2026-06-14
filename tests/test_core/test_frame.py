@@ -96,7 +96,7 @@ Charlie,35,1.75"""
     def test_block_from_csv_empty_file(self):
         """Test Block.from_csv with empty file."""
         csv_io = StringIO("")
-        with pytest.raises(ValueError, match="CSV file is empty"):
+        with pytest.raises(ValueError, match="empty"):
             Block.from_csv(csv_io)
 
     def test_block_from_csv_no_header(self):
@@ -142,8 +142,8 @@ Charlie,35,1.75"""
 1.0,1.0,1.0"""
 
         csv_io = StringIO(csv_content)
-        # Header has more columns than data
-        with pytest.raises(IndexError):
+        # Header has more columns than data: molrs rejects the mismatch.
+        with pytest.raises(ValueError, match="field"):
             Block.from_csv(csv_io, header=["x", "y", "z", "extra"])
 
         csv_io.seek(0)
@@ -750,7 +750,7 @@ class TestFrame:
             "bonds": 123,  # Integer value
         }
 
-        with pytest.raises(ValueError, match="Failed to convert value to Block"):
+        with pytest.raises(ValueError, match="must be a dict"):
             Frame(blocks=invalid_blocks)
 
     def test_frame_init_with_complex_nested_data(self):

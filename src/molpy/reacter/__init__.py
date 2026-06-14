@@ -1,51 +1,49 @@
-"""
-Programmable Reacter Module for Chemical Transformations.
+"""Chemical reactions on native molpy structures — start here.
 
-This module provides a framework for defining and executing chemical reactions
-within the molpy framework, following SMIRKS-style semantics but working
-entirely on native data structures (Atom, Bond, Atomistic).
+Entry points (most users need only these):
 
-Core Concepts:
---------------
-- **Reacter**: Represents a single chemical reaction type
-- **ReactionResult**: Container for reaction products and metadata
-- **Selectors**: Functions that map port atoms to anchors and choose leaving groups
-- **Transformers**: Functions that create or modify bonds
+- :class:`Reacter` — execute one reaction type between two structures;
+  compose it from anchor selectors, leaving selectors, and a bond former
+- :func:`find_port` — locate a port-marked atom to pass into
+  :meth:`Reacter.run`
+- :class:`BondReactReacter` — :class:`Reacter` plus LAMMPS
+  ``fix bond/react`` template generation (serialize with
+  :func:`molpy.io.write_lammps_bond_react_system`)
 
-Example Usage:
---------------
-```python
-from molpy.reacter import Reacter, select_port, select_one_hydrogen, form_single_bond
+Building blocks:
 
-# Define a C-C coupling reaction
-cc_coupling = Reacter(
-    name="C-C_coupling_with_H_loss",
-    anchor_selector_left=select_port,
-    anchor_selector_right=select_port,
-    leaving_selector_left=select_one_hydrogen,
-    leaving_selector_right=select_one_hydrogen,
-    bond_former=form_single_bond,
-)
+- **Anchor selectors** (``select_self``, ``select_neighbor``, …) map a
+  port atom to the atom that actually forms the bond
+- **Leaving selectors** (``select_hydrogens``, ``select_hydroxyl_group``,
+  ``select_none``, …) choose atoms to remove
+- **Bond formers** (``form_single_bond``, ``form_double_bond``, …)
+  create the new bond
 
-# Find port atoms first
-port_atom_a = find_port_atom(struct_a, "1")
-port_atom_b = find_port_atom(struct_b, "2")
+Example::
 
-# Execute reaction
-result = cc_coupling.run(
-    left=struct_a, right=struct_b,
-    port_atom_L=port_atom_a, port_atom_R=port_atom_b
-)
-```
+    from molpy.reacter import (
+        Reacter, find_port, form_single_bond,
+        select_hydrogens, select_self,
+    )
 
-Design Goals:
--------------
-- Pure Python, framework-native (no RDKit)
-- Composable: reaction logic = modular functions
-- Stable indexing: atom deletion doesn't shift IDs
-- Single responsibility: one Reacter = one reaction type
-- Extensible: easy to subclass for specialized reactions
-- Auditable: all changes recorded in ReactionResult.notes
+    cc_coupling = Reacter(
+        name="C-C_coupling_with_H_loss",
+        anchor_selector_left=select_self,
+        anchor_selector_right=select_self,
+        leaving_selector_left=select_hydrogens(1),
+        leaving_selector_right=select_hydrogens(1),
+        bond_former=form_single_bond,
+    )
+    result = cc_coupling.run(
+        left=struct_a, right=struct_b,
+        port_atom_L=find_port(struct_a, ">"),
+        port_atom_R=find_port(struct_b, "<"),
+    )
+    product = result.product  # caller inputs are never mutated
+
+Design goals: pure Python and framework-native (no RDKit); composable
+modular reaction logic; deterministic, explicit port selection; one
+Reacter = one reaction type.
 """
 
 from .base import (
@@ -72,7 +70,7 @@ from .selectors import (
     select_none,
     select_one_hydrogen,
     # Utilities
-    find_port_atom,
+    find_port,
     find_port_atom_by_node,
     # High-level convenience selectors
     Selector,
@@ -81,8 +79,6 @@ from .selectors import (
     select_neighbor,
 )
 
-# Alias for backward compatibility
-find_port = find_port_atom
 from .topology_detector import TopologyDetector
 from .utils import (
     break_bond,
@@ -115,7 +111,7 @@ __all__ = [
     # Utilities
     "create_atom_mapping",
     "find_neighbors",
-    "find_port_atom",
+    "find_port",
     "find_port_atom_by_node",
     # Anchor selectors
     "select_port",

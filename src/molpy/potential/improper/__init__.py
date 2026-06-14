@@ -1,17 +1,15 @@
-"""Improper dihedral potentials."""
+"""Improper dihedral potential styles (facade over molrs)."""
 
-from .class2 import ImproperClass2, ImproperClass2Style
-from .cvff import ImproperCvff, ImproperCvffStyle
-from .harmonic import ImproperHarmonic, ImproperHarmonicStyle
-from .periodic import ImproperPeriodicStyle, ImproperPeriodicType
+from molpy.core.forcefield import (
+    ImproperClass2Style,
+    ImproperCvffStyle,
+    ImproperHarmonicStyle,
+    ImproperPeriodicStyle,
+)
 
 __all__ = [
-    "ImproperPeriodicStyle",
-    "ImproperPeriodicType",
-    "ImproperHarmonic",
     "ImproperHarmonicStyle",
-    "ImproperCvff",
     "ImproperCvffStyle",
-    "ImproperClass2",
     "ImproperClass2Style",
+    "ImproperPeriodicStyle",
 ]

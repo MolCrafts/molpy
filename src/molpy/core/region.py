@@ -1,5 +1,6 @@
 from abc import abstractmethod
 
+import molrs
 import numpy as np
 from numpy.typing import ArrayLike
 
@@ -89,16 +90,20 @@ class BoxRegion(Region):
         if self.origin.shape != (3,):
             raise ValueError(f"origin must be 3D, got shape {self.origin.shape}")
 
+        # Point-in-box math is sunk to the molrs Rust primitive; this class keeps
+        # only the MaskPredicate / boolean-algebra (& | ~) layer. Cube inherits.
+        self._cuboid = molrs.Cuboid(self.origin, self.lengths)
+
     def mask(self, block: Block) -> np.ndarray:  # type: ignore[override]
         """Extract coordinates from block and apply geometric predicate."""
         coords = block[self.coord_field]
         return self.isin(coords)
 
     def isin(self, xyz: np.ndarray) -> np.ndarray:
-        xyz = np.asarray(xyz, dtype=float)
-        lower = self.origin
-        upper = self.origin + self.lengths
-        return np.all((xyz >= lower) & (xyz <= upper), axis=1)
+        arr = np.asarray(xyz, dtype=float)
+        if arr.ndim == 1:
+            return bool(self._cuboid.contains(arr.reshape(1, 3))[0])
+        return self._cuboid.contains(arr)
 
     @property
     def bounds(self) -> np.ndarray:
@@ -160,6 +165,10 @@ class SphereRegion(Region):
         if self.center.shape != (3,):
             raise ValueError(f"center must be 3D, got shape {self.center.shape}")
 
+        # Point-in-sphere math is sunk to the molrs Rust primitive; this class
+        # keeps only the MaskPredicate / boolean-algebra (& | ~) layer.
+        self._sphere = molrs.Sphere(self.center, self.radius)
+
     def mask(self, block: Block) -> np.ndarray:  # type: ignore[override]
         """Extract coordinates from block and apply geometric predicate."""
         coords = block[self.coord_field]
@@ -172,9 +181,10 @@ class SphereRegion(Region):
         return np.vstack([c - r, c + r])
 
     def isin(self, xyz: np.ndarray) -> np.ndarray:
-        xyz = np.asarray(xyz, dtype=float)
-        diff = xyz - self.center
-        return np.einsum("ij,ij->i", diff, diff) <= self.radius * self.radius
+        arr = np.asarray(xyz, dtype=float)
+        if arr.ndim == 1:
+            return bool(self._sphere.contains(arr.reshape(1, 3))[0])
+        return self._sphere.contains(arr)
 
     def __eq__(self, other) -> bool:
         if not isinstance(other, SphereRegion):

@@ -15,11 +15,17 @@ from molpy import (
     Style,
 )
 from molpy.core.fields import ForceFieldFormatter
+from molpy.core.forcefield import (
+    AngleHarmonicStyle,
+    BondHarmonicStyle,
+    DihedralFourierStyle,
+    DihedralOPLSStyle,
+    PairCoulTTStyle,
+    PairLJ126CoulCutStyle,
+    PairLJ126CoulLongStyle,
+    PairTholeStyle,
+)
 from molpy.io.data.lammps import LammpsFieldFormatter
-from molpy.potential.angle import AngleHarmonicStyle
-from molpy.potential.bond import BondHarmonicStyle
-from molpy.potential.dihedral import DihedralFourierStyle, DihedralOPLSStyle
-from molpy.potential.pair import PairLJ126CoulCutStyle, PairLJ126CoulLongStyle
 from molpy.version import version
 
 
@@ -46,10 +52,9 @@ class LAMMPSForceFieldReader:
         self, atomstyle: AtomStyle, name: str
     ) -> AtomType | None:
         """Find an atom type by name within a style."""
-        for type_class in atomstyle.types.classes():
-            for atom_type in atomstyle.types.bucket(type_class):
-                if atom_type.name == name:
-                    return atom_type
+        for atom_type in atomstyle.types:
+            if atom_type.name == name:
+                return atom_type
         return None
 
     def _ensure_atomtype(self, name: str) -> AtomType:
@@ -555,14 +560,16 @@ class LAMMPSForceFieldReader:
             assert len(pairstyles) == 1, ValueError(
                 "pair_modify command requires one pair style"
             )
-            pairstyle = pairstyles[0]
-
-            if "modified" in pairstyle.params.kwargs:
-                for l in line:
-                    if l not in pairstyle.params.kwargs["modified"]:
-                        pairstyle.params.kwargs["modified"].append(l)
+            # Exactly one pair style exists (asserted above). molrs styles are
+            # immutable handles that cannot store a string-list param, so record
+            # the pair_modify args on the reader instead of on the style.
+            modified = getattr(self, "_pair_modify", None)
+            if modified is None:
+                self._pair_modify = list(line)
             else:
-                pairstyle.params.kwargs["modified"] = line
+                for token in line:
+                    if token not in modified:
+                        modified.append(token)
 
 
 # ===================================================================
@@ -633,23 +640,22 @@ class TypeFilter:
 
 
 def _format_bond_harmonic(typ) -> list[float]:
-    """Format BondHarmonicType parameters: k r0"""
-    from molpy.potential.bond import BondHarmonicType
+    """Format a harmonic bond type's parameters: k r0.
 
-    if isinstance(typ, BondHarmonicType):
-        return [typ.params.kwargs["k"], typ.params.kwargs["r0"]]
-    # Fallback for generic BondType
+    Dispatch is by style name (``harmonic``); the owning ``BondHarmonicStyle``
+    is resolved upstream in :meth:`ForceFieldFormatter.format_params`.
+    """
     return [typ.params.kwargs["k"], typ.params.kwargs["r0"]]
 
 
 def _format_angle_harmonic(typ) -> list[float]:
-    """Format AngleHarmonicType parameters: k theta0
+    """Format a harmonic angle type's parameters: k theta0.
 
     Note: theta0 is stored internally in RADIANS but LAMMPS requires DEGREES.
-    The k parameter is in kcal/mol/rad² which is what LAMMPS expects.
+    The k parameter is in kcal/mol/rad² which is what LAMMPS expects. Dispatch
+    is by style name (``harmonic``).
     """
     import math
-    from molpy.potential.angle import AngleHarmonicType
 
     k = typ.params.kwargs.get("k", 0.0)  # kcal/mol/rad²
     theta0_rad = typ.params.kwargs.get("theta0", 0.0)  # radians (internal storage)
@@ -659,21 +665,11 @@ def _format_angle_harmonic(typ) -> list[float]:
 
 
 def _format_dihedral_opls(typ) -> list[float]:
-    """Format DihedralOPLSType parameters: k1 k2 k3 k4
+    """Format an OPLS dihedral type's parameters: k1 k2 k3 k4.
 
-    Uses analytical RB → OPLS conversion via rb_to_opls() function.
-    The c0-c5 coefficients are converted to LAMMPS k1-k4 format.
+    The c1-c4 coefficients are emitted in LAMMPS k1-k4 order. Dispatch is by
+    style name (``opls``).
     """
-    from molpy.potential.dihedral import DihedralOPLSType
-
-    if isinstance(typ, DihedralOPLSType):
-        return [
-            typ.params.kwargs.get("c1", 0.0),
-            typ.params.kwargs.get("c2", 0.0),
-            typ.params.kwargs.get("c3", 0.0),
-            typ.params.kwargs.get("c4", 0.0),
-        ]
-    # Fallback for generic DihedralType
     kwargs = typ.params.kwargs
     return [
         kwargs.get("c1", 0.0),
@@ -697,17 +693,10 @@ def _format_dihedral_fourier(typ) -> list:
 
 
 def _format_pair_lj(typ) -> list[float]:
-    """Format PairLJ126Type parameters: epsilon sigma"""
-    from molpy.potential.pair import PairLJ126Type
+    """Format an LJ 12-6 pair type's parameters: epsilon sigma.
 
-    if isinstance(typ, PairLJ126Type):
-        result = []
-        if "epsilon" in typ.params.kwargs:
-            result.append(typ.params.kwargs["epsilon"])
-        if "sigma" in typ.params.kwargs:
-            result.append(typ.params.kwargs["sigma"])
-        return result
-    # Fallback for generic PairType
+    Dispatch is by style name (``lj/cut`` and its coulomb variants).
+    """
     kwargs = typ.params.kwargs
     result = []
     if "epsilon" in kwargs:
@@ -751,6 +740,32 @@ def _format_generic_pair(typ) -> list[float]:
     return result
 
 
+def _format_pair_thole(typ) -> list[float]:
+    """Format a Thole pair type's parameters: alpha a_thole.
+
+    CL&Pol Thole core–shell screening (LAMMPS ``pair_style thole``). The
+    per-atom-type polarizability ``alpha`` (Å³) and Thole width ``a_thole``
+    drive the screened dipole interaction; the charge is written per-atom in the
+    data file, not in the pair coefficient. Dispatch is by style name
+    (``thole``).
+    """
+    kwargs = typ.params.kwargs
+    return [kwargs.get("alpha", 0.0), kwargs.get("a_thole", 2.6)]
+
+
+def _format_pair_coul_tt(typ) -> list[float]:
+    """Format a Tang−Toennies pair type's parameters: b n c.
+
+    CL&Pol Tang−Toennies charge–dipole damping (LAMMPS ``pair_style coul/tt``).
+    The damping parameters ``b`` (1/Å), ``n`` and ``c`` are global to the style
+    in molrs; when a type carries them they are emitted per pair, otherwise the
+    Tang−Toennies defaults (b=4.5, n=4, c=1.0) are written. The charge is in the
+    data file. Dispatch is by style name (``coul/tt``).
+    """
+    kwargs = typ.params.kwargs
+    return [kwargs.get("b", 4.5), kwargs.get("n", 4), kwargs.get("c", 1.0)]
+
+
 class LammpsForceFieldFormatter(LammpsFieldFormatter, ForceFieldFormatter):
     """LAMMPS force-field formatter.
 
@@ -767,6 +782,9 @@ class LammpsForceFieldFormatter(LammpsFieldFormatter, ForceFieldFormatter):
         DihedralOPLSStyle: _format_dihedral_opls,
         PairLJ126CoulCutStyle: _format_pair_lj,
         PairLJ126CoulLongStyle: _format_pair_lj,
+        # CL&Pol damping potentials
+        PairTholeStyle: _format_pair_thole,
+        PairCoulTTStyle: _format_pair_coul_tt,
         # Generic styles (fallback)
         BondStyle: _format_generic_bond,
         AngleStyle: _format_generic_angle,
@@ -838,8 +856,12 @@ class LAMMPSForceFieldWriter:
             return typ.name
 
     def _get_style_params(self, style) -> list[float]:
-        """Get style parameters (cutoffs, etc.) from style.params.args."""
-        return list(style.params.args) if style.params.args else []
+        """Get positional style parameters (cutoffs, etc.).
+
+        molrs styles have no positional args, so this always returns an empty
+        list and callers fall back to :meth:`_get_default_style_params`.
+        """
+        return []
 
     def _get_default_style_params(
         self, style_name: str, style_type: str
@@ -887,8 +909,10 @@ class LAMMPSForceFieldWriter:
             style: Style object
             style_type: Style type name
         """
-        if "modified" in style.params.kwargs:
-            modify_args = " ".join(style.params.kwargs["modified"])
+        style_params = style._ff.style_params(style.category, style.name)
+        modified = style_params.get("modified")
+        if modified:
+            modify_args = " ".join(modified)
             lines.append(f"{style_type}_modify {modify_args}\n")
 
     def _write_type_coeffs(
@@ -906,21 +930,14 @@ class LAMMPSForceFieldWriter:
             style_type: Style type name
             type_filter: Filter to determine which types to include
         """
-        has_types = False
-        for type_class in style.types.classes():
-            types = [
-                t for t in style.types.bucket(type_class) if type_filter.includes(t)
-            ]
-            if types:
-                has_types = True
-                for typ in types:
-                    params = self._get_type_params(typ, style)
-                    coeff_id = self._get_coeff_id(typ, style_type)
-                    lines.append(
-                        f"{style_type}_coeff {coeff_id} {self._format_params(params)}\n"
-                    )
-
-        if has_types:
+        types = [t for t in style.types if type_filter.includes(t)]
+        if types:
+            for typ in types:
+                params = self._get_type_params(typ, style)
+                coeff_id = self._get_coeff_id(typ, style_type)
+                lines.append(
+                    f"{style_type}_coeff {coeff_id} {self._format_params(params)}\n"
+                )
             lines.append("\n")
 
     def _write_single_style_section(
@@ -965,16 +982,13 @@ class LAMMPSForceFieldWriter:
         lines.append("\n")
 
         for style in styles:
-            for type_class in style.types.classes():
-                types = [
-                    t for t in style.types.bucket(type_class) if type_filter.includes(t)
-                ]
-                for typ in types:
-                    params = self._get_type_params(typ, style)
-                    coeff_id = self._get_coeff_id(typ, style_type)
-                    lines.append(
-                        f"{style_type}_coeff {coeff_id} {style.name} {self._format_params(params)}\n"
-                    )
+            types = [t for t in style.types if type_filter.includes(t)]
+            for typ in types:
+                params = self._get_type_params(typ, style)
+                coeff_id = self._get_coeff_id(typ, style_type)
+                lines.append(
+                    f"{style_type}_coeff {coeff_id} {style.name} {self._format_params(params)}\n"
+                )
 
         lines.append("\n")
 

@@ -320,33 +320,6 @@ def select_none(struct: Atomistic, reaction_site: Atom) -> list[Atom]:
 # =============================================================================
 
 
-def find_port_atom(struct: Atomistic, port_name: str) -> Atom:
-    """
-    Find an atom with the specified port marker.
-
-    This is a utility function, not a selector. Use it to find
-    port atoms before passing them to selectors.
-
-    Args:
-        struct: Atomistic structure containing ports
-        port_name: Name of port to find
-
-    Returns:
-        Atom with matching port
-
-    Raises:
-        ValueError: If port not found
-    """
-    for atom in struct.atoms:
-        if atom.get("port") == port_name:
-            return atom  # type: ignore[return-value]
-        ports = atom.get("ports")
-        if isinstance(ports, list) and port_name in ports:
-            return atom
-
-    raise ValueError(f"Port '{port_name}' not found")
-
-
 def find_port_atom_by_node(struct: Atomistic, port_name: str, node_id: int) -> Atom:
     """
     Find port atom for a specific node ID.
@@ -378,25 +351,37 @@ def find_port_atom_by_node(struct: Atomistic, port_name: str, node_id: int) -> A
 
 
 def find_port(struct: Atomistic, port_name: str, *, node_id: int | None = None) -> Atom:
-    """Find a port atom, optionally filtering by node ID.
+    """Find an atom carrying the given port marker.
 
-    Convenience wrapper: delegates to find_port_atom or
-    find_port_atom_by_node depending on whether node_id is given.
+    This is a utility function, not a selector. Use it to locate port
+    atoms (``"<"`` / ``">"`` / custom labels) before passing them to
+    :meth:`molpy.reacter.Reacter.run`. Matches either the scalar
+    ``port`` attribute or membership in a ``ports`` list.
 
     Args:
         struct: Atomistic structure containing ports.
         port_name: Name of port to find.
-        node_id: If given, restrict search to atoms with this monomer_node_id.
+        node_id: If given, restrict the search to atoms whose
+            ``monomer_node_id`` equals this value (useful when a
+            structure holds several monomer units).
 
     Returns:
         Atom with matching port.
 
     Raises:
-        ValueError: If port not found.
+        ValueError: If no atom carries the port (for the node, when
+            ``node_id`` is given).
     """
     if node_id is not None:
         return find_port_atom_by_node(struct, port_name, node_id)
-    return find_port_atom(struct, port_name)
+    for atom in struct.atoms:
+        if atom.get("port") == port_name:
+            return atom  # type: ignore[return-value]
+        ports = atom.get("ports")
+        if isinstance(ports, list) and port_name in ports:
+            return atom
+
+    raise ValueError(f"Port '{port_name}' not found")
 
 
 # =============================================================================

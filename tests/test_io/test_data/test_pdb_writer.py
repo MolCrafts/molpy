@@ -10,8 +10,8 @@ from molpy.core.frame import Block, Frame
 
 
 @pytest.fixture(
-    params=["molpy.io.data.pdb", "molpy.io.experimental.data.pdb"],
-    ids=["molpy", "experimental"],
+    params=["molpy.io.data.pdb"],
+    ids=["molpy"],
 )
 def pdb_backend(request):
     return importlib.import_module(request.param)
@@ -20,66 +20,39 @@ def pdb_backend(request):
 class TestPDBWriterRequiredFields:
     """Test that PDB writer correctly handles required fields and None values."""
 
-    def test_missing_required_field_x(self, tmp_path, pdb_backend):
-        """Test that missing 'x' field raises ValueError."""
+    @pytest.mark.parametrize("missing", ["x", "y", "z"])
+    def test_missing_required_field(self, tmp_path, pdb_backend, missing):
+        """A missing required coordinate field raises ValueError."""
+        columns = {
+            "x": np.array([1.0, 2.0]),
+            "y": np.array([4.0, 5.0]),
+            "z": np.array([7.0, 8.0]),
+        }
+        del columns[missing]
         frame = Frame()
-        atoms = Block(
-            {
-                "y": np.array([4.0, 5.0]),
-                "z": np.array([7.0, 8.0]),
-            }
-        )
-        frame["atoms"] = atoms
+        frame["atoms"] = Block(columns)
 
         writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
-        with pytest.raises(ValueError, match="Required field 'x' is missing"):
-            writer.write(frame)
-
-    def test_missing_required_field_y(self, tmp_path, pdb_backend):
-        """Test that missing 'y' field raises ValueError."""
-        frame = Frame()
-        atoms = Block(
-            {
-                "x": np.array([1.0, 2.0]),
-                "z": np.array([7.0, 8.0]),
-            }
-        )
-        frame["atoms"] = atoms
-
-        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
-        with pytest.raises(ValueError, match="Required field 'y' is missing"):
-            writer.write(frame)
-
-    def test_missing_required_field_z(self, tmp_path, pdb_backend):
-        """Test that missing 'z' field raises ValueError."""
-        frame = Frame()
-        atoms = Block(
-            {
-                "x": np.array([1.0, 2.0]),
-                "y": np.array([4.0, 5.0]),
-            }
-        )
-        frame["atoms"] = atoms
-
-        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
-        with pytest.raises(ValueError, match="Required field 'z' is missing"):
+        with pytest.raises(ValueError, match=f"Required field '{missing}' is missing"):
             writer.write(frame)
 
     def test_none_value_in_required_field(self, tmp_path, pdb_backend):
-        """Test that None value in required field raises ValueError."""
-        frame = Frame()
-        atoms = Block(
-            {
-                "x": np.array([None, 2.0], dtype=object),
-                "y": np.array([4.0, 5.0]),
-                "z": np.array([7.0, 8.0]),
-            }
-        )
-        frame["atoms"] = atoms
+        """A None-bearing column is rejected at Block construction.
 
-        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
-        with pytest.raises(ValueError, match="Required field 'x' contains None"):
-            writer.write(frame)
+        Under the numpy-only Store contract a column cannot hold ``None``, so
+        the failure is fail-fast when the Block is built — earlier than (and
+        superseding) the writer's own required-field check.
+        """
+        import molrs
+
+        with pytest.raises(molrs.BlockDtypeError):
+            Block(
+                {
+                    "x": np.array([None, 2.0]),
+                    "y": np.array([4.0, 5.0]),
+                    "z": np.array([7.0, 8.0]),
+                }
+            )
 
     def test_valid_minimal_frame(self, tmp_path, pdb_backend):
         """Test that minimal valid frame (only x, y, z) writes correctly."""
@@ -150,7 +123,7 @@ class TestPDBWriterRequiredFields:
                 "x": np.array([1.0, 2.0]),
                 "y": np.array([1.0, 2.0]),
                 "z": np.array([1.0, 2.0]),
-                "element": np.array(["C", "H"], dtype=object),
+                "element": np.array(["C", "H"]),
             }
         )
         frame["atoms"] = atoms
@@ -165,26 +138,38 @@ class TestPDBWriterRequiredFields:
             elements = [line[76:78].strip() for line in atom_lines]
             assert elements == ["C", "H"]
 
-    def test_optional_fields_none_ignored(self, tmp_path, pdb_backend):
-        """Test that None values in optional fields are ignored."""
+    def test_optional_field_none_rejected_at_construction(self, tmp_path, pdb_backend):
+        """None-bearing optional columns are rejected at Block construction.
+
+        The numpy-only Store has no place for ``None`` — a sparse optional field
+        must be expressed as a typed column (e.g. empty string / default value)
+        rather than a None-bearing object array.
+        """
+        import molrs
+
+        with pytest.raises(molrs.BlockDtypeError):
+            Block(
+                {
+                    "x": np.array([1.0, 2.0]),
+                    "y": np.array([1.0, 2.0]),
+                    "z": np.array([1.0, 2.0]),
+                    "occupancy": np.array([None, 1.0], dtype=object),
+                }
+            )
+
+        # The valid form: a typed column with a real default writes fine.
         frame = Frame()
-        atoms = Block(
+        frame["atoms"] = Block(
             {
                 "x": np.array([1.0, 2.0]),
                 "y": np.array([1.0, 2.0]),
                 "z": np.array([1.0, 2.0]),
-                "name": np.array([None, "C"], dtype=object),  # None should be ignored
-                "occupancy": np.array(
-                    [None, 1.0], dtype=object
-                ),  # None should use default
+                "name": np.array(["X", "C"]),
+                "occupancy": np.array([0.0, 1.0]),
             }
         )
-        frame["atoms"] = atoms
         frame.metadata["elements"] = "X C"
-
-        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
-        writer.write(frame)  # Should not raise error
-
+        pdb_backend.PDBWriter(tmp_path / "test.pdb").write(frame)
         assert (tmp_path / "test.pdb").exists()
 
     def test_atom_ids_from_field(self, tmp_path, pdb_backend):
