@@ -260,6 +260,15 @@ class AmberPrmtopReader:
             self.raw_data["RESIDUE_POINTER"], meta, atoms, bonds, angles, dihedrals
         )
 
+        # Atom-connectivity indices are UNSIGNED, matching molrs's UInt index
+        # columns (molrs ff reads atomi/atomj/... via get_uint). Mask/sentinel
+        # columns that use -1 stay signed and are deliberately left untouched.
+        for _block in (bonds, angles, dihedrals):
+            for _col in ("atomi", "atomj", "atomk", "atoml", "id"):
+                if _col in _block:
+                    _block[_col] = np.asarray(_block[_col], dtype=np.uint32)
+        atoms["id"] = np.asarray(atoms["id"], dtype=np.uint32)
+
         pairstyle = ff.def_pairstyle(
             "lj/cut/coul/long", cutoff_lj=9.0, cutoff_coul=10.0
         )
