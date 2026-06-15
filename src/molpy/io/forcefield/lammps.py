@@ -651,17 +651,13 @@ def _format_bond_harmonic(typ) -> list[float]:
 def _format_angle_harmonic(typ) -> list[float]:
     """Format a harmonic angle type's parameters: k theta0.
 
-    Note: theta0 is stored internally in RADIANS but LAMMPS requires DEGREES.
-    The k parameter is in kcal/mol/rad² which is what LAMMPS expects. Dispatch
-    is by style name (``harmonic``).
+    Following the molrs unit convention, ``theta0`` is stored in **degrees** —
+    the same unit LAMMPS ``angle_coeff harmonic`` expects — so it is written
+    through unchanged (no radian conversion). ``k`` is in kcal/mol/rad².
+    Dispatch is by style name (``harmonic``).
     """
-    import math
-
-    k = typ.params.kwargs.get("k", 0.0)  # kcal/mol/rad²
-    theta0_rad = typ.params.kwargs.get("theta0", 0.0)  # radians (internal storage)
-    theta0_deg = math.degrees(theta0_rad)  # Convert to degrees for LAMMPS
-
-    return [k, theta0_deg]
+    kwargs = typ.params.kwargs
+    return [kwargs.get("k", 0.0), kwargs.get("theta0", 0.0)]
 
 
 def _format_dihedral_opls(typ) -> list[float]:

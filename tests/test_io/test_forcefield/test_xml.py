@@ -10,6 +10,7 @@ This module contains comprehensive tests for:
 Uses pytest framework with modern Python 3.10+ type hints and Google-style docstrings.
 """
 
+import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -246,7 +247,8 @@ class TestXMLForceFieldReader:
                         "type1": type1,
                         "type2": type2,
                         "type3": type3,
-                        "angle": float(angle) if angle else None,
+                        # XML stores radians; reader normalises to internal degrees.
+                        "angle": math.degrees(float(angle)) if angle else None,
                         "k": float(k) if k else None,
                     }
                 )
@@ -480,7 +482,8 @@ class TestXMLForceFieldReader:
                         "type1": type1,
                         "type2": type2,
                         "type3": type3,
-                        "angle": float(angle) if angle else None,
+                        # XML stores radians; reader normalises to internal degrees.
+                        "angle": math.degrees(float(angle)) if angle else None,
                         "k": float(k) if k else None,
                     }
                 )
@@ -741,3 +744,86 @@ class TestXMLForceFieldReader:
         # Should have a type assigned
         assert bond.data.get("type") is not None, "Bond should have a type assigned"
         assert "k" in bond.data or "r0" in bond.data, "Bond should have parameters"
+
+
+class TestAngleUnitOption:
+    """Input angle unit is configurable; internal storage is always degrees."""
+
+    def _theta0_deg(self, ff):
+        from molpy import AngleStyle
+
+        for style in ff.get_styles(AngleStyle):
+            for typ in style.types:
+                v = typ.params.kwargs.get("theta0")
+                if v:
+                    return v
+        return None
+
+    def test_radian_input_normalised_to_internal_degrees(self):
+        """The default (radian) XML input is stored internally in degrees."""
+        ff = XMLForceFieldReader("oplsaa.xml", angle_unit="radian").read()
+        theta0 = self._theta0_deg(ff)
+        assert theta0 is not None
+        assert 80.0 < theta0 < 180.0  # degrees, not the ~1.9 rad it was stored as
+
+    def test_degree_input_passes_through(self):
+        """Declaring degree input skips conversion (value kept as-is)."""
+        from molpy.io.forcefield.xml import _angle_to_internal
+
+        assert _angle_to_internal(109.5, "degree") == 109.5
+        assert abs(_angle_to_internal(math.radians(109.5), "radian") - 109.5) < 1e-9
+
+    def test_writer_inverts_to_output_unit(self):
+        """Reader(radian)->internal degrees->writer(radian) round-trips."""
+        from molpy.io.forcefield.xml import _angle_from_internal, _angle_to_internal
+
+        for unit in ("radian", "degree"):
+            internal = _angle_to_internal(1.91 if unit == "radian" else 109.5, unit)
+            back = _angle_from_internal(internal, unit)
+            assert abs(back - (1.91 if unit == "radian" else 109.5)) < 1e-9
+
+    def test_invalid_unit_raises(self):
+        with pytest.raises(ValueError, match="angle_unit"):
+            XMLForceFieldReader("oplsaa.xml", angle_unit="grad")
+
+
+class TestAngleUnitDetection:
+    """Warnings/errors that flag a likely angle-unit mismatch."""
+
+    def test_degrees_read_as_radians_warns(self):
+        """The classic bug: a degree value (104.52) declared radian -> warn."""
+        from molpy.io.forcefield.xml import AngleUnitWarning, _normalize_angle
+
+        with pytest.warns(AngleUnitWarning):
+            _normalize_angle(104.52, "radian", kind="equilibrium", label="theta0")
+
+    def test_plausible_value_does_not_warn(self):
+        """A genuine radian equilibrium angle is silent."""
+        import warnings
+
+        from molpy.io.forcefield.xml import _normalize_angle
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # any warning becomes a failure
+            deg = _normalize_angle(
+                math.radians(109.5), "radian", kind="equilibrium", label="theta0"
+            )
+        assert abs(deg - 109.5) < 1e-9
+
+    def test_phase_out_of_range_warns(self):
+        from molpy.io.forcefield.xml import AngleUnitWarning, _normalize_angle
+
+        with pytest.warns(AngleUnitWarning):
+            _normalize_angle(400.0, "degree", kind="phase", label="phase1")
+
+    def test_phase_radian_converts_without_warning(self):
+        import warnings
+
+        from molpy.io.forcefield.xml import _normalize_angle
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            deg = _normalize_angle(
+                math.radians(180.0), "radian", kind="phase", label="phase1"
+            )
+        assert abs(deg - 180.0) < 1e-9

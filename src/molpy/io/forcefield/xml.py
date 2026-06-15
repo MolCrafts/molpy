@@ -1,6 +1,8 @@
 """XML force field parser for atomistic force fields."""
 
 import logging
+import math
+import warnings
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,79 @@ from molpy.core.forcefield import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Angles are stored internally in DEGREES (the molrs convention). A reader
+# declares the unit of its *input* file via ``angle_unit`` and converts to
+# degrees at the boundary; a writer converts degrees back to its output unit.
+ANGLE_UNITS = ("radian", "degree")
+
+
+def _check_angle_unit(angle_unit: str) -> str:
+    if angle_unit not in ANGLE_UNITS:
+        raise ValueError(
+            f"angle_unit must be one of {ANGLE_UNITS}, got {angle_unit!r}."
+        )
+    return angle_unit
+
+
+def _angle_to_internal(value: float, angle_unit: str) -> float:
+    """Convert an input angle in *angle_unit* to the internal unit (degrees)."""
+    return math.degrees(value) if angle_unit == "radian" else value
+
+
+def _angle_from_internal(value_deg: float, angle_unit: str) -> float:
+    """Convert an internal-degrees angle to *angle_unit* for serialisation."""
+    return math.radians(value_deg) if angle_unit == "radian" else value_deg
+
+
+class AngleUnitWarning(UserWarning):
+    """An angle value looks inconsistent with its declared ``angle_unit``."""
+
+
+# Generous internal-degree sanity bounds per angle kind. These are deliberately
+# wide so genuine values (incl. linear 180° angles) never trip them; their job is
+# to catch order-of-magnitude unit mismatches (a degree value read as radians
+# becomes ~57x larger, e.g. 104.52 -> 5988), not to validate physical chemistry.
+_ANGLE_RANGES = {"equilibrium": (0.0, 360.0), "phase": (-360.0, 360.0)}
+_TWO_PI = 2.0 * math.pi
+
+
+def _normalize_angle(raw: float, angle_unit: str, *, kind: str, label: str) -> float:
+    """Convert *raw* (in *angle_unit*) to internal degrees, warning on anomalies.
+
+    *kind* selects the plausible range: ``"equilibrium"`` (bond angle ``theta0``,
+    0–180°) or ``"phase"`` (dihedral/improper phase, ±360°). An
+    :class:`AngleUnitWarning` is emitted when the value is implausible for that
+    kind — the usual cause is an ``angle_unit`` that does not match the file
+    (e.g. a degree value read as radians, which turned ``104.52`` into ``5988``).
+
+    Args:
+        raw: The value as written in the input file.
+        angle_unit: The declared unit of *raw* (``"radian"`` or ``"degree"``).
+        kind: ``"equilibrium"`` or ``"phase"``.
+        label: Human-readable field name for diagnostics (e.g. ``"theta0"``).
+
+    Returns:
+        The value in internal degrees.
+    """
+    if angle_unit == "radian" and abs(raw) > _TWO_PI + 1e-6:
+        warnings.warn(
+            f"{label}={raw:g} exceeds 2π but angle_unit='radian'; the value looks "
+            f"like degrees — pass angle_unit='degree' if the file is in degrees.",
+            AngleUnitWarning,
+            stacklevel=3,
+        )
+    deg = _angle_to_internal(raw, angle_unit)
+    lo, hi = _ANGLE_RANGES[kind]
+    if not (lo - 1e-6 <= deg <= hi + 1e-6):
+        warnings.warn(
+            f"{label}={deg:g}° is far outside the {kind} sanity bound "
+            f"[{lo:g}, {hi:g}]° (angle_unit='{angle_unit}'); likely an angle_unit "
+            f"mismatch.",
+            AngleUnitWarning,
+            stacklevel=3,
+        )
+    return deg
 
 
 def _normalize_to_wildcard(value: str | None) -> str:
@@ -122,14 +197,19 @@ class XMLForceFieldReader:
     - NonbondedForce: LJ and Coulomb parameters
     """
 
-    def __init__(self, filepath: str | Path):
+    def __init__(self, filepath: str | Path, *, angle_unit: str = "radian"):
         """
         Initialize the XML force field reader.
 
         Args:
             filepath: Path to the XML force field file, or filename for built-in files
                      (e.g., "oplsaa.xml" will load from molpy/data/forcefield/)
+            angle_unit: Unit of angle equilibria (``"angle"``/phase) in the input
+                file — ``"radian"`` (default, the OpenMM/OPLS XML convention) or
+                ``"degree"``. Values are converted to the internal degrees
+                representation on read, so the rest of the pipeline is unit-consistent.
         """
+        self._angle_unit = _check_angle_unit(angle_unit)
         self._file = _resolve_forcefield_path(filepath)
         self._type_to_atomtype: dict[str, AtomType] = {}  # type -> AtomType mapping
         self._class_to_atomtype: dict[str, AtomType] = {}  # class -> AtomType mapping
@@ -521,13 +601,20 @@ class XMLForceFieldReader:
             at2 = self._get_or_create_atomtype(type2, class2)
             at3 = self._get_or_create_atomtype(type3, class3)
 
-            # Parse parameters
+            # Parse parameters (convert input angle unit -> internal degrees)
             theta0 = (
-                float(angle_str) if angle_str else 0.0
-            )  # Store in radians as in XML
+                _normalize_angle(
+                    float(angle_str),
+                    self._angle_unit,
+                    kind="equilibrium",
+                    label="theta0",
+                )
+                if angle_str
+                else 0.0
+            )
             k = float(k_str) if k_str else 0.0
 
-            # Define angle type (theta0 in radians)
+            # Define angle type (theta0 in internal degrees)
             anglestyle.def_type(at1, at2, at3, k=k, theta0=theta0)
             count += 1
 
@@ -628,7 +715,9 @@ class XMLForceFieldReader:
                 if pn is not None and kn is not None and phn is not None:
                     params[f"periodicity{j}"] = int(pn)
                     params[f"k{j}"] = float(kn)
-                    params[f"phase{j}"] = float(phn)
+                    params[f"phase{j}"] = _normalize_angle(
+                        float(phn), self._angle_unit, kind="phase", label=f"phase{j}"
+                    )
                 else:
                     break
 
@@ -679,7 +768,9 @@ class XMLForceFieldReader:
                 if pn is not None and kn is not None and phn is not None:
                     params[f"periodicity{j}"] = int(pn)
                     params[f"k{j}"] = float(kn)
-                    params[f"phase{j}"] = float(phn)
+                    params[f"phase{j}"] = _normalize_angle(
+                        float(phn), self._angle_unit, kind="phase", label=f"phase{j}"
+                    )
                 else:
                     break
 
@@ -889,19 +980,27 @@ class OPLSAAForceFieldReader(XMLForceFieldReader):
             at3 = self._get_or_create_atomtype(type3, class3)
 
             # Parse parameters and convert units
-            theta0 = float(angle_str) if angle_str else 0.0  # Keep in radians
+            theta0 = (
+                _normalize_angle(
+                    float(angle_str),
+                    self._angle_unit,
+                    kind="equilibrium",
+                    label="theta0",
+                )
+                if angle_str
+                else 0.0
+            )  # input angle unit -> internal degrees
             k_opls = float(k_str) if k_str else 0.0
 
-            # Convert energy units only
+            # Convert energy units only (k is per rad², independent of theta0's unit)
             # OPLS XML: E = 0.5 * k_opls * (theta - theta0)^2 (kJ/mol, rad)
             # LAMMPS: E = k * (theta - theta0)^2 (kcal/mol, rad)
-            # Both use radians, so only energy conversion needed
             # Conversion: k_lammps = 0.5 * k_opls / 4.184
             k = (
                 0.5 * k_opls / 4.184
             )  # kJ/mol/rad² to kcal/mol/rad² (accounting for 0.5 factor difference)
 
-            # Define angle type (theta0 in radians)
+            # Define angle type (theta0 in internal degrees)
             anglestyle.def_type(at1, at2, at3, k=k, theta0=theta0)
             count += 1
 
@@ -1077,9 +1176,13 @@ class XMLForceFieldWriter:
         precision: Number of decimal digits for floating-point values.
     """
 
-    def __init__(self, filepath: str | Path, precision: int = 6) -> None:
+    def __init__(
+        self, filepath: str | Path, precision: int = 6, *, angle_unit: str = "radian"
+    ) -> None:
         self._file = Path(filepath)
         self._prec = precision
+        # Output unit for angle equilibria / phases; internal storage is degrees.
+        self._angle_unit = _check_angle_unit(angle_unit)
 
     # ------------------------------------------------------------------
     # public
@@ -1224,7 +1327,9 @@ class XMLForceFieldWriter:
                 **self._atom_ident(at.ktom, 3),
             }
             kw = at.params.kwargs
-            attrs["angle"] = self._fmt(kw.get("theta0", 0.0))
+            attrs["angle"] = self._fmt(
+                _angle_from_internal(kw.get("theta0", 0.0), self._angle_unit)
+            )
             attrs["k"] = self._fmt(kw.get("k", 0.0))
             elem = ET.SubElement(section, "Angle")
             for a, v in attrs.items():
@@ -1275,7 +1380,9 @@ class XMLForceFieldWriter:
                 if pk in kw and kk in kw and phk in kw:
                     attrs[pk] = str(int(kw[pk]))
                     attrs[kk] = self._fmt(kw[kk])
-                    attrs[phk] = self._fmt(kw[phk])
+                    attrs[phk] = self._fmt(
+                        _angle_from_internal(kw[phk], self._angle_unit)
+                    )
                 else:
                     break
             elem = ET.SubElement(section, "Proper")
@@ -1306,7 +1413,9 @@ class XMLForceFieldWriter:
                 if pk in kw and kk in kw and phk in kw:
                     attrs[pk] = str(int(kw[pk]))
                     attrs[kk] = self._fmt(kw[kk])
-                    attrs[phk] = self._fmt(kw[phk])
+                    attrs[phk] = self._fmt(
+                        _angle_from_internal(kw[phk], self._angle_unit)
+                    )
                 else:
                     break
             elem = ET.SubElement(section, "Improper")
