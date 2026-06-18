@@ -342,9 +342,9 @@ class IonicConductivity(Compute):
 
     Builds the **ionic translational dipole** M_J(t) = sum_i q_i r_i(t) from the
     trajectory (minimum-image unwrapped, same as
-    :class:`DielectricSusceptibility`), then delegates the collective-MSD,
-    linear fit, and S/m unit conversion to
-    ``molrs.dielectric.Dielectric.einstein_helfand_conductivity``:
+    :class:`DielectricSusceptibility`), then composes the raw collective-dipole
+    MSD (:class:`molrs.EinsteinConductivity`) with the diffusive-window slope
+    (:class:`molrs.LinearFit`) and a ``slope / (6 V k_B T)`` S/m prefactor:
 
         sigma = lim_{t->inf} (1 / (6 V k_B T)) d/dt <|M_J(t) - M_J(0)|^2>.
 
