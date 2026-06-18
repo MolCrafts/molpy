@@ -383,6 +383,56 @@ def read_pdb_trajectory(file: PathLike) -> list:
     return list(molrs.io.read_pdb_trajectory(str(file)))
 
 
+def read_dcd_trajectory(file: PathLike) -> Any:
+    """Read a DCD trajectory and return a lazy trajectory reader.
+
+    Backed by the molrs Rust lazy reader (O(1) random access by frame index).
+
+    Args:
+        file: Path to a ``.dcd`` file.
+
+    Returns:
+        molrs ``TrajectoryReader`` object.
+    """
+    import molrs.io
+
+    return molrs.io.read_dcd_trajectory(str(file))
+
+
+def read_trr_trajectory(file: PathLike) -> Any:
+    """Read a GROMACS TRR trajectory and return a lazy trajectory reader.
+
+    Backed by the molrs Rust lazy reader (single/double precision, coordinates
+    plus velocities/forces when present; O(1) random access).
+
+    Args:
+        file: Path to a ``.trr`` file.
+
+    Returns:
+        molrs ``TrajectoryReader`` object.
+    """
+    import molrs.io
+
+    return molrs.io.read_trr_trajectory(str(file))
+
+
+def read_xtc_trajectory(file: PathLike) -> Any:
+    """Read a GROMACS XTC (compressed) trajectory and return a lazy reader.
+
+    Backed by the molrs Rust lazy reader (lossy compression; accepts classic
+    1995 and 2023 magic; O(1) random access after a one-time index scan).
+
+    Args:
+        file: Path to a ``.xtc`` file.
+
+    Returns:
+        molrs ``TrajectoryReader`` object.
+    """
+    import molrs.io
+
+    return molrs.io.read_xtc_trajectory(str(file))
+
+
 def read_h5_trajectory(file: PathLike) -> Any:
     """
     Read HDF5 trajectory file and return a trajectory reader.
