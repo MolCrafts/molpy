@@ -4,8 +4,10 @@ Thin glue layers bridging molpy `Trajectory` to molrs computational
 kernels. The Python side does only data extraction (positions, charges)
 and vectorized NumPy assembly (dipole moment via `einsum`, minimum-image
 unwrap via `Box.diff_dr`); all spectral physics — ACF, windowing, FFT,
-prefactors — is performed in Rust by `molrs.dielectric` and
-`molrs.signal`.
+prefactors — is performed in Rust by the raw computes
+(`molrs.DebyeRelaxation`, `molrs.GreenKuboConductivity`) and the ε(ω) Fits
+(`molrs.EinsteinHelfandSpectrum`, `molrs.GreenKuboSpectrum`), plus the raw
+`molrs.dielectric` observables and `molrs.signal`.
 """
 
 from __future__ import annotations
@@ -14,7 +16,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from molrs import DebyeRelaxation as _MolrsDebyeRelaxation
 from molrs import EinsteinConductivity as _MolrsEinsteinConductivity
+from molrs import EinsteinHelfandSpectrum as _MolrsEinsteinHelfandSpectrum
+from molrs import GreenKuboConductivity as _MolrsGreenKuboConductivity
+from molrs import GreenKuboSpectrum as _MolrsGreenKuboSpectrum
 from molrs import LinearFit as _MolrsLinearFit
 from molrs.dielectric import Dielectric
 from molrs.signal import acf_fft, apply_window, frequency_grid
@@ -33,8 +39,7 @@ if TYPE_CHECKING:
     from ..core.trajectory import Trajectory
 
 # Treat ACF lag-0 values below this threshold as numerical zero (would
-# otherwise blow up the normalization step). Same magnitude as the DC
-# cutoff used on the Rust side in `dielectric::green_kubo_spectrum`.
+# otherwise blow up the normalization step in ACFAnalyzer).
 _ACF_ZERO_LAG_EPSILON = 1e-30
 
 # SI constants for the Einstein-Helfand conductivity unit prefactor (CODATA
@@ -182,9 +187,12 @@ class DielectricSusceptibility(Compute):
     Extracts atomic positions and charges per frame, unwraps coordinates
     via minimum-image convention, builds the total dipole moment series,
     and runs one or more spectral routes (Einstein-Helfand and/or
-    Green-Kubo) through `molrs.dielectric`. The static dielectric constant
-    is also computed once via Neumann's fluctuation formula and attached
-    to every result.
+    Green-Kubo) as the explicit raw-compute + ε(ω)-Fit composition:
+    `molrs.DebyeRelaxation` (raw fluctuation dipole ACF) +
+    `molrs.EinsteinHelfandSpectrum`, and `molrs.GreenKuboConductivity`
+    (raw current ACF) + `molrs.GreenKuboSpectrum`. No spectra math runs in
+    Python. The static dielectric constant is computed once via Neumann's
+    fluctuation formula and attached to every result.
 
     Args:
         dt: Frame spacing in **ps**.
@@ -267,14 +275,9 @@ class DielectricSusceptibility(Compute):
         _unwrap_inplace(positions, frames)
 
         # Dipole moment per frame: M[f, d] = Σ_a charges[a] · positions[f, a, d]
-        dipole_moments = np.einsum("a,fad->fd", charges, positions)
-
-        # Compute current density (only needed for the GK route)
-        current_density = None
-        if "green-kubo" in self.routes:
-            current_density = Dielectric.compute_current_density(
-                dipole_moments, self.dt, volume
-            )
+        dipole_moments = np.ascontiguousarray(
+            np.einsum("a,fad->fd", charges, positions)
+        )
 
         # Static dielectric constant is route-independent — compute once so
         # every result carries it (avoids the dual problem of the GK route
@@ -287,19 +290,21 @@ class DielectricSusceptibility(Compute):
 
         for route in self.routes:
             if route == "einstein-helfand":
-                spec = Dielectric.einstein_helfand_spectrum(
-                    dipole_moments,
+                # Raw fluctuation dipole ACF + ⟨M²⟩ (DebyeRelaxation) → ε(ω) Fit.
+                raw = _MolrsDebyeRelaxation(
+                    volume, self.temperature, "tinfoil"
+                ).compute(dipole_moments, self.dt, self.max_correlation_time)
+                spec = _MolrsEinsteinHelfandSpectrum(
                     self.dt,
                     volume,
                     self.temperature,
                     self.epsilon_inf,
-                    self.max_correlation_time,
-                    self.window_type,
-                )
+                    raw["zero_lag_variance"],
+                ).fit(raw["acf"])
                 results["EH-full"] = DielectricResult(
                     frequency=spec["frequencies"],
-                    epsilon_real=spec["epsilon_real"],
-                    epsilon_imag=spec["epsilon_imag"],
+                    epsilon_real=spec["eps_real"],
+                    epsilon_imag=spec["eps_imag"],
                     epsilon_static=eps_stat,
                     epsilon_inf=self.epsilon_inf,
                     route="einstein-helfand",
@@ -307,19 +312,27 @@ class DielectricSusceptibility(Compute):
                 )
 
             if route == "green-kubo":
-                spec = Dielectric.green_kubo_spectrum(
-                    current_density,
+                # Current density (raw; row 0 is NaN, no previous frame). Skip
+                # row 0, then take the raw current ACF (GreenKuboConductivity)
+                # over the post-NaN series and transform it with the ε(ω) Fit.
+                current_density = Dielectric.compute_current_density(
+                    dipole_moments, self.dt, volume
+                )
+                current_post = np.ascontiguousarray(current_density[1:])
+                raw = _MolrsGreenKuboConductivity().compute(
+                    current_post, self.dt, self.max_correlation_time
+                )
+                spec = _MolrsGreenKuboSpectrum(
                     self.dt,
                     volume,
                     self.temperature,
                     self.epsilon_inf,
-                    self.max_correlation_time,
                     self.window_type,
-                )
+                ).fit(raw["jacf"])
                 results["GK-full"] = DielectricResult(
                     frequency=spec["frequencies"],
-                    epsilon_real=spec["epsilon_real"],
-                    epsilon_imag=spec["epsilon_imag"],
+                    epsilon_real=spec["eps_real"],
+                    epsilon_imag=spec["eps_imag"],
                     epsilon_static=eps_stat,
                     epsilon_inf=self.epsilon_inf,
                     route="green-kubo",
