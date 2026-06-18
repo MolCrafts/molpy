@@ -3,6 +3,19 @@
 The full user-facing changelog lives in [docs/changelog.md](docs/changelog.md).
 This file records API renames and breaking changes at the repository root.
 
+## 0.4.2 - 2026-06-18
+
+### Added (additive; no API renames or breaking changes)
+
+- GROMACS **TRR** / **XTC** and **DCD** trajectory readers
+  (`read_trr_trajectory`, `read_xtc_trajectory`, `read_dcd_trajectory`) and TRR/
+  XTC writers (`write_trr`, `write_xtc`), thin delegations to the molrs backend.
+
+### Changed
+
+- Pin `molcrafts-molrs==0.1.4` (was `0.1.3`) — required for the new GROMACS
+  trajectory bindings.
+
 ## 0.4.0 - 2026-06-11
 
 ### Removed (no deprecation shims — project is in the experimental stage)

@@ -4,8 +4,10 @@ Thin glue layers bridging molpy `Trajectory` to molrs computational
 kernels. The Python side does only data extraction (positions, charges)
 and vectorized NumPy assembly (dipole moment via `einsum`, minimum-image
 unwrap via `Box.diff_dr`); all spectral physics — ACF, windowing, FFT,
-prefactors — is performed in Rust by `molrs.dielectric` and
-`molrs.signal`.
+prefactors — is performed in Rust by the raw computes
+(`molrs.DebyeRelaxation`, `molrs.GreenKuboConductivity`) and the ε(ω) Fits
+(`molrs.EinsteinHelfandSpectrum`, `molrs.GreenKuboSpectrum`), plus the raw
+`molrs.dielectric` observables and `molrs.signal`.
 """
 
 from __future__ import annotations
@@ -14,6 +16,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from molrs import DebyeRelaxation as _MolrsDebyeRelaxation
+from molrs import EinsteinConductivity as _MolrsEinsteinConductivity
+from molrs import EinsteinHelfandSpectrum as _MolrsEinsteinHelfandSpectrum
+from molrs import GreenKuboConductivity as _MolrsGreenKuboConductivity
+from molrs import GreenKuboSpectrum as _MolrsGreenKuboSpectrum
+from molrs import LinearFit as _MolrsLinearFit
 from molrs.dielectric import Dielectric
 from molrs.signal import acf_fft, apply_window, frequency_grid
 
@@ -31,9 +39,24 @@ if TYPE_CHECKING:
     from ..core.trajectory import Trajectory
 
 # Treat ACF lag-0 values below this threshold as numerical zero (would
-# otherwise blow up the normalization step). Same magnitude as the DC
-# cutoff used on the Rust side in `dielectric::green_kubo_spectrum`.
+# otherwise blow up the normalization step in ACFAnalyzer).
 _ACF_ZERO_LAG_EPSILON = 1e-30
+
+# SI constants for the Einstein-Helfand conductivity unit prefactor (CODATA
+# 2018), matching molrs::units::constants used by the legacy Rust kernel.
+_ELEMENTARY_CHARGE_C = 1.602176634e-19
+_BOLTZMANN_SI = 1.380649e-23
+_ANGSTROM_M = 1e-10
+_PICOSECOND_S = 1e-12
+# σ = prefactor · slope / (V·T), Einstein factor 1/6. Folds in e², Å→m, ps→s so
+# the caller works in LAMMPS *real* units in / SI S/m out.
+_EINSTEIN_HELFAND_PREFACTOR = (
+    _ELEMENTARY_CHARGE_C
+    * _ELEMENTARY_CHARGE_C
+    * _ANGSTROM_M
+    * _ANGSTROM_M
+    / _PICOSECOND_S
+) / (6.0 * _ANGSTROM_M * _ANGSTROM_M * _ANGSTROM_M * _BOLTZMANN_SI)
 
 
 def _unwrap_inplace(coords: np.ndarray, frames: list) -> None:
@@ -164,9 +187,12 @@ class DielectricSusceptibility(Compute):
     Extracts atomic positions and charges per frame, unwraps coordinates
     via minimum-image convention, builds the total dipole moment series,
     and runs one or more spectral routes (Einstein-Helfand and/or
-    Green-Kubo) through `molrs.dielectric`. The static dielectric constant
-    is also computed once via Neumann's fluctuation formula and attached
-    to every result.
+    Green-Kubo) as the explicit raw-compute + ε(ω)-Fit composition:
+    `molrs.DebyeRelaxation` (raw fluctuation dipole ACF) +
+    `molrs.EinsteinHelfandSpectrum`, and `molrs.GreenKuboConductivity`
+    (raw current ACF) + `molrs.GreenKuboSpectrum`. No spectra math runs in
+    Python. The static dielectric constant is computed once via Neumann's
+    fluctuation formula and attached to every result.
 
     Args:
         dt: Frame spacing in **ps**.
@@ -249,14 +275,9 @@ class DielectricSusceptibility(Compute):
         _unwrap_inplace(positions, frames)
 
         # Dipole moment per frame: M[f, d] = Σ_a charges[a] · positions[f, a, d]
-        dipole_moments = np.einsum("a,fad->fd", charges, positions)
-
-        # Compute current density (only needed for the GK route)
-        current_density = None
-        if "green-kubo" in self.routes:
-            current_density = Dielectric.compute_current_density(
-                dipole_moments, self.dt, volume
-            )
+        dipole_moments = np.ascontiguousarray(
+            np.einsum("a,fad->fd", charges, positions)
+        )
 
         # Static dielectric constant is route-independent — compute once so
         # every result carries it (avoids the dual problem of the GK route
@@ -269,19 +290,21 @@ class DielectricSusceptibility(Compute):
 
         for route in self.routes:
             if route == "einstein-helfand":
-                spec = Dielectric.einstein_helfand_spectrum(
-                    dipole_moments,
+                # Raw fluctuation dipole ACF + ⟨M²⟩ (DebyeRelaxation) → ε(ω) Fit.
+                raw = _MolrsDebyeRelaxation(
+                    volume, self.temperature, "tinfoil"
+                ).compute(dipole_moments, self.dt, self.max_correlation_time)
+                spec = _MolrsEinsteinHelfandSpectrum(
                     self.dt,
                     volume,
                     self.temperature,
                     self.epsilon_inf,
-                    self.max_correlation_time,
-                    self.window_type,
-                )
+                    raw["zero_lag_variance"],
+                ).fit(raw["acf"])
                 results["EH-full"] = DielectricResult(
                     frequency=spec["frequencies"],
-                    epsilon_real=spec["epsilon_real"],
-                    epsilon_imag=spec["epsilon_imag"],
+                    epsilon_real=spec["eps_real"],
+                    epsilon_imag=spec["eps_imag"],
                     epsilon_static=eps_stat,
                     epsilon_inf=self.epsilon_inf,
                     route="einstein-helfand",
@@ -289,19 +312,27 @@ class DielectricSusceptibility(Compute):
                 )
 
             if route == "green-kubo":
-                spec = Dielectric.green_kubo_spectrum(
-                    current_density,
+                # Current density (raw; row 0 is NaN, no previous frame). Skip
+                # row 0, then take the raw current ACF (GreenKuboConductivity)
+                # over the post-NaN series and transform it with the ε(ω) Fit.
+                current_density = Dielectric.compute_current_density(
+                    dipole_moments, self.dt, volume
+                )
+                current_post = np.ascontiguousarray(current_density[1:])
+                raw = _MolrsGreenKuboConductivity().compute(
+                    current_post, self.dt, self.max_correlation_time
+                )
+                spec = _MolrsGreenKuboSpectrum(
                     self.dt,
                     volume,
                     self.temperature,
                     self.epsilon_inf,
-                    self.max_correlation_time,
                     self.window_type,
-                )
+                ).fit(raw["jacf"])
                 results["GK-full"] = DielectricResult(
                     frequency=spec["frequencies"],
-                    epsilon_real=spec["epsilon_real"],
-                    epsilon_imag=spec["epsilon_imag"],
+                    epsilon_real=spec["eps_real"],
+                    epsilon_imag=spec["eps_imag"],
                     epsilon_static=eps_stat,
                     epsilon_inf=self.epsilon_inf,
                     route="green-kubo",
@@ -324,9 +355,9 @@ class IonicConductivity(Compute):
 
     Builds the **ionic translational dipole** M_J(t) = sum_i q_i r_i(t) from the
     trajectory (minimum-image unwrapped, same as
-    :class:`DielectricSusceptibility`), then delegates the collective-MSD,
-    linear fit, and S/m unit conversion to
-    ``molrs.dielectric.Dielectric.einstein_helfand_conductivity``:
+    :class:`DielectricSusceptibility`), then composes the raw collective-dipole
+    MSD (:class:`molrs.EinsteinConductivity`) with the diffusive-window slope
+    (:class:`molrs.LinearFit`) and a ``slope / (6 V k_B T)`` S/m prefactor:
 
         sigma = lim_{t->inf} (1 / (6 V k_B T)) d/dt <|M_J(t) - M_J(0)|^2>.
 
@@ -413,22 +444,25 @@ class IonicConductivity(Compute):
         # Ionic translational dipole M_J[f, d] = sum_a charges[a] * pos[f, a, d].
         translational_dipole = np.einsum("a,fad->fd", charges, positions)
 
-        spec = Dielectric.einstein_helfand_conductivity(
-            translational_dipole,
+        # Explicit raw-compute + fit: the collective-dipole MSD is measured in
+        # Rust (no fitted sigma), then the diffusive-window OLS slope is the
+        # analyst's LinearFit choice. The only Python step is the SI prefactor.
+        raw = _MolrsEinsteinConductivity().compute(
+            np.ascontiguousarray(translational_dipole),
             self.dt,
-            volume,
-            self.temperature,
             self.max_correlation_time,
-            self.fit_start_frac,
-            self.fit_end_frac,
         )
+        fit = _MolrsLinearFit(self.fit_start_frac, self.fit_end_frac).fit(
+            raw["lag_times"], raw["msd"]
+        )
+        sigma = _EINSTEIN_HELFAND_PREFACTOR * fit["slope"] / (volume * self.temperature)
         return ConductivityResult(
-            time=spec["lag_times"],
-            msd=spec["msd"],
-            sigma=spec["sigma"],
-            slope=spec["slope"],
-            fit_start=spec["fit_start"],
-            fit_end=spec["fit_end"],
+            time=raw["lag_times"],
+            msd=raw["msd"],
+            sigma=sigma,
+            slope=fit["slope"],
+            fit_start=fit["fit_start"],
+            fit_end=fit["fit_end"],
             meta={
                 "dt": self.dt,
                 "temperature": self.temperature,

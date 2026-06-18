@@ -7,8 +7,12 @@ collective charge current ``J(t) = sum_a q_a v_a(t)``::
 
 This wrapper assembles the collective current ``J = sum v_cation - sum v_anion``
 (unit charges +/-1) from per-atom velocities and delegates the current
-autocorrelation + trapezoidal Green-Kubo integral to Rust
-(``molrs.transport.Jacf``).
+autocorrelation + trapezoidal Green-Kubo integral to Rust via the explicit
+raw-compute + fit composition (``molrs.GreenKuboConductivity`` for the raw
+current ACF, then ``molrs.RunningIntegral`` for the cumulative integral). The
+only Python-side step is multiplying by the fixed Green-Kubo unit prefactor
+``e^2 A^2 ps^-1 / (3 A^3 kB)`` to convert the integral to SI ``S/m`` — no ACF /
+integration math is reimplemented in Python.
 
 Units (LAMMPS *real*, matching :mod:`molpy.compute.dielectric`): velocities in
 ``A/ps`` (so ``J`` is ``e*A/ps``), ``dt`` in ps, volume in ``A^3``,
@@ -28,13 +32,30 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
-from molrs.transport import Jacf as _MolrsJacf
+from molrs import GreenKuboConductivity as _MolrsGreenKuboConductivity
+from molrs import RunningIntegral as _MolrsRunningIntegral
 
 from .base import Compute
 from .result import JACFResult
 
 if TYPE_CHECKING:
     from ..core.trajectory import Trajectory
+
+# SI constants for the Green-Kubo unit prefactor (CODATA 2018), matching
+# molrs::units::constants used by the legacy Rust kernel.
+_ELEMENTARY_CHARGE_C = 1.602176634e-19
+_BOLTZMANN_SI = 1.380649e-23
+_ANGSTROM_M = 1e-10
+_PICOSECOND_S = 1e-12
+# σ = prefactor · ∫⟨J(0)·J(t)⟩ dt / (V·T), Green-Kubo factor 1/3. Folds in e²,
+# Å→m, and ps→s so the caller works in LAMMPS *real* units in / SI S/m out.
+_GREEN_KUBO_PREFACTOR = (
+    _ELEMENTARY_CHARGE_C
+    * _ELEMENTARY_CHARGE_C
+    * _ANGSTROM_M
+    * _ANGSTROM_M
+    / _PICOSECOND_S
+) / (3.0 * _ANGSTROM_M * _ANGSTROM_M * _ANGSTROM_M * _BOLTZMANN_SI)
 
 
 class JACF(Compute):
@@ -113,17 +134,21 @@ class JACF(Compute):
             raise ValueError(f"Need at least 2 frames, got {current.shape[0]}")
         volume = self.volume if self.volume is not None else float(np.mean(volumes))
 
-        res = _MolrsJacf.green_kubo_conductivity(
+        # Raw current ACF in Rust (no fitted sigma), then the cumulative
+        # trapezoidal integral in Rust; the only Python step is the SI prefactor.
+        raw = _MolrsGreenKuboConductivity().compute(
             np.ascontiguousarray(current),
             self.dt,
-            volume,
-            self.temperature,
             self.n_cache - 1,
+        )
+        integ = _MolrsRunningIntegral().fit(raw["jacf"], self.dt)
+        sigma_running = (
+            _GREEN_KUBO_PREFACTOR * integ["integral"] / (volume * self.temperature)
         )
         time_array = np.arange(self.n_cache, dtype=np.float64) * self.dt
         return JACFResult(
             time=time_array,
-            jacf=res["jacf"],
-            sigma_running=res["sigma_running"],
-            sigma=float(res["sigma"]),
+            jacf=raw["jacf"],
+            sigma_running=sigma_running,
+            sigma=float(sigma_running[-1]),
         )
