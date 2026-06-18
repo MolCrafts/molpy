@@ -1,8 +1,5 @@
 # Specs
 
-- [compute-fit-01-module](compute-fit-01-module.md) — 计算↔拟合分离 链 1/3（molrs 主体，非破坏新增）：新增 `Fit` trait + `compute::fit`（LinearFit/RunningIntegral/Plateau/DebyeFit + PowerSpectrum/IRSpectrum/RamanSpectrum 谱变换）+ 只返回原始曲线的 method-first OOP compute（VACF/EinsteinDiffusion/GreenKuboDiffusion/EinsteinConductivity/GreenKuboConductivity/DebyeRelaxation）；molpy 侧无改动，仅为链上下文（molpy 工作在 02/03） [approved]
-- [compute-fit-02-repoint](compute-fit-02-repoint.md) — 计算↔拟合分离 链 2/3（含 molpy）：molpy compute 包装薄继承/委托到 molrs 裸 compute+fit（core 下沉，molpy 不留拟合/谱数学，ad-hoc DebyeFit 改委托）；PyO3 暴露新类、旧绑定加 DeprecationWarning；freud-parity benches 改 raw→fit 保留双预算 floor。核心=数值回归锁；前置须重建 maturin wheel [approved]
-- [compute-fit-03-cleanup](compute-fit-03-cleanup.md) — 计算↔拟合分离 链 3/3（BREAKING，含 molpy）：删 molrs bundled derived 字段 + 残余自由函数转 OOP/删 + 删死代码；移除弃用 PyO3 绑定 + molpy 过渡 shim；grep-clean 全仓零引用被删符号 + 物理逐值不变回归；记录 breaking SemVer 跳版 [approved]
 - [molgraph-ecs-03-molpy](molgraph-ecs-03-molpy.md) — molpy 收成 molrs ECS world 上的句柄列视图：Atomistic(_GraphViews, molrs.Atomistic) IS-A 无桥；删 Struct+3 Mixin + _ordered_* 镜像 + from_molrs_graph 拷贝 + _MOLRS_KIND；属性走零拷贝 component 列；system 即自由函数；零硬编码字段=引用 fields 约定+错即报错（chain molgraph-ecs 3/3，依赖 molrs 01+02；supersedes atomistic-cg-on-molrs-molgraph + molgraph-views-02） [draft]
 - [cg-atomistic-mapping-redesign](cg-atomistic-mapping-redesign.md) — 简化 CoarseGrain 至与 Atomistic 对称 [draft]
 - [molrs-backend](molrs-backend.md) — molrs 作为 molpy 必选后端：Box 继承 + NeighborList/RDF + 替换 RDKit + 暴露 MSD/Cluster 等 [code-complete]
