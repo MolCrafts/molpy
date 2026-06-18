@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from molrs import EinsteinConductivity as _MolrsEinsteinConductivity
+from molrs import LinearFit as _MolrsLinearFit
 from molrs.dielectric import Dielectric
 from molrs.signal import acf_fft, apply_window, frequency_grid
 
@@ -34,6 +36,22 @@ if TYPE_CHECKING:
 # otherwise blow up the normalization step). Same magnitude as the DC
 # cutoff used on the Rust side in `dielectric::green_kubo_spectrum`.
 _ACF_ZERO_LAG_EPSILON = 1e-30
+
+# SI constants for the Einstein-Helfand conductivity unit prefactor (CODATA
+# 2018), matching molrs::units::constants used by the legacy Rust kernel.
+_ELEMENTARY_CHARGE_C = 1.602176634e-19
+_BOLTZMANN_SI = 1.380649e-23
+_ANGSTROM_M = 1e-10
+_PICOSECOND_S = 1e-12
+# σ = prefactor · slope / (V·T), Einstein factor 1/6. Folds in e², Å→m, ps→s so
+# the caller works in LAMMPS *real* units in / SI S/m out.
+_EINSTEIN_HELFAND_PREFACTOR = (
+    _ELEMENTARY_CHARGE_C
+    * _ELEMENTARY_CHARGE_C
+    * _ANGSTROM_M
+    * _ANGSTROM_M
+    / _PICOSECOND_S
+) / (6.0 * _ANGSTROM_M * _ANGSTROM_M * _ANGSTROM_M * _BOLTZMANN_SI)
 
 
 def _unwrap_inplace(coords: np.ndarray, frames: list) -> None:
@@ -413,22 +431,25 @@ class IonicConductivity(Compute):
         # Ionic translational dipole M_J[f, d] = sum_a charges[a] * pos[f, a, d].
         translational_dipole = np.einsum("a,fad->fd", charges, positions)
 
-        spec = Dielectric.einstein_helfand_conductivity(
-            translational_dipole,
+        # Explicit raw-compute + fit: the collective-dipole MSD is measured in
+        # Rust (no fitted sigma), then the diffusive-window OLS slope is the
+        # analyst's LinearFit choice. The only Python step is the SI prefactor.
+        raw = _MolrsEinsteinConductivity().compute(
+            np.ascontiguousarray(translational_dipole),
             self.dt,
-            volume,
-            self.temperature,
             self.max_correlation_time,
-            self.fit_start_frac,
-            self.fit_end_frac,
         )
+        fit = _MolrsLinearFit(self.fit_start_frac, self.fit_end_frac).fit(
+            raw["lag_times"], raw["msd"]
+        )
+        sigma = _EINSTEIN_HELFAND_PREFACTOR * fit["slope"] / (volume * self.temperature)
         return ConductivityResult(
-            time=spec["lag_times"],
-            msd=spec["msd"],
-            sigma=spec["sigma"],
-            slope=spec["slope"],
-            fit_start=spec["fit_start"],
-            fit_end=spec["fit_end"],
+            time=raw["lag_times"],
+            msd=raw["msd"],
+            sigma=sigma,
+            slope=fit["slope"],
+            fit_start=fit["fit_start"],
+            fit_end=fit["fit_end"],
             meta={
                 "dt": self.dt,
                 "temperature": self.temperature,
