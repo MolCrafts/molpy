@@ -65,6 +65,11 @@ dev = [
     "pytest-benchmark>=5.0",
     "pre-commit>=4.0.0",
     "rdkit",
+    # Lint/type tools — pinned so local checks (the pre-commit `language: system`
+    # ty hook, and ruff) use exactly the versions CI lints with. Keep in sync
+    # with .github/workflows/ci.yml and the ruff-pre-commit rev.
+    "ruff==0.15.13",
+    "ty==0.0.37",
 ]
 doc = [
     "mkdocs>=1.4.0",
