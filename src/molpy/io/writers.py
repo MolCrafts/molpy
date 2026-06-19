@@ -229,6 +229,38 @@ def write_xyz_trajectory(file: PathLike, frames: list) -> None:
             writer.write_frame(frame)
 
 
+def write_trr(file: PathLike, frames: list) -> None:
+    """Write frames to a GROMACS TRR trajectory (single precision).
+
+    Thin delegation to the native molrs writer. Each frame needs ``x``/``y``/
+    ``z`` (nm); optional ``vx``/``vy``/``vz`` and ``fx``/``fy``/``fz`` are
+    written when present.
+
+    Args:
+        file: Output file path.
+        frames: List of Frame objects to write.
+    """
+    import molrs.io
+
+    molrs.io.write_trr(str(file), list(frames))
+
+
+def write_xtc(file: PathLike, frames: list) -> None:
+    """Write frames to a GROMACS XTC (compressed) trajectory.
+
+    Thin delegation to the native molrs writer. Each frame needs ``x``/``y``/
+    ``z`` (nm); quantization precision comes from ``frame.metadata['precision']``
+    when present, else 1000 (0.001 nm).
+
+    Args:
+        file: Output file path.
+        frames: List of Frame objects to write.
+    """
+    import molrs.io
+
+    molrs.io.write_xtc(str(file), list(frames))
+
+
 def write_h5_trajectory(
     file: PathLike,
     frames: list,

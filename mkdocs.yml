@@ -159,7 +159,6 @@ nav:
       - Engine: api/engine.md
       - Optimization: api/optimize.md
       - Compute: api/compute.md
-      - Legacy: api/legacy.md
 
   - Developer Guide:
       - developer/index.md

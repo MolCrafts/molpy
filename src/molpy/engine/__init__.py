@@ -27,9 +27,13 @@ from .cp2k import CP2KEngine
 from .lammps import LAMMPSEngine
 from .openmm import OpenMMEngine, OpenMMSimulationConfig
 
+# Short, ergonomic alias: ``mp.engine.LAMMPS()``.
+LAMMPS = LAMMPSEngine
+
 __all__ = [
     "CP2KEngine",
     "Engine",
+    "LAMMPS",
     "LAMMPSEngine",
     "OpenMMEngine",
     "OpenMMSimulationConfig",

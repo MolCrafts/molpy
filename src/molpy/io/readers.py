@@ -235,23 +235,32 @@ def read_h5(file: PathLike, frame: Any = None) -> Any:
 # =============================================================================
 
 
-def read_lammps_forcefield(
-    scripts: PathLike | list[PathLike], forcefield: Any = None
-) -> Any:
+def read_lammps_forcefield(scripts: PathLike | list[PathLike]) -> Any:
     """
-    Read LAMMPS force field file and return a ForceField object.
+    Read a LAMMPS force-field include (``*.ff``) into a ForceField.
+
+    Delegates to the native molrs reader (``molrs.read_lammps_forcefield``),
+    which parses the include directly into a ``molrs.ForceField`` in molrs units
+    (Å, kcal/mol, radians, e): LAMMPS harmonic ``K`` → molrs ``k = 2K``, angle
+    and dihedral-phase values stay in degrees, and ``dihedral_style fourier``
+    maps to the molrs ``periodic`` kernel. AMBER 1-4 scaling is recorded on the
+    force field's special bonds. Per-atom charge and mass live in the LAMMPS
+    *data* file, not this include, so they are not read here.
 
     Args:
-        scripts: Path or list of paths to LAMMPS force field scripts
-        forcefield: Optional existing ForceField to populate
+        scripts: Path (or list of paths) to LAMMPS force-field include(s). A
+            list is concatenated and parsed as a single document.
 
     Returns:
-        Populated ForceField object
+        ``molpy.ForceField`` (which is ``molrs.ForceField``).
     """
-    from .forcefield.lammps import LAMMPSForceFieldReader
+    import molrs
 
-    reader = LAMMPSForceFieldReader(scripts)
-    return reader.read(forcefield=forcefield)
+    paths = scripts if isinstance(scripts, list) else [scripts]
+    if len(paths) == 1:
+        return molrs.read_lammps_forcefield(str(paths[0]))
+    text = "\n".join(Path(p).read_text() for p in paths)
+    return molrs.read_lammps_forcefield_str(text)
 
 
 def read_xml_forcefield(file: PathLike) -> Any:
@@ -372,6 +381,56 @@ def read_pdb_trajectory(file: PathLike) -> list:
 
     # molrs.io.read_pdb_trajectory already returns canonical rich Frames.
     return list(molrs.io.read_pdb_trajectory(str(file)))
+
+
+def read_dcd_trajectory(file: PathLike) -> Any:
+    """Read a DCD trajectory and return a lazy trajectory reader.
+
+    Backed by the molrs Rust lazy reader (O(1) random access by frame index).
+
+    Args:
+        file: Path to a ``.dcd`` file.
+
+    Returns:
+        molrs ``TrajectoryReader`` object.
+    """
+    import molrs.io
+
+    return molrs.io.read_dcd_trajectory(str(file))
+
+
+def read_trr_trajectory(file: PathLike) -> Any:
+    """Read a GROMACS TRR trajectory and return a lazy trajectory reader.
+
+    Backed by the molrs Rust lazy reader (single/double precision, coordinates
+    plus velocities/forces when present; O(1) random access).
+
+    Args:
+        file: Path to a ``.trr`` file.
+
+    Returns:
+        molrs ``TrajectoryReader`` object.
+    """
+    import molrs.io
+
+    return molrs.io.read_trr_trajectory(str(file))
+
+
+def read_xtc_trajectory(file: PathLike) -> Any:
+    """Read a GROMACS XTC (compressed) trajectory and return a lazy reader.
+
+    Backed by the molrs Rust lazy reader (lossy compression; accepts classic
+    1995 and 2023 magic; O(1) random access after a one-time index scan).
+
+    Args:
+        file: Path to a ``.xtc`` file.
+
+    Returns:
+        molrs ``TrajectoryReader`` object.
+    """
+    import molrs.io
+
+    return molrs.io.read_xtc_trajectory(str(file))
 
 
 def read_h5_trajectory(file: PathLike) -> Any:

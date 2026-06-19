@@ -20,7 +20,10 @@ jobs:
           python-version: '3.12'
 
       - name: Install tools
-        run: pip install ruff ty
+        # Pinned to match .pre-commit-config.yaml (ruff-pre-commit rev) and the
+        # [dev] extra, so local pre-commit and CI lint with identical tool
+        # versions. Bump ruff/ty in lockstep across all three.
+        run: pip install "ruff==0.15.13" "ty==0.0.37"
 
       - name: Ruff format
         run: ruff format --check src/ tests/
@@ -48,8 +51,14 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        # molrs (molcrafts-molrs==0.1.0, pinned in pyproject.toml) installs as a
-        # wheel from PyPI — no Rust toolchain / source build needed.
+        # molcrafts-molrs (exact-pinned in pyproject.toml) installs as a wheel
+        # from PyPI — no Rust toolchain / source build needed. NOTE: this
+        # clean-room install is the ONE check pre-commit cannot mirror — locally
+        # molrs is an editable install of the sibling checkout, so the pin's
+        # availability on PyPI is never verified there. On a coordinated
+        # molrs→molpy release the pinned molrs must reach PyPI *before* this
+        # runs; otherwise the job fails transiently until the index propagates —
+        # just re-run after molrs publishes.
         run: pip install -e ".[dev]"
 
       - name: Run tests

@@ -8,3 +8,6 @@
 - [clpol-01-virtualsite-drude](clpol-01-virtualsite-drude.md) — CL&Pol 1/3：core 虚位点数据模型 VirtualSite/DrudeParticle/MasslessSite + 通用增补基类 VirtualSiteBuilder + DrudeBuilder（极化器）+ Tip4pBuilder（证明基类通用）+ alpha.ff 极化率数据;α=q_D²/k_D、电荷守恒、不改入参（molpy 内,不导出） [approved]
 - [clpol-02-damping-potentials](clpol-02-damping-potentials.md) — CL&Pol 2/3：potential 层 Thole + Tang-Toennies 阻尼求值器（calc_energy/calc_forces,闭式+解析力 FD 校验+长短程极限），依赖 01 [approved]
 - [clpol-03-scalelj](clpol-03-scalelj.md) — CL&Pol 3/3：scaleLJ SAPT 因子缩放 fragment 对 LJ ε（k_ij=1/[1+C0·r²q²/α+C1·μ²/α],μ² 无 r² 前因子）,写回 PairType 不改 σ/电荷,依赖 01 [approved]
+- [opls-typifier-downsink](opls-typifier-downsink.md) — molpy 消费侧：OPLS typifier+估计器整体下沉 molrs 后，molpy OplsTypifier 退成 molrs.OplsTypifier 薄壳委托、删 Python 分型实现(_OplsAtomTypifier/ForceField*Typifier/SMARTS 引擎)、pin 新 molrs；对应 molrs 链 opls-typifier-01/02/03 + ff-parameter-estimator；删除前 molrs parity 门须绿 [approved]
+- [ff-parameter-estimator](ff-parameter-estimator.md) — ⚠️ SUPERSEDED：估计器随 OPLS/GAFF 分型整体下沉 molrs(Rust)，molpy-Python 方案作废；算法/Domain basis 已转录至 molrs 仓库 ff-parameter-estimator.md(Rust) [superseded]
+- [ff-parameter-estimator](ff-parameter-estimator.md) — ⚠️ SUPERSEDED：估计器改为随 OPLS/GAFF/CL&P 分型整体下沉 molrs(Rust)，molpy-Python 方案作废；算法/Domain basis 转用于 molrs 仓库 Rust 版 spec [superseded]

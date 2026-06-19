@@ -6,6 +6,16 @@
 #   pre-push:             the test suite (matches CI's test job). Before push only.
 #
 # Install both stages:  pre-commit install --hook-type pre-commit --hook-type pre-push
+#
+# Tool versions are pinned to match CI exactly: ruff via the ruff-pre-commit
+# `rev` below (== the ci.yml pin and the [dev] extra), ty via the [dev] extra
+# (`ty==…`, picked up by the `language: system` hook). Bump all three together.
+#
+# KNOWN GAP — cannot be mirrored here: CI's test job does a clean `pip install`
+# that resolves the exact `molcrafts-molrs==X` pin from PyPI. Locally molrs is an
+# editable install of the sibling checkout, so the pin's *availability on PyPI*
+# is never exercised — only CI catches an unpublished / not-yet-propagated molrs.
+# On a coordinated release, publish molrs first, then re-run molpy CI.
 default_install_hook_types: [pre-commit, pre-push]
 
 repos:
@@ -37,6 +47,7 @@ repos:
   - repo: local
     hooks:
       # ─── ci.yml::lint — ty check src/molpy/ ──────────────────────────────
+      # ty version is pinned via the [dev] extra (ty==…); this runs the dev-env ty.
       - id: ty
         name: ty (type check)
         entry: ty check src/molpy/

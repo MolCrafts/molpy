@@ -20,49 +20,20 @@ def pdb_backend(request):
 class TestPDBWriterRequiredFields:
     """Test that PDB writer correctly handles required fields and None values."""
 
-    def test_missing_required_field_x(self, tmp_path, pdb_backend):
-        """Test that missing 'x' field raises ValueError."""
+    @pytest.mark.parametrize("missing", ["x", "y", "z"])
+    def test_missing_required_field(self, tmp_path, pdb_backend, missing):
+        """A missing required coordinate field raises ValueError."""
+        columns = {
+            "x": np.array([1.0, 2.0]),
+            "y": np.array([4.0, 5.0]),
+            "z": np.array([7.0, 8.0]),
+        }
+        del columns[missing]
         frame = Frame()
-        atoms = Block(
-            {
-                "y": np.array([4.0, 5.0]),
-                "z": np.array([7.0, 8.0]),
-            }
-        )
-        frame["atoms"] = atoms
+        frame["atoms"] = Block(columns)
 
         writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
-        with pytest.raises(ValueError, match="Required field 'x' is missing"):
-            writer.write(frame)
-
-    def test_missing_required_field_y(self, tmp_path, pdb_backend):
-        """Test that missing 'y' field raises ValueError."""
-        frame = Frame()
-        atoms = Block(
-            {
-                "x": np.array([1.0, 2.0]),
-                "z": np.array([7.0, 8.0]),
-            }
-        )
-        frame["atoms"] = atoms
-
-        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
-        with pytest.raises(ValueError, match="Required field 'y' is missing"):
-            writer.write(frame)
-
-    def test_missing_required_field_z(self, tmp_path, pdb_backend):
-        """Test that missing 'z' field raises ValueError."""
-        frame = Frame()
-        atoms = Block(
-            {
-                "x": np.array([1.0, 2.0]),
-                "y": np.array([4.0, 5.0]),
-            }
-        )
-        frame["atoms"] = atoms
-
-        writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
-        with pytest.raises(ValueError, match="Required field 'z' is missing"):
+        with pytest.raises(ValueError, match=f"Required field '{missing}' is missing"):
             writer.write(frame)
 
     def test_none_value_in_required_field(self, tmp_path, pdb_backend):

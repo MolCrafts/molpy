@@ -78,6 +78,7 @@ from .readers import (
     read_amber_ac,
     read_amber_inpcrd,
     read_amber_prmtop,
+    read_dcd_trajectory,
     read_gro,
     read_h5,
     read_h5_trajectory,
@@ -90,8 +91,10 @@ from .readers import (
     read_pdb,
     read_pdb_trajectory,
     read_top,
+    read_trr_trajectory,
     read_xml_forcefield,
     read_xsf,
+    read_xtc_trajectory,
     read_xyz,
     read_xyz_trajectory,
 )
@@ -139,7 +142,9 @@ from .writers import (
     write_lammps_trajectory,
     write_pdb,
     write_top,
+    write_trr,
     write_xsf,
+    write_xtc,
     write_xyz_trajectory,
 )
 
@@ -170,6 +175,9 @@ __all__ = [
     "read_xyz",
     "read_xyz_trajectory",
     "read_h5_trajectory",
+    "read_dcd_trajectory",
+    "read_trr_trajectory",
+    "read_xtc_trajectory",
     # Factory functions - Writers
     "write_gro",
     "write_h5",
@@ -185,6 +193,8 @@ __all__ = [
     "write_top",
     "write_xsf",
     "write_xyz_trajectory",
+    "write_trr",
+    "write_xtc",
     # Utility functions
     "read_txt",
     # Data Readers
