@@ -3,6 +3,30 @@
 The full user-facing changelog lives in [docs/changelog.md](docs/changelog.md).
 This file records API renames and breaking changes at the repository root.
 
+## 0.5.0 - 2026-06-21
+
+### Removed (breaking)
+
+- **SMARTS GAFF typifier removed.** `molpy.typifier.GaffTypifier` (and the
+  internal `_GaffAtomTypifier`), the `typifier/gaff.py` module, and the bundled
+  `data/forcefield/gaff.xml` are gone. GAFF atom types and AM1-BCC charges are
+  now obtained exclusively by delegating to AmberTools (antechamber/prepgen); the
+  AmberTools wrapper path is unaffected. The 41 generic SMARTS-matcher tests are
+  retained.
+
+### Changed
+
+- Pin `molcrafts-molrs==0.1.5` (was `0.1.4`).
+
+### Fixed
+
+- tip3p water `theta0` is now expressed in radians, matching the molrs
+  angles-internal-radians convention.
+
+### Added
+
+- PEO polymer-electrolyte workflow examples.
+
 ## 0.4.2 - 2026-06-18
 
 ### Added (additive; no API renames or breaking changes)

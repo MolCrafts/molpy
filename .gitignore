@@ -155,3 +155,6 @@ notebooks/
 # User-guide example output directories
 *_output/
 .claude/worktrees/
+
+# Lock file not version-controlled (avoid manifest/lock drift)
+uv.lock

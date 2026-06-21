@@ -1,5 +1,7 @@
 """Test TIP3P water molecule optimization through a molrs ForceField."""
 
+import math
+
 import numpy as np
 
 from molpy.core.atomistic import Atomistic
@@ -12,6 +14,11 @@ def _build_tip3p_forcefield() -> ForceField:
 
     Bond: O-H length 0.09572 nm, k = 462750.4 kJ/mol/nm².
     Angle: H-O-H 104.52°, k = 836.8 kJ/mol/rad².
+
+    Angle ``theta0`` is supplied in **radians**: a programmatically built molrs
+    ``ForceField`` stores values verbatim (no deg→rad normalization — that only
+    happens in the XML/format readers), and the molrs angle kernel consumes
+    ``theta0`` in radians (angles-internal-radians convention).
     """
     ff = ForceField(name="tip3p", units="real")
     astyle = ff.def_atomstyle("full")
@@ -22,7 +29,9 @@ def _build_tip3p_forcefield() -> ForceField:
     bondstyle.def_type(o_type, h_type, k=462750.4, r0=0.09572)
 
     anglestyle = ff.def_style(AngleHarmonicStyle())
-    anglestyle.def_type(h_type, o_type, h_type, k=836.8, theta0=104.5199948597)
+    anglestyle.def_type(
+        h_type, o_type, h_type, k=836.8, theta0=math.radians(104.5199948597)
+    )
 
     return ff
 

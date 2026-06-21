@@ -4,8 +4,8 @@ Version information for MolPy.
 This module provides simple version information for MolPy.
 """
 
-version = "0.4.2"
-release_date = "2026-06-18"
+version = "0.5.0"
+release_date = "2026-06-21"
 
 
 def __str__() -> str:
