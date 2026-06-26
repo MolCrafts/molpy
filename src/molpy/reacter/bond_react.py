@@ -9,20 +9,20 @@ See: https://docs.lammps.org/fix_bond_react.html
 
 from __future__ import annotations
 
-import logging
 from copy import deepcopy
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING
 
 from molpy.core.atomistic import Atom, Atomistic, Bond
 from molpy.core.entity import Entity
+from molpy.core.logger import get_logger
 from molpy.reacter.base import Reacter, ReactionResult
 from molpy.reacter.utils import AnchorSelector, BondFormer, LeavingSelector
 
 if TYPE_CHECKING:
     from molpy.typifier.atomistic import TypifierBase
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 #: Tolerance for the pre/post total-charge conservation check, in
 #: elementary charge units (e). Fixed point-charge force fields assign
@@ -182,10 +182,8 @@ def validate_bond_react_template(template: BondReactTemplate) -> None:
             )
         logger.warning(
             "Charge not conserved in bond/react template: "
-            "sum(q_post) - sum(q_pre) = %.6g e exceeds tolerance %.1g e%s.",
-            delta,
-            CHARGE_CONSERVATION_TOL,
-            missing_note,
+            f"sum(q_post) - sum(q_pre) = {delta:.6g} e exceeds tolerance "
+            f"{CHARGE_CONSERVATION_TOL:.1g} e{missing_note}."
         )
 
 
