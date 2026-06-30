@@ -19,7 +19,7 @@ Run all three validation steps locally before creating the release branch.
 
 ```bash
 pytest tests/ -v -m "not external"    # tests pass
-mkdocs build                           # docs build
+zensical build                         # docs build
 python -m build && twine check dist/*  # package is valid
 ```
 

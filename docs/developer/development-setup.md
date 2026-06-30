@@ -59,14 +59,20 @@ for the native-crate and WASM build targets.
 
 ## Documentation preview
 
-The doc site uses MkDocs with Material theme. Install the doc extras and start a local preview server.
+The doc site is built with [Zensical](https://zensical.org) (Material for MkDocs'
+successor), using the Material theme. It reads the existing `mkdocs.yml`. Install
+the doc extras and start a local preview server from the repo root.
 
 ```bash
 pip install -e ".[doc]"
-mkdocs serve
+zensical serve
 ```
 
 The site is at `http://localhost:8000`. Changes to `.md` files are reflected immediately.
+
+User-guide notebooks are pre-rendered to Markdown (Zensical does not run notebooks
+at build time). After editing one, regenerate its page with
+`python scripts/render_notebooks.py`.
 
 
 ## External tools
@@ -90,10 +96,10 @@ ruff check src                            # lint source tree
 pytest tests/ -v -m "not external"        # local test suite
 pytest --cov=src/molpy tests/ -v          # with coverage
 pre-commit run --all-files                # all pre-commit hooks
-mkdocs build                              # build static doc site
+zensical build                            # build static doc site into site/
 ```
 
 
 ## Troubleshooting
 
-If imports fail after pulling new code, reinstall the editable package: `pip install -e ".[dev]"`. If notebook cells fail during doc build, install doc dependencies: `pip install -e ".[doc]"`. If formatting checks fail in CI, run `ruff format src tests` locally before pushing.
+If imports fail after pulling new code, reinstall the editable package: `pip install -e ".[dev]"`. To regenerate the user-guide notebook pages, run `python scripts/render_notebooks.py` (needs the `[doc]` extras, including RDKit and Packmol). If formatting checks fail in CI, run `ruff format src tests` locally before pushing.

@@ -74,8 +74,8 @@ internal copies and the product is a fresh structure.
 
 ## Related
 
-- [Guide: Stepwise Polymer Construction](../user-guide/02_polymer_stepwise.ipynb)
-- [Guide: Crosslinked Networks](../user-guide/04_crosslinking.ipynb)
+- [Guide: Stepwise Polymer Construction](../user-guide/02_polymer_stepwise.md)
+- [Guide: Crosslinked Networks](../user-guide/04_crosslinking.md)
 
 ---
 

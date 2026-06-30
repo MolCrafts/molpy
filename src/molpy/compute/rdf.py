@@ -3,6 +3,14 @@
 Returns ``molrs.compute.density.RDFResult`` directly (no molpy wrapper).
 The result is finalized eagerly inside ``RDF.compute``, so ``result.rdf``
 is the normalized g(r) and not the raw histogram.
+
+References
+----------
+- V. Ramasubramani, B. D. Dice, E. S. Harper, M. P. Spellings, J. A. Anderson,
+  S. C. Glotzer, *Comput. Phys. Commun.* **254**, 107275 (2020) — the freud
+  library, on which this kernel is modelled.
+- M. P. Allen, D. J. Tildesley, *Computer Simulation of Liquids*, 2nd ed.,
+  Oxford (2017) — g(r) and coordination numbers.
 """
 
 from __future__ import annotations

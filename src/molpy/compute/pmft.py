@@ -4,7 +4,12 @@
 frame of each particle. Thin shell over ``molrs.compute.pmft.PMFTXY``; takes
 ``(frames, nlists, orientations=None)``.
 
-Reference: van Anders et al., *ACS Nano* **8**, 931 (2014).
+References
+----------
+- G. van Anders, D. Klotsa, N. K. Ahmed, M. Engel, S. C. Glotzer, *ACS Nano* **8**,
+  931 (2014) — potential of mean force and torque.
+- V. Ramasubramani et al., *Comput. Phys. Commun.* **254**, 107275 (2020) — the
+  freud library, on which this kernel is modelled.
 """
 
 from __future__ import annotations

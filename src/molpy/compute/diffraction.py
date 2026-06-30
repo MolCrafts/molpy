@@ -9,6 +9,12 @@
 
 via the Debye scattering equation. Thin shell over
 ``molrs.compute.diffraction.StaticStructureFactorDebye``; takes ``(frames)``.
+
+References
+----------
+- P. Debye, *Ann. Phys.* **351**, 809 (1915) — the Debye scattering equation.
+- V. Ramasubramani et al., *Comput. Phys. Commun.* **254**, 107275 (2020) — the
+  freud library, on which this kernel is modelled.
 """
 
 from __future__ import annotations

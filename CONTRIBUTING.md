@@ -248,12 +248,16 @@ pytest -x
 
 ### Updating Documentation
 
-Documentation is built with MkDocs and includes:
+Documentation is built with [Zensical](https://zensical.org) (the successor to
+MkDocs, by the Material for MkDocs team). It reads the existing `mkdocs.yml`
+directly. The docs include:
 
 1. **Docstrings** - In-code documentation
-2. **User Guide** - Jupyter notebooks in `docs/user-guide/`
-3. **Tutorials** - Jupyter notebooks in `docs/tutorials/`
-4. **API Reference** - Auto-generated from docstrings
+2. **User Guide** - Jupyter notebooks in `docs/user-guide/`, pre-rendered to
+   Markdown by `scripts/render_notebooks.py` (Zensical does not run notebooks
+   at build time)
+3. **Tutorials** - Markdown in `docs/tutorials/`
+4. **API Reference** - Auto-generated from docstrings via `mkdocstrings`
 
 ### Building Documentation Locally
 
@@ -261,11 +265,17 @@ Documentation is built with MkDocs and includes:
 # Install doc dependencies
 pip install -e ".[doc]"
 
-# Serve documentation
-cd docs
-mkdocs serve
+# Serve documentation (run from the repo root, where mkdocs.yml lives)
+zensical serve
 
 # Open http://127.0.0.1:8000
+```
+
+After editing a user-guide notebook, regenerate its Markdown page before building:
+
+```bash
+python scripts/render_notebooks.py            # all notebooks
+python scripts/render_notebooks.py 05         # just docs/user-guide/05_*.ipynb
 ```
 
 ### Adding Examples

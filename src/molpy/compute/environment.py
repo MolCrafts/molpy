@@ -3,6 +3,11 @@
 ``BondOrder`` histograms neighbor bond directions on a (theta, phi) grid.
 Thin shell over ``molrs.compute.environment.BondOrder``; takes
 ``(frames, nlists)`` like ``RDF``.
+
+References
+----------
+- V. Ramasubramani et al., *Comput. Phys. Commun.* **254**, 107275 (2020) — the
+  freud library, whose ``environment.BondOrder`` this mirrors.
 """
 
 from __future__ import annotations
