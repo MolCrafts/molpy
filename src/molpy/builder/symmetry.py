@@ -107,7 +107,9 @@ class SpaceGroup:
         return cls(tuple(parse_triplet(t) for t in triplets))
 
     @classmethod
-    def from_generators(cls, generators: list[str], *, max_order: int = 1536) -> SpaceGroup:
+    def from_generators(
+        cls, generators: list[str], *, max_order: int = 1536
+    ) -> SpaceGroup:
         """Build by closing a set of generator triplets into the full group.
 
         Repeatedly composes operators until the set is closed under
@@ -133,7 +135,9 @@ class SpaceGroup:
             i += 1
         return cls(tuple(ops))
 
-    def equivalent_positions(self, frac: ArrayLike, *, symprec: float = 1e-5) -> np.ndarray:
+    def equivalent_positions(
+        self, frac: ArrayLike, *, symprec: float = 1e-5
+    ) -> np.ndarray:
         """All symmetry images of fractional site ``frac``, de-duplicated in ``[0, 1)``.
 
         Args:
