@@ -7,6 +7,13 @@ lazily on first attribute access via module ``__getattr__`` (PEP 562), so
 usual.
 """
 
+# Version is loaded first and checked against the installed molcrafts-molrs
+# backend before any molrs-backed core import below (``core.frame`` imports
+# molrs), so a stale editable build or a mismatched pin surfaces immediately.
+from .version import check_molrs_version, release_date, version
+
+check_molrs_version()
+
 from importlib import import_module
 from types import ModuleType
 from typing import TYPE_CHECKING
@@ -94,7 +101,6 @@ from .core.frame import Block, Frame
 from .core.script import Script, ScriptLanguage
 from .core.trajectory import Trajectory
 from .core.unit import UnitSystem
-from .version import release_date, version
 
 __all__ = [
     # Submodules
