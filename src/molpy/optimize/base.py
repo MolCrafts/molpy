@@ -1,9 +1,18 @@
-"""Base classes for geometry optimization."""
+"""Base classes for geometry optimization.
+
+The optimizer operates directly on a :class:`molrs.Frame` — the universal
+coordinate-plus-topology container. ``run(frame, ...)`` reads and writes the
+frame's ``"atoms"`` coordinate columns in place and returns an
+:class:`OptimizationResult` carrying the optimized frame. The potential
+(:class:`~molpy.optimize.ForceFieldPotential`) is the Frame-consuming layer, so
+both the optimizer and the potential share the same ``Frame`` object.
+"""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, Protocol, TypeVar
+from typing import Any, Callable, Protocol
 
+import molrs
 import numpy as np
 
 from molpy.core.entity import Entity
@@ -11,29 +20,26 @@ from molpy.core.entity import Entity
 
 # Protocol for potentials (duck typing)
 class PotentialLike(Protocol):
-    """Protocol for potential functions compatible with calc_energy_from_frame."""
+    """Protocol for potential functions evaluated on a :class:`molrs.Frame`."""
 
     def calc_energy(self, *args: Any, **kwargs: Any) -> float: ...
     def calc_forces(self, *args: Any, **kwargs: Any) -> np.ndarray: ...
 
 
-S = TypeVar("S")  # Generic structure type (StructLike)
-
-
 @dataclass
-class OptimizationResult(Generic[S]):
+class OptimizationResult:
     """Result of a geometry optimization.
 
     Attributes:
-        structure: Final optimized structure (same object if inplace=True)
-        energy: Final potential energy
-        fmax: Final maximum force component
-        nsteps: Number of optimization steps taken
-        converged: Whether convergence criteria were met
-        reason: Human-readable termination reason
+        frame: Final optimized ``molrs.Frame`` (same object when ``inplace=True``).
+        energy: Final potential energy (force-field units, e.g. kcal/mol).
+        fmax: Final maximum force component (energy units / angstrom).
+        nsteps: Number of optimization steps taken.
+        converged: Whether the convergence criterion was met.
+        reason: Human-readable termination reason.
     """
 
-    structure: S
+    frame: "molrs.Frame"
     energy: float
     fmax: float
     nsteps: int
@@ -41,26 +47,25 @@ class OptimizationResult(Generic[S]):
     reason: str
 
 
-class Optimizer(ABC, Generic[S]):
-    """Base class for structure optimizers.
+class Optimizer(ABC):
+    """Base class for Frame-native geometry optimizers.
 
-    Works with any structure leaf (Atomistic, CoarseGrain, etc.) that:
-    - Has `.atoms` (or `.beads`) yielding entity views with an "xyz" field
-    - Has `.to_frame()` method to convert to Frame format
-
-    The optimizer calls potential.calc_energy(frame) and potential.calc_forces(frame)
-    directly - each potential is responsible for extracting what it needs from Frame.
+    The optimizer reads/writes the coordinate columns of a ``molrs.Frame``'s
+    ``"atoms"`` block and evaluates energy/forces by calling the potential on the
+    same frame (``potential.calc_energy(frame)`` / ``calc_forces(frame)``). The
+    frame *is* the optimized state — there is no structure-to-frame conversion.
 
     Args:
-        potential: Potential with calc_energy/calc_forces methods
-        entity_type: Type of entity to optimize (default: Entity for all)
+        potential: Potential exposing ``calc_energy(frame)`` / ``calc_forces(frame)``.
+        entity_type: Retained for backward-compatible construction; unused (the
+            frame's atom block is the single source of coordinates).
 
     Example:
         >>> from molpy.optimize import LBFGS, ForceFieldPotential
         >>>
         >>> potential = ForceFieldPotential(forcefield)  # molrs ForceField
         >>> opt = LBFGS(potential, maxstep=0.04, memory=20)
-        >>> result = opt.run(struct, fmax=0.01, steps=500)
+        >>> result = opt.run(frame, fmax=0.01, steps=500)  # frame: molrs.Frame
     """
 
     def __init__(
@@ -73,154 +78,100 @@ class Optimizer(ABC, Generic[S]):
         self.entity_type = entity_type
         self._callbacks: list[tuple[Callable, int, dict]] = []
 
-    # ===== Bridge methods: StructLike ↔ numpy arrays =====
+    # ===== Bridge methods: Frame coordinate columns <-> numpy arrays =====
 
-    def get_positions(self, structure: S) -> np.ndarray:
-        """Extract positions as (N, 3) array from entities.
-
-        Args:
-            structure: Structure to extract positions from
-
-        Returns:
-            (N, 3) numpy array of positions
-        """
-        entities = structure.atoms
-        if not entities:
+    def get_positions(self, frame: "molrs.Frame") -> np.ndarray:
+        """Return the frame's atom positions as an ``(N, 3)`` array."""
+        atoms = frame["atoms"]
+        x = np.asarray(atoms["x"], dtype=float)
+        if x.size == 0:
             return np.empty((0, 3), dtype=float)
+        y = np.asarray(atoms["y"], dtype=float)
+        z = np.asarray(atoms["z"], dtype=float)
+        return np.column_stack([x, y, z])
 
-        # Use x, y, z fields (never use xyz)
-        x_list = entities["x"]
-        y_list = entities["y"]
-        z_list = entities["z"]
-        positions = np.column_stack([x_list, y_list, z_list])
+    def set_positions(self, frame: "molrs.Frame", positions: np.ndarray) -> None:
+        """Write an ``(N, 3)`` (or flat ``3N``) position array into the frame.
 
-        if positions.ndim == 1:
-            positions = positions.reshape(-1, 3)
-        return positions
-
-    def set_positions(self, structure: S, positions: np.ndarray) -> None:
-        """Write positions back into structure entities.
-
-        Args:
-            structure: Structure to update
-            positions: (N, 3) array of new positions
+        Uses ``Block.insert`` (an upsert), which both molrs Block variants
+        support — the rich ``molrs.frame.Block`` (from ``Atomistic.to_frame``)
+        and the raw core ``Block`` (from ``MMFFTypifier.typify``) — so the
+        optimizer is agnostic to how the frame was built.
         """
-        entities = structure.atoms
-        positions = positions.reshape(-1, 3)
-        for i, entity in enumerate(entities):
-            pos = positions[i]
-            # Update x, y, z fields (never use xyz)
-            entity["x"] = float(pos[0])
-            entity["y"] = float(pos[1])
-            entity["z"] = float(pos[2])
+        atoms = frame["atoms"]
+        positions = np.asarray(positions, dtype=float).reshape(-1, 3)
+        atoms.insert("x", np.ascontiguousarray(positions[:, 0]))
+        atoms.insert("y", np.ascontiguousarray(positions[:, 1]))
+        atoms.insert("z", np.ascontiguousarray(positions[:, 2]))
 
-    def get_energy_and_forces(self, structure: S) -> tuple[float, np.ndarray]:
-        """Compute energy and forces via Frame interface.
-
-        Converts structure to Frame and calls potential methods directly.
-        Each potential is responsible for extracting what it needs from Frame.
-
-        Args:
-            structure: Structure to evaluate
-
-        Returns:
-            (energy, forces) where forces is (N, 3) array
-        """
-        # Convert structure to Frame
-        frame = structure.to_frame()
-
-        # Call potential methods directly - they handle Frame extraction
+    def get_energy_and_forces(self, frame: "molrs.Frame") -> tuple[float, np.ndarray]:
+        """Evaluate energy and forces by calling the potential on the frame."""
         energy = self.potential.calc_energy(frame)
         forces = self.potential.calc_forces(frame)
-
         return energy, forces
 
-    def get_energy(self, structure: S) -> float:
-        """Compute energy for structure.
-
-        Args:
-            structure: Structure to evaluate
-
-        Returns:
-            Potential energy
-        """
-        energy, _ = self.get_energy_and_forces(structure)
+    def get_energy(self, frame: "molrs.Frame") -> float:
+        """Return the potential energy of the frame."""
+        energy, _ = self.get_energy_and_forces(frame)
         return energy
 
-    def get_forces(self, structure: S) -> np.ndarray:
-        """Compute forces for structure as (N, 3) array.
-
-        Args:
-            structure: Structure to evaluate
-
-        Returns:
-            (N, 3) array of forces
-        """
-        _, forces = self.get_energy_and_forces(structure)
+    def get_forces(self, frame: "molrs.Frame") -> np.ndarray:
+        """Return the forces on the frame's atoms."""
+        _, forces = self.get_energy_and_forces(frame)
         return forces
 
     # ===== Abstract method for subclasses =====
 
     @abstractmethod
-    def step(self, structure: S) -> tuple[float, float]:
-        """Perform one optimization step.
+    def step(self, frame: "molrs.Frame") -> tuple[float, float]:
+        """Perform one optimization step, mutating the frame's coordinates.
 
         Args:
-            structure: Structure to optimize (modified in-place)
+            frame: ``molrs.Frame`` to optimize (modified in-place).
 
         Returns:
-            (energy, fmax) tuple where:
-                energy: potential energy after step
-                fmax: maximum force component after step
+            ``(energy, fmax)`` after the step.
         """
-        pass
+        ...
 
     # ===== Public API =====
 
     def run(
         self,
-        structure: S,
+        frame: "molrs.Frame",
         fmax: float = 0.01,
         steps: int = 1000,
         *,
         inplace: bool = True,
-    ) -> OptimizationResult[S]:
-        """Run optimization until convergence or max steps.
+    ) -> OptimizationResult:
+        """Optimize ``frame`` until convergence or ``steps`` is reached.
 
         Args:
-            structure: Structure to optimize
-            fmax: Convergence threshold (max force component)
-            steps: Maximum number of steps
-            inplace: If True, modify structure in-place; if False, work on copy
+            frame: ``molrs.Frame`` to optimize.
+            fmax: Convergence threshold on the maximum force component.
+            steps: Maximum number of steps.
+            inplace: If True, mutate ``frame``; if False, optimize a ``frame.copy()``.
 
         Returns:
-            OptimizationResult with final state
+            :class:`OptimizationResult` whose ``frame`` is the optimized frame.
         """
-        # Make copy if needed
-        if inplace:
-            working_structure = structure
-        else:
-            from copy import deepcopy
-
-            working_structure = deepcopy(structure)
+        working_frame = frame if inplace else frame.copy()
 
         energy = 0.0
         current_fmax = float("inf")
         nsteps = 0
 
-        for i in range(steps):
-            energy, current_fmax = self.step(working_structure)
+        for _ in range(steps):
+            energy, current_fmax = self.step(working_frame)
             nsteps += 1
 
-            # Call callbacks
             for callback, interval, kwargs in self._callbacks:
                 if nsteps % interval == 0:
-                    callback(self, working_structure, **kwargs)
+                    callback(self, working_frame, **kwargs)
 
-            # Check convergence
             if current_fmax < fmax:
                 return OptimizationResult(
-                    structure=working_structure,
+                    frame=working_frame,
                     energy=energy,
                     fmax=current_fmax,
                     nsteps=nsteps,
@@ -228,9 +179,8 @@ class Optimizer(ABC, Generic[S]):
                     reason=f"Converged: fmax={current_fmax:.6f} < {fmax}",
                 )
 
-        # Max steps reached
         return OptimizationResult(
-            structure=working_structure,
+            frame=working_frame,
             energy=energy,
             fmax=current_fmax,
             nsteps=nsteps,
@@ -239,14 +189,5 @@ class Optimizer(ABC, Generic[S]):
         )
 
     def attach(self, func: Callable, interval: int = 1, **kwargs: Any) -> None:
-        """Attach a callback function.
-
-        The callback will be called every `interval` steps with the optimizer
-        instance and current structure as arguments.
-
-        Args:
-            func: Callback function(optimizer, structure, **kwargs)
-            interval: Call every N steps
-            **kwargs: Additional arguments for callback
-        """
+        """Attach a callback ``func(optimizer, frame, **kwargs)`` called every ``interval`` steps."""
         self._callbacks.append((func, interval, kwargs))

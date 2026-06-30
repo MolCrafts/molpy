@@ -58,12 +58,18 @@ def test_tip3p_water_optimization():
     ff = _build_tip3p_forcefield()
     potential = ForceFieldPotential(ff)
 
+    # The optimizer is Frame-native: optimize the molecule's Frame directly.
+    frame = struct.to_frame()
     opt = LBFGS(potential, maxstep=0.005, memory=20)
-    result = opt.run(struct, fmax=5.0, steps=500, inplace=True)
+    result = opt.run(frame, fmax=5.0, steps=500, inplace=True)
 
-    o_pos = struct.xyz[0]
-    h1_pos = struct.xyz[1]
-    h2_pos = struct.xyz[2]
+    atoms = result.frame["atoms"]
+    coords = np.column_stack(
+        [np.asarray(atoms["x"]), np.asarray(atoms["y"]), np.asarray(atoms["z"])]
+    )
+    o_pos = coords[0]
+    h1_pos = coords[1]
+    h2_pos = coords[2]
 
     bond1_vec = h1_pos - o_pos
     bond2_vec = h2_pos - o_pos
