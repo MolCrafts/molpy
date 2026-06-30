@@ -3,6 +3,31 @@
 The full user-facing changelog lives in [docs/changelog.md](docs/changelog.md).
 This file records API renames and breaking changes at the repository root.
 
+## 0.5.1 - 2026-07-01
+
+### Changed
+
+- **Pin `molcrafts-molrs==0.5.1`** (was `0.1.5`). molpy and molrs now share one
+  version line and release as a pair. `import molpy` calls
+  `molpy.version.check_molrs_version()` and warns when the installed molrs does
+  not match.
+
+### Added
+
+- **TRAVIS-parity compute operators** in `molpy.compute`: geometric distribution
+  functions (`AngleDistribution`, `DihedralDistribution`, `DistanceDistribution`),
+  `CombinedDistribution`, `SpatialDistribution`, `VanHove`,
+  `LegendreReorientation`, `HBonds`, radical Voronoi (`RadicalVoronoi`,
+  `VoronoiIntegration`, `voronoi_domains`, `voronoi_voids`), and vibrational
+  spectra (`PowerSpectrum`, `IRSpectrum`, `RamanSpectrum`, `VcdSpectrum`,
+  `RoaSpectrum`, `ResonanceRamanSpectrum`).
+
+### Docs
+
+- Documentation now builds with **Zensical** (reads the existing `mkdocs.yml`);
+  user-guide notebooks are pre-rendered to Markdown. Compute documentation is
+  complete — narrative guides plus API reference for every operator.
+
 ## 0.5.0 - 2026-06-21
 
 ### Removed (breaking)
