@@ -85,6 +85,35 @@ from .workflow import (
     WorkflowMissingInputError,
 )
 
+# TRAVIS-parity computes (geometric / combined / spatial distributions, Van Hove,
+# reorientation, hydrogen bonds, radical Voronoi, vibrational spectra). The
+# numerical kernels live in molrs; these are thin typed shells.
+from .distribution import (
+    AngleDistribution,
+    CombinedDistribution,
+    DihedralDistribution,
+    DistanceDistribution,
+)
+from .spatial import SpatialDistribution
+from .van_hove import VanHove
+from .reorientation import LegendreReorientation
+from .hbond import HBondCriterion, HBonds
+from .voronoi import (
+    RadicalVoronoi,
+    VoronoiCells,
+    VoronoiIntegration,
+    voronoi_domains,
+    voronoi_voids,
+)
+from .spectra import (
+    IRSpectrum,
+    PowerSpectrum,
+    RamanSpectrum,
+    ResonanceRamanSpectrum,
+    RoaSpectrum,
+    VcdSpectrum,
+)
+
 __all__ = [
     "Compute",
     "Result",
@@ -140,4 +169,25 @@ __all__ = [
     "BondOrder",
     "PMFTXY",
     "ClusterProperties",
+    # TRAVIS-parity computes
+    "DistanceDistribution",
+    "AngleDistribution",
+    "DihedralDistribution",
+    "CombinedDistribution",
+    "SpatialDistribution",
+    "VanHove",
+    "LegendreReorientation",
+    "HBonds",
+    "HBondCriterion",
+    "RadicalVoronoi",
+    "VoronoiCells",
+    "VoronoiIntegration",
+    "voronoi_domains",
+    "voronoi_voids",
+    "PowerSpectrum",
+    "IRSpectrum",
+    "RamanSpectrum",
+    "VcdSpectrum",
+    "RoaSpectrum",
+    "ResonanceRamanSpectrum",
 ]
