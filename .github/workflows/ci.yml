@@ -61,27 +61,26 @@ jobs:
         # just re-run after molrs publishes.
         run: pip install -e ".[dev]"
 
-      # Clone tests-data once, serially, before the parallel (-n auto) test run.
+      # Fetch tests-data once, serially, before the parallel (-n auto) test run.
       # Under xdist the session fixture runs per-worker, so a git op there would
-      # mutate the shared checkout while other workers read it (Windows-fatal).
-      # Pre-fetching here means every worker sees a stable tree.
+      # mutate the shared checkout while other workers read it. Pre-fetching here
+      # means every worker sees a complete, stable tree.
       #
-      # tests-data has a `con/` directory (EON-format fixtures); `con` is a
-      # reserved device name on Windows, so its working tree cannot be checked
-      # out there. On Windows we clone metadata only (--no-checkout) so the step
-      # succeeds deterministically; the conftest fixture then skips the
-      # data-dependent tests (none of which molpy runs on Windows anyway). On
-      # Linux/macOS the full clone must succeed — a failure here fails the job.
+      # Download the archive and extract everything EXCEPT `con/`, rather than
+      # git-cloning — leaving tests-data itself untouched. tests-data (a fork of
+      # chemfiles/tests-data) ships EON fixtures under con/, a reserved device name
+      # Windows cannot create; a git checkout aborts there ("cannot create
+      # directory at 'con'") and sparse-checkout can't reliably exclude it on
+      # Windows. Extracting the tarball without con/ never asks the OS to create
+      # it, so it works on every platform. Nothing reads con/ data.
       - name: Fetch test data
         shell: bash
         run: |
-          url=https://github.com/molcrafts/tests-data.git
-          if [ -d tests/tests-data/.git ]; then exit 0; fi
-          if [ "${RUNNER_OS:-}" = "Windows" ]; then
-            git clone --depth 1 --no-checkout "$url" tests/tests-data
-          else
-            git clone --depth 1 "$url" tests/tests-data
-          fi
+          dir=tests/tests-data
+          if [ -e "$dir/README.md" ]; then exit 0; fi
+          mkdir -p "$dir"
+          curl -fsSL https://github.com/molcrafts/tests-data/archive/refs/heads/master.tar.gz \
+            | tar -xz -C "$dir" --strip-components=1 --exclude='*/con' --exclude='*/con/*'
 
       - name: Run tests
         run: pytest tests/ -m "not external" -n auto --cov=src/molpy --cov-report=xml --cov-report=term
