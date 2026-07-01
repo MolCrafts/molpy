@@ -48,10 +48,15 @@ def mollog_capture() -> Callable[[str], "contextlib.AbstractContextManager"]:
 
 
 def _ensure_test_data() -> Path:
-    """Clone tests-data if absent, else fast-forward it. Returns the dir."""
-    if (_DEFAULT_DIR / ".git").exists():
-        subprocess.run(["git", "pull", "--ff-only"], cwd=_DEFAULT_DIR)
-    else:
+    """Clone tests-data if absent; reuse an existing checkout as-is.
+
+    Deliberately does NOT ``git pull`` a present checkout: under ``-n auto`` the
+    session fixture runs once per worker, so pulling would mutate the shared
+    working tree while other workers read from it — which surfaced as spurious
+    "path not found" file reads on Windows. CI clones fresh each run (and does so
+    in a serial pre-test step); to refresh a local copy, delete tests/tests-data.
+    """
+    if not (_DEFAULT_DIR / ".git").exists():
         _DEFAULT_DIR.parent.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
             ["git", "clone", "--depth", "1", _REPO_URL, str(_DEFAULT_DIR)],

@@ -61,6 +61,17 @@ jobs:
         # just re-run after molrs publishes.
         run: pip install -e ".[dev]"
 
+      # Clone tests-data once, serially, before the parallel (-n auto) test run.
+      # Under xdist the session fixture runs per-worker, so a git op there would
+      # mutate the shared checkout while other workers read it (Windows-fatal).
+      # Pre-fetching here means every worker sees a complete, stable tree.
+      - name: Fetch test data
+        shell: bash
+        run: |
+          if [ ! -d tests/tests-data/.git ]; then
+            git clone --depth 1 https://github.com/molcrafts/tests-data.git tests/tests-data
+          fi
+
       - name: Run tests
         run: pytest tests/ -m "not external" -n auto --cov=src/molpy --cov-report=xml --cov-report=term
 
