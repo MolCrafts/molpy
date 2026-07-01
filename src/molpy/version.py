@@ -75,3 +75,12 @@ __all__ = [
     "release_date",
     "check_molrs_version",
 ]
+
+
+# Run the compatibility check once, when this module is imported — and therefore
+# on ``import molpy``, which imports version first. Guarded so a version check
+# can never prevent import.
+try:
+    check_molrs_version()
+except Exception:  # pragma: no cover - defensive: never break import
+    pass
