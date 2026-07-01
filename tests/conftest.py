@@ -51,14 +51,15 @@ _SENTINEL = _DEFAULT_DIR / "README.md"
 
 
 def _ensure_test_data() -> Path:
-    """Clone tests-data (minus ``con/``) if absent; skip data tests if unavailable.
+    """Clone tests-data if absent; skip data tests if it isn't available.
 
-    The tests-data repo (a fork of chemfiles/tests-data) ships EON fixtures under
-    ``con/``, but ``con`` is a reserved device name on Windows and git cannot
-    materialize it there. We read no ``con/`` data, so the checkout excludes it via
-    sparse-checkout on every platform — keeping the tree identical across OSes and
-    checkoutable on Windows. If tests-data still isn't available (e.g. offline),
-    skip the data-dependent tests via a sentinel rather than failing.
+    tests-data (a fork of chemfiles/tests-data) used to carry a ``con/`` directory
+    — a reserved device name Windows cannot check out, which aborted the whole
+    clone there. It has been removed upstream, so a plain clone now works on every
+    platform. (Sparse-checkout does NOT help: git rejects the reserved path during
+    checkout before sparse rules apply — keeping con/ out of the fork is the real
+    fix.) If tests-data still isn't available (e.g. offline), skip the
+    data-dependent tests via a ``README.md`` sentinel rather than failing.
 
     Deliberately does NOT ``git pull`` a present checkout: under ``-n auto`` the
     session fixture runs once per worker, so pulling would mutate the shared
@@ -68,30 +69,9 @@ def _ensure_test_data() -> Path:
     if not (_DEFAULT_DIR / ".git").exists():
         _DEFAULT_DIR.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
-            [
-                "git",
-                "clone",
-                "--depth",
-                "1",
-                "--no-checkout",
-                _REPO_URL,
-                str(_DEFAULT_DIR),
-            ],
+            ["git", "clone", "--depth", "1", _REPO_URL, str(_DEFAULT_DIR)],
             cwd=_DEFAULT_DIR.parent,
         )
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(_DEFAULT_DIR),
-                "sparse-checkout",
-                "set",
-                "--no-cone",
-                "/*",
-                "!/con/",
-            ],
-        )
-        subprocess.run(["git", "-C", str(_DEFAULT_DIR), "checkout"])
     if not _SENTINEL.exists():
         pytest.skip("tests-data checkout unavailable or incomplete")
     return _DEFAULT_DIR
