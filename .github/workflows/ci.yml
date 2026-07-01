@@ -61,26 +61,26 @@ jobs:
         # just re-run after molrs publishes.
         run: pip install -e ".[dev]"
 
-      # Clone tests-data once, serially, before the parallel (-n auto) test run.
+      # Fetch tests-data once, serially, before the parallel (-n auto) test run.
       # Under xdist the session fixture runs per-worker, so a git op there would
       # mutate the shared checkout while other workers read it. Pre-fetching here
       # means every worker sees a complete, stable tree.
       #
-      # Skip the `con/` directory at checkout, leaving tests-data itself untouched.
-      # tests-data (a fork of chemfiles/tests-data) ships EON fixtures under con/,
-      # a reserved device name Windows cannot create. Two settings are BOTH
-      # required on Windows: core.protectNTFS=false lets git process the con/ index
-      # entry without rejecting the name, and sparse-checkout keeps con/ off disk so
-      # the OS is never asked to create it. Nothing reads con/ data.
+      # Download the archive and extract everything EXCEPT `con/`, rather than
+      # git-cloning — leaving tests-data itself untouched. tests-data (a fork of
+      # chemfiles/tests-data) ships EON fixtures under con/, a reserved device name
+      # Windows cannot create; a git checkout aborts there ("cannot create
+      # directory at 'con'") and sparse-checkout can't reliably exclude it on
+      # Windows. Extracting the tarball without con/ never asks the OS to create
+      # it, so it works on every platform. Nothing reads con/ data.
       - name: Fetch test data
         shell: bash
         run: |
           dir=tests/tests-data
-          if [ -d "$dir/.git" ]; then exit 0; fi
-          git clone --depth 1 --no-checkout https://github.com/molcrafts/tests-data.git "$dir"
-          git -C "$dir" config core.protectNTFS false
-          git -C "$dir" sparse-checkout set --no-cone '/*' '!/con/'
-          git -C "$dir" checkout
+          if [ -e "$dir/README.md" ]; then exit 0; fi
+          mkdir -p "$dir"
+          curl -fsSL https://github.com/molcrafts/tests-data/archive/refs/heads/master.tar.gz \
+            | tar -xz -C "$dir" --strip-components=1 --exclude='*/con' --exclude='*/con/*'
 
       - name: Run tests
         run: pytest tests/ -m "not external" -n auto --cov=src/molpy --cov-report=xml --cov-report=term
