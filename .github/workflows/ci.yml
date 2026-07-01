@@ -64,12 +64,23 @@ jobs:
       # Clone tests-data once, serially, before the parallel (-n auto) test run.
       # Under xdist the session fixture runs per-worker, so a git op there would
       # mutate the shared checkout while other workers read it (Windows-fatal).
-      # Pre-fetching here means every worker sees a complete, stable tree.
+      # Pre-fetching here means every worker sees a stable tree.
+      #
+      # tests-data has a `con/` directory (EON-format fixtures); `con` is a
+      # reserved device name on Windows, so its working tree cannot be checked
+      # out there. On Windows we clone metadata only (--no-checkout) so the step
+      # succeeds deterministically; the conftest fixture then skips the
+      # data-dependent tests (none of which molpy runs on Windows anyway). On
+      # Linux/macOS the full clone must succeed — a failure here fails the job.
       - name: Fetch test data
         shell: bash
         run: |
-          if [ ! -d tests/tests-data/.git ]; then
-            git clone --depth 1 https://github.com/molcrafts/tests-data.git tests/tests-data
+          url=https://github.com/molcrafts/tests-data.git
+          if [ -d tests/tests-data/.git ]; then exit 0; fi
+          if [ "${RUNNER_OS:-}" = "Windows" ]; then
+            git clone --depth 1 --no-checkout "$url" tests/tests-data
+          else
+            git clone --depth 1 "$url" tests/tests-data
           fi
 
       - name: Run tests

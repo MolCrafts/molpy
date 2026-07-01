@@ -47,25 +47,33 @@ def mollog_capture() -> Callable[[str], "contextlib.AbstractContextManager"]:
     return _capture
 
 
+_SENTINEL = _DEFAULT_DIR / "README.md"
+
+
 def _ensure_test_data() -> Path:
-    """Clone tests-data if absent; reuse an existing checkout as-is.
+    """Clone tests-data if absent; skip data tests when the checkout is incomplete.
+
+    On Windows the repo cannot be fully checked out: it contains a ``con/``
+    directory (EON-format fixtures) and ``con`` is a reserved device name, so git
+    aborts the working-tree checkout. Rather than fail, detect the incomplete tree
+    via a sentinel (``README.md``, always present in a full checkout) and skip the
+    data-dependent tests — matching the pre-existing behavior where the Windows
+    clone failed and these tests were skipped.
 
     Deliberately does NOT ``git pull`` a present checkout: under ``-n auto`` the
     session fixture runs once per worker, so pulling would mutate the shared
     working tree while other workers read from it — which surfaced as spurious
-    "path not found" file reads on Windows. CI clones fresh each run (and does so
-    in a serial pre-test step); to refresh a local copy, delete tests/tests-data.
+    "path not found" file reads on Windows. CI clones fresh each run (in a serial
+    pre-test step); to refresh a local copy, delete tests/tests-data.
     """
     if not (_DEFAULT_DIR / ".git").exists():
         _DEFAULT_DIR.parent.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(
+        subprocess.run(
             ["git", "clone", "--depth", "1", _REPO_URL, str(_DEFAULT_DIR)],
             cwd=_DEFAULT_DIR.parent,
         )
-        if result.returncode != 0:
-            pytest.skip(f"Cannot clone tests-data (exit {result.returncode})")
-    if not _DEFAULT_DIR.exists():
-        pytest.skip("tests-data directory not available")
+    if not _SENTINEL.exists():
+        pytest.skip("tests-data checkout unavailable or incomplete")
     return _DEFAULT_DIR
 
 
