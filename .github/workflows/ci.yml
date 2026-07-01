@@ -61,8 +61,30 @@ jobs:
         # just re-run after molrs publishes.
         run: pip install -e ".[dev]"
 
+      # Clone tests-data once, serially, before the parallel (-n auto) test run.
+      # Under xdist the session fixture runs per-worker, so a git op there would
+      # mutate the shared checkout while other workers read it (Windows-fatal).
+      # Pre-fetching here means every worker sees a stable tree.
+      #
+      # tests-data has a `con/` directory (EON-format fixtures); `con` is a
+      # reserved device name on Windows, so its working tree cannot be checked
+      # out there. On Windows we clone metadata only (--no-checkout) so the step
+      # succeeds deterministically; the conftest fixture then skips the
+      # data-dependent tests (none of which molpy runs on Windows anyway). On
+      # Linux/macOS the full clone must succeed — a failure here fails the job.
+      - name: Fetch test data
+        shell: bash
+        run: |
+          url=https://github.com/molcrafts/tests-data.git
+          if [ -d tests/tests-data/.git ]; then exit 0; fi
+          if [ "${RUNNER_OS:-}" = "Windows" ]; then
+            git clone --depth 1 --no-checkout "$url" tests/tests-data
+          else
+            git clone --depth 1 "$url" tests/tests-data
+          fi
+
       - name: Run tests
-        run: pytest tests/ -v -m "not external" --cov=src/molpy --cov-report=xml --cov-report=term
+        run: pytest tests/ -m "not external" -n auto --cov=src/molpy --cov-report=xml --cov-report=term
 
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'

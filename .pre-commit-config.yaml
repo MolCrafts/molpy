@@ -58,7 +58,7 @@ repos:
       # ─── ci.yml::test — pytest tests/ -m "not external" (pre-push) ───────
       - id: pytest
         name: pytest (mirrors CI test job)
-        entry: pytest tests/ -v -m "not external"
+        entry: pytest tests/ -m "not external" -n auto
         language: system
         pass_filenames: false
         stages: [pre-push]
