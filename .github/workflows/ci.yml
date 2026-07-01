@@ -66,17 +66,21 @@ jobs:
       # mutate the shared checkout while other workers read it. Pre-fetching here
       # means every worker sees a complete, stable tree.
       #
-      # Windows note: tests-data (a fork of chemfiles/tests-data) used to carry a
-      # `con/` directory — a reserved device name Windows cannot check out. It has
-      # been removed upstream, so a plain clone now works on every platform.
-      # (Sparse-checkout does NOT help: git rejects the reserved path during
-      # checkout before sparse rules apply. Keeping con/ out of the fork is the fix.)
+      # Skip the `con/` directory at checkout, leaving tests-data itself untouched.
+      # tests-data (a fork of chemfiles/tests-data) ships EON fixtures under con/,
+      # a reserved device name Windows cannot create. Two settings are BOTH
+      # required on Windows: core.protectNTFS=false lets git process the con/ index
+      # entry without rejecting the name, and sparse-checkout keeps con/ off disk so
+      # the OS is never asked to create it. Nothing reads con/ data.
       - name: Fetch test data
         shell: bash
         run: |
-          if [ ! -d tests/tests-data/.git ]; then
-            git clone --depth 1 https://github.com/molcrafts/tests-data.git tests/tests-data
-          fi
+          dir=tests/tests-data
+          if [ -d "$dir/.git" ]; then exit 0; fi
+          git clone --depth 1 --no-checkout https://github.com/molcrafts/tests-data.git "$dir"
+          git -C "$dir" config core.protectNTFS false
+          git -C "$dir" sparse-checkout set --no-cone '/*' '!/con/'
+          git -C "$dir" checkout
 
       - name: Run tests
         run: pytest tests/ -m "not external" -n auto --cov=src/molpy --cov-report=xml --cov-report=term
