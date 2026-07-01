@@ -5,6 +5,7 @@ from pathlib import Path
 
 import mollog
 import pytest
+from filelock import FileLock
 
 _REPO_URL = "https://github.com/molcrafts/tests-data.git"
 _DEFAULT_DIR = Path(__file__).resolve().parent / "tests-data"
@@ -46,13 +47,8 @@ def mollog_capture() -> Callable[[str], "contextlib.AbstractContextManager"]:
     return _capture
 
 
-@pytest.fixture(scope="session", name="TEST_DATA_DIR")
-def find_test_data() -> Path:
-    """
-    Ensure the tests-data repository is present and up-to-date.
-    * If the directory already contains a `.git` folder -> `git pull`.
-      Otherwise clone afresh.
-    """
+def _ensure_test_data() -> Path:
+    """Clone tests-data if absent, else fast-forward it. Returns the dir."""
     if (_DEFAULT_DIR / ".git").exists():
         subprocess.run(["git", "pull", "--ff-only"], cwd=_DEFAULT_DIR)
     else:
@@ -66,6 +62,26 @@ def find_test_data() -> Path:
     if not _DEFAULT_DIR.exists():
         pytest.skip("tests-data directory not available")
     return _DEFAULT_DIR
+
+
+@pytest.fixture(scope="session", name="TEST_DATA_DIR")
+def find_test_data(tmp_path_factory, worker_id) -> Path:
+    """Ensure the tests-data repository is present and up-to-date.
+
+    xdist-safe: the session fixture runs once **per worker**, so without a lock
+    all workers would `git clone`/`pull` the *same* directory concurrently and
+    corrupt each other's checkout (Windows is strict about concurrent file
+    access — this manifested as spurious "path not found" file-read failures
+    under ``-n auto``). Serialize the git operation across workers with a
+    cross-process lock on a shared path; ``git pull --ff-only`` is idempotent so
+    running it once per worker (in turn) is harmless.
+    """
+    if worker_id == "master":
+        # Not running under xdist — no other workers to race with.
+        return _ensure_test_data()
+    lock_path = tmp_path_factory.getbasetemp().parent / "tests_data.lock"
+    with FileLock(str(lock_path)):
+        return _ensure_test_data()
 
 
 def pytest_collection_modifyitems(
