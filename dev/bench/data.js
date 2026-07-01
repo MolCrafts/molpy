@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1782043509559,
+  "lastUpdate": 1782897741075,
   "repoUrl": "https://github.com/MolCrafts/molpy",
   "entries": {
     "Benchmark": [
@@ -178,6 +178,184 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.012289858919012266",
             "extra": "mean: 181.5215697142857 msec\nrounds: 7"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "42854324+Roy-Kid@users.noreply.github.com",
+            "name": "Jichen Li",
+            "username": "Roy-Kid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9e6081663ad0d302f4cf614776405dca6cae9a1e",
+          "message": "Merge pull request #36 from MolCrafts/dev\n\nchore(release): molpy 0.5.1",
+          "timestamp": "2026-07-01T17:21:22+08:00",
+          "tree_id": "cdb397714c96fa4febd6a55c2b8bf3c345f8eb8f",
+          "url": "https://github.com/MolCrafts/molpy/commit/9e6081663ad0d302f4cf614776405dca6cae9a1e"
+        },
+        "date": 1782897740778,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_box.py::test_box_cubic_construct",
+            "value": 16218.991634563965,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000007485567760484612",
+            "extra": "mean: 61.65611417351744 usec\nrounds: 1524"
+          },
+          {
+            "name": "benchmarks/test_box.py::test_box_make_fractional[small-1k]",
+            "value": 16976.529797659656,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000029810633019183284",
+            "extra": "mean: 58.90485346056163 usec\nrounds: 10591"
+          },
+          {
+            "name": "benchmarks/test_box.py::test_box_make_fractional[medium-10k]",
+            "value": 1709.8066468390737,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009892181954724389",
+            "extra": "mean: 584.8614531056502 usec\nrounds: 1642"
+          },
+          {
+            "name": "benchmarks/test_box.py::test_box_make_fractional[large-100k]",
+            "value": 169.2868611529697,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006329770208711233",
+            "extra": "mean: 5.907132976471148 msec\nrounds: 170"
+          },
+          {
+            "name": "benchmarks/test_box.py::test_box_make_absolute[small-1k]",
+            "value": 17104.285847048126,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003306082165845423",
+            "extra": "mean: 58.464878857984054 usec\nrounds: 15552"
+          },
+          {
+            "name": "benchmarks/test_box.py::test_box_make_absolute[medium-10k]",
+            "value": 1711.5289330818703,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001815923677335843",
+            "extra": "mean: 584.2729156785838 usec\nrounds: 1518"
+          },
+          {
+            "name": "benchmarks/test_box.py::test_box_make_absolute[large-100k]",
+            "value": 172.0222747641101,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003670019615746907",
+            "extra": "mean: 5.813200653062374 msec\nrounds: 147"
+          },
+          {
+            "name": "benchmarks/test_box.py::test_box_wrap[small-1k]",
+            "value": 5219.283440499827,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016773392289998205",
+            "extra": "mean: 191.5971821419675 usec\nrounds: 3371"
+          },
+          {
+            "name": "benchmarks/test_box.py::test_box_wrap[medium-10k]",
+            "value": 652.6767156674407,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008636656076482775",
+            "extra": "mean: 1.5321520991864699 msec\nrounds: 615"
+          },
+          {
+            "name": "benchmarks/test_box.py::test_box_wrap[large-100k]",
+            "value": 67.90993103757282,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006397902440499643",
+            "extra": "mean: 14.72538676923005 msec\nrounds: 65"
+          },
+          {
+            "name": "benchmarks/test_frame.py::test_frame_create[small-1k]",
+            "value": 74277.82729134634,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000023845269862052285",
+            "extra": "mean: 13.46296783934745 usec\nrounds: 8271"
+          },
+          {
+            "name": "benchmarks/test_frame.py::test_frame_create[medium-10k]",
+            "value": 61081.12317192248,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00000568922142874905",
+            "extra": "mean: 16.37167013424658 usec\nrounds: 22206"
+          },
+          {
+            "name": "benchmarks/test_frame.py::test_frame_create[large-100k]",
+            "value": 30000.068233033082,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003545810365101284",
+            "extra": "mean: 33.33325751902456 usec\nrounds: 9110"
+          },
+          {
+            "name": "benchmarks/test_frame.py::test_frame_block_access[small-1k]",
+            "value": 331817.6674423225,
+            "unit": "iter/sec",
+            "range": "stddev: 7.71639808677959e-7",
+            "extra": "mean: 3.0137033019009545 usec\nrounds: 19262"
+          },
+          {
+            "name": "benchmarks/test_frame.py::test_frame_block_access[medium-10k]",
+            "value": 331874.8969621636,
+            "unit": "iter/sec",
+            "range": "stddev: 7.446419825057571e-7",
+            "extra": "mean: 3.013183609708233 usec\nrounds: 89358"
+          },
+          {
+            "name": "benchmarks/test_frame.py::test_frame_block_access[large-100k]",
+            "value": 331548.2326301037,
+            "unit": "iter/sec",
+            "range": "stddev: 7.739809165122711e-7",
+            "extra": "mean: 3.016152407350226 usec\nrounds: 93985"
+          },
+          {
+            "name": "benchmarks/test_topology.py::test_get_topo[small-1k]",
+            "value": 39.29810240899715,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006500037212165738",
+            "extra": "mean: 25.44652129999676 msec\nrounds: 40"
+          },
+          {
+            "name": "benchmarks/test_topology.py::test_get_topo[medium-10k]",
+            "value": 3.8823175233874414,
+            "unit": "iter/sec",
+            "range": "stddev: 0.010737447881435467",
+            "extra": "mean: 257.57810740000195 msec\nrounds: 5"
+          },
+          {
+            "name": "benchmarks/test_topology.py::test_get_topo[large-50k]",
+            "value": 0.7181288781296088,
+            "unit": "iter/sec",
+            "range": "stddev: 0.06434563868927785",
+            "extra": "mean: 1.392507710599989 sec\nrounds: 5"
+          },
+          {
+            "name": "benchmarks/test_topology.py::test_get_topo_distances[small-1k]",
+            "value": 396.3811027534655,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0017266284464410567",
+            "extra": "mean: 2.5228246075645115 msec\nrounds: 423"
+          },
+          {
+            "name": "benchmarks/test_topology.py::test_get_topo_distances[medium-10k]",
+            "value": 31.44815292164672,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00827979018511335",
+            "extra": "mean: 31.798369923076457 msec\nrounds: 39"
+          },
+          {
+            "name": "benchmarks/test_topology.py::test_get_topo_distances[large-50k]",
+            "value": 5.84646602015496,
+            "unit": "iter/sec",
+            "range": "stddev: 0.014508693113656228",
+            "extra": "mean: 171.04349816669165 msec\nrounds: 6"
           }
         ]
       }
