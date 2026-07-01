@@ -37,11 +37,10 @@ job fails. Order matters:
 gh pr create --base master --head dev --title "Release vX.Y.Z"
 gh pr merge --merge            # after checks pass
 
-# 3. Tag the merged commit and push the tag through the guard, which verifies it
-#    is reachable from the canonical master before pushing (mirrors the CI
-#    repo-guard — prevents orphan tags):
-git tag -a vX.Y.Z -m "Release vX.Y.Z"
-./scripts/push-release.sh main vX.Y.Z
+# 3. Only after master has the release commit, tag it and push the tag:
+git fetch main master
+git tag -a vX.Y.Z -m "Release vX.Y.Z"    # on the merged master commit
+git push main vX.Y.Z
 ```
 
 Do **not** `git push <remote> master --tags`: if the protected-master push is
