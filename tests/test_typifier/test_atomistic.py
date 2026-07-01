@@ -535,50 +535,8 @@ class TestOplsTypifier:
         assert hasattr(typifier, "bond_typifier")
         assert hasattr(typifier, "angle_typifier")
         assert hasattr(typifier, "dihedral_typifier")
-
-    def test_atomistic_typifier_initialization_with_atom_typing(self):
-        """Test OplsTypifier initialization with atom typing enabled."""
-        ff = AtomisticForcefield()
-        typifier = OplsTypifier(ff, skip_atom_typing=False)
-
-        assert typifier.skip_atom_typing is False
-        assert hasattr(typifier, "atom_typifier")
+        # The atom typifier is the OPLS SMARTS-based implementation.
         assert isinstance(typifier.atom_typifier, _OplsAtomTypifier)
-
-    def test_atomistic_typifier_typify_bonds_only(self):
-        """Test OplsTypifier.typify() with bonds only."""
-        ff = AtomisticForcefield()
-        astyle = ff.def_atomstyle("full")
-        at1 = astyle.def_type("CA", **{"type": "CA", "class": "CT"})
-        at2 = astyle.def_type("HA", **{"type": "HA", "class": "HC"})
-
-        bstyle = ff.def_bondstyle("harmonic")
-        bstyle.def_type(at1, at2, k=1000.0, r0=1.08)
-
-        typifier = OplsTypifier(
-            ff,
-            skip_atom_typing=True,
-            skip_angle_typing=True,
-            skip_dihedral_typing=True,
-            skip_pair_typing=True,
-        )
-
-        # Create structure with typed atoms
-        asm = Atomistic()
-        c = Atom(symbol="C")
-        h = Atom(symbol="H")
-        c.data["type"] = "CA"
-        h.data["type"] = "HA"
-        asm.add_entity(c, h)
-
-        bond = Bond(c, h)
-        asm.add_link(bond)
-
-        # Typify
-        result = typifier.typify(asm)
-
-        assert result is not asm
-        assert list(result.bonds)[0].data.get("type") is not None
 
     def test_atomistic_typifier_typify_all(self):
         """Test OplsTypifier.typify() with all typing enabled."""

@@ -74,7 +74,7 @@ def pytest_collection_modifyitems(
     """Mark tests requiring external software.
 
     We use the `external` marker for tests that depend on third-party software
-    outside the Python environment (e.g. RDKit, simulation engines).
+    outside the Python environment (e.g. simulation engines, AmberTools).
     """
 
     for item in items:
@@ -86,9 +86,6 @@ def pytest_collection_modifyitems(
         if "test_engine" in fspath.parts:
             item.add_marker(pytest.mark.external)
 
-        # RDKit-dependent tests
-        if "test_adapter" in fspath.parts and "rdkit" in fspath.name:
-            item.add_marker(pytest.mark.external)
         # AmberTools-dependent tests
         if "test_wrapper" in fspath.parts and fspath.name in (
             "test_antechamber.py",
