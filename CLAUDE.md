@@ -47,10 +47,11 @@ ruff check src tests              # Lint
 ty check src/molpy/               # Type check
 pre-commit run --all-files       # Run all pre-commit hooks
 
-# Documentation
+# Documentation (built with Zensical; reads the existing mkdocs.yml)
 pip install -e ".[doc]"
-mkdocs serve                      # Local preview at http://localhost:8000
-mkdocs build                      # Build static site
+zensical serve                       # Local preview at http://localhost:8000
+zensical build                       # Build static site into site/
+python scripts/render_notebooks.py   # Re-render user-guide notebooks → Markdown
 ```
 
 ## Architecture Overview

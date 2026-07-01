@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.1 - 2026-07-01
+
+Requires `molcrafts-molrs == 0.5.1` (molpy and molrs now share one version).
+
+### Added
+
+- **TRAVIS-parity compute operators** in `molpy.compute`: angular/dihedral/
+  distance and combined distribution functions, the spatial distribution
+  function, the Van Hove correlation `G(r, t)`, Legendre reorientational
+  correlations, hydrogen-bond detection, radical Voronoi tessellation with
+  domain/void/charge analysis, and vibrational spectra (VDOS, IR, Raman, VCD,
+  ROA, resonance Raman).
+- `molpy.version.check_molrs_version()` — run on `import molpy`, warns when the
+  installed `molcrafts-molrs` does not match.
+
+### Changed
+
+- Documentation now builds with **Zensical**; user-guide notebooks are
+  pre-rendered to Markdown. The compute section documents every operator with
+  textbook-style guides and a full API reference.
+
 ## 0.4.1 - 2026-06-14
 
 Maintenance release on top of `0.4.0`. Requires `molcrafts-molrs == 0.1.2`.

@@ -5,6 +5,11 @@ frame. ``ClusterCenters`` takes (frames, clusters) and returns the
 geometric centers per cluster.
 
 Both wrappers take two data inputs — mirroring the ``RDF`` pattern.
+
+References
+----------
+- V. Ramasubramani et al., *Comput. Phys. Commun.* **254**, 107275 (2020) — the
+  freud library, whose ``cluster`` module this mirrors.
 """
 
 from __future__ import annotations

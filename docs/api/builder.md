@@ -84,8 +84,8 @@ assert "cc_coupling_demo" in ReactionPresets.list_presets()
 
 ## Related
 
-- [Guide: Stepwise Polymer](../user-guide/02_polymer_stepwise.ipynb)
-- [Guide: Topology-Driven Assembly](../user-guide/03_polymer_topology.ipynb)
+- [Guide: Stepwise Polymer](../user-guide/02_polymer_stepwise.md)
+- [Guide: Topology-Driven Assembly](../user-guide/03_polymer_topology.md)
 
 ---
 

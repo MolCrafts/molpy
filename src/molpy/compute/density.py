@@ -3,6 +3,11 @@
 Thin ``Compute`` shells over ``molrs.compute.density.*``, returning the molrs
 native results unchanged. ``LocalDensity`` takes ``(frames, nlists)`` (like
 ``RDF``); ``GaussianDensity`` takes ``(frames)`` only.
+
+References
+----------
+- V. Ramasubramani et al., *Comput. Phys. Commun.* **254**, 107275 (2020) — the
+  freud library, on which these density kernels are modelled.
 """
 
 from __future__ import annotations

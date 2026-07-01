@@ -45,7 +45,9 @@ dependencies = [
     "python-igraph>=1.0.0",
     "lark>=1.3.1",
     "pint>=0.24",
-    "molcrafts-molrs==0.1.5",
+    "molcrafts-molrs==0.5.1",
+    "molcrafts-mollog>=1.0.0",
+    "molcrafts-molcfg>=1.2.0",
 ]
 
 [tool.setuptools.dynamic]
@@ -72,10 +74,20 @@ dev = [
     "ty==0.0.37",
 ]
 doc = [
-    "mkdocs>=1.4.0",
+    # Zensical is the static-site generator (successor to MkDocs by the Material
+    # team). It reads the existing mkdocs.yml directly; `zensical build` / `serve`
+    # replace `mkdocs build` / `serve`.
+    "zensical>=0.0.45",
+    # mkdocs-material is kept for the Material theme assets and the icon/emoji
+    # markdown extension (material.extensions.emoji) that Zensical reads from
+    # mkdocs.yml — it is not used as a generator.
     "mkdocs-material>=9.7.0",
     "mkdocstrings[python]>=0.24.0",
-    "mkdocs-jupyter>=0.24.0",
+    # Notebook rendering: Zensical does not run the mkdocs-jupyter plugin, so the
+    # user-guide notebooks are pre-rendered to Markdown by scripts/render_notebooks.py.
+    # These deps are only needed to regenerate those pages, not to build the site.
+    "nbconvert>=7.0",
+    "ipykernel",
     "packmol",
     "rdkit",
     "matplotlib",

@@ -11,6 +11,9 @@ References
 - ten Wolde, Ruiz-Montero & Frenkel, *J. Chem. Phys.* **104**, 9932 (1996)
   (solid-liquid).
 - de Gennes & Prost, *The Physics of Liquid Crystals*, 2nd ed. (1993) (nematic).
+- W. Lechner, C. Dellago, *J. Chem. Phys.* **129**, 114707 (2008) (averaged variant).
+- V. Ramasubramani et al., *Comput. Phys. Commun.* **254**, 107275 (2020) — the
+  freud library, on which these order parameters are modelled.
 """
 
 from __future__ import annotations

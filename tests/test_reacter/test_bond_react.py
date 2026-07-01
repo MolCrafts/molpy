@@ -10,9 +10,9 @@ Tests cover:
 - Error handling
 """
 
-import logging
 from pathlib import Path
 
+import mollog
 import pytest
 
 from molpy.core.atomistic import Atom, Atomistic, Bond, Improper
@@ -1233,9 +1233,7 @@ class TestChargeConservation:
 
         assert CHARGE_CONSERVATION_TOL == 1e-6
 
-    def test_charge_imbalance_logs_warning(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_charge_imbalance_logs_warning(self, mollog_capture) -> None:
         """Post total charge off by 1.0 -> WARNING on the module logger."""
         from molpy.reacter.bond_react import validate_bond_react_template
 
@@ -1248,22 +1246,16 @@ class TestChargeConservation:
         post_atom = template.post_react_id_to_atom[anchor_rid]
         post_atom["charge"] = float(post_atom["charge"]) + 1.0
 
-        with caplog.at_level(logging.WARNING, logger="molpy.reacter.bond_react"):
+        with mollog_capture("molpy.reacter.bond_react") as records:
             validate_bond_react_template(template)
 
-        warning_records = [
-            r
-            for r in caplog.records
-            if r.name == "molpy.reacter.bond_react" and r.levelno >= logging.WARNING
-        ]
+        warning_records = [r for r in records if r.level >= mollog.Level.WARNING]
         assert len(warning_records) >= 1, (
             "Expected a charge-conservation WARNING on logger "
             "'molpy.reacter.bond_react'"
         )
 
-    def test_charge_conserving_template_logs_no_warning(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_charge_conserving_template_logs_no_warning(self, mollog_capture) -> None:
         """Untouched real-flow template logs no charge warning."""
         from molpy.reacter.bond_react import validate_bond_react_template
 
@@ -1271,14 +1263,10 @@ class TestChargeConservation:
         template = result.template
         assert template is not None
 
-        with caplog.at_level(logging.WARNING, logger="molpy.reacter.bond_react"):
+        with mollog_capture("molpy.reacter.bond_react") as records:
             validate_bond_react_template(template)
 
-        warning_records = [
-            r
-            for r in caplog.records
-            if r.name == "molpy.reacter.bond_react" and r.levelno >= logging.WARNING
-        ]
+        warning_records = [r for r in records if r.level >= mollog.Level.WARNING]
         assert warning_records == []
 
 

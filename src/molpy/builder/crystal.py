@@ -23,8 +23,9 @@ from numpy.typing import ArrayLike
 from molpy.core.atomistic import Atomistic
 from molpy.core.box import Box
 from molpy.core.region import Region
+from molpy.builder.symmetry import SpaceGroup
 
-__all__ = ["Lattice", "Site", "build_crystal"]
+__all__ = ["Lattice", "Site", "SpaceGroup", "build_crystal"]
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,53 @@ class Lattice:
                 Site("D", species, (0.0, 0.5, 0.5)),
             ],
         )
+
+    @classmethod
+    def from_spacegroup(
+        cls,
+        cell: ArrayLike,
+        sites: list[Site],
+        spacegroup: SpaceGroup,
+        *,
+        symprec: float = 1e-5,
+    ) -> Lattice:
+        """Expand an asymmetric unit into a full-cell basis via a space group.
+
+        A published crystal structure lists only the symmetry-inequivalent sites
+        (the asymmetric unit); applying every operator of its space group fills
+        the conventional cell. This is the native, zero-dependency path to a
+        tiling-ready lattice from a CIF.
+
+        Args:
+            cell: ``(3, 3)`` cell matrix (lattice vectors as rows), e.g.
+                ``a * np.eye(3)`` for a cubic cell of edge ``a``.
+            sites: Asymmetric-unit basis sites (one :class:`Site` per
+                inequivalent atom; ``fractional`` are its reduced coordinates).
+            spacegroup: The :class:`~molpy.builder.symmetry.SpaceGroup`, e.g.
+                ``SpaceGroup.from_triplets(cif_symops)``.
+            symprec: Fractional tolerance for collapsing images that land on a
+                special position (passed to
+                :meth:`~molpy.builder.symmetry.SpaceGroup.equivalent_positions`).
+
+        Returns:
+            A :class:`Lattice` whose basis is every symmetry image of every input
+            site; each image keeps its parent site's ``species``, ``charge``, and
+            ``attrs``, and is labelled ``"<label>_<k>"``.
+        """
+        basis: list[Site] = []
+        for site in sites:
+            images = spacegroup.equivalent_positions(site.fractional, symprec=symprec)
+            for k, frac in enumerate(images):
+                basis.append(
+                    Site(
+                        label=f"{site.label}_{k}",
+                        species=site.species,
+                        fractional=(float(frac[0]), float(frac[1]), float(frac[2])),
+                        charge=site.charge,
+                        attrs=site.attrs,
+                    )
+                )
+        return cls(cell, basis)
 
     @classmethod
     def rocksalt(cls, a: float, species_a: str, species_b: str) -> Lattice:

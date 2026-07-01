@@ -1,6 +1,5 @@
 """XML force field parser for atomistic force fields."""
 
-import logging
 import math
 import warnings
 import xml.etree.ElementTree as ET
@@ -18,8 +17,9 @@ from molpy.core.forcefield import (
     PairLJ126CoulCutStyle,
     PairLJ126CoulLongStyle,
 )
+from molpy.core.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Angles are stored internally in DEGREES (the molrs convention). A reader
 # declares the unit of its *input* file via ``angle_unit`` and converts to

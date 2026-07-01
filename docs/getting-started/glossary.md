@@ -56,16 +56,16 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 ### Modules
 
 **Parser**
-:   Converts string notations (SMILES, SMARTS, BigSMILES, CGSmiles) into MolPy structures. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.ipynb).
+:   Converts string notations (SMILES, SMARTS, BigSMILES, CGSmiles) into MolPy structures. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
 
 **Reacter**
-:   Executes a chemical reaction by connecting two `Atomistic` objects at designated port atoms, removing leaving groups, and forming new bonds. See [Stepwise Polymer Construction](../user-guide/02_polymer_stepwise.ipynb).
+:   Executes a chemical reaction by connecting two `Atomistic` objects at designated port atoms, removing leaving groups, and forming new bonds. See [Stepwise Polymer Construction](../user-guide/02_polymer_stepwise.md).
 
 **Port**
 :   A marker on an atom (`<`, `>`, or `$`) indicating that it is a reactive connection point for polymerization.
 
 **Typifier**
-:   Assigns force field types to atoms, bonds, angles, and dihedrals via SMARTS pattern matching. Subclasses: `OplsTypifier`, `GaffTypifier`, `ClpTypifier`. See [Force Field Typification](../user-guide/06_typifier.ipynb).
+:   Assigns force field types to atoms, bonds, angles, and dihedrals via SMARTS pattern matching. Subclasses: `OplsTypifier`, `GaffTypifier`, `ClpTypifier`. See [Force Field Typification](../user-guide/06_typifier.md).
 
 **Selector**
 :   A composable predicate that filters atoms in a `Block` by element, type, coordinate range, or distance. Combinable with `&`, `|`, `~`. See [Selector](../tutorials/06_selector.md).

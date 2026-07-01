@@ -281,4 +281,4 @@ write_lammps_forcefield(lammps_dir / "system.ff", combined_ff, skip_pair_style=T
 | Force field merge conflict | Inspect atom type names for collisions between PEO and TFSI |
 | Packing fails | Increase box size or reduce molecule count |
 
-See also: [Force Field Typification](06_typifier.ipynb), [Wrapper and Adapter](../tutorials/07_wrapper_and_adapter.md).
+See also: [Force Field Typification](06_typifier.md), [Wrapper and Adapter](../tutorials/07_wrapper_and_adapter.md).

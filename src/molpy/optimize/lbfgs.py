@@ -1,15 +1,13 @@
 """L-BFGS geometry optimizer."""
 
-from typing import TypeVar
-
 import numpy as np
+
+import molrs
 
 from .base import Optimizer
 
-S = TypeVar("S")  # Generic structure type
 
-
-class LBFGS(Optimizer[S]):
+class LBFGS(Optimizer):
     """Limited-memory BFGS geometry optimizer.
 
     Implements the L-BFGS algorithm for quasi-Newton optimization with
@@ -32,14 +30,11 @@ class LBFGS(Optimizer[S]):
         rho_history: Curvature history (1 / y·s)
 
     Example:
-        >>> from molpy.core.atomistic import Atomistic
         >>> from molpy.optimize import LBFGS, ForceFieldPotential
         >>>
-        >>> struct = Atomistic()
-        >>> # ... add atoms and bonds ...
         >>> potential = ForceFieldPotential(forcefield)  # molrs ForceField
         >>> opt = LBFGS(potential, maxstep=0.04, memory=20)
-        >>> result = opt.run(struct, fmax=0.01, steps=500)
+        >>> result = opt.run(frame, fmax=0.01, steps=500)  # frame: molrs.Frame
     """
 
     def __init__(
@@ -62,8 +57,8 @@ class LBFGS(Optimizer[S]):
         self.memory = memory
         self.damping = damping
 
-        # LBFGS state (reset for each new structure/run)
-        self._current_structure_id = None
+        # LBFGS state (reset for each new frame/run)
+        self._current_frame_id = None
         self.s_history: list[np.ndarray] = []  # position differences
         self.y_history: list[np.ndarray] = []  # gradient differences
         self.rho_history: list[float] = []  # 1 / (y · s)
@@ -71,35 +66,34 @@ class LBFGS(Optimizer[S]):
         self._prev_positions: np.ndarray | None = None
         self._prev_gradient: np.ndarray | None = None
 
-    def _reset_state(self, structure_id) -> None:
-        """Reset LBFGS state for a new structure."""
-        if self._current_structure_id != structure_id:
-            self._current_structure_id = structure_id
+    def _reset_state(self, frame_id) -> None:
+        """Reset LBFGS state for a new frame."""
+        if self._current_frame_id != frame_id:
+            self._current_frame_id = frame_id
             self.s_history = []
             self.y_history = []
             self.rho_history = []
             self._prev_positions = None
             self._prev_gradient = None
 
-    def step(self, structure: S) -> tuple[float, float]:
-        """Perform one L-BFGS optimization step.
+    def step(self, frame: "molrs.Frame") -> tuple[float, float]:
+        """Perform one L-BFGS optimization step on a frame.
 
         Args:
-            structure: Structure to optimize (modified in-place).
+            frame: ``molrs.Frame`` to optimize (coordinate columns modified in-place).
 
         Returns:
-            tuple[float, float]: (energy, fmax) tuple where
-                energy is potential energy after step and
-                fmax is maximum force component after step.
+            tuple[float, float]: (energy, fmax) where energy is the potential
+                energy after the step and fmax is the maximum force component.
         """
-        # Reset state if this is a new structure
-        self._reset_state(id(structure))
+        # Reset state if this is a new frame
+        self._reset_state(id(frame))
 
         # Get current state
-        positions = self.get_positions(structure)
-        forces = self.get_forces(structure)
+        positions = self.get_positions(frame)
+        forces = self.get_forces(frame)
         gradient = -forces  # Forces are -∇E, we need ∇E for minimization
-        energy = self.get_energy(structure)
+        energy = self.get_energy(frame)
 
         # Flatten for linear algebra
         x = positions.reshape(-1)
@@ -132,15 +126,15 @@ class LBFGS(Optimizer[S]):
         # Update positions: move in the direction of -∇E (minimization)
         new_x = x - step_size * search_dir
         new_positions = new_x.reshape(positions.shape)
-        self.set_positions(structure, new_positions)
+        self.set_positions(frame, new_positions)
 
         # Store for next iteration (before updating positions)
         self._prev_positions = x.copy()
         self._prev_gradient = g.copy()
 
         # Recompute energy and forces at new positions
-        new_energy = self.get_energy(structure)
-        new_forces = self.get_forces(structure)
+        new_energy = self.get_energy(frame)
+        new_forces = self.get_forces(frame)
         fmax = float(np.max(np.abs(new_forces)))
 
         return new_energy, fmax

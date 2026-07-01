@@ -5,6 +5,11 @@ stacked once via ``frame["atoms"][["x", "y", "z"]]`` (the only unavoidable
 copy, internal to ``Block.__getitem__(list)``); from that point through to
 the returned indices/distances the path is zero-copy borrowed views into
 the molrs Rust buffers.
+
+References
+----------
+- V. Ramasubramani et al., *Comput. Phys. Commun.* **254**, 107275 (2020) — the
+  freud library, whose ``locality`` neighbor query this mirrors.
 """
 
 from __future__ import annotations

@@ -6,6 +6,13 @@ Thin wrappers around ``molrs.compute.cluster``:
 - ``GyrationTensor`` (frames, clusters, centers) → 3×3 tensors per cluster
 - ``InertiaTensor`` (frames, clusters, com) → 3×3 tensors per cluster
 - ``RadiusOfGyration`` (frames, clusters, com) → Rg per cluster
+
+References
+----------
+- V. Ramasubramani et al., *Comput. Phys. Commun.* **254**, 107275 (2020) — the
+  freud library, on which these per-cluster reductions are modelled.
+- D. N. Theodorou, U. W. Suter, *Macromolecules* **18**, 1206 (1985) — gyration
+  tensor and shape descriptors.
 """
 
 from __future__ import annotations

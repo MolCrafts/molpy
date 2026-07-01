@@ -22,8 +22,8 @@ mp.io.write_lammps_system("output/", typed.to_frame(), ff)
 # → output/system.data  output/system.in
 ```
 
-See also: [Parsing Chemistry](../user-guide/01_parsing_chemistry.ipynb) ·
-[Force Field Typification](../user-guide/06_typifier.ipynb).
+See also: [Parsing Chemistry](../user-guide/01_parsing_chemistry.md) ·
+[Force Field Typification](../user-guide/06_typifier.md).
 
 ## Polymer chain — G-BigSMILES to LAMMPS
 
@@ -40,7 +40,7 @@ typed = mp.typifier.OplsTypifier(ff).typify(peo)
 mp.io.write_lammps_system("output/", typed.to_frame(), ff)
 ```
 
-See also: [Topology-Driven Assembly](../user-guide/03_polymer_topology.ipynb).
+See also: [Topology-Driven Assembly](../user-guide/03_polymer_topology.md).
 
 ## Polydisperse melt — Schulz-Zimm distribution
 
@@ -64,7 +64,7 @@ packed = mp.pack.pack(frames, box=[80, 80, 80])
 mp.io.write_lammps_system("peo_bulk/", packed, ff)
 ```
 
-See also: [Polydisperse Systems](../user-guide/05_polydisperse_systems.ipynb).
+See also: [Polydisperse Systems](../user-guide/05_polydisperse_systems.md).
 
 ## AmberTools pipeline — GAFF2 parameters
 

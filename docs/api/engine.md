@@ -11,7 +11,7 @@ MD engine abstractions for LAMMPS and CP2K.
 
 ## Related
 
-- [Guide: Crosslinked Networks](../user-guide/04_crosslinking.ipynb) (LAMMPS script generation)
+- [Guide: Crosslinked Networks](../user-guide/04_crosslinking.md) (LAMMPS script generation)
 
 ---
 

@@ -1,162 +1,140 @@
 """
 Global configuration system for MolPy.
 
-This module provides a thread-safe singleton configuration system using Pydantic.
-Configuration can be accessed globally, updated, reset, or temporarily overridden
-using a context manager.
+Thin singleton over :class:`molcfg.Config` (the molcrafts configuration
+library). Configuration can be read globally, updated, reset, or temporarily
+overridden with a context manager. Because the singleton is mutated in place,
+the module-level :data:`config` reference always reflects the current values.
 
 Examples:
     >>> from molpy.core.config import config, Config
     >>>
     >>> # Access current config
     >>> print(config.log_level)
-    'INFO'
+    INFO
     >>>
     >>> # Update config globally
-    >>> Config.update(log_level='DEBUG', n_threads=4)
+    >>> Config.update(log_level="DEBUG", n_threads=4)
+    >>> print(config.n_threads)
+    4
     >>>
     >>> # Temporary override
-    >>> with Config.temporary(log_level='WARNING'):
-    ...     print(config.log_level)  # 'WARNING'
-    >>> print(config.log_level)  # Back to 'DEBUG'
+    >>> with Config.temporary(log_level="WARNING"):
+    ...     print(config.log_level)
+    WARNING
+    >>> print(config.log_level)
+    DEBUG
+    >>> Config.reset()
 """
+
+from __future__ import annotations
 
 import contextlib
 import threading
 from collections.abc import Generator
-from typing import Self
+from typing import Any
 
-from pydantic import BaseModel, Field
+from molcfg import Config as _MolcfgConfig
+
+# Default configuration values. ``reset()`` restores exactly these keys.
+_DEFAULTS: dict[str, Any] = {
+    "log_level": "INFO",
+    "n_threads": 1,
+}
 
 
-class Config(BaseModel):
+class Config(_MolcfgConfig):
     """
-    Global configuration for MolPy.
+    Global configuration for MolPy, backed by :class:`molcfg.Config`.
 
-    Thread-safe singleton that stores global settings like logging level
-    and parallelization parameters. Use class methods to access and modify
-    the singleton instance.
+    Thread-safe singleton storing global settings such as the logging level
+    and parallelization parameters. Use the class methods to access and modify
+    the shared instance; values are read through attribute access
+    (``config.log_level``) or dotted-path access (``config["log_level"]``).
 
     Attributes:
-        log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        n_threads: Number of threads for parallel computations
-
-    Examples:
-        >>> # Get singleton instance
-        >>> cfg = Config.instance()
-        >>>
-        >>> # Update configuration
-        >>> Config.update(n_threads=8)
-        >>>
-        >>> # Temporary override
-        >>> with Config.temporary(log_level='DEBUG'):
-        ...     # Config is DEBUG here
-        ...     pass
-        >>> # Config restored here
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+        n_threads: Number of threads for parallel computations.
     """
 
-    log_level: str = Field(default="INFO")
-
-    n_threads: int = Field(
-        default=1, description="Number of threads to use for parallel computations"
-    )
-
-    # --- Internal singleton & lock ---
-    _instance: Self = None
+    _instance: Config | None = None
     _lock = threading.Lock()
 
-    # --- Singleton accessor ---
     @classmethod
-    def instance(cls) -> Self:
+    def instance(cls) -> Config:
         """
         Get the singleton Config instance.
 
-        Thread-safe lazy initialization. Creates instance on first call.
+        Thread-safe lazy initialization. Creates the instance on first call
+        seeded with the default values.
 
         Returns:
-            The singleton Config instance
-
-        Examples:
-            >>> cfg = Config.instance()
-            >>> print(cfg.log_level)
-            'INFO'
+            The singleton Config instance.
         """
         with cls._lock:
             if cls._instance is None:
-                cls._instance = cls()
+                cls._instance = cls(dict(_DEFAULTS))
             return cls._instance
 
-    # --- Update config ---
     @classmethod
-    def update(cls, **kwargs):
+    def update(cls, **kwargs: Any) -> None:
         """
-        Update the global configuration.
+        Update the global configuration in place.
 
-        Thread-safe update that creates a new instance with updated values.
-        Changes persist until reset() or another update().
+        Thread-safe update. Changes persist until :meth:`reset` or another
+        :meth:`update`.
 
         Args:
-            **kwargs (Any): Configuration fields to update (log_level, n_threads, etc.).
-
-        Examples:
-            >>> Config.update(log_level='DEBUG', n_threads=4)
-            >>> cfg = Config.instance()
-            >>> print(cfg.n_threads)
-            4
+            **kwargs: Configuration fields to update (log_level, n_threads, ...).
         """
+        inst = cls.instance()
         with cls._lock:
-            cls._instance = cls.instance().model_copy(update=kwargs)
+            for key, value in kwargs.items():
+                setattr(inst, key, value)
 
-    # --- Reset to default ---
     @classmethod
-    def reset(cls):
+    def reset(cls) -> None:
         """
-        Reset configuration to default values.
+        Reset configuration to default values in place.
 
-        Thread-safe reset. Creates a new instance with all default values.
-
-        Examples:
-            >>> Config.update(n_threads=8)
-            >>> Config.reset()
-            >>> print(Config.instance().n_threads)
-            1
+        Thread-safe reset. Removes any keys added at runtime and restores the
+        documented defaults.
         """
+        inst = cls.instance()
         with cls._lock:
-            cls._instance = cls()
+            for key in list(inst.keys()):
+                delattr(inst, key)
+            for key, value in _DEFAULTS.items():
+                setattr(inst, key, value)
 
-    # --- Context manager for temporary override ---
     @classmethod
     @contextlib.contextmanager
-    def temporary(cls, **overrides) -> Generator[None, None, None]:
+    def temporary(cls, **overrides: Any) -> Generator[None, None, None]:
         """
         Temporarily override configuration within a context.
 
-        Thread-safe context manager that restores original config on exit.
-        Useful for testing or temporary parameter changes.
+        Thread-safe context manager that snapshots the current state on entry
+        and restores it on exit. Useful for testing or scoped parameter changes.
 
         Args:
-            **overrides (Any): Configuration fields to temporarily override.
+            **overrides: Configuration fields to temporarily override.
 
         Yields:
             None
-
-        Examples:
-            >>> original_level = Config.instance().log_level
-            >>> with Config.temporary(log_level='DEBUG'):
-            ...     print(Config.instance().log_level)  # 'DEBUG'
-            >>> print(Config.instance().log_level)  # original_level
         """
+        inst = cls.instance()
         with cls._lock:
-            old = cls.instance().model_copy()
-            cls._instance = cls._instance.model_copy(update=overrides)
+            inst.snapshot()
+            for key, value in overrides.items():
+                setattr(inst, key, value)
         try:
             yield
         finally:
             with cls._lock:
-                cls._instance = old
+                inst.rollback()
 
     def __repr__(self) -> str:
-        return f"<MolpyConfig: {self}>"
+        return f"<MolpyConfig: {self.to_dict()}>"
 
 
 config = Config.instance()
@@ -167,14 +145,9 @@ def get_config() -> Config:
     """
     Get the global configuration instance.
 
-    Convenience function equivalent to Config.instance().
+    Convenience function equivalent to :meth:`Config.instance`.
 
     Returns:
-        The singleton Config instance
-
-    Examples:
-        >>> cfg = get_config()
-        >>> print(cfg.log_level)
-        'INFO'
+        The singleton Config instance.
     """
     return config

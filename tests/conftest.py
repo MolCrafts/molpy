@@ -1,10 +1,49 @@
+import contextlib
 import subprocess
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
+import mollog
 import pytest
 
 _REPO_URL = "https://github.com/molcrafts/tests-data.git"
 _DEFAULT_DIR = Path(__file__).resolve().parent / "tests-data"
+
+
+class _RecordingHandler(mollog.Handler):
+    """mollog handler that collects records for assertions in tests."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[mollog.LogRecord] = []
+
+    def emit(self, record: mollog.LogRecord) -> None:
+        self.records.append(record)
+
+
+@pytest.fixture
+def mollog_capture() -> Callable[[str], "contextlib.AbstractContextManager"]:
+    """Factory fixture to capture records on a named mollog logger.
+
+    MolPy logs through :mod:`mollog`, not the stdlib ``logging`` module, so
+    pytest's ``caplog`` does not see its records. Usage::
+
+        with mollog_capture("molpy.reacter.bond_react") as records:
+            do_something()
+        assert any(r.level >= mollog.Level.WARNING for r in records)
+    """
+
+    @contextlib.contextmanager
+    def _capture(name: str) -> Iterator[list[mollog.LogRecord]]:
+        logger = mollog.get_logger(name)
+        handler = _RecordingHandler()
+        logger.add_handler(handler)
+        try:
+            yield handler.records
+        finally:
+            logger.remove_handler(handler)
+
+    return _capture
 
 
 @pytest.fixture(scope="session", name="TEST_DATA_DIR")
@@ -35,7 +74,7 @@ def pytest_collection_modifyitems(
     """Mark tests requiring external software.
 
     We use the `external` marker for tests that depend on third-party software
-    outside the Python environment (e.g. RDKit, simulation engines).
+    outside the Python environment (e.g. simulation engines, AmberTools).
     """
 
     for item in items:
@@ -47,9 +86,6 @@ def pytest_collection_modifyitems(
         if "test_engine" in fspath.parts:
             item.add_marker(pytest.mark.external)
 
-        # RDKit-dependent tests
-        if "test_adapter" in fspath.parts and "rdkit" in fspath.name:
-            item.add_marker(pytest.mark.external)
         # AmberTools-dependent tests
         if "test_wrapper" in fspath.parts and fspath.name in (
             "test_antechamber.py",

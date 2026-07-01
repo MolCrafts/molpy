@@ -19,30 +19,36 @@ Run all three validation steps locally before creating the release branch.
 
 ```bash
 pytest tests/ -v -m "not external"    # tests pass
-mkdocs build                           # docs build
+zensical build                         # docs build
 python -m build && twine check dist/*  # package is valid
 ```
 
 
 ## Release workflow
 
-Create a release branch, update the version, and merge back to master with a tag.
+**master is branch-protected**, and the release/publish workflow refuses a tag
+that is not reachable from `master`. So the release commit must land on `master`
+**before** the tag is pushed — otherwise you get an orphan tag and the publish
+job fails. Order matters:
 
 ```bash
-git checkout master && git pull origin master
-git checkout -b release/vX.Y.Z
+# 1. Bump version.py + CHANGELOG on dev, commit.
+# 2. Get the release commit onto master via a PR (direct pushes are rejected):
+gh pr create --base master --head dev --title "Release vX.Y.Z"
+gh pr merge --merge            # after checks pass
 
-# update version.py, commit
-git add src/molpy/version.py
-git commit -m "chore(release): vX.Y.Z"
-
-git checkout master
-git merge release/vX.Y.Z
-git tag -a vX.Y.Z -m "Release vX.Y.Z"
-git push origin master --tags
+# 3. Only after master has the release commit, tag it and push the tag:
+git fetch main master
+git tag -a vX.Y.Z -m "Release vX.Y.Z"    # on the merged master commit
+git push main vX.Y.Z
 ```
 
-On tag push (`v*`), GitHub Actions runs `.github/workflows/release.yml`. It validates the tag against `molpy.version.version`, runs the test suite, builds artifacts, and publishes to PyPI.
+Do **not** `git push <remote> master --tags`: if the protected-master push is
+rejected, the tag still goes out as an orphan and publish refuses it.
+
+On tag push (`v*`), GitHub Actions runs `.github/workflows/release.yml`. It
+validates the tag against `molpy.version.version`, runs the test suite, builds
+artifacts, and publishes to PyPI.
 
 
 ## Nightly releases

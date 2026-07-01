@@ -109,13 +109,13 @@ hide:
 
 - :material-graph: **[Explicit representational hierarchy](tutorials/01_atomistic_and_topology.md)** — Molecular graphs (`Atomistic`), numerical snapshots (`Frame`), and force field parameters (`ForceField`) occupy distinct layers with explicit conversion boundaries.
 
-- :material-text-search: **[Polymer notation support](user-guide/01_parsing_chemistry.ipynb)** — SMILES, BigSMILES, CGSmiles, and G-BigSMILES are parsed directly. Monomer definitions, architectures, and polydisperse specifications can be represented in a compact textual form.
+- :material-text-search: **[Polymer notation support](user-guide/01_parsing_chemistry.md)** — SMILES, BigSMILES, CGSmiles, and G-BigSMILES are parsed directly. Monomer definitions, architectures, and polydisperse specifications can be represented in a compact textual form.
 
-- :material-chart-bell-curve: **[Statistical molecular-weight distributions](user-guide/05_polydisperse_systems.ipynb)** — Schulz–Zimm, Poisson, Flory–Schulz, and uniform distributions are implemented natively. Target number- and weight-average molecular weights are specified directly; reproducible chain populations are generated from a fixed random seed.
+- :material-chart-bell-curve: **[Statistical molecular-weight distributions](user-guide/05_polydisperse_systems.md)** — Schulz–Zimm, Poisson, Flory–Schulz, and uniform distributions are implemented natively. Target number- and weight-average molecular weights are specified directly; reproducible chain populations are generated from a fixed random seed.
 
 - :material-database-search: **[Force fields as queryable data structures](tutorials/04_force_field.md)** — A `ForceField` object is an inspectable typed dictionary. Parameter completeness and type consistency can be checked in Python before file export.
 
-- :material-vector-link: **[Reactive topology editing](user-guide/04_crosslinking.ipynb)** — Chemical reactions are expressed through anchor selectors and leaving-group selectors. Pre- and post-reaction topology templates for LAMMPS `fix bond/react` can be generated directly from the edited system.
+- :material-vector-link: **[Reactive topology editing](user-guide/04_crosslinking.md)** — Chemical reactions are expressed through anchor selectors and leaving-group selectors. Pre- and post-reaction topology templates for LAMMPS `fix bond/react` can be generated directly from the edited system.
 
 - :material-puzzle: **[Explicit subsystem boundaries](api/index.md)** — The parser, builder, typifier, packer, and I/O subsystems interact through explicit data conversions rather than hidden shared state, so each layer can be used independently or combined into a larger workflow.
 

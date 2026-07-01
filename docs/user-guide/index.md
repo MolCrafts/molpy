@@ -5,20 +5,20 @@ Each guide in this section addresses a concrete modeling task, from input specif
 
 ## Foundational Subsystems
 
-- [Chemistry Notation Parsing](01_parsing_chemistry.ipynb) — conversion of SMILES, SMARTS, BigSMILES, and CGSmiles strings into `Atomistic` structures
+- [Chemistry Notation Parsing](01_parsing_chemistry.md) — conversion of SMILES, SMARTS, BigSMILES, and CGSmiles strings into `Atomistic` structures
 
 
 ## Polymer Construction Workflows
 
-- [Stepwise Chain Construction](02_polymer_stepwise.ipynb) — explicit reaction-based monomer coupling, the `PolymerBuilder` interface, and high-level facade functions
-- [Topology-Driven Assembly](03_polymer_topology.ipynb) — specification of linear, cyclic, and branched polymer architectures via CGSmiles expressions
-- [Crosslinked Network Generation](04_crosslinking.ipynb) — template-based network formation and pre/post topology generation for LAMMPS `fix bond/react`
-- [Polydisperse System Construction](05_polydisperse_systems.ipynb) — molecular-weight distribution sampling, atomistic chain construction, and box packing
+- [Stepwise Chain Construction](02_polymer_stepwise.md) — explicit reaction-based monomer coupling, the `PolymerBuilder` interface, and high-level facade functions
+- [Topology-Driven Assembly](03_polymer_topology.md) — specification of linear, cyclic, and branched polymer architectures via CGSmiles expressions
+- [Crosslinked Network Generation](04_crosslinking.md) — template-based network formation and pre/post topology generation for LAMMPS `fix bond/react`
+- [Polydisperse System Construction](05_polydisperse_systems.md) — molecular-weight distribution sampling, atomistic chain construction, and box packing
 
 
 ## Parameterization and External Tool Integration
 
-- [Force Field Typification](06_typifier.ipynb) — SMARTS-based atom type assignment and force field parameter resolution
+- [Force Field Typification](06_typifier.md) — SMARTS-based atom type assignment and force field parameter resolution
 - [PEO–LiTFSI Electrolyte via AmberTools](07_ambertools_integration.md) — a complete polymer electrolyte system preparation workflow using the AmberTools integration
 
 

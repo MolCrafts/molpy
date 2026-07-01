@@ -40,7 +40,7 @@ typed_mol = typifier.typify(mol)  # returns NEW Atomistic
 
 ## Related
 
-- [Guide: Force Field Typification](../user-guide/06_typifier.ipynb)
+- [Guide: Force Field Typification](../user-guide/06_typifier.md)
 - [Concepts: Force Field](../tutorials/04_force_field.md)
 
 ---
@@ -50,10 +50,6 @@ typed_mol = typifier.typify(mol)  # returns NEW Atomistic
 ### Force-Field Typifiers (OPLS, base orchestrator, pair)
 
 ::: molpy.typifier.atomistic
-
-### GAFF Typifier
-
-::: molpy.typifier.gaff
 
 ### CL&P Typifier
 
