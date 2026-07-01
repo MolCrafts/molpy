@@ -53,18 +53,19 @@ _SENTINEL = _DEFAULT_DIR / "README.md"
 def _ensure_test_data() -> Path:
     """Clone tests-data if absent; skip data tests when the checkout is incomplete.
 
-    On Windows the repo cannot be fully checked out: it contains a ``con/``
-    directory (EON-format fixtures) and ``con`` is a reserved device name, so git
-    aborts the working-tree checkout. Rather than fail, detect the incomplete tree
-    via a sentinel (``README.md``, always present in a full checkout) and skip the
-    data-dependent tests — matching the pre-existing behavior where the Windows
-    clone failed and these tests were skipped.
+    Skips (rather than fails) the data-dependent tests whenever tests-data is not
+    fully available — offline runs, or a platform that cannot check out the whole
+    tree. The tests-data repo (a fork of chemfiles/tests-data) contains a ``con/``
+    directory and ``con`` is a reserved device name on Windows, so git aborts the
+    working-tree checkout there; molpy's CI does not run on Windows for this
+    reason, but the graceful skip keeps a local Windows checkout usable. An
+    incomplete tree is detected via a sentinel (``README.md``, always present in a
+    full checkout).
 
     Deliberately does NOT ``git pull`` a present checkout: under ``-n auto`` the
     session fixture runs once per worker, so pulling would mutate the shared
-    working tree while other workers read from it — which surfaced as spurious
-    "path not found" file reads on Windows. CI clones fresh each run (in a serial
-    pre-test step); to refresh a local copy, delete tests/tests-data.
+    working tree while other workers read from it. CI clones fresh each run (in a
+    serial pre-test step); to refresh a local copy, delete tests/tests-data.
     """
     if not (_DEFAULT_DIR / ".git").exists():
         _DEFAULT_DIR.parent.mkdir(parents=True, exist_ok=True)
