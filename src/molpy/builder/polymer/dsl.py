@@ -167,7 +167,7 @@ def polymer_system(
 
 def prepare_monomer(
     bigsmiles: str,
-    typifier=None,
+    typifier: Any = None,
     *,
     add_hydrogens: bool = True,
     optimize: bool = True,

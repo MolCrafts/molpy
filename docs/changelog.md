@@ -1,12 +1,17 @@
 # Changelog
 
+Release notes for MolPy, newest first. MolPy and molrs share one version line
+and release as a pair — every entry lists the `molcrafts-molrs` version it
+requires. Tagged releases and installable artifacts live on
+[GitHub Releases](https://github.com/MolCrafts/molpy/releases).
+
 ## 0.5.1 - 2026-07-01
 
-Requires `molcrafts-molrs == 0.5.1` (molpy and molrs now share one version).
+Requires `molcrafts-molrs == 0.5.1` (molpy and molrs now release as a pair).
 
 ### Added
 
-- **TRAVIS-parity compute operators** in `molpy.compute`: angular/dihedral/
+- **analysis-parity compute operators** in `molpy.compute`: angular/dihedral/
   distance and combined distribution functions, the spatial distribution
   function, the Van Hove correlation `G(r, t)`, Legendre reorientational
   correlations, hydrogen-bond detection, radical Voronoi tessellation with
@@ -20,6 +25,38 @@ Requires `molcrafts-molrs == 0.5.1` (molpy and molrs now share one version).
 - Documentation now builds with **Zensical**; user-guide notebooks are
   pre-rendered to Markdown. The compute section documents every operator with
   textbook-style guides and a full API reference.
+
+## 0.5.0 - 2026-06-21
+
+Requires `molcrafts-molrs == 0.1.5`.
+
+### Removed
+
+- **SMARTS GAFF typifier removed.** `molpy.typifier.GaffTypifier` (and the
+  internal `_GaffAtomTypifier`), the `typifier/gaff.py` module, and the bundled
+  `data/forcefield/gaff.xml` are gone. GAFF atom types and AM1-BCC charges now
+  come exclusively from AmberTools (`antechamber` / `prepgen`) through the
+  unchanged AmberTools wrapper; the 41 generic SMARTS-matcher tests are kept.
+
+### Fixed
+
+- **tip3p water `theta0` is now expressed in radians**, matching molrs's
+  angles-internal-radians convention.
+
+### Added
+
+- PEO polymer-electrolyte workflow examples.
+
+## 0.4.2 - 2026-06-18
+
+Additive release — no API renames or breaking changes.
+Requires `molcrafts-molrs == 0.1.4`.
+
+### Added
+
+- **GROMACS TRR / XTC and DCD trajectory readers** (`read_trr_trajectory`,
+  `read_xtc_trajectory`, `read_dcd_trajectory`) and TRR / XTC writers
+  (`write_trr`, `write_xtc`) — thin delegations to the molrs backend.
 
 ## 0.4.1 - 2026-06-14
 

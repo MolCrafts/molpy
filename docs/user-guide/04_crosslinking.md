@@ -49,34 +49,38 @@ ff = mp.io.read_xml_forcefield("oplsaa.xml")
 typifier = OplsTypifier(ff, strict_typing=False)
 ```
 
-    2026-07-01 03:07:38,585 - molpy.io.forcefield.xml - INFO - Using built-in force field: /Users/roykid/work/molcrafts/molpy/src/molpy/data/forcefield/oplsaa.xml
+```text
+2026-07-01 03:07:38,585 - molpy.io.forcefield.xml - INFO - Using built-in force field: /Users/roykid/work/molcrafts/molpy/src/molpy/data/forcefield/oplsaa.xml
+```
 
 
-    2026-07-01 03:07:38,589 - molpy.io.forcefield.xml - INFO - Parsing force field: OPLS-AA v0.1.0
+```text
+2026-07-01 03:07:38,589 - molpy.io.forcefield.xml - INFO - Parsing force field: OPLS-AA v0.1.0
 
 
-    2026-07-01 03:07:38,589 - molpy.io.forcefield.xml - INFO - Combining rule: geometric
+2026-07-01 03:07:38,589 - molpy.io.forcefield.xml - INFO - Combining rule: geometric
 
 
-    2026-07-01 03:07:38,596 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types
+2026-07-01 03:07:38,596 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types
 
 
-    2026-07-01 03:07:38,597 - molpy.io.forcefield.xml - INFO - Parsed 307 bond types (OPLS-AA with unit conversion)
+2026-07-01 03:07:38,597 - molpy.io.forcefield.xml - INFO - Parsed 307 bond types (OPLS-AA with unit conversion)
 
 
-    2026-07-01 03:07:38,599 - molpy.io.forcefield.xml - INFO - Parsed 964 angle types (OPLS-AA with unit conversion)
+2026-07-01 03:07:38,599 - molpy.io.forcefield.xml - INFO - Parsed 964 angle types (OPLS-AA with unit conversion)
 
 
-    2026-07-01 03:07:38,601 - molpy.io.forcefield._rb_opls - WARNING - RB coefficients do not lie on the ideal 4-term OPLS manifold (C0+C1+C2+C3+C4 = 10.041600, expected ≈ 0). Conversion will preserve forces and relative energies exactly, but will introduce a constant energy offset of ΔE = 10.041600 kJ/mol. This does not affect MD simulations.
+2026-07-01 03:07:38,601 - molpy.io.forcefield._rb_opls - WARNING - RB coefficients do not lie on the ideal 4-term OPLS manifold (C0+C1+C2+C3+C4 = 10.041600, expected ≈ 0). Conversion will preserve forces and relative energies exactly, but will introduce a constant energy offset of ΔE = 10.041600 kJ/mol. This does not affect MD simulations.
 
 
-    2026-07-01 03:07:38,603 - molpy.io.forcefield.xml - INFO - Parsed 1089 dihedral types (OPLS-AA with unit conversion)
+2026-07-01 03:07:38,603 - molpy.io.forcefield.xml - INFO - Parsed 1089 dihedral types (OPLS-AA with unit conversion)
 
 
-    2026-07-01 03:07:38,605 - molpy.io.forcefield.xml - INFO - Parsed 825 nonbonded parameters (OPLS-AA with unit conversion)
+2026-07-01 03:07:38,605 - molpy.io.forcefield.xml - INFO - Parsed 825 nonbonded parameters (OPLS-AA with unit conversion)
 
 
-    2026-07-01 03:07:38,605 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types (by type)
+2026-07-01 03:07:38,605 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types (by type)
+```
 
 
 Each monomer is parsed from BigSMILES, expanded to 3D with hydrogens, and typified with OPLS-AA. Atom IDs must be assigned before typification because the force field writer expects them.
@@ -101,8 +105,10 @@ for idx, atom in enumerate(eo3.atoms, start=1):
 eo3 = typifier.typify(eo3)
 ```
 
-    /Users/roykid/work/molcrafts/molpy/src/molpy/adapter/rdkit.py:719: UserWarning: UFF optimization returned code 1. Code 1 typically means convergence not reached within 200 iterations. The structure may still be improved.
-      warnings.warn(msg, UserWarning)
+```text
+/Users/roykid/work/molcrafts/molpy/src/molpy/adapter/rdkit.py:719: UserWarning: UFF optimization returned code 1. Code 1 typically means convergence not reached within 200 iterations. The structure may still be improved.
+  warnings.warn(msg, UserWarning)
+```
 
 
 Verify that the port markers survived 3D generation:
@@ -114,8 +120,10 @@ for label, mon in [("EO2", eo2), ("EO3", eo3)]:
     print(f"{label}: atoms={len(mon.atoms)}, ports={ports}")
 ```
 
-    EO2: atoms=24, ports=['$', '$']
-    EO3: atoms=38, ports=['$', '$', '$']
+```text
+EO2: atoms=24, ports=['$', '$']
+EO3: atoms=38, ports=['$', '$', '$']
+```
 
 
 ## Template generation captures the local reaction environment
@@ -167,7 +175,9 @@ result = reacter.run(
 template = result.template
 ```
 
-    2026-07-01 03:07:47,385 - molpy.reacter.bond_react - WARNING - Charge not conserved in bond/react template: sum(q_post) - sum(q_pre) = 0.278 e exceeds tolerance 1e-06 e.
+```text
+2026-07-01 03:07:47,385 - molpy.reacter.bond_react - WARNING - Charge not conserved in bond/react template: sum(q_post) - sum(q_pre) = 0.278 e exceeds tolerance 1e-06 e.
+```
 
 
 The pre and post templates have the same number of atoms. Atoms in the leaving group are marked for deletion in the `.map` file — LAMMPS removes them after applying the post-template topology.
@@ -178,8 +188,10 @@ print(f"pre:  {len(template.pre.atoms)} atoms")
 print(f"post: {len(template.post.atoms)} atoms")
 ```
 
-    pre:  23 atoms
-    post: 23 atoms
+```text
+pre:  23 atoms
+post: 23 atoms
+```
 
 
 ## Packing at realistic density
@@ -215,7 +227,9 @@ packed.box = mp.Box.cubic(length=box_length)
 print(f"packed: {packed['atoms'].nrows} atoms in {box_length:.1f} Å box")
 ```
 
-    packed: 990 atoms in 21.1 Å box
+```text
+packed: 990 atoms in 21.1 Å box
+```
 
 
 ## One call exports data, force field, and templates together
@@ -404,7 +418,9 @@ n_mols_final = len(set(final["atoms"]["mol_id"]))
 print(f"final: {n_atoms_final} atoms, {n_mols_final} molecules (started with 36)")
 ```
 
-    final: 891 atoms, 3 molecules (started with 36)
+```text
+final: 891 atoms, 3 molecules (started with 36)
+```
 
 
 ## Troubleshooting
@@ -422,11 +438,13 @@ for nb in find_neighbors(left, carbon):
     print(f"  neighbor: {nb.get('element')} name={nb.get('name')}")
 ```
 
-    site: C name=None
-      neighbor: O name=None
-      neighbor: C name=None
-      neighbor: H name=None
-      neighbor: H name=None
+```text
+site: C name=None
+  neighbor: O name=None
+  neighbor: C name=None
+  neighbor: H name=None
+  neighbor: H name=None
+```
 
 
 **Packing fails**
@@ -450,53 +468,55 @@ Check that the `.map` file contains valid equivalence IDs:
 print((output_dir / "rxn1.map").read_text()[:500])
 ```
 
-    # auto-generated map file for fix bond/react
+```text
+# auto-generated map file for fix bond/react
 
-    23 equivalences
-    2 edgeIDs
-    3 deleteIDs
+23 equivalences
+2 edgeIDs
+3 deleteIDs
 
-    InitiatorIDs
+InitiatorIDs
 
-    2
-    14
+2
+14
 
-    EdgeIDs
+EdgeIDs
 
-    6
-    18
+6
+18
 
-    DeleteIDs
+DeleteIDs
 
-    1
-    7
-    19
+1
+7
+19
 
-    Equivalences
+Equivalences
 
-    1   1
-    2   2
-    3   3
-    4   4
-    5   5
-    6   6
-    7   7
-    8   8
-    9   9
-    10   10
-    11   11
-    12   12
-    13   13
-    14   14
-    15   15
-    16   16
-    17   17
-    18   18
-    19   19
-    20   20
-    21   21
-    22   22
-    23   23
+1   1
+2   2
+3   3
+4   4
+5   5
+6   6
+7   7
+8   8
+9   9
+10   10
+11   11
+12   12
+13   13
+14   14
+15   15
+16   16
+17   17
+18   18
+19   19
+20   20
+21   21
+22   22
+23   23
+```
 
 
 

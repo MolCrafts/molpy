@@ -4,14 +4,14 @@
 3-D grid, after Kabsch-aligning each reference molecule to a template geometry.
 This is the orientation-resolved generalization of the radial distribution
 function: it reveals *where* around a molecule its neighbours sit, not just how
-far. Thin shell over the molrs TRAVIS-parity kernel; takes ``(frames)``.
+far. Thin shell over the molrs analysis-parity kernel; takes ``(frames)``.
 
 References
 ----------
 - I. M. Svishchev, P. G. Kusalik, *J. Chem. Phys.* **99**, 3049 (1993);
   P. G. Kusalik, I. M. Svishchev, *Science* **265**, 1219 (1994) — spatial
   distribution functions.
-- M. Brehm, B. Kirchner, *J. Chem. Inf. Model.* **51**, 2007 (2011) — TRAVIS SDF.
+- M. Brehm, B. Kirchner, *J. Chem. Inf. Model.* **51**, 2007 (2011) — reference implementation SDF.
 """
 
 from __future__ import annotations

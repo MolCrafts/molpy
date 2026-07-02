@@ -46,6 +46,8 @@ The `atoms` namespace contains per-atom properties, including atomic numbers, po
 
 Format-specific aliases such as LAMMPS `q` and `mol` exist only at the I/O boundary. Readers canonicalize them to `charge` and `mol_id`; writers localize them back when required by the target format.
 
+**Units.** `mass` is in amu and `charge` in elementary-charge units, but coordinates (`x/y/z`) and velocities (`vx/vy/vz`) carry *no intrinsic unit* — MolPy stores raw numbers. The length convention is fixed by the force field you apply (its `units=` setting, e.g. LAMMPS `real` ⇒ Å) and by the file format you read from or export to. Keep your input coordinates consistent with that convention (e.g. TIP3P's `tip3p.xml` uses nm).
+
 #### Bond Topology (`bonds`)
 
 The `bonds` namespace stores bond connectivity using separate index arrays for source and target atoms. This design simplifies indexing and aligns with the naming convention used in Entity-level representations. All arrays have length `E`, where `E` is the number of bonds.
@@ -149,8 +151,6 @@ for i in range(len(frame["bonds"]["atomi"])):
 These conversions must be explicit and localized at the boundary between Frame and Entity layers. Mixing the two representations inside the same object is not allowed. The namespace structure in Frame ensures that all related fields (such as bond indices and bond types) are kept together during conversion, simplifying the logic and reducing the chance of misalignment errors.
 
 
-### Implementation guidelines for developers and agents
+### For contributors
 
-When refactoring or extending the MolPy codebase, treat this naming scheme as a hard invariant. Any topology stored inside a Frame or Block must use `atomi`, `atomj`, `atomk`, and `atoml`. Any topology stored inside an Entity object must use `itom`, `jtom`, `ktom`, and `ltom`. If existing code uses ambiguous names (such as `atom_i`, `atom1`, or reuses `itom` to store indices), split the representation and introduce an explicit conversion step at the layer boundary. Lightweight runtime checks or type hints are encouraged at constructors to ensure misuse is caught early.
-
-This convention slightly increases verbosity at conversion boundaries, but it pays off in clarity, correctness, and long-term maintainability. It allows MolPy to scale to larger systems and workflows without semantic drift, support serialization and cross-language backends cleanly, and remain friendly to both interactive chemistry workflows and high-throughput numerical pipelines. Most importantly, it makes the meaning of topology fields obvious from the name alone, which is a critical property for a library intended to be extended by both humans and automated agents.
+When extending MolPy, treat this scheme as a hard invariant: Frame/Block topology always uses `atomi/atomj/atomk/atoml` (indices); Entity topology always uses `itom/jtom/ktom/ltom` (object references); convert explicitly at the boundary, never mix the two inside one object. The rationale (type-safety, serialization to JSON/Arrow/HDF5, and cross-language backends) is covered in the [Developer Guide](../developer/index.md).

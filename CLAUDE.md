@@ -47,7 +47,7 @@ ruff check src tests              # Lint
 ty check src/molpy/               # Type check
 pre-commit run --all-files       # Run all pre-commit hooks
 
-# Documentation (built with Zensical; reads the existing mkdocs.yml)
+# Documentation (built with Zensical; configured by zensical.toml)
 pip install -e ".[doc]"
 zensical serve                       # Local preview at http://localhost:8000
 zensical build                       # Build static site into site/

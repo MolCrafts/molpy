@@ -1,4 +1,4 @@
-# The compute layer runs on molrs
+# molrs Backend
 
 MolPy's analysis operators are thin Python shells over [molrs](https://github.com/MolCrafts/molrs),
 a Rust column store and compute kernel. molrs is a **required** runtime

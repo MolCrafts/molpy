@@ -37,7 +37,7 @@ Example:
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Any, Mapping
 
 import pint
 
@@ -171,9 +171,9 @@ class UnitSystem(pint.UnitRegistry):
 
     def __init__(
         self,
-        *args,
+        *args: Any,
         base_units: Mapping[str, str] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         # Captured here so that _after_init (run post default-unit load) can
         # resolve unit labels against the fully-populated registry.

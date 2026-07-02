@@ -8,7 +8,7 @@
 
 - Source: `src/molpy/` (package uses `src/` layout)
 - Tests: `tests/` (pytest; external-dependent tests are marked `external`)
-- Docs: `docs/` + `mkdocs.yml` (MkDocs Material; notebooks rendered via `mkdocs-jupyter`)
+- Docs: `docs/` + `zensical.toml` (Zensical; notebooks pre-rendered to Markdown via `scripts/render_notebooks.py`)
 - CI/release: `.github/workflows/`
 
 ## Local workflows (commands used in CI)

@@ -7,7 +7,7 @@ SMARTS-based atom typing and force field parameter assignment.
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
 | `OplsTypifier` | Full OPLS-AA typing pipeline | OPLS force fields |
-| `GaffTypifier` | Full GAFF typing pipeline | GAFF / GAFF2 force fields |
+| `MMFFTypifier` | Full MMFF94 typing pipeline | MMFF force fields |
 | `ClpTypifier` | Full CL&P typing pipeline (OPLS engine + built-in `clp.xml`) | Ionic-liquid force fields |
 | `PairTypifier` | Pair (LJ) parameter assignment | Standalone nonbonded typing |
 | `LayeredTypingEngine` | Dependency-aware SMARTS matching engine | Custom typing engines |
@@ -19,6 +19,10 @@ runs atom typing, then pair parameters, then bond/angle/dihedral types derived
 from the atom assignments. Individual stages can be disabled with the
 `skip_*_typing` constructor flags — there are no separate public
 atom-only or bond/angle/dihedral typifier classes.
+
+GAFF is **not** a typifier here: GAFF atom types and AM1-BCC charges are
+obtained by delegating to AmberTools (`antechamber` / `prepgen`) through the
+[Wrapper](wrapper.md) package, not through a `*Typifier` class.
 
 ## Canonical example
 
@@ -54,6 +58,10 @@ typed_mol = typifier.typify(mol)  # returns NEW Atomistic
 ### CL&P Typifier
 
 ::: molpy.typifier.clp
+
+### MMFF Typifier
+
+::: molpy.typifier.mmff
 
 ### Layered Typing Engine
 

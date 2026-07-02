@@ -3,6 +3,18 @@
 The full user-facing changelog lives in [docs/changelog.md](docs/changelog.md).
 This file records API renames and breaking changes at the repository root.
 
+## Unreleased
+
+### Docs
+
+- Documentation config migrated from `mkdocs.yml` to `zensical.toml` (the
+  native Zensical format, matching molrs). The `[doc]` extra no longer installs
+  `mkdocs-material` — Zensical is self-contained (bundles the theme, icon sets,
+  and markdown extensions). Build with `zensical build`.
+- New **Velocity Autocorrelation & VDOS** compute guide; the Diffusion and
+  Structural-Analysis guides gained dedicated *Parameters and hyperparameters*
+  sections.
+
 ## 0.5.1 - 2026-07-01
 
 ### Changed
@@ -14,7 +26,7 @@ This file records API renames and breaking changes at the repository root.
 
 ### Added
 
-- **TRAVIS-parity compute operators** in `molpy.compute`: geometric distribution
+- **analysis-parity compute operators** in `molpy.compute`: geometric distribution
   functions (`AngleDistribution`, `DihedralDistribution`, `DistanceDistribution`),
   `CombinedDistribution`, `SpatialDistribution`, `VanHove`,
   `LegendreReorientation`, `HBonds`, radical Voronoi (`RadicalVoronoi`,
@@ -64,6 +76,18 @@ This file records API renames and breaking changes at the repository root.
 
 - Pin `molcrafts-molrs==0.1.4` (was `0.1.3`) — required for the new GROMACS
   trajectory bindings.
+
+## 0.4.1 - 2026-06-14
+
+### Removed (breaking)
+
+- **`molpy.legacy` removed.** The pure-NumPy `MSD` / `DisplacementCorrelation`
+  operators and the `molpy.legacy` submodule are gone — use the molrs-backed
+  `molpy.compute.MSD` / `molpy.compute.MCDCompute` instead.
+
+### Changed
+
+- Pin `molcrafts-molrs==0.1.2` (was `0.1.1`).
 
 ## 0.4.0 - 2026-06-11
 

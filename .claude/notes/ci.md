@@ -17,10 +17,11 @@ same commit.
 | Tests | `pytest tests/ -v -m "not external"` | required (**pre-push stage**) | required |
 | Notebook strip | `nbstripout` | required when `.ipynb` present | intentionally absent |
 | File hygiene | `pre-commit-hooks` (trailing-ws, eof, merge-conflict, …) | required | intentionally absent |
-| Docs build | `mkdocs build` | intentionally absent (too slow) | required when `docs/` present |
+| Docs build | `zensical build` | intentionally absent (too slow) | required when `docs/` present |
 
 Intentional exemptions: `nbstripout` and file hygiene are local-only hooks;
-`mkdocs build` / docs jobs are CI-only. Do not "fix" these as parity gaps.
+`zensical build` / docs jobs are CI-only. Do not "fix" these as parity gaps.
+Docs deploy is Cloudflare Pages (builds from the repo), not a GitHub workflow.
 
 ## Audit rules
 

@@ -13,6 +13,7 @@ File readers and writers for molecular data, force fields, and trajectories.
 | `read_gro` / `write_gro` | GROMACS GRO | read/write |
 | `read_mol2` | MOL2 | read |
 | `read_xyz` | XYZ | read |
+| `XsfReader` / `XsfWriter` | XSF (crystallographic) | read/write |
 | `read_h5` / `write_h5` | HDF5 | read/write |
 | `read_amber_inpcrd` | AMBER inpcrd | read |
 
@@ -84,7 +85,8 @@ mp.io.write_lammps_system("output_dir", frame, ff)
 ::: molpy.io.readers
     options:
       members: true
-      filters: ["!^Base"]
+      filters:
+        - "!^Base"
 
 ::: molpy.io.writers
     options:
@@ -112,6 +114,7 @@ mp.io.write_lammps_system("output_dir", frame, ff)
 #### LAMMPS
 ::: molpy.io.data.lammps
 ::: molpy.io.data.lammps_molecule
+::: molpy.io.data.lammps_bond_react
 
 #### PDB
 ::: molpy.io.data.pdb
@@ -136,6 +139,9 @@ mp.io.write_lammps_system("output_dir", frame, ff)
 
 #### XYZ
 ::: molpy.io.data.xyz
+
+#### XSF
+::: molpy.io.data.xsf
 
 ### Trajectory Modules
 

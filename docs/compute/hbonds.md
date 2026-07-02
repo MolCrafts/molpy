@@ -96,7 +96,7 @@ is the standard way to characterize hydrogen-bond dynamics.
 - D. C. Rapaport, *Mol. Phys.* **50**, 1151 (1983) — continuous vs. intermittent
   bond correlation functions.
 - M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — TRAVIS.
+  (2020) — reference implementation.
 
 ## See also
 

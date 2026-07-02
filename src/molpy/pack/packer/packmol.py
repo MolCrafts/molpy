@@ -412,7 +412,9 @@ class Packmol(Packer):
 
                 # Expand atoms block - preserve ALL fields including type and charge
                 atoms = target.frame["atoms"].copy()
-                n = len(atoms.get("id", atoms.get("xyz", [])))
+                n = atoms.nrows  # atom count from the block itself (robust to
+                # frames built by Atomistic.to_frame(), which have x/y/z but no
+                # "id"/"xyz" column)
 
                 # Set molecule ID for this instance
                 atoms["mol_id"] = np.full(n, current_instance + 1, dtype=int)

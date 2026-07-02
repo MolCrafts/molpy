@@ -63,8 +63,10 @@ A real MSD curve has three parts, and only the middle one is physical diffusion:
   by statistical scatter.
 
 Choosing the linear window is the single most important judgement call in a
-diffusion calculation. MolPy's transport computes expose `fit_min`/`fit_max` (or
-fraction-based windows) for exactly this reason.
+diffusion calculation. The transport computes return the **full correlation
+curve** so you can inspect it before fitting; `IonicConductivity` exposes a
+fraction-based fit window (`fit_start_frac`/`fit_end_frac`) for exactly this
+reason (see [§6](#6-parameters-and-hyperparameters)).
 
 ### 1.2 Averaging over time origins
 
@@ -261,7 +263,9 @@ $$
 The integrand $C(\tau)=\langle\mathbf{J}(0)\cdot\mathbf{J}(\tau)\rangle$ is the
 current autocorrelation function (JACF); the factor $1/3$ is the Green–Kubo
 analogue of the Einstein $1/6$ (one comes from integrating the ACF, the other
-from differentiating the MSD).
+from differentiating the MSD). The single-particle analogue — the Green–Kubo
+route to $D$ via the velocity autocorrelation — is derived in
+[Velocity Autocorrelation & VDOS](vacf.md).
 
 ```python
 from molpy.compute import JACF
@@ -300,7 +304,70 @@ their ratio is the ionicity.
 
 ---
 
-## 6. Pitfalls checklist
+## 6. Parameters and hyperparameters
+
+### 6.1 Parameters and their meaning
+
+| Parameter | Compute(s) | Meaning |
+|---|---|---|
+| `tags` | `MCDCompute`, `Onsager` | species selectors: `"3"` = self / like-species collective term of type 3; `"3,4"` = distinct cross-correlation of types 3 and 4 |
+| `max_dt` | `MCDCompute`, `Onsager`, `PMSDCompute`, `JACF` | longest correlation lag, **ps**; the returned curve has `n_cache = int(max_dt / dt)` points |
+| `dt` | all transport computes | trajectory frame spacing, **ps** (the *capture* interval, not the MD timestep) |
+| `center_of_mass` | `MCDCompute`, `Onsager` | optional `{type: mass}` map; when given, the system centre of mass is removed each frame before building displacements (default `None`) |
+| `cation_type` / `anion_type` | `PMSDCompute`, `JACF` | atom-type indices assigned charge $+1$ / $-1$ in the collective coordinate $\mathbf{P}(t)$ or current $\mathbf{J}(t)$ |
+| `temperature` | `JACF`, `IonicConductivity` | $T$ in the $1/(V k_B T)$ prefactor, **K** — $\sigma$ scales as $1/T$ |
+| `volume` | `JACF`, `IonicConductivity` | system volume, **Å³**; `None` → mean box volume over the trajectory (`JACF`) or first-frame box volume (`IonicConductivity`, assumes NVT/NVE) |
+| `max_correlation_time` | `IonicConductivity` | longest MSD lag **in frames** (clamped to `n_frames − 1`); practical choice ≤ `n_frames / 5` |
+| `fit_start_frac`, `fit_end_frac` | `IonicConductivity` | linear-fit window over the diffusive regime, as fractions of the maximum lag (defaults `0.1`, `0.5`) |
+
+`MCDCompute`, `Onsager` and `PMSDCompute` return **raw correlation curves** —
+the $1/(2d\,\tau)$ slope, the $1/(6 k_B T V N_A)$ Onsager prefactor, and any
+unit conversion are applied by *you*, which is what keeps the fit window under
+your eyes. Only `IonicConductivity` and `JACF` fit and convert internally.
+
+### 6.2 Hyperparameter effects
+
+- **Fit window placement.** Fitting **too early** includes the ballistic/caged
+  head where the local exponent $d\ln\mathrm{MSD}/d\ln\tau \ne 1$ — the
+  extracted slope is systematically biased (check that the log–log slope is ≈ 1
+  across your window before trusting $D$). Fitting **too late** trades bias for
+  variance: the number of independent time origins falls as
+  $N_\text{origins} = N_\text{frames} - \tau/\Delta t$, so the statistical
+  error grows roughly like $\sqrt{\tau/T_\text{traj}}$. Move
+  `fit_start_frac`/`fit_end_frac` (or your manual window) and report the spread
+  — for few-carrier collective quantities it is rarely below several percent.
+- **`max_dt` vs trajectory length.** Lags approaching the trajectory length
+  average over almost no origins; keep `max_dt` a small fraction of the run
+  (the `≤ n_frames / 5` rule from `IonicConductivity` is a good default for
+  every curve on this page). Doubling the trajectory beats doubling `max_dt`.
+- **Frame spacing `dt`.** The Einstein/MSD routes are robust at coarse `dt` —
+  displacement is cumulative. The Green–Kubo `JACF` is not: the current ACF
+  decays in ~0.1–1 ps, so coarse frames under-resolve the integrand and $\sigma$
+  drifts. The same sampling-rate trade-offs as for the VACF apply — see
+  [vacf.md §6](vacf.md#6-hyperparameter-effects).
+- **Dimensionality.** The prefactors on this page assume $d = 3$
+  ($1/(2d) = 1/6$ Einstein, $1/3$ Green–Kubo). For quasi-2-D systems (confined
+  films, membranes) apply the $d = 2$ factors to the raw curves yourself —
+  using the 3-D factor on 2-D motion underestimates $D$ by $2/3$.
+- **Centre-of-mass drift (`center_of_mass`).** Collective quantities (Onsager,
+  PMSD, JACF) are a *single* realization per species — a net COM drift adds a
+  coherent $\propto \tau^2$ contamination that never averages out. Remove it
+  (pass the mass map, or pre-clean the trajectory) before quoting off-diagonal
+  coefficients.
+- **`temperature` / `volume`.** $\sigma \propto 1/(V\,T)$: a 3 % error in
+  either rescales the conductivity linearly. Use the *production-run* averages,
+  not the target thermostat values, for NPT data.
+- **Green–Kubo integration limit (`JACF.max_dt`).** Quote $\sigma$ at the
+  plateau of `result.sigma_running`, never at the last lag — integrating ACF
+  tail noise makes the estimate drift linearly (same plateau rule as the
+  running-integral $D(\tau)$ in [vacf.md §2](vacf.md#2-the-greenkubo-route-to-the-diffusion-coefficient)).
+
+The scattered warnings in [§7](#7-pitfalls-checklist) are the failure modes of
+exactly these knobs.
+
+---
+
+## 7. Pitfalls checklist
 
 1. **No unwrapping** → boundary crossings inject $L$-sized jumps; every MSD is
    garbage. (MolPy unwraps automatically via `Box.delta`.)
@@ -317,7 +384,7 @@ their ratio is the ionicity.
 
 ---
 
-## 7. References
+## 8. References
 
 - A. Einstein, *Ann. Phys.* **322**, 549 (1905) — the diffusion/MSD relation.
 - M. P. Allen, D. J. Tildesley, *Computer Simulation of Liquids*, 2nd ed. (2017)

@@ -85,6 +85,10 @@ internal copies and the product is a fresh structure.
 
 ::: molpy.reacter.base
 
+### Bond/React Templates
+
+::: molpy.reacter.bond_react
+
 ### Selectors
 
 ::: molpy.reacter.selectors

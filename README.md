@@ -129,7 +129,8 @@ mp.io.write_lammps_system("output/", typed.to_frame(), ff)
 # → output/system.data  output/system.in
 ```
 
-More workflows — polymer chains, polydisperse melts, AmberTools
+More workflows — packed solvent boxes, virtual-site models, polymer chains and
+networks (the stress test for MolPy's editing machinery), AmberTools
 parameterization — are in the
 **[Example Gallery](https://molpy.molcrafts.org/getting-started/examples/)**
 and the task-oriented [Guides](https://molpy.molcrafts.org/user-guide/).
@@ -170,6 +171,11 @@ Issues and pull requests are welcome — see
 ## License
 
 BSD-3-Clause — see [LICENSE](LICENSE).
+
+MolPy ports or adapts code, algorithms, and data from other projects (freud,
+foyer, OpenMM, moltemplate, RDKit, and others). All third-party attributions and
+their license terms are consolidated in
+[Third-Party Attributions](docs/developer/attribution.md).
 
 <hr>
 

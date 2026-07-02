@@ -85,7 +85,7 @@ from .workflow import (
     WorkflowMissingInputError,
 )
 
-# TRAVIS-parity computes (geometric / combined / spatial distributions, Van Hove,
+# analysis-parity computes (geometric / combined / spatial distributions, Van Hove,
 # reorientation, hydrogen bonds, radical Voronoi, vibrational spectra). The
 # numerical kernels live in molrs; these are thin typed shells.
 from .distribution import (
@@ -169,7 +169,7 @@ __all__ = [
     "BondOrder",
     "PMFTXY",
     "ClusterProperties",
-    # TRAVIS-parity computes
+    # analysis-parity computes
     "DistanceDistribution",
     "AngleDistribution",
     "DihedralDistribution",

@@ -1,14 +1,13 @@
 # Getting Started
 
-This section establishes a working MolPy environment and introduces the explicit `Atomistic → Frame → export` workflow that underlies most tasks in polymer simulation setup. It also covers the MolCrafts MCP suite for agent-assisted use, a dedicated naming-conventions page for canonical field names, and a compact glossary for MolPy-specific terminology. The pages below are intended to be read in sequence by new users; readers already familiar with MolPy's data model may proceed directly to any subsection.
+This section establishes a working MolPy environment and introduces the explicit `Atomistic → Frame → export` workflow that underlies most system-preparation tasks. The pages below are intended to be read in sequence by new users; readers already familiar with MolPy's data model may proceed directly to any subsection.
 
 1. **[Installation](installation.md)** — dependency requirements, package installation, and environment verification
 2. **[Quickstart](quickstart.md)** — construction of a solvated system, force field assignment, and LAMMPS input generation
-3. **[MCP Setup](mcp.md)** — register the MolCrafts MCP suite for agent-assisted exploration and code generation
-4. **[Core Concepts](core-concepts.md)** — the `Atomistic → Typed Atomistic → Frame` pipeline and the roles of each representation
-5. **[Naming Conventions](naming-conventions.md)** — canonical field names and topology-key rules used across the data model
-6. **[Glossary](glossary.md)** — concise definitions for the core data structures and modules
-7. **[FAQ](faq.md)** — troubleshooting, comparison with related software, and answers to frequently asked questions
+3. **[Example Gallery](examples.md)** — copy-paste-ready workflows, from a single small molecule to packed boxes and polymer networks
+4. **[FAQ](faq.md)** — troubleshooting, comparison with related software, and answers to frequently asked questions
+
+Looking for reference material that used to live here? Canonical field names and the glossary are now appendices of [Concepts](../tutorials/index.md); the MCP suite guide lives under [Guides → Tools & Ecosystem](../user-guide/15_mcp.md).
 
 
 ## Preliminary Verification
@@ -64,7 +63,7 @@ SMILES / file               Atomistic                   Frame
 ```
 
 1. **Parse or construct** — produce an `Atomistic` structure from a SMILES string, an existing file, or explicit atom and bond definitions
-2. **Edit** — modify connectivity, run reactions, or assemble polymer chains
+2. **Edit** — modify connectivity, run reactions, or assemble larger structures from building blocks
 3. **Typify** — assign force field atom types through SMARTS-based pattern matching
 4. **Convert** — invoke `atomistic.to_frame()` to produce columnar NumPy arrays suitable for numerical operations
 5. **Export** — write to LAMMPS, GROMACS, PDB, or other simulation formats
@@ -76,4 +75,4 @@ Upon completing these pages, a reader should be able to answer the following que
 - Why is topology (angles, dihedrals) derived from bond connectivity rather than stored independently?
 - At which stage does force field typification occur, and what does it produce?
 
-Readers for whom these questions remain unclear after completing the Getting Started section should consult [Concepts](../tutorials/index.md) for a more rigorous treatment. Those who prefer to proceed directly to a concrete modeling task should refer to [Guides](../user-guide/index.md).
+Readers for whom these questions remain unclear should consult [Concepts](../tutorials/index.md) for a rigorous treatment of the data model. Those who prefer to proceed directly to a concrete modeling task should refer to [Guides](../user-guide/index.md).

@@ -46,7 +46,7 @@ class Workflow:
     # Registration
     # ------------------------------------------------------------------
 
-    def add(self, name: str, compute, inputs: dict[str, str] | None = None) -> str:
+    def add(self, name: str, compute: Any, inputs: dict[str, str] | None = None) -> str:
         """Register a compute node.
 
         Args:

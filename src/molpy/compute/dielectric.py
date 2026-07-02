@@ -374,10 +374,11 @@ class IonicConductivity(Compute):
             ``n_frames - 1``). Practical choice: <= ``n_frames / 5``.
         volume: System volume in **A^3**. If ``None``, uses ``frame.box.volume``
             from the first frame (assumes NVT/NVE).
-        fit_start_frac, fit_end_frac: Fractions of ``max_lag`` bounding the
-            linear-fit window over the diffusive regime (default 0.1, 0.5).
-            ``sigma`` is window-sensitive for few-carrier systems; report a
-            range rather than a single digit.
+        fit_start_frac: Fraction of ``max_lag`` where the linear-fit window
+            over the diffusive regime starts (default 0.1).
+        fit_end_frac: Fraction of ``max_lag`` where that window ends
+            (default 0.5). ``sigma`` is window-sensitive for few-carrier
+            systems; report a range rather than a single digit.
 
     Inputs:
         Each frame's ``atoms`` block must contain ``x``, ``y``, ``z`` (**A**)

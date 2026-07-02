@@ -14,6 +14,9 @@ Foundational data structures for molecular systems. All available via `import mo
 | `CoarseGrain` | CG molecular graph (beads + CG bonds) | Coarse-grained modelling; mirrors `Atomistic` | All-atom work (use `Atomistic`) |
 | `Config` | Thread-safe global configuration singleton | Logging level, thread count settings | Per-run overrides (use `Config.temporary`) |
 | `AtomisticForcefield` | Force field container (styles → types → potentials) | Defining parameters before execution | Direct numerical computation |
+| `Entity` / `Link` | Base classes for graph nodes / edges (atoms are Entities, bonds are Links) | Custom graph element types | Everyday atom / bond editing |
+| `Region` | Geometric region (box, sphere, boolean combinations) | Spatial selection, packing constraints | Non-geometric masks (use a `Selector`) |
+| `UnitSystem` | LAMMPS-style unit-system registry (`real`, `metal`, …) | Unit conversions and custom presets | Unit-agnostic array math |
 
 ## Canonical examples
 
@@ -84,3 +87,19 @@ ct = style.def_type("CT", mass=12.011)
 ### Script
 
 ::: molpy.core.script
+
+### Entity and Link
+
+::: molpy.core.entity
+
+### Selector
+
+::: molpy.core.selector
+
+### Region
+
+::: molpy.core.region
+
+### Units
+
+::: molpy.core.unit

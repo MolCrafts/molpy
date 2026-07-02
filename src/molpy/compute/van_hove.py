@@ -5,13 +5,13 @@ function, the time-resolved generalization of the radial distribution function:
 ``G_s(r, t)`` is the probability that a particle has moved a distance ``r`` in
 time ``t`` (it integrates to the self-diffusion picture), while ``G_d(r, t)``
 tracks how the structure around a particle decorrelates. Thin shell over the
-molrs TRAVIS-parity kernel; takes ``(frames)``.
+molrs analysis-parity kernel; takes ``(frames)``.
 
 References
 ----------
 - L. Van Hove, *Phys. Rev.* **95**, 249 (1954) — the correlation function G(r, t).
 - M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — TRAVIS.
+  (2020) — reference implementation.
 """
 
 from __future__ import annotations

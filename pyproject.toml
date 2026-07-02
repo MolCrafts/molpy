@@ -77,13 +77,9 @@ dev = [
 ]
 doc = [
     # Zensical is the static-site generator (successor to MkDocs by the Material
-    # team). It reads the existing mkdocs.yml directly; `zensical build` / `serve`
-    # replace `mkdocs build` / `serve`.
+    # team). It is self-contained (bundles the theme, icon sets, and markdown
+    # extensions) and reads zensical.toml; build with `zensical build` / `serve`.
     "zensical>=0.0.45",
-    # mkdocs-material is kept for the Material theme assets and the icon/emoji
-    # markdown extension (material.extensions.emoji) that Zensical reads from
-    # mkdocs.yml — it is not used as a generator.
-    "mkdocs-material>=9.7.0",
     "mkdocstrings[python]>=0.24.0",
     # Notebook rendering: Zensical does not run the mkdocs-jupyter plugin, so the
     # user-guide notebooks are pre-rendered to Markdown by scripts/render_notebooks.py.

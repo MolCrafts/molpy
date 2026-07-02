@@ -2,6 +2,9 @@
 
 This page shows how to add new entity types, link types, and struct subclasses to MolPy's core data model.
 
+!!! note "Discuss before you build"
+    Changes at this layer ripple through `TypeBucket` registration, copy semantics, and formatter dispatch. Open a [GitHub issue](https://github.com/MolCrafts/molpy/issues) describing the extension before implementation; the [Architecture Overview](architecture-overview.md) explains the invariants involved.
+
 ## Architecture recap
 
 MolPy's data model has three layers:

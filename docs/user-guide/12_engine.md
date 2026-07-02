@@ -55,7 +55,7 @@ script.save("./submit/input.lmp")
 # -> ./submit/input.lmp written
 ```
 
-The saved file, together with `system.data` and `system.ff` produced by `mp.io.write_lammps_system`, is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
+The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_system` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
 
 `Script.from_path` is the mirror image — load an existing file, modify it programmatically, and save it back or pass it to `run()`.
 
@@ -206,6 +206,6 @@ class GromacsEngine(Engine):
 
 ## See also
 
-- [I/O Subsystem](io.md) — writing LAMMPS data files, force field coefficient files, PDB and GRO files; the engine assumes these files exist before it runs.
-- [PEO–LiTFSI Electrolyte via AmberTools](../user-guide/07_ambertools_integration.md) — an end-to-end workflow that writes AMBER input files and invokes external tools, illustrating the same generate-then-run pattern applied to a different toolchain.
+- [I/O Subsystem](11_io.md) — writing LAMMPS data files, force field coefficient files, PDB and GRO files; the engine assumes these files exist before it runs.
+- [PEO–LiTFSI Electrolyte via AmberTools](13_ambertools_integration.md) — an end-to-end workflow that writes AMBER input files and invokes external tools, illustrating the same generate-then-run pattern applied to a different toolchain.
 - API Reference: `molpy.engine`, `molpy.core.script.Script`.

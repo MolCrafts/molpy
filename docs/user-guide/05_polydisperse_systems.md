@@ -54,38 +54,42 @@ for label, mon in library.items():
     print(f"{label}: atoms={len(mon.atoms)}, mass={mass:.1f}, ports={ports}")
 ```
 
-    2026-06-30 21:08:42,748 - molpy.io.forcefield.xml - INFO - Using built-in force field: /Users/roykid/work/molcrafts/molpy/src/molpy/data/forcefield/oplsaa.xml
+```text
+2026-06-30 21:08:42,748 - molpy.io.forcefield.xml - INFO - Using built-in force field: /Users/roykid/work/molcrafts/molpy/src/molpy/data/forcefield/oplsaa.xml
+```
 
 
-    2026-06-30 21:08:42,753 - molpy.io.forcefield.xml - INFO - Parsing force field: OPLS-AA v0.1.0
+```text
+2026-06-30 21:08:42,753 - molpy.io.forcefield.xml - INFO - Parsing force field: OPLS-AA v0.1.0
 
 
-    2026-06-30 21:08:42,753 - molpy.io.forcefield.xml - INFO - Combining rule: geometric
+2026-06-30 21:08:42,753 - molpy.io.forcefield.xml - INFO - Combining rule: geometric
 
 
-    2026-06-30 21:08:42,759 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types
+2026-06-30 21:08:42,759 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types
 
 
-    2026-06-30 21:08:42,760 - molpy.io.forcefield.xml - INFO - Parsed 307 bond types (OPLS-AA with unit conversion)
+2026-06-30 21:08:42,760 - molpy.io.forcefield.xml - INFO - Parsed 307 bond types (OPLS-AA with unit conversion)
 
 
-    2026-06-30 21:08:42,763 - molpy.io.forcefield.xml - INFO - Parsed 964 angle types (OPLS-AA with unit conversion)
+2026-06-30 21:08:42,763 - molpy.io.forcefield.xml - INFO - Parsed 964 angle types (OPLS-AA with unit conversion)
 
 
-    2026-06-30 21:08:42,765 - molpy.io.forcefield._rb_opls - WARNING - RB coefficients do not lie on the ideal 4-term OPLS manifold (C0+C1+C2+C3+C4 = 10.041600, expected ≈ 0). Conversion will preserve forces and relative energies exactly, but will introduce a constant energy offset of ΔE = 10.041600 kJ/mol. This does not affect MD simulations.
+2026-06-30 21:08:42,765 - molpy.io.forcefield._rb_opls - WARNING - RB coefficients do not lie on the ideal 4-term OPLS manifold (C0+C1+C2+C3+C4 = 10.041600, expected ≈ 0). Conversion will preserve forces and relative energies exactly, but will introduce a constant energy offset of ΔE = 10.041600 kJ/mol. This does not affect MD simulations.
 
 
-    2026-06-30 21:08:42,767 - molpy.io.forcefield.xml - INFO - Parsed 1089 dihedral types (OPLS-AA with unit conversion)
+2026-06-30 21:08:42,767 - molpy.io.forcefield.xml - INFO - Parsed 1089 dihedral types (OPLS-AA with unit conversion)
 
 
-    2026-06-30 21:08:42,769 - molpy.io.forcefield.xml - INFO - Parsed 825 nonbonded parameters (OPLS-AA with unit conversion)
+2026-06-30 21:08:42,769 - molpy.io.forcefield.xml - INFO - Parsed 825 nonbonded parameters (OPLS-AA with unit conversion)
 
 
-    2026-06-30 21:08:42,769 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types (by type)
+2026-06-30 21:08:42,769 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types (by type)
 
 
-    Sty: atoms=24, mass=112.2, ports=['<', '>']
-    MA: atoms=14, mass=88.1, ports=['<', '>']
+Sty: atoms=24, mass=112.2, ports=['<', '>']
+MA: atoms=14, mass=88.1, ports=['<', '>']
+```
 
 
 ## Sampling draws chain lengths from a statistical distribution
@@ -138,10 +142,12 @@ for name, chains in results.items():
     print(f"{name:15s}: {len(chains):4d} chains, Mn={Mn:.0f}, PDI={Mw / Mn:.3f}")
 ```
 
-    Schulz-Zimm    :  374 chains, Mn=1338, PDI=1.076
-    Uniform        :  312 chains, Mn=1609, PDI=1.086
-    Poisson        :  334 chains, Mn=1500, PDI=1.073
-    Flory-Schulz   :  193 chains, Mn=2597, PDI=1.619
+```text
+Schulz-Zimm    :  374 chains, Mn=1338, PDI=1.076
+Uniform        :  312 chains, Mn=1609, PDI=1.086
+Poisson        :  334 chains, Mn=1500, PDI=1.073
+Flory-Schulz   :  193 chains, Mn=2597, PDI=1.619
+```
 
 
 ## Visualising the sampled ensembles reveals the distribution shape
@@ -351,11 +357,15 @@ total_atoms = sum(len(c.atoms) for c in atomistic_chains)
 print(f"built {len(atomistic_chains)} chains, total atoms: {total_atoms}")
 ```
 
-      built 5/374 chains ...
+```text
+  built 5/374 chains ...
+```
 
 
-      built 10/374 chains ...
-    built 10 chains, total atoms: 2080
+```text
+  built 10/374 chains ...
+built 10 chains, total atoms: 2080
+```
 
 
 ## Packing and exporting follow the same pattern as earlier guides
@@ -389,11 +399,15 @@ mp.io.write_lammps_system("05_output/lammps", packed, ff)
 print(f"packed: {packed['atoms'].nrows} atoms, box: {box_length:.1f} A")
 ```
 
-    /Users/roykid/work/molcrafts/molpy/src/molpy/io/data/lammps.py:607: UserWarning: 'impropers' block has 25 entries but no 'type' column; these are untyped topology (a relation kind the force field does not parameterize) and are omitted from the LAMMPS data file.
-      counts = self._get_counts(frame)
+```text
+/Users/roykid/work/molcrafts/molpy/src/molpy/io/data/lammps.py:607: UserWarning: 'impropers' block has 25 entries but no 'type' column; these are untyped topology (a relation kind the force field does not parameterize) and are omitted from the LAMMPS data file.
+  counts = self._get_counts(frame)
+```
 
 
-    packed: 2080 atoms, box: 71.5 A
+```text
+packed: 2080 atoms, box: 71.5 A
+```
 
 
 ## The engine assembles a runnable input script from the exported data
@@ -457,20 +471,22 @@ print(lmp_script.preview(max_lines=12))
 #   print("Exit code:", result.returncode)
 ```
 
-    Input script written to: 05_output/lammps/input.lmp
-     1 |
-     2 | # Polydisperse PS/PMA system — generated by MolPy
-     3 | units           real
-     4 | atom_style      full
-     5 |
-     6 | read_data       lammps.data
-     7 | include         lammps.ff
-     8 |
-     9 | pair_style      lj/cut/coul/long 12.0
-    10 | pair_modify     mix arithmetic tail yes
-    11 | kspace_style    pppm 1e-4
-    12 |
-    ... (15 more lines)
+```text
+Input script written to: 05_output/lammps/input.lmp
+ 1 |
+ 2 | # Polydisperse PS/PMA system — generated by MolPy
+ 3 | units           real
+ 4 | atom_style      full
+ 5 |
+ 6 | read_data       lammps.data
+ 7 | include         lammps.ff
+ 8 |
+ 9 | pair_style      lj/cut/coul/long 12.0
+10 | pair_modify     mix arithmetic tail yes
+11 | kspace_style    pppm 1e-4
+12 |
+... (15 more lines)
+```
 
 
 ## GBigSMILES encodes the whole workflow in one string
@@ -493,7 +509,9 @@ ir = mp.parser.parse_gbigsmiles(gbigsmiles)
 print(f"molecules: {len(ir.molecules)}, total_mass: {ir.total_mass}")
 ```
 
-    molecules: 1, total_mass: 500000.0
+```text
+molecules: 1, total_mass: 500000.0
+```
 
 
 ## Troubleshooting

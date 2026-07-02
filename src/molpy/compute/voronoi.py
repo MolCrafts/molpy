@@ -12,7 +12,7 @@ of the tessellation:
   yield per-molecule charges and dipoles (Voronoi/atomic-charge partitioning),
   the basis for predicting infrared spectra from *ab initio* MD.
 
-Thin shells over the molrs TRAVIS-parity kernels.
+Thin shells over the molrs analysis-parity kernels.
 
 References
 ----------
@@ -21,7 +21,7 @@ References
 - M. Thomas, M. Brehm, B. Kirchner, *Phys. Chem. Chem. Phys.* **17**, 3207 (2015)
   — Voronoi integration of the electron density for molecular dipoles.
 - M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — TRAVIS; domain and void analysis.
+  (2020) — reference implementation; domain and void analysis.
 """
 
 from __future__ import annotations

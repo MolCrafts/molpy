@@ -207,7 +207,60 @@ result = pmft([frame], [nlist], orientations)   # orientations optional (None = 
 
 ---
 
-## 9. Pitfalls checklist
+## 9. Parameters and hyperparameters
+
+### 9.1 Parameters and their meaning
+
+| Parameter | Compute | Meaning |
+|---|---|---|
+| `n_bins` | `RDF` | number of histogram bins over $[r_\text{min}, r_\text{max}]$ (100–300 typical) |
+| `r_max` | `RDF` | upper edge of the last bin, **Å**; keep $\le L/2$ (minimum image) |
+| `r_min` | `RDF` | lower edge of bin 0, **Å** (default `0.0`) |
+| `k_values` | `StaticStructureFactorDebye` | wavenumber grid, **Å⁻¹**; start above 0 — the smallest physically meaningful $k$ is $\approx 2\pi/L$ |
+| `cutoff` | `NeighborList` | pair-search radius, **Å**; must be **≥ the `r_max`** of every analysis that consumes the list |
+| `r_max`, `diameter` | `LocalDensity` | counting-sphere radius, **Å**; `diameter` (default `0.0`) applies a particle-size correction — `0.0` counts centres only |
+| `nx`, `ny`, `nz`, `sigma` | `GaussianDensity` | grid resolution per axis; Gaussian smearing width, **Å** |
+
+Bin geometry matches the Rust kernel exactly: bin width
+$\Delta r = (r_\text{max} - r_\text{min})/n_\text{bins}$ and bin centres
+$r_i = r_\text{min} + (i + \tfrac12)\,\Delta r$ — what `result.bin_centers`
+returns.
+
+### 9.2 Hyperparameter effects
+
+- **`n_bins` (bin width vs noise).** Counts per bin scale as $1/n_\text{bins}$,
+  so the relative shot noise of each bin grows as
+  $\sigma_\text{bin} \propto 1/\sqrt{\text{counts}} \propto \sqrt{n_\text{bins}}$.
+  Too **few** bins under-sample the first peak — its height reads low and the
+  coordination number of §2 with it (aim for ≥ 5 bins across the first peak).
+  Too **many** bins buy resolution you pay for in frames.
+- **`r_max` beyond half the box.** Distances past $L/2$ are contaminated by
+  periodic images under the minimum-image convention; the tail of $g(r)$ stops
+  meaning anything. This is a *correctness* limit, not a resolution knob.
+- **`r_max` / `cutoff` and cost.** The number of pairs a `NeighborList` returns
+  grows as $\rho\,r^3$; the linked-cell build and every downstream histogram
+  scale with it. Do not query 12 Å of neighbours to histogram 6 Å of $g(r)$.
+- **Debye $k$-grid density.** The Debye sum is exact at each requested $k$ but
+  costs $\mathcal{O}(N^2)$ **per $k$ per frame** — a 300-point grid is 300
+  double sums. Refine the grid only where features live (the first sharp
+  diffraction peak), and remember $k < 2\pi/L$ probes fluctuations larger than
+  the box.
+- **Number of frames.** $g(r)$ and $S(k)$ are ensemble averages; the noise of
+  every bin falls as $1/\sqrt{N_\text{frames}}$ for *uncorrelated* frames.
+  Frames closer in time than the structural relaxation time add cost, not
+  statistics.
+- **`LocalDensity.r_max` / `GaussianDensity.sigma` (field resolution).** Both
+  set the smoothing length of the density field: too small → shot noise per
+  particle, too large → interfaces and voids wash out (see §6). Choose them
+  against a physical length (first $g(r)$ minimum, interface width), not the
+  grid.
+
+The failure modes of these knobs are collected in
+[§10](#10-pitfalls-checklist).
+
+---
+
+## 10. Pitfalls checklist
 
 1. **`r_max` (or the largest $k$ feature) beyond half the box** → periodic images
    contaminate the result. Keep `r_max ≤ L/2` for the minimum-image convention.
@@ -223,7 +276,7 @@ result = pmft([frame], [nlist], orientations)   # orientations optional (None = 
 
 ---
 
-## 10. References
+## 11. References
 
 - M. P. Allen, D. J. Tildesley, *Computer Simulation of Liquids*, 2nd ed.,
   Oxford (2017) — $g(r)$, coordination numbers, and structure factors.

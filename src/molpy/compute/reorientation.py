@@ -9,7 +9,7 @@ reorientational time-correlation functions of bond (or molecular) vectors,
 
 with ``P_1(x) = x`` and ``P_2(x) = (3x^2 - 1)/2``. ``C_2(t)`` is the quantity
 probed by NMR and dielectric relaxation; its decay time is the reorientational
-correlation time. Thin shell over the molrs TRAVIS-parity kernel; takes
+correlation time. Thin shell over the molrs analysis-parity kernel; takes
 ``(frames, pairs)`` where ``pairs`` selects the vector endpoints.
 
 References
@@ -17,7 +17,7 @@ References
 - B. J. Berne, R. Pecora, *Dynamic Light Scattering*, Wiley (1976) — reorientational
   correlation functions.
 - M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — TRAVIS.
+  (2020) — reference implementation.
 """
 
 from __future__ import annotations

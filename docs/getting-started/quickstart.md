@@ -60,6 +60,11 @@ We load MolPy's built-in TIP3P force field file (`tip3p.xml`), then use `OplsTyp
 
 This is deterministic and uses only MolPy's built-in API + built-in force field data.
 
+> **Note:** `OplsTypifier` here is MolPy's general-purpose SMARTS-based typing
+> engine, not an OPLS-only tool. It matches atoms against the patterns in
+> whatever force field you load — here `tip3p.xml` — and assigns the types that
+> file defines. The name refers to the matching engine, not the force field.
+
 ```python
 ff = read_xml_forcefield('tip3p.xml')
 

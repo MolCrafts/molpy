@@ -1,156 +1,104 @@
 ---
-template: home.html
+title: MolPy
+description: A programmable toolkit for molecular simulation workflows.
 hide:
   - navigation
   - toc
+hero:
+  kicker: MolPy Manual
+  title: MolPy
+  description: Build, edit, type, pack, analyze, and export molecular systems in Python with explicit data structures that stay inspectable at every workflow boundary.
+  actions:
+    - label: Get started
+      href: getting-started/
+      style: primary
+    - label: Guides
+      href: user-guide/
+    - label: API reference
+      href: api/
+  metrics:
+    - label: Model
+      value: Atomistic · Frame · ForceField
+    - label: Workflows
+      value: Parse · build · type · export
+    - label: Runtime
+      value: Python 3.12+
 ---
 
-# MolPy
+<h1 class="molcrafts-sr-only">MolPy</h1>
 
-<div class="hero-copy" markdown>
-  <p class="lead" markdown>**A programmable toolkit for molecular simulation workflows.**</p>
-  <p class="tagline" markdown>Build, edit, type, and export molecular systems in Python with explicit, composable data structures.</p>
-</div>
+<div class="molcrafts-manual-home molpy-home" markdown>
 
-<div class="badges" markdown>
-  [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-  [![License: BSD](https://img.shields.io/badge/license-BSD-green.svg)](https://github.com/MolCrafts/molpy/blob/master/LICENSE)
-  [![Docs](https://img.shields.io/badge/docs-mkdocs-blue.svg)](https://molpy.molcrafts.org)
-  [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-  [![Type checked: ty](https://img.shields.io/badge/type%20checked-ty-blue.svg)](https://github.com/astral-sh/ty)
-</div>
+<section class="molcrafts-manual-section molcrafts-manual-section--compact" markdown>
 
-<div class="button-group" markdown>
-  [Get Started](getting-started/index.md){ .md-button .md-button--primary }
-  [Guides](user-guide/index.md){ .md-button }
-  [API Reference](api/index.md){ .md-button }
-</div>
+<div class="molcrafts-manual-section__header" markdown>
 
----
+<span class="molcrafts-manual-eyebrow">At a glance</span>
 
-## Representative Workflows
+## A molecular description in, a runnable system out
 
-=== "Small Molecule"
-
-    Parse a small organic molecule from SMILES, assign OPLS-AA types, and export complete LAMMPS input files.
-
-    ```python
-    import molpy as mp
-
-    mol   = mp.parser.parse_molecule("CCO")          # ethanol from SMILES
-    ff    = mp.io.read_xml_forcefield("oplsaa.xml")  # bundled OPLS-AA
-    typed = mp.typifier.OplsTypifier(ff).typify(mol)
-
-    mp.io.write_lammps_system("output/", typed.to_frame(), ff)
-    # → output/system.data  output/system.in
-    ```
-
-=== "Polymer Chain"
-
-    Construct a poly(ethylene oxide) chain from G-BigSMILES notation, generate three-dimensional coordinates, and export a simulation-ready topology.
-
-    ```python
-    import molpy as mp
-    from molpy.builder import polymer
-
-    # PEO chain, degree of polymerization = 10
-    peo = polymer("{[<]CCOCC[>]}|10|")
-
-    ff    = mp.io.read_xml_forcefield("oplsaa.xml")
-    typed = mp.typifier.OplsTypifier(ff).typify(peo)
-    mp.io.write_lammps_system("output/", typed.to_frame(), ff)
-    ```
-
-=== "Polydisperse System"
-
-    Sample a Schulz-Zimm molecular-weight distribution, construct each chain atomistically, and pack the ensemble into a periodic simulation box.
-
-    ```python
-    import molpy as mp
-    from molpy.builder import polymer_system
-
-    # Mn = 1500 Da, Mw = 3000 Da, target total mass ≈ 500 kDa
-    chains = polymer_system(
-        "{[<]CCOCC[>]}|schulz_zimm(1500,3000)||5e5|",
-        random_seed=42,
-    )
-    print(f"Built {len(chains)} chains")
-
-    frames = [c.to_frame() for c in chains]
-    packed = mp.pack.pack(frames, box=[80, 80, 80])
-    mp.io.write_lammps_system("peo_bulk/", packed, ff)
-    ```
-
-=== "AmberTools Pipeline"
-
-    Prepare a monomer with partial charges via antechamber, assemble a chain with GAFF2 parameters via tleap, and retrieve AMBER topology files programmatically.
-
-    ```python
-    import molpy as mp
-    from molpy.builder import polymer, PrepareMonomer
-
-    # BigSMILES → three-dimensional structure with port annotation
-    eo = PrepareMonomer().run("{[<]CCOCC[>]}")
-
-    # Assemble DP = 20 chain via AmberTools
-    result = polymer(
-        "{[#EO]|20}",
-        library={"EO": eo},
-        backend="amber",
-    )
-    # result.prmtop_path  result.inpcrd_path  result.pdb_path
-    ```
-
----
-
-## Core Capabilities
-
-<div class="feature-list" markdown>
-
-- :material-graph: **[Explicit representational hierarchy](tutorials/01_atomistic_and_topology.md)** — Molecular graphs (`Atomistic`), numerical snapshots (`Frame`), and force field parameters (`ForceField`) occupy distinct layers with explicit conversion boundaries.
-
-- :material-text-search: **[Polymer notation support](user-guide/01_parsing_chemistry.md)** — SMILES, BigSMILES, CGSmiles, and G-BigSMILES are parsed directly. Monomer definitions, architectures, and polydisperse specifications can be represented in a compact textual form.
-
-- :material-chart-bell-curve: **[Statistical molecular-weight distributions](user-guide/05_polydisperse_systems.md)** — Schulz–Zimm, Poisson, Flory–Schulz, and uniform distributions are implemented natively. Target number- and weight-average molecular weights are specified directly; reproducible chain populations are generated from a fixed random seed.
-
-- :material-database-search: **[Force fields as queryable data structures](tutorials/04_force_field.md)** — A `ForceField` object is an inspectable typed dictionary. Parameter completeness and type consistency can be checked in Python before file export.
-
-- :material-vector-link: **[Reactive topology editing](user-guide/04_crosslinking.md)** — Chemical reactions are expressed through anchor selectors and leaving-group selectors. Pre- and post-reaction topology templates for LAMMPS `fix bond/react` can be generated directly from the edited system.
-
-- :material-puzzle: **[Explicit subsystem boundaries](api/index.md)** — The parser, builder, typifier, packer, and I/O subsystems interact through explicit data conversions rather than hidden shared state, so each layer can be used independently or combined into a larger workflow.
+MolPy keeps chemistry, coordinates, and force-field parameters in separate, inspectable layers. Parsing, coordinate generation, and typing are each explicit steps:
 
 </div>
 
----
+```python
+import molpy as mp
 
-## External Integrations
+mol   = mp.parser.parse_molecule("CCO")                  # ethanol from SMILES (heavy atoms)
+mol   = mp.adapter.generate_3d(mol, add_hydrogens=True)  # add hydrogens + 3D coordinates
+ff    = mp.io.read_xml_forcefield("oplsaa.xml")          # bundled OPLS-AA
+typed = mp.typifier.OplsTypifier(ff).typify(mol)         # assign force-field types
 
-<div class="feature-list" markdown>
+frame = typed.to_frame()   # columnar arrays, ready for analysis or export
+```
 
-- :material-robot-outline: **[MCP suite for large language model agents](getting-started/mcp.md)** — The MolCrafts MCP suite exposes MolPy's source symbols and documentation through the Model Context Protocol, supporting structured agent access without altering the core data model.
+From that typed `Frame`, one call writes a LAMMPS deck (`mp.io.write_lammps_system`), and the same machinery scales to packed solvent boxes, virtual-site models, and crosslinked polymer networks. The [Quickstart](getting-started/quickstart/) walks through a full solvated system; the [Example Gallery](getting-started/examples/) collects short end-to-end workflows.
 
-- :material-atom: **[AmberTools](user-guide/07_ambertools_integration.md)** — Antechamber (partial charge assignment), parmchk2 (missing parameter estimation), and tleap (topology assembly) are invoked programmatically with structured Python interfaces.
+</section>
 
-- :material-flask: **[RDKit](api/adapter.md)** — `RDKitAdapter` provides bidirectional conversion between `Atomistic` and RDKit `Mol` objects, enabling three-dimensional embedding, conformer generation, and SMILES export.
+<section class="molcrafts-manual-section molcrafts-manual-section--compact" markdown>
 
-- :material-cube-outline: **[Packmol](api/pack.md)** — Molecule packing into periodic simulation boxes is managed through a typed constraint interface wrapping the Packmol executable.
+<div class="molcrafts-manual-section__header" markdown>
 
-- :material-lightning-bolt: **[LAMMPS · CP2K](api/engine.md)** — Complete input decks are generated from MolPy data objects. The engine abstraction layer decouples system description from simulation-code-specific syntax.
+<span class="molcrafts-manual-eyebrow">Find your page</span>
+
+## The manual in six sections
 
 </div>
 
----
+<nav class="molcrafts-manual-index molpy-entry-index" aria-label="Manual sections">
+  <a href="getting-started/">
+    <span>01</span>
+    <strong>Getting Started</strong>
+    <em>Install MolPy, run the quickstart, and browse copy-paste example workflows.</em>
+  </a>
+  <a href="tutorials/">
+    <span>02</span>
+    <strong>Concepts</strong>
+    <em>The data model: Atomistic, Frame, Box, ForceField, and the explicit boundaries between them.</em>
+  </a>
+  <a href="user-guide/">
+    <span>03</span>
+    <strong>Guides</strong>
+    <em>Task-oriented workflows: parsing, construction, typification, packing, export, and tool integrations.</em>
+  </a>
+  <a href="compute/">
+    <span>04</span>
+    <strong>Compute</strong>
+    <em>Trajectory analysis: distributions, transport, spectra, order parameters, and analysis workflows.</em>
+  </a>
+  <a href="api/">
+    <span>05</span>
+    <strong>API Reference</strong>
+    <em>Complete reference for every public module, from core data structures to engine adapters.</em>
+  </a>
+  <a href="developer/">
+    <span>06</span>
+    <strong>Developer Guide</strong>
+    <em>Contributing workflow, architecture overview, and the extension points for new capabilities.</em>
+  </a>
+</nav>
 
-## Documentation Map
-
-<div class="feature-list" markdown>
-
-- :material-rocket-launch: **[Getting Started](getting-started/index.md)** — Installation, environment verification, MCP setup, and the core `Atomistic → Frame → export` workflow for first-time users.
-
-- :material-book-open-variant: **[Concepts](tutorials/index.md)** — Systematic exposition of the core data model plus the surrounding I/O, builder, and engine boundaries that connect MolPy to external workflows.
-
-- :material-hammer-wrench: **[Guides](user-guide/index.md)** — Task-oriented executable notebooks and worked examples covering chemistry parsing, polymer construction, force field typification, and AmberTools-based system preparation.
-
-- :material-code-braces: **[Developer Guide](developer/index.md)** — Conventions, extension patterns, and internal architecture for contributors and library developers.
+</section>
 
 </div>

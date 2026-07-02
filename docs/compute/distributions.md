@@ -1,7 +1,7 @@
 # Distribution Functions: Angle, Dihedral, Combined & Spatial
 
 This page is a self-contained, textbook-style introduction to the **geometric
-distribution functions** MolPy ports from TRAVIS: the angular (ADF), dihedral
+distribution functions** MolPy ports from the reference implementation: the angular (ADF), dihedral
 (DDF), and distance distribution functions, their joint **combined distribution
 function** (CDF), and the orientation-resolved **spatial distribution function**
 (SDF). Where the [radial distribution function](structure.md) answers "how far?",
@@ -140,10 +140,10 @@ result.g_sdf     # normalized by bulk_density (if supplied)
 
 ## 6. References
 
-- M. Brehm, B. Kirchner, *J. Chem. Inf. Model.* **51**, 2007 (2011) — TRAVIS;
+- M. Brehm, B. Kirchner, *J. Chem. Inf. Model.* **51**, 2007 (2011) — reference implementation;
   radial/angular/dihedral and combined distribution functions.
 - M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — TRAVIS, current feature set.
+  (2020) — reference implementation, current feature set.
 - I. M. Svishchev, P. G. Kusalik, *J. Chem. Phys.* **99**, 3049 (1993);
   P. G. Kusalik, I. M. Svishchev, *Science* **265**, 1219 (1994) — spatial
   distribution functions.

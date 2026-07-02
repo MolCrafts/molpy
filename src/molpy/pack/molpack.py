@@ -33,7 +33,7 @@ class Molpack:
 
     def __init__(
         self,
-        workdir: Path,
+        workdir: str | Path,
     ):
         """
         Initialize Molpack.
@@ -41,6 +41,7 @@ class Molpack:
         Args:
             workdir: Working directory for packing operations
         """
+        workdir = Path(workdir)
         if not workdir.exists():
             workdir.mkdir(parents=True, exist_ok=True)
         self.workdir = workdir

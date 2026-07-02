@@ -430,7 +430,7 @@ This is exactly the quantity `gmx current` reports as "Einstein–Helfand".
    averaged over all time origins $t$ (`collective_msd`).
 2. **Linear fit for the slope**: the MSD is *ballistic* at short times,
    *diffusive* in the middle, and *noisy* at long times. Fit a straight line only
-   in the diffusive window $[\text{fit\_start\_frac},\text{fit\_end\_frac}]\cdot
+   in the diffusive window $\lbrack\text{fit\_start\_frac},\text{fit\_end\_frac}\rbrack\cdot
    \text{max\_lag}$, typically $[0.1, 0.5]$.
 3. **Convert to S/m** (SI constants fold Å, ps into m, s):
 
@@ -446,8 +446,8 @@ folds the Å²→m² and ps→s conversions.
 
 The example has only **32 ions over 20 ns**. The ion-dipole MSD is mildly
 super-diffusive, so $\sigma$ is sensitive to the fit window: it drifts from
-≈ 5.8 to ≈ 10 S/m as the window moves from [50,200] to [1000,3000] ps. **Report
-a range, not a single digit.** The default [100,400] ps window gives
+≈ 5.8 to ≈ 10 S/m as the window moves from `[50,200]` to `[1000,3000]` ps. **Report
+a range, not a single digit.** The default `[100,400]` ps window gives
 $\sigma \approx 6.1$ S/m (matching `gmx current`'s 6.12 S/m to 1.2 %); longer
 windows approach ≈ 8.5 S/m (the experimental value for 1 M NaCl). Tighter
 convergence requires more carriers and longer trajectories.

@@ -1,6 +1,6 @@
 """Geometric distribution functions (ADF / DDF / distance-DF, CDF) — molrs-backed.
 
-Thin ``Compute`` shells over ``molrs`` TRAVIS-parity geometric distributions.
+Thin ``Compute`` shells over ``molrs`` analysis-parity geometric distributions.
 Each forwards verbatim to the Rust kernel and returns the molrs native result.
 All take ``(frames, groups)`` where ``groups`` is an integer index array selecting
 the atom tuples to histogram (pairs for distances, triplets for angles,
@@ -8,10 +8,10 @@ quadruplets for dihedrals).
 
 References
 ----------
-- M. Brehm, B. Kirchner, *J. Chem. Inf. Model.* **51**, 2007 (2011) — TRAVIS;
+- M. Brehm, B. Kirchner, *J. Chem. Inf. Model.* **51**, 2007 (2011) — reference implementation;
   radial/angular/dihedral and combined distribution functions.
 - M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — TRAVIS, current feature set.
+  (2020) — reference implementation, current feature set.
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ class DihedralDistribution(Compute):
 
 class CombinedDistribution(Compute):
     """Joint (combined) distribution over several geometric observables — the
-    TRAVIS combined distribution function (CDF).
+    reference implementation combined distribution function (CDF).
 
     Parameters
     ----------

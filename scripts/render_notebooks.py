@@ -70,6 +70,64 @@ def _rewrite_notebook_links(markdown: str) -> str:
     return _NB_LINK_RE.sub(r"](\g<path>.md\g<frag>", markdown)
 
 
+def _fence_stream_outputs(markdown: str) -> str:
+    """Wrap nbconvert's *indented* cell-output blocks in fenced code blocks.
+
+    ``nbconvert --to markdown`` emits stream / text outputs as 4-space *indented*
+    code blocks. Zensical's Markdown parser only recognizes *fenced* code blocks,
+    so an indented output line such as ``labels=['EO2', ...]`` is parsed as prose
+    and its ``[...]`` is (wrongly) treated as an unresolved reference link. Re-emit
+    each output block — the indented block that directly follows a fenced code
+    cell — as a fenced ``text`` block, so brackets in a repr are never parsed.
+    """
+    lines = markdown.split("\n")
+    out: list[str] = []
+    in_fence = False
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        if line.startswith("```") or line.startswith("~~~"):
+            in_fence = not in_fence
+            out.append(line)
+            i += 1
+            if in_fence:
+                continue
+            # Just closed a fence: absorb a following indented output block.
+            j = i
+            while j < n and lines[j].strip() == "":
+                j += 1
+            if j < n and lines[j].startswith("    ") and lines[j].strip():
+                out.extend(lines[i:j])  # keep the blank separator(s)
+                i = j
+                block: list[str] = []
+                while i < n:
+                    if lines[i].startswith("    "):
+                        block.append(lines[i][4:])
+                        i += 1
+                    elif lines[i] == "":
+                        # Absorb blank separators only when more indented output
+                        # follows — a single cell can emit several chunks (logging
+                        # to stderr + a stdout print), split by blank lines.
+                        k = i
+                        while k < n and lines[k] == "":
+                            k += 1
+                        if k < n and lines[k].startswith("    "):
+                            block.extend(lines[i:k])
+                            i = k
+                        else:
+                            break
+                    else:
+                        break
+                out.append("```text")
+                out.extend(block)
+                out.append("```")
+            continue
+        out.append(line)
+        i += 1
+    return "\n".join(out)
+
+
 def render(notebook: Path) -> None:
     """Render a single notebook to ``docs/user-guide/<stem>.md``."""
     stem = notebook.stem
@@ -100,6 +158,7 @@ def render(notebook: Path) -> None:
         rendered = (Path(tmp) / f"{stem}.md").read_text(encoding="utf-8")
         rendered = _inline_images(rendered, Path(tmp))
         rendered = _rewrite_notebook_links(rendered)
+        rendered = _fence_stream_outputs(rendered)
     (USER_GUIDE / f"{stem}.md").write_text(rendered, encoding="utf-8")
     print(f"rendered {stem}.md (execute={execute})")
 

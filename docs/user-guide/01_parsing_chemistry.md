@@ -25,8 +25,10 @@ elements = [atom.get("element") for atom in mol.atoms]
 print(elements)  # ['C', 'C', 'O', 'O', 'C', 'C']
 ```
 
-    atoms: 6, bonds: 5
-    ['C', 'C', 'O', 'O', 'C', 'C']
+```text
+atoms: 6, bonds: 5
+['C', 'C', 'O', 'O', 'C', 'C']
+```
 
 
 When the input contains dot-separated components — a common SMILES convention for ion pairs and solvent mixtures — use `parse_mixture` instead, which always returns a list.
@@ -41,8 +43,10 @@ mols = mp.parser.parse_mixture("CCO")
 print(len(mols))  # 1
 ```
 
-    2
-    1
+```text
+2
+1
+```
 
 
 Aromatic atoms are lowercase in SMILES. The ring closure digits must match: the first occurrence opens the ring and the second closes it. Parsing benzene this way preserves aromaticity flags on each atom, which downstream typifiers rely on.
@@ -54,12 +58,14 @@ for atom in benzene.atoms:
     print(f"{atom.get('element')}, aromatic={atom.get('aromatic')}")
 ```
 
-    C, aromatic=True
-    C, aromatic=True
-    C, aromatic=True
-    C, aromatic=True
-    C, aromatic=True
-    C, aromatic=True
+```text
+C, aromatic=True
+C, aromatic=True
+C, aromatic=True
+C, aromatic=True
+C, aromatic=True
+C, aromatic=True
+```
 
 
 Stereochemical information defined in SMILES/SMARTS (e.g., tetrahedral and double-bond stereochemistry) is parsed and preserved during topology construction when explicitly specified.
@@ -83,10 +89,12 @@ for i, atom in enumerate(query.atoms):
     print(f"  atom {i}: {atom.expression}")
 ```
 
-    query atoms: 2
-    query bonds: 1
-      atom 0: AtomExpressionIR(op='weak_and', children=[AtomPrimitiveIR(type='symbol', value='C'), AtomPrimitiveIR(type='neighbor_count', value=4)])
-      atom 1: AtomExpressionIR(op='weak_and', children=[AtomPrimitiveIR(type='symbol', value='O'), AtomPrimitiveIR(type='hydrogen_count', value=1)])
+```text
+query atoms: 2
+query bonds: 1
+  atom 0: AtomExpressionIR(op='weak_and', children=[AtomPrimitiveIR(type='symbol', value='C'), AtomPrimitiveIR(type='neighbor_count', value=4)])
+  atom 1: AtomExpressionIR(op='weak_and', children=[AtomPrimitiveIR(type='symbol', value='O'), AtomPrimitiveIR(type='hydrogen_count', value=1)])
+```
 
 
 SMARTS is the language of force-field typification: SMARTS patterns map atom environments to force-field types. Once you have typed atoms and assigned parameters, you may want to model how those atoms repeat into a polymer chain — which is what BigSMILES is for.
@@ -108,10 +116,12 @@ for p in ports:
     print(f"  port '{p.get('port')}' on {p.get('element')}")
 ```
 
-    atoms: 8
-    ports: 2
-      port '<' on C
-      port '>' on C
+```text
+atoms: 8
+ports: 2
+  port '<' on C
+  port '>' on C
+```
 
 
 For copolymer systems that specify multiple distinct monomers in one string, `parse_polymer` preserves the segment-level organization so that each monomer type remains independently accessible.
@@ -124,8 +134,10 @@ print(f"topology:  {spec.topology}")
 print(f"monomers:  {len(spec.all_monomers())}")
 ```
 
-    topology:  random_copolymer
-    monomers:  2
+```text
+topology:  random_copolymer
+monomers:  2
+```
 
 
 BigSMILES captures the chemistry of each block: its atoms, its bonds, its connection ports. When you need to step back further and describe how those blocks are arranged at the architectural level — without specifying their internal chemistry at all — CGSmiles takes over.
@@ -146,9 +158,11 @@ print(f"bonds: {len(cg.base_graph.bonds)}")
 print(f"fragments: {len(cg.fragments)}")
 ```
 
-    nodes: 5
-    bonds: 4
-    fragments: 1
+```text
+nodes: 5
+bonds: 4
+fragments: 1
+```
 
 
 The syntax is compact but precise. `[#LABEL]` references a named block; `|n` repeats it; parentheses introduce a branch; matched digits close rings, exactly as in SMILES. CGSmiles is the input to `PolymerBuilder`: BigSMILES defines what each block is, while CGSmiles defines how those blocks are arranged.
@@ -174,11 +188,13 @@ mol = smilesir_to_atomistic(ir)
 print(f"Atomistic atoms: {len(mol.atoms)}")
 ```
 
-    IR atoms: 3
-      element=C, aromatic=False
-      element=C, aromatic=False
-      element=O, aromatic=False
-    Atomistic atoms: 3
+```text
+IR atoms: 3
+  element=C, aromatic=False
+  element=C, aromatic=False
+  element=O, aromatic=False
+Atomistic atoms: 3
+```
 
 
 The same pattern is available for BigSMILES, where inspecting the IR before conversion reveals how port markers were resolved and which atoms were assigned connection roles.
@@ -192,7 +208,9 @@ spec = bigsmilesir_to_polymerspec(ir)
 print(f"topology: {spec.topology}")
 ```
 
-    topology: random_copolymer
+```text
+topology: random_copolymer
+```
 
 
 ## Choosing the right parser

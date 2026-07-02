@@ -12,6 +12,7 @@ the thin `Style` classes that name them plus the `Potentials` evaluator.
 | `BondHarmonicStyle` | Harmonic bond style: E = k(r - r₀)² | Standard bonded interactions |
 | `AngleHarmonicStyle` | Harmonic angle style: E = k(θ - θ₀)² | Standard angle terms |
 | `LJ126Style` | Lennard-Jones 12-6 pair style | Standard nonbonded interactions |
+| `ImproperHarmonicStyle` | Harmonic improper style (plus Cvff / Class2 / Periodic variants) | Out-of-plane / improper terms |
 | `Potentials` | Deferred evaluator over a typed `Frame` | Energy / force computation |
 
 ## Canonical example
@@ -69,6 +70,10 @@ forces = pots.calc_forces(frame)
 ### Dihedral
 
 ::: molpy.potential.dihedral
+
+### Improper
+
+::: molpy.potential.improper
 
 ### Pair
 

@@ -685,4 +685,4 @@ With this information Claude has everything it needs to assemble the script.
 ## See Also
 
 - [Polydisperse Systems](../user-guide/05_polydisperse_systems.md) — end-to-end workflow from distribution to LAMMPS export
-- [Discovery engine reference](https://molcrafts.github.io/molmcp/concepts/discovery/) — the full code-graph schema, snapshot/cache mechanics, and CLI for the curious
+- [Discovery engine reference](https://github.com/MolCrafts/molmcp) — the full code-graph schema, snapshot/cache mechanics, and CLI for the curious

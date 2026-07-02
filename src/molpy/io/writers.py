@@ -308,8 +308,9 @@ def write_lammps_system(
     if not workdir_path.exists():
         workdir_path.mkdir(parents=True, exist_ok=True)
 
-    # Use directory name as file stem
-    file_stem = workdir_path / workdir_path.stem
+    # Fixed "system" stem inside the directory, so filenames are predictable
+    # (write_lammps_system("out") -> out/system.data + out/system.ff).
+    file_stem = workdir_path / "system"
     data_path = file_stem.with_suffix(".data")
     write_lammps_data(data_path, frame)
 

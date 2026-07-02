@@ -53,15 +53,15 @@ python -c "import molrs, molpy as mp; print(mp.Box.cubic(10.0), isinstance(mp.Bo
 
 Re-run `maturin develop` after any change to the molrs Rust source to recompile
 the extension. See the
-[molrs build-from-source guide](https://molcrafts.github.io/molrs/getting-started/installation/)
+[molrs build-from-source guide](https://molrs.molcrafts.org/getting-started/installation/)
 for the native-crate and WASM build targets.
 
 
 ## Documentation preview
 
 The doc site is built with [Zensical](https://zensical.org) (Material for MkDocs'
-successor), using the Material theme. It reads the existing `mkdocs.yml`. Install
-the doc extras and start a local preview server from the repo root.
+successor), configured by `zensical.toml` at the repo root. Install the doc
+extras and start a local preview server from the repo root.
 
 ```bash
 pip install -e ".[doc]"
