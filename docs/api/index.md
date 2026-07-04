@@ -1,6 +1,6 @@
 # API Reference
 
-All public symbols are documented on the package pages listed below. Docstrings are auto-generated from source annotations; signatures include type hints throughout. The tables on this page provide a task-oriented index for locating the appropriate symbol and package without prior knowledge of MolPy's internal organization.
+Auto-generated reference for every public symbol, with typed signatures throughout. Start from the tables below: find your task, get the symbol and its package.
 
 
 ## Index of Operations and Symbols

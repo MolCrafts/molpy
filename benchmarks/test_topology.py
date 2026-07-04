@@ -14,9 +14,9 @@ from conftest import make_chain
 
 pytestmark = pytest.mark.benchmark
 
-# Perception copies the whole graph each call, so cap below the 1M box grid.
-SIZES = [1_000, 10_000, 50_000]
-SIZE_IDS = ["small-1k", "medium-10k", "large-50k"]
+# Regression sizing: one small representative size (guard, not a scaling study).
+SIZES = [1_000]
+SIZE_IDS = ["reg-1k"]
 
 
 @pytest.fixture(params=SIZES, ids=SIZE_IDS)

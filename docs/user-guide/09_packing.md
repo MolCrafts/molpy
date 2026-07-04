@@ -1,8 +1,7 @@
 # Packing Systems into a Box
 
-This guide explains how MolPy fills a simulation cell with many copies of one or
-more molecules, subject to geometric constraints, by driving the **Packmol**
-backend through `molpy.pack`.
+Fill a simulation cell with hundreds of molecules under geometric constraints —
+from Python, through the **Packmol** backend.
 
 !!! note "Prerequisites"
     Packing shells out to the **Packmol** executable. Install it and make sure

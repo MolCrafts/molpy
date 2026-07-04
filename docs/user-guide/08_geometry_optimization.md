@@ -1,7 +1,7 @@
 # Geometry Optimization
 
-This page explains how MolPy relaxes a structure to a local energy minimum with a
-force field, using the `molpy.optimize` optimizers.
+Take the strain out of a freshly built structure: `molpy.optimize` relaxes it
+to a local force-field minimum and tells you why it stopped.
 
 ## When you need it
 

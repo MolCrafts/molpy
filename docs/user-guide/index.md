@@ -1,8 +1,8 @@
 # Guides
 
-Each guide in this section addresses a concrete modeling task, from input specification to simulation-ready output. Readers are assumed to be familiar with MolPy's core data model, as described in [Concepts](../tutorials/index.md).
+Each guide takes one concrete modeling task from input to simulation-ready output — the *how-to* layer of the manual. The [Example Gallery](../getting-started/examples.md) holds copy-paste short forms of several of these; the guides are the full story. When a term is unfamiliar, the [data-model tutorials](../tutorials/index.md) are where it is defined.
 
-Several guides use polymers as the working example. That is a choice of demonstration domain, not a statement of scope: chain growth, crosslinking, and polydispersity exercise every part of MolPy's molecular editing machinery — reaction-based coupling, topology regeneration, statistical ensembles. The same operations apply to any complex molecular system.
+Several guides use polymers as the working example — a demonstration domain, not a statement of scope. Chain growth, crosslinking, and polydispersity exercise every part of MolPy's editing machinery; the same operations apply to any complex molecular system.
 
 
 ## Foundations

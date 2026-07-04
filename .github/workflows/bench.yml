@@ -31,7 +31,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install molpy + bench deps
-        # molrs (molcrafts-molrs==0.1.0, pinned in pyproject.toml) installs as a
+        # molrs (molcrafts-molrs, exact-pinned in pyproject.toml) installs as a
         # wheel from PyPI.
         run: pip install -e ".[dev]"
 

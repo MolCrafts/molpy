@@ -1,8 +1,8 @@
 # Polarizable & Virtual-Site Models
 
-This guide explains how MolPy augments a structure with **virtual sites** —
-massless or auxiliary particles that carry charge or polarizability but are not
-real atoms — through the `molpy.builder.virtualsite` builders.
+Drude shells and TIP4P M-sites put charge where no nucleus is. The
+`molpy.builder.virtualsite` builders add these **virtual sites** to a copy of
+your structure and redistribute charge automatically.
 
 ## What virtual sites are for
 

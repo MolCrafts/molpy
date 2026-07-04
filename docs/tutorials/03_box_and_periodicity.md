@@ -1,6 +1,6 @@
 # Box and Periodicity
 
-This page explains how MolPy represents simulation cells, wraps coordinates into the primary image, and computes minimum-image distances under periodic boundary conditions.
+Positions only mean something relative to a simulation cell. `Box` carries that cell, wraps coordinates into the primary image, and computes minimum-image distances.
 
 ## Why periodicity matters
 

@@ -2,7 +2,7 @@
 
 # Force Field Typification
 
-This guide explains how MolPy assigns atom, bond, angle, and dihedral types through SMARTS-based force-field matching.
+Typification is the bridge between chemistry and parameters: SMARTS patterns from the force field decide which type every atom, bond, angle, and dihedral gets.
 
 !!! note "Prerequisites"
     This guide requires RDKit for 3D coordinate generation. Typification itself does not require RDKit.

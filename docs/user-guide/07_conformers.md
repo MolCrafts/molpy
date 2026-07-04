@@ -1,8 +1,8 @@
 # 3D Conformer Generation
 
-This guide explains how MolPy turns a 2D molecular graph (from SMILES or any
-`Atomistic`) into a physically reasonable set of 3D coordinates, and how to read
-the report that comes back.
+Between SMILES and simulation stands one hard step: real coordinates.
+`Conformer` takes it with the molrs generator — and reports every stage of the
+attempt.
 
 ## What conformer generation solves
 

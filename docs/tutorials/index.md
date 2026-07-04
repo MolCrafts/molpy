@@ -1,13 +1,45 @@
-# Concepts
+# Tutorials
 
-MolPy separates molecular work into three ideas — **edit on graphs, compute and export on arrays, keep parameters apart** — so every stage stays explicit and reproducible. This section explains that design layer by layer, from the editable molecular graph to the numerical frame representation, together with the auxiliary structures — periodic geometry, force-field parameters, time-ordered sequences, selectors, external-tool boundaries, and unit conventions — that complete the data model.
+Everything you need to learn MolPy, in order: get it running first, then
+understand the data model it rests on. When you have a concrete task in hand
+instead — build, typify, pack, export — go straight to
+[Guides](../user-guide/index.md), which assume these tutorials.
 
-This section explains what the data structures *are* and why they look the way they do. Task-oriented workflows that use them — building, typifying, packing, exporting — live in [Guides](../user-guide/index.md).
+## Get running
 
-These pages are self-contained and may be read in any order by readers already familiar with one or more concepts. New users are advised to proceed from the first page to the last.
+1. **[Installation](../getting-started/installation.md)** — install the package and verify it imports. *~2 min*
+2. **[Quickstart](../getting-started/quickstart.md)** — the whole pipeline in six lines, then a TIP3P water box built with full control. *~10 min*
+3. **[Example Gallery](../getting-started/examples.md)** — copy-paste workflows: small molecules, packed boxes, polymers, virtual sites.
+4. **[FAQ](../getting-started/faq.md)** — why MolPy exists, how it relates to RDKit / ASE / mBuild, and when another tool is the better choice.
 
+If MolPy is installed, this runs as-is — no optional dependencies, not even RDKit:
 
-## The design in four ideas
+```python
+import molpy as mp
+
+water = mp.Atomistic(name="water")
+o  = water.def_atom(element="O", x=0.000, y=0.000, z=0.000)
+h1 = water.def_atom(element="H", x=0.957, y=0.000, z=0.000)
+h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.000)
+water.def_bond(o, h1)
+water.def_bond(o, h2)
+
+frame = water.to_frame()
+mp.io.write_pdb("water.pdb", frame)
+print(f"Wrote {frame['atoms'].nrows} atoms to water.pdb")
+```
+
+`Wrote 3 atoms to water.pdb` means you are ready — and those few lines already
+crossed MolPy's one essential boundary: **edit chemistry on a graph
+(`Atomistic`), compute and export from arrays (`Frame`)**. The chapters below
+explain that split and everything built on it.
+
+## The data model
+
+MolPy rests on three ideas: **edit on graphs, compute and export on arrays,
+keep parameters apart**. These chapters explain the data structures behind
+them — what each object *is*, why it exists, and where its boundaries lie.
+Read them in order once; afterwards each chapter stands alone as reference.
 
 - **Identity vs data.** Entities (atoms, links) are unique identities; bulk numbers live in columnar arrays. Two atoms with identical properties are still different atoms — they can take part in different bonds, selections, and edits.
 - **Graph → arrays.** Build and edit as a graph (`Atomistic`); compute and export from arrays (`Frame`). The conversion is explicit (`Atomistic.to_frame()`).
@@ -18,8 +50,7 @@ The typical flow:
 
 > `Atomistic` (edit) → derive topology → `Frame` (arrays) → I/O → simulate → analyze
 
-
-## Representational Hierarchy
+### Representational hierarchy
 
 The diagram below illustrates the standard data flow through a MolPy pipeline. Each node represents a core data structure; each edge represents an explicit transformation.
 
@@ -64,8 +95,7 @@ The diagram below illustrates the standard data flow through a MolPy pipeline. E
 
 **`Trajectory`** is a time-ordered sequence of `Frame` objects providing lazy access patterns for large datasets.
 
-
-## Chapter map
+### Chapter map
 
 | Layer | What it is | In depth |
 |-------|-----------|----------|
@@ -79,7 +109,6 @@ The diagram below illustrates the standard data flow through a MolPy pipeline. E
 | **Wrapper & Adapter** | Subprocess execution boundaries and in-memory representation bridges to external tools | [Wrapper and Adapter](07_wrapper_and_adapter.md) |
 | **CoarseGrain** | `Bead` / `CGBond` graph for coarse-grained models | [Coarse-Grained Structure](08_coarsegrain.md) |
 | **Units** | Unit-system presets and explicit quantity conversion | [Units](09_units.md) |
-
 
 ## Appendix
 

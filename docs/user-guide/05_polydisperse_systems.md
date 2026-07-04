@@ -1,6 +1,6 @@
 # Polydisperse Systems
 
-This guide constructs a polydisperse copolymer system from a target molecular-weight distribution, including chain sampling, incremental junction re-typification, packing, and LAMMPS export.
+From a target molecular-weight distribution to a packed, LAMMPS-ready box: sample the chains, build each one, re-typify the junctions, pack, export.
 
 !!! note "Prerequisites"
     This guide requires RDKit, Packmol, and the `oplsaa.xml` force field. Familiarity with [Stepwise Polymer Construction](02_polymer_stepwise.md) is assumed.

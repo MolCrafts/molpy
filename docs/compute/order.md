@@ -142,13 +142,16 @@ $$
 
 Its largest eigenvalue is the scalar nematic order parameter $S$ (0 isotropic, 1
 perfectly aligned) and the corresponding eigenvector is the **director**.
-`Nematic` takes per-particle direction vectors and returns the order, the
-eigenvalues, the director, and the full $Q$-tensor:
+`Nematic` reads each particle's orientation axis from the frame's `orientations`
+topology block (one `(head, tail)` atom pair per particle; the director is the
+unit `head - tail` vector) and returns the order, the eigenvalues, the director,
+and the full $Q$-tensor:
 
 ```python
 from molpy.compute import Nematic
 
-order, eigenvalues, director, q_tensor = Nematic()([frame], directors)
+# `frame` must carry an `orientations` block, e.g. one (head, tail) row per particle.
+order, eigenvalues, director, q_tensor = Nematic()([frame])
 ```
 
 ---
@@ -184,8 +187,9 @@ diagram = BondOrder(n_theta=80, n_phi=160)([frame], [nlist])
    unnormalized definitions; report which (`wl_normalize`).
 5. **Finite size and surfaces** → particles near a free surface or interface have
    truncated neighbour shells and artificially low order; exclude or flag them.
-6. **Nematic directors not normalized** → supply unit direction vectors so $S$
-   lies in $[0, 1]$.
+6. **Nematic axis endpoints reversed** → the director is `head - tail` (block
+   columns `atomi`/`atomj`); the $Q$-tensor is sign-independent so $S$ is
+   unaffected, but the reported director points along the head-to-tail sense.
 
 ---
 

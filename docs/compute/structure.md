@@ -193,16 +193,19 @@ barriers the desolvation penalties between them.
 
 `PMFTXY` generalizes this to a **2-D potential of mean force and torque**:
 instead of a single $r$, it accumulates neighbour positions in the local
-$(x, y)$ frame of each reference particle (optionally aligned by per-particle
-orientations), exposing directional structure that an isotropic $g(r)$ averages
-away — face-to-face vs edge-to-edge contacts, for example.
+$(x, y)$ frame of each reference particle, exposing directional structure that an
+isotropic $g(r)$ averages away — face-to-face vs edge-to-edge contacts, for
+example. When the frame carries an `orientations` topology block (one
+`(head, tail)` atom pair per particle), every bond is rotated into that
+particle's local frame — the per-particle angle is `atan2` of its `head - tail`
+axis. Without the block the analyzer works in the lab frame.
 
 ```python
 from molpy.compute import PMFTXY
 
 nlist = NeighborList(cutoff=6.0)(frame)
 pmft = PMFTXY(x_max=6.0, y_max=6.0, n_x=120, n_y=120)
-result = pmft([frame], [nlist], orientations)   # orientations optional (None = lab frame)
+result = pmft([frame], [nlist])   # aligned if frame has an `orientations` block, else lab frame
 ```
 
 ---

@@ -1,6 +1,6 @@
 # Block and Frame
 
-This page explains how MolPy stores molecular data in aligned tables, groups those tables into complete snapshots, and uses them for export and downstream computation.
+When chemistry stops changing and numbers start mattering, work moves to aligned tables: a `Block` is one NumPy-backed table, a `Frame` is the complete snapshot.
 
 ## Why two representations?
 

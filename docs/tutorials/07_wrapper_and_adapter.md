@@ -1,6 +1,6 @@
 # Wrapper and Adapter
 
-This page explains the distinction between execution boundaries and representation boundaries in MolPy, and how wrappers and adapters handle those two cases.
+Calling an external executable and converting to another library's objects are different problems — MolPy names them differently and gives each its own layer.
 
 ## Two kinds of external boundary
 

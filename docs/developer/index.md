@@ -8,7 +8,7 @@ This guide addresses contributors and library developers working on MolPy as a r
 - **Understand how MolPy is put together** → [Architecture Overview](architecture-overview.md) and [molrs Backend](molrs-backend.md)
 - **Cut a release** → [Release Process](release-process.md)
 
-Canonical field names and topology keys live in the [Naming Conventions](../tutorials/naming-conventions.md) appendix of Concepts.
+Canonical field names and topology keys live in the [Naming Conventions](../tutorials/naming-conventions.md) appendix of the Tutorials.
 
 ## Contributing
 

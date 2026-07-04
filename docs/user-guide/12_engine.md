@@ -1,6 +1,6 @@
 # The Engine Module Bridges Python Data and MD Programs
 
-This page describes how MolPy's `engine` module translates Python-level molecular data into engine-readable input files, and how those files can either be handed to an external scheduler or executed directly from Python.
+An `Engine` turns your typed system into ready-to-run input for LAMMPS, CP2K, or OpenMM — and either hands the files to your scheduler or presses start itself.
 
 ---
 

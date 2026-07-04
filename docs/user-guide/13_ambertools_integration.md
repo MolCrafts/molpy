@@ -1,6 +1,6 @@
 # PEO-LiTFSI with AmberTools
 
-This guide presents an AmberTools-based workflow for parameterizing ions, building PEO chains, and assembling a PEO-LiTFSI electrolyte system within MolPy.
+Parameterize the ions with antechamber, grow PEO chains with tleap, and assemble a PEO-LiTFSI electrolyte at target density — a complete AmberTools workflow driven from MolPy.
 
 !!! warning "External dependencies"
     This guide requires **AmberTools** (via conda), **RDKit**, and **Packmol**. All three must be installed and accessible. Without AmberTools, no code on this page will run.

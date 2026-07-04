@@ -1,8 +1,6 @@
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/molcrafts/molpy/blob/master/docs/getting-started/installation.ipynb)
-
 # Installation
 
-MolPy is a pure Python package. Install it with pip:
+MolPy requires Python 3.12+. Install it with pip:
 
 ```bash
 pip install molcrafts-molpy
@@ -46,6 +44,5 @@ print("Released on:", mp.release_date)
 
 ## Next steps
 
-- Continue with the Quickstart to build, type, and export your first system.
-- Read Core Concepts to understand why MolPy's data model is split into graph (`Atomistic`) vs arrays (`Frame`).
-- Continue with Concepts for the object model, or jump into Guides for larger, task-oriented workflows.
+- Continue with the [Quickstart](quickstart.md) to build, type, and export your first system.
+- Then: the [data-model tutorials](../tutorials/index.md), or [Guides](../user-guide/index.md) for task-oriented recipes.

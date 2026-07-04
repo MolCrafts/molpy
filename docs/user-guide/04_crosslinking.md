@@ -2,7 +2,7 @@
 
 # Crosslinked Networks
 
-This guide develops the inputs required for reactive polymer simulations with LAMMPS `fix bond/react`: local reaction templates, packed initial configurations, and exported topology and force-field files.
+Everything LAMMPS `fix bond/react` needs — local reaction templates, a packed initial configuration, consistently numbered topology and force-field files — generated in one MolPy workflow.
 
 !!! note "Prerequisites"
     This guide requires RDKit, Packmol, and the `oplsaa.xml` force field. Familiarity with [Stepwise Polymer Construction](02_polymer_stepwise.md) is assumed.

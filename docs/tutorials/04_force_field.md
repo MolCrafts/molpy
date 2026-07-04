@@ -1,6 +1,6 @@
 # Force Field
 
-This page explains how MolPy represents a force field as structured parameter data, inspects it before execution, converts it to numerical potentials, and exports it for different simulation engines.
+A force field in MolPy is data you can query and validate — long before it becomes numbers in an engine file.
 
 ## Why separate structure from parameters?
 

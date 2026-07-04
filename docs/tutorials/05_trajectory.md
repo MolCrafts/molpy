@@ -1,6 +1,6 @@
 # Trajectory
 
-This page explains how MolPy represents trajectories as ordered sequences of frames, and how lazy access and transformation are handled at that level.
+A `Trajectory` stacks frames in time order and stays lazy — a five-frame list and a multi-gigabyte stream get the same API.
 
 ## One frame is rarely enough
 

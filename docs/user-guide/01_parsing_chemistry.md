@@ -2,7 +2,7 @@
 
 # Parsing Chemistry
 
-This guide explains how MolPy interprets SMILES, SMARTS, BigSMILES, and CGSmiles, and when each notation is appropriate in a molecular or polymer modeling workflow.
+From a one-line string to an editable structure: `mp.parser` reads SMILES, SMARTS, BigSMILES, and CGSmiles — and this guide shows which to reach for when.
 
 ## Four notations, four purposes
 

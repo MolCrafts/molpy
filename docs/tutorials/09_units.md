@@ -1,8 +1,7 @@
 # Unit Systems
 
-This page explains how MolPy represents physical units with `UnitSystem`, how it
-relates to the (unitless) coordinates stored in a `Frame`, and how to pick or
-define a LAMMPS-style unit convention.
+A `Frame` stores bare numbers. `UnitSystem` names the convention that gives
+them meaning — and converts explicitly when two conventions meet.
 
 ## Coordinates are unitless; a convention gives them meaning
 

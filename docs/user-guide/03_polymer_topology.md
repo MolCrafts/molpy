@@ -2,7 +2,7 @@
 
 # Topology-Driven Assembly with CGSmiles
 
-This guide shows how CGSmiles expressions can specify linear, cyclic, and branched polymer architectures under a common builder configuration.
+Change the CGSmiles string, keep everything else: one builder configuration yields linear chains, rings, and branched stars.
 
 !!! note "Prerequisites"
     This guide requires RDKit (for `generate_3d`), the `oplsaa.xml` force field, and familiarity with [Stepwise Polymer Construction](02_polymer_stepwise.md).

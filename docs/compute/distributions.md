@@ -10,13 +10,17 @@ tools for reading the *geometry* of local order, not just its radial extent.
 
 As with every `compute` operator, the histogram kernels run in Rust (`molrs`); the
 MolPy layer extracts coordinates and the box and returns a typed result. The
-geometric distributions take **two inputs** — frames and a `groups` index array
-that selects the atom tuples to histogram (pairs, triplets, quadruplets).
+geometric distributions take **one input** — the frames. The atom tuples to
+histogram are read from each frame's core topology blocks: `bonds` (pairs) for the
+distance distribution, `angles` (triplets) for the ADF, `dihedrals` (quadruplets)
+for the DDF. No separate index array is passed.
 
 !!! note "Conventions used throughout"
     - Distances are in Å, angles and dihedrals in degrees, densities in Å⁻³.
-    - `groups` is an integer array of atom indices: pairs `(i, j)` for distance,
-      triplets `(i, j, k)` for angle (vertex at `j`), quadruplets for dihedral.
+    - The atom tuples come from the frame's topology blocks — pairs `(i, j)` from
+      `bonds`, triplets `(i, j, k)` from `angles` (vertex at `j`), quadruplets
+      from `dihedrals`. Perceive them with
+      `Atomistic.get_topo(gen_angle=True, gen_dihe=True)`.
     - Angular distributions carry a trivial `sin θ` solid-angle weighting; the
       result's `density_sin_corrected` removes it so a structureless distribution
       is flat.
@@ -44,15 +48,17 @@ structure.
 
 ## 2. Computing the geometric distributions
 
-Build the index array of tuples, then call the operator on one or more frames:
+Perceive the topology (so the frame carries `bonds` / `angles` / `dihedrals`),
+then call the operator on one or more frames:
 
 ```python
-import numpy as np
 from molpy.compute import AngleDistribution, DihedralDistribution, DistanceDistribution
 
-triplets = np.array([[o, h1, h2]], dtype=np.int64)   # H–O–H angle at O
+# The frame must carry the relevant topology block, e.g. from a built structure:
+frame = mol.get_topo(gen_angle=True, gen_dihe=True).to_frame()
+
 adf = AngleDistribution(n_bins=180, min=0.0, max=180.0)
-result = adf(frames, triplets)
+result = adf([frame])        # angle triplets read from frame["angles"]
 
 result.bin_centers           # angle at each bin, degrees
 result.density               # normalized p(theta)
@@ -60,8 +66,8 @@ result.density_sin_corrected # solid-angle-corrected distribution
 ```
 
 `DistanceDistribution(n_bins, min, max)` and
-`DihedralDistribution(n_bins, min=-180, max=180)` follow the same call pattern with
-pair and quadruplet `groups` respectively.
+`DihedralDistribution(n_bins, min=-180, max=180)` follow the same call pattern,
+reading the frame's `bonds` and `dihedrals` blocks respectively.
 
 ---
 
@@ -83,10 +89,10 @@ Each axis is declared as `(kind, n_bins, min, max, sin_weight)`:
 from molpy.compute import CombinedDistribution
 
 cdf = CombinedDistribution([
-    ("distance", 100, 2.0, 4.0, False),   # O...H distance
-    ("angle",     90, 90.0, 180.0, True), # O...H-C angle (sin-weighted)
+    ("distance", 100, 2.0, 4.0, False),   # read from frame["bonds"]
+    ("angle",     90, 90.0, 180.0, True), # read from frame["angles"] (sin-weighted)
 ])
-result = cdf(frames, [dist_pairs, angle_triplets])   # one index array per axis
+result = cdf([frame])   # each axis reads the tuples of its kind's topology block
 ```
 
 The result carries the multi-dimensional histogram plus helpers
@@ -120,16 +126,23 @@ result.density   # target density on the body-fixed grid
 result.g_sdf     # normalized by bulk_density (if supplied)
 ```
 
+If the frames carry an `orientations` topology block (one `(head, tail)` atom
+pair per target atom, in `target` order), the result also exposes a per-voxel
+mean body-frame orientation of the unit `head - tail` vector as
+`result.orientation`; without the block the SDF is orientation-free.
+
 ---
 
 ## 5. Pitfalls checklist
 
 1. **Wrong vertex order** → for the ADF the angle is at the *middle* index of each
-   triplet; order the `groups` accordingly.
+   triplet; the `angles` topology block already stores them vertex-in-the-middle
+   (perceived by `get_topo(gen_angle=True)`).
 2. **Forgetting the sin-correction** → raw angular densities peak near 90° purely
    from the solid angle; compare `density_sin_corrected` for structure.
-3. **CDF axis/group mismatch** → pass exactly one index array per declared axis,
-   each with the right tuple arity for its `kind`.
+3. **CDF axis-count mismatch** → every axis reads its `kind`'s topology block
+   (`bonds` / `angles` / `dihedrals`), and all axes must yield the same number of
+   tuples, or the joint sample is undefined.
 4. **SDF template misaligned** → the template must match the `reference` atom
    ordering and a sensible geometry, or the body frame (and the whole map) is
    garbage; verify with a small, symmetric reference.

@@ -148,6 +148,9 @@ docs/**
 !docs/**/*.ipynb
 !docs/**/*.md
 !docs/assets/**/
+!docs/assets/**/*.glb
+!docs/assets/**/*.js
+!docs/assets/**/*.sdf
 
 # Demo Notebooks
 notebooks/
