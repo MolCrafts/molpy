@@ -37,10 +37,6 @@ packed = packer.optimize(max_steps=10000, seed=42)
 
 ## Full API
 
-### MolPack
-
-::: molpy.pack.molpack
-
 ### Constraint
 
 ::: molpy.pack.constraint

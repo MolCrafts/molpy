@@ -9,8 +9,8 @@ molrs matches this version; it is called once on ``import molpy`` so a stale
 editable build or an out-of-date pin surfaces immediately.
 """
 
-version = "0.5.1"
-release_date = "2026-07-01"
+version = "0.6.0"
+release_date = "2026-07-03"
 
 
 def check_molrs_version(*, strict: bool = False) -> str | None:
