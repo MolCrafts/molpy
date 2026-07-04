@@ -375,7 +375,7 @@ The box size follows from total molecular weight and target density. Each chain 
 
 ```python
 from pathlib import Path
-from molpy.pack import InsideBoxConstraint, Molpack
+from molpy.pack import InsideBoxConstraint, Packmol
 
 total_mw = sum(
     sum(Element(a.get("element")).mass for a in c.atoms) for c in atomistic_chains
@@ -384,15 +384,15 @@ target_density = 0.05  # g/cm^3 (use ~1.0 for production)
 volume = (total_mw / 6.022e23) / target_density * 1e24
 box_length = volume ** (1 / 3)
 
-packer = Molpack(workdir=Path("05_output/packmol"))
+packer = Packmol(workdir=Path("05_output/packmol"))
 constraint = InsideBoxConstraint(
     length=np.array([box_length] * 3),
     origin=np.zeros(3),
 )
 for chain in atomistic_chains:
-    packer.add_target(chain.to_frame(), number=1, constraint=constraint)
+    packer.def_target(chain.to_frame(), number=1, constraint=constraint)
 
-packed = packer.optimize(max_steps=10000, seed=42)
+packed = packer(max_steps=10000, seed=42)
 packed.box = mp.Box.cubic(length=box_length)
 
 mp.io.write_lammps_system("05_output/lammps", packed, ff)

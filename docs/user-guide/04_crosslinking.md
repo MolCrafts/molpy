@@ -9,7 +9,7 @@ Everything LAMMPS `fix bond/react` needs — local reaction templates, a packed 
 
 ## Reactive MD requires four outputs
 
-LAMMPS `fix bond/react` drives bond formation during MD. It needs reaction templates that capture the local topology before and after each bond formation event, a packed configuration at realistic density, force field coefficients that cover every type in both the initial configuration and the post-reaction templates, and an input script that sequences these ingredients through minimisation, equilibration, and reactive MD. MolPy's `BondReactReacter` generates the template files, `Molpack` handles packing, and `write_lammps_bond_react_system` exports the data, force field, and templates with unified type numbering in one call.
+LAMMPS `fix bond/react` drives bond formation during MD. It needs reaction templates that capture the local topology before and after each bond formation event, a packed configuration at realistic density, force field coefficients that cover every type in both the initial configuration and the post-reaction templates, and an input script that sequences these ingredients through minimisation, equilibration, and reactive MD. MolPy's `BondReactReacter` generates the template files, `Packmol` handles packing, and `write_lammps_bond_react_system` exports the data, force field, and templates with unified type numbering in one call.
 
 ## Two monomers share one reaction template
 
@@ -200,7 +200,7 @@ Compute the box size from total molecular weight and target density, then let Pa
 
 
 ```python
-from molpy.pack import InsideBoxConstraint, Molpack
+from molpy.pack import InsideBoxConstraint, Packmol
 
 N_EO2, N_EO3 = 27, 9
 TARGET_DENSITY = 1.1  # g/cm³ (amorphous PEO ≈ 1.1–1.2)
@@ -214,15 +214,15 @@ box_length = ((total_mass_g / TARGET_DENSITY) * 1e24) ** (1 / 3)
 
 
 ```python
-packer = Molpack(workdir=Path("04_output/packmol"))
+packer = Packmol(workdir=Path("04_output/packmol"))
 constraint = InsideBoxConstraint(
     length=np.array([box_length] * 3),
     origin=np.zeros(3),
 )
-packer.add_target(eo2.to_frame(), number=N_EO2, constraint=constraint)
-packer.add_target(eo3.to_frame(), number=N_EO3, constraint=constraint)
+packer.def_target(eo2.to_frame(), number=N_EO2, constraint=constraint)
+packer.def_target(eo3.to_frame(), number=N_EO3, constraint=constraint)
 
-packed = packer.optimize(max_steps=20000, seed=42)
+packed = packer(max_steps=20000, seed=42)
 packed.box = mp.Box.cubic(length=box_length)
 print(f"packed: {packed['atoms'].nrows} atoms in {box_length:.1f} Å box")
 ```

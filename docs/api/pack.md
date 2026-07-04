@@ -6,7 +6,7 @@ Spatial packing of molecules into periodic simulation boxes via Packmol.
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `Molpack` | High-level packing interface | Multi-component systems |
+| `Packmol` | High-level packing interface | Multi-component systems |
 | `InsideBoxConstraint` | Cubic/orthorhombic box constraint | Standard periodic boxes |
 | `InsideSphereConstraint` | Spherical region constraint | Droplet / cluster geometries |
 | `Target` | One molecule species + count + constraint | Defining packing targets |
@@ -15,17 +15,17 @@ Spatial packing of molecules into periodic simulation boxes via Packmol.
 
 ```python
 import numpy as np
-from molpy.pack import Molpack, InsideBoxConstraint
+from molpy.pack import Packmol, InsideBoxConstraint
 
-packer = Molpack(workdir="pack_output")
+packer = Packmol(workdir="pack_output")
 constraint = InsideBoxConstraint(
     length=np.array([30.0, 30.0, 30.0]),
     origin=np.zeros(3),
 )
-packer.add_target(water_frame, number=100, constraint=constraint)
-packer.add_target(ion_frame, number=10, constraint=constraint)
+packer.def_target(water_frame, number=100, constraint=constraint)
+packer.def_target(ion_frame, number=10, constraint=constraint)
 
-packed = packer.optimize(max_steps=10000, seed=42)
+packed = packer(max_steps=10000, seed=42)
 ```
 
 ## Related

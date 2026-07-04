@@ -40,7 +40,7 @@ Packmol backend.
 
 ```python
 import molpy as mp
-from molpy.pack import Molpack, InsideBoxConstraint
+from molpy.pack import Packmol, InsideBoxConstraint
 
 water = mp.Atomistic(name="water")
 o  = water.def_atom(element="O", x=0.000, y=0.000, z=0.000)
@@ -49,13 +49,13 @@ h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.000)
 water.def_bond(o, h1)
 water.def_bond(o, h2)
 
-p = Molpack("pack_out")
-p.add_target(
+p = Packmol(workdir="pack_out")
+p.def_target(
     water.to_frame(),
     number=500,
     constraint=InsideBoxConstraint(length=30.0),  # a 30 Å cube
 )
-packed = p.optimize(max_steps=1000, seed=42)       # → one packed Frame (1500 atoms)
+packed = p(max_steps=1000, seed=42)       # → one packed Frame (1500 atoms)
 ```
 
 See also: [Packing Systems](../user-guide/09_packing.md).

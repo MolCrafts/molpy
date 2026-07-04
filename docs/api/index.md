@@ -17,7 +17,7 @@ Auto-generated reference for every public symbol, with typed signatures througho
 | Execute a chemical reaction (bond formation / removal) | `Reacter`, `find_port`, `select_neighbor` | [Reacter](reacter.md) |
 | Generate `fix bond/react` pre/post topology templates | `TemplateReacter` | [Reacter](reacter.md) |
 | Assemble polymer chains from CGSmiles | `PolymerBuilder`, `Connector`, `Placer` | [Builder](builder.md) |
-| Pack molecules into a periodic simulation box | `Molpack`, `InsideBoxConstraint` | [Pack](pack.md) |
+| Pack molecules into a periodic simulation box | `Packmol`, `InsideBoxConstraint` | [Pack](pack.md) |
 | Generate 3D conformers from a molecular graph | `Conformer` | [Conformer](conformer.md) |
 | Assign force field atom types via SMARTS matching | `OplsTypifier`, `ClpTypifier`, `MMFFTypifier` | [Typifier](typifier.md) |
 | Evaluate bond, angle, and pair potentials | `BondHarmonicStyle`, `LJ126Style`, `Potentials` | [Potential](potential.md) |

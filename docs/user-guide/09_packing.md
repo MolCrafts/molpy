@@ -1,12 +1,21 @@
 # Packing Systems into a Box
 
 Fill a simulation cell with hundreds of molecules under geometric constraints —
-from Python, through the **Packmol** backend.
+from Python, through molpy's **`Packmol` wrapper**.
 
 !!! note "Prerequisites"
-    Packing shells out to the **Packmol** executable. Install it and make sure
-    `packmol` is on your `PATH` (or pass an explicit path to `Packmol(...)`).
-    Without it the packer cannot run.
+    `Packmol` is molpy's thin **wrapper** around the
+    [Packmol](https://m3g.github.io/packmol/) executable: it writes the input
+    deck, shells out to `packmol`, and reads the result back into a `Frame`.
+    Install Packmol and put `packmol` on your `PATH` (or point at it explicitly:
+    `Packmol(executable="/path/to/packmol")`).
+
+!!! tip "Prefer a pure-Python packer? Try `molcrafts-molpack`"
+    [**molcrafts-molpack**](https://molcrafts.github.io/molpack/) is our own
+    dependency-free, Python-native packer — a Rust Packmol port with collective
+    restraints and **no external binary**. `pip install molcrafts-molpack`; it
+    speaks the same molrs `Frame`, so it drops straight into the workflows below.
+    Give it a spin.
 
 ## What packing solves
 
@@ -14,35 +23,35 @@ Building one molecule gives you one molecule. A simulation needs a *box* — oft
 hundreds or thousands of molecules arranged without steric clashes. Doing that by
 hand (a grid, random insertion) either wastes volume or produces overlaps.
 
-**`Molpack` collects packing *targets* (a molecule + how many + where it may go)
-and asks Packmol to place them without clashes, returning a single packed
-`Frame`.**
+**molpy's `Packmol` wrapper collects packing *targets* (a molecule + how many +
+where it may go) and drives the Packmol executable to place them without clashes,
+returning a single packed `Frame`.**
 
 ## Packing a box
 
 ```python
-from molpy.pack import Molpack, InsideBoxConstraint
+from molpy.pack import Packmol, InsideBoxConstraint
 
-p = Molpack("pack_out")                      # workdir for Packmol's scratch files
-p.add_target(
+p = Packmol(workdir="pack_out")                      # workdir for Packmol's scratch files
+p.def_target(
     water,                                   # a molrs Frame (one molecule)
     number=500,                              # how many copies
     constraint=InsideBoxConstraint(length=30.0),   # keep them inside a 30 Å cube
 )
-packed = p.optimize(max_steps=1000, seed=42)  # -> a single packed Frame
+packed = p(max_steps=1000, seed=42)  # -> a single packed Frame
 ```
 
-`optimize` returns the packed `Frame` directly. Add several `add_target` calls
-before `optimize` to pack a mixture (e.g. solute + solvent) in one run.
+Calling the packer — `p(...)` — runs Packmol and returns the packed `Frame`
+directly. Register several `def_target`s before that call to pack a mixture
+(e.g. solute + solvent) in one run.
 
 ## The pieces
 
 | Object | Role |
 |---|---|
-| `Molpack(workdir)` | The packing session. `workdir` holds Packmol's input/output scratch files. |
-| `add_target(frame, number, constraint)` | Register `number` copies of `frame`, restricted by `constraint`. Returns the `Target`. |
-| `optimize(max_steps=1000, seed=None, pbc=None)` | Run Packmol and return the packed `Frame`. `pbc` supplies a periodic cell for minimum-image spacing. |
-| `Packmol(executable=None, workdir=None)` / `get_packer()` | The backend wrapper, if you need to point at a specific Packmol binary. |
+| `Packmol(executable=None, workdir=None)` | molpy's Packmol **wrapper** — the packing session. `workdir` holds Packmol's scratch files; `executable` points at a specific `packmol` binary. |
+| `def_target(frame, number, constraint)` | Register `number` copies of `frame`, restricted by `constraint`. Returns the `Target`. |
+| `packer(max_steps=1000, seed=None, pbc=None)` | Call the packer to run Packmol and return the packed `Frame`. `pbc` supplies a periodic cell for minimum-image spacing. |
 
 ### Constraint catalog
 
