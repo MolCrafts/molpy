@@ -68,6 +68,7 @@ from .data.lammps_molecule import (
     LammpsMoleculeWriter,
 )
 from .data.mol2 import Mol2Reader
+from .data.smiles import SmilesReader
 from .data.pdb import PDBReader, PDBWriter
 from .data.top import TopReader
 from .data.xsf import XsfReader, XsfWriter
@@ -206,6 +207,7 @@ __all__ = [
     "LammpsDataReader",
     "LammpsMoleculeReader",
     "Mol2Reader",
+    "SmilesReader",
     "PDBReader",
     "TopReader",
     "XsfReader",

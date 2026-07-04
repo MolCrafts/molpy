@@ -1,8 +1,8 @@
-"""Tests for Packmol packer and Molpack interface.
+"""Tests for the Packmol packer wrapper.
 
-Unit tests (TestPackmolUnit, TestMolpackUnit) run without any external binary.
-Integration tests (*Integration classes) require Packmol in PATH and are
-skipped automatically when unavailable.
+Unit tests (TestPackmolUnit) run without any external binary. Integration tests
+(TestPackmolIntegration) require Packmol in PATH and are skipped automatically
+when unavailable.
 """
 
 import shutil
@@ -13,7 +13,6 @@ import pytest
 import molpy.pack as mpk
 from molpy import Script
 from molpy.core import Block, Frame
-from molpy.pack.molpack import Molpack
 from molpy.pack.packer.packmol import Packmol
 
 PACKMOL_AVAILABLE = shutil.which("packmol") is not None
@@ -336,24 +335,6 @@ class TestPackmolUnit:
 
 
 # ---------------------------------------------------------------------------
-# Molpack unit tests — no Packmol binary needed
-# ---------------------------------------------------------------------------
-
-
-class TestMolpackUnit:
-    def test_init(self, tmp_path):
-        mp = Molpack(workdir=tmp_path)
-        assert mp.workdir == tmp_path
-        assert len(mp.targets) == 0
-
-    def test_add_target(self, water_frame, box20, tmp_path):
-        mp = Molpack(workdir=tmp_path)
-        t = mp.add_target(water_frame, number=5, constraint=box20)
-        assert len(mp.targets) == 1
-        assert t.number == 5
-
-
-# ---------------------------------------------------------------------------
 # Integration tests — require Packmol executable
 # ---------------------------------------------------------------------------
 
@@ -399,14 +380,3 @@ class TestPackmolIntegration:
         )
         assert isinstance(result, Frame)
         assert len(result["atoms"]["x"]) == 15
-
-
-@pytest.mark.external
-@needs_packmol
-class TestMolpackIntegration:
-    def test_optimize(self, water_frame, box20, tmp_path):
-        mp = Molpack(workdir=tmp_path)
-        mp.add_target(water_frame, number=5, constraint=box20)
-        result = mp.optimize(max_steps=100, seed=42)
-        assert isinstance(result, Frame)
-        assert len(result["atoms"]["x"]) == 15  # 5 molecules × 3 atoms

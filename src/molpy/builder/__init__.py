@@ -15,6 +15,7 @@ Crystal construction goes through :func:`build_crystal` with
 
 from molpy.core.region import BoxRegion, Cube, Region, SphereRegion
 
+from .ambertools import AmberResult, AmberTools
 from .crystal import Lattice, Site, SpaceGroup, build_crystal
 from .polymer import *
 from .polymer.ambertools import AmberPolymerBuilder
@@ -34,6 +35,8 @@ from .virtualsite import (
 __all__ = [
     # AmberTools builders
     "AmberPolymerBuilder",
+    "AmberTools",
+    "AmberResult",
     # Crystal builders
     "BoxRegion",
     "Cube",

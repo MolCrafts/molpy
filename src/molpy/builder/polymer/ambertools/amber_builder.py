@@ -22,17 +22,44 @@ from .types import AmberBuildResult
 
 
 class AmberPolymerBuilder:
-    """Build polymers from CGSmiles notation using AmberTools backend.
+    """Build polymers from CGSmiles notation using the AmberTools backend.
 
-    This builder parses CGSmiles strings and constructs polymers using
-    AmberTools (antechamber, parmchk2, prepgen, tleap).
+    ========================= DESIGN CONTRACT — READ FIRST =========================
+    This is the whole reason the class exists; do NOT "optimise" or "fix" around it.
 
-    Internally, the builder:
-    1. Prepares each monomer type (antechamber → parmchk2 → prepgen)
-    2. Generates HEAD/CHAIN/TAIL residue variants based on port annotations
-    3. Translates CGSmiles to tleap sequence command
-    4. Runs tleap to build the polymer
-    5. Returns Frame + ForceField from prmtop/inpcrd
+    * Parameterise each MONOMER individually, ONCE. Every unique repeat unit / cap
+      is run through antechamber (GAFF atom types + AM1-BCC charges) and prepgen
+      (HEAD/CHAIN/TAIL residue templates) on its own small structure. Results are
+      cached on disk under ``work_dir/monomers/<label>/`` and reused across every
+      chain and every run — AM1-BCC is the expensive step and must never be
+      recomputed for a monomer already prepared.
+
+    * Assemble the CHAIN with tleap ``sequence``. tleap stitches the per-monomer
+      residue templates head-to-tail; the inter-residue (junction) parameters come
+      from GAFF base (``source leaprc.gaff2``), resolved at assembly time.
+
+    * CUT residues on backbone c3-c3 bonds ONLY. Never leave an exotic atom at a
+      residue junction — fold such a group INTO an adjacent residue instead. E.g.
+      a RAFT dithioester's bridging sulfur must be folded into the first monomer
+      so it is an INTERNAL thioether (typed ``ss``); left as a separate cap
+      connecting through its S it becomes a junction ``sh`` thiol and needs a
+      ``cs-sh-c3`` term GAFF base lacks. With correct segmentation every junction
+      is GAFF-covered and per-monomer + tleap alone is sufficient — no extra pass.
+
+    * parmchk2 is a per-MONOMER step (it fills each monomer's missing GAFF
+      parameters) and is always run there. NEVER run antechamber or parmchk2 on
+      the assembled chain (or any multi-residue fragment) — it is both wrong
+      (junction parameters belong to GAFF base) and, on a long flexible chain,
+      pathologically slow (100% CPU for tens of minutes). If tleap reports a
+      missing junction parameter, the fix is correct segmentation (previous
+      bullet), never a parmchk2 pass over the assembly.
+    ================================================================================
+
+    Pipeline:
+    1. Prepare each monomer type (antechamber → parmchk2 → prepgen), disk-cached.
+    2. Generate HEAD/CHAIN/TAIL residue variants from the port annotations.
+    3. Translate CGSmiles to a tleap ``sequence`` command.
+    4. Run tleap to build the polymer; read back Frame + ForceField.
 
     Example:
         >>> builder = AmberPolymerBuilder(
@@ -206,6 +233,38 @@ class AmberPolymerBuilder:
                 elif port == ">":
                     tail_atom_name = atom["name"]
 
+            is_full = head_atom_name is not None and tail_atom_name is not None
+            is_left_cap = head_atom_name is not None and tail_atom_name is None
+            is_right_cap = head_atom_name is None and tail_atom_name is not None
+
+            # Disk cache: a monomer's antechamber (.ac/charges) + prepgen residue
+            # templates depend only on the monomer, so reuse them across chains
+            # and runs. AM1-BCC is the slow step — never repeat it for a monomer
+            # already prepared on disk.
+            frcmod_file = monomer_dir / f"{label}.frcmod"
+            head_prepi = (
+                monomer_dir / f"H{label}.prepi" if (is_full or is_left_cap) else None
+            )
+            chain_prepi = monomer_dir / f"{label}.prepi" if is_full else None
+            tail_prepi = (
+                monomer_dir / f"T{label}.prepi" if (is_full or is_right_cap) else None
+            )
+            cached = [
+                p for p in (frcmod_file, head_prepi, chain_prepi, tail_prepi) if p
+            ]
+            if cached and all(p.exists() for p in cached):
+                self._prepared_monomers[label] = _PreparedMonomer(
+                    label=label,
+                    frcmod_file=frcmod_file,
+                    head_prepi=head_prepi,
+                    chain_prepi=chain_prepi,
+                    tail_prepi=tail_prepi,
+                    head_resname=f"H{label[:2].upper()}" if head_prepi else None,
+                    chain_resname=label[:3].upper() if chain_prepi else None,
+                    tail_resname=f"T{label[:2].upper()}" if tail_prepi else None,
+                )
+                continue
+
             # Step 1: Write monomer to PDB
             input_pdb = monomer_dir / f"{label}.pdb"
             self._write_atomistic_pdb(monomer, input_pdb)
@@ -319,10 +378,22 @@ class AmberPolymerBuilder:
                 head_tail_name = tail_atom_name or head_atom_name
                 head_ctrl = monomer_dir / f"{label}.head"
                 head_prepi = monomer_dir / f"H{label}.prepi"
+                # A HEAD cap (chain start) connects FORWARD through its port atom,
+                # so that atom must be the main-chain *tail terminus*, not the tree
+                # root. If it is the root prepgen builds a faulty connection. Pin
+                # any heavy neighbour as HEAD_NAME so the main chain runs
+                # neighbour -> port atom and the port atom becomes the terminus.
+                # (A TAIL cap is the opposite: its port atom is the head/root and
+                # needs no pinning, so tail_name below stays degree-1-only.)
+                head_pin = (
+                    None
+                    if is_full
+                    else self._connect_pin_neighbor(monomer, head_atom_name)
+                )
                 write_prepgen_control_file(
                     head_ctrl,
                     variant="head",
-                    head_name=None,
+                    head_name=head_pin,
                     tail_name=head_tail_name,
                     omit_names=omit_tail if is_full else omit_head,
                     charge=net_charge,
@@ -350,11 +421,18 @@ class AmberPolymerBuilder:
                 tail_head_name = head_atom_name or tail_atom_name
                 tail_ctrl = monomer_dir / f"{label}.tail"
                 tail_prepi = monomer_dir / f"T{label}.prepi"
+                # Symmetric pinning for a right cap whose connect atom is a
+                # graph terminus (see the head-cap note above).
+                tail_pin = (
+                    None
+                    if is_full
+                    else self._terminus_neighbor_name(monomer, tail_atom_name)
+                )
                 write_prepgen_control_file(
                     tail_ctrl,
                     variant="tail",
                     head_name=tail_head_name,
-                    tail_name=None,
+                    tail_name=tail_pin,
                     omit_names=omit_head if is_full else omit_tail,
                     charge=net_charge,
                 )
@@ -397,6 +475,56 @@ class AmberPolymerBuilder:
                 names.append(other["name"])
         return names
 
+    def _terminus_neighbor_name(
+        self, monomer: Atomistic, atom_name: str | None
+    ) -> str | None:
+        """Name of the single heavy neighbour of ``atom_name`` if it is a terminus.
+
+        Returns ``None`` when the atom has zero or more than one heavy neighbour
+        (i.e. it is not a graph terminus and needs no main-chain pinning).
+        """
+        if atom_name is None:
+            return None
+        atom = next((a for a in monomer.atoms if a.get("name") == atom_name), None)
+        if atom is None:
+            return None
+        heavy: list[str] = []
+        for bond in monomer.bonds:
+            other = None
+            if bond.itom is atom:
+                other = bond.jtom
+            elif bond.jtom is atom:
+                other = bond.itom
+            if other is not None and other.get("element") != "H":
+                heavy.append(other["name"])
+        return heavy[0] if len(heavy) == 1 else None
+
+    def _connect_pin_neighbor(
+        self, monomer: Atomistic, atom_name: str | None
+    ) -> str | None:
+        """A heavy neighbour of ``atom_name`` to pin as the HEAD residue's HEAD_NAME.
+
+        Unlike :meth:`_terminus_neighbor_name` this returns a neighbour for a
+        connect atom of *any* degree (not only degree-1): a HEAD cap's forward
+        connect atom must always be the main-chain terminus, so it always needs a
+        neighbour pinned as the tree root. Returns ``None`` only for an isolated
+        atom.
+        """
+        if atom_name is None:
+            return None
+        atom = next((a for a in monomer.atoms if a.get("name") == atom_name), None)
+        if atom is None:
+            return None
+        for bond in monomer.bonds:
+            other = None
+            if bond.itom is atom:
+                other = bond.jtom
+            elif bond.jtom is atom:
+                other = bond.itom
+            if other is not None and other.get("element") != "H":
+                return other["name"]
+        return None
+
     def _get_one_omit_name(self, monomer: Atomistic, port: str) -> list[str]:
         """Return the name of ONE hydrogen bonded to the port atom.
 
@@ -434,19 +562,15 @@ class AmberPolymerBuilder:
         graph: CGSmilesGraphIR,
         output_prefix: str,
     ) -> AmberBuildResult:
-        """Generate tleap script and run tleap to build polymer.
+        """Assemble the chain with tleap ``sequence`` from the per-monomer templates.
 
-        Uses a two-pass strategy so that *inter-residue* bonded parameters
-        (angles / torsions that span a residue junction, e.g. a cap's exotic
-        atom type bonded to a backbone carbon) are filled in. parmchk2 run on
-        each isolated monomer cannot see across junctions; GAFF base covers the
-        plain c3-c3 backbone link but not unusual end-group chemistries. So we
-        first assemble the unit and dump it to mol2, run parmchk2 on the whole
-        molecule to synthesise any missing junction parameters, then build the
-        final topology with that extra frcmod loaded.
+        A single tleap run: load each monomer's cached frcmod + prepgen residue
+        templates, ``sequence`` them, and save the prmtop/inpcrd. All junction
+        parameters come from GAFF base (``source leaprc.gaff2``); with residues
+        cut on backbone c3-c3 bonds this always resolves. See the class
+        ``DESIGN CONTRACT`` — do NOT add a parmchk2 pass over the assembly.
         """
         from molpy.wrapper.tleap import TLeapWrapper
-        from molpy.wrapper.prepgen import Parmchk2Wrapper
 
         work_dir = self.work_dir
         output_dir = work_dir / "output"
@@ -479,36 +603,8 @@ class AmberPolymerBuilder:
             name="tleap", workdir=work_dir, env=self.env, env_manager=self.env_manager
         )
 
-        # --- Pass 1: assemble the unit and dump a typed mol2 (no params needed) ---
-        full_mol2 = work_dir / f"{output_prefix}_full.mol2"
-        pass1 = "\n".join(
-            load_lines + [seq_line, "", f"savemol2 mol {full_mol2} 1", "quit"]
-        )
-        (work_dir / f"{output_prefix}_pass1.in").write_text(pass1)
-        r = tleap.run_from_script(pass1)
-        interres_frcmod = None
-        if full_mol2.exists():
-            # --- Inter-residue parmchk2 pass over the whole assembled unit ---
-            interres_frcmod = work_dir / f"{output_prefix}_interres.frcmod"
-            parmchk2 = Parmchk2Wrapper(
-                name="parmchk2",
-                workdir=work_dir,
-                env=self.env,
-                env_manager=self.env_manager,
-            )
-            cr = parmchk2.generate_parameters(
-                input_file=full_mol2,
-                output_file=interres_frcmod,
-                force_field=self.force_field,
-            )
-            if cr.returncode != 0 or not interres_frcmod.exists():
-                interres_frcmod = None
-
-        # --- Pass 2: build final topology, loading the inter-residue frcmod ---
-        final_loads = list(load_lines)
-        if interres_frcmod is not None:
-            final_loads.insert(-1, f"loadamberparams {interres_frcmod}")
-        script_lines = final_loads + [
+        # --- Build the topology in one pass: per-monomer params + GAFF base. ---
+        script_lines = load_lines + [
             seq_line,
             "",
             f"savepdb mol {pdb}",

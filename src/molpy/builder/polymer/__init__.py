@@ -44,7 +44,12 @@ from .dsl import (
 )
 from .placer import CovalentSeparator, LinearOrienter, Placer, VdWSeparator
 from .presets import ReactionPresets, ReactionPresetSpec
-from .sequences import SequenceGenerator, WeightedSequenceGenerator
+from .sequences import (
+    AlternatingSequenceGenerator,
+    BlockSequenceGenerator,
+    SequenceGenerator,
+    WeightedSequenceGenerator,
+)
 from .system import (
     Chain,
     PolydisperseChainGenerator,
@@ -72,6 +77,8 @@ __all__ = [
     "Placer",
     "VdWSeparator",
     # Sequence generators
+    "AlternatingSequenceGenerator",
+    "BlockSequenceGenerator",
     "SequenceGenerator",
     "WeightedSequenceGenerator",
     # Distributions

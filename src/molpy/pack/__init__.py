@@ -8,7 +8,6 @@ from .constraint import (
     OutsideBoxConstraint,
     OutsideSphereConstraint,
 )
-from .molpack import Molpack
 from .packer import Packmol, get_packer
 from .target import Target
 
@@ -18,7 +17,6 @@ __all__ = [
     "InsideBoxConstraint",
     "InsideSphereConstraint",
     "MinDistanceConstraint",
-    "Molpack",
     "OrConstraint",
     "OutsideBoxConstraint",
     "OutsideSphereConstraint",
