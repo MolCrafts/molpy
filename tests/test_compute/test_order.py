@@ -18,6 +18,7 @@ from molpy.compute import NeighborList
 
 from .parity_helpers import (
     assert_nested_equal,
+    attach_orientations,
     frame_coords_snapshot,
     random_periodic_frame,
 )
@@ -65,13 +66,19 @@ def test_solidliquid_parity_with_molrs_direct(frame_and_nlist):
     assert_nested_equal(mine, direct)
 
 
-def test_nematic_parity_with_molrs_direct(frame_and_nlist):
+def test_nematic_reads_orientations_from_frame(frame_and_nlist):
+    # The per-particle directors are read from the frame's `orientations`
+    # block — no external director array is passed.
     frame, _ = frame_and_nlist
-    rng = np.random.default_rng(1)
-    directors = rng.standard_normal((200, 3))
-    mine = Nematic()(frame, directors)
-    direct = molrs.compute.order.Nematic().compute([frame], directors)
+    n = len(np.asarray(frame["atoms"]["x"]))
+    idx = np.arange(n, dtype=np.uint32)
+    attach_orientations(frame, heads=idx, tails=(idx + 1) % n)
+    mine = Nematic()(frame)
+    direct = molrs.compute.order.Nematic().compute([frame])
     assert_nested_equal(mine, direct)
+    order, eigenvalues, director, q_tensor = mine
+    assert np.asarray(eigenvalues).shape == (3,)
+    assert np.asarray(q_tensor).shape == (3, 3)
 
 
 def test_order_input_frame_immutable(frame_and_nlist):

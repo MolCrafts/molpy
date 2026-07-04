@@ -74,16 +74,19 @@ class Hexatic(Compute):
 class Nematic(Compute):
     """Nematic order parameter and Q-tensor from per-particle directors.
 
-    The second call argument is a ``(N, 3)`` array of per-particle orientation
-    vectors. Returns ``(order, eigenvalues, director, q_tensor)``.
+    Called as ``__call__(frames)`` only. The per-particle orientation directors
+    are the unit ``head - tail`` vectors read from each frame's core
+    ``orientations`` topology block (one ``(head, tail)`` atom pair per row), so
+    no separate director array is passed. Returns
+    ``(order, eigenvalues, director, q_tensor)``.
     """
 
     def __init__(self):
         super().__init__()
         self._inner = molrs.compute.order.Nematic()
 
-    def __call__(self, frames, directors):
-        return self._inner.compute(frames, directors)
+    def __call__(self, frames):
+        return self._inner.compute(frames)
 
 
 class SolidLiquid(Compute):

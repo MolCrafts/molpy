@@ -2,9 +2,10 @@
 
 Thin ``Compute`` shells over ``molrs`` analysis-parity geometric distributions.
 Each forwards verbatim to the Rust kernel and returns the molrs native result.
-All take ``(frames, groups)`` where ``groups`` is an integer index array selecting
-the atom tuples to histogram (pairs for distances, triplets for angles,
-quadruplets for dihedrals).
+Each takes ``(frames)`` only. The atom tuples to histogram are read from each
+frame's core topology blocks — ``bonds`` (pairs) for distances, ``angles``
+(triplets) for angles, ``dihedrals`` (quadruplets) for dihedrals — so no separate
+group-index array is passed.
 
 References
 ----------
@@ -38,8 +39,8 @@ class DistanceDistribution(Compute):
         super().__init__(n_bins=n_bins, min=min, max=max)
         self._inner = molrs.DistanceDistribution(n_bins, min, max)
 
-    def __call__(self, frames, groups):
-        return self._inner.compute(frames, groups)
+    def __call__(self, frames):
+        return self._inner.compute(frames)
 
 
 class AngleDistribution(Compute):
@@ -61,8 +62,8 @@ class AngleDistribution(Compute):
         super().__init__(n_bins=n_bins, min=min, max=max)
         self._inner = molrs.AngleDistribution(n_bins, min, max)
 
-    def __call__(self, frames, groups):
-        return self._inner.compute(frames, groups)
+    def __call__(self, frames):
+        return self._inner.compute(frames)
 
 
 class DihedralDistribution(Compute):
@@ -80,8 +81,8 @@ class DihedralDistribution(Compute):
         super().__init__(n_bins=n_bins, min=min, max=max)
         self._inner = molrs.DihedralDistribution(n_bins, min, max)
 
-    def __call__(self, frames, groups):
-        return self._inner.compute(frames, groups)
+    def __call__(self, frames):
+        return self._inner.compute(frames)
 
 
 class CombinedDistribution(Compute):
@@ -96,12 +97,14 @@ class CombinedDistribution(Compute):
 
     Notes
     -----
-    Called as ``compute(frames, groups)`` with one index array per axis.
+    Called as ``compute(frames)``; each axis reads its atom tuples from the
+    matching topology block (``bonds`` / ``angles`` / ``dihedrals``) of every
+    frame.
     """
 
     def __init__(self, axes: Sequence[tuple[str, int, float, float, bool]]):
         super().__init__(axes=axes)
         self._inner = molrs.CombinedDistribution(axes)
 
-    def __call__(self, frames, groups):
-        return self._inner.compute(frames, groups)
+    def __call__(self, frames):
+        return self._inner.compute(frames)

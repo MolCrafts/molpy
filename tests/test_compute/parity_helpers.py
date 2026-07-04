@@ -44,3 +44,19 @@ def assert_nested_equal(a, b, atol=1e-12):
 def frame_coords_snapshot(frame):
     block = frame["atoms"]
     return np.column_stack([block["x"], block["y"], block["z"]]).copy()
+
+
+def attach_orientations(frame, heads, tails):
+    """Attach an ``orientations`` topology block to ``frame`` (in place).
+
+    One ``(head, tail)`` atom-index row per particle, using the same on-disk
+    schema as the core ``bonds`` block — the two endpoint columns ``atomi``
+    (head) and ``atomj`` (tail), stored as unsigned-int atom indices. The
+    orientation-aware compute ops (Nematic / SpatialDistribution / PMFTXY) read
+    their per-particle axis ``normalize(pos[head] - pos[tail])`` from this block.
+    """
+    frame["orientations"] = {
+        "atomi": np.asarray(heads, dtype=np.uint32),
+        "atomj": np.asarray(tails, dtype=np.uint32),
+    }
+    return frame
