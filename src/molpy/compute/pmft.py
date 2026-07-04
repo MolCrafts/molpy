@@ -2,7 +2,10 @@
 
 ``PMFTXY`` accumulates the 2-D potential of mean force in the local (x, y)
 frame of each particle. Thin shell over ``molrs.compute.pmft.PMFTXY``; takes
-``(frames, nlists, orientations=None)``.
+``(frames, nlists)``. When the frames carry an ``orientations`` topology block,
+every bond is rotated into each query particle's local frame (the per-particle
+angle is ``atan2`` of its ``head - tail`` axis); otherwise it works in the lab
+frame.
 
 References
 ----------
@@ -34,5 +37,5 @@ class PMFTXY(Compute):
         super().__init__(x_max=x_max, y_max=y_max, n_x=n_x, n_y=n_y)
         self._inner = molrs.compute.pmft.PMFTXY(x_max, y_max, n_x, n_y)
 
-    def __call__(self, frames, nlists, orientations=None):
-        return self._inner.compute(frames, nlists, orientations)
+    def __call__(self, frames, nlists):
+        return self._inner.compute(frames, nlists)

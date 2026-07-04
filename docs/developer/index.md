@@ -1,37 +1,45 @@
 # Developer Guide
 
-This guide addresses contributors and library developers working on MolPy as a research software library. It covers coding and testing conventions, the established extension points for analysis and I/O, and the architectural constraints governing the core data model and force-field hierarchy. Canonical field names and topology keys live in [Naming Conventions](../getting-started/naming-conventions.md); this section focuses on contributor workflow and extension points.
+This guide addresses contributors and library developers working on MolPy as a research software library. It is organized around what you came here to do:
 
-## Part I: Project Conventions
+- **Fix a bug or land a first PR** → [Development Setup](development-setup.md), then [Contributing Workflow](contributing.md) and [Testing](testing.md)
+- **Add an analysis operation, file format, or tool integration** → the plug-in recipes under [Extending MolPy](extending-compute.md); no core changes required
+- **Change the data model or force-field internals** → read the [Architecture Overview](architecture-overview.md) first, open a GitHub issue to discuss, then follow [Extending the Data Model](extending-core.md) or [Extending the Force Field](extending-forcefield.md)
+- **Understand how MolPy is put together** → [Architecture Overview](architecture-overview.md) and [molrs Backend](molrs-backend.md)
+- **Cut a release** → [Release Process](release-process.md)
 
-The following pages document day-to-day development practices.
+Canonical field names and topology keys live in the [Naming Conventions](../tutorials/naming-conventions.md) appendix of the Tutorials.
 
-- [Development Setup](development-setup.md) — repository cloning, editable installation, and test execution
-- [Contributing](contributing.md) — the pull request workflow, commit message conventions, and the pre-commit hook suite
-- [Coding Style](coding-style.md) — identifier style, formatting requirements, and the immutability constraint
+## Contributing
+
+Day-to-day development practices:
+
+- [Development Setup](development-setup.md) — repository cloning, editable installation, building molrs from source, and test execution
+- [Contributing Workflow](contributing.md) — the pull request workflow, commit message conventions, and the pre-commit hook suite
+- [Coding Style](coding-style.md) — identifier style, formatting requirements, and the mutation contract
 - [Testing](testing.md) — pytest conventions, test markers, coverage requirements, and the distinction between local and external tests
-- [Release Process](release-process.md) — semantic versioning, changelog maintenance, and CI-driven package publication
+- [Release Process](release-process.md) — the shared molpy/molrs version line, changelog maintenance, and CI-driven package publication
+- [Third-Party Attributions](attribution.md) — licenses of ported code and bundled parameter data
 
-## Part II: Extending Compute
+## Architecture
 
-The extension points documented here present stable interfaces with explicit contracts. Contributing a new capability at this layer requires implementing a subclass or registering a handler; no modification of core internals is necessary.
+The design context that the extension recipes assume:
 
-- [Adding a Compute Operation](extending-compute.md) — the `Compute` protocol for reusable analysis operations on array data
-- [Adding an I/O Format](extending-io.md) — reader and writer base classes, the `FieldFormatter` canonicalization interface, and force field formatter registration
-- [Adding a Wrapper or Adapter](extending-integration.md) — subprocess wrapper conventions for external CLI tools and in-memory adapter patterns for third-party libraries
+- [Architecture Overview](architecture-overview.md) — module responsibilities, the graph and tabular layers, the formatter hierarchy, the mutation contract, and the build-loop performance model
+- [molrs Backend](molrs-backend.md) — how the Rust column store and compute kernels surface in Python: boxes, neighbor lists, RDF, and the analysis catalog
 
-## Part III: Extending Core Structures
+## Extending MolPy
 
-Modifications at this layer require a thorough understanding of MolPy's type bucket system, force field parameter hierarchy, and potential dispatch chain. Contributions should be discussed in a GitHub issue before implementation begins.
+Ordered from plug-in interfaces (implement a subclass, register a handler) to core internals (discuss in a GitHub issue before implementation):
 
-- [Extending the Data Model](extending-core.md) — new `Entity` and `Link` subtypes, custom `Struct` subclasses, and identity-based hashing invariants
-- [Extending the Force Field](extending-forcefield.md) — custom `Style`, `Type`, and `Potential` definitions, and `ForceFieldFormatter` registration for serialization
-
-## Integrations
-
-- [MCP Suite for LLM Agents](../getting-started/mcp.md) — exposing MolPy's source code and symbol index to large language model agents via the MolCrafts MCP suite
+- [Adding a Compute Operation](extending-compute.md) — the `Compute` protocol for reusable analysis operations
+- [Adding an I/O Format](extending-io.md) — reader and writer base classes and the `FieldFormatter` canonicalization interface
+- [Adding a Wrapper or Adapter](extending-integration.md) — subprocess wrapper conventions and in-memory adapter patterns
+- [Extending the Data Model](extending-core.md) — new `Entity` and `Link` subtypes, custom `Struct` subclasses, and identity-hashing invariants
+- [Extending the Force Field](extending-forcefield.md) — molrs kernels, named `Style` classes, and export formatter registration
 
 ## Issue Tracking and Discussion
 
 - Bug reports and feature requests: <https://github.com/MolCrafts/molpy/issues>
 - Design discussions: <https://github.com/MolCrafts/molpy/discussions>
+- Agent-assisted development: the [MCP Suite](../user-guide/15_mcp.md) exposes MolPy's symbol index to LLM agents

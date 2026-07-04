@@ -32,7 +32,7 @@ print(result.returncode) # 0
 ## Related
 
 - [Concepts: Wrapper and Adapter](../tutorials/07_wrapper_and_adapter.md)
-- [Guide: AmberTools Integration](../user-guide/07_ambertools_integration.md)
+- [Guide: AmberTools Integration](../user-guide/13_ambertools_integration.md)
 
 ---
 

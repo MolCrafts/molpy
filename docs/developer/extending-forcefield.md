@@ -2,6 +2,9 @@
 
 This page shows how to add custom interaction styles and export formatters.
 
+!!! note "Discuss before you build"
+    New interaction styles span two repositories (a Rust kernel in molrs plus the Python style and formatters here). Open a [GitHub issue](https://github.com/MolCrafts/molpy/issues) describing the functional form before implementation; the [Architecture Overview](architecture-overview.md) explains where the pieces live.
+
 ## Where the math lives
 
 The force-field model — `ForceField`, the `Style` tree, the `Type` tree, and all

@@ -1,6 +1,6 @@
 # Coarse-Grained Structure
 
-This page explains the `CoarseGrain` data structure, why it stays out of the way of force-field choices, and how to project an atomistic system onto a coarse-grained one.
+`CoarseGrain` is `Atomistic` with beads instead of atoms — the same factories, transforms, and composition, with no mapping convention forced on you.
 
 ## A coarse-grained structure is the same kind of object as an atomistic one
 

@@ -2,7 +2,7 @@
 
 This page is a self-contained, textbook-style introduction to predicting
 **vibrational spectra** from molecular-dynamics trajectories — the time-correlation
-route that TRAVIS pioneered for *ab initio* MD. Every spectrum here is the Fourier
+route that the reference implementation pioneered for *ab initio* MD. Every spectrum here is the Fourier
 transform of an autocorrelation function (ACF) of a fluctuating quantity, dressed
 with the appropriate prefactor: a velocity ACF gives the vibrational density of
 states, a dipole-derivative ACF gives the infrared spectrum, a polarizability ACF
@@ -50,13 +50,17 @@ the spectra:
 
 The simplest spectrum is the **power spectrum** of the velocity ACF, the
 vibrational density of states (VDOS). It needs no electronic information — just the
-velocities — and locates every vibrational mode, IR-active or not.
+velocities — and locates every vibrational mode, IR-active or not. See
+[Velocity Autocorrelation & VDOS](vacf.md) for the full theory (cage effect,
+Green–Kubo diffusion); the `dt_fs` and `cache_size` choices below follow
+[vacf.md §6 — Hyperparameter effects](vacf.md#6-hyperparameter-effects).
 
 ```python
 from molpy.compute import PowerSpectrum, compute_acf
 
-vacf = compute_acf(velocities)          # raw velocity autocorrelation
-vdos = PowerSpectrum()(vacf, dt_fs=0.5) # -> {frequency (cm^-1), intensity}
+# velocities: (n_frames, n_atoms, 3); cache_size = max lag in frames
+vacf = compute_acf(velocities, cache_size=4096)  # raw velocity autocorrelation
+vdos = PowerSpectrum()(vacf, dt_fs=0.5)          # -> {frequency (cm^-1), intensity}
 ```
 
 ---
@@ -99,7 +103,7 @@ roa = RoaSpectrum(averaged=True)(acf_iso, acf_aniso, dt_fs=0.5)
 rr  = ResonanceRamanSpectrum(incident_frequency_cm1=20000.0)(acf_iso, acf_aniso, dt_fs=0.5)
 ```
 
-These reproduce TRAVIS's bulk-phase chiral-spectroscopy predictions, the first of
+These reproduce the reference implementation's bulk-phase chiral-spectroscopy predictions, the first of
 their kind from MD.
 
 ---
@@ -129,7 +133,7 @@ their kind from MD.
 - M. Brehm, M. Thomas, *J. Phys. Chem. Lett.* **8**, 3409 (2017) — VCD, ROA and
   resonance Raman from MD.
 - M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — TRAVIS.
+  (2020) — reference implementation.
 
 ## See also
 

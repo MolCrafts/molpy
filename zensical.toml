@@ -1,0 +1,197 @@
+[project]
+site_name = "MolPy"
+site_url = "https://molpy.molcrafts.org"
+repo_url = "https://github.com/MolCrafts/molpy"
+repo_name = "MolCrafts/molpy"
+site_description = "A Python toolkit for building, editing, and parameterizing complex molecular systems."
+copyright = "Copyright &copy; 2024 - 2026 MolCrafts Team"
+docs_dir = "docs"
+site_dir = "site"
+
+# Markdown extensions are intentionally not listed: Zensical's built-in default
+# set (admonition, attr_list, def_list, footnotes, md_in_html, toc permalink,
+# pymdownx.{arithmatex,details,emoji,highlight,inlinehilite,superfences,tabbed,
+# tasklist}, and more) is a superset of what these docs use.
+
+# The user-guide notebooks are pre-rendered to Markdown by
+# scripts/render_notebooks.py (Zensical does not run notebooks at build time);
+# the nav points at the generated *.md pages below.
+nav = [
+  { "Home" = "index.md" },
+
+  { "Tutorials" = [
+    "tutorials/index.md",
+    { "Get Running" = [
+      { "Installation" = "getting-started/installation.md" },
+      { "Quickstart" = "getting-started/quickstart.md" },
+      { "Example Gallery" = "getting-started/examples.md" },
+      { "FAQ" = "getting-started/faq.md" },
+    ] },
+    { "The Data Model" = [
+      { "Atomistic and Topology" = "tutorials/01_atomistic_and_topology.md" },
+      { "Block and Frame" = "tutorials/02_block_and_frame.md" },
+      { "Box and Periodicity" = "tutorials/03_box_and_periodicity.md" },
+      { "Force Field" = "tutorials/04_force_field.md" },
+      { "Trajectory" = "tutorials/05_trajectory.md" },
+      { "Selector" = "tutorials/06_selector.md" },
+      { "Wrapper and Adapter" = "tutorials/07_wrapper_and_adapter.md" },
+      { "Coarse-Grained Structure" = "tutorials/08_coarsegrain.md" },
+      { "Units" = "tutorials/09_units.md" },
+    ] },
+    { "Appendix" = [
+      { "Naming Conventions" = "tutorials/naming-conventions.md" },
+      { "Glossary" = "tutorials/glossary.md" },
+    ] },
+  ] },
+
+  { "Guides" = [
+    "user-guide/index.md",
+    { "Foundations" = [
+      { "Parsing Chemistry" = "user-guide/01_parsing_chemistry.md" },
+    ] },
+    { "Chain & Network Construction" = [
+      { "Step by Step" = "user-guide/02_polymer_stepwise.md" },
+      { "Topology-Driven Assembly" = "user-guide/03_polymer_topology.md" },
+      { "Crosslinked Networks" = "user-guide/04_crosslinking.md" },
+      { "Polydisperse Systems" = "user-guide/05_polydisperse_systems.md" },
+    ] },
+    { "Parameterization" = [
+      { "Force Field Typification" = "user-guide/06_typifier.md" },
+    ] },
+    { "Geometry & Packing" = [
+      { "3D Conformer Generation" = "user-guide/07_conformers.md" },
+      { "Geometry Optimization" = "user-guide/08_geometry_optimization.md" },
+      { "Packing Systems" = "user-guide/09_packing.md" },
+      { "Polarizable & Virtual-Site Models" = "user-guide/10_polarizable.md" },
+    ] },
+    { "Export & Engines" = [
+      { "File I/O" = "user-guide/11_io.md" },
+      { "Simulation Engines" = "user-guide/12_engine.md" },
+    ] },
+    { "Tools & Ecosystem" = [
+      { "AmberTools Integration" = "user-guide/13_ambertools_integration.md" },
+      { "Moltemplate CLI" = "user-guide/14_moltemplate_cli.md" },
+      { "MCP Suite" = "user-guide/15_mcp.md" },
+    ] },
+  ] },
+
+  { "Compute" = [
+    "compute/index.md",
+    # Groups mirror src/molpy/compute/ module organization:
+    # Structure  = neighborlist/rdf/density/diffraction/pmft, distribution/spatial,
+    #              order/environment, shape/cluster/decomposition, hbond, voronoi
+    # Dynamics   = msd/mcd/onsager/jacf/pmsd, time_series, van_hove/reorientation, persist
+    # Spectroscopy = dielectric, spectra
+    { "Structure" = [
+      { "Structural Analysis" = "compute/structure.md" },
+      { "Distribution Functions" = "compute/distributions.md" },
+      { "Bond-Orientational Order" = "compute/order.md" },
+      { "Shape, Clustering & Decomposition" = "compute/descriptors.md" },
+      { "Hydrogen-Bond Networks" = "compute/hbonds.md" },
+      { "Radical Voronoi" = "compute/voronoi.md" },
+    ] },
+    { "Dynamics" = [
+      { "Diffusion & Ionic Transport" = "compute/transport.md" },
+      { "Velocity Autocorrelation & VDOS" = "compute/vacf.md" },
+      { "Van Hove & Reorientation" = "compute/van-hove.md" },
+      { "Pair Persistence" = "compute/persistence.md" },
+    ] },
+    { "Spectroscopy" = [
+      { "Dielectric Spectroscopy" = "compute/dielectric.md" },
+      { "Vibrational Spectra" = "compute/spectra.md" },
+    ] },
+    { "Compute Workflows" = "compute/workflows.md" },
+  ] },
+
+  { "API Reference" = [
+    "api/index.md",
+    # Core data structures
+    { "Core" = "api/core.md" },
+    # Construction pipeline
+    { "Parser" = "api/parser.md" },
+    { "Reacter" = "api/reacter.md" },
+    { "Builder" = "api/builder.md" },
+    { "Packing" = "api/pack.md" },
+    { "Conformer" = "api/conformer.md" },
+    # Parameterization
+    { "Typifier" = "api/typifier.md" },
+    { "Potentials" = "api/potential.md" },
+    # I/O and integration
+    { "I/O" = "api/io.md" },
+    { "Adapter" = "api/adapter.md" },
+    { "Wrapper" = "api/wrapper.md" },
+    # High-level operations
+    { "Engine" = "api/engine.md" },
+    { "Optimization" = "api/optimize.md" },
+    { "Compute" = "api/compute.md" },
+    { "Data" = "api/data.md" },
+  ] },
+
+  { "Developer Guide" = [
+    "developer/index.md",
+    { "Contributing" = [
+      { "Development Setup" = "developer/development-setup.md" },
+      { "Contributing Workflow" = "developer/contributing.md" },
+      { "Coding Style" = "developer/coding-style.md" },
+      { "Testing" = "developer/testing.md" },
+      { "Release Process" = "developer/release-process.md" },
+      { "Third-Party Attributions" = "developer/attribution.md" },
+    ] },
+    { "Architecture" = [
+      { "Architecture Overview" = "developer/architecture-overview.md" },
+      { "molrs Backend" = "developer/molrs-backend.md" },
+    ] },
+    { "Extending MolPy" = [
+      { "Adding a Compute Operation" = "developer/extending-compute.md" },
+      { "Adding an I/O Format" = "developer/extending-io.md" },
+      { "Adding a Wrapper or Adapter" = "developer/extending-integration.md" },
+      { "Extending the Data Model" = "developer/extending-core.md" },
+      { "Extending the Force Field" = "developer/extending-forcefield.md" },
+    ] },
+  ] },
+
+  { "Changelog" = "changelog.md" },
+]
+
+extra_javascript = [
+  "assets/javascripts/mathjax.js",
+  "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
+]
+
+extra_css = ["assets/stylesheets/extra.css"]
+
+[project.theme]
+name = "molcrafts"
+language = "en"
+favicon = "assets/favicon.ico"
+logo = "assets/molpy.png"
+
+[project.extra]
+generator = false
+
+[project.extra.molcrafts]
+product = "molpy"
+accent = "#0284c7"                       # primary (主) — molpy signature colour
+accent_soft = "rgba(2, 132, 199, 0.14)"  # secondary (副) — soft fill behind it
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/MolCrafts/molpy"
+
+[project.plugins.search]
+
+[project.plugins.mkdocstrings]
+default_handler = "python"
+
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["src"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "google"
+show_source = false
+show_root_heading = true
+show_root_full_path = false
+separate_signature = true
+heading_level = 3
+merge_init_into_class = true
+filters = ["!^_"]

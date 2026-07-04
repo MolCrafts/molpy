@@ -9,15 +9,17 @@ reorientational time-correlation functions of bond (or molecular) vectors,
 
 with ``P_1(x) = x`` and ``P_2(x) = (3x^2 - 1)/2``. ``C_2(t)`` is the quantity
 probed by NMR and dielectric relaxation; its decay time is the reorientational
-correlation time. Thin shell over the molrs TRAVIS-parity kernel; takes
-``(frames, pairs)`` where ``pairs`` selects the vector endpoints.
+correlation time. Thin shell over the molrs analysis-parity kernel; takes
+``(frames)`` only. The ``(tail, head)`` endpoints of each tracked bond vector
+are read from each frame's core ``bonds`` topology block, so no separate
+endpoint-index array is passed.
 
 References
 ----------
 - B. J. Berne, R. Pecora, *Dynamic Light Scattering*, Wiley (1976) — reorientational
   correlation functions.
 - M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — TRAVIS.
+  (2020) — reference implementation.
 """
 
 from __future__ import annotations
@@ -39,8 +41,9 @@ class LegendreReorientation(Compute):
 
     Notes
     -----
-    Called as ``compute(frames, pairs)`` where ``pairs`` is an integer array of
-    ``(i, j)`` endpoints defining each tracked vector. The result exposes
+    Called as ``compute(frames)`` only. The ``(tail, head)`` endpoints defining
+    each tracked bond vector are read from each frame's core ``bonds`` topology
+    block, so no separate endpoint-index array is passed. The result exposes
     ``lags``, ``c1``, and ``c2``.
     """
 
@@ -48,5 +51,5 @@ class LegendreReorientation(Compute):
         super().__init__(max_lag=max_lag, stride=stride)
         self._inner = molrs.LegendreReorientation(max_lag, stride)
 
-    def __call__(self, frames, pairs):
-        return self._inner.compute(frames, pairs)
+    def __call__(self, frames):
+        return self._inner.compute(frames)

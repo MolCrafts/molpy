@@ -148,6 +148,9 @@ docs/**
 !docs/**/*.ipynb
 !docs/**/*.md
 !docs/assets/**/
+!docs/assets/**/*.glb
+!docs/assets/**/*.js
+!docs/assets/**/*.sdf
 
 # Demo Notebooks
 notebooks/
@@ -158,3 +161,6 @@ notebooks/
 
 # Lock file not version-controlled (avoid manifest/lock drift)
 uv.lock
+
+# model-viewer library is loaded from jsdelivr CDN, not vendored (exceeds 1MB hook limit)
+docs/assets/vendor/model-viewer.min.js

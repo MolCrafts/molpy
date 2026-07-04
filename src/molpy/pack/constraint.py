@@ -60,6 +60,9 @@ class OrConstraint(Constraint):
 
 class InsideBoxConstraint(Constraint):
     def __init__(self, length, origin=np.array([0, 0, 0])):
+        length = np.asarray(length, dtype=float)
+        if length.ndim == 0:  # scalar edge -> cube
+            length = np.full(3, float(length))
         self.region = BoxRegion(length, origin)
         self.lengths = np.array(length)
         self.origin = np.array(origin)

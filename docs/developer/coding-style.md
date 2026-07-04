@@ -29,7 +29,7 @@ Keep functions under 50 lines and focused on one task. Keep files under 800 line
 
 ## Code identifiers
 
-Use `snake_case` for functions and variables, `PascalCase` for classes, `UPPER_CASE` for constants. Canonical data-field names such as `element`, `charge`, and `mol_id` are defined in [Naming Conventions](../getting-started/naming-conventions.md); do not introduce local variants in developer docs or extension examples. Use MolPy-specific terms precisely: `topology` means the bond graph (not "connections"), `atom type` means the force field identifier (not "kind"), `struct` refers to the MolPy `Struct` base class (not a generic "structure").
+Use `snake_case` for functions and variables, `PascalCase` for classes, `UPPER_CASE` for constants. Canonical data-field names such as `element`, `charge`, and `mol_id` are defined in [Naming Conventions](../tutorials/naming-conventions.md); do not introduce local variants in developer docs or extension examples. Use MolPy-specific terms precisely: `topology` means the bond graph (not "connections"), `atom type` means the force field identifier (not "kind"), `struct` refers to the MolPy `Struct` base class (not a generic "structure").
 
 
 ## Type hints

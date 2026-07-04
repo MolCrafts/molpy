@@ -1170,37 +1170,46 @@ class LammpsDataWriter(DataWriter):
             atom_type_list = sorted([str(t) for t in unique_types])
             type_to_id = self._get_type_to_id_mapping(atom_type_list)
 
-        for idx in range(len(atoms_data["type"])):
-            # Use atom ID from the 'id' field
-            atom_id = int(atoms_data["id"][idx])
-            atom_type_str = str(atoms_data["type"][idx])
-            # Use merged type_id mapping, fallback to old behavior
-            if atom_type_str in type_to_id:
-                atom_type = type_to_id[atom_type_str]
-            else:
-                # Fallback: compute on the fly if not in merged list
-                unique_types = np.unique(atoms_data["type"])
-                fallback_mapping = {
-                    str(t): type_idx + 1
-                    for type_idx, t in enumerate(sorted(unique_types))
-                }
-                atom_type = fallback_mapping.get(atom_type_str, 1)
+        # Materialise every column ONCE (each ``atoms_data[col]`` view rebuilds
+        # the whole molrs column — indexing it per row is O(N^2), catastrophic
+        # for the string ``type`` column on a large packed system).
+        ids = np.asarray(atoms_data["id"])
+        types = np.asarray(atoms_data["type"])
+        xs = np.asarray(atoms_data["x"], dtype=float)
+        ys = np.asarray(atoms_data["y"], dtype=float)
+        zs = np.asarray(atoms_data["z"], dtype=float)
+        mol_ids = charges = None
+        if self.atom_style in ("full",):
+            mol_ids = np.asarray(atoms_data["mol_id"])
+        if self.atom_style in ("full", "charge"):
+            charges = np.asarray(atoms_data["charge"], dtype=float)
 
-            # Get coordinates - must use separate x, y, z fields
-            x = float(atoms_data["x"][idx])
-            y = float(atoms_data["y"][idx])
-            z = float(atoms_data["z"][idx])
+        # Resolve every type id up front (unique set is tiny vs N atoms).
+        fallback_mapping: dict[str, int] = {}
+        if any(str(t) not in type_to_id for t in np.unique(types)):
+            fallback_mapping = {
+                str(t): type_idx + 1
+                for type_idx, t in enumerate(sorted(np.unique(types)))
+            }
+
+        for idx in range(len(types)):
+            atom_id = int(ids[idx])
+            atom_type_str = str(types[idx])
+            atom_type = type_to_id.get(
+                atom_type_str, fallback_mapping.get(atom_type_str, 1)
+            )
+            x = xs[idx]
+            y = ys[idx]
+            z = zs[idx]
 
             if self.atom_style == "full":
-                mol_id = int(atoms_data["mol_id"][idx])
-                charge = float(atoms_data["charge"][idx])
                 lines.append(
-                    f"{atom_id} {mol_id} {atom_type} {charge:.6f} {x:.6f} {y:.6f} {z:.6f}"
+                    f"{atom_id} {int(mol_ids[idx])} {atom_type} "
+                    f"{charges[idx]:.6f} {x:.6f} {y:.6f} {z:.6f}"
                 )
             elif self.atom_style == "charge":
-                charge = float(atoms_data["charge"][idx])
                 lines.append(
-                    f"{atom_id} {atom_type} {charge:.6f} {x:.6f} {y:.6f} {z:.6f}"
+                    f"{atom_id} {atom_type} {charges[idx]:.6f} {x:.6f} {y:.6f} {z:.6f}"
                 )
             else:  # atomic
                 lines.append(f"{atom_id} {atom_type} {x:.6f} {y:.6f} {z:.6f}")
@@ -1235,15 +1244,11 @@ class LammpsDataWriter(DataWriter):
                 "This field is required for LAMMPS output to map indices to atom IDs."
             )
 
-        # Build index to ID mapping
-        # Frame uses index (0-based), we need to map to atom ID
-        index_to_id = {}
-        # Also build ID set for validation
-        atom_ids_set = set()
-        for idx in range(len(atoms_data["type"])):
-            atom_id = int(atoms_data["id"][idx])
-            index_to_id[idx] = atom_id
-            atom_ids_set.add(atom_id)
+        # Build index to ID mapping (0-based frame index -> LAMMPS atom ID).
+        # Materialise the id column once; per-row ``atoms_data["id"][idx]`` would
+        # rebuild the whole molrs column each iteration (O(N^2)).
+        atom_id_arr = np.asarray(atoms_data["id"])
+        index_to_id = {i: int(v) for i, v in enumerate(atom_id_arr)}
 
         merged_types = self._get_merged_type_labels(frame)
 
@@ -1311,102 +1316,51 @@ class LammpsDataWriter(DataWriter):
                 f"but expected {n_items} (based on atom index fields)"
             )
 
+        # Materialise every column ONCE — per-row ``data[col][idx]`` on a molrs
+        # Block rebuilds the whole column each iteration (O(N^2); the string
+        # ``type`` column made this the dominant writer cost).
+        type_arr = np.asarray(data["type"])
+        ai = np.asarray(data["atomi"])
+        aj = np.asarray(data["atomj"])
+        ak = np.asarray(data["atomk"]) if "atomk" in data else None
+        al = np.asarray(data["atoml"]) if "atoml" in data else None
+        n_atoms = len(atom_id_arr)
+
+        fallback_mapping: dict[str, int] = {}
+        if any(str(t) not in type_to_id for t in np.unique(type_arr)):
+            fallback_mapping = {
+                str(t): type_idx + 1
+                for type_idx, t in enumerate(sorted(np.unique(type_arr)))
+            }
+
+        def _id(atom_idx: int, pos: str) -> int:
+            if atom_idx not in index_to_id:
+                raise ValueError(
+                    f"{section_name.capitalize()} {idx + 1}: {pos} index "
+                    f"{atom_idx} is out of range. Valid indices: 0-{n_atoms - 1}"
+                )
+            return index_to_id[atom_idx]
+
         for idx in range(n_items):
             item_id = idx + 1
-            item_type_str = str(data["type"][idx])
-            # Use merged type_id mapping, fallback to old behavior
-            if item_type_str in type_to_id:
-                item_type = type_to_id[item_type_str]
-            else:
-                # Fallback: compute on the fly if not in merged list
-                unique_types = np.unique(data["type"])
-                fallback_mapping = {
-                    str(t): type_idx + 1
-                    for type_idx, t in enumerate(sorted(unique_types))
-                }
-                item_type = fallback_mapping.get(item_type_str, 1)
+            item_type_str = str(type_arr[idx])
+            item_type = type_to_id.get(
+                item_type_str, fallback_mapping.get(item_type_str, 1)
+            )
 
             if section_name == "bonds":
-                # Convert indices to IDs
-                atom1_idx = int(data["atomi"][idx])
-                atom2_idx = int(data["atomj"][idx])
-
-                # Validate indices before converting - raise error if invalid
-                if atom1_idx not in index_to_id:
-                    raise ValueError(
-                        f"Bond {idx + 1}: atom_i index {atom1_idx} is out of range. "
-                        f"Valid indices: 0-{len(atoms_data) - 1}"
-                    )
-                if atom2_idx not in index_to_id:
-                    raise ValueError(
-                        f"Bond {idx + 1}: atom_j index {atom2_idx} is out of range. "
-                        f"Valid indices: 0-{len(atoms_data) - 1}"
-                    )
-
-                atom1_id = index_to_id[atom1_idx]
-                atom2_id = index_to_id[atom2_idx]
-                lines.append(f"{item_id} {item_type} {atom1_id} {atom2_id}")
+                a1 = _id(int(ai[idx]), "atom_i")
+                a2 = _id(int(aj[idx]), "atom_j")
+                lines.append(f"{item_id} {item_type} {a1} {a2}")
             elif section_name == "angles":
-                # Convert indices to IDs
-                atom1_idx = int(data["atomi"][idx])
-                atom2_idx = int(data["atomj"][idx])
-                atom3_idx = int(data["atomk"][idx])
-
-                # Validate indices before converting - raise error if invalid
-                if atom1_idx not in index_to_id:
-                    raise ValueError(
-                        f"Angle {idx + 1}: atom_i index {atom1_idx} is out of range. "
-                        f"Valid indices: 0-{len(atoms_data) - 1}"
-                    )
-                if atom2_idx not in index_to_id:
-                    raise ValueError(
-                        f"Angle {idx + 1}: atom_j index {atom2_idx} is out of range. "
-                        f"Valid indices: 0-{len(atoms_data) - 1}"
-                    )
-                if atom3_idx not in index_to_id:
-                    raise ValueError(
-                        f"Angle {idx + 1}: atom_k index {atom3_idx} is out of range. "
-                        f"Valid indices: 0-{len(atoms_data) - 1}"
-                    )
-
-                atom1_id = index_to_id[atom1_idx]
-                atom2_id = index_to_id[atom2_idx]
-                atom3_id = index_to_id[atom3_idx]
-                lines.append(f"{item_id} {item_type} {atom1_id} {atom2_id} {atom3_id}")
+                a1 = _id(int(ai[idx]), "atom_i")
+                a2 = _id(int(aj[idx]), "atom_j")
+                a3 = _id(int(ak[idx]), "atom_k")
+                lines.append(f"{item_id} {item_type} {a1} {a2} {a3}")
             elif section_name in ["dihedrals", "impropers"]:
-                # Convert indices to IDs
-                atom1_idx = int(data["atomi"][idx])
-                atom2_idx = int(data["atomj"][idx])
-                atom3_idx = int(data["atomk"][idx])
-                atom4_idx = int(data["atoml"][idx])
-
-                # Validate indices before converting - raise error if invalid
-                if atom1_idx not in index_to_id:
-                    raise ValueError(
-                        f"{section_name.capitalize()} {idx + 1}: atom_i index {atom1_idx} is out of range. "
-                        f"Valid indices: 0-{len(atoms_data) - 1}"
-                    )
-                if atom2_idx not in index_to_id:
-                    raise ValueError(
-                        f"{section_name.capitalize()} {idx + 1}: atom_j index {atom2_idx} is out of range. "
-                        f"Valid indices: 0-{len(atoms_data) - 1}"
-                    )
-                if atom3_idx not in index_to_id:
-                    raise ValueError(
-                        f"{section_name.capitalize()} {idx + 1}: atom_k index {atom3_idx} is out of range. "
-                        f"Valid indices: 0-{len(atoms_data) - 1}"
-                    )
-                if atom4_idx not in index_to_id:
-                    raise ValueError(
-                        f"{section_name.capitalize()} {idx + 1}: atom_l index {atom4_idx} is out of range. "
-                        f"Valid indices: 0-{len(atoms_data) - 1}"
-                    )
-
-                atom1_id = index_to_id[atom1_idx]
-                atom2_id = index_to_id[atom2_idx]
-                atom3_id = index_to_id[atom3_idx]
-                atom4_id = index_to_id[atom4_idx]
-                lines.append(
-                    f"{item_id} {item_type} {atom1_id} {atom2_id} {atom3_id} {atom4_id}"
-                )
+                a1 = _id(int(ai[idx]), "atom_i")
+                a2 = _id(int(aj[idx]), "atom_j")
+                a3 = _id(int(ak[idx]), "atom_k")
+                a4 = _id(int(al[idx]), "atom_l")
+                lines.append(f"{item_id} {item_type} {a1} {a2} {a3} {a4}")
         lines.append("")

@@ -1,4 +1,4 @@
-# The compute layer runs on molrs
+# molrs Backend
 
 MolPy's analysis operators are thin Python shells over [molrs](https://github.com/MolCrafts/molrs),
 a Rust column store and compute kernel. molrs is a **required** runtime
@@ -122,8 +122,8 @@ molrs result type unchanged:
 They follow the same call convention as `NeighborList` / `RDF`. The
 neighbor-based operators take `(frames, nlists)`; a few take other inputs
 (`GaussianDensity` and `StaticStructureFactorDebye` take just `frames`,
-`Nematic` takes per-particle `directors`, `ClusterProperties` takes the
-`Cluster` result):
+`Nematic` reads per-particle directors from the frame's `orientations` topology
+block, `ClusterProperties` takes the `Cluster` result):
 
 ```python
 from molpy.compute import MSD, GyrationTensor, Steinhardt, StaticStructureFactorDebye

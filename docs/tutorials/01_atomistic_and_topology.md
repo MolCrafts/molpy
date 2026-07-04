@@ -1,6 +1,6 @@
 # Atomistic and Topology
 
-This page explains how MolPy represents a molecule as an editable graph, how connectivity is queried, and how higher-order topology is derived from bonds.
+A molecule in MolPy is a graph you edit: atoms are nodes, bonds are edges, and angles, dihedrals, and rings are derived from connectivity on demand.
 
 ## Why a graph?
 

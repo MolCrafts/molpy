@@ -2,7 +2,7 @@
 
 # Topology-Driven Assembly with CGSmiles
 
-This guide shows how CGSmiles expressions can specify linear, cyclic, and branched polymer architectures under a common builder configuration.
+Change the CGSmiles string, keep everything else: one builder configuration yields linear chains, rings, and branched stars.
 
 !!! note "Prerequisites"
     This guide requires RDKit (for `generate_3d`), the `oplsaa.xml` force field, and familiarity with [Stepwise Polymer Construction](02_polymer_stepwise.md).
@@ -39,9 +39,11 @@ for name, expr in expressions.items():
     print(f"{name}: nodes={len(ir.base_graph.nodes)}, labels={labels}")
 ```
 
-    linear: nodes=5, labels=['EO2', 'EO2', 'EO2', 'EO2', 'PS']
-    ring: nodes=5, labels=['EO2', 'PS', 'EO2', 'PS', 'EO2']
-    branch: nodes=4, labels=['PS', 'EO3', 'PS', 'PS']
+```text
+linear: nodes=5, labels=['EO2', 'EO2', 'EO2', 'EO2', 'PS']
+ring: nodes=5, labels=['EO2', 'PS', 'EO2', 'PS', 'EO2']
+branch: nodes=4, labels=['PS', 'EO3', 'PS', 'PS']
+```
 
 
 With the graph validated, the next step is giving each node a physical structure.
@@ -80,39 +82,43 @@ for label, mon in library.items():
     print(f"{label}: atoms={len(mon.atoms)}, ports={ports}")
 ```
 
-    2026-06-30 21:08:23,619 - molpy.io.forcefield.xml - INFO - Using built-in force field: /Users/roykid/work/molcrafts/molpy/src/molpy/data/forcefield/oplsaa.xml
+```text
+2026-06-30 21:08:23,619 - molpy.io.forcefield.xml - INFO - Using built-in force field: /Users/roykid/work/molcrafts/molpy/src/molpy/data/forcefield/oplsaa.xml
+```
 
 
-    2026-06-30 21:08:23,623 - molpy.io.forcefield.xml - INFO - Parsing force field: OPLS-AA v0.1.0
+```text
+2026-06-30 21:08:23,623 - molpy.io.forcefield.xml - INFO - Parsing force field: OPLS-AA v0.1.0
 
 
-    2026-06-30 21:08:23,623 - molpy.io.forcefield.xml - INFO - Combining rule: geometric
+2026-06-30 21:08:23,623 - molpy.io.forcefield.xml - INFO - Combining rule: geometric
 
 
-    2026-06-30 21:08:23,630 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types
+2026-06-30 21:08:23,630 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types
 
 
-    2026-06-30 21:08:23,631 - molpy.io.forcefield.xml - INFO - Parsed 307 bond types (OPLS-AA with unit conversion)
+2026-06-30 21:08:23,631 - molpy.io.forcefield.xml - INFO - Parsed 307 bond types (OPLS-AA with unit conversion)
 
 
-    2026-06-30 21:08:23,634 - molpy.io.forcefield.xml - INFO - Parsed 964 angle types (OPLS-AA with unit conversion)
+2026-06-30 21:08:23,634 - molpy.io.forcefield.xml - INFO - Parsed 964 angle types (OPLS-AA with unit conversion)
 
 
-    2026-06-30 21:08:23,635 - molpy.io.forcefield._rb_opls - WARNING - RB coefficients do not lie on the ideal 4-term OPLS manifold (C0+C1+C2+C3+C4 = 10.041600, expected ≈ 0). Conversion will preserve forces and relative energies exactly, but will introduce a constant energy offset of ΔE = 10.041600 kJ/mol. This does not affect MD simulations.
+2026-06-30 21:08:23,635 - molpy.io.forcefield._rb_opls - WARNING - RB coefficients do not lie on the ideal 4-term OPLS manifold (C0+C1+C2+C3+C4 = 10.041600, expected ≈ 0). Conversion will preserve forces and relative energies exactly, but will introduce a constant energy offset of ΔE = 10.041600 kJ/mol. This does not affect MD simulations.
 
 
-    2026-06-30 21:08:23,638 - molpy.io.forcefield.xml - INFO - Parsed 1089 dihedral types (OPLS-AA with unit conversion)
+2026-06-30 21:08:23,638 - molpy.io.forcefield.xml - INFO - Parsed 1089 dihedral types (OPLS-AA with unit conversion)
 
 
-    2026-06-30 21:08:23,640 - molpy.io.forcefield.xml - INFO - Parsed 825 nonbonded parameters (OPLS-AA with unit conversion)
+2026-06-30 21:08:23,640 - molpy.io.forcefield.xml - INFO - Parsed 825 nonbonded parameters (OPLS-AA with unit conversion)
 
 
-    2026-06-30 21:08:23,640 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types (by type)
+2026-06-30 21:08:23,640 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types (by type)
 
 
-    EO2: atoms=10, ports=['$', '$']
-    EO3: atoms=17, ports=['$', '$', '$']
-    PS: atoms=29, ports=['$', '$']
+EO2: atoms=10, ports=['$', '$']
+EO3: atoms=17, ports=['$', '$', '$']
+PS: atoms=29, ports=['$', '$']
+```
 
 
 With a complete library, the only remaining definition is the chemistry that connects one template to another.
@@ -198,13 +204,17 @@ for name, expr in expressions.items():
     print(f"{name}: atoms={len(polymer.atoms)}, steps={result.total_steps}")
 ```
 
-    linear: atoms=57, steps=4
+```text
+linear: atoms=57, steps=4
+```
 
 
-    ring: atoms=73, steps=5
+```text
+ring: atoms=73, steps=5
 
 
-    branch: atoms=95, steps=3
+branch: atoms=95, steps=3
+```
 
 
 The same builder, the same reaction, the same library — only the CGSmiles string changes. This is the key advantage of topology-driven assembly: new architectures do not require new code. Once a product exists in memory, writing it to disk follows a single pattern regardless of topology.

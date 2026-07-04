@@ -1,6 +1,6 @@
 # Selector
 
-This page explains how MolPy expresses atom selections as composable predicates over `Block` columns, including filters by element, type, coordinate range, and distance.
+Ask for "all carbons within 3 Å of this point" as a composable expression, not a hand-written loop.
 
 ## Selecting atoms without loops
 

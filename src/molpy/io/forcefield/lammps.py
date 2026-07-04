@@ -928,9 +928,18 @@ class LAMMPSForceFieldWriter:
         """
         types = [t for t in style.types if type_filter.includes(t)]
         if types:
+            # A merged force field carries one type object per contributing
+            # component (per-monomer parameterisation duplicates e.g. `c3`,
+            # `c-c3` many times). A labelmap LAMMPS file holds exactly one coeff
+            # per type name, so emit the first occurrence of each coeff id and
+            # drop the rest — the data file's Type Labels count then matches.
+            seen: set[str] = set()
             for typ in types:
-                params = self._get_type_params(typ, style)
                 coeff_id = self._get_coeff_id(typ, style_type)
+                if coeff_id in seen:
+                    continue
+                seen.add(coeff_id)
+                params = self._get_type_params(typ, style)
                 lines.append(
                     f"{style_type}_coeff {coeff_id} {self._format_params(params)}\n"
                 )
@@ -977,11 +986,16 @@ class LAMMPSForceFieldWriter:
         lines.append(f"{style_type}_style hybrid {style_names}\n")
         lines.append("\n")
 
+        # Dedup coeff ids across every hybrid sub-style (see _write_type_coeffs).
+        seen: set[str] = set()
         for style in styles:
             types = [t for t in style.types if type_filter.includes(t)]
             for typ in types:
-                params = self._get_type_params(typ, style)
                 coeff_id = self._get_coeff_id(typ, style_type)
+                if coeff_id in seen:
+                    continue
+                seen.add(coeff_id)
+                params = self._get_type_params(typ, style)
                 lines.append(
                     f"{style_type}_coeff {coeff_id} {style.name} {self._format_params(params)}\n"
                 )

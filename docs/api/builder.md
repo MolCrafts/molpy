@@ -15,6 +15,9 @@ System assembly: polymer chain construction from G-BigSMILES / CGSmiles notation
 | `Placer` | Geometric placement (separator + orienter) | Controlling inter-monomer geometry |
 | `CovalentSeparator` | Covalent radii-based distance (buffer in Å) | Default monomer spacing |
 | `LinearOrienter` | Linear chain orientation | Default growth direction |
+| `DrudeBuilder` | Add Drude oscillators (CL&Pol polarizable model) | Polarizable force fields |
+| `Tip4pBuilder` | Add TIP4P/M-site virtual sites | Rigid 4-site water |
+| `VirtualSiteBuilder` | Base class for virtual-site construction | Custom virtual-site schemes |
 
 ## Canonical example
 
@@ -105,3 +108,11 @@ High-level entry functions (`polymer`, `polymer_system`,
 `prepare_monomer`, `generate_3d`).
 
 ::: molpy.builder.polymer.dsl
+
+### Virtual Sites
+
+Add Drude oscillators (CL&Pol) or TIP4P M-sites to a structure; each builder
+copies its input, selects host atoms, builds the virtual sites, and
+redistributes mass/charge without mutating the caller.
+
+::: molpy.builder.virtualsite

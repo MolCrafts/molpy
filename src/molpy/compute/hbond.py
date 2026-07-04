@@ -4,7 +4,7 @@
 ``(D, H)`` pairs and acceptor atoms, using the :class:`HBondCriterion`
 (donor-acceptor distance and D-H...A angle). Pair these counts with the
 :class:`~molpy.compute.persist.Persist` survival analysis for hydrogen-bond
-lifetime dynamics. Thin shell over the molrs TRAVIS-parity kernel; takes
+lifetime dynamics. Thin shell over the molrs analysis-parity kernel; takes
 ``(frames)``.
 
 References
@@ -12,7 +12,7 @@ References
 - A. Luzar, D. Chandler, *Nature* **379**, 55 (1996); *Phys. Rev. Lett.* **76**,
   928 (1996) — geometric hydrogen-bond criterion and bond-lifetime kinetics.
 - M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — TRAVIS.
+  (2020) — reference implementation.
 """
 
 from __future__ import annotations

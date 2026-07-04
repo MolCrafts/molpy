@@ -1,6 +1,6 @@
 # PEO-LiTFSI with AmberTools
 
-This guide presents an AmberTools-based workflow for parameterizing ions, building PEO chains, and assembling a PEO-LiTFSI electrolyte system within MolPy.
+Parameterize the ions with antechamber, grow PEO chains with tleap, and assemble a PEO-LiTFSI electrolyte at target density — a complete AmberTools workflow driven from MolPy.
 
 !!! warning "External dependencies"
     This guide requires **AmberTools** (via conda), **RDKit**, and **Packmol**. All three must be installed and accessible. Without AmberTools, no code on this page will run.
@@ -232,7 +232,7 @@ Merging is done before packing rather than after because Packmol operates on coo
 ```python
 import numpy as np
 from molpy.io import read_amber
-from molpy.pack import Molpack, InsideBoxConstraint
+from molpy.pack import Packmol, InsideBoxConstraint
 
 # Read TFSI from Amber files generated in Stage 1
 tfsi_frame, tfsi_ff = read_amber(
@@ -245,13 +245,13 @@ combined_ff = peo_ff.merge(tfsi_ff).merge(li_ff)
 
 # Pack system
 box_size = 60.0
-packer = Molpack(workdir=output_dir / "packmol")
+packer = Packmol(workdir=output_dir / "packmol")
 constraint = InsideBoxConstraint(length=[box_size] * 3, origin=[0.0] * 3)
-packer.add_target(peo_frame, number=3, constraint=constraint)
-packer.add_target(li_frame, number=10, constraint=constraint)
-packer.add_target(tfsi_frame, number=10, constraint=constraint)
+packer.def_target(peo_frame, number=3, constraint=constraint)
+packer.def_target(li_frame, number=10, constraint=constraint)
+packer.def_target(tfsi_frame, number=10, constraint=constraint)
 
-system = packer.optimize(max_steps=20000, seed=12345)
+system = packer(max_steps=20000, seed=12345)
 system.box = mp.Box.cubic(box_size)
 ```
 

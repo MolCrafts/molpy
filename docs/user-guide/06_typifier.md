@@ -2,7 +2,7 @@
 
 # Force Field Typification
 
-This guide explains how MolPy assigns atom, bond, angle, and dihedral types through SMARTS-based force-field matching.
+Typification is the bridge between chemistry and parameters: SMARTS patterns from the force field decide which type every atom, bond, angle, and dihedral gets.
 
 !!! note "Prerequisites"
     This guide requires RDKit for 3D coordinate generation. Typification itself does not require RDKit.
@@ -33,8 +33,10 @@ print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")
 print(f"angles: {len(mol.angles)}, dihedrals: {len(mol.dihedrals)}")
 ```
 
-    atoms: 9, bonds: 8
-    angles: 13, dihedrals: 12
+```text
+atoms: 9, bonds: 8
+angles: 13, dihedrals: 12
+```
 
 
 Loading the force field is a separate step from building the structure because the force field is an independent object — it can be shared across multiple molecules, swapped for a different variant, or inspected before any typification takes place. Once the force field is in hand, the typifier is constructed with it and `typify` is called on the molecule.
@@ -49,34 +51,38 @@ typifier = OplsTypifier(ff, strict_typing=True)
 typed_mol = typifier.typify(mol)
 ```
 
-    2026-06-30 21:11:37,176 - molpy.io.forcefield.xml - INFO - Using built-in force field: /Users/roykid/work/molcrafts/molpy/src/molpy/data/forcefield/oplsaa.xml
+```text
+2026-06-30 21:11:37,176 - molpy.io.forcefield.xml - INFO - Using built-in force field: /Users/roykid/work/molcrafts/molpy/src/molpy/data/forcefield/oplsaa.xml
+```
 
 
-    2026-06-30 21:11:37,181 - molpy.io.forcefield.xml - INFO - Parsing force field: OPLS-AA v0.1.0
+```text
+2026-06-30 21:11:37,181 - molpy.io.forcefield.xml - INFO - Parsing force field: OPLS-AA v0.1.0
 
 
-    2026-06-30 21:11:37,181 - molpy.io.forcefield.xml - INFO - Combining rule: geometric
+2026-06-30 21:11:37,181 - molpy.io.forcefield.xml - INFO - Combining rule: geometric
 
 
-    2026-06-30 21:11:37,187 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types
+2026-06-30 21:11:37,187 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types
 
 
-    2026-06-30 21:11:37,188 - molpy.io.forcefield.xml - INFO - Parsed 307 bond types (OPLS-AA with unit conversion)
+2026-06-30 21:11:37,188 - molpy.io.forcefield.xml - INFO - Parsed 307 bond types (OPLS-AA with unit conversion)
 
 
-    2026-06-30 21:11:37,190 - molpy.io.forcefield.xml - INFO - Parsed 964 angle types (OPLS-AA with unit conversion)
+2026-06-30 21:11:37,190 - molpy.io.forcefield.xml - INFO - Parsed 964 angle types (OPLS-AA with unit conversion)
 
 
-    2026-06-30 21:11:37,192 - molpy.io.forcefield._rb_opls - WARNING - RB coefficients do not lie on the ideal 4-term OPLS manifold (C0+C1+C2+C3+C4 = 10.041600, expected ≈ 0). Conversion will preserve forces and relative energies exactly, but will introduce a constant energy offset of ΔE = 10.041600 kJ/mol. This does not affect MD simulations.
+2026-06-30 21:11:37,192 - molpy.io.forcefield._rb_opls - WARNING - RB coefficients do not lie on the ideal 4-term OPLS manifold (C0+C1+C2+C3+C4 = 10.041600, expected ≈ 0). Conversion will preserve forces and relative energies exactly, but will introduce a constant energy offset of ΔE = 10.041600 kJ/mol. This does not affect MD simulations.
 
 
-    2026-06-30 21:11:37,195 - molpy.io.forcefield.xml - INFO - Parsed 1089 dihedral types (OPLS-AA with unit conversion)
+2026-06-30 21:11:37,195 - molpy.io.forcefield.xml - INFO - Parsed 1089 dihedral types (OPLS-AA with unit conversion)
 
 
-    2026-06-30 21:11:37,197 - molpy.io.forcefield.xml - INFO - Parsed 825 nonbonded parameters (OPLS-AA with unit conversion)
+2026-06-30 21:11:37,197 - molpy.io.forcefield.xml - INFO - Parsed 825 nonbonded parameters (OPLS-AA with unit conversion)
 
 
-    2026-06-30 21:11:37,197 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types (by type)
+2026-06-30 21:11:37,197 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types (by type)
+```
 
 
 `typify` modifies the structure in-place and returns it — atoms in the returned object carry a `type` key and associated parameters.
@@ -91,15 +97,17 @@ for atom in typed_mol.atoms:
     print(f"  {element:2s} -> {atype:15s}  q={charge:+.4f}")
 ```
 
-      C  -> opls_135         q=-0.1800
-      C  -> opls_157         q=+0.1450
-      O  -> opls_154         q=-0.6830
-      H  -> opls_140         q=+0.0600
-      H  -> opls_140         q=+0.0600
-      H  -> opls_140         q=+0.0600
-      H  -> opls_140         q=+0.0600
-      H  -> opls_140         q=+0.0600
-      H  -> opls_155         q=+0.4180
+```text
+  C  -> opls_135         q=-0.1800
+  C  -> opls_157         q=+0.1450
+  O  -> opls_154         q=-0.6830
+  H  -> opls_140         q=+0.0600
+  H  -> opls_140         q=+0.0600
+  H  -> opls_140         q=+0.0600
+  H  -> opls_140         q=+0.0600
+  H  -> opls_140         q=+0.0600
+  H  -> opls_155         q=+0.4180
+```
 
 
 ## How atom typing works
@@ -142,12 +150,14 @@ for angle in typed_mol.angles[:3]:
     print(f"  {'-'.join(names)} -> {atype}")
 ```
 
-      C-C -> CT-CT
-      C-O -> CT-OH
-      C-H -> CT-HC
-      opls_157-opls_135-opls_140 -> CT-CT-HC
-      opls_157-opls_135-opls_140 -> CT-CT-HC
-      opls_157-opls_135-opls_140 -> CT-CT-HC
+```text
+  C-C -> CT-CT
+  C-O -> CT-OH
+  C-H -> CT-HC
+  opls_157-opls_135-opls_140 -> CT-CT-HC
+  opls_157-opls_135-opls_140 -> CT-CT-HC
+  opls_157-opls_135-opls_140 -> CT-CT-HC
+```
 
 
 ## A typed structure is ready for simulation export
@@ -175,7 +185,9 @@ mp.io.write_lammps_system(outdir / "ethanol", frame, ff)
 print(f"exported to {outdir}")
 ```
 
-    exported to 06_output
+```text
+exported to 06_output
+```
 
 
 The `write_lammps_system` convenience function automatically filters the force field to only include types present in the frame, and translates canonical field names (`charge`, `mol_id`) to LAMMPS-specific names (`q`, `mol`) via the formatter system.

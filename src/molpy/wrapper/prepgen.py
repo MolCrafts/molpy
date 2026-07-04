@@ -217,18 +217,29 @@ def write_prepgen_control_file(
             lines.append(f"POST_TAIL_TYPE {tail_type}")
 
     elif variant == "head":
-        # Head of chain: only TAIL connection point (connects to next monomer)
+        # Head of chain: only TAIL connection point (connects to next monomer).
+        # When the tail (connect-forward) atom is a graph terminus (degree-1),
+        # prepgen would root the residue tree there and attach the next residue
+        # at the wrong atom; passing HEAD_NAME = the connect atom's neighbor pins
+        # the main chain so the connect atom becomes the tail terminus. The head
+        # connect point is unused at a chain start, so this is harmless.
         if tail_name is None:
             raise ValueError("head variant requires tail_name")
+        if head_name:
+            lines.append(f"HEAD_NAME {head_name}")
         lines.append(f"TAIL_NAME {tail_name}")
         if tail_type:
             lines.append(f"POST_TAIL_TYPE {tail_type}")
 
     elif variant == "tail":
-        # Tail of chain: only HEAD connection point (connects to previous monomer)
+        # Tail of chain: only HEAD connection point (connects to previous
+        # monomer). Symmetric to the head variant: pin TAIL_NAME when the head
+        # (connect-back) atom is a graph terminus so it becomes the head terminus.
         if head_name is None:
             raise ValueError("tail variant requires head_name")
         lines.append(f"HEAD_NAME {head_name}")
+        if tail_name:
+            lines.append(f"TAIL_NAME {tail_name}")
         if head_type:
             lines.append(f"PRE_HEAD_TYPE {head_type}")
 

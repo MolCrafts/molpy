@@ -1,4 +1,4 @@
-# Composing Compute Nodes into a Workflow
+# Compute Workflows
 
 Analysis tasks often need more than a single compute step. Radial distribution
 functions require neighbour lists; cluster analysis feeds on per-frame
@@ -7,10 +7,10 @@ Doing this by hand — calling each node, threading outputs into inputs,
 checking that upstream ran before downstream — is tedious and easy to get
 wrong.
 
-`Workflow` makes this mechanical. You register named compute nodes, declare
-which parameters come from which upstream node (or from an external input),
-and the workflow handles topological order and result caching. It adds zero
-dependencies beyond Python's standard library.
+`molpy.compute.Workflow` makes this mechanical. You register named compute
+nodes, declare which parameters come from which upstream node (or from an
+external input), and the workflow handles topological order and result caching.
+It adds zero dependencies beyond Python's standard library.
 
 ## A linear chain
 

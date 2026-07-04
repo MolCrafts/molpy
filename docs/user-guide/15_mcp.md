@@ -231,7 +231,7 @@ Tell the agent what you want to build. Do not tell it which function names to ca
 | Too low-level | Better |
 | --- | --- |
 | `Use polymer() to build a PEG chain` | `Build a PEG chain with 15 repeat units` |
-| `Call Molpack to pack molecules` | `Pack 15 chains into a 20 nm cubic box` |
+| `Call Packmol to pack molecules` | `Pack 15 chains into a 20 nm cubic box` |
 | `Use the Box class` | `Create a periodic simulation box for the system` |
 
 If your prompt names specific MolPy functions, it is usually too low-level. The point of `molmcp_find_capability` is that the agent maps the *task* onto the right symbol — feeding it the symbol up front bypasses the strongest part of the pipeline.
@@ -615,7 +615,7 @@ molmcp_outline(path="molpy/pack")
 ```
 
 ```
-Molpack                  High-level Packmol packing interface
+Packmol                  High-level Packmol packing interface
 InsideBoxConstraint      Place molecules inside a rectangular box
 OutsideBoxConstraint     Keep molecules outside a box
 InsideSphereConstraint   Sphere constraint
@@ -624,7 +624,7 @@ Target                   One packing target (frame + count + constraint)
 ```
 
 ```
-molmcp_describe_symbol("molpy.pack.Molpack.optimize")
+molmcp_describe_symbol("molpy.pack.Packmol.pack")
 ```
 
 ```
@@ -685,4 +685,4 @@ With this information Claude has everything it needs to assemble the script.
 ## See Also
 
 - [Polydisperse Systems](../user-guide/05_polydisperse_systems.md) — end-to-end workflow from distribution to LAMMPS export
-- [Discovery engine reference](https://molcrafts.github.io/molmcp/concepts/discovery/) — the full code-graph schema, snapshot/cache mechanics, and CLI for the curious
+- [Discovery engine reference](https://github.com/MolCrafts/molmcp) — the full code-graph schema, snapshot/cache mechanics, and CLI for the curious

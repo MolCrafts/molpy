@@ -3,6 +3,65 @@
 The full user-facing changelog lives in [docs/changelog.md](docs/changelog.md).
 This file records API renames and breaking changes at the repository root.
 
+## 0.6.0 - 2026-07-03
+
+### Breaking
+
+- **`molpy.compute` selection API.** The distribution, reorientation, spatial
+  (SDF), `Nematic`, and `PMFTXY` operators now read their atom-tuple selections
+  (pairs, triplets, orientation axes) from the frame's core topology blocks
+  (`bonds` / `angles` / `dihedrals` / `orientations`) instead of a `groups`
+  argument of external index arrays. The `groups` parameter is removed —
+  populate the frame's topology blocks and call the operator with the frame(s)
+  only.
+- **`Molpack` removed** — use the `Packmol` wrapper directly
+  (`packer.def_target(frame, n, constraint)` then call the packer).
+- **`LammpsSystem` class removed** — use the
+  `molpy.io.write_lammps_system(workdir, frame, forcefield)` function.
+
+### Added
+
+- **Deterministic copolymer sequence generators** `AlternatingSequenceGenerator`
+  and `BlockSequenceGenerator` in `molpy.builder.polymer`, implementing the
+  existing `SequenceGenerator` protocol over arbitrary monomer ids
+  (strict alternation / contiguous blocks, largest-remainder apportionment).
+- **`AmberTools`** facade (`molpy.builder`) owning the GAFF2/AM1-BCC workflow:
+  `parameterize` (small molecule), `parameterize_ion` (monatomic ion from
+  literature Lennard-Jones parameters, no charge calc), and `build_polymer`
+  (per-monomer parameterisation cached and reused across a chain).
+- **`SmilesReader`** (`molpy.io`) — OOP SMILES → 3D `Atomistic` reader.
+
+### Fixed
+
+- **O(N²) in packing and LAMMPS writing.** `Packmol`'s frame replication copied a
+  molrs `Block` once per instance and re-materialised its string columns each
+  time; it now materialises each target's columns once and tiles them with numpy.
+  The LAMMPS data writer re-read string columns per atom/bond row; every column
+  is now hoisted to a numpy array before the row loop. (~15 min → sub-second on a
+  ~30k-atom system.)
+- **LAMMPS force-field writer** now de-duplicates coefficients by type name, so a
+  merged multi-component force field emits `*.ff` coeff counts that match the
+  `*.data` Type Labels (previously duplicate same-name types were written).
+
+### Changed
+
+- **Pin `molcrafts-molrs==0.6.0`** (was `0.5.1`). molpy and molrs release as a
+  pair; `import molpy` calls `molpy.version.check_molrs_version()` and warns when
+  the installed molrs does not match. molrs 0.6.0 reorganizes its Rust `compute`
+  module tree (freud-style categories) and removes its native GAFF/AMBER
+  parameter estimator — molpy's public `molpy.compute` surface is unchanged (the
+  molrs Python shim keeps the flat names), so no molpy code changes are required.
+
+### Docs
+
+- Documentation config migrated from `mkdocs.yml` to `zensical.toml` (the
+  native Zensical format, matching molrs). The `[doc]` extra no longer installs
+  `mkdocs-material` — Zensical is self-contained (bundles the theme, icon sets,
+  and markdown extensions). Build with `zensical build`.
+- New **Velocity Autocorrelation & VDOS** compute guide; the Diffusion and
+  Structural-Analysis guides gained dedicated *Parameters and hyperparameters*
+  sections.
+
 ## 0.5.1 - 2026-07-01
 
 ### Changed
@@ -14,7 +73,7 @@ This file records API renames and breaking changes at the repository root.
 
 ### Added
 
-- **TRAVIS-parity compute operators** in `molpy.compute`: geometric distribution
+- **analysis-parity compute operators** in `molpy.compute`: geometric distribution
   functions (`AngleDistribution`, `DihedralDistribution`, `DistanceDistribution`),
   `CombinedDistribution`, `SpatialDistribution`, `VanHove`,
   `LegendreReorientation`, `HBonds`, radical Voronoi (`RadicalVoronoi`,
@@ -64,6 +123,18 @@ This file records API renames and breaking changes at the repository root.
 
 - Pin `molcrafts-molrs==0.1.4` (was `0.1.3`) — required for the new GROMACS
   trajectory bindings.
+
+## 0.4.1 - 2026-06-14
+
+### Removed (breaking)
+
+- **`molpy.legacy` removed.** The pure-NumPy `MSD` / `DisplacementCorrelation`
+  operators and the `molpy.legacy` submodule are gone — use the molrs-backed
+  `molpy.compute.MSD` / `molpy.compute.MCDCompute` instead.
+
+### Changed
+
+- Pin `molcrafts-molrs==0.1.2` (was `0.1.1`).
 
 ## 0.4.0 - 2026-06-11
 

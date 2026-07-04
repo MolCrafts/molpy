@@ -4,14 +4,14 @@
 3-D grid, after Kabsch-aligning each reference molecule to a template geometry.
 This is the orientation-resolved generalization of the radial distribution
 function: it reveals *where* around a molecule its neighbours sit, not just how
-far. Thin shell over the molrs TRAVIS-parity kernel; takes ``(frames)``.
+far. Thin shell over the molrs analysis-parity kernel; takes ``(frames)``.
 
 References
 ----------
 - I. M. Svishchev, P. G. Kusalik, *J. Chem. Phys.* **99**, 3049 (1993);
   P. G. Kusalik, I. M. Svishchev, *Science* **265**, 1219 (1994) — spatial
   distribution functions.
-- M. Brehm, B. Kirchner, *J. Chem. Inf. Model.* **51**, 2007 (2011) — TRAVIS SDF.
+- M. Brehm, B. Kirchner, *J. Chem. Inf. Model.* **51**, 2007 (2011) — reference implementation SDF.
 """
 
 from __future__ import annotations
@@ -42,8 +42,13 @@ class SpatialDistribution(Compute):
     bulk_density : float, optional
         If given, the result also exposes ``g_sdf`` (the density normalized by
         the bulk number density).
-    orientation_pairs : ndarray, optional
-        Atom-index pairs whose mean orientation is accumulated per voxel.
+
+    Notes
+    -----
+    A per-voxel mean orientation field is produced when the frames carry an
+    ``orientations`` topology block (one ``(head, tail)`` atom pair per target
+    atom, in ``target`` order), read at compute time; there is no
+    ``orientation_pairs`` constructor argument.
     """
 
     def __init__(
@@ -54,7 +59,6 @@ class SpatialDistribution(Compute):
         n: tuple[int, int, int],
         extent: tuple[float, float, float],
         bulk_density: float | None = None,
-        orientation_pairs=None,
     ):
         super().__init__(
             reference=reference,
@@ -63,10 +67,9 @@ class SpatialDistribution(Compute):
             n=n,
             extent=extent,
             bulk_density=bulk_density,
-            orientation_pairs=orientation_pairs,
         )
         self._inner = molrs.SpatialDistribution(
-            reference, template, target, n, extent, bulk_density, orientation_pairs
+            reference, template, target, n, extent, bulk_density
         )
 
     def __call__(self, frames):

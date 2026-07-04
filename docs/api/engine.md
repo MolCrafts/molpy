@@ -1,6 +1,6 @@
 # Engine
 
-MD engine abstractions for LAMMPS and CP2K.
+MD / simulation engine abstractions for LAMMPS, CP2K, and OpenMM.
 
 ## Quick reference
 
@@ -8,6 +8,8 @@ MD engine abstractions for LAMMPS and CP2K.
 |--------|---------|---------------|
 | `LAMMPSEngine` | LAMMPS simulation management | Running LAMMPS simulations |
 | `CP2KEngine` | CP2K simulation management | Running CP2K simulations |
+| `OpenMMEngine` | OpenMM simulation management | Running OpenMM simulations |
+| `OpenMMSimulationConfig` | OpenMM run configuration | Configuring an OpenMM run |
 
 ## Related
 
@@ -28,3 +30,7 @@ MD engine abstractions for LAMMPS and CP2K.
 ### LAMMPS
 
 ::: molpy.engine.lammps
+
+### OpenMM
+
+::: molpy.engine.openmm

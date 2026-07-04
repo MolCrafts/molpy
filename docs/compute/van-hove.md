@@ -1,7 +1,7 @@
 # Van Hove Correlations & Reorientational Dynamics
 
 This page is a self-contained, textbook-style introduction to two time-resolved
-correlation functions MolPy ports from TRAVIS: the **Van Hove correlation
+correlation functions MolPy ports from the reference implementation: the **Van Hove correlation
 function** $G(r, t)$ — the time-dependent generalization of the radial
 distribution function — and the **Legendre reorientational correlation functions**
 $C_1(t)$, $C_2(t)$ that quantify how fast molecular vectors lose their orientation.
@@ -116,7 +116,7 @@ result.c2     # C_2(t)
 - B. J. Berne, R. Pecora, *Dynamic Light Scattering*, Wiley (1976) — reorientational
   correlation functions and the $C_1$/$C_2$ distinction.
 - M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — TRAVIS.
+  (2020) — reference implementation.
 
 ## See also
 

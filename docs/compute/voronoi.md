@@ -1,7 +1,7 @@
 # Radical Voronoi: Domains, Voids & Charge Integration
 
 This page is a self-contained, textbook-style introduction to the **radical
-Voronoi tessellation** MolPy ports from TRAVIS, and the three analyses built on
+Voronoi tessellation** MolPy ports from the reference implementation, and the three analyses built on
 it: connected-domain detection, void analysis, and electron-density integration
 into per-molecule charges and dipoles. A Voronoi tessellation assigns every point
 in space to its nearest atom; the **radical** (Laguerre / power) variant weights
@@ -116,7 +116,7 @@ moments = VoronoiIntegration()(
 - M. Thomas, M. Brehm, B. Kirchner, *Phys. Chem. Chem. Phys.* **17**, 3207 (2015)
   — Voronoi integration of the electron density for molecular dipoles.
 - M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — TRAVIS; domain and void analysis.
+  (2020) — reference implementation; domain and void analysis.
 
 ## See also
 

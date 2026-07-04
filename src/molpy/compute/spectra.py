@@ -13,7 +13,7 @@ molecular-dynamics trajectories:
 - :class:`RoaSpectrum` — Raman optical activity.
 - :class:`ResonanceRamanSpectrum` — resonance Raman.
 
-Thin shells over the molrs TRAVIS-parity kernels; called as ``compute(acf, dt_fs)``
+Thin shells over the molrs analysis-parity kernels; called as ``compute(acf, dt_fs)``
 (or ``compute(acf_iso, acf_aniso, dt_fs)`` for the polarizability-based spectra).
 
 References
@@ -23,9 +23,9 @@ References
 - M. Thomas, M. Brehm, R. Fligg, P. Vöhringer, B. Kirchner, *Phys. Chem. Chem.
   Phys.* **15**, 6608 (2013) — IR and Raman spectra from AIMD via TCFs.
 - M. Brehm, M. Thomas, *J. Phys. Chem. Lett.* **8**, 3409 (2017) — VCD, ROA and
-  resonance Raman from MD (TRAVIS).
+  resonance Raman from MD (reference implementation).
 - M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — TRAVIS.
+  (2020) — reference implementation.
 """
 
 from __future__ import annotations
