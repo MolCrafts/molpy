@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from molpy.core.affected_region import AffectedRegion, region_radius
 from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper
 from molpy.core.entity import Entity
 from molpy.reacter.topology_detector import TopologyDetector
@@ -47,6 +48,9 @@ class ReactionResult:
     removed_impropers: list[Improper] = field(default_factory=list)
     removed_atoms: list[Atom] = field(default_factory=list)
     modified_atoms: set[Atom] = field(default_factory=set)
+    #: Hashable MolGraph subgraph around the touched atoms (supersedes the flat
+    #: ``modified_atoms``); ``None`` when no bond formed / atom was removed.
+    region: AffectedRegion | None = None
 
     # Bookkeeping
     reaction_name: str = ""
@@ -503,6 +507,22 @@ class Reacter:
         # Step 7: Determine if retypification is needed
         requires_retype = bool(new_bond or removed_atoms)
 
+        # Step 7b: Build the affected region around the touched atoms (the
+        # anchors and the new-bond endpoints), the hashable subgraph that
+        # supersedes the flat ``modified_atoms``. Radius auto-derives from the
+        # typifier's SMARTS depth (floor 4) so boundary atoms carry full context.
+        region: AffectedRegion | None = None
+        if new_bond or removed_atoms:
+            seeds: list[Atom] = []
+            if isinstance(anchor_L, Atom):
+                seeds.append(anchor_L)
+            if isinstance(anchor_R, Atom):
+                seeds.append(anchor_R)
+            if new_bond is not None:
+                seeds.extend(ep for ep in new_bond.endpoints if isinstance(ep, Atom))
+            if seeds:
+                region = AffectedRegion._from(merged, seeds, region_radius(typifier))
+
         # Step 8: Build result structure
         result = ReactionResult(
             product=merged,
@@ -520,6 +540,7 @@ class Reacter:
             removed_impropers=removed_impropers,
             removed_atoms=removed_atoms,
             modified_atoms=({anchor_L, anchor_R} if anchor_L and anchor_R else set()),
+            region=region,
             reaction_name=self.name,
             requires_retype=requires_retype,
             entity_maps=[final_entity_map],

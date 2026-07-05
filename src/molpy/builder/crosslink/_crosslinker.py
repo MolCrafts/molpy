@@ -25,6 +25,7 @@ from typing import TypeVar
 import numpy as np
 
 import molrs
+from molpy.core.affected_region import AffectedRegion, region_radius
 from molpy.core.atomistic import Atomistic
 
 # ``apply`` returns the same subclass it was handed (Atomistic -> Atomistic, and
@@ -64,6 +65,11 @@ class Crosslinker(ABC):
     def __init__(self, reaction: str, *, cutoff: float | None = None) -> None:
         self._reaction = molrs.Reaction(reaction)
         self._cutoff = cutoff
+        # Affected regions from the most recent ``apply`` — one per formed
+        # crosslink, seeded by the atoms ``molrs.Reaction.apply`` reports as
+        # touched. Consumed by the incremental-typify layer (spec 02); ``apply``
+        # still returns the graph, so this is a backward-compatible side channel.
+        self._last_regions: list[AffectedRegion] = []
         forming = self._reaction.forming_bonds
         label_sets = self._component_label_sets()
         if forming:
@@ -78,13 +84,27 @@ class Crosslinker(ABC):
     # -- template method -----------------------------------------------------
 
     def apply(self, graph: GraphT) -> GraphT:
-        """Return a new crosslinked graph (same subclass); ``graph`` untouched."""
+        """Return a new crosslinked graph (same subclass); ``graph`` untouched.
+
+        Each ``molrs.Reaction.apply`` returns the atom handles it touched; the
+        radius-``region_radius`` ball around them is captured as an
+        :class:`AffectedRegion` in :attr:`last_regions` for the retype layer.
+        """
         work = graph.copy()
         occurrences = self._match_occurrences(work)
         candidates = self._candidate_pairs(work, occurrences)
+        radius = region_radius()
+        regions: list[AffectedRegion] = []
         for binding in self.select(work, candidates):
-            self._reaction.apply(work, binding)
+            touched = self._reaction.apply(work, binding)
+            regions.append(AffectedRegion._from(work, touched, radius))
+        self._last_regions = regions
         return work
+
+    @property
+    def last_regions(self) -> list[AffectedRegion]:
+        """Affected regions built by the most recent :meth:`apply` call."""
+        return self._last_regions
 
     def _match_occurrences(self, graph: Atomistic) -> list[list[dict[int, int]]]:
         """Per-component site occurrences ``{map_number: handle}`` for the reaction.

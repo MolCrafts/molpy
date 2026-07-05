@@ -1,6 +1,6 @@
 ---
 title: Incremental-typify 1/3 — AffectedRegion (hashable MolGraph subgraph)
-status: draft
+status: done
 created: 2026-07-05
 depends_on: "molrs: region-support-01-graph-hash, region-support-02-reaction-touched"
 ---
@@ -93,11 +93,11 @@ This spec only **produces** the region; region-scoped typing + cache is `increme
 
 ## Tasks
 
-- [ ] **T1**: `AffectedRegion` (`core/region.py`) — `_from(parent, touched, radius)` via `extract_subgraph`; `interior`/`boundary`/`entity_map`; `__hash__`/`__eq__` via molrs `structural_hash`/`is_isomorphic`
-- [ ] **T2**: `region_radius(typifier)` helper + optional `context_radius` on typifiers (floor 4)
-- [ ] **T3**: pin molrs providing `structural_hash`/`is_isomorphic`/touched-return; `Crosslinker` builds regions from `Reaction.apply` touched handles
-- [ ] **T4**: `ReactionResult.region`; `Reacter` builds it in `_execute_reaction`/`run` (supersede `modified_atoms`)
-- [ ] **T5**: tests + quality gate — ruff/ty/pytest全绿
+- [x] **T1**: `AffectedRegion` (`core/affected_region.py`, renamed to avoid the existing spatial-mask `core/region.py`) — `_from(parent, touched, radius)` via `Atomistic._extract_mapped` (refactor of `extract_subgraph`); `interior`/`boundary`/`entity_map`; `__hash__`/`__eq__` via molrs `structural_hash`/`is_isomorphic`
+- [x] **T2**: `region_radius(typifier)` helper + optional `context_radius` on `ForceFieldTypifier` (floor 4)
+- [x] **T3**: molrs already provides `structural_hash`/`is_isomorphic`/touched-return (workspace venv); `Crosslinker` builds `last_regions` from `Reaction.apply` touched handles
+- [x] **T4**: `ReactionResult.region`; `Reacter.run` builds it from anchors + new-bond endpoints (supersedes `modified_atoms`, which is kept for back-compat)
+- [x] **T5**: tests (`tests/test_core/test_affected_region.py`) + quality gate — ruff/ty/pytest全绿
 
 ## Testing strategy
 

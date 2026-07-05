@@ -540,11 +540,30 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         entity_type: type[Atom] = Atom,
         link_type: type[Link] = Bond,
     ) -> tuple["Atomistic", list[Atom]]:
-        centers = list(center_entities)
-        new_struct = type(self)()
-        new_struct._props = dict(self._props)
+        sub, boundary, _ = self._extract_mapped(
+            list(center_entities), radius, type(self)
+        )
+        return sub, boundary
+
+    def _extract_mapped[G: "Atomistic"](
+        self,
+        centers: list[Atom],
+        radius: int,
+        out_cls: type[G],
+    ) -> tuple[G, list[Atom], dict[Atom, Atom]]:
+        """Induced radius-``radius`` ball plus a region-atom → parent-atom map.
+
+        Backs :meth:`extract_subgraph` (which drops the map) and
+        :class:`~molpy.core.affected_region.AffectedRegion` (which keeps it).
+        ``out_cls`` selects the produced graph type — a plain :class:`Atomistic`
+        or an :class:`AffectedRegion` — so the ball is materialised straight into
+        a region subclass with no second copy. Returns
+        ``(subgraph, boundary_atoms, {region_atom: parent_atom})``.
+        """
+        new = out_cls()
+        new._props = dict(self._props)
         if not centers:
-            return new_struct, []
+            return new, [], {}
 
         # BFS radius ball around every center over the bond graph (molrs kernel).
         # A center not in this structure contributes nothing (empty distances).
@@ -554,7 +573,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
                 h for h, d in self.topo_distances(c.handle) if d <= radius
             )
         if not selected_handles:
-            return new_struct, []
+            return new, [], {}
 
         # Deterministic (row) order over the selection.
         selected_entities = [a for a in self.atoms if a.handle in selected_handles]
@@ -568,25 +587,25 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         ]
 
         # clone selected atoms + induced topology into the new struct
-        entity_map: dict[Atom, Atom] = {}
+        parent_to_clone: dict[Atom, Atom] = {}
         for atom in selected_entities:
-            clone = new_struct.def_atom(dict(atom.data))
-            entity_map[atom] = clone
+            parent_to_clone[atom] = new.def_atom(dict(atom.data))
 
         def _clone_links(views: Entities[Any], adder: Any) -> None:
             for link in views:
                 eps = link.endpoints
                 if all(ep in selected_set for ep in eps):
-                    mapped = [entity_map[ep] for ep in eps]
+                    mapped = [parent_to_clone[ep] for ep in eps]
                     adder(*mapped, **dict(link.data))
 
-        _clone_links(self.bonds, new_struct.def_bond)
-        _clone_links(self.angles, new_struct.def_angle)
-        _clone_links(self.dihedrals, new_struct.def_dihedral)
-        _clone_links(self.impropers, new_struct.def_improper)
+        _clone_links(self.bonds, new.def_bond)
+        _clone_links(self.angles, new.def_angle)
+        _clone_links(self.dihedrals, new.def_dihedral)
+        _clone_links(self.impropers, new.def_improper)
 
-        cloned_edges = [entity_map[e] for e in edge_entities if e in entity_map]
-        return new_struct, cloned_edges
+        boundary = [parent_to_clone[e] for e in edge_entities if e in parent_to_clone]
+        region_to_parent = {clone: parent for parent, clone in parent_to_clone.items()}
+        return new, boundary, region_to_parent
 
     # ---------- copy / merge / adopt ----------
     def copy(self) -> Self:

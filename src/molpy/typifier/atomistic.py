@@ -577,6 +577,17 @@ class ForceFieldTypifier(TypifierBase[Atomistic]):
                 self.ff, strict=self.strict_typing
             )
 
+    @property
+    def context_radius(self) -> int:
+        """Max SMARTS-pattern depth (in bonds) this typifier's atom typing needs.
+
+        A conservative constant: OPLS/GAFF atom-typing SMARTS reach only a few
+        bonds, so 3 covers their neighbour/ring context. Consumed by
+        :func:`molpy.core.region_radius`, which floors it to the retype-safe 4 so
+        an :class:`~molpy.core.AffectedRegion` always carries a complete shell.
+        """
+        return 3
+
     @override
     def typify(self, struct: Atomistic) -> Atomistic:
         """Return a new Atomistic with types assigned; input is not mutated."""
