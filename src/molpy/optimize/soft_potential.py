@@ -25,33 +25,7 @@ import numpy as np
 
 import molrs
 
-# Cordero et al. (2008) single-bond covalent radii (Angstrom) for the common
-# organic / biomolecular elements. Mirrors the house style of hard-coding a
-# small chemistry table (cf. ``builder.polymer.placer``) rather than depending
-# on a radius attribute molpy's ``Element`` does not carry.
-_COVALENT_RADII: dict[str, float] = {
-    "H": 0.31,
-    "B": 0.84,
-    "C": 0.76,
-    "N": 0.71,
-    "O": 0.66,
-    "F": 0.57,
-    "Na": 1.66,
-    "Mg": 1.41,
-    "Al": 1.21,
-    "Si": 1.11,
-    "P": 1.07,
-    "S": 1.05,
-    "Cl": 1.02,
-    "K": 2.03,
-    "Ca": 1.76,
-    "Br": 1.20,
-    "I": 1.39,
-}
-
-# Fallback covalent radius (~carbon) when an element symbol is unknown, giving a
-# default single-bond ``r0`` of ~1.5 Angstrom.
-_DEFAULT_COVALENT_RADIUS = 0.75
+from molpy.core.element import Element
 
 # Padding (Angstrom) so every atom sits strictly inside the synthesized
 # non-periodic box used for the neighbor search.
@@ -206,7 +180,7 @@ class SoftPotential:
 
     @staticmethod
     def _atom_radii(frame: molrs.Frame) -> np.ndarray:
-        """Covalent radius per atom, read from the ``element``/``symbol`` column."""
+        """Covalent radius per atom via ``Element`` (from ``element``/``symbol``)."""
         atoms = frame["atoms"]
         if "element" in atoms:
             symbols = np.asarray(atoms["element"])
@@ -215,11 +189,18 @@ class SoftPotential:
         else:
             symbols = None
         n_atoms = molrs.extract_coords(frame).reshape(-1, 3).shape[0]
+        unknown = Element(0).covalent  # "unknown" element fallback, still via Element
         if symbols is None:
-            return np.full(n_atoms, _DEFAULT_COVALENT_RADIUS)
-        return np.array(
-            [_COVALENT_RADII.get(str(s), _DEFAULT_COVALENT_RADIUS) for s in symbols]
-        )
+            return np.full(n_atoms, unknown)
+        return np.array([SoftPotential._covalent(str(s), unknown) for s in symbols])
+
+    @staticmethod
+    def _covalent(symbol: str, default: float) -> float:
+        """Covalent radius for *symbol* via ``Element``; *default* if unresolved."""
+        try:
+            return Element(symbol).covalent
+        except KeyError:
+            return default
 
     def _nonbonded_pairs(
         self, coords: np.ndarray, bond_i: np.ndarray, bond_j: np.ndarray

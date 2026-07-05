@@ -4,6 +4,31 @@ __all__ = ["Element"]
 
 daltons = 1
 
+# Single-bond covalent radii in Angstroms (Cordero et al., Dalton Trans. 2008)
+# for the common organic / biomolecular elements. Merged into ``ElementData`` in
+# ``Element.initialize`` so covalent radii are reached only through
+# ``Element(...).covalent`` — the single source of per-element data. Elements not
+# listed fall back to ``ElementData.covalent``'s default.
+_COVALENT_RADII: dict[str, float] = {
+    "H": 0.31,
+    "B": 0.84,
+    "C": 0.76,
+    "N": 0.71,
+    "O": 0.66,
+    "F": 0.57,
+    "Na": 1.66,
+    "Mg": 1.41,
+    "Al": 1.21,
+    "Si": 1.11,
+    "P": 1.07,
+    "S": 1.05,
+    "Cl": 1.02,
+    "K": 2.03,
+    "Ca": 1.76,
+    "Br": 1.20,
+    "I": 1.39,
+}
+
 
 @dataclass
 class ElementData:
@@ -14,6 +39,9 @@ class ElementData:
     symbol: str
     mass: float
     vdw: float = 1.70  # van der Waals radius in Angstroms (default to carbon)
+    # Single-bond covalent radius in Angstroms; populated from ``_COVALENT_RADII``
+    # for common elements, else this ~carbon default (gives ~1.5 Å single bonds).
+    covalent: float = 0.75
 
     def __repr__(self) -> str:
         return f"<Element {self.symbol}>"
@@ -231,8 +259,9 @@ class Element:
         cls._symbol_to_element.clear()
         cls._number_to_element.clear()
 
-        # Populate dictionaries
+        # Populate dictionaries + merge covalent radii (single source of truth)
         for element in elements_data:
+            element.covalent = _COVALENT_RADII.get(element.symbol, element.covalent)
             cls._elements[element.name] = element
             cls._symbol_to_element[element.symbol] = element
             cls._number_to_element[element.number] = element
