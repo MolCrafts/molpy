@@ -16,6 +16,7 @@ Crystal construction goes through :func:`build_crystal` with
 from molpy.core.region import BoxRegion, Cube, Region, SphereRegion
 
 from .ambertools import AmberResult, AmberTools
+from .crosslink import Crosslinker, DeterministicCrosslinker
 from .crystal import Lattice, Site, SpaceGroup, build_crystal
 from .polymer import *
 from .polymer.ambertools import AmberPolymerBuilder
@@ -56,4 +57,7 @@ __all__ = [
     "DrudeBuilder",
     "Tip4pBuilder",
     "load_polarizability",
+    # Offline crosslinking
+    "Crosslinker",
+    "DeterministicCrosslinker",
 ]
