@@ -82,7 +82,7 @@ SMARTS + SMIRKS), **implemented in molrs**.
     · apply(mol, binding)  (edit)   ◀─apply(work, binding)──                             │   copy→match(molrs)→
   Atomistic: copy/remove/topo_dist  ◀─copy/topo_distances──                             ┘   select→apply(molrs)→return
   NeighborList (PBC 距离)            ◀─neighbors within cutoff─
-                                                                  (post) molpy.optimize.minimize  ← 松弛
+                                                                  (post) LBFGS(SoftPotential()).run(frame)  ← 松弛
 ```
 
 molpy holds **no** SMARTS engine, **no** SMIRKS applier, **no** `MatchSet`/`Block` — matches
@@ -133,20 +133,21 @@ class RandomCrosslinker(Crosslinker):
 ```python
 import molpy as mp
 from molpy.builder import polymer
-from molpy.builder.crosslink import DeterministicCrosslinker, RandomCrosslinker
-from molpy.optimize import minimize
+from molpy.builder.crosslink import DeterministicCrosslinker, RandomCrosslinker, crosslink_gel
 
 # 均匀网络：deterministic + spacing 均匀交联点 + 邻近连
 peg = polymer("{[<][<]CCO[>][>]}", degree=100, count=200)          # builder 建链（含 3D）
-gel = DeterministicCrosslinker(
-    "[C:1]=[C:2].[C:3]=[C:4] >> [C:1][C:2][C:3][C:4]",              # Daylight reaction SMARTS（molrs 解析）
-    spacing=10, cutoff=6.0,
-).apply(peg)                                                        # → 新 Atomistic；入参不动
-gel = minimize(gel)                                                # 已有优化器松弛超长键
+gel = crosslink_gel(                                                # crosslink → LBFGS 松弛 → 新 Atomistic
+    peg,
+    DeterministicCrosslinker(
+        "[C:1]=[C:2].[C:3]=[C:4] >> [C:1][C:2][C:3][C:4]",          # Daylight reaction SMARTS（molrs 解析）
+        spacing=10, cutoff=6.0,
+    ),
+)                                                                   # relax 默认走 SoftPotential（无 FF）；传 ff= 用 ForceFieldPotential
 mp.io.write(gel, "peo_gel_uniform.data", format="lammps")
 
-# 随机网络：到 70% 转化
-gel_r = minimize(RandomCrosslinker(rxn, conversion=0.7, seed=42, cutoff=6.0).apply(peg))
+# 随机网络：到 70% 转化（同样自动 LBFGS 松弛超长键）
+gel_r = crosslink_gel(peg, RandomCrosslinker(rxn, conversion=0.7, seed=42, cutoff=6.0))
 ```
 
 规则网络提示：`spacing` 给规则**分布**（拓扑）；规则**几何** mesh 需先排列（builder/placer + `cutoff`）

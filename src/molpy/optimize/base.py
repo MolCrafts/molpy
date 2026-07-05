@@ -15,15 +15,13 @@ from typing import Any, Callable, Protocol
 import molrs
 import numpy as np
 
-from molpy.core.entity import Entity
-
 
 # Protocol for potentials (duck typing)
 class PotentialLike(Protocol):
     """Protocol for potential functions evaluated on a :class:`molrs.Frame`."""
 
-    def calc_energy(self, *args: Any, **kwargs: Any) -> float: ...
-    def calc_forces(self, *args: Any, **kwargs: Any) -> np.ndarray: ...
+    def calc_energy(self, frame: "molrs.Frame") -> float: ...
+    def calc_forces(self, frame: "molrs.Frame") -> np.ndarray: ...
 
 
 @dataclass
@@ -57,8 +55,6 @@ class Optimizer(ABC):
 
     Args:
         potential: Potential exposing ``calc_energy(frame)`` / ``calc_forces(frame)``.
-        entity_type: Retained for backward-compatible construction; unused (the
-            frame's atom block is the single source of coordinates).
 
     Example:
         >>> from molpy.optimize import LBFGS, ForceFieldPotential
@@ -68,14 +64,8 @@ class Optimizer(ABC):
         >>> result = opt.run(frame, fmax=0.01, steps=500)  # frame: molrs.Frame
     """
 
-    def __init__(
-        self,
-        potential: PotentialLike,
-        *,
-        entity_type: type[Entity] = Entity,
-    ) -> None:
+    def __init__(self, potential: PotentialLike) -> None:
         self.potential = potential
-        self.entity_type = entity_type
         self._callbacks: list[tuple[Callable, int, dict]] = []
 
     # ===== Bridge methods: Frame coordinate columns <-> numpy arrays =====

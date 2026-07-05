@@ -1,21 +1,25 @@
 """PEO-gel recipes (crosslink-03) — compose existing pieces, add no engine.
 
 A crosslinked network is just: build a polymer (any builder), crosslink it with a
-:class:`~molpy.builder.crosslink.Crosslinker`, optionally relax the stretched
-bonds with an injected minimizer, and export. These helpers wire those existing
+:class:`~molpy.builder.crosslink.Crosslinker`, relax the freshly formed
+(often over-stretched) bonds, and export. These helpers wire those existing
 steps together; they introduce no new chemistry.
 
-``relax`` is intentionally an injected callable rather than a hard-wired
-``molpy.optimize`` call: relaxation needs a fully parameterized force field,
-which is the caller's concern, not the crosslinker's.
+Relaxation composes :class:`molpy.optimize.LBFGS` at the call site — there is no
+``minimize`` free function. It runs on the crosslinked :class:`molrs.Frame` with
+a soft-vs-force-field fallback: a caller-supplied ``ff`` uses
+:class:`~molpy.optimize.ForceFieldPotential`; otherwise the coordinate-only
+:class:`~molpy.optimize.SoftPotential` relaxes without needing atom types.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from os import PathLike
 
+import molrs
+
 from molpy.core.atomistic import Atomistic
+from molpy.optimize import ForceFieldPotential, LBFGS, SoftPotential
 
 from ._crosslinker import Crosslinker
 
@@ -24,18 +28,40 @@ def crosslink_gel(
     structure: Atomistic,
     crosslinker: Crosslinker,
     *,
-    relax: Callable[[Atomistic], Atomistic] | None = None,
+    relax: bool = True,
+    ff: molrs.ForceField | None = None,
+    fmax: float = 0.05,
+    steps: int = 200,
 ) -> Atomistic:
-    """Crosslink a pre-built polymer, optionally relax, return the new network.
+    """Crosslink a pre-built polymer, relax the new bonds, return the network.
 
-    The input ``structure`` is never mutated (``crosslinker.apply`` copies it).
-    Pass ``relax`` (e.g. a ``molpy.optimize`` minimizer bound to a force field)
-    to relax the freshly formed, possibly stretched crosslink bonds.
+    The input ``structure`` is never mutated (``crosslinker.apply`` copies it),
+    and relaxation produces a fresh, independent structure — neither the input
+    nor the intermediate crosslinked graph is modified in place.
+
+    Args:
+        structure: Pre-built polymer to crosslink.
+        crosslinker: Crosslinker defining the reaction and site-selection mode.
+        relax: Relax the freshly formed bonds via :class:`~molpy.optimize.LBFGS`.
+        ff: Optional molrs force field. When given, relaxation uses
+            :class:`~molpy.optimize.ForceFieldPotential`; otherwise it falls back
+            to the force-field-free :class:`~molpy.optimize.SoftPotential`.
+        fmax: Relaxation force-convergence threshold.
+        steps: Maximum relaxation steps.
+
+    Returns:
+        The crosslinked (and, when ``relax`` is set, relaxed) network.
     """
     gel = crosslinker.apply(structure)
-    if relax is not None:
-        gel = relax(gel)
-    return gel
+    if not relax:
+        return gel
+
+    potential = ForceFieldPotential(ff) if ff is not None else SoftPotential()
+    frame = gel.to_frame()
+    result = LBFGS(potential).run(frame, fmax=fmax, steps=steps)
+    # Rebuild a fresh structure from the relaxed frame; the crosslinked
+    # intermediate ``gel`` is left untouched (immutable recipe).
+    return Atomistic.adopt(molrs.Atomistic.from_frame(result.frame))
 
 
 def write_lammps(

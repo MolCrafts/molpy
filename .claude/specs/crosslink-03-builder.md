@@ -66,18 +66,19 @@ class PortMatcher:
 ```python
 import molpy as mp
 from molpy.builder import polymer
-from molpy.builder.crosslink import DeterministicCrosslinker, RandomCrosslinker
-from molpy.optimize import minimize
+from molpy.builder.crosslink import DeterministicCrosslinker, RandomCrosslinker, crosslink_gel
 
 peg = polymer("{[<][<]CCO[>][>]}", degree=100, count=200)          # builder 建链（含 3D）
-# 均匀网络：spacing 均匀交联点 + 邻近连
-gel = DeterministicCrosslinker(
-    "[C:1]=[C:2].[C:3]=[C:4] >> [C:1][C:2][C:3][C:4]", spacing=10, cutoff=6.0,
-).apply(peg)
-gel = minimize(gel)                                                # 已有优化器松弛
+# 均匀网络：spacing 均匀交联点 + 邻近连；crosslink_gel 内部 LBFGS 松弛
+gel = crosslink_gel(
+    peg,
+    DeterministicCrosslinker(
+        "[C:1]=[C:2].[C:3]=[C:4] >> [C:1][C:2][C:3][C:4]", spacing=10, cutoff=6.0,
+    ),
+)                                                                  # relax 默认 SoftPotential；传 ff= 走 ForceFieldPotential
 mp.io.write(gel, "peo_gel_uniform.data", format="lammps")
-# 随机网络：到 70% 转化
-gel_r = minimize(RandomCrosslinker(rxn, conversion=0.7, seed=42, cutoff=6.0).apply(peg))
+# 随机网络：到 70% 转化（同样自动 LBFGS 松弛）
+gel_r = crosslink_gel(peg, RandomCrosslinker(rxn, conversion=0.7, seed=42, cutoff=6.0))
 ```
 
 recipe 只**组合**已有件（builder + 01/02 + molrs 引擎 + optimize）；不新增引擎。

@@ -1,10 +1,10 @@
 """End-to-end PEO-gel recipe tests (crosslink-03).
 
 Build a linear multi-chain PEG-like structure, crosslink it (uniform ``spacing``
-or random ``conversion``), and export to LAMMPS — the recipe only composes
-existing pieces. Force-field ``minimize`` is out of scope for the gated suite
-(it needs a fully parameterized force field); the recipe accepts an injected
-``relax`` callable for that post-step.
+or random ``conversion``), relax, and export to LAMMPS — the recipe only
+composes existing pieces. Relaxation is real: the recipe runs
+:class:`molpy.optimize.LBFGS` on the crosslinked frame, defaulting to the
+force-field-free :class:`~molpy.optimize.SoftPotential`.
 """
 
 import molpy as mp
@@ -115,17 +115,36 @@ def test_random_network_recipe_reproducible_and_exports(tmp_path):
     assert out.exists() and out.stat().st_size > 0
 
 
-def test_recipe_accepts_relax_callable():
+def test_recipe_relaxes_via_lbfgs_soft_potential():
+    """Default relax runs LBFGS+SoftPotential: coords move, topology preserved."""
+    import numpy as np
+
     peg = _peg_like(n_chains=2, degree=10, gap=2.0)
-    seen = {}
+    xlink = DeterministicCrosslinker(RXN, cutoff=2.5, exclude_same_molecule=True)
 
-    def relax(gel):
-        seen["called"] = True
-        return gel
+    unrelaxed = crosslink_gel(peg, xlink, relax=False)
+    relaxed = crosslink_gel(peg, xlink, relax=True)
 
-    crosslink_gel(
+    # Relaxation returns a distinct, independent structure.
+    assert relaxed is not unrelaxed
+    # Same topology (relaxation only moves atoms).
+    assert len(list(relaxed.atoms)) == len(list(unrelaxed.atoms))
+    assert len(list(relaxed.bonds)) == len(list(unrelaxed.bonds))
+    # Coordinates actually changed under relaxation.
+    assert not np.allclose(relaxed.xyz, unrelaxed.xyz)
+    # Input polymer untouched (immutable recipe).
+    assert np.allclose(peg.xyz, _peg_like(n_chains=2, degree=10, gap=2.0).xyz)
+
+
+def test_relaxed_network_exports(tmp_path):
+    peg = _peg_like(n_chains=3, degree=12, gap=2.0)
+    gel = crosslink_gel(
         peg,
-        DeterministicCrosslinker(RXN, cutoff=2.5, exclude_same_molecule=True),
-        relax=relax,
+        DeterministicCrosslinker(
+            RXN, spacing=2, cutoff=2.5, exclude_same_molecule=True
+        ),
+        relax=True,
     )
-    assert seen.get("called") is True
+    out = tmp_path / "peo_gel_relaxed.data"
+    write_lammps(gel, out)
+    assert out.exists() and out.stat().st_size > 0
