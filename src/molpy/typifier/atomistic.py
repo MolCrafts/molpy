@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import override
+from typing import TYPE_CHECKING, override
 
 from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral
 from molpy.core.forcefield import (
@@ -12,6 +12,10 @@ from molpy.core.forcefield import (
     ImproperType,
     PairType,
 )
+
+if TYPE_CHECKING:
+    from molpy.core.affected_region import AffectedRegion
+    from molpy.typifier.region import RegionTypes
 
 # Priority stride between force-field overlay layers. An overlay type (layer L)
 # adds L * stride to its priority so it strictly outranks every lower-layer
@@ -587,6 +591,31 @@ class ForceFieldTypifier(TypifierBase[Atomistic]):
         an :class:`~molpy.core.AffectedRegion` always carries a complete shell.
         """
         return 3
+
+    def typify_region(self, region: "AffectedRegion") -> "RegionTypes":
+        """Type ``region`` as a standalone graph; snapshot its interior types.
+
+        Thin delegate to :func:`molpy.typifier.region.typify_region`. Its
+        presence is the capability marker the reacter checks (``hasattr``) before
+        taking the region-scoped + cached retype path; typifiers without it fall
+        back to the whole-graph pass unchanged.
+        """
+        from molpy.typifier.region import typify_region
+
+        return typify_region(self, region)
+
+    def retype_region(self, region: "AffectedRegion") -> "RegionTypes":
+        """Type ``region`` and write its interior types onto the parent atoms.
+
+        The un-cached one-shot the reacter uses when no shared
+        :class:`~molpy.typifier.cache.RetypeCache` is threaded through — types
+        the region and applies the result via canonical order + ``entity_map``.
+        """
+        from molpy.typifier.region import apply_region_types
+
+        region_types = self.typify_region(region)
+        apply_region_types(region_types, region)
+        return region_types
 
     @override
     def typify(self, struct: Atomistic) -> Atomistic:

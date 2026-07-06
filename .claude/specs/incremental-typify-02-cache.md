@@ -1,6 +1,6 @@
 ---
 title: Incremental-typify 2/3 — region-scoped typing + hash-keyed RetypeCache
-status: draft
+status: done
 created: 2026-07-05
 depends_on: incremental-typify-01-region
 ---
