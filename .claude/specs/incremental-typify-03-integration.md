@@ -1,6 +1,6 @@
 ---
 title: Incremental-typify 3/3 — wire builder / crosslink / AmberTools onto the region cache
-status: draft
+status: done
 created: 2026-07-05
 depends_on: incremental-typify-02-cache
 ---
@@ -75,11 +75,11 @@ untouched.
 
 ## Tasks
 
-- [ ] **T1**: thread a shared `RetypeCache` through `PolymerBuilder.build` → `Connector.connect` → `Reacter.run`
-- [ ] **T2**: `Crosslinker(typifier=None)` — region retype via shared cache when set; default unchanged
-- [ ] **T3**: `AmberTools` region path + hash-keyed cache (map GAFF types back via entity_map); external-marked test
-- [ ] **T4**: tests — chain junction dedup (bounded typifier calls), crosslink retype, AmberTools region cache
-- [ ] **T5**: quality gate — ruff/ty/pytest 全绿；builder/crosslink 现有测试无回归
+- [x] **T1**: thread a shared `RetypeCache` through `PolymerBuilder.build` → `Connector.connect` → `Reacter.run`
+- [x] **T2**: `Crosslinker(typifier=None)` — region retype via shared cache when set; default unchanged
+- [x] **T3**: `AmberTools` region path + hash-keyed cache (map GAFF types back via entity_map); external-marked test
+- [x] **T4**: tests — chain junction dedup (bounded typifier calls), crosslink retype, AmberTools region cache
+- [x] **T5**: quality gate — ruff/ty/pytest 全绿；builder/crosslink 现有测试无回归
 
 ## Testing strategy
 

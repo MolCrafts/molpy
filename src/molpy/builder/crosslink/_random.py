@@ -10,10 +10,14 @@ graph edit — is inherited unchanged.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 import numpy
 
 from ._crosslinker import Candidate, Crosslinker
+
+if TYPE_CHECKING:
+    from molpy.typifier.atomistic import ForceFieldTypifier
 
 
 class RandomCrosslinker(Crosslinker):
@@ -29,8 +33,9 @@ class RandomCrosslinker(Crosslinker):
         exclude_same_molecule: bool = False,
         exclude_same_match: bool = False,
         max_per_molecule: tuple[str, int] | int | None = None,
+        typifier: ForceFieldTypifier | None = None,
     ) -> None:
-        super().__init__(reaction, cutoff=cutoff)
+        super().__init__(reaction, cutoff=cutoff, typifier=typifier)
         self._conversion = conversion
         self._seed = seed
         self._exclude_same_molecule = exclude_same_molecule

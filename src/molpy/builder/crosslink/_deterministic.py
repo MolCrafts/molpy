@@ -12,8 +12,12 @@ Three deterministic ways to pick crosslink points:
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
+from typing import TYPE_CHECKING
 
 from ._crosslinker import Candidate, Crosslinker
+
+if TYPE_CHECKING:
+    from molpy.typifier.atomistic import ForceFieldTypifier
 
 
 class DeterministicCrosslinker(Crosslinker):
@@ -28,8 +32,9 @@ class DeterministicCrosslinker(Crosslinker):
         pairs: Sequence[tuple[int, int]] | None = None,
         exclude_same_molecule: bool = False,
         exclude_same_match: bool = False,
+        typifier: ForceFieldTypifier | None = None,
     ) -> None:
-        super().__init__(reaction, cutoff=cutoff)
+        super().__init__(reaction, cutoff=cutoff, typifier=typifier)
         self._spacing = spacing
         self._pairs = pairs
         self._exclude_same_molecule = exclude_same_molecule

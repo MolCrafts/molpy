@@ -20,13 +20,16 @@ import math
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import numpy as np
 
 import molrs
 from molpy.core.affected_region import AffectedRegion, region_radius
 from molpy.core.atomistic import Atomistic
+
+if TYPE_CHECKING:
+    from molpy.typifier.atomistic import ForceFieldTypifier
 
 # ``apply`` returns the same subclass it was handed (Atomistic -> Atomistic, and
 # any user subclass -> itself), matching the immutable ``.copy()`` contract.
@@ -62,9 +65,20 @@ class Crosslinker(ABC):
     explicit, random, ...). Everything else — copy, match, apply — is shared.
     """
 
-    def __init__(self, reaction: str, *, cutoff: float | None = None) -> None:
+    def __init__(
+        self,
+        reaction: str,
+        *,
+        cutoff: float | None = None,
+        typifier: ForceFieldTypifier | None = None,
+    ) -> None:
         self._reaction = molrs.Reaction(reaction)
         self._cutoff = cutoff
+        # Optional region-scoped retype hook. When set, each formed crosslink's
+        # affected region is retyped (via a per-``apply`` shared cache) and its
+        # interior types written back onto the returned graph; ``None`` keeps the
+        # crosslinker pure-topology (unchanged default behaviour).
+        self._typifier = typifier
         # Affected regions from the most recent ``apply`` — one per formed
         # crosslink, seeded by the atoms ``molrs.Reaction.apply`` reports as
         # touched. Consumed by the incremental-typify layer (spec 02); ``apply``
@@ -89,17 +103,36 @@ class Crosslinker(ABC):
         Each ``molrs.Reaction.apply`` returns the atom handles it touched; the
         radius-``region_radius`` ball around them is captured as an
         :class:`AffectedRegion` in :attr:`last_regions` for the retype layer.
+        When a ``typifier`` was supplied, each region is retyped through a
+        per-``apply`` shared cache and its interior types written onto ``work``
+        (structurally identical crosslinks type once).
         """
         work = graph.copy()
         occurrences = self._match_occurrences(work)
         candidates = self._candidate_pairs(work, occurrences)
-        radius = region_radius()
+        radius = region_radius(self._typifier)
         regions: list[AffectedRegion] = []
         for binding in self.select(work, candidates):
             touched = self._reaction.apply(work, binding)
             regions.append(AffectedRegion._from(work, touched, radius))
         self._last_regions = regions
+        self._retype_regions(regions)
         return work
+
+    def _retype_regions(self, regions: list[AffectedRegion]) -> None:
+        """Retype each region's interior onto the parent when a typifier is set.
+
+        A single :class:`~molpy.typifier.cache.RetypeCache` spans this ``apply``
+        so identical crosslink environments type once; a ``None`` typifier is a
+        no-op (pure-topology default).
+        """
+        if self._typifier is None:
+            return
+        from molpy.typifier.cache import RetypeCache
+
+        cache = RetypeCache(self._typifier)
+        for region in regions:
+            cache.retype_and_apply(region)
 
     @property
     def last_regions(self) -> list[AffectedRegion]:

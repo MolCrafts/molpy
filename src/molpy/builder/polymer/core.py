@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from molpy.core.atomistic import Atom, Atomistic
 from molpy.parser.smiles import parse_cgsmiles
@@ -31,6 +31,9 @@ from .errors import (
     PositionMissingError,
     SequenceError,
 )
+
+if TYPE_CHECKING:
+    from molpy.typifier.cache import RetypeCache
 
 __all__ = [
     "AmbiguousPortsError",
@@ -162,7 +165,14 @@ class PolymerBuilder:
         ir = parse_cgsmiles(cgsmiles)
         self._validate_ir(ir)
 
-        polymer, history = self._build_from_graph(ir.base_graph)
+        # One shared retype cache for the whole build: structurally identical
+        # junctions recurring along the chain dedupe to a single hash key, so the
+        # underlying atom typing runs once per distinct junction environment
+        # (O(#distinct)) instead of once per connection (O(N)). Built only when
+        # the typifier supports region typing; otherwise ``None`` leaves each
+        # connection on its unchanged per-call path.
+        retype_cache = self._make_retype_cache()
+        polymer, history = self._build_from_graph(ir.base_graph, retype_cache)
 
         from .port_utils import cleanup_build_markers
 
@@ -173,6 +183,20 @@ class PolymerBuilder:
             connection_history=history,
             total_steps=len(history),
         )
+
+    def _make_retype_cache(self) -> "RetypeCache | None":
+        """Build the per-build shared cache when region typing is available.
+
+        Returns ``None`` unless a typifier is set *and* it exposes
+        ``typify_region`` — the capability the region-scoped retype path needs.
+        Without one, connections fall back to the unchanged per-call behaviour.
+        """
+        typifier = self.typifier
+        if typifier is not None and hasattr(typifier, "typify_region"):
+            from molpy.typifier.cache import RetypeCache
+
+            return RetypeCache(typifier)
+        return None
 
     def _validate_ir(self, ir: CGSmilesIR) -> None:
         """Validate CGSmiles IR."""
@@ -193,9 +217,14 @@ class PolymerBuilder:
             )
 
     def _build_from_graph(
-        self, graph: CGSmilesGraphIR
+        self, graph: CGSmilesGraphIR, retype_cache: "RetypeCache | None" = None
     ) -> tuple[Atomistic, list[ReactionResult]]:
-        """Build polymer from CGSmiles graph using iterative DFS traversal."""
+        """Build polymer from CGSmiles graph using iterative DFS traversal.
+
+        ``retype_cache`` is the build-wide shared cache threaded into every
+        connection so recurring junctions type once; ``None`` keeps each
+        connection on its per-call path.
+        """
         if not graph.nodes:
             raise ValueError("Cannot build from empty graph")
 
@@ -255,6 +284,7 @@ class PolymerBuilder:
                     right_ports=ports_registry.get(neighbor_id, {}),
                     bond_order=bond_order,
                     connection_history=connection_history,
+                    retype_cache=retype_cache,
                 )
 
                 if gid_left == gid_right:
@@ -324,6 +354,7 @@ class PolymerBuilder:
         # bond-order-aware connection; connectors currently ignore it.
         bond_order: int,
         connection_history: list[ReactionResult],
+        retype_cache: "RetypeCache | None" = None,
     ) -> tuple[Atomistic, dict[Atom, Atom], set[tuple[int, str, int]]]:
         """Connect two monomers using registry-provided port atoms.
 
@@ -379,6 +410,7 @@ class PolymerBuilder:
             left_port_atom,
             right_port_atom,
             typifier=self.typifier,
+            retype_cache=retype_cache,
         )
         product = connection_result.product
         connection_history.append(connection_result)

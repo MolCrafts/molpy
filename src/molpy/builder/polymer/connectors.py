@@ -5,8 +5,10 @@ The Connector decides which ports to connect between adjacent monomers
 and executes the chemical reaction via a Reacter.
 """
 
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from molpy.core.atomistic import Atom, Atomistic
 from molpy.core.entity import Entity
@@ -15,6 +17,10 @@ from molpy.typifier.atomistic import TypifierBase
 
 from .errors import AmbiguousPortsError
 from .port_utils import port_role, ports_compatible
+
+if TYPE_CHECKING:
+    from molpy.reacter.base import ReactionResult
+    from molpy.typifier.cache import RetypeCache
 
 
 class ConnectorContext(dict[str, Any]):
@@ -152,10 +158,14 @@ class Connector:
         port_atom_L: Entity,
         port_atom_R: Entity,
         typifier: TypifierBase | None = None,
-    ) -> "ReactionResult":
-        """Execute the chemical reaction between two structures."""
-        from molpy.reacter.base import ReactionResult
+        retype_cache: RetypeCache | None = None,
+    ) -> ReactionResult:
+        """Execute the chemical reaction between two structures.
 
+        ``retype_cache`` is the build-wide shared
+        :class:`~molpy.typifier.cache.RetypeCache`, passed straight through to
+        :meth:`Reacter.run` so identical junctions across connections type once.
+        """
         reacter = self.get_reacter(left_type, right_type)
 
         result: ReactionResult = reacter.run(
@@ -165,6 +175,7 @@ class Connector:
             port_atom_R=port_atom_R,
             compute_topology=True,
             typifier=typifier,
+            retype_cache=retype_cache,
         )
 
         self._history.append(result)
