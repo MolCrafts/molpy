@@ -80,7 +80,7 @@ doc = [
     # team); it reads zensical.toml. Build with `zensical build` / `serve`.
     "zensical>=0.0.45",
     # The molcrafts docs theme (zensical.toml sets `theme.name = "molcrafts"`).
-    "molcrafts-zensical-theme>=0.1.0",
+    "molcrafts-zensical-theme>=0.1.1",
     "mkdocstrings[python]>=0.24.0",
     # Notebook rendering: Zensical does not run the mkdocs-jupyter plugin, so the
     # user-guide notebooks are pre-rendered to Markdown by scripts/render_notebooks.py.
