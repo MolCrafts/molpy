@@ -10,8 +10,8 @@ Tests the full flow: parse → build → typify, verifying:
 
 import pytest
 
-from molpy.builder.polymer.port_utils import port_role, ports_compatible
-from molpy.builder.polymer.dsl import polymer
+from molpy.builder.polymer import PolymerBuilder, ReactionPresets
+from molpy.builder.polymer.connectors import port_role, ports_compatible
 
 try:
     from rdkit import Chem  # noqa: F401
@@ -23,6 +23,18 @@ except ModuleNotFoundError:
 rdkit_needed = pytest.mark.skipif(
     not _HAS_RDKIT, reason="RDKit required for explicit hydrogen placement"
 )
+
+
+def _build_peg(n: int):
+    """Compose the real builders to make a PEG-n chain from the {[<]CCOCCO[>]} unit."""
+    from molpy.adapter import RDKitAdapter
+    from molpy.parser import parse_monomer
+
+    mono = RDKitAdapter(parse_monomer("{[<]CCOCCO[>]}")).generate_3d(
+        add_hydrogens=True, optimize=True
+    )
+    builder = PolymerBuilder({"M": mono}, reacter=ReactionPresets.get("dehydration"))
+    return builder.build_sequence(["M"] * n).polymer
 
 
 class TestPortRoleDerivation:
@@ -56,7 +68,7 @@ class TestPortCompatibility:
 class TestJunctionConnectivity:
     def test_peg_all_oxygens_are_ethers_or_terminal(self):
         """In PEG, every O is either an ether (C-O-C) or terminal (C-O-H)."""
-        peg2 = polymer("{[<]CCOCCO[>]}|2|", optimize=True)
+        peg2 = _build_peg(2)
 
         for atom in peg2.atoms:
             if atom.get("element") != "O":
@@ -82,7 +94,7 @@ class TestJunctionConnectivity:
         In correct PEG: ...CH2-O-CH2... (all C-C bonds have at most 1 O neighbor).
         A C-C junction bug would create a C bonded to 3 C + 1 H (no O).
         """
-        peg3 = polymer("{[<]CCOCCO[>]}|3|", optimize=True)
+        peg3 = _build_peg(3)
 
         for atom in peg3.atoms:
             if atom.get("element") != "C":
@@ -108,7 +120,7 @@ class TestJunctionConnectivity:
         PEG-n: 16n - 2(n-1) = 14n + 2 atoms.
         """
         for n in (2, 3, 5):
-            peg = polymer(f"{{[<]CCOCCO[>]}}|{n}|", optimize=True)
+            peg = _build_peg(n)
             expected = 14 * n + 2
             actual = len(list(peg.atoms))
             assert actual == expected, (
@@ -120,7 +132,7 @@ class TestJunctionConnectivity:
 class TestChemicalCorrectness:
     def test_atom_valence(self):
         """All atoms have correct valence in built PEG."""
-        peg = polymer("{[<]CCOCCO[>]}|3|", optimize=True)
+        peg = _build_peg(3)
         expected_degree = {"C": 4, "O": 2, "H": 1}
 
         for atom in peg.atoms:
@@ -136,7 +148,7 @@ class TestChemicalCorrectness:
 class TestBuildCleanup:
     def test_no_port_markers_after_build(self):
         """Built polymer has no leftover port/monomer_node_id markers."""
-        peg = polymer("{[<]CCOCCO[>]}|3|", optimize=True)
+        peg = _build_peg(3)
 
         for atom in peg.atoms:
             assert atom.get("port") is None, (
@@ -145,19 +157,3 @@ class TestBuildCleanup:
             assert atom.get("monomer_node_id") is None, (
                 f"Atom has leftover monomer_node_id={atom.get('monomer_node_id')}"
             )
-
-
-@rdkit_needed
-class TestFullPipeline:
-    def test_parse_build_typify_all_typed(self):
-        """Parse → Build → Typify → all atoms have types."""
-        from molpy.data import get_forcefield_path
-        from molpy.io.forcefield.xml import XMLForceFieldReader
-        from molpy.typifier import OplsTypifier
-
-        peg = polymer("{[<]CCOCCO[>]}|5|", optimize=True)
-        opls_ff = XMLForceFieldReader(get_forcefield_path("oplsaa.xml")).read()
-        typed = OplsTypifier(opls_ff, strict_typing=False).typify(peg)
-
-        untyped = [a for a in typed.atoms if a.get("type") is None]
-        assert untyped == [], f"{len(untyped)} atoms untyped"

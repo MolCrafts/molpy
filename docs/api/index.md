@@ -19,12 +19,12 @@ Auto-generated reference for every public symbol, with typed signatures througho
 | Assemble polymer chains from CGSmiles | `PolymerBuilder`, `Connector`, `Placer` | [Builder](builder.md) |
 | Pack molecules into a periodic simulation box | `Packmol`, `InsideBoxConstraint` | [Pack](pack.md) |
 | Generate 3D conformers from a molecular graph | `Conformer` | [Conformer](conformer.md) |
-| Assign force field atom types via SMARTS matching | `OplsTypifier`, `ClpTypifier`, `MMFFTypifier` | [Typifier](typifier.md) |
+| Assign force field atom types via SMARTS matching | `OPLSAATypifier`, `ClpTypifier`, `MMFFTypifier` | [Typifier](typifier.md) |
 | Evaluate bond, angle, and pair potentials | `BondHarmonicStyle`, `LJ126Style`, `Potentials` | [Potential](potential.md) |
 | Read and write molecular files (PDB, LAMMPS, GRO, …) | `read_pdb`, `write_lammps_data`, `read_xml_forcefield` | [I/O](io.md) |
 | Convert between MolPy and RDKit / OpenBabel objects | `RDKitAdapter`, `OpenBabelAdapter` | [Adapter](adapter.md) |
 | Invoke external CLI tools (antechamber, tleap) | `Wrapper`, `AntechamberWrapper` | [Wrapper](wrapper.md) |
-| Execute packaged multi-step preparation workflows | `prepare_monomer`, `polymer`, `generate_3d` | [Builder](builder.md) |
+| Build polymer chains and crosslinked networks | `PolymerBuilder`, `Crosslinker`, `Conformer` | [Builder](builder.md) |
 | Compute mean-squared displacement, correlations, RDF, clustering | `MSD`, `MCDCompute`, `RDF` | [Compute](compute.md) |
 | Locate bundled data files and built-in force fields | `get_forcefield_path`, `get_path` | [Data](data.md) |
 | Generate LAMMPS, CP2K, or OpenMM input decks | `LAMMPSEngine`, `CP2KEngine`, `OpenMMEngine` | [Engine](engine.md) |

@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from molpy.core.affected_region import AffectedRegion, region_radius
 from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper
 from molpy.core.entity import Entity
 from molpy.reacter.topology_detector import TopologyDetector
@@ -17,6 +18,7 @@ from molpy.reacter.utils import AnchorSelector, BondFormer, LeavingSelector
 
 if TYPE_CHECKING:
     from molpy.typifier.atomistic import TypifierBase
+    from molpy.typifier.cache import RetypeCache
 
 
 @dataclass
@@ -47,6 +49,9 @@ class ReactionResult:
     removed_impropers: list[Improper] = field(default_factory=list)
     removed_atoms: list[Atom] = field(default_factory=list)
     modified_atoms: set[Atom] = field(default_factory=set)
+    #: Hashable MolGraph subgraph around the touched atoms (supersedes the flat
+    #: ``modified_atoms``); ``None`` when no bond formed / atom was removed.
+    region: AffectedRegion | None = None
 
     # Bookkeeping
     reaction_name: str = ""
@@ -248,7 +253,11 @@ class Reacter:
         if "ports" in anchor_R:
             del anchor_R["ports"]
 
-        # Remove leaving groups
+        # Remove leaving groups. (Leaving-group charge is intentionally NOT folded
+        # onto anchors here: bond/react templates require the superimposed atoms
+        # to conserve charge among themselves, with deleted-atom charge handled by
+        # LAMMPS. Whole-system charge conservation for offline networks lives in
+        # the crosslinker instead — see ``builder.crosslink._conserve_leaving_charge``.)
         removed_atoms = []
         if leaving_L:
             assembly.remove_entity(*leaving_L, drop_incident_links=True)
@@ -329,6 +338,7 @@ class Reacter:
         compute_topology: bool = True,
         record_intermediates: bool = False,
         typifier: TypifierBase | None = None,
+        retype_cache: RetypeCache | None = None,
     ) -> ReactionResult:
         """
         Execute the reaction between two Atomistic structures.
@@ -353,6 +363,10 @@ class Reacter:
             compute_topology: If True, compute new angles/dihedrals/impropers (default True)
             record_intermediates: If True, record intermediate states
             typifier: Optional typifier for incremental retypification
+            retype_cache: Optional shared :class:`~molpy.typifier.cache.RetypeCache`
+                so identical junctions across many ``run`` calls type once. When
+                ``None`` the region path uses a per-call cache; a typifier without
+                region typing ignores it and falls back to whole-graph typing.
 
         Returns:
             ReactionResult containing product and metadata.
@@ -503,6 +517,22 @@ class Reacter:
         # Step 7: Determine if retypification is needed
         requires_retype = bool(new_bond or removed_atoms)
 
+        # Step 7b: Build the affected region around the touched atoms (the
+        # anchors and the new-bond endpoints), the hashable subgraph that
+        # supersedes the flat ``modified_atoms``. Radius auto-derives from the
+        # typifier's SMARTS depth (floor 4) so boundary atoms carry full context.
+        region: AffectedRegion | None = None
+        if new_bond or removed_atoms:
+            seeds: list[Atom] = []
+            if isinstance(anchor_L, Atom):
+                seeds.append(anchor_L)
+            if isinstance(anchor_R, Atom):
+                seeds.append(anchor_R)
+            if new_bond is not None:
+                seeds.extend(ep for ep in new_bond.endpoints if isinstance(ep, Atom))
+            if seeds:
+                region = AffectedRegion._from(merged, seeds, region_radius(typifier))
+
         # Step 8: Build result structure
         result = ReactionResult(
             product=merged,
@@ -520,6 +550,7 @@ class Reacter:
             removed_impropers=removed_impropers,
             removed_atoms=removed_atoms,
             modified_atoms=({anchor_L, anchor_R} if anchor_L and anchor_R else set()),
+            region=region,
             reaction_name=self.name,
             requires_retype=requires_retype,
             entity_maps=[final_entity_map],
@@ -532,7 +563,7 @@ class Reacter:
                 # CompositeTypifier: use incremental path so atom typing
                 # runs before pair typing on the modified atoms.
                 # _incremental_typify operates on merged in-place.
-                self._incremental_typify(merged, result, typifier)
+                self._incremental_typify(merged, result, typifier, retype_cache)
                 # result.product already points to merged (set above).
             else:
                 # Simple typifier: regen full topology then typify.
@@ -548,6 +579,7 @@ class Reacter:
         assembly: Atomistic,
         reaction_result: ReactionResult,
         typifier: TypifierBase,
+        retype_cache: RetypeCache | None = None,
     ) -> None:
         """
         Perform incremental typification using exact information from reaction result.
@@ -557,46 +589,68 @@ class Reacter:
         - New bonds, angles, and dihedrals
         - Existing bonds/angles/dihedrals involving modified atoms
 
+        Atom typing takes the region-scoped + cached path when the reaction
+        reported an :class:`~molpy.core.affected_region.AffectedRegion` and the
+        typifier supports region typing; otherwise it falls back to the original
+        whole-graph SMARTS pass unchanged. Bonded-term typing is unchanged.
+
         Args:
             assembly: The product assembly structure (will be modified)
             reaction_result: Result from the reaction containing exact topology changes
             typifier: OPLS typifier for assigning types
+            retype_cache: Optional shared cache so identical junctions across
+                calls type once; ``None`` uses a per-call cache.
         """
         modified_atoms = reaction_result.modified_atoms
         new_bonds = reaction_result.new_bonds
         new_angles = reaction_result.new_angles
         new_dihedrals = reaction_result.new_dihedrals
 
-        # Step 1: Re-type modified atoms (port atoms where bonds were formed)
+        # Step 1: Re-type the atoms whose bonding environment changed.
         if hasattr(typifier, "atom_typifier") and typifier.atom_typifier:
-            # Save old types before clearing so we can restore them if
-            # re-typification fails (e.g. SMARTS pattern has no match in the
-            # new bonding environment).  Keyed by id() because modified_atoms
-            # holds references into the live assembly.
-            saved_types: dict[int, str] = {}
-            for atom in modified_atoms:
-                if "type" in atom.data:
-                    saved_types[id(atom)] = atom.data["type"]
-                    del atom.data["type"]
+            region = reaction_result.region
+            if region is not None and hasattr(typifier, "retype_region"):
+                # Region-scoped + hash-keyed atom typing: type the affected
+                # junction as a standalone graph once and reuse the result across
+                # every structurally-identical junction, replacing the O(N^2)
+                # whole-graph SMARTS pass. Interior types (+ params) are written
+                # onto the product's atoms via canonical order + entity_map. A
+                # shared cache (threaded from the caller) dedups across calls;
+                # without one the typifier does an un-cached one-shot retype.
+                if retype_cache is not None:
+                    retype_cache.retype_and_apply(region)
+                else:
+                    typifier.retype_region(region)
+            else:
+                # Fallback (no region, or typifier lacks region typing): the
+                # original whole-graph atom typing. Save old types before
+                # clearing so they can be restored if re-typification finds no
+                # match. Keyed by id() because modified_atoms holds references
+                # into the live assembly.
+                saved_types: dict[int, str] = {}
+                for atom in modified_atoms:
+                    if "type" in atom.data:
+                        saved_types[id(atom)] = atom.data["type"]
+                        del atom.data["type"]
 
-            # Re-type all atoms (graph matching needs full structure).
-            # atom_typifier.typify() may return a NEW Atomistic copy with
-            # types assigned (immutable pattern), so we must propagate the
-            # type assignments back to the original assembly atoms.
-            typed_struct = typifier.atom_typifier.typify(assembly)
-            if typed_struct is not assembly:
-                # Propagate type assignments from the returned copy back
-                # to the original assembly atoms by positional correspondence.
-                orig_atoms = list(assembly.atoms)
-                typed_atoms = list(typed_struct.atoms)
-                for orig, typed in zip(orig_atoms, typed_atoms):
-                    t = typed.data.get("type")
-                    if t is not None:
-                        orig.data["type"] = t
-                    elif id(orig) in saved_types:
-                        # Re-typification produced no match; keep the previous
-                        # type so the atom is never left with type=None.
-                        orig.data["type"] = saved_types[id(orig)]
+                # Re-type all atoms (graph matching needs full structure).
+                # atom_typifier.typify() may return a NEW Atomistic copy with
+                # types assigned (immutable pattern), so we must propagate the
+                # type assignments back to the original assembly atoms.
+                typed_struct = typifier.atom_typifier.typify(assembly)
+                if typed_struct is not assembly:
+                    # Propagate type assignments from the returned copy back
+                    # to the original assembly atoms by positional correspondence.
+                    orig_atoms = list(assembly.atoms)
+                    typed_atoms = list(typed_struct.atoms)
+                    for orig, typed in zip(orig_atoms, typed_atoms):
+                        t = typed.data.get("type")
+                        if t is not None:
+                            orig.data["type"] = t
+                        elif id(orig) in saved_types:
+                            # Re-typification produced no match; keep the previous
+                            # type so the atom is never left with type=None.
+                            orig.data["type"] = saved_types[id(orig)]
 
         # Step 2: Update pair types (charge, sigma, epsilon) for modified atoms
         if hasattr(typifier, "pair_typifier") and typifier.pair_typifier:

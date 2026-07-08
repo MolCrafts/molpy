@@ -3,19 +3,13 @@
 import numpy as np
 import pytest
 
+from molpy.builder.polymer.connectors import port_role, ports_compatible
+from molpy.builder.polymer.core import get_ports_on_node
 from molpy.builder.polymer.placer import (
     CovalentSeparator,
     LinearOrienter,
     Placer,
     VdWSeparator,
-)
-from molpy.builder.polymer.port_utils import (
-    get_all_ports,
-    get_port_atom,
-    get_ports,
-    get_ports_on_node,
-    port_role,
-    ports_compatible,
 )
 from molpy.core.atomistic import Atomistic
 
@@ -55,40 +49,7 @@ class TestPortsCompatible:
 # ---- Port Utility Tests ----
 
 
-class TestPortUtilities:
-    def _make_struct(self) -> Atomistic:
-        struct = Atomistic()
-        struct.def_atom(symbol="C", x=0.0, y=0.0, z=0.0, port=">")
-        struct.def_atom(symbol="C", x=1.5, y=0.0, z=0.0)
-        struct.def_atom(symbol="O", x=3.0, y=0.0, z=0.0, port="<")
-        return struct
-
-    def test_get_ports(self):
-        struct = self._make_struct()
-        ports = get_ports(struct)
-        assert ">" in ports
-        assert "<" in ports
-        assert len(ports[">"]) == 1
-        assert len(ports["<"]) == 1
-
-    def test_get_port_atom(self):
-        struct = self._make_struct()
-        atom = get_port_atom(struct, ">")
-        assert atom is not None
-        assert atom.get("symbol") == "C"
-
-    def test_get_port_atom_not_found(self):
-        struct = self._make_struct()
-        assert get_port_atom(struct, "nonexistent") is None
-
-    def test_get_all_ports(self):
-        struct = self._make_struct()
-        all_ports = get_all_ports(struct)
-        assert len(all_ports) == 2
-        for name, atom_list in all_ports.items():
-            for atom in atom_list:
-                assert atom.get("port") == name
-
+class TestPortsOnNode:
     def test_get_ports_on_node(self):
         struct = Atomistic()
         struct.def_atom(symbol="C", port=">", monomer_node_id=0)
@@ -106,13 +67,6 @@ class TestPortUtilities:
         struct = Atomistic()
         struct.def_atom(symbol="C", monomer_node_id=0)
         assert get_ports_on_node(struct, 0) == {}
-
-    def test_multiple_ports_same_name(self):
-        struct = Atomistic()
-        struct.def_atom(symbol="C", x=0.0, y=0.0, z=0.0, port="$")
-        struct.def_atom(symbol="C", x=1.0, y=0.0, z=0.0, port="$")
-        ports = get_all_ports(struct)
-        assert len(ports["$"]) == 2
 
 
 # ---- Separator Tests ----
@@ -141,6 +95,7 @@ class TestVdWSeparator:
 
 
 class TestCovalentSeparator:
+    # Bond length = sum of Element covalent radii: C=0.76, O=0.66 Å.
     def test_cc_bond_length(self):
         sep = CovalentSeparator(buffer=0.0)
         struct = Atomistic()
@@ -148,7 +103,7 @@ class TestCovalentSeparator:
         b = struct.def_atom(symbol="C", x=1.0, y=0.0, z=0.0)
 
         dist = sep.get_separation(struct, struct, a, b)
-        assert dist == pytest.approx(1.54, abs=0.01)
+        assert dist == pytest.approx(1.52, abs=0.01)  # 0.76 + 0.76
 
     def test_co_bond_length(self):
         sep = CovalentSeparator(buffer=0.0)
@@ -157,7 +112,7 @@ class TestCovalentSeparator:
         b = struct.def_atom(symbol="O", x=1.0, y=0.0, z=0.0)
 
         dist = sep.get_separation(struct, struct, a, b)
-        assert dist == pytest.approx(1.43, abs=0.01)
+        assert dist == pytest.approx(1.42, abs=0.01)  # 0.76 + 0.66
 
     def test_buffer(self):
         sep = CovalentSeparator(buffer=-0.1)
@@ -166,16 +121,16 @@ class TestCovalentSeparator:
         b = struct.def_atom(symbol="C", x=1.0, y=0.0, z=0.0)
 
         dist = sep.get_separation(struct, struct, a, b)
-        assert dist == pytest.approx(1.54 - 0.1, abs=0.01)
+        assert dist == pytest.approx(1.52 - 0.1, abs=0.01)
 
-    def test_unknown_elements_fallback(self):
+    def test_unknown_elements_fall_back_to_carbon(self):
         sep = CovalentSeparator(buffer=0.0)
         struct = Atomistic()
-        a = struct.def_atom(symbol="Xe", x=0.0, y=0.0, z=0.0)
-        b = struct.def_atom(symbol="Kr", x=1.0, y=0.0, z=0.0)
+        a = struct.def_atom(symbol="Xx", x=0.0, y=0.0, z=0.0)
+        b = struct.def_atom(symbol="Zz", x=1.0, y=0.0, z=0.0)
 
         dist = sep.get_separation(struct, struct, a, b)
-        assert dist == pytest.approx(1.54, abs=0.01)  # Default C-C
+        assert dist == pytest.approx(1.52, abs=0.01)  # carbon fallback: 0.76 + 0.76
 
 
 # ---- Orienter Tests ----

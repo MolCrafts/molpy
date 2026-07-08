@@ -44,9 +44,9 @@ class ReactionPresets:
     """Class-level registry of named reaction presets.
 
     The public extension point for custom polymerization chemistry:
-    :meth:`register` a :class:`ReactionPresetSpec` once, then refer to it
-    by name everywhere a ``reaction_preset`` keyword is accepted
-    (``polymer()``, ``polymer_system()``, builders).
+    :meth:`register` a :class:`ReactionPresetSpec` once, then pass the
+    :class:`~molpy.reacter.Reacter` from :meth:`get` into
+    :class:`~molpy.builder.polymer.PolymerBuilder`.
 
     Attributes:
         _presets: Class-level registry mapping preset name to

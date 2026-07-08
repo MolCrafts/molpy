@@ -88,7 +88,7 @@ Each monomer is parsed from BigSMILES, expanded to 3D with hydrogens, and typifi
 
 ```python
 eo2 = mp.parser.parse_monomer("{[][$]OCCOCCOCCO[$][]}")
-eo2 = mp.adapter.generate_3d(eo2, add_hydrogens=True, optimize=True)
+eo2 = mp.adapter.RDKitAdapter(eo2).generate_3d(add_hydrogens=True, optimize=True)
 eo2 = eo2.get_topo(gen_angle=True, gen_dihe=True)
 for idx, atom in enumerate(eo2.atoms, start=1):
     atom["id"] = idx
@@ -98,7 +98,7 @@ eo2 = typifier.typify(eo2)
 
 ```python
 eo3 = mp.parser.parse_monomer("{[]C(COCCO[$])(COCCO[$])COCCO[$][]}")
-eo3 = mp.adapter.generate_3d(eo3, add_hydrogens=True, optimize=True)
+eo3 = mp.adapter.RDKitAdapter(eo3).generate_3d(add_hydrogens=True, optimize=True)
 eo3 = eo3.get_topo(gen_angle=True, gen_dihe=True)
 for idx, atom in enumerate(eo3.atoms, start=1):
     atom["id"] = idx

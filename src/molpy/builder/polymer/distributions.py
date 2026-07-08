@@ -122,10 +122,9 @@ class SchulzZimmPolydisperse:
     Args:
         Mn: Number-average molecular weight (g/mol).
         Mw: Weight-average molecular weight (g/mol), must satisfy Mw > Mn.
-        random_seed: Optional random seed.
     """
 
-    def __init__(self, Mn: float, Mw: float, random_seed: int | None = None):
+    def __init__(self, Mn: float, Mw: float):
         if Mw <= Mn:
             raise ValueError(
                 f"Mw ({Mw}) must be greater than Mn ({Mn}) for valid Schulz-Zimm distribution"
@@ -133,7 +132,6 @@ class SchulzZimmPolydisperse:
 
         self.Mn = Mn
         self.Mw = Mw
-        self.random_seed = random_seed
         self.z = Mn / (Mw - Mn)
         self.theta = Mw - Mn
         self.PDI = Mw / Mn
@@ -170,10 +168,9 @@ class UniformPolydisperse:
     Args:
         min_dp: Lower bound (>= 1).
         max_dp: Upper bound (>= min_dp).
-        random_seed: Optional random seed.
     """
 
-    def __init__(self, min_dp: int, max_dp: int, random_seed: int | None = None):
+    def __init__(self, min_dp: int, max_dp: int):
         if min_dp < 1:
             raise ValueError(f"min_dp must be >= 1, got {min_dp}")
         if max_dp < min_dp:
@@ -181,7 +178,6 @@ class UniformPolydisperse:
 
         self.min_dp = min_dp
         self.max_dp = max_dp
-        self.random_seed = random_seed
 
     def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
         """PMF: equal probability for all integer DP in [min_dp, max_dp]."""
@@ -206,14 +202,12 @@ class PoissonPolydisperse:
 
     Args:
         lambda_param: Mean of the Poisson distribution (> 0).
-        random_seed: Optional random seed.
     """
 
-    def __init__(self, lambda_param: float, random_seed: int | None = None):
+    def __init__(self, lambda_param: float):
         if lambda_param <= 0:
             raise ValueError(f"lambda_param must be > 0, got {lambda_param}")
         self.lambda_param = lambda_param
-        self.random_seed = random_seed
 
     def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
         """Zero-truncated Poisson PMF."""
@@ -249,14 +243,12 @@ class FlorySchulzPolydisperse:
 
     Args:
         a: Probability parameter (0 < a < 1), related to extent of reaction.
-        random_seed: Optional random seed.
     """
 
-    def __init__(self, a: float, random_seed: int | None = None):
+    def __init__(self, a: float):
         if not (0 < a < 1):
             raise ValueError(f"a must be in (0, 1), got {a}")
         self.a = a
-        self.random_seed = random_seed
 
     def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
         """Flory-Schulz PMF."""
@@ -280,13 +272,11 @@ class FlorySchulzPolydisperse:
 
 def create_polydisperse_from_ir(
     distribution_ir: DistributionIR,
-    random_seed: int | None = None,
 ) -> DPDistribution | MassDistribution:
     """Create a distribution instance from a parsed DistributionIR.
 
     Args:
         distribution_ir: DistributionIR from parser.
-        random_seed: Random seed for reproducibility.
 
     Returns:
         Distribution instance.
@@ -302,35 +292,24 @@ def create_polydisperse_from_ir(
             raise ValueError(
                 f"schulz_zimm requires 'p0' (Mn) and 'p1' (Mw) parameters, got {params}"
             )
-        return SchulzZimmPolydisperse(
-            Mn=float(params["p0"]),
-            Mw=float(params["p1"]),
-            random_seed=random_seed,
-        )
+        return SchulzZimmPolydisperse(Mn=float(params["p0"]), Mw=float(params["p1"]))
 
     if dist_name == "uniform":
         if "p0" not in params or "p1" not in params:
             raise ValueError(
                 f"uniform requires 'p0' (min_dp) and 'p1' (max_dp) parameters, got {params}"
             )
-        return UniformPolydisperse(
-            min_dp=int(params["p0"]),
-            max_dp=int(params["p1"]),
-            random_seed=random_seed,
-        )
+        return UniformPolydisperse(min_dp=int(params["p0"]), max_dp=int(params["p1"]))
 
     if dist_name == "poisson":
         if "p0" not in params:
             raise ValueError(f"poisson requires 'p0' (lambda) parameter, got {params}")
-        return PoissonPolydisperse(
-            lambda_param=float(params["p0"]),
-            random_seed=random_seed,
-        )
+        return PoissonPolydisperse(lambda_param=float(params["p0"]))
 
     if dist_name == "flory_schulz":
         if "p0" not in params:
             raise ValueError(f"flory_schulz requires 'p0' (a) parameter, got {params}")
-        return FlorySchulzPolydisperse(a=float(params["p0"]), random_seed=random_seed)
+        return FlorySchulzPolydisperse(a=float(params["p0"]))
 
     raise ValueError(
         f"Unsupported distribution type: {dist_name}. "

@@ -1,24 +1,23 @@
 # Typifier
 
-SMARTS-based atom typing and force field parameter assignment.
+Graph typification and force-field parameter assignment.
 
 ## Quick reference
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `OplsTypifier` | Full OPLS-AA typing pipeline | OPLS force fields |
-| `MMFFTypifier` | Full MMFF94 typing pipeline | MMFF force fields |
-| `ClpTypifier` | Full CL&P typing pipeline (OPLS engine + built-in `clp.xml`) | Ionic-liquid force fields |
+| `OPLSAATypifier` | Full OPLS-AA typing pipeline re-exported from `molrs.typifier` | OPLS-AA all-atom force fields |
+| `MMFFTypifier` | Full MMFF94 typing pipeline re-exported from `molrs.typifier` | MMFF all-atom force fields |
+| `ClpTypifier` | CL&P force-field loader shell; typification pending molpy-side rewrite | Ionic-liquid force fields |
 | `PairTypifier` | Pair (LJ) parameter assignment | Standalone nonbonded typing |
-| `LayeredTypingEngine` | Dependency-aware SMARTS matching engine | Custom typing engines |
-| `DependencyAnalyzer` | Computes SMARTS pattern dependency levels | Custom typing engines |
-| `.typify(struct)` | Assign all types (atom → pair → bond → angle → dihedral) | One-call complete typing |
+| `.typify(mol)` | Return a new graph of the same concrete type | One-call complete typing |
 
-Each force-field typifier is a single orchestrator class: one `typify()` call
-runs atom typing, then pair parameters, then bond/angle/dihedral types derived
-from the atom assignments. Individual stages can be disabled with the
-`skip_*_typing` constructor flags — there are no separate public
-atom-only or bond/angle/dihedral typifier classes.
+The typifier contract is `typify(mol: T) -> T`: input and output are molecular
+graphs, not frames. Built-in all-atom typifiers accept `molrs.Atomistic` and
+return `molrs.Atomistic`; convert with `.to_frame()` only after typification.
+When a force field defines bonded terms, `typify()` must label the complete
+topology it supports: atoms, bonds, angles, dihedrals, and force-field-specific
+impropers.
 
 GAFF is **not** a typifier here: GAFF atom types and AM1-BCC charges are
 obtained by delegating to AmberTools (`antechamber` / `prepgen`) through the
@@ -28,19 +27,19 @@ obtained by delegating to AmberTools (`antechamber` / `prepgen`) through the
 
 ```python
 import molpy as mp
-from molpy.typifier import OplsTypifier
+from molpy.typifier import OPLSAATypifier
 
-ff = mp.io.read_xml_forcefield("oplsaa.xml")
-typifier = OplsTypifier(ff, strict_typing=True)
-typed_mol = typifier.typify(mol)  # returns NEW Atomistic
+typifier = OPLSAATypifier(strict=True)
+typed_mol = typifier.typify(mol)  # returns a new Atomistic
+frame = typed_mol.to_frame()
 ```
 
 ## Key behavior
 
-- `typify()` returns a **new** `Atomistic` — the original is not modified
-- `strict_typing=True` raises on untyped atoms; `False` silently skips them
-- Atom typing uses SMARTS pattern matching with priority/override resolution
-- Bonded types are derived from atom type assignments (CT-OH → bond type CT-OH)
+- `typify()` returns a **new** graph — the original is not modified
+- `OPLSAATypifier(strict=True)` raises on missing OPLS-AA bonded terms
+- SMARTS matching is implemented in molrs; MolPy no longer carries an igraph matcher
+- Matcher APIs return match bindings, while typifier APIs return typed graphs
 
 ## Related
 
@@ -51,7 +50,11 @@ typed_mol = typifier.typify(mol)  # returns NEW Atomistic
 
 ## Full API
 
-### Force-Field Typifiers (OPLS, base orchestrator, pair)
+### Typifier Re-exports
+
+::: molpy.typifier
+
+### Pair Typifier
 
 ::: molpy.typifier.atomistic
 
@@ -62,19 +65,3 @@ typed_mol = typifier.typify(mol)  # returns NEW Atomistic
 ### MMFF Typifier
 
 ::: molpy.typifier.mmff
-
-### Layered Typing Engine
-
-::: molpy.typifier.layered_engine
-
-### Dependency Analyzer
-
-::: molpy.typifier.dependency_analyzer
-
-### Adapter
-
-::: molpy.typifier.adapter
-
-### Graph
-
-::: molpy.typifier.graph

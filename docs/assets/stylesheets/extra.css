@@ -78,12 +78,11 @@ html[data-molcrafts-product="molpy"] .molcrafts-manual-eyebrow {
   color: var(--molpy-accent);
 }
 
+/* The hero title gradient now comes from the shared molcrafts theme (auto-derived
+   from the molpy accent). Keep only molpy's width tuning so that gradient spans
+   the short "MolPy" wordmark tightly instead of the full hero column. */
 html[data-molcrafts-product="molpy"] .molcrafts-home-hero h1 {
   max-width: 13rem;
-  background: linear-gradient(96deg, var(--molpy-accent) 0%, #22d3ee 55%, var(--molpy-teal) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
 }
 
 html[data-molcrafts-product="molpy"] .molcrafts-home-hero__description {

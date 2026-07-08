@@ -5,7 +5,7 @@
 Polymer construction at the reaction level: which atoms are selected, which bond forms, which atoms leave — and why topology and types must be regenerated after every coupling. First by hand with `merge`, `def_bond`, `del_atom`, `get_topo`, `typify`; then again through `Reacter`, which packages the same five steps.
 
 !!! note "Prerequisites"
-    This guide requires RDKit (for `generate_3d`) and the `oplsaa.xml` force field file.
+    This guide requires RDKit (for `RDKitAdapter.generate_3d`) and the `oplsaa.xml` force field file.
 
 The monomer is **ethylene oxide (EO)**, represented in BigSMILES as `{[][<]OCCOCCOCCO[>][]}`. Each EO unit carries two reactive port markers: `<` on the left oxygen and `>` on the right oxygen. They are not separate atoms — they annotate existing atoms to signal where coupling occurs.
 
@@ -36,7 +36,7 @@ MONOMER_BIGSMILES = "{[][<]OCCOCCOCCO[>][]}"
 
 def make_eo_monomer():
     m = mp.parser.parse_monomer(MONOMER_BIGSMILES)
-    m = mp.adapter.generate_3d(m, add_hydrogens=True, optimize=True)
+    m = mp.adapter.RDKitAdapter(m).generate_3d(add_hydrogens=True, optimize=True)
     m = m.get_topo(gen_angle=True, gen_dihe=True)
     m = typifier.typify(m)
     return m

@@ -15,6 +15,7 @@ Several guides use polymers as the working example — a demonstration domain, n
 - [Stepwise Construction](02_polymer_stepwise.md) — explicit reaction-based monomer coupling, the `PolymerBuilder` interface, and high-level facade functions
 - [Topology-Driven Assembly](03_polymer_topology.md) — specification of linear, cyclic, and branched architectures via CGSmiles expressions
 - [Crosslinked Networks](04_crosslinking.md) — template-based network formation and pre/post topology generation for LAMMPS `fix bond/react`
+- [Building a Crosslinked Gel](16_crosslinked_gel.md) — offline end-to-end workflow: GAFF chain → grid melt → `DeterministicCrosslinker` → LAMMPS equilibration → network connectivity analysis
 - [Polydisperse Systems](05_polydisperse_systems.md) — molecular-weight distribution sampling, atomistic chain construction, and box packing
 
 

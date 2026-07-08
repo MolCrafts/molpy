@@ -4,8 +4,6 @@ Tests verify:
 - amber_config attribute-overrides accept reaction_preset
 - AmberPolymerBuilder uses port utilities for validation
 - AmberPolymerBuilder uses preset leaving selectors
-- BuildPolymerAmber Tool basics (agent-only, lives in builder.polymer.tools)
-- DSL backend="amber" dispatch
 
 Note: Tests that require actual AmberTools executables are marked
 @pytest.mark.external.
@@ -68,8 +66,8 @@ def _make_test_monomer() -> Atomistic:
 
 
 class TestAmberBuilderPortUtilities:
-    def test_validate_ir_uses_port_utils(self):
-        """AmberPolymerBuilder._validate_ir should use get_all_ports."""
+    def test_validate_ir_accepts_ported_monomer(self):
+        """AmberPolymerBuilder._validate_ir accepts a port-annotated library."""
         from molpy.builder.polymer.ambertools import AmberPolymerBuilder
         from molpy.parser.smiles import parse_cgsmiles
 
@@ -141,63 +139,6 @@ class TestAmberBuilderLeavingGroups:
         assert omit == []
 
 
-# ---- BuildPolymerAmber compute tests ----
-
-
-class TestBuildPolymerAmber:
-    def test_is_tool_subclass(self):
-        from molpy.builder.polymer.tools import BuildPolymerAmber
-        from molpy.builder._tool import Tool
-
-        assert issubclass(BuildPolymerAmber, Tool)
-
-    def test_not_compute_subclass(self):
-        from molpy.builder.polymer.tools import BuildPolymerAmber
-        from molpy.compute.base import Compute
-
-        assert not issubclass(BuildPolymerAmber, Compute)
-
-    def test_registered_in_registry(self):
-        from molpy.builder.polymer.tools import BuildPolymerAmber
-        from molpy.builder._tool import ToolRegistry
-
-        assert ToolRegistry.get("BuildPolymerAmber") is BuildPolymerAmber
-
-    def test_frozen(self):
-        from molpy.builder.polymer.tools import BuildPolymerAmber
-
-        tool = BuildPolymerAmber()
-        with pytest.raises(AttributeError):
-            tool.force_field = "gaff"
-
-    def test_defaults(self):
-        from molpy.builder.polymer.tools import BuildPolymerAmber
-
-        tool = BuildPolymerAmber()
-        assert tool.reaction_preset == "dehydration"
-        assert tool.force_field == "gaff2"
-        assert tool.charge_method == "bcc"
-
-
-# ---- DSL backend dispatch tests ----
-
-
-class TestDSLBackendDispatch:
-    def test_amber_backend_requires_library(self):
-        from molpy.builder.polymer.dsl import polymer
-
-        with pytest.raises(TypeError, match="requires 'library'"):
-            polymer("{[#EO]|10}", backend="amber")
-
-    def test_default_backend_unchanged(self):
-        """Verify default backend still works as before."""
-        from molpy.builder.polymer.dsl import _detect_notation
-
-        # These should still work regardless of backend param
-        assert _detect_notation("{[#EO]|10}") == "cgsmiles"
-        assert _detect_notation("{[<]CCO[>]}|10|") == "gbigsmiles"
-
-
 # ---- Exports tests ----
 
 
@@ -207,14 +148,6 @@ class TestAmberExports:
         from molpy.builder import AmberPolymerBuilder
 
         assert AmberPolymerBuilder is not None
-
-    def test_tool_exports_amber(self):
-        """BuildPolymerAmber is agent-only: lives in tools, not in builder exports."""
-        import molpy.builder as builder_pkg
-        from molpy.builder.polymer.tools import BuildPolymerAmber
-
-        assert BuildPolymerAmber is not None
-        assert "BuildPolymerAmber" not in builder_pkg.__all__
 
     def test_no_old_amber_in_polymer_all(self):
         """Old AmberPolymerBuilder should NOT be in polymer.__all__."""

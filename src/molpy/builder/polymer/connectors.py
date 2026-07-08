@@ -5,8 +5,10 @@ The Connector decides which ports to connect between adjacent monomers
 and executes the chemical reaction via a Reacter.
 """
 
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING
 
 from molpy.core.atomistic import Atom, Atomistic
 from molpy.core.entity import Entity
@@ -14,20 +16,37 @@ from molpy.reacter.base import Reacter
 from molpy.typifier.atomistic import TypifierBase
 
 from .errors import AmbiguousPortsError
-from .port_utils import port_role, ports_compatible
+
+if TYPE_CHECKING:
+    from molpy.reacter.base import ReactionResult
+    from molpy.typifier.cache import RetypeCache
 
 
-class ConnectorContext(dict[str, Any]):
-    """Shared context passed to the connector during linear build.
+def port_role(name: str) -> str:
+    """Derive a port's role from its name (BigSMILES convention).
 
-    Keys:
-    - step: int (current connection step index)
-    - left_label: str (label of left monomer)
-    - right_label: str (label of right monomer)
-    - sequence: list[str] (full sequence being built)
+    ``<`` (and ``<N``) → ``"left"`` (head), ``>`` (and ``>N``) → ``"right"``
+    (tail), everything else → ``"terminal"`` (symmetric).
     """
+    if name.startswith("<"):
+        return "left"
+    if name.startswith(">"):
+        return "right"
+    return "terminal"
 
-    pass
+
+def ports_compatible(a: str, b: str) -> bool:
+    """Whether two port names may connect.
+
+    ``>`` pairs with ``<`` (directional); identical non-directional names
+    pair with each other (e.g. ``$``, ``$1``); ``>``/``>`` and ``<``/``<``
+    do not connect.
+    """
+    if {a, b} == {">", "<"}:
+        return True
+    if a == b and a not in {">", "<"}:
+        return True
+    return False
 
 
 class Connector:
@@ -65,7 +84,6 @@ class Connector:
         self.default = reacter
         self.port_map = port_map or {}
         self.overrides = overrides or {}
-        self._history: list = []
 
     def get_reacter(self, left_type: str, right_type: str) -> Reacter:
         """Get the appropriate Reacter for a structure pair."""
@@ -73,27 +91,22 @@ class Connector:
 
     def select_ports(
         self,
-        left: Atomistic,
-        right: Atomistic,
         left_ports: Mapping[str, list[Atom]],
         right_ports: Mapping[str, list[Atom]],
-        ctx: ConnectorContext,
+        left_label: str,
+        right_label: str,
     ) -> tuple[str, int, str, int, None]:
         """Select which ports to connect.
 
         Args:
-            left: Left Atomistic structure.
-            right: Right Atomistic structure.
             left_ports: Available ports on left (name -> list[Atom]).
             right_ports: Available ports on right (name -> list[Atom]).
-            ctx: Context with step info and labels.
+            left_label: Label of the left monomer (for port_map lookup).
+            right_label: Label of the right monomer (for port_map lookup).
 
         Returns:
             (left_port_name, left_idx, right_port_name, right_idx, None)
         """
-        left_label = ctx.get("left_label", "")
-        right_label = ctx.get("right_label", "")
-
         # 1. Explicit port_map
         key = (left_label, right_label)
         if key in self.port_map:
@@ -152,10 +165,14 @@ class Connector:
         port_atom_L: Entity,
         port_atom_R: Entity,
         typifier: TypifierBase | None = None,
-    ) -> "ReactionResult":
-        """Execute the chemical reaction between two structures."""
-        from molpy.reacter.base import ReactionResult
+        retype_cache: RetypeCache | None = None,
+    ) -> ReactionResult:
+        """Execute the chemical reaction between two structures.
 
+        ``retype_cache`` is the build-wide shared
+        :class:`~molpy.typifier.cache.RetypeCache`, passed straight through to
+        :meth:`Reacter.run` so identical junctions across connections type once.
+        """
         reacter = self.get_reacter(left_type, right_type)
 
         result: ReactionResult = reacter.run(
@@ -165,7 +182,7 @@ class Connector:
             port_atom_R=port_atom_R,
             compute_topology=True,
             typifier=typifier,
+            retype_cache=retype_cache,
         )
 
-        self._history.append(result)
         return result

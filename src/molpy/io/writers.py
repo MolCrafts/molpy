@@ -167,11 +167,37 @@ def write_h5(
 # =============================================================================
 
 
+def _frame_used_types(frame: Any) -> dict[str, set | None]:
+    """Per-section set of the type names a frame actually uses (``None`` if the
+    section/column is absent), for whitelisting FF output to the labelmap.
+
+    A LAMMPS data file's type labels come from the frame's used types, so any
+    coeff the FF writer emits for a type *not* in this set references a labelmap
+    entry that does not exist and LAMMPS rejects it. Both the system writer and
+    the engine writer filter against this so their coeffs match the data file.
+    """
+    sections = {
+        "atom_types": "atoms",
+        "bond_types": "bonds",
+        "angle_types": "angles",
+        "dihedral_types": "dihedrals",
+        "improper_types": "impropers",
+    }
+    used: dict[str, set | None] = {}
+    for key, section in sections.items():
+        if section in frame and "type" in frame[section]:
+            used[key] = set(frame[section]["type"])
+        else:
+            used[key] = None
+    return used
+
+
 def write_lammps_forcefield(
     file: PathLike,
     forcefield: Any,
     precision: int = 6,
     skip_pair_style: bool = False,
+    frame: Any = None,
 ) -> None:
     """
     Write a ForceField object to a LAMMPS force field file.
@@ -183,11 +209,16 @@ def write_lammps_forcefield(
         skip_pair_style: If True, omit the ``pair_style`` line so the calling
             LAMMPS input script can set it independently (e.g. to switch between
             ``lj/cut/coul/cut`` for minimisation and ``lj/cut/coul/long`` for MD).
+        frame: When given, restrict emitted coeffs to the types the frame
+            actually uses — so a force field carrying extra types (e.g. cap
+            artifacts from region parameterisation) does not emit a coeff for a
+            type absent from the data file's labelmap (which LAMMPS rejects).
     """
     from .forcefield.lammps import LAMMPSForceFieldWriter
 
     writer = LAMMPSForceFieldWriter(Path(file), precision=precision)
-    writer.write(forcefield, skip_pair_style=skip_pair_style)
+    used = _frame_used_types(frame) if frame is not None else {}
+    writer.write(forcefield, skip_pair_style=skip_pair_style, **used)
 
 
 # =============================================================================
@@ -314,41 +345,12 @@ def write_lammps_system(
     data_path = file_stem.with_suffix(".data")
     write_lammps_data(data_path, frame)
 
-    # Extract type names from frame to create whitelist
-    atom_types = None
-    bond_types = None
-    angle_types = None
-    dihedral_types = None
-    improper_types = None
-
-    if "atoms" in frame and "type" in frame["atoms"]:
-        atom_types = set(frame["atoms"]["type"])
-
-    if "bonds" in frame and "type" in frame["bonds"]:
-        bond_types = set(frame["bonds"]["type"])
-
-    if "angles" in frame and "type" in frame["angles"]:
-        angle_types = set(frame["angles"]["type"])
-
-    if "dihedrals" in frame and "type" in frame["dihedrals"]:
-        dihedral_types = set(frame["dihedrals"]["type"])
-
-    if "impropers" in frame and "type" in frame["impropers"]:
-        improper_types = set(frame["impropers"]["type"])
-
-    # Write forcefield with whitelist
+    # Write forcefield, whitelisted to the types the frame's labelmap actually uses.
     from .forcefield.lammps import LAMMPSForceFieldWriter
 
     ff_path = file_stem.with_suffix(".ff")
     writer = LAMMPSForceFieldWriter(ff_path)
-    writer.write(
-        forcefield,
-        atom_types=atom_types,
-        bond_types=bond_types,
-        angle_types=angle_types,
-        dihedral_types=dihedral_types,
-        improper_types=improper_types,
-    )
+    writer.write(forcefield, **_frame_used_types(frame))
 
     return {"data": data_path, "ff": ff_path}
 

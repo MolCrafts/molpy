@@ -230,7 +230,7 @@ Tell the agent what you want to build. Do not tell it which function names to ca
 
 | Too low-level | Better |
 | --- | --- |
-| `Use polymer() to build a PEG chain` | `Build a PEG chain with 15 repeat units` |
+| `Use PolymerBuilder to build a PEG chain` | `Build a PEG chain with 15 repeat units` |
 | `Call Packmol to pack molecules` | `Pack 15 chains into a 20 nm cubic box` |
 | `Use the Box class` | `Create a periodic simulation box for the system` |
 

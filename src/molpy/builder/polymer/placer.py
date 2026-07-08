@@ -22,8 +22,6 @@ __all__ = [
     "Placer",
     "Separator",
     "VdWSeparator",
-    "create_covalent_linear_placer",
-    "create_vdw_linear_placer",
 ]
 
 
@@ -140,17 +138,22 @@ class VdWSeparator:
         return left_vdw + right_vdw + self.buffer
 
 
-class CovalentSeparator:
-    """
-    Separator based on typical bond lengths (for bonded atoms).
+def _covalent_radius(symbol: str) -> float:
+    """Covalent radius (Å) for an element symbol; unknowns fall back to carbon."""
+    try:
+        return Element(symbol).covalent
+    except KeyError:
+        return Element("C").covalent
 
-    Uses realistic bond lengths based on element types.
-    Typical bond lengths:
-    - C-C: 1.54 Å (single), 1.34 Å (double)
-    - C-O: 1.43 Å (single), 1.23 Å (double)
-    - C-N: 1.47 Å (single)
-    - O-H: 0.96 Å
-    - N-H: 1.01 Å
+
+class CovalentSeparator:
+    """Separator using summed covalent radii as the bond length.
+
+    The target separation is ``covalent_radius(A) + covalent_radius(B) +
+    buffer`` — the standard single-bond estimate — with radii read from
+    :class:`~molpy.core.element.Element` (no per-pair hardcoded table).
+    Symbols :class:`~molpy.core.element.Element` cannot resolve fall back to
+    carbon's radius.
     """
 
     def __init__(self, buffer: float = 0.0):
@@ -158,24 +161,10 @@ class CovalentSeparator:
         Initialize covalent separator.
 
         Args:
-            buffer: Additional buffer distance in Angstroms (default: 0.0)
-                   Can be negative to account for slight compression
+            buffer: Additional buffer distance in Angstroms (default: 0.0).
+                Can be negative to account for slight compression.
         """
         self.buffer = buffer
-
-        # Typical single bond lengths (in Angstroms)
-        self.bond_lengths = {
-            ("C", "C"): 1.54,
-            ("C", "O"): 1.43,
-            ("C", "N"): 1.47,
-            ("C", "S"): 1.82,
-            ("C", "H"): 1.09,
-            ("O", "H"): 0.96,
-            ("N", "H"): 1.01,
-            ("O", "O"): 1.48,
-            ("N", "N"): 1.45,
-            ("S", "S"): 2.05,
-        }
 
     def get_separation(
         self,
@@ -184,39 +173,12 @@ class CovalentSeparator:
         left_port: Atom,
         right_port: Atom,
     ) -> float:
-        """
-        Calculate separation based on typical bond lengths.
-
-        Args:
-            left_struct: Previous structure in sequence
-            right_struct: Next structure to place
-            left_port: Connection port on left structure
-            right_port: Connection port on right structure
-
-        Returns:
-            Separation distance = typical_bond_length + buffer
-        """
-        # Get port anchor atoms
-        left_anchor = left_port
-        right_anchor = right_port
-
-        # Get element symbols
-        left_symbol = left_anchor.get("symbol", "C")
-        right_symbol = right_anchor.get("symbol", "C")
-
-        # Look up bond length (try both orderings)
-        bond_key = (left_symbol, right_symbol)
-        reverse_key = (right_symbol, left_symbol)
-
-        if bond_key in self.bond_lengths:
-            bond_length = self.bond_lengths[bond_key]
-        elif reverse_key in self.bond_lengths:
-            bond_length = self.bond_lengths[reverse_key]
-        else:
-            # Default: C-C bond length
-            bond_length = 1.54
-
-        return bond_length + self.buffer
+        """Separation = covalent_radius(left) + covalent_radius(right) + buffer."""
+        return (
+            _covalent_radius(left_port.get("symbol", "C"))
+            + _covalent_radius(right_port.get("symbol", "C"))
+            + self.buffer
+        )
 
 
 class LinearOrienter:

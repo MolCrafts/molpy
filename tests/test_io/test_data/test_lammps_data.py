@@ -293,6 +293,31 @@ class TestLammpsDataWriter:
         #     original_frame.box.lengths, new_frame.box.lengths
         # )
 
+    def test_read_from_frame_preserves_topology(self, tmp_path):
+        """read_lammps_data -> Atomistic.from_frame must keep bonds/angles/dihedrals.
+
+        Regression: the reader stored relation endpoints as a signed int, and
+        ``molrs.from_frame`` reads endpoints only as ``uint32`` — so it silently
+        dropped every bond on the Frame->Atomistic round-trip.
+        """
+        data = (
+            "minimal\n\n4 atoms\n3 bonds\n1 atom types\n1 bond types\n\n"
+            "0 10 xlo xhi\n0 10 ylo yhi\n0 10 zlo zhi\n\n"
+            "Masses\n\n1 12.011\n\n"
+            "Atoms\n\n"
+            "1 1 1 0.0 0.0 0.0 0.0\n2 1 1 0.0 1.5 0.0 0.0\n"
+            "3 1 1 0.0 3.0 0.0 0.0\n4 1 1 0.0 4.5 0.0 0.0\n\n"
+            "Bonds\n\n1 1 1 2\n2 1 2 3\n3 1 3 4\n"
+        )
+        path = tmp_path / "chain.data"
+        path.write_text(data)
+
+        frame = LammpsDataReader(path, atom_style="full").read()
+        # endpoints must be uint32 or molrs.from_frame ignores them
+        assert np.asarray(frame["bonds"]["atomi"]).dtype == np.uint32
+        rebuilt = mp.Atomistic.from_frame(frame)
+        assert sum(1 for _ in rebuilt.bonds) == 3
+
     def test_write_minimal_frame(self, tmp_path):
         """Test writing a minimal frame with just atoms."""
         # Create a simple frame

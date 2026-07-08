@@ -12,7 +12,7 @@ Each package has one clear responsibility with minimal coupling to its siblings:
 | `parser` | Grammar-based parsing: SMILES, SMARTS, BigSMILES, G-BigSMILES, CGSmiles |
 | `builder` | System assembly: chain builders, virtual sites, AmberTools integration |
 | `reacter` | Reaction framework: template-based reactions with anchor and leaving-group selectors |
-| `typifier` | Atom typing: OPLS-AA, GAFF, custom SMARTS/SMIRKS-based typifiers |
+| `typifier` | Graph typification: molrs OPLS-AA/MMFF re-exports, MolPy-side overlays such as CL&P, and standalone pair typing |
 | `pack` | Packing workflows: Packmol integration, density targets |
 | `io` | File I/O: readers/writers for molecular data, trajectories, and force-field formats |
 | `compute` | Analysis operators over `Frame`/`Block` data |
@@ -81,4 +81,5 @@ What still scales with chain length per connection: the reacter's input copy of 
 | a file format | plug-in interface | [Adding an I/O Format](extending-io.md) |
 | an external tool integration | plug-in interface | [Adding a Wrapper or Adapter](extending-integration.md) |
 | an entity/link/struct type | core internals — open an issue first | [Extending the Data Model](extending-core.md) |
+| a graph typifier / force-field overlay | typifier internals — open an issue first | [Extending Typifiers](extending-typifiers.md) |
 | an interaction style / kernel | core internals — open an issue first | [Extending the Force Field](extending-forcefield.md) |

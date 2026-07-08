@@ -33,7 +33,6 @@ The Amber workflow for small molecules is: antechamber (assign types + charges) 
 from pathlib import Path
 import molpy as mp
 from molpy.adapter import RDKitAdapter
-from molpy.adapter import Generate3D
 from molpy.io.writers import write_pdb
 from molpy.wrapper import AntechamberWrapper, Parmchk2Wrapper, TLeapWrapper
 
@@ -43,14 +42,7 @@ ions_dir.mkdir(parents=True, exist_ok=True)
 
 # Create TFSI from SMILES and generate 3D coordinates
 tfsi = mp.parser.parse_molecule("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F")
-adapter = RDKitAdapter(internal=tfsi)
-adapter = Generate3D(
-    add_hydrogens=False,
-    embed=True,
-    optimize=True,
-    update_internal=True,
-)(adapter)
-tfsi = adapter.get_internal()
+tfsi = RDKitAdapter(internal=tfsi).generate_3d(add_hydrogens=False, optimize=True)
 
 # Write PDB for antechamber input
 write_pdb(ions_dir / "tfsi.pdb", tfsi.to_frame())
@@ -171,14 +163,7 @@ Port markers in BigSMILES (`[>]` and `[<]`) define connection points. A monomer 
 ```python
 def parse_monomer_3d(bigsmiles):
     mol = mp.parser.parse_monomer(bigsmiles)
-    adapter = RDKitAdapter(internal=mol)
-    adapter = Generate3D(
-        add_hydrogens=True,
-        embed=True,
-        optimize=True,
-        update_internal=True,
-    )(adapter)
-    return adapter.get_internal()
+    return RDKitAdapter(internal=mol).generate_3d(add_hydrogens=True, optimize=True)
 
 
 # Head cap:  only < port → start of chain

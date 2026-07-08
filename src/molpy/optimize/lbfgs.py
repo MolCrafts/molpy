@@ -19,7 +19,6 @@ class LBFGS(Optimizer):
         maxstep: Maximum step size (as displacement norm).
         memory: Number of previous steps to store for Hessian approximation.
         damping: Damping factor for step size.
-        entity_type (type[Entity]): Type of entity to optimize.
 
     Attributes:
         maxstep: Maximum allowed step size
@@ -44,15 +43,8 @@ class LBFGS(Optimizer):
         maxstep: float = 0.04,
         memory: int = 20,
         damping: float = 1.0,
-        entity_type=None,
     ) -> None:
-        # Handle entity_type default
-        if entity_type is None:
-            from molpy.core.entity import Entity
-
-            entity_type = Entity
-
-        super().__init__(potential, entity_type=entity_type)
+        super().__init__(potential)
         self.maxstep = maxstep
         self.memory = memory
         self.damping = damping

@@ -3,6 +3,38 @@
 The full user-facing changelog lives in [docs/changelog.md](docs/changelog.md).
 This file records API renames and breaking changes at the repository root.
 
+## 0.7.0 - 2026-07-08
+
+Requires `molcrafts-molrs == 0.7.0` (molpy and molrs release as a pair).
+
+### Breaking
+
+- **OPLS-AA and MMFF typifiers moved to molrs.** `molpy.typifier` now re-exports
+  `OPLSAATypifier` and `MMFFTypifier` from `molrs.typifier`; the molpy-side
+  typifier internals (`adapter`, `graph`, `matcher`, `layered_engine`,
+  `dependency_analyzer`) are removed. Construct via
+  `OPLSAATypifier(source, strict=…)` and call `.typify(mol)` (returns a typed
+  `molrs.Atomistic`; use `.to_frame()` for tabular access). The old
+  `OplsTypifier(ff, strict_typing=…)` constructor is gone.
+
+### Added
+
+- **CL&P ionic-liquid typifier** (`molpy.typifier.ClpTypifier`) — now functional
+  (was a placeholder after OPLS-AA moved to molrs). Implemented as an OPLS-AA
+  overlay: molrs's SMARTS engine assigns the CL&P atom types (imidazolium ring +
+  alkyl chain + BF4/PF6/NTf2/FSI/dca anions) from the `clp.xml` overlay, and the
+  molpy pair/bond/angle/dihedral typifiers assign parameters. Types and
+  charge/σ/ε match the CL&P (Canongia Lopes & Pádua) reference.
+- **Offline network crosslinking** over the molrs SMARTS/SMIRKS engine.
+- **Distance-based `SoftPotential` + force-field-free relax** in `molpy.optimize`.
+- **Region-scoped typing with a hash-keyed `RetypeCache`** — only the subgraph
+  affected by a graph edit (`AffectedRegion`) is re-typed, keyed by the molrs
+  isomorphism-invariant structural graph hash.
+
+### Changed
+
+- Covalent radii merged into `Element`; `SoftPotential` reads radii via `Element`.
+
 ## 0.6.0 - 2026-07-03
 
 ### Breaking

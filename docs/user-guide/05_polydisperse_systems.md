@@ -38,7 +38,7 @@ BIGSMILES = {
 
 def build_typed_monomer(bigsmiles, typifier):
     monomer = mp.parser.parse_monomer(bigsmiles)
-    monomer = mp.adapter.generate_3d(monomer, add_hydrogens=True, optimize=False)
+    monomer = mp.adapter.RDKitAdapter(monomer).generate_3d(add_hydrogens=True, optimize=False)
     monomer = monomer.get_topo(gen_angle=True, gen_dihe=True)
     monomer = typifier.typify(monomer)
     return monomer

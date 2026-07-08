@@ -26,7 +26,7 @@ from molpy.typifier import OplsTypifier
 
 # 1. Build the structure
 mol = mp.parser.parse_molecule("CCO")
-mol = mp.adapter.generate_3d(mol, add_hydrogens=True, optimize=True)
+mol = mp.adapter.RDKitAdapter(mol).generate_3d(add_hydrogens=True, optimize=True)
 mol = mol.get_topo(gen_angle=True, gen_dihe=True)
 
 print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")

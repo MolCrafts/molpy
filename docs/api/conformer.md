@@ -15,8 +15,8 @@ molrs backend. Available via `import molpy as mp` (`mp.conformer.Conformer`).
 
 ## Related
 
-- [Builder](builder.md) — `prepare_monomer` / `generate_3d` wrap conformer
-  generation into the monomer-preparation flow.
+- [Builder](builder.md) — `PolymerBuilder` consumes 3D monomers; embed them
+  with `Conformer` (this module) or `RDKitAdapter.generate_3d`.
 
 ---
 
