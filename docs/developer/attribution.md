@@ -15,7 +15,7 @@ this page covers what MolPy's own Python layer copies.
 
 | Project | SPDX | Copyright | Used in | Upstream |
 |---|---|---|---|---|
-| **foyer** | `MIT` | © 2015 Vanderbilt University | `typifier.graph` (`SMARTSGraph`), `typifier.matcher`, `typifier.atomistic` (OPLS SMARTS atom-typing engine); `data/forcefield/oplsaa.xml`, `tip3p.xml` | [mosdef-hub/foyer](https://github.com/mosdef-hub/foyer) |
+| **foyer** | `MIT` | © 2015 Vanderbilt University | historical OPLS-AA SMARTS typing reference; `data/forcefield/oplsaa.xml`, `tip3p.xml` | [mosdef-hub/foyer](https://github.com/mosdef-hub/foyer) |
 | **OpenMM** | `MIT` (`openmm/app/element.py`) | Stanford University and the Authors | `core.element` — element name/symbol/mass table | [openmm/openmm](https://github.com/openmm/openmm) |
 | **moltemplate** | `MIT` | © 2013 Andrew Jewett, UC Santa Barbara | `parser.moltemplate.*`, `cli.moltemplate` — `.lt` format reader/writer & `ltemplify` | [jewettaij/moltemplate](https://github.com/jewettaij/moltemplate) |
 | **tame** | `BSD-3-Clause` | © Yunqi Shao | `compute.mcd`, `compute.pmsd`, `compute.time_series`, `compute.jacf`, `compute.onsager`, `compute.persist` | [yqshao-archive/tame](https://github.com/yqshao-archive/tame) (archived) |

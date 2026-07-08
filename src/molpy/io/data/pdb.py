@@ -502,11 +502,17 @@ class PDBWriter(DataWriter):
 
             # Build index -> id mapping for bonds
             index_to_id = {}
+            # PDB atom serials must be unique. Use the ``id`` field only when it
+            # already forms a valid, unique serial set; otherwise number atoms
+            # sequentially so merged/copied structures (which can repeat ids)
+            # still produce valid ATOM serials and CONECT records.
+            index_to_id = {i: i + 1 for i in range(n_atoms)}
             if "id" in atoms:
-                for i, atom_id in enumerate(atoms["id"]):
-                    index_to_id[i] = int(atom_id) if atom_id is not None else i + 1
-            else:
-                index_to_id = {i: i + 1 for i in range(n_atoms)}
+                ids = [atoms["id"][i] for i in range(n_atoms)]
+                if all(a is not None for a in ids):
+                    int_ids = [int(a) for a in ids]
+                    if len(set(int_ids)) == n_atoms:
+                        index_to_id = {i: int_ids[i] for i in range(n_atoms)}
 
             for i in range(n_atoms):
                 # Extract required fields - raise error if None

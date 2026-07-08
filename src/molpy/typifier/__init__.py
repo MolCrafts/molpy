@@ -1,14 +1,11 @@
-from .dependency_analyzer import DependencyAnalyzer
-from .atomistic import OplsTypifier, PairTypifier
+from molrs.typifier import MMFFTypifier, OPLSAATypifier
+
+from .atomistic import PairTypifier
 from .clp import ClpTypifier
-from .layered_engine import LayeredTypingEngine
-from .mmff import MMFFTypifier
 
 __all__ = [
-    "DependencyAnalyzer",
-    "LayeredTypingEngine",
     "PairTypifier",
-    "OplsTypifier",
+    "OPLSAATypifier",
     "ClpTypifier",
     "MMFFTypifier",
 ]

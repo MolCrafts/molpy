@@ -83,17 +83,29 @@ def test_from_accepts_handles_as_well_as_atoms():
     assert by_atom == by_handle
 
 
-def test_region_radius_floor_and_override():
-    assert region_radius(None) == 4  # floor
+def test_region_radius_trusts_declaration_with_fallback():
+    # Fallback floor only when no typifier / no declared context_radius.
+    assert region_radius(None) == 4
 
+    class _NoDeclaration:
+        pass
+
+    class _Zero:
+        context_radius = 0
+
+    assert region_radius(_NoDeclaration()) == 4  # absent -> fallback
+    assert region_radius(_Zero()) == 4  # zero -> fallback
+
+    # A declared context_radius is trusted verbatim — the typifier owns it as a
+    # user-tunable knob, so a small local reaction is not floored up to 4.
     class _Shallow:
         context_radius = 2
 
     class _Deep:
         context_radius = 6
 
-    assert region_radius(_Shallow()) == 4  # floored up
-    assert region_radius(_Deep()) == 6  # override wins
+    assert region_radius(_Shallow()) == 2  # trusted, not floored up
+    assert region_radius(_Deep()) == 6  # trusted
 
 
 # --------------------------------------------------------------------------

@@ -7,7 +7,7 @@ Daylight reaction SMARTS string plus an optional ``cutoff``; the single verb
 loops the subclass :meth:`select` hook to choose bindings, applies each via
 ``molrs.Reaction.apply``, and returns the new graph — the input is never touched.
 
-**All chemistry is molrs**: SMARTS matching (``SmartsPattern.find_matches_mapped``),
+**All chemistry is molrs**: SMARTS matching (``SmartsPattern.find_matches``),
 the SMIRKS graph edit (``Reaction.apply``), distances (``NeighborQuery``), and
 backbone ordering (``Atomistic.topo_distances``). molpy holds no SMARTS engine,
 no match store, no graph-edit primitives — matches are just molrs's
@@ -29,7 +29,7 @@ from molpy.core.affected_region import AffectedRegion, region_radius
 from molpy.core.atomistic import Atomistic
 
 if TYPE_CHECKING:
-    from molpy.typifier.atomistic import ForceFieldTypifier
+    from molpy.typifier.region import RegionTypifier
 
 # ``apply`` returns the same subclass it was handed (Atomistic -> Atomistic, and
 # any user subclass -> itself), matching the immutable ``.copy()`` contract.
@@ -38,6 +38,38 @@ GraphT = TypeVar("GraphT", bound=Atomistic)
 # Non-periodic padding (Angstrom) so every point sits strictly inside the
 # synthesized bounding box used for the neighbor search.
 _BOX_MARGIN = 1.0
+
+
+def _total_charge(graph: Atomistic) -> float:
+    """Sum of the graph's atomic partial charges (0.0 on an untyped graph)."""
+    return float(sum(a.get("charge", 0.0) or 0.0 for a in graph.atoms))
+
+
+def _conserve_leaving_charge(
+    graph: Atomistic, touched: Sequence[int], q_before: float
+) -> None:
+    """Fold the charge a reaction removed onto its surviving anchor atoms.
+
+    A leaving-group reaction (``[C:1][H]...>>[C:1]...``) deletes atoms whose
+    partial charge would otherwise vanish and leave the system net-charged.
+    Redistribute that deficit evenly onto the reaction's ``touched`` anchor atoms
+    — the atoms the leaving groups detached from — conserving total charge
+    locally. A no-op on untyped graphs (no ``charge`` field, zero deficit).
+    """
+    deficit = q_before - _total_charge(graph)
+    if not deficit:
+        return
+    anchors = [
+        atom
+        for handle in touched
+        if (atom := graph._intern_atom(handle)) is not None
+        and atom.get("charge") is not None
+    ]
+    if not anchors:
+        return
+    share = deficit / len(anchors)
+    for atom in anchors:
+        atom["charge"] = atom["charge"] + share
 
 
 @dataclass(frozen=True)
@@ -57,6 +89,17 @@ class Candidate:
     distance: float
 
 
+@dataclass(frozen=True)
+class SelectionContext:
+    """Immutable inputs available to a crosslink selection strategy."""
+
+    graph: Atomistic
+    candidates: list[Candidate]
+    occurrences: list[list[dict[int, int]]]
+    labels: dict[int, str]
+    components: dict[int, int]
+
+
 class Crosslinker(ABC):
     """Immutable offline crosslinker driven by a molrs reaction.
 
@@ -70,14 +113,16 @@ class Crosslinker(ABC):
         reaction: str,
         *,
         cutoff: float | None = None,
-        typifier: ForceFieldTypifier | None = None,
+        typifier: RegionTypifier | None = None,
     ) -> None:
         self._reaction = molrs.Reaction(reaction)
         self._cutoff = cutoff
         # Optional region-scoped retype hook. When set, each formed crosslink's
         # affected region is retyped (via a per-``apply`` shared cache) and its
         # interior types written back onto the returned graph; ``None`` keeps the
-        # crosslinker pure-topology (unchanged default behaviour).
+        # crosslinker pure-topology (unchanged default behaviour). The regions are
+        # always built into :attr:`last_regions` regardless — a typifier-free
+        # consumer (the GAFF path) parameterises junctions off them externally.
         self._typifier = typifier
         # Affected regions from the most recent ``apply`` — one per formed
         # crosslink, seeded by the atoms ``molrs.Reaction.apply`` reports as
@@ -102,22 +147,53 @@ class Crosslinker(ABC):
 
         Each ``molrs.Reaction.apply`` returns the atom handles it touched; the
         radius-``region_radius`` ball around them is captured as an
-        :class:`AffectedRegion` in :attr:`last_regions` for the retype layer.
-        When a ``typifier`` was supplied, each region is retyped through a
-        per-``apply`` shared cache and its interior types written onto ``work``
-        (structurally identical crosslinks type once).
+        :class:`AffectedRegion` in :attr:`last_regions` for every formed crosslink.
+        When a ``typifier`` was supplied, each region is additionally retyped
+        through a per-``apply`` shared cache and its interior types written onto
+        ``work`` (identical crosslinks type once); with no typifier the regions
+        are still exposed for an external parameteriser (the GAFF path).
         """
         work = graph.copy()
-        occurrences = self._match_occurrences(work)
+        # Per-atom ``{handle: type}`` — the ``%LABEL`` context for matching (so a
+        # reaction like ``[C;%cx:1]`` targets typed sites) and for re-anchoring
+        # leaving atoms inside each apply. Built once; removed atoms' stale entries
+        # are simply never queried.
+        labels = self._type_labels(work)
+        occurrences = self._match_occurrences(work, labels)
         candidates = self._candidate_pairs(work, occurrences)
+        components = self._components(work)
+        context = SelectionContext(
+            graph=work,
+            candidates=candidates,
+            occurrences=occurrences,
+            labels=labels,
+            components=components,
+        )
         radius = region_radius(self._typifier)
         regions: list[AffectedRegion] = []
-        for binding in self.select(work, candidates):
-            touched = self._reaction.apply(work, binding)
+        for binding in self.select(context):
+            q_before = _total_charge(work)
+            # refresh=False: skip molrs' per-apply whole-graph angle/dihedral +
+            # aromaticity refresh (O(N) each). Matching + region extraction need
+            # only bonds, which update in place; we refresh ONCE below.
+            touched = self._reaction.apply(work, binding, labels, refresh=False)
+            _conserve_leaving_charge(work, touched, q_before)
             regions.append(AffectedRegion._from(work, touched, radius))
+        if regions:
+            work.generate_topology(gen_angle=True, gen_dihedral=True)
+            molrs.perceive_aromaticity(work)
         self._last_regions = regions
         self._retype_regions(regions)
         return work
+
+    @staticmethod
+    def _type_labels(graph: Atomistic) -> dict[int, str]:
+        """Per-atom ``{handle: type}`` map for ``%LABEL`` context matching."""
+        return {
+            atom.handle: str(kind)
+            for atom in graph.atoms
+            if (kind := atom.get("type")) is not None
+        }
 
     def _retype_regions(self, regions: list[AffectedRegion]) -> None:
         """Retype each region's interior onto the parent when a typifier is set.
@@ -139,23 +215,24 @@ class Crosslinker(ABC):
         """Affected regions built by the most recent :meth:`apply` call."""
         return self._last_regions
 
-    def _match_occurrences(self, graph: Atomistic) -> list[list[dict[int, int]]]:
+    def _match_occurrences(
+        self, graph: Atomistic, labels: dict[int, str]
+    ) -> list[list[dict[int, int]]]:
         """Per-component site occurrences ``{map_number: handle}`` for the reaction.
 
-        Defaults to molrs SMARTS matching (one list per reactant component).
-        Override to swap in an alternate site front-end (e.g. reading modelled
-        ``port`` markers via :class:`PortMatcher`) — the molrs edit engine that
-        consumes the occurrences stays the same.
+        molrs SMARTS matching, one list per reactant component, evaluated against
+        the ``{handle: type}`` ``labels`` so a reaction can target sites marked at
+        modelling time with a ``%LABEL`` predicate: ``[C;%cx:1]`` matches only
+        ``cx``-typed carbons. Types no ``%`` predicate references are ignored, so
+        plain SMARTS is unaffected.
         """
         return [
-            pattern.find_matches_mapped(graph)
+            pattern.find_matches(graph, labels=labels, mapped=True)
             for pattern in self._reaction.reactant_patterns
         ]
 
     @abstractmethod
-    def select(
-        self, graph: Atomistic, candidates: list[Candidate]
-    ) -> Iterator[dict[int, int]]:
+    def select(self, context: SelectionContext) -> Iterator[dict[int, int]]:
         """Yield ``{map_number: handle}`` bindings to react (subclass mode)."""
 
     # -- reaction wiring -----------------------------------------------------
@@ -327,21 +404,18 @@ class Crosslinker(ABC):
                         stack.append(neighbor)
         return root
 
-    def _regular_sites(self, graph: Atomistic, spacing: int) -> set[int]:
+    def _regular_sites(self, context: SelectionContext, spacing: int) -> set[int]:
         """Bonding atoms kept when thinning each molecule's sites every ``spacing``.
 
         Sites are ordered along the backbone by ``topo_distances`` from a chain
         end; keeping every ``spacing``-th yields uniformly spaced crosslink
         points. Pure topology — coordinates are never read.
         """
-        occurrences = [
-            pattern.find_matches_mapped(graph)
-            for pattern in self._reaction.reactant_patterns
-        ]
+        occurrences = context.occurrences
         sites = {oa[self._map_a] for oa in occurrences[self._comp_a]}
         sites |= {ob[self._map_b] for ob in occurrences[self._comp_b]}
-        handles, adjacency = self._adjacency(graph)
-        components = self._components(graph)
+        _, adjacency = self._adjacency(context.graph)
+        components = context.components
 
         by_molecule: dict[int, list[int]] = {}
         for handle in sites:
@@ -350,7 +424,7 @@ class Crosslinker(ABC):
         keep: set[int] = set()
         for root, site_handles in by_molecule.items():
             ordered = self._backbone_order(
-                graph, adjacency, components, root, site_handles
+                context.graph, adjacency, components, root, site_handles
             )
             keep.update(ordered[::spacing])
         return keep
@@ -370,12 +444,10 @@ class Crosslinker(ABC):
         return sorted(site_handles, key=lambda h: (distances.get(h, 0), h))
 
     def _ordered_sites(
-        self, graph: Atomistic, component: int, map_number: int
+        self, context: SelectionContext, component: int, map_number: int
     ) -> list[dict[int, int]]:
         """Deduplicated representative occurrences per site, ordered by handle."""
-        occurrences = self._reaction.reactant_patterns[component].find_matches_mapped(
-            graph
-        )
+        occurrences = context.occurrences[component]
         representative: dict[int, dict[int, int]] = {}
         for occurrence in occurrences:
             handle = occurrence[map_number]

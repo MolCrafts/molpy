@@ -507,6 +507,51 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         )
         return new_struct
 
+    def complete_valence(self) -> "Atomistic":
+        """Return a copy with every dangling valence filled by hydrogen.
+
+        Under-coordinated atoms (bond degree below their element valence) are
+        capped with hydrogens, turning a sliced subgraph into a chemically valid
+        molecule an external tool can parameterise. Original atoms keep their
+        order (caps appended); ``self`` is untouched. See
+        :func:`molpy.core.capping.complete_valence`.
+        """
+        from molpy.core.capping import complete_valence
+
+        return complete_valence(self)
+
+    def assign_bonded_types(self, forcefield: Any) -> "Atomistic":
+        """Label every bond/angle/dihedral from its endpoint atom types.
+
+        For each bonded term, look its endpoint ``type`` tuple up in
+        ``forcefield`` (matching either endpoint order) and write the canonical
+        type name onto the link. Atoms must already carry ``type``; a term whose
+        atom-type tuple is absent from the force field is left unlabelled.
+        Mutates and returns ``self``.
+        """
+        from molpy.core.forcefield import AngleType, BondType, DihedralType
+
+        def name_table(cls: type) -> dict[tuple[str, ...], str]:
+            table: dict[tuple[str, ...], str] = {}
+            for t in forcefield.get_types(cls):
+                parts = tuple(t.name.split("-"))
+                table[parts] = t.name
+                table[parts[::-1]] = t.name
+            return table
+
+        for view, cls in (
+            (self.bonds, BondType),
+            (self.angles, AngleType),
+            (self.dihedrals, DihedralType),
+        ):
+            table = name_table(cls)
+            for link in view:
+                key = tuple(ep.get("type") for ep in link.endpoints)
+                name = table.get(key)
+                if name is not None:
+                    link["type"] = name
+        return self
+
     def get_topo_neighbors(
         self,
         entity: Atom,
@@ -519,8 +564,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         # (the source itself, at distance 0, is within any radius >= 0).
         return [
             self._intern_atom(h)
-            for h, d in self.topo_distances(entity.handle)
-            if d <= radius
+            for h, _ in self.topo_distances(entity.handle, max_hops=radius)
         ]
 
     def get_topo_distances(
@@ -550,6 +594,8 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         centers: list[Atom],
         radius: int,
         out_cls: type[G],
+        *,
+        regenerate_topology: bool = False,
     ) -> tuple[G, list[Atom], dict[Atom, Atom]]:
         """Induced radius-``radius`` ball plus a region-atom → parent-atom map.
 
@@ -559,6 +605,15 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         or an :class:`AffectedRegion` — so the ball is materialised straight into
         a region subclass with no second copy. Returns
         ``(subgraph, boundary_atoms, {region_atom: parent_atom})``.
+
+        ``regenerate_topology`` perceives the ball's angles/dihedrals from its own
+        bonds instead of copying them from the parent. The induced higher-order
+        terms are fully determined by the induced bonds, and molrs indexes only
+        arity-2 relations per atom — so copying them would mean scanning *every*
+        angle/dihedral in the graph to find the few in the ball (O(graph) per
+        extraction). Regeneration keeps the whole extraction O(ball). Used by the
+        region path (types are (re)assigned downstream, so parent type labels on
+        those terms are irrelevant); ``extract_subgraph`` keeps verbatim copies.
         """
         new = out_cls()
         new._props = dict(self._props)
@@ -566,45 +621,74 @@ class Atomistic(molrs.Atomistic, _GraphViews):
             return new, [], {}
 
         # BFS radius ball around every center over the bond graph (molrs kernel).
-        # A center not in this structure contributes nothing (empty distances).
+        # Radius-bounded so cost is O(ball), not O(connected component): once
+        # crosslinks merge many chains into one giant component, an unbounded BFS
+        # per edit would scan the whole network to build a ~radius-4 ball.
         selected_handles: set[int] = set()
         for c in centers:
             selected_handles.update(
-                h for h, d in self.topo_distances(c.handle) if d <= radius
+                h for h, _ in self.topo_distances(c.handle, max_hops=radius)
             )
         if not selected_handles:
             return new, [], {}
 
-        # Deterministic (row) order over the selection.
-        selected_entities = [a for a in self.atoms if a.handle in selected_handles]
-        selected_set = set(selected_entities)
+        # Intern the ball's atoms straight from the BFS handles (O(ball)), in a
+        # deterministic order. Everything below keys off the stable atom HANDLE,
+        # never the view object: molrs re-interns views freely (a cached link can
+        # hold endpoint views distinct from a fresh intern of the same handle) and
+        # molpy atoms hash by identity, so view-identity maps are unsafe.
+        selected_entities = [self._intern_atom(h) for h in sorted(selected_handles)]
 
         # Boundary atoms: a selected atom with a bond-neighbor outside the ball.
-        edge_entities = [
-            a
-            for a in selected_entities
-            if any(nb not in selected_set for nb in self.get_neighbors(a))
-        ]
+        edge_handles = {
+            atom.handle
+            for atom in selected_entities
+            if any(nb.handle not in selected_handles for nb in self.get_neighbors(atom))
+        }
 
-        # clone selected atoms + induced topology into the new struct
-        parent_to_clone: dict[Atom, Atom] = {}
+        # Clone selected atoms; keep clone + parent view keyed by handle.
+        clone_by_handle: dict[int, Atom] = {}
+        parent_by_handle: dict[int, Atom] = {}
         for atom in selected_entities:
-            parent_to_clone[atom] = new.def_atom(dict(atom.data))
+            parent_by_handle[atom.handle] = atom
+            clone_by_handle[atom.handle] = new.def_atom(dict(atom.data))
 
-        def _clone_links(views: Entities[Any], adder: Any) -> None:
-            for link in views:
-                eps = link.endpoints
-                if all(ep in selected_set for ep in eps):
-                    mapped = [parent_to_clone[ep] for ep in eps]
-                    adder(*mapped, **dict(link.data))
+        # Clone the induced bonds from each ball atom's incident bond relations —
+        # arity-2 relations ARE indexed per atom, so this is O(ball x degree), not
+        # a scan over every bond in the graph.
+        seen_bonds: set[int] = set()
+        for atom in selected_entities:
+            for bond_handle, other in self.incident_relations(atom.handle, Bond._kind):
+                if bond_handle in seen_bonds or other not in selected_handles:
+                    continue
+                seen_bonds.add(bond_handle)
+                nodes = self.relation_nodes(Bond._kind, bond_handle)
+                data = dict(self._intern_link(Bond._kind, bond_handle).data)
+                new.def_bond(*(clone_by_handle[h] for h in nodes), **data)
 
-        _clone_links(self.bonds, new.def_bond)
-        _clone_links(self.angles, new.def_angle)
-        _clone_links(self.dihedrals, new.def_dihedral)
-        _clone_links(self.impropers, new.def_improper)
+        if regenerate_topology:
+            # Angles/dihedrals induced on the ball, perceived locally from the
+            # cloned bonds — no scan over the whole graph's higher-order terms.
+            new.generate_topology(gen_angle=True, gen_dihedral=True)
+        else:
+            # Higher-arity relations aren't indexed per atom, so fall back to a
+            # graph scan (only ``extract_subgraph`` on small structures reaches
+            # here; regions regenerate instead).
+            def _clone_links(views: Entities[Any], adder: Any) -> None:
+                for link in views:
+                    nodes = [ep.handle for ep in link.endpoints]
+                    if all(h in selected_handles for h in nodes):
+                        data = dict(link.data)
+                        adder(*(clone_by_handle[h] for h in nodes), **data)
 
-        boundary = [parent_to_clone[e] for e in edge_entities if e in parent_to_clone]
-        region_to_parent = {clone: parent for parent, clone in parent_to_clone.items()}
+            _clone_links(self.angles, new.def_angle)
+            _clone_links(self.dihedrals, new.def_dihedral)
+            _clone_links(self.impropers, new.def_improper)
+
+        boundary = [clone_by_handle[h] for h in edge_handles]
+        region_to_parent = {
+            clone_by_handle[h]: parent_by_handle[h] for h in clone_by_handle
+        }
         return new, boundary, region_to_parent
 
     # ---------- copy / merge / adopt ----------
@@ -669,6 +753,16 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         # Link views enumerate live relations straight from molrs via
         # relation_ids(); no Python-side handle shadow to populate.
         return struct
+
+    @classmethod
+    def from_frame(cls, frame: "Frame") -> "Atomistic":
+        """Build a molpy ``Atomistic`` from a :class:`~molpy.core.frame.Frame`.
+
+        The inverse of :meth:`to_frame`. molrs' inherited ``from_frame`` returns a
+        bare molrs graph; this override adopts it so the result is a molpy
+        ``Atomistic`` — the call site never needs a second ``adopt``.
+        """
+        return cls.adopt(molrs.Atomistic.from_frame(frame))
 
     # ---------- spatial operations ----------
     def move(

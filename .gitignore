@@ -164,3 +164,7 @@ uv.lock
 
 # model-viewer library is loaded from jsdelivr CDN, not vendored (exceeds 1MB hook limit)
 docs/assets/vendor/model-viewer.min.js
+
+# Scratch output from external-tool runs (AmberTools/antechamber) and browser automation
+amber_work/
+.playwright-mcp/

@@ -14,10 +14,10 @@ from typing import TYPE_CHECKING
 
 import numpy
 
-from ._crosslinker import Candidate, Crosslinker
+from ._crosslinker import Candidate, Crosslinker, SelectionContext
 
 if TYPE_CHECKING:
-    from molpy.typifier.atomistic import ForceFieldTypifier
+    from molpy.typifier.region import RegionTypifier
 
 
 class RandomCrosslinker(Crosslinker):
@@ -33,7 +33,7 @@ class RandomCrosslinker(Crosslinker):
         exclude_same_molecule: bool = False,
         exclude_same_match: bool = False,
         max_per_molecule: tuple[str, int] | int | None = None,
-        typifier: ForceFieldTypifier | None = None,
+        typifier: RegionTypifier | None = None,
     ) -> None:
         super().__init__(reaction, cutoff=cutoff, typifier=typifier)
         self._conversion = conversion
@@ -42,11 +42,11 @@ class RandomCrosslinker(Crosslinker):
         self._exclude_same_match = exclude_same_match
         self._max_per_molecule = max_per_molecule
 
-    def select(self, graph, candidates: list[Candidate]) -> Iterator[dict[int, int]]:
+    def select(self, context: SelectionContext) -> Iterator[dict[int, int]]:
         rng = numpy.random.RandomState(self._seed)
-        order = rng.permutation(len(candidates))
-        target = self._target_reactions(graph)
-        components = self._components(graph)
+        order = rng.permutation(len(context.candidates))
+        target = self._target_reactions(context)
+        components = context.components
         consumed: set[int] = set()
         per_molecule: dict[int, int] = {}
         reacted = 0
@@ -55,7 +55,7 @@ class RandomCrosslinker(Crosslinker):
         for index in order:
             if reacted >= target:
                 break
-            candidate = candidates[int(index)]
+            candidate = context.candidates[int(index)]
             if self._skip(candidate, consumed, components, per_molecule):
                 continue
             yield self._binding(candidate)
@@ -64,12 +64,9 @@ class RandomCrosslinker(Crosslinker):
 
     # -- conversion target ---------------------------------------------------
 
-    def _target_reactions(self, graph) -> float:
+    def _target_reactions(self, context: SelectionContext) -> float:
         """``conversion`` x limiting-reactant sites (A x B -> min, A x A -> half)."""
-        occurrences = [
-            pattern.find_matches_mapped(graph)
-            for pattern in self._reaction.reactant_patterns
-        ]
+        occurrences = context.occurrences
         sites_a = {oa[self._map_a] for oa in occurrences[self._comp_a]}
         sites_b = {ob[self._map_b] for ob in occurrences[self._comp_b]}
         if sites_a and sites_a == sites_b:

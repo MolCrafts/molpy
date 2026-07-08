@@ -8,21 +8,21 @@ orchestrates *which* sites pair.
 
 - :class:`DeterministicCrosslinker` — exhaustive / ``spacing`` / explicit ``pairs``
 - :class:`RandomCrosslinker` — random pairing to a target ``conversion`` (seeded)
-- :class:`PortMatcher` — modelled ``atom["port"]`` markers as an alternate site
-  front-end (same occurrence shape as molrs SMARTS matching)
+
+Crosslink sites may be pre-marked at modelling time (``site_field``): the one
+molrs SMARTS matcher then only pairs marked atoms — no separate site front-end.
 """
 
-from ._crosslinker import Candidate, Crosslinker
+from ._crosslinker import Candidate, Crosslinker, SelectionContext
 from ._deterministic import DeterministicCrosslinker
-from ._port_matcher import PortMatcher
 from ._random import RandomCrosslinker
 from .recipes import crosslink_gel, write_lammps
 
 __all__ = [
     "Candidate",
     "Crosslinker",
+    "SelectionContext",
     "DeterministicCrosslinker",
-    "PortMatcher",
     "RandomCrosslinker",
     "crosslink_gel",
     "write_lammps",

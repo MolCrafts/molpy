@@ -18,8 +18,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 
@@ -27,18 +28,17 @@ from molpy.core.atomistic import Atomistic
 from molpy.io import read_amber
 from molpy.io.writers import write_pdb
 
-if TYPE_CHECKING:
-    from molpy.core.affected_region import AffectedRegion
-    from molpy.core.frame import Frame
-    from molpy.typifier.region import RegionTypes
-
 
 @dataclass
 class AmberResult:
-    """A parameterised component: its :class:`Frame` and its ForceField."""
+    """A parameterised component: its :class:`Frame`, ForceField, and the Amber
+    topology/coordinate files it was read from (``prmtop``/``inpcrd``), so it can
+    be fed straight to a downstream sander run without re-parameterising."""
 
     frame: Any
     forcefield: Any
+    prmtop: Any = None
+    inpcrd: Any = None
 
     @property
     def ff(self) -> Any:
@@ -68,21 +68,34 @@ class AmberTools:
         self.charge_method = charge_method
         self.work_dir = Path(work_dir).resolve()
         self.work_dir.mkdir(parents=True, exist_ok=True)
-        self._polymer_builder: Any = None
-        # Region GAFF cache: structural hash -> [(region, snapshot)]. A recurring
-        # identical junction is a hash hit (isomorphism-confirmed), so antechamber
-        # runs once per distinct region environment.
-        self._region_cache: dict[int, list[tuple[AffectedRegion, RegionTypes]]] = {}
+        self._polymer_builders: dict[tuple[Any, ...], Any] = {}
 
     # -- small molecule ----------------------------------------------------
     def parameterize(
-        self, struct: Atomistic, *, net_charge: int = 0, name: str = "MOL"
+        self,
+        struct: Atomistic,
+        *,
+        net_charge: int = 0,
+        name: str = "MOL",
+        charge_method: str | None = None,
     ) -> AmberResult:
-        """Parameterise a small molecule; returns a neutralised :class:`AmberResult`."""
+        """Parameterise a small molecule; returns a neutralised :class:`AmberResult`.
+
+        Runs antechamber (atom typing + charges) → parmchk2 (bonded params) →
+        tleap (prmtop/inpcrd) on ``struct`` as given. ``struct`` is expected to
+        carry sane geometry (a built/parsed molecule, or a valence-completed
+        region whose caps sit at proper tetrahedral angles), so ``sqm`` runs
+        directly on it.
+
+        ``charge_method`` overrides the facade default for this call — e.g. a
+        caller that only needs atom types + bonded params (both charge-method
+        independent) can pass ``"gas"`` to skip the ``sqm`` charge solve entirely.
+        """
         from molpy.wrapper.antechamber import AntechamberWrapper
         from molpy.wrapper.prepgen import Parmchk2Wrapper
         from molpy.wrapper.tleap import TLeapWrapper
 
+        method = charge_method or self.charge_method
         d = self.work_dir / name
         d.mkdir(parents=True, exist_ok=True)
         for idx, atom in enumerate(struct.atoms, start=1):
@@ -90,15 +103,16 @@ class AmberTools:
                 atom["name"] = f"{atom.get('element', 'X')}{idx}"
         write_pdb(d / f"{name}.pdb", struct.to_frame())
 
+        input_pdb = d / f"{name}.pdb"
         ac = AntechamberWrapper(
             name="antechamber", workdir=d, env=self.env, env_manager=self.env_manager
         )
         r = ac.atomtype_assign(
-            input_file=(d / f"{name}.pdb").absolute(),
+            input_file=input_pdb.absolute(),
             output_file=(d / f"{name}.mol2").absolute(),
             input_format="pdb",
             output_format="mol2",
-            charge_method=self.charge_method,
+            charge_method=method,
             atom_type=self.force_field,
             net_charge=net_charge,
         )
@@ -128,131 +142,34 @@ class AmberTools:
             raise RuntimeError(f"tleap failed to produce {name}.prmtop")
         frame, ff = read_amber(d / f"{name}.prmtop", d / f"{name}.inpcrd")
         _neutralize(frame, float(net_charge))
-        return AmberResult(frame, ff)
-
-    # -- affected region ---------------------------------------------------
-    def parameterize_region(
-        self, region: AffectedRegion, *, net_charge: int = 0, name: str = "REGION"
-    ) -> RegionTypes:
-        """Assign GAFF atom types to an :class:`AffectedRegion` via antechamber.
-
-        The region **is** an :class:`~molpy.core.atomistic.Atomistic`, so it hands
-        straight to the existing ``Atomistic -> PDB -> antechamber`` bridge. The
-        resulting GAFF types (interior atoms only; the context boundary shell is
-        dropped) are written onto the parent graph through ``region.entity_map``.
-
-        Results cache by the region's structural hash, so a recurring identical
-        junction reuses the snapshot and skips the antechamber subprocess. The
-        whole-molecule :meth:`parameterize` path is untouched.
-
-        Args:
-            region: the affected region to type (its ``entity_map`` reaches the
-                parent atoms that receive the GAFF types).
-            net_charge: net charge passed to antechamber.
-            name: work-subdirectory / molecule name for the antechamber run.
-
-        Returns:
-            The frozen :class:`~molpy.typifier.region.RegionTypes` snapshot that
-            was applied (canonical-order keyed; reused verbatim on a cache hit).
-        """
-        from molpy.typifier.region import apply_region_types
-
-        snapshot = self._region_cache_lookup(region)
-        if snapshot is None:
-            snapshot = self._region_gaff_types(region, net_charge=net_charge, name=name)
-            self._region_cache_store(region, snapshot)
-        apply_region_types(snapshot, region)
-        return snapshot
-
-    def _region_cache_lookup(self, region: AffectedRegion) -> RegionTypes | None:
-        """Return a cached snapshot for an isomorphic region, else ``None``."""
-        for cached, snapshot in self._region_cache.get(hash(region), ()):
-            if region == cached:  # is_isomorphic confirm
-                return snapshot
-        return None
-
-    def _region_cache_store(
-        self, region: AffectedRegion, snapshot: RegionTypes
-    ) -> None:
-        self._region_cache.setdefault(hash(region), []).append((region, snapshot))
-
-    def _region_gaff_types(
-        self, region: AffectedRegion, *, net_charge: int, name: str
-    ) -> RegionTypes:
-        """Run antechamber on ``region`` and snapshot its interior GAFF types.
-
-        Writes the region to a PDB, assigns GAFF atom types, reads the mol2 back,
-        and captures the non-boundary atoms' types in canonical order. Isolated as
-        one method so the region-path plumbing (cache + write-back) can be tested
-        with this subprocess stubbed.
-        """
-        from molpy.io.readers import read_mol2
-        from molpy.wrapper.antechamber import (
-            AntechamberWrapper,
-            write_antechamber_input_pdb,
+        return AmberResult(
+            frame, ff, prmtop=d / f"{name}.prmtop", inpcrd=d / f"{name}.inpcrd"
         )
 
+    # -- geometry optimization --------------------------------------------
+    def minimize(
+        self, result: AmberResult, *, max_iter: int = 500, name: str = "min"
+    ) -> Any:
+        """Energy-minimise a parameterised ``result``'s geometry with sander.
+
+        Reuses the ``prmtop``/``inpcrd`` the result was parameterised into (no
+        re-parameterisation), runs a sander minimization, and returns a
+        coordinate :class:`Frame` with the relaxed positions in atom order.
+        """
+        from molpy.io.readers import read_amber_inpcrd
+        from molpy.wrapper.sander import SanderWrapper
+
+        if result.prmtop is None or result.inpcrd is None:
+            raise ValueError(
+                "AmberTools.minimize needs a result carrying prmtop/inpcrd "
+                "(produced by parameterize / build_polymer)."
+            )
         d = self.work_dir / name
         d.mkdir(parents=True, exist_ok=True)
-        pdb = d / f"{name}.pdb"
-        mol2 = d / f"{name}.mol2"
-        # The region is an Atomistic; use the antechamber-specific PDB bridge.
-        write_antechamber_input_pdb(pdb, region)
-
-        ac = AntechamberWrapper(
-            name="antechamber", workdir=d, env=self.env, env_manager=self.env_manager
-        )
-        r = ac.atomtype_assign(
-            input_file=pdb.absolute(),
-            output_file=mol2.absolute(),
-            input_format="pdb",
-            output_format="mol2",
-            charge_method=self.charge_method,
-            atom_type=self.force_field,
-            net_charge=net_charge,
-        )
-        if r.returncode != 0:
-            raise RuntimeError(
-                f"antechamber failed for region {name}:\n{r.stderr or r.stdout}"
-            )
-        return self._region_types_from_mol2(region, read_mol2(mol2))
-
-    @staticmethod
-    def _region_types_from_mol2(region: AffectedRegion, frame: Frame) -> RegionTypes:
-        """Build a canonical-order GAFF snapshot from an antechamber mol2 frame.
-
-        Antechamber preserves atom order, so the i-th mol2 atom corresponds to the
-        i-th region atom. Non-boundary atoms are keyed by canonical position (as
-        :func:`~molpy.typifier.region.typify_region` does) so the snapshot reuses
-        across isomorphic regions; the context boundary shell is dropped.
-        """
-        from molpy.typifier.region import RegionTypes, TypeInfo
-
-        block = frame["atoms"]
-        gaff_types = list(block["type"])
-        charges = list(block["charge"])
-
-        region_atoms = list(region.atoms)
-        canon = region.canonical_order()
-        pos_of_handle = {atom.handle: i for i, atom in enumerate(region_atoms)}
-        canon_of_pos = {pos_of_handle[h]: idx for idx, h in enumerate(canon)}
-        boundary = {atom.handle for atom in region.boundary}
-
-        entries: list[tuple[int, TypeInfo]] = []
-        for pos, atom in enumerate(region_atoms):
-            if atom.handle in boundary:
-                continue
-            entries.append(
-                (
-                    canon_of_pos[pos],
-                    TypeInfo(
-                        type=str(gaff_types[pos]),
-                        params=(("charge", float(charges[pos])),),
-                    ),
-                )
-            )
-        entries.sort(key=lambda entry: entry[0])
-        return RegionTypes(atoms=tuple(entries), bonds=(), angles=(), dihedrals=())
+        rst = SanderWrapper(
+            name="sander", workdir=d, env=self.env, env_manager=self.env_manager
+        ).minimize(result.prmtop, result.inpcrd, max_iter=max_iter)
+        return read_amber_inpcrd(rst)
 
     # -- monatomic ion -----------------------------------------------------
     def parameterize_ion(
@@ -312,16 +229,50 @@ class AmberTools:
         """Assemble a chain from a CGSmiles sequence + monomer library (cached)."""
         from .polymer.ambertools import AmberPolymerBuilder
 
-        if self._polymer_builder is None:
-            self._polymer_builder = AmberPolymerBuilder(
+        key = self._polymer_builder_key(library, net_charges)
+        builder = self._polymer_builders.get(key)
+        if builder is None:
+            digest = hashlib.sha1(repr(key).encode("utf-8")).hexdigest()[:12]
+            builder = AmberPolymerBuilder(
                 library=library,
                 force_field=self.force_field,  # type: ignore[arg-type]
                 charge_method=self.charge_method,
-                work_dir=self.work_dir / "polymer",
+                work_dir=self.work_dir / "polymer" / digest,
                 env=self.env,
                 env_manager=self.env_manager,
                 net_charges=net_charges,
             )
-        result = self._polymer_builder.build(cgsmiles)
+            self._polymer_builders[key] = builder
+        result = builder.build(cgsmiles)
         _neutralize(result.frame, 0.0)
-        return AmberResult(result.frame, result.forcefield)
+        return AmberResult(
+            result.frame,
+            result.forcefield,
+            prmtop=result.prmtop_path,
+            inpcrd=result.inpcrd_path,
+        )
+
+    @staticmethod
+    def _polymer_builder_key(
+        library: Mapping[str, Atomistic],
+        net_charges: Mapping[str, int] | None,
+    ) -> tuple[Any, ...]:
+        def monomer_key(label: str, struct: Atomistic) -> tuple[Any, ...]:
+            try:
+                structural = int(struct.structural_hash())
+            except Exception:
+                structural = None
+            return (
+                label,
+                id(struct),
+                structural,
+                getattr(struct, "n_atoms", None),
+                len(getattr(struct, "bonds", ())),
+            )
+
+        return (
+            tuple(
+                monomer_key(label, struct) for label, struct in sorted(library.items())
+            ),
+            tuple(sorted((net_charges or {}).items())),
+        )

@@ -1,43 +1,49 @@
 # Builder
 
-System assembly: polymer chain construction from G-BigSMILES / CGSmiles notation and monomer libraries.
+System assembly: polymer chain construction from a monomer library plus
+CGSmiles / label-sequence connectivity. You compose the real engine
+classes directly — there is no `polymer()` dispatcher.
 
 ## Quick reference
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `polymer(spec, ...)` | String → chain in one call | Quick prototyping |
-| `polymer_system(spec, ...)` | G-BigSMILES → polydisperse multi-chain system | Bulk system setup |
-| `prepare_monomer(bigsmiles)` | BigSMILES → 3D monomer with ports | Building monomer libraries |
-| `PolymerBuilder` | Build chains from CGSmiles + library + connector + placer | Full control over assembly |
+| `PolymerBuilder` | Assemble a chain from a monomer library + reaction; `.build_sequence(labels)` or `.build(cgsmiles)` | The entry point for chain assembly |
 | `Connector` | Port selection rules + reaction binding | Defining which ports react |
 | `ReactionPresets` | Named reaction chemistries (`"dehydration"`, …) | Reusing / registering chemistry |
 | `Placer` | Geometric placement (separator + orienter) | Controlling inter-monomer geometry |
 | `CovalentSeparator` | Covalent radii-based distance (buffer in Å) | Default monomer spacing |
 | `LinearOrienter` | Linear chain orientation | Default growth direction |
-| `DrudeBuilder` | Add Drude oscillators (CL&Pol polarizable model) | Polarizable force fields |
-| `Tip4pBuilder` | Add TIP4P/M-site virtual sites | Rigid 4-site water |
-| `VirtualSiteBuilder` | Base class for virtual-site construction | Custom virtual-site schemes |
+| `SystemPlanner` / `PolydisperseChainGenerator` | Sample a polydisperse chain plan | Bulk / molecular-weight-distributed systems |
+| `AmberPolymerBuilder` | GAFF-parameterised build via AmberTools | AMBER/LAMMPS-bound workflows |
+| `DrudeBuilder` / `Tip4pBuilder` / `VirtualSiteBuilder` | Virtual-site augmentation | Polarizable / 4-site models |
 
 ## Canonical example
 
-The one-call entry point auto-detects the notation and returns an
-`Atomistic` directly:
+Prepare the repeat-unit monomer, then feed a label sequence to
+`PolymerBuilder` — no notation round-trip, no wrapper:
 
 ```python
-from molpy.builder import polymer
+from molpy.builder.polymer import PolymerBuilder, ReactionPresets
+from molpy.conformer import Conformer
+from molpy.parser import parse_monomer
 
-# G-BigSMILES: monomer repeat unit + chain length in one string
-chain = polymer("{[<]CCO[>]}|5|", optimize=False, random_seed=42)
+# 1. repeat-unit monomer: BigSMILES -> 3D Atomistic with < / > ports
+#    (Conformer is molpy's native molrs embedder)
+eo, _ = Conformer(add_hydrogens=True, seed=42).generate(parse_monomer("{[<]CCO[>]}"))
+
+# 2. assemble a chain: monomer library + a reaction, then a label sequence
+builder = PolymerBuilder({"EO": eo}, reacter=ReactionPresets.get("dehydration"))
+chain = builder.build_sequence(["EO"] * 5).polymer
+
 assert chain.__class__.__name__ == "Atomistic"
 assert len(list(chain.atoms)) > 0
 ```
 
-For full control, prepare a monomer library and drive `PolymerBuilder`
-step by step:
+For explicit port mapping and geometry, pass a `Connector` + `Placer` and
+build from a CGSmiles string (reusing the `eo` monomer above):
 
 ```python
-from molpy.builder import prepare_monomer
 from molpy.builder.polymer import (
     Connector,
     CovalentSeparator,
@@ -47,8 +53,6 @@ from molpy.builder.polymer import (
     ReactionPresets,
 )
 
-eo = prepare_monomer("{[<]CCO[>]}", optimize=False)
-
 builder = PolymerBuilder(
     library={"EO": eo},
     connector=Connector(
@@ -57,15 +61,41 @@ builder = PolymerBuilder(
     ),
     placer=Placer(CovalentSeparator(), LinearOrienter()),
 )
-result = builder.build("{[#EO]|3}")
-chain = result.polymer
+chain = builder.build("{[#EO]|3}").polymer
 assert len(list(chain.atoms)) > 0
+```
+
+## Polydisperse systems
+
+Drive `PolymerBuilder` from the distribution + planner primitives
+yourself — sample a chain plan, then loop `build_sequence`:
+
+```python
+import numpy as np
+from molpy.builder.polymer import (
+    PolydisperseChainGenerator,
+    SchulzZimmPolydisperse,
+    SystemPlanner,
+    WeightedSequenceGenerator,
+)
+
+planner = SystemPlanner(
+    PolydisperseChainGenerator(
+        WeightedSequenceGenerator({"EO": 1.0}),
+        {"EO": 44.05},
+        distribution=SchulzZimmPolydisperse(1500, 3000),
+    ),
+    target_total_mass=5e5,
+)
+plan = planner.plan_system(np.random.default_rng(42))
+chains = [builder.build_sequence(c.monomers).polymer for c in plan.chains]
+assert len(chains) >= 1
 ```
 
 ## Custom reaction chemistry
 
 `ReactionPresets.register()` is the extension point for naming your own
-chemistry and using it via the `reaction_preset` keyword everywhere:
+chemistry, then handed to `PolymerBuilder` via `ReactionPresets.get`:
 
 ```python
 from molpy.builder.polymer import ReactionPresets, ReactionPresetSpec
@@ -101,13 +131,6 @@ assert "cc_coupling_demo" in ReactionPresets.list_presets()
 ### Polymer
 
 ::: molpy.builder.polymer
-
-### Polymer entry functions
-
-High-level entry functions (`polymer`, `polymer_system`,
-`prepare_monomer`, `generate_3d`).
-
-::: molpy.builder.polymer.dsl
 
 ### Virtual Sites
 

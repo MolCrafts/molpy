@@ -253,7 +253,11 @@ class Reacter:
         if "ports" in anchor_R:
             del anchor_R["ports"]
 
-        # Remove leaving groups
+        # Remove leaving groups. (Leaving-group charge is intentionally NOT folded
+        # onto anchors here: bond/react templates require the superimposed atoms
+        # to conserve charge among themselves, with deleted-atom charge handled by
+        # LAMMPS. Whole-system charge conservation for offline networks lives in
+        # the crosslinker instead — see ``builder.crosslink._conserve_leaving_charge``.)
         removed_atoms = []
         if leaving_L:
             assembly.remove_entity(*leaving_L, drop_incident_links=True)

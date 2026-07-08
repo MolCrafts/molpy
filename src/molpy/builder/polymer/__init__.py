@@ -1,32 +1,51 @@
-"""Polymer assembly — start here.
+"""Polymer assembly — compose the real builder classes directly.
 
-One-call entry points (most users need only these):
+There is no ``polymer()`` convenience dispatcher. You build a chain by
+calling the engine classes yourself, which keeps the data flow explicit:
 
-- :func:`polymer` — build a single chain from G-BigSMILES / CGSmiles
-- :func:`polymer_system` — build a polydisperse multi-chain system
-- :func:`prepare_monomer` — BigSMILES → 3D Atomistic with ports
-- :func:`generate_3d` — embed an existing Atomistic in 3D
+1. Prepare monomers — parse a BigSMILES repeat unit and embed it in 3D with
+   molpy's native (molrs) conformer generator::
 
-Step-by-step (advanced) API:
+       from molpy.conformer import Conformer
+       from molpy.parser import parse_monomer
 
-- :class:`PolymerBuilder` + :class:`Connector` — direct graph assembly
-  with explicit port mapping and reaction control
-- :class:`Placer` family (:class:`CovalentSeparator`,
-  :class:`VdWSeparator`, :class:`LinearOrienter`) — geometric placement
-- :class:`ReactionPresets` / :class:`ReactionPresetSpec` — named
-  reaction chemistry; ``ReactionPresets.register()`` is the extension
-  point for custom chemistries
-- Sequence generators and polydispersity distributions for system
-  planning
+       eo, _ = Conformer(add_hydrogens=True, seed=42).generate(parse_monomer("{[<]CCO[>]}"))
 
-Internal machinery (importable but not part of the public surface):
-``GBigSmilesCompiler``, ``SystemPlanner``, ``PolydisperseChainGenerator``.
+2. Assemble a chain with :class:`PolymerBuilder` — feed it a monomer
+   ``library`` + a :class:`~molpy.reacter.Reacter` (from
+   :class:`ReactionPresets`), then either a CGSmiles string or a plain
+   label sequence::
+
+       from molpy.builder.polymer import PolymerBuilder, ReactionPresets
+
+       builder = PolymerBuilder({"EO": eo}, reacter=ReactionPresets.get("dehydration"))
+       chain = builder.build_sequence(["EO"] * 10).polymer
+
+For a **polydisperse system**, drive :class:`PolymerBuilder` from the
+distribution + planner primitives yourself — sample a plan, then loop::
+
+       import numpy as np
+       from molpy.builder.polymer import (
+           PolydisperseChainGenerator, SchulzZimmPolydisperse,
+           SystemPlanner, WeightedSequenceGenerator,
+       )
+
+       planner = SystemPlanner(
+           PolydisperseChainGenerator(
+               WeightedSequenceGenerator({"EO": 1.0}),
+               {"EO": 44.05},
+               distribution=SchulzZimmPolydisperse(1500, 3000),
+           ),
+           target_total_mass=5e5,
+       )
+       plan = planner.plan_system(np.random.default_rng(42))
+       chains = [builder.build_sequence(c.monomers).polymer for c in plan.chains]
+
+The AmberTools-backed build (:class:`AmberPolymerBuilder`) lives in
+:mod:`molpy.builder.polymer.ambertools`.
 """
 
-from .connectors import (
-    Connector,
-    ConnectorContext,
-)
+from .connectors import Connector
 from .core import PolymerBuilder, PolymerBuildResult
 from .distributions import (
     DPDistribution,
@@ -35,12 +54,6 @@ from .distributions import (
     PoissonPolydisperse,
     SchulzZimmPolydisperse,
     UniformPolydisperse,
-)
-from .dsl import (
-    generate_3d,
-    polymer,
-    polymer_system,
-    prepare_monomer,
 )
 from .placer import CovalentSeparator, LinearOrienter, Placer, VdWSeparator
 from .presets import ReactionPresets, ReactionPresetSpec
@@ -58,16 +71,10 @@ from .system import (
 )
 
 __all__ = [
-    # One-call entry functions
-    "polymer",
-    "polymer_system",
-    "prepare_monomer",
-    "generate_3d",
-    # Step-by-step builder
+    # Chain assembly engine
     "PolymerBuilder",
     "PolymerBuildResult",
     "Connector",
-    "ConnectorContext",
     # Reaction presets (public extension point)
     "ReactionPresets",
     "ReactionPresetSpec",
@@ -88,7 +95,9 @@ __all__ = [
     "PoissonPolydisperse",
     "SchulzZimmPolydisperse",
     "UniformPolydisperse",
-    # System planning data types
+    # System planning
     "Chain",
     "SystemPlan",
+    "SystemPlanner",
+    "PolydisperseChainGenerator",
 ]

@@ -6,6 +6,8 @@ Drude system. Tip4pBuilder proves the base class is not Drude-specific.
 
 import math
 
+import pytest
+
 from molpy import Atom, Atomistic, Bond
 from molpy.builder import DrudeBuilder, Tip4pBuilder, VirtualSiteBuilder
 from molpy.builder.virtualsite import FOUR_PI_EPS0, K_DRUDE, load_polarizability

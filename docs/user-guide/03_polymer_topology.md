@@ -5,7 +5,7 @@
 Change the CGSmiles string, keep everything else: one builder configuration yields linear chains, rings, and branched stars.
 
 !!! note "Prerequisites"
-    This guide requires RDKit (for `generate_3d`), the `oplsaa.xml` force field, and familiarity with [Stepwise Polymer Construction](02_polymer_stepwise.md).
+    This guide requires RDKit (for `RDKitAdapter.generate_3d`), the `oplsaa.xml` force field, and familiarity with [Stepwise Polymer Construction](02_polymer_stepwise.md).
 
 ## One builder, multiple architectures
 
@@ -69,7 +69,7 @@ BIGSMILES = {
 
 def build_monomer(bigsmiles, typifier):
     monomer = mp.parser.parse_monomer(bigsmiles)
-    monomer = mp.adapter.generate_3d(monomer, add_hydrogens=True, optimize=False)
+    monomer = mp.adapter.RDKitAdapter(monomer).generate_3d(add_hydrogens=True, optimize=False)
     monomer = monomer.get_topo(gen_angle=True, gen_dihe=True)
     monomer = typifier.typify(monomer)
     return monomer

@@ -50,26 +50,31 @@ def _inter_monomer_edges(struct: Atomistic) -> list[list[int]]:
 def _build_peo_chain(
     dp: int, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Atomistic, list[list[int]]]:
-    """Build ``{[<]CCO[>]}|dp|`` and capture inter-monomer edges.
+    """Compose the real builders for ``["EO"] * dp`` (unit ``{[<]CCO[>]}``).
 
     Build markers (``monomer_node_id``) are stripped by
-    ``cleanup_build_markers`` at the end of ``PolymerBuilder.build``, so
+    ``cleanup_build_markers`` at the end of ``PolymerBuilder._assemble``, so
     the connectivity summary is captured just before cleanup runs
     (``core.py`` resolves the function from the module at call time).
     """
-    from molpy.builder import polymer
-    from molpy.builder.polymer import port_utils
+    from molpy.adapter import RDKitAdapter
+    from molpy.builder.polymer import PolymerBuilder, ReactionPresets, core
+    from molpy.parser import parse_monomer
 
     captured: dict[str, list[list[int]]] = {}
-    real_cleanup = port_utils.cleanup_build_markers
+    real_cleanup = core.cleanup_build_markers
 
     def capturing_cleanup(struct: Atomistic) -> None:
         captured["edges"] = _inter_monomer_edges(struct)
         real_cleanup(struct)
 
+    mono = RDKitAdapter(parse_monomer("{[<]CCO[>]}")).generate_3d(
+        add_hydrogens=True, optimize=False
+    )
+    builder = PolymerBuilder({"EO": mono}, reacter=ReactionPresets.get("dehydration"))
     with monkeypatch.context() as patch:
-        patch.setattr(port_utils, "cleanup_build_markers", capturing_cleanup)
-        chain = polymer(f"{{[<]CCO[>]}}|{dp}|", optimize=False, random_seed=42)
+        patch.setattr(core, "cleanup_build_markers", capturing_cleanup)
+        chain = builder.build_sequence(["EO"] * dp).polymer
 
     return chain, captured.get("edges", [])
 
@@ -123,17 +128,17 @@ class TestBoundedPortScans:
     @staticmethod
     def _max_scan_size(dp: int, monkeypatch: pytest.MonkeyPatch) -> int:
         """Build DP=dp; record the largest struct scanned per call."""
-        from molpy.builder.polymer import port_utils
+        from molpy.builder.polymer import core
 
         sizes: list[int] = []
-        real = port_utils.get_ports_on_node
+        real = core.get_ports_on_node
 
         def recording(struct: Atomistic, node_id: int):
             sizes.append(len(list(struct.atoms)))
             return real(struct, node_id)
 
         with monkeypatch.context() as patch:
-            patch.setattr(port_utils, "get_ports_on_node", recording)
+            patch.setattr(core, "get_ports_on_node", recording)
             _build_peo_chain(dp, monkeypatch)
 
         return max(sizes, default=0)

@@ -110,44 +110,24 @@ def write_antechamber_input_pdb(path: Path, atomistic: Atomistic) -> None:
     """
 
     ensure_parent_dir(path)
-
     atoms = list(atomistic.atoms)
-    n_atoms = len(atoms)
-    ids = np.arange(n_atoms, dtype=int) + 1
 
-    def _get_str(key: str, default: str) -> list[str]:
-        out: list[str] = []
-        for a in atoms:
-            v = a.get(key)
-            out.append(default if v is None else str(v))
-        return out
-
-    def _get_int(key: str, default: int) -> np.ndarray:
-        out: list[int] = []
-        for a in atoms:
-            v = a.get(key)
-            out.append(default if v is None else int(v))
-        return np.array(out, dtype=int)
-
-    xs = np.array([float(a.get("x") or 0.0) for a in atoms], dtype=float)
-    ys = np.array([float(a.get("y") or 0.0) for a in atoms], dtype=float)
-    zs = np.array([float(a.get("z") or 0.0) for a in atoms], dtype=float)
-
+    # Build each column straight into a typed numpy array (str, not object — the
+    # molrs Store rejects object columns). ``a.get(k) or default`` fills missing.
     frame = Frame()
     frame["atoms"] = Block.from_dict(
         {
-            "x": xs,
-            "y": ys,
-            "z": zs,
-            "id": ids,
-            "name": np.array(_get_str("name", "X"), dtype=object),
-            "resName": np.array(_get_str("resName", "MOL"), dtype=object),
-            "resSeq": _get_int("resSeq", 1),
-            "chainID": np.array(_get_str("chainID", "A"), dtype=object),
-            "element": np.array(_get_str("element", "X"), dtype=object),
+            "x": np.array([a.get("x") or 0.0 for a in atoms], dtype=float),
+            "y": np.array([a.get("y") or 0.0 for a in atoms], dtype=float),
+            "z": np.array([a.get("z") or 0.0 for a in atoms], dtype=float),
+            "id": np.arange(1, len(atoms) + 1),
+            "name": np.array([a.get("name") or "X" for a in atoms], dtype=str),
+            "resName": np.array([a.get("resName") or "MOL" for a in atoms], dtype=str),
+            "resSeq": np.array([a.get("resSeq") or 1 for a in atoms], dtype=int),
+            "chainID": np.array([a.get("chainID") or "A" for a in atoms], dtype=str),
+            "element": np.array([a.get("element") or "X" for a in atoms], dtype=str),
         }
     )
-
     write_pdb(path, frame)
 
 

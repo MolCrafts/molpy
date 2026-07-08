@@ -217,6 +217,6 @@ topology: random_copolymer
 
 The four notations cover a spectrum from fully specified chemistry to pure topology. Use `parse_molecule` or `parse_mixture` whenever you have a concrete small molecule in SMILES. Move to `parse_monomer` or `parse_polymer` the moment connectivity ports become relevant — that is, whenever your molecule is a polymer repeat unit. Reserve `parse_smarts` for matching rules that feed into the typifier, never for structure creation. Use `parse_cgsmiles` when you need to express architectural arrangements of named blocks, leaving the internal chemistry to the fragment definitions.
 
-For 3D coordinates after parsing, use `mp.adapter.generate_3d(mol)` (requires RDKit).
+For 3D coordinates after parsing, use `mp.adapter.RDKitAdapter(mol).generate_3d()` (requires RDKit).
 
 See also: [Stepwise Polymer Construction](02_polymer_stepwise.md), [Atomistic and Topology](../tutorials/01_atomistic_and_topology.md).

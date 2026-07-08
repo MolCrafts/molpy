@@ -24,14 +24,14 @@ from molpy.typifier.region import apply_region_types
 
 if TYPE_CHECKING:
     from molpy.core.affected_region import AffectedRegion
-    from molpy.typifier.atomistic import ForceFieldTypifier
+    from molpy.typifier.region import RegionTypifier
     from molpy.typifier.region import RegionTypes
 
 
 class RetypeCache:
     """Deduplicate region typing by structural hash + isomorphism confirm."""
 
-    def __init__(self, typifier: ForceFieldTypifier) -> None:
+    def __init__(self, typifier: RegionTypifier) -> None:
         self._typifier = typifier
         self._buckets: dict[int, list[tuple[AffectedRegion, RegionTypes]]] = {}
 

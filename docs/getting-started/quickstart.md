@@ -10,7 +10,7 @@ export — so you see every boundary you will later automate.
 import molpy as mp
 
 mol   = mp.parser.parse_molecule("CCO")                  # ethanol from SMILES (heavy atoms)
-mol   = mp.adapter.generate_3d(mol, add_hydrogens=True)  # add hydrogens + 3D coordinates
+mol   = mp.adapter.RDKitAdapter(mol).generate_3d(add_hydrogens=True)  # add hydrogens + 3D coordinates
 ff    = mp.io.read_xml_forcefield("oplsaa.xml")          # bundled OPLS-AA
 typed = mp.typifier.OplsTypifier(ff).typify(mol)         # assign force-field types
 

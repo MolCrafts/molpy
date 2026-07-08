@@ -23,13 +23,30 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from molpy.core.affected_region import AffectedRegion
     from molpy.core.atomistic import Atom, Atomistic
     from molpy.core.entity import Link
     from molpy.typifier.atomistic import ForceFieldTypifier
+
+
+@runtime_checkable
+class RegionTypifier(Protocol):
+    """Structural type of the crosslinker/reacter retype hook.
+
+    Anything that can type an :class:`~molpy.core.affected_region.AffectedRegion`
+    and report its context depth: the SMARTS-based
+    :class:`~molpy.typifier.atomistic.ForceFieldTypifier` and the AmberTools-backed
+    :class:`~molpy.typifier.ambertools.AmberToolsTypifier` both satisfy it.
+    """
+
+    @property
+    def context_radius(self) -> int: ...
+
+    def typify_region(self, region: AffectedRegion) -> RegionTypes: ...
+
 
 #: A force-field parameter value a typifier writes onto an element. molrs Block
 #: columns are scalar-typed, so a param is always one of these.

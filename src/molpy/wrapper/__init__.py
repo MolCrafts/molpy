@@ -8,6 +8,7 @@ nodes.
 from .base import Wrapper
 from .antechamber import AntechamberWrapper
 from .prepgen import Parmchk2Wrapper, PrepgenWrapper, write_prepgen_control_file
+from .sander import SanderWrapper
 from .tleap import TLeapWrapper
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "AntechamberWrapper",
     "Parmchk2Wrapper",
     "PrepgenWrapper",
+    "SanderWrapper",
     "TLeapWrapper",
     "write_prepgen_control_file",
 ]

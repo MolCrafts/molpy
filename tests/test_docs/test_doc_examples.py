@@ -7,14 +7,12 @@ Three classes of user-facing code are exercised here:
    document, so later blocks may reuse earlier definitions). Whole-file
    skips are not allowed; only an RDKit-missing environment skips the
    blocks that need 3D embedding.
-2. Targeted doctests for src/molpy/reacter/base.py and
-   src/molpy/builder/polymer/dsl.py, plus source-level assertions that
-   the class docstring examples reference only real symbols.
-3. The two ``examples/`` scripts' ``main()`` entry points.
+2. A targeted doctest for src/molpy/reacter/base.py, plus source-level
+   assertions that the class docstring examples reference only real symbols.
+3. The ``examples/`` scripts' ``main()`` entry points.
 
-Also locks the API surface consolidated by builder-reacter-04:
-lazy top-level submodules, agent-only Tool classes out of user
-``__all__``, ReactionPresets as the public extension point.
+Also locks the API surface: lazy top-level submodules and
+ReactionPresets as the public extension point.
 """
 
 import doctest
@@ -86,14 +84,6 @@ class TestDocstringDoctests:
         assert results.failed == 0, f"{results.failed} doctest failures in base.py"
         assert results.attempted > 0, "base.py should carry a runnable doctest"
 
-    def test_dsl_doctests_pass(self):
-        import importlib
-
-        dsl_module = importlib.import_module("molpy.builder.polymer.dsl")
-
-        results = doctest.testmod(dsl_module, verbose=False)
-        assert results.failed == 0, f"{results.failed} doctest failures in dsl.py"
-
     def test_reacter_base_example_uses_real_api(self):
         source = (REPO_ROOT / "src/molpy/reacter/base.py").read_text(encoding="utf-8")
         for stale in ("select_port_atom", "port_selector_left", "port_L="):
@@ -123,41 +113,6 @@ class TestTopLevelSurface:
             [sys.executable, "-c", probe], capture_output=True, text=True
         )
         assert result.returncode == 0, result.stderr
-
-    def test_tool_classes_agent_only(self):
-        import importlib
-
-        import molpy.builder as builder_pkg
-
-        # NOTE: the attribute molpy.builder.polymer is the polymer()
-        # entry FUNCTION (star-import rebinds it over the subpackage);
-        # the module itself is addressed via importlib/sys.modules.
-        polymer_pkg = importlib.import_module("molpy.builder.polymer")
-        tools_module = importlib.import_module("molpy.builder.polymer.tools")
-
-        tool_names = {
-            "PrepareMonomer",
-            "BuildPolymer",
-            "PlanSystem",
-            "BuildSystem",
-            "BuildPolymerAmber",
-        }
-        assert tool_names.isdisjoint(builder_pkg.__all__)
-        assert tool_names.isdisjoint(polymer_pkg.__all__)
-        for name in tool_names:
-            assert hasattr(tools_module, name), f"tools.py missing {name}"
-
-    def test_internal_components_demoted(self):
-        import importlib
-
-        polymer_pkg = importlib.import_module("molpy.builder.polymer")
-
-        internal = {
-            "GBigSmilesCompiler",
-            "SystemPlanner",
-            "PolydisperseChainGenerator",
-        }
-        assert internal.isdisjoint(polymer_pkg.__all__)
 
     def test_reaction_presets_public(self):
         from molpy.builder.polymer import ReactionPresets, ReactionPresetSpec
@@ -191,13 +146,19 @@ def _run_example_main(script_name: str) -> None:
 
 
 class TestExampleScripts:
-    """examples/ scripts stay runnable (RDKit-dependent paths skip)."""
+    """examples/ scripts stay runnable. 01-05 are pure molpy (native molrs
+    conformer, no RDKit); 06 needs AmberTools and is not run here."""
 
-    @pytest.mark.skipif(not _HAS_RDKIT, reason="polymer build embeds 3D via RDKit")
-    def test_example_polymer_build(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize(
+        "script",
+        [
+            "01_parse_chemistry.py",
+            "02_build_polymer.py",
+            "03_polymer_topology.py",
+            "04_crosslinking.py",
+            "05_polydisperse.py",
+        ],
+    )
+    def test_example_runs(self, script, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        _run_example_main("polymer_build.py")
-
-    def test_example_reacter_bond_react_templates(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        _run_example_main("reacter_bond_react_templates.py")
+        _run_example_main(script)

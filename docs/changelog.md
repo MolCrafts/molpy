@@ -5,6 +5,65 @@ and release as a pair — every entry lists the `molcrafts-molrs` version it
 requires. Tagged releases and installable artifacts live on
 [GitHub Releases](https://github.com/MolCrafts/molpy/releases).
 
+## 0.7.0 - 2026-07-08
+
+Requires `molcrafts-molrs == 0.7.0` (molpy and molrs release as a pair).
+
+### Breaking
+
+- **OPLS-AA and MMFF typifiers moved to molrs.** `molpy.typifier` now re-exports
+  `OPLSAATypifier` and `MMFFTypifier` from `molrs.typifier`; the molpy-side
+  typifier internals (`adapter`, `graph`, `matcher`, `layered_engine`,
+  `dependency_analyzer`) are removed. Construct via
+  `OPLSAATypifier(source, strict=…)` and call `.typify(mol)` (returns a typed
+  `molrs.Atomistic`; use `.to_frame()` for tabular access). The old
+  `OplsTypifier(ff, strict_typing=…)` constructor is gone.
+
+### Added
+
+- **CL&P ionic-liquid typifier** (`molpy.typifier.ClpTypifier`) — now functional,
+  implemented as an OPLS-AA overlay (molrs SMARTS assigns CL&P atom types from
+  `clp.xml`; molpy assigns parameters). Matches the CL&P reference charges/σ/ε.
+- **Offline network crosslinking** over the molrs SMARTS/SMIRKS engine.
+- **Distance-based `SoftPotential` + force-field-free relax** in `molpy.optimize`.
+- **Region-scoped typing with a hash-keyed `RetypeCache`** — only the subgraph
+  affected by a graph edit (`AffectedRegion`) is re-typed, keyed by the molrs
+  isomorphism-invariant structural graph hash.
+
+### Changed
+
+- Covalent radii merged into `Element`; `SoftPotential` reads radii via `Element`.
+
+## 0.6.0 - 2026-07-03
+
+Requires `molcrafts-molrs == 0.6.0`.
+
+### Breaking
+
+- **`molpy.compute` selection API** now reads atom-tuple selections (pairs /
+  triplets / orientation axes) from the frame's core topology blocks
+  (`bonds` / `angles` / `dihedrals` / `orientations`); the `groups` argument is
+  removed.
+- **`Molpack` removed** — use the `Packmol` wrapper directly.
+- **`LammpsSystem` removed** — use `molpy.io.write_lammps_system(...)`.
+
+### Added
+
+- Deterministic copolymer sequence generators (`AlternatingSequenceGenerator`,
+  `BlockSequenceGenerator`).
+- `AmberTools` facade owning the GAFF2/AM1-BCC workflow (`parameterize`,
+  `parameterize_ion`, `build_polymer`).
+- `SmilesReader` — OOP SMILES → 3D `Atomistic` reader.
+
+### Fixed
+
+- O(N²) blow-ups in packing and LAMMPS writing (string columns hoisted to numpy
+  once); LAMMPS force-field writer de-duplicates coefficients by type name.
+
+### Changed
+
+- Pin `molcrafts-molrs==0.6.0`; docs config migrated `mkdocs.yml` → `zensical.toml`.
+
 ## 0.5.1 - 2026-07-01
 
 Requires `molcrafts-molrs == 0.5.1` (molpy and molrs now release as a pair).

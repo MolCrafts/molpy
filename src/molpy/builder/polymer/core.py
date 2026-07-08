@@ -6,15 +6,15 @@ and exception classes for polymer assembly.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from molpy.core.atomistic import Atom, Atomistic
 from molpy.parser.smiles import parse_cgsmiles
 from molpy.parser.smiles.cgsmiles_ir import (
+    CGSmilesBondIR,
     CGSmilesGraphIR,
-    CGSmilesIR,
     CGSmilesNodeIR,
 )
 from molpy.reacter.base import ReactionResult
@@ -22,13 +22,7 @@ from molpy.reacter.base import ReactionResult
 from .errors import (
     AmbiguousPortsError,
     AssemblyError,
-    BondKindConflictError,
-    GeometryError,
-    MissingConnectorRule,
     NoCompatiblePortsError,
-    OrientationUnavailableError,
-    PortReuseError,
-    PositionMissingError,
     SequenceError,
 )
 
@@ -38,18 +32,44 @@ if TYPE_CHECKING:
 __all__ = [
     "AmbiguousPortsError",
     "AssemblyError",
-    "BondKindConflictError",
-    "GeometryError",
-    "MissingConnectorRule",
     "NoCompatiblePortsError",
-    "OrientationUnavailableError",
     "PolymerBuilder",
     "PolymerBuildResult",
-    "PortReuseError",
-    "PositionMissingError",
     "SequenceError",
     "TypifierProtocol",
 ]
+
+
+# ============================================================================
+# Build-time port scanning + marker cleanup (used only by PolymerBuilder)
+# ============================================================================
+
+
+def get_ports_on_node(struct: Atomistic, node_id: int) -> dict[str, list[Atom]]:
+    """Ports on the atoms of one monomer node (``monomer_node_id``).
+
+    O(atoms) scan, used only for the initial per-monomer scan; the build
+    loop then reads live ports from its registry instead of rescanning.
+    """
+    ports: dict[str, list[Atom]] = {}
+    for atom in struct.atoms:
+        if atom.get("monomer_node_id") != node_id:
+            continue
+        port_name = atom.get("port")
+        if port_name is not None:
+            ports.setdefault(port_name, []).append(atom)
+    return ports
+
+
+def cleanup_build_markers(struct: Atomistic) -> None:
+    """Strip build-time markers once assembly is done, leaving a clean
+    Atomistic. Removes ``port``, ``monomer_node_id``, ``port_descriptor_id``.
+    """
+    for atom in struct.atoms:
+        for key in ("port", "monomer_node_id", "port_descriptor_id"):
+            if key in atom:
+                del atom[key]
+
 
 # ============================================================================
 # Type Protocol
@@ -162,8 +182,34 @@ class PolymerBuilder:
         Returns:
             PolymerBuildResult containing the assembled polymer and metadata
         """
-        ir = parse_cgsmiles(cgsmiles)
-        self._validate_ir(ir)
+        return self._assemble(parse_cgsmiles(cgsmiles).base_graph)
+
+    def build_sequence(self, labels: Sequence[str]) -> PolymerBuildResult:
+        """Build a linear chain directly from a monomer-label sequence.
+
+        Equivalent to the linear CGSmiles ``{[#a][#b]...}`` but without the
+        string round-trip: the label list becomes the linear connectivity
+        graph directly. Every label must exist in :attr:`library`.
+
+        Args:
+            labels: Ordered monomer labels, e.g. ``["EO", "EO", "PMA"]``.
+
+        Returns:
+            PolymerBuildResult containing the assembled polymer and metadata
+        """
+        nodes = [CGSmilesNodeIR(label=label) for label in labels]
+        bonds = [
+            CGSmilesBondIR(node_i=nodes[i], node_j=nodes[i + 1])
+            for i in range(len(nodes) - 1)
+        ]
+        return self._assemble(CGSmilesGraphIR(nodes=nodes, bonds=bonds))
+
+    def _assemble(self, graph: CGSmilesGraphIR) -> PolymerBuildResult:
+        """Validate a connectivity graph and assemble it into a chain.
+
+        Shared tail of :meth:`build` and :meth:`build_sequence`.
+        """
+        self._validate_graph(graph)
 
         # One shared retype cache for the whole build: structurally identical
         # junctions recurring along the chain dedupe to a single hash key, so the
@@ -172,9 +218,7 @@ class PolymerBuilder:
         # the typifier supports region typing; otherwise ``None`` leaves each
         # connection on its unchanged per-call path.
         retype_cache = self._make_retype_cache()
-        polymer, history = self._build_from_graph(ir.base_graph, retype_cache)
-
-        from .port_utils import cleanup_build_markers
+        polymer, history = self._build_from_graph(graph, retype_cache)
 
         cleanup_build_markers(polymer)
 
@@ -198,10 +242,8 @@ class PolymerBuilder:
             return RetypeCache(typifier)
         return None
 
-    def _validate_ir(self, ir: CGSmilesIR) -> None:
-        """Validate CGSmiles IR."""
-        graph = ir.base_graph
-
+    def _validate_graph(self, graph: CGSmilesGraphIR) -> None:
+        """Validate a connectivity graph against the monomer library."""
         if not graph.nodes:
             raise ValueError("CGSmiles graph is empty")
 
@@ -235,8 +277,6 @@ class PolymerBuilder:
         # monomers): each node maps to a group id; the group's current
         # structure is stored once per group. Live port atoms are kept
         # in a registry so connections never rescan the growing chain.
-        from .port_utils import get_ports_on_node
-
         group_id: dict[int, int] = {}
         members: dict[int, list[int]] = {}
         struct_of: dict[int, Atomistic] = {}
@@ -366,8 +406,6 @@ class PolymerBuilder:
             holds the (node_id, port_name, index) entries used by this
             connection.
         """
-        from .connectors import ConnectorContext
-
         if not left_ports:
             raise NoCompatiblePortsError(
                 f"Node {left_node_id} (label '{left_label}') has no available ports"
@@ -377,15 +415,10 @@ class PolymerBuilder:
                 f"Node {right_node_id} (label '{right_label}') has no available ports"
             )
 
-        ctx = ConnectorContext(
-            step=len(connection_history),
-            left_label=left_label,
-            right_label=right_label,
-            sequence=[left_label, right_label],
-        )
-
         left_port_name, left_port_idx, right_port_name, right_port_idx, _ = (
-            self.connector.select_ports(left, right, left_ports, right_ports, ctx)
+            self.connector.select_ports(
+                left_ports, right_ports, left_label, right_label
+            )
         )
 
         left_port_atom = left_ports[left_port_name][left_port_idx]

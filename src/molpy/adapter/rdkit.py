@@ -148,6 +148,42 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
     def mol(self) -> Chem.Mol:
         return self.get_external()
 
+    def generate_3d(
+        self,
+        *,
+        add_hydrogens: bool = True,
+        optimize: bool = True,
+    ) -> Atomistic:
+        """Add hydrogens, embed 3D coordinates, and optimize geometry via RDKit.
+
+        Returns a new :class:`~molpy.core.atomistic.Atomistic` with coordinates;
+        this adapter is not mutated. For molpy's native (molrs) embedder, use
+        :class:`molpy.conformer.Conformer` instead.
+        """
+        working = self.copy()
+        if not working.has_external():
+            working.sync_to_external()
+        mol = Chem.Mol(working.get_external())
+
+        if add_hydrogens:
+            mol = _add_hydrogens(mol)
+        try:
+            Chem.SanitizeMol(mol)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Sanitization failed: {exc}. "
+                "The molecule may have invalid valency or other issues."
+            ) from exc
+        mol = _embed(mol, 10, 0)
+        if optimize:
+            mol = _sanitize(mol)
+            if mol.GetNumConformers() > 0:
+                mol = _optimize_uff(mol, 200, False)
+
+        working.set_external(mol)
+        working.sync_to_internal()
+        return working.get_internal()
+
     def _ensure_atom_ids(self) -> None:
         if self._internal is None:
             return
@@ -843,193 +879,3 @@ def _embed(
             "The molecule may be too large or have structural issues."
         )
     return mol
-
-
-@dataclass(frozen=True)
-class OptimizeGeometry:
-    """RDKit-based geometry optimization for RDKitAdapter.
-
-    Attributes:
-        max_opt_iters: Maximum optimization iterations
-        forcefield: Force field to use ("UFF" or "MMFF94")
-        update_internal: Whether to sync internal structure after optimization
-        raise_on_failure: Whether to raise exception on optimization failure
-
-    Examples:
-        >>> optimizer = OptimizeGeometry(forcefield="UFF", max_opt_iters=200)
-        >>> result_adapter = optimizer(adapter)
-    """
-
-    max_opt_iters: int = 200
-    forcefield: str = "UFF"
-    update_internal: bool = True
-    raise_on_failure: bool = False
-
-    def run(self, input: RDKitAdapter) -> RDKitAdapter:
-        new_adapter = input.copy()
-
-        if not new_adapter.has_external():
-            new_adapter.sync_to_external()
-
-        original_mol = new_adapter.get_external()
-        mol = Chem.Mol(original_mol)
-
-        # Copy conformer explicitly if needed
-        if mol.GetNumConformers() == 0 and original_mol.GetNumConformers() > 0:
-            original_conf = original_mol.GetConformer()
-            new_conf = Chem.Conformer(mol.GetNumAtoms())
-            for i in range(mol.GetNumAtoms()):
-                pos = original_conf.GetAtomPosition(i)
-                new_conf.SetAtomPosition(i, pos)
-            mol.AddConformer(new_conf, assignId=True)
-
-        mol = _sanitize(mol)
-
-        if mol.GetNumConformers() == 0:
-            raise ValueError(
-                "Cannot optimize geometry: no conformer found. "
-                "Enable embedding or provide a molecule with coordinates."
-            )
-
-        if self.forcefield == "UFF":
-            mol = _optimize_uff(mol, self.max_opt_iters, self.raise_on_failure)
-        elif self.forcefield == "MMFF94":
-            mol = _optimize_mmff(mol, self.max_opt_iters, self.raise_on_failure)
-        else:
-            raise ValueError(
-                f"Unknown force field: {self.forcefield}. Use 'UFF' or 'MMFF94'."
-            )
-
-        new_adapter.set_external(mol)
-
-        if self.update_internal:
-            new_adapter.sync_to_internal(update_topology=False)
-
-        return new_adapter
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        return self.run(*args, **kwargs)
-
-
-@dataclass(frozen=True)
-class Generate3D:
-    """RDKit-based 3D generation pipeline for RDKitAdapter.
-
-    Pipeline stages (each optional):
-    1. Add explicit hydrogens
-    2. Sanitize molecule
-    3. Generate 3D coordinates via embedding
-    4. Optimize geometry with force field
-
-    Attributes:
-        add_hydrogens: Whether to add explicit hydrogens before embedding
-        sanitize: Whether to sanitize the molecule
-        embed: Whether to perform 3D coordinate embedding
-        optimize: Whether to optimize geometry after embedding
-        max_embed_attempts: Maximum number of embedding attempts
-        embed_random_seed: Random seed for embedding (None for random)
-        max_opt_iters: Maximum optimization iterations
-        forcefield: Force field to use ("UFF" or "MMFF94")
-        update_internal: Whether to sync internal structure after modifications
-
-    Examples:
-        >>> op = Generate3D(add_hydrogens=True, embed=True, optimize=True)
-        >>> result_adapter = op(adapter)
-    """
-
-    add_hydrogens: bool = True
-    sanitize: bool = True
-    embed: bool = True
-    optimize: bool = True
-
-    max_embed_attempts: int = 10
-    embed_random_seed: int | None = 0
-
-    max_opt_iters: int = 200
-    forcefield: str = "UFF"
-
-    update_internal: bool = True
-
-    def run(self, input: RDKitAdapter) -> RDKitAdapter:
-        new_adapter = input.copy()
-
-        if not new_adapter.has_external():
-            new_adapter.sync_to_external()
-
-        mol = new_adapter.get_external()
-        mol = Chem.Mol(mol)
-
-        if self.add_hydrogens:
-            mol = _add_hydrogens(mol)
-
-        if self.sanitize:
-            try:
-                Chem.SanitizeMol(mol)
-            except Exception as e:
-                raise RuntimeError(
-                    f"Sanitization failed: {e}. "
-                    "The molecule may have invalid valency or other issues."
-                ) from e
-
-        if self.embed:
-            mol = _embed(mol, self.max_embed_attempts, self.embed_random_seed)
-
-        if self.optimize:
-            new_adapter.set_external(mol)
-            if not new_adapter.has_external():
-                new_adapter.sync_to_external()
-            original_mol = new_adapter.get_external()
-            opt_mol = Chem.Mol(original_mol)
-            if opt_mol.GetNumConformers() == 0 and original_mol.GetNumConformers() > 0:
-                original_conf = original_mol.GetConformer()
-                new_conf = Chem.Conformer(opt_mol.GetNumAtoms())
-                for i in range(opt_mol.GetNumAtoms()):
-                    pos = original_conf.GetAtomPosition(i)
-                    new_conf.SetAtomPosition(i, pos)
-                opt_mol.AddConformer(new_conf, assignId=True)
-            opt_mol = _sanitize(opt_mol)
-            if opt_mol.GetNumConformers() > 0:
-                if self.forcefield == "UFF":
-                    opt_mol = _optimize_uff(opt_mol, self.max_opt_iters, False)
-                elif self.forcefield == "MMFF94":
-                    opt_mol = _optimize_mmff(opt_mol, self.max_opt_iters, False)
-            mol = opt_mol
-
-        new_adapter.set_external(mol)
-
-        if self.update_internal:
-            new_adapter.sync_to_internal()
-
-        return new_adapter
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        return self.run(*args, **kwargs)
-
-
-def generate_3d(
-    mol: "Atomistic",
-    add_hydrogens: bool = True,
-    optimize: bool = True,
-) -> "Atomistic":
-    """Generate 3D coordinates for a molecular structure via RDKit.
-
-    Wraps :class:`RDKitAdapter` + :class:`Generate3D` into a single
-    convenience call.
-
-    Args:
-        mol: Atomistic structure (typically from parser.parse_molecule)
-        add_hydrogens: Add implicit hydrogens before embedding
-        optimize: Run force-field geometry optimization after embedding
-
-    Returns:
-        New Atomistic with 3D coordinates and (optionally) explicit hydrogens
-    """
-    adapter = RDKitAdapter(internal=mol)
-    compute = Generate3D(
-        add_hydrogens=add_hydrogens,
-        embed=True,
-        optimize=optimize,
-        update_internal=True,
-    )
-    adapter = compute(adapter)
-    return adapter.get_internal()

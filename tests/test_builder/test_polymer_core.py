@@ -5,15 +5,9 @@ import pytest
 from molpy.builder.polymer.core import (
     AssemblyError,
     AmbiguousPortsError,
-    BondKindConflictError,
-    GeometryError,
-    MissingConnectorRule,
     NoCompatiblePortsError,
-    OrientationUnavailableError,
     PolymerBuildResult,
     PolymerBuilder,
-    PortReuseError,
-    PositionMissingError,
     SequenceError,
     TypifierProtocol,
 )
@@ -33,40 +27,15 @@ class TestExceptionHierarchy:
     def test_ambiguous_ports_is_assembly_error(self):
         assert issubclass(AmbiguousPortsError, AssemblyError)
 
-    def test_missing_connector_rule_is_assembly_error(self):
-        assert issubclass(MissingConnectorRule, AssemblyError)
-
     def test_no_compatible_ports_is_assembly_error(self):
         assert issubclass(NoCompatiblePortsError, AssemblyError)
-
-    def test_bond_kind_conflict_is_assembly_error(self):
-        assert issubclass(BondKindConflictError, AssemblyError)
-
-    def test_port_reuse_is_assembly_error(self):
-        assert issubclass(PortReuseError, AssemblyError)
-
-    def test_geometry_error_is_assembly_error(self):
-        """GeometryError should be catchable via AssemblyError."""
-        assert issubclass(GeometryError, AssemblyError)
-
-    def test_orientation_unavailable_is_geometry_error(self):
-        assert issubclass(OrientationUnavailableError, GeometryError)
-
-    def test_position_missing_is_geometry_error(self):
-        assert issubclass(PositionMissingError, GeometryError)
 
     def test_catch_all_via_assembly_error(self):
         """All polymer exceptions should be catchable via AssemblyError."""
         exceptions = [
             SequenceError("test"),
             AmbiguousPortsError("test"),
-            MissingConnectorRule("test"),
             NoCompatiblePortsError("test"),
-            BondKindConflictError("test"),
-            PortReuseError("test"),
-            GeometryError("test"),
-            OrientationUnavailableError("test"),
-            PositionMissingError("test"),
         ]
         for exc in exceptions:
             with pytest.raises(AssemblyError):
@@ -161,12 +130,6 @@ class TestPolymerModuleConsolidation:
 
         assert PolymerBuildResult is core.PolymerBuildResult
 
-    def test_errors_module_geometry_error_is_assembly_error(self):
-        """errors.GeometryError must derive from errors.AssemblyError."""
-        from molpy.builder.polymer.errors import AssemblyError, GeometryError
-
-        assert issubclass(GeometryError, AssemblyError)
-
     def test_connector_exception_catchable_via_public_assembly_error(self):
         """errors.AmbiguousPortsError (raised by connectors) must be caught
         via core.AssemblyError -- one hierarchy, not two."""
@@ -175,18 +138,6 @@ class TestPolymerModuleConsolidation:
 
         with pytest.raises(AssemblyError):
             raise AmbiguousPortsError("ambiguous")
-
-    def test_errors_orientation_and_position_catchable_as_assembly_error(self):
-        """errors geometry subclasses must be catchable via errors.AssemblyError."""
-        from molpy.builder.polymer import errors
-
-        exceptions = [
-            errors.OrientationUnavailableError("no orientation"),
-            errors.PositionMissingError("no position"),
-        ]
-        for exc in exceptions:
-            with pytest.raises(errors.AssemblyError):
-                raise exc
 
 
 # ---- Validation Tests ----
@@ -228,18 +179,14 @@ def _make_reacter():
 def _make_monomer(bigsmiles: str) -> Atomistic:
     """Build a 3D test monomer from a BigSMILES string (requires RDKit)."""
     from molpy.adapter import RDKitAdapter
-    from molpy.adapter.rdkit import Generate3D
     from molpy.parser.smiles import bigsmilesir_to_monomer, parse_bigsmiles
 
     ir = parse_bigsmiles(bigsmiles)
     monomer = bigsmilesir_to_monomer(ir)
 
-    adapter = RDKitAdapter(internal=monomer)
-    generate_3d = Generate3D(
-        add_hydrogens=True, embed=True, optimize=False, update_internal=True
+    monomer = RDKitAdapter(internal=monomer).generate_3d(
+        add_hydrogens=True, optimize=False
     )
-    adapter = generate_3d(adapter)
-    monomer = adapter.get_internal()
     monomer = monomer.get_topo(gen_angle=True, gen_dihe=True)
 
     for idx, atom in enumerate(monomer.atoms):

@@ -53,6 +53,7 @@ nav = [
       { "Step by Step" = "user-guide/02_polymer_stepwise.md" },
       { "Topology-Driven Assembly" = "user-guide/03_polymer_topology.md" },
       { "Crosslinked Networks" = "user-guide/04_crosslinking.md" },
+      { "Building a Crosslinked Gel" = "user-guide/16_crosslinked_gel.md" },
       { "Polydisperse Systems" = "user-guide/05_polydisperse_systems.md" },
     ] },
     { "Parameterization" = [
@@ -145,6 +146,7 @@ nav = [
       { "Adding a Compute Operation" = "developer/extending-compute.md" },
       { "Adding an I/O Format" = "developer/extending-io.md" },
       { "Adding a Wrapper or Adapter" = "developer/extending-integration.md" },
+      { "Extending Typifiers" = "developer/extending-typifiers.md" },
       { "Extending the Data Model" = "developer/extending-core.md" },
       { "Extending the Force Field" = "developer/extending-forcefield.md" },
     ] },
@@ -168,6 +170,11 @@ logo = "assets/molpy.png"
 
 [project.extra]
 generator = false
+
+alternate = [
+    { name = "English", link = "/", lang = "en" },
+    { name = "中文", link = "/zh/", lang = "zh" },
+]
 
 [project.extra.molcrafts]
 product = "molpy"

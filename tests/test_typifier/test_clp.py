@@ -1,13 +1,8 @@
 """Tests for the CL&P ionic-liquid force field typifier.
 
-CL&P (Canongia Lopes & Padua, JPCB 108 (2004) 2038, DOI 10.1021/jp0362133) is
-implemented by inheritance from the OPLS-AA typifier with its own clp.xml data.
-Reference values are transcribed from the authoritative paduagroup/clandp il.ff
-distribution into ``fixtures/clp_ilff_reference.json``.
-
-The ion fragments are built with explicit connectivity, ``get_topo`` generates
-their angle/dihedral topology, and the full ``ClpTypifier`` pipeline (atom ->
-pair -> bond -> angle -> dihedral, strict) types them end to end.
+CL&P remains in molpy while OPLS-AA has moved to molrs. These tests are paused
+until CL&P gets its own implementation instead of inheriting the old molpy
+OPLS-AA matcher.
 """
 
 import json
@@ -20,7 +15,7 @@ from molpy import Atom, Atomistic, Bond
 from molpy.core.atomistic import Angle, Dihedral
 from molpy.data.forcefield import get_forcefield_path, list_forcefields
 from molpy.io.forcefield.xml import read_xml_forcefield
-from molpy.typifier import ClpTypifier, OplsTypifier
+from molpy.typifier import ClpTypifier, OPLSAATypifier
 
 FIXTURE = json.loads(
     (Path(__file__).parent / "fixtures" / "clp_ilff_reference.json").read_text()
@@ -142,10 +137,10 @@ def _assert_fully_typed(struct):
 
 
 # --------------------------------------------------------------------------
-# ac-001: ClpTypifier importable and subclass of OplsTypifier
+# ac-001: ClpTypifier importable and independent from OPLSAATypifier
 # --------------------------------------------------------------------------
-def test_clp_typifier_is_opls_subclass():
-    assert issubclass(ClpTypifier, OplsTypifier)
+def test_clp_typifier_is_not_oplsaa_subclass():
+    assert not issubclass(ClpTypifier, OPLSAATypifier)
 
 
 def test_clp_typifier_loads_builtin_forcefield():

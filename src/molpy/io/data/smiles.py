@@ -45,13 +45,13 @@ class SmilesReader:
 
     def read(self) -> "Atomistic":
         """Parse, embed in 3D, (optionally) build topology, and name atoms."""
-        from molpy.adapter import generate_3d
+        from molpy.adapter import RDKitAdapter
         from molpy.parser import parse_molecule, parse_monomer
 
         smiles = self.smiles
         parse = parse_monomer if smiles.lstrip().startswith("{") else parse_molecule
-        mol = generate_3d(
-            parse(smiles), add_hydrogens=self.add_hydrogens, optimize=self.optimize
+        mol = RDKitAdapter(parse(smiles)).generate_3d(
+            add_hydrogens=self.add_hydrogens, optimize=self.optimize
         )
         if self.gen_topo:
             mol = mol.get_topo(gen_angle=True, gen_dihe=True)

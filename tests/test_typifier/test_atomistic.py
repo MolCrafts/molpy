@@ -6,8 +6,6 @@ Tests cover:
 - ForceFieldBondTypifier
 - ForceFieldAngleTypifier
 - ForceFieldDihedralTypifier
-- _OplsAtomTypifier
-- OplsTypifier
 """
 
 import pytest
@@ -15,8 +13,6 @@ import pytest
 from molpy import Angle, Atom, Atomistic, AtomisticForcefield, AtomType, Bond, Dihedral
 from molpy.typifier.atomistic import (
     ForceFieldAngleTypifier,
-    OplsTypifier,
-    _OplsAtomTypifier,
     ForceFieldBondTypifier,
     ForceFieldDihedralTypifier,
     atomtype_matches,
@@ -515,74 +511,3 @@ class TestForceFieldDihedralTypifier:
 
         with pytest.raises(ValueError, match="No dihedral type found"):
             typifier.typify(dihedral)
-
-
-class TestOplsTypifier:
-    """Test OplsTypifier class."""
-
-    def test_atomistic_typifier_initialization_default(self):
-        """Test OplsTypifier initialization with defaults."""
-        ff = AtomisticForcefield()
-        typifier = OplsTypifier(ff)
-
-        assert typifier.ff is ff
-        assert typifier.skip_atom_typing is False
-        assert typifier.skip_pair_typing is False
-        assert typifier.skip_bond_typing is False
-        assert typifier.skip_angle_typing is False
-        assert typifier.skip_dihedral_typing is False
-        assert hasattr(typifier, "atom_typifier")
-        assert hasattr(typifier, "bond_typifier")
-        assert hasattr(typifier, "angle_typifier")
-        assert hasattr(typifier, "dihedral_typifier")
-        # The atom typifier is the OPLS SMARTS-based implementation.
-        assert isinstance(typifier.atom_typifier, _OplsAtomTypifier)
-
-    def test_atomistic_typifier_typify_all(self):
-        """Test OplsTypifier.typify() with all typing enabled."""
-        ff = AtomisticForcefield()
-        astyle = ff.def_atomstyle("full")
-        at1 = astyle.def_type("HA", type_="HA", class_="HC")
-        at2 = astyle.def_type("CA", type_="CA", class_="CT")
-        at3 = astyle.def_type("HA", type_="HA", class_="HC")
-
-        bstyle = ff.def_bondstyle("harmonic")
-        bstyle.def_type(at1, at2, k=1000.0, r0=1.08)
-
-        anglestyle = ff.def_anglestyle("harmonic")
-        anglestyle.def_type(at1, at2, at3, k=500.0, theta0=120.0)
-
-        pairstyle = ff.def_pairstyle("opls")
-        pairstyle.def_type(at1, at1, c0=1.0, c1=2.0)
-        pairstyle.def_type(at2, at2, c0=1.0, c1=2.0)
-        pairstyle.def_type(at3, at3, c0=1.0, c1=2.0)
-
-        typifier = OplsTypifier(
-            ff,
-            skip_atom_typing=True,  # Skip atom typing for simplicity
-            skip_angle_typing=False,
-            skip_dihedral_typing=True,
-        )
-
-        # Create structure
-        asm = Atomistic()
-        h1 = Atom(symbol="H")
-        c = Atom(symbol="C")
-        h2 = Atom(symbol="H")
-        h1.data["type"] = "HA"
-        c.data["type"] = "CA"
-        h2.data["type"] = "HA"
-        asm.add_entity(h1, c, h2)
-
-        bond1 = Bond(h1, c)
-        bond2 = Bond(c, h2)
-        asm.add_link(bond1, bond2)
-
-        # Generate topology
-        asm = asm.get_topo(gen_angle=True, gen_dihe=False)
-
-        # Typify
-        result = typifier.typify(asm)
-
-        assert result is not asm
-        assert list(result.bonds)[0].data.get("type") is not None

@@ -73,7 +73,7 @@ class TestPolydisperseChainGenerator:
         """Test basic chain generation."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
 
-        dp_dist = SchulzZimmPolydisperse(Mn=1500.0, Mw=3000.0, random_seed=42)
+        dp_dist = SchulzZimmPolydisperse(Mn=1500.0, Mw=3000.0)
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
@@ -173,7 +173,7 @@ class TestSystemPlanner:
         """Test basic system planning."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
 
-        dp_dist = SchulzZimmPolydisperse(Mn=1500.0, Mw=3000.0, random_seed=42)
+        dp_dist = SchulzZimmPolydisperse(Mn=1500.0, Mw=3000.0)
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
@@ -375,7 +375,7 @@ class TestIntegration:
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
 
         # Middle layer: PolydisperseChainGenerator
-        dp_dist = SchulzZimmPolydisperse(Mn=1500.0, Mw=3000.0, random_seed=42)
+        dp_dist = SchulzZimmPolydisperse(Mn=1500.0, Mw=3000.0)
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,

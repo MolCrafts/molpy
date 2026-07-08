@@ -57,7 +57,7 @@ class TestOptionalImportContract:
     def test_rdkit_symbols_are_exposed(self):
         # The names always exist on the package (either the real objects or the
         # None sentinels), so downstream code can import them unconditionally.
-        for name in ("RDKitAdapter", "MP_ID", "Generate3D", "OptimizeGeometry"):
+        for name in ("RDKitAdapter", "MP_ID"):
             assert hasattr(adapter_mod, name)
 
     def test_sentinels_consistent_with_availability(self):
@@ -100,9 +100,6 @@ class TestOptionalImportContract:
             assert reloaded._HAS_RDKIT is False
             assert reloaded.RDKitAdapter is None
             assert reloaded.MP_ID is None
-            assert reloaded.Generate3D is None
-            assert reloaded.OptimizeGeometry is None
-            assert reloaded.generate_3d is None
             # Base contract remains usable without the optional backend.
             assert reloaded.Adapter is Adapter
         finally:
@@ -141,7 +138,7 @@ class TestRDKitAdapterDesign:
         assert isinstance(getattr(adapter_cls, "mol", None), property)
 
     def test_exported_in_all(self):
-        for name in ("RDKitAdapter", "MP_ID", "Generate3D", "OptimizeGeometry"):
+        for name in ("RDKitAdapter", "MP_ID"):
             assert name in adapter_mod.__all__
 
 

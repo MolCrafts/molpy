@@ -28,21 +28,26 @@ from typing import Any, Self
 from molpy.core.atomistic import Atom, Atomistic
 from molpy.core.entity import Entity
 
-#: Retype-safe floor radius — BondReact's proven default; the extracted ball
-#: must cover the typifier's SMARTS depth so boundary atoms have full context.
+#: Fallback extraction radius when a typifier declares no ``context_radius`` —
+#: BondReact's proven default, wide enough for SMARTS boundary context.
 _FLOOR = 4
 
 
 def region_radius(typifier: object | None = None) -> int:
-    """Retype-safe extraction radius for an :class:`AffectedRegion`.
+    """Extraction radius for an :class:`AffectedRegion`.
 
-    ``max(typifier.context_radius, _FLOOR)`` with ``_FLOOR = 4``. A typifier may
-    expose ``context_radius`` (the max path length over its SMARTS patterns);
-    when it is absent — or ``typifier`` is ``None`` — the floor applies. Callers
-    may override the radius per edit.
+    The typifier owns this: it exposes ``context_radius`` — the ball depth its
+    typing actually needs, which it may make a user-tunable knob (a simple
+    junction needs a small radius; a bulky/fused one more). ``region_radius``
+    trusts that declaration. Only when it is absent/zero — or ``typifier`` is
+    ``None`` — does the :data:`_FLOOR` fallback apply.
+
+    Trusting the declaration (rather than flooring every typifier up to 4) is
+    what keeps a small, local reaction from extracting a ball so wide it reaches
+    neighbouring edits and fragments the retype cache into many spurious classes.
     """
-    ctx = getattr(typifier, "context_radius", 0)
-    return max(int(ctx), _FLOOR)
+    ctx = int(getattr(typifier, "context_radius", 0) or 0)
+    return ctx if ctx > 0 else _FLOOR
 
 
 class _RegionMixin[E: Entity]:
@@ -83,7 +88,9 @@ class AffectedRegion(_RegionMixin[Atom], Atomistic):
         is not mutated: the region is an induced clone with its own atom views.
         """
         centers = _resolve_centers(parent, touched)
-        sub, boundary, region_to_parent = parent._extract_mapped(centers, radius, cls)
+        sub, boundary, region_to_parent = parent._extract_mapped(
+            centers, radius, cls, regenerate_topology=True
+        )
         parent_to_region = {
             parent_atom: region_atom
             for region_atom, parent_atom in region_to_parent.items()

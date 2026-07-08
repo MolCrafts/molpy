@@ -4,7 +4,7 @@ This guide addresses contributors and library developers working on MolPy as a r
 
 - **Fix a bug or land a first PR** → [Development Setup](development-setup.md), then [Contributing Workflow](contributing.md) and [Testing](testing.md)
 - **Add an analysis operation, file format, or tool integration** → the plug-in recipes under [Extending MolPy](extending-compute.md); no core changes required
-- **Change the data model or force-field internals** → read the [Architecture Overview](architecture-overview.md) first, open a GitHub issue to discuss, then follow [Extending the Data Model](extending-core.md) or [Extending the Force Field](extending-forcefield.md)
+- **Change typification, the data model, or force-field internals** → read the [Architecture Overview](architecture-overview.md) first, open a GitHub issue to discuss, then follow [Extending Typifiers](extending-typifiers.md), [Extending the Data Model](extending-core.md), or [Extending the Force Field](extending-forcefield.md)
 - **Understand how MolPy is put together** → [Architecture Overview](architecture-overview.md) and [molrs Backend](molrs-backend.md)
 - **Cut a release** → [Release Process](release-process.md)
 
@@ -35,6 +35,7 @@ Ordered from plug-in interfaces (implement a subclass, register a handler) to co
 - [Adding a Compute Operation](extending-compute.md) — the `Compute` protocol for reusable analysis operations
 - [Adding an I/O Format](extending-io.md) — reader and writer base classes and the `FieldFormatter` canonicalization interface
 - [Adding a Wrapper or Adapter](extending-integration.md) — subprocess wrapper conventions and in-memory adapter patterns
+- [Extending Typifiers](extending-typifiers.md) — graph-in, graph-out typifier contracts, `typify_*` naming, matcher boundaries, and the CL&P overlay plan
 - [Extending the Data Model](extending-core.md) — new `Entity` and `Link` subtypes, custom `Struct` subclasses, and identity-hashing invariants
 - [Extending the Force Field](extending-forcefield.md) — molrs kernels, named `Style` classes, and export formatter registration
 

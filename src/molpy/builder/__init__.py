@@ -1,16 +1,16 @@
 """System assembly — start here.
 
-Polymer construction goes through the declarative entry functions:
+Polymer construction composes the real engine classes directly (there is
+no ``polymer()`` dispatcher): prepare monomers with
+:func:`molpy.parser.parse_monomer` + :func:`molpy.adapter.rdkit.generate_3d`,
+then assemble with :class:`PolymerBuilder` (``.build_sequence`` or
+``.build`` on a CGSmiles string). Polydisperse systems drive
+:class:`PolymerBuilder` from the distribution + :class:`SystemPlanner`
+primitives. See :mod:`molpy.builder.polymer` for the full recipe.
 
-- :func:`polymer` — build a single chain in one call
-- :func:`polymer_system` — build a polydisperse multi-chain system
-- :func:`prepare_monomer` — BigSMILES → 3D monomer with ports
-
-Advanced, step-by-step assembly lives in :mod:`molpy.builder.polymer`
-(``PolymerBuilder``, ``Connector``, placers, ``ReactionPresets``).
 Crystal construction goes through :func:`build_crystal` with
 :class:`Lattice` / :class:`Site`. AmberTools-backed polymer builds use
-:class:`AmberPolymerBuilder` (or ``polymer(..., backend="amber")``).
+:class:`AmberPolymerBuilder`.
 """
 
 from molpy.core.region import BoxRegion, Cube, Region, SphereRegion
@@ -20,12 +20,6 @@ from .crosslink import Crosslinker, DeterministicCrosslinker
 from .crystal import Lattice, Site, SpaceGroup, build_crystal
 from .polymer import *
 from .polymer.ambertools import AmberPolymerBuilder
-from .polymer.dsl import (
-    generate_3d,
-    polymer,
-    polymer_system,
-    prepare_monomer,
-)
 from .virtualsite import (
     DrudeBuilder,
     Tip4pBuilder,
@@ -47,11 +41,6 @@ __all__ = [
     "SpaceGroup",
     "SphereRegion",
     "build_crystal",
-    # Polymer entry functions
-    "polymer",
-    "polymer_system",
-    "prepare_monomer",
-    "generate_3d",
     # Virtual-site augmentation
     "VirtualSiteBuilder",
     "DrudeBuilder",

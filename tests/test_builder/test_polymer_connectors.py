@@ -2,8 +2,7 @@
 
 import pytest
 
-from molpy import Atomistic
-from molpy.builder.polymer.connectors import Connector, ConnectorContext
+from molpy.builder.polymer.connectors import Connector
 from molpy.builder.polymer.errors import AmbiguousPortsError
 from molpy.core.atomistic import Atom
 from molpy.reacter import Reacter
@@ -32,11 +31,6 @@ def reacter():
     return _make_reacter()
 
 
-@pytest.fixture
-def ctx():
-    return ConnectorContext(step=0, left_label="A", right_label="B")
-
-
 class TestConnectorInit:
     def test_default_empty_port_map(self, reacter):
         c = Connector(reacter=reacter)
@@ -56,33 +50,33 @@ class TestConnectorInit:
 
 
 class TestSelectPortsExplicit:
-    def test_explicit_port_map(self, reacter, ctx):
+    def test_explicit_port_map(self, reacter):
         c = Connector(reacter=reacter, port_map={("A", "B"): (">", "<")})
         left_ports = {">": [_make_port_atom(">")]}
         right_ports = {"<": [_make_port_atom("<")]}
-        result = c.select_ports(Atomistic(), Atomistic(), left_ports, right_ports, ctx)
+        result = c.select_ports(left_ports, right_ports, "A", "B")
         assert result[0] == ">"
         assert result[2] == "<"
 
-    def test_explicit_port_not_found_raises(self, reacter, ctx):
+    def test_explicit_port_not_found_raises(self, reacter):
         c = Connector(reacter=reacter, port_map={("A", "B"): (">", "<")})
         left_ports = {"x": [_make_port_atom("x")]}
         right_ports = {"<": [_make_port_atom("<")]}
         with pytest.raises(AmbiguousPortsError):
-            c.select_ports(Atomistic(), Atomistic(), left_ports, right_ports, ctx)
+            c.select_ports(left_ports, right_ports, "A", "B")
 
 
 class TestSelectPortsCompatibility:
-    def test_directional_gt_lt(self, reacter, ctx):
+    def test_directional_gt_lt(self, reacter):
         """Left's > connects to right's <."""
         c = Connector(reacter=reacter)
         left_ports = {">": [_make_port_atom(">")]}
         right_ports = {"<": [_make_port_atom("<")]}
-        result = c.select_ports(Atomistic(), Atomistic(), left_ports, right_ports, ctx)
+        result = c.select_ports(left_ports, right_ports, "A", "B")
         assert result[0] == ">"
         assert result[2] == "<"
 
-    def test_both_ports_selects_correct_direction(self, reacter, ctx):
+    def test_both_ports_selects_correct_direction(self, reacter):
         """When both sides have < and >, selects > on left, < on right."""
         c = Connector(reacter=reacter)
         left_ports = {
@@ -93,23 +87,23 @@ class TestSelectPortsCompatibility:
             "<": [_make_port_atom("<")],
             ">": [_make_port_atom(">")],
         }
-        result = c.select_ports(Atomistic(), Atomistic(), left_ports, right_ports, ctx)
+        result = c.select_ports(left_ports, right_ports, "A", "B")
         assert result[0] == ">"
         assert result[2] == "<"
 
 
 class TestSelectPortsSinglePort:
-    def test_single_port_each_side(self, reacter, ctx):
+    def test_single_port_each_side(self, reacter):
         c = Connector(reacter=reacter)
         left_ports = {"$": [_make_port_atom("$")]}
         right_ports = {"$": [_make_port_atom("$")]}
-        result = c.select_ports(Atomistic(), Atomistic(), left_ports, right_ports, ctx)
+        result = c.select_ports(left_ports, right_ports, "A", "B")
         assert result[0] == "$"
         assert result[2] == "$"
 
 
 class TestSelectPortsAmbiguous:
-    def test_ambiguous_raises(self, reacter, ctx):
+    def test_ambiguous_raises(self, reacter):
         c = Connector(reacter=reacter)
         left_ports = {
             "a": [_make_port_atom("a")],
@@ -120,4 +114,4 @@ class TestSelectPortsAmbiguous:
             "y": [_make_port_atom("y")],
         }
         with pytest.raises(AmbiguousPortsError):
-            c.select_ports(Atomistic(), Atomistic(), left_ports, right_ports, ctx)
+            c.select_ports(left_ports, right_ports, "A", "B")

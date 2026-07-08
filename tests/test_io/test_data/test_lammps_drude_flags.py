@@ -8,6 +8,7 @@ ordering — writes the ready-to-paste ``fix drude`` flags as a header comment.
 import warnings
 
 import molpy as mp
+import pytest
 from molpy import Atom, Atomistic, Bond
 from molpy.builder.virtualsite import DrudeBuilder
 from molpy.io.data.lammps import LammpsDataWriter

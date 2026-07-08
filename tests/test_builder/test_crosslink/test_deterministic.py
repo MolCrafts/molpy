@@ -26,6 +26,20 @@ def _carbon_chain(m):
     return s
 
 
+def _typed_carbon_chain(types):
+    """Linear carbon chain whose atoms carry optional ``type`` labels."""
+    s = mp.Atomistic()
+    prev = None
+    for kind in types:
+        c = s.def_atom(element="C")
+        if kind is not None:
+            c["type"] = kind
+        if prev is not None:
+            s.def_bond(prev, c, order=1.0)
+        prev = c
+    return s
+
+
 def _n_o_cloud(n):
     """``n`` nitrogens and ``n`` oxygens, all mutually within a small cutoff."""
     s = mp.Atomistic()
@@ -101,6 +115,21 @@ def test_spacing_works_without_coordinates():
     assert _bond_count(out) > _bond_count(base)  # selected sites reacted
 
 
+def test_spacing_uses_label_aware_sites():
+    base = _typed_carbon_chain([None, "cx", None, "cx", None, "cx"])
+    base_bonds = _bond_count(base)
+
+    out = DeterministicCrosslinker(
+        "[C;%cx:1].[C;%cx:2]>>[C:1][C:2]",
+        spacing=2,
+        exclude_same_match=True,
+    ).apply(base)
+
+    new_bonds = list(out.bonds)[base_bonds:]
+    assert len(new_bonds) == 1
+    assert {new_bonds[0].itom.get("type"), new_bonds[0].jtom.get("type")} == {"cx"}
+
+
 # --------------------------------------------------------------------------
 # ac-006 — determinism, explicit pairs, exclusions
 # --------------------------------------------------------------------------
@@ -126,6 +155,20 @@ def test_explicit_pairs_only_forms_named_bonds():
     base = _bond_count(g)
     out = DeterministicCrosslinker(RXN, pairs=[(0, 2), (1, 0)]).apply(g)
     assert _bond_count(out) - base == 2
+
+
+def test_explicit_pairs_use_label_aware_site_indices():
+    base = _typed_carbon_chain([None, "cx", None, "cx"])
+    base_bonds = _bond_count(base)
+
+    out = DeterministicCrosslinker(
+        "[C;%cx:1].[C;%cx:2]>>[C:1][C:2]",
+        pairs=[(0, 1)],
+    ).apply(base)
+
+    new_bonds = list(out.bonds)[base_bonds:]
+    assert len(new_bonds) == 1
+    assert {new_bonds[0].itom.get("type"), new_bonds[0].jtom.get("type")} == {"cx"}
 
 
 def test_exclude_same_molecule():

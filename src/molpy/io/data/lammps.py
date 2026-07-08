@@ -535,7 +535,7 @@ class LammpsDataReader(DataReader):
                 ids = block[old_key].astype(int)
                 indices = np.array([id_to_idx.get(id_val, -1) for id_val in ids])
 
-                # Check for unmapped IDs
+                # Check for unmapped IDs (on the signed array, -1 sentinel intact).
                 if np.any(indices == -1):
                     unmapped = ids[indices == -1]
                     import warnings
@@ -545,8 +545,11 @@ class LammpsDataReader(DataReader):
                         f"that could not be mapped to atom indices: {unmapped[:5]}..."
                     )
 
-                # Add new column and remove old one
-                block[new_key] = indices
+                # Store endpoints as uint32 — the canonical dtype molrs uses for
+                # relation endpoints (matching Atomistic.to_frame). A signed-int
+                # column is silently ignored by molrs.from_frame, which would drop
+                # every bond/angle/dihedral on the Frame->Atomistic round-trip.
+                block[new_key] = indices.astype(np.uint32)
                 del block[old_key]
 
         return block

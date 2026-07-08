@@ -14,19 +14,20 @@ def _ethanol():
     return mol
 
 
-def test_typify_returns_to_potentials_ready_frame():
-    """typify yields an assembly-complete Frame: ff.to_potentials(frame) works
-    (no `mmff_stbn missing r0_ij` error) and gives a finite energy."""
+def test_typify_returns_atomistic_and_build_is_finite():
+    """typify returns a typed graph; build compiles finite potentials."""
     typ = MMFFTypifier()
-    frame = typ.typify(_ethanol())
-    ff = typ.forcefield()
-    energy = ff.to_potentials(frame).calc_energy(molrs.extract_coords(frame))
+    mol = _ethanol()
+    typed = typ.typify(mol)
+    assert isinstance(typed, molrs.Atomistic)
+    pots = typ.build(mol)
+    energy = pots.calc_energy(molrs.extract_coords(typed.to_frame()))
     assert np.isfinite(energy)
 
 
 def test_forcefield_is_usable_by_forcefield_potential():
     typ = MMFFTypifier()
-    frame = typ.typify(_ethanol())
+    frame = typ.typify(_ethanol()).to_frame()
     pot = ForceFieldPotential(typ.forcefield())
     assert np.isfinite(pot.calc_energy(frame))
 
@@ -34,7 +35,7 @@ def test_forcefield_is_usable_by_forcefield_potential():
 def test_lbfgs_energy_non_increasing():
     """LBFGS over the MMFF force field (Frame-native) lowers, never raises, energy."""
     typ = MMFFTypifier()
-    frame = typ.typify(_ethanol())
+    frame = typ.typify(_ethanol()).to_frame()
     pot = ForceFieldPotential(typ.forcefield())
     e0 = pot.calc_energy(frame)
     result = LBFGS(pot, maxstep=0.04, memory=20).run(frame, fmax=0.05, steps=300)
@@ -42,11 +43,6 @@ def test_lbfgs_energy_non_increasing():
     assert e1 <= e0 + 1e-6
 
 
-def test_unknown_variant_raises_value_error():
-    with pytest.raises(ValueError):
+def test_mmff_typifier_takes_no_variant_argument():
+    with pytest.raises(TypeError):
         MMFFTypifier(variant="MMFF95")
-
-
-def test_mmff94s_not_yet_supported():
-    with pytest.raises(NotImplementedError):
-        MMFFTypifier(variant="MMFF94s")

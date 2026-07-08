@@ -357,7 +357,13 @@ class LAMMPSEngine(Engine):
         )
 
         LammpsDataWriter(run_dir / data_name, atom_style=atom_style).write(frame)
-        write_lammps_forcefield(run_dir / settings_name, ff, skip_pair_style=True)
+        # Whitelist coeffs to the frame's used types: the data file's labelmap is
+        # built from `frame`, so a coeff for a type the frame lacks (e.g. an `oh`
+        # cap artifact left in a merged ff) would reference a missing labelmap
+        # entry and LAMMPS would abort.
+        write_lammps_forcefield(
+            run_dir / settings_name, ff, skip_pair_style=True, frame=frame
+        )
 
         text = _RELAX_TEMPLATE.format(
             units=units,

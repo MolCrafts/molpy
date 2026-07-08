@@ -14,10 +14,10 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING
 
-from ._crosslinker import Candidate, Crosslinker
+from ._crosslinker import Candidate, Crosslinker, SelectionContext
 
 if TYPE_CHECKING:
-    from molpy.typifier.atomistic import ForceFieldTypifier
+    from molpy.typifier.region import RegionTypifier
 
 
 class DeterministicCrosslinker(Crosslinker):
@@ -32,7 +32,7 @@ class DeterministicCrosslinker(Crosslinker):
         pairs: Sequence[tuple[int, int]] | None = None,
         exclude_same_molecule: bool = False,
         exclude_same_match: bool = False,
-        typifier: ForceFieldTypifier | None = None,
+        typifier: RegionTypifier | None = None,
     ) -> None:
         super().__init__(reaction, cutoff=cutoff, typifier=typifier)
         self._spacing = spacing
@@ -40,28 +40,27 @@ class DeterministicCrosslinker(Crosslinker):
         self._exclude_same_molecule = exclude_same_molecule
         self._exclude_same_match = exclude_same_match
 
-    def select(self, graph, candidates: list[Candidate]) -> Iterator[dict[int, int]]:
+    def select(self, context: SelectionContext) -> Iterator[dict[int, int]]:
         if self._pairs is not None:
-            yield from self._select_explicit(graph)
+            yield from self._select_explicit(context)
             return
 
-        eligible = candidates
+        eligible = context.candidates
         if self._spacing is not None:
-            keep = self._regular_sites(graph, self._spacing)
+            keep = self._regular_sites(context, self._spacing)
             eligible = [
                 c
-                for c in candidates
+                for c in context.candidates
                 if all(handle in keep for handle in self._bond_atoms(c))
             ]
 
-        yield from self._select_exhaustive(graph, eligible)
+        yield from self._select_exhaustive(context, eligible)
 
     # -- exhaustive: consume every candidate once, deterministically ---------
 
     def _select_exhaustive(
-        self, graph, candidates: list[Candidate]
+        self, context: SelectionContext, candidates: list[Candidate]
     ) -> Iterator[dict[int, int]]:
-        components = self._components(graph)
         consumed: set[int] = set()
         for candidate in sorted(candidates, key=self._sort_key):
             atoms = self._occ_atoms(candidate.occ_a) | self._occ_atoms(candidate.occ_b)
@@ -70,7 +69,7 @@ class DeterministicCrosslinker(Crosslinker):
             if self._exclude_same_match and self._same_match(candidate):
                 continue
             if self._exclude_same_molecule and self._same_molecule(
-                components, candidate
+                context.components, candidate
             ):
                 continue
             yield self._binding(candidate)
@@ -78,10 +77,10 @@ class DeterministicCrosslinker(Crosslinker):
 
     # -- explicit: form exactly the named site pairs -------------------------
 
-    def _select_explicit(self, graph) -> Iterator[dict[int, int]]:
+    def _select_explicit(self, context: SelectionContext) -> Iterator[dict[int, int]]:
         assert self._pairs is not None
-        sites_a = self._ordered_sites(graph, self._comp_a, self._map_a)
-        sites_b = self._ordered_sites(graph, self._comp_b, self._map_b)
+        sites_a = self._ordered_sites(context, self._comp_a, self._map_a)
+        sites_b = self._ordered_sites(context, self._comp_b, self._map_b)
         for i, j in self._pairs:
             candidate = Candidate(
                 sites_a[i], sites_b[j], self._comp_a, self._comp_b, 0.0

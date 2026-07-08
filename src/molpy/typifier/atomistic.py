@@ -17,14 +17,6 @@ if TYPE_CHECKING:
     from molpy.core.affected_region import AffectedRegion
     from molpy.typifier.region import RegionTypes
 
-# Priority stride between force-field overlay layers. An overlay type (layer L)
-# adds L * stride to its priority so it strictly outranks every lower-layer
-# candidate in the SMARTS matcher regardless of specificity score. The stride
-# is far larger than any realistic specificity score (pattern size) or
-# overrides-based delta, so a single CL&P/CL&Pol type always wins over OPLS-AA
-# where it matches, while OPLS-AA remains the fallback where it does not.
-_LAYER_PRIORITY_STRIDE = 1000
-
 
 def _build_type_class_layer(
     ff: ForceField,
@@ -362,177 +354,6 @@ class PairTypifier(TypifierBase[Atom]):
 
 
 # ============================================================
-# SMARTS-based atom typifier base class
-# ============================================================
-
-
-class ForceFieldAtomTypifier(TypifierBase["Atomistic"]):
-    """Base class for SMARTS-based atom typifiers."""
-
-    def __init__(
-        self,
-        forcefield: ForceField,
-        strict: bool = False,
-    ) -> None:
-        super().__init__(forcefield)
-        from .adapter import build_mol_graph
-
-        self.pattern_dict = self._extract_patterns()
-        self._build_mol_graph = build_mol_graph
-        self.strict = strict
-
-        from .layered_engine import LayeredTypingEngine
-
-        self.engine = LayeredTypingEngine(self.pattern_dict)
-
-    @abstractmethod
-    def _extract_patterns(self) -> dict:
-        """Extract SMARTS patterns from forcefield. Subclasses implement this."""
-        ...
-
-    @override
-    def typify(self, struct: "Atomistic") -> "Atomistic":
-        """Return a new Atomistic with atom types assigned; input is not mutated."""
-        orig_atoms = list(struct.atoms)
-        graph, vs_to_atomid, _atomid_to_vs = self._build_mol_graph(struct)
-
-        result = self.engine.typify(graph, vs_to_atomid)
-
-        new_struct = struct.copy()
-        new_atoms = list(new_struct.atoms)
-
-        for orig_atom, new_atom in zip(orig_atoms, new_atoms):
-            atom_id = id(orig_atom)
-            if atom_id in result:
-                atomtype = result[atom_id]
-                new_atom.data["type"] = atomtype
-
-                atom_type_obj = self._find_atomtype_by_name(atomtype)
-                if atom_type_obj:
-                    # Don't overwrite existing atom fields with None kwargs from
-                    # the AtomType (e.g. an AtomType with no `element` attr yields
-                    # a kwargs dict carrying element=None, which would clobber the
-                    # real element set during parsing).
-                    new_atom.data.update(
-                        {
-                            k: v
-                            for k, v in atom_type_obj.params.kwargs.items()
-                            if v is not None
-                        }
-                    )
-
-        if self.strict:
-            untyped_atoms = [
-                atom for atom in new_struct.atoms if atom.get("type") is None
-            ]
-            if untyped_atoms:
-                untyped_info = [
-                    f"{atom.get('element', '?')} (id={id(atom)})"
-                    for atom in untyped_atoms[:10]
-                ]
-                error_msg = (
-                    f"Failed to assign types to {len(untyped_atoms)} atom(s). "
-                    f"Examples: {', '.join(untyped_info)}"
-                )
-                if len(untyped_atoms) > 10:
-                    error_msg += f" (and {len(untyped_atoms) - 10} more)"
-                raise ValueError(error_msg)
-
-        return new_struct
-
-    def _find_atomtype_by_name(self, name: str) -> AtomType | None:
-        """Find AtomType object by name"""
-        for at in self.ff.get_types(AtomType):
-            if at.name == name:
-                return at
-        return None
-
-
-# ============================================================
-# OPLS-specific typifiers
-# ============================================================
-
-
-class _OplsAtomTypifier(ForceFieldAtomTypifier):
-    """Assign atom types using SMARTS matcher for OPLS-AA force field.
-
-    Internal helper for :class:`OplsTypifier`; not part of the public API.
-    """
-
-    def _extract_patterns(self):
-        """Extract SMARTS patterns from OPLS forcefield with overrides-based priority."""
-        from molpy.parser.smarts import SmartsParser
-
-        from .graph import SMARTSGraph
-
-        pattern_dict = {}
-        atom_types = list(self.ff.get_types(AtomType))
-        parser = SmartsParser()
-
-        # Build overrides mapping
-        overrides_map = {}
-        for at in atom_types:
-            overrides_str = at.params.kwargs.get("overrides")
-            if overrides_str:
-                overrides_map[at.name] = {s.strip() for s in overrides_str.split(",")}
-
-        # Calculate priority based on overrides
-        type_priority = {}
-        for at in atom_types:
-            explicit_priority = at.params.kwargs.get("priority")
-            if explicit_priority is not None:
-                try:
-                    type_priority[at.name] = int(explicit_priority)
-                    continue
-                except (ValueError, TypeError):
-                    pass
-
-            priority = 0
-            for _overrider, overridden_set in overrides_map.items():
-                if at.name in overridden_set:
-                    priority -= 1
-            if at.name in overrides_map:
-                priority += len(overrides_map[at.name])
-            # Overlay layers (CL&P, CL&Pol read on top of OPLS-AA) outrank the
-            # base force field: a type tagged layer=L beats every lower-layer
-            # type regardless of specificity, while intra-layer overrides
-            # ordering is preserved by adding (not replacing) the boost.
-            layer = at.params.kwargs.get("layer")
-            if layer:
-                priority += int(layer) * _LAYER_PRIORITY_STRIDE
-            type_priority[at.name] = priority
-
-        for at in atom_types:
-            smarts_str = at.params.kwargs.get("def_")
-
-            if smarts_str:
-                try:
-                    priority = type_priority.get(at.name, 0)
-                    overrides = overrides_map.get(at.name, set())
-
-                    pattern = SMARTSGraph(
-                        smarts_string=smarts_str,
-                        parser=parser,
-                        atomtype_name=at.name,
-                        priority=priority,
-                        source=f"oplsaa:{at.name}",
-                        overrides=overrides,
-                        target_vertices=[0],
-                    )
-                    pattern_dict[at.name] = pattern
-                except Exception as e:
-                    # A SMARTS pattern that fails to parse means this atom type
-                    # would silently never match — a broken force-field
-                    # definition. Fail fast instead of warning and dropping it.
-                    raise ValueError(
-                        f"Failed to parse SMARTS for atom type {at.name!r}: "
-                        f"{smarts_str!r} ({e})"
-                    ) from e
-
-        return pattern_dict
-
-
-# ============================================================
 # Generic atomistic typifier orchestrator
 # ============================================================
 
@@ -583,14 +404,15 @@ class ForceFieldTypifier(TypifierBase[Atomistic]):
 
     @property
     def context_radius(self) -> int:
-        """Max SMARTS-pattern depth (in bonds) this typifier's atom typing needs.
+        """Retype-safe extraction depth (in bonds) this typifier's atom typing needs.
 
-        A conservative constant: OPLS/GAFF atom-typing SMARTS reach only a few
-        bonds, so 3 covers their neighbour/ring context. Consumed by
-        :func:`molpy.core.region_radius`, which floors it to the retype-safe 4 so
-        an :class:`~molpy.core.AffectedRegion` always carries a complete shell.
+        OPLS/GAFF atom-typing SMARTS reach only a few bonds; 4 (BondReact's
+        proven default) covers their neighbour/ring context with margin.
+        Consumed by :func:`molpy.core.region_radius` as this typifier's own
+        declaration of how wide an :class:`~molpy.core.AffectedRegion` shell it
+        needs — so the region always carries complete SMARTS context.
         """
-        return 3
+        return 4
 
     def typify_region(self, region: "AffectedRegion") -> "RegionTypes":
         """Type ``region`` as a standalone graph; snapshot its interior types.
@@ -653,12 +475,3 @@ class ForceFieldTypifier(TypifierBase[Atomistic]):
                     self.dihedral_typifier.typify(dihedral)
 
         return new_struct
-
-
-class OplsTypifier(ForceFieldTypifier):
-    """OPLS-AA full typing orchestrator: atom → pair → bond → angle → dihedral."""
-
-    def _init_typifiers(self) -> None:
-        if not self.skip_atom_typing:
-            self.atom_typifier = _OplsAtomTypifier(self.ff, strict=self.strict_typing)
-        super()._init_typifiers()

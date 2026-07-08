@@ -225,9 +225,9 @@ class XMLForceFieldReader:
         self._overrides: dict[str, str] = {}
         # overlay layer for this read: 0 = base force field, >0 = overlay that
         # extends/overrides the base. Atom types created during the read are
-        # tagged with this layer so the SMARTS typifier can give overlay
+        # tagged with this layer so an OPLS-compatible typifier can give overlay
         # patterns strictly higher priority than base ones (CL&P/CL&Pol over
-        # OPLS-AA). See _OplsAtomTypifier._extract_patterns.
+        # OPLS-AA).
         self._layer: int = 0
 
         self._ff: AtomisticForcefield | None = None
