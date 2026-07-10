@@ -1,6 +1,6 @@
 ---
 title: GraphAssembler — 唯一装配内核 + Selector 策略族
-status: approved
+status: in-progress
 created: 2026-07-10
 depends_on: "graph-assembler-01-reach"
 supersedes: "graph-assembler.md §Design;crosslink-03 记录的 'PolymerBuilder = 退化交联' follow-up"
@@ -428,11 +428,19 @@ gel = GraphAssembler(ether, typifier=gaff).assemble(
 
 ## Tasks
 
-- [ ] T1 **先验证 molrs 契约**:`Reaction.apply(refresh=False)` 删原子时是否删除其关联
-      角/二面角/improper。不成立 → 提 molrs issue,本 spec 阻塞
-- [ ] T2 **铁律 6 · re-export 审计**:`molpy/__init__.py` 导出 `Reaction` 等;
-      `molpy.Reaction is molrs.Reaction` 为真;审计 `dir(molrs)` 全表
-- [ ] T3 `fields.SITE` 注册;全仓库 `"port"` / `"site"` / `site_field=` / `monomer_node_id` 字符串清零
+- [x] T1 **先验证 molrs 契约**:`Reaction.apply(refresh=False)` 删原子时是否删除其关联
+      角/二面角/improper。**已验证 (2026-07-10)**:C0-C1-C2-O3 删 O3 后 dihedral 1→0、
+      angle 2→1、零悬挂项 ⟹ **契约成立,本 spec 不阻塞**
+- [x] T2 **铁律 6 · re-export 审计**:`molpy/__init__.py` 导出 `Reaction` / `SmartsPattern` /
+      `NeighborQuery` / `Graph` / `perceive_aromaticity` / `find_rings`;
+      `molpy.Reaction is molrs.Reaction` 为真(commit 00c8422)。
+      ⚠️ 审计发现 `src/molpy/compute/` 有 ~40 处 `self._inner = molrs.X(...)` 转发门面
+      (distribution / spectra / order / voronoi / density …)。它们继承 molpy `Compute`
+      协议并提供 `__call__`,介于适配器与门面之间 —— **超出本 spec 范围,须单独裁决**;
+      ac-021 的反向检查因此收窄到本 spec 触及的文件
+- [~] T3 `fields.SITE` 已注册(molpy 自有 FieldSpec);`Entity` 的下标/`get` 接受 FieldSpec
+      (commit 00c8422)。**未完**:`site_field=` / `monomer_node_id` / `"port"` 字符串仍在
+      `builder/crosslink/` 与 `builder/polymer/core.py`,随 T14 一并删除
 - [ ] T4 `Typifier` / `LocalTypifier` / `ChargeModel`;`ChargeModel.freeze()` 折叠帽电荷
 - [ ] T5 `TermSpec` / `RegionPatch` / `RegionPatchCache`(结构哈希唯一键)
 - [ ] T6 `AffectedRegion.owned_terms()` / `drop_owned_terms(parent)`

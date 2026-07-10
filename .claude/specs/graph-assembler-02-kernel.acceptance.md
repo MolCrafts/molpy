@@ -216,7 +216,9 @@ criteria:
       `molpy.Reaction is molrs.Reaction` 为 True —— 纯 re-export,不是包装层;
       同理 SmartsPattern / NeighborQuery / Graph / perceive_aromaticity / find_rings。
       grep -rn 'import molrs|molrs\.' docs/user-guide/ docs/api/ examples/ → 零命中。
-      反向检查(防二次封装):grep -rn '_inner|_molrs\b' src/molpy/ → 零命中。
+      反向检查(防二次封装):grep -rn '_inner|_molrs\b' 于**本 spec 触及的文件** → 零命中。
+      (2026-07-10 审计:src/molpy/compute/ 存在 ~40 处 self._inner = molrs.X(...) 转发,
+       它们继承 Compute 协议提供 __call__,介于适配器与门面之间 —— 单独裁决,不在本 spec。)
       src/molpy/ 内部 import molrs 不受限;tests/ 可直接测 molrs 契约(ac-001)。
     status: pending
 
