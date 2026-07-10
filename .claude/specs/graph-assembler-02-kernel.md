@@ -442,23 +442,28 @@ gel = GraphAssembler(ether, typifier=gaff).assemble(
       (commit 00c8422)。**未完**:`site_field=` / `monomer_node_id` / `"port"` 字符串仍在
       `builder/crosslink/` 与 `builder/polymer/core.py`,随 T14 一并删除
 - [ ] T4 `Typifier` / `LocalTypifier` / `ChargeModel`;`ChargeModel.freeze()` 折叠帽电荷
-- [ ] T5 `TermSpec` / `RegionPatch` / `RegionPatchCache`(结构哈希唯一键)
-- [ ] T6 `AffectedRegion.owned_terms()` / `drop_owned_terms(parent)`
-- [ ] T7 `Selector(ABC)`;`TopologySelector`(按 `RES_ID` 查表,同名 site 多值 → raise)
-- [ ] T8 `ProximitySelector(ABC)` + `Exhaustive` / `Spacing` / `ExplicitPair` / `Random`;
+- [x] T5 **简化**:`RegionPatch(types + terms)` 未实现,因为 T1 探针证明 molrs 在删原子时
+      **已经**删掉关联键项 ⟹ 补丁只需 **insert**,不需要 delete。类型走既有 `RetypeCache`
+      (结构哈希 + is_isomorphic),键项由 `GraphAssembler._insert_new_terms` 从区域直接生成
+      (含跨区域幂等 `inserted` 去重)。少一个类,同样的保证
+- [x] T6 **不需要**:同上。只有"含新形成键"的键项是新生的,它们在编辑前不可能存在,
+      所以没有要删除的东西。`_spans_bond` 判定一个键项是否含新键,`inserted` 集合保证
+      两个重叠区域共同拥有的二面角只插一次
+- [x] T7 `Selector(ABC)`;`TopologySelector`(按 `RES_ID` 查表,同名 site 多值 → raise)
+- [x] T8 `ProximitySelector(ABC)` + `Exhaustive` / `Spacing` / `ExplicitPair` / `Random`;
       `Candidate` 下沉进 `_proximity.py`
-- [ ] T9 `MonomerLibrary`:构造时校验模板(≥1 个 SITE 原子;有 charge 列则帽电荷已归零);
+- [x] T9 `MonomerLibrary`:构造时校验模板(≥1 个 SITE 原子;有 charge 列则帽电荷已归零);
       `expand()` 打 `RES_ID` / `RES_NAME`
-- [ ] T10 `GraphAssembler`(具体类):`assemble(world, selector)` —— selector 是**实参**不是构造器参数;
+- [x] T10`GraphAssembler`(具体类):`assemble(world, selector)` —— selector 是**实参**不是构造器参数;
       匹配一次 / disjoint 断言 / 零电荷断言 / placer / apply-all / 建区域 / 两趟打补丁;
       **`RegionPatchCache` 为实例属性**;构造时 `isinstance` 拒非 `LocalTypifier`
-- [ ] T10b `PolymerBuilder(GraphAssembler)`:持 `MonomerLibrary`,`build(cgsmiles)` 内部
+- [x] T10b `PolymerBuilder(GraphAssembler)`:持 `MonomerLibrary`,`build(cgsmiles)` 内部
       `parse_cgsmiles(...).base_graph` → `expand` → `assemble(world, TopologySelector(topo))`;
       `.base_graph` 不出现在用户代码里
 - [ ] T11 `Placer` 迁入 assembly/,消费 `fields.SITE`;成环边用 `topo_distances` 判环长;
       共价半径初值改具名常量 + docstring(铁律 5 例外)
 - [ ] T12 `Am1BccCharges(ChargeModel)`;`AmberToolsTypifier` 只管类型
-- [ ] T13 **铁律 5**:`_find_component` 找不到 map_number → `raise ValueError`(**修现存 bug**);
+- [x] T13 **铁律 5**:`_find_component` 找不到 map_number → `raise ValueError`(**修现存 bug**);
       `Candidate.distance` 无坐标时为 `None`;删 `_make_retype_cache` 的 hasattr 回退;
       `select` 产出 0 binding → `warnings.warn`
 - [ ] T14 删 `builder/crosslink/`、`builder/polymer/core.py`、`polymer/placer.py`;
