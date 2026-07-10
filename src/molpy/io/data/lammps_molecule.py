@@ -948,28 +948,31 @@ class LammpsMoleculeWriter(DataWriter):
 
         lines.append("")
 
-        # Optional sections
+        # Optional sections. ``Molecules`` holds molecule IDs, which LAMMPS parses
+        # as integers ("Not a valid integer number: '1.000000'"); the rest are
+        # real-valued. The formatter is per section, not per file.
         optional_sections = [
-            ("mol_id", "Molecules"),
-            ("charge", "Charges"),
-            ("mass", "Masses"),
-            ("diameter", "Diameters"),
+            ("mol_id", "Molecules", "{:d}"),
+            ("charge", "Charges", "{:.6f}"),
+            ("mass", "Masses", "{:.6f}"),
+            ("diameter", "Diameters", "{:.6f}"),
         ]
 
-        for attr_name, section_name in optional_sections:
-            if attr_name in atoms:
-                lines.append(section_name)
-                lines.append("")
+        for attr_name, section_name, value_format in optional_sections:
+            if attr_name not in atoms:
+                continue
+            lines.append(section_name)
+            lines.append("")
 
-                for idx in range(atoms.nrows):
-                    atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
-                    value = atoms[attr_name][idx]
-                    if value is None:
-                        value = 0.0
-                    value = float(value)
-                    lines.append(f"{atom_id} {value:.6f}")
+            for idx in range(atoms.nrows):
+                atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
+                value = atoms[attr_name][idx]
+                if value is None:
+                    value = 0
+                cast = int if value_format == "{:d}" else float
+                lines.append(f"{atom_id} {value_format.format(cast(value))}")
 
-                lines.append("")
+            lines.append("")
 
     def _write_native_connectivity_section(
         self, lines: list[str], block, section_type: str, frame

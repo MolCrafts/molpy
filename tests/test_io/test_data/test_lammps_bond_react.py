@@ -161,7 +161,10 @@ def _build_reaction() -> tuple[BondReactTemplate, Atomistic]:
     post.def_bond(
         post_by_react_id[anchor_l["react_id"]], post_by_react_id[anchor_r["react_id"]]
     )
-    post.generate_topology(gen_angle=True, gen_dihedral=True)
+    # clear_existing: `post` inherited `pre`'s angles/dihedrals, including the ones
+    # running through the hydrogens the reaction deletes. LAMMPS would then try to
+    # build an angle on a deleted atom ("Angle atoms 2 3 9 missing").
+    post.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)
 
     template = BondReactTemplate(
         pre=pre,
