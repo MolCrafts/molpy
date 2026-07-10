@@ -387,11 +387,7 @@ def write_lammps_bond_react_system(
             templates={"rxn1": template},
         )
     """
-    from .data.lammps_bond_react import (
-        apply_type_maps,
-        collect_type_maps,
-        write_bond_react_map,
-    )
+    from .data.lammps_bond_react import LammpsBondReactWriter
 
     workdir_path = Path(workdir)
     workdir_path.mkdir(parents=True, exist_ok=True)
@@ -412,7 +408,7 @@ def write_lammps_bond_react_system(
     for _, _, pre_f, post_f in tpl_frames:
         all_frames.extend([pre_f, post_f])
 
-    unified, type_maps = collect_type_maps(all_frames)
+    unified, type_maps = LammpsBondReactWriter.collect_type_maps(all_frames)
 
     # -- Inject unified type labels so LammpsDataWriter uses them --
     frame.metadata["type_labels"] = unified
@@ -437,11 +433,24 @@ def write_lammps_bond_react_system(
         # Convert pre/post string types → unified numeric IDs,
         # dropping rows with None type (boundary topology).
         for tpl_frame in [pre_frame, post_frame]:
-            apply_type_maps(tpl_frame, type_maps, template_name=name)
+            LammpsBondReactWriter.apply_type_maps(
+                tpl_frame, type_maps, template_name=name
+            )
 
         write_lammps_molecule(workdir_path / f"{name}_pre.mol", pre_frame)
         write_lammps_molecule(workdir_path / f"{name}_post.mol", post_frame)
-        write_bond_react_map(tpl, workdir_path / name)
+        LammpsBondReactWriter(workdir_path / name).write_map(tpl)
+
+
+def write_bond_react_map(template: Any, base_path: PathLike) -> None:
+    """Write the ``.map`` file for a LAMMPS ``fix bond/react`` template.
+
+    Thin factory over :class:`~molpy.io.data.lammps_bond_react.LammpsBondReactWriter`,
+    matching the ``write_*`` convention the rest of this module uses.
+    """
+    from .data.lammps_bond_react import LammpsBondReactWriter
+
+    LammpsBondReactWriter(base_path).write_map(template)
 
 
 def write_top(file: PathLike, frame: Any) -> None:

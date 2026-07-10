@@ -1,3 +1,56 @@
+## Unreleased
+
+### BREAKING
+
+- **`molpy.reacter` is removed.** Reaction semantics live in `molpy.Reaction`
+  (a re-export of the molrs SMIRKS engine); chemistry lives in the reaction
+  SMARTS itself. `Reacter`, `ReactionResult`, `TopologyDetector`, the 14
+  anchor/leaving selectors, `BondReactReacter` and `ReactionPresets` are gone.
+- **`molpy.builder.crosslink` is removed.** `Crosslinker`,
+  `DeterministicCrosslinker` and `RandomCrosslinker` held a selector and
+  forwarded `apply` to `assemble`. Crosslinking is now
+  `GraphAssembler(rxn).assemble(melt, RandomSelector(...))`. The
+  `crosslink_gel()` / `write_lammps()` recipes are documentation, not library.
+- **`PolymerBuilder` is rebuilt** on the assembly kernel:
+  `PolymerBuilder(MonomerLibrary({...}), reaction, typifier=..., placer=...)`
+  `.build(cgsmiles)`. `build_sequence`, `PolymerBuildResult`, `Connector` and
+  the `connector=` / `reacter=` dual constructor are gone. A repeat unit is a
+  molecule with `fields.SITE` marked on the atoms that may react — there is no
+  port system and no `<` / `>` direction.
+- **`molpy.core.AffectedRegion` moved** to `molpy.typifier.affected_region`.
+  It is not a data-model type: it is the ball a graph edit disturbed, and its
+  radius is decided by the typifier's `TypeScope`.
+- **`molpy.core.region_radius` is removed** along with the `_FLOOR = 4`
+  fallback and the three `context_radius` declarations. A typifier declares a
+  `TypeScope(reach)`; `AmberToolsTypifier` now requires `reach=`.
+- `BondReactTemplate` moved from `molpy.reacter.bond_react` to
+  `molpy.io.data.lammps_bond_react` (it is an IO artifact). The public
+  `write_bond_react_map` / `write_lammps_bond_react_system` are unchanged.
+
+### Fixed
+
+- **Region retyping wrote wrong atom types.** The extraction radius and the
+  write-back radius were conflated into one `radius`; correctness required
+  `reach <= 1`, which no real typifier satisfies. Measured against whole-graph
+  typing, `AmberToolsTypifier`'s default mistyped 22 of 46 written-back atoms
+  of a PEO junction. The guard that should have caught it was gated on a
+  `strict` flag read through a two-level `getattr(..., False)`, so for any
+  typifier without an `atom_typifier` attribute it never fired.
+- **Malformed reaction SMIRKS silently paired the wrong sites.**
+  `_find_component` returned component `0` when a forming-bond map number
+  appeared in no reactant pattern; it now raises.
+- Polymer assembly was `O(N^2)` in chain length from four independent sources.
+
+### Added
+
+- `molpy.Reaction`, `molpy.SmartsPattern`, `molpy.NeighborQuery`, `molpy.Graph`,
+  `molpy.perceive_aromaticity`, `molpy.find_rings` — re-exports, so user code
+  never imports molrs.
+- `molpy.core.fields.SITE`; `Entity` subscripting accepts a `FieldSpec`.
+- `molpy.builder.assembly`: `GraphAssembler`, `Selector`, `TopologySelector`,
+  `ProximitySelector` (`Exhaustive` / `Spacing` / `ExplicitPair` / `Random`),
+  `MonomerLibrary`, `PolymerBuilder`, `Placer` / `ResiduePlacer`.
+
 # Changelog
 
 Release notes for MolPy, newest first. MolPy and molrs share one version line

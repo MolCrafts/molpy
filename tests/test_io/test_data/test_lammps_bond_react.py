@@ -27,14 +27,8 @@ import pytest
 import molpy as mp
 from molpy.core.atomistic import Atomistic
 from molpy.core.entity import Link
-from molpy.reacter import (
-    BondReactReacter,
-    find_port,
-    form_single_bond,
-    select_one_hydrogen,
-    select_port,
-)
-from molpy.reacter.bond_react import BondReactTemplate
+from molpy.io.data.lammps_bond_react import BondReactTemplate
+from molpy.typifier.affected_region import AffectedRegion
 
 
 # ===================================================================
@@ -122,32 +116,81 @@ def _strip_port_markers(struct: Atomistic) -> None:
         atom.data.pop("port", None)
 
 
+def _port_atom(struct: Atomistic, label: str):
+    return next(a for a in struct.atoms if a.get("port") == label)
+
+
+def _one_hydrogen(struct: Atomistic, anchor):
+    """The lowest-handle hydrogen bonded to ``anchor`` — deterministic."""
+    neighbours = [n for n in struct.get_neighbors(anchor) if n.get("element") == "H"]
+    return min(neighbours, key=lambda a: a.handle)
+
+
 def _build_reaction() -> tuple[BondReactTemplate, Atomistic]:
-    """Run the deterministic C-C coupling; return (typed template, typed product)."""
-    left = _propane_fragment(0.0, ">", port_on_first_carbon=False)
-    right = _propane_fragment(6.0, "<", port_on_first_carbon=True)
+    """Deterministic C-C coupling, built as data rather than run by an engine.
 
-    reacter = BondReactReacter(
-        name="cc_coupling",
-        anchor_selector_left=select_port,
-        anchor_selector_right=select_port,
-        leaving_selector_left=select_one_hydrogen,
-        leaving_selector_right=select_one_hydrogen,
-        bond_former=form_single_bond,
-        radius=2,
-    )
-    port_l = find_port(left, ">")
-    port_r = find_port(right, "<")
-    result = reacter.run(
-        left, right, port_atom_L=port_l, port_atom_R=port_r, compute_topology=True
-    )
-    template = result.template
-    assert template is not None
+    A bond/react template *is* a description of an edit: the radius-2 environment
+    before it, the same atoms after it, and which of them are initiators, edges
+    and deletions. Nothing here needs a reaction engine — the old
+    ``BondReactReacter`` only existed to produce this object.
+    """
+    world = _propane_fragment(0.0, ">", port_on_first_carbon=False)
+    world.merge(_propane_fragment(6.0, "<", port_on_first_carbon=True))
+    for react_id, atom in enumerate(world.atoms, start=1):
+        atom["react_id"] = react_id
 
-    for struct in (template.pre, template.post, result.product):
+    anchor_l = _port_atom(world, ">")
+    anchor_r = _port_atom(world, "<")
+    leaving = [_one_hydrogen(world, anchor_l), _one_hydrogen(world, anchor_r)]
+
+    # radius-2 local environment: the far methyl hydrogens fall outside, so the
+    # template has genuine EdgeIDs.
+    pre = AffectedRegion._from(
+        world, [anchor_l, anchor_r], extract_radius=2, interior_reach=2
+    )
+    by_react_id = {a["react_id"]: a for a in pre.atoms}
+
+    # the same atoms, after the edit: drop the two C-H bonds, add the C-C bond
+    post = pre.copy()
+    post_by_react_id = {a["react_id"]: a for a in post.atoms}
+    for hydrogen in leaving:
+        target = post_by_react_id[hydrogen["react_id"]]
+        for bond in list(post.bonds):
+            if target in bond.endpoints:
+                post.del_bond(bond)
+    post.def_bond(
+        post_by_react_id[anchor_l["react_id"]], post_by_react_id[anchor_r["react_id"]]
+    )
+    post.generate_topology(gen_angle=True, gen_dihedral=True)
+
+    template = BondReactTemplate(
+        pre=pre,
+        post=post,
+        initiator_atoms=[
+            by_react_id[anchor_l["react_id"]],
+            by_react_id[anchor_r["react_id"]],
+        ],
+        edge_atoms=list(pre.boundary),
+        deleted_atoms=[by_react_id[h["react_id"]] for h in leaving],
+        pre_react_id_to_atom=by_react_id,
+        post_react_id_to_atom=post_by_react_id,
+    )
+
+    # the reacted whole system, for the .data file
+    product = world.copy()
+    product_by_react_id = {a["react_id"]: a for a in product.atoms}
+    for hydrogen in leaving:
+        product.del_atom(product_by_react_id[hydrogen["react_id"]])
+    product.def_bond(
+        product_by_react_id[anchor_l["react_id"]],
+        product_by_react_id[anchor_r["react_id"]],
+    )
+    product.generate_topology(gen_angle=True, gen_dihedral=True)
+
+    for struct in (template.pre, template.post, product):
         _strip_port_markers(struct)
         _assign_link_types(struct)
-    return template, result.product
+    return template, product
 
 
 def _build_forcefield(template: BondReactTemplate, product: Atomistic) -> mp.ForceField:
@@ -297,7 +340,7 @@ class TestWriteBondReactMap:
     """Unit tests for write_bond_react_map (module does not exist yet → RED)."""
 
     def _write_map(self, tmp_path: Path) -> tuple[str, BondReactTemplate]:
-        from molpy.io.data.lammps_bond_react import write_bond_react_map
+        from molpy.io import write_bond_react_map
 
         template, _ = _build_reaction()
         write_bond_react_map(template, tmp_path / "rxn1")
@@ -350,7 +393,7 @@ class TestWriteBondReactMap:
 
     def test_map_mismatched_pre_post_raises(self, tmp_path: Path) -> None:
         """Post missing one react_id must raise ValueError, not write silently."""
-        from molpy.io.data.lammps_bond_react import write_bond_react_map
+        from molpy.io import write_bond_react_map
 
         pre = Atomistic()
         a1 = pre.def_atom(element="C", type="c3", react_id=1)

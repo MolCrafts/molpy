@@ -110,7 +110,6 @@ nav = [
     { "Core" = "api/core.md" },
     # Construction pipeline
     { "Parser" = "api/parser.md" },
-    { "Reacter" = "api/reacter.md" },
     { "Builder" = "api/builder.md" },
     { "Packing" = "api/pack.md" },
     { "Conformer" = "api/conformer.md" },

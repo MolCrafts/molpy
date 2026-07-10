@@ -14,8 +14,8 @@ Auto-generated reference for every public symbol, with typed signatures througho
 | Query bond-graph relations (angles, paths, rings) | `get_topo`, `get_topo_neighbors`, `get_topo_distances` | [Core](core.md) |
 | Define and query force field parameters | `AtomisticForcefield`, `Style`, `Type` | [Core](core.md) |
 | Parse SMILES / BigSMILES / SMARTS / CGSmiles | `parse_molecule`, `parse_monomer`, `parse_smarts`, `parse_cgsmiles` | [Parser](parser.md) |
-| Execute a chemical reaction (bond formation / removal) | `Reacter`, `find_port`, `select_neighbor` | [Reacter](reacter.md) |
-| Generate `fix bond/react` pre/post topology templates | `TemplateReacter` | [Reacter](reacter.md) |
+| Execute a chemical reaction (bond formation / removal) | `Reaction`, `GraphAssembler`, `Selector` | [Builder](builder.md) |
+| Generate `fix bond/react` pre/post topology templates | `BondReactTemplate`, `write_bond_react_map` | [IO](io.md) |
 | Assemble polymer chains from CGSmiles | `PolymerBuilder`, `Connector`, `Placer` | [Builder](builder.md) |
 | Pack molecules into a periodic simulation box | `Packmol`, `InsideBoxConstraint` | [Pack](pack.md) |
 | Generate 3D conformers from a molecular graph | `Conformer` | [Conformer](conformer.md) |
@@ -36,7 +36,6 @@ Auto-generated reference for every public symbol, with typed signatures througho
 |---------|---------------|
 | [Core](core.md) | Foundational data structures: `Atomistic`, `Frame`, `Block`, `Box`, `Trajectory`, `Entity`/`Link`, `Region`, `UnitSystem`, `ForceField` |
 | [Parser](parser.md) | Grammar-based notation parsing: SMILES, SMARTS, BigSMILES, CGSmiles, G-BigSMILES |
-| [Reacter](reacter.md) | Chemical reaction framework: site and leaving-group selectors, bond formers, reactive MD templates |
 | [Builder](builder.md) | Polymer system construction: builders, port connectors, geometric placers |
 | [Pack](pack.md) | Spatial packing of molecular ensembles via the Packmol executable |
 | [Conformer](conformer.md) | 3D conformer generation from molecular graphs (molrs backend) |

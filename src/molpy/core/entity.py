@@ -553,7 +553,7 @@ class _GraphViews:
     # ``.entities`` would collide with the pyo3 ``entities()`` method, so the
     # node bucket compat is not exposed; downstream uses ``.atoms`` / ``.beads``.
     # ``.links`` has no pyo3 collision and stays as a compat surface used by the
-    # typifier / reacter.
+    # typifier / assembler.
     @property
     def links(self) -> "_LinkBucketView":
         return _LinkBucketView(self)

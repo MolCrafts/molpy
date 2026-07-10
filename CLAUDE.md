@@ -69,10 +69,9 @@ MolPy is a computational chemistry toolkit with explicit data flow and minimal m
 | `core` | Data structures: `Entity`, `Link`, `Frame`, `Block`, `Atomistic`, `ForceField`. `Frame`/`Block` are backed by the molrs Rust column store (see below) |
 | `io` | File I/O: readers/writers for PDB, GRO, LAMMPS DATA, XYZ, MOL2, AMBER (prmtop/inpcrd/prep/ac), GROMACS TOP, XSF, HDF5 formats |
 | `parser` | Grammar-based parsing: SMILES, SMARTS, BigSMILES, GBigSMILES, CGSmiles |
-| `builder` | System assembly: polymer builders, AmberTools integration, residue management |
+| `builder` | System assembly: one `GraphAssembler` kernel + a `Selector` family (`PolymerBuilder`, crosslinking), AmberTools integration |
 | `typifier` | Atom typing: OPLS-AA, GAFF, custom SMARTS/SMIRKS-based typifiers |
 | `compute` | Analysis: distance, angles, RDF, MSD, cross-correlation, and custom operators |
-| `reacter` | Reaction framework: template-based reactions with leaving groups |
 | `pack` | Packing workflows: Packmol integration, density targets |
 | `engine` | MD abstractions: LAMMPS, CP2K, simulation management |
 | `wrapper` | External tools: Antechamber, Prepgen, command-line wrappers |
@@ -108,7 +107,7 @@ The foundation is three class hierarchies:
 
 ```
 1. Parse or build → Atomistic structure
-2. Transform → reacter, builder, op modules
+2. Transform → builder (assembly), op modules
 3. Typify → assign force-field types
 4. Export or wrap → io, wrapper, engine modules
 5. Analyze → compute operators
@@ -191,7 +190,7 @@ work = struct.copy()        # deep copy; entities/links remapped
 work.move([5, 0, 0], entity_type=Atom)   # struct is untouched
 ```
 
-For *higher-level helper functions* (in `op`, `builder`, `reacter`, etc.), prefer
+For *higher-level helper functions* (in `op`, `builder`, etc.), prefer
 not mutating a caller-owned structure unexpectedly — `.copy()` first or build a new
 structure and return it. This is a coding guideline for helpers, **not** how the
 core `Atomistic`/`Struct`/`Frame` methods behave.
@@ -209,10 +208,9 @@ tests/
 ├─ test_core/              # Data structures
 ├─ test_io/                # File I/O
 ├─ test_parser/            # Parsing
-├─ test_builder/           # Builders
+├─ test_builder/           # Assembly kernel, selectors, builders
 ├─ test_typifier/          # Typifiers
 ├─ test_compute/           # Analysis
-├─ test_reacter/           # Reactions
 ├─ test_wrapper/           # External tools
 └─ test_engine/            # MD engines
 ```

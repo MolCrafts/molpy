@@ -62,7 +62,6 @@ from .data.base import DataReader, DataWriter
 from .data.gro import GroReader, GroWriter
 from .data.h5 import HDF5Reader, HDF5Writer
 from .data.lammps import LammpsDataReader, LammpsDataWriter
-from .data.lammps_bond_react import write_bond_react_map
 from .data.lammps_molecule import (
     LammpsMoleculeReader,
     LammpsMoleculeWriter,
@@ -138,6 +137,7 @@ from .writers import (
     write_lammps_data,
     write_lammps_forcefield,
     write_lammps_molecule,
+    write_bond_react_map,
     write_lammps_bond_react_system,
     write_lammps_system,
     write_lammps_trajectory,

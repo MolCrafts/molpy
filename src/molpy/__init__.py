@@ -26,12 +26,11 @@ if TYPE_CHECKING:
         io,
         pack,
         parser,
-        reacter,
         typifier,
     )
 
 # Submodules are loaded lazily (PEP 562) so that importing a single
-# subpackage (e.g. ``molpy.reacter``) does not eagerly initialize the
+# subpackage (e.g. ``molpy.io``) does not eagerly initialize the
 # whole io/engine/adapter surface. ``molpy.io`` et al. still work as
 # attribute accesses and ``import molpy.io`` works as usual.
 _LAZY_SUBMODULES = frozenset(
@@ -44,7 +43,6 @@ _LAZY_SUBMODULES = frozenset(
         "io",
         "pack",
         "parser",
-        "reacter",
         "typifier",
     }
 )
@@ -123,7 +121,6 @@ __all__ = [
     "io",
     "pack",
     "parser",
-    "reacter",
     "typifier",
     # molrs engine primitives, re-exported (never wrapped)
     "Graph",

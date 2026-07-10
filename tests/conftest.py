@@ -33,7 +33,7 @@ def mollog_capture() -> Callable[[str], "contextlib.AbstractContextManager"]:
     MolPy logs through :mod:`mollog`, not the stdlib ``logging`` module, so
     pytest's ``caplog`` does not see its records. Usage::
 
-        with mollog_capture("molpy.reacter.bond_react") as records:
+        with mollog_capture("molpy.io.data.lammps_bond_react") as records:
             do_something()
         assert any(r.level >= mollog.Level.WARNING for r in records)
     """
