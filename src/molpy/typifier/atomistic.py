@@ -388,7 +388,21 @@ class ForceFieldTypifier(TypifierBase[Atomistic]):
         self._init_typifiers()
 
     def _init_typifiers(self) -> None:
-        """Initialize sub-typifiers. Subclasses override to customize."""
+        """Initialize sub-typifiers. Subclasses override to customize.
+
+        Atom typing is SMARTS matching and molrs owns that matcher, so this class
+        supplies no ``atom_typifier``: a subclass must set one before delegating
+        up (see :class:`~molpy.typifier.clp.ClpTypifier`). Only the parameter
+        typifiers — pair, bond, angle, dihedral — are force-field judgments and
+        therefore live here.
+        """
+        if not self.skip_atom_typing and not hasattr(self, "atom_typifier"):
+            raise TypeError(
+                f"{type(self).__name__} does not know how to type atoms. "
+                f"Either subclass it and set `self.atom_typifier` before calling "
+                f"super()._init_typifiers(), or pass skip_atom_typing=True to "
+                f"assign only bonded/pair parameters to already-typed atoms."
+            )
         if not self.skip_pair_typing:
             self.pair_typifier = PairTypifier(self.ff, strict=self.strict_typing)
         if not self.skip_bond_typing:

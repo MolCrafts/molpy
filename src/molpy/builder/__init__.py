@@ -3,10 +3,11 @@
 Polymer construction composes the real engine classes directly (there is
 no ``polymer()`` dispatcher): prepare monomers with
 :func:`molpy.parser.parse_monomer` + :func:`molpy.adapter.rdkit.generate_3d`,
-then assemble with :class:`PolymerBuilder` (``.build_sequence`` or
-``.build`` on a CGSmiles string). Polydisperse systems drive
+mark the atoms that may react with ``fields.SITE``, then
+:meth:`PolymerBuilder.build` a CGSmiles string. Crosslinking is the same
+kernel with a different :class:`Selector`. Polydisperse systems drive
 :class:`PolymerBuilder` from the distribution + :class:`SystemPlanner`
-primitives. See :mod:`molpy.builder.polymer` for the full recipe.
+primitives. See :mod:`molpy.builder.assembly` for the full recipe.
 
 Crystal construction goes through :func:`build_crystal` with
 :class:`Lattice` / :class:`Site`. AmberTools-backed polymer builds use

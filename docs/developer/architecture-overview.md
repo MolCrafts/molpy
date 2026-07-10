@@ -63,15 +63,26 @@ The core data-model API mutates in place and returns `self` (or the created enti
 
 ## Performance model of the build loop
 
-The chain build loop (`PolymerBuilder._build_from_graph`) is designed so that per-connection bookkeeping is bounded by monomer size and live port count, not by chain length:
+Assembly is linear in chain length because nothing per-edit walks the whole system:
 
-- **Reacter copy semantics** — `Reacter.run` copies its two inputs once each. With `record_intermediates=False`, the base `Reacter` never copies the merged assembly; `BondReactReacter` (which needs a pre-reaction snapshot for `fix bond/react` template generation) takes exactly one.
-- **Adjacency reuse** — `TopologyDetector.detect_and_update_topology` builds an atom → neighbors adjacency map once per call (O(bonds)) and threads it through every neighbor query, so angle/dihedral/improper enumeration is O(degree) per query.
-- **Port registry** — the build loop tracks live port atoms per monomer node in a registry remapped through each connection's entity map; the growing chain is never rescanned.
-- **Group map** — monomer-to-structure membership uses a group-id map with smaller-into-larger union instead of per-edge identity scans.
-- **Vectorized placement** — `Placer._apply_transform` applies `(coords - pivot) @ R.T + pivot + t` as one (N, 3) NumPy operation.
+- **One paste, in-place edits** — the world is built once; `molrs.Reaction.apply` edits it in
+  place and returns the atoms it touched. There is no per-bond copy and no `entity_map`
+  remapping, which is where the old builder's four independent O(N)-per-bond terms lived.
+- **Local retyping** — only the ball around each new bond is retyped, at the radius the
+  typifier's `TypeScope` declares. Identical junctions dedupe by structural hash, so the
+  typing cost tracks distinct environments, not bonds.
+- **Local topology** — the angles and dihedrals a new bond creates are inserted from the
+  region. `generate_topology` is never called on the assembled world.
+- **Matching once** — the kernel matches the reaction's patterns in O(N) and hands the
+  occurrences to the `Selector`; pairing (the only O(sites^2) step) belongs to the selector
+  that needs it, and `TopologySelector` indexes by residue instead.
 
-What still scales with chain length per connection: the reacter's input copy of the accumulated structure and the merge itself — O(chain) each, giving O(N²) total copying for a DP=N chain. Eliminating that requires an in-place assembly mode and is currently out of scope. Counting-based performance tests live in `tests/test_reacter/test_perf_copy_semantics.py` and `tests/test_builder/test_polymer_build_perf.py`.
+
+Nothing per-connection scales with chain length. The old builder copied the accumulated
+structure once per bond and remapped its entities, which made a DP=N chain cost O(N²) in
+copying alone; the assembly kernel pastes once, edits in place, and never copies again.
+The one O(N) step left is the single paste at the start, and the single `.copy()`
+`assemble` takes so it does not mutate the world you handed it.
 
 ## Where extension happens
 

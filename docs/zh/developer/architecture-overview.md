@@ -59,19 +59,18 @@ ForceFieldFormatter(FieldFormatter)    — 添加参数格式化器：{StyleType
 
 ## 变更约定
 
-核心数据模型 API 就地修改并返回 `self`（或新创建实体）以支持链式调用：`def_atom`、`def_bond`、`get_topo`、`move`、`rotate`、`merge` 都会修改当前结构。`.copy()` 用于显式创建一个独立的深度副本。`builder`、`reacter` 和 `op` 中的辅助函数遵循相反的约定：不能意外修改调用者传入的结构 —— 要么先拷贝，要么新建并返回。
+核心数据模型 API 就地修改并返回 `self`（或新创建实体）以支持链式调用：`def_atom`、`def_bond`、`get_topo`、`move`、`rotate`、`merge` 都会修改当前结构。`.copy()` 用于显式创建一个独立的深度副本。`builder` 和 `op` 中的辅助函数遵循相反的约定：不能意外修改调用者传入的结构 —— 要么先拷贝，要么新建并返回。
 
 ## 构建循环的性能模型
 
-链构建循环（`PolymerBuilder._build_from_graph`）的设计保证了每次连接的开销只取决于单体大小和活动端口数，与链长无关：
+组装的开销对链长是线性的，因为没有任何一次编辑会遍历整个体系：
 
-- **Reacter 拷贝语义** —— `Reacter.run` 对其两个输入各拷贝一次。`record_intermediates=False` 时，基础 `Reacter` 不会拷贝合并后的组装体；`BondReactReacter`（需要反应前快照来生成 `fix bond/react` 模板）只执行一次拷贝。
-- **邻接复用** —— `TopologyDetector.detect_and_update_topology` 每次调用构建一次原子到邻居的邻接映射（O(键数)），后续所有邻接查询复用这个映射；角度、二面角、Improper 的枚举复杂度为 O(度数)。
-- **端口注册表** —— 构建循环在每个单体节点的注册表中跟踪活动端口原子，每次连接后通过实体映射做重映射；链不断增长，但不会重新扫描。
-- **分组映射** —— 单体到结构的成员关系用分组 ID 映射管理，合并操作总是把小集合并入大集合，避免逐边扫描身份标识。
-- **向量化放置** —— `Placer._apply_transform` 把 `(coords - pivot) @ R.T + pivot + t` 作为单个 (N, 3) NumPy 操作执行。
+- **粘贴一次，就地编辑** —— 世界只构建一次；`molrs.Reaction.apply` 就地编辑它，并返回它碰过的原子。没有逐键拷贝，也没有 `entity_map` 重映射——旧构建器四项各自 O(N)/键的开销正出在那里。
+- **局部重类型化** —— 只有每根新键周围的那个球会被重新类型化，半径由 typifier 自己声明的 `TypeScope` 决定。相同的连接处按结构哈希去重，所以类型化的开销取决于**不同**化学环境的数量，而不是键的数量。
+- **局部拓扑** —— 新键产生的角和二面角直接从该区域插入。组装后的世界上从不调用 `generate_topology`。
+- **只匹配一次** —— 内核以 O(N) 匹配反应的模式，把匹配结果交给 `Selector`；配对（唯一的 O(位点²) 步骤）留给需要它的 selector，而 `TopologySelector` 改为按残基索引。
 
-每次连接中仍有链长相关性的是两个操作：reacter 对累积结构输入的拷贝和合并操作，两者都是 O(链长)。对于 DP=N 的链，总拷贝量为 O(N²)。要消除这个瓶颈需要原位组装模式，目前暂不支持。相关的性能测试见 `tests/test_reacter/test_perf_copy_semantics.py` 和 `tests/test_builder/test_polymer_build_perf.py`。
+每次连接都不再与链长相关。旧构建器每成一根键就拷贝一次累积结构并重映射实体，仅拷贝一项就让 DP=N 的链付出 O(N²)；组装内核只粘贴一次、就地编辑，之后不再拷贝。剩下的 O(N) 只有开头那一次粘贴，以及 `assemble` 为了不修改调用者传入的世界而做的那一次 `.copy()`。
 
 ## 扩展入口
 

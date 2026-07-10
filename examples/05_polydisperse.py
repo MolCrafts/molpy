@@ -7,8 +7,8 @@ planner primitives do the sampling; you compose them directly (no wrapper):
     distribution + sequence generator -> PolydisperseChainGenerator
     -> SystemPlanner.plan_system() -> a list of Chain (dp, monomers, mass)
 
-Each ``Chain`` carries its monomer sequence, ready to feed straight into
-``PolymerBuilder.build_sequence`` (see 02_build_polymer).
+Each ``Chain`` carries its monomer sequence, which spells a CGSmiles string for
+``PolymerBuilder.build`` (see 02_build_polymer).
 
 Guide: docs/user-guide/05_polydisperse_systems.md
 Run:   python 05_polydisperse.py
@@ -48,9 +48,11 @@ def main() -> None:
     print(f"sampled {len(plan.chains)} chains for target mass {plan.target_mass:.0f}")
     print(f"  Mn={Mn:.0f}  Mw={Mw:.0f}  PDI={Mw / Mn:.3f}")
 
-    # Each Chain is (dp, monomer sequence, mass) — hand it to build_sequence.
+    # Each Chain is (dp, monomer sequence, mass); the sequence spells a CGSmiles
+    # string, so `builder.build("{" + labels + "}")` turns it into an Atomistic.
     first = plan.chains[0]
-    print(f"  first chain: dp={first.dp}, sequence[:8]={first.monomers[:8]}")
+    labels = " ".join(f"[#{m}]" for m in first.monomers[:8])
+    print(f"  first chain: dp={first.dp}, cgsmiles[:8]=" + "{" + labels + " ...}")
 
 
 if __name__ == "__main__":

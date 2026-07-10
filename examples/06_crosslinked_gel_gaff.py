@@ -8,8 +8,9 @@ The full pipeline, composing real classes end to end:
    (molrs) conformer generator.
 2. Replicate it into a small bundle of independent chains, packed close
    enough that CH2 sites reach across chains.
-3. Crosslink CH2 sites across chains with ``RandomCrosslinker`` (offline,
-   graph-level) and relax the freshly formed bonds (SoftPotential).
+3. Crosslink CH2 sites across chains with a ``GraphAssembler`` + a
+   ``RandomSelector`` (offline, graph-level), then relax the freshly formed
+   bonds (SoftPotential).
 4. Parameterise the whole network with GAFF via AmberTools (antechamber +
    parmchk2 + tleap): atom types, AM1-BCC charges, and a force field.
 5. Write a complete LAMMPS system (``system.data`` + ``system.ff``).

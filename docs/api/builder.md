@@ -129,4 +129,4 @@ assert len(list(one.bonds)) == 1
 
 ## Related
 
-- [Guide: Stepwise Polymer](../user-guide/02_polymer_stepwise.md)
+- [Guide: Assembly](../user-guide/02_assembly.md)

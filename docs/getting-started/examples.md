@@ -97,7 +97,7 @@ typed = mp.typifier.OplsTypifier(ff).typify(peo)
 frame = typed.to_frame()   # write with mp.io.write_lammps_system(dir, frame, ff)
 ```
 
-See also: [Topology-Driven Assembly](../user-guide/03_polymer_topology.md).
+See also: [Assembly](../user-guide/02_assembly.md).
 
 ## Polydisperse melt — Schulz-Zimm distribution
 

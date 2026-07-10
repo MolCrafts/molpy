@@ -9,7 +9,7 @@ A repeat unit is an ordinary capped molecule with a couple of its atoms named.
 There is no port system, no direction, no ``Connector``: the reaction SMARTS is
 the only place the chemistry is written down, and it binds to the names you set.
 
-Guide: docs/user-guide/02_polymer_stepwise.md
+Guide: docs/user-guide/02_assembly.md
 Run:   python 02_build_polymer.py
 """
 

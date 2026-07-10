@@ -16,7 +16,7 @@ Auto-generated reference for every public symbol, with typed signatures througho
 | Parse SMILES / BigSMILES / SMARTS / CGSmiles | `parse_molecule`, `parse_monomer`, `parse_smarts`, `parse_cgsmiles` | [Parser](parser.md) |
 | Execute a chemical reaction (bond formation / removal) | `Reaction`, `GraphAssembler`, `Selector` | [Builder](builder.md) |
 | Generate `fix bond/react` pre/post topology templates | `BondReactTemplate`, `write_bond_react_map` | [IO](io.md) |
-| Assemble polymer chains from CGSmiles | `PolymerBuilder`, `Connector`, `Placer` | [Builder](builder.md) |
+| Assemble polymer chains from CGSmiles | `PolymerBuilder`, `Selector`, `Placer` | [Builder](builder.md) |
 | Pack molecules into a periodic simulation box | `Packmol`, `InsideBoxConstraint` | [Pack](pack.md) |
 | Generate 3D conformers from a molecular graph | `Conformer` | [Conformer](conformer.md) |
 | Assign force field atom types via SMARTS matching | `OPLSAATypifier`, `ClpTypifier`, `MMFFTypifier` | [Typifier](typifier.md) |
@@ -24,7 +24,7 @@ Auto-generated reference for every public symbol, with typed signatures througho
 | Read and write molecular files (PDB, LAMMPS, GRO, …) | `read_pdb`, `write_lammps_data`, `read_xml_forcefield` | [I/O](io.md) |
 | Convert between MolPy and RDKit / OpenBabel objects | `RDKitAdapter`, `OpenBabelAdapter` | [Adapter](adapter.md) |
 | Invoke external CLI tools (antechamber, tleap) | `Wrapper`, `AntechamberWrapper` | [Wrapper](wrapper.md) |
-| Build polymer chains and crosslinked networks | `PolymerBuilder`, `Crosslinker`, `Conformer` | [Builder](builder.md) |
+| Build polymer chains and crosslinked networks | `PolymerBuilder`, `GraphAssembler`, `Conformer` | [Builder](builder.md) |
 | Compute mean-squared displacement, correlations, RDF, clustering | `MSD`, `MCDCompute`, `RDF` | [Compute](compute.md) |
 | Locate bundled data files and built-in force fields | `get_forcefield_path`, `get_path` | [Data](data.md) |
 | Generate LAMMPS, CP2K, or OpenMM input decks | `LAMMPSEngine`, `CP2KEngine`, `OpenMMEngine` | [Engine](engine.md) |

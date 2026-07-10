@@ -3,7 +3,7 @@
 从目标分子量分布到可直接用于 LAMMPS 模拟的盒子：链采样、链构建、连接点重新类型化、填装、导出。
 
 !!! note "先决条件"
-    本指南需要 RDKit、Packmol 和 `oplsaa.xml` 力场。读者应已了解[逐步聚合物构建](02_polymer_stepwise.md)。
+    本指南需要 RDKit、Packmol 和 `oplsaa.xml` 力场。读者应已了解[组装](02_assembly.md)。
 
 ## 从分布到模拟盒子
 
@@ -24,6 +24,7 @@ CCOC(=O)C(C)(C){[>][<|8|]CC([>|8|])c1ccccc1, [<|2|]CC([>|2|])C(=O)OC [<]}|schulz
 
 ```python
 import molpy as mp
+from molpy.core import fields
 from molpy.core.element import Element
 from molpy.typifier import OplsTypifier
 
@@ -35,12 +36,21 @@ BIGSMILES = {
     "MA": "{[][<]CC(C(=O)OC)[>][]}",
 }
 
+# The BigSMILES descriptors [<] and [>] name the two backbone carbons that may
+# react. The assembler knows nothing about BigSMILES, so translate them into the
+# canonical `site` annotation that the reaction SMARTS below binds to.
+SITE_OF_PORT = {"<": "head", ">": "tail"}
+
 
 def build_typed_monomer(bigsmiles, typifier):
     monomer = mp.parser.parse_monomer(bigsmiles)
     monomer = mp.adapter.RDKitAdapter(monomer).generate_3d(add_hydrogens=True, optimize=False)
     monomer = monomer.get_topo(gen_angle=True, gen_dihe=True)
     monomer = typifier.typify(monomer)
+    for atom in monomer.atoms:
+        port = atom.get("port")
+        if port:
+            atom[fields.SITE] = SITE_OF_PORT[port]
     return monomer
 
 
@@ -49,9 +59,9 @@ library = {label: build_typed_monomer(bs, typifier) for label, bs in BIGSMILES.i
 monomer_mass = {}
 for label, mon in library.items():
     mass = sum(Element(a.get("element")).mass for a in mon.atoms)
-    ports = [a.get("port") for a in mon.atoms if a.get("port")]
+    sites = [a.get(fields.SITE) for a in mon.atoms if a.get(fields.SITE)]
     monomer_mass[label] = mass
-    print(f"{label}: atoms={len(mon.atoms)}, mass={mass:.1f}, ports={ports}")
+    print(f"{label}: atoms={len(mon.atoms)}, mass={mass:.1f}, sites={sites}")
 ```
 
 ```text
@@ -87,8 +97,8 @@ for label, mon in library.items():
 2026-06-30 21:08:42,769 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types (by type)
 
 
-Sty: atoms=24, mass=112.2, ports=['<', '>']
-MA: atoms=14, mass=88.1, ports=['<', '>']
+Sty: atoms=24, mass=112.2, sites=['head', 'tail']
+MA: atoms=14, mass=88.1, sites=['head', 'tail']
 ```
 
 
@@ -302,44 +312,21 @@ plt.show()
 
 这里使用的反应是**自由基加成**：每次连接时，从每个主链碳上移除一个氢原子，形成一条新的 C–C 键。这与之前指南中的脱水缩合不同——没有羟基离去基团，只从两侧移除氢原子。
 
-将类型器传给 `PolymerBuilder`，由它在每个偶联步骤中对连接点原子执行增量重新类型化。构建过程结束后不再进行全链类型化；只有紧邻新键的原子会被重新类型化。
+这个差别完全写在反应 SMARTS 里。无论哪种化学，`PolymerBuilder` 都是同一个类：它为序列中的每个单体盖出一份残基，再把相邻的两份键合起来。共聚物的两种单体标签取自同一个库，所以一个 builder 就能处理规划器采样出的每一条序列——而跨链复用同一个 builder，正是它们共享一份重类型化缓存的原因。
 
 
 ```python
-from molpy.builder.polymer import (
-    Connector,
-    CovalentSeparator,
-    LinearOrienter,
-    Placer,
-    PolymerBuilder,
-)
-from molpy.reacter import (
-    Reacter,
-    form_single_bond,
-    select_hydrogens,
-    select_self,
-)
+from molpy.builder.assembly import MonomerLibrary, PolymerBuilder, ResiduePlacer
 
-rxn = Reacter(
-    name="addition",
-    anchor_selector_left=select_self,
-    anchor_selector_right=select_self,
-    leaving_selector_left=select_hydrogens(1),
-    leaving_selector_right=select_hydrogens(1),
-    bond_former=form_single_bond,
-)
+# One H leaves each backbone carbon; the two carbons become a C-C bond. Atoms on
+# the left that do not reappear on the right are the leaving groups.
+ADDITION = "[C;%tail:1][H].[C;%head:2][H]>>[C:1][C:2]"
 
-rules = {(l, r): (">", "<") for l in library for r in library}
-connector = Connector(port_map=rules, reacter=rxn)
-placer = Placer(
-    separator=CovalentSeparator(buffer=-0.1),
-    orienter=LinearOrienter(),
-)
 builder = PolymerBuilder(
-    library=library,
-    connector=connector,
-    placer=placer,
-    typifier=typifier,  # incremental re-typification at junctions
+    MonomerLibrary(library),
+    mp.Reaction(ADDITION),
+    typifier=typifier,  # junctions are re-typed locally, as they form
+    placer=ResiduePlacer(),
 )
 
 sz_chains = results["Schulz-Zimm"]
@@ -347,18 +334,16 @@ atomistic_chains = []
 n_chains = 10  # truncated for this tutorial; use len(sz_chains) for a production run
 for i, chain in enumerate(sz_chains[:n_chains]):
     labels = " ".join(f"[#{m}]" for m in chain.monomers)
-    cgsmiles = "{" + labels + "}"
-    result = builder.build(cgsmiles)
-    atomistic_chains.append(result.polymer)
+    atomistic_chains.append(builder.build("{" + labels + "}"))
     if (i + 1) % 5 == 0:
-        print(f"  built {i + 1}/{len(sz_chains)} chains ...")
+        print(f"  built {i + 1}/{n_chains} chains ...")
 
 total_atoms = sum(len(c.atoms) for c in atomistic_chains)
 print(f"built {len(atomistic_chains)} chains, total atoms: {total_atoms}")
 ```
 
 ```text
-  built 5/374 chains ...
+  built 5/10 chains ...
 ```
 
 
@@ -524,4 +509,4 @@ molecules: 1, total_mass: 500000.0
 | 连接点处未类型化原子 | 将 `typifier` 传给 `PolymerBuilder` 以执行增量重新类型化 |
 | 填装失败 | 降低目标密度或增加 `max_steps` |
 
-参见：[拓扑驱动组装](03_polymer_topology.md)、[交联网络](04_crosslinking.md)。
+参见：[组装](02_assembly.md)、[力场类型化](06_typifier.md)。

@@ -13,7 +13,7 @@ branch point is a residue with three sites, and a ring closure is one more edge
 between residues that are already connected. The reaction is the same in all
 three; only how many sites a monomer carries changes.
 
-Guide: docs/user-guide/03_polymer_topology.md
+Guide: docs/user-guide/02_assembly.md
 Run:   python 03_polymer_topology.py
 """
 

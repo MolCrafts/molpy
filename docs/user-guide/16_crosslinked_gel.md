@@ -18,7 +18,7 @@ Grow a GAFF-typed PEO chain, replicate it into a melt, crosslink the melt into a
 
 Offline crosslinking builds the whole network *before* the simulation starts, so the exported system is a finished topology rather than a set of reaction templates. The path is: parameterize one ethylene-oxide monomer and stitch it into a chain; mark where crosslinks may form while the chain is still a single molecule; replicate the chain onto a jittered grid so the copies interpenetrate; let a deterministic crosslinker pair nearby marked carbons and re-type each new junction; merge the junction force-field terms and write a LAMMPS system; equilibrate; and finally reload the relaxed structure to measure the network it produced.
 
-Two ingredients carry the chemistry — `AmberTools` for parameterization and `DeterministicCrosslinker` for the graph edit — and nothing in between is hand-rolled.
+Two ingredients carry the chemistry — `AmberTools` for parameterization and `GraphAssembler + ExhaustiveSelector` for the graph edit — and nothing in between is hand-rolled.
 
 ## A monomer parameterized once becomes a GAFF-typed chain
 
@@ -98,7 +98,7 @@ A `3³` grid gives 27 chains — about 3800 atoms once packed.
 
 ## The crosslinker forms C–C bonds and re-types each junction
 
-`DeterministicCrosslinker` copies the packed graph, matches the two reactant patterns, pairs occurrences within `cutoff`, and applies the reaction to each chosen pair. The reaction abstracts one hydrogen from each of two marked carbons and forms a C–C bond between them:
+`GraphAssembler + ExhaustiveSelector` copies the packed graph, matches the two reactant patterns, pairs occurrences within `cutoff`, and applies the reaction to each chosen pair. The reaction abstracts one hydrogen from each of two marked carbons and forms a C–C bond between them:
 
 ```python
 XLINK = "[C;%cx:1][H].[C;%cx:2][H]>>[C:1][C:2]"
@@ -113,7 +113,7 @@ Passing a `typifier=` hook makes the crosslinker parameterize the junctions it c
 - **Identical junctions are typed once.** A per-`apply` cache keyed by the region's isomorphism-invariant hash means the dozens of chemically identical PEO junctions are parameterized a single time.
 
 ```python
-from molpy.builder.crosslink import DeterministicCrosslinker
+from molpy.builder.crosslink import GraphAssembler + ExhaustiveSelector
 from molpy.typifier.ambertools import AmberToolsTypifier
 
 amber = AmberTools(charge_method="bcc", **GAFF)
@@ -122,7 +122,7 @@ mark_crosslink_sites(strand, spacing=3)
 box = grid_pack(strand)
 
 typifier = AmberToolsTypifier(amber)                 # context_radius=2 by default
-xl = DeterministicCrosslinker(
+xl = GraphAssembler + ExhaustiveSelector(
     XLINK, cutoff=6.5, typifier=typifier,
     exclude_same_molecule=True, exclude_same_match=True,
 )

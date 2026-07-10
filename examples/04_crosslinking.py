@@ -1,17 +1,21 @@
 """Offline crosslinking: turn a bundle of chains into a network.
 
-A ``Crosslinker`` takes a Daylight reaction SMARTS and rewrites one graph into
-a new, crosslinked one — matching reactive sites, pairing them (by distance or
-topology), and forming bonds. It is offline: the network is built as a graph,
-not during an MD run. The assembler forms the bonds; you relax them yourself (the call sequence is relax:
+A ``GraphAssembler`` takes a Daylight reaction SMARTS and rewrites one graph
+into a crosslinked one — matching reactive sites, pairing them, and forming
+bonds. It is offline: the network is built as a graph, not during an MD run.
+The same class that grows a chain crosslinks a melt; only the ``Selector``
+differs, because only the question "which sites pair up?" differs.
 
-    build chains -> RandomCrosslinker.apply (match + pair + bond)
+The assembler forms the bonds at a guessed length and never relaxes them —
+that is your call, and it must come next:
+
+    build chains -> GraphAssembler.assemble(melt, RandomSelector(...))
     -> LBFGS/SoftPotential relaxes the new (over-stretched) bonds
 
 Here the network is exported to LAMMPS as geometry (no force field). To attach
 GAFF types + charges, see 06_crosslinked_gel_gaff.
 
-Guide: docs/user-guide/04_crosslinking.md
+Guide: docs/user-guide/02_assembly.md
 Run:   python 04_crosslinking.py
 """
 

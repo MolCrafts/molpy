@@ -50,9 +50,7 @@ nav = [
       { "Parsing Chemistry" = "user-guide/01_parsing_chemistry.md" },
     ] },
     { "Chain & Network Construction" = [
-      { "Step by Step" = "user-guide/02_polymer_stepwise.md" },
-      { "Topology-Driven Assembly" = "user-guide/03_polymer_topology.md" },
-      { "Crosslinked Networks" = "user-guide/04_crosslinking.md" },
+      { "Assembly" = "user-guide/02_assembly.md" },
       { "Building a Crosslinked Gel" = "user-guide/16_crosslinked_gel.md" },
       { "Polydisperse Systems" = "user-guide/05_polydisperse_systems.md" },
     ] },

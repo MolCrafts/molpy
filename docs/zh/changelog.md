@@ -2,6 +2,40 @@
 
 本页记录了 MolPy 的各版本发布说明，按版本号从高到低排列。MolPy 与 molrs 共享同一版本号，两者配对发布。每个版本条目注明了所需的 `molcrafts-molrs` 版本。已标记的发布版本和可安装包见 [GitHub Releases](https://github.com/MolCrafts/molpy/releases) 页面。
 
+## 未发布
+
+### 破坏性变更
+
+- **移除 `molpy.reacter`。** 反应语义现在住在 `molpy.Reaction`（molrs SMIRKS 引擎的
+  re-export）里，化学则住在 reaction SMARTS 本身。`Reacter`、`ReactionResult`、
+  `TopologyDetector`、那 14 个 anchor/leaving selector、`BondReactReacter` 和
+  `ReactionPresets` 全部删除。
+- **移除 `molpy.builder.crosslink`。** `Crosslinker`、`DeterministicCrosslinker` 和
+  `RandomCrosslinker` 只是持有一个 selector 并把 `apply` 转发给 `assemble`。交联现在写作
+  `GraphAssembler(rxn).assemble(melt, RandomSelector(...))`。`crosslink_gel()` /
+  `write_lammps()` 这类配方属于文档，不属于库。
+- **`PolymerBuilder` 在组装内核之上重建**：
+  `PolymerBuilder(MonomerLibrary({...}), reaction, typifier=..., placer=...).build(cgsmiles)`。
+  `build_sequence`、`PolymerBuildResult`、`Connector` 以及 `connector=` / `reacter=`
+  双构造器全部删除。一个重复单元就是一个普通分子，只在可反应的原子上标了 `fields.SITE`
+  ——没有端口系统，也没有 `<` / `>` 方向。
+- **`molpy.core.AffectedRegion` 迁移**到 `molpy.typifier.affected_region`。它不是数据模型
+  类型：它是一次图编辑所扰动的那个球，半径由 typifier 的 `TypeScope` 决定。
+- **移除 `molpy.core.region_radius`**，连同 `_FLOOR = 4` 回退和三处 `context_radius` 声明。
+  typifier 自行声明 `TypeScope(reach)`；`AmberToolsTypifier` 现在要求显式传入 `reach=`。
+- `BondReactTemplate` 从 `molpy.reacter.bond_react` 迁移到 `molpy.io.data.lammps_bond_react`
+  （它是一个 IO 产物）。公开的 `write_bond_react_map` / `write_lammps_bond_react_system` 不变。
+
+### 修复
+
+- **区域重类型化写错了原子类型。** 提取半径和写回半径被混成了同一个 `radius`，正确性要求
+  `reach <= 1`，而没有任何真实 typifier 满足它。以全图类型化为基准测量，`AmberToolsTypifier`
+  的默认设置在一个 PEO 连接处把 46 个写回原子中的 22 个类型判错。本应拦住它的那道断言，其条件
+  经由两层 `getattr(..., False)` 读一个 `strict` 标志，因此对任何没有 `atom_typifier` 属性的
+  typifier 从未触发过。
+- **畸形的 reaction SMIRKS 会静默地配错位点。** 当成键的 map number 不出现在任何反应物模式里时，
+  `_find_component` 会返回组件 `0`，从而配对了错误的匹配列表。现在直接报错。
+
 ## 0.5.1 - 2026-07-01
 
 需配合 `molcrafts-molrs == 0.5.1`（从本版本起 MolPy 与 molrs 配对发布）。

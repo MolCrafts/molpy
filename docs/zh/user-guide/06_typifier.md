@@ -185,33 +185,29 @@ exported to 06_output
 
 ## 聚合物连接处的增量重新类型化
 
-`Reacter` 在两个单体之间形成新键时，连接处的化学环境变了，原来的原子类型、键类型、键角类型和二面角类型也随之失效。
+`molpy.Reaction` 在两个单体之间形成新键时，连接处的化学环境变了，原来的原子类型、键类型、键角类型和二面角类型也随之失效。
 
-MolPy 不会每个耦合步骤都重新类型化整条链，而是做**增量重新类型化**——只重算受影响的原子和它们的邻居。
+MolPy 不会每个耦合步骤都重新类型化整条链，而是只重新类型化这次编辑真正扰动到的那一小片邻域。
 
-`Reacter` 在 `ReactionResult.modified_atoms` 里精确记录了哪些原子被改过。把 Typifier 传给 `Reacter.run()` 后，内部的 `_incremental_typify()` 只对这些原子走六步流程：
+这片邻域有多大，不是一个可调的旋钮。每个 typifier 都以 `TypeScope` 的形式声明自己的感受野——它要看到一个原子周围几根键，才能叫出这个原子的类型——而这一个数字同时定下了操作的两个半径。`GraphAssembler` 会围绕每根新键取出一个半径为 `2 x reach` 的球，对整个球做类型化，但只把内层 `reach` 那一壳写回去：真正改变了环境的正是这些原子，而外壳存在的唯一理由，是给它们提供一个正确的环境去匹配。内壳之外的原子本来就是对的，因此不去动它们。
 
-1. 清除被修改原子上的 `type`
-2. 对整个结构重跑原子类型化（SMARTS 匹配）
-3. 为被修改原子重新分配成对参数（LJ sigma/epsilon）
-4. 对新键和与被修改原子相连的键重新类型化
-5. 对新键角和与被修改原子相连的键角重新类型化
-6. 对新二面角和与被修改原子相连的二面角重新类型化
+相同的连接处会哈希到同一个键，只被类型化一次。于是类型化的遍数取决于体系中**不同**化学环境的数量，而不是形成了多少根键：构建一个千聚体，所花的类型化遍数和构建一个十聚体差不多。
 
-对一个 20 聚体，每个耦合步骤只需要重类型化大约 4 个原子加它们的邻居，比全链重跑快得多。
-
-要在 `PolymerBuilder` 中启用这个功能，构造时传入 Typifier：
+要启用它，在构造 builder 时传入 typifier：
 
 ```text
+from molpy.typifier.ambertools import AmberToolsTypifier
+
 builder = PolymerBuilder(
-    library={"EO": eo_typed},       # 预先类型化的单体
-    connector=connector,
-    placer=placer,
-    typifier=typifier,              # 启用增量重新类型化
+    MonomerLibrary({"EO": eo}),
+    mp.Reaction(ETHER),
+    typifier=AmberToolsTypifier(amber, reach=2),  # 连接处在成键时就地重新类型化
+    placer=ResiduePlacer(),
 )
+chain = builder.build("{[#EO]|20}")
 ```
 
-如果更想在最后对整个链做一次类型化，直接从构建器里省略 `typifier`，构建完再调用 `typifier.typify(result.polymer)` 就行。
+不传 typifier，组装过程就完全不分配类型；那就等链构建完再对它做一次类型化。结果是一样的，只是代价正比于整条链，而不是正比于它的连接处。
 
 ## 标准力场不够用时
 
@@ -222,4 +218,4 @@ builder = PolymerBuilder(
 
 Typifier 不关心力场里有什么内容。只要 XML 里有 SMARTS 模式和类型定义，它就能匹配。
 
-参见：[力场](../tutorials/04_force_field.md)、[逐步聚合物构建](02_polymer_stepwise.md)。
+参见：[力场](../tutorials/04_force_field.md)、[组装](02_assembly.md)。

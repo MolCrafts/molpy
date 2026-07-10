@@ -219,4 +219,4 @@ The four notations cover a spectrum from fully specified chemistry to pure topol
 
 For 3D coordinates after parsing, use `mp.adapter.RDKitAdapter(mol).generate_3d()` (requires RDKit).
 
-See also: [Stepwise Polymer Construction](02_polymer_stepwise.md), [Atomistic and Topology](../tutorials/01_atomistic_and_topology.md).
+See also: [Stepwise Polymer Construction](02_assembly.md), [Atomistic and Topology](../tutorials/01_atomistic_and_topology.md).

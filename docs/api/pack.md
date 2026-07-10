@@ -30,7 +30,7 @@ packed = packer(max_steps=10000, seed=42)
 
 ## Related
 
-- [Guide: Crosslinked Networks](../user-guide/04_crosslinking.md)
+- [Guide: Assembly](../user-guide/02_assembly.md)
 - [Guide: Polydisperse Systems](../user-guide/05_polydisperse_systems.md)
 
 ---

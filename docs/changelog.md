@@ -1,3 +1,10 @@
+# Changelog
+
+Release notes for MolPy, newest first. MolPy and molrs share one version line
+and release as a pair — every entry lists the `molcrafts-molrs` version it
+requires. Tagged releases and installable artifacts live on
+[GitHub Releases](https://github.com/MolCrafts/molpy/releases).
+
 ## Unreleased
 
 ### BREAKING
@@ -50,13 +57,6 @@
 - `molpy.builder.assembly`: `GraphAssembler`, `Selector`, `TopologySelector`,
   `ProximitySelector` (`Exhaustive` / `Spacing` / `ExplicitPair` / `Random`),
   `MonomerLibrary`, `PolymerBuilder`, `Placer` / `ResiduePlacer`.
-
-# Changelog
-
-Release notes for MolPy, newest first. MolPy and molrs share one version line
-and release as a pair — every entry lists the `molcrafts-molrs` version it
-requires. Tagged releases and installable artifacts live on
-[GitHub Releases](https://github.com/MolCrafts/molpy/releases).
 
 ## 0.7.0 - 2026-07-08
 

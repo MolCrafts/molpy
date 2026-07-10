@@ -194,33 +194,29 @@ The `write_lammps_system` convenience function automatically filters the force f
 
 ## Incremental re-typification at polymer junctions
 
-When a `Reacter` forms a new bond between two monomers, the atoms at the junction change their chemical environment. The old atom types, bond types, angle types, and dihedral types at the junction become invalid.
+When a `molpy.Reaction` forms a new bond between two monomers, the atoms at the junction change their chemical environment. The old atom types, bond types, angle types, and dihedral types at the junction become invalid.
 
-Rather than re-typifying the entire chain after each coupling step, MolPy performs **incremental re-typification** — it re-computes force field parameters only for the affected atoms and their neighbors.
+Rather than re-typifying the entire chain after each coupling step, MolPy re-types only the neighbourhood the edit disturbed.
 
-The `Reacter` records exactly which atoms were modified in `ReactionResult.modified_atoms`. When a typifier is passed to `Reacter.run()`, the internal `_incremental_typify()` method runs a six-step pipeline on just those atoms:
+How wide that neighbourhood is is not a knob. Every typifier declares its receptive field — the number of bonds it must see around an atom before it can name that atom's type — as a `TypeScope`, and that single number fixes both radii of the operation. `GraphAssembler` extracts a ball of `2 x reach` bonds around each new bond, re-types it, and writes back only the inner `reach` shell: those are the atoms whose environment actually changed, and the outer shell exists solely to give them a correct environment to be typed against. Atoms beyond the inner shell were already right and are left alone.
 
-1. Clear `type` on modified atoms
-2. Re-run atom typing (SMARTS matching) on the full structure
-3. Re-assign pair parameters (LJ sigma/epsilon) for modified atoms
-4. Re-type new bonds and bonds touching modified atoms
-5. Re-type new angles and angles touching modified atoms
-6. Re-type new dihedrals and dihedrals touching modified atoms
+Identical junctions hash to the same key and are typed once, so the number of typing passes tracks the number of *distinct* chemical environments in the system rather than the number of bonds formed. Building a 1000-mer costs about as many typing passes as building a 10-mer.
 
-For a 20-mer, each coupling step only re-types ~4 atoms and their neighbors — much faster than full-chain re-typification.
-
-To enable this in `PolymerBuilder`, pass the typifier at construction:
+To enable this, pass the typifier to the builder at construction:
 
 ```text
+from molpy.typifier.ambertools import AmberToolsTypifier
+
 builder = PolymerBuilder(
-    library={"EO": eo_typed},       # pre-typed monomer
-    connector=connector,
-    placer=placer,
-    typifier=typifier,              # enables incremental re-typification
+    MonomerLibrary({"EO": eo}),
+    mp.Reaction(ETHER),
+    typifier=AmberToolsTypifier(amber, reach=2),  # junctions re-typed as they form
+    placer=ResiduePlacer(),
 )
+chain = builder.build("{[#EO]|20}")
 ```
 
-If you prefer to typify the entire chain at the end instead, simply omit the typifier from the builder and call `typifier.typify(result.polymer)` after building.
+Omit the typifier and assembly assigns no types at all; typify the finished chain instead. That gives the same answer, at a cost proportional to the whole chain rather than to its junctions.
 
 ## When standard force fields are not enough
 
@@ -231,4 +227,4 @@ Standard OPLS-AA covers common organic functional groups. Specialized molecules 
 
 The typifier itself is agnostic to the force field content. It only needs SMARTS patterns and type definitions in the XML. If those are present, it will match them.
 
-See also: [Force Field](../tutorials/04_force_field.md), [Stepwise Polymer Construction](02_polymer_stepwise.md).
+See also: [Force Field](../tutorials/04_force_field.md), [Stepwise Polymer Construction](02_assembly.md).

@@ -98,7 +98,7 @@ c = AndConstraint(
 
 ## See also
 
-- [Building Polymers](02_polymer_stepwise.md) — producing the molecules you pack.
+- [Assembly](02_assembly.md) — producing the molecules you pack.
 - [Polydisperse Systems](05_polydisperse_systems.md) — packing a chain-length
   distribution.
 - [API Reference — Packing](../api/pack.md) — full class/constraint reference.

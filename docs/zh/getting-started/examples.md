@@ -88,7 +88,7 @@ typed = mp.typifier.OplsTypifier(ff).typify(peo)
 frame = typed.to_frame()   # 使用 mp.io.write_lammps_system(dir, frame, ff) 写入
 ```
 
-另见：[拓扑驱动组装](../user-guide/03_polymer_topology.md)。
+另见：[组装](../user-guide/02_assembly.md)。
 
 ## 多分散熔体 — Schulz-Zimm 分布
 

@@ -11,14 +11,18 @@ angles/dihedrals a linear chain lacks).
 independent, so the region is typed with ``gas`` charges — no per-fragment
 ``sqm``/AM1-BCC solve. Recomputing junction charges from a capped fragment would
 be both non-local and biased (capping a cut ether-O makes antechamber see a
-hydroxyl); charge is instead conserved locally by the reacter/crosslinker folding
-each leaving group's charge onto its anchor atom. This typifier never writes a
-charge back.
+hydroxyl); charge is instead conserved by construction, by folding each cap's
+charge onto its site atom on the *template* so a deleted atom carries exactly
+zero. This typifier never writes a charge back.
 
 It satisfies the region-typifier protocol (``scope`` + ``typify_region``) so a
-:class:`~molpy.builder.crosslink.Crosslinker` (or reacter) retypes and patches
-each formed junction back onto the network through its ``typifier=`` hook +
-``RetypeCache`` — the patch-back is the reacter's job, not the wrapper's.
+:class:`~molpy.builder.assembly.GraphAssembler` retypes and patches each formed
+junction back onto the network through its ``typifier=`` hook + ``RetypeCache``
+— the patch-back is the assembler's job, not the wrapper's.
+
+Unlike a typifier whose SMARTS patterns MolPy can read, AmberTools is a black box:
+antechamber will not say how far it looks. Hence ``reach`` is a required argument
+(``reach=2`` for GAFF, whose atom types are set by a one-to-two-bond environment).
 """
 
 from __future__ import annotations

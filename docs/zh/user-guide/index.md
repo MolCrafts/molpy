@@ -12,9 +12,7 @@
 
 ## 链与网络构建
 
-- [逐步构建](02_polymer_stepwise.md) — 显式反应驱动的单体耦合、`PolymerBuilder` 接口以及高层快捷函数
-- [拓扑驱动组装](03_polymer_topology.md) — 用 CGSmiles 表达式描述线型、环状和支化架构
-- [交联网络](04_crosslinking.md) — 基于模板的网络生成，以及 LAMMPS `fix bond/react` 前后拓扑的构建
+- [组装](02_assembly.md) — 一个 `GraphAssembler` 完成长链、交联和成环三件事；差别只在 `Selector` 如何配对反应位点
 - [多分散体系](05_polydisperse_systems.md) — 分子量分布采样、原子级链构建与盒子填充
 
 

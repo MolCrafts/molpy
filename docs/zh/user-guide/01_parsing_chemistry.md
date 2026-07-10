@@ -201,4 +201,4 @@ topology: random_copolymer
 
 解析后需要 3D 坐标的话，用 `mp.adapter.RDKitAdapter(mol).generate_3d()`（需要 RDKit）。
 
-另请参见：[逐步构建聚合物](02_polymer_stepwise.md)、[原子与拓扑结构](../tutorials/01_atomistic_and_topology.md)。
+另请参见：[组装](02_assembly.md)、[原子与拓扑结构](../tutorials/01_atomistic_and_topology.md)。
