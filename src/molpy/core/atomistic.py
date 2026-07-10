@@ -600,7 +600,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         """Induced radius-``radius`` ball plus a region-atom → parent-atom map.
 
         Backs :meth:`extract_subgraph` (which drops the extras) and
-        :class:`~molpy.core.affected_region.AffectedRegion` (which keeps them).
+        :class:`~molpy.typifier.affected_region.AffectedRegion` (which keeps them).
         ``out_cls`` selects the produced graph type — a plain :class:`Atomistic`
         or an :class:`AffectedRegion` — so the ball is materialised straight into
         a region subclass with no second copy. Returns

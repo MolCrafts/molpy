@@ -1,4 +1,3 @@
-from .affected_region import AffectedRegion
 from .atomistic import (
     Angle,
     Atom,
@@ -37,7 +36,6 @@ from .script import Script, ScriptLanguage
 from .unit import UnitSystem
 
 __all__ = [
-    "AffectedRegion",
     "Angle",
     "Atom",
     "Atomistic",

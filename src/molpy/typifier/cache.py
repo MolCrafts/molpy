@@ -2,7 +2,7 @@
 
 :class:`RetypeCache` keys :class:`~molpy.typifier.region.RegionTypes` by the
 region's isomorphism-invariant structural hash
-(:meth:`~molpy.core.affected_region.AffectedRegion.__hash__`). During polymer
+(:meth:`~molpy.typifier.affected_region.AffectedRegion.__hash__`). During polymer
 growth the many structurally-identical junctions collapse to one hash → the
 region is typed **once** and every later identical junction is a cache hit,
 turning the reacter's O(N²) whole-graph retype pass into O(#distinct junction
@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from molpy.core.affected_region import AffectedRegion
+    from molpy.typifier.affected_region import AffectedRegion
     from molpy.typifier.region import RegionTypes, RegionTypifier
 
 

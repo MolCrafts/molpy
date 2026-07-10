@@ -10,13 +10,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from molpy.core.affected_region import AffectedRegion
 from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper
 from molpy.core.entity import Entity
 from molpy.reacter.topology_detector import TopologyDetector
 from molpy.reacter.utils import AnchorSelector, BondFormer, LeavingSelector
 
 if TYPE_CHECKING:
+    # AffectedRegion is a typifier concept: the reacter only ever receives one
+    # back from ``TypeScope.region()`` and annotates it. reacter must not import
+    # molpy.typifier at runtime (tests/test_reacter/test_import_hygiene.py).
+    from molpy.typifier.affected_region import AffectedRegion
     from molpy.typifier.atomistic import TypifierBase
     from molpy.typifier.cache import RetypeCache
 
@@ -593,7 +596,7 @@ class Reacter:
         - Existing bonds/angles/dihedrals involving modified atoms
 
         Atom typing takes the region-scoped + cached path when the reaction
-        reported an :class:`~molpy.core.affected_region.AffectedRegion` and the
+        reported an :class:`~molpy.typifier.affected_region.AffectedRegion` and the
         typifier supports region typing; otherwise it falls back to the original
         whole-graph SMARTS pass unchanged. Bonded-term typing is unchanged.
 

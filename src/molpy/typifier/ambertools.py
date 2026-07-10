@@ -31,7 +31,7 @@ from molpy.core import fields
 
 if TYPE_CHECKING:
     from molpy.builder.ambertools import AmberTools
-    from molpy.core.affected_region import AffectedRegion
+    from molpy.typifier.affected_region import AffectedRegion
 
 
 class AmberToolsTypifier:

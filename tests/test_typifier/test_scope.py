@@ -22,7 +22,7 @@ import molrs
 import pytest
 
 import molpy as mp
-from molpy.core.affected_region import AffectedRegion
+from molpy.typifier.affected_region import AffectedRegion
 from molpy.core.atomistic import Atom, Atomistic
 from molpy.parser import parse_smiles, smilesir_to_atomistic
 from molpy.typifier.region import RegionTypes

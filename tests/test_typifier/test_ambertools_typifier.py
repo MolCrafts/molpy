@@ -13,7 +13,7 @@ from unittest.mock import Mock
 import molpy as mp
 import pytest
 
-from molpy.core.affected_region import AffectedRegion
+from molpy.typifier.affected_region import AffectedRegion
 from molpy.typifier.ambertools import AmberToolsTypifier
 from molpy.typifier.scope import TypeScope
 

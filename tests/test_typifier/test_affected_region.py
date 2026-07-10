@@ -9,7 +9,7 @@ Producers (``Reacter``, ``Crosslinker``) build it from the atoms an edit touched
 import inspect
 
 import molpy as mp
-from molpy.core.affected_region import AffectedRegion
+from molpy.typifier.affected_region import AffectedRegion
 from molpy.core.atomistic import Atom, Atomistic
 from molpy.typifier.scope import TypeScope
 from molpy.wrapper.antechamber import write_antechamber_input_pdb

@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
-    from molpy.core.affected_region import AffectedRegion
+    from molpy.typifier.affected_region import AffectedRegion
     from molpy.core.atomistic import Atom, Atomistic
 
 
@@ -82,7 +82,7 @@ class TypeScope:
             touched: Seed atoms (views or molrs handles) the edit reported.
 
         Returns:
-            An :class:`~molpy.core.affected_region.AffectedRegion` whose
+            An :class:`~molpy.typifier.affected_region.AffectedRegion` whose
             ``interior`` is ``ball(touched, interior_reach)`` — the atoms whose
             types are written back — inside an extracted ball of radius
             ``extract_radius``.
@@ -91,7 +91,7 @@ class TypeScope:
             ValueError: if ``touched`` is empty or names a handle that is not a
                 live atom of ``graph``.
         """
-        from molpy.core.affected_region import AffectedRegion
+        from molpy.typifier.affected_region import AffectedRegion
 
         return AffectedRegion._from(
             graph,

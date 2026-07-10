@@ -1,6 +1,6 @@
 """Valence completion — fill an atomistic graph's dangling bonds with hydrogens.
 
-Extracting a subgraph (an :class:`~molpy.core.affected_region.AffectedRegion`, a
+Extracting a subgraph (an :class:`~molpy.typifier.affected_region.AffectedRegion`, a
 manually sliced fragment, …) leaves the cut atoms under-coordinated: their real
 bond-neighbours lay outside the slice. :func:`complete_valence` returns a copy
 whose every under-valent atom is capped with hydrogens, so the fragment is a

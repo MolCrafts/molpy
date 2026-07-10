@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, TypeVar
 import numpy as np
 
 import molrs
-from molpy.core.affected_region import AffectedRegion
+from molpy.typifier.affected_region import AffectedRegion
 from molpy.core.atomistic import Atomistic
 
 if TYPE_CHECKING:

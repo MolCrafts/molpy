@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from molrs.fields import FieldSpec
 
     from molpy.builder.assembly._placer import Placer
-    from molpy.core.affected_region import AffectedRegion
+    from molpy.typifier.affected_region import AffectedRegion
 
 #: Net charge drift that counts as zero (elementary charge).
 _CHARGE_TOL = 1e-9

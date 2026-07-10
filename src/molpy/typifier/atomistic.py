@@ -15,7 +15,7 @@ from molpy.core.forcefield import (
 )
 
 if TYPE_CHECKING:
-    from molpy.core.affected_region import AffectedRegion
+    from molpy.typifier.affected_region import AffectedRegion
     from molpy.typifier.region import RegionTypes
     from molpy.typifier.scope import TypeScope
 

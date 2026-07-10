@@ -1,6 +1,6 @@
 """Region-scoped force-field typing: the immutable snapshot and its write-back.
 
-A typifier types an :class:`~molpy.core.affected_region.AffectedRegion` as an
+A typifier types an :class:`~molpy.typifier.affected_region.AffectedRegion` as an
 ordinary standalone :class:`~molpy.core.atomistic.Atomistic` — the context shell
 around the region gives its interior atoms complete ring/degree/SMARTS context,
 so they receive the *same* types they would in the full structure — then snapshots
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 from molpy.core import fields
 
 if TYPE_CHECKING:
-    from molpy.core.affected_region import AffectedRegion
+    from molpy.typifier.affected_region import AffectedRegion
     from molpy.core.atomistic import Atom, Atomistic
     from molpy.core.entity import Link
     from molpy.typifier.scope import TypeScope
@@ -206,7 +206,7 @@ class RegionTypes:
         """Write this snapshot onto ``region``'s parent atoms.
 
         Lines each stored canonical position up against ``region``'s **own**
-        :meth:`~molpy.core.affected_region.AffectedRegion.canonical_order` — so a
+        :meth:`~molpy.typifier.affected_region.AffectedRegion.canonical_order` — so a
         snapshot captured from a *different* but isomorphic region still maps
         correctly — then reaches the parent atom through ``region.entity_map``.
         Atoms outside the write-back set are absent from the snapshot and are

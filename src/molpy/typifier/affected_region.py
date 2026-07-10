@@ -1,5 +1,10 @@
 """A hashable MolGraph subgraph produced by a graph edit.
 
+This is not a data-model type — it is the ripple a graph edit raises, and how far
+it travels is decided by the typifier's :class:`~molpy.typifier.scope.TypeScope`.
+That is why it lives here and not in :mod:`molpy.core`: nothing in the data model
+needs it, and everything that does is a typifier.
+
 :class:`AffectedRegion` is the ball a graph edit disturbed, extracted at the
 radius its typifier declares (see :class:`~molpy.typifier.scope.TypeScope`, the
 one place that owns the radius arithmetic). It **is** an
