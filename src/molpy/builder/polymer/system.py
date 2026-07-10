@@ -106,8 +106,10 @@ class PolydisperseChainGenerator:
             raise ValueError("distribution must be set")
 
         # Determine what capabilities the distribution actually provides
-        has_sample_dp = callable(getattr(self.distribution, "sample_dp", None))
-        has_sample_mass = callable(getattr(self.distribution, "sample_mass", None))
+        # DPDistribution / MassDistribution are runtime_checkable Protocols:
+        # ask the type system, do not sniff for a method name.
+        has_sample_dp = isinstance(self.distribution, DPDistribution)
+        has_sample_mass = isinstance(self.distribution, MassDistribution)
 
         # DP-based distributions may only be used via sample_dp
         if has_sample_dp and not has_sample_mass:
@@ -131,7 +133,7 @@ class PolydisperseChainGenerator:
         if self.distribution is None:
             raise ValueError("distribution must be set")
 
-        has_sample_mass = callable(getattr(self.distribution, "sample_mass", None))
+        has_sample_mass = isinstance(self.distribution, MassDistribution)
         if not has_sample_mass:
             raise TypeError(
                 f"Distribution {type(self.distribution).__name__} does not support 'sample_mass'. "
@@ -151,8 +153,10 @@ class PolydisperseChainGenerator:
         Returns:
             Chain object with dp, monomers, and mass
         """
-        has_sample_dp = callable(getattr(self.distribution, "sample_dp", None))
-        has_sample_mass = callable(getattr(self.distribution, "sample_mass", None))
+        # DPDistribution / MassDistribution are runtime_checkable Protocols:
+        # ask the type system, do not sniff for a method name.
+        has_sample_dp = isinstance(self.distribution, DPDistribution)
+        has_sample_mass = isinstance(self.distribution, MassDistribution)
 
         # Pure DPDistribution path: sample DP once and build fixed-length chain
         if has_sample_dp and not has_sample_mass:

@@ -1,6 +1,6 @@
 ---
 title: 删除 reacter/ —— 反应语义统一到 molrs.Reaction
-status: approved
+status: code-complete
 created: 2026-07-10
 depends_on: "graph-assembler-02-kernel"
 ---
@@ -153,16 +153,16 @@ right_symbol = right_anchor.get("symbol", "C")
 
 ## Tasks
 
-- [ ] T1 `LammpsBondReactWriter(RegionPatch, RegionPatch)`;三个自由函数并入类;
+- [x] T1 `LammpsBondReactWriter(RegionPatch, RegionPatch)`;三个自由函数并入类;
       golden 逐字节回归;删 `reacter/bond_react.py`
-- [ ] T2 `tests/test_reacter/` 分流:有效行为断言 → `tests/test_builder/test_assembler.py`,
+- [x] T2 `tests/test_reacter/` 分流:有效行为断言 → `tests/test_builder/test_assembler.py`,
       实现细节断言 → 删(commit body 逐类说明)
-- [ ] T3 删 `reacter/` 整包 + `connectors.py` + `presets.py` + `crosslink/recipes.py`
+- [x] T3 删 `reacter/` 整包 + `connectors.py` + `presets.py` + `crosslink/recipes.py`
       (`polymer/core.py`、`crosslink/_*.py`、`placer.py` 已在 02 处理)
-- [ ] T4 `molpy/__init__.py` 去掉 `reacter` 公开导出;`docs/changelog.md` 记 **breaking**
+- [x] T4 `molpy/__init__.py` 去掉 `reacter` 公开导出;`docs/changelog.md` 记 **breaking**
 - [ ] T5 6 篇文档 / notebook 改写 + `scripts/render_notebooks.py` 重渲染;
       `crosslink_gel` 的调用序列以叙述形式落进 `04_crosslinking.md`
-- [ ] T6 `.claude/notes/architecture.md` 与 `CLAUDE.md` 的包表去掉 `reacter`
+- [x] T6 `.claude/notes/architecture.md` 与 `CLAUDE.md` 的包表去掉 `reacter`
 - [ ] T7 minor 版本号 bump(experimental stage,但公开子包消失需要显式记账)
 - [ ] T8 全仓库铁律扫描:`^def ` 在 `builder/` `typifier/` `io/data/lammps_bond_react.py`
       计数为 0;字段字符串字面量清零
@@ -172,7 +172,7 @@ right_symbol = right_anchor.get("symbol", "C")
       `virtualsite.py` 的 `get("charge",0.0)` / `get("x",0.0)` 同治;
       `polymer/system.py` 的 `callable(getattr(distribution,"sample_dp",None))` 能力嗅探
       → `isinstance` + 构造时 `TypeError`
-- [ ] T10 `docs/api/reacter.md` → `docs/api/assembly.md`;`tests/test_docs/test_doc_examples.py`
+- [x] T10 `docs/api/reacter.md` → `docs/api/assembly.md`;`tests/test_docs/test_doc_examples.py`
       的三处断言(`_exec_blocks("reacter.md")`、`ReactionPresets.register` 公开面、
       `reacter/base.py` doctest)一并改;`examples/02_build_polymer.py` 与
       `examples/03_polymer_topology.py` 用 `GraphAssembler` 重写

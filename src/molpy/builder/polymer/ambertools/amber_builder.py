@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from molpy.core import fields
 from molpy.core.atomistic import Atomistic
 from molpy.io.readers import read_amber_prmtop
 from molpy.parser.smiles import parse_cgsmiles
@@ -217,11 +218,12 @@ class AmberPolymerBuilder:
             monomer_dir = work_dir / "monomers" / label
             monomer_dir.mkdir(parents=True, exist_ok=True)
 
-            # Ensure every atom has a name (PDB / prepgen require it)
+            # Ensure every atom has a name (PDB / prepgen require it). An atom
+            # with no element cannot be named: guessing "X" would put a fake
+            # identity into the prep file, and nothing downstream corrects it.
             for idx, atom in enumerate(monomer.atoms, start=1):
-                if atom.get("name") is None:
-                    sym = atom.get("element", "X")
-                    atom["name"] = f"{sym}{idx}"
+                if atom.get(fields.NAME) is None:
+                    atom[fields.NAME] = f"{atom[fields.ELEMENT]}{idx}"
 
             # Find port atoms
             head_atom_name = None

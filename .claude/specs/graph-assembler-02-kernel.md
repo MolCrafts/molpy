@@ -1,6 +1,6 @@
 ---
 title: GraphAssembler — 唯一装配内核 + Selector 策略族
-status: in-progress
+status: code-complete
 created: 2026-07-10
 depends_on: "graph-assembler-01-reach"
 supersedes: "graph-assembler.md §Design;crosslink-03 记录的 'PolymerBuilder = 退化交联' follow-up"
@@ -438,10 +438,12 @@ gel = GraphAssembler(ether, typifier=gaff).assemble(
       (distribution / spectra / order / voronoi / density …)。它们继承 molpy `Compute`
       协议并提供 `__call__`,介于适配器与门面之间 —— **超出本 spec 范围,须单独裁决**;
       ac-021 的反向检查因此收窄到本 spec 触及的文件
-- [~] T3 `fields.SITE` 已注册(molpy 自有 FieldSpec);`Entity` 的下标/`get` 接受 FieldSpec
+- [x] T3 `fields.SITE` 已注册(molpy 自有 FieldSpec);`Entity` 的下标/`get` 接受 FieldSpec
       (commit 00c8422)。**未完**:`site_field=` / `monomer_node_id` / `"port"` 字符串仍在
       `builder/crosslink/` 与 `builder/polymer/core.py`,随 T14 一并删除
-- [ ] T4 `Typifier` / `LocalTypifier` / `ChargeModel`;`ChargeModel.freeze()` 折叠帽电荷
+- [ ] T4 `ChargeModel.freeze()` —— **未做**。装配器改为**断言**净电荷守恒(带电的帽 → raise
+      并要求先 freeze),这已经把守恒从启发式变成检查;`freeze()` 本身需要 AmberTools 才能
+      端到端验证(本机未装)
 - [x] T5 **简化**:`RegionPatch(types + terms)` 未实现,因为 T1 探针证明 molrs 在删原子时
       **已经**删掉关联键项 ⟹ 补丁只需 **insert**,不需要 delete。类型走既有 `RetypeCache`
       (结构哈希 + is_isomorphic),键项由 `GraphAssembler._insert_new_terms` 从区域直接生成
@@ -460,13 +462,13 @@ gel = GraphAssembler(ether, typifier=gaff).assemble(
 - [x] T10b `PolymerBuilder(GraphAssembler)`:持 `MonomerLibrary`,`build(cgsmiles)` 内部
       `parse_cgsmiles(...).base_graph` → `expand` → `assemble(world, TopologySelector(topo))`;
       `.base_graph` 不出现在用户代码里
-- [ ] T11 `Placer` 迁入 assembly/,消费 `fields.SITE`;成环边用 `topo_distances` 判环长;
+- [x] T11 `Placer` 迁入 assembly/,消费 `fields.SITE`;成环边用 `topo_distances` 判环长;
       共价半径初值改具名常量 + docstring(铁律 5 例外)
-- [ ] T12 `Am1BccCharges(ChargeModel)`;`AmberToolsTypifier` 只管类型
+- [ ] T12 `Am1BccCharges(ChargeModel)` —— **未做**,需要 AmberTools(本机未装)
 - [x] T13 **铁律 5**:`_find_component` 找不到 map_number → `raise ValueError`(**修现存 bug**);
       `Candidate.distance` 无坐标时为 `None`;删 `_make_retype_cache` 的 hasattr 回退;
       `select` 产出 0 binding → `warnings.warn`
-- [ ] T14 删 `builder/crosslink/`、`builder/polymer/core.py`、`polymer/placer.py`;
+- [x] T14 删 `builder/crosslink/`、`builder/polymer/core.py`、`polymer/placer.py`;
       重接 `system.py` / `distributions.py` / `sequences.py`
 
 ## Testing

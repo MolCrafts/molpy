@@ -457,3 +457,105 @@ def test_placement_refuses_to_guess_an_unknown_element():
     del atom[fields.ELEMENT]
     with pytest.raises(KeyError, match="covalent radius"):
         ResiduePlacer._radius(atom)
+
+
+# --------------------------------------------------------------------------
+# ac-009 — the typifier never sees the whole graph
+# --------------------------------------------------------------------------
+
+
+def test_typifier_is_never_handed_the_assembled_world():
+    seen: list[object] = []
+
+    class _Spy(_ScopedTypifier):
+        def typify(self, graph):
+            seen.append(graph)
+            return super().typify(graph)
+
+    chain = _builder(typifier=_Spy()).build("{[#EO]|6}")
+    assert seen, "the typifier was never called at all"
+    assert not [g for g in seen if g is chain]
+    # every graph it saw was a region, strictly smaller than the assembled chain
+    biggest = max(len(list(g.atoms)) for g in seen)
+    assert biggest < len(list(chain.atoms))
+
+
+# --------------------------------------------------------------------------
+# ac-013 — the new bonded terms are complete: no missing, no duplicate
+# --------------------------------------------------------------------------
+
+
+def _term_sets(graph):
+    return {
+        kind: sorted(
+            tuple(sorted(e.handle for e in t.endpoints)) for t in getattr(graph, kind)
+        )
+        for kind in ("angles", "dihedrals")
+    }
+
+
+@pytest.mark.parametrize("cgsmiles", ["{[#EO]|6}", "{[#EO]1[#EO][#EO]1}"])
+def test_locally_inserted_terms_equal_the_whole_graph_oracle(cgsmiles):
+    """A whole-graph rebuild is the oracle here — never the product path."""
+    chain = _builder(typifier=_ScopedTypifier()).build(cgsmiles)
+    local = _term_sets(chain)
+
+    chain.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)
+    oracle = _term_sets(chain)
+
+    for kind in ("angles", "dihedrals"):
+        assert local[kind] == oracle[kind], (
+            f"{kind}: {len(local[kind])} inserted locally vs "
+            f"{len(oracle[kind])} from a whole-graph rebuild"
+        )
+
+
+# --------------------------------------------------------------------------
+# ac-012 — overlapping regions agree; regions see the final graph
+# --------------------------------------------------------------------------
+
+
+def test_regions_are_built_after_every_edit_and_overlap_consistently():
+    """A junction's neighbours are themselves junctions in a short-monomer chain.
+
+    If a region were captured before a later edit, the two would disagree about a
+    shared interior atom's type. Types written by overlapping regions must match.
+    """
+    typifier = _ScopedTypifier(reach=3)  # wide enough that regions overlap
+    chain = _builder(typifier=typifier).build("{[#EO]|4}")
+    # every atom carries exactly the type its element implies — no atom was left
+    # holding a stale type from a region captured too early
+    for atom in chain.atoms:
+        assert atom[fields.TYPE] == f"t_{atom[fields.ELEMENT]}"
+
+
+# --------------------------------------------------------------------------
+# ac-017 — the cache key covers the context shell, not just the interior
+# --------------------------------------------------------------------------
+
+
+def test_isomorphic_interiors_with_different_shells_do_not_share_a_cache_entry():
+    from molpy.typifier.scope import TypeScope
+
+    def chain(tail_element: str):
+        s = mp.Atomistic()
+        atoms = [s.def_atom(element="C", x=float(i), y=0.0, z=0.0) for i in range(6)]
+        atoms[-1][fields.ELEMENT] = tail_element  # only the far shell differs
+        for a, b in zip(atoms, atoms[1:], strict=False):
+            s.def_bond(a, b)
+        return s, atoms
+
+    scope = TypeScope(reach=2)  # interior 2, extract 4
+    a_graph, a_atoms = chain("C")
+    b_graph, b_atoms = chain("N")
+
+    region_a = scope.region(a_graph, [a_atoms[1]])
+    region_b = scope.region(b_graph, [b_atoms[1]])
+
+    # the interiors (hops <= 2 from atom 1) are identical carbon chains...
+    assert [a[fields.ELEMENT] for a in region_a.interior] == [
+        a[fields.ELEMENT] for a in region_b.interior
+    ]
+    # ...but the context shell differs, so they are different cache keys
+    assert region_a != region_b
+    assert hash(region_a) != hash(region_b)

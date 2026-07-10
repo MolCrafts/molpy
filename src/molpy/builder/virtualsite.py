@@ -15,6 +15,7 @@ from math import sqrt
 from pathlib import Path
 from typing import Any
 
+from molpy.core import fields
 from molpy.core.atomistic import Atom, Atomistic, Bond, DrudeParticle, MasslessSite
 
 # 4*pi*eps0 in e^2 / (kJ/mol * A), per paduagroup/clandpol polarizer.
@@ -150,9 +151,9 @@ class DrudeBuilder(VirtualSiteBuilder):
     ) -> None:
         (shell,) = sites
         q_d = shell.get("charge")
-        host.data["charge"] = host.get("charge", 0.0) - q_d
+        host.data[fields.CHARGE.key] = host[fields.CHARGE] - q_d
         if host.get("mass") is not None:
-            host.data["mass"] = host.get("mass") - shell.get("mass", 0.0)
+            host.data[fields.MASS.key] = host[fields.MASS] - shell[fields.MASS]
         struct.add_atom(shell)
         # Spring constant is the host type's k_D (data-driven, from alpha.ff). The
         # spring carries its own bond type so the augmented structure is fully
@@ -182,7 +183,7 @@ class Tip4pBuilder(VirtualSiteBuilder):
 
     @staticmethod
     def _xyz(atom: Atom) -> tuple[float, float, float]:
-        return (atom.get("x", 0.0), atom.get("y", 0.0), atom.get("z", 0.0))
+        return (atom[fields.POS_X], atom[fields.POS_Y], atom[fields.POS_Z])
 
     def _hydrogens(self, struct: Atomistic, o: Atom) -> list[Atom]:
         hs: list[Atom] = []
@@ -212,7 +213,7 @@ class Tip4pBuilder(VirtualSiteBuilder):
         return [
             MasslessSite(
                 element="M",
-                charge=host.get("charge", 0.0),
+                charge=host[fields.CHARGE],
                 x=m[0],
                 y=m[1],
                 z=m[2],
