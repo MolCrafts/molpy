@@ -1,4 +1,4 @@
-from .affected_region import AffectedRegion, region_radius
+from .affected_region import AffectedRegion
 from .atomistic import (
     Angle,
     Atom,
@@ -38,7 +38,6 @@ from .unit import UnitSystem
 
 __all__ = [
     "AffectedRegion",
-    "region_radius",
     "Angle",
     "Atom",
     "Atomistic",

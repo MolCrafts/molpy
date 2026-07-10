@@ -21,6 +21,7 @@ from molrs.typifier import OPLSAATypifier
 
 from molpy.core.atomistic import Atomistic
 from molpy.core.forcefield import ForceField
+from molpy.core import fields
 
 from .atomistic import ForceFieldTypifier
 
@@ -65,7 +66,7 @@ class _ClpAtomTypifier:
     def typify(self, struct: Atomistic) -> Atomistic:
         """Return a copy of ``struct`` with CL&P ``type``/``class`` on every atom."""
         typed_atoms = self._typifier.typify(struct).to_frame()["atoms"]
-        types = typed_atoms["type"]
+        types = typed_atoms[fields.TYPE.key]
         classes = (
             typed_atoms["class"] if "class" in typed_atoms else [None] * len(types)
         )

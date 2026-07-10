@@ -584,7 +584,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         entity_type: type[Atom] = Atom,
         link_type: type[Link] = Bond,
     ) -> tuple["Atomistic", list[Atom]]:
-        sub, boundary, _ = self._extract_mapped(
+        sub, boundary, _, _ = self._extract_mapped(
             list(center_entities), radius, type(self)
         )
         return sub, boundary
@@ -596,15 +596,21 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         out_cls: type[G],
         *,
         regenerate_topology: bool = False,
-    ) -> tuple[G, list[Atom], dict[Atom, Atom]]:
+    ) -> tuple[G, list[Atom], dict[Atom, Atom], dict[int, int]]:
         """Induced radius-``radius`` ball plus a region-atom → parent-atom map.
 
-        Backs :meth:`extract_subgraph` (which drops the map) and
-        :class:`~molpy.core.affected_region.AffectedRegion` (which keeps it).
+        Backs :meth:`extract_subgraph` (which drops the extras) and
+        :class:`~molpy.core.affected_region.AffectedRegion` (which keeps them).
         ``out_cls`` selects the produced graph type — a plain :class:`Atomistic`
         or an :class:`AffectedRegion` — so the ball is materialised straight into
         a region subclass with no second copy. Returns
-        ``(subgraph, boundary_atoms, {region_atom: parent_atom})``.
+        ``(subgraph, boundary_atoms, {region_atom: parent_atom},
+        {region_atom_handle: hops_from_nearest_center})``.
+
+        The hop count is what the region's write-back filter keys on: an atom is
+        written back iff it lies within the typifier's ``interior_reach`` of the
+        edit. The BFS already computes it, so it is carried out rather than
+        recomputed.
 
         ``regenerate_topology`` perceives the ball's angles/dihedrals from its own
         bonds instead of copying them from the parent. The induced higher-order
@@ -618,19 +624,23 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         new = out_cls()
         new._props = dict(self._props)
         if not centers:
-            return new, [], {}
+            return new, [], {}, {}
 
         # BFS radius ball around every center over the bond graph (molrs kernel).
         # Radius-bounded so cost is O(ball), not O(connected component): once
         # crosslinks merge many chains into one giant component, an unbounded BFS
         # per edit would scan the whole network to build a ~radius-4 ball.
-        selected_handles: set[int] = set()
+        # Keep each atom's hop count to the *nearest* center — the region's
+        # write-back filter needs it, and recomputing it would mean a second BFS.
+        parent_hops: dict[int, int] = {}
         for c in centers:
-            selected_handles.update(
-                h for h, _ in self.topo_distances(c.handle, max_hops=radius)
-            )
+            for h, d in self.topo_distances(c.handle, max_hops=radius):
+                hops = int(d)
+                if hops < parent_hops.get(h, radius + 1):
+                    parent_hops[h] = hops
+        selected_handles: set[int] = set(parent_hops)
         if not selected_handles:
-            return new, [], {}
+            return new, [], {}, {}
 
         # Intern the ball's atoms straight from the BFS handles (O(ball)), in a
         # deterministic order. Everything below keys off the stable atom HANDLE,
@@ -689,7 +699,8 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         region_to_parent = {
             clone_by_handle[h]: parent_by_handle[h] for h in clone_by_handle
         }
-        return new, boundary, region_to_parent
+        hops = {clone_by_handle[h].handle: d for h, d in parent_hops.items()}
+        return new, boundary, region_to_parent, hops
 
     # ---------- copy / merge / adopt ----------
     def copy(self) -> Self:

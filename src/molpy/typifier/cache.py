@@ -20,12 +20,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from molpy.typifier.region import apply_region_types
-
 if TYPE_CHECKING:
     from molpy.core.affected_region import AffectedRegion
-    from molpy.typifier.region import RegionTypifier
-    from molpy.typifier.region import RegionTypes
+    from molpy.typifier.region import RegionTypes, RegionTypifier
 
 
 class RetypeCache:
@@ -45,17 +42,14 @@ class RetypeCache:
         self._buckets.setdefault(key, []).append((region, types))
         return types
 
-    def apply(self, region_types: RegionTypes, region: AffectedRegion) -> None:
-        """Write ``region_types`` onto ``region``'s parent interior atoms.
-
-        Delegates to :func:`~molpy.typifier.region.apply_region_types`, which
-        maps each stored canonical position onto ``region``'s atoms via its own
-        canonical order + ``entity_map`` (boundary atoms are never touched).
-        """
-        apply_region_types(region_types, region)
-
     def retype_and_apply(self, region: AffectedRegion) -> RegionTypes:
-        """Convenience: :meth:`retype` then :meth:`apply` onto the parent."""
+        """Type ``region`` (cached) and write its interior types onto the parent.
+
+        The write-back maps each stored canonical position onto ``region``'s own
+        canonical order + ``entity_map``, so a snapshot captured from a different
+        but isomorphic region still lands correctly. Atoms outside the write-back
+        set are never touched.
+        """
         types = self.retype(region)
-        self.apply(types, region)
+        types.apply_to(region)
         return types

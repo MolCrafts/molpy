@@ -1,49 +1,52 @@
-"""Region-scoped force-field typing.
+"""Region-scoped force-field typing: the immutable snapshot and its write-back.
 
-:func:`typify_region` types an :class:`~molpy.core.affected_region.AffectedRegion`
-as an ordinary standalone :class:`~molpy.core.atomistic.Atomistic` — the context
-``boundary`` shell gives the interior atoms complete ring/degree/SMARTS context,
-so they receive the *same* types they would in the full structure — then reads
-off the assigned types for every **non-boundary** atom plus the incident bonded
-terms, keyed by the region's molrs **canonical order**.
+A typifier types an :class:`~molpy.core.affected_region.AffectedRegion` as an
+ordinary standalone :class:`~molpy.core.atomistic.Atomistic` — the context shell
+around the region gives its interior atoms complete ring/degree/SMARTS context,
+so they receive the *same* types they would in the full structure — then snapshots
+the types of every **interior** atom (within ``interior_reach`` hops of the edit)
+plus the bonded terms wholly inside that set, keyed by the region's molrs
+**canonical order**.
 
 The result, a frozen :class:`RegionTypes`, holds plain data only (type strings +
-scalar params + canonical positions) and **no live** :class:`~molpy.core.entity.Entity`
-references, so it caches across structures: an isomorphic region reuses it by
-lining its own canonical order up against the cached one (see
-:class:`~molpy.typifier.cache.RetypeCache`).
+scalar params + canonical positions) and **no live**
+:class:`~molpy.core.entity.Entity` references, so it caches across structures: an
+isomorphic region reuses it by lining its own canonical order up against the
+cached one (see :class:`~molpy.typifier.cache.RetypeCache`).
 
-Boundary atoms have a bond-neighbour outside the ball, so their SMARTS context is
-truncated and their types would be wrong; region typing runs the atom typifier
-**non-strictly** so those atoms are simply left untyped and dropped here — never
-written back.
+Atoms outside the write-back set are never recorded. They exist only to give the
+interior its context, and their own context is truncated — a truncated SMARTS
+environment does not fail to match, it matches the **wrong rule**.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
+
+from molpy.core import fields
 
 if TYPE_CHECKING:
     from molpy.core.affected_region import AffectedRegion
     from molpy.core.atomistic import Atom, Atomistic
     from molpy.core.entity import Link
-    from molpy.typifier.atomistic import ForceFieldTypifier
+    from molpy.typifier.scope import TypeScope
 
 
 @runtime_checkable
 class RegionTypifier(Protocol):
-    """Structural type of the crosslinker/reacter retype hook.
+    """Structural type of a typifier that can type an affected region.
 
-    Anything that can type an :class:`~molpy.core.affected_region.AffectedRegion`
-    and report its context depth: the SMARTS-based
-    :class:`~molpy.typifier.atomistic.ForceFieldTypifier` and the AmberTools-backed
-    :class:`~molpy.typifier.ambertools.AmberToolsTypifier` both satisfy it.
+    It declares its receptive field as a :class:`~molpy.typifier.scope.TypeScope`
+    and knows how to type a region. The SMARTS-based
+    :class:`~molpy.typifier.atomistic.ForceFieldTypifier` and the
+    AmberTools-backed :class:`~molpy.typifier.ambertools.AmberToolsTypifier` both
+    satisfy it.
     """
 
     @property
-    def context_radius(self) -> int: ...
+    def scope(self) -> TypeScope: ...
 
     def typify_region(self, region: AffectedRegion) -> RegionTypes: ...
 
@@ -64,11 +67,32 @@ class TypeInfo:
     type: str | None
     params: tuple[tuple[str, ParamValue], ...]
 
+    @staticmethod
+    def as_param(value: object) -> ParamValue | None:
+        """Return ``value`` if it is a storable scalar param, else ``None``."""
+        if isinstance(value, (str, int, float, bool)):
+            return value
+        return None
+
+    @classmethod
+    def from_data(cls, data: dict[str, object], param_keys: tuple[str, ...]) -> Self:
+        """Capture one atom's type + the shared ``param_keys`` it carries."""
+        params: list[tuple[str, ParamValue]] = []
+        for key in param_keys:
+            value = cls.as_param(data.get(key))
+            if value is not None:
+                params.append((key, value))
+        raw_type = data.get(fields.TYPE.key)
+        return cls(
+            type=raw_type if isinstance(raw_type, str) else None,
+            params=tuple(params),
+        )
+
     def as_dict(self) -> dict[str, ParamValue]:
         """Flatten back to a ``data`` patch (``params`` plus ``type``)."""
         patch: dict[str, ParamValue] = dict(self.params)
         if self.type is not None:
-            patch["type"] = self.type
+            patch[fields.TYPE.key] = self.type
         return patch
 
 
@@ -80,204 +104,159 @@ class BondedTypeInfo:
     positions: tuple[int, ...]
     info: TypeInfo
 
+    @classmethod
+    def from_link(cls, data: dict[str, object], positions: tuple[int, ...]) -> Self:
+        """Capture a bonded term's type + scalar params at ``positions``."""
+        params: list[tuple[str, ParamValue]] = []
+        for key, value in data.items():
+            if key == fields.TYPE.key:
+                continue
+            scalar = TypeInfo.as_param(value)
+            if scalar is not None:
+                params.append((key, scalar))
+        raw_type = data.get(fields.TYPE.key)
+        return cls(
+            positions=positions,
+            info=TypeInfo(
+                type=raw_type if isinstance(raw_type, str) else None,
+                params=tuple(sorted(params)),
+            ),
+        )
+
 
 @dataclass(frozen=True)
 class RegionTypes:
     """Immutable, canonical-order snapshot of a region's assigned types.
 
-    Only **non-boundary** atoms (and bonded terms all of whose endpoints are
-    non-boundary) are recorded — boundary atoms carry truncated context and are
-    discarded. ``atoms`` maps a canonical-order position to the type the atom at
-    that position received; the same canonical labelling holds for any
-    isomorphic region, which is what lets the cache reuse a snapshot across
-    structures.
+    Only **interior** atoms (within ``interior_reach`` of the edit) and bonded
+    terms all of whose endpoints are interior are recorded. ``atoms`` maps a
+    canonical-order position to the type the atom at that position received; the
+    same canonical labelling holds for any isomorphic region, which is what lets
+    the cache reuse a snapshot across structures.
     """
 
-    #: ``(canonical position, type info)`` for each non-boundary atom.
+    #: ``(canonical position, type info)`` for each interior atom.
     atoms: tuple[tuple[int, TypeInfo], ...]
     bonds: tuple[BondedTypeInfo, ...]
     angles: tuple[BondedTypeInfo, ...]
     dihedrals: tuple[BondedTypeInfo, ...]
+    #: sp2 planarity terms; absent from a snapshot means a pyramidalised centre.
+    impropers: tuple[BondedTypeInfo, ...]
 
+    @classmethod
+    def capture(
+        cls,
+        region: AffectedRegion,
+        typed: Atomistic,
+        before: list[dict[str, object]],
+        after: list[dict[str, object]],
+    ) -> Self:
+        """Snapshot ``typed``'s interior types in ``region``'s canonical order.
 
-def _as_param(value: object) -> ParamValue | None:
-    """Return ``value`` if it is a storable scalar param, else ``None``."""
-    if isinstance(value, (str, int, float, bool)):
-        return value
-    return None
+        ``typed`` is ``region`` after a typifier ran on it (possibly a copy); its
+        atoms are in the same positional order as ``region``'s. ``before`` /
+        ``after`` are the per-atom data dicts either side of typing, used to
+        derive the shared param-key schema.
 
+        Raises:
+            ValueError: if an interior atom was left untyped. That means the
+                extracted ball was too small to give it complete context — the
+                one condition region typing may never paper over.
+        """
+        region_atoms = list(region.atoms)
+        typed_atoms = list(typed.atoms)
+        canon = region.canonical_order()
+        pos_of_handle = {atom.handle: pos for pos, atom in enumerate(region_atoms)}
+        canon_of_pos = {pos_of_handle[handle]: idx for idx, handle in enumerate(canon)}
+        interior = {atom.handle for atom in region.interior}
 
-def _scalar_delta(
-    before: list[dict[str, object]], after: list[dict[str, object]]
-) -> frozenset[str]:
-    """Keys whose scalar value typing added or changed on at least one atom.
+        param_keys = tuple(sorted(cls._scalar_delta(before, after) - {fields.TYPE.key}))
 
-    The union over all atoms defines a single, complete field schema (``type``
-    plus force-field params). Geometry / identity fields (coordinates, ``id``,
-    ``element`` …) are untouched by typing and so never enter the schema — which
-    is exactly why a snapshot is safe to apply onto a *different* isomorphic
-    region's parent atoms.
-    """
-    owned: set[str] = set()
-    for pre, post in zip(before, after, strict=True):
-        for key, value in post.items():
-            if _as_param(value) is not None and pre.get(key) != value:
-                owned.add(key)
-    return frozenset(owned)
+        entries: list[tuple[int, TypeInfo]] = []
+        for pos, region_atom in enumerate(region_atoms):
+            if region_atom.handle not in interior:
+                continue
+            entries.append(
+                (canon_of_pos[pos], TypeInfo.from_data(after[pos], param_keys))
+            )
+        entries.sort(key=lambda entry: entry[0])
 
-
-def _atom_info(data: dict[str, object], param_keys: tuple[str, ...]) -> TypeInfo:
-    """Build a :class:`TypeInfo` for one atom over the shared ``param_keys``."""
-    params: list[tuple[str, ParamValue]] = []
-    for key in param_keys:
-        value = _as_param(data.get(key))
-        if value is not None:
-            params.append((key, value))
-    raw_type = data.get("type")
-    return TypeInfo(
-        type=raw_type if isinstance(raw_type, str) else None,
-        params=tuple(params),
-    )
-
-
-def _link_info(data: dict[str, object], positions: tuple[int, ...]) -> BondedTypeInfo:
-    """Capture a bonded term's type + scalar params at ``positions``."""
-    params: list[tuple[str, ParamValue]] = []
-    for key, value in data.items():
-        if key == "type":
-            continue
-        scalar = _as_param(value)
-        if scalar is not None:
-            params.append((key, scalar))
-    raw_type = data.get("type")
-    return BondedTypeInfo(
-        positions=positions,
-        info=TypeInfo(
-            type=raw_type if isinstance(raw_type, str) else None,
-            params=tuple(sorted(params)),
-        ),
-    )
-
-
-def typify_region(typifier: ForceFieldTypifier, region: AffectedRegion) -> RegionTypes:
-    """Type ``region`` as a standalone graph and snapshot its interior types.
-
-    Runs the typifier's full pipeline on the region with atom typing forced
-    **non-strict** (boundary atoms have truncated context and are meant to be
-    left untyped), then records, in canonical order, the types of every
-    non-boundary atom and every fully-interior bonded term.
-
-    Args:
-        typifier: the force-field typifier (must expose ``typify`` and, for the
-            non-strict atom pass, ``atom_typifier``).
-        region: the affected region to type.
-
-    Returns:
-        A frozen :class:`RegionTypes` snapshot (canonical-order keyed, no live
-        entity references).
-
-    Raises:
-        ValueError: if a non-boundary (interior) atom is left untyped while the
-            typifier's atom typing is strict — a signal that the extraction
-            radius is too small to give interior atoms complete context.
-    """
-    region_atoms = list(region.atoms)
-    before = [dict(atom.data) for atom in region_atoms]
-
-    typed = _typify_nonstrict(typifier, region)
-    typed_atoms = list(typed.atoms)
-    after = [dict(atom.data) for atom in typed_atoms]
-
-    canon = region.canonical_order()
-    pos_of_handle = {atom.handle: pos for pos, atom in enumerate(region_atoms)}
-    canon_of_pos = {pos_of_handle[handle]: idx for idx, handle in enumerate(canon)}
-    boundary = {atom.handle for atom in region.boundary}
-
-    param_keys = tuple(sorted(_scalar_delta(before, after) - {"type"}))
-
-    atom_entries: list[tuple[int, TypeInfo]] = []
-    for pos, region_atom in enumerate(region_atoms):
-        if region_atom.handle in boundary:
-            continue
-        atom_entries.append((canon_of_pos[pos], _atom_info(after[pos], param_keys)))
-    atom_entries.sort(key=lambda entry: entry[0])
-
-    strict = bool(getattr(getattr(typifier, "atom_typifier", None), "strict", False))
-    if strict:
-        untyped = [idx for idx, info in atom_entries if info.type is None]
+        untyped = [idx for idx, info in entries if info.type is None]
         if untyped:
             raise ValueError(
                 "region interior atom(s) left untyped at canonical positions "
-                f"{untyped}: extraction radius too small for full SMARTS context"
+                f"{untyped}: extract_radius={region.extract_radius} is too small "
+                f"for interior_reach={region.interior_reach}"
             )
 
-    def _links(views: Iterable[Link[Atom]]) -> tuple[BondedTypeInfo, ...]:
-        return _capture_links(views, typed_atoms, canon_of_pos, boundary, region_atoms)
+        def links(views: Iterable[Link[Atom]]) -> tuple[BondedTypeInfo, ...]:
+            return cls._capture_links(
+                views, typed_atoms, canon_of_pos, interior, region_atoms
+            )
 
-    return RegionTypes(
-        atoms=tuple(atom_entries),
-        bonds=_links(typed.bonds),
-        angles=_links(typed.angles),
-        dihedrals=_links(typed.dihedrals),
-    )
+        return cls(
+            atoms=tuple(entries),
+            bonds=links(typed.bonds),
+            angles=links(typed.angles),
+            dihedrals=links(typed.dihedrals),
+            impropers=links(typed.impropers),
+        )
 
+    def apply_to(self, region: AffectedRegion) -> None:
+        """Write this snapshot onto ``region``'s parent atoms.
 
-def apply_region_types(region_types: RegionTypes, region: AffectedRegion) -> None:
-    """Write a :class:`RegionTypes` snapshot onto ``region``'s parent atoms.
+        Lines each stored canonical position up against ``region``'s **own**
+        :meth:`~molpy.core.affected_region.AffectedRegion.canonical_order` — so a
+        snapshot captured from a *different* but isomorphic region still maps
+        correctly — then reaches the parent atom through ``region.entity_map``.
+        Atoms outside the write-back set are absent from the snapshot and are
+        never touched.
+        """
+        canon = region.canonical_order()
+        handle_to_parent = {
+            region_atom.handle: parent_atom
+            for region_atom, parent_atom in region.entity_map.items()
+        }
+        for canon_index, info in self.atoms:
+            handle_to_parent[canon[canon_index]].update(**info.as_dict())
 
-    Lines each stored canonical position up against ``region``'s **own**
-    :meth:`~molpy.core.affected_region.AffectedRegion.canonical_order` — so a
-    snapshot captured from a *different* but isomorphic region still maps
-    correctly — then reaches the parent atom through ``region.entity_map``.
-    Boundary atoms are absent from the snapshot and never touched.
-    """
-    canon = region.canonical_order()
-    handle_to_parent = {
-        region_atom.handle: parent_atom
-        for region_atom, parent_atom in region.entity_map.items()
-    }
-    for canon_index, info in region_types.atoms:
-        handle_to_parent[canon[canon_index]].update(**info.as_dict())
+    @staticmethod
+    def _scalar_delta(
+        before: list[dict[str, object]], after: list[dict[str, object]]
+    ) -> frozenset[str]:
+        """Keys whose scalar value typing added or changed on at least one atom.
 
+        The union over all atoms defines a single, complete field schema (``type``
+        plus force-field params). Geometry / identity fields (coordinates, ``id``,
+        ``element`` …) are untouched by typing and so never enter the schema —
+        which is exactly why a snapshot is safe to apply onto a *different*
+        isomorphic region's parent atoms.
+        """
+        owned: set[str] = set()
+        for pre, post in zip(before, after, strict=True):
+            for key, value in post.items():
+                if TypeInfo.as_param(value) is not None and pre.get(key) != value:
+                    owned.add(key)
+        return frozenset(owned)
 
-def _typify_nonstrict(
-    typifier: ForceFieldTypifier, region: AffectedRegion
-) -> Atomistic:
-    """Type ``region`` with atom typing forced non-strict, then restore.
-
-    Only the atom typifier's strictness matters: the pipeline already skips
-    bonded/pair typing for any atom left without a ``type``, so a
-    truncated-context boundary atom never raises. The toggle is transient and
-    restored even on error.
-    """
-    atom_typifier = getattr(typifier, "atom_typifier", None)
-    if atom_typifier is None:
-        return typifier.typify(region)
-    saved = atom_typifier.strict
-    atom_typifier.strict = False
-    try:
-        return typifier.typify(region)
-    finally:
-        atom_typifier.strict = saved
-
-
-def _capture_links(
-    links: Iterable[Link[Atom]],
-    typed_atoms: list[Atom],
-    canon_of_pos: dict[int, int],
-    boundary: set[int],
-    region_atoms: list[Atom],
-) -> tuple[BondedTypeInfo, ...]:
-    """Snapshot every bonded term all of whose endpoints are non-boundary."""
-    pos_of_handle = {atom.handle: pos for pos, atom in enumerate(typed_atoms)}
-    out: list[BondedTypeInfo] = []
-    for link in links:
-        positions = [pos_of_handle.get(ep.handle) for ep in link.endpoints]
-        if any(pos is None for pos in positions):
-            continue
-        resolved = [pos for pos in positions if pos is not None]
-        if any(region_atoms[pos].handle in boundary for pos in resolved):
-            continue
-        canon_positions = tuple(canon_of_pos[pos] for pos in resolved)
-        out.append(_link_info(dict(link.data), canon_positions))
-    return tuple(out)
+    @staticmethod
+    def _capture_links(
+        links: Iterable[Link[Atom]],
+        typed_atoms: list[Atom],
+        canon_of_pos: dict[int, int],
+        interior: set[int],
+        region_atoms: list[Atom],
+    ) -> tuple[BondedTypeInfo, ...]:
+        """Snapshot every bonded term all of whose endpoints are interior."""
+        pos_of_handle = {atom.handle: pos for pos, atom in enumerate(typed_atoms)}
+        out: list[BondedTypeInfo] = []
+        for link in links:
+            positions = [pos_of_handle.get(ep.handle) for ep in link.endpoints]
+            if any(pos is None for pos in positions):
+                continue
+            resolved = [pos for pos in positions if pos is not None]
+            if any(region_atoms[pos].handle not in interior for pos in resolved):
+                continue
+            canon_positions = tuple(canon_of_pos[pos] for pos in resolved)
+            out.append(BondedTypeInfo.from_link(dict(link.data), canon_positions))
+        return tuple(out)

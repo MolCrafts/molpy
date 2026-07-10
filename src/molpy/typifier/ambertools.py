@@ -15,10 +15,10 @@ hydroxyl); charge is instead conserved locally by the reacter/crosslinker foldin
 each leaving group's charge onto its anchor atom. This typifier never writes a
 charge back.
 
-It satisfies the region-typifier protocol (``context_radius`` + ``typify_region``)
-so a :class:`~molpy.builder.crosslink.Crosslinker` (or reacter) retypes and
-patches each formed junction back onto the network through its ``typifier=`` hook
-+ ``RetypeCache`` — the patch-back is the reacter's job, not the wrapper's.
+It satisfies the region-typifier protocol (``scope`` + ``typify_region``) so a
+:class:`~molpy.builder.crosslink.Crosslinker` (or reacter) retypes and patches
+each formed junction back onto the network through its ``typifier=`` hook +
+``RetypeCache`` — the patch-back is the reacter's job, not the wrapper's.
 """
 
 from __future__ import annotations
@@ -26,41 +26,39 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from molpy.typifier.region import RegionTypes, TypeInfo
+from molpy.typifier.scope import TypeScope
+from molpy.core import fields
 
 if TYPE_CHECKING:
     from molpy.builder.ambertools import AmberTools
     from molpy.core.affected_region import AffectedRegion
 
-#: Default extraction radius (bonds). GAFF atom types are set by a 1–2 bond
-#: environment, so a small ball types the junction interior identically to a
-#: large one while keeping the retype cache from fragmenting on far-field edits.
-_DEFAULT_CONTEXT_RADIUS = 2
-
 
 class AmberToolsTypifier:
     """Type an affected region's interior via AmberTools; accumulate its FF."""
 
-    def __init__(
-        self, amber: AmberTools, *, context_radius: int = _DEFAULT_CONTEXT_RADIUS
-    ) -> None:
+    def __init__(self, amber: AmberTools, *, reach: int) -> None:
+        """Bind an AmberTools wrapper and declare its receptive field.
+
+        Args:
+            amber: The antechamber/parmchk2/tleap wrapper.
+            reach: Neighbourhood radius (bonds) that decides one GAFF atom type.
+                **Required** — antechamber is a black box, so molpy cannot derive
+                it the way it can for a compiled SMARTS pattern set. GAFF atom
+                types are set by a 1–2 bond environment, so ``reach=2``; measure
+                it for a bulky or fused junction rather than guessing.
+        """
         self._amber = amber
-        self._context_radius = int(context_radius)
+        self._scope = TypeScope(reach=int(reach))
         # Merged force field of every distinct region typed so far (lazily set to
         # the first region's ff, then merged into). Holds the junction bonded
         # terms a linear chain lacks.
         self._forcefield: Any = None
 
     @property
-    def context_radius(self) -> int:
-        """Extraction ball depth (bonds) for a retyped region — user-tunable.
-
-        GAFF atom typing reaches only 1–2 bonds, so the default (2) types the
-        junction the same as a wider ball would. Raise it for a bulky or fused
-        junction whose interior atoms need more surrounding context; a smaller
-        radius also keeps the retype cache from splitting on unrelated nearby
-        edits (see :func:`molpy.core.region_radius`).
-        """
-        return self._context_radius
+    def scope(self) -> TypeScope:
+        """The declared receptive field (see :meth:`__init__`)."""
+        return self._scope
 
     @property
     def forcefield(self) -> Any:
@@ -89,29 +87,43 @@ class AmberToolsTypifier:
 
     @staticmethod
     def _snapshot(region: AffectedRegion, result: Any) -> RegionTypes:
-        """Interior (non-boundary) atom **types**, keyed by canonical order.
+        """Interior atom **types**, keyed by canonical order.
 
         antechamber preserves atom order and the capped molecule keeps the region
-        atoms first, so ``result``'s i-th atom is the region's i-th atom. Boundary
-        atoms carry truncated context and are dropped (same contract as
-        :func:`~molpy.typifier.region.typify_region`). Charges are deliberately
-        not captured — they are conserved locally by the reacter, not recomputed.
+        atoms first, so ``result``'s i-th atom is the region's i-th atom. Only the
+        write-back set (``hops <= interior_reach``) is recorded; atoms further out
+        exist to give it context and carry truncated context themselves. Charges
+        are deliberately not captured — they are conserved locally by the
+        reacter/crosslinker, not recomputed.
+
+        Raises:
+            ValueError: if an interior atom came back untyped — the extracted ball
+                was too small for its context.
         """
         block = result.frame["atoms"]
-        types = list(block["type"])
+        types = list(block[fields.TYPE.key])
 
         region_atoms = list(region.atoms)
         canon = region.canonical_order()
         pos_of_handle = {atom.handle: i for i, atom in enumerate(region_atoms)}
         canon_of_pos = {pos_of_handle[h]: idx for idx, h in enumerate(canon)}
-        boundary = {atom.handle for atom in region.boundary}
+        interior = {atom.handle for atom in region.interior}
 
         entries: list[tuple[int, TypeInfo]] = []
         for pos, atom in enumerate(region_atoms):
-            if atom.handle in boundary:
+            if atom.handle not in interior:
                 continue
-            entries.append(
-                (canon_of_pos[pos], TypeInfo(type=str(types[pos]), params=()))
-            )
+            kind = str(types[pos])
+            entries.append((canon_of_pos[pos], TypeInfo(type=kind or None, params=())))
         entries.sort(key=lambda entry: entry[0])
-        return RegionTypes(atoms=tuple(entries), bonds=(), angles=(), dihedrals=())
+
+        untyped = [idx for idx, info in entries if info.type is None]
+        if untyped:
+            raise ValueError(
+                "region interior atom(s) left untyped by antechamber at canonical "
+                f"positions {untyped}: extract_radius={region.extract_radius} is "
+                f"too small for interior_reach={region.interior_reach}"
+            )
+        return RegionTypes(
+            atoms=tuple(entries), bonds=(), angles=(), dihedrals=(), impropers=()
+        )

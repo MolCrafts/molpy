@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from molpy.core.affected_region import AffectedRegion, region_radius
+from molpy.core.affected_region import AffectedRegion
 from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral, Improper
 from molpy.core.entity import Entity
 from molpy.reacter.topology_detector import TopologyDetector
@@ -519,10 +519,13 @@ class Reacter:
 
         # Step 7b: Build the affected region around the touched atoms (the
         # anchors and the new-bond endpoints), the hashable subgraph that
-        # supersedes the flat ``modified_atoms``. Radius auto-derives from the
-        # typifier's SMARTS depth (floor 4) so boundary atoms carry full context.
+        # supersedes the flat ``modified_atoms``. Only a typifier declares the
+        # radius (its ``scope``); without one there is no region — no radius may
+        # be guessed. (This module is removed by graph-assembler-03; the
+        # capability probe below is kept only to keep the legacy path alive.)
         region: AffectedRegion | None = None
-        if new_bond or removed_atoms:
+        scope = getattr(typifier, "scope", None)
+        if scope is not None and (new_bond or removed_atoms):
             seeds: list[Atom] = []
             if isinstance(anchor_L, Atom):
                 seeds.append(anchor_L)
@@ -531,7 +534,7 @@ class Reacter:
             if new_bond is not None:
                 seeds.extend(ep for ep in new_bond.endpoints if isinstance(ep, Atom))
             if seeds:
-                region = AffectedRegion._from(merged, seeds, region_radius(typifier))
+                region = scope.region(merged, seeds)
 
         # Step 8: Build result structure
         result = ReactionResult(

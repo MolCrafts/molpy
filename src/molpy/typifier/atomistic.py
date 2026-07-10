@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import TYPE_CHECKING, override
 
+from molpy.core import fields
 from molpy.core.atomistic import Angle, Atom, Atomistic, Bond, Dihedral
 from molpy.core.forcefield import (
     AngleType,
@@ -16,6 +17,7 @@ from molpy.core.forcefield import (
 if TYPE_CHECKING:
     from molpy.core.affected_region import AffectedRegion
     from molpy.typifier.region import RegionTypes
+    from molpy.typifier.scope import TypeScope
 
 
 def _build_type_class_layer(
@@ -101,7 +103,7 @@ def atomtype_matches(atomtype: AtomType, type_str: str) -> bool:
 
     Args:
         atomtype: AtomType instance
-        type_str: Type string to match (from Atom.data["type"] or class name)
+        type_str: Type string to match (from the atom's canonical type field or class name)
 
     Returns:
         True if matches, False otherwise
@@ -182,7 +184,7 @@ class ForceFieldBondTypifier(TypifierBase[Bond]):
                 best_key, best_bt = key, bond_type
 
         if best_bt is not None:
-            bond.data["type"] = best_bt.name
+            bond.data[fields.TYPE.key] = best_bt.name
             bond.data.update(**best_bt.params.kwargs)
             return bond
 
@@ -240,7 +242,7 @@ class ForceFieldAngleTypifier(TypifierBase[Angle]):
                 best_key, best_at = key, angle_type
 
         if best_at is not None:
-            angle.data["type"] = best_at.name
+            angle.data[fields.TYPE.key] = best_at.name
             angle.data.update(**best_at.params.kwargs)
             return angle
 
@@ -306,7 +308,7 @@ class ForceFieldDihedralTypifier(TypifierBase[Dihedral]):
                 best_key, best_dt = key, dihedral_type
 
         if best_dt is not None:
-            dihedral.data["type"] = best_dt.name
+            dihedral.data[fields.TYPE.key] = best_dt.name
             dihedral.data.update(**best_dt.params.kwargs)
             return dihedral
 
@@ -403,40 +405,59 @@ class ForceFieldTypifier(TypifierBase[Atomistic]):
             )
 
     @property
-    def context_radius(self) -> int:
-        """Retype-safe extraction depth (in bonds) this typifier's atom typing needs.
+    def scope(self) -> "TypeScope":
+        """The receptive field of this typifier's atom typing, in bonds.
 
-        OPLS/GAFF atom-typing SMARTS reach only a few bonds; 4 (BondReact's
-        proven default) covers their neighbour/ring context with margin.
-        Consumed by :func:`molpy.core.region_radius` as this typifier's own
-        declaration of how wide an :class:`~molpy.core.AffectedRegion` shell it
-        needs — so the region always carries complete SMARTS context.
+        ``reach = 2`` is the **measured** minimum: sweeping ``reach`` over
+        1…5 and comparing region typing against whole-graph typing (the
+        definitional oracle) for OPLS-AA, ``reach = 1`` mistypes 6 of 98 interior
+        atoms of ``COCCOC`` while ``reach = 2`` reproduces every type on PEO,
+        p-xylene (aromatic ring) and methyl acrylate (sp2 carbonyl). Anything
+        larger only widens the extracted ball and fragments the retype cache.
+
+        See :class:`~molpy.typifier.scope.TypeScope` for the two radii this
+        implies (write-back ``ball(touched, 2)``, extraction ``ball(touched, 4)``).
         """
-        return 4
+        from molpy.typifier.scope import TypeScope
+
+        return TypeScope(reach=2)
+
+    def _typify_relaxed(self, region: "AffectedRegion") -> Atomistic:
+        """Type ``region`` with atom typing relaxed, then restore strictness.
+
+        Atoms on the region's outer shell have truncated context and are *meant*
+        to come back untyped; only the atom typifier's strictness would object.
+        The interior guard in :meth:`RegionTypes.capture` is unconditional and
+        does not depend on this flag — that is the whole point.
+        """
+        if self.skip_atom_typing:
+            return self.typify(region)
+        saved = self.atom_typifier.strict
+        self.atom_typifier.strict = False
+        try:
+            return self.typify(region)
+        finally:
+            self.atom_typifier.strict = saved
 
     def typify_region(self, region: "AffectedRegion") -> "RegionTypes":
-        """Type ``region`` as a standalone graph; snapshot its interior types.
+        """Type ``region`` as a standalone graph; snapshot its interior types."""
+        from molpy.typifier.region import RegionTypes
 
-        Thin delegate to :func:`molpy.typifier.region.typify_region`. Its
-        presence is the capability marker the reacter checks (``hasattr``) before
-        taking the region-scoped + cached retype path; typifiers without it fall
-        back to the whole-graph pass unchanged.
-        """
-        from molpy.typifier.region import typify_region
-
-        return typify_region(self, region)
+        region_atoms = list(region.atoms)
+        before = [dict(atom.data) for atom in region_atoms]
+        typed = self._typify_relaxed(region)
+        after = [dict(atom.data) for atom in typed.atoms]
+        return RegionTypes.capture(region, typed, before, after)
 
     def retype_region(self, region: "AffectedRegion") -> "RegionTypes":
         """Type ``region`` and write its interior types onto the parent atoms.
 
-        The un-cached one-shot the reacter uses when no shared
+        The un-cached one-shot used when no shared
         :class:`~molpy.typifier.cache.RetypeCache` is threaded through — types
         the region and applies the result via canonical order + ``entity_map``.
         """
-        from molpy.typifier.region import apply_region_types
-
         region_types = self.typify_region(region)
-        apply_region_types(region_types, region)
+        region_types.apply_to(region)
         return region_types
 
     @override
@@ -449,14 +470,14 @@ class ForceFieldTypifier(TypifierBase[Atomistic]):
 
         if not self.skip_pair_typing:
             for atom in new_struct.atoms:
-                if atom.get("type") is not None:
+                if atom.get(fields.TYPE.key) is not None:
                     self.pair_typifier.typify(atom)
 
         if not self.skip_bond_typing:
             for bond in new_struct.bonds:
                 if (
-                    bond.itom.get("type") is not None
-                    and bond.jtom.get("type") is not None
+                    bond.itom.get(fields.TYPE.key) is not None
+                    and bond.jtom.get(fields.TYPE.key) is not None
                 ):
                     self.bond_typifier.typify(bond)
 
@@ -464,14 +485,14 @@ class ForceFieldTypifier(TypifierBase[Atomistic]):
             angles = new_struct.links.bucket(Angle)
             for angle in angles:
                 endpoints = angle.endpoints
-                if all(ep.get("type") is not None for ep in endpoints):
+                if all(ep.get(fields.TYPE.key) is not None for ep in endpoints):
                     self.angle_typifier.typify(angle)
 
         if not self.skip_dihedral_typing:
             dihedrals = new_struct.links.bucket(Dihedral)
             for dihedral in dihedrals:
                 endpoints = dihedral.endpoints
-                if all(ep.get("type") is not None for ep in endpoints):
+                if all(ep.get(fields.TYPE.key) is not None for ep in endpoints):
                     self.dihedral_typifier.typify(dihedral)
 
         return new_struct

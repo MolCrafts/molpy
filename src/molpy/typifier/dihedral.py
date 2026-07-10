@@ -4,6 +4,7 @@ from collections import defaultdict
 
 from molpy.core.atomistic import Dihedral
 from molpy.core.forcefield import AtomType, DihedralType, ForceField
+from molpy.core import fields
 
 from .base import TypifierBase
 
@@ -77,7 +78,7 @@ class DihedralTypifier(TypifierBase):
                 and self._matches(at3, jtom_type)
                 and self._matches(at4, itom_type)
             ):
-                dihedral.data["type"] = (
+                dihedral.data[fields.TYPE.key] = (
                     f"{itom_type}-{jtom_type}-{ktom_type}-{ltom_type}"
                 )
                 dihedral.data["ff_type"] = dihedral_type.name
@@ -109,7 +110,7 @@ class DihedralTypifier(TypifierBase):
                     and self._matches(at3, jtom_class)
                     and self._matches(at4, itom_class)
                 ):
-                    dihedral.data["type"] = dihedral_type.name
+                    dihedral.data[fields.TYPE.key] = dihedral_type.name
                     dihedral.data.update(**dihedral_type.params.kwargs)
                     return dihedral
 

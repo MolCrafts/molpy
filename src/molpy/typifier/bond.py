@@ -4,6 +4,7 @@ from collections import defaultdict
 
 from molpy.core.atomistic import Bond
 from molpy.core.forcefield import AtomType, BondType, ForceField
+from molpy.core import fields
 
 from .base import TypifierBase
 
@@ -62,7 +63,7 @@ class BondTypifier(TypifierBase):
             if (self._matches(at1, itom_type) and self._matches(at2, jtom_type)) or (
                 self._matches(at1, jtom_type) and self._matches(at2, itom_type)
             ):
-                bond.data["type"] = bond_type.name
+                bond.data[fields.TYPE.key] = bond_type.name
                 bond.data.update(**bond_type.params.kwargs)
                 return bond
 
@@ -77,7 +78,7 @@ class BondTypifier(TypifierBase):
                 ) or (
                     self._matches(at1, jtom_class) and self._matches(at2, itom_class)
                 ):
-                    bond.data["type"] = bond_type.name
+                    bond.data[fields.TYPE.key] = bond_type.name
                     bond.data.update(**bond_type.params.kwargs)
                     return bond
 

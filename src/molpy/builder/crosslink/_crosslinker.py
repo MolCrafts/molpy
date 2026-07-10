@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, TypeVar
 import numpy as np
 
 import molrs
-from molpy.core.affected_region import AffectedRegion, region_radius
+from molpy.core.affected_region import AffectedRegion
 from molpy.core.atomistic import Atomistic
 
 if TYPE_CHECKING:
@@ -126,8 +126,9 @@ class Crosslinker(ABC):
         self._typifier = typifier
         # Affected regions from the most recent ``apply`` — one per formed
         # crosslink, seeded by the atoms ``molrs.Reaction.apply`` reports as
-        # touched. Consumed by the incremental-typify layer (spec 02); ``apply``
-        # still returns the graph, so this is a backward-compatible side channel.
+        # touched. Only a typifier declares the radius a region needs (its
+        # ``scope``), so with ``typifier=None`` this stays empty: pure-topology
+        # crosslinking is a named mode, not a region path with a guessed radius.
         self._last_regions: list[AffectedRegion] = []
         forming = self._reaction.forming_bonds
         label_sets = self._component_label_sets()
@@ -145,13 +146,14 @@ class Crosslinker(ABC):
     def apply(self, graph: GraphT) -> GraphT:
         """Return a new crosslinked graph (same subclass); ``graph`` untouched.
 
-        Each ``molrs.Reaction.apply`` returns the atom handles it touched; the
-        radius-``region_radius`` ball around them is captured as an
-        :class:`AffectedRegion` in :attr:`last_regions` for every formed crosslink.
-        When a ``typifier`` was supplied, each region is additionally retyped
-        through a per-``apply`` shared cache and its interior types written onto
-        ``work`` (identical crosslinks type once); with no typifier the regions
-        are still exposed for an external parameteriser (the GAFF path).
+        Each ``molrs.Reaction.apply`` returns the atom handles it touched. When a
+        ``typifier`` was supplied, the ball its :class:`~molpy.typifier.scope.TypeScope`
+        calls for is captured around them as an :class:`AffectedRegion`, retyped
+        through a per-``apply`` shared cache (identical crosslinks type once), and
+        its interior types written onto ``work``; the regions are also exposed in
+        :attr:`last_regions`. With ``typifier=None`` this is pure-topology
+        crosslinking and no region is built — nothing declares how wide it
+        should be.
         """
         work = graph.copy()
         # Per-atom ``{handle: type}`` — the ``%LABEL`` context for matching (so a
@@ -169,17 +171,21 @@ class Crosslinker(ABC):
             labels=labels,
             components=components,
         )
-        radius = region_radius(self._typifier)
+        scope = self._typifier.scope if self._typifier is not None else None
         regions: list[AffectedRegion] = []
+        edits = 0
         for binding in self.select(context):
             q_before = _total_charge(work)
             # refresh=False: skip molrs' per-apply whole-graph angle/dihedral +
             # aromaticity refresh (O(N) each). Matching + region extraction need
             # only bonds, which update in place; we refresh ONCE below.
             touched = self._reaction.apply(work, binding, labels, refresh=False)
+            self._assert_touched_covers_forming_bond(binding, touched)
             _conserve_leaving_charge(work, touched, q_before)
-            regions.append(AffectedRegion._from(work, touched, radius))
-        if regions:
+            edits += 1
+            if scope is not None:
+                regions.append(scope.region(work, touched))
+        if edits:
             work.generate_topology(gen_angle=True, gen_dihedral=True)
             molrs.perceive_aromaticity(work)
         self._last_regions = regions
@@ -194,6 +200,28 @@ class Crosslinker(ABC):
             for atom in graph.atoms
             if (kind := atom.get("type")) is not None
         }
+
+    def _assert_touched_covers_forming_bond(
+        self, binding: dict[int, int], touched: Sequence[int]
+    ) -> None:
+        """The region is only complete if ``touched`` names the new bond's ends.
+
+        ``interior = ball(touched, interior_reach)`` covers every atom whose type
+        can change **provided** the edit reported the surviving endpoint of each
+        bond it formed or broke. That is a contract of
+        ``molrs.Reaction.apply``; molpy asserts it rather than assuming it,
+        because a miss would silently leave stale types behind.
+        """
+        if self._map_a < 0:
+            return
+        expected = {binding[self._map_a], binding[self._map_b]}
+        missing = expected - set(touched)
+        if missing:
+            raise RuntimeError(
+                f"molrs.Reaction.apply omitted forming-bond endpoint(s) "
+                f"{sorted(missing)} from its touched set {sorted(touched)}; "
+                "the affected region would be incomplete"
+            )
 
     def _retype_regions(self, regions: list[AffectedRegion]) -> None:
         """Retype each region's interior onto the parent when a typifier is set.

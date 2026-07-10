@@ -1,20 +1,23 @@
 """A hashable MolGraph subgraph produced by a graph edit.
 
-:class:`AffectedRegion` is the radius-N ball around the atoms a graph edit
-touched, extracted (via :meth:`Atomistic._extract_mapped`) at a retype-safe
-radius. It **is** an :class:`~molpy.core.atomistic.Atomistic` — so it hands
-straight to third-party typifiers / AmberTools — but adds region semantics
-(``interior`` / ``boundary`` / ``entity_map``) and an isomorphism-invariant
-structural ``__hash__`` / ``__eq__`` (via the molrs Weisfeiler–Lehman graph
-hash), so identical polymer junctions dedupe to one cache key.
+:class:`AffectedRegion` is the ball a graph edit disturbed, extracted at the
+radius its typifier declares (see :class:`~molpy.typifier.scope.TypeScope`, the
+one place that owns the radius arithmetic). It **is** an
+:class:`~molpy.core.atomistic.Atomistic` — so it hands straight to third-party
+typifiers / AmberTools — but adds region semantics (``interior`` / ``boundary`` /
+``hops`` / ``entity_map``) and an isomorphism-invariant structural ``__hash__`` /
+``__eq__`` (via the molrs Weisfeiler–Lehman graph hash), so identical polymer
+junctions dedupe to one cache key.
+
+``interior`` is the **write-back set**: every atom within ``interior_reach`` hops
+of the edit. It is *not* "everything that is not boundary" — an atom on the outer
+shell of the extracted ball carries truncated context, and a truncated SMARTS
+environment does not fail to match, it matches the **wrong rule**. Only ``hops``
+decides what is written back.
 
 The region overrides hashing only at the *region* level; its member
 :class:`~molpy.core.entity.Entity` / :class:`~molpy.core.entity.Link` views keep
 their identity hashing (unchanged core contract).
-
-Producers (``Reacter``, ``Crosslinker``) build a region from the atoms an edit
-reports as touched. Region-scoped typing + the retype cache keyed by
-``AffectedRegion.__hash__`` are ``incremental-typify-02`` (out of scope here).
 
 The generic :class:`_RegionMixin` is shared with an eventual coarse-grained
 variant; only the all-atom :class:`AffectedRegion` is instantiated here.
@@ -23,49 +26,35 @@ variant; only the all-atom :class:`AffectedRegion` is instantiated here.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, Self
+from typing import Self
 
 from molpy.core.atomistic import Atom, Atomistic
 from molpy.core.entity import Entity
-
-#: Fallback extraction radius when a typifier declares no ``context_radius`` —
-#: BondReact's proven default, wide enough for SMARTS boundary context.
-_FLOOR = 4
-
-
-def region_radius(typifier: object | None = None) -> int:
-    """Extraction radius for an :class:`AffectedRegion`.
-
-    The typifier owns this: it exposes ``context_radius`` — the ball depth its
-    typing actually needs, which it may make a user-tunable knob (a simple
-    junction needs a small radius; a bulky/fused one more). ``region_radius``
-    trusts that declaration. Only when it is absent/zero — or ``typifier`` is
-    ``None`` — does the :data:`_FLOOR` fallback apply.
-
-    Trusting the declaration (rather than flooring every typifier up to 4) is
-    what keeps a small, local reaction from extracting a ball so wide it reaches
-    neighbouring edits and fragments the retype cache into many spurious classes.
-    """
-    ctx = int(getattr(typifier, "context_radius", 0) or 0)
-    return ctx if ctx > 0 else _FLOOR
 
 
 class _RegionMixin[E: Entity]:
     """Region semantics layered onto a molpy graph (all-atom or coarse-grained).
 
-    Carries the changed ``interior`` atoms (to be retyped), the context-only
-    ``boundary`` shell (never retyped), and the region → parent ``entity_map``
-    (to map assigned types back). The concrete subclass supplies the structural
-    ``__hash__`` / ``__eq__`` over the molrs graph hash. Populated by
-    :meth:`_from`, which is the region's only constructor.
+    Carries the ``interior`` atoms (within ``interior_reach`` of the edit — the
+    ones whose types are written back), the context-only ``boundary`` shell, the
+    per-atom ``hops`` distance from the edit, and the region → parent
+    ``entity_map`` (to map assigned types back). The concrete subclass supplies
+    the structural ``__hash__`` / ``__eq__`` over the molrs graph hash. Populated
+    by :meth:`_from`, which is the region's only constructor.
     """
 
-    #: the changed atoms an edit touched — the ones to be retyped.
+    #: atoms within ``interior_reach`` hops of the edit — the write-back set.
     interior: tuple[E, ...]
-    #: the context-only shell (each has a neighbour outside the ball).
+    #: the outer shell (each has a neighbour outside the extracted ball).
     boundary: tuple[E, ...]
+    #: region entity handle → hops from the nearest touched atom.
+    hops: dict[int, int]
     #: region entity → parent-graph entity (invert to map types back).
     entity_map: dict[E, E]
+    #: radius of the write-back set (``TypeScope.interior_reach``).
+    interior_reach: int
+    #: radius of the extracted ball (``TypeScope.extract_radius``).
+    extract_radius: int
 
 
 class AffectedRegion(_RegionMixin[Atom], Atomistic):
@@ -75,32 +64,80 @@ class AffectedRegion(_RegionMixin[Atom], Atomistic):
     ``molrs.Atomistic`` remains the solid base (contributed by ``Atomistic``),
     with the plain-Python :class:`_RegionMixin` layered in front for its region
     attributes.
+
+    Build one through :meth:`molpy.typifier.scope.TypeScope.region`, never by
+    guessing a radius.
     """
 
     @classmethod
     def _from(
-        cls, parent: Atomistic, touched: Iterable[Atom | int], radius: int
+        cls,
+        parent: Atomistic,
+        touched: Iterable[Atom | int],
+        *,
+        extract_radius: int,
+        interior_reach: int,
     ) -> Self:
-        """Build the region around ``touched`` in ``parent`` at ``radius``.
+        """Build the region around ``touched`` in ``parent``.
 
         ``touched`` are the seed atoms an edit reported — :class:`Atom` views or
         raw molrs handles (as returned by ``molrs.Reaction.apply``). ``parent``
         is not mutated: the region is an induced clone with its own atom views.
+
+        Raises:
+            ValueError: if ``touched`` is empty, or names a handle that is not a
+                live atom of ``parent`` (a deleted atom was reported as touched).
         """
-        centers = _resolve_centers(parent, touched)
-        sub, boundary, region_to_parent = parent._extract_mapped(
-            centers, radius, cls, regenerate_topology=True
+        if interior_reach > extract_radius:
+            raise ValueError(
+                f"interior_reach ({interior_reach}) exceeds extract_radius "
+                f"({extract_radius}): the write-back set would reach past the "
+                "extracted ball"
+            )
+        centers = cls._resolve_centers(parent, touched)
+        sub, boundary, region_to_parent, hops = parent._extract_mapped(
+            centers, extract_radius, cls, regenerate_topology=True
         )
-        parent_to_region = {
-            parent_atom: region_atom
-            for region_atom, parent_atom in region_to_parent.items()
-        }
+        sub.hops = hops
         sub.interior = tuple(
-            parent_to_region[c] for c in centers if c in parent_to_region
+            atom for atom in sub.atoms if hops[atom.handle] <= interior_reach
         )
         sub.boundary = tuple(boundary)
         sub.entity_map = region_to_parent
+        sub.interior_reach = interior_reach
+        sub.extract_radius = extract_radius
         return sub
+
+    @classmethod
+    def _resolve_centers(
+        cls, parent: Atomistic, touched: Iterable[Atom | int]
+    ) -> list[Atom]:
+        """Normalise ``touched`` (atoms or handles) to deduplicated parent atoms.
+
+        A handle that no longer names a live atom is a contract violation by the
+        edit that produced it — a deleted atom must never be reported as touched.
+        """
+        seen: set[int] = set()
+        centers: list[Atom] = []
+        for item in touched:
+            handle = item.handle if isinstance(item, Atom) else int(item)
+            # A dead handle still interns to an (empty) Atom view, so probe the
+            # graph itself: a live atom is always at distance 0 from itself.
+            if not list(parent.topo_distances(handle, max_hops=0)):
+                raise ValueError(
+                    f"touched handle {handle} is not a live atom of the parent "
+                    "graph (a deleted atom must not be reported as touched)"
+                )
+            if handle in seen:
+                continue
+            seen.add(handle)
+            view = item if isinstance(item, Atom) else parent._intern_atom(handle)
+            if not isinstance(view, Atom):
+                raise ValueError(f"handle {handle} did not intern to an Atom")
+            centers.append(view)
+        if not centers:
+            raise ValueError("touched is empty: an edit must report its seed atoms")
+        return centers
 
     def __hash__(self) -> int:
         # Isomorphism-invariant molrs Weisfeiler–Lehman hash — the dedup key.
@@ -110,20 +147,3 @@ class AffectedRegion(_RegionMixin[Atom], Atomistic):
         # Graph equality (resolves the rare hash collision); only regions of the
         # same kind compare — a region never equals a plain Atomistic.
         return isinstance(other, AffectedRegion) and self.is_isomorphic(other)
-
-
-def _resolve_centers(parent: Atomistic, touched: Iterable[Atom | int]) -> list[Atom]:
-    """Normalise ``touched`` (atoms or handles) to deduplicated parent atoms."""
-    seen: set[int] = set()
-    centers: list[Atom] = []
-    for item in touched:
-        if isinstance(item, Atom):
-            atom = item
-        else:
-            view = parent._intern_atom(item)
-            assert isinstance(view, Atom), "handle did not intern to an Atom"
-            atom = view
-        if atom.handle not in seen:
-            seen.add(atom.handle)
-            centers.append(atom)
-    return centers

@@ -4,6 +4,7 @@ from collections import defaultdict
 
 from molpy.core.atomistic import Angle
 from molpy.core.forcefield import AngleType, AtomType, ForceField
+from molpy.core import fields
 
 from .base import TypifierBase
 
@@ -68,7 +69,7 @@ class AngleTypifier(TypifierBase):
                 and self._matches(at2, jtom_type)
                 and self._matches(at3, itom_type)
             ):
-                angle.data["type"] = angle_type.name
+                angle.data[fields.TYPE.key] = angle_type.name
                 angle.data.update(**angle_type.params.kwargs)
                 return angle
 
@@ -88,7 +89,7 @@ class AngleTypifier(TypifierBase):
                     and self._matches(at2, jtom_class)
                     and self._matches(at3, itom_class)
                 ):
-                    angle.data["type"] = angle_type.name
+                    angle.data[fields.TYPE.key] = angle_type.name
                     angle.data.update(**angle_type.params.kwargs)
                     return angle
 

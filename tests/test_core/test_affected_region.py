@@ -9,8 +9,9 @@ Producers (``Reacter``, ``Crosslinker``) build it from the atoms an edit touched
 import inspect
 
 import molpy as mp
-from molpy.core.affected_region import AffectedRegion, region_radius
+from molpy.core.affected_region import AffectedRegion
 from molpy.core.atomistic import Atom, Atomistic
+from molpy.typifier.scope import TypeScope
 from molpy.wrapper.antechamber import write_antechamber_input_pdb
 
 
@@ -36,14 +37,18 @@ def _carbon_chain(m: int) -> tuple[Atomistic, list[Atom]]:
 
 def test_from_is_an_atomistic_subclass():
     chain, carbons = _carbon_chain(5)
-    region = AffectedRegion._from(chain, [carbons[2]], radius=1)
+    region = AffectedRegion._from(
+        chain, [carbons[2]], extract_radius=1, interior_reach=0
+    )
     assert isinstance(region, AffectedRegion)
     assert isinstance(region, Atomistic)
 
 
 def test_interior_is_the_touched_atoms():
     chain, carbons = _carbon_chain(5)
-    region = AffectedRegion._from(chain, [carbons[2]], radius=1)
+    region = AffectedRegion._from(
+        chain, [carbons[2]], extract_radius=1, interior_reach=0
+    )
     # exactly one seed -> one interior atom, mapping back to the parent center.
     assert len(region.interior) == 1
     assert region.entity_map[region.interior[0]] is carbons[2]
@@ -52,7 +57,9 @@ def test_interior_is_the_touched_atoms():
 def test_boundary_atoms_have_a_neighbor_outside_the_ball():
     chain, carbons = _carbon_chain(5)
     # center C2, radius 1 -> ball is the carbons {C1, C2, C3} plus their H's.
-    region = AffectedRegion._from(chain, [carbons[2]], radius=1)
+    region = AffectedRegion._from(
+        chain, [carbons[2]], extract_radius=1, interior_reach=0
+    )
     # C1 (neighbor C0 outside) and C3 (neighbor C4 outside) are the carbon
     # boundary; every boundary atom must map to a parent with an outside neighbor.
     boundary_parents = {region.entity_map[b] for b in region.boundary}
@@ -67,7 +74,9 @@ def test_boundary_atoms_have_a_neighbor_outside_the_ball():
 
 def test_entity_map_round_trips_region_to_parent():
     chain, carbons = _carbon_chain(5)
-    region = AffectedRegion._from(chain, [carbons[2]], radius=1)
+    region = AffectedRegion._from(
+        chain, [carbons[2]], extract_radius=1, interior_reach=0
+    )
     # every region atom maps to a distinct parent atom of the same element.
     parents = [region.entity_map[a] for a in region.atoms]
     assert len(parents) == len(set(map(id, parents)))
@@ -78,34 +87,31 @@ def test_entity_map_round_trips_region_to_parent():
 
 def test_from_accepts_handles_as_well_as_atoms():
     chain, carbons = _carbon_chain(5)
-    by_atom = AffectedRegion._from(chain, [carbons[2]], radius=1)
-    by_handle = AffectedRegion._from(chain, [carbons[2].handle], radius=1)
+    by_atom = AffectedRegion._from(
+        chain, [carbons[2]], extract_radius=1, interior_reach=0
+    )
+    by_handle = AffectedRegion._from(
+        chain, [carbons[2].handle], extract_radius=1, interior_reach=0
+    )
     assert by_atom == by_handle
 
 
-def test_region_radius_trusts_declaration_with_fallback():
-    # Fallback floor only when no typifier / no declared context_radius.
-    assert region_radius(None) == 4
+def test_extraction_radius_comes_from_the_typifier_scope():
+    """No floor, no guessed radius: the typifier's ``scope`` owns both radii.
 
-    class _NoDeclaration:
-        pass
+    ``region_radius()`` / ``_FLOOR`` are gone — see
+    ``tests/test_typifier/test_scope.py`` for the arithmetic and the measured
+    reach. Here we only pin that a region built through a scope agrees with it.
+    """
+    chain, carbons = _carbon_chain(12)
+    scope = TypeScope(reach=2)
+    region = scope.region(chain, [carbons[6]])
 
-    class _Zero:
-        context_radius = 0
-
-    assert region_radius(_NoDeclaration()) == 4  # absent -> fallback
-    assert region_radius(_Zero()) == 4  # zero -> fallback
-
-    # A declared context_radius is trusted verbatim — the typifier owns it as a
-    # user-tunable knob, so a small local reaction is not floored up to 4.
-    class _Shallow:
-        context_radius = 2
-
-    class _Deep:
-        context_radius = 6
-
-    assert region_radius(_Shallow()) == 2  # trusted, not floored up
-    assert region_radius(_Deep()) == 6  # trusted
+    assert region.extract_radius == scope.extract_radius == 4
+    assert region.interior_reach == scope.interior_reach == 2
+    # interior is the write-back ball, not "everything that is not boundary"
+    inside = {h for h, _ in chain.topo_distances(carbons[6].handle, max_hops=2)}
+    assert {region.entity_map[a].handle for a in region.interior} == inside
 
 
 # --------------------------------------------------------------------------
@@ -116,23 +122,31 @@ def test_region_radius_trusts_declaration_with_fallback():
 def test_identical_junctions_are_equal_and_hash_equal():
     chain_a, ca = _carbon_chain(5)
     chain_b, cb = _carbon_chain(5)
-    region_a = AffectedRegion._from(chain_a, [ca[2]], radius=2)
-    region_b = AffectedRegion._from(chain_b, [cb[2]], radius=2)
+    region_a = AffectedRegion._from(
+        chain_a, [ca[2]], extract_radius=2, interior_reach=0
+    )
+    region_b = AffectedRegion._from(
+        chain_b, [cb[2]], extract_radius=2, interior_reach=0
+    )
     assert region_a == region_b
     assert hash(region_a) == hash(region_b)
 
 
 def test_different_junctions_are_not_equal():
     chain, carbons = _carbon_chain(6)
-    small = AffectedRegion._from(chain, [carbons[2]], radius=1)
-    big = AffectedRegion._from(chain, [carbons[2]], radius=3)
+    small = AffectedRegion._from(
+        chain, [carbons[2]], extract_radius=1, interior_reach=0
+    )
+    big = AffectedRegion._from(chain, [carbons[2]], extract_radius=3, interior_reach=0)
     assert small != big
     assert hash(small) != hash(big)
 
 
 def test_member_atoms_keep_identity_hashing():
     chain, carbons = _carbon_chain(5)
-    region = AffectedRegion._from(chain, [carbons[2]], radius=1)
+    region = AffectedRegion._from(
+        chain, [carbons[2]], extract_radius=1, interior_reach=0
+    )
     atom = region.interior[0]
     # region overrides hashing only at the region level; member atoms stay
     # identity-hashed (unchanged core contract).
@@ -143,7 +157,9 @@ def test_member_atoms_keep_identity_hashing():
 
 def test_region_is_not_equal_to_plain_atomistic():
     chain, carbons = _carbon_chain(5)
-    region = AffectedRegion._from(chain, [carbons[2]], radius=1)
+    region = AffectedRegion._from(
+        chain, [carbons[2]], extract_radius=1, interior_reach=0
+    )
     assert region != chain
 
 
@@ -154,7 +170,9 @@ def test_region_is_not_equal_to_plain_atomistic():
 
 def test_region_feeds_the_ambertools_pdb_bridge():
     chain, carbons = _carbon_chain(5)
-    region = AffectedRegion._from(chain, [carbons[2]], radius=2)
+    region = AffectedRegion._from(
+        chain, [carbons[2]], extract_radius=2, interior_reach=0
+    )
 
     # The antechamber input bridge is typed ``(path, atomistic: Atomistic)``;
     # the region satisfies that declared input type unchanged.
@@ -180,17 +198,46 @@ def test_region_feeds_the_ambertools_pdb_bridge():
 # --------------------------------------------------------------------------
 
 
+class _ScopedTypifier:
+    """Region typifier that declares a scope and types every atom it is given."""
+
+    def __init__(self, reach: int = 2) -> None:
+        self._scope = TypeScope(reach=reach)
+
+    @property
+    def scope(self) -> TypeScope:
+        return self._scope
+
+    def typify(self, struct: Atomistic) -> Atomistic:
+        typed = struct.copy()
+        for atom in typed.atoms:
+            atom["type"] = f"t_{atom['element']}"
+        return typed
+
+    def typify_region(self, region):
+        from molpy.typifier.region import RegionTypes
+
+        before = [dict(a.data) for a in region.atoms]
+        typed = self.typify(region)
+        after = [dict(a.data) for a in typed.atoms]
+        return RegionTypes.capture(region, typed, before, after)
+
+
+def _nitrogen_oxygen_cloud(n: int = 3) -> Atomistic:
+    cloud = mp.Atomistic()
+    for i in range(n):
+        cloud.def_atom(element="N", x=float(i), y=0.0, z=0.0)
+        cloud.def_atom(element="O", x=float(i), y=1.0, z=0.0)
+    return cloud
+
+
 def test_crosslinker_builds_regions_from_touched_handles():
     from molpy.builder.crosslink import DeterministicCrosslinker
 
-    reaction = "[N:1].[O:2]>>[N:1][O:2]"
-    cloud = mp.Atomistic()
-    for i in range(3):
-        cloud.def_atom(element="N", x=float(i), y=0.0, z=0.0)
-        cloud.def_atom(element="O", x=float(i), y=1.0, z=0.0)
-
-    xl = DeterministicCrosslinker(reaction, cutoff=2.0)
-    out = xl.apply(cloud)
+    xl = DeterministicCrosslinker(
+        "[N:1].[O:2]>>[N:1][O:2]", cutoff=2.0, typifier=_ScopedTypifier()
+    )
+    out = xl.apply(_nitrogen_oxygen_cloud())
 
     # one region per formed crosslink bond, each a real AffectedRegion.
     assert len(xl.last_regions) == 3
@@ -201,7 +248,23 @@ def test_crosslinker_builds_regions_from_touched_handles():
     assert isinstance(out, mp.Atomistic)
 
 
-def test_reacter_run_sets_region():
+def test_crosslinker_without_a_typifier_builds_no_region():
+    """No typifier declares no scope, and no radius may be guessed.
+
+    Pure-topology crosslinking is a named mode, not a region path with a
+    fallback radius — ``_FLOOR = 4`` is gone.
+    """
+    from molpy.builder.crosslink import DeterministicCrosslinker
+
+    xl = DeterministicCrosslinker("[N:1].[O:2]>>[N:1][O:2]", cutoff=2.0)
+    out = xl.apply(_nitrogen_oxygen_cloud())
+
+    assert xl.last_regions == []
+    assert isinstance(out, mp.Atomistic)
+    assert len(list(out.bonds)) == 3  # the edits still happened
+
+
+def _methane_coupling():
     from molpy.reacter import (
         Reacter,
         find_port,
@@ -228,13 +291,24 @@ def test_reacter_run_sets_region():
         leaving_selector_right=select_hydrogens(1),
         bond_former=form_single_bond,
     )
+    return coupling, left, right, find_port(left, ">"), find_port(right, "<")
+
+
+def test_reacter_run_sets_region_when_the_typifier_declares_a_scope():
+    coupling, left, right, port_l, port_r = _methane_coupling()
     result = coupling.run(
         left,
         right,
-        port_atom_L=find_port(left, ">"),
-        port_atom_R=find_port(right, "<"),
+        port_atom_L=port_l,
+        port_atom_R=port_r,
+        typifier=_ScopedTypifier(),
     )
-    assert result.region is not None
     assert isinstance(result.region, AffectedRegion)
     # the region seeds are the two anchors where the bond formed.
     assert len(result.region.interior) >= 1
+
+
+def test_reacter_run_builds_no_region_without_a_scope():
+    coupling, left, right, port_l, port_r = _methane_coupling()
+    result = coupling.run(left, right, port_atom_L=port_l, port_atom_R=port_r)
+    assert result.region is None
