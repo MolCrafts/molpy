@@ -100,6 +100,19 @@ from .core.script import Script, ScriptLanguage
 from .core.trajectory import Trajectory
 from .core.unit import UnitSystem
 
+# molrs is an implementation detail: every symbol a user needs is reachable from
+# ``molpy``. These are **re-exports**, not wrapper layers —
+# ``molpy.Reaction is molrs.Reaction`` — so there is no second class, no
+# forwarding shell and no ``_inner``. User code never writes ``import molrs``.
+from molrs import (  # noqa: E402
+    Graph,
+    NeighborQuery,
+    Reaction,
+    SmartsPattern,
+    find_rings,
+    perceive_aromaticity,
+)
+
 __all__ = [
     # Submodules
     "adapter",
@@ -112,6 +125,13 @@ __all__ = [
     "parser",
     "reacter",
     "typifier",
+    # molrs engine primitives, re-exported (never wrapped)
+    "Graph",
+    "NeighborQuery",
+    "Reaction",
+    "SmartsPattern",
+    "find_rings",
+    "perceive_aromaticity",
     # Core atomistic
     "Angle",
     "Atom",

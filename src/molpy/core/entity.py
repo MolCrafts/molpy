@@ -33,6 +33,7 @@ import molrs
 import numpy as np
 
 from molpy.core import fields
+from molrs.fields import FieldSpec
 
 
 # ===================================================================
@@ -62,17 +63,25 @@ class _DictView:
 
     data: Any
 
-    def __getitem__(self, key: str) -> Any:
-        return self.data[key]
+    @staticmethod
+    def _key(key: Any) -> Any:
+        """Accept a canonical :class:`~molrs.fields.FieldSpec` wherever a column
+        name is expected, so call sites name fields through the registry
+        (``atom[fields.SITE]``) instead of repeating a string literal.
+        """
+        return key.key if isinstance(key, FieldSpec) else key
 
-    def __setitem__(self, key: str, value: Any) -> None:
-        self.data[key] = value
+    def __getitem__(self, key: Any) -> Any:
+        return self.data[self._key(key)]
 
-    def __delitem__(self, key: str) -> None:
-        del self.data[key]
+    def __setitem__(self, key: Any, value: Any) -> None:
+        self.data[self._key(key)] = value
+
+    def __delitem__(self, key: Any) -> None:
+        del self.data[self._key(key)]
 
     def __contains__(self, key: object) -> bool:
-        return key in self.data
+        return self._key(key) in self.data
 
     def __iter__(self) -> Iterator[str]:
         return iter(self.data)
@@ -89,9 +98,9 @@ class _DictView:
     def items(self) -> Any:
         return self.data.items()
 
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key: Any, default: Any = None) -> Any:
         try:
-            return self.data[key]
+            return self.data[self._key(key)]
         except KeyError:
             return default
 

@@ -12,8 +12,27 @@ from __future__ import annotations
 
 from typing import Callable
 
+import numpy as np
+
 from molrs.fields import *  # noqa: F401,F403  (re-export canonical registry)
 from molrs.fields import FieldFormatter, FieldSpec, __all__ as _MOLRS_FIELDS_ALL
+
+# ===================================================================
+#                    molpy-owned canonical fields
+# ===================================================================
+# Assembly is a molpy concept, so its field lives here rather than in the molrs
+# registry. It is a real ``FieldSpec``, not a ``site_field: str`` constructor
+# knob: field names are never strings passed around.
+
+#: Reaction-site label on an atom. Sparse: only the atoms a reaction may bind
+#: carry a name (``"a"``, ``"b"``, …); every other atom holds the empty string,
+#: which means *unmarked* and never matches a ``%site`` predicate. A missing
+#: ``site`` column is an error, not "no sites".
+SITE = FieldSpec(
+    key="site",
+    dtype=np.dtype("U16"),
+    doc="Assembly site label; empty string means the atom is not a site.",
+)
 
 # ===================================================================
 #                    ForceFieldFormatter
@@ -158,4 +177,4 @@ class ForceFieldFormatter(FieldFormatter):
         )
 
 
-__all__ = [*_MOLRS_FIELDS_ALL, "ForceFieldFormatter"]
+__all__ = [*_MOLRS_FIELDS_ALL, "ForceFieldFormatter", "SITE"]
