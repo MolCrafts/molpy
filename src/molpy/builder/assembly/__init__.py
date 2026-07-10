@@ -8,6 +8,7 @@ One kernel (:class:`GraphAssembler`) and one variation point
 from ._assembler import GraphAssembler
 from ._context import MatchContext
 from ._library import MonomerLibrary
+from ._placer import Placer, ResiduePlacer
 from ._polymer import PolymerBuilder
 from ._proximity import (
     Candidate,
@@ -28,7 +29,9 @@ __all__ = [
     "GraphAssembler",
     "MatchContext",
     "MonomerLibrary",
+    "Placer",
     "PolymerBuilder",
+    "ResiduePlacer",
     "ProximitySelector",
     "RandomSelector",
     "Selector",

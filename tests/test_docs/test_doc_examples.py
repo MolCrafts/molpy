@@ -12,7 +12,7 @@ Three classes of user-facing code are exercised here:
 3. The ``examples/`` scripts' ``main()`` entry points.
 
 Also locks the API surface: lazy top-level submodules and
-ReactionPresets as the public extension point.
+Selector as the public extension point.
 """
 
 import doctest
@@ -67,9 +67,15 @@ class TestApiDocExamples:
         for leaked in ("ToolRegistry", "molpy.builder._tool"):
             assert leaked not in text, f"builder.md leaks agent infra {leaked!r}"
 
-    def test_builder_md_documents_reaction_presets_register(self):
+    def test_builder_md_documents_the_selector_extension_point(self):
+        """Selection is the one variation point of the assembly kernel.
+
+        (It replaces ReactionPresets, which existed to name Reacter chemistries;
+        chemistry now lives in the reaction SMARTS itself.)
+        """
         text = (DOCS_API / "builder.md").read_text(encoding="utf-8")
-        assert "ReactionPresets.register" in text
+        assert "class FirstPairSelector(Selector)" in text
+        assert "ReactionPresets" not in text
 
 
 class TestDocstringDoctests:
@@ -114,16 +120,19 @@ class TestTopLevelSurface:
         )
         assert result.returncode == 0, result.stderr
 
-    def test_reaction_presets_public(self):
-        from molpy.builder.polymer import ReactionPresets, ReactionPresetSpec
+    def test_assembly_surface_is_public(self):
+        """One kernel, one variation point; chemistry lives in the reaction.
 
-        assert callable(ReactionPresets.register)
-        assert "dehydration" in ReactionPresets.list_presets()
-        import dataclasses
+        Replaces the ReactionPresets surface: presets existed to name Reacter
+        chemistries, and a reaction SMARTS names its own.
+        """
+        import molpy as mp
+        from molpy.builder import GraphAssembler, PolymerBuilder, Selector
 
-        field_names = [f.name for f in dataclasses.fields(ReactionPresetSpec)]
-        assert "anchor_selector_left" in field_names
-        assert "anchor_selector_right" in field_names
+        assert issubclass(PolymerBuilder, GraphAssembler)
+        assert hasattr(Selector, "select")
+        # the reaction is constructed by the caller, from molpy, never molrs
+        assert isinstance(mp.Reaction("[N:1].[O:2]>>[N:1][O:2]"), mp.Reaction)
 
     def test_find_port_is_the_only_exported_name(self):
         import molpy.reacter as reacter_pkg

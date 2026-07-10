@@ -110,11 +110,11 @@ class GraphAssembler:
             return work
         self._assert_disjoint(bindings)
 
+        formed = [(b[self._map_a], b[self._map_b]) for b in bindings]
         if self._placer is not None:
-            self._placer.place(work, bindings)
+            self._placer.place(work, formed)
 
         charge_before = self._total_charge(work)
-        formed: list[tuple[int, int]] = []
         touched_sets: list[list[int]] = []
         for binding in bindings:
             # refresh=False: skip molrs' per-apply whole-graph angle/dihedral +
@@ -122,7 +122,6 @@ class GraphAssembler:
             # need only bonds, which update in place.
             touched = self._reaction.apply(work, binding, labels, refresh=False)
             self._assert_touched_covers_forming_bond(binding, touched)
-            formed.append((binding[self._map_a], binding[self._map_b]))
             touched_sets.append(list(touched))
         self._assert_charge_conserved(work, charge_before)
 

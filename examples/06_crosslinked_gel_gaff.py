@@ -30,7 +30,7 @@ import numpy as np
 
 import molpy as mp
 from molpy.builder.ambertools import AmberTools
-from molpy.builder.crosslink import RandomCrosslinker, crosslink_gel
+from molpy.builder.assembly import GraphAssembler, RandomSelector
 from molpy.conformer import Conformer
 from molpy.io import write_lammps_system
 from molpy.parser import parse_molecule
@@ -44,6 +44,17 @@ OUT = Path("peo_gel_output")
 # Radical C-C coupling: bond two CH2 carbons on different chains, dropping one
 # H from each (a standard idealised PEO crosslink).
 CROSSLINK = "[C;H2:1][H].[C;H2:2][H] >> [C:1][C:2]"
+
+
+def _relax(gel: mp.Atomistic) -> mp.Atomistic:
+    """Converge the freshly formed bonds; they started at a guessed length."""
+    import molrs
+
+    from molpy.optimize import LBFGS, SoftPotential
+
+    frame = gel.to_frame()
+    result = LBFGS(SoftPotential()).run(frame, fmax=0.05, steps=200)
+    return mp.Atomistic.adopt(molrs.Atomistic.from_frame(result.frame))
 
 
 def main() -> None:
@@ -68,16 +79,18 @@ def main() -> None:
     print(f"[1-2] {mol} PEO chains from SMILES {CHAIN_SMILES!r}: {n_atoms0} atoms")
 
     # 3. Crosslink across chains, then relax the new (over-stretched) bonds with
-    #    the force-field-free SoftPotential (crosslink_gel does apply + relax).
-    crosslinker = RandomCrosslinker(
-        CROSSLINK,
-        conversion=1.0,
-        seed=3,
-        cutoff=5.0,
-        exclude_same_molecule=True,  # inter-chain only
-        max_per_molecule=2,
+    #    the force-field-free SoftPotential.
+    gel = GraphAssembler(mp.Reaction(CROSSLINK)).assemble(
+        system,
+        RandomSelector(
+            conversion=1.0,
+            seed=3,
+            cutoff=5.0,
+            exclude_same_molecule=True,  # inter-chain only
+            max_per_molecule=2,
+        ),
     )
-    gel = crosslink_gel(system, crosslinker, relax=True)
+    gel = _relax(gel)
     n_xlink = (n_atoms0 - len(list(gel.atoms))) // 2  # each crosslink drops 2 H
     print(
         f"[3]   crosslinked network: {len(list(gel.atoms))} atoms, {n_xlink} crosslinks"

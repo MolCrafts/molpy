@@ -385,3 +385,75 @@ def test_reproducible_random_network():
         _no_cloud(4), RandomSelector(conversion=0.5, seed=7, cutoff=5.0)
     )
     assert len(list(a.bonds)) == len(list(b.bonds))
+
+
+# --------------------------------------------------------------------------
+# ResiduePlacer — guess the value (bond length), never the identity (element)
+# --------------------------------------------------------------------------
+
+
+def test_placer_lays_residues_out_without_overlap():
+    import numpy as np
+
+    from molpy.builder.assembly import ResiduePlacer
+
+    stacked = _builder().build("{[#EO]|5}")
+    spread = _builder(placer=ResiduePlacer()).build("{[#EO]|5}")
+
+    def min_separation(graph):
+        p = np.array([[a["x"], a["y"], a["z"]] for a in graph.atoms])
+        d = np.linalg.norm(p[:, None] - p[None, :], axis=-1) + np.eye(len(p)) * 1e9
+        return d.min()
+
+    assert min_separation(stacked) < 1e-9  # template copies sit on top of each other
+    assert min_separation(spread) > 0.5  # ...until they are placed
+
+
+def test_placer_uses_summed_covalent_radii_as_the_initial_bond_length():
+    import numpy as np
+
+    from molpy.builder.assembly import ResiduePlacer
+    from molpy.core.element import Element
+
+    chain = _builder(placer=ResiduePlacer()).build("{[#EO]|4}")
+    lengths = [
+        float(
+            np.linalg.norm(
+                np.array([b.itom["x"], b.itom["y"], b.itom["z"]])
+                - np.array([b.jtom["x"], b.jtom["y"], b.jtom["z"]])
+            )
+        )
+        for b in chain.bonds
+    ]
+    ether = Element("C").covalent + Element("O").covalent
+    assert max(lengths) == pytest.approx(ether, abs=1e-6)
+
+
+def test_alignment_is_a_proper_rotation_never_a_reflection():
+    """`-I` would mirror a residue and invert its chirality."""
+    import numpy as np
+
+    from molpy.builder.assembly import ResiduePlacer
+
+    rng = np.random.default_rng(0)
+    cases = [rng.normal(size=(2, 3)) for _ in range(200)]
+    cases += [
+        np.array([[1.0, 0, 0], [-1.0, 0, 0]]),  # antiparallel
+        np.array([[0, 0, 1.0], [0, 0, -1.0]]),
+        np.array([[1.0, 0, 0], [1.0, 0, 0]]),  # parallel
+    ]
+    for source, target in cases:
+        source = source / np.linalg.norm(source)
+        target = target / np.linalg.norm(target)
+        rotation = ResiduePlacer._align(source, target)
+        assert np.linalg.det(rotation) == pytest.approx(1.0, abs=1e-9)
+        assert rotation @ source == pytest.approx(target, abs=1e-9)
+
+
+def test_placement_refuses_to_guess_an_unknown_element():
+    from molpy.builder.assembly import ResiduePlacer
+
+    atom = _eo().atoms[0]
+    del atom[fields.ELEMENT]
+    with pytest.raises(KeyError, match="covalent radius"):
+        ResiduePlacer._radius(atom)

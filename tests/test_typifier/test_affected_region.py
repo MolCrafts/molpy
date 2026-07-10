@@ -231,37 +231,35 @@ def _nitrogen_oxygen_cloud(n: int = 3) -> Atomistic:
     return cloud
 
 
-def test_crosslinker_builds_regions_from_touched_handles():
-    from molpy.builder.crosslink import DeterministicCrosslinker
+def test_assembler_types_every_region_it_builds():
+    """One region per formed bond; each one's interior is written back."""
+    from molpy.builder.assembly import ExhaustiveSelector, GraphAssembler
 
-    xl = DeterministicCrosslinker(
-        "[N:1].[O:2]>>[N:1][O:2]", cutoff=2.0, typifier=_ScopedTypifier()
-    )
-    out = xl.apply(_nitrogen_oxygen_cloud())
+    out = GraphAssembler(
+        mp.Reaction("[N:1].[O:2]>>[N:1][O:2]"), typifier=_ScopedTypifier()
+    ).assemble(_nitrogen_oxygen_cloud(), ExhaustiveSelector(cutoff=2.0))
 
-    # one region per formed crosslink bond, each a real AffectedRegion.
-    assert len(xl.last_regions) == 3
-    for region in xl.last_regions:
-        assert isinstance(region, AffectedRegion)
-        assert len(region.interior) >= 1
-    # apply's public contract is unchanged (returns the new graph).
     assert isinstance(out, mp.Atomistic)
+    assert len(list(out.bonds)) == 3
+    # every atom the edits touched carries a type written back from its region
+    assert all(atom.get("type") for atom in out.atoms)
 
 
-def test_crosslinker_without_a_typifier_builds_no_region():
+def test_assembler_without_a_typifier_builds_no_region():
     """No typifier declares no scope, and no radius may be guessed.
 
-    Pure-topology crosslinking is a named mode, not a region path with a
-    fallback radius — ``_FLOOR = 4`` is gone.
+    Pure-topology assembly is a named mode, not a region path with a fallback
+    radius — ``_FLOOR = 4`` is gone.
     """
-    from molpy.builder.crosslink import DeterministicCrosslinker
+    from molpy.builder.assembly import ExhaustiveSelector, GraphAssembler
 
-    xl = DeterministicCrosslinker("[N:1].[O:2]>>[N:1][O:2]", cutoff=2.0)
-    out = xl.apply(_nitrogen_oxygen_cloud())
+    out = GraphAssembler(mp.Reaction("[N:1].[O:2]>>[N:1][O:2]")).assemble(
+        _nitrogen_oxygen_cloud(), ExhaustiveSelector(cutoff=2.0)
+    )
 
-    assert xl.last_regions == []
     assert isinstance(out, mp.Atomistic)
     assert len(list(out.bonds)) == 3  # the edits still happened
+    assert not any(atom.get("type") for atom in out.atoms)
 
 
 def _methane_coupling():

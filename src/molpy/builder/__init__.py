@@ -16,9 +16,22 @@ Crystal construction goes through :func:`build_crystal` with
 from molpy.core.region import BoxRegion, Cube, Region, SphereRegion
 
 from .ambertools import AmberResult, AmberTools
-from .crosslink import Crosslinker, DeterministicCrosslinker
 from .crystal import Lattice, Site, SpaceGroup, build_crystal
 from .polymer import *
+from .assembly import (
+    Placer,
+    PolymerBuilder,
+    ResiduePlacer,
+    ExhaustiveSelector,
+    ExplicitPairSelector,
+    GraphAssembler,
+    MonomerLibrary,
+    ProximitySelector,
+    RandomSelector,
+    Selector,
+    SpacingSelector,
+    TopologySelector,
+)
 from .polymer.ambertools import AmberPolymerBuilder
 from .virtualsite import (
     DrudeBuilder,
@@ -46,7 +59,17 @@ __all__ = [
     "DrudeBuilder",
     "Tip4pBuilder",
     "load_polarizability",
-    # Offline crosslinking
-    "Crosslinker",
-    "DeterministicCrosslinker",
+    # Assembly: one kernel, one selector family
+    "GraphAssembler",
+    "PolymerBuilder",
+    "Placer",
+    "ResiduePlacer",
+    "MonomerLibrary",
+    "Selector",
+    "TopologySelector",
+    "ProximitySelector",
+    "ExhaustiveSelector",
+    "SpacingSelector",
+    "ExplicitPairSelector",
+    "RandomSelector",
 ]

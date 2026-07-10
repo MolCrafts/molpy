@@ -232,23 +232,23 @@ def test_interior_reach_may_not_exceed_extraction():
         AffectedRegion._from(chain, [carbons[2]], extract_radius=1, interior_reach=3)
 
 
-def test_crosslinker_asserts_molrs_reports_the_forming_bond_endpoints():
+def test_assembler_asserts_molrs_reports_the_forming_bond_endpoints():
     """molrs must report both new-bond endpoints as touched; molpy checks it."""
-    from molpy.builder.crosslink import DeterministicCrosslinker
+    from molpy.builder.assembly import ExhaustiveSelector, GraphAssembler
 
     cloud = mp.Atomistic()
     for i in range(3):
         cloud.def_atom(element="N", x=float(i), y=0.0, z=0.0)
         cloud.def_atom(element="O", x=float(i), y=1.0, z=0.0)
 
-    xl = DeterministicCrosslinker("[N:1].[O:2]>>[N:1][O:2]", cutoff=2.0)
+    assembler = GraphAssembler(mp.Reaction("[N:1].[O:2]>>[N:1][O:2]"))
     # the real molrs return value satisfies the contract
-    out = xl.apply(cloud)
+    out = assembler.assemble(cloud, ExhaustiveSelector(cutoff=2.0))
     assert isinstance(out, mp.Atomistic)
 
     # a molrs that dropped an endpoint would be caught, not silently absorbed
     with pytest.raises(RuntimeError, match="omitted forming-bond endpoint"):
-        xl._assert_touched_covers_forming_bond({1: 10, 2: 20}, [10])
+        assembler._assert_touched_covers_forming_bond({1: 10, 2: 20}, [10])
 
 
 # --------------------------------------------------------------------------

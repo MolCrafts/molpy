@@ -3,7 +3,7 @@
 A ``Crosslinker`` takes a Daylight reaction SMARTS and rewrites one graph into
 a new, crosslinked one — matching reactive sites, pairing them (by distance or
 topology), and forming bonds. It is offline: the network is built as a graph,
-not during an MD run. ``crosslink_gel`` composes crosslink + relax:
+not during an MD run. The assembler forms the bonds; you relax them yourself (the call sequence is relax:
 
     build chains -> RandomCrosslinker.apply (match + pair + bond)
     -> LBFGS/SoftPotential relaxes the new (over-stretched) bonds
@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 
 import molpy as mp
-from molpy.builder.crosslink import RandomCrosslinker, crosslink_gel
+from molpy.builder.assembly import GraphAssembler, RandomSelector
 from molpy.conformer import Conformer
 from molpy.io import write_lammps_data
 from molpy.parser import parse_molecule
@@ -30,6 +30,17 @@ OUT = Path("crosslink_output")
 # Radical C-C coupling: bond two CH2 carbons on different chains, dropping one
 # H from each.
 CROSSLINK = "[C;H2:1][H].[C;H2:2][H] >> [C:1][C:2]"
+
+
+def _relax(gel: mp.Atomistic) -> mp.Atomistic:
+    """Converge the freshly formed bonds; they started at a guessed length."""
+    import molrs
+
+    from molpy.optimize import LBFGS, SoftPotential
+
+    frame = gel.to_frame()
+    result = LBFGS(SoftPotential()).run(frame, fmax=0.05, steps=200)
+    return mp.Atomistic.adopt(molrs.Atomistic.from_frame(result.frame))
 
 
 def main() -> None:
@@ -51,15 +62,17 @@ def main() -> None:
     print(f"{mol} PEO chains: {n_atoms0} atoms")
 
     # Crosslink across chains (inter-chain only), then relax the new bonds.
-    crosslinker = RandomCrosslinker(
-        CROSSLINK,
-        conversion=1.0,
-        seed=3,
-        cutoff=5.0,
-        exclude_same_molecule=True,
-        max_per_molecule=2,
+    gel = GraphAssembler(mp.Reaction(CROSSLINK)).assemble(
+        system,
+        RandomSelector(
+            conversion=1.0,
+            seed=3,
+            cutoff=5.0,
+            exclude_same_molecule=True,
+            max_per_molecule=2,
+        ),
     )
-    gel = crosslink_gel(system, crosslinker, relax=True)
+    gel = _relax(gel)
     n_xlink = (n_atoms0 - len(list(gel.atoms))) // 2  # each crosslink drops 2 H
     print(f"crosslinked network: {len(list(gel.atoms))} atoms, {n_xlink} crosslinks")
 

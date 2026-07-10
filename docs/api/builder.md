@@ -1,74 +1,86 @@
 # Builder
 
-System assembly: polymer chain construction from a monomer library plus
-CGSmiles / label-sequence connectivity. You compose the real engine
-classes directly — there is no `polymer()` dispatcher.
+System assembly: paste graphs, apply a reaction wherever a selector says, and
+repair the force-field types near each new bond. Growing a chain and
+crosslinking a melt are the same algorithm with a different pairing rule, so
+there is one kernel and one variation point.
 
 ## Quick reference
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `PolymerBuilder` | Assemble a chain from a monomer library + reaction; `.build_sequence(labels)` or `.build(cgsmiles)` | The entry point for chain assembly |
-| `Connector` | Port selection rules + reaction binding | Defining which ports react |
-| `ReactionPresets` | Named reaction chemistries (`"dehydration"`, …) | Reusing / registering chemistry |
-| `Placer` | Geometric placement (separator + orienter) | Controlling inter-monomer geometry |
-| `CovalentSeparator` | Covalent radii-based distance (buffer in Å) | Default monomer spacing |
-| `LinearOrienter` | Linear chain orientation | Default growth direction |
-| `SystemPlanner` / `PolydisperseChainGenerator` | Sample a polydisperse chain plan | Bulk / molecular-weight-distributed systems |
+| `GraphAssembler` | The kernel: `assemble(world, selector)` | Crosslinking an existing graph |
+| `PolymerBuilder` | `GraphAssembler` + a monomer library + CGSmiles: `.build(cgsmiles)` | Chain assembly |
+| `MonomerLibrary` | Validated repeat-unit templates; `.expand(topology)` | Naming your monomers |
+| `Selector` | The one variation point: which matched sites pair up | Writing your own pairing rule |
+| `TopologySelector` | Pairs adjacent residues (used by `PolymerBuilder`) | Any CGSmiles topology |
+| `ExhaustiveSelector` / `SpacingSelector` / `ExplicitPairSelector` | Deterministic crosslink rules | Reproducible networks |
+| `RandomSelector` | Random pairing to a target `conversion`, seeded | Flory–Stockmayer networks |
+| `ResiduePlacer` | Lays fresh template copies out in space | Building from templates |
+| `SystemPlanner` / `PolydisperseChainGenerator` | Sample a polydisperse chain plan | Bulk / MW-distributed systems |
 | `AmberPolymerBuilder` | GAFF-parameterised build via AmberTools | AMBER/LAMMPS-bound workflows |
 | `DrudeBuilder` / `Tip4pBuilder` / `VirtualSiteBuilder` | Virtual-site augmentation | Polarizable / 4-site models |
 
 ## Canonical example
 
-Prepare the repeat-unit monomer, then feed a label sequence to
-`PolymerBuilder` — no notation round-trip, no wrapper:
+A repeat unit is an ordinary capped molecule with a few of its atoms named.
+There is no port system and no direction: the reaction SMARTS is the only place
+the chemistry lives, and `%a` / `%b` bind it to the atoms you marked.
 
 ```python
-from molpy.builder.polymer import PolymerBuilder, ReactionPresets
+import molpy as mp
+from molpy.builder.assembly import MonomerLibrary, PolymerBuilder, ResiduePlacer
 from molpy.conformer import Conformer
-from molpy.parser import parse_monomer
+from molpy.core import fields
+from molpy.parser import parse_molecule
 
-# 1. repeat-unit monomer: BigSMILES -> 3D Atomistic with < / > ports
-#    (Conformer is molpy's native molrs embedder)
-eo, _ = Conformer(add_hydrogens=True, seed=42).generate(parse_monomer("{[<]CCO[>]}"))
+# 1. repeat unit: ethylene glycol, with its two hydroxyl oxygens named
+eo, _ = Conformer(add_hydrogens=True, seed=42).generate(parse_molecule("OCCO"))
+oxygens = [a for a in eo.atoms if a.get(fields.ELEMENT) == "O"]
+oxygens[0][fields.SITE] = "a"
+oxygens[1][fields.SITE] = "b"
 
-# 2. assemble a chain: monomer library + a reaction, then a label sequence
-builder = PolymerBuilder({"EO": eo}, reacter=ReactionPresets.get("dehydration"))
-chain = builder.build_sequence(["EO"] * 5).polymer
+# 2. assemble a chain: an ether condensation drops H2O per bond
+ether = mp.Reaction("[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]")
+builder = PolymerBuilder(
+    MonomerLibrary({"EO": eo}), ether, placer=ResiduePlacer()
+)
+chain = builder.build("{[#EO]|5}")
 
 assert chain.__class__.__name__ == "Atomistic"
-assert len(list(chain.atoms)) > 0
+assert len({int(a[fields.RES_ID]) for a in chain.atoms}) == 5
 ```
 
-For explicit port mapping and geometry, pass a `Connector` + `Placer` and
-build from a CGSmiles string (reusing the `eo` monomer above):
+Each repeat unit is a residue, and that identity survives into a PDB or a
+prmtop — it is output, not a build-time marker to scrub afterwards.
+
+## Crosslinking is the same machine
+
+Strip the library and the notation away and you have the kernel itself, which is
+all crosslinking needs: a graph you already have, plus a rule for which sites
+pair up.
 
 ```python
-from molpy.builder.polymer import (
-    Connector,
-    CovalentSeparator,
-    LinearOrienter,
-    Placer,
-    PolymerBuilder,
-    ReactionPresets,
-)
+from molpy.builder.assembly import GraphAssembler, RandomSelector
 
-builder = PolymerBuilder(
-    library={"EO": eo},
-    connector=Connector(
-        reacter=ReactionPresets.get("dehydration"),
-        port_map={("EO", "EO"): (">", "<")},
-    ),
-    placer=Placer(CovalentSeparator(), LinearOrienter()),
+melt = mp.Atomistic()
+for i in range(4):
+    melt.def_atom(element="N", x=float(i), y=0.0, z=0.0)
+    melt.def_atom(element="O", x=float(i), y=1.0, z=0.0)
+
+gel = GraphAssembler(mp.Reaction("[N:1].[O:2]>>[N:1][O:2]")).assemble(
+    melt, RandomSelector(conversion=1.0, seed=1, cutoff=2.0)
 )
-chain = builder.build("{[#EO]|3}").polymer
-assert len(list(chain.atoms)) > 0
+assert len(list(gel.bonds)) == 4
 ```
+
+No `placer` is passed here: the melt's coordinates are already meaningful and
+must not be disturbed. That is a decision about your *input*, not about which
+class you reached for, which is why it is an argument.
 
 ## Polydisperse systems
 
-Drive `PolymerBuilder` from the distribution + planner primitives
-yourself — sample a chain plan, then loop `build_sequence`:
+Sample a chain plan, then loop `build`:
 
 ```python
 import numpy as np
@@ -85,57 +97,36 @@ planner = SystemPlanner(
         {"EO": 44.05},
         distribution=SchulzZimmPolydisperse(1500, 3000),
     ),
-    target_total_mass=5e5,
+    target_total_mass=5e3,
 )
 plan = planner.plan_system(np.random.default_rng(42))
-chains = [builder.build_sequence(c.monomers).polymer for c in plan.chains]
-assert len(chains) >= 1
+chains = [builder.build("{[#EO]|%d}" % len(c.monomers)) for c in plan.chains[:2]]
+assert len(chains) == 2
 ```
 
-## Custom reaction chemistry
+## Your own pairing rule
 
-`ReactionPresets.register()` is the extension point for naming your own
-chemistry, then handed to `PolymerBuilder` via `ReactionPresets.get`:
+You never subclass the assembler. You write a `Selector`, which answers the one
+question that varies. The matching has already happened — the kernel does it
+once, in linear time — so a selector never scans the system, it only decides.
 
 ```python
-from molpy.builder.polymer import ReactionPresets, ReactionPresetSpec
-from molpy.reacter import form_single_bond, select_hydrogens, select_self
+from molpy.builder.assembly import Selector
 
-ReactionPresets.register(
-    ReactionPresetSpec(
-        name="cc_coupling_demo",
-        description="C-C coupling, one H lost per side",
-        anchor_selector_left=select_self,
-        anchor_selector_right=select_self,
-        leaving_selector_left=select_hydrogens(1),
-        leaving_selector_right=select_hydrogens(1),
-        bond_former=form_single_bond,
-    )
+class FirstPairSelector(Selector):
+    """React exactly one pairing: the first site of each reactant."""
+
+    def select(self, context):
+        a_sites = context.occurrences[context.comp_a]
+        b_sites = context.occurrences[context.comp_b]
+        yield {**a_sites[0], **b_sites[0]}
+
+one = GraphAssembler(mp.Reaction("[N:1].[O:2]>>[N:1][O:2]")).assemble(
+    melt, FirstPairSelector()
 )
-assert "cc_coupling_demo" in ReactionPresets.list_presets()
+assert len(list(one.bonds)) == 1
 ```
 
 ## Related
 
 - [Guide: Stepwise Polymer](../user-guide/02_polymer_stepwise.md)
-- [Guide: Topology-Driven Assembly](../user-guide/03_polymer_topology.md)
-
----
-
-## Full API
-
-### Crystal
-
-::: molpy.builder.crystal
-
-### Polymer
-
-::: molpy.builder.polymer
-
-### Virtual Sites
-
-Add Drude oscillators (CL&Pol) or TIP4P M-sites to a structure; each builder
-copies its input, selects host atoms, builds the virtual sites, and
-redistributes mass/charge without mutating the caller.
-
-::: molpy.builder.virtualsite
