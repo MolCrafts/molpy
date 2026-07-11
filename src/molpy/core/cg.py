@@ -26,9 +26,7 @@ from molpy.core.ops.geometry import (
     _cross,
     _dot,
     _norm,
-    _rodrigues_rotate,
     _unit,
-    _vec_add,
     _vec_scale,
     _vec_sub,
 )
@@ -313,31 +311,26 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
 
     # ---------- copy / merge ----------
     def copy(self) -> Self:
+        """Independent deep copy. **Handles are preserved** (molrs clone)."""
+        bare = molrs.CoarseGrain.copy(self)
         new = type(self)()
+        molrs.CoarseGrain.adopt(new, bare)
         new._props = dict(self._props)
-        bead_map: dict[Bead, Bead] = {}
-        for bead in self.beads:
-            bead_map[bead] = new.def_bead(dict(bead.data))
-        for bond in self.cgbonds:
-            mapped = [bead_map[ep] for ep in bond.endpoints]
-            new.def_cgbond(*mapped, **dict(bond.data))
+        new._member_world = self._member_world
         return new
 
     def merge(self, other: "CoarseGrain") -> Self:
-        """Transfer ``other``'s beads and bonds into ``self`` in place.
+        """Structural merge of ``other`` into ``self`` (molrs).
 
-        Identity-preserving move (see :meth:`molpy.core.atomistic.Atomistic.merge`):
-        the same view objects are reused; ``other`` is emptied.
+        Handles are remapped; ``other`` is emptied. View identity is not preserved.
         """
-        beads = list(other.beads)
-        bonds = list(other.cgbonds)
-        for bead in beads:
-            bead._detach()
-            self._spawn_entity(bead)
-        for bond in bonds:
-            if all(ep._world is self for ep in bond.endpoints):
-                bond._detach()
-                self._spawn_link("bonds", bond)
+        molrs.CoarseGrain.merge(self, other)
+        if self._member_world is None:
+            self._member_world = other._member_world
+        other._atom_intern.clear()
+        other._link_intern.clear()
+        other._props.clear()
+        other._member_world = None
         return self
 
     @staticmethod
@@ -345,15 +338,12 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
         """Zero-copy take ownership of a molrs-produced ``CoarseGrain`` graph."""
         struct = CoarseGrain()
         molrs.CoarseGrain.adopt(struct, graph)
-        # Link views enumerate live relations from molrs via relation_ids().
         return struct
 
     # ---------- spatial ----------
     def move(
         self, delta: list[float], *, entity_type: type[Entity] = Bead
     ) -> "CoarseGrain":
-        # Delegate to the molrs Rust kernel (vectorized over the dense
-        # coordinate columns) instead of a per-bead Python loop.
         molrs.translate(self, [float(d) for d in delta])
         return self
 
@@ -376,10 +366,8 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
         *,
         entity_type: type[Entity] = Bead,
     ) -> "CoarseGrain":
-        o = [0.0, 0.0, 0.0] if about is None else about
-        for b in self.beads:
-            xyz = _vec_add(o, _vec_scale(_vec_sub([b["x"], b["y"], b["z"]], o), factor))
-            b["x"], b["y"], b["z"] = xyz
+        o = [0.0, 0.0, 0.0] if about is None else list(about)
+        molrs.scale(self, [factor, factor, factor], o)
         return self
 
     def align(
@@ -405,11 +393,7 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
                 from math import atan2
 
                 angle = atan2(na, _dot(va, vb))
-                for e in self.beads:
-                    xyz = _rodrigues_rotate(
-                        [e["x"], e["y"], e["z"]], _vec_scale(axis, 1.0 / na), angle, pa
-                    )
-                    e["x"], e["y"], e["z"] = xyz
+                molrs.rotate(self, _vec_scale(axis, 1.0 / na), angle, pa)
         self.move(_vec_sub(pb, pa))
         return self
 
@@ -420,7 +404,7 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
 
     def __add__(self, other: "CoarseGrain") -> "CoarseGrain":
         result = self.copy()
-        result.merge(other)
+        result.merge(other.copy())  # merge empties its argument
         return result
 
     def replicate(

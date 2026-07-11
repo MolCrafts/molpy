@@ -23,183 +23,32 @@ from molpy.core.ops.geometry import (
     _vec_sub,
 )
 
+from .atomistic_types import (
+    Angle,
+    Atom,
+    Bond,
+    Dihedral,
+    DrudeParticle,
+    Improper,
+    MasslessSite,
+    VirtualSite,
+)
 from .entity import Entities, Entity, Link, _GraphViews
 
 if TYPE_CHECKING:
     from .frame import Frame
 
-
-# ===================================================================
-#                       Handle view types
-# ===================================================================
-
-
-class Atom(Entity):
-    """Atom view: one node in a molrs ``Atomistic`` world (or pending)."""
-
-    __slots__ = ()
-
-    def __repr__(self) -> str:
-        ident = self.get("element") or self.get("symbol") or self.get("type")
-        return f"<Atom: {ident if ident is not None else id(self)}>"
-
-    @property
-    def is_virtual(self) -> bool:
-        """True if this node carries a virtual-site marker (``vsite`` field).
-
-        The marker is a stored data field, not the Python class: molrs
-        re-materialises nodes as plain :class:`Atom`, so identity must be read
-        from the persisted ``vsite`` field rather than ``isinstance``.
-        """
-        return self.get("vsite") is not None
-
-
-class VirtualSite(Atom):
-    """A massless / rule-placed auxiliary particle. Data only — no energy.
-
-    Carries a persistent ``vsite`` marker field (set on construction) plus the
-    usual atom data. Subclasses set the marker value via ``_vsite_kind``.
-    Identity after a molrs round-trip is read from the ``vsite`` field
-    (:attr:`Atom.is_virtual`), since the Python subclass is not preserved.
-    """
-
-    __slots__ = ()
-    _vsite_kind = "virtual"
-
-    def __init__(self, mapping: Any = None, /, **attrs: Any) -> None:
-        attrs.setdefault("vsite", self._vsite_kind)
-        super().__init__(mapping, **attrs)
-
-
-class DrudeParticle(VirtualSite):
-    """Polarizable Drude shell: co-located with its core, spring-bound."""
-
-    __slots__ = ()
-    _vsite_kind = "drude"
-
-
-class MasslessSite(VirtualSite):
-    """Rigid geometric site (e.g. TIP4P M-site, lone pair); no spring."""
-
-    __slots__ = ()
-    _vsite_kind = "massless"
-
-
-class Bond(Link[Atom]):
-    """Covalent bond between two atoms (molrs relation kind ``bonds``)."""
-
-    __slots__ = ()
-    _kind = "bonds"
-
-    def __init__(self, a: Atom, b: Atom, /, **attrs: Any) -> None:
-        assert isinstance(a, Atom), f"atom a must be an Atom instance, got {type(a)}"
-        assert isinstance(b, Atom), f"atom b must be an Atom instance, got {type(b)}"
-        super().__init__([a, b], **attrs)
-
-    def __repr__(self) -> str:
-        return f"<Bond: {self.itom} - {self.jtom}>"
-
-    @property
-    def itom(self) -> Atom:
-        return self.endpoints[0]
-
-    @property
-    def jtom(self) -> Atom:
-        return self.endpoints[1]
-
-
-class Angle(Link[Atom]):
-    """Valence angle over three atoms i--j--k (kind ``angles``)."""
-
-    __slots__ = ()
-    _kind = "angles"
-
-    def __init__(self, a: Atom, b: Atom, c: Atom, /, **attrs: Any) -> None:
-        for x in (a, b, c):
-            assert isinstance(x, Atom), f"endpoint must be an Atom, got {type(x)}"
-        super().__init__([a, b, c], **attrs)
-
-    def __repr__(self) -> str:
-        return f"<Angle: {self.itom} - {self.jtom} - {self.ktom}>"
-
-    @property
-    def itom(self) -> Atom:
-        return self.endpoints[0]
-
-    @property
-    def jtom(self) -> Atom:
-        return self.endpoints[1]
-
-    @property
-    def ktom(self) -> Atom:
-        return self.endpoints[2]
-
-
-class Dihedral(Link[Atom]):
-    """Proper dihedral (torsion) over four atoms (kind ``dihedrals``)."""
-
-    __slots__ = ()
-    _kind = "dihedrals"
-
-    def __init__(self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any) -> None:
-        for x in (a, b, c, d):
-            assert isinstance(x, Atom), f"endpoint must be an Atom, got {type(x)}"
-        super().__init__([a, b, c, d], **attrs)
-
-    def __repr__(self) -> str:
-        return f"<Dihedral: {self.itom} - {self.jtom} - {self.ktom} - {self.ltom}>"
-
-    @property
-    def itom(self) -> Atom:
-        return self.endpoints[0]
-
-    @property
-    def jtom(self) -> Atom:
-        return self.endpoints[1]
-
-    @property
-    def ktom(self) -> Atom:
-        return self.endpoints[2]
-
-    @property
-    def ltom(self) -> Atom:
-        return self.endpoints[3]
-
-
-class Improper(Link[Atom]):
-    """Improper torsion over four atoms, ``i`` central (kind ``impropers``)."""
-
-    __slots__ = ()
-    _kind = "impropers"
-
-    def __init__(self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any) -> None:
-        for x in (a, b, c, d):
-            assert isinstance(x, Atom), f"endpoint must be an Atom, got {type(x)}"
-        super().__init__([a, b, c, d], **attrs)
-
-    def __repr__(self) -> str:
-        return f"<Improper: {self.itom} - {self.jtom} - {self.ktom} - {self.ltom}>"
-
-    @property
-    def itom(self) -> Atom:
-        return self.endpoints[0]
-
-    @property
-    def jtom(self) -> Atom:
-        return self.endpoints[1]
-
-    @property
-    def ktom(self) -> Atom:
-        return self.endpoints[2]
-
-    @property
-    def ltom(self) -> Atom:
-        return self.endpoints[3]
-
-
-# ===================================================================
-#                          Atomistic leaf
-# ===================================================================
+__all__ = [
+    "Angle",
+    "Atom",
+    "Atomistic",
+    "Bond",
+    "Dihedral",
+    "DrudeParticle",
+    "Improper",
+    "MasslessSite",
+    "VirtualSite",
+]
 
 
 class Atomistic(molrs.Atomistic, _GraphViews):
@@ -567,156 +416,62 @@ class Atomistic(molrs.Atomistic, _GraphViews):
     ) -> tuple[G, list[Atom], dict[Atom, Atom], dict[int, int]]:
         """Induced radius-``radius`` ball plus a region-atom → parent-atom map.
 
-        Backs :meth:`extract_subgraph` (which drops the extras) and
-        :class:`~molpy.typifier.affected_region.AffectedRegion` (which keeps them).
-        ``out_cls`` selects the produced graph type — a plain :class:`Atomistic`
-        or an :class:`AffectedRegion` — so the ball is materialised straight into
-        a region subclass with no second copy. Returns
+        Delegates BFS + materialisation to
+        :meth:`molrs.Atomistic.extract_subgraph`. Returns
         ``(subgraph, boundary_atoms, {region_atom: parent_atom},
         {region_atom_handle: hops_from_nearest_center})``.
-
-        The hop count is what the region's write-back filter keys on: an atom is
-        written back iff it lies within the typifier's ``interior_reach`` of the
-        edit. The BFS already computes it, so it is carried out rather than
-        recomputed.
-
-        ``regenerate_topology`` perceives the ball's angles/dihedrals from its own
-        bonds instead of copying them from the parent. The induced higher-order
-        terms are fully determined by the induced bonds, and molrs indexes only
-        arity-2 relations per atom — so copying them would mean scanning *every*
-        angle/dihedral in the graph to find the few in the ball (O(graph) per
-        extraction). Regeneration keeps the whole extraction O(ball). Used by the
-        region path (types are (re)assigned downstream, so parent type labels on
-        those terms are irrelevant); ``extract_subgraph`` keeps verbatim copies.
         """
         new = out_cls()
         new._props = dict(self._props)
         if not centers:
             return new, [], {}, {}
 
-        # BFS radius ball around every center over the bond graph (molrs kernel).
-        # Radius-bounded so cost is O(ball), not O(connected component): once
-        # crosslinks merge many chains into one giant component, an unbounded BFS
-        # per edit would scan the whole network to build a ~radius-4 ball.
-        # Keep each atom's hop count to the *nearest* center — the region's
-        # write-back filter needs it, and recomputing it would mean a second BFS.
-        parent_hops: dict[int, int] = {}
-        for c in centers:
-            for h, d in self.topo_distances(c.handle, max_hops=radius):
-                hops = int(d)
-                if hops < parent_hops.get(h, radius + 1):
-                    parent_hops[h] = hops
-        selected_handles: set[int] = set(parent_hops)
-        if not selected_handles:
-            return new, [], {}, {}
+        res = molrs.Atomistic.extract_subgraph(
+            self,
+            [c.handle for c in centers],
+            int(radius),
+            regenerate_topology=regenerate_topology,
+        )
+        molrs.Atomistic.adopt(new, res.graph)
 
-        # Intern the ball's atoms straight from the BFS handles (O(ball)), in a
-        # deterministic order. Everything below keys off the stable atom HANDLE,
-        # never the view object: molrs re-interns views freely (a cached link can
-        # hold endpoint views distinct from a fresh intern of the same handle) and
-        # molpy atoms hash by identity, so view-identity maps are unsafe.
-        selected_entities = [self._intern_atom(h) for h in sorted(selected_handles)]
-
-        # Boundary atoms: a selected atom with a bond-neighbor outside the ball.
-        edge_handles = {
-            atom.handle
-            for atom in selected_entities
-            if any(nb.handle not in selected_handles for nb in self.get_neighbors(atom))
+        parent_by_old: dict[int, Atom] = {
+            old: self._intern_atom(old) for old in res.node_map
         }
-
-        # Clone selected atoms; keep clone + parent view keyed by handle.
-        clone_by_handle: dict[int, Atom] = {}
-        parent_by_handle: dict[int, Atom] = {}
-        for atom in selected_entities:
-            parent_by_handle[atom.handle] = atom
-            clone_by_handle[atom.handle] = new.def_atom(dict(atom.data))
-
-        # Clone the induced bonds from each ball atom's incident bond relations —
-        # arity-2 relations ARE indexed per atom, so this is O(ball x degree), not
-        # a scan over every bond in the graph.
-        seen_bonds: set[int] = set()
-        for atom in selected_entities:
-            for bond_handle, other in self.incident_relations(atom.handle, Bond._kind):
-                if bond_handle in seen_bonds or other not in selected_handles:
-                    continue
-                seen_bonds.add(bond_handle)
-                nodes = self.relation_nodes(Bond._kind, bond_handle)
-                data = dict(self._intern_link(Bond._kind, bond_handle).data)
-                new.def_bond(*(clone_by_handle[h] for h in nodes), **data)
-
-        if regenerate_topology:
-            # Angles/dihedrals induced on the ball, perceived locally from the
-            # cloned bonds — no scan over the whole graph's higher-order terms.
-            new.generate_topology(gen_angle=True, gen_dihedral=True)
-        else:
-            # Higher-arity relations aren't indexed per atom, so fall back to a
-            # graph scan (only ``extract_subgraph`` on small structures reaches
-            # here; regions regenerate instead).
-            def _clone_links(views: Entities[Any], adder: Any) -> None:
-                for link in views:
-                    nodes = [ep.handle for ep in link.endpoints]
-                    if all(h in selected_handles for h in nodes):
-                        data = dict(link.data)
-                        adder(*(clone_by_handle[h] for h in nodes), **data)
-
-            _clone_links(self.angles, new.def_angle)
-            _clone_links(self.dihedrals, new.def_dihedral)
-            _clone_links(self.impropers, new.def_improper)
-
-        boundary = [clone_by_handle[h] for h in edge_handles]
+        region_by_old: dict[int, Atom] = {
+            old: new._intern_atom(new_h)  # type: ignore[attr-defined]
+            for old, new_h in res.node_map.items()
+        }
+        boundary = [region_by_old[h] for h in res.boundary if h in region_by_old]
         region_to_parent = {
-            clone_by_handle[h]: parent_by_handle[h] for h in clone_by_handle
+            region_by_old[old]: parent_by_old[old] for old in res.node_map
         }
-        hops = {clone_by_handle[h].handle: d for h, d in parent_hops.items()}
+        hops = {
+            res.node_map[old]: int(d)
+            for old, d in res.hops.items()
+            if old in res.node_map
+        }
         return new, boundary, region_to_parent, hops
 
     # ---------- copy / merge / adopt ----------
     def copy(self) -> Self:
+        """Independent deep copy. **Handles are preserved** (molrs clone)."""
+        bare = molrs.Atomistic.copy(self)
         new = type(self)()
+        molrs.Atomistic.adopt(new, bare)
         new._props = dict(self._props)
-        emap: dict[Atom, Atom] = {}
-        for atom in self.atoms:
-            emap[atom] = new.def_atom(dict(atom.data))
-
-        def _copy_links(views: Entities[Any], adder: Any) -> None:
-            for link in views:
-                mapped = [emap[ep] for ep in link.endpoints]
-                adder(*mapped, **dict(link.data))
-
-        _copy_links(self.bonds, new.def_bond)
-        _copy_links(self.angles, new.def_angle)
-        _copy_links(self.dihedrals, new.def_dihedral)
-        _copy_links(self.impropers, new.def_improper)
         return new
 
     def merge(self, other: "Atomistic") -> Self:
-        """Transfer ``other``'s atoms and topology into ``self`` in place.
+        """Structural merge of ``other`` into ``self`` (molrs).
 
-        The **same** view objects are reused (identity preserved): each of
-        ``other``'s atoms/links is detached and re-spawned onto ``self`` with a
-        fresh handle, so external references (e.g. a reacter's leaving-group
-        list) stay valid. ``other`` is emptied and must not be used afterwards.
+        Every node of ``other`` is remapped to a fresh handle in ``self``.
+        ``other`` is emptied and must not be used afterwards. Cross-graph
+        identity is handle-based — Python view objects are **not** rebound.
         """
-        atoms = list(other.atoms)
-        bonds = list(other.bonds)
-        angles = list(other.angles)
-        dihedrals = list(other.dihedrals)
-        impropers = list(other.impropers)
-
-        for atom in atoms:
-            atom._detach()
-            self._spawn_entity(atom)
-
-        def _transfer(links: list[Any], kind: str) -> None:
-            for link in links:
-                if all(ep._world is self for ep in link.endpoints):
-                    link._detach()
-                    self._spawn_link(kind, link)
-
-        _transfer(bonds, "bonds")
-        _transfer(angles, "angles")
-        _transfer(dihedrals, "dihedrals")
-        _transfer(impropers, "impropers")
+        molrs.Atomistic.merge(self, other)
+        other._atom_intern.clear()
+        other._link_intern.clear()
+        other._props.clear()
         return self
 
     @staticmethod
@@ -729,8 +484,6 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         """
         struct = Atomistic()
         molrs.Atomistic.adopt(struct, graph)
-        # Link views enumerate live relations straight from molrs via
-        # relation_ids(); no Python-side handle shadow to populate.
         return struct
 
     @classmethod
@@ -811,7 +564,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     def __add__(self, other: "Atomistic") -> "Atomistic":
         result = self.copy()
-        result.merge(other)
+        result.merge(other.copy())  # merge empties its argument
         return result
 
     def replicate(self, n: int, transform: Any = None) -> "Atomistic":

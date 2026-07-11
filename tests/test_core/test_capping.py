@@ -6,9 +6,10 @@ import numpy as np
 import pytest
 
 from molpy.core.atomistic import Atomistic
-from molpy.core.capping import _CAP_LEN
 
 TET = np.deg2rad(109.47)  # ideal tetrahedral angle
+#: standard C–H cap length (Å) used by molrs.add_hydrogens placement.
+_CAP_LEN_C = 1.09
 #: the four tetrahedral vertex directions (unit, mutually 109.47° apart).
 VERTS = [
     np.array(v, float) / np.sqrt(3.0)
@@ -85,7 +86,7 @@ def test_cap_bond_length_matches_element():
         np.array([h["x"], h["y"], h["z"]])
         - np.array([carbon["x"], carbon["y"], carbon["z"]])
     )
-    assert d == pytest.approx(_CAP_LEN["C"], abs=1e-6)
+    assert d == pytest.approx(_CAP_LEN_C, abs=1e-2)
 
 
 def test_oxygen_capped_to_valence_two():

@@ -3,6 +3,23 @@
 The full user-facing changelog lives in [docs/changelog.md](docs/changelog.md).
 This file records API renames and breaking changes at the repository root.
 
+## Unreleased
+
+### Breaking
+
+- **`Atomistic.copy` / `CoarseGrain.copy`** preserve molrs handles (clone), no longer
+  re-spawn every entity with new handles.
+- **`merge`** is structural (molrs): handles of `other` are remapped; Python view
+  identity is not preserved; `other` is emptied. `a + b` merges a copy of `b` so
+  operands stay intact.
+- **`complete_valence`** delegates to `molrs.add_hydrogens` (engine chemistry +
+  tetrahedral placement when coordinates exist).
+
+### Changed
+
+- Graph extract / copy / merge / CG spatial ops are thin wrappers over molrs
+  (`graph-sink` chain). View types live in `molpy.core.atomistic_types`.
+
 ## 0.7.0 - 2026-07-08
 
 Requires `molcrafts-molrs == 0.7.0` (molpy and molrs release as a pair).
