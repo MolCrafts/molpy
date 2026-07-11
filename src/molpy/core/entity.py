@@ -35,40 +35,6 @@ import numpy as np
 from molpy.core import fields
 from molrs.fields import FieldSpec
 
-# I/O format aliases → canonical component keys (same mapping as
-# ``XyzFieldFormatter`` / ``PdbFieldFormatter``: format "symbol" means ELEMENT).
-# Applied at Entity construction and node writes so callers never store chemical
-# identity under the non-canonical key. ``fields.SYMBOL`` remains a distinct
-# FieldSpec for true site labels that coexist with ELEMENT.
-_NODE_KEY_ALIASES: dict[str, str] = {
-    fields.SYMBOL.key: fields.ELEMENT.key,  # "symbol" → "element"
-}
-
-
-def _canonicalize_node_key(key: str) -> str:
-    """Map a format/legacy node key to the molrs canonical component name."""
-    return _NODE_KEY_ALIASES.get(key, key)
-
-
-def _canonicalize_node_props(data: dict[str, Any]) -> dict[str, Any]:
-    """Rewrite construction props so chemical identity lands on ELEMENT.
-
-    If both ``symbol`` and ``element`` are present and equal, drop the alias.
-    If both are present and differ, keep both (ELEMENT is identity; SYMBOL may
-    be a distinct site label). If only ``symbol`` is present, promote it to
-    ELEMENT — matching XYZ/PDB reader exit behaviour.
-    """
-    out = dict(data)
-    sym_key = fields.SYMBOL.key
-    el_key = fields.ELEMENT.key
-    if sym_key in out:
-        sym = out.pop(sym_key)
-        if el_key not in out:
-            out[el_key] = sym
-        elif out[el_key] != sym:
-            out[sym_key] = sym
-    return out
-
 
 # ===================================================================
 #                       Entity / Link views
@@ -213,10 +179,6 @@ class _NodeProxy(MutableMapping):
         if key == _XYZ:
             self._set_xyz(value)
             return
-        # Promote format alias "symbol" → ELEMENT when ELEMENT is unset (same
-        # rule as Entity construction / XYZ·PDB field formatters).
-        if key == fields.SYMBOL.key and not self._col_has(fields.ELEMENT.key):
-            key = fields.ELEMENT.key
         if value is None:
             # ``None`` is the absence marker in a sparse component store, not a
             # storable value: setting it clears the key (no Python-side stash).
@@ -224,7 +186,8 @@ class _NodeProxy(MutableMapping):
                 self._col_del(key)
             return
         # molrs coerces canonical fields to their dtype and raises if ``value``
-        # is not numpy-representable.
+        # is not numpy-representable. Key is stored as given — no alias rewrite
+        # (I/O formatters alone map format-local names to canonical fields).
         self._col_set(key, value)
 
     def __delitem__(self, key: str) -> None:
@@ -317,12 +280,13 @@ class Entity(_DictView):
 
     Accepts both forms::
 
-        Atom(element="C", xyz=[0, 0, 0])   # kwargs (canonical)
+        Atom(element="C", xyz=[0, 0, 0])   # kwargs — key is stored as given
         Atom({"element": "C", "xyz": ...}) # positional mapping
 
-    Construction also accepts the I/O alias ``symbol=…`` (XYZ/PDB format key);
-    it is promoted to :data:`~molpy.core.fields.ELEMENT` so chemical identity is
-    never stored under a non-canonical key.
+    Keys are **not** rewritten. Chemical identity for :class:`~molpy.core.atomistic.Atomistic`
+    is :data:`~molpy.core.fields.ELEMENT`. Format-local names (e.g. XYZ ``symbol``)
+    are translated only by I/O :class:`~molrs.fields.FieldFormatter`s at the
+    reader/writer boundary.
     """
 
     def __init__(self, mapping: Any = None, /, **attrs: Any) -> None:
@@ -332,7 +296,7 @@ class Entity(_DictView):
         if mapping is not None:
             data.update(mapping)
         data.update(attrs)
-        self.data = _canonicalize_node_props(data)
+        self.data = data
 
     # ----- binding (called by the owning container) -----
     @property

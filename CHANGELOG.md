@@ -19,10 +19,10 @@ This file records API renames and breaking changes at the repository root.
 
 - Graph extract / copy / merge / CG spatial ops are thin wrappers over molrs
   (`graph-sink` chain). View types live in `molpy.core.atomistic_types`.
-- **Field convention**: chemical identity on atoms is canonical `element`
-  (`fields.ELEMENT` / `molrs` `keys::ELEMENT`). Construction accepts the XYZ/PDB
-  I/O alias `symbol=…` and promotes it to `element` — never stores identity only
-  under `symbol`.
+- **Field convention**: keys set by the user are stored as given (no silent
+  rename). Chemical identity for atomistic graphs is `fields.ELEMENT`
+  (`molrs` `keys::ELEMENT`). Format-local names such as XYZ/PDB `symbol` are
+  mapped to canonical fields **only** by I/O `FieldFormatter`s.
 
 ## 0.7.0 - 2026-07-08
 
