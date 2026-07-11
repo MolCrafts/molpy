@@ -14,9 +14,9 @@ class TestAtomisticCopy:
     def test_copy_preserves_all_atoms(self):
         """Test that copy duplicates all atoms."""
         asm = Atomistic()
-        a1 = Atom(symbol="C")
-        a2 = Atom(symbol="H")
-        a3 = Atom(symbol="O")
+        a1 = Atom(element="C")
+        a2 = Atom(element="H")
+        a3 = Atom(element="O")
 
         asm.add_atom(a1)
         asm.add_atom(a2)
@@ -29,14 +29,14 @@ class TestAtomisticCopy:
         atoms_copy = list(asm_copy.atoms)
 
         assert len(atoms_copy) == len(atoms_orig) == 3
-        assert all(a.get("symbol") in ["C", "H", "O"] for a in atoms_copy)
+        assert all(a.get("element") in ["C", "H", "O"] for a in atoms_copy)
 
     def test_copy_preserves_all_bonds(self):
         """Test that copy duplicates all bonds."""
         asm = Atomistic()
-        a1 = Atom(symbol="C")
-        a2 = Atom(symbol="H")
-        a3 = Atom(symbol="O")
+        a1 = Atom(element="C")
+        a2 = Atom(element="H")
+        a3 = Atom(element="O")
 
         asm.add_atom(a1)
         asm.add_atom(a2)
@@ -59,8 +59,8 @@ class TestAtomisticCopy:
     def test_copy_bonds_reference_copied_atoms(self):
         """Test that copied bonds reference copied atoms, not original atoms."""
         asm = Atomistic()
-        a1 = Atom(symbol="C")
-        a2 = Atom(symbol="H")
+        a1 = Atom(element="C")
+        a2 = Atom(element="H")
 
         asm.add_atom(a1)
         asm.add_atom(a2)
@@ -88,9 +88,9 @@ class TestAtomisticCopy:
     def test_copy_no_orphan_bonds(self):
         """Test that copy doesn't create orphan bonds (bonds with missing endpoints)."""
         asm = Atomistic()
-        a1 = Atom(symbol="C")
-        a2 = Atom(symbol="H")
-        a3 = Atom(symbol="O")
+        a1 = Atom(element="C")
+        a2 = Atom(element="H")
+        a3 = Atom(element="O")
 
         asm.add_atom(a1)
         asm.add_atom(a2)
@@ -125,8 +125,8 @@ class TestAtomisticCopy:
     def test_copy_independence(self):
         """Test that modifications to copy don't affect original."""
         asm = Atomistic()
-        a1 = Atom(symbol="C")
-        a2 = Atom(symbol="H")
+        a1 = Atom(element="C")
+        a2 = Atom(element="H")
 
         asm.add_atom(a1)
         asm.add_atom(a2)
@@ -138,7 +138,7 @@ class TestAtomisticCopy:
         asm_copy = asm.copy()
 
         # Modify copy
-        a3 = Atom(symbol="O")
+        a3 = Atom(element="O")
         asm_copy.add_atom(a3)
 
         # Check original is unchanged
@@ -153,9 +153,9 @@ class TestAtomisticCopyWithPorts:
         """Test that structure copy preserves all atoms and bonds."""
         # Create structure
         struct = Atomistic()
-        c1 = Atom(symbol="C")
-        c2 = Atom(symbol="C")
-        h1 = Atom(symbol="H")
+        c1 = Atom(element="C")
+        c2 = Atom(element="C")
+        h1 = Atom(element="H")
 
         struct.add_atom(c1)
         struct.add_atom(c2)
@@ -181,10 +181,10 @@ class TestAtomisticCopyWithPorts:
         """Test that structure copy doesn't create orphan bonds."""
         # Create structure
         struct = Atomistic()
-        c1 = Atom(symbol="C")
-        c2 = Atom(symbol="C")
-        o1 = Atom(symbol="O")
-        h1 = Atom(symbol="H")
+        c1 = Atom(element="C")
+        c2 = Atom(element="C")
+        o1 = Atom(element="O")
+        h1 = Atom(element="H")
 
         struct.add_atom(c1)
         struct.add_atom(c2)
@@ -223,8 +223,8 @@ class TestAtomisticCopyWithPorts:
         """Test that port markers are correctly preserved on copied atoms."""
         # Create structure
         struct = Atomistic()
-        c1 = Atom(symbol="C")
-        c2 = Atom(symbol="C")
+        c1 = Atom(element="C")
+        c2 = Atom(element="C")
 
         struct.add_atom(c1)
         struct.add_atom(c2)
@@ -253,8 +253,8 @@ class TestAtomisticCopyWithPorts:
         """Test that multiple copies are independent."""
         # Create structure
         struct = Atomistic()
-        c1 = Atom(symbol="C")
-        h1 = Atom(symbol="H")
+        c1 = Atom(element="C")
+        h1 = Atom(element="H")
 
         struct.add_atom(c1)
         struct.add_atom(h1)
@@ -268,8 +268,8 @@ class TestAtomisticCopyWithPorts:
         copy3 = struct.copy()
 
         # Modify each copy
-        copy1.add_atom(Atom(symbol="O"))
-        copy2.add_atom(Atom(symbol="N"))
+        copy1.add_atom(Atom(element="O"))
+        copy2.add_atom(Atom(element="N"))
 
         # Check independence
         assert len(list(struct.atoms)) == 2

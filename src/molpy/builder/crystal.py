@@ -250,7 +250,7 @@ def build_crystal(
     for xyz, site in zip(carts, site_tiled):
         out.def_atom(
             xyz=xyz.tolist(),
-            symbol=site.species,
+            element=site.species,
             charge=site.charge,
             label=site.label,
         )

@@ -19,18 +19,18 @@ class TestAtomisticFactoryMethods:
     def test_def_atom_creates_and_adds(self):
         """Test def_atom creates an Atom and adds it to the structure."""
         struct = Atomistic()
-        atom = struct.def_atom(symbol="C", xyz=[0, 0, 0])
+        atom = struct.def_atom(element="C", xyz=[0, 0, 0])
 
         assert isinstance(atom, Atom)
-        assert atom.get("symbol") == "C"
+        assert atom.get("element") == "C"
         assert len(struct.atoms) == 1
         assert next(iter(struct.atoms)) is atom
 
     def test_def_bond_creates_and_adds(self):
         """Test def_bond creates a Bond between two atoms."""
         struct = Atomistic()
-        a1 = struct.def_atom(symbol="C", xyz=[0, 0, 0])
-        a2 = struct.def_atom(symbol="H", xyz=[1, 0, 0])
+        a1 = struct.def_atom(element="C", xyz=[0, 0, 0])
+        a2 = struct.def_atom(element="H", xyz=[1, 0, 0])
 
         bond = struct.def_bond(a1, a2, order=1)
 
@@ -43,9 +43,9 @@ class TestAtomisticFactoryMethods:
     def test_def_angle_creates_and_adds(self):
         """Test def_angle creates an Angle between three atoms."""
         struct = Atomistic()
-        a1 = struct.def_atom(symbol="H")
-        a2 = struct.def_atom(symbol="C")
-        a3 = struct.def_atom(symbol="H")
+        a1 = struct.def_atom(element="H")
+        a2 = struct.def_atom(element="C")
+        a3 = struct.def_atom(element="H")
 
         angle = struct.def_angle(a1, a2, a3, theta=109.5)
 
@@ -59,10 +59,10 @@ class TestAtomisticFactoryMethods:
     def test_def_dihedral_creates_and_adds(self):
         """Test def_dihedral creates a Dihedral between four atoms."""
         struct = Atomistic()
-        a1 = struct.def_atom(symbol="H")
-        a2 = struct.def_atom(symbol="C")
-        a3 = struct.def_atom(symbol="C")
-        a4 = struct.def_atom(symbol="H")
+        a1 = struct.def_atom(element="H")
+        a2 = struct.def_atom(element="C")
+        a3 = struct.def_atom(element="C")
+        a4 = struct.def_atom(element="H")
 
         dihe = struct.def_dihedral(a1, a2, a3, a4, phi=180.0)
 
@@ -81,7 +81,7 @@ class TestAtomisticAddMethods:
     def test_add_atom_adds_existing(self):
         """Test add_atom adds an already created Atom object."""
         struct = Atomistic()
-        atom = Atom(symbol="C", xyz=[0, 0, 0])
+        atom = Atom(element="C", xyz=[0, 0, 0])
 
         result = struct.add_atom(atom)
 
@@ -92,8 +92,8 @@ class TestAtomisticAddMethods:
     def test_add_bond_adds_existing(self):
         """Test add_bond adds an already created Bond object."""
         struct = Atomistic()
-        a1 = struct.def_atom(symbol="C")
-        a2 = struct.def_atom(symbol="H")
+        a1 = struct.def_atom(element="C")
+        a2 = struct.def_atom(element="H")
         bond = Bond(a1, a2, order=1)
 
         result = struct.add_bond(bond)
@@ -105,9 +105,9 @@ class TestAtomisticAddMethods:
     def test_add_angle_adds_existing(self):
         """Test add_angle adds an already created Angle object."""
         struct = Atomistic()
-        a1 = struct.def_atom(symbol="H")
-        a2 = struct.def_atom(symbol="C")
-        a3 = struct.def_atom(symbol="H")
+        a1 = struct.def_atom(element="H")
+        a2 = struct.def_atom(element="C")
+        a3 = struct.def_atom(element="H")
         angle = Angle(a1, a2, a3, theta=109.5)
 
         result = struct.add_angle(angle)
@@ -119,10 +119,10 @@ class TestAtomisticAddMethods:
     def test_add_dihedral_adds_existing(self):
         """Test add_dihedral adds an already created Dihedral object."""
         struct = Atomistic()
-        a1 = struct.def_atom(symbol="H")
-        a2 = struct.def_atom(symbol="C")
-        a3 = struct.def_atom(symbol="C")
-        a4 = struct.def_atom(symbol="H")
+        a1 = struct.def_atom(element="H")
+        a2 = struct.def_atom(element="C")
+        a3 = struct.def_atom(element="C")
+        a4 = struct.def_atom(element="H")
         dihe = Dihedral(a1, a2, a3, a4, phi=180.0)
 
         result = struct.add_dihedral(dihe)
@@ -141,23 +141,23 @@ class TestAtomisticBatchFactoryMethods:
 
         atoms = struct.def_atoms(
             [
-                {"symbol": "C", "xyz": [0, 0, 0]},
-                {"symbol": "H", "xyz": [1, 0, 0]},
-                {"symbol": "H", "xyz": [0, 1, 0]},
+                {"element": "C", "xyz": [0, 0, 0]},
+                {"element": "H", "xyz": [1, 0, 0]},
+                {"element": "H", "xyz": [0, 1, 0]},
             ]
         )
 
         assert len(atoms) == 3
         assert all(isinstance(a, Atom) for a in atoms)
         assert len(struct.atoms) == 3
-        assert np.array_equal(struct.atoms["symbol"], ["C", "H", "H"])
+        assert np.array_equal(struct.atoms["element"], ["C", "H", "H"])
 
     def test_def_bonds_batch_create(self):
         """Test def_bonds creates multiple bonds at once."""
         struct = Atomistic()
-        a1 = struct.def_atom(symbol="C")
-        a2 = struct.def_atom(symbol="H")
-        a3 = struct.def_atom(symbol="H")
+        a1 = struct.def_atom(element="C")
+        a2 = struct.def_atom(element="H")
+        a3 = struct.def_atom(element="H")
 
         bonds = struct.def_bonds(
             [
@@ -173,10 +173,10 @@ class TestAtomisticBatchFactoryMethods:
     def test_def_angles_batch_create(self):
         """Test def_angles creates multiple angles at once."""
         struct = Atomistic()
-        a1 = struct.def_atom(symbol="H")
-        a2 = struct.def_atom(symbol="C")
-        a3 = struct.def_atom(symbol="H")
-        a4 = struct.def_atom(symbol="H")
+        a1 = struct.def_atom(element="H")
+        a2 = struct.def_atom(element="C")
+        a3 = struct.def_atom(element="H")
+        a4 = struct.def_atom(element="H")
 
         angles = struct.def_angles(
             [
@@ -192,7 +192,7 @@ class TestAtomisticBatchFactoryMethods:
     def test_def_dihedrals_batch_create(self):
         """Test def_dihedrals creates multiple dihedrals at once."""
         struct = Atomistic()
-        atoms = struct.def_atoms([{"symbol": "H"} for _ in range(5)])
+        atoms = struct.def_atoms([{"element": "H"} for _ in range(5)])
 
         dihedrals = struct.def_dihedrals(
             [
@@ -213,9 +213,9 @@ class TestAtomisticBatchAddMethods:
         """Test add_atoms adds multiple existing Atom objects."""
         struct = Atomistic()
         atoms = [
-            Atom(symbol="C", xyz=[0, 0, 0]),
-            Atom(symbol="H", xyz=[1, 0, 0]),
-            Atom(symbol="H", xyz=[0, 1, 0]),
+            Atom(element="C", xyz=[0, 0, 0]),
+            Atom(element="H", xyz=[1, 0, 0]),
+            Atom(element="H", xyz=[0, 1, 0]),
         ]
 
         result = struct.add_atoms(atoms)
@@ -228,9 +228,9 @@ class TestAtomisticBatchAddMethods:
     def test_add_bonds_batch_add(self):
         """Test add_bonds adds multiple existing Bond objects."""
         struct = Atomistic()
-        a1 = struct.def_atom(symbol="C")
-        a2 = struct.def_atom(symbol="H")
-        a3 = struct.def_atom(symbol="H")
+        a1 = struct.def_atom(element="C")
+        a2 = struct.def_atom(element="H")
+        a3 = struct.def_atom(element="H")
 
         bonds = [
             Bond(a1, a2, order=1),
@@ -245,7 +245,7 @@ class TestAtomisticBatchAddMethods:
     def test_add_angles_batch_add(self):
         """Test add_angles adds multiple existing Angle objects."""
         struct = Atomistic()
-        atoms = struct.def_atoms([{"symbol": "H"} for _ in range(4)])
+        atoms = struct.def_atoms([{"element": "H"} for _ in range(4)])
 
         angles = [
             Angle(atoms[0], atoms[1], atoms[2]),
@@ -260,7 +260,7 @@ class TestAtomisticBatchAddMethods:
     def test_add_dihedrals_batch_add(self):
         """Test add_dihedrals adds multiple existing Dihedral objects."""
         struct = Atomistic()
-        atoms = struct.def_atoms([{"symbol": "H"} for _ in range(5)])
+        atoms = struct.def_atoms([{"element": "H"} for _ in range(5)])
 
         dihedrals = [
             Dihedral(atoms[0], atoms[1], atoms[2], atoms[3]),
@@ -281,11 +281,11 @@ class TestAtomisticSemanticClarity:
         struct = Atomistic()
 
         # Factory: creates new atom
-        atom1 = struct.def_atom(symbol="C")
+        atom1 = struct.def_atom(element="C")
         assert atom1 in struct.atoms
 
         # Add: adds existing atom
-        atom2 = Atom(symbol="N")
+        atom2 = Atom(element="N")
         struct.add_atom(atom2)
         assert atom2 in struct.atoms
 
@@ -296,13 +296,13 @@ class TestAtomisticSemanticClarity:
         struct = Atomistic()
 
         # Singular: one at a time
-        struct.def_atom(symbol="C")
+        struct.def_atom(element="C")
 
         # Plural: batch operation
         atoms = struct.def_atoms(
             [
-                {"symbol": "H"},
-                {"symbol": "H"},
+                {"element": "H"},
+                {"element": "H"},
             ]
         )
 

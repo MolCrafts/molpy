@@ -102,7 +102,10 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     @property
     def symbols(self) -> list[str]:
-        return [str(a.get("element") or a.get("symbol") or "") for a in self.atoms]
+        """Element symbols for every atom (canonical :data:`~molpy.core.fields.ELEMENT`)."""
+        from molpy.core import fields
+
+        return [str(a.get(fields.ELEMENT) or "") for a in self.atoms]
 
     @property
     def xyz(self) -> np.ndarray:
@@ -123,7 +126,9 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         from collections import Counter
 
         atoms = list(self.atoms)
-        comp = Counter(a.get("element") or a.get("symbol") or "?" for a in atoms)
+        from molpy.core import fields
+
+        comp = Counter(a.get(fields.ELEMENT) or "?" for a in atoms)
         if len(comp) <= 5:
             composition = " ".join(f"{s}:{n}" for s, n in sorted(comp.items()))
         else:

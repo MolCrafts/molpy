@@ -51,8 +51,8 @@ class TestBeadEntity:
         and therefore makes no opinion about which conventional keys
         should be shared vs. cloned — that's the user's call."""
         ato = Atomistic()
-        a = ato.def_atom(symbol="C", x=0.0, y=0.0, z=0.0)
-        b = ato.def_atom(symbol="H", x=1.0, y=0.0, z=0.0)
+        a = ato.def_atom(element="C", x=0.0, y=0.0, z=0.0)
+        b = ato.def_atom(element="H", x=1.0, y=0.0, z=0.0)
 
         bead = Bead(atoms=(a, b), type="CH")
         clone = copy.deepcopy(bead)
@@ -268,8 +268,8 @@ class TestBeadsOf:
     def test_beads_of_disjoint(self):
         """In a disjoint partition each atom maps to exactly one bead."""
         ato = Atomistic()
-        a = ato.def_atom(symbol="C", x=0, y=0, z=0)
-        b = ato.def_atom(symbol="O", x=5, y=0, z=0)
+        a = ato.def_atom(element="C", x=0, y=0, z=0)
+        b = ato.def_atom(element="O", x=5, y=0, z=0)
 
         cg = CoarseGrain()
         bead_a = cg.def_bead(atoms=(a,), type="A")
@@ -281,9 +281,9 @@ class TestBeadsOf:
     def test_beads_of_overlap(self):
         """An atom shared by two beads is returned in both."""
         ato = Atomistic()
-        a = ato.def_atom(symbol="C", x=0, y=0, z=0)
-        b = ato.def_atom(symbol="O", x=5, y=0, z=0)
-        c = ato.def_atom(symbol="N", x=10, y=0, z=0)
+        a = ato.def_atom(element="C", x=0, y=0, z=0)
+        b = ato.def_atom(element="O", x=5, y=0, z=0)
+        c = ato.def_atom(element="N", x=10, y=0, z=0)
 
         cg = CoarseGrain()
         bead1 = cg.def_bead(atoms=(a, b), type="AB")
@@ -298,8 +298,8 @@ class TestBeadsOf:
     def test_beads_of_unknown_returns_empty(self):
         """Unknown atom (not in any bead's ``atoms`` key) gives an empty tuple."""
         ato = Atomistic()
-        a = ato.def_atom(symbol="C", x=0, y=0, z=0)
-        unknown = ato.def_atom(symbol="X", x=99, y=0, z=0)
+        a = ato.def_atom(element="C", x=0, y=0, z=0)
+        unknown = ato.def_atom(element="X", x=99, y=0, z=0)
 
         cg = CoarseGrain()
         cg.def_bead(atoms=(a,), type="A")
@@ -309,7 +309,7 @@ class TestBeadsOf:
     def test_beads_of_skips_beads_without_atoms_key(self):
         """Beads lacking an ``atoms`` key are silently skipped (not errors)."""
         ato = Atomistic()
-        a = ato.def_atom(symbol="C", x=0, y=0, z=0)
+        a = ato.def_atom(element="C", x=0, y=0, z=0)
 
         cg = CoarseGrain()
         # Bead with no AA precursor (pure CG bead)
@@ -676,7 +676,7 @@ class TestCoarseGrainToFrame:
     def test_to_frame_field_whitelist(self):
         cg = CoarseGrain()
         ato = Atomistic()
-        a = ato.def_atom(symbol="C")
+        a = ato.def_atom(element="C")
         cg.def_bead(type="P4", x=1.0, y=2.0, z=3.0, atoms=(a,))
 
         frame = cg.to_frame(bead_fields=["x", "y", "z", "type"])
@@ -688,8 +688,8 @@ class TestCoarseGrainToFrame:
     def test_to_frame_drops_non_numpy_atoms_key(self):
         cg = CoarseGrain()
         ato = Atomistic()
-        a = ato.def_atom(symbol="C")
-        b = ato.def_atom(symbol="H")
+        a = ato.def_atom(element="C")
+        b = ato.def_atom(element="H")
         cg.def_bead(type="P4", atoms=(a, b))
 
         frame = cg.to_frame()

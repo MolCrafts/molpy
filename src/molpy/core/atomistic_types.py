@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from molpy.core import fields
+
 from .entity import Entity, Link
 
 
@@ -18,7 +20,8 @@ class Atom(Entity):
     __slots__ = ()
 
     def __repr__(self) -> str:
-        ident = self.get("element") or self.get("symbol") or self.get("type")
+        # Chemical identity is ELEMENT (iron law 1); no silent fallback to SYMBOL.
+        ident = self.get(fields.ELEMENT) or self.get(fields.TYPE)
         return f"<Atom: {ident if ident is not None else id(self)}>"
 
     @property
