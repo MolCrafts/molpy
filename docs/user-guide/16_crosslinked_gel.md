@@ -143,17 +143,20 @@ restore_crosslink_sites(gel)
 
 ## The force field is assembled and exported to LAMMPS
 
-The junction terms the typifier collected are merged into the chain force field. `get_topo` perceives the network's angles and dihedrals, and `assign_bonded_types` labels every bond, angle, and dihedral by its atom-type tuple against the merged force field. A final equal shift over all charges removes the tiny residue left by the folds, and `write_lammps_system` emits a data + force-field pair — restricting every coefficient to the types the structure actually uses.
+The junction terms the typifier collected are merged into the chain force field. `get_topo` perceives the network's angles and dihedrals, and `ForceFieldParams` labels every bond, angle, and dihedral against the merged force field. `ForceFieldParams` is not a typifier — it decides no atom type, it spends one — and it is the tail every force-field typifier ends with; here the atom types are already on the graph, so it is used on its own. A final equal shift over all charges removes the tiny residue left by the folds, and `write_lammps_system` emits a data + force-field pair — restricting every coefficient to the types the structure actually uses.
 
 ```python
 from molpy.io import write_lammps_system
+from molpy.typifier import ForceFieldParams
 
 net_ff.merge(typifier.forcefield)                    # + junction bonded terms
 shift = sum(a.get("charge", 0.0) for a in gel.atoms) / gel.n_atoms
 for a in gel.atoms:
     a["charge"] = a.get("charge", 0.0) - shift       # exact neutrality
 
-gel = gel.get_topo(gen_angle=True, gen_dihe=True).assign_bonded_types(net_ff)
+gel = ForceFieldParams(net_ff, strict=False).assign(
+    gel.get_topo(gen_angle=True, gen_dihe=True)
+)
 frame = gel.to_frame()
 frame["atoms"]["id"] = np.arange(1, frame["atoms"].nrows + 1)
 xyz = frame["atoms"][["x", "y", "z"]]

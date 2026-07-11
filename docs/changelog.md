@@ -9,6 +9,64 @@ requires. Tagged releases and installable artifacts live on
 
 ### BREAKING
 
+- **The typifier package has one contract: `Typifier` is `MolGraph -> MolGraph`.**
+  `typify()` is concrete — copy, `match()`, write the annotations back — and
+  `match()` is the single abstract method. Typifiers are generic over the graph,
+  so an `Atomistic` typifier and a `CoarseGrain` one share the same pipeline.
+  Removed: `ForceFieldTypifier`, `RegionTypifier`, `TypeScope`, `typify_region`,
+  `retype_region`, `relaxed()`, `atomtype_matches`, `skip_atom_typing` and the
+  four other `skip_*_typing` flags, and the public `PairTypifier`. Deleted
+  modules: `typifier/{base(old),bond,angle,dihedral,pair,mmff,atomistic,scope}.py`
+  — six of them were dead code that shadowed live names (`TypifierBase`,
+  `PairTypifier` and `atomtype_matches` were each defined twice in the package).
+- **`molpy.typifier.ForceFieldParams` replaces `Atomistic.assign_bonded_types`.**
+  Assigning parameters to a graph whose types are already known is not a
+  typifier; it is the second half of one. The old method lived in `core` (a
+  force-field judgment in the data-model layer), matched force-field types by
+  splitting their names on `"-"` — no wildcards, no atom classes, no overlay
+  layers — and left a term it could not match *silently* unlabelled.
+  `ForceFieldParams(ff).assign(graph)` returns a new graph, matches by
+  specificity, and raises on an unparameterised term unless `strict=False`.
+- **`GraphAssembler(reaction, typifier=..., reach=N)`** — `reach` is now a
+  required argument alongside a typifier, and `AmberToolsTypifier(amber)` no
+  longer takes one. `TypeScope` dissolved into
+  `AffectedRegion.around(graph, touched, reach=N)`, the only place that derives
+  the write-back radius (`max(reach, 2)`) and the extraction radius
+  (`interior_reach + reach`) from the one number they share.
+
+  *A defence moved from the type system to the test suite.* `graph-assembler-01`
+  established that the radius is decided by the typifier and is "never a
+  setting", because a wrong `reach` silently mistypes — measured, `reach`
+  one too small mistyped 22 of 46 written-back atoms of a PEO junction. With
+  `reach` supplied to the assembler, nothing rejects a wrong value at
+  construction; it is caught by the oracle test (region typing == whole-graph
+  typing) instead. Note that `AmberToolsTypifier(amber, reach=2)` already took
+  `reach` from the user; this only moves where it is passed.
+
+### Fixed
+
+- **`complete_valence()` silently dropped angles, dihedrals and impropers.**
+  It copied atoms and bonds only, so completing a 4-carbon fragment carrying 2
+  angles and 1 dihedral returned one carrying none — a function that promises a
+  completed molecule was throwing topology away. It now carries over every link
+  kind; a cap still adds bonds only, because a cap is context, not a term.
+- **A region typed from a raw slice could not be typed at all.** Because the
+  extracted ball is `interior_reach + reach` wide, an interior atom's receptive
+  field reaches exactly to the boundary atoms, and a raw cut leaves those with
+  unfilled valences — radicals, to a SMARTS matcher. Only the AmberTools path
+  completed them. Measured on p-xylene with OPLS-AA at `reach = 2`, **12 of 19
+  raw slices are rejected outright** by the typifier (a truncated aromatic
+  carbon types as something no bonded term covers); PEO and methyl acrylate
+  happen to survive a raw cut. `RegionTypes.of` now completes every region
+  before typing it — every region *is* a cut, so there is no condition to get
+  wrong. A typifier itself never guesses whether its graph is a fragment:
+  truncation is a fact about provenance, not something readable off a graph's
+  valences.
+- **An unparameterised bonded term was written back as `None`.**
+  `RegionTypes._capture_links` recorded terms whose type was undecided, and
+  `apply_to` then erased whatever the parent's term already carried. Undecided
+  terms are now skipped.
+
 - **`molpy.reacter` is removed.** Reaction semantics live in `molpy.Reaction`
   (a re-export of the molrs SMIRKS engine); chemistry lives in the reaction
   SMARTS itself. `Reacter`, `ReactionResult`, `TopologyDetector`, the 14
@@ -34,7 +92,6 @@ requires. Tagged releases and installable artifacts live on
   `molpy.io.data.lammps_bond_react` (it is an IO artifact). The public
   `write_bond_react_map` / `write_lammps_bond_react_system` are unchanged.
 
-### Fixed
 
 - **Region retyping wrote wrong atom types.** The extraction radius and the
   write-back radius were conflated into one `radius`; correctness required

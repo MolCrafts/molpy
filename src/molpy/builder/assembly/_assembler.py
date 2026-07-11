@@ -6,7 +6,8 @@ handed to :meth:`GraphAssembler.assemble`; everything else is this one code path
 
 Nothing here walks the whole system per edit. Adding the thousandth bond costs
 what the second one cost, because the only atoms examined are the ones inside the
-ball the typifier's :class:`~molpy.typifier.scope.TypeScope` calls for.
+ball :meth:`~molpy.typifier.affected_region.AffectedRegion.around` cuts for the
+declared ``reach``.
 """
 
 from __future__ import annotations
@@ -19,13 +20,13 @@ from molpy.builder.assembly._context import MatchContext
 from molpy.builder.assembly._selector import Binding, Selector
 from molpy.core import fields
 from molpy.core.atomistic import Atomistic
-from molpy.typifier.region import RegionTypifier
+from molpy.typifier.affected_region import AffectedRegion
+from molpy.typifier.base import Typifier
 
 if TYPE_CHECKING:
     from molrs.fields import FieldSpec
 
     from molpy.builder.assembly._placer import Placer
-    from molpy.typifier.affected_region import AffectedRegion
 
 #: Net charge drift that counts as zero (elementary charge).
 _CHARGE_TOL = 1e-9
@@ -39,16 +40,17 @@ class GraphAssembler:
     CGSmiles + a monomer library.
 
     ``typifier=None`` is a named mode — *pure-topology assembly* — not a
-    fallback: it skips retyping and nothing else. A typifier that declares no
-    receptive field is rejected at construction, because there is no honest way
-    to type a region with it.
+    fallback: it skips retyping and nothing else. A typifier must be accompanied
+    by the ``reach`` it needs, because there is no honest way to cut a region
+    without knowing how far the typifier looks.
     """
 
     def __init__(
         self,
         reaction: molrs.Reaction,
         *,
-        typifier: RegionTypifier | None = None,
+        typifier: Typifier | None = None,
+        reach: int | None = None,
         placer: Placer | None = None,
         label_field: FieldSpec = fields.SITE,
     ) -> None:
@@ -57,13 +59,21 @@ class GraphAssembler:
                 "reaction must be a molpy.Reaction instance, not "
                 f"{type(reaction).__name__}; build it once with mp.Reaction(smirks)"
             )
-        if typifier is not None and not isinstance(typifier, RegionTypifier):
+        if typifier is not None and not isinstance(typifier, Typifier):
             raise TypeError(
-                f"{type(typifier).__name__} declares no receptive field (scope) and "
+                f"{type(typifier).__name__} is not a molpy.typifier.Typifier and "
                 "cannot type a region. There is no whole-graph fallback."
+            )
+        if typifier is not None and reach is None:
+            raise TypeError(
+                "reach= is required alongside typifier=: it is the neighbourhood "
+                "radius (in bonds) that decides one atom's type, and it fixes both "
+                "the extracted ball and the write-back set. Pass reach=2 for GAFF "
+                "and for SMARTS pattern sets without ring predicates."
             )
         self._reaction = reaction
         self._typifier = typifier
+        self._reach = reach
         self._placer = placer
         self._label_field = label_field
 
@@ -134,8 +144,11 @@ class GraphAssembler:
 
         # Regions are built AFTER every apply, so each one sees the final graph.
         # Two overlapping regions then agree on a shared interior atom's type.
-        scope = self._typifier.scope
-        regions = [scope.region(work, touched) for touched in touched_sets]
+        assert self._reach is not None  # guaranteed by __init__
+        regions = [
+            AffectedRegion.around(work, touched, reach=self._reach)
+            for touched in touched_sets
+        ]
         inserted: set[tuple[str, tuple[int, ...]]] = set()
         for region, bond in zip(regions, formed, strict=True):
             self._cache.retype_and_apply(region)

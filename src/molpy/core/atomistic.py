@@ -520,38 +520,6 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
         return complete_valence(self)
 
-    def assign_bonded_types(self, forcefield: Any) -> "Atomistic":
-        """Label every bond/angle/dihedral from its endpoint atom types.
-
-        For each bonded term, look its endpoint ``type`` tuple up in
-        ``forcefield`` (matching either endpoint order) and write the canonical
-        type name onto the link. Atoms must already carry ``type``; a term whose
-        atom-type tuple is absent from the force field is left unlabelled.
-        Mutates and returns ``self``.
-        """
-        from molpy.core.forcefield import AngleType, BondType, DihedralType
-
-        def name_table(cls: type) -> dict[tuple[str, ...], str]:
-            table: dict[tuple[str, ...], str] = {}
-            for t in forcefield.get_types(cls):
-                parts = tuple(t.name.split("-"))
-                table[parts] = t.name
-                table[parts[::-1]] = t.name
-            return table
-
-        for view, cls in (
-            (self.bonds, BondType),
-            (self.angles, AngleType),
-            (self.dihedrals, DihedralType),
-        ):
-            table = name_table(cls)
-            for link in view:
-                key = tuple(ep.get("type") for ep in link.endpoints)
-                name = table.get(key)
-                if name is not None:
-                    link["type"] = name
-        return self
-
     def get_topo_neighbors(
         self,
         entity: Atom,

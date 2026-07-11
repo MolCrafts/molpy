@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from molpy.builder.assembly._placer import Placer
     from molpy.core.atomistic import Atomistic
-    from molpy.typifier.region import RegionTypifier
+    from molpy.typifier.base import Typifier
 
 
 class PolymerBuilder(GraphAssembler):
@@ -45,12 +45,17 @@ class PolymerBuilder(GraphAssembler):
         library: MonomerLibrary | Mapping[str, Atomistic],
         reaction: molrs.Reaction,
         *,
-        typifier: RegionTypifier | None = None,
+        typifier: Typifier | None = None,
+        reach: int | None = None,
         placer: Placer | None = None,
         label_field: FieldSpec = fields.SITE,
     ) -> None:
         super().__init__(
-            reaction, typifier=typifier, placer=placer, label_field=label_field
+            reaction,
+            typifier=typifier,
+            reach=reach,
+            placer=placer,
+            label_field=label_field,
         )
         self._library = (
             library if isinstance(library, MonomerLibrary) else MonomerLibrary(library)

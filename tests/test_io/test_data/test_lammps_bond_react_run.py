@@ -11,7 +11,8 @@ two bugs the first time it ran:
 * a post-reaction template must not carry angles/dihedrals through the atoms the
   reaction deletes, and it must extend far enough that every term the edit
   creates lies strictly inside it ("Atom affected by reaction is too close to
-  template edge") — the same two-radii argument :class:`TypeScope` makes.
+  template edge") — the same two-radii argument
+  :meth:`~molpy.typifier.affected_region.AffectedRegion.around` makes.
 
 Reference: https://docs.lammps.org/fix_bond_react.html and the LAMMPS
 ``examples/PACKAGES/reaction`` inputs.

@@ -134,6 +134,15 @@ def complete_valence(struct: Atomistic) -> Atomistic:
     parameterisation maps position-for-position back onto ``struct`` for its first
     ``struct.n_atoms`` atoms.
 
+    **Every link kind is carried over**, not just bonds: an angle or dihedral the
+    caller perceived is part of the graph being completed, and a completion that
+    dropped it would silently delete the very terms a force field is about to
+    label. A cap, conversely, only adds a *bond* — it is context for the atoms it
+    completes, not a term anyone asked to parameterise.
+
+    Completing an already-complete molecule is the identity: no atom is
+    under-coordinated, so nothing is capped.
+
     Args:
         struct: the (possibly under-coordinated) atomistic graph to complete.
 
@@ -147,9 +156,10 @@ def complete_valence(struct: Atomistic) -> Atomistic:
     atoms = list(struct.atoms)
     for atom in atoms:
         clone[atom.handle] = mol.def_atom(dict(atom.data))
-    for bond in struct.bonds:
-        i, j = bond.endpoints
-        mol.def_bond(clone[i.handle], clone[j.handle], **dict(bond.data))
+    for link_cls in struct.links.classes():
+        for link in struct.links.bucket(link_cls):
+            endpoints = (clone[ep.handle] for ep in link.endpoints)
+            mol.links.add(link_cls(*endpoints, **dict(link.data)))
 
     bond_orders = {atom.handle: 0.0 for atom in atoms}
     for bond in struct.bonds:

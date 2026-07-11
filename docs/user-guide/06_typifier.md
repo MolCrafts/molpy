@@ -198,19 +198,22 @@ When a `molpy.Reaction` forms a new bond between two monomers, the atoms at the 
 
 Rather than re-typifying the entire chain after each coupling step, MolPy re-types only the neighbourhood the edit disturbed.
 
-How wide that neighbourhood is is not a knob. Every typifier declares its receptive field — the number of bonds it must see around an atom before it can name that atom's type — as a `TypeScope`, and that single number fixes both radii of the operation. `GraphAssembler` extracts a ball of `2 x reach` bonds around each new bond, re-types it, and writes back only the inner `reach` shell: those are the atoms whose environment actually changed, and the outer shell exists solely to give them a correct environment to be typed against. Atoms beyond the inner shell were already right and are left alone.
+How wide that neighbourhood is is not a knob on the typifier. `GraphAssembler` is told the `reach` its typifier needs — the number of bonds it must see around an atom before it can name that atom's type — and that single number fixes both radii of the operation. `AffectedRegion.around` extracts a ball of `2 x reach` bonds around each new bond, and only the inner `reach` shell is written back: those are the atoms whose environment actually changed. The outer shell exists solely to give them a correct environment to be typed against. Atoms beyond the inner shell were already right and are left alone.
+
+The region completes its own cut valences before any typifier sees it, and that is not a convenience. Because the extracted ball is exactly `interior_reach + reach` wide, an interior atom's receptive field reaches precisely to the boundary atoms — and a raw cut leaves those with unfilled valences, which a SMARTS matcher reads as radicals. Measured on p-xylene at `reach = 2`, 12 of its 19 raw slices cannot be typed at all.
 
 Identical junctions hash to the same key and are typed once, so the number of typing passes tracks the number of *distinct* chemical environments in the system rather than the number of bonds formed. Building a 1000-mer costs about as many typing passes as building a 10-mer.
 
 To enable this, pass the typifier to the builder at construction:
 
 ```text
-from molpy.typifier.ambertools import AmberToolsTypifier
+from molpy.typifier import AmberToolsTypifier
 
 builder = PolymerBuilder(
     MonomerLibrary({"EO": eo}),
     mp.Reaction(ETHER),
-    typifier=AmberToolsTypifier(amber, reach=2),  # junctions re-typed as they form
+    typifier=AmberToolsTypifier(amber),
+    reach=2,                     # GAFF: a 1-2 bond environment names an atom type
     placer=ResiduePlacer(),
 )
 chain = builder.build("{[#EO]|20}")

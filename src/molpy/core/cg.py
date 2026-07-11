@@ -128,6 +128,19 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
     def cgbonds(self) -> Entities[CGBond]:
         return self._link_views("bonds")  # type: ignore[return-value]
 
+    def complete_valence(self) -> "CoarseGrain":
+        """Return an independent copy — a bead has no valence to complete.
+
+        The counterpart of :meth:`molpy.core.atomistic.Atomistic.complete_valence`.
+        A typifier caps every graph it is handed, unconditionally, so that a
+        sliced fragment is never matched against as a radical. A coarse-grained
+        bead is not an element and carries no bond-order budget, so there is
+        nothing to cap and the completion is the identity. Answering here rather
+        than branching on the graph's type inside the typifier is what keeps the
+        typing pipeline kind-agnostic.
+        """
+        return self.copy()
+
     def __repr__(self) -> str:
         from collections import Counter
 

@@ -719,7 +719,7 @@ class TestXMLForceFieldReader:
         which requires wildcard AtomTypes to be created during parsing.
         """
         from molpy import Atom, Atomistic, Bond
-        from molpy.typifier.atomistic import ForceFieldBondTypifier
+        from molpy.typifier import ForceFieldParams
 
         xml_file = TEST_DATA_DIR / "xml" / "oplsaa.xml"
         assert xml_file.exists(), f"Test file not found: {xml_file}"
@@ -737,13 +737,16 @@ class TestXMLForceFieldReader:
         bond = Bond(atom1, atom2)
         asm.add_link(bond)
 
-        # Typify bond
-        typifier = ForceFieldBondTypifier(ff)
-        typifier.typify(bond)
+        # Assign parameters from the atom types already on the graph. ``assign``
+        # returns a new graph, so the input's bond stays untouched.
+        typed = ForceFieldParams(ff, strict=False).assign(asm)
+        typed_bond = next(iter(typed.bonds))
 
-        # Should have a type assigned
-        assert bond.data.get("type") is not None, "Bond should have a type assigned"
-        assert "k" in bond.data or "r0" in bond.data, "Bond should have parameters"
+        assert typed_bond.get("type") is not None, "Bond should have a type assigned"
+        assert "k" in typed_bond.data or "r0" in typed_bond.data, (
+            "Bond should have parameters"
+        )
+        assert bond.data == {}, "assign must not mutate its input"
 
 
 class TestAngleUnitOption:

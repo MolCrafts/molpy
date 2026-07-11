@@ -11,7 +11,7 @@ import inspect
 import molpy as mp
 from molpy.typifier.affected_region import AffectedRegion
 from molpy.core.atomistic import Atom, Atomistic
-from molpy.typifier.scope import TypeScope
+from molpy.typifier.base import Match, Typifier
 from molpy.wrapper.antechamber import write_antechamber_input_pdb
 
 
@@ -96,19 +96,18 @@ def test_from_accepts_handles_as_well_as_atoms():
     assert by_atom == by_handle
 
 
-def test_extraction_radius_comes_from_the_typifier_scope():
-    """No floor, no guessed radius: the typifier's ``scope`` owns both radii.
+def test_extraction_radius_is_derived_from_reach_not_guessed():
+    """No floor, no guessed radius: ``around`` derives both radii from ``reach``.
 
-    ``region_radius()`` / ``_FLOOR`` are gone — see
-    ``tests/test_typifier/test_scope.py`` for the arithmetic and the measured
-    reach. Here we only pin that a region built through a scope agrees with it.
+    ``region_radius()`` / ``_FLOOR`` / ``TypeScope`` are gone — see
+    ``tests/test_typifier/test_region_radii.py`` for the arithmetic and the
+    measured reach.
     """
     chain, carbons = _carbon_chain(12)
-    scope = TypeScope(reach=2)
-    region = scope.region(chain, [carbons[6]])
+    region = AffectedRegion.around(chain, [carbons[6]], reach=2)
 
-    assert region.extract_radius == scope.extract_radius == 4
-    assert region.interior_reach == scope.interior_reach == 2
+    assert region.extract_radius == 4
+    assert region.interior_reach == 2
     # interior is the write-back ball, not "everything that is not boundary"
     inside = {h for h, _ in chain.topo_distances(carbons[6].handle, max_hops=2)}
     assert {region.entity_map[a].handle for a in region.interior} == inside
@@ -198,29 +197,11 @@ def test_region_feeds_the_ambertools_pdb_bridge():
 # --------------------------------------------------------------------------
 
 
-class _ScopedTypifier:
-    """Region typifier that declares a scope and types every atom it is given."""
+class _ElementTypifier(Typifier[Atomistic]):
+    """Types every atom by element; implements ``match`` and nothing else."""
 
-    def __init__(self, reach: int = 2) -> None:
-        self._scope = TypeScope(reach=reach)
-
-    @property
-    def scope(self) -> TypeScope:
-        return self._scope
-
-    def typify(self, struct: Atomistic) -> Atomistic:
-        typed = struct.copy()
-        for atom in typed.atoms:
-            atom["type"] = f"t_{atom['element']}"
-        return typed
-
-    def typify_region(self, region):
-        from molpy.typifier.region import RegionTypes
-
-        before = [dict(a.data) for a in region.atoms]
-        typed = self.typify(region)
-        after = [dict(a.data) for a in typed.atoms]
-        return RegionTypes.capture(region, typed, before, after)
+    def match(self, graph: Atomistic) -> Match:
+        return Match(nodes=tuple({"type": f"t_{a['element']}"} for a in graph.atoms))
 
 
 def _nitrogen_oxygen_cloud(n: int = 3) -> Atomistic:
@@ -236,7 +217,7 @@ def test_assembler_types_every_region_it_builds():
     from molpy.builder.assembly import ExhaustiveSelector, GraphAssembler
 
     out = GraphAssembler(
-        mp.Reaction("[N:1].[O:2]>>[N:1][O:2]"), typifier=_ScopedTypifier()
+        mp.Reaction("[N:1].[O:2]>>[N:1][O:2]"), typifier=_ElementTypifier(), reach=2
     ).assemble(_nitrogen_oxygen_cloud(), ExhaustiveSelector(cutoff=2.0))
 
     assert isinstance(out, mp.Atomistic)
@@ -246,7 +227,7 @@ def test_assembler_types_every_region_it_builds():
 
 
 def test_assembler_without_a_typifier_builds_no_region():
-    """No typifier declares no scope, and no radius may be guessed.
+    """No typifier, no region, and no radius may be guessed.
 
     Pure-topology assembly is a named mode, not a region path with a fallback
     radius — ``_FLOOR = 4`` is gone.

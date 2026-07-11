@@ -10,9 +10,8 @@ Each package has one clear responsibility with minimal coupling to its siblings:
 |---------|---------|
 | `core` | Data structures: `Entity`, `Link`, `Struct`, `Atomistic`, `Frame`, `Block`, `Box`, `ForceField` |
 | `parser` | Grammar-based parsing: SMILES, SMARTS, BigSMILES, G-BigSMILES, CGSmiles |
-| `builder` | System assembly: chain builders, virtual sites, AmberTools integration |
-| `reacter` | Reaction framework: template-based reactions with anchor and leaving-group selectors |
-| `typifier` | Graph typification: molrs OPLS-AA/MMFF re-exports, MolPy-side overlays such as CL&P, and standalone pair typing |
+| `builder` | System assembly: one `GraphAssembler` kernel + a `Selector` family, virtual sites, AmberTools integration |
+| `typifier` | Graph typification: one `Typifier` contract (`MolGraph -> MolGraph`), molrs OPLS-AA/MMFF re-exports, and MolPy-side overlays such as CL&P |
 | `pack` | Packing workflows: Packmol integration, density targets |
 | `io` | File I/O: readers/writers for molecular data, trajectories, and force-field formats |
 | `compute` | Analysis operators over `Frame`/`Block` data |
@@ -21,7 +20,7 @@ Each package has one clear responsibility with minimal coupling to its siblings:
 | `adapter` | In-memory bridges to external object models (RDKit, OpenBabel, …) |
 | `data` | Bundled package data: force-field XML files, parameter tables |
 
-`core` depends on nothing above it; everything else builds on `core`. `compute`, `io`, and `engine` operate on the tabular layer (`Frame`/`Block`); `parser`, `builder`, `reacter`, and `typifier` operate on the graph layer (`Atomistic`). `wrapper` and `adapter` sit at the outer edge and never leak external types into `core`.
+`core` depends on nothing above it; everything else builds on `core`. `compute`, `io`, and `engine` operate on the tabular layer (`Frame`/`Block`); `parser`, `builder`, and `typifier` operate on the graph layer (`Atomistic`). `wrapper` and `adapter` sit at the outer edge and never leak external types into `core`.
 
 ## The graph layer: Entity, Link, Struct
 
@@ -59,7 +58,7 @@ Readers call `canonicalize()` at exit (format → canonical); writers call `loca
 
 ## The mutation contract
 
-The core data-model API mutates in place and returns `self` (or the created entity) for chaining: `def_atom`, `def_bond`, `get_topo`, `move`, `rotate`, `merge` all modify the structure they are called on. `.copy()` is the explicit opt-in for an independent deep copy. Higher-level helpers in `builder`, `reacter`, and `op` follow the opposite convention: they must not mutate caller-owned structures unexpectedly — copy first, or build and return a new structure.
+The core data-model API mutates in place and returns `self` (or the created entity) for chaining: `def_atom`, `def_bond`, `get_topo`, `move`, `rotate`, `merge` all modify the structure they are called on. `.copy()` is the explicit opt-in for an independent deep copy. Higher-level helpers in `builder` and `op` follow the opposite convention: they must not mutate caller-owned structures unexpectedly — copy first, or build and return a new structure.
 
 ## Performance model of the build loop
 
@@ -68,9 +67,9 @@ Assembly is linear in chain length because nothing per-edit walks the whole syst
 - **One paste, in-place edits** — the world is built once; `molrs.Reaction.apply` edits it in
   place and returns the atoms it touched. There is no per-bond copy and no `entity_map`
   remapping, which is where the old builder's four independent O(N)-per-bond terms lived.
-- **Local retyping** — only the ball around each new bond is retyped, at the radius the
-  typifier's `TypeScope` declares. Identical junctions dedupe by structural hash, so the
-  typing cost tracks distinct environments, not bonds.
+- **Local retyping** — only the ball around each new bond is retyped, at the radius
+  `AffectedRegion.around` derives from the assembler's `reach`. Identical junctions dedupe
+  by structural hash, so the typing cost tracks distinct environments, not bonds.
 - **Local topology** — the angles and dihedrals a new bond creates are inserted from the
   region. `generate_topology` is never called on the assembled world.
 - **Matching once** — the kernel matches the reaction's patterns in O(N) and hands the

@@ -1,13 +1,24 @@
 """A hashable MolGraph subgraph produced by a graph edit.
 
-This is not a data-model type — it is the ripple a graph edit raises, and how far
-it travels is decided by the typifier's :class:`~molpy.typifier.scope.TypeScope`.
-That is why it lives here and not in :mod:`molpy.core`: nothing in the data model
-needs it, and everything that does is a typifier.
+This is not a data-model type — it is the ripple a graph edit raises. That is why
+it lives here and not in :mod:`molpy.core`: nothing in the data model needs it,
+and everything that does is a typifier.
 
-:class:`AffectedRegion` is the ball a graph edit disturbed, extracted at the
-radius its typifier declares (see :class:`~molpy.typifier.scope.TypeScope`, the
-one place that owns the radius arithmetic). It **is** an
+A region retype has **two** radii, and they are not independent degrees of
+freedom — they are ``reach`` and (essentially) ``2 * reach``. Let ``reach`` be the
+neighbourhood radius, in bonds, that decides one atom's type.
+
+*Write-back set.* An edit lands on ``touched``. Atom ``a``'s type can change iff
+the edit falls inside ``a``'s deciding neighbourhood, i.e. ``touched`` intersects
+``ball(a, reach)``. Distance is symmetric, so the atoms that must be retyped are
+exactly ``ball(touched, reach)``.
+
+*Extraction radius.* Every atom in that write-back set still needs its own
+``reach``-ball in view. The farthest one sits ``reach`` hops out, and its ball
+reaches ``reach`` hops further — so the extracted ball has radius ``2 * reach``.
+
+:meth:`AffectedRegion.around` is the **only** place in molpy that does this
+arithmetic. It **is** an
 :class:`~molpy.core.atomistic.Atomistic` — so it hands straight to third-party
 typifiers / AmberTools — but adds region semantics (``interior`` / ``boundary`` /
 ``hops`` / ``entity_map``) and an isomorphism-invariant structural ``__hash__`` /
@@ -31,7 +42,7 @@ variant; only the all-atom :class:`AffectedRegion` is instantiated here.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Self
+from typing import ClassVar, Self
 
 from molpy.core.atomistic import Atom, Atomistic
 from molpy.core.entity import Entity
@@ -56,9 +67,9 @@ class _RegionMixin[E: Entity]:
     hops: dict[int, int]
     #: region entity → parent-graph entity (invert to map types back).
     entity_map: dict[E, E]
-    #: radius of the write-back set (``TypeScope.interior_reach``).
+    #: radius of the write-back set: ``max(reach, TERM_REACH)``.
     interior_reach: int
-    #: radius of the extracted ball (``TypeScope.extract_radius``).
+    #: radius of the extracted ball: ``interior_reach + reach``.
     extract_radius: int
 
 
@@ -70,9 +81,45 @@ class AffectedRegion(_RegionMixin[Atom], Atomistic):
     with the plain-Python :class:`_RegionMixin` layered in front for its region
     attributes.
 
-    Build one through :meth:`molpy.typifier.scope.TypeScope.region`, never by
-    guessing a radius.
+    Build one through :meth:`around`, never by guessing a radius.
     """
+
+    #: A dihedral / improper is a 4-body term, so a term containing a newly
+    #: formed bond spans at most ``4 - 2 = 2`` hops from that bond. Those atoms
+    #: must be typed for the term to be looked up, which floors the write-back
+    #: radius. Not a magic number: it is the arity of the widest bonded term
+    #: :class:`~molpy.core.atomistic.Atomistic` carries, minus two.
+    TERM_REACH: ClassVar[int] = 2
+
+    @classmethod
+    def around(
+        cls, graph: Atomistic, touched: Iterable[Atom | int], *, reach: int
+    ) -> Self:
+        """Extract the region a ``reach``-limited typifier needs around ``touched``.
+
+        Args:
+            graph: The parent graph an edit just modified.
+            touched: Seed atoms (views or molrs handles) the edit reported.
+            reach: Neighbourhood radius, in bonds, that decides one atom's type.
+
+        Returns:
+            A region whose ``interior`` is ``ball(touched, max(reach, TERM_REACH))``
+            — the atoms whose types are written back — inside an extracted ball of
+            radius ``interior_reach + reach``.
+
+        Raises:
+            ValueError: if ``reach < 1``, if ``touched`` is empty, or if it names
+                a handle that is not a live atom of ``graph``.
+        """
+        if reach < 1:
+            raise ValueError(f"reach must be >= 1, got {reach}")
+        interior_reach = max(reach, cls.TERM_REACH)
+        return cls._from(
+            graph,
+            touched,
+            extract_radius=interior_reach + reach,
+            interior_reach=interior_reach,
+        )
 
     @classmethod
     def _from(

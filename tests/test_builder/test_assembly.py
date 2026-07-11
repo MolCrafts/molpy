@@ -27,33 +27,21 @@ from molpy.builder.assembly._placer import Placer
 from molpy.core import fields
 from molpy.parser.smiles import parse_cgsmiles
 from molpy.typifier.region import RegionTypes
-from molpy.typifier.scope import TypeScope
+from molpy.typifier.base import Match, Typifier
 
 ETHER = "[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]"
 NO_PLUS_O = "[N:1].[O:2]>>[N:1][O:2]"
 
 
-class _ScopedTypifier:
-    """Region typifier with a declared scope; types every atom by element."""
+class _ElementTypifier(Typifier):
+    """Types every atom by element. Implements ``match`` and nothing else."""
 
-    def __init__(self, reach: int = 2) -> None:
-        self._scope = TypeScope(reach=reach)
-
-    @property
-    def scope(self) -> TypeScope:
-        return self._scope
-
-    def typify(self, graph):
-        typed = graph.copy()
-        for atom in typed.atoms:
-            atom[fields.TYPE] = f"t_{atom[fields.ELEMENT]}"
-        return typed
-
-    def typify_region(self, region) -> RegionTypes:
-        before = [dict(a.data) for a in region.atoms]
-        typed = self.typify(region)
-        after = [dict(a.data) for a in typed.atoms]
-        return RegionTypes.capture(region, typed, before, after)
+    def match(self, graph) -> Match:
+        return Match(
+            nodes=tuple(
+                {fields.TYPE.key: f"t_{atom[fields.ELEMENT]}"} for atom in graph.atoms
+            )
+        )
 
 
 def _eo(*, typed: bool = True, charge: float | None = None):
@@ -86,8 +74,16 @@ def _no_cloud(n: int = 3):
     return cloud
 
 
-def _builder(**kwargs) -> PolymerBuilder:
-    return PolymerBuilder(MonomerLibrary({"EO": _eo()}), mp.Reaction(ETHER), **kwargs)
+def _builder(*, typifier=None, reach=None, **kwargs) -> PolymerBuilder:
+    if typifier is not None and reach is None:
+        reach = 2
+    return PolymerBuilder(
+        MonomerLibrary({"EO": _eo()}),
+        mp.Reaction(ETHER),
+        typifier=typifier,
+        reach=reach,
+        **kwargs,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -182,7 +178,7 @@ def test_selector_is_an_assemble_argument_not_a_constructor_argument():
 
 
 def test_cache_is_shared_across_builds_of_different_lengths():
-    builder = _builder(typifier=_ScopedTypifier())
+    builder = _builder(typifier=_ElementTypifier())
     for n in (4, 7, 11):
         builder.build(f"{{[#EO]|{n}}}")
     junctions = (4 - 1) + (7 - 1) + (11 - 1)
@@ -260,7 +256,7 @@ def test_no_whole_graph_generate_topology_on_the_assembled_world(monkeypatch):
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(atomistic_module.Atomistic, "generate_topology", spy)
-    chain = _builder(typifier=_ScopedTypifier()).build("{[#EO]|6}")
+    chain = _builder(typifier=_ElementTypifier()).build("{[#EO]|6}")
 
     assert not [g for g in seen if g is chain], (
         "the assembled world was rebuilt whole-graph; only regions may be"
@@ -275,13 +271,19 @@ def test_no_whole_graph_generate_topology_on_the_assembled_world(monkeypatch):
 # --------------------------------------------------------------------------
 
 
-def test_non_local_typifier_is_rejected_at_construction():
-    class NoScope:
+def test_something_that_is_not_a_typifier_is_rejected_at_construction():
+    class NotATypifier:
         def typify(self, graph):
             return graph
 
-    with pytest.raises(TypeError, match="declares no receptive field"):
-        GraphAssembler(mp.Reaction(NO_PLUS_O), typifier=NoScope())
+    with pytest.raises(TypeError, match="is not a molpy.typifier.Typifier"):
+        GraphAssembler(mp.Reaction(NO_PLUS_O), typifier=NotATypifier(), reach=2)
+
+
+def test_a_typifier_without_a_reach_is_rejected_at_construction():
+    """The radius belongs to whoever cuts the region; it may never be guessed."""
+    with pytest.raises(TypeError, match="reach= is required"):
+        GraphAssembler(mp.Reaction(NO_PLUS_O), typifier=_ElementTypifier())
 
 
 def test_reaction_must_be_a_reaction_not_a_string():
@@ -467,17 +469,22 @@ def test_placement_refuses_to_guess_an_unknown_element():
 def test_typifier_is_never_handed_the_assembled_world():
     seen: list[object] = []
 
-    class _Spy(_ScopedTypifier):
-        def typify(self, graph):
+    class _Spy(_ElementTypifier):
+        def match(self, graph):
             seen.append(graph)
-            return super().typify(graph)
+            return super().match(graph)
 
     chain = _builder(typifier=_Spy()).build("{[#EO]|6}")
     assert seen, "the typifier was never called at all"
     assert not [g for g in seen if g is chain]
-    # every graph it saw was a region, strictly smaller than the assembled chain
-    biggest = max(len(list(g.atoms)) for g in seen)
-    assert biggest < len(list(chain.atoms))
+
+    # Count heavy atoms, not atoms: the pipeline hands the typifier a
+    # valence-completed region, and the cap hydrogens say nothing about how much
+    # of the world it was shown.
+    def heavy(graph):
+        return sum(1 for atom in graph.atoms if atom[fields.ELEMENT] != "H")
+
+    assert max(heavy(g) for g in seen) < heavy(chain)
 
 
 # --------------------------------------------------------------------------
@@ -497,7 +504,7 @@ def _term_sets(graph):
 @pytest.mark.parametrize("cgsmiles", ["{[#EO]|6}", "{[#EO]1[#EO][#EO]1}"])
 def test_locally_inserted_terms_equal_the_whole_graph_oracle(cgsmiles):
     """A whole-graph rebuild is the oracle here — never the product path."""
-    chain = _builder(typifier=_ScopedTypifier()).build(cgsmiles)
+    chain = _builder(typifier=_ElementTypifier()).build(cgsmiles)
     local = _term_sets(chain)
 
     chain.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)
@@ -521,8 +528,8 @@ def test_regions_are_built_after_every_edit_and_overlap_consistently():
     If a region were captured before a later edit, the two would disagree about a
     shared interior atom's type. Types written by overlapping regions must match.
     """
-    typifier = _ScopedTypifier(reach=3)  # wide enough that regions overlap
-    chain = _builder(typifier=typifier).build("{[#EO]|4}")
+    # reach=3 is wide enough that neighbouring junction regions overlap
+    chain = _builder(typifier=_ElementTypifier(), reach=3).build("{[#EO]|4}")
     # every atom carries exactly the type its element implies — no atom was left
     # holding a stale type from a region captured too early
     for atom in chain.atoms:
@@ -535,7 +542,7 @@ def test_regions_are_built_after_every_edit_and_overlap_consistently():
 
 
 def test_isomorphic_interiors_with_different_shells_do_not_share_a_cache_entry():
-    from molpy.typifier.scope import TypeScope
+    from molpy.typifier.affected_region import AffectedRegion
 
     def chain(tail_element: str):
         s = mp.Atomistic()
@@ -545,12 +552,12 @@ def test_isomorphic_interiors_with_different_shells_do_not_share_a_cache_entry()
             s.def_bond(a, b)
         return s, atoms
 
-    scope = TypeScope(reach=2)  # interior 2, extract 4
     a_graph, a_atoms = chain("C")
     b_graph, b_atoms = chain("N")
 
-    region_a = scope.region(a_graph, [a_atoms[1]])
-    region_b = scope.region(b_graph, [b_atoms[1]])
+    # reach=2 -> interior 2, extract 4
+    region_a = AffectedRegion.around(a_graph, [a_atoms[1]], reach=2)
+    region_b = AffectedRegion.around(b_graph, [b_atoms[1]], reach=2)
 
     # the interiors (hops <= 2 from atom 1) are identical carbon chains...
     assert [a[fields.ELEMENT] for a in region_a.interior] == [

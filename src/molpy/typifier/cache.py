@@ -22,13 +22,14 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from molpy.typifier.affected_region import AffectedRegion
-    from molpy.typifier.region import RegionTypes, RegionTypifier
+    from molpy.typifier.base import Typifier
+    from molpy.typifier.region import RegionTypes
 
 
 class RetypeCache:
     """Deduplicate region typing by structural hash + isomorphism confirm."""
 
-    def __init__(self, typifier: RegionTypifier) -> None:
+    def __init__(self, typifier: Typifier) -> None:
         self._typifier = typifier
         self._buckets: dict[int, list[tuple[AffectedRegion, RegionTypes]]] = {}
 
@@ -38,7 +39,9 @@ class RetypeCache:
         for cached_region, types in self._buckets.get(key, ()):
             if region == cached_region:  # is_isomorphic confirm
                 return types
-        types = self._typifier.typify_region(region)
+        from molpy.typifier.region import RegionTypes
+
+        types = RegionTypes.of(region, self._typifier)
         self._buckets.setdefault(key, []).append((region, types))
         return types
 

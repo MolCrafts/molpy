@@ -549,9 +549,20 @@ class _GraphViews:
             out.extend(self._link_views(kind))
         return out
 
-    # ---------- compat .links bucket view ----------
+    # ---------- generic views ----------
     # ``.entities`` would collide with the pyo3 ``entities()`` method, so the
-    # node bucket compat is not exposed; downstream uses ``.atoms`` / ``.beads``.
+    # node bucket compat is not exposed under that name.
+    @property
+    def nodes(self) -> "Entities[Any]":
+        """Every node, whatever a leaf calls them (``atoms``, ``beads``, …).
+
+        The kind-neutral name a graph-generic caller reaches for: a typifier
+        writes its annotations onto ``graph.nodes`` without knowing whether it is
+        looking at an :class:`~molpy.core.atomistic.Atomistic` or a
+        :class:`~molpy.core.cg.CoarseGrain`.
+        """
+        return self._atom_views()
+
     # ``.links`` has no pyo3 collision and stays as a compat surface used by the
     # typifier / assembler.
     @property

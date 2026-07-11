@@ -76,12 +76,9 @@ def _c4c1im_typed():
     asm.add_entity(*atoms)
     for i, j in edges:
         asm.add_link(Bond(atoms[i], atoms[j]))
-    return ClpTypifier(
-        skip_bond_typing=True,
-        skip_angle_typing=True,
-        skip_dihedral_typing=True,
-        strict_typing=False,
-    ).typify(asm)
+    # No skip_* knobs: a term this force field cannot match is left undecided,
+    # which is what "skip bonded typing" used to spell.
+    return ClpTypifier(strict=False).typify(asm)
 
 
 def _water(charge_o=-0.8, charge_h=0.4):

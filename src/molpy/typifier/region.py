@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Self
 
 from molpy.core import fields
 
@@ -31,24 +31,7 @@ if TYPE_CHECKING:
     from molpy.typifier.affected_region import AffectedRegion
     from molpy.core.atomistic import Atom, Atomistic
     from molpy.core.entity import Link
-    from molpy.typifier.scope import TypeScope
-
-
-@runtime_checkable
-class RegionTypifier(Protocol):
-    """Structural type of a typifier that can type an affected region.
-
-    It declares its receptive field as a :class:`~molpy.typifier.scope.TypeScope`
-    and knows how to type a region. The SMARTS-based
-    :class:`~molpy.typifier.atomistic.ForceFieldTypifier` and the
-    AmberTools-backed :class:`~molpy.typifier.ambertools.AmberToolsTypifier` both
-    satisfy it.
-    """
-
-    @property
-    def scope(self) -> TypeScope: ...
-
-    def typify_region(self, region: AffectedRegion) -> RegionTypes: ...
+    from molpy.typifier.base import Typifier
 
 
 #: A force-field parameter value a typifier writes onto an element. molrs Block
@@ -142,6 +125,33 @@ class RegionTypes:
     dihedrals: tuple[BondedTypeInfo, ...]
     #: sp2 planarity terms; absent from a snapshot means a pyramidalised centre.
     impropers: tuple[BondedTypeInfo, ...]
+
+    @classmethod
+    def of(cls, region: AffectedRegion, typifier: Typifier) -> Self:
+        """Type ``region`` with ``typifier`` and snapshot its interior.
+
+        Region typing is not a kind of typifier — an
+        :class:`~molpy.typifier.affected_region.AffectedRegion` *is* a MolGraph,
+        so ``typifier.typify(region)`` is already legal. The only thing region
+        typing adds is this cacheable snapshot of what landed on the interior.
+
+        A region is a cut, always — so its valences are completed here, always,
+        with no condition to get wrong. The typifier is never asked to guess
+        whether what it holds is a fragment.
+
+        Completion is not a convenience. ``extract_radius == interior_reach +
+        reach`` means an interior atom's receptive field reaches *exactly* to the
+        boundary atoms; a raw cut leaves those with unfilled valences, and a
+        SMARTS matcher reads them as radicals. Measured on p-xylene at
+        ``reach = 2``, 12 of 19 raw slices cannot be typed at all.
+        """
+        capped = region.complete_valence()
+        before = [dict(atom.data) for atom in region.atoms]
+        typed = typifier.typify(capped)
+        # The completion appended the caps, so the region's own atoms are the
+        # prefix. A cap is context; it is never part of the snapshot.
+        after = [dict(atom.data) for atom in list(typed.atoms)[: len(before)]]
+        return cls.capture(region, typed, before, after)
 
     @classmethod
     def capture(
@@ -247,12 +257,22 @@ class RegionTypes:
         interior: set[int],
         region_atoms: list[Atom],
     ) -> tuple[BondedTypeInfo, ...]:
-        """Snapshot every bonded term all of whose endpoints are interior."""
+        """Snapshot every bonded term all of whose endpoints are interior.
+
+        ``typed`` may carry the cap atoms the region's completion appended; they
+        sit past the region's own atoms, so a term touching one is not a term of
+        the region and is skipped.
+        """
         pos_of_handle = {atom.handle: pos for pos, atom in enumerate(typed_atoms)}
+        n_region = len(region_atoms)
         out: list[BondedTypeInfo] = []
         for link in links:
+            if link.get(fields.TYPE.key) is None:
+                # Undecided, not "typed as None". Writing that back would erase
+                # whatever the parent's term already carried.
+                continue
             positions = [pos_of_handle.get(ep.handle) for ep in link.endpoints]
-            if any(pos is None for pos in positions):
+            if any(pos is None or pos >= n_region for pos in positions):
                 continue
             resolved = [pos for pos in positions if pos is not None]
             if any(region_atoms[pos].handle not in interior for pos in resolved):
