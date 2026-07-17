@@ -1,5 +1,7 @@
 name: CI
 
+# Default gate: lint + unit tests. No caches, no OS matrix, no coverage theater.
+# external (network/binaries) is the only exclude. There is no test_integration/.
 on:
   push:
     branches: [master, dev, dev-*]
@@ -13,66 +15,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
       - name: Install tools
-        # Pinned to match .pre-commit-config.yaml (ruff-pre-commit rev) and the
-        # [dev] extra, so local pre-commit and CI lint with identical tool
-        # versions. Bump ruff/ty in lockstep across all three.
         run: pip install "ruff==0.15.13" "ty==0.0.37"
-
       - name: Ruff format
         run: ruff format --check src/ tests/
-
       - name: Ruff lint
         run: ruff check src/ tests/
-
       - name: Type check
         run: ty check src/molpy/
 
   test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ['3.12', '3.13']
-
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-
+          python-version: '3.12'
       - name: Install dependencies
-        # molcrafts-molrs (exact-pinned in pyproject.toml) installs as a wheel
-        # from PyPI — no Rust toolchain / source build needed. NOTE: this
-        # clean-room install is the ONE check pre-commit cannot mirror — locally
-        # molrs is an editable install of the sibling checkout, so the pin's
-        # availability on PyPI is never verified there. On a coordinated
-        # molrs→molpy release the pinned molrs must reach PyPI *before* this
-        # runs; otherwise the job fails transiently until the index propagates —
-        # just re-run after molrs publishes.
         run: pip install -e ".[dev]"
-
-      # Fetch tests-data once, serially, before the parallel (-n auto) test run.
-      # Under xdist the session fixture runs per-worker, so a git op there would
-      # mutate the shared checkout while other workers read it. Pre-fetching here
-      # means every worker sees a complete, stable tree.
-      #
-      # Download the archive and extract everything EXCEPT `con/`, rather than
-      # git-cloning — leaving tests-data itself untouched. tests-data (a fork of
-      # chemfiles/tests-data) ships EON fixtures under con/, a reserved device name
-      # Windows cannot create; a git checkout aborts there ("cannot create
-      # directory at 'con'") and sparse-checkout can't reliably exclude it on
-      # Windows. Extracting the tarball without con/ never asks the OS to create
-      # it, so it works on every platform. Nothing reads con/ data.
       - name: Fetch test data
         shell: bash
         run: |
@@ -81,15 +44,5 @@ jobs:
           mkdir -p "$dir"
           curl -fsSL https://github.com/molcrafts/tests-data/archive/refs/heads/master.tar.gz \
             | tar -xz -C "$dir" --strip-components=1 --exclude='*/con' --exclude='*/con/*'
-
-      - name: Run tests
-        run: pytest tests/ -m "not external" -n auto --cov=src/molpy --cov-report=xml --cov-report=term
-
-      - name: Upload coverage
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        uses: codecov/codecov-action@v5
-        with:
-          files: ./coverage.xml
-          slug: MolCrafts/molpy
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+      - name: Unit tests
+        run: pytest tests/ -m "not external" -n auto

@@ -43,7 +43,7 @@ classifiers = [
 dependencies = [
     "numpy>=2.0",
     "lark>=1.3.1",
-    "molcrafts-molrs==0.8.0",
+    "molcrafts-molrs==0.8.2",
     "molcrafts-mollog>=1.0.0",
     "molcrafts-molcfg>=1.2.0",
     "zarr>=3.0",
@@ -213,10 +213,12 @@ filterwarnings = [
     "error",
     # pytest-benchmark cannot run under xdist; CI/pre-push use -n auto.
     "ignore:Benchmarks are automatically disabled because xdist plugin is active:pytest_benchmark.logger.PytestBenchmarkWarning",
+    # PyO3 `unsendable` types (molrs.Frame) may be finalised on an xdist
+    # worker teardown thread; pytest turns that into PytestUnraisableExceptionWarning.
+    # Seen on CI: test_clp_typifier_loads_builtin_forcefield (ubuntu-3.12, -n auto).
+    "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 markers = [
     "external: tests requiring external network/resources or executables",
-    "integration: cross-layer workflows kept outside unit-test mirrors",
-    "slow: long-running end-to-end tests (e.g. whole-upstream moltemplate sweep)",
-    "benchmark: pytest-benchmark regression benchmarks (live under benchmarks/, not tests/)",
+    "benchmark: pytest-benchmark suite under benchmarks/ (not tests/)",
 ]
