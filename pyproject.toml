@@ -216,6 +216,8 @@ pythonpath = [
 ]
 filterwarnings = [
     "error",
+    # pytest-benchmark cannot run under xdist; CI/pre-push use -n auto.
+    "ignore:Benchmarks are automatically disabled because xdist plugin is active:pytest_benchmark.logger.PytestBenchmarkWarning",
 ]
 markers = [
     "external: tests requiring external network/resources or executables",
