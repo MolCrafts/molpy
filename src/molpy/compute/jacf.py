@@ -71,8 +71,8 @@ class JACF(Compute):
             trajectory is used.
 
     Examples:
-        >>> from molpy.io import read_h5_trajectory
-        >>> traj = read_h5_trajectory("ionic_liquid.h5")
+        >>> from molpy.io import read_lammps_trajectory
+        >>> traj = read_lammps_trajectory("ionic_liquid.lammpstrj")
         >>> jacf = JACF(cation_type=1, anion_type=2, max_dt=30.0, dt=0.01,
         ...             temperature=300.0)
         >>> result = jacf(traj)

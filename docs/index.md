@@ -73,7 +73,7 @@ you have, keep going.
 </div>
 <div>
 <span>05 · Export</span>
-<a href="user-guide/11_io/"><strong>LAMMPS, GROMACS, PDB, HDF5, and more</strong></a>
+<a href="user-guide/11_io/"><strong>LAMMPS, GROMACS, PDB, Zarr, and more</strong></a>
 </div>
 <div>
 <span>06 · Analyze</span>
@@ -182,7 +182,7 @@ packed = Packmol()([target], seed=42)     # one clash-free Frame
 ### [Write files your engine actually runs](user-guide/11_io/)
 
 One call per file: LAMMPS data plus force-field coefficients. GROMACS, PDB,
-and HDF5 writers share the same pattern.
+and Zarr (`MolStore`) writers share the same pattern.
 
 ```python
 packed.simbox = mp.Box.cubic(30.0)

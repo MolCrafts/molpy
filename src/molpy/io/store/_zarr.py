@@ -13,21 +13,13 @@ from pathlib import Path
 
 import numpy as np
 
-try:
-    import zarr
-except ImportError:
-    zarr = None  # type: ignore[assignment]
+import zarr
 
 
 class ZarrBackend:
     """Thin wrapper around zarr.Group providing a normalized API."""
 
     def __init__(self, path: str, mode: str = "r"):
-        if zarr is None:
-            raise ImportError(
-                "zarr >= 3.0 is required for Zarr store support. "
-                "Install with: pip install 'zarr>=3.0'"
-            )
         self._path = Path(path)
         self._mode = mode
         self._root = zarr.open_group(str(path), mode=mode)

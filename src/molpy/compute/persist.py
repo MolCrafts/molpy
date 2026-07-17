@@ -68,8 +68,8 @@ class Persist(Compute):
         dt: Timestep in ps.
 
     Examples:
-        >>> from molpy.io import read_h5_trajectory
-        >>> traj = read_h5_trajectory("electrolyte.h5")
+        >>> from molpy.io import read_lammps_trajectory
+        >>> traj = read_lammps_trajectory("electrolyte.lammpstrj")
         >>> p = Persist(tags=["3,4:ssp:3.0,4.0"], max_dt=30.0, dt=0.01)
         >>> result = p(traj)
         >>> result.correlations["3,4:ssp:3.0,4.0"]  # C(tau), shape (n_cache,)

@@ -62,7 +62,6 @@ from .data.amber import AmberInpcrdReader
 # 1. Deepest level: Base classes
 from .data.base import DataReader, DataWriter
 from .data.gro import GroReader, GroWriter
-from .data.h5 import HDF5Reader, HDF5Writer
 from .data.lammps import LammpsDataReader, LammpsDataResult, LammpsDataWriter
 from .data.lammps_molecule import (
     LammpsMoleculeReader,
@@ -82,8 +81,6 @@ from .readers import (
     read_amber_inpcrd,
     read_dcd_trajectory,
     read_gro,
-    read_h5,
-    read_h5_trajectory,
     read_LAMMPS_log,
     read_lammps_data,
     read_lammps_forcefield,
@@ -107,7 +104,6 @@ from .trajectory.base import (
 )
 
 # 3. Trajectory Readers and Writers
-from .trajectory.h5 import HDF5TrajectoryReader, HDF5TrajectoryWriter
 from .trajectory.lammps import (
     LammpsTrajectoryWriter,
 )
@@ -131,8 +127,6 @@ from .log.lammps import (
 )
 from .writers import (
     write_gro,
-    write_h5,
-    write_h5_trajectory,
     write_lammps_data,
     write_lammps_forcefield,
     write_lammps_molecule,
@@ -159,7 +153,6 @@ __all__ = [
     "read_amber_ac",
     "read_amber_inpcrd",
     "read_gro",
-    "read_h5",
     "read_LAMMPS_log",
     "read_lammps_data",
     "read_lammps_forcefield",
@@ -173,14 +166,11 @@ __all__ = [
     "read_xsf",
     "read_xyz",
     "read_xyz_trajectory",
-    "read_h5_trajectory",
     "read_dcd_trajectory",
     "read_trr_trajectory",
     "read_xtc_trajectory",
     # Factory functions - Writers
     "write_gro",
-    "write_h5",
-    "write_h5_trajectory",
     "write_lammps_data",
     "write_lammps_forcefield",
     "write_lammps_molecule",
@@ -201,7 +191,6 @@ __all__ = [
     "AcReader",
     "AmberInpcrdReader",
     "GroReader",
-    "HDF5Reader",
     "LammpsDataReader",
     "LammpsDataResult",
     "LammpsMoleculeReader",
@@ -214,7 +203,6 @@ __all__ = [
     # Data Writers
     "DataWriter",
     "GroWriter",
-    "HDF5Writer",
     "LammpsDataWriter",
     "LammpsMoleculeWriter",
     "PDBWriter",
@@ -233,10 +221,8 @@ __all__ = [
     # Trajectory Readers
     "BaseReader",
     "BaseTrajectoryReader",
-    "HDF5TrajectoryReader",
     # Trajectory Writers
     "TrajectoryWriter",
-    "HDF5TrajectoryWriter",
     "LammpsTrajectoryWriter",
     "XYZTrajectoryWriter",
     # Log Readers

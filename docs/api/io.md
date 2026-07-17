@@ -14,7 +14,6 @@ File readers and writers for molecular data, force fields, and trajectories.
 | `read_mol2` | MOL2 | read |
 | `read_xyz` | XYZ | read |
 | `XsfReader` / `XsfWriter` | XSF (crystallographic) | read/write |
-| `read_h5` / `write_h5` | HDF5 | read/write |
 | `read_amber_inpcrd` | AMBER inpcrd | read |
 
 ### Force fields
@@ -33,7 +32,6 @@ File readers and writers for molecular data, force fields, and trajectories.
 |----------|--------|-----------|
 | `read_lammps_trajectory` | LAMMPS dump | read (lazy) |
 | `read_xyz_trajectory` | XYZ trajectory | read (lazy) |
-| `read_h5_trajectory` | HDF5 trajectory | read (lazy) |
 
 ### Logs
 
@@ -125,9 +123,6 @@ mp.io.write_lammps_system("output_dir", frame, ff)
 #### Mol2
 ::: molpy.io.data.mol2
 
-#### H5
-::: molpy.io.data.h5
-
 #### Amber
 ::: molpy.io.data.amber
 
@@ -150,9 +145,6 @@ mp.io.write_lammps_system("output_dir", frame, ff)
 
 #### LAMMPS
 ::: molpy.io.trajectory.lammps
-
-#### H5
-::: molpy.io.trajectory.h5
 
 #### XYZ
 ::: molpy.io.trajectory.xyz

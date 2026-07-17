@@ -71,7 +71,7 @@ hero:
 </div>
 <div>
 <span>05 · 导出</span>
-<a href="user-guide/11_io/"><strong>LAMMPS、GROMACS、PDB、HDF5 等多种格式</strong></a>
+<a href="user-guide/11_io/"><strong>LAMMPS、GROMACS、PDB、Zarr 等多种格式</strong></a>
 </div>
 <div>
 <span>06 · 分析</span>
@@ -170,7 +170,7 @@ packed = Packmol()([target], seed=42)     # 一个无碰撞的 Frame
 
 ### [写入你的引擎真正能运行的文件](user-guide/11_io/)
 
-每个文件一条命令：同时写出 LAMMPS data 文件和力场系数。GROMACS、PDB 和 HDF5 的写入接口也遵循同样的模式。
+每个文件一条命令：同时写出 LAMMPS data 文件和力场系数。GROMACS、PDB 和 Zarr 的写入接口也遵循同样的模式。
 
 ```python
 packed.simbox = mp.Box.cubic(30.0)

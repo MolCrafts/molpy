@@ -1,8 +1,6 @@
-"""Unified molecular simulation store.
+"""Unified molecular simulation store (Zarr only).
 
-Supports both HDF5 (.h5 / .hdf5) and Zarr (.zarr) backends.
-Both h5py and zarr are optional dependencies — only the backend you use
-needs to be installed.
+Uses the Zarr V3 backend. ``zarr>=3`` is a hard runtime dependency of molpy.
 
 Store layout::
 
@@ -58,25 +56,18 @@ PathLike = str | Path
 # Backend dispatch
 # ─────────────────────────────────────────────────────────────────────
 
-_H5_EXTENSIONS = {".h5", ".hdf5"}
 _ZARR_EXTENSIONS = {".zarr"}
 
 
 def _open_backend(path: PathLike, mode: str):
     ext = Path(path).suffix.lower()
-    if ext in _H5_EXTENSIONS:
-        from ._h5 import H5Backend
-
-        return H5Backend(str(path), mode)
-    elif ext in _ZARR_EXTENSIONS:
-        from ._zarr import ZarrBackend
-
-        return ZarrBackend(str(path), mode)
-    else:
+    if ext not in _ZARR_EXTENSIONS:
         raise ValueError(
-            f"Unsupported file extension '{ext}'. "
-            f"Use .h5/.hdf5 for HDF5 or .zarr for Zarr."
+            f"Unsupported file extension '{ext}'. MolStore uses Zarr only (.zarr)."
         )
+    from ._zarr import ZarrBackend
+
+    return ZarrBackend(str(path), mode)
 
 
 # ─────────────────────────────────────────────────────────────────────

@@ -148,34 +148,6 @@ def write_lammps_molecule(
     writer.write(frame)
 
 
-def write_h5(
-    file: PathLike,
-    frame: Any,
-    compression: str | None = "gzip",
-    compression_opts: int = 4,
-) -> None:
-    """
-    Write a Frame object to an HDF5 file.
-
-    Args:
-        file: Output file path
-        frame: Frame object to write
-        compression: Compression algorithm (None, 'gzip', 'lzf', 'szip').
-            Defaults to 'gzip'.
-        compression_opts: Compression level (for gzip: 0-9). Defaults to 4.
-
-    Examples:
-        >>> frame = Frame(blocks={"atoms": {"x": [0, 1, 2], "y": [0, 0, 0]}})
-        >>> write_h5("structure.h5", frame)
-    """
-    from .data.h5 import HDF5Writer
-
-    writer = HDF5Writer(
-        Path(file), compression=compression, compression_opts=compression_opts
-    )
-    writer.write(frame)
-
-
 # =============================================================================
 # Force Field Writers
 # =============================================================================
@@ -304,35 +276,6 @@ def write_xtc(file: PathLike, frames: list) -> None:
     import molrs.io
 
     molrs.io.write_xtc(str(file), list(frames))
-
-
-def write_h5_trajectory(
-    file: PathLike,
-    frames: list,
-    compression: str | None = "gzip",
-    compression_opts: int = 4,
-) -> None:
-    """
-    Write frames to an HDF5 trajectory file.
-
-    Args:
-        file: Output file path
-        frames: List of Frame objects to write
-        compression: Compression algorithm (None, 'gzip', 'lzf', 'szip').
-            Defaults to 'gzip'.
-        compression_opts: Compression level (for gzip: 0-9). Defaults to 4.
-
-    Examples:
-        >>> frames = [frame0, frame1, frame2]
-        >>> write_h5_trajectory("trajectory.h5", frames)
-    """
-    from .trajectory.h5 import HDF5TrajectoryWriter
-
-    with HDF5TrajectoryWriter(
-        Path(file), compression=compression, compression_opts=compression_opts
-    ) as writer:
-        for frame in frames:
-            writer.write_frame(frame)
 
 
 def write_lammps_system(
