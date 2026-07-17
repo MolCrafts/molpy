@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1784271924634,
+  "lastUpdate": 1784273122773,
   "repoUrl": "https://github.com/MolCrafts/molpy",
   "entries": {
     "Benchmark": [
@@ -1960,6 +1960,422 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.002783829246428966",
             "extra": "mean: 5.107324587378405 msec\nrounds: 206"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "42854324+Roy-Kid@users.noreply.github.com",
+            "name": "Jichen Li",
+            "username": "Roy-Kid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c06ea3190c58ce61b82c9da716d86f68907ba16c",
+          "message": "refactor(io)!: drop HDF5/h5py; require zarr for MolStore\n\nrefactor(io)!: drop HDF5/h5py; require zarr for MolStore",
+          "timestamp": "2026-07-17T15:24:19+08:00",
+          "tree_id": "c9ebc1a4d7a58edc122d50f045871b28ede95054",
+          "url": "https://github.com/MolCrafts/molpy/commit/c06ea3190c58ce61b82c9da716d86f68907ba16c"
+        },
+        "date": 1784273122471,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/compute/test_cluster.py::test_cluster",
+            "value": 7815.759161437394,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00000524100364720145",
+            "extra": "mean: 127.94662416594862 usec\nrounds: 4196"
+          },
+          {
+            "name": "benchmarks/compute/test_cluster.py::test_cluster_centers",
+            "value": 112583.50909627824,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000011361406846125272",
+            "extra": "mean: 8.882295533574355 usec\nrounds: 36764"
+          },
+          {
+            "name": "benchmarks/compute/test_cluster.py::test_cluster_properties",
+            "value": 48868.34384717401,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000022646310466120394",
+            "extra": "mean: 20.46314487610426 usec\nrounds: 16559"
+          },
+          {
+            "name": "benchmarks/compute/test_correlation.py::test_van_hove",
+            "value": 55.62475899047825,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0010422037665655897",
+            "extra": "mean: 17.97760598245789 msec\nrounds: 57"
+          },
+          {
+            "name": "benchmarks/compute/test_correlation.py::test_legendre_reorientation",
+            "value": 33556.74674413869,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000007210936151911008",
+            "extra": "mean: 29.800266623720564 usec\nrounds: 7715"
+          },
+          {
+            "name": "benchmarks/compute/test_density.py::test_local_density",
+            "value": 18874.21893021785,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000035774770690870565",
+            "extra": "mean: 52.982324921482615 usec\nrounds: 10501"
+          },
+          {
+            "name": "benchmarks/compute/test_density.py::test_gaussian_density",
+            "value": 365.66556994559613,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000017357425752487596",
+            "extra": "mean: 2.7347392869084737 msec\nrounds: 359"
+          },
+          {
+            "name": "benchmarks/compute/test_dielectric.py::test_acf_analyzer",
+            "value": 3487.0571433077,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000017269689510326626",
+            "extra": "mean: 286.77476706086765 usec\nrounds: 2198"
+          },
+          {
+            "name": "benchmarks/compute/test_dielectric.py::test_spectral_analyzer",
+            "value": 457982.97747420776,
+            "unit": "iter/sec",
+            "range": "stddev: 5.316035044864468e-7",
+            "extra": "mean: 2.1834872673980925 usec\nrounds: 66011"
+          },
+          {
+            "name": "benchmarks/compute/test_dielectric.py::test_dielectric_susceptibility",
+            "value": 801.1130494888903,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004680915615690912",
+            "extra": "mean: 1.2482632764976171 msec\nrounds: 651"
+          },
+          {
+            "name": "benchmarks/compute/test_dielectric.py::test_debye_fit",
+            "value": 52159.464567609706,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003426608545040644",
+            "extra": "mean: 19.171975945109413 usec\nrounds: 11349"
+          },
+          {
+            "name": "benchmarks/compute/test_dielectric.py::test_ionic_conductivity",
+            "value": 432.23573587945884,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011822405982995283",
+            "extra": "mean: 2.3135523442209744 msec\nrounds: 398"
+          },
+          {
+            "name": "benchmarks/compute/test_distribution.py::test_distance_distribution",
+            "value": 213888.38363352756,
+            "unit": "iter/sec",
+            "range": "stddev: 8.454073566901016e-7",
+            "extra": "mean: 4.675335719556335 usec\nrounds: 47215"
+          },
+          {
+            "name": "benchmarks/compute/test_distribution.py::test_angle_distribution",
+            "value": 123172.64931274451,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000010949072178310074",
+            "extra": "mean: 8.118685483990244 usec\nrounds: 25792"
+          },
+          {
+            "name": "benchmarks/compute/test_distribution.py::test_dihedral_distribution",
+            "value": 149954.62290714576,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000010097905770319303",
+            "extra": "mean: 6.668684036631639 usec\nrounds: 41144"
+          },
+          {
+            "name": "benchmarks/compute/test_distribution.py::test_combined_distribution",
+            "value": 75086.95359381697,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000013152727288382635",
+            "extra": "mean: 13.31789281809863 usec\nrounds: 26469"
+          },
+          {
+            "name": "benchmarks/compute/test_hbond.py::test_hbonds",
+            "value": 3541.3577934939785,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000008230126160725627",
+            "extra": "mean: 282.3775676767692 usec\nrounds: 2475"
+          },
+          {
+            "name": "benchmarks/compute/test_ml.py::test_pca",
+            "value": 15213.595587195743,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000035014955349754554",
+            "extra": "mean: 65.73068110484233 usec\nrounds: 10897"
+          },
+          {
+            "name": "benchmarks/compute/test_ml.py::test_kmeans",
+            "value": 17050.503334357873,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000033076562614201793",
+            "extra": "mean: 58.64929500262523 usec\nrounds: 9705"
+          },
+          {
+            "name": "benchmarks/compute/test_order.py::test_steinhardt",
+            "value": 78.40433062187606,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000060116298161650736",
+            "extra": "mean: 12.754397519478141 msec\nrounds: 77"
+          },
+          {
+            "name": "benchmarks/compute/test_order.py::test_hexatic",
+            "value": 1265.6843688129948,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009907077381481021",
+            "extra": "mean: 790.0863948709714 usec\nrounds: 1170"
+          },
+          {
+            "name": "benchmarks/compute/test_order.py::test_solid_liquid",
+            "value": 137.72817596536598,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000440205223725387",
+            "extra": "mean: 7.260678455884484 msec\nrounds: 136"
+          },
+          {
+            "name": "benchmarks/compute/test_order.py::test_nematic",
+            "value": 44537.130829965856,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001990819063372307",
+            "extra": "mean: 22.453175167879728 usec\nrounds: 25016"
+          },
+          {
+            "name": "benchmarks/compute/test_pair.py::test_neighborlist",
+            "value": 1085.2791896088886,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008145568825785487",
+            "extra": "mean: 921.4218880953375 usec\nrounds: 840"
+          },
+          {
+            "name": "benchmarks/compute/test_pair.py::test_rdf",
+            "value": 1278.15531458506,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015179753598019186",
+            "extra": "mean: 782.377531579282 usec\nrounds: 950"
+          },
+          {
+            "name": "benchmarks/compute/test_shape.py::test_center_of_mass",
+            "value": 104296.1459958864,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000017959130969758195",
+            "extra": "mean: 9.58808199911281 usec\nrounds: 47781"
+          },
+          {
+            "name": "benchmarks/compute/test_shape.py::test_gyration_tensor",
+            "value": 93590.59635606442,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000014439392248088354",
+            "extra": "mean: 10.684834149314646 usec\nrounds: 46361"
+          },
+          {
+            "name": "benchmarks/compute/test_shape.py::test_inertia_tensor",
+            "value": 79700.73219766752,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000013997238187867423",
+            "extra": "mean: 12.546936175189437 usec\nrounds: 46424"
+          },
+          {
+            "name": "benchmarks/compute/test_shape.py::test_radius_of_gyration",
+            "value": 104164.71693818901,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000011140065642594465",
+            "extra": "mean: 9.600179690339836 usec\nrounds: 55885"
+          },
+          {
+            "name": "benchmarks/compute/test_spatial.py::test_spatial_distribution",
+            "value": 40067.139047328375,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000024122541897185553",
+            "extra": "mean: 24.95810840945677 usec\nrounds: 15340"
+          },
+          {
+            "name": "benchmarks/compute/test_spectra.py::test_power_spectrum",
+            "value": 178212.644585257,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001026563377215455",
+            "extra": "mean: 5.611274117654427 usec\nrounds: 16409"
+          },
+          {
+            "name": "benchmarks/compute/test_spectra.py::test_ir_spectrum",
+            "value": 178597.69190772477,
+            "unit": "iter/sec",
+            "range": "stddev: 8.988527476994239e-7",
+            "extra": "mean: 5.599176502889328 usec\nrounds: 27399"
+          },
+          {
+            "name": "benchmarks/compute/test_spectra.py::test_vcd_spectrum",
+            "value": 177914.61452107003,
+            "unit": "iter/sec",
+            "range": "stddev: 8.62942806694961e-7",
+            "extra": "mean: 5.620673729878285 usec\nrounds: 27183"
+          },
+          {
+            "name": "benchmarks/compute/test_spectra.py::test_raman_spectrum",
+            "value": 160020.86241394727,
+            "unit": "iter/sec",
+            "range": "stddev: 9.748256733959596e-7",
+            "extra": "mean: 6.2491851682011745 usec\nrounds: 32619"
+          },
+          {
+            "name": "benchmarks/compute/test_spectra.py::test_roa_spectrum",
+            "value": 167531.81218526987,
+            "unit": "iter/sec",
+            "range": "stddev: 9.405443295869136e-7",
+            "extra": "mean: 5.969015597432453 usec\nrounds: 35647"
+          },
+          {
+            "name": "benchmarks/compute/test_spectra.py::test_resonance_raman_spectrum",
+            "value": 177245.60859490946,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000010009888300375974",
+            "extra": "mean: 5.6418887211218625 usec\nrounds: 28469"
+          },
+          {
+            "name": "benchmarks/compute/test_structure.py::test_static_structure_factor",
+            "value": 23.335999704660818,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0003262165273341157",
+            "extra": "mean: 42.85224599999774 msec\nrounds: 24"
+          },
+          {
+            "name": "benchmarks/compute/test_structure.py::test_bond_order",
+            "value": 849.6644146761003,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000024656449205068693",
+            "extra": "mean: 1.176935249643483 msec\nrounds: 701"
+          },
+          {
+            "name": "benchmarks/compute/test_structure.py::test_pmft_xy",
+            "value": 4561.306033828044,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000007350406471547989",
+            "extra": "mean: 219.23545418432647 usec\nrounds: 4027"
+          },
+          {
+            "name": "benchmarks/compute/test_transport.py::test_msd",
+            "value": 34523.48952409209,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004166861497231969",
+            "extra": "mean: 28.965785724011294 usec\nrounds: 7257"
+          },
+          {
+            "name": "benchmarks/compute/test_transport.py::test_mcd",
+            "value": 1440.0896013572515,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000027497263540346858",
+            "extra": "mean: 694.4012366018911 usec\nrounds: 989"
+          },
+          {
+            "name": "benchmarks/compute/test_transport.py::test_pmsd",
+            "value": 1296.8180223593438,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000027786143252437393",
+            "extra": "mean: 771.1182160937792 usec\nrounds: 1106"
+          },
+          {
+            "name": "benchmarks/compute/test_transport.py::test_onsager",
+            "value": 2608.396288124682,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002069186458178744",
+            "extra": "mean: 383.37732826592634 usec\nrounds: 2105"
+          },
+          {
+            "name": "benchmarks/compute/test_transport.py::test_jacf",
+            "value": 1488.6872792780716,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000036990388869416285",
+            "extra": "mean: 671.7327500003513 usec\nrounds: 1196"
+          },
+          {
+            "name": "benchmarks/compute/test_transport.py::test_persist",
+            "value": 5490.768952209131,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003092591631384329",
+            "extra": "mean: 182.12385345365234 usec\nrounds: 3214"
+          },
+          {
+            "name": "benchmarks/compute/test_voronoi.py::test_radical_voronoi",
+            "value": 109.3536065334044,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00042706565245991684",
+            "extra": "mean: 9.144645811883017 msec\nrounds: 101"
+          },
+          {
+            "name": "benchmarks/compute/test_voronoi.py::test_voronoi_domains",
+            "value": 5992.624030458729,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000008073104306697469",
+            "extra": "mean: 166.871806894158 usec\nrounds: 3133"
+          },
+          {
+            "name": "benchmarks/compute/test_voronoi.py::test_voronoi_voids",
+            "value": 10537.870781693748,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004911465725016883",
+            "extra": "mean: 94.89583054455242 usec\nrounds: 7052"
+          },
+          {
+            "name": "benchmarks/test_box.py::test_box_cubic_construct",
+            "value": 29867.93988800803,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000050006846177302185",
+            "extra": "mean: 33.48071556825048 usec\nrounds: 6571"
+          },
+          {
+            "name": "benchmarks/test_box.py::test_box_make_fractional[reg-1k]",
+            "value": 13939.860332662782,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000033664648365814506",
+            "extra": "mean: 71.73673022080995 usec\nrounds: 12273"
+          },
+          {
+            "name": "benchmarks/test_box.py::test_box_make_absolute[reg-1k]",
+            "value": 14192.273061123085,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003243937992398547",
+            "extra": "mean: 70.4608765412851 usec\nrounds: 13057"
+          },
+          {
+            "name": "benchmarks/test_box.py::test_box_wrap[reg-1k]",
+            "value": 5232.039162624891,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000022258299000642434",
+            "extra": "mean: 191.13006782202763 usec\nrounds: 3981"
+          },
+          {
+            "name": "benchmarks/test_frame.py::test_frame_create[reg-1k]",
+            "value": 79034.57078523746,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002242222304274114",
+            "extra": "mean: 12.652690968833424 usec\nrounds: 15856"
+          },
+          {
+            "name": "benchmarks/test_frame.py::test_frame_block_access[reg-1k]",
+            "value": 314261.92668753245,
+            "unit": "iter/sec",
+            "range": "stddev: 9.058092899446012e-7",
+            "extra": "mean: 3.182059024904694 usec\nrounds: 85896"
+          },
+          {
+            "name": "benchmarks/test_topology.py::test_get_topo[reg-1k]",
+            "value": 1428.3110402071434,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003558329513404992",
+            "extra": "mean: 700.1276135588598 usec\nrounds: 885"
+          },
+          {
+            "name": "benchmarks/test_topology.py::test_get_topo_distances[reg-1k]",
+            "value": 189.41616017086926,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0032586475745531684",
+            "extra": "mean: 5.279380592964803 msec\nrounds: 199"
           }
         ]
       }
