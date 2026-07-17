@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import h5py
 import numpy as np
 import pytest
+
+h5py = pytest.importorskip("h5py")
 from molrs import Block, Frame, MetaValue
 
 from molpy.core.box import Box
