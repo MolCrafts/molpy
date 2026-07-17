@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import numpy as np
 
+import molrs
+
 import molpy
 from molpy.io import (
     read_trr_trajectory,
@@ -19,8 +21,8 @@ from molpy.io import (
 )
 
 
-def _frame(n: int, shift: float = 0.0) -> molpy.Frame:
-    frame = molpy.Frame()
+def _frame(n: int, shift: float = 0.0) -> molrs.Frame:
+    frame = molrs.Frame()
     frame["atoms"] = {
         "id": np.arange(1, n + 1, dtype=np.int32),
         "x": np.linspace(0.0, 1.0, n) + shift,

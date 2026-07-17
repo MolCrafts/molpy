@@ -27,6 +27,16 @@ class TestSite:
         site = Site(label="A", species="C", fractional=(0.0, 0.0, 0.0), attrs=attrs)
         assert site.attrs == attrs
 
+    def test_site_attrs_are_copied_to_built_atoms(self):
+        site = Site(
+            label="A",
+            species="C",
+            fractional=(0.0, 0.0, 0.0),
+            attrs={"domain": "wall"},
+        )
+        structure = build_crystal(Lattice(np.eye(3), [site]), repeats=(1, 1, 1))
+        assert structure.atoms[0].get("domain") == "wall"
+
     def test_site_is_frozen(self):
         site = Site(label="A", species="C", fractional=(0.0, 0.0, 0.0))
         with pytest.raises(dataclasses.FrozenInstanceError):

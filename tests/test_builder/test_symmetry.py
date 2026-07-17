@@ -32,6 +32,12 @@ z,1/2+x,-y;1/2+z,-x,y;-y,z,1/2+x;3/4-y,1/4-x,1/4+z;1/4+y,1/4+x,1/4+z;
 IA3D_OPS = [op.strip() for op in IA3D.replace("\n", "").split(";") if op.strip()]
 
 
+class TestSpaceGroup:
+    def test_identity_generator_has_order_one(self):
+        group = SpaceGroup.from_generators(["x,y,z"])
+        assert group.order == 1
+
+
 def test_parse_triplet_identity():
     R, t = parse_triplet("x,y,z")
     assert np.allclose(R, np.eye(3))

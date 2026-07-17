@@ -19,7 +19,7 @@ from typing import Any, overload
 
 import molrs
 
-from .frame import Frame
+from molrs import Frame
 
 
 class Trajectory(molrs.Trajectory):
@@ -76,14 +76,6 @@ class Trajectory(molrs.Trajectory):
     def topology(self) -> Any | None:
         """The topology object associated with this trajectory (or None)."""
         return self._topology
-
-    def has_length(self) -> bool:
-        """Whether ``len()`` is available — always True for the eager container.
-
-        Retained for backwards compatibility; the molrs-backed container is
-        always materialized, so this never returns False.
-        """
-        return True
 
     @overload
     def __getitem__(self, key: int) -> Frame: ...

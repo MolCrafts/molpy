@@ -5,7 +5,7 @@ from textwrap import dedent
 import numpy as np
 import pytest
 
-from molpy.core.frame import Frame
+from molrs import Frame
 from molpy.io.data.amber import AmberInpcrdReader
 
 
@@ -36,7 +36,7 @@ def test_inpcrd_basic_coords_only(tmp_inpcrd_dir):
 
     assert "atoms" in frame
     assert frame["atoms"].nrows == 3
-    assert frame.metadata["title"] == "Simple 3-atom system"
+    assert frame.meta["title"].value == "Simple 3-atom system"
 
     # Check coordinates
     np.testing.assert_array_almost_equal(
@@ -71,7 +71,7 @@ def test_inpcrd_with_time(tmp_inpcrd_dir):
     frame = reader.read()
 
     assert frame["atoms"].nrows == 2
-    assert frame.metadata["timestep"] == 100
+    assert frame.meta["timestep"].value == 100
 
 
 def test_inpcrd_with_velocities(tmp_inpcrd_dir):
@@ -123,10 +123,10 @@ def test_inpcrd_with_box(tmp_inpcrd_dir):
     reader = AmberInpcrdReader(inpcrd_file)
     frame = reader.read()
 
-    assert frame.box is not None
+    assert frame.simbox is not None
     # Box should use first 3 values as diagonal
     expected_box = np.diag([10.0, 20.0, 30.0])
-    np.testing.assert_array_almost_equal(frame.box.matrix, expected_box)
+    np.testing.assert_array_almost_equal(frame.simbox.matrix, expected_box)
 
 
 def test_inpcrd_with_velocities_and_box(tmp_inpcrd_dir):
@@ -150,8 +150,8 @@ def test_inpcrd_with_velocities_and_box(tmp_inpcrd_dir):
 
     assert frame["atoms"].nrows == 2
     assert "vel" in frame["atoms"]
-    assert frame.box is not None
-    assert frame.metadata["timestep"] == 50
+    assert frame.simbox is not None
+    assert frame.meta["timestep"].value == 50
 
 
 def test_inpcrd_update_existing_frame(tmp_inpcrd_dir):

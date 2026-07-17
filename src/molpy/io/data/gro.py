@@ -11,7 +11,7 @@ import numpy as np
 import molrs.io
 
 from molpy.core.fields import RES_ID, RES_NAME, FieldFormatter
-from molpy.core.frame import Frame
+from molrs import Frame
 
 from .base import DataReader, DataWriter
 

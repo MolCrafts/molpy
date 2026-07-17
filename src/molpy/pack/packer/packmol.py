@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 import molpy.io as mp_io
-from molpy.core.frame import Frame
+from molrs import Frame
 from molpy.core.script import Script
 
 from ..constraint import InsideBoxConstraint

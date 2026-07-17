@@ -12,7 +12,8 @@ from typing import Any
 
 import numpy as np
 
-from molpy.core.frame import Block, Frame
+from molrs import Block, Frame, MetaValue
+from molpy._frame_meta import get_frame_meta, update_frame_meta
 from molpy.io.data.lammps import LammpsFieldFormatter
 
 from .base import DataReader, DataWriter
@@ -48,16 +49,17 @@ class LammpsMoleculeReader(DataReader):
         if data.get("format") != "molecule":
             raise ValueError("JSON file must have format='molecule'")
 
-        # Store metadata
-        frame.metadata.update(
+        # Store exact-dtype frame metadata.
+        update_frame_meta(
+            frame,
             {
-                "format": "lammps_molecule",
-                "source_format": "json",
-                "source_file": str(self._path),
-                "title": data.get("title", ""),
-                "units": data.get("units", "lj"),
-                "revision": data.get("revision", 1),
-            }
+                "format": MetaValue("string", "lammps_molecule"),
+                "source_format": MetaValue("string", "json"),
+                "source_file": MetaValue("string", str(self._path)),
+                "title": MetaValue("string", data.get("title", "")),
+                "units": MetaValue("string", data.get("units", "lj")),
+                "revision": MetaValue("i64", int(data.get("revision", 1))),
+            },
         )
 
         # Parse atoms section (required)
@@ -148,13 +150,15 @@ class LammpsMoleculeReader(DataReader):
         self._parse_json_connectivity(data, frame, "dihedrals", atom_id_to_index)
         self._parse_json_connectivity(data, frame, "impropers", atom_id_to_index)
 
-        # Store molecule properties in metadata
+        # Store molecule properties as exact-dtype metadata.
+        molecule_meta = {}
         if "com" in data:
-            frame.metadata["center_of_mass"] = np.array(data["com"])
+            molecule_meta["center_of_mass"] = MetaValue("f64x3", data["com"])
         if "masstotal" in data:
-            frame.metadata["total_mass"] = float(data["masstotal"])
+            molecule_meta["total_mass"] = MetaValue("f64", float(data["masstotal"]))
         if "inertia" in data:
-            frame.metadata["inertia"] = np.array(data["inertia"])
+            molecule_meta["inertia"] = MetaValue("f64x6", data["inertia"])
+        update_frame_meta(frame, molecule_meta)
 
         return frame
 
@@ -272,16 +276,36 @@ class LammpsMoleculeReader(DataReader):
         # Parse header and sections
         header_info, sections = self._parse_native_sections(lines)
 
-        # Store metadata
-        frame.metadata.update(
-            {
-                "format": "lammps_molecule",
-                "source_format": "native",
-                "source_file": str(self._path),
-                "title": header_info.get("title", ""),
-                **header_info,
-            }
-        )
+        # Store exact-dtype scalar and fixed-shape metadata.
+        typed_meta = {
+            "format": MetaValue("string", "lammps_molecule"),
+            "source_format": MetaValue("string", "native"),
+            "source_file": MetaValue("string", str(self._path)),
+            "title": MetaValue("string", header_info.get("title", "")),
+        }
+        for key in (
+            "n_atoms",
+            "n_bonds",
+            "n_angles",
+            "n_dihedrals",
+            "n_impropers",
+            "n_fragments",
+            "n_body_integers",
+            "n_body_doubles",
+        ):
+            if key in header_info:
+                typed_meta[key] = MetaValue("i64", int(header_info[key]))
+        if "total_mass" in header_info:
+            typed_meta["total_mass"] = MetaValue(
+                "f64", float(header_info["total_mass"])
+            )
+        if "center_of_mass" in header_info:
+            typed_meta["center_of_mass"] = MetaValue(
+                "f64x3", header_info["center_of_mass"]
+            )
+        if "inertia" in header_info:
+            typed_meta["inertia"] = MetaValue("f64x6", header_info["inertia"])
+        update_frame_meta(frame, typed_meta)
 
         # Parse atoms data
         atoms_data = self._parse_native_atoms(sections, header_info)
@@ -653,12 +677,13 @@ class LammpsMoleculeWriter(DataWriter):
             "application": "LAMMPS",
             "format": "molecule",
             "revision": 1,
-            "title": frame.metadata.get(
+            "title": get_frame_meta(
+                frame,
                 "title",
                 f"Molecule template written by molpy on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             ),
             "schema": "https://download.lammps.org/json/molecule-schema.json",
-            "units": frame.metadata.get("units", "lj"),
+            "units": get_frame_meta(frame, "units", "lj"),
         }
 
         # Add atoms data (required)
@@ -741,12 +766,12 @@ class LammpsMoleculeWriter(DataWriter):
         self._add_json_connectivity(data, frame, "impropers")
 
         # Add molecule properties
-        if "center_of_mass" in frame.metadata:
-            data["com"] = frame.metadata["center_of_mass"].tolist()
-        if "total_mass" in frame.metadata:
-            data["masstotal"] = float(frame.metadata["total_mass"])
-        if "inertia" in frame.metadata:
-            data["inertia"] = frame.metadata["inertia"].tolist()
+        if "center_of_mass" in frame.meta:
+            data["com"] = get_frame_meta(frame, "center_of_mass")
+        if "total_mass" in frame.meta:
+            data["masstotal"] = float(get_frame_meta(frame, "total_mass"))
+        if "inertia" in frame.meta:
+            data["inertia"] = get_frame_meta(frame, "inertia")
 
         # Write to file
         with open(self._path, "w") as f:
@@ -828,7 +853,8 @@ class LammpsMoleculeWriter(DataWriter):
         lines = []
 
         # Header comment
-        title = frame.metadata.get(
+        title = get_frame_meta(
+            frame,
             "title",
             f"Molecule template written by molpy on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         )
@@ -844,15 +870,15 @@ class LammpsMoleculeWriter(DataWriter):
                 lines.append(f"{frame[section].nrows} {section}")
 
         # Add molecule properties to header
-        if "total_mass" in frame.metadata:
-            lines.append(f"{frame.metadata['total_mass']:.6f} mass")
+        if "total_mass" in frame.meta:
+            lines.append(f"{get_frame_meta(frame, 'total_mass'):.6f} mass")
 
-        if "center_of_mass" in frame.metadata:
-            com = frame.metadata["center_of_mass"]
+        if "center_of_mass" in frame.meta:
+            com = get_frame_meta(frame, "center_of_mass")
             lines.append(f"{com[0]:.6f} {com[1]:.6f} {com[2]:.6f} com")
 
-        if "inertia" in frame.metadata:
-            inertia = frame.metadata["inertia"]
+        if "inertia" in frame.meta:
+            inertia = get_frame_meta(frame, "inertia")
             inertia_str = " ".join([f"{val:.6f}" for val in inertia])
             lines.append(f"{inertia_str} inertia")
 
@@ -948,28 +974,31 @@ class LammpsMoleculeWriter(DataWriter):
 
         lines.append("")
 
-        # Optional sections
+        # Optional sections. ``Molecules`` holds molecule IDs, which LAMMPS parses
+        # as integers ("Not a valid integer number: '1.000000'"); the rest are
+        # real-valued. The formatter is per section, not per file.
         optional_sections = [
-            ("mol_id", "Molecules"),
-            ("charge", "Charges"),
-            ("mass", "Masses"),
-            ("diameter", "Diameters"),
+            ("mol_id", "Molecules", "{:d}"),
+            ("charge", "Charges", "{:.6f}"),
+            ("mass", "Masses", "{:.6f}"),
+            ("diameter", "Diameters", "{:.6f}"),
         ]
 
-        for attr_name, section_name in optional_sections:
-            if attr_name in atoms:
-                lines.append(section_name)
-                lines.append("")
+        for attr_name, section_name, value_format in optional_sections:
+            if attr_name not in atoms:
+                continue
+            lines.append(section_name)
+            lines.append("")
 
-                for idx in range(atoms.nrows):
-                    atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
-                    value = atoms[attr_name][idx]
-                    if value is None:
-                        value = 0.0
-                    value = float(value)
-                    lines.append(f"{atom_id} {value:.6f}")
+            for idx in range(atoms.nrows):
+                atom_id = int(atoms["id"][idx]) if "id" in atoms else (idx + 1)
+                value = atoms[attr_name][idx]
+                if value is None:
+                    value = 0
+                cast = int if value_format == "{:d}" else float
+                lines.append(f"{atom_id} {value_format.format(cast(value))}")
 
-                lines.append("")
+            lines.append("")
 
     def _write_native_connectivity_section(
         self, lines: list[str], block, section_type: str, frame

@@ -22,6 +22,7 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
+import molrs
 import numpy as np
 
 from molpy.core.atomistic import Atomistic
@@ -96,12 +97,10 @@ class AmberTools:
         from molpy.wrapper.tleap import TLeapWrapper
 
         method = charge_method or self.charge_method
+        work = self._named_copy(struct)
         d = self.work_dir / name
         d.mkdir(parents=True, exist_ok=True)
-        for idx, atom in enumerate(struct.atoms, start=1):
-            if atom.get("name") is None:
-                atom["name"] = f"{atom.get('element', 'X')}{idx}"
-        write_pdb(d / f"{name}.pdb", struct.to_frame())
+        write_pdb(d / f"{name}.pdb", work.to_frame())
 
         input_pdb = d / f"{name}.pdb"
         ac = AntechamberWrapper(
@@ -145,6 +144,20 @@ class AmberTools:
         return AmberResult(
             frame, ff, prmtop=d / f"{name}.prmtop", inpcrd=d / f"{name}.inpcrd"
         )
+
+    @staticmethod
+    def _named_copy(struct: Atomistic) -> Atomistic:
+        """Return an Amber-named snapshot without mutating caller state."""
+        if not isinstance(struct, Atomistic):
+            raise TypeError("struct must be an Atomistic")
+        work = struct.copy()
+        for index, atom in enumerate(work.atoms, start=1):
+            if atom.get("name") is None:
+                element = atom.get("element")
+                if not element:
+                    raise ValueError(f"atom {index} has no element for an Amber name")
+                atom["name"] = f"{element}{index}"
+        return work
 
     # -- geometry optimization --------------------------------------------
     def minimize(
@@ -224,17 +237,19 @@ class AmberTools:
         cgsmiles: str,
         *,
         library: Mapping[str, Atomistic],
+        reaction: molrs.Reaction,
         net_charges: Mapping[str, int] | None = None,
     ) -> AmberResult:
-        """Assemble a chain from a CGSmiles sequence + monomer library (cached)."""
+        """Assemble a chain from MolPy monomers + reaction semantics (cached)."""
         from .polymer.ambertools import AmberPolymerBuilder
 
-        key = self._polymer_builder_key(library, net_charges)
+        key = (*self._polymer_builder_key(library, net_charges), id(reaction))
         builder = self._polymer_builders.get(key)
         if builder is None:
             digest = hashlib.sha1(repr(key).encode("utf-8")).hexdigest()[:12]
             builder = AmberPolymerBuilder(
                 library=library,
+                reaction=reaction,
                 force_field=self.force_field,  # type: ignore[arg-type]
                 charge_method=self.charge_method,
                 work_dir=self.work_dir / "polymer" / digest,

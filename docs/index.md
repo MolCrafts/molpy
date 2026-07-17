@@ -61,7 +61,7 @@ you have, keep going.
 </div>
 <div>
 <span>02 · Edit</span>
-<a href="user-guide/02_polymer_stepwise/"><strong>React, crosslink, and assemble on the graph</strong></a>
+<a href="user-guide/02_assembly/"><strong>React, crosslink, and assemble on the graph</strong></a>
 </div>
 <div>
 <span>03 · Typify</span>
@@ -126,7 +126,7 @@ peo = polymer("{[<]CCOCC[>]}|10|")      # or a whole chain, DP = 10
 
 <div class="molcrafts-workflow-list__meta">02 · Edit</div>
 
-### [Rewire the topology, atom by atom](user-guide/02_polymer_stepwise/)
+### [Rewire the topology, atom by atom](user-guide/02_assembly/)
 
 Merge structures, form and break bonds, drop leaving groups — then re-derive
 angles and dihedrals across the new junction.
@@ -185,7 +185,7 @@ One call per file: LAMMPS data plus force-field coefficients. GROMACS, PDB,
 and HDF5 writers share the same pattern.
 
 ```python
-packed.box = mp.Box.cubic(30.0)
+packed.simbox = mp.Box.cubic(30.0)
 mp.io.write_lammps_data("system.data", packed, atom_style="full")
 mp.io.write_lammps_forcefield("system.ff", ff)
 ```

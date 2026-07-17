@@ -170,7 +170,7 @@ import numpy as np
 from pathlib import Path
 
 frame = typed_mol.to_frame()
-frame.box = mp.Box.cubic(30.0)
+frame.simbox = mp.Box.cubic(30.0)
 
 # mol_id is not set by typifier — add it for LAMMPS full atom style
 atoms = frame["atoms"]
@@ -194,33 +194,32 @@ The `write_lammps_system` convenience function automatically filters the force f
 
 ## Incremental re-typification at polymer junctions
 
-When a `Reacter` forms a new bond between two monomers, the atoms at the junction change their chemical environment. The old atom types, bond types, angle types, and dihedral types at the junction become invalid.
+When a `molpy.Reaction` forms a new bond between two monomers, the atoms at the junction change their chemical environment. The old atom types, bond types, angle types, and dihedral types at the junction become invalid.
 
-Rather than re-typifying the entire chain after each coupling step, MolPy performs **incremental re-typification** — it re-computes force field parameters only for the affected atoms and their neighbors.
+Rather than re-typifying the entire chain after each coupling step, MolPy re-types only the neighbourhood the edit disturbed.
 
-The `Reacter` records exactly which atoms were modified in `ReactionResult.modified_atoms`. When a typifier is passed to `Reacter.run()`, the internal `_incremental_typify()` method runs a six-step pipeline on just those atoms:
+How wide that neighbourhood is is not a knob on the typifier. `GraphAssembler` is told the `reach` its typifier needs — the number of bonds it must see around an atom before it can name that atom's type — and that single number fixes both radii of the operation. `AffectedRegion.around` extracts a ball of `2 x reach` bonds around each new bond, and only the inner `reach` shell is written back: those are the atoms whose environment actually changed. The outer shell exists solely to give them a correct environment to be typed against. Atoms beyond the inner shell were already right and are left alone.
 
-1. Clear `type` on modified atoms
-2. Re-run atom typing (SMARTS matching) on the full structure
-3. Re-assign pair parameters (LJ sigma/epsilon) for modified atoms
-4. Re-type new bonds and bonds touching modified atoms
-5. Re-type new angles and angles touching modified atoms
-6. Re-type new dihedrals and dihedrals touching modified atoms
+The region completes its own cut valences before any typifier sees it, and that is not a convenience. Because the extracted ball is exactly `interior_reach + reach` wide, an interior atom's receptive field reaches precisely to the boundary atoms — and a raw cut leaves those with unfilled valences, which a SMARTS matcher reads as radicals. Measured on p-xylene at `reach = 2`, 12 of its 19 raw slices cannot be typed at all.
 
-For a 20-mer, each coupling step only re-types ~4 atoms and their neighbors — much faster than full-chain re-typification.
+Identical junctions hash to the same key and are typed once, so the number of typing passes tracks the number of *distinct* chemical environments in the system rather than the number of bonds formed. Building a 1000-mer costs about as many typing passes as building a 10-mer.
 
-To enable this in `PolymerBuilder`, pass the typifier at construction:
+To enable this, pass the typifier to the builder at construction:
 
 ```text
+from molpy.typifier import AmberToolsTypifier
+
 builder = PolymerBuilder(
-    library={"EO": eo_typed},       # pre-typed monomer
-    connector=connector,
-    placer=placer,
-    typifier=typifier,              # enables incremental re-typification
+    MonomerLibrary({"EO": eo}),
+    mp.Reaction(ETHER),
+    typifier=AmberToolsTypifier(amber),
+    reach=2,                     # GAFF: a 1-2 bond environment names an atom type
+    placer=ResiduePlacer(),
 )
+chain = builder.build("{[#EO]|20}")
 ```
 
-If you prefer to typify the entire chain at the end instead, simply omit the typifier from the builder and call `typifier.typify(result.polymer)` after building.
+Omit the typifier and assembly assigns no types at all; typify the finished chain instead. That gives the same answer, at a cost proportional to the whole chain rather than to its junctions.
 
 ## When standard force fields are not enough
 
@@ -231,4 +230,4 @@ Standard OPLS-AA covers common organic functional groups. Specialized molecules 
 
 The typifier itself is agnostic to the force field content. It only needs SMARTS patterns and type definitions in the XML. If those are present, it will match them.
 
-See also: [Force Field](../tutorials/04_force_field.md), [Stepwise Polymer Construction](02_polymer_stepwise.md).
+See also: [Force Field](../tutorials/04_force_field.md), [Stepwise Polymer Construction](02_assembly.md).

@@ -17,12 +17,14 @@ from pathlib import Path
 
 import pytest
 
+import molrs
+
 import molpy as mp
 
 
-def _make_frame(n_atoms: int, element: str) -> mp.Frame:
+def _make_frame(n_atoms: int, element: str) -> molrs.Frame:
     """Build a tiny, identifiable Frame with ``n_atoms`` atoms of ``element``."""
-    return mp.Frame(
+    return molrs.Frame(
         blocks={
             "atoms": {
                 "element": [element] * n_atoms,
@@ -34,7 +36,7 @@ def _make_frame(n_atoms: int, element: str) -> mp.Frame:
     )
 
 
-def _atom_count(frame: mp.Frame) -> int:
+def _atom_count(frame: molrs.Frame) -> int:
     return len(frame["atoms"]["element"])
 
 

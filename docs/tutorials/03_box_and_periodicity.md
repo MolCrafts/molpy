@@ -22,6 +22,7 @@ MolPy keeps the box explicit rather than burying periodicity inside a flag or a 
 `Box` offers factory constructors for the three common cell types.
 
 ```python
+import molrs
 import molpy as mp
 import numpy as np
 
@@ -138,20 +139,20 @@ print(distances)
 
 ## Box on Frame
 
-A box is attached to a Frame as `frame.box`, not stored in metadata. This is the standard way to associate a simulation cell with molecular data.
+A box is attached to a Frame as `frame.simbox`, not stored in metadata. This is the standard way to associate a simulation cell with molecular data.
 
 ```python
-frame = mp.Frame(blocks={
+frame = molrs.Frame(blocks={
     "atoms": {"x": [1.0, 9.5], "y": [1.0, 9.5], "z": [1.0, 9.5]},
 })
-frame.box = mp.Box.cubic(10.0)
+frame.simbox = mp.Box.cubic(10.0)
 
-# I/O readers set frame.box automatically
-frame = mp.io.read_lammps_data("system.data", atom_style="full")
-print(frame.box.lengths)   # from the data file header
+# I/O readers set frame.simbox automatically
+frame = mp.io.read_lammps_data("system.data", atom_style="full").frame
+print(frame.simbox.lengths)   # from the data file header
 ```
 
-All compute operators (MSD, RDF, etc.) read the box from `frame.box`.
+All compute operators (MSD, RDF, etc.) read the box from `frame.simbox`.
 
 
 ## When the box matters

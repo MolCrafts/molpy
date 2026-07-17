@@ -141,7 +141,7 @@ print('box atoms:', len(water_box_atomistic.atoms), 'box bonds:', len(water_box_
 
 ```python
 frame = water_box_atomistic.to_frame()
-frame.box = box  # box 是 Frame 的一等属性；写入器读取 frame.box
+frame.simbox = box  # box 是 Frame 的一等属性；写入器读取 frame.simbox
 
 atoms = frame['atoms']
 n_atoms = atoms.nrows

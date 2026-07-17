@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from typing import IO
+from typing import IO, Generic, TypeVar
 
-from molpy.core.frame import Frame
+from molrs import Frame
 
 from ..base import BaseReader, PathLike
 
@@ -49,7 +49,10 @@ class FileBase(BaseReader):
 # ─────────────────────────────────────────────────────────────────────
 # DataReader
 # ─────────────────────────────────────────────────────────────────────
-class DataReader(FileBase, ABC):
+ReadResult = TypeVar("ReadResult", covariant=True)
+
+
+class DataReader(FileBase, ABC, Generic[ReadResult]):
     """Base class for data file readers."""
 
     def __init__(self, path: PathLike, **open_kwargs):
@@ -58,11 +61,21 @@ class DataReader(FileBase, ABC):
     # -- line helpers --------------------------------------------------
     def _iter_nonblank(self) -> Iterator[str]:
         """Iterate over non-blank, stripped lines."""
-        self.fh.seek(0)
-        for raw in self.fh:
-            line = raw.strip()
-            if line:
-                yield line
+        if self._fh is not None:
+            self._fh.seek(0)
+            for raw in self._fh:
+                line = raw.strip()
+                if line:
+                    yield line
+            return
+
+        # A one-shot read owns its handle. Persistent handles are reserved for
+        # an explicit ``with Reader(...)`` lifecycle.
+        with self._path.open(self._mode, **self._open_kwargs) as fh:
+            for raw in fh:
+                line = raw.strip()
+                if line:
+                    yield line
 
     def __iter__(self) -> Iterator[str]:
         """`for line in reader:` yields non-blank, stripped lines."""
@@ -70,11 +83,15 @@ class DataReader(FileBase, ABC):
 
     def read_lines(self) -> list[str]:
         """Return all lines at once."""
-        return list(self.fh.readlines())
+        if self._fh is not None:
+            self._fh.seek(0)
+            return list(self._fh.readlines())
+        with self._path.open(self._mode, **self._open_kwargs) as fh:
+            return list(fh.readlines())
 
     # -- high-level parse ---------------------------------------------
     @abstractmethod
-    def read(self, frame: Frame | None = None) -> Frame:
+    def read(self, frame: Frame | None = None) -> ReadResult:
         """
         Populate / update a Frame from the underlying file.
 

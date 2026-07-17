@@ -1,6 +1,6 @@
 # molrs 后端
 
-MolPy 的分析算子是 [molrs](https://github.com/MolCrafts/molrs) 的薄 Python 封装。molrs 是一个用 Rust 实现的列存储与计算内核，也是**必需**的运行时依赖——`molpy.core.frame` 在模块加载时就会导入它。每个 `Frame` 和 `Block` 都由 Rust 的 `Store` 支撑，`compute` 算子也直接转发到 Rust。不存在纯 Python 回退方案，也没有启用或禁用的开关。
+MolPy 的分析算子是 [molrs](https://github.com/MolCrafts/molrs) 的薄 Python 封装。molrs 是一个用 Rust 实现的列存储与计算内核，也是**必需**的运行时依赖——调用方必须直接从 `molrs` 导入 `Frame` 和 `Block`。两者都由 Rust 的 `Store` 支撑，`compute` 算子也直接转发到 Rust。不存在纯 Python 回退方案，也没有启用或禁用的开关。
 
 以下几个场景展示该后端在日常分析中的具体体现：box 类型如何与 molrs 共享，近邻列表和径向分布函数如何构建，以及从 Python 视角看 molrs 分析目录的其余内容。
 
@@ -36,7 +36,7 @@ box = mp.Box.cubic(10.0)
 assert isinstance(box, molrs.Box)   # 它 *就是* 一个 molrs box
 ```
 
-同样，`frame.box` 可以直接传给 Rust 侧的函数，比如 `molrs.NeighborQuery`。molpy 在继承的 Rust 核心之上增加的方法（`Style`、`cubic`、`from_lengths_angles`、`diff_dr`……）也仍然可用。
+同样，`frame.simbox` 可以直接传给 Rust 侧的函数，比如 `molrs.NeighborQuery`。molpy 在继承的 Rust 核心之上增加的方法（`Style`、`cubic`、`from_lengths_angles`、`diff_dr`……）也仍然可用。
 
 ## 近邻列表来自 linked-cell 内核
 
@@ -50,9 +50,9 @@ from molpy.compute import NeighborList
 rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(500, 3))
 
-frame = mp.Frame()
+frame = molrs.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(20.0)
+frame.simbox = mp.Box.cubic(20.0)
 
 neighbors = NeighborList(cutoff=8.0)(frame)
 print(neighbors.n_pairs)          # 找到的对数

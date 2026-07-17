@@ -64,11 +64,6 @@ class TimeCache:
         self._buffer[self._head] = new_data
         self._count += 1
 
-    @property
-    def cache(self) -> NDArray:
-        """Return data ordered newest-first (for backward compatibility)."""
-        return self.get()
-
     def get(self) -> NDArray:
         """Get cached data array, ordered newest-first.
 

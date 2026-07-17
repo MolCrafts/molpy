@@ -113,8 +113,8 @@ class MCDCompute(Compute):
             elems_list.append(atoms["type"])
 
             # Get box
-            if frame.box is not None:
-                box_list.append(frame.box)
+            if frame.simbox is not None:
+                box_list.append(frame.simbox)
             else:
                 raise ValueError("Frame must contain box information")
 

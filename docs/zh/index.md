@@ -59,7 +59,7 @@ hero:
 </div>
 <div>
 <span>02 · 编辑</span>
-<a href="user-guide/02_polymer_stepwise/"><strong>在图上进行反应、交联和组装</strong></a>
+<a href="user-guide/02_assembly/"><strong>在图上进行反应、交联和组装</strong></a>
 </div>
 <div>
 <span>03 · 类型化</span>
@@ -119,7 +119,7 @@ peo = polymer("{[<]CCOCC[>]}|10|")      # 或整条链，聚合度 DP = 10
 
 <div class="molcrafts-workflow-list__meta">02 · 编辑</div>
 
-### [逐个原子地重新连接拓扑](user-guide/02_polymer_stepwise/)
+### [逐个原子地重新连接拓扑](user-guide/02_assembly/)
 
 合并结构、创建和断开化学键、移除离去基团——然后在新连接处重新推导出角和二面角。
 
@@ -173,7 +173,7 @@ packed = Packmol()([target], seed=42)     # 一个无碰撞的 Frame
 每个文件一条命令：同时写出 LAMMPS data 文件和力场系数。GROMACS、PDB 和 HDF5 的写入接口也遵循同样的模式。
 
 ```python
-packed.box = mp.Box.cubic(30.0)
+packed.simbox = mp.Box.cubic(30.0)
 mp.io.write_lammps_data("system.data", packed, atom_style="full")
 mp.io.write_lammps_forcefield("system.ff", ff)
 ```

@@ -10,30 +10,78 @@ HDF5 Trajectory Structure:
 ├── frames/                 # Group containing all frames
 │   ├── 0/                  # Frame 0
 │   │   ├── blocks/         # Data blocks (same structure as single Frame)
-│   │   └── metadata/       # Frame metadata
+│   │   ├── simbox/         # Optional simulation cell
+│   │   └── meta/           # Exact-dtype MetaValue entries
 │   ├── 1/                  # Frame 1
 │   │   ├── blocks/
-│   │   └── metadata/
+│   │   ├── simbox/
+│   │   └── meta/
 │   └── ...
-├── n_frames                # Attribute: total number of frames
-└── metadata/               # Optional trajectory-level metadata
+├── trajectory_schema_version  # Attribute: exact schema version (2)
+└── n_frames                # Attribute: total number of frames
 """
 
 from __future__ import annotations
 
+from numbers import Integral
 from pathlib import Path
-
-import numpy as np
 
 try:
     import h5py
 except ImportError:
     h5py = None  # type: ignore[assignment, unused-ignore]
 
-from molpy.core import Frame
+from molrs import Frame
 
 from ..data.h5 import frame_to_h5_group, h5_group_to_frame
 from .base import BaseTrajectoryReader, PathLike, TrajectoryWriter
+
+TRAJECTORY_SCHEMA_VERSION = 2
+
+
+def _validate_trajectory_file(h5_file: "h5py.File") -> int:
+    if set(h5_file.attrs) != {"trajectory_schema_version", "n_frames"}:
+        raise ValueError(
+            "HDF5 trajectory requires exactly trajectory_schema_version and "
+            "n_frames attributes"
+        )
+    version = h5_file.attrs["trajectory_schema_version"]
+    if not isinstance(version, Integral) or int(version) != TRAJECTORY_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported HDF5 trajectory schema {version!r}; "
+            f"required schema is {TRAJECTORY_SCHEMA_VERSION}"
+        )
+    if set(h5_file.keys()) != {"frames"}:
+        raise ValueError("HDF5 trajectory must contain exactly the frames group")
+
+    frames_group = h5_file["frames"]
+    if not isinstance(frames_group, h5py.Group):
+        raise ValueError("HDF5 trajectory frames entry must be a group")
+    if frames_group.attrs:
+        raise ValueError("HDF5 trajectory frames group has unknown attributes")
+
+    n_frames = h5_file.attrs["n_frames"]
+    if not isinstance(n_frames, Integral) or int(n_frames) < 0:
+        raise ValueError("HDF5 trajectory n_frames must be a non-negative integer")
+    n_frames = int(n_frames)
+    expected_names = [str(index) for index in range(n_frames)]
+    names = sorted(
+        frames_group.keys(), key=lambda name: int(name) if name.isdigit() else -1
+    )
+    if names != expected_names:
+        raise ValueError(
+            "HDF5 trajectory frame groups must be contiguous and match n_frames"
+        )
+    for name in names:
+        if not isinstance(frames_group[name], h5py.Group):
+            raise ValueError(f"HDF5 trajectory frame {name!r} must be a group")
+    return n_frames
+
+
+def _initialize_trajectory_file(h5_file: "h5py.File") -> None:
+    h5_file.attrs["trajectory_schema_version"] = TRAJECTORY_SCHEMA_VERSION
+    h5_file.attrs["n_frames"] = 0
+    h5_file.create_group("frames")
 
 
 class HDF5TrajectoryReader(BaseTrajectoryReader):
@@ -45,8 +93,8 @@ class HDF5TrajectoryReader(BaseTrajectoryReader):
 
     The HDF5 file structure should follow:
     - /frames/{frame_index}/blocks/ for data blocks
-    - /frames/{frame_index}/metadata/ for frame metadata
-    - /n_frames attribute for total frame count
+    - /frames/{frame_index}/meta/ for exact-dtype frame metadata
+    - /trajectory_schema_version and /n_frames attributes
 
     Examples:
         >>> reader = HDF5TrajectoryReader("trajectory.h5")
@@ -70,12 +118,18 @@ class HDF5TrajectoryReader(BaseTrajectoryReader):
         self._path = self.fpath
         self._open_kwargs = open_kwargs
         self._file: h5py.File | None = None
-        self._n_frames: int | None = None
+        with h5py.File(self._path, mode="r", **self._open_kwargs) as h5_file:
+            self._n_frames = _validate_trajectory_file(h5_file)
 
     def __enter__(self):
         """Open the HDF5 file and cache the frame count."""
         self._file = h5py.File(self._path, mode="r", **self._open_kwargs)
-        self._n_frames = self._get_n_frames()
+        try:
+            self._n_frames = _validate_trajectory_file(self._file)
+        except Exception:
+            self._file.close()
+            self._file = None
+            raise
         return self
 
     def close(self) -> None:
@@ -87,48 +141,14 @@ class HDF5TrajectoryReader(BaseTrajectoryReader):
     @property
     def n_frames(self) -> int:
         """Number of frames in the trajectory."""
-        if self._n_frames is None:
-            with h5py.File(self._path, "r") as f:
-                self._n_frames = self._get_n_frames_from_file(f)
         return self._n_frames
 
     def _get_n_frames(self) -> int:
         """Get number of frames from open file."""
-        if self._file is None:
-            with h5py.File(self._path, "r") as f:
-                return self._get_n_frames_from_file(f)
-        return self._get_n_frames_from_file(self._file)
-
-    def _get_n_frames_from_file(self, f: h5py.File) -> int:
-        """Get number of frames from HDF5 file.
-
-        Args:
-            f: Open HDF5 file handle
-
-        Returns:
-            Number of frames in the trajectory
-        """
-        if "frames" not in f:
-            return 0
-
-        frames_group = f["frames"]
-        # Count frame groups (they should be named "0", "1", "2", ...)
-        frame_keys = [k for k in frames_group.keys() if k.isdigit()]
-        if frame_keys:
-            # Get the maximum frame index and add 1
-            max_index = max(int(k) for k in frame_keys)
-            # Check if all indices from 0 to max_index exist
-            expected_count = max_index + 1
-            if all(str(i) in frames_group for i in range(expected_count)):
-                return expected_count
-            # Otherwise count what we have
-            return len(frame_keys)
-
-        # Fallback: check n_frames attribute
-        if "n_frames" in f.attrs:
-            return int(f.attrs["n_frames"])
-
-        return 0
+        if self._file is not None:
+            return _validate_trajectory_file(self._file)
+        with h5py.File(self._path, "r", **self._open_kwargs) as h5_file:
+            return _validate_trajectory_file(h5_file)
 
     def read_frame(self, index: int) -> Frame:
         """Read a specific frame from the trajectory.
@@ -180,8 +200,8 @@ class HDF5TrajectoryWriter(TrajectoryWriter):
 
     The HDF5 file structure follows:
     - /frames/{frame_index}/blocks/ for data blocks
-    - /frames/{frame_index}/metadata/ for frame metadata
-    - /n_frames attribute for total frame count
+    - /frames/{frame_index}/meta/ for exact-dtype frame metadata
+    - /trajectory_schema_version and /n_frames attributes
 
     Examples:
         >>> writer = HDF5TrajectoryWriter("trajectory.h5")
@@ -217,25 +237,34 @@ class HDF5TrajectoryWriter(TrajectoryWriter):
         self._file: h5py.File | None = None
         self._frame_count = 0
 
-        # Open file in append mode if it exists, otherwise create new
+        # Existing files must already implement the exact current schema.
         if self._path.exists():
             self._file = h5py.File(self._path, mode="a", **self._open_kwargs)
-            # Get current frame count
-            if "frames" in self._file:
-                frames_group = self._file["frames"]
-                frame_keys = [k for k in frames_group.keys() if k.isdigit()]
-                if frame_keys:
-                    self._frame_count = max(int(k) for k in frame_keys) + 1
+            try:
+                self._frame_count = _validate_trajectory_file(self._file)
+            except Exception:
+                self._file.close()
+                self._file = None
+                raise
         else:
             self._file = h5py.File(self._path, mode="w", **self._open_kwargs)
+            _initialize_trajectory_file(self._file)
 
     def __enter__(self):
         """Open HDF5 file."""
         if self._file is None:
             if self._path.exists():
                 self._file = h5py.File(self._path, mode="a", **self._open_kwargs)
+                try:
+                    self._frame_count = _validate_trajectory_file(self._file)
+                except Exception:
+                    self._file.close()
+                    self._file = None
+                    raise
             else:
                 self._file = h5py.File(self._path, mode="w", **self._open_kwargs)
+                _initialize_trajectory_file(self._file)
+                self._frame_count = 0
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -251,18 +280,20 @@ class HDF5TrajectoryWriter(TrajectoryWriter):
         if self._file is None:
             raise ValueError("File not open. Use 'with' statement or call __enter__")
 
-        # Create or get frames group
-        if "frames" not in self._file:
-            frames_group = self._file.create_group("frames")
-        else:
-            frames_group = self._file["frames"]
+        if _validate_trajectory_file(self._file) != self._frame_count:
+            raise ValueError("HDF5 trajectory changed while writer was open")
+        frames_group = self._file["frames"]
 
         # Create frame group
         frame_key = str(self._frame_count)
         frame_group = frames_group.create_group(frame_key)
-
-        # Write frame using conversion function
-        frame_to_h5_group(frame, frame_group, self.compression, self.compression_opts)
+        try:
+            frame_to_h5_group(
+                frame, frame_group, self.compression, self.compression_opts
+            )
+        except Exception:
+            del frames_group[frame_key]
+            raise
 
         # Update frame count and n_frames attribute
         self._frame_count += 1

@@ -2,8 +2,8 @@
 
 MolPy's analysis operators are thin Python shells over [molrs](https://github.com/MolCrafts/molrs),
 a Rust column store and compute kernel. molrs is a **required** runtime
-dependency — `molpy.core.frame` imports it at module load, every `Frame` and
-`Block` is backed by a Rust `Store`, and the `compute` operators forward
+dependency — callers import `Frame` and `Block` directly from `molrs`; both are
+backed by a Rust `Store`, and the `compute` operators forward
 straight into Rust. There is no pure-Python fallback and no opt-in flag.
 
 This page shows how that backend surfaces in everyday analysis: how the box
@@ -47,7 +47,7 @@ box = mp.Box.cubic(10.0)
 assert isinstance(box, molrs.Box)   # it *is* a molrs box
 ```
 
-Likewise `frame.box` is accepted directly by Rust-side calls such as
+Likewise `frame.simbox` is accepted directly by Rust-side calls such as
 `molrs.NeighborQuery`. The enriched molpy methods (`Style`, `cubic`,
 `from_lengths_angles`, `diff_dr`, …) remain available on top of the inherited
 Rust core.
@@ -66,9 +66,9 @@ from molpy.compute import NeighborList
 rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(500, 3))
 
-frame = mp.Frame()
+frame = molrs.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(20.0)
+frame.simbox = mp.Box.cubic(20.0)
 
 neighbors = NeighborList(cutoff=8.0)(frame)
 print(neighbors.n_pairs)          # number of pairs found

@@ -17,7 +17,7 @@ In practice, the workflow is simple:
 
 ## Why a code graph
 
-MolPy is not a flat list of functions. A real workflow — say, building a polymer, typifying it, and writing LAMMPS files — traverses *relationships*: `AmberPolymerBuilder` *contains* a `build` method that *calls* `tleap`, which *produces* a `Frame` whose `box` attribute is read by `write_lammps_data`. A grep on `"build"` cannot tell you any of that. A flat symbol table cannot either.
+MolPy is not a flat list of functions. A real workflow — say, building a polymer, typifying it, and writing LAMMPS files — traverses *relationships*: `AmberPolymerBuilder` *contains* a `build` method that *calls* `tleap`, which *produces* a `Frame` whose `simbox` attribute is read by `write_lammps_data`. A grep on `"build"` cannot tell you any of that. A flat symbol table cannot either.
 
 The MCP server indexes MolPy into a **typed code graph** so the agent can ask graph-shaped questions:
 
@@ -421,7 +421,7 @@ typifier = OplsTypifier(ff, skip_dihedral_typing=True, strict_typing=True)
 system = typifier.typify(system)
 
 frame = system.to_frame()
-frame.box = mp.Box.orth([1.28, 1.28, 1.28])
+frame.simbox = mp.Box.orth([1.28, 1.28, 1.28])
 frame["atoms"]["id"] = np.arange(1, frame["atoms"].nrows + 1, dtype=int)
 frame["atoms"]["mol_id"] = np.asarray(frame["atoms"]["mol_id"], dtype=int)
 frame["atoms"]["charge"] = np.asarray(frame["atoms"]["charge"], dtype=float)
@@ -673,7 +673,7 @@ molmcp_relations(
 )
 ```
 
-confirms `write_lammps_data` ultimately reads `frame.box` and per-atom
+confirms `write_lammps_data` ultimately reads `frame.simbox` and per-atom
 `charge`/`mol_id` columns — which is why the generated script explicitly fills
 those columns before exporting.
 

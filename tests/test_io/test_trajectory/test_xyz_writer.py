@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import numpy as np
 
+import molrs
+
 import molpy
 from molpy.io import read_xyz_trajectory, write_xyz_trajectory
 
 
-def _frame(n: int) -> molpy.Frame:
-    frame = molpy.Frame()
+def _frame(n: int) -> molrs.Frame:
+    frame = molrs.Frame()
     frame["atoms"] = {
         "element": np.array(["C"] * n),
         "x": np.arange(n, dtype=float),

@@ -18,6 +18,8 @@ import copy
 import numpy as np
 import pytest
 
+import molrs
+
 import molpy
 from molrs.compute.density import RDFResult as _MolrsRDFResult
 from molpy.compute import RDF, NeighborList
@@ -100,9 +102,9 @@ def simple_frame():
     """A minimal Frame with a few random atoms, cubic Box = 10 A."""
     rng = np.random.default_rng(42)
     xyz = rng.uniform(0.0, 10.0, size=(10, 3))
-    frame = molpy.Frame()
+    frame = molrs.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.box = molpy.Box.cubic(10.0)
+    frame.simbox = molpy.Box.cubic(10.0)
     return frame
 
 

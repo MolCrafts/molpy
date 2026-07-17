@@ -1,11 +1,4 @@
-"""MolTemplate (.lt) reader — thin shim over ``molpy.parser.moltemplate``.
-
-Preserves the historical public API (``MolTemplateReader``,
-``read_moltemplate``, ``read_moltemplate_molecule``,
-``read_moltemplate_molecules``) while delegating to the new native parser.
-Adds a new ``read_system()`` method that returns ``(Atomistic, ForceField)``
-for end-to-end moltemplate execution.
-"""
+"""MolTemplate (.lt) reader over ``molpy.parser.moltemplate``."""
 
 from __future__ import annotations
 
@@ -33,16 +26,8 @@ class MolTemplateReader:
         doc = parse_file(resolved)
         return build_forcefield(doc, base_dir=resolved.parent)
 
-    def read_molecule(
-        self,
-        file_path: str | Path,
-        molecule_name: str | None = None,  # kept for backward compat
-    ) -> Atomistic:
-        """Parse a .lt file and return the first instantiated molecule.
-
-        ``molecule_name`` is accepted for backward compatibility but ignored
-        -- the new parser returns the full assembled system.
-        """
+    def read_molecule(self, file_path: str | Path) -> Atomistic:
+        """Parse a .lt file and return the full assembled system."""
         atomistic, _ = self.read_system(file_path)
         return atomistic
 
@@ -71,11 +56,9 @@ def read_moltemplate(file_path: str | Path) -> ForceField:
     return MolTemplateReader().read(file_path)
 
 
-def read_moltemplate_molecule(
-    file_path: str | Path, molecule_name: str | None = None
-) -> Atomistic:
+def read_moltemplate_molecule(file_path: str | Path) -> Atomistic:
     """Convenience: parse a .lt file and return the assembled Atomistic."""
-    return MolTemplateReader().read_molecule(file_path, molecule_name)
+    return MolTemplateReader().read_molecule(file_path)
 
 
 def read_moltemplate_molecules(file_path: str | Path) -> list[Atomistic]:

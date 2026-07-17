@@ -3,7 +3,9 @@ from pathlib import Path
 import numpy as np
 
 from molpy.core.box import Box
-from molpy.core.frame import Frame, Block
+from molrs import Block, Frame, MetaValue
+
+from molpy._frame_meta import update_frame_meta
 
 from .base import DataReader
 
@@ -133,9 +135,10 @@ class AmberInpcrdReader(DataReader):
                 atoms_blk["vel"] = velocity_vals
             frame["atoms"] = atoms_blk
 
-        frame.box = box
+        frame.simbox = box
+        meta = {"title": MetaValue("string", title)}
         if time is not None:
-            frame.metadata["timestep"] = int(time)
-        frame.metadata["title"] = title
+            meta["timestep"] = MetaValue("i64", int(time))
+        update_frame_meta(frame, meta)
 
         return frame

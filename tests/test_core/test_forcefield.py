@@ -16,8 +16,6 @@ Key facts about the molrs-backed API (verified against the installed wheel):
   ``style.get_types(cls)`` / ``ff.get_styles(cls)`` / ``ff.get_types(cls)``.
 * ``ff.to_potentials()`` with no frame is a *deferred* ``Potentials``
   (``len()==0``, not iterable). To evaluate you must pass a typed ``Frame``.
-* ``TypeBucket`` remains a generic container (``molpy.core.utils``); it is
-  tested here directly with plain Python objects.
 """
 
 import numpy as np
@@ -40,7 +38,6 @@ from molpy import (
     Parameters,
     Style,
     Type,
-    TypeBucket,
 )
 
 
@@ -191,67 +188,6 @@ class TestAngleType:
         anglestyle = ff.def_anglestyle("harmonic")
         angle = anglestyle.def_type(at1, at2, at3, k=500.0)
         assert angle.name == "CA-CB-CC"
-
-
-class TestTypeBucket:
-    """Test the generic TypeBucket container directly with plain objects.
-
-    TypeBucket is a back-compat generic container (``molpy.core.utils``); it is
-    no longer used for style storage. These tests exercise it with plain Python
-    classes, independent of the molrs FF hierarchy.
-    """
-
-    class _Foo:
-        def __init__(self, name):
-            self.name = name
-
-    class _Bar:
-        def __init__(self, name):
-            self.name = name
-
-    def test_typebucket_add_and_bucket(self):
-        tb = TypeBucket()
-        f1 = self._Foo("a")
-        f2 = self._Foo("b")
-        b1 = self._Bar("c")
-        tb.add(f1)
-        tb.add(f2)
-        tb.add(b1)
-
-        foos = tb.bucket(self._Foo)
-        bars = tb.bucket(self._Bar)
-
-        assert len(foos) == 2
-        assert len(bars) == 1
-        assert f1 in foos
-        assert f2 in foos
-        assert b1 in bars
-        assert len(tb) == 3
-
-    def test_typebucket_remove(self):
-        tb = TypeBucket()
-        f = self._Foo("a")
-        tb.add(f)
-        assert len(tb.bucket(self._Foo)) == 1
-        assert tb.remove(f) is True
-        assert len(tb.bucket(self._Foo)) == 0
-
-    def test_typebucket_classes(self):
-        tb = TypeBucket()
-        tb.add(self._Foo("a"))
-        tb.add(self._Bar("b"))
-        classes = list(tb.classes())
-        assert self._Foo in classes
-        assert self._Bar in classes
-
-    def test_typebucket_exact_bucket_and_all(self):
-        tb = TypeBucket()
-        f = self._Foo("a")
-        b = self._Bar("b")
-        tb.add(f)
-        tb.add(b)
-        assert tb.exact_bucket(self._Foo) == [f]
-        assert set(tb.all()) == {f, b}
 
 
 class TestStyle:

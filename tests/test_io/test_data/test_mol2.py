@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 
+import molrs
+
 import molpy as mp
 
 
@@ -8,7 +10,7 @@ class TestMol2Reader:
     """Basic MOL2 reading tests."""
 
     def test_read(self, TEST_DATA_DIR):
-        frame = mp.Frame()
+        frame = molrs.Frame()
         mol2 = mp.io.read_mol2(TEST_DATA_DIR / "mol2/ethane.mol2", frame)
         atoms = mol2["atoms"]
 
@@ -35,7 +37,7 @@ class TestMol2Comprehensive:
         if not fpath.exists():
             pytest.skip("ethane.mol2 test data not available")
 
-        frame = mp.io.read_mol2(fpath, frame=mp.Frame())
+        frame = mp.io.read_mol2(fpath, frame=molrs.Frame())
 
         # Check basic structure
         assert "atoms" in frame
@@ -58,7 +60,7 @@ class TestMol2Comprehensive:
         if not fpath.exists():
             pytest.skip("imatinib.mol2 test data not available")
 
-        frame = mp.io.read_mol2(fpath, frame=mp.Frame())
+        frame = mp.io.read_mol2(fpath, frame=molrs.Frame())
 
         # Check basic structure
         assert "atoms" in frame
@@ -78,7 +80,7 @@ class TestMol2Comprehensive:
         for mol2_file in ["ethane.mol2", "imatinib.mol2"]:
             fpath = TEST_DATA_DIR / f"mol2/{mol2_file}"
             if fpath.exists():
-                frame = mp.io.read_mol2(fpath, frame=mp.Frame())
+                frame = mp.io.read_mol2(fpath, frame=molrs.Frame())
 
                 # Should handle status bits gracefully
                 assert "atoms" in frame
@@ -97,7 +99,7 @@ class TestMol2Comprehensive:
         for mol2_file in ["ethane.mol2", "imatinib.mol2"]:
             fpath = TEST_DATA_DIR / f"mol2/{mol2_file}"
             if fpath.exists():
-                frame = mp.io.read_mol2(fpath, frame=mp.Frame())
+                frame = mp.io.read_mol2(fpath, frame=molrs.Frame())
 
                 # Check that small molecules are handled
                 assert "atoms" in frame
@@ -117,7 +119,7 @@ class TestMol2Comprehensive:
         if not fpath.exists():
             pytest.skip("imatinib.mol2 test data not available")
 
-        frame = mp.io.read_mol2(fpath, frame=mp.Frame())
+        frame = mp.io.read_mol2(fpath, frame=molrs.Frame())
 
         # Should handle ring structures
         assert "atoms" in frame
@@ -134,7 +136,7 @@ class TestMol2Comprehensive:
         if not fpath.exists():
             pytest.skip("ethane.mol2 test data not available")
 
-        frame = mp.io.read_mol2(fpath, frame=mp.Frame())
+        frame = mp.io.read_mol2(fpath, frame=molrs.Frame())
         atoms = frame["atoms"]
 
         # Check coordinate precision
@@ -158,7 +160,7 @@ class TestMol2Comprehensive:
         if not fpath.exists():
             pytest.skip("ethane.mol2 test data not available")
 
-        frame = mp.io.read_mol2(fpath, frame=mp.Frame())
+        frame = mp.io.read_mol2(fpath, frame=molrs.Frame())
         atoms = frame["atoms"]
 
         # Should have charge information
@@ -173,7 +175,7 @@ class TestMol2Comprehensive:
         if not fpath.exists():
             pytest.skip("ethane.mol2 test data not available")
 
-        frame = mp.io.read_mol2(fpath, frame=mp.Frame())
+        frame = mp.io.read_mol2(fpath, frame=molrs.Frame())
         atoms = frame["atoms"]
 
         # Check substructure fields
@@ -191,7 +193,7 @@ class TestMol2Comprehensive:
         if not fpath.exists():
             pytest.skip("ethane.mol2 test data not available")
 
-        frame = mp.io.read_mol2(fpath, frame=mp.Frame())
+        frame = mp.io.read_mol2(fpath, frame=molrs.Frame())
         atoms = frame["atoms"]
 
         # Should have atomic numbers
@@ -209,7 +211,7 @@ class TestMol2Comprehensive:
         for mol2_file in ["ethane.mol2", "imatinib.mol2"]:
             fpath = TEST_DATA_DIR / f"mol2/{mol2_file}"
             if fpath.exists():
-                frame = mp.io.read_mol2(fpath, frame=mp.Frame())
+                frame = mp.io.read_mol2(fpath, frame=molrs.Frame())
 
                 # Should handle bonds
                 if "bonds" in frame:
@@ -232,7 +234,7 @@ class TestMol2Comprehensive:
         for mol2_file in ["ethane.mol2", "imatinib.mol2"]:
             fpath = TEST_DATA_DIR / f"mol2/{mol2_file}"
             if fpath.exists():
-                frame = mp.io.read_mol2(fpath, frame=mp.Frame())
+                frame = mp.io.read_mol2(fpath, frame=molrs.Frame())
 
                 # Should always have atoms
                 assert "atoms" in frame
@@ -255,7 +257,7 @@ class TestMol2Comprehensive:
 
         # Test that all files can be read consistently
         for fpath in mol2_files:
-            frame = mp.io.read_mol2(fpath, frame=mp.Frame())
+            frame = mp.io.read_mol2(fpath, frame=molrs.Frame())
 
             # Basic consistency checks
             assert "atoms" in frame

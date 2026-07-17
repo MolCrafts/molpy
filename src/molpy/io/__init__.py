@@ -20,7 +20,9 @@ Basic Usage:
     from molpy.io import read_pdb, read_lammps_data
 
     frame = read_pdb("structure.pdb")
-    frame = read_lammps_data("data.lammps", atom_style="full")
+    result = read_lammps_data("data.lammps", atom_style="full")
+    frame = result.frame
+    forcefield = result.forcefield
 
     # Writing data files
     from molpy.io import write_pdb, write_lammps_data
@@ -61,8 +63,7 @@ from .data.amber import AmberInpcrdReader
 from .data.base import DataReader, DataWriter
 from .data.gro import GroReader, GroWriter
 from .data.h5 import HDF5Reader, HDF5Writer
-from .data.lammps import LammpsDataReader, LammpsDataWriter
-from .data.lammps_bond_react import write_bond_react_map
+from .data.lammps import LammpsDataReader, LammpsDataResult, LammpsDataWriter
 from .data.lammps_molecule import (
     LammpsMoleculeReader,
     LammpsMoleculeWriter,
@@ -76,9 +77,9 @@ from .data.xyz import XYZReader
 
 # 5. Factory functions (use the classes above)
 from .readers import (
+    read_amber,
     read_amber_ac,
     read_amber_inpcrd,
-    read_amber_prmtop,
     read_dcd_trajectory,
     read_gro,
     read_h5,
@@ -99,9 +100,6 @@ from .readers import (
     read_xyz,
     read_xyz_trajectory,
 )
-
-# Convenience alias: read_amber(prmtop, inpcrd=None, frame=None)
-read_amber = read_amber_prmtop
 from .base import BaseReader
 from .trajectory.base import (
     BaseTrajectoryReader,
@@ -138,6 +136,7 @@ from .writers import (
     write_lammps_data,
     write_lammps_forcefield,
     write_lammps_molecule,
+    write_bond_react_map,
     write_lammps_bond_react_system,
     write_lammps_system,
     write_lammps_trajectory,
@@ -159,7 +158,6 @@ __all__ = [
     "read_amber",
     "read_amber_ac",
     "read_amber_inpcrd",
-    "read_amber_prmtop",
     "read_gro",
     "read_h5",
     "read_LAMMPS_log",
@@ -205,6 +203,7 @@ __all__ = [
     "GroReader",
     "HDF5Reader",
     "LammpsDataReader",
+    "LammpsDataResult",
     "LammpsMoleculeReader",
     "Mol2Reader",
     "SmilesReader",

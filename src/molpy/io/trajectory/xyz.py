@@ -1,6 +1,9 @@
 from pathlib import Path
+from io import TextIOWrapper
 
-from molpy.core import Frame
+from molrs import Frame
+
+from molpy._frame_meta import get_frame_meta
 
 from .base import TrajectoryWriter
 
@@ -10,7 +13,9 @@ class XYZTrajectoryWriter(TrajectoryWriter):
 
     def __init__(self, fpath: str | Path):
         super().__init__(fpath)
-        self.fobj = open(fpath, "w")
+        # Reuse TrajectoryWriter's owned binary handle instead of opening a
+        # second descriptor that its base lifecycle cannot close.
+        self.fobj = TextIOWrapper(self._fp, encoding="utf-8", write_through=True)
 
     def __del__(self):
         if hasattr(self, "fobj") and not self.fobj.closed:
@@ -19,13 +24,15 @@ class XYZTrajectoryWriter(TrajectoryWriter):
     def write_frame(self, frame: Frame):
         """Write a single frame to the XYZ file."""
         atoms = frame["atoms"]
-        box = frame.box
+        box = frame.simbox
         n_atoms = atoms.nrows
 
         self.fobj.write(f"{n_atoms}\n")
 
         # Write comment line
-        comment = frame.metadata.get("comment", f"Step={frame.metadata.get('step', 0)}")
+        comment = get_frame_meta(
+            frame, "comment", f"Step={get_frame_meta(frame, 'step', 0)}"
+        )
         if box is not None:
             comment += f' Lattice="{box.matrix.tolist()}"'
         self.fobj.write(f"{comment}\n")
@@ -47,6 +54,7 @@ class XYZTrajectoryWriter(TrajectoryWriter):
         """Close the file."""
         if hasattr(self, "fobj") and not self.fobj.closed:
             self.fobj.close()
+        self._fp = None
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()

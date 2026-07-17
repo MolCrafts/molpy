@@ -36,10 +36,9 @@ def _ntf2_polarized():
     asm = Atomistic()
     # Spread atoms along x so cores (and the shells co-located on them) carry
     # coordinates the LAMMPS data writer can emit.
-    atoms = [Atom(element=e, x=1.5 * i, y=0.0, z=0.0) for i, e in enumerate(el)]
-    asm.add_entity(*atoms)
+    atoms = [asm.def_atom(element=e, x=1.5 * i, y=0.0, z=0.0) for i, e in enumerate(el)]
     for i, j in edges:
-        asm.add_link(Bond(atoms[i], atoms[j]))
+        asm.def_bond(atoms[i], atoms[j])
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         typed = ClpTypifier().typify(asm.get_topo(gen_angle=True, gen_dihe=True))
@@ -74,29 +73,31 @@ def test_data_writer_emits_fix_drude_flags(tmp_path):
 def test_data_writer_no_drude_comment_for_plain_system(tmp_path):
     """A non-polarizable frame (no element ``D``) gets no fix-drude comment."""
     asm = Atomistic()
-    asm.add_entity(
-        Atom(
-            id=1,
-            mol_id=1,
-            element="C",
-            type="CT",
-            charge=0.0,
-            x=0.0,
-            y=0.0,
-            z=0.0,
-            mass=12.0,
-        ),
-        Atom(
-            id=2,
-            mol_id=1,
-            element="H",
-            type="HC",
-            charge=0.0,
-            x=1.0,
-            y=0.0,
-            z=0.0,
-            mass=1.0,
-        ),
+    asm.def_atoms(
+        [
+            dict(
+                id=1,
+                mol_id=1,
+                element="C",
+                type="CT",
+                charge=0.0,
+                x=0.0,
+                y=0.0,
+                z=0.0,
+                mass=12.0,
+            ),
+            dict(
+                id=2,
+                mol_id=1,
+                element="H",
+                type="HC",
+                charge=0.0,
+                x=1.0,
+                y=0.0,
+                z=0.0,
+                mass=1.0,
+            ),
+        ]
     )
     path = tmp_path / "plain.data"
     LammpsDataWriter(path).write(asm.to_frame())

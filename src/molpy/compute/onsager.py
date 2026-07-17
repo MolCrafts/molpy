@@ -87,9 +87,9 @@ class Onsager(Compute):
                     raise ValueError(f"Atoms block must contain '{col}'")
             coords_list.append(np.column_stack([atoms["x"], atoms["y"], atoms["z"]]))
             elems_list.append(np.asarray(atoms["type"]))
-            if frame.box is None:
+            if frame.simbox is None:
                 raise ValueError("Frame must contain box information")
-            boxes.append(frame.box)
+            boxes.append(frame.simbox)
 
         coords_traj = np.asarray(coords_list, dtype=np.float64)  # (F, N, 3)
         elems = np.asarray(elems_list[0])

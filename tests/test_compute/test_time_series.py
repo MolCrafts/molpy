@@ -19,8 +19,8 @@ class TestTimeCache:
         cache = TimeCache(cache_size=10, shape=(5, 3))
         assert cache.cache_size == 10
         assert cache.shape == (5, 3)
-        assert cache.cache.shape == (10, 5, 3)
-        assert np.all(np.isnan(cache.cache))
+        assert cache.get().shape == (10, 5, 3)
+        assert np.all(np.isnan(cache.get()))
 
     def test_update(self):
         """Test updating cache with new data."""
@@ -28,26 +28,26 @@ class TestTimeCache:
 
         # Add first frame
         cache.update(np.array([1.0, 2.0]))
-        assert np.allclose(cache.cache[0], [1.0, 2.0])
-        assert np.all(np.isnan(cache.cache[1:]))
+        assert np.allclose(cache.get()[0], [1.0, 2.0])
+        assert np.all(np.isnan(cache.get()[1:]))
 
         # Add second frame
         cache.update(np.array([3.0, 4.0]))
-        assert np.allclose(cache.cache[0], [3.0, 4.0])
-        assert np.allclose(cache.cache[1], [1.0, 2.0])
-        assert np.all(np.isnan(cache.cache[2:]))
+        assert np.allclose(cache.get()[0], [3.0, 4.0])
+        assert np.allclose(cache.get()[1], [1.0, 2.0])
+        assert np.all(np.isnan(cache.get()[2:]))
 
         # Add third frame
         cache.update(np.array([5.0, 6.0]))
-        assert np.allclose(cache.cache[0], [5.0, 6.0])
-        assert np.allclose(cache.cache[1], [3.0, 4.0])
-        assert np.allclose(cache.cache[2], [1.0, 2.0])
+        assert np.allclose(cache.get()[0], [5.0, 6.0])
+        assert np.allclose(cache.get()[1], [3.0, 4.0])
+        assert np.allclose(cache.get()[2], [1.0, 2.0])
 
         # Add fourth frame (should drop oldest)
         cache.update(np.array([7.0, 8.0]))
-        assert np.allclose(cache.cache[0], [7.0, 8.0])
-        assert np.allclose(cache.cache[1], [5.0, 6.0])
-        assert np.allclose(cache.cache[2], [3.0, 4.0])
+        assert np.allclose(cache.get()[0], [7.0, 8.0])
+        assert np.allclose(cache.get()[1], [5.0, 6.0])
+        assert np.allclose(cache.get()[2], [3.0, 4.0])
 
     def test_wrong_shape(self):
         """Test error on wrong data shape."""
@@ -62,7 +62,7 @@ class TestTimeCache:
         cache.update(np.array([3.0, 4.0]))
 
         cache.reset()
-        assert np.all(np.isnan(cache.cache))
+        assert np.all(np.isnan(cache.get()))
         assert cache._count == 0
 
 

@@ -1,52 +1,13 @@
-"""Polymer assembly — compose the real builder classes directly.
+"""Polymer sub-primitives: sequences, chain-length distributions, system plans.
 
-There is no ``polymer()`` convenience dispatcher. You build a chain by
-calling the engine classes yourself, which keeps the data flow explicit:
-
-1. Prepare monomers — parse a BigSMILES repeat unit and embed it in 3D with
-   molpy's native (molrs) conformer generator::
-
-       from molpy.conformer import Conformer
-       from molpy.parser import parse_monomer
-
-       eo, _ = Conformer(add_hydrogens=True, seed=42).generate(parse_monomer("{[<]CCO[>]}"))
-
-2. Assemble a chain with :class:`PolymerBuilder` — feed it a monomer
-   ``library`` + a :class:`~molpy.reacter.Reacter` (from
-   :class:`ReactionPresets`), then either a CGSmiles string or a plain
-   label sequence::
-
-       from molpy.builder.polymer import PolymerBuilder, ReactionPresets
-
-       builder = PolymerBuilder({"EO": eo}, reacter=ReactionPresets.get("dehydration"))
-       chain = builder.build_sequence(["EO"] * 10).polymer
-
-For a **polydisperse system**, drive :class:`PolymerBuilder` from the
-distribution + planner primitives yourself — sample a plan, then loop::
-
-       import numpy as np
-       from molpy.builder.polymer import (
-           PolydisperseChainGenerator, SchulzZimmPolydisperse,
-           SystemPlanner, WeightedSequenceGenerator,
-       )
-
-       planner = SystemPlanner(
-           PolydisperseChainGenerator(
-               WeightedSequenceGenerator({"EO": 1.0}),
-               {"EO": 44.05},
-               distribution=SchulzZimmPolydisperse(1500, 3000),
-           ),
-           target_total_mass=5e5,
-       )
-       plan = planner.plan_system(np.random.default_rng(42))
-       chains = [builder.build_sequence(c.monomers).polymer for c in plan.chains]
-
-The AmberTools-backed build (:class:`AmberPolymerBuilder`) lives in
-:mod:`molpy.builder.polymer.ambertools`.
+Chain assembly itself lives in :mod:`molpy.builder.assembly`
+(:class:`~molpy.builder.assembly.PolymerBuilder` +
+:class:`~molpy.builder.assembly.MonomerLibrary`). What remains here is what a
+polymer needs *besides* the assembler: how to pick the next monomer label
+(:mod:`sequences`), how long the chains are (:mod:`distributions`), and how many
+of each to make (:mod:`system`).
 """
 
-from .connectors import Connector
-from .core import PolymerBuilder, PolymerBuildResult
 from .distributions import (
     DPDistribution,
     FlorySchulzPolydisperse,
@@ -55,8 +16,6 @@ from .distributions import (
     SchulzZimmPolydisperse,
     UniformPolydisperse,
 )
-from .placer import CovalentSeparator, LinearOrienter, Placer, VdWSeparator
-from .presets import ReactionPresets, ReactionPresetSpec
 from .sequences import (
     AlternatingSequenceGenerator,
     BlockSequenceGenerator,
@@ -71,18 +30,7 @@ from .system import (
 )
 
 __all__ = [
-    # Chain assembly engine
-    "PolymerBuilder",
-    "PolymerBuildResult",
-    "Connector",
-    # Reaction presets (public extension point)
-    "ReactionPresets",
-    "ReactionPresetSpec",
     # Placer
-    "CovalentSeparator",
-    "LinearOrienter",
-    "Placer",
-    "VdWSeparator",
     # Sequence generators
     "AlternatingSequenceGenerator",
     "BlockSequenceGenerator",

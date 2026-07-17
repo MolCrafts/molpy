@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from molpy.core import Box
-from molpy.core.element import Element
+from molrs import Element
 
 
 @pytest.fixture(
@@ -74,7 +74,7 @@ class TestXYZReader:
         assert frame["atoms"]["z"].shape == (192,), "z-coordinates should be 1D array"
 
         # Check box from Lattice
-        box = frame.box
+        box = frame.simbox
         assert isinstance(box, molrs.Box)
         assert box.matrix.shape == (3, 3)
         assert np.allclose(
@@ -88,11 +88,11 @@ class TestXYZReader:
             ),
         )
 
-        # Check metadata
-        assert "ENERGY" in frame.metadata
-        assert float(frame.metadata["ENERGY"]) == pytest.approx(-2069.84934116)
-        assert "Natoms" in frame.metadata
-        assert frame.metadata["Natoms"] == "192"
+        # Check exact-dtype metadata
+        assert "ENERGY" in frame.meta
+        assert float(frame.meta["ENERGY"].value) == pytest.approx(-2069.84934116)
+        assert "Natoms" in frame.meta
+        assert str(frame.meta["Natoms"].value) == "192"
 
         # Check atomic numbers are present
         assert "number" in frame["atoms"]
@@ -225,19 +225,19 @@ class TestXYZReader:
                 expected_num = Element.get_atomic_number(str(elem))
                 assert num == expected_num
 
-    def test_metadata_extraction(self, xyz_test_dir, xyz_backend):
-        """Test that metadata from comment line is correctly extracted."""
+    def test_typed_meta_extraction(self, xyz_test_dir, xyz_backend):
+        """Test that typed metadata from comment line is correctly extracted."""
         reader = xyz_backend.XYZReader(xyz_test_dir / "extended.xyz")
         frame = reader.read()
 
-        # Check various metadata fields
-        assert "ENERGY" in frame.metadata
-        assert "Natoms" in frame.metadata
-        assert "NAME" in frame.metadata
+        # Check various typed metadata fields
+        assert "ENERGY" in frame.meta
+        assert "Natoms" in frame.meta
+        assert "NAME" in frame.meta
 
         # Metadata values should be strings or parsed values
-        assert isinstance(frame.metadata["ENERGY"], (str, float))
-        assert isinstance(frame.metadata["Natoms"], str)
+        assert isinstance(frame.meta["ENERGY"].value, (str, float))
+        assert isinstance(frame.meta["Natoms"].value, (str, int))
 
     def test_empty_comment_line(self, xyz_test_dir, xyz_backend):
         """Test XYZ file with empty comment line."""

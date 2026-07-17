@@ -1,4 +1,3 @@
-from .affected_region import AffectedRegion, region_radius
 from .atomistic import (
     Angle,
     Atom,
@@ -30,15 +29,11 @@ from .forcefield import (
     Parameters,
     Style,
     Type,
-    TypeBucket,
 )
-from .frame import Block, Frame
 from .script import Script, ScriptLanguage
 from .unit import UnitSystem
 
 __all__ = [
-    "AffectedRegion",
-    "region_radius",
     "Angle",
     "Atom",
     "Atomistic",
@@ -69,9 +64,6 @@ __all__ = [
     "Parameters",
     "Style",
     "Type",
-    "TypeBucket",
-    "Block",
-    "Frame",
     "Script",
     "ScriptLanguage",
     "UnitSystem",

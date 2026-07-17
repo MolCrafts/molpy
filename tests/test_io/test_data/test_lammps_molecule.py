@@ -11,6 +11,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import molrs
+from molrs import MetaValue
+
 import molpy as mp
 from molpy.io.data.lammps_molecule import LammpsMoleculeReader, LammpsMoleculeWriter
 
@@ -35,11 +38,11 @@ class TestLammpsMoleculeReader:
         frame = reader.read()
 
         # Check metadata
-        assert frame.metadata["format"] == "lammps_molecule"
-        assert frame.metadata["source_format"] == "native"
-        assert frame.metadata["n_atoms"] == 3
-        assert frame.metadata["n_bonds"] == 2
-        assert frame.metadata["n_angles"] == 1
+        assert frame.meta["format"].value == "lammps_molecule"
+        assert frame.meta["source_format"].value == "native"
+        assert frame.meta["n_atoms"].value == 3
+        assert frame.meta["n_bonds"].value == 2
+        assert frame.meta["n_angles"].value == 1
 
         # Check atoms
         assert "atoms" in frame
@@ -94,11 +97,11 @@ class TestLammpsMoleculeReader:
         frame = reader.read()
 
         # Check metadata
-        assert frame.metadata["format"] == "lammps_molecule"
-        assert frame.metadata["source_format"] == "json"
-        assert frame.metadata["title"] == "Water molecule. TIP3P geometry"
-        assert frame.metadata["units"] == "real"
-        assert frame.metadata["revision"] == 1
+        assert frame.meta["format"].value == "lammps_molecule"
+        assert frame.meta["source_format"].value == "json"
+        assert frame.meta["title"].value == "Water molecule. TIP3P geometry"
+        assert frame.meta["units"].value == "real"
+        assert frame.meta["revision"].value == 1
 
         # Check atoms
         assert "atoms" in frame
@@ -152,12 +155,12 @@ class TestLammpsMoleculeReader:
         frame = reader.read()
 
         # Check metadata
-        assert frame.metadata["format"] == "lammps_molecule"
-        assert frame.metadata["source_format"] == "native"
-        assert frame.metadata["n_atoms"] == 8
-        assert frame.metadata["n_bonds"] == 7
-        assert frame.metadata["n_angles"] == 12
-        assert frame.metadata["n_dihedrals"] == 9
+        assert frame.meta["format"].value == "lammps_molecule"
+        assert frame.meta["source_format"].value == "native"
+        assert frame.meta["n_atoms"].value == 8
+        assert frame.meta["n_bonds"].value == 7
+        assert frame.meta["n_angles"].value == 12
+        assert frame.meta["n_dihedrals"].value == 9
 
         # Check atoms
         assert "atoms" in frame
@@ -336,7 +339,7 @@ class TestLammpsMoleculeWriter:
 
     def test_write_without_atoms_error(self, tmp_path):
         """Test error when trying to write frame without atoms."""
-        frame = mp.Frame()
+        frame = molrs.Frame()
 
         tmp_file = tmp_path / "test.mol"
         writer = LammpsMoleculeWriter(tmp_file, format_type="native")
@@ -353,17 +356,19 @@ class TestLammpsMoleculeWriter:
         writer = LammpsMoleculeWriter("test.mol", format_type="json")
         assert writer._path.suffix == ".json"
 
-    def test_metadata_preservation(self, test_files, tmp_path):
-        """Test that metadata is preserved during write/read cycle."""
+    def test_typed_meta_preservation(self, test_files, tmp_path):
+        """Test that typed metadata is preserved during write/read cycle."""
         # Read original
         reader = LammpsMoleculeReader(test_files["water_json"])
         frame = reader.read()
 
-        # Add custom metadata
-        frame.metadata["custom_field"] = 42
-        frame.metadata["total_mass"] = 18.015
-        frame.metadata["center_of_mass"] = np.array([0.0, 0.0, 0.0])
-        frame.metadata["inertia"] = np.array([1.0, 2.0, 3.0, 0.0, 0.0, 0.0])
+        frame.meta = {
+            **frame.meta,
+            "custom_field": MetaValue("i64", 42),
+            "total_mass": MetaValue("f64", 18.015),
+            "center_of_mass": MetaValue("f64x3", [0.0, 0.0, 0.0]),
+            "inertia": MetaValue("f64x6", [1.0, 2.0, 3.0, 0.0, 0.0, 0.0]),
+        }
 
         # Write JSON format
         tmp_file = tmp_path / "test.json"
@@ -374,9 +379,9 @@ class TestLammpsMoleculeWriter:
         reader2 = LammpsMoleculeReader(tmp_file)
         frame2 = reader2.read()
 
-        # Check if metadata is preserved (at least the ones we wrote)
+        # Check if typed metadata is preserved (at least the ones we wrote)
         # Note: custom_field won't be preserved in standard LAMMPS format
-        assert "total_mass" in frame2.metadata or "masstotal" in frame2.metadata
+        assert "total_mass" in frame2.meta
 
 
 class TestIntegrationWithMolpyIO:
@@ -388,7 +393,7 @@ class TestIntegrationWithMolpyIO:
 
         assert "atoms" in frame
         assert frame["atoms"].nrows == 3
-        assert frame.metadata["format"] == "lammps_molecule"
+        assert frame.meta["format"].value == "lammps_molecule"
 
     def test_write_lammps_molecule_function(self, test_files, tmp_path):
         """Test the high-level write_lammps_molecule function."""
@@ -416,4 +421,4 @@ class TestIntegrationWithMolpyIO:
         # Read back and verify
         frame2 = mp.io.read_lammps_molecule(tmp_file)
         assert frame2["atoms"].nrows == frame["atoms"].nrows
-        assert frame2.metadata["source_format"] == "json"
+        assert frame2.meta["source_format"].value == "json"

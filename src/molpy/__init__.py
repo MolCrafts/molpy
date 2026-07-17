@@ -1,6 +1,6 @@
 """MolPy — Composable molecular modeling in Python.
 
-Core data structures (``Atom``, ``Frame``, ``ForceField``, …) are imported
+Core data structures (``Atom``, ``ForceField``, …) are imported
 eagerly. Heavier subpackages (``io``, ``engine``, ``parser``, …) are loaded
 lazily on first attribute access via module ``__getattr__`` (PEP 562), so
 ``import molpy`` stays fast; ``molpy.io`` and ``import molpy.io`` work as
@@ -8,8 +8,8 @@ usual.
 """
 
 # Import version first: version.py runs the molcrafts-molrs compatibility check
-# on import, before any molrs-backed core import below (``core.frame`` imports
-# molrs), so a stale editable build or a mismatched pin surfaces immediately.
+# on import, before any molrs-backed core import below, so a stale editable
+# build or a mismatched pin surfaces immediately.
 from .version import release_date, version
 
 from importlib import import_module
@@ -26,12 +26,11 @@ if TYPE_CHECKING:
         io,
         pack,
         parser,
-        reacter,
         typifier,
     )
 
 # Submodules are loaded lazily (PEP 562) so that importing a single
-# subpackage (e.g. ``molpy.reacter``) does not eagerly initialize the
+# subpackage (e.g. ``molpy.io``) does not eagerly initialize the
 # whole io/engine/adapter surface. ``molpy.io`` et al. still work as
 # attribute accesses and ``import molpy.io`` works as usual.
 _LAZY_SUBMODULES = frozenset(
@@ -44,7 +43,6 @@ _LAZY_SUBMODULES = frozenset(
         "io",
         "pack",
         "parser",
-        "reacter",
         "typifier",
     }
 )
@@ -93,12 +91,25 @@ from .core.forcefield import (
     Parameters,
     Style,
     Type,
-    TypeBucket,
 )
-from .core.frame import Block, Frame
 from .core.script import Script, ScriptLanguage
 from .core.trajectory import Trajectory
 from .core.unit import UnitSystem
+
+# Selected graph primitives are exposed through the molpy facade. These are
+# identity re-exports, not wrapper layers —
+# ``molpy.Reaction is molrs.Reaction`` — so there is no second class, no
+# forwarding shell and no ``_inner``. Core storage and chemistry primitives such
+# as Frame, Block, and Element are imported directly from molrs.
+from molrs import (  # noqa: E402
+    Graph,
+    NeighborQuery,
+    Perceive,
+    Reaction,
+    SmartsPattern,
+    find_rings,
+    perceive_aromaticity,
+)
 
 __all__ = [
     # Submodules
@@ -110,8 +121,15 @@ __all__ = [
     "io",
     "pack",
     "parser",
-    "reacter",
     "typifier",
+    # molrs engine primitives, re-exported (never wrapped)
+    "Graph",
+    "NeighborQuery",
+    "Perceive",
+    "Reaction",
+    "SmartsPattern",
+    "find_rings",
+    "perceive_aromaticity",
     # Core atomistic
     "Angle",
     "Atom",
@@ -146,10 +164,7 @@ __all__ = [
     "Parameters",
     "Style",
     "Type",
-    "TypeBucket",
-    # Core frame/topology/trajectory
-    "Block",
-    "Frame",
+    # Core topology/trajectory
     "Script",
     "ScriptLanguage",
     "Trajectory",

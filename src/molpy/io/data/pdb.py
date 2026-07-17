@@ -5,7 +5,10 @@ from typing import Any
 
 import numpy as np
 
-from molpy.core import Block, Box, Frame
+from molrs import Block, Frame
+
+from molpy._frame_meta import get_frame_meta
+from molpy.core import Box
 
 from .base import DataReader, DataWriter
 
@@ -83,7 +86,7 @@ class PDBReader(DataReader):
     Minimal-yet-robust PDB reader.
 
     * ATOM / HETATM parsed per PDB v3.3 fixed columns
-    * CRYST1 -> frame.box
+    * CRYST1 -> frame.simbox
     * CONECT -> bond list
     """
 
@@ -460,29 +463,27 @@ class PDBWriter(DataWriter):
         - occupancy: occupancy (float)
         - tempFactor: temperature factor (float)
 
-        Optional metadata:
+        Optional typed metadata:
         - elements: space-separated string of element symbols (one per atom)
         - name: frame name (str)
-        - box: Box object for CRYST1 record
+
+        The optional CRYST1 cell is read from ``frame.simbox``.
 
         Raises:
             ValueError: If required fields (x, y, z) are missing or contain None
         """
-        # Extract elements from metadata if available
-        elements_list = None
-        if "elements" in frame.metadata:
-            elements_str = frame.metadata["elements"]
-            if isinstance(elements_str, str):
-                elements_list = elements_str.split()
+        # Extract elements from typed metadata if available.
+        elements_str = get_frame_meta(frame, "elements")
+        elements_list = elements_str.split() if isinstance(elements_str, str) else None
 
         with open(self._path, "w") as f:
             # Write header
-            frame_name = frame.metadata.get("name", "MOL")
+            frame_name = get_frame_meta(frame, "name", "MOL")
             f.write(f"REMARK  {frame_name}\n")
 
             # Write CRYST1 record if box exists
-            if frame.box is not None:
-                f.write(self._format_cryst1_line(frame.box) + "\n")
+            if frame.simbox is not None:
+                f.write(self._format_cryst1_line(frame.simbox) + "\n")
             else:
                 f.write(self._format_cryst1_line(None) + "\n")
 

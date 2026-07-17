@@ -3,7 +3,7 @@
 From a target molecular-weight distribution to a packed, LAMMPS-ready box: sample the chains, build each one, re-typify the junctions, pack, export.
 
 !!! note "Prerequisites"
-    This guide requires RDKit, Packmol, and the `oplsaa.xml` force field. Familiarity with [Stepwise Polymer Construction](02_polymer_stepwise.md) is assumed.
+    This guide requires RDKit, Packmol, and the `oplsaa.xml` force field. Familiarity with [Assembly](02_assembly.md) is assumed.
 
 ## From distribution to simulation box
 
@@ -19,12 +19,13 @@ The three summary statistics that describe polydispersity are the number-average
 
 ## Typification happens per monomer, not per chain
 
-Each monomer is parsed, expanded to 3D with hydrogens, and assigned force field types individually. The builder then handles incremental re-typification at each junction during chain growth, so there is no need to re-typify the entire chain after assembly.
+Each monomer is parsed, expanded to 3D with hydrogens, and assigned force field types individually. Two of its backbone carbons are then annotated as reaction sites. The builder re-types each junction as the bond forms, so there is no need to re-typify the entire chain after assembly.
 
 
 ```python
 import molpy as mp
-from molpy.core.element import Element
+from molpy.core import fields
+from molrs import Element
 from molpy.typifier import OplsTypifier
 
 ff = mp.io.read_xml_forcefield("oplsaa.xml")
@@ -35,12 +36,21 @@ BIGSMILES = {
     "MA": "{[][<]CC(C(=O)OC)[>][]}",
 }
 
+# The BigSMILES descriptors [<] and [>] name the two backbone carbons that may
+# react. The assembler knows nothing about BigSMILES, so translate them into the
+# canonical `site` annotation that the reaction SMARTS below binds to.
+SITE_OF_PORT = {"<": "head", ">": "tail"}
+
 
 def build_typed_monomer(bigsmiles, typifier):
     monomer = mp.parser.parse_monomer(bigsmiles)
     monomer = mp.adapter.RDKitAdapter(monomer).generate_3d(add_hydrogens=True, optimize=False)
     monomer = monomer.get_topo(gen_angle=True, gen_dihe=True)
     monomer = typifier.typify(monomer)
+    for atom in monomer.atoms:
+        port = atom.get("port")
+        if port:
+            atom[fields.SITE] = SITE_OF_PORT[port]
     return monomer
 
 
@@ -49,9 +59,9 @@ library = {label: build_typed_monomer(bs, typifier) for label, bs in BIGSMILES.i
 monomer_mass = {}
 for label, mon in library.items():
     mass = sum(Element(a.get("element")).mass for a in mon.atoms)
-    ports = [a.get("port") for a in mon.atoms if a.get("port")]
+    sites = [a.get(fields.SITE) for a in mon.atoms if a.get(fields.SITE)]
     monomer_mass[label] = mass
-    print(f"{label}: atoms={len(mon.atoms)}, mass={mass:.1f}, ports={ports}")
+    print(f"{label}: atoms={len(mon.atoms)}, mass={mass:.1f}, sites={sites}")
 ```
 
 ```text
@@ -87,8 +97,8 @@ for label, mon in library.items():
 2026-06-30 21:08:42,769 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types (by type)
 
 
-Sty: atoms=24, mass=112.2, ports=['<', '>']
-MA: atoms=14, mass=88.1, ports=['<', '>']
+Sty: atoms=24, mass=112.2, sites=['head', 'tail']
+MA: atoms=14, mass=88.1, sites=['head', 'tail']
 ```
 
 
@@ -302,44 +312,21 @@ plt.show()
 
 The reaction here is **radical addition**: each connection removes one hydrogen from each backbone carbon and forms a new C–C bond. This differs from the dehydration condensation used in earlier guides — there are no hydroxyl leaving groups, only hydrogen removal from both sides.
 
-The typifier is passed to `PolymerBuilder` so that incremental re-typification handles the junction atoms at each coupling step. There is no whole-chain typification after building; only the atoms immediately flanking each new bond are re-typed.
+That difference lives entirely in the reaction SMARTS. `PolymerBuilder` is the same class either way: it stamps out one residue per monomer of the sequence and applies the reaction between adjacent residues. Because both monomer labels of the copolymer are drawn from one library, a single builder handles every sequence the planner sampled — and reusing it across chains is what lets them share one retype cache.
 
 
 ```python
-from molpy.builder.polymer import (
-    Connector,
-    CovalentSeparator,
-    LinearOrienter,
-    Placer,
-    PolymerBuilder,
-)
-from molpy.reacter import (
-    Reacter,
-    form_single_bond,
-    select_hydrogens,
-    select_self,
-)
+from molpy.builder.assembly import MonomerLibrary, PolymerBuilder, ResiduePlacer
 
-rxn = Reacter(
-    name="addition",
-    anchor_selector_left=select_self,
-    anchor_selector_right=select_self,
-    leaving_selector_left=select_hydrogens(1),
-    leaving_selector_right=select_hydrogens(1),
-    bond_former=form_single_bond,
-)
+# One H leaves each backbone carbon; the two carbons become a C-C bond. Atoms on
+# the left that do not reappear on the right are the leaving groups.
+ADDITION = "[C;%tail:1][H].[C;%head:2][H]>>[C:1][C:2]"
 
-rules = {(l, r): (">", "<") for l in library for r in library}
-connector = Connector(port_map=rules, reacter=rxn)
-placer = Placer(
-    separator=CovalentSeparator(buffer=-0.1),
-    orienter=LinearOrienter(),
-)
 builder = PolymerBuilder(
-    library=library,
-    connector=connector,
-    placer=placer,
-    typifier=typifier,  # incremental re-typification at junctions
+    MonomerLibrary(library),
+    mp.Reaction(ADDITION),
+    typifier=typifier,  # junctions are re-typed locally, as they form
+    placer=ResiduePlacer(),
 )
 
 sz_chains = results["Schulz-Zimm"]
@@ -347,18 +334,16 @@ atomistic_chains = []
 n_chains = 10  # truncated for this tutorial; use len(sz_chains) for a production run
 for i, chain in enumerate(sz_chains[:n_chains]):
     labels = " ".join(f"[#{m}]" for m in chain.monomers)
-    cgsmiles = "{" + labels + "}"
-    result = builder.build(cgsmiles)
-    atomistic_chains.append(result.polymer)
+    atomistic_chains.append(builder.build("{" + labels + "}"))
     if (i + 1) % 5 == 0:
-        print(f"  built {i + 1}/{len(sz_chains)} chains ...")
+        print(f"  built {i + 1}/{n_chains} chains ...")
 
 total_atoms = sum(len(c.atoms) for c in atomistic_chains)
 print(f"built {len(atomistic_chains)} chains, total atoms: {total_atoms}")
 ```
 
 ```text
-  built 5/374 chains ...
+  built 5/10 chains ...
 ```
 
 
@@ -393,7 +378,7 @@ for chain in atomistic_chains:
     packer.def_target(chain.to_frame(), number=1, constraint=constraint)
 
 packed = packer(max_steps=10000, seed=42)
-packed.box = mp.Box.cubic(length=box_length)
+packed.simbox = mp.Box.cubic(length=box_length)
 
 mp.io.write_lammps_system("05_output/lammps", packed, ff)
 print(f"packed: {packed['atoms'].nrows} atoms, box: {box_length:.1f} A")
@@ -520,8 +505,9 @@ molecules: 1, total_mass: 500000.0
 |------|-------|
 | Monomer mass wrong | Verify monomer has explicit hydrogens before mass calculation |
 | SystemPlanner total mass off | Check `max_rel_error` setting |
-| Chain topology missing | Call `get_topo(gen_angle=True, gen_dihe=True)` before typification |
-| Untyped atoms at junction | Pass `typifier` to `PolymerBuilder` for incremental re-typification |
+| Chain topology missing | Call `get_topo(gen_angle=True, gen_dihe=True)` before building |
+| `MonomerLibrary` rejects a monomer | Every template needs at least one atom carrying `fields.SITE` |
+| Reaction matches nothing | The `%name` in the SMARTS must equal the `fields.SITE` value you set |
 | Packing fails | Lower target density or increase `max_steps` |
 
-See also: [Topology-Driven Assembly](03_polymer_topology.md), [Crosslinked Networks](04_crosslinking.md).
+See also: [Assembly](02_assembly.md), [Force Field Typification](06_typifier.md).

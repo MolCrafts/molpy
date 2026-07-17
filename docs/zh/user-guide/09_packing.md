@@ -76,6 +76,6 @@ c = AndConstraint(
 
 ## 另请参见
 
-- [构建聚合物](02_polymer_stepwise.md) — 生成待填充的分子。
+- [组装](02_assembly.md) — 生成待填充的分子。
 - [多分散体系](05_polydisperse_systems.md) — 填充链长分布。
 - [API 参考 — 填充](../../api/pack.md) — 完整的类和约束参考。

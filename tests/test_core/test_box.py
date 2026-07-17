@@ -1,10 +1,18 @@
 import numpy as np
 import numpy.testing as npt
+import pytest
 
 from molpy import Box
 
 
 class TestBoxConstruction:
+    def test_removed_private_state_aliases_are_absent(self):
+        box = Box.cubic(2.0)
+        for name in ("_matrix", "_origin", "_pbc"):
+            assert not hasattr(box, name)
+            with pytest.raises(AttributeError):
+                getattr(box, name)
+
     def test_matrix_construction(self):
         matrix = np.diag([1, 2, 3])
         box = Box(matrix)
@@ -97,3 +105,24 @@ class TestBoxOps:
         npt.assert_allclose(box2.ly, 6)
         npt.assert_allclose(box2.lz, 8)
         assert "Box" in repr(box)
+
+    def test_native_batched_distances_and_displacements(self):
+        box = Box.cubic(10.0)
+        left = np.array([[0.0, 0.0, 0.0], [9.0, 0.0, 0.0]])
+        right = np.array([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+
+        npt.assert_allclose(box.diff(left, right), [[-1.0, 0.0, 0.0], [-2.0, 0.0, 0.0]])
+        npt.assert_allclose(box.dist(left, right), [1.0, 2.0])
+        npt.assert_allclose(
+            box.diff_all(left, right[:1]),
+            [[[-1.0, 0.0, 0.0]], [[-2.0, 0.0, 0.0]]],
+        )
+        npt.assert_allclose(box.dist_all(left, right[:1]), [[1.0], [2.0]])
+
+    def test_native_transform_preserves_metadata(self):
+        box = Box.orth([2.0, 3.0, 4.0], pbc=[True, False, True], origin=[1, 2, 3])
+        transformed = box.transform(np.diag([2.0, 1.0, 0.5]))
+
+        npt.assert_allclose(transformed.matrix, np.diag([4.0, 3.0, 2.0]))
+        npt.assert_allclose(transformed.origin, box.origin)
+        npt.assert_array_equal(transformed.pbc, box.pbc)

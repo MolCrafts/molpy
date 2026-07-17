@@ -2,7 +2,7 @@
 
 import pytest
 
-from molpy import Atom, AtomisticForcefield
+from molpy import Atomistic, AtomisticForcefield
 from molpy.core.forcefield import PairType
 from molpy.core.ops import (
     FragmentScaling,
@@ -33,9 +33,11 @@ def _pt(ff, a, b):
 
 def _fragments(r=4.0):
     """Cation (CR) at origin, anion (B) at distance r along x."""
+    cation = Atomistic()
+    anion = Atomistic()
     return {
-        "c2c1im": [Atom(type="CR", mass=12.0, x=0.0, y=0.0, z=0.0)],
-        "bf4": [Atom(type="B", mass=11.0, x=r, y=0.0, z=0.0)],
+        "c2c1im": [cation.def_atom(type="CR", mass=12.0, x=0.0, y=0.0, z=0.0)],
+        "bf4": [anion.def_atom(type="B", mass=11.0, x=r, y=0.0, z=0.0)],
     }
 
 

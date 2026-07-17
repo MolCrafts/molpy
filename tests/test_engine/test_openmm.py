@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from molpy.core.frame import Block, Frame
+from molrs import Block, Frame
 from molpy.core.forcefield import AtomisticForcefield
 from molpy.engine.openmm import OpenMMEngine, OpenMMSimulationConfig
 

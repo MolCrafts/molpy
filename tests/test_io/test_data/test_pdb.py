@@ -31,7 +31,7 @@ class TestPDBIO:
         frame = reader.read()
         atoms = frame["atoms"]
         assert atoms["name"].shape[0] == 3730
-        assert frame.box is not None
+        assert frame.simbox is not None
         # Bonds block exists and has correct shape
         bonds = frame["bonds"]
         assert bonds["atomi"].shape[0] == 7
@@ -75,4 +75,4 @@ class TestPDBIO:
         assert np.allclose(atoms1["x"], atoms2["x"])
         assert np.allclose(atoms1["y"], atoms2["y"])
         assert np.allclose(atoms1["z"], atoms2["z"])
-        assert frame2.box is not None
+        assert frame2.simbox is not None

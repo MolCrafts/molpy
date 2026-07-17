@@ -1,7 +1,7 @@
 """OpenMM simulation engine for MolPy.
 
 Generates OpenMM input files (PDB + XML force field + Python simulation
-script) from MolPy :class:`~molpy.core.Frame` and
+script) from :class:`molrs.Frame` and
 :class:`~molpy.core.forcefield.ForceField` objects.  OpenMM itself is **not**
 required for input generation; it is only needed for
 :meth:`~OpenMMEngine.serialize_system`.
@@ -39,7 +39,8 @@ from molpy.core.script import Script
 from .base import Engine
 
 if TYPE_CHECKING:
-    from molpy.core import Frame
+    from molrs import Frame
+
     from molpy.core.forcefield import ForceField
 
 PathLike = str | Path
@@ -168,7 +169,7 @@ class OpenMMEngine(Engine):
     """OpenMM molecular dynamics engine.
 
     Generates a complete set of OpenMM input files from MolPy
-    :class:`~molpy.core.Frame` and :class:`~molpy.core.forcefield.ForceField`
+    :class:`molrs.Frame` and :class:`~molpy.core.forcefield.ForceField`
     objects.  OpenMM itself is **not** required for input generation; it is
     only needed for :meth:`serialize_system`.
 
@@ -314,7 +315,7 @@ class OpenMMEngine(Engine):
         Does **not** require OpenMM to be installed.
 
         Args:
-            frame: MolPy :class:`~molpy.core.Frame` with atom positions.
+            frame: :class:`molrs.Frame` with atom positions.
             forcefield: MolPy :class:`~molpy.core.forcefield.ForceField`
                 containing interaction parameters.
             config: Simulation parameters.
@@ -368,7 +369,7 @@ class OpenMMEngine(Engine):
         back without re-parsing the force field.
 
         Args:
-            frame: MolPy :class:`~molpy.core.Frame` with atom positions.
+            frame: :class:`molrs.Frame` with atom positions.
             forcefield: MolPy :class:`~molpy.core.forcefield.ForceField`.
             config: Simulation parameters.
             output_dir: Output directory.

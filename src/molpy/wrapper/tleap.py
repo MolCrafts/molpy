@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from molpy.core.forcefield import ForceField
-from molpy.core.frame import Frame
-from molpy.io.readers import read_amber_prmtop
+from molpy.io.readers import read_amber
 from molpy.io.utils import ensure_parent_dir
+from molrs import Frame
 
 from .base import Wrapper
 
@@ -64,4 +64,4 @@ def read_tleap_outputs(
     Returns:
         Tuple of (Frame, ForceField) objects.
     """
-    return read_amber_prmtop(prmtop_path, inpcrd_path)
+    return read_amber(prmtop_path, inpcrd_path)

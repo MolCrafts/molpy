@@ -1,0 +1,31 @@
+{
+  "excluded_molpy_owned": ["config", "logger", "script"],
+  "identity_reexports": {
+    "entity": ["Entities", "Entity", "GraphViews", "Link", "NodeRef", "Refs", "RelationRef", "_GraphViews"],
+    "atomistic": ["Angle", "Atom", "Bond", "Dihedral", "DrudeParticle", "Improper", "MasslessSite", "VirtualSite"],
+    "cg": ["Bead", "CGBond"],
+    "forcefield": ["AngleHarmonicStyle", "AngleStyle", "AngleType", "AtomStyle", "AtomType", "AtomisticForcefield", "BondHarmonicStyle", "BondStyle", "BondType", "DihedralOPLSStyle", "DihedralStyle", "DihedralType", "ForceField", "ImproperStyle", "ImproperType", "PairCoulLongStyle", "PairLJ126CoulCutStyle", "PairLJ126CoulLongStyle", "PairLJ126Style", "PairStyle", "PairType", "Parameters", "Style", "Type"],
+    "ops.scale_lj": ["FragmentScaling", "compute_k_ij"]
+  },
+  "python_sugar": {
+    "atomistic": ["Atomistic"],
+    "box": ["Box"],
+    "cg": ["CoarseGrain"],
+    "fields": ["ForceFieldFormatter", "SITE"],
+    "forcefield": ["AngleClass2BondAngleStyle", "AngleClass2BondBondStyle", "AngleClass2Style", "BondClass2Style", "BondMorseStyle", "DihedralCharmmStyle", "DihedralClass2Style", "DihedralFourierStyle", "DihedralMultiHarmonicStyle", "DihedralPeriodicStyle", "ImproperClass2Style", "ImproperCvffStyle", "ImproperHarmonicStyle", "ImproperPeriodicStyle", "PairBuckStyle", "PairCoulTTStyle", "PairLJClass2Style", "PairMorseStyle", "PairTholeStyle"],
+    "ops.scale_lj": ["load_fragment_scaling_data", "scale_lj"],
+    "region": ["AndRegion", "BoxRegion", "Cube", "NotRegion", "OrRegion", "Region", "SphereRegion"],
+    "selector": ["AtomIndexSelector", "AtomTypeSelector", "CoordinateRangeSelector", "DistanceSelector", "ElementSelector", "MaskPredicate"],
+    "trajectory": ["CustomStrategy", "FrameIntervalStrategy", "SplitStrategy", "TimeIntervalStrategy", "Trajectory", "TrajectorySplitter"],
+    "unit": ["UnitSystem"]
+  },
+  "removed": [
+    "core/element.py",
+    "core/frame.py",
+    "core/atomistic_types.py",
+    "core/capping.py",
+    "core/utils.py",
+    "ops/geometry.py",
+    "data/forcefield/clpol_fragments.ff"
+  ]
+}

@@ -1,6 +1,7 @@
 # Core
 
-Foundational data structures for molecular systems. All available via `import molpy as mp`.
+Foundational data structures for molecular systems. All available via `import molrs
+import molpy as mp`.
 
 ## Quick reference
 
@@ -8,7 +9,7 @@ Foundational data structures for molecular systems. All available via `import mo
 |--------|---------|---------------|------------|
 | `Atomistic` | Editable molecular graph (atoms + bonds) | Building, editing, reacting on chemistry | Array-backed analysis or export |
 | `Block` | Columnar table: column names → NumPy arrays | Tabular data, vectorized computation | Graph-level chemical editing |
-| `Frame` | Named collection of Blocks + metadata | System snapshots, file I/O | Editing individual atoms |
+| `Frame` | Named Blocks + simbox + exact-dtype `MetaValue` entries | System snapshots, file I/O | Editing individual atoms |
 | `Box` | Periodic simulation cell (3×3 matrix + PBC) | Wrapping, minimum-image distances | Non-periodic systems |
 | `Trajectory` | Ordered sequence of Frames (eager or lazy) | Time-series analysis, streaming I/O | Single-snapshot work |
 | `CoarseGrain` | CG molecular graph (beads + CG bonds) | Coarse-grained modelling; mirrors `Atomistic` | All-atom work (use `Atomistic`) |
@@ -30,7 +31,7 @@ h = mol.def_atom(element="H", x=0.957, y=0.0, z=0.0)
 mol.def_bond(o, h)
 
 # Block + Frame: tabular snapshot
-frame = mp.Frame(blocks={
+frame = molrs.Frame(blocks={
     "atoms": {"element": ["O", "H"], "x": [0.0, 0.957]},
 }, timestep=0)
 
@@ -70,7 +71,9 @@ ct = style.def_type("CT", mass=12.011)
 
 ### Frame
 
-::: molpy.core.frame
+::: molrs.Frame
+
+::: molrs.Block
 
 ### Trajectory
 

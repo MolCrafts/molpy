@@ -3,7 +3,7 @@ from io import StringIO
 import numpy as np
 import pytest
 
-from molpy import Block, Frame
+from molrs import Block, Frame, MetaValue
 
 
 @pytest.fixture
@@ -785,11 +785,20 @@ class TestFrame:
         assert np.array_equal(frame["atoms"]["id"], np.array([1, 2, 3, 4]))
         assert np.array_equal(frame["bonds"]["atomi"], np.array([0, 0, 0]))
 
-    def test_frame_init_preserves_metadata(self):
-        """Test that Frame initialization preserves metadata."""
-        frame = Frame(blocks={}, name="test_frame", version="1.0")
-        assert frame.metadata["name"] == "test_frame"
-        assert frame.metadata["version"] == "1.0"
+    def test_frame_init_preserves_exact_dtype_meta(self):
+        frame = Frame(
+            blocks={},
+            meta={
+                "name": MetaValue("string", "test_frame"),
+                "version": MetaValue("string", "1.0"),
+            },
+        )
+        assert frame.meta["name"].value == "test_frame"
+        assert frame.meta["version"].value == "1.0"
+
+    def test_frame_init_rejects_untyped_metadata_kwargs(self):
+        with pytest.raises(TypeError):
+            Frame(blocks={}, name="test_frame", version="1.0")
 
     def test_frame_blocks_validation_chain(self):
         """Test that blocks validation works correctly in a chain of operations."""

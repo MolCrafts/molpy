@@ -9,10 +9,10 @@ from molpy import Angle, Atom, Atomistic, Bond, Dihedral
 
 def _ethane() -> Atomistic:
     mol = Atomistic()
-    c1 = mol.def_atom(symbol="C", type="CT", xyz=[0.0, 0.0, 0.0])
-    c2 = mol.def_atom(symbol="C", type="CT", xyz=[1.54, 0.0, 0.0])
+    c1 = mol.def_atom(element="C", type="CT", xyz=[0.0, 0.0, 0.0])
+    c2 = mol.def_atom(element="C", type="CT", xyz=[1.54, 0.0, 0.0])
     h = [
-        mol.def_atom(symbol="H", type="HC", xyz=[0.0, float(i), 0.0]) for i in range(6)
+        mol.def_atom(element="H", type="HC", xyz=[0.0, float(i), 0.0]) for i in range(6)
     ]
     mol.def_bond(c1, c2, type="CT-CT")
     for hh in h[:3]:
@@ -46,7 +46,7 @@ class TestRenameType:
         mol = _ethane()
         n = mol.rename_type("CT", "opls_135")
         assert n == 2
-        assert all(a.get("type") != "CT" for a in mol.atoms if a.get("symbol") == "C")
+        assert all(a.get("type") != "CT" for a in mol.atoms if a.get("element") == "C")
         assert sum(1 for a in mol.atoms if a.get("type") == "opls_135") == 2
 
     def test_rename_bond_type(self):
@@ -59,10 +59,12 @@ class TestRenameType:
 class TestSetProperty:
     def test_set_property_callable(self):
         mol = _ethane()
-        n = mol.set_property(lambda a: a.get("symbol") == "H", "charge", 0.06)
+        n = mol.set_property(lambda a: a.get("element") == "H", "charge", 0.06)
         assert n == 6
-        assert all(a.get("charge") == 0.06 for a in mol.atoms if a.get("symbol") == "H")
-        assert all("charge" not in a.data for a in mol.atoms if a.get("symbol") == "C")
+        assert all(
+            a.get("charge") == 0.06 for a in mol.atoms if a.get("element") == "H"
+        )
+        assert all("charge" not in a.data for a in mol.atoms if a.get("element") == "C")
 
     def test_set_property_rejects_string(self):
         mol = _ethane()
@@ -73,7 +75,7 @@ class TestSetProperty:
 class TestSelect:
     def test_select_returns_new_atomistic(self):
         mol = _ethane()
-        sub = mol.select(lambda a: a.get("symbol") == "C")
+        sub = mol.select(lambda a: a.get("element") == "C")
         assert isinstance(sub, Atomistic)
         assert sub is not mol
         assert len(sub.atoms) == 2
@@ -82,7 +84,7 @@ class TestSelect:
 
     def test_select_drops_cross_bonds(self):
         mol = _ethane()
-        sub = mol.select(lambda a: a.get("symbol") == "H")
+        sub = mol.select(lambda a: a.get("element") == "H")
         assert len(sub.atoms) == 6
         # No bonds survive (every bond had a C endpoint that's excluded)
         assert len(sub.bonds) == 0

@@ -10,6 +10,8 @@ Acceptance criteria covered:
 import numpy as np
 import pytest
 
+import molrs
+
 import molpy
 from molpy.compute import RDF, NeighborList
 from molpy.compute.base import Compute
@@ -18,9 +20,9 @@ from molpy.compute.base import Compute
 def _uniform_frame(n: int, box_len: float, seed: int):
     rng = np.random.default_rng(seed)
     xyz = rng.uniform(0.0, box_len, size=(n, 3))
-    frame = molpy.Frame()
+    frame = molrs.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.box = molpy.Box.cubic(box_len)
+    frame.simbox = molpy.Box.cubic(box_len)
     return frame
 
 
@@ -75,22 +77,22 @@ def test_input_frame_immutable():
     frame = _uniform_frame(300, 15.0, seed=11)
     nlist = NeighborList(cutoff=4.0)(frame)
 
-    box_matrix_before = frame.box.matrix.copy()
+    box_matrix_before = frame.simbox.matrix.copy()
     x_before = frame["atoms"]["x"].copy()
 
     RDF(20, r_max=4.0)([frame], [nlist])
 
-    np.testing.assert_array_equal(frame.box.matrix, box_matrix_before)
+    np.testing.assert_array_equal(frame.simbox.matrix, box_matrix_before)
     np.testing.assert_array_equal(frame["atoms"]["x"], x_before)
 
 
 def test_no_box_raises():
     """RDF on a frame without a box must raise ValueError mentioning 'box'."""
-    frame = molpy.Frame()
+    frame = molrs.Frame()
     rng = np.random.default_rng(0)
     xyz = rng.uniform(0.0, 10.0, size=(50, 3))
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    # frame.box left as None deliberately.
+    # frame.simbox left as None deliberately.
 
     with pytest.raises(ValueError, match="box"):
         NeighborList(cutoff=2.0)(frame)

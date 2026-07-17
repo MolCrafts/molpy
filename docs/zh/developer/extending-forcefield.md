@@ -31,6 +31,7 @@ ff.to_potentials().calc_energy(frame)   # 以及 .calc_forces(frame)
 注册完成后，类型名可直接用于通用辅助方法：
 
 ```python
+import molrs
 import molpy as mp
 
 ff = mp.ForceField(name="custom", units="real")
@@ -104,13 +105,13 @@ morse = ff.def_style(BondMorseStyle())
 morse.def_type(c, o, D=100.0, alpha=1.8, r0=1.43)
 
 # 两个原子恰好位于 r0 → Morse 能量为 0。
-frame = mp.Frame()
-atoms = mp.Block()
+frame = molrs.Frame()
+atoms = molrs.Block()
 atoms.insert("x", np.array([0.0, 1.43]))
 atoms.insert("y", np.array([0.0, 0.0]))
 atoms.insert("z", np.array([0.0, 0.0]))
 frame["atoms"] = atoms
-bonds = mp.Block()
+bonds = molrs.Block()
 bonds.insert("atomi", np.array([0], dtype=np.uint32))
 bonds.insert("atomj", np.array([1], dtype=np.uint32))
 bonds.insert("type", np.array(["C-O"], dtype=str))

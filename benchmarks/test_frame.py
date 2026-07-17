@@ -1,11 +1,11 @@
-"""molpy.core.Frame benchmarks: construction and block access."""
+"""Canonical molrs.Frame benchmarks used by molpy consumers."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-import molpy as mp
+import molrs
 
 pytestmark = pytest.mark.benchmark
 
@@ -22,11 +22,11 @@ def _atom_columns(n: int) -> dict[str, np.ndarray]:
 
 def test_frame_create(benchmark, n: int) -> None:
     cols = _atom_columns(n)
-    frame = benchmark(lambda: mp.Frame(blocks={"atoms": cols}))
+    frame = benchmark(lambda: molrs.Frame(blocks={"atoms": cols}))
     assert frame["atoms"].nrows == n
 
 
 def test_frame_block_access(benchmark, n: int) -> None:
-    frame = mp.Frame(blocks={"atoms": _atom_columns(n)})
+    frame = molrs.Frame(blocks={"atoms": _atom_columns(n)})
     out = benchmark(lambda: frame["atoms"]["x"])
     assert out.shape == (n,)

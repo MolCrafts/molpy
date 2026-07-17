@@ -18,7 +18,7 @@ typed = mp.typifier.OplsTypifier(ff).typify(mol)         # 分配力场类型
 
 frame = typed.to_frame()   # 可供模拟的列式数组
 # mp.io.write_lammps_system("output/", frame, ff) 写入 system.data + system.ff
-# （请先设置 frame.box 和每个原子的 mol_id —— 参见快速入门）。
+# （请先设置 frame.simbox 和每个原子的 mol_id —— 参见快速入门）。
 ```
 
 另见：[解析化学结构](../user-guide/01_parsing_chemistry.md) ·
@@ -88,7 +88,7 @@ typed = mp.typifier.OplsTypifier(ff).typify(peo)
 frame = typed.to_frame()   # 使用 mp.io.write_lammps_system(dir, frame, ff) 写入
 ```
 
-另见：[拓扑驱动组装](../user-guide/03_polymer_topology.md)。
+另见：[组装](../user-guide/02_assembly.md)。
 
 ## 多分散熔体 — Schulz-Zimm 分布
 

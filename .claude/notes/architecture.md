@@ -11,7 +11,7 @@ _Generated 2026-06-10 by /mol:map._
 ### Module list
 
 - **core** — Data-model foundation. `Atomistic`/`CoarseGrain` are handle-views that **subclass** the molrs Rust world (`class Atomistic(molrs.Atomistic, _GraphViews)`, `class CoarseGrain(molrs.CoarseGrain, _GraphViews)`); `Entity`/`Link` are dict-like views over molrs ECS nodes with identity hashing (`id(self)`). Holds `ForceField` + style/type hierarchy, `Box`, `Topology`, `Trajectory`, `Script`, `UnitSystem`, field formatters (`fields.py`), region/selector helpers. `core/ops/` holds pure-Python geometry helpers; `_handle.py`/`_columns.py` implement the molrs column ↔ Python-overflow proxy.
-- **core/frame.py** — Thin re-export shim. After the `frame-block-sink` cutover, molpy no longer subclasses Frame/Block: `from molrs import Block, Frame`. Identity contract is `molpy.core.frame.Frame is molrs.Frame`. No `_inner`, no `to_molrs()`/`from_molrs()`, and no `core/_molrs.py` (does not exist).
+- **molrs.Frame / molrs.Block** — Numerical containers are imported directly from molrs. `core/frame.py`, top-level aliases, and `molpy.core` aliases are deleted; no compatibility import path, `_inner`, or conversion bridge exists.
 - **adapter** — In-memory/file conversion to external libs (RDKit, OpenBabel). Data sync only; MUST NOT exec binaries. Optional imports with `None` fallbacks.
 - **builder** — System assembly. `crystal.py` (lattice/site builders) plus `builder/polymer/` (declarative `polymer()`/`polymer_system()` DSL, connectors, placers, sequence generators, distributions, AmberTools polymer). Major teardown: `polymer_builder.py`, `stochastic.py`, `stochastic_generator.py`, `growth_kernel.py`, `residue_manager.py`, `selectors.py`, `ambertools/polymer_amber.py` were deleted; `PolymerBuilder`/`PolymerBuildResult` now live in `polymer/core.py`.
 - **cli** — Command-line entry point (`molpy.cli:main`); `moltemplate.py` subcommand.
@@ -34,9 +34,8 @@ _Generated 2026-06-10 by /mol:map._
 
 ### Public surface (key symbols)
 
-- **molpy (top)**: re-exports submodules `adapter, data, engine, io, legacy, parser, potential, typifier`; core types `Angle, Atom, Atomistic, Bond, Dihedral, Improper, Box, Bead, CGBond, CoarseGrain, Entity, Link`; forcefield `ForceField, AtomisticForcefield, Style, Type, TypeBucket, Parameters, {Atom,Bond,Angle,Dihedral,Improper,Pair}{Style,Type}`; `Block, Frame, Script, ScriptLanguage, Topology, Trajectory, UnitSystem, version, release_date`; plus `potential.*`.
-- **core**: same atomistic/forcefield/box/cg/frame/topology/unit symbols (no `Trajectory` in `core.__init__` `__all__`, but exported at top level via `core.trajectory`).
-- **core.frame**: `Block, Frame` (both are the molrs types verbatim).
+- **molpy (top)**: re-exports submodules `adapter, data, engine, io, legacy, parser, potential, typifier`; core graph/forcefield/box types; and `Script`, `Trajectory`, `UnitSystem`, `version`, `release_date`. It does not export `Frame` or `Block`.
+- **core**: same atomistic/forcefield/box/cg/topology/unit symbols. It does not export `Frame` or `Block`.
 - **adapter**: `Adapter`; optionally `RDKitAdapter, MP_ID, Generate3D, OptimizeGeometry, generate_3d`, `OpenBabelAdapter` (guarded by `_HAS_RDKIT`/`_HAS_OPENBABEL`).
 - **builder**: `polymer, polymer_system, prepare_monomer, generate_3d, PrepareMonomer, BuildPolymer, BuildPolymerAmber, BuildSystem, PlanSystem, AmberPolymerBuilder, build_crystal, Lattice, Site, BoxRegion, Cube, SphereRegion, Region`.
 - **builder.polymer**: `Connector, ConnectorContext, Placer, LinearOrienter, CovalentSeparator, VdWSeparator, PolymerBuilder, PolymerBuildResult, SequenceGenerator, WeightedSequenceGenerator, DPDistribution, MassDistribution, FlorySchulzPolydisperse, PoissonPolydisperse, SchulzZimmPolydisperse, UniformPolydisperse, Chain, PolydisperseChainGenerator, SystemPlan, SystemPlanner` + DSL entry functions.
@@ -68,7 +67,7 @@ _Generated 2026-06-10 by /mol:map._
 | Package | Layer (per "Architecture Overview" / typical workflow) |
 |---|---|
 | core | Data-model foundation (Entity/Link/Struct, Frame/Block, ForceField) — base layer, molrs-backed |
-| core.frame / Block, Frame | Numerical container layer — re-exported verbatim from molrs Rust backend |
+| molrs / Block, Frame | Numerical container layer — imported directly from molrs Rust backend |
 | parser | Stage 1 — parse → Atomistic |
 | builder | Stage 1/2 — build & transform (system assembly) |
 | reacter | Stage 2 — transform (template reactions) |
@@ -92,7 +91,7 @@ _Generated 2026-06-10 by /mol:map._
 ### molrs dependency
 
 - Hard runtime dependency pinned at `molcrafts-molrs>=0.0.18` in `pyproject.toml`.
-- `Frame`/`Block` ARE molrs types: `molpy.core.frame` does `from molrs import Block, Frame` (no subclass, no `_inner`, no `to_molrs()`/`from_molrs()` bridge); `core/_molrs.py` does not exist. Object/None/ragged columns are rejected fail-fast at write time (`molrs.BlockDtypeError`).
+- `Frame`/`Block` are molrs-only exports: use `from molrs import Block, Frame`. Molpy defines no module, alias, subclass, `_inner`, or conversion bridge for them. Object/None/ragged columns are rejected fail-fast at write time (`molrs.BlockDtypeError`).
 - `Atomistic`/`CoarseGrain` subclass `molrs.Atomistic`/`molrs.CoarseGrain` (native pyo3 base must be first in MRO) and ARE molrs worlds, accepted directly by `molrs.*` free functions (`molrs.translate`, `molrs.rotate`). `Atomistic.adopt(graph: molrs.Atomistic)` re-wraps a Rust graph.
 - `Entity`/`Link` are handle-views over molrs ECS nodes; scalar columns route to molrs component columns (`core/_handle.py`, `core/_columns.py`), bool/object overflow kept Python-side.
 - `Conformer` subclasses `molrs.Conformer`; `ConformerReport`/`ConformerStageReport` re-exported from molrs unchanged.
@@ -141,3 +140,172 @@ Per-package constraints from the same source:
 > Caveat: this table predates the `conformer`, `optimize`, `op`, `legacy`, `cli`,
 > and `data` packages (see "Layer roles" above for their stage placement) — extend
 > rather than blindly enforce when those packages are involved.
+
+## 设计铁律 (2026-07-10, 由 graph-assembler 链引出)
+
+四条硬约束,适用于全仓库,优先于任何 spec 的局部方便。
+
+### 1. 不硬编码字段名
+
+字段只有两个合法来源:`molrs.fields` 的正则表(经 `molpy.core.fields` 再导出),
+以及 molpy 在该模块里**自己注册的 `FieldSpec`**。
+
+- 允许:`atom[fields.CHARGE.key]`、`fields.SITE`
+- 禁止:`atom.get("charge")`、`site_field: str = "site"` 这类字符串旋钮、
+  `element == "O"` 这类元素字面量
+- 新概念要一个字段 ⟹ 在 `molpy/core/fields.py` 注册一个 `FieldSpec`,不要开构造器参数
+- 字段缺失是错误,不是回退:fail-fast,不 `getattr(..., default)`
+
+### 2. 体系相关的操作留在 molpy,不下沉
+
+molrs 拥有**引擎原语**:SMARTS 匹配、SMIRKS 图编辑、WL 哈希、canonical order、
+邻居搜索、列存储与字段正则表。它可以回答**语法/结构事实**。
+
+molpy 拥有**体系判断**:力场语义、局域性判据、区域所有权、电荷守恒、装配编排。
+
+判据是"这个决定是否需要知道**化学/力场**":
+
+- molrs 回答"这条编译好的 SMARTS 的最大键深是多少、它用了哪些环谓词"(语法事实)
+- molpy 决定"这个模式集因此有界吗、`reach` 是多少、无界就 `TypeError`"(体系判断)
+
+不要把 `TypeScope` / 力场策略推进 Rust 换取"编译期"的名义。
+
+> 与 `opls-typifier-downsink`(把 OPLS 分型整体下沉 molrs)存在张力 —— 那条 spec 目前
+> BLOCKED,重启前须按本条重新裁决。
+
+### 3. experimental 阶段不背向后兼容
+
+反应 / 交联 / 装配的公开 API 可以重新设计。不留 deprecated shim,不留双构造器
+(`connector=` 或 `reacter=` 二选一那种),不留 `last_regions` 之类的兼容侧信道。
+breaking change 记进 changelog + 版本号,然后往前走。
+
+### 4. OOP,且是真 OOP
+
+- 模块级 `def`(自由函数)不是公开面。行为挂在拥有数据的类上。
+- 但**禁止假 OOP**:只为消灭自由函数而造的命名空间类、单次使用的抽象、
+  二次封装外部类型的门面 —— 一律不要(见 `feedback_no_wrapper_layers_oop`)。
+  一个类必须携带数据或承担分派。
+- 同族变换用**同一个动词**:`GraphAssembler.assemble`、`VirtualSiteBuilder.apply`。
+  不要一个类叫 `build`、一个叫 `apply`、一个叫 `run`。
+- 工作流拼装(`crosslink_gel(...)` 这种把几个类串起来的自由函数)属于**文档**,不属于库。
+
+**门面 vs 真类 —— 别把这条用反了。** 判据不是"它内部调用了别的类",而是
+**它自己拥有数据吗?它做决定吗?**
+
+| | `crosslink_gel(struct, linker, ...)` | `PolymerBuilder(library, reaction).build(cgsmiles)` |
+|---|---|---|
+| 拥有数据 | 无(实参都是造好的对象) | 单体库 |
+| 做决定 | 无(按顺序调一遍) | 记号 → 世界 + 配对 的翻译 |
+| 结论 | **门面,删** | **真类,留** |
+
+**"实现上可以合并"不等于"API 上必须拆开"。** 三个 builder 在内核层面收敛成一个,
+不意味着用户要自己把 `MonomerLibrary` + `TopologySelector` + `GraphAssembler` 串起来。
+让用户手工穿线、还要求他知道 `CGSmilesIR.base_graph` 这种 IR 内部属性,是把内部分解
+泄漏成了公开 API。
+
+> 边界切错的信号:**同一份数据穿过两个对象传了两次**
+> (`expand(topology)` 与 `TopologySelector(topology)`)。看到这个就回去重切。
+
+### 5. 不 fallback,不静默失败
+
+**契约被违反 ⟹ 立刻 raise。可疑但合法 ⟹ warning。永远不要悄悄换一条路走。**
+
+静默回退的代价不是"行为不对",是"行为不对且没人知道"。一个退化到全图分型的分支会把
+O(N²) 伪装成正常;一个 `get("symbol", "C")` 会把缺失的元素伪装成碳。
+
+禁止的形态:
+
+| 形态 | 例子 |
+|---|---|
+| 能力嗅探 + 退化路径 | `if hasattr(typifier, "typify_region"): ... else: 全图分型` |
+| `getattr` 带默认值当契约 | `getattr(typifier, "context_radius", 0) or 0` → `_FLOOR = 4` |
+| 数据字段带默认值 | `atom.get("charge", 0.0)`、`atom.get("symbol", "C")` |
+| `or` 强制转换掩盖 `None` | `sum(a.get("charge", 0.0) or 0.0 ...)` |
+| 查找失败返回哨兵 | `_find_component(...)` 找不到 map_number 时 `return 0` |
+| 缺前置条件返回中性值 | `_pair_distance` 无坐标时 `return 0.0`,cutoff 排序静默失效 |
+| 吞异常 | `except Exception: pass` / `except KeyError: return None` |
+| 守卫依赖可选属性 | `if getattr(x, "strict", False): raise ...` —— `x` 没有该属性时守卫永不触发 |
+
+**取而代之:**
+
+- 能力差异用**类型**表达(`isinstance(t, LocalTypifier)`),在**构造时**拒绝,不在运行时嗅探。
+- 字段缺失 → `KeyError`(见铁律 1)。查找失败 → `raise`,不返回 `0` / `None` / `""`。
+- 真正可选的东西用**显式的、有名字的模式**(`typifier=None` = 纯拓扑装配),
+  并在 docstring 里说明它是一个**模式**,不是一个**回退**。
+- 需要提醒但不该中断的(例如 `select` 产出 0 个 binding、conversion 未达标提前收敛)
+  → `warnings.warn` / `logger.warning`,带上数字。
+
+截至 2026-07-10 已知的实例(graph-assembler 链逐一消除):
+`core/affected_region.py:49`、`builder/polymer/core.py:239`、`reacter/base.py:610-612`、
+`typifier/region.py:205,253`、`builder/crosslink/_crosslinker.py:45,257,346`、
+`builder/polymer/placer.py:124-125`。
+
+> `_crosslinker.py:257` 的 `_find_component` 在 map_number 不属于任何反应物组分时 `return 0`
+> —— 一个畸形 SMIRKS 会被静默当成"位点在第 0 个组分上"。这是**现存 bug**,不是风格问题。
+
+#### 铁律 5 的例外:无先验的初值可以猜 —— 但只能猜数值,不能猜身份
+
+有一类"魔数"和"似是而非"是**允许**的:当某个量**根本没有先验可查**,先给一个差不多的数,
+靠下游把它拉回来。单体放置时用共价半径之和当初始键长,就是这类 —— 我们并不知道这根新键
+在这个化学环境里的平衡长度(那要力场说了算),但 `LBFGS` 会把它优化回去。
+
+三条同时满足才算合法初值:
+
+1. **连续量**:几何、坐标、初始键长/键角、优化的起点。不是离散身份。
+2. **确实无先验**:不是"懒得查表",是查不到 —— 力场未指派、参数尚未拟合。
+3. **同一条流水线里有收敛它的下游**:`minimize` / 平衡化 / 参数拟合。
+   且**收敛失败必须报错**(优化不收敛 → raise),不能默默留着猜测值。
+
+形式上还要求:写成**有名字的常量**,docstring 注明"初始猜测,由 X 收敛";
+**不得**写成 `.get(key, default)` 藏在取值点 —— 那样读代码的人分不清它是初值还是回退。
+
+**永远不许猜的是身份**:`element`、原子类型、力场类型、组分索引、map number、
+键级、字段存不存在。它们是离散的,没有任何下游过程会把猜错的身份收敛回来 ——
+猜错就一路错到底,而且悄无声息。
+
+> 一句话:**可以猜数值,不能猜身份。** 判据是"有没有一个下游过程会把这个猜测收敛掉"。
+
+因此 `placer.py:124` 的 `left_anchor.get("symbol", "C")` 依然是违规:`symbol` 是**身份**,
+缺了就 `KeyError`。但同一个 `Placer` 用共价半径之和作为初始放置距离是**合法的**,
+因为紧跟着的几何优化会把它拉回平衡值 —— 前提是那个常量有名字、有 docstring、
+且优化不收敛时会报错。
+
+### 6. molrs 是实现细节 —— 用户永远不该知道它存在
+
+`import molrs` **不允许**出现在任何用户会读、会抄、会运行的地方:
+`docs/user-guide/`、`docs/api/`、`docs/developer/` 里的**扩展示例**、`examples/`、notebook。
+用户需要的每一个 molrs 符号,都必须能从 `molpy` 拿到。
+
+三档手段,按优先级:
+
+| 手段 | 何时用 | 例 |
+|---|---|---|
+| **re-export** | 默认。molpy 不加任何行为 | `from molrs import Reaction` → `molpy.Reaction` |
+| **继承** | molpy 有**真实增补**(新方法/新约束) | `class Box(molrs.Box)` |
+| **转发门面** | **永不** | ~~`class Reaction: def __init__(s): s._inner = molrs.Reaction(s)`~~ |
+
+这条与 `feedback_no_wrapper_layers_oop`(禁止二次封装)**不冲突,而是它的同一面**:
+re-export 不是包装层 —— `molpy.Reaction is molrs.Reaction` 为真,没有新类、没有转发、
+没有 `_inner`。真正被禁止的是那个只持有一个 molrs 对象并把每个方法转发出去的壳。
+**"包裹"的意思是命名空间上的包裹,不是对象上的包裹。**
+
+`src/molpy/` 内部随便 `import molrs` —— molpy **就是**那层包裹。
+`docs/developer/molrs-backend.md` 是唯一可以正面讨论 molrs 的文档,因为它讲的就是后端本身。
+
+判据:把一段用户代码原样贴进解释器,若它需要用户先装明白 molrs 是什么、从哪 import,
+那这段代码就违规。用户的世界里只有 `molpy`。
+
+> 落地缺口(2026-07-10 实测):`molrs.Reaction`、`SmartsPattern`、`NeighborQuery`、`Graph`、
+> `perceive_aromaticity`、`find_rings` 均**未**从 `molpy` 导出;
+> `docs/developer/extending-typifiers.md` 的扩展示例直接写 `molrs.SmartsPattern(...)`。
+> 由 graph-assembler-02 的 re-export 审计任务补齐。
+
+## molrs bugs found from molpy (report upstream, do not work around)
+
+- **`NeighborQuery` panics on a tiny cutoff** (2026-07-10). With a cutoff much
+  smaller than the box (e.g. `1e-6` on a ~4 Å box) the Rust link cell overflows:
+  `linkcell.rs:135: index out of bounds: the len is 2852448265 but the index is
+  3542051524`. A panic crosses the pyo3 boundary as `PanicException`, which no
+  Python caller can reasonably handle. molrs should validate `cutoff` against the
+  box and return an error. Found by `tests/test_builder/test_assembly.py`
+  (which now uses a sane cutoff — the bug is *avoided*, not worked around).

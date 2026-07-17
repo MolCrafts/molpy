@@ -28,10 +28,9 @@ REF = FIXTURE["atom_types"]
 # --------------------------------------------------------------------------
 def _build(elements, edges):
     asm = Atomistic()
-    atoms = [Atom(element=e) for e in elements]
-    asm.add_entity(*atoms)
+    atoms = [asm.def_atom(element=e) for e in elements]
     for i, j in edges:
-        asm.add_link(Bond(atoms[i], atoms[j]))
+        asm.def_bond(atoms[i], atoms[j])
     return asm.get_topo(gen_angle=True, gen_dihe=True)
 
 

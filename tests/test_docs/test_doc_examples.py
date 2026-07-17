@@ -2,20 +2,17 @@
 
 Three classes of user-facing code are exercised here:
 
-1. Every ``python`` code block in docs/api/builder.md and
-   docs/api/reacter.md is executed block-by-block (shared namespace per
-   document, so later blocks may reuse earlier definitions). Whole-file
-   skips are not allowed; only an RDKit-missing environment skips the
-   blocks that need 3D embedding.
-2. A targeted doctest for src/molpy/reacter/base.py, plus source-level
-   assertions that the class docstring examples reference only real symbols.
-3. The ``examples/`` scripts' ``main()`` entry points.
+1. Every ``python`` code block in docs/api/builder.md is executed
+   block-by-block (shared namespace per document, so later blocks may reuse
+   earlier definitions). Whole-file skips are not allowed; only an
+   RDKit-missing environment skips the blocks that need 3D embedding.
+2. The ``examples/`` scripts' ``main()`` entry points.
 
-Also locks the API surface: lazy top-level submodules and
-ReactionPresets as the public extension point.
+Also locks the API surface: lazy top-level submodules and Selector as the
+public extension point. (``molpy.reacter`` and its api page are gone: reaction
+semantics live in ``molpy.Reaction``, chemistry in the SMARTS itself.)
 """
 
-import doctest
 import importlib.util
 import re
 import sys
@@ -54,40 +51,20 @@ class TestApiDocExamples:
     def test_builder_md_blocks_execute(self):
         _exec_blocks("builder.md")
 
-    def test_reacter_md_blocks_execute(self):
-        _exec_blocks("reacter.md")
-
-    def test_reacter_md_references_real_symbols(self):
-        text = (DOCS_API / "reacter.md").read_text(encoding="utf-8")
-        for stale in ("TemplateReacter", "select_nothing", "product_info"):
-            assert stale not in text, f"reacter.md references stale symbol {stale!r}"
-
     def test_builder_md_no_agent_infrastructure(self):
         text = (DOCS_API / "builder.md").read_text(encoding="utf-8")
         for leaked in ("ToolRegistry", "molpy.builder._tool"):
             assert leaked not in text, f"builder.md leaks agent infra {leaked!r}"
 
-    def test_builder_md_documents_reaction_presets_register(self):
+    def test_builder_md_documents_the_selector_extension_point(self):
+        """Selection is the one variation point of the assembly kernel.
+
+        (It replaces ReactionPresets, which existed to name Reacter chemistries;
+        chemistry now lives in the reaction SMARTS itself.)
+        """
         text = (DOCS_API / "builder.md").read_text(encoding="utf-8")
-        assert "ReactionPresets.register" in text
-
-
-class TestDocstringDoctests:
-    """Targeted doctests + stale-symbol grep on class docstring examples."""
-
-    def test_reacter_base_doctests_pass(self):
-        import importlib
-
-        base_module = importlib.import_module("molpy.reacter.base")
-
-        results = doctest.testmod(base_module, verbose=False)
-        assert results.failed == 0, f"{results.failed} doctest failures in base.py"
-        assert results.attempted > 0, "base.py should carry a runnable doctest"
-
-    def test_reacter_base_example_uses_real_api(self):
-        source = (REPO_ROOT / "src/molpy/reacter/base.py").read_text(encoding="utf-8")
-        for stale in ("select_port_atom", "port_selector_left", "port_L="):
-            assert stale not in source, f"base.py example references {stale!r}"
+        assert "class FirstPairSelector(Selector)" in text
+        assert "ReactionPresets" not in text
 
 
 class TestTopLevelSurface:
@@ -96,7 +73,7 @@ class TestTopLevelSurface:
     def test_mp_top_level_submodules_available(self):
         import molpy as mp
 
-        for name in ("builder", "reacter", "pack", "compute"):
+        for name in ("builder", "pack", "compute"):
             assert hasattr(mp, name), f"molpy.{name} not reachable as attribute"
             assert name in mp.__all__, f"{name!r} missing from molpy.__all__"
 
@@ -114,25 +91,19 @@ class TestTopLevelSurface:
         )
         assert result.returncode == 0, result.stderr
 
-    def test_reaction_presets_public(self):
-        from molpy.builder.polymer import ReactionPresets, ReactionPresetSpec
+    def test_assembly_surface_is_public(self):
+        """One kernel, one variation point; chemistry lives in the reaction.
 
-        assert callable(ReactionPresets.register)
-        assert "dehydration" in ReactionPresets.list_presets()
-        import dataclasses
+        Replaces the ReactionPresets surface: presets existed to name Reacter
+        chemistries, and a reaction SMARTS names its own.
+        """
+        import molpy as mp
+        from molpy.builder import GraphAssembler, PolymerBuilder, Selector
 
-        field_names = [f.name for f in dataclasses.fields(ReactionPresetSpec)]
-        assert "anchor_selector_left" in field_names
-        assert "anchor_selector_right" in field_names
-
-    def test_find_port_is_the_only_exported_name(self):
-        import molpy.reacter as reacter_pkg
-
-        assert "find_port" in reacter_pkg.__all__
-        assert "find_port_atom" not in reacter_pkg.__all__
-        assert not hasattr(reacter_pkg, "find_port_atom")
-        # find_port_atom_by_node is explicitly out of scope and stays.
-        assert hasattr(reacter_pkg, "find_port_atom_by_node")
+        assert issubclass(PolymerBuilder, GraphAssembler)
+        assert hasattr(Selector, "select")
+        # the reaction is constructed by the caller, from molpy, never molrs
+        assert isinstance(mp.Reaction("[N:1].[O:2]>>[N:1][O:2]"), mp.Reaction)
 
 
 def _run_example_main(script_name: str) -> None:
@@ -157,6 +128,7 @@ class TestExampleScripts:
             "03_polymer_topology.py",
             "04_crosslinking.py",
             "05_polydisperse.py",
+            "07_carbon_nanotube.py",
         ],
     )
     def test_example_runs(self, script, tmp_path, monkeypatch):

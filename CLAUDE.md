@@ -66,19 +66,18 @@ MolPy is a computational chemistry toolkit with explicit data flow and minimal m
 
 | Package | Purpose |
 |---------|---------|
-| `core` | Data structures: `Entity`, `Link`, `Frame`, `Block`, `Atomistic`, `ForceField`. `Frame`/`Block` are backed by the molrs Rust column store (see below) |
+| `core` | Molpy-owned topology conveniences plus identity re-exports of molrs graph types. `Frame`/`Block`/`Element` are imported from molrs directly and are not exported by molpy (see below) |
 | `io` | File I/O: readers/writers for PDB, GRO, LAMMPS DATA, XYZ, MOL2, AMBER (prmtop/inpcrd/prep/ac), GROMACS TOP, XSF, HDF5 formats |
 | `parser` | Grammar-based parsing: SMILES, SMARTS, BigSMILES, GBigSMILES, CGSmiles |
-| `builder` | System assembly: polymer builders, AmberTools integration, residue management |
+| `builder` | System assembly: one `GraphAssembler` kernel + a `Selector` family (`PolymerBuilder`, crosslinking), AmberTools integration |
 | `typifier` | Atom typing: OPLS-AA, GAFF, custom SMARTS/SMIRKS-based typifiers |
 | `compute` | Analysis: distance, angles, RDF, MSD, cross-correlation, and custom operators |
-| `reacter` | Reaction framework: template-based reactions with leaving groups |
 | `pack` | Packing workflows: Packmol integration, density targets |
 | `engine` | MD abstractions: LAMMPS, CP2K, simulation management |
 | `wrapper` | External tools: Antechamber, Prepgen, command-line wrappers |
 | `adapter` | Format bridges: RDKit, OpenBabel, and other external libraries |
 
-> **Hard runtime dependency**: `molcrafts-molrs` (Rust extension) is a required dependency declared in `pyproject.toml`. `Frame` and `Block` wrap `molrs.Frame` / `molrs.Block` — `core/frame.py` does `import molrs` at module load and all tabular data lives in the Rust Store. molpy does not run without it.
+> **Hard runtime dependency**: `molcrafts-molrs==0.7.0` (Rust extension) is an exact required dependency declared in `pyproject.toml`. `Frame`, `Block`, and `Element` are owned and exported only by molrs; molpy has no `core/frame.py` or `core/element.py`, wrapper, alias, or compatibility import path. `ElementData` does not exist. Molpy does not run with missing or mismatched molrs package metadata.
 
 ### Data Model Layer
 
@@ -96,19 +95,20 @@ The foundation is three class hierarchies:
    - Manages collections, provides selectors
    - Subclasses: `Atomistic`, `CoarseGrain`
 
-**Block** and **Frame** are separate: tabular data (NumPy arrays) for fast computation.
+**Block**, **Frame**, and **Element** are molrs-owned core types. Import them
+directly with `from molrs import Block, Element, Frame`.
 
-4. **Frame** (numerical container): Holds named Blocks + metadata + box
+4. **Frame** (numerical container): Holds named Blocks + typed metadata + simbox
    - `frame["atoms"]`, `frame["bonds"]` → Block objects
-   - `frame.box` → `Box | None` (first-class attribute, **not** in metadata)
-   - `frame.metadata` → arbitrary dict (timestep, format info, etc.)
+   - `frame.simbox` → `molrs.Box | None` (the only simulation-cell attribute)
+   - `frame.meta` → `dict[str, molrs.MetaValue]` with explicit dtype tags
    - `Block.rename(old, new)` for in-place column key rename
 
 ### Typical Workflow
 
 ```
 1. Parse or build → Atomistic structure
-2. Transform → reacter, builder, op modules
+2. Transform → builder (assembly), op modules
 3. Typify → assign force-field types
 4. Export or wrap → io, wrapper, engine modules
 5. Analyze → compute operators
@@ -191,7 +191,7 @@ work = struct.copy()        # deep copy; entities/links remapped
 work.move([5, 0, 0], entity_type=Atom)   # struct is untouched
 ```
 
-For *higher-level helper functions* (in `op`, `builder`, `reacter`, etc.), prefer
+For *higher-level helper functions* (in `op`, `builder`, etc.), prefer
 not mutating a caller-owned structure unexpectedly — `.copy()` first or build a new
 structure and return it. This is a coding guideline for helpers, **not** how the
 core `Atomistic`/`Struct`/`Frame` methods behave.
@@ -209,10 +209,9 @@ tests/
 ├─ test_core/              # Data structures
 ├─ test_io/                # File I/O
 ├─ test_parser/            # Parsing
-├─ test_builder/           # Builders
+├─ test_builder/           # Assembly kernel, selectors, builders
 ├─ test_typifier/          # Typifiers
 ├─ test_compute/           # Analysis
-├─ test_reacter/           # Reactions
 ├─ test_wrapper/           # External tools
 └─ test_engine/            # MD engines
 ```
@@ -270,13 +269,21 @@ def test_adapter_fallback():
 - `Atomistic`: Struct subclass managing atoms, bonds, angles, dihedrals
 - All use identity-based hashing
 
-### `core.frame` and `core.block`
+### `molrs.Frame` and `molrs.Block`
 
-- **Re-exported from molrs**: `frame.py` is a thin `from molrs import Block, Frame` re-export — `molpy.core.frame.Frame IS molrs.Frame` and `Block IS molrs.Block` (the rich Python layer in molrs over the Rust core). No molpy subclass, no `.to_molrs()` / `_inner` / `_source` bridge. `molcrafts-molrs` is a hard runtime dependency.
+- **Owned and exported only by molrs**: import `Frame` and `Block` directly from `molrs`. Molpy deliberately has no `core.frame` module and does not re-export either type from `molpy` or `molpy.core`. There is no molpy subclass, alias, `.to_molrs()` / `_inner` / `_source` bridge, or compatibility import path. `molcrafts-molrs` is a hard runtime dependency.
 - `Block`: **numpy-only** typed columns (float / int / bool / str) in the Rust Store, exposed as zero-copy numpy views. There is **no Python-side object-column overflow** — a non-representable column (object / None / ragged) is rejected fail-fast at write (`molrs.BlockDtypeError` / `TypeError`).
-- `Frame`: container of named Blocks + `metadata: dict` (Python-only annotations like timestep) + `box`. Built from a molrs world via the world's native `to_frame()` (e.g. `Atomistic.to_frame()` delegates to `molrs.Atomistic.to_frame()` and wraps the bare pyo3 frame with `Frame.from_dict` — zero Python-side densify/conversion).
+- `Frame`: container of named Blocks + exact-dtype `meta` + `simbox`. Built from a molrs world via the world's native `to_frame()`; `Frame.from_dict` accepts exactly `{"blocks": ..., "meta": ...}`.
 - `Trajectory`: Sequence of Frames
-- **Box is on `frame.box`**, never in `frame.metadata["box"]`
+
+### `molrs.Element`
+
+- **One public owner**: import `Element` directly from `molrs`; molpy has no
+  `Element` re-export or `core.element` module.
+- Valid identifiers resolve elements 1 through 118. `0`, `"X"`, unknown names,
+  and out-of-range atomic numbers raise `KeyError`; there is no unknown-element
+  sentinel or radius fallback.
+- **The simulation cell is only on `frame.simbox`**. `frame.box` and untyped `frame.metadata` do not exist.
 
 ### `io.forcefield` hierarchy
 
@@ -325,7 +332,7 @@ From `docs/developer/coding-style.md`:
 3. **External tools**: Mark tests with `@pytest.mark.external` if they need LAMMPS, Packmol, or AmberTools.
 4. **Formatter registration**: Custom styles need `_param_formatters` registered on the format's `ForceFieldFormatter` subclass. Custom data fields need `_field_formatters` on the `FieldFormatter` subclass.
 5. **Identity vs equality**: `Entity` and `Link` use identity-based hashing (`id(self)`), not value-based.
-6. **Box is `frame.box`**: Never store box in `frame.metadata["box"]`. Use `frame.box` directly.
+6. **The only Frame cell field is `frame.simbox`**: `frame.box` is deleted, with no alias or fallback.
 7. **Canonical field names**: Internal code uses `charge` (not `q`), `mol_id` (not `mol`). Readers/writers translate at the boundary via `FieldFormatter.canonicalize()`/`localize()`.
 
 ## Debugging Tips

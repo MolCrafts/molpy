@@ -5,6 +5,158 @@ and release as a pair — every entry lists the `molcrafts-molrs` version it
 requires. Tagged releases and installable artifacts live on
 [GitHub Releases](https://github.com/MolCrafts/molpy/releases).
 
+## Unreleased
+
+### Added
+
+- **Compile-first polymer assembly and deferred finalization.** The selector's
+  complete binding set is compiled into rooted local product motifs before the
+  assembled graph is edited. Distinct motifs are typed once and cache scalar
+  per-atom patches only; one batch reaction then builds the product.
+  `Finalization.ATOMS`, `TOPOLOGY` (default), and `BONDED` split atom write-back,
+  topology generation, and `ForceFieldParams` assignment so large MD systems
+  can defer the latter two stages until export.
+- **Carbon nanotube topology builder.** `CarbonTubeBuilder.build(n, m, ...)`
+  covers zigzag, armchair, and general chiral tubes, open or axially periodic.
+  Exact integer lattice quotienting closes seams without distance-guessed
+  bonds; immutable compiled geometry/connectivity is cached internally.
+- **`molpy.core` is now a Python surface over molrs, not a second kernel.**
+  `Frame`/`Block`, entity refs, `Element`, and force-field primitives preserve
+  molrs object identity; graph, Box, Region, trajectory, selector, and unit
+  conveniences are native subclasses or Python call-shape sugar. Element/unit
+  truth, PBC geometry, alignment/replication, and CL&Pol scaleLJ all execute in
+  Rust, with an architecture manifest and AST gate guarding that ownership.
+- **Polymer topology assembly helpers** on `PolymerBuilder`: `build_linear`,
+  `build_sequence`, `build_ring`, `build_star` format CGSmiles and call the sole
+  entry `build(cgsmiles)`. Supporting types: `SiteMap` (site labels + leaving-H
+  charge fold), `Replicas` (grid / linear multi-chain worlds), and
+  `linear_cgsmiles` / `ring_cgsmiles` / `star_cgsmiles` formatters.
+- **User-guide section [Polymer Topologies](user-guide/topology/index.md)** with
+  eleven pages paired 1:1 to `examples/topology/01_*.py` … `11_*.py` (linear,
+  block, ring, star, comb, telechelic, exhaustive/random gel, end-linked, dual
+  network, prepolymer + agent). Smoke with `python examples/topology/run_all.py`.
+
+### BREAKING
+
+- **Amber polymer construction now uses MolPy chemistry directly.**
+  `AmberPolymerBuilder(library, reaction, ...)` and
+  `AmberTools.build_polymer(..., reaction=...)` require a `molpy.Reaction` over
+  `fields.SITE`. The private `port` language, `reaction_preset`, and
+  one-hydrogen leaving-group guess are removed; the backend translates the
+  shared compiled residue product into prepgen/tleap inputs.
+
+- **Pint and the runtime CL&Pol fragment file are removed.** `UnitSystem` uses
+  molrs' native unit registry; only the native `lj` compatibility context is
+  accepted. Custom scaleLJ data must be supplied as `FragmentScaling` values
+  instead of a parameter-file path.
+- **`TypeBucket` and `molpy.core.utils` are removed.** They belonged to the old
+  detached Python entity model; graph collections now come from molrs live
+  handle views, and CSV input is `Block.from_csv`.
+- **The typifier package has one contract: `Typifier` is `MolGraph -> MolGraph`.**
+  `typify()` is concrete — copy, `match()`, write the annotations back — and
+  `match()` is the single abstract method. Typifiers are generic over the graph,
+  so an `Atomistic` typifier and a `CoarseGrain` one share the same pipeline.
+  Removed: `ForceFieldTypifier`, `RegionTypifier`, `TypeScope`, `typify_region`,
+  `retype_region`, `relaxed()`, `atomtype_matches`, `skip_atom_typing` and the
+  four other `skip_*_typing` flags, and the public `PairTypifier`. Deleted
+  modules: `typifier/{base(old),bond,angle,dihedral,pair,mmff,atomistic,scope}.py`
+  — six of them were dead code that shadowed live names (`TypifierBase`,
+  `PairTypifier` and `atomtype_matches` were each defined twice in the package).
+- **`molpy.typifier.ForceFieldParams` replaces `Atomistic.assign_bonded_types`.**
+  Assigning parameters to a graph whose types are already known is not a
+  typifier; it is the second half of one. The old method lived in `core` (a
+  force-field judgment in the data-model layer), matched force-field types by
+  splitting their names on `"-"` — no wildcards, no atom classes, no overlay
+  layers — and left a term it could not match *silently* unlabelled.
+  `ForceFieldParams(ff).assign(graph)` returns a new graph, matches by
+  specificity, and raises on an unparameterised term unless `strict=False`.
+- **`GraphAssembler(reaction, typifier=..., reach=N)`** — `reach` is now a
+  required argument alongside a typifier, and `AmberToolsTypifier(amber)` no
+  longer takes one. `TypeScope` dissolved into
+  `AffectedRegion.around(graph, touched, reach=N)`, the only place that derives
+  the write-back radius (`max(reach, 2)`) and the extraction radius
+  (`interior_reach + reach`) from the one number they share.
+
+  *A defence moved from the type system to the test suite.* `graph-assembler-01`
+  established that the radius is decided by the typifier and is "never a
+  setting", because a wrong `reach` silently mistypes — measured, `reach`
+  one too small mistyped 22 of 46 written-back atoms of a PEO junction. With
+  `reach` supplied to the assembler, nothing rejects a wrong value at
+  construction; it is caught by the oracle test (region typing == whole-graph
+  typing) instead. Note that `AmberToolsTypifier(amber, reach=2)` already took
+  `reach` from the user; this only moves where it is passed.
+
+### Fixed
+
+- **Hydrogen perception preserves angles, dihedrals and impropers.** The old
+  `complete_valence()` facade copied atoms and bonds only. It has been removed;
+  cut sites now call `Perceive.find_hydrogens` directly, which returns a
+  non-mutating graph with every existing relation kind preserved.
+- **A region typed from a raw slice could not be typed at all.** Because the
+  extracted ball is `interior_reach + reach` wide, an interior atom's receptive
+  field reaches exactly to the boundary atoms, and a raw cut leaves those with
+  unfilled valences — radicals, to a SMARTS matcher. Only the AmberTools path
+  completed them. Measured on p-xylene with OPLS-AA at `reach = 2`, **12 of 19
+  raw slices are rejected outright** by the typifier (a truncated aromatic
+  carbon types as something no bonded term covers); PEO and methyl acrylate
+  happen to survive a raw cut. `RegionTypes.of` now completes every region
+  before typing it — every region *is* a cut, so there is no condition to get
+  wrong. A typifier itself never guesses whether its graph is a fragment:
+  truncation is a fact about provenance, not something readable off a graph's
+  valences.
+- **An unparameterised bonded term was written back as `None`.**
+  `RegionTypes._capture_links` recorded terms whose type was undecided, and
+  `apply_to` then erased whatever the parent's term already carried. Undecided
+  terms are now skipped.
+
+- **`molpy.reacter` is removed.** Reaction semantics live in `molpy.Reaction`
+  (a re-export of the molrs SMIRKS engine); chemistry lives in the reaction
+  SMARTS itself. `Reacter`, `ReactionResult`, `TopologyDetector`, the 14
+  anchor/leaving selectors, `BondReactReacter` and `ReactionPresets` are gone.
+- **`molpy.builder.crosslink` is removed.** `Crosslinker`,
+  `DeterministicCrosslinker` and `RandomCrosslinker` held a selector and
+  forwarded `apply` to `assemble`. Crosslinking is now
+  `GraphAssembler(rxn).assemble(melt, RandomSelector(...))`. The
+  `crosslink_gel()` / `write_lammps()` recipes are documentation, not library.
+- **`PolymerBuilder` is rebuilt** on the assembly kernel:
+  `PolymerBuilder(MonomerLibrary({...}), reaction, typifier=..., placer=...)`
+  `.build(cgsmiles)`. `build_sequence`, `PolymerBuildResult`, `Connector` and
+  the `connector=` / `reacter=` dual constructor are gone. A repeat unit is a
+  molecule with `fields.SITE` marked on the atoms that may react — there is no
+  port system and no `<` / `>` direction.
+- **`molpy.core.AffectedRegion` moved** to `molpy.typifier.affected_region`.
+  It is not a data-model type: it is the ball a graph edit disturbed, and its
+  radius is decided by the typifier's `TypeScope`.
+- **`molpy.core.region_radius` is removed** along with the `_FLOOR = 4`
+  fallback and the three `context_radius` declarations. A typifier declares a
+  `TypeScope(reach)`; `AmberToolsTypifier` now requires `reach=`.
+- `BondReactTemplate` moved from `molpy.reacter.bond_react` to
+  `molpy.io.data.lammps_bond_react` (it is an IO artifact). The public
+  `write_bond_react_map` / `write_lammps_bond_react_system` are unchanged.
+
+
+- **Region retyping wrote wrong atom types.** The extraction radius and the
+  write-back radius were conflated into one `radius`; correctness required
+  `reach <= 1`, which no real typifier satisfies. Measured against whole-graph
+  typing, `AmberToolsTypifier`'s default mistyped 22 of 46 written-back atoms
+  of a PEO junction. The guard that should have caught it was gated on a
+  `strict` flag read through a two-level `getattr(..., False)`, so for any
+  typifier without an `atom_typifier` attribute it never fired.
+- **Malformed reaction SMIRKS silently paired the wrong sites.**
+  `_find_component` returned component `0` when a forming-bond map number
+  appeared in no reactant pattern; it now raises.
+- Polymer assembly was `O(N^2)` in chain length from four independent sources.
+
+### Added
+
+- `molpy.Reaction`, `molpy.SmartsPattern`, `molpy.NeighborQuery`, `molpy.Graph`,
+  `molpy.perceive_aromaticity`, `molpy.find_rings` — re-exports, so user code
+  never imports molrs.
+- `molpy.core.fields.SITE`; `Entity` subscripting accepts a `FieldSpec`.
+- `molpy.builder.assembly`: `GraphAssembler`, `Selector`, `TopologySelector`,
+  `ProximitySelector` (`Exhaustive` / `Spacing` / `ExplicitPair` / `Random`),
+  `MonomerLibrary`, `PolymerBuilder`, `Placer` / `ResiduePlacer`.
+
 ## 0.7.0 - 2026-07-08
 
 Requires `molcrafts-molrs == 0.7.0` (molpy and molrs release as a pair).
@@ -76,8 +228,8 @@ Requires `molcrafts-molrs == 0.5.1` (molpy and molrs now release as a pair).
   correlations, hydrogen-bond detection, radical Voronoi tessellation with
   domain/void/charge analysis, and vibrational spectra (VDOS, IR, Raman, VCD,
   ROA, resonance Raman).
-- `molpy.version.check_molrs_version()` — run on `import molpy`, warns when the
-  installed `molcrafts-molrs` does not match.
+- `molpy.version.check_molrs_version()` — run on `import molpy`; import fails
+  when the exact paired `molcrafts-molrs` version is missing or does not match.
 
 ### Changed
 
@@ -187,11 +339,11 @@ Requires `molcrafts-molrs == 0.1.0`.
   atoms are checked for identical pre/post type and charge, total charge is
   checked for conservation (`CHARGE_CONSERVATION_TOL = 1e-6` e), and `run()` no
   longer mutates caller-owned `left` / `right` structures.
-- **molrs is now a required dependency.** `molcrafts-molrs` moved from an
-  optional extra into the core `dependencies`. The `molpy[molrs]` extra key was
-  removed — installing molpy always installs molrs. `Frame`, `Block`, and `Box`
-  are backed by (and inherit from) molrs types, and the `compute` operators
-  forward directly into the Rust kernel. There is no pure-Python fallback.
+- **molrs is now an exact required dependency.** `molcrafts-molrs==0.7.0` is in
+  the core `dependencies`; missing package metadata or any version mismatch is
+  an import error. `Frame` and `Block` are owned only by molrs. Molpy's `Box`
+  remains geometry sugar over the native box, and compute operators execute in
+  Rust. There is no pure-Python fallback.
 - **The RDKit-backed compute node was removed.** `molpy.compute.rdkit`
   (`Generate3D` / `OptimizeGeometry` over `RDKitAdapter`) is gone.
   `molpy.compute.Generate3D` is now the molrs-backed trunk operator, taking an
@@ -199,14 +351,16 @@ Requires `molcrafts-molrs == 0.1.0`.
   (`molpy.adapter.rdkit`) is retained as an
   **optional** external backend; `rdkit` remains an optional extra, not a
   required dependency.
-- **`Frame` / `Block` are the canonical molrs types, not molpy subclasses.**
-  `molpy.core.frame.Frame is molrs.Frame` and `Block is molrs.Block` (thin
-  re-exports). The Python-side object-column overflow (`_objects`) is gone:
+- **`Frame` / `Block` are imported directly from molrs.** Molpy's former
+  top-level, `molpy.core`, and `molpy.core.frame` compatibility exports were
+  deleted; use `from molrs import Frame, Block`. The Python-side object-column
+  overflow (`_objects`) is gone:
   columns are **numpy-only** (float / int / bool / str). Assigning an
   object / `None` / ragged column now raises `molrs.BlockDtypeError` at write
-  time instead of being silently stored on the Python side. `frame.box` returns
-  a `molrs.Box` (carrying `is_free` / `style` / `volume()`); molpy's richer box
-  geometry stays available as `molpy.Box`, upgradable via `Box.from_box(frame.box)`.
+  time instead of being silently stored on the Python side. `frame.simbox` is
+  the only cell attribute and returns `molrs.Box`; `frame.box` is deleted.
+  Exact-dtype metadata uses `frame.meta` + `molrs.MetaValue`; untyped
+  `frame.metadata` is deleted. No aliases or compatibility shims remain.
 
 ### Typifiers & Force Fields
 
@@ -276,8 +430,7 @@ Requires `molcrafts-molrs == 0.1.0`.
   and the mmap-index infrastructure were deleted. molpy keeps the split
   extensions (`SplitStrategy` / `TrajectorySplitter`), topology/slice/map
   conveniences, the XYZ writer, and the HDF5 path. `TimeIntervalStrategy` reads
-  the native `.time` array (Python `frame.metadata` does not round-trip the
-  molrs store).
+  the native `.time` array; exact-dtype snapshot metadata uses `frame.meta`.
 - **`Compute` is a plain class.** `__init__` takes configuration, `__call__`
   takes inputs, `dump()` persists. The single-input `_compute` hook, the molexp
   `execute()` / `input_key` / `output_key` shim, and the `Compute[InT, OutT]`
@@ -316,10 +469,10 @@ Requires `molcrafts-molrs == 0.1.0`.
   of degrading to a match-anything wildcard (`*` stays reserved for the
   explicit no-element/no-number case).
 - **The LAMMPS data reader keeps force-field coefficients.**
-  Pair/Bond/Angle/Dihedral/Improper Coeffs sections are now stored on the
-  metadata `ForceField` (positionally-keyed, style-arity aware) so read → write
-  round-trips them; previously they were parsed and discarded. Malformed
-  (non-numeric) coeff lines raise `ValueError` instead of being swallowed.
+  `read_lammps_data` returns `LammpsDataResult`; coefficient sections live on
+  `result.forcefield`, while `result.frame` remains pure Frame state. Writers
+  accept `forcefield=` and `type_labels=` explicitly. Malformed coefficient
+  lines raise `ValueError` instead of being swallowed.
 - The dead `molpy.op` package (unused geometry helpers) was deleted.
 
 ### Added

@@ -2,8 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from molpy.core.frame import Frame
-from molpy.core.element import Element
+from molrs import Element, Frame
 
 from .base import DataReader
 
@@ -207,12 +206,17 @@ class Mol2Reader(DataReader):
     def _assign_atomic_numbers(self) -> None:
         """Assign atomic numbers to all atoms based on name or type."""
         for atom in self.atoms:
-            element_data = self._guess_atomic_number(atom["name"])
-            atomic_number = element_data.number
-            if atomic_number == 0:
-                element_data = self._guess_atomic_number(atom["type"])
-                atomic_number = element_data.number
-            atom["number"] = atomic_number
+            for source in (atom["name"], atom["type"]):
+                try:
+                    atom["number"] = self._guess_atomic_number(source).number
+                    break
+                except KeyError:
+                    continue
+            else:
+                raise ValueError(
+                    f"Cannot infer an element from MOL2 atom name {atom['name']!r} "
+                    f"or type {atom['type']!r}"
+                )
 
     def _guess_atomic_number(self, name_or_type: str):
         """Guess the atomic number from atom name or type.
@@ -221,16 +225,16 @@ class Mol2Reader(DataReader):
             name_or_type: Atom name (e.g., 'C1', 'H') or type (e.g., 'c3', 'hc')
 
         Returns:
-            ElementData object
+            Element object
         """
         if not name_or_type:
-            return Element(0)  # Unknown element
+            raise KeyError("Empty element identifier")
 
         # Clean the name: remove numbers and special characters, keep only letters
         clean_name = "".join(c for c in name_or_type if c.isalpha())
 
         if not clean_name:
-            return Element(0)
+            raise KeyError(f"No element letters in {name_or_type!r}")
 
         # Try common element patterns
         clean_upper = clean_name.upper()
@@ -267,5 +271,5 @@ class Mol2Reader(DataReader):
         # If all else fails, try the original string
         try:
             return Element(clean_upper)
-        except KeyError:
-            return Element(0)  # Unknown element
+        except KeyError as exc:
+            raise KeyError(f"Unknown element identifier {name_or_type!r}") from exc

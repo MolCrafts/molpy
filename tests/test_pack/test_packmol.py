@@ -12,7 +12,7 @@ import pytest
 
 import molpy.pack as mpk
 from molpy import Script
-from molpy.core import Block, Frame
+from molrs import Block, Frame
 from molpy.pack.packer.packmol import Packmol
 
 PACKMOL_AVAILABLE = shutil.which("packmol") is not None

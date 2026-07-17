@@ -1,6 +1,7 @@
 import numpy as np
+import molrs
 
-from molpy import Block
+from molrs import Block
 from molpy.core.region import (
     AndRegion,
     BoxRegion,
@@ -9,6 +10,21 @@ from molpy.core.region import (
     OrRegion,
     SphereRegion,
 )
+
+
+def test_regions_are_native_subclasses_without_forwarding_state():
+    assert issubclass(BoxRegion, molrs.Cuboid)
+    assert issubclass(SphereRegion, molrs.Sphere)
+    box = BoxRegion([2.0, 2.0, 2.0])
+    sphere = SphereRegion(1.0)
+    composed = box & sphere
+    assert isinstance(composed, molrs.Region)
+    assert isinstance(molrs.Cuboid.__and__(box, sphere), molrs.Region)
+    for region in (box, sphere, composed):
+        assert not any(
+            hasattr(region, name)
+            for name in ("_inner", "_region", "_cuboid", "_sphere")
+        )
 
 
 class TestRegion:

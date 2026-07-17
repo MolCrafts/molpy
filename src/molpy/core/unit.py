@@ -1,58 +1,13 @@
-"""Unit support for MolPy.
-
-:class:`UnitSystem` is a :class:`pint.UnitRegistry` subclass. Its
-constructor accepts every argument pint's does. On top of pint it:
-
-* Pre-registers three per-molecule energy units
-  (``kilocalorie_per_mole``, ``kilojoule_per_mole``, ``gram_per_mole``)
-  and four LJ reduced-unit symbols (``lj_sigma``, ``lj_epsilon``,
-  ``lj_tau``, ``lj_epsilon_over_kB``). Names are prefixed so they do
-  not shadow pint's ``sigma`` (Stefan–Boltzmann alias) or ``tau``
-  (:math:`2\\pi`).
-* Exposes a :attr:`~UnitSystem.base_units` mapping ``{dimension: Unit}``
-  that records the user's chosen base unit per physical dimension. This
-  is how downstream code (force fields, I/O, compute operators) learns
-  "which length unit does this system use?" — without caring whether the
-  system came from a preset.
-* Provides :meth:`~UnitSystem.preset` (LAMMPS unit-style presets) and
-  :meth:`~UnitSystem.lj` (Lennard-Jones reduced units) as optional
-  factories.
-
-Example:
-    >>> from molpy import UnitSystem
-    >>> real = UnitSystem.preset("real")
-    >>> 1.5 * real.angstrom
-    <Quantity(1.5, 'angstrom')>
-    >>> real.base_units["length"]
-    <Unit('angstrom')>
-    >>> ar = UnitSystem.lj(
-    ...     mass=39.948 * real.amu,
-    ...     sigma=3.405 * real.angstrom,
-    ...     epsilon=0.2381 * real.kilocalorie_per_mole,
-    ... )
-    >>> with ar.context("lj"):
-    ...     (4.0 * ar.angstrom).to(ar.lj_sigma).magnitude  # doctest: +ELLIPSIS
-    1.174743...
-"""
+"""Python unit-system sugar over molrs' native unit engine."""
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Mapping, Self
 
-import pint
+import molrs
 
 __all__ = ["UnitSystem"]
 
-
-# --------------------------------------------------------------------------- #
-# LAMMPS unit-style presets
-# --------------------------------------------------------------------------- #
-#
-# Reference: https://docs.lammps.org/units.html
-#
-# These are *one* source of base-unit selections, not the definition of
-# UnitSystem. Downstream code must never branch on preset names — always
-# read from system.base_units.
 
 _LAMMPS_PRESETS: dict[str, dict[str, str]] = {
     "real": {
@@ -141,103 +96,38 @@ _LAMMPS_PRESETS: dict[str, dict[str, str]] = {
 }
 
 
-# --------------------------------------------------------------------------- #
-# UnitSystem
-# --------------------------------------------------------------------------- #
+class UnitSystem(molrs.UnitRegistry):
+    """Native unit registry with LAMMPS presets and LJ construction sugar.
 
-
-class UnitSystem(pint.UnitRegistry):
-    """A :class:`pint.UnitRegistry` with MolPy-specific pre-registered
-    units and an optional ``base_units`` selection per dimension.
-
-    The constructor accepts every argument :class:`pint.UnitRegistry`
-    accepts, plus one MolPy-specific keyword:
-
-    Args:
-        *args: Forwarded to :class:`pint.UnitRegistry`.
-        base_units: Optional ``{dimension: unit}`` mapping recording this
-            system's chosen base unit for each physical dimension.
-            Downstream code reads this to learn which units a system
-            uses, independent of how the system was created.
-        **kwargs: Forwarded to :class:`pint.UnitRegistry`.
-
-    Example:
-        >>> u = UnitSystem(base_units={"length": "nm", "time": "ps"})
-        >>> u.base_units["length"]
-        <Unit('nanometer')>
-        >>> 2.5 * u.nanometer
-        <Quantity(2.5, 'nanometer')>
+    Parsing, definitions, dimensional arithmetic, and conversion all execute in
+    molrs. ``base_units`` only records the user's chosen working units.
     """
 
-    def __init__(
-        self,
-        *args: Any,
-        base_units: Mapping[str, str] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        # Captured here so that _after_init (run post default-unit load) can
-        # resolve unit labels against the fully-populated registry.
-        self._pending_base_units = base_units
-        super().__init__(*args, **kwargs)
+    def __new__(cls, *, base_units: Mapping[str, str] | None = None) -> "UnitSystem":
+        del base_units
+        return super().__new__(cls)
 
-    def _after_init(self) -> None:
-        # pint loads default_en.txt here; our custom units must be defined
-        # *after* that, and base_units must be resolved *after* that again.
-        super()._after_init()
-        self._install_molpy_units()
-        self.base_units: dict[str, pint.Unit] = (
-            {dim: self.Unit(expr) for dim, expr in self._pending_base_units.items()}
-            if self._pending_base_units
-            else {}
-        )
-        del self._pending_base_units
-
-    def _install_molpy_units(self) -> None:
-        """Register MolPy-specific additions on top of pint's defaults."""
-        # Per-molecule energy/mass. pint's kcal/mol carries a [substance]
-        # dimension; the per-molecule form is what we want for MD values.
-        self.define("kilocalorie_per_mole = kilocalorie / avogadro_number")
-        self.define("kilojoule_per_mole   = kilojoule   / avogadro_number")
-        self.define("gram_per_mole        = gram        / avogadro_number")
-
-        # LJ reduced-unit symbols. Each lives in its own private dimension
-        # so any conversion across the boundary requires an active context.
-        # Prefixed with 'lj_' to avoid shadowing pint's 'sigma'
-        # (Stefan–Boltzmann alias) and 'tau' (= 2π).
-        self.define("lj_sigma           = [length_lj]")
-        self.define("lj_epsilon         = [energy_lj]")
-        self.define("lj_tau             = [time_lj]")
-        self.define("lj_epsilon_over_kB = [temperature_lj]")
-
-    # --- Factories --------------------------------------------------------
+    def __init__(self, *, base_units: Mapping[str, str] | None = None) -> None:
+        super().__init__()
+        self.base_units = {
+            dimension: self.parse(expression)
+            for dimension, expression in (base_units or {}).items()
+        }
 
     @classmethod
-    def preset(cls, name: str, **overrides: str) -> "UnitSystem":
-        """Return a :class:`UnitSystem` initialised from a built-in preset.
-
-        Currently MolPy ships the seven LAMMPS unit styles (``real``,
-        ``metal``, ``si``, ``cgs``, ``electron``, ``micro``, ``nano``).
-        Preset names and contents are an implementation detail — callers
-        consuming the resulting :class:`UnitSystem` must only rely on
-        :attr:`base_units`.
-
-        Any keyword overrides replace individual dimension entries::
-
-            >>> UnitSystem.preset("real", pressure="bar").base_units["pressure"]
-            <Unit('bar')>
-        """
+    def preset(cls, name: str, **overrides: str) -> Self:
+        """Create a unit system from a LAMMPS unit-style preset."""
         try:
             preset = _LAMMPS_PRESETS[name]
         except KeyError as exc:
             raise ValueError(
                 f"unknown preset {name!r}; available: {sorted(_LAMMPS_PRESETS)}"
             ) from exc
-        base = {**preset, **overrides}
-        return cls(base_units=base)
+        return cls(base_units={**preset, **overrides})
 
     @classmethod
     def preset_names(cls) -> tuple[str, ...]:
-        """Names of all registered presets (built-in and custom)."""
+        """Return registered preset names."""
         return tuple(_LAMMPS_PRESETS)
 
     @classmethod
@@ -248,23 +138,7 @@ class UnitSystem(pint.UnitRegistry):
         *,
         overwrite: bool = False,
     ) -> None:
-        """Register a custom unit-system preset, usable via :meth:`preset`.
-
-        Lets downstream code add unit styles without editing molpy (the preset
-        table is an extension point, not a closed set). ``base_units`` maps a
-        dimension name to a unit string, the same shape as the built-in
-        presets, e.g. ``{"length": "nm", "time": "ps", "energy": "kJ/mol"}``.
-
-        Args:
-            name: Preset name to register.
-            base_units: ``{dimension: unit}`` mapping for the preset.
-            overwrite: Replace an existing preset of the same name instead of
-                raising.
-
-        Raises:
-            TypeError: If ``base_units`` is not a non-empty ``dict``.
-            ValueError: If ``name`` already exists and ``overwrite`` is False.
-        """
+        """Register a custom base-unit mapping."""
         if not isinstance(base_units, dict) or not base_units:
             raise TypeError("base_units must be a non-empty dict[str, str]")
         if name in _LAMMPS_PRESETS and not overwrite:
@@ -277,107 +151,21 @@ class UnitSystem(pint.UnitRegistry):
     def lj(
         cls,
         *,
-        mass: pint.Quantity,
-        sigma: pint.Quantity,
-        epsilon: pint.Quantity,
-    ) -> "UnitSystem":
-        """Return a reduced Lennard-Jones unit system.
-
-        The three scales ``mass``, ``sigma`` (length), and ``epsilon``
-        (per-molecule energy) fix the system; :math:`\\tau = \\sqrt{m\\sigma^2/\\varepsilon}`
-        and :math:`\\varepsilon/k_B` are derived. The returned registry
-        has a pint context named ``"lj"`` registered; activate it with
-        ``with system.context("lj"): ...`` to convert across the
-        physical/reduced boundary.
-
-        ``mass``/``sigma``/``epsilon`` may be Quantities from any pint
-        registry — they are translated to SI magnitudes before being
-        rebuilt in the new registry.
-        """
-        mass_kg = mass.to("kg").magnitude
-        sigma_m = sigma.to("m").magnitude
-        eps_J = epsilon.to("J").magnitude
-
-        system = cls(
-            base_units={
-                "length": "lj_sigma",
-                "energy": "lj_epsilon",
-                "time": "lj_tau",
-                "temperature": "lj_epsilon_over_kB",
-            }
-        )
-
-        m = mass_kg * system.kilogram
-        s = sigma_m * system.meter
-        e = eps_J * system.joule
-        tau = ((m * s**2 / e) ** 0.5).to_base_units()
-
-        system.add_context(_build_lj_context(system, sigma=s, epsilon=e, tau=tau))
+        mass: molrs.Quantity,
+        sigma: molrs.Quantity,
+        epsilon: molrs.Quantity,
+    ) -> Self:
+        """Create a native Lennard-Jones reduced unit system."""
+        system = cls()
+        system.define_lj_units(mass, sigma, epsilon)
+        system.base_units = {
+            "length": system.lj_sigma,
+            "energy": system.lj_epsilon,
+            "time": system.lj_tau,
+            "temperature": system.lj_epsilon_over_kB,
+        }
         return system
 
-
-# --------------------------------------------------------------------------- #
-# LJ context builder
-# --------------------------------------------------------------------------- #
-
-
-def _build_lj_context(
-    reg: pint.UnitRegistry,
-    *,
-    sigma: pint.Quantity,
-    epsilon: pint.Quantity,
-    tau: pint.Quantity,
-) -> pint.Context:
-    kB = reg.boltzmann_constant
-    ctx = pint.Context("lj")
-
-    ctx.add_transformation(
-        "[length]",
-        "lj_sigma",
-        lambda _reg, x, _s=sigma: (x / _s).to_reduced_units().magnitude * _reg.lj_sigma,
-    )
-    ctx.add_transformation(
-        "lj_sigma",
-        "[length]",
-        lambda _reg, x, _s=sigma: x.magnitude * _s,
-    )
-
-    ctx.add_transformation(
-        "[energy]",
-        "lj_epsilon",
-        lambda _reg, x, _e=epsilon: (
-            (x / _e).to_reduced_units().magnitude * _reg.lj_epsilon
-        ),
-    )
-    ctx.add_transformation(
-        "lj_epsilon",
-        "[energy]",
-        lambda _reg, x, _e=epsilon: x.magnitude * _e,
-    )
-
-    ctx.add_transformation(
-        "[time]",
-        "lj_tau",
-        lambda _reg, x, _t=tau: (x / _t).to_reduced_units().magnitude * _reg.lj_tau,
-    )
-    ctx.add_transformation(
-        "lj_tau",
-        "[time]",
-        lambda _reg, x, _t=tau: x.magnitude * _t,
-    )
-
-    # T* = T * kB / epsilon
-    ctx.add_transformation(
-        "[temperature]",
-        "lj_epsilon_over_kB",
-        lambda _reg, x, _e=epsilon, _k=kB: (
-            (x * _k / _e).to_reduced_units().magnitude * _reg.lj_epsilon_over_kB
-        ),
-    )
-    ctx.add_transformation(
-        "lj_epsilon_over_kB",
-        "[temperature]",
-        lambda _reg, x, _e=epsilon, _k=kB: (x.magnitude * _e / _k).to("kelvin"),
-    )
-
-    return ctx
+    def convert(self, quantity: molrs.Quantity, target: str | molrs.Unit):
+        """Convert with this registry, including registry-local LJ units."""
+        return quantity.to(self.parse(target) if isinstance(target, str) else target)

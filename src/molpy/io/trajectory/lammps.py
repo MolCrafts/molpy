@@ -2,7 +2,9 @@ from pathlib import Path
 
 import numpy as np
 
-from molpy.core import Frame
+from molrs import Frame
+
+from molpy._frame_meta import get_frame_meta
 
 from .base import TrajectoryWriter
 
@@ -17,7 +19,7 @@ class LammpsTrajectoryWriter(TrajectoryWriter):
     def write_frame(self, frame: "Frame", timestep: int | None = None):
         """Write a single frame to the file."""
         if timestep is None:
-            timestep = frame.metadata.get("timestep", 0)
+            timestep = get_frame_meta(frame, "timestep", 0)
 
         # Write timestep
         if self._fp is None:
@@ -32,8 +34,8 @@ class LammpsTrajectoryWriter(TrajectoryWriter):
             self._fp.write(f"ITEM: NUMBER OF ATOMS\n{n_atoms}\n".encode())
 
         # Write box bounds
-        # Get box from metadata
-        box = frame.box
+        # The simulation box is a first-class Frame field.
+        box = frame.simbox
         if box:
             matrix = box.matrix
             origin = box.origin

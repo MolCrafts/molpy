@@ -72,26 +72,21 @@ def _c4c1im_typed():
         (19, 24),
     ]
     asm = Atomistic()
-    atoms = [Atom(element=e) for e in el]
-    asm.add_entity(*atoms)
+    atoms = [asm.def_atom(element=e) for e in el]
     for i, j in edges:
-        asm.add_link(Bond(atoms[i], atoms[j]))
-    return ClpTypifier(
-        skip_bond_typing=True,
-        skip_angle_typing=True,
-        skip_dihedral_typing=True,
-        strict_typing=False,
-    ).typify(asm)
+        asm.def_bond(atoms[i], atoms[j])
+    # No skip_* knobs: a term this force field cannot match is left undecided,
+    # which is what "skip bonded typing" used to spell.
+    return ClpTypifier(strict=False).typify(asm)
 
 
 def _water(charge_o=-0.8, charge_h=0.4):
     asm = Atomistic()
-    o = Atom(element="O", charge=charge_o, x=0.0, y=0.0, z=0.0)
-    h1 = Atom(element="H", charge=charge_h, x=0.757, y=0.586, z=0.0)
-    h2 = Atom(element="H", charge=charge_h, x=-0.757, y=0.586, z=0.0)
-    asm.add_entity(o, h1, h2)
-    asm.add_link(Bond(o, h1))
-    asm.add_link(Bond(o, h2))
+    o = asm.def_atom(element="O", charge=charge_o, x=0.0, y=0.0, z=0.0)
+    h1 = asm.def_atom(element="H", charge=charge_h, x=0.757, y=0.586, z=0.0)
+    h2 = asm.def_atom(element="H", charge=charge_h, x=-0.757, y=0.586, z=0.0)
+    asm.def_bond(o, h1)
+    asm.def_bond(o, h2)
     return asm, o
 
 
@@ -101,6 +96,22 @@ def _drudes(struct):
 
 def _drude_bonds(struct):
     return [b for b in struct.bonds if b.get("style") == "drude"]
+
+
+class TestVirtualSiteBuilder:
+    def test_builder_is_an_abstract_transform(self):
+        with pytest.raises(TypeError):
+            VirtualSiteBuilder()
+
+
+class TestDrudeBuilder:
+    def test_is_a_virtual_site_transform(self):
+        assert issubclass(DrudeBuilder, VirtualSiteBuilder)
+
+
+class TestTip4pBuilder:
+    def test_is_a_virtual_site_transform(self):
+        assert issubclass(Tip4pBuilder, VirtualSiteBuilder)
 
 
 def test_drude_shell_is_typed_from_core():

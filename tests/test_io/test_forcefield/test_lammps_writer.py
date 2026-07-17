@@ -1,5 +1,6 @@
 import os
 import tempfile
+from pathlib import Path
 
 import molpy as mp
 from molpy.io.forcefield.lammps import LAMMPSForceFieldWriter
@@ -40,7 +41,7 @@ def test_ff_writer_frame_filters_unused_pair_coeff():
     with tempfile.TemporaryDirectory() as tmpdir:
         out = os.path.join(tmpdir, "filtered.ff")
         write_lammps_forcefield(out, ff, frame=frame)
-        content = open(out).read()
+        content = Path(out).read_text()
     assert "pair_coeff c3" in content
     assert "pair_coeff h1" in content
     assert "oh" not in content  # the unused cap type is filtered out
@@ -52,7 +53,7 @@ def test_ff_writer_without_frame_keeps_all_types():
     with tempfile.TemporaryDirectory() as tmpdir:
         out = os.path.join(tmpdir, "all.ff")
         write_lammps_forcefield(out, ff)
-        content = open(out).read()
+        content = Path(out).read_text()
     assert "pair_coeff oh oh" in content
 
 

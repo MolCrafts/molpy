@@ -24,8 +24,7 @@ from __future__ import annotations
 import numpy as np
 
 import molrs
-
-from molpy.core.element import Element
+from molrs import Element
 
 # Padding (Angstrom) so every atom sits strictly inside the synthesized
 # non-periodic box used for the neighbor search.
@@ -188,19 +187,26 @@ class SoftPotential:
             symbols = np.asarray(atoms["symbol"])
         else:
             symbols = None
-        n_atoms = molrs.extract_coords(frame).reshape(-1, 3).shape[0]
-        unknown = Element(0).covalent  # "unknown" element fallback, still via Element
         if symbols is None:
-            return np.full(n_atoms, unknown)
-        return np.array([SoftPotential._covalent(str(s), unknown) for s in symbols])
+            raise ValueError(
+                "SoftPotential requires atoms.element or atoms.symbol when r0 is None"
+            )
 
-    @staticmethod
-    def _covalent(symbol: str, default: float) -> float:
-        """Covalent radius for *symbol* via ``Element``; *default* if unresolved."""
-        try:
-            return Element(symbol).covalent
-        except KeyError:
-            return default
+        n_atoms = molrs.extract_coords(frame).reshape(-1, 3).shape[0]
+        if len(symbols) != n_atoms:
+            raise ValueError(
+                f"Element column has {len(symbols)} rows for {n_atoms} atoms"
+            )
+        radii = np.empty(n_atoms, dtype=float)
+        for index, symbol in enumerate(symbols):
+            try:
+                radii[index] = Element(str(symbol)).covalent
+            except KeyError as exc:
+                raise ValueError(
+                    f"Unknown element {str(symbol)!r} at atom row {index}; "
+                    "provide a valid element column or an explicit r0"
+                ) from exc
+        return radii
 
     def _nonbonded_pairs(
         self, coords: np.ndarray, bond_i: np.ndarray, bond_j: np.ndarray

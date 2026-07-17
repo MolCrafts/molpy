@@ -3,6 +3,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import molrs
+
 import molpy as mp
 
 
@@ -13,7 +15,7 @@ class TestGMXGroReader:
         fpath = TEST_DATA_DIR / "gro/cod_4020641.gro"
         if not fpath.exists():
             pytest.skip("gro test data not available")
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
+        frame = mp.io.read_gro(fpath, frame=molrs.Frame())
 
         # Get the atoms block
         atoms = frame["atoms"]
@@ -36,7 +38,7 @@ class TestGROReaderComprehensive:
     def test_roundtrip_gro(self, tmp_path):
         """Test roundtrip writing and reading of GRO files."""
         # Create test frame
-        frame = mp.Frame()
+        frame = molrs.Frame()
         atoms_data = {
             "res_id": [1, 1],
             "res_name": ["WAT", "WAT"],
@@ -45,14 +47,14 @@ class TestGROReaderComprehensive:
             "xyz": [[0.000, 0.000, 0.000], [0.100, 0.000, 0.000]],
         }
         frame["atoms"] = atoms_data
-        frame.box = mp.Box(np.eye(3) * 2.0)
+        frame.simbox = mp.Box(np.eye(3) * 2.0)
 
         tmp_file = tmp_path / "test.gro"
         writer = mp.io.data.GroWriter(str(tmp_file))
         writer.write(frame)
 
         # Read back
-        mp.io.read_gro(tmp_file, frame=mp.Frame())
+        mp.io.read_gro(tmp_file, frame=molrs.Frame())
 
     def test_read_cod_4020641_gro(self, TEST_DATA_DIR):
         """Test reading cod_4020641.gro file."""
@@ -60,7 +62,7 @@ class TestGROReaderComprehensive:
         if not fpath.exists():
             pytest.skip("cod_4020641.gro test data not available")
 
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
+        frame = mp.io.read_gro(fpath, frame=molrs.Frame())
 
         # Check basic structure
         assert "atoms" in frame
@@ -92,7 +94,7 @@ class TestGROReaderComprehensive:
         np.testing.assert_allclose(xyz, expected_xyz, rtol=1e-3)
 
         # Check box information
-        assert frame.box is not None
+        assert frame.simbox is not None
 
     def test_read_lysozyme_gro(self, TEST_DATA_DIR):
         """Test reading lysozyme.gro file."""
@@ -100,7 +102,7 @@ class TestGROReaderComprehensive:
         if not fpath.exists():
             pytest.skip("lysozyme.gro test data not available")
 
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
+        frame = mp.io.read_gro(fpath, frame=molrs.Frame())
 
         # Check basic structure
         assert "atoms" in frame
@@ -123,10 +125,10 @@ class TestGROReaderComprehensive:
         if not fpath.exists():
             pytest.skip("1vln-triclinic.gro test data not available")
 
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
+        frame = mp.io.read_gro(fpath, frame=molrs.Frame())
 
         # Check that triclinic box is handled
-        assert frame.box is not None
+        assert frame.simbox is not None
         # Should have non-zero off-diagonal elements for triclinic
 
     def test_read_malformed_gro(self, TEST_DATA_DIR):
@@ -136,12 +138,12 @@ class TestGROReaderComprehensive:
         fpath = TEST_DATA_DIR / "gro/truncated.gro"
         if fpath.exists():
             with pytest.raises(OSError):
-                mp.io.read_gro(fpath, frame=mp.Frame())
+                mp.io.read_gro(fpath, frame=molrs.Frame())
 
         # Missing final (box) line is tolerated
         fpath = TEST_DATA_DIR / "gro/no-final-line.gro"
         if fpath.exists():
-            frame = mp.io.read_gro(fpath, frame=mp.Frame())
+            frame = mp.io.read_gro(fpath, frame=molrs.Frame())
             assert "atoms" in frame
 
     def test_read_gro_error_handling(self, tmp_path):
@@ -149,13 +151,13 @@ class TestGROReaderComprehensive:
 
         # Non-existent file -> molrs raises OSError (FileNotFoundError's base)
         with pytest.raises(OSError):
-            mp.io.read_gro(Path("nonexistent.gro"), frame=mp.Frame())
+            mp.io.read_gro(Path("nonexistent.gro"), frame=molrs.Frame())
 
         # Empty file has no frames -> rejected fail-fast
         tmp_file = tmp_path / "empty.gro"
         tmp_file.write_text("")
         with pytest.raises(OSError):
-            mp.io.read_gro(tmp_file, frame=mp.Frame())
+            mp.io.read_gro(tmp_file, frame=molrs.Frame())
 
     def test_gro_coordinate_precision(self, TEST_DATA_DIR):
         """Test that coordinate precision is maintained."""
@@ -163,7 +165,7 @@ class TestGROReaderComprehensive:
         if not fpath.exists():
             pytest.skip("cod_4020641.gro test data not available")
 
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
+        frame = mp.io.read_gro(fpath, frame=molrs.Frame())
         atoms = frame["atoms"]
 
         # Check that coordinates are reasonable floats
@@ -178,7 +180,7 @@ class TestGROReaderComprehensive:
         if not fpath.exists():
             pytest.skip("cod_4020641.gro test data not available")
 
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
+        frame = mp.io.read_gro(fpath, frame=molrs.Frame())
         atoms = frame["atoms"]
 
         # Check residue fields
@@ -199,7 +201,7 @@ class TestGROWriter:
     def test_write_simple_gro(self, tmp_path):
         """Test writing a simple GRO file."""
         # Create test frame
-        frame = mp.Frame()
+        frame = molrs.Frame()
 
         atoms_data = {
             "res_id": [1, 1, 1],
@@ -213,7 +215,7 @@ class TestGROWriter:
             ],
         }
         frame["atoms"] = atoms_data
-        frame.box = mp.Box(np.eye(3) * 2.0)
+        frame.simbox = mp.Box(np.eye(3) * 2.0)
 
         # Write to temporary file
         tmp_file = tmp_path / "test.gro"
@@ -236,7 +238,7 @@ class TestGROWriter:
             pytest.skip("cod_4020641.gro test data not available")
 
         # Read original
-        original_frame = mp.io.read_gro(fpath, frame=mp.Frame())
+        original_frame = mp.io.read_gro(fpath, frame=molrs.Frame())
 
         # Write to temporary file
         tmp_file = tmp_path / "test.gro"
@@ -244,7 +246,7 @@ class TestGROWriter:
         writer.write(original_frame)
 
         # Read back
-        roundtrip_frame = mp.io.read_gro(tmp_file, frame=mp.Frame())
+        roundtrip_frame = mp.io.read_gro(tmp_file, frame=molrs.Frame())
 
         # Compare basic properties
         orig_atoms = original_frame["atoms"]
@@ -264,7 +266,7 @@ class TestGROWriter:
 
     def test_write_gro_with_box(self, tmp_path):
         """Test writing GRO with various box types."""
-        frame = mp.Frame()
+        frame = molrs.Frame()
 
         atoms_data = {
             "res_id": [1],
@@ -276,7 +278,7 @@ class TestGROWriter:
         frame["atoms"] = atoms_data
 
         # Test orthogonal box
-        frame.box = mp.Box(np.diag([2.0, 3.0, 4.0]))
+        frame.simbox = mp.Box(np.diag([2.0, 3.0, 4.0]))
 
         tmp_file = tmp_path / "test.gro"
         writer = mp.io.data.GroWriter(str(tmp_file))
@@ -299,11 +301,11 @@ class TestGROEdgeCases:
         if not fpath.exists():
             pytest.skip("cod_4020641.gro test data not available")
 
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
+        frame = mp.io.read_gro(fpath, frame=molrs.Frame())
 
         # Basic checks
         assert "atoms" in frame
-        assert frame.box is not None
+        assert frame.simbox is not None
 
         atoms = frame["atoms"]
         n_atoms = atoms.nrows
@@ -315,7 +317,7 @@ class TestGROEdgeCases:
         for gro_file in ["lysozyme.gro", "cod_4020641.gro"]:
             fpath = TEST_DATA_DIR / f"gro/{gro_file}"
             if fpath.exists():
-                frame = mp.io.read_gro(fpath, frame=mp.Frame())
+                frame = mp.io.read_gro(fpath, frame=molrs.Frame())
                 atoms = frame["atoms"]
 
                 # Check if velocity fields exist
@@ -332,7 +334,7 @@ class TestGROEdgeCases:
         if not fpath.exists():
             pytest.skip("cod_4020641.gro test data not available")
 
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
+        frame = mp.io.read_gro(fpath, frame=molrs.Frame())
         atoms = frame["atoms"]
 
         # Should still work without velocities
@@ -345,7 +347,7 @@ class TestGROEdgeCases:
         if not fpath.exists():
             pytest.skip("cod_4020641.gro test data not available")
 
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
+        frame = mp.io.read_gro(fpath, frame=molrs.Frame())
         atoms = frame["atoms"]
 
         xyz = atoms["xyz"]
@@ -358,11 +360,11 @@ class TestGROEdgeCases:
         if not fpath.exists():
             pytest.skip("cod_4020641.gro test data not available")
 
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
+        frame = mp.io.read_gro(fpath, frame=molrs.Frame())
 
         # Should have box
-        assert frame.box is not None
-        assert frame.box.matrix.shape == (3, 3)
+        assert frame.simbox is not None
+        assert frame.simbox.matrix.shape == (3, 3)
 
     def test_large_structures(self, TEST_DATA_DIR):
         """Test handling of large GRO structures."""
@@ -370,7 +372,7 @@ class TestGROEdgeCases:
         if not fpath.exists():
             pytest.skip("lysozyme.gro test data not available")
 
-        frame = mp.io.read_gro(fpath, frame=mp.Frame())
+        frame = mp.io.read_gro(fpath, frame=molrs.Frame())
         atoms = frame["atoms"]
 
         # Should handle large structures

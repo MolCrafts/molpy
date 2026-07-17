@@ -156,26 +156,23 @@ print(
 ```
 
 
-## 三种单体变体定义链的起始、内部和末端
+## Amber 单体变体由 MolPy 化学语义定义
 
-BigSMILES 的端口标记（`[>]` 和 `[<]`）定义连接点。两个端口都有的单体是内部重复单元，只有一个端口的是端帽。构建器根据端口注释决定生成哪种 prepgen 变体（HEAD / CHAIN / TAIL）。
+AmberTools 不再维护独立的端口或离去基语义。使用 `fields.SITE` 标记单体，
+并定义与 `PolymerBuilder` 相同的 `Reaction`；Amber 后端会先编译标准 MolPy
+分子产物，再把连接原子和被删除原子翻译成 prepgen 的 HEAD、CHAIN、TAIL
+输入。
 
 ```python
-def parse_monomer_3d(bigsmiles):
-    mol = mp.parser.parse_monomer(bigsmiles)
-    return RDKitAdapter(internal=mol).generate_3d(add_hydrogens=True, optimize=True)
+from molpy.builder.assembly import SiteMap
+from molpy.conformer import Conformer
+from molpy.parser import parse_molecule
 
+eo, _ = Conformer(add_hydrogens=True, seed=42).generate(parse_molecule("COC"))
+SiteMap(eo).label_elements("C", "a", "b")
 
-# 头帽：仅有 < 端口 → 链的起始
-me_head = parse_monomer_3d("{[][<]C[]}")
-
-# 链单元：同时有 < 和 > → 内部重复单元
-eo_chain = parse_monomer_3d("{[][<]COC[>][]}")
-
-# 尾帽：仅有 > 端口 → 链的末端
-me_tail = parse_monomer_3d("{[]C[>][]}")
-
-library = {"MeH": me_head, "EO": eo_chain, "MeT": me_tail}
+STITCH = mp.Reaction("[C;%a:1][H].[C;%b:2][H]>>[C:1][C:2]")
+library = {"EO": eo}
 ```
 
 
@@ -191,6 +188,7 @@ polymer_dir.mkdir(exist_ok=True)
 
 builder = AmberPolymerBuilder(
     library=library,
+    reaction=STITCH,
     force_field="gaff2",
     charge_method="bcc",
     env="AmberTools25",
@@ -198,7 +196,7 @@ builder = AmberPolymerBuilder(
     work_dir=polymer_dir,
 )
 
-result = builder.build("{[#MeH][#EO]|10[#MeT]}")
+result = builder.build("{[#EO]|10}")
 ```
 
 `AmberPolymerBuilder.build()` 在内部运行 antechamber、parmchk2、prepgen 和 tleap。结果包含聚合物 Frame、ForceField 以及中间 Amber 文件的路径。
@@ -237,7 +235,7 @@ packer.def_target(li_frame, number=10, constraint=constraint)
 packer.def_target(tfsi_frame, number=10, constraint=constraint)
 
 system = packer(max_steps=20000, seed=12345)
-system.box = mp.Box.cubic(box_size)
+system.simbox = mp.Box.cubic(box_size)
 ```
 
 

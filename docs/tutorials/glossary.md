@@ -29,7 +29,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 :   A columnar table mapping string keys to NumPy arrays. All columns share the same row count. Used inside `Frame` to store atoms, bonds, angles, etc. See [Block and Frame](02_block_and_frame.md).
 
 **Frame**
-:   A named collection of `Block` objects plus free-form metadata. Represents one complete system snapshot. The universal exchange object for I/O. See [Block and Frame](02_block_and_frame.md).
+:   A named collection of `Block` objects plus an optional simulation box and exact-dtype `MetaValue` entries. Represents one complete system snapshot. The universal exchange object for I/O. See [Block and Frame](02_block_and_frame.md).
 
 **Box**
 :   A simulation cell defined by a 3x3 lattice matrix and periodic boundary conditions. Provides wrapping, minimum-image distances, and coordinate conversion. See [Box and Periodicity](03_box_and_periodicity.md).
@@ -58,11 +58,14 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 **Parser**
 :   Converts string notations (SMILES, SMARTS, BigSMILES, CGSmiles) into MolPy structures. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
 
-**Reacter**
-:   Executes a chemical reaction by connecting two `Atomistic` objects at designated port atoms, removing leaving groups, and forming new bonds. See [Stepwise Polymer Construction](../user-guide/02_polymer_stepwise.md).
+**Reaction**
+:   A reaction SMARTS. It matches the reactant patterns, forms and breaks bonds, and deletes the atoms that appear on the left and not on the right (the leaving groups). All the chemistry lives here. See [Assembly](../user-guide/02_assembly.md).
 
-**Port**
-:   A marker on an atom (`<`, `>`, or `$`) indicating that it is a reactive connection point for polymerization.
+**GraphAssembler**
+:   Pastes molecules into one world, applies a `Reaction` wherever its `Selector` says, and repairs the force-field types near each new bond. `PolymerBuilder` is a `GraphAssembler` that also owns a monomer library and speaks CGSmiles.
+
+**Site**
+:   A name (`fields.SITE`) on an atom that may react. Sites have no direction and no role — a linear chain, a branch point and a ring closure differ only in how many sites a monomer carries and how the topology pairs them.
 
 **Typifier**
 :   Assigns force field types to atoms, bonds, angles, and dihedrals via SMARTS pattern matching. Subclasses: `OplsTypifier`, `ClpTypifier`, `MMFFTypifier`, `PairTypifier`. (GAFF atom types are *not* a Typifier — they come from AmberTools/antechamber; see [AmberTools Integration](../user-guide/13_ambertools_integration.md).) See [Force Field Typification](../user-guide/06_typifier.md).

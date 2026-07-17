@@ -194,7 +194,7 @@ class LAMMPSEngine(Engine):
             relaxed = eng.minimize(pack_result.frame, ff)
 
         Args:
-            frame: Input structure; must carry a periodic box (``frame.box``).
+            frame: Input structure; must carry a periodic box (``frame.simbox``).
             ff: Typified force field providing pair/bond/angle/... coefficients.
             etol: Energy stopping tolerance (unitless).
             ftol: Force stopping tolerance (force units).
@@ -258,7 +258,7 @@ class LAMMPSEngine(Engine):
         ``nve``.
 
         Args:
-            frame: Input structure; must carry a periodic box (``frame.box``).
+            frame: Input structure; must carry a periodic box (``frame.simbox``).
             ff: Typified force field.
             ensemble: One of ``"nve"``, ``"nve/limit"``, ``"nvt"``.
             steps: Number of MD steps.
@@ -337,10 +337,10 @@ class LAMMPSEngine(Engine):
         from molpy.io.data.lammps import LammpsDataReader, LammpsDataWriter
         from molpy.io.writers import write_lammps_forcefield
 
-        if frame.box is None:
+        if frame.simbox is None:
             raise ValueError(
                 "LAMMPS relaxation needs a periodic box on the frame. Set it via "
-                "molpack's `with_periodic_box(...)` or assign `frame.box`. "
+                "molpack's `with_periodic_box(...)` or assign `frame.simbox`. "
                 "Box-free / shrink-wrap relaxation is not supported yet."
             )
 
@@ -390,7 +390,7 @@ class LAMMPSEngine(Engine):
                 f"LAMMPS finished but did not write {out_path}; "
                 f"inspect {run_dir / 'log.lammps'}."
             )
-        relaxed = LammpsDataReader(out_path, atom_style=atom_style).read()
+        relaxed = LammpsDataReader(out_path, atom_style=atom_style).read().frame
         return _splice_coords(frame, relaxed)
 
 
@@ -469,5 +469,5 @@ def _splice_coords(original: Frame, relaxed: Frame) -> Frame:
 
     atoms["x"], atoms["y"], atoms["z"] = rx[sel], ry[sel], rz[sel]
     new = molrs.Frame.from_dict(data)
-    new.box = original.box
+    new.simbox = original.simbox
     return new

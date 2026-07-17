@@ -628,11 +628,6 @@ class TypeFilter:
 
         return True
 
-    @classmethod
-    def from_whitelist(cls, whitelist: set[str] | None) -> "TypeFilter":
-        """Create a filter from a whitelist (backward compatibility)."""
-        return cls(whitelist=whitelist)
-
 
 # ===================================================================
 #               Parameter Formatters
@@ -1070,10 +1065,10 @@ class LAMMPSForceFieldWriter:
 
         filters = {
             "pair": TypeFilter(custom=_pair_includes),
-            "bond": TypeFilter.from_whitelist(bond_types),
-            "angle": TypeFilter.from_whitelist(angle_types),
-            "dihedral": TypeFilter.from_whitelist(dihedral_types),
-            "improper": TypeFilter.from_whitelist(improper_types),
+            "bond": TypeFilter(whitelist=bond_types),
+            "angle": TypeFilter(whitelist=angle_types),
+            "dihedral": TypeFilter(whitelist=dihedral_types),
+            "improper": TypeFilter(whitelist=improper_types),
         }
 
         # Get styles and write sections

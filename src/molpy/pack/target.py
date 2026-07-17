@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from molpy.core.frame import Frame
+from molrs import Frame
 
 if TYPE_CHECKING:
     from .constraint import Constraint

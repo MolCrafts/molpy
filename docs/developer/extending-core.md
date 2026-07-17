@@ -1,119 +1,58 @@
 # Extending the Data Model
 
-This page shows how to add new entity types, link types, and struct subclasses to MolPy's core data model.
+MolPy's graph data model is backed directly by molrs. `Atomistic` and
+`CoarseGrain` are native worlds; `Atom`, `Bond`, `Bead`, and the other Python
+objects are live views over stable handles in those worlds.
 
 !!! note "Discuss before you build"
-    Changes at this layer ripple through `TypeBucket` registration, copy semantics, and formatter dispatch. Open a [GitHub issue](https://github.com/MolCrafts/molpy/issues) describing the extension before implementation; the [Architecture Overview](architecture-overview.md) explains the invariants involved.
+    A new stored node or relation kind changes the molrs schema, Rust graph
+    algorithms, Python bindings, frame projection, and I/O formatters. Open a
+    [GitHub issue](https://github.com/MolCrafts/molpy/issues) before implementing it.
 
-## Architecture recap
+## What can be extended in Python
 
-MolPy's data model has three layers:
+Python subclasses may add stateless conveniences around an existing native
+kind: constructor aliases, selection helpers, callbacks, display methods, and
+format-specific serialization. They must not create a second property store,
+endpoint list, or handle registry.
 
-1. **Entity** (node) — `UserDict` subclass with identity-based hashing. Example: `Atom`, `Bead`.
-2. **Link** (edge) — holds an ordered tuple of `Entity` endpoints. Example: `Bond`, `Angle`, `Dihedral`.
-3. **Struct** (container) — holds `TypeBucket[Entity]` and `TypeBucket[Link]`, manages CRUD. Example: `Atomistic`, `CoarseGrain`.
-
-`TypeBucket` stores items by their concrete type. When you register `Atom` in a bucket, calling `bucket[Atom]` returns all `Atom` instances. Subclasses are included in parent queries.
-
-
-## Adding a new Entity type
-
-Subclass `Entity`. No methods are required — the base class provides dict-like storage and identity-based hashing.
+Use a graph factory to create data:
 
 ```python
-from molpy.core.entity import Entity
+from molpy import Atomistic
 
-class VirtualSite(Entity):
-    """A massless interaction site (e.g., TIP4P oxygen lone pair)."""
+mol = Atomistic(name="water")
+oxygen = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
+hydrogen = mol.def_atom(element="H", x=0.96, y=0.0, z=0.0)
+bond = mol.def_bond(oxygen, hydrogen)
 
-    def __repr__(self) -> str:
-        name = self.data.get("name", id(self))
-        return f"<VirtualSite: {name}>"
+assert mol.atoms[0] is oxygen
+assert bond.atoms == (oxygen, hydrogen)
 ```
 
+Writes through a ref immediately update the native world. Collection properties
+such as `.atoms`, `.bonds`, and `.impropers` are live molrs views.
 
-## Adding a new Link type
+## Adding a stored graph kind
 
-Subclass `Link`. Enforce endpoint count and types in `__init__`. Add named endpoint properties for readability.
+There is intentionally no `TypeBucket.register_type` hook. A real new kind
+requires, in order:
 
-```python
-from molpy.core.entity import Link
-from molpy.core.atomistic import Atom
+1. Define its storage and relation arity in molrs.
+2. Teach native copy/merge/extract/topology and Frame projection about it.
+3. Expose a handle view and graph factory in `molrs.views`.
+4. Re-export that same object from `molpy.core`; add only Python syntax sugar.
+5. Update relevant readers/writers and add Rust, binding, and molpy integration tests.
 
-class Improper(Link):
-    """Improper dihedral: one central atom with three outer atoms."""
-
-    def __init__(self, center: Atom, a: Atom, b: Atom, c: Atom, /, **attrs):
-        super().__init__([center, a, b, c], **attrs)
-
-    @property
-    def center(self) -> Atom:
-        return self.endpoints[0]
-
-    @property
-    def outer(self) -> tuple[Atom, Atom, Atom]:
-        return self.endpoints[1], self.endpoints[2], self.endpoints[3]
-```
-
-
-## Registering types in a Struct
-
-New entity and link types must be registered in the struct's `__init__` so that `TypeBucket` creates a bucket for them. Without registration, `bucket[MyType]` returns an empty list.
-
-```python
-from molpy.core.entity import Struct, MembershipMixin, ConnectivityMixin
-
-class ExtendedAtomistic(Atomistic):
-    """Atomistic with virtual sites and impropers."""
-
-    def __init__(self, **props):
-        super().__init__(**props)
-        self.entities.register_type(VirtualSite)
-        self.links.register_type(Improper)
-
-    @property
-    def virtual_sites(self):
-        return self.entities[VirtualSite]
-
-    @property
-    def impropers(self):
-        return self.links[Improper]
-
-    def def_virtual_site(self, **attrs) -> VirtualSite:
-        vs = VirtualSite(**attrs)
-        self.entities.add(vs)
-        return vs
-
-    def def_improper(self, center, a, b, c, /, **attrs) -> Improper:
-        imp = Improper(center, a, b, c, **attrs)
-        self.links.add(imp)
-        return imp
-```
-
-
-## How TypeBucket works
-
-`TypeBucket` uses `get_nearest_type(item)` to determine the bucket key (the item's concrete class). Key behaviors:
-
-- `bucket.add(item)` — adds to the bucket for the item's concrete type, skips if already present (identity check)
-- `bucket[SomeType]` — returns all items of `SomeType` and its subclasses
-- `bucket.register_type(SomeType)` — ensures an empty bucket exists (so `.atoms` returns `[]` instead of raising)
-- `bucket.remove(item)` — removes by identity (`is`), not by equality
-
-
-## Struct.copy() and new types
-
-`Struct.copy()` deep-copies all entities and links, remapping endpoint references. This works automatically for new `Link` subclasses as long as their `__init__` accepts either `(*endpoints, **attrs)` or `(endpoints, **attrs)`. The copy logic tries positional args first, then list form.
-
-If your Link subclass has a different constructor signature (e.g., named parameters), you may need to override `copy()` in your Struct subclass.
-
+If the concept is only an annotation, prefer a typed field on an existing node
+or relation. For example, assembly sites use `fields.SITE`; they do not require
+a new node class.
 
 ## Checklist
 
-- [ ] Entity subclass: `class MyEntity(Entity)` with `__repr__`
-- [ ] Link subclass: `class MyLink(Link)` with endpoint assertions and properties
-- [ ] Register in Struct's `__init__`: `self.entities.register_type(MyEntity)`
-- [ ] Add `def_*` factory method on the Struct
-- [ ] Add property accessor (e.g., `@property def my_links`)
-- [ ] Verify `Struct.copy()` works with the new types
-- [ ] Write tests in `tests/test_core/`
+- [ ] The data has one owner in molrs; no Python mirror or `_inner` facade.
+- [ ] Handles remain stable across live views and writes update the world.
+- [ ] Native copy/merge/extract and Frame round trips cover the new kind.
+- [ ] PyO3 exports and type stubs are updated before molpy uses the API.
+- [ ] MolPy re-exports the native type or adds a true native subclass only.
+- [ ] Rust, molrs-python, and molpy integration tests all pass.

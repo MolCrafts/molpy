@@ -2,7 +2,7 @@
 
 :class:`RetypeCache` keys :class:`~molpy.typifier.region.RegionTypes` by the
 region's isomorphism-invariant structural hash
-(:meth:`~molpy.core.affected_region.AffectedRegion.__hash__`). During polymer
+(:meth:`~molpy.typifier.affected_region.AffectedRegion.__hash__`). During polymer
 growth the many structurally-identical junctions collapse to one hash → the
 region is typed **once** and every later identical junction is a cache hit,
 turning the reacter's O(N²) whole-graph retype pass into O(#distinct junction
@@ -20,18 +20,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from molpy.typifier.region import apply_region_types
-
 if TYPE_CHECKING:
-    from molpy.core.affected_region import AffectedRegion
-    from molpy.typifier.region import RegionTypifier
+    from molpy.typifier.affected_region import AffectedRegion
+    from molpy.typifier.base import Typifier
     from molpy.typifier.region import RegionTypes
 
 
 class RetypeCache:
     """Deduplicate region typing by structural hash + isomorphism confirm."""
 
-    def __init__(self, typifier: RegionTypifier) -> None:
+    def __init__(self, typifier: Typifier) -> None:
         self._typifier = typifier
         self._buckets: dict[int, list[tuple[AffectedRegion, RegionTypes]]] = {}
 
@@ -41,21 +39,20 @@ class RetypeCache:
         for cached_region, types in self._buckets.get(key, ()):
             if region == cached_region:  # is_isomorphic confirm
                 return types
-        types = self._typifier.typify_region(region)
+        from molpy.typifier.region import RegionTypes
+
+        types = RegionTypes.of(region, self._typifier)
         self._buckets.setdefault(key, []).append((region, types))
         return types
 
-    def apply(self, region_types: RegionTypes, region: AffectedRegion) -> None:
-        """Write ``region_types`` onto ``region``'s parent interior atoms.
-
-        Delegates to :func:`~molpy.typifier.region.apply_region_types`, which
-        maps each stored canonical position onto ``region``'s atoms via its own
-        canonical order + ``entity_map`` (boundary atoms are never touched).
-        """
-        apply_region_types(region_types, region)
-
     def retype_and_apply(self, region: AffectedRegion) -> RegionTypes:
-        """Convenience: :meth:`retype` then :meth:`apply` onto the parent."""
+        """Type ``region`` (cached) and write its interior types onto the parent.
+
+        The write-back maps each stored canonical position onto ``region``'s own
+        canonical order + ``entity_map``, so a snapshot captured from a different
+        but isomorphic region still lands correctly. Atoms outside the write-back
+        set are never touched.
+        """
         types = self.retype(region)
-        self.apply(types, region)
+        types.apply_to(region)
         return types

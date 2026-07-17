@@ -1,870 +1,271 @@
-"""Tests for HDF5 Frame I/O.
+"""Strict schema-v2 tests for single-Frame HDF5 I/O."""
 
-This module tests reading and writing Frame objects to/from HDF5 format.
-Tests use LAMMPS data files as input sources to ensure compatibility with
-real-world molecular data structures.
-"""
+from __future__ import annotations
 
 from pathlib import Path
 
-import molrs
 import numpy as np
 import pytest
 
-import molpy as mp
+h5py = pytest.importorskip("h5py")
+from molrs import Block, Frame, MetaValue
+
+from molpy.core.box import Box
+from molpy.io import read_h5, write_h5
+from molpy.io.data.h5 import FRAME_SCHEMA_VERSION, HDF5Reader, HDF5Writer
 
 
-def _check_h5py():
-    """Check if h5py is available and can be imported."""
-    try:
-        import h5py
-
-        # Try to actually use it to catch version incompatibility
-        _ = h5py.File.__name__
-        return True
-    except (ImportError, ValueError, AttributeError):
-        return False
-
-
-HAS_H5PY = _check_h5py()
-
-if HAS_H5PY:
-    from molpy.io import read_h5, read_lammps_data, write_h5
-    from molpy.io.data.h5 import HDF5Reader, HDF5Writer
-
-pytestmark = pytest.mark.skipif(
-    not HAS_H5PY, reason="h5py is not installed or incompatible"
-)
-
-
-@pytest.fixture
-def test_files(TEST_DATA_DIR) -> dict[str, Path]:
-    """Provide paths to test files."""
-    test_data_dir = TEST_DATA_DIR / "lammps-data"
-
-    files = {
-        "molid": test_data_dir / "molid.lmp",
-        "labelmap": test_data_dir / "labelmap.lmp",
-        "solvated": test_data_dir / "solvated.lmp",
-        "whitespaces": test_data_dir / "whitespaces.lmp",
+def _all_meta_values() -> dict[str, MetaValue]:
+    values = {
+        "bool": True,
+        "i32": -32,
+        "i64": -(2**40),
+        "u32": 32,
+        "u64": 2**40,
+        "f32": 1.25,
+        "f64": np.pi,
+        "string": "typed/元数据",
+        "bool3": [True, False, True],
+        "i32x3": [-1, 0, 1],
+        "i64x3": [-(2**40), 0, 2**40],
+        "u32x3": [1, 2, 3],
+        "u64x3": [2**40, 2**41, 2**42],
+        "f32x3": [1.25, 2.5, 5.0],
+        "f64x3": [np.pi, np.e, np.sqrt(2.0)],
+        "f32x6": list(np.arange(6, dtype=np.float32) / 3),
+        "f64x6": list(np.arange(6, dtype=np.float64) / 7),
+        "f32x9": list(np.arange(9, dtype=np.float32) / 11),
+        "f64x9": list(np.arange(9, dtype=np.float64) / 13),
     }
-    return files
+    return {dtype: MetaValue(dtype, value) for dtype, value in values.items()}
 
 
-class TestHDF5Writer:
-    """Test HDF5Writer with various Frame structures."""
-
-    def test_write_simple_frame(self, test_files, tmp_path):
-        """Test writing a simple frame with atoms only."""
-        # Read original LAMMPS data file
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        # Write to HDF5
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, original_frame)
-
-        # Verify file exists
-        assert h5_file.exists()
-
-    def test_write_frame_with_connectivity(self, test_files, tmp_path):
-        """Test writing frame with bonds, angles, dihedrals."""
-        # Read file with connectivity
-        original_frame = read_lammps_data(test_files["labelmap"], atom_style="full")
-
-        # Write to HDF5
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, original_frame)
-
-        assert h5_file.exists()
-
-    def test_write_with_compression(self, test_files, tmp_path):
-        """Test writing with different compression options."""
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        # Test with gzip compression
-        h5_file = tmp_path / "test_gzip.h5"
-        write_h5(h5_file, original_frame, compression="gzip", compression_opts=6)
-
-        assert h5_file.exists()
-
-        # Test without compression
-        h5_file_no_comp = tmp_path / "test_no_comp.h5"
-        write_h5(h5_file_no_comp, original_frame, compression=None)
-
-        assert h5_file_no_comp.exists()
-
-    def test_write_empty_frame_raises_error(self, tmp_path):
-        """Test that writing empty frame raises ValueError."""
-        empty_frame = mp.Frame()
-
-        h5_file = tmp_path / "test.h5"
-        with pytest.raises(ValueError, match="Cannot write empty frame"):
-            write_h5(h5_file, empty_frame)
-
-
-class TestHDF5Reader:
-    """Test HDF5Reader with various Frame structures."""
-
-    def test_read_simple_frame(self, test_files, tmp_path):
-        """Test reading a simple frame with atoms only."""
-        # Read original
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        # Write to HDF5
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, original_frame)
-
-        # Read back
-        read_frame = read_h5(h5_file)
-
-        # Compare atoms
-        orig_atoms = original_frame["atoms"]
-        read_atoms = read_frame["atoms"]
-
-        assert orig_atoms.nrows == read_atoms.nrows
-        assert set(orig_atoms.keys()) == set(read_atoms.keys())
-
-        # Compare numeric fields
-        for key in orig_atoms.keys():
-            if orig_atoms[key].dtype.kind in "biufc":  # numeric types
-                np.testing.assert_array_almost_equal(
-                    orig_atoms[key], read_atoms[key], decimal=6
-                )
-            elif orig_atoms[key].dtype.kind == "U":  # string types
-                np.testing.assert_array_equal(orig_atoms[key], read_atoms[key])
-
-    def test_read_frame_with_connectivity(self, test_files, tmp_path):
-        """Test reading frame with bonds, angles, dihedrals."""
-        # Read original
-        original_frame = read_lammps_data(test_files["labelmap"], atom_style="full")
-
-        # Write to HDF5
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, original_frame)
-
-        # Read back
-        read_frame = read_h5(h5_file)
-
-        # Compare all blocks
-        assert set(original_frame._blocks.keys()) == set(read_frame._blocks.keys())
-
-        for block_name in original_frame._blocks.keys():
-            orig_block = original_frame[block_name]
-            read_block = read_frame[block_name]
-
-            assert orig_block.nrows == read_block.nrows
-            assert set(orig_block.keys()) == set(read_block.keys())
-
-            # Compare all variables in block
-            for var_name in orig_block.keys():
-                orig_data = orig_block[var_name]
-                read_data = read_block[var_name]
-
-                if orig_data.dtype.kind in "biufc":  # numeric types
-                    np.testing.assert_array_almost_equal(
-                        orig_data, read_data, decimal=6
-                    )
-                elif orig_data.dtype.kind == "U":  # string types
-                    np.testing.assert_array_equal(orig_data, read_data)
-
-    def test_read_metadata(self, test_files, tmp_path):
-        """Test reading frame metadata."""
-        # Read original
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        # Add some test metadata
-        original_frame.metadata["test_int"] = 42
-        original_frame.metadata["test_float"] = 3.14
-        original_frame.metadata["test_string"] = "test_value"
-        original_frame.metadata["test_list"] = [1, 2, 3]
-
-        # Write to HDF5
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, original_frame)
-
-        # Read back
-        read_frame = read_h5(h5_file)
-
-        # Compare metadata (excluding complex objects like Box, ForceField)
-        for key in original_frame.metadata.keys():
-            if key == "box":
-                # Box is a special object, check separately
-                if read_frame.box is not None:
-                    orig_box = original_frame.box
-                    read_box = read_frame.box
-                    if orig_box is not None and read_box is not None:
-                        np.testing.assert_array_almost_equal(
-                            orig_box.matrix, read_box.matrix, decimal=6
-                        )
-            elif key == "forcefield":
-                # ForceField is complex, just check it exists
-                assert (
-                    key in read_frame.metadata
-                    or "forcefield" not in original_frame.metadata
-                )
-            elif isinstance(
-                original_frame.metadata[key], (int, float, str, bool, list)
-            ):
-                assert key in read_frame.metadata
-                orig_val = original_frame.metadata[key]
-                read_val = read_frame.metadata[key]
-                if isinstance(orig_val, (int, float)):
-                    assert abs(orig_val - read_val) < 1e-6
-                else:
-                    assert orig_val == read_val
-
-    def test_read_metadata_with_box(self, test_files, tmp_path):
-        """Test reading frame metadata with Box object."""
-        # Read original
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        # Ensure box exists in metadata
-        assert original_frame.box is not None
-        orig_box = original_frame.box
-        assert orig_box is not None
-
-        # Write to HDF5
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, original_frame)
-
-        # Read back
-        read_frame = read_h5(h5_file)
-
-        # Check Box was correctly restored
-        assert read_frame.box is not None
-        read_box = read_frame.box
-        assert read_box is not None
-        assert isinstance(read_box, molrs.Box)
-
-        # Compare Box properties
-        np.testing.assert_array_almost_equal(
-            orig_box.matrix, read_box.matrix, decimal=6
-        )
-        np.testing.assert_array_almost_equal(orig_box.pbc, read_box.pbc, decimal=6)
-        np.testing.assert_array_almost_equal(
-            orig_box.origin, read_box.origin, decimal=6
-        )
-
-    def test_read_with_nested_metadata(self, test_files, tmp_path):
-        """Test reading frame with nested metadata dictionaries."""
-        # Read original
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        # Add nested metadata
-        original_frame.metadata["nested"] = {
-            "level1": {"level2": "value"},
-            "number": 123,
+def _frame(step: int = 0) -> Frame:
+    frame = Frame(
+        {
+            "atoms": Block(
+                {
+                    "id": np.array([1, 2, 3], dtype=np.int64),
+                    "position": np.arange(9, dtype=np.float64).reshape(3, 3),
+                    "charge": np.array([-0.2, 0.1, 0.1], dtype=np.float32),
+                    "element": np.array(["O", "H", "H"]),
+                }
+            ),
+            "bonds": Block(
+                {
+                    "atomi": np.array([0, 0], dtype=np.int32),
+                    "atomj": np.array([1, 2], dtype=np.int32),
+                    "type": np.array(["O-H", "O-H"]),
+                }
+            ),
         }
-
-        # Write to HDF5
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, original_frame)
-
-        # Read back
-        read_frame = read_h5(h5_file)
-
-        # Check nested metadata
-        assert "nested" in read_frame.metadata
-        assert read_frame.metadata["nested"]["number"] == 123
-        assert read_frame.metadata["nested"]["level1"]["level2"] == "value"
-
-    def test_box_array_conversion(self, tmp_path):
-        """Test that Box can be converted to numpy array via __array__."""
-        from molpy.core import Box
-
-        box = Box(matrix=np.eye(3) * 10.0)
-
-        # Test __array__ method
-        box_array = np.array(box)
-        assert box_array.shape == (3, 3), f"Expected (3,3), got {box_array.shape}"
-        np.testing.assert_array_almost_equal(box_array, box.matrix)
-
-        # Test with different dtypes
-        box_array_f32 = np.array(box, dtype=np.float32)
-        assert box_array_f32.dtype == np.float32
-
-        # Test in HDF5 context
-        frame = mp.Frame()
-        frame["atoms"] = {"x": [0.0, 1.0], "y": [0.0, 0.0], "z": [0.0, 0.0]}
-        frame.box = box
-        frame.metadata["timestep"] = 0
-
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, frame)
-
-        read_frame = read_h5(h5_file)
-        read_box = read_frame.box
-
-        assert isinstance(read_box, molrs.Box), f"Expected Box, got {type(read_box)}"
-        np.testing.assert_array_almost_equal(box.matrix, read_box.matrix, decimal=6)
-        np.testing.assert_array_almost_equal(box.pbc, read_box.pbc)
-        np.testing.assert_array_almost_equal(box.origin, read_box.origin, decimal=6)
-
-    def test_box_with_different_pbc_and_origin(self, tmp_path):
-        """Test Box with different PBC and origin values."""
-        from molpy.core import Box
-
-        # Test with custom PBC and origin
-        box = Box(
-            matrix=np.diag([10.0, 20.0, 30.0]),
-            pbc=np.array([True, True, False]),
-            origin=np.array([-5.0, -10.0, 0.0]),
-        )
-
-        frame = mp.Frame()
-        frame["atoms"] = {"x": [0.0], "y": [0.0], "z": [0.0]}
-        frame.box = box
-
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, frame)
-
-        read_frame = read_h5(h5_file)
-        read_box = read_frame.box
-
-        assert isinstance(read_box, molrs.Box)
-        np.testing.assert_array_almost_equal(box.matrix, read_box.matrix, decimal=6)
-        np.testing.assert_array_equal(box.pbc, read_box.pbc)
-        np.testing.assert_array_almost_equal(box.origin, read_box.origin, decimal=6)
-
-    def test_box_triclinic(self, tmp_path):
-        """Test Box with triclinic (non-orthogonal) matrix."""
-        from molpy.core import Box
-
-        # Create triclinic box
-        matrix = np.array(
-            [
-                [10.0, 2.0, 1.0],
-                [0.0, 20.0, 1.5],
-                [0.0, 0.0, 30.0],
-            ]
-        )
-        box = Box(matrix=matrix)
-
-        frame = mp.Frame()
-        frame["atoms"] = {"x": [0.0], "y": [0.0], "z": [0.0]}
-        frame.box = box
-
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, frame)
-
-        read_frame = read_h5(h5_file)
-        read_box = read_frame.box
-
-        assert isinstance(read_box, molrs.Box)
-        np.testing.assert_array_almost_equal(box.matrix, read_box.matrix, decimal=6)
+    )
+    frame.simbox = Box.tric(
+        [10.0, 11.0, 12.0],
+        [0.5, 1.0, -0.25],
+        pbc=[True, False, True],
+        origin=[-1.0, 2.0, 3.0],
+    )
+    meta = _all_meta_values()
+    meta["step"] = MetaValue("i64", step)
+    frame.meta = meta
+    return frame
 
 
-class TestHDF5RoundTrip:
-    """Test round-trip conversion: read -> write -> read."""
-
-    def test_roundtrip_simple_frame(self, test_files, tmp_path):
-        """Test round-trip for simple frame."""
-        # Read original
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        # Write to HDF5
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, original_frame)
-
-        # Read back
-        read_frame = read_h5(h5_file)
-
-        # Compare atoms block
-        orig_atoms = original_frame["atoms"]
-        read_atoms = read_frame["atoms"]
-
-        assert orig_atoms.nrows == read_atoms.nrows
-        assert set(orig_atoms.keys()) == set(read_atoms.keys())
-
-        # Compare all numeric fields
-        for key in orig_atoms.keys():
-            if orig_atoms[key].dtype.kind in "biufc":
-                np.testing.assert_array_almost_equal(
-                    orig_atoms[key], read_atoms[key], decimal=6
-                )
-            elif orig_atoms[key].dtype.kind == "U":
-                np.testing.assert_array_equal(orig_atoms[key], read_atoms[key])
-
-        # Compare Box if present
-        if original_frame.box is not None and original_frame.box is not None:
-            assert read_frame.box is not None
-            orig_box = original_frame.box
-            read_box = read_frame.box
-            assert read_box is not None
-            assert isinstance(read_box, molrs.Box)
-            np.testing.assert_array_almost_equal(
-                orig_box.matrix, read_box.matrix, decimal=6
-            )
-            np.testing.assert_array_equal(orig_box.pbc, read_box.pbc)
-            np.testing.assert_array_almost_equal(
-                orig_box.origin, read_box.origin, decimal=6
-            )
-
-    def test_roundtrip_with_connectivity(self, test_files, tmp_path):
-        """Test round-trip for frame with full connectivity."""
-        # Read original
-        original_frame = read_lammps_data(test_files["labelmap"], atom_style="full")
-
-        # Write to HDF5
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, original_frame)
-
-        # Read back
-        read_frame = read_h5(h5_file)
-
-        # Compare all blocks
-        for block_name in original_frame._blocks.keys():
-            orig_block = original_frame[block_name]
-            read_block = read_frame[block_name]
-
-            assert orig_block.nrows == read_block.nrows
-            assert set(orig_block.keys()) == set(read_block.keys())
-
-            # Compare all variables
-            for var_name in orig_block.keys():
-                orig_data = orig_block[var_name]
-                read_data = read_block[var_name]
-
-                if orig_data.dtype.kind in "biufc":
-                    np.testing.assert_array_almost_equal(
-                        orig_data, read_data, decimal=6
-                    )
-                elif orig_data.dtype.kind == "U":
-                    np.testing.assert_array_equal(orig_data, read_data)
-
-        # Compare Box if present
-        if original_frame.box is not None and original_frame.box is not None:
-            assert read_frame.box is not None
-            orig_box = original_frame.box
-            read_box = read_frame.box
-            assert read_box is not None
-            assert isinstance(read_box, molrs.Box)
-            np.testing.assert_array_almost_equal(
-                orig_box.matrix, read_box.matrix, decimal=6
-            )
-
-    def test_roundtrip_with_string_types(self, test_files, tmp_path):
-        """Test round-trip for frame with string type labels."""
-        # Read original (labelmap has string types)
-        original_frame = read_lammps_data(test_files["labelmap"], atom_style="full")
-
-        # Write to HDF5
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, original_frame)
-
-        # Read back
-        read_frame = read_h5(h5_file)
-
-        # Check that string types are preserved
-        orig_atoms = original_frame["atoms"]
-        read_atoms = read_frame["atoms"]
-
-        if "type" in orig_atoms and orig_atoms["type"].dtype.kind == "U":
-            np.testing.assert_array_equal(orig_atoms["type"], read_atoms["type"])
-
-    def test_roundtrip_with_compression(self, test_files, tmp_path):
-        """Test round-trip with compression enabled."""
-        # Read original
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        # Write with compression
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, original_frame, compression="gzip", compression_opts=6)
-
-        # Read back
-        read_frame = read_h5(h5_file)
-
-        # Compare atoms
-        orig_atoms = original_frame["atoms"]
-        read_atoms = read_frame["atoms"]
-
-        assert orig_atoms.nrows == read_atoms.nrows
-        for key in orig_atoms.keys():
-            if orig_atoms[key].dtype.kind in "biufc":
-                np.testing.assert_array_almost_equal(
-                    orig_atoms[key], read_atoms[key], decimal=6
-                )
-
-
-class TestHDF5Compression:
-    """Comprehensive tests for HDF5 compression options."""
-
-    @pytest.mark.parametrize("compression", ["gzip", "lzf", None])
-    def test_compression_options_frame(self, test_files, tmp_path, compression):
-        """Test all compression options for Frame I/O."""
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        # Write with specified compression
-        h5_file = tmp_path / f"test_{compression or 'none'}.h5"
-        if compression == "gzip":
-            write_h5(h5_file, original_frame, compression="gzip", compression_opts=4)
-        elif compression == "lzf":
-            write_h5(h5_file, original_frame, compression="lzf")
+def _assert_meta_equal(actual: dict[str, MetaValue], expected: dict[str, MetaValue]):
+    assert set(actual) == set(expected)
+    for key, expected_value in expected.items():
+        actual_value = actual[key]
+        assert actual_value.dtype == expected_value.dtype
+        if isinstance(expected_value.value, list):
+            np.testing.assert_array_equal(actual_value.value, expected_value.value)
         else:
-            write_h5(h5_file, original_frame, compression=None)
-
-        assert h5_file.exists()
-
-        # Read back and verify
-        read_frame = read_h5(h5_file)
-        orig_atoms = original_frame["atoms"]
-        read_atoms = read_frame["atoms"]
-
-        assert orig_atoms.nrows == read_atoms.nrows
-        assert set(orig_atoms.keys()) == set(read_atoms.keys())
-
-        for key in orig_atoms.keys():
-            if orig_atoms[key].dtype.kind in "biufc":
-                np.testing.assert_array_almost_equal(
-                    orig_atoms[key], read_atoms[key], decimal=6
-                )
-
-    @pytest.mark.parametrize("compression_opts", [1, 4, 9])
-    def test_gzip_compression_levels(self, test_files, tmp_path, compression_opts):
-        """Test different gzip compression levels."""
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        h5_file = tmp_path / f"test_gzip_{compression_opts}.h5"
-        write_h5(
-            h5_file,
-            original_frame,
-            compression="gzip",
-            compression_opts=compression_opts,
-        )
-
-        assert h5_file.exists()
-
-        # Read back and verify data integrity
-        read_frame = read_h5(h5_file)
-        orig_atoms = original_frame["atoms"]
-        read_atoms = read_frame["atoms"]
-
-        assert orig_atoms.nrows == read_atoms.nrows
-        for key in orig_atoms.keys():
-            if orig_atoms[key].dtype.kind in "biufc":
-                np.testing.assert_array_almost_equal(
-                    orig_atoms[key], read_atoms[key], decimal=6
-                )
-
-    def test_compression_with_connectivity(self, test_files, tmp_path):
-        """Test compression with frames containing connectivity data."""
-        original_frame = read_lammps_data(test_files["labelmap"], atom_style="full")
-
-        # Test gzip
-        h5_file_gzip = tmp_path / "test_gzip_connectivity.h5"
-        write_h5(h5_file_gzip, original_frame, compression="gzip", compression_opts=4)
-
-        read_frame_gzip = read_h5(h5_file_gzip)
-        assert set(original_frame._blocks.keys()) == set(read_frame_gzip._blocks.keys())
-
-        # Test lzf
-        h5_file_lzf = tmp_path / "test_lzf_connectivity.h5"
-        write_h5(h5_file_lzf, original_frame, compression="lzf")
-
-        read_frame_lzf = read_h5(h5_file_lzf)
-        assert set(original_frame._blocks.keys()) == set(read_frame_lzf._blocks.keys())
-
-        # Verify all blocks are correctly restored
-        for block_name in original_frame._blocks.keys():
-            orig_block = original_frame[block_name]
-            read_block_gzip = read_frame_gzip[block_name]
-            read_block_lzf = read_frame_lzf[block_name]
-
-            assert orig_block.nrows == read_block_gzip.nrows
-            assert orig_block.nrows == read_block_lzf.nrows
-
-            for var_name in orig_block.keys():
-                orig_data = orig_block[var_name]
-                if orig_data.dtype.kind in "biufc":
-                    np.testing.assert_array_almost_equal(
-                        orig_data, read_block_gzip[var_name], decimal=6
-                    )
-                    np.testing.assert_array_almost_equal(
-                        orig_data, read_block_lzf[var_name], decimal=6
-                    )
-
-    def test_compression_with_metadata(self, test_files, tmp_path):
-        """Test compression with frames containing metadata including Box."""
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        # Ensure box exists
-        assert original_frame.box is not None
-        orig_box = original_frame.box
-
-        # Test gzip with metadata
-        h5_file_gzip = tmp_path / "test_gzip_metadata.h5"
-        write_h5(h5_file_gzip, original_frame, compression="gzip", compression_opts=4)
-
-        read_frame_gzip = read_h5(h5_file_gzip)
-        assert read_frame_gzip.box is not None
-        read_box_gzip = read_frame_gzip.box
-        assert isinstance(read_box_gzip, molrs.Box)
-        np.testing.assert_array_almost_equal(
-            orig_box.matrix, read_box_gzip.matrix, decimal=6
-        )
-
-        # Test lzf with metadata
-        h5_file_lzf = tmp_path / "test_lzf_metadata.h5"
-        write_h5(h5_file_lzf, original_frame, compression="lzf")
-
-        read_frame_lzf = read_h5(h5_file_lzf)
-        assert read_frame_lzf.box is not None
-        read_box_lzf = read_frame_lzf.box
-        assert isinstance(read_box_lzf, molrs.Box)
-        np.testing.assert_array_almost_equal(
-            orig_box.matrix, read_box_lzf.matrix, decimal=6
-        )
-
-    def test_compression_with_string_types(self, test_files, tmp_path):
-        """Test compression with frames containing string type data."""
-        original_frame = read_lammps_data(test_files["labelmap"], atom_style="full")
-
-        # Test gzip with strings
-        h5_file_gzip = tmp_path / "test_gzip_strings.h5"
-        write_h5(h5_file_gzip, original_frame, compression="gzip", compression_opts=4)
-
-        read_frame_gzip = read_h5(h5_file_gzip)
-        if "type" in original_frame["atoms"]:
-            orig_type = original_frame["atoms"]["type"]
-            read_type = read_frame_gzip["atoms"]["type"]
-            if orig_type.dtype.kind == "U":
-                np.testing.assert_array_equal(orig_type, read_type)
-
-        # Test lzf with strings
-        h5_file_lzf = tmp_path / "test_lzf_strings.h5"
-        write_h5(h5_file_lzf, original_frame, compression="lzf")
-
-        read_frame_lzf = read_h5(h5_file_lzf)
-        if "type" in original_frame["atoms"]:
-            orig_type = original_frame["atoms"]["type"]
-            read_type = read_frame_lzf["atoms"]["type"]
-            if orig_type.dtype.kind == "U":
-                np.testing.assert_array_equal(orig_type, read_type)
-
-    def test_compression_file_sizes(self, test_files, tmp_path):
-        """Test that compression options work (file size may vary)."""
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        # Write without compression
-        h5_file_no_comp = tmp_path / "test_no_comp.h5"
-        write_h5(h5_file_no_comp, original_frame, compression=None)
-        size_no_comp = h5_file_no_comp.stat().st_size
-        assert size_no_comp > 0
-
-        # Write with gzip
-        h5_file_gzip = tmp_path / "test_gzip.h5"
-        write_h5(h5_file_gzip, original_frame, compression="gzip", compression_opts=9)
-        size_gzip = h5_file_gzip.stat().st_size
-        assert size_gzip > 0
-
-        # Write with lzf
-        h5_file_lzf = tmp_path / "test_lzf.h5"
-        write_h5(h5_file_lzf, original_frame, compression="lzf")
-        size_lzf = h5_file_lzf.stat().st_size
-        assert size_lzf > 0
-
-        # Verify all files are readable
-        read_frame_no_comp = read_h5(h5_file_no_comp)
-        read_frame_gzip = read_h5(h5_file_gzip)
-        read_frame_lzf = read_h5(h5_file_lzf)
-
-        assert read_frame_no_comp["atoms"].nrows == original_frame["atoms"].nrows
-        assert read_frame_gzip["atoms"].nrows == original_frame["atoms"].nrows
-        assert read_frame_lzf["atoms"].nrows == original_frame["atoms"].nrows
-
-    def test_compression_with_writer_class(self, test_files, tmp_path):
-        """Test compression using HDF5Writer class directly."""
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        # Test gzip with HDF5Writer (using context manager)
-        h5_file_gzip = tmp_path / "test_writer_gzip.h5"
-        with HDF5Writer(
-            h5_file_gzip, compression="gzip", compression_opts=4
-        ) as writer_gzip:
-            writer_gzip.write(original_frame)
-
-        read_frame_gzip = read_h5(h5_file_gzip)
-        assert read_frame_gzip["atoms"].nrows == original_frame["atoms"].nrows
-
-        # Test lzf with HDF5Writer (using context manager)
-        h5_file_lzf = tmp_path / "test_writer_lzf.h5"
-        with HDF5Writer(h5_file_lzf, compression="lzf") as writer_lzf:
-            writer_lzf.write(original_frame)
-
-        read_frame_lzf = read_h5(h5_file_lzf)
-        assert read_frame_lzf["atoms"].nrows == original_frame["atoms"].nrows
-
-    def test_compression_with_context_manager(self, test_files, tmp_path):
-        """Test compression using context manager."""
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        # Test gzip with context manager
-        h5_file_gzip = tmp_path / "test_ctx_gzip.h5"
-        with HDF5Writer(h5_file_gzip, compression="gzip", compression_opts=4) as writer:
-            writer.write(original_frame)
-
-        read_frame_gzip = read_h5(h5_file_gzip)
-        assert read_frame_gzip["atoms"].nrows == original_frame["atoms"].nrows
-
-        # Test lzf with context manager
-        h5_file_lzf = tmp_path / "test_ctx_lzf.h5"
-        with HDF5Writer(h5_file_lzf, compression="lzf") as writer:
-            writer.write(original_frame)
-
-        read_frame_lzf = read_h5(h5_file_lzf)
-        assert read_frame_lzf["atoms"].nrows == original_frame["atoms"].nrows
-
-    def test_roundtrip_different_atom_styles(self, test_files, tmp_path):
-        """Test round-trip with different atom styles."""
-        atom_styles = ["atomic", "charge", "full"]
-
-        for atom_style in atom_styles:
-            try:
-                # Read original
-                original_frame = read_lammps_data(
-                    test_files["molid"], atom_style=atom_style
-                )
-
-                # Write to HDF5
-                h5_file = tmp_path / f"test_{atom_style}.h5"
-                write_h5(h5_file, original_frame)
-
-                # Read back
-                read_frame = read_h5(h5_file)
-
-                # Compare atoms
-                orig_atoms = original_frame["atoms"]
-                read_atoms = read_frame["atoms"]
-
-                assert orig_atoms.nrows == read_atoms.nrows
-                assert set(orig_atoms.keys()) == set(read_atoms.keys())
-
-                # Compare numeric fields
-                for key in orig_atoms.keys():
-                    if orig_atoms[key].dtype.kind in "biufc":
-                        np.testing.assert_array_almost_equal(
-                            orig_atoms[key], read_atoms[key], decimal=6
-                        )
-            except Exception:
-                # Some atom styles may not be compatible with certain files
-                # Skip if read fails
-                continue
-
-
-class TestHDF5DataTypes:
-    """Test handling of different data types."""
-
-    def test_integer_types(self, tmp_path):
-        """Test writing and reading integer types."""
-        frame = mp.Frame()
-        frame["atoms"] = {
-            "id": np.array([1, 2, 3], dtype=np.int32),
-            "type": np.array([1, 1, 2], dtype=np.int64),
-        }
-
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, frame)
-
-        read_frame = read_h5(h5_file)
-        read_atoms = read_frame["atoms"]
-
-        assert read_atoms["id"].dtype in (np.int32, np.int64)
-        assert read_atoms["type"].dtype in (np.int32, np.int64)
-        np.testing.assert_array_equal(frame["atoms"]["id"], read_atoms["id"])
-        np.testing.assert_array_equal(frame["atoms"]["type"], read_atoms["type"])
-
-    def test_float_types(self, tmp_path):
-        """Test writing and reading float types."""
-        frame = mp.Frame()
-        frame["atoms"] = {
-            "x": np.array([0.0, 1.0, 2.0], dtype=np.float32),
-            "y": np.array([0.0, 1.0, 2.0], dtype=np.float64),
-        }
-
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, frame)
-
-        read_frame = read_h5(h5_file)
-        read_atoms = read_frame["atoms"]
-
-        np.testing.assert_array_almost_equal(
-            frame["atoms"]["x"], read_atoms["x"], decimal=6
-        )
-        np.testing.assert_array_almost_equal(
-            frame["atoms"]["y"], read_atoms["y"], decimal=6
-        )
-
-    def test_string_types(self, tmp_path):
-        """Test writing and reading string types."""
-        frame = mp.Frame()
-        frame["atoms"] = {
-            "type": np.array(["C", "H", "O"], dtype="U10"),
-            "element": np.array(["C", "H", "O"], dtype="U1"),
-        }
-
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, frame)
-
-        read_frame = read_h5(h5_file)
-        read_atoms = read_frame["atoms"]
-
-        np.testing.assert_array_equal(frame["atoms"]["type"], read_atoms["type"])
-        np.testing.assert_array_equal(frame["atoms"]["element"], read_atoms["element"])
-
-
-class TestHDF5ErrorHandling:
-    """Test error handling and edge cases."""
-
-    def test_read_nonexistent_file(self, tmp_path):
-        """Test reading non-existent file."""
-        h5_file = tmp_path / "nonexistent.h5"
-        with pytest.raises((FileNotFoundError, OSError)):
-            read_h5(h5_file)
-
-    def test_write_empty_frame_raises_error(self, tmp_path):
-        """Test that writing empty frame raises error."""
-        empty_frame = mp.Frame()
-        h5_file = tmp_path / "test.h5"
-
-        with pytest.raises(ValueError, match="Cannot write empty frame"):
-            write_h5(h5_file, empty_frame)
-
-    def test_read_invalid_h5_file(self, tmp_path):
-        """Test reading invalid HDF5 file."""
-        # Create a file that's not valid HDF5
-        invalid_file = tmp_path / "invalid.h5"
-        with open(invalid_file, "w") as f:
-            f.write("not an hdf5 file")
-
-        with pytest.raises((OSError, ValueError)):
-            read_h5(invalid_file)
-
-
-class TestHDF5ContextManager:
-    """Test context manager usage."""
-
-    def test_writer_context_manager(self, test_files, tmp_path):
-        """Test using HDF5Writer as context manager."""
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        h5_file = tmp_path / "test.h5"
-        with HDF5Writer(h5_file) as writer:
-            writer.write(original_frame)
-
-        assert h5_file.exists()
-
-        # Read back to verify
-        read_frame = read_h5(h5_file)
-        assert read_frame["atoms"].nrows == original_frame["atoms"].nrows
-
-    def test_reader_context_manager(self, test_files, tmp_path):
-        """Test using HDF5Reader as context manager."""
-        original_frame = read_lammps_data(test_files["molid"], atom_style="full")
-
-        h5_file = tmp_path / "test.h5"
-        write_h5(h5_file, original_frame)
-
-        with HDF5Reader(h5_file) as reader:
-            read_frame = reader.read()
-
-        assert read_frame["atoms"].nrows == original_frame["atoms"].nrows
+            assert actual_value.value == expected_value.value
+
+
+def _assert_frame_equal(actual: Frame, expected: Frame) -> None:
+    assert set(actual.keys()) == set(expected.keys())
+    for block_name in expected.keys():
+        actual_block = actual[block_name]
+        expected_block = expected[block_name]
+        assert set(actual_block.keys()) == set(expected_block.keys())
+        for field in expected_block.keys():
+            assert actual_block[field].dtype == expected_block[field].dtype
+            np.testing.assert_array_equal(actual_block[field], expected_block[field])
+
+    assert actual.simbox is not None
+    assert expected.simbox is not None
+    np.testing.assert_array_equal(actual.simbox.matrix, expected.simbox.matrix)
+    np.testing.assert_array_equal(actual.simbox.origin, expected.simbox.origin)
+    np.testing.assert_array_equal(actual.simbox.pbc, expected.simbox.pbc)
+    _assert_meta_equal(actual.meta, expected.meta)
+
+
+@pytest.mark.parametrize("compression", ["gzip", "lzf", None])
+def test_roundtrip_exact_frame_surface(tmp_path: Path, compression: str | None):
+    expected = _frame()
+    path = tmp_path / f"frame-{compression}.h5"
+
+    write_h5(path, expected, compression=compression)
+    actual = read_h5(path)
+
+    _assert_frame_equal(actual, expected)
+    with h5py.File(path, "r") as h5_file:
+        assert h5_file.attrs["frame_schema_version"] == FRAME_SCHEMA_VERSION
+        assert set(h5_file) == {"blocks", "simbox", "meta"}
+        assert h5_file["meta"].attrs["schema_version"] == FRAME_SCHEMA_VERSION
+        assert len(h5_file["meta"]) == 20
+        assert h5_file["blocks/atoms/position"].compression == compression
+
+
+def test_all_nineteen_meta_dtypes_roundtrip_exactly(tmp_path: Path):
+    frame = _frame()
+    path = tmp_path / "typed-meta.h5"
+    HDF5Writer(path).write(frame)
+
+    actual = HDF5Reader(path).read()
+
+    expected = _all_meta_values()
+    _assert_meta_equal(
+        {key: actual.meta[key] for key in expected},
+        expected,
+    )
+
+
+def test_frame_without_simbox_and_empty_meta_roundtrips(tmp_path: Path):
+    frame = Frame({"atoms": Block({"x": np.array([1.0])})})
+    path = tmp_path / "minimal.h5"
+    write_h5(path, frame)
+
+    actual = read_h5(path)
+    assert actual.simbox is None
+    assert actual.meta == {}
+    with h5py.File(path, "r") as h5_file:
+        assert set(h5_file) == {"blocks", "meta"}
+
+
+def test_reader_can_populate_explicit_frame(tmp_path: Path):
+    path = tmp_path / "populate.h5"
+    write_h5(path, _frame())
+    target = Frame()
+
+    result = read_h5(path, target)
+
+    assert result is target
+    assert result["atoms"].nrows == 3
+
+
+def test_context_managers_use_schema_v2(tmp_path: Path):
+    path = tmp_path / "context.h5"
+    with HDF5Writer(path) as writer:
+        writer.write(_frame())
+    with HDF5Reader(path) as reader:
+        actual = reader.read()
+    assert actual.meta["string"].value == "typed/元数据"
+
+
+def test_empty_frame_is_rejected(tmp_path: Path):
+    with pytest.raises(ValueError, match="Cannot write empty frame"):
+        write_h5(tmp_path / "empty.h5", Frame())
+
+
+@pytest.mark.parametrize("version", [None, 1, 3, "2"])
+def test_old_missing_future_or_wrong_type_frame_schema_is_rejected(
+    tmp_path: Path, version: int | str | None
+):
+    path = tmp_path / "bad-version.h5"
+    write_h5(path, _frame())
+    with h5py.File(path, "a") as h5_file:
+        if version is None:
+            del h5_file.attrs["frame_schema_version"]
+        else:
+            h5_file.attrs["frame_schema_version"] = version
+
+    with pytest.raises(ValueError, match="schema|requires exactly"):
+        read_h5(path)
+
+
+def test_old_box_and_metadata_layout_is_rejected(tmp_path: Path):
+    path = tmp_path / "old-layout.h5"
+    with h5py.File(path, "w") as h5_file:
+        h5_file.attrs["frame_schema_version"] = FRAME_SCHEMA_VERSION
+        h5_file.create_group("blocks")
+        h5_file.create_group("box")
+        h5_file.create_group("metadata")
+
+    with pytest.raises(ValueError, match="missing groups|unknown groups"):
+        read_h5(path)
+
+
+@pytest.mark.parametrize("corruption", ["unknown_group", "unknown_attr"])
+def test_unknown_frame_surface_is_rejected(tmp_path: Path, corruption: str):
+    path = tmp_path / "unknown.h5"
+    write_h5(path, _frame())
+    with h5py.File(path, "a") as h5_file:
+        if corruption == "unknown_group":
+            h5_file.create_group("extra")
+        else:
+            h5_file.attrs["extra"] = 1
+
+    with pytest.raises(ValueError, match="unknown groups|requires exactly"):
+        read_h5(path)
+
+
+@pytest.mark.parametrize(
+    ("corruption", "match"),
+    [
+        ("meta_version", "meta schema"),
+        ("unknown_dtype", "unknown dtype"),
+        ("missing_dtype", "exactly key and dtype"),
+        ("bad_name", "contiguous numeric"),
+        ("duplicate_key", "Duplicate"),
+        ("wrong_shape", "requires shape"),
+    ],
+)
+def test_malformed_typed_meta_is_rejected(tmp_path: Path, corruption: str, match: str):
+    path = tmp_path / "bad-meta.h5"
+    write_h5(path, _frame())
+    with h5py.File(path, "a") as h5_file:
+        meta = h5_file["meta"]
+        if corruption == "meta_version":
+            meta.attrs["schema_version"] = 1
+        elif corruption == "unknown_dtype":
+            meta["00000000"].attrs["dtype"] = "json"
+        elif corruption == "missing_dtype":
+            del meta["00000000"].attrs["dtype"]
+        elif corruption == "bad_name":
+            meta.move("00000000", "entry")
+        elif corruption == "duplicate_key":
+            meta["00000001"].attrs["key"] = meta["00000000"].attrs["key"]
+        else:
+            dataset = meta["00000000"]
+            key = dataset.attrs["key"]
+            del meta["00000000"]
+            replacement = meta.create_dataset(
+                "00000000", data=np.array([True, False], dtype=np.bool_)
+            )
+            replacement.attrs["key"] = key
+            replacement.attrs["dtype"] = "bool"
+
+    with pytest.raises(ValueError, match=match):
+        read_h5(path)
+
+
+def test_block_without_exact_dtype_marker_is_rejected(tmp_path: Path):
+    path = tmp_path / "bad-block.h5"
+    write_h5(path, _frame())
+    with h5py.File(path, "a") as h5_file:
+        del h5_file["blocks/atoms/id"].attrs["dtype"]
+
+    with pytest.raises(ValueError, match="exactly one 'dtype'"):
+        read_h5(path)
+
+
+def test_malformed_simbox_is_rejected(tmp_path: Path):
+    path = tmp_path / "bad-simbox.h5"
+    write_h5(path, _frame())
+    with h5py.File(path, "a") as h5_file:
+        del h5_file["simbox/origin"]
+
+    with pytest.raises(ValueError, match="simbox must contain exactly"):
+        read_h5(path)

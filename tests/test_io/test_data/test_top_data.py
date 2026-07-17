@@ -5,6 +5,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import molrs
+from molrs import MetaValue
+
 import molpy as mp
 from molpy.io.data.top import TopReader, TopWriter
 
@@ -154,10 +157,10 @@ MOL  3
 class TestTopWriter:
     """Tests for TopWriter producing valid GROMACS topology files."""
 
-    def _make_minimal_frame(self) -> mp.Frame:
+    def _make_minimal_frame(self) -> molrs.Frame:
         """Create a minimal two-atom frame with one bond."""
-        frame = mp.Frame()
-        frame.metadata["name"] = "MOL"
+        frame = molrs.Frame()
+        frame.meta = {"name": MetaValue("string", "MOL")}
         frame["atoms"] = {
             "id": np.array([1, 2]),
             "type": np.array(["CT", "HC"]),
@@ -197,9 +200,9 @@ class TestTopWriter:
         assert "[ molecules ]" in content
 
     def test_write_molecule_name(self, tmp_path: Path) -> None:
-        """Written file uses frame.metadata['name'] as molecule name."""
+        """Written file uses frame.meta['name'] as molecule name."""
         frame = self._make_minimal_frame()
-        frame.metadata["name"] = "BENZENE"
+        frame.meta = {**frame.meta, "name": MetaValue("string", "BENZENE")}
         out_file = tmp_path / "out.top"
         TopWriter(out_file).write(frame)
 

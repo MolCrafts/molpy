@@ -13,7 +13,7 @@ MD / simulation engine abstractions for LAMMPS, CP2K, and OpenMM.
 
 ## Related
 
-- [Guide: Crosslinked Networks](../user-guide/04_crosslinking.md) (LAMMPS script generation)
+- [Guide: Assembly](../user-guide/02_assembly.md) (building the network the script runs)
 
 ---
 

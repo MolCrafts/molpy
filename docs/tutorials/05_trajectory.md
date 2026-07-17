@@ -1,14 +1,14 @@
 # Trajectory
 
-A `Trajectory` stacks frames in time order and stays lazy — a five-frame list and a multi-gigabyte stream get the same API.
+A `Trajectory` stacks an in-memory sequence of frames in time order. Lazy, seekable file access is provided by molrs trajectory readers.
 
 ## One frame is rarely enough
 
 A single `Frame` captures the state of a system at one instant. Simulation and analysis almost always involve many such states ordered in time. Storing them as a plain Python list would work for small datasets, but it hides two concerns that become important at scale: memory management and lazy access.
 
-**A `Trajectory` is an ordered sequence of `Frame` objects that supports lazy evaluation, so system meaning survives even when the data becomes large.**
+**A `Trajectory` is an eager, ordered sequence of `Frame` objects.**
 
-The key idea is continuity with `Frame`. Each element of a trajectory is still one frame — named blocks, metadata, and optionally a box. Time does not replace the snapshot model. It stacks snapshots in order.
+The key idea is continuity with `Frame`. Each element of a trajectory is still one frame — named blocks, exact-dtype metadata, and optionally a box. Time does not replace the snapshot model. It stacks snapshots in order.
 
 
 ## Building a trajectory from a list
@@ -16,44 +16,39 @@ The key idea is continuity with `Frame`. Each element of a trajectory is still o
 The simplest trajectory comes from an in-memory list of frames. This supports random access, `len`, and slicing.
 
 ```python
+import molrs
 import molpy as mp
 
 frames = []
 for i in range(5):
-    f = mp.Frame()
-    f["atoms"] = mp.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
-    f.metadata["time"] = i * 10.0
+    f = molrs.Frame()
+    f["atoms"] = molrs.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
+    f.meta = {"time": molrs.MetaValue("f64", i * 10.0)}
     frames.append(f)
 
 traj = mp.Trajectory(frames)
 print(len(traj))             # 5
-print(traj.has_length())     # True
 print(traj[0]["atoms"]["x"]) # [0.]
 ```
 
 
-## Generator-based trajectories stay lazy
+## Iterables are materialized
 
-For large or streaming data, pass a generator instead of a list. The trajectory yields frames on demand without loading everything into memory. The trade-off: you lose `len` and indexing until the generator is materialized.
+The constructor accepts any iterable, but materializes it immediately into the native container. Use `molrs.read_lammps_trajectory` or `molrs.read_xyz_trajectory` when data must remain lazy and seekable on disk.
 
 ```python
 def make_frames(n):
     for i in range(n):
-        f = mp.Frame()
-        f["atoms"] = mp.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
-        f.metadata["time"] = i * 0.5
+        f = molrs.Frame()
+        f["atoms"] = molrs.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
+        f.meta = {"time": molrs.MetaValue("f64", i * 0.5)}
         yield f
 
-lazy_traj = mp.Trajectory(make_frames(1000))
-print(lazy_traj.has_length())   # False
-
-# Iterate without materializing all frames at once
-for frame in lazy_traj:
-    if frame.metadata["time"] > 2.0:
-        break
+traj_from_iterable = mp.Trajectory(make_frames(1000))
+print(len(traj_from_iterable))   # 1000
 ```
 
-Generators are consumed by iteration. If you need to read the same data multiple times, materialize a subset or create a fresh generator each time.
+The generator is consumed during construction. File readers avoid that eager materialization.
 
 
 ## Slicing and indexing
@@ -68,32 +63,30 @@ strided = traj[::2]
 print(len(strided))     # 3
 
 last = traj[-1]
-print(last.metadata["time"])   # 40.0
+print(last.meta["time"].value)   # 40.0
 ```
 
 Slicing with a stride (`traj[::n]`) is a convenient way to downsample for quick inspection.
 
 
-## Lazy transforms with map
+## Transforms with map
 
-`map` applies a function to each frame and returns a new trajectory. The transformation is lazy — the function runs only when a frame is accessed, not when `map` is called. This means you can chain several transforms without paying for all of them upfront.
+`map` applies a function to every frame immediately and returns a new trajectory. The original frames are unchanged.
 
 ```python
 def shift_x(frame):
-    new = mp.Frame()
+    new = molrs.Frame()
     x = frame["atoms"]["x"]
-    new["atoms"] = mp.Block({
+    new["atoms"] = molrs.Block({
         "x": x + 10.0,
         "y": frame["atoms"]["y"],
         "z": frame["atoms"]["z"],
     })
-    new.metadata = frame.metadata.copy()
+    new.meta = frame.meta
     return new
 
 shifted = traj.map(shift_x)
 ```
-
-Because `map` returns a generator-based trajectory, you need to iterate or materialize to see the results.
 
 ```python
 shifted_list = list(shifted)

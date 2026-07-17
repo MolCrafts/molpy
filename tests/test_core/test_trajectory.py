@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from molpy import Frame
+from molrs import Frame, MetaValue
 from molpy.core.trajectory import (
     CustomStrategy,
     FrameIntervalStrategy,
@@ -23,7 +23,7 @@ def _make_frame(time: float | None = None) -> Frame:
         "z": np.array([0.0]),
     }
     if time is not None:
-        frame.metadata["time"] = time
+        frame.meta = {"time": MetaValue("f64", time)}
     return frame
 
 
@@ -59,10 +59,6 @@ class TestTrajectory:
     def test_len(self, frames):
         traj = Trajectory(frames)
         assert len(traj) == len(frames)
-
-    def test_has_length_always_true(self, frames):
-        traj = Trajectory(frames)
-        assert traj.has_length() is True
 
     def test_getitem_int_returns_frame(self, frames):
         traj = Trajectory(frames)
