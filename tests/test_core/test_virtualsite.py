@@ -1,58 +1,43 @@
-"""Tests for the virtual-site data model (VirtualSite/DrudeParticle/MasslessSite).
+"""Virtual sites are live refs identified by their persisted marker."""
 
-Key design fact (verified): molrs re-materialises nodes as plain ``Atom`` (the
-intern cache is weak and ``_intern_atom`` uses ``_entity_cls``), so the Python
-subclass identity is NOT preserved across a ``.copy()`` / round-trip. Identity
-is therefore carried by the persistent ``vsite`` marker field, exposed via
-``Atom.is_virtual``.
-"""
+import pytest
 
-from molpy.core import (
-    Atom,
-    Atomistic,
-    DrudeParticle,
-    MasslessSite,
-    VirtualSite,
-)
+from molpy.core import Atom, Atomistic, DrudeParticle, MasslessSite, VirtualSite
 
 
-# --- ac-001: class hierarchy --------------------------------------------------
-def test_class_hierarchy():
+def test_class_hierarchy() -> None:
     assert issubclass(VirtualSite, Atom)
     assert issubclass(DrudeParticle, VirtualSite)
     assert issubclass(MasslessSite, VirtualSite)
 
 
-def test_construction_sets_marker():
-    assert VirtualSite().get("vsite") == "virtual"
-    assert DrudeParticle().get("vsite") == "drude"
-    assert MasslessSite().get("vsite") == "massless"
+@pytest.mark.parametrize(
+    ("cls", "marker"),
+    [
+        (VirtualSite, "virtual"),
+        (DrudeParticle, "drude"),
+        (MasslessSite, "massless"),
+    ],
+)
+def test_factory_sets_marker(cls: type[VirtualSite], marker: str) -> None:
+    struct = Atomistic()
+    site = struct.def_virtual_site(kind=cls, element="D")
+
+    assert site.get("vsite") == marker
+    assert site.is_virtual
+    assert struct.atoms[0] is site
 
 
-def test_is_virtual_property():
-    assert DrudeParticle().is_virtual is True
-    assert MasslessSite().is_virtual is True
-    assert Atom(element="C").is_virtual is False
+def test_marker_survives_copy_roundtrip() -> None:
+    struct = Atomistic()
+    struct.def_atom(element="C", charge=0.5)
+    struct.def_virtual_site(kind=DrudeParticle, element="D", charge=-1.0)
+    clone = struct.copy()
+
+    assert sorted(atom.get("vsite") or "" for atom in clone.atoms) == ["", "drude"]
+    assert [atom.is_virtual for atom in clone.atoms].count(True) == 1
 
 
-# --- ac-002: injectable via add_atom, marker survives molrs round-trip --------
-def test_add_atom_injection_and_retrieval():
-    asm = Atomistic()
-    asm.add_atom(Atom(element="C"))
-    asm.add_atom(DrudeParticle(element="D", charge=-1.5))
-    vsites = [a for a in asm.atoms if a.is_virtual]
-    assert len(vsites) == 1
-    assert vsites[0].get("vsite") == "drude"
-    assert vsites[0].get("charge") == -1.5
-
-
-def test_marker_survives_copy_roundtrip():
-    asm = Atomistic()
-    asm.add_atom(Atom(element="C", charge=0.5))
-    asm.add_atom(DrudeParticle(element="D", charge=-1.0))
-    clone = asm.copy()
-    # Subclass identity is lost (re-interned as Atom) but the marker field
-    # persists — identification must use the field, not isinstance.
-    kinds = sorted(a.get("vsite") or "" for a in clone.atoms)
-    assert kinds == ["", "drude"]
-    assert [a.is_virtual for a in clone.atoms].count(True) == 1
+def test_virtual_site_has_no_detached_form() -> None:
+    with pytest.raises(TypeError):
+        DrudeParticle(element="D")  # type: ignore[call-arg]

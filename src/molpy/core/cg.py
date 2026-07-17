@@ -22,75 +22,12 @@ import numpy as np
 
 import molrs
 
-from molpy.core.ops.geometry import (
-    _cross,
-    _dot,
-    _norm,
-    _unit,
-    _vec_scale,
-    _vec_sub,
-)
-
-from .entity import Entities, Entity, Link, _GraphViews
+from molrs.views import Bead, CGBond, Entities, Entity, Link, _GraphViews
 
 if TYPE_CHECKING:
+    from molrs import Frame
+
     from .atomistic import Atom
-    from .frame import Frame
-
-
-class Bead(Entity):
-    """Coarse-grained bead view: one node in a molrs ``CoarseGrain`` world.
-
-    The ``"atoms"`` key is not a scalar component: it is the bead's **membership**
-    (the underlying atom views it groups), owned by the molrs ``CoarseGrain`` as
-    opaque atom handles and resolved back to views through the source world. It
-    is intercepted here so ``bead["atoms"]`` / ``bead.get("atoms")`` keep working
-    over the membership store rather than the component columns.
-    """
-
-    __slots__ = ()
-
-    def __getitem__(self, key: str) -> Any:
-        if key == "atoms" and self.is_bound:
-            return self._world._resolve_bead_atoms(self._handle)
-        return super().__getitem__(key)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        if key == "atoms" and self.is_bound:
-            return self._world._resolve_bead_atoms(self._handle)
-        return super().get(key, default)
-
-    def __contains__(self, key: object) -> bool:
-        if key == "atoms" and self.is_bound:
-            return bool(self._world._resolve_bead_atoms(self._handle))
-        return super().__contains__(key)
-
-    def __repr__(self) -> str:
-        ident = self.get("type") or self.get("name")
-        return f"<Bead: {ident if ident is not None else id(self)}>"
-
-
-class CGBond(Link["Bead"]):
-    """Coarse-grained bond between two beads (molrs relation kind ``bonds``)."""
-
-    __slots__ = ()
-    _kind = "bonds"
-
-    def __init__(self, a: Bead, b: Bead, /, **attrs: Any) -> None:
-        assert isinstance(a, Bead), f"a must be Bead, got {type(a)}"
-        assert isinstance(b, Bead), f"b must be Bead, got {type(b)}"
-        super().__init__([a, b], **attrs)
-
-    def __repr__(self) -> str:
-        return f"<CGBond: {self.ibead} - {self.jbead}>"
-
-    @property
-    def ibead(self) -> Bead:
-        return self.endpoints[0]
-
-    @property
-    def jbead(self) -> Bead:
-        return self.endpoints[1]
 
 
 class CoarseGrain(molrs.CoarseGrain, _GraphViews):
@@ -100,8 +37,15 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
     on :class:`molpy.core.atomistic.Atomistic`).
     """
 
-    _entity_cls = Bead
-    _link_classes = {"bonds": CGBond}
+    _node_cls = Bead
+    _relation_classes = {"bonds": CGBond}
+    _hidden_native_builders = frozenset({"add_bead", "add_bond"})
+
+    def __getattribute__(self, name: str) -> Any:
+        if name in object.__getattribute__(self, "_hidden_native_builders"):
+            target = "def_bead" if name == "add_bead" else "def_cgbond"
+            raise AttributeError(f"{name} is not public; use {target} instead")
+        return super().__getattribute__(name)
 
     def __init__(self, **props: Any) -> None:
         _GraphViews.__init__(self, **props)
@@ -120,24 +64,11 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
     # ---------- collection views ----------
     @property
     def beads(self) -> Entities[Bead]:
-        return self._atom_views()  # type: ignore[return-value]
+        return self._node_views()  # type: ignore[return-value]
 
     @property
     def cgbonds(self) -> Entities[CGBond]:
-        return self._link_views("bonds")  # type: ignore[return-value]
-
-    def complete_valence(self) -> "CoarseGrain":
-        """Return an independent copy — a bead has no valence to complete.
-
-        The counterpart of :meth:`molpy.core.atomistic.Atomistic.complete_valence`.
-        A typifier caps every graph it is handed, unconditionally, so that a
-        sliced fragment is never matched against as a radical. A coarse-grained
-        bead is not an element and carries no bond-order budget, so there is
-        nothing to cap and the completion is the identity. Answering here rather
-        than branching on the graph's type inside the typifier is what keeps the
-        typing pipeline kind-agnostic.
-        """
-        return self.copy()
+        return self._relation_views("bonds")  # type: ignore[return-value]
 
     def __repr__(self) -> str:
         from collections import Counter
@@ -160,7 +91,7 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
         if mapping is not None and "atoms" in mapping:
             mapping = dict(mapping)
             atoms = mapping.pop("atoms")
-        bead = self._spawn_entity(Bead(mapping, **attrs))
+        bead = self._create_node(mapping, cls=Bead, **attrs)
         if atoms is not None:
             self._set_bead_atoms(bead, tuple(atoms))
         return bead  # type: ignore[return-value]
@@ -170,12 +101,7 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
         """Record a bead's atom membership in the molrs world (by handle)."""
         handles: list[int] = []
         for a in atoms:
-            world = getattr(a, "_world", None)
-            if world is None:
-                raise ValueError(
-                    "bead membership requires bound atoms (each must belong to a "
-                    "source Atomistic world); got an unbound atom"
-                )
+            world = a.world
             if self._member_world is None:
                 self._member_world = world
             elif world is not self._member_world:
@@ -190,37 +116,26 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
         handles = molrs.CoarseGrain.bead_members(self, bead_handle)
         if not handles or self._member_world is None:
             return ()
-        return tuple(self._member_world._intern_atom(h) for h in handles)
+        return tuple(self._member_world._intern_node(h) for h in handles)
 
     def def_cgbond(self, a: Bead, b: Bead, /, **attrs: Any) -> CGBond:
-        bond = CGBond(a, b, **attrs)
-        return self._spawn_link("bonds", bond)  # type: ignore[return-value]
-
-    def add_bead(self, bead: Bead, /) -> Bead:
-        return self._spawn_entity(bead)  # type: ignore[return-value]
-
-    def add_cgbond(self, bond: CGBond, /) -> CGBond:
-        return self._spawn_link("bonds", bond)  # type: ignore[return-value]
-
-    def add_entity(self, *beads: Bead) -> None:
-        for bead in beads:
-            self._spawn_entity(bead)
+        return self._create_relation("bonds", (a, b), cls=CGBond, **attrs)  # type: ignore[return-value]
 
     def del_bead(self, *beads: Bead) -> None:
         for bead in beads:
-            self._remove_atom(bead)
+            self._remove_node(bead)
 
     def remove_entity(self, *beads: Bead, drop_incident_links: bool = True) -> None:
         for bead in beads:
-            self._remove_atom(bead)
+            self._remove_node(bead)
 
     def del_cgbond(self, *bonds: CGBond) -> None:
         for bond in bonds:
-            self._remove_link(bond)
+            self._remove_relation(bond)
 
     def remove_link(self, *links: Link) -> None:
         for link in links:
-            self._remove_link(link)
+            self._remove_relation(link)
 
     def def_beads(self, beads_data: list[dict[str, Any]], /) -> list[Bead]:
         return [self.def_bead(**a) for a in beads_data]
@@ -236,21 +151,11 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
             out.append(self.def_cgbond(a, b, **attrs))
         return out
 
-    def add_beads(self, beads: list[Bead], /) -> list[Bead]:
-        for bead in beads:
-            self._spawn_entity(bead)
-        return beads
-
-    def add_cgbonds(self, bonds: list[CGBond], /) -> list[CGBond]:
-        for bond in bonds:
-            self._spawn_link("bonds", bond)
-        return bonds
-
     # ---------- reverse lookup ----------
     def beads_of(self, atom: "Atom") -> tuple[Bead, ...]:
         """Beads whose membership includes ``atom`` (molrs reverse lookup)."""
         handles = molrs.CoarseGrain.beads_of_atom(self, atom.handle)
-        return tuple(self._intern_atom(h) for h in handles)  # type: ignore[misc]
+        return tuple(self._intern_node(h) for h in handles)  # type: ignore[misc]
 
     # ---------- property / type / selection editing ----------
     def rename_type(self, old: str, new: str, *, kind: type = Bead) -> int:
@@ -293,7 +198,7 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
 
     def _items_of_kind(self, kind: type) -> Entities[Any]:
         if isinstance(kind, type) and issubclass(kind, Link):
-            return self._link_views("bonds")
+            return self._relation_views("bonds")
         return self.beads  # type: ignore[return-value]
 
     def _subset(self, selected: list[Bead]) -> "CoarseGrain":
@@ -327,8 +232,8 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
         molrs.CoarseGrain.merge(self, other)
         if self._member_world is None:
             self._member_world = other._member_world
-        other._atom_intern.clear()
-        other._link_intern.clear()
+        other._node_refs.clear()
+        other._relation_refs.clear()
         other._props.clear()
         other._member_world = None
         return self
@@ -356,7 +261,7 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
         entity_type: type[Entity] = Bead,
     ) -> "CoarseGrain":
         o = [0.0, 0.0, 0.0] if about is None else list(about)
-        molrs.rotate(self, _unit(axis), float(angle), o)
+        molrs.rotate(self, axis, float(angle), o)
         return self
 
     def scale(
@@ -382,19 +287,7 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
     ) -> "CoarseGrain":
         pa = [a["x"], a["y"], a["z"]]
         pb = [b["x"], b["y"], b["z"]]
-        if a_dir is not None and b_dir is not None:
-            va = _unit(a_dir)
-            vb = _unit(b_dir)
-            if flip:
-                vb = _vec_scale(vb, -1.0)
-            axis = _cross(va, vb)
-            na = _norm(axis)
-            if na > 0:
-                from math import atan2
-
-                angle = atan2(na, _dot(va, vb))
-                molrs.rotate(self, _vec_scale(axis, 1.0 / na), angle, pa)
-        self.move(_vec_sub(pb, pa))
+        molrs.align_direction(self, pa, pb, a_dir, b_dir, flip)
         return self
 
     # ---------- composition ----------
@@ -410,6 +303,8 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
     def replicate(
         self, n: int, transform: Callable[["CoarseGrain", int], None] | None = None
     ) -> "CoarseGrain":
+        if transform is None:
+            return type(self).adopt(molrs.CoarseGrain.replicate(self, n))
         result = type(self)()
         for i in range(n):
             replica = self.copy()
@@ -428,7 +323,7 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
         there is zero Python-side conversion. ``bead_fields`` optionally restricts
         the beads block columns.
         """
-        from .frame import Frame
+        from molrs import Frame
 
         # Upgrade the bare pyo3 frame to the rich ``Frame`` callers expect.
         frame = Frame.from_dict(molrs.CoarseGrain.to_frame(self))

@@ -1,5 +1,8 @@
 import numpy as np
 
+import molrs
+from molrs import MetaValue
+
 import molpy as mp
 from molpy.io import read_lammps_trajectory
 from molpy.io.trajectory.lammps import LammpsTrajectoryWriter
@@ -11,7 +14,7 @@ class TestWriteLammpsTrajectory:
         # Create test frames
         frames = []
         for i in range(3):
-            frame = mp.Frame()
+            frame = molrs.Frame()
 
             # Create atoms data using Block structure
             atoms_data = {
@@ -22,15 +25,15 @@ class TestWriteLammpsTrajectory:
                 "z": [0.0, 0.0, 0.0],
             }
             frame["atoms"] = atoms_data
-            frame.metadata["timestep"] = i * 100
-            frame.box = mp.Box(np.eye(3) * 10.0)
+            frame.meta = {"timestep": MetaValue("i64", i * 100)}
+            frame.simbox = mp.Box(np.eye(3) * 10.0)
             frames.append(frame)
 
         # Write trajectory
         tmp_file = tmp_path / "test.dump"
         writer = LammpsTrajectoryWriter(str(tmp_file))
         for frame in frames:
-            timestep = frame.metadata["timestep"]
+            timestep = frame.meta["timestep"].value
             writer.write_frame(frame, timestep=timestep)
         writer.close()
 
@@ -41,9 +44,7 @@ class TestWriteLammpsTrajectory:
         for i, frame_read in enumerate(reader):
             if i >= len(frames):
                 break
-            assert (
-                int(frame_read.metadata["timestep"]) == frames[i].metadata["timestep"]
-            )
+            assert frame_read.meta["timestep"].value == frames[i].meta["timestep"].value
             assert "atoms" in frame_read
             # Check that positions changed over time
             if i > 0:
@@ -54,7 +55,7 @@ class TestWriteLammpsTrajectory:
 
     def test_write_with_context_manager(self, tmp_path):
         """Test writing trajectory using context manager."""
-        frame = mp.Frame()
+        frame = molrs.Frame()
         atoms_data = {
             "id": [0, 1],
             "type": [1, 1],
@@ -63,8 +64,8 @@ class TestWriteLammpsTrajectory:
             "z": [0.0, 0.0],
         }
         frame["atoms"] = atoms_data
-        frame.metadata["timestep"] = 0
-        frame.box = mp.Box(np.eye(3) * 5.0)
+        frame.meta = {"timestep": MetaValue("i64", 0)}
+        frame.simbox = mp.Box(np.eye(3) * 5.0)
 
         tmp_file = tmp_path / "test.dump"
         with LammpsTrajectoryWriter(str(tmp_file)) as writer:
@@ -73,7 +74,7 @@ class TestWriteLammpsTrajectory:
     def test_trajectory_roundtrip(self, tmp_path):
         """Test writing and reading back maintains data integrity."""
         # Create a more complex frame
-        frame = mp.Frame()
+        frame = molrs.Frame()
 
         atoms_data = {
             "id": [0, 1, 2, 3],
@@ -86,8 +87,8 @@ class TestWriteLammpsTrajectory:
             "vz": [0.0, 0.0, 0.0, 0.0],
         }
         frame["atoms"] = atoms_data
-        frame.metadata["timestep"] = 1000
-        frame.box = mp.Box(np.diag([5.0, 5.0, 5.0]))
+        frame.meta = {"timestep": MetaValue("i64", 1000)}
+        frame.simbox = mp.Box(np.diag([5.0, 5.0, 5.0]))
 
         tmp_file = tmp_path / "test.dump"
         # Write
@@ -100,7 +101,7 @@ class TestWriteLammpsTrajectory:
         frame_read = reader[0]
 
         # Verify timestep
-        assert int(frame_read.metadata["timestep"]) == 1000
+        assert frame_read.meta["timestep"].value == 1000
 
         # Verify atoms data exists
         assert "atoms" in frame_read
@@ -108,15 +109,15 @@ class TestWriteLammpsTrajectory:
         assert atoms.nrows == 4
 
         # Verify box
-        assert frame_read.box is not None
-        assert np.allclose(frame_read.box.matrix.diagonal(), [5.0, 5.0, 5.0])
+        assert frame_read.simbox is not None
+        assert np.allclose(frame_read.simbox.matrix.diagonal(), [5.0, 5.0, 5.0])
 
 
 class TestTrajectoryIntegration:
     def test_data_to_trajectory_conversion(self, tmp_path):
         """Test converting data format to trajectory format."""
         # Create a frame in data format
-        frame = mp.Frame()
+        frame = molrs.Frame()
 
         atoms_data = {
             "id": [0, 1, 2],
@@ -127,8 +128,8 @@ class TestTrajectoryIntegration:
             "q": [-0.8476, 0.4238, 0.4238],
         }
         frame["atoms"] = atoms_data
-        frame.metadata["timestep"] = 0
-        frame.box = mp.Box(np.diag([10.0, 10.0, 10.0]))
+        frame.meta = {"timestep": MetaValue("i64", 0)}
+        frame.simbox = mp.Box(np.diag([10.0, 10.0, 10.0]))
 
         # Write as trajectory
         tmp_file = tmp_path / "test.dump"
@@ -140,15 +141,15 @@ class TestTrajectoryIntegration:
         reader = read_lammps_trajectory(str(tmp_file))
         frame_read = reader[0]
 
-        assert frame_read.metadata["timestep"] is not None
+        assert frame_read.meta["timestep"].value == 0
         assert "atoms" in frame_read
-        assert frame_read.box is not None
+        assert frame_read.simbox is not None
 
     def test_multiple_formats_consistency(self, tmp_path):
         """Test that data and trajectory formats are consistent."""
         # This test ensures that a frame written in one format
         # can be meaningfully compared with the other format
-        frame_original = mp.Frame()
+        frame_original = molrs.Frame()
 
         atoms_data = {
             "id": [0, 1],
@@ -158,8 +159,8 @@ class TestTrajectoryIntegration:
             "z": [0.0, 0.0],
         }
         frame_original["atoms"] = atoms_data
-        frame_original.metadata["timestep"] = 100
-        frame_original.box = mp.Box(np.eye(3) * 5.0)
+        frame_original.meta = {"timestep": MetaValue("i64", 100)}
+        frame_original.simbox = mp.Box(np.eye(3) * 5.0)
 
         # Write as trajectory and read back
         tmp_file = tmp_path / "test.dump"
@@ -171,13 +172,13 @@ class TestTrajectoryIntegration:
         frame_traj = reader[0]
 
         # Both should have same basic structure
-        assert frame_traj.metadata["timestep"] is not None
+        assert frame_traj.meta["timestep"].value == 100
         assert "atoms" in frame_traj
-        assert frame_traj.box is not None
-        assert frame_original.box is not None
+        assert frame_traj.simbox is not None
+        assert frame_original.simbox is not None
 
         # Box dimensions should be similar
         assert np.allclose(
-            frame_traj.box.matrix.diagonal(),
-            frame_original.box.matrix.diagonal(),
+            frame_traj.simbox.matrix.diagonal(),
+            frame_original.simbox.matrix.diagonal(),
         )

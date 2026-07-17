@@ -1,24 +1,30 @@
 # Builder
 
-System assembly: paste graphs, apply a reaction wherever a selector says, and
-repair the force-field types near each new bond. Growing a chain and
-crosslinking a melt are the same algorithm with a different pairing rule, so
-there is one kernel and one variation point.
+System assembly: select every reaction, compile and cache its local product,
+execute the graph edits as one batch, then optionally finalize topology. Growing
+a chain and crosslinking a melt are the same algorithm with a different pairing
+rule, so there is one kernel and one variation point.
 
 ## Quick reference
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
 | `GraphAssembler` | The kernel: `assemble(world, selector)` | Crosslinking an existing graph |
-| `PolymerBuilder` | `GraphAssembler` + a monomer library + CGSmiles: `.build(cgsmiles)` | Chain assembly |
+| `PolymerBuilder` | Library + reaction; `.build(cgsmiles)` is the sole expand + assemble path; `.build_*` only format CGSmiles | Ruled polymer topologies |
+| `Finalization` | `ATOMS`, `TOPOLOGY` (default), or `BONDED` | Choosing when topology is materialized |
+| `StructureFinalizer` | Run the shared topology/bonded tail later | Deferred MD export for large systems |
+| `AssemblyFinalizer` | Assembly finalizer with aromaticity perception | Molecular reaction products |
+| `SiteMap` | Mark `fields.SITE` (and optional leaving H + charge fold) | Naming reaction sites |
+| `Replicas` | Grid / linear copies of a strand with `mol_id` | Melt precursor before crosslinking |
 | `MonomerLibrary` | Validated repeat-unit templates; `.expand(topology)` | Naming your monomers |
 | `Selector` | The one variation point: which matched sites pair up | Writing your own pairing rule |
-| `TopologySelector` | Pairs adjacent residues (used by `PolymerBuilder`) | Any CGSmiles topology |
+| `TopologySelector` | Pairs adjacent residues (used by `PolymerBuilder`) | Residue-edge pairing |
 | `ExhaustiveSelector` / `SpacingSelector` / `ExplicitPairSelector` | Deterministic crosslink rules | Reproducible networks |
 | `RandomSelector` | Random pairing to a target `conversion`, seeded | Flory–Stockmayer networks |
 | `ResiduePlacer` | Lays fresh template copies out in space | Building from templates |
 | `SystemPlanner` / `PolydisperseChainGenerator` | Sample a polydisperse chain plan | Bulk / MW-distributed systems |
 | `AmberPolymerBuilder` | GAFF-parameterised build via AmberTools | AMBER/LAMMPS-bound workflows |
+| `CarbonTubeBuilder` | `.build(n, m, ...)` rolled-graphene topology | Zigzag, armchair, and chiral nanotubes |
 | `DrudeBuilder` / `Tip4pBuilder` / `VirtualSiteBuilder` | Virtual-site augmentation | Polarizable / 4-site models |
 
 ## Canonical example
@@ -29,23 +35,19 @@ the chemistry lives, and `%a` / `%b` bind it to the atoms you marked.
 
 ```python
 import molpy as mp
-from molpy.builder.assembly import MonomerLibrary, PolymerBuilder, ResiduePlacer
+from molpy.builder.assembly import MonomerLibrary, PolymerBuilder, ResiduePlacer, SiteMap
 from molpy.conformer import Conformer
 from molpy.core import fields
 from molpy.parser import parse_molecule
 
-# 1. repeat unit: ethylene glycol, with its two hydroxyl oxygens named
 eo, _ = Conformer(add_hydrogens=True, seed=42).generate(parse_molecule("OCCO"))
-oxygens = [a for a in eo.atoms if a.get(fields.ELEMENT) == "O"]
-oxygens[0][fields.SITE] = "a"
-oxygens[1][fields.SITE] = "b"
+SiteMap(eo).label_elements("O", "a", "b")
 
-# 2. assemble a chain: an ether condensation drops H2O per bond
 ether = mp.Reaction("[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]")
 builder = PolymerBuilder(
     MonomerLibrary({"EO": eo}), ether, placer=ResiduePlacer()
 )
-chain = builder.build("{[#EO]|5}")
+chain = builder.build_linear("EO", 5)
 
 assert chain.__class__.__name__ == "Atomistic"
 assert len({int(a[fields.RES_ID]) for a in chain.atoms}) == 5
@@ -53,6 +55,47 @@ assert len({int(a[fields.RES_ID]) for a in chain.atoms}) == 5
 
 Each repeat unit is a residue, and that identity survives into a PDB or a
 prmtop — it is output, not a build-time marker to scrub afterwards.
+
+## Compile first; finalize when needed
+
+`typifier=` never receives the growing polymer. The builder first compiles all
+selected junction motifs against the intact monomer templates, caches distinct
+rooted environments, and records scalar per-atom changes only. It then executes
+all reactions in one batch. Local bond/angle/dihedral annotations are not copied
+from a motif into the world.
+
+The default finalization generates complete angle/dihedral topology once. For a
+large system that will be written to an MD format later, select
+`Finalization.ATOMS` while building and apply
+`StructureFinalizer(Finalization.TOPOLOGY)` at export time. This keeps the public
+examples focused on polymer architectures while still documenting the deferred
+topology option.
+
+Use `Finalization.BONDED` together with
+`bonded=ForceFieldParams(forcefield)` when those generated terms also need type
+and parameter annotations.
+
+A full walk of architectures from one ethylene-glycol template — linear, ring,
+star, comb, gels, dual network — is the user-guide section
+[Polymer Topologies](../user-guide/topology/index.md) (paired with
+`examples/topology/`).
+
+## Nanostructure topology
+
+Nanostructure builders keep their lattice planning private and expose one verb:
+
+```python
+from molpy.builder import CarbonTubeBuilder
+
+tube = CarbonTubeBuilder().build(6, 6, cells=2, periodic=True)
+assert len(tube.atoms) == 48
+assert len(tube.bonds) == 72
+assert tube["box"].pbc.tolist() == [False, False, True]
+```
+
+The same call accepts zigzag `(n, 0)`, armchair `(n, n)`, and general chiral
+`(n, m)` tubes. See [Nanostructures](../user-guide/04_nanostructures.md) for
+open ends, length selection, and deferred topology.
 
 ## Crosslinking is the same machine
 

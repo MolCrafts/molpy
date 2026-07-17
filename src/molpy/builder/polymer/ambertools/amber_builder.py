@@ -13,13 +13,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+import molrs
+
+from molpy.builder.assembly import Finalization, PolymerBuilder
+from molpy.builder.assembly._topology import TopologySelector
 from molpy.core import fields
 from molpy.core.atomistic import Atomistic
-from molpy.io.readers import read_amber_prmtop
+from molpy.io.readers import read_amber
 from molpy.parser.smiles import parse_cgsmiles
 from molpy.parser.smiles.cgsmiles_ir import CGSmilesGraphIR, CGSmilesIR
 
 from .types import AmberBuildResult
+
+type _VariantRecipe = tuple[str | None, str | None, tuple[str, ...]]
+type _ResidueRecipes = dict[str, dict[str, _VariantRecipe]]
 
 
 class AmberPolymerBuilder:
@@ -58,13 +65,15 @@ class AmberPolymerBuilder:
 
     Pipeline:
     1. Prepare each monomer type (antechamber → parmchk2 → prepgen), disk-cached.
-    2. Generate HEAD/CHAIN/TAIL residue variants from the port annotations.
+    2. Compile the MolPy ``fields.SITE`` + ``Reaction`` semantics once and
+       translate the resulting residue edits into HEAD/CHAIN/TAIL variants.
     3. Translate CGSmiles to a tleap ``sequence`` command.
     4. Run tleap to build the polymer; read back Frame + ForceField.
 
     Example:
         >>> builder = AmberPolymerBuilder(
         ...     library={"EO": eo_monomer},
+        ...     reaction=ether_reaction,
         ...     force_field="gaff2",
         ...     env="AmberTools25",
         ...     env_manager="conda",
@@ -75,49 +84,72 @@ class AmberPolymerBuilder:
     def __init__(
         self,
         library: Mapping[str, Atomistic],
+        reaction: molrs.Reaction,
         *,
         force_field: Literal["gaff", "gaff2"] = "gaff2",
         charge_method: str = "bcc",
         work_dir: Path | str | None = None,
-        keep_intermediates: bool = True,
         env: str | Path | None = None,
         env_manager: str | None = None,
-        reaction_preset: str | None = None,
         net_charges: Mapping[str, int] | None = None,
     ):
         """Initialize the polymer builder.
 
         Args:
             library: Mapping from CGSmiles labels to Atomistic monomer structures.
-                Each Atomistic must have port annotations on atoms (port="<" for
-                head, port=">" for tail).
+                Reaction sites use the same ``fields.SITE`` annotations as
+                :class:`molpy.builder.assembly.PolymerBuilder`.
+            reaction: The MolPy reaction that defines connection atoms and
+                leaving groups. AmberTools translates its compiled products; it
+                does not define a second port/leaving-group language.
             force_field: Force field to use (gaff or gaff2).
             charge_method: Charge method for antechamber.
             work_dir: Directory for intermediate files.
-            keep_intermediates: Whether to keep intermediate files after build.
             env: Conda environment name or path for AmberTools.
             env_manager: Environment manager type ("conda" for conda environments).
-            reaction_preset: Named reaction preset for leaving group detection.
             net_charges: Optional mapping from CGSmiles label to the formal net
                 charge of that monomer/residue, passed to antechamber's AM1-BCC
                 step. Defaults to 0 for any label not present. Required for
                 charged residues (e.g. cationic / anionic monomers) so the
                 computed partial charges sum to the correct integer.
         """
-        self.library = library
+        if not isinstance(reaction, molrs.Reaction):
+            raise TypeError("reaction must be a molpy.Reaction instance")
+        self.reaction = reaction
+        self.library: dict[str, Atomistic] = {}
+        for label, template in library.items():
+            if not isinstance(template, Atomistic):
+                raise TypeError(f"monomer {label!r} must be an Atomistic")
+            copied = template.copy()
+            names: set[str] = set()
+            for index, atom in enumerate(copied.atoms, start=1):
+                if atom.get(fields.NAME) is None:
+                    element = atom.get(fields.ELEMENT)
+                    if not element:
+                        raise ValueError(
+                            f"monomer {label!r} atom {index} has no element and "
+                            "cannot receive a stable Amber atom name"
+                        )
+                    atom[fields.NAME] = f"{element}{index}"
+                name = str(atom.get(fields.NAME))
+                if name in names:
+                    raise ValueError(
+                        f"monomer {label!r} repeats Amber atom name {name!r}"
+                    )
+                names.add(name)
+            self.library[label] = copied
         self.force_field = force_field
         self.charge_method = charge_method
         self.net_charges = dict(net_charges or {})
         self.work_dir = (
             Path(work_dir) if work_dir is not None else Path("amber_work")
         ).resolve()
-        self.keep_intermediates = keep_intermediates
         self.env = env
         self.env_manager = env_manager
-        self.reaction_preset = reaction_preset
 
         # Internal state
         self._prepared_monomers: dict[str, _PreparedMonomer] = {}
+        self._semantic_cache: dict[str, _ResidueRecipes] = {}
 
     def build(self, cgsmiles: str) -> AmberBuildResult:
         """Build a polymer from a CGSmiles string.
@@ -137,12 +169,15 @@ class AmberPolymerBuilder:
         # Validate
         self._validate_ir(ir)
 
+        recipes = self._compile_semantics(cgsmiles, ir.base_graph)
+
         # Prepare all monomers (antechamber → parmchk2 → prepgen)
-        self._prepare_monomers(ir.base_graph)
+        self._prepare_monomers(ir.base_graph, recipes)
 
         # Generate and run tleap
         result = self._build_with_tleap(ir.base_graph, output_prefix="polymer")
 
+        result.cgsmiles = cgsmiles
         return result
 
     def _validate_ir(self, ir: CGSmilesIR) -> None:
@@ -165,23 +200,118 @@ class AmberPolymerBuilder:
                 f"Available labels: {available}"
             )
 
-        # Validate port annotations on each monomer.
-        # Interior monomers need both '<' (head) and '>' (tail).
-        # End-group / cap monomers need at least one port.
-        for label, monomer in self.library.items():
-            ports_found = set()
-            for atom in monomer.atoms:
-                port = atom.get("port")
-                if port in ("<", ">"):
-                    ports_found.add(port)
+        if len(graph.nodes) < 2:
+            raise ValueError(
+                "AmberPolymerBuilder requires at least two residues; use "
+                "AmberTools.parameterize() for one molecule"
+            )
+        residue_of = TopologySelector.residue_ids(graph)
+        edges = {
+            frozenset((residue_of[bond.node_i.id], residue_of[bond.node_j.id]))
+            for bond in graph.bonds
+        }
+        expected = {frozenset((i, i + 1)) for i in range(1, len(graph.nodes))}
+        if len(graph.bonds) != len(graph.nodes) - 1 or edges != expected:
+            raise ValueError(
+                "Amber tleap sequence supports one linear polymer path; "
+                "build rings, stars, and networks with PolymerBuilder"
+            )
 
-            if not ports_found:
+    def _compile_semantics(
+        self,
+        cgsmiles: str,
+        graph: CGSmilesGraphIR,
+    ) -> _ResidueRecipes:
+        """Translate the standard MolPy reaction product into Amber variants."""
+        cached = self._semantic_cache.get(cgsmiles)
+        if cached is not None:
+            return cached
+
+        product = PolymerBuilder(
+            self.library,
+            self.reaction,
+            finalize=Finalization.ATOMS,
+        ).build(cgsmiles)
+        atoms_by_residue: dict[int, list] = {}
+        for atom in product.atoms:
+            residue = atom.get(fields.RES_ID)
+            if residue is None:
                 raise ValueError(
-                    f"Monomer '{label}' has no port annotations. "
-                    "At least one port='<' or port='>' is required."
+                    "Amber translation supports bond-forming/deletion reactions, "
+                    "not reaction-created atoms without residue identity"
                 )
+            atoms_by_residue.setdefault(int(residue), []).append(atom)
 
-    def _prepare_monomers(self, graph: CGSmilesGraphIR) -> None:
+        connections: dict[int, dict[int, str]] = {}
+        for bond in product.bonds:
+            left, right = bond.endpoints
+            left_residue = int(left.get(fields.RES_ID))
+            right_residue = int(right.get(fields.RES_ID))
+            if left_residue == right_residue:
+                continue
+            left_name = left.get(fields.NAME)
+            right_name = right.get(fields.NAME)
+            if left_name is None or right_name is None:
+                raise ValueError("Amber connection atoms require stable atom names")
+            left_connections = connections.setdefault(left_residue, {})
+            right_connections = connections.setdefault(right_residue, {})
+            if right_residue in left_connections or left_residue in right_connections:
+                raise ValueError(
+                    "Amber tleap sequence supports exactly one bond between "
+                    "adjacent residues"
+                )
+            left_connections[right_residue] = str(left_name)
+            right_connections[left_residue] = str(right_name)
+
+        recipes: _ResidueRecipes = {}
+        residue_of = TopologySelector.residue_ids(graph)
+        count = len(graph.nodes)
+        for position, node in enumerate(graph.nodes, start=1):
+            residue = residue_of[node.id]
+            template_names = {
+                str(atom.get(fields.NAME)) for atom in self.library[node.label].atoms
+            }
+            surviving_names = {
+                str(atom.get(fields.NAME)) for atom in atoms_by_residue.get(residue, ())
+            }
+            created_names = surviving_names - template_names
+            if created_names:
+                raise ValueError(
+                    "Amber translation cannot place reaction-created atoms into a "
+                    f"residue: {sorted(created_names)}"
+                )
+            omitted = tuple(sorted(template_names - surviving_names))
+            incoming = connections.get(residue, {}).get(residue - 1)
+            outgoing = connections.get(residue, {}).get(residue + 1)
+            if position == 1:
+                variant = "head"
+            elif position == count:
+                variant = "tail"
+            else:
+                variant = "chain"
+            recipe = (incoming, outgoing, omitted)
+            previous = recipes.setdefault(node.label, {}).get(variant)
+            if previous is not None and previous != recipe:
+                raise ValueError(
+                    f"monomer {node.label!r} needs incompatible {variant} Amber "
+                    "variants in one chain"
+                )
+            recipes[node.label][variant] = recipe
+
+        for label, variants in recipes.items():
+            for variant, (head_name, tail_name, _) in variants.items():
+                if variant in {"chain", "tail"} and head_name is None:
+                    raise ValueError(f"{label!r} {variant} variant has no HEAD atom")
+                if variant in {"head", "chain"} and tail_name is None:
+                    raise ValueError(f"{label!r} {variant} variant has no TAIL atom")
+        self._semantic_cache[cgsmiles] = recipes
+        return recipes
+
+    def _prepare_monomers(
+        self,
+        graph: CGSmilesGraphIR,
+        recipes: _ResidueRecipes,
+    ) -> None:
         """Prepare all monomer types used in the graph.
 
         For each monomer type:
@@ -197,12 +327,6 @@ class AmberPolymerBuilder:
             write_prepgen_control_file,
         )
 
-        # Common wrapper kwargs for environment
-        wrapper_kwargs: dict = {"workdir": None}  # Will be set per-monomer
-        if self.env is not None:
-            wrapper_kwargs["env"] = self.env
-            wrapper_kwargs["env_manager"] = self.env_manager
-
         # Get unique labels
         labels = {node.label for node in graph.nodes}
 
@@ -210,47 +334,22 @@ class AmberPolymerBuilder:
         work_dir.mkdir(parents=True, exist_ok=True)
 
         for label in labels:
-            if label in self._prepared_monomers:
-                continue  # Already prepared
-
             monomer = self.library[label]
             net_charge = self.net_charges.get(label, 0)
             monomer_dir = work_dir / "monomers" / label
             monomer_dir.mkdir(parents=True, exist_ok=True)
-
-            # Ensure every atom has a name (PDB / prepgen require it). An atom
-            # with no element cannot be named: guessing "X" would put a fake
-            # identity into the prep file, and nothing downstream corrects it.
-            for idx, atom in enumerate(monomer.atoms, start=1):
-                if atom.get(fields.NAME) is None:
-                    atom[fields.NAME] = f"{atom[fields.ELEMENT]}{idx}"
-
-            # Find port atoms
-            head_atom_name = None
-            tail_atom_name = None
-            for atom in monomer.atoms:
-                port = atom.get("port")
-                if port == "<":
-                    head_atom_name = atom["name"]
-                elif port == ">":
-                    tail_atom_name = atom["name"]
-
-            is_full = head_atom_name is not None and tail_atom_name is not None
-            is_left_cap = head_atom_name is not None and tail_atom_name is None
-            is_right_cap = head_atom_name is None and tail_atom_name is not None
+            variants = recipes[label]
 
             # Disk cache: a monomer's antechamber (.ac/charges) + prepgen residue
             # templates depend only on the monomer, so reuse them across chains
             # and runs. AM1-BCC is the slow step — never repeat it for a monomer
             # already prepared on disk.
             frcmod_file = monomer_dir / f"{label}.frcmod"
-            head_prepi = (
-                monomer_dir / f"H{label}.prepi" if (is_full or is_left_cap) else None
+            head_prepi = monomer_dir / f"H{label}.prepi" if "head" in variants else None
+            chain_prepi = (
+                monomer_dir / f"{label}.prepi" if "chain" in variants else None
             )
-            chain_prepi = monomer_dir / f"{label}.prepi" if is_full else None
-            tail_prepi = (
-                monomer_dir / f"T{label}.prepi" if (is_full or is_right_cap) else None
-            )
+            tail_prepi = monomer_dir / f"T{label}.prepi" if "tail" in variants else None
             cached = [
                 p for p in (frcmod_file, head_prepi, chain_prepi, tail_prepi) if p
             ]
@@ -267,78 +366,73 @@ class AmberPolymerBuilder:
                 )
                 continue
 
-            # Step 1: Write monomer to PDB
             input_pdb = monomer_dir / f"{label}.pdb"
-            self._write_atomistic_pdb(monomer, input_pdb)
-
-            # Step 2: Run antechamber
             ac_file = monomer_dir / f"{label}.ac"
             mol2_file = monomer_dir / f"{label}.mol2"
-
-            antechamber = AntechamberWrapper(
-                name="antechamber",
-                workdir=monomer_dir,
-                env=self.env,
-                env_manager=self.env_manager,
+            base_cached = all(
+                path.exists() for path in (ac_file, mol2_file, frcmod_file)
             )
-            r = antechamber.atomtype_assign(
-                input_file=input_pdb,
-                output_file=mol2_file,
-                input_format="pdb",
-                output_format="mol2",
-                charge_method=self.charge_method,
-                atom_type=self.force_field,
-                net_charge=net_charge,
-            )
-            if r.returncode != 0:
-                raise RuntimeError(
-                    f"antechamber (mol2) failed for monomer '{label}':\n"
-                    f"{r.stderr or r.stdout}"
+            if not base_cached:
+                # Steps 1–3 are monomer-only and expensive. A later build may
+                # need an extra HEAD/CHAIN/TAIL recipe, but it must reuse these
+                # antechamber charges and parmchk2 parameters.
+                self._write_atomistic_pdb(monomer, input_pdb)
+                antechamber = AntechamberWrapper(
+                    name="antechamber",
+                    workdir=monomer_dir,
+                    env=self.env,
+                    env_manager=self.env_manager,
                 )
-
-            # Also generate .ac file for prepgen
-            r = antechamber.atomtype_assign(
-                input_file=input_pdb,
-                output_file=ac_file,
-                input_format="pdb",
-                output_format="ac",
-                charge_method=self.charge_method,
-                atom_type=self.force_field,
-                net_charge=net_charge,
-            )
-            if r.returncode != 0:
-                raise RuntimeError(
-                    f"antechamber (ac) failed for monomer '{label}':\n"
-                    f"{r.stderr or r.stdout}"
+                r = antechamber.atomtype_assign(
+                    input_file=input_pdb,
+                    output_file=mol2_file,
+                    input_format="pdb",
+                    output_format="mol2",
+                    charge_method=self.charge_method,
+                    atom_type=self.force_field,
+                    net_charge=net_charge,
                 )
+                if r.returncode != 0:
+                    raise RuntimeError(
+                        f"antechamber (mol2) failed for monomer '{label}':\n"
+                        f"{r.stderr or r.stdout}"
+                    )
 
-            # Step 3: Run parmchk2
-            frcmod_file = monomer_dir / f"{label}.frcmod"
-            parmchk2 = Parmchk2Wrapper(
-                name="parmchk2",
-                workdir=monomer_dir,
-                env=self.env,
-                env_manager=self.env_manager,
-            )
-            r = parmchk2.generate_parameters(
-                input_file=mol2_file,
-                output_file=frcmod_file,
-                force_field=self.force_field,
-            )
-            if r.returncode != 0:
-                raise RuntimeError(
-                    f"parmchk2 failed for monomer '{label}':\n{r.stderr or r.stdout}"
+                r = antechamber.atomtype_assign(
+                    input_file=input_pdb,
+                    output_file=ac_file,
+                    input_format="pdb",
+                    output_format="ac",
+                    charge_method=self.charge_method,
+                    atom_type=self.force_field,
+                    net_charge=net_charge,
                 )
+                if r.returncode != 0:
+                    raise RuntimeError(
+                        f"antechamber (ac) failed for monomer '{label}':\n"
+                        f"{r.stderr or r.stdout}"
+                    )
 
-            # Step 4: Generate prepgen control files and run prepgen.
-            # Which variants to generate depends on the ports present:
-            #   both < and > : full monomer → HEAD, CHAIN, TAIL
-            #   only <       : left cap    → HEAD only (no TAIL connection)
-            #   only >       : right cap   → TAIL only (no HEAD connection)
-            is_full = head_atom_name is not None and tail_atom_name is not None
-            is_left_cap = head_atom_name is not None and tail_atom_name is None
-            is_right_cap = head_atom_name is None and tail_atom_name is not None
+                parmchk2 = Parmchk2Wrapper(
+                    name="parmchk2",
+                    workdir=monomer_dir,
+                    env=self.env,
+                    env_manager=self.env_manager,
+                )
+                r = parmchk2.generate_parameters(
+                    input_file=mol2_file,
+                    output_file=frcmod_file,
+                    force_field=self.force_field,
+                )
+                if r.returncode != 0:
+                    raise RuntimeError(
+                        f"parmchk2 failed for monomer '{label}':\n"
+                        f"{r.stderr or r.stdout}"
+                    )
 
+            # Step 4: Generate exactly the variants compiled from MolPy's
+            # reaction product. No Amber-only port or leaving-H inference lives
+            # below this boundary.
             prepgen = PrepgenWrapper(
                 name="prepgen",
                 workdir=monomer_dir,
@@ -353,13 +447,6 @@ class AmberPolymerBuilder:
             # prepgen crashes on long absolute paths (Fortran buffer).
             # Use short filenames — the wrapper runs with cwd=monomer_dir.
             ac_name = f"{label}.ac"
-
-            # Omit rules: each connection point loses 1 H.
-            #   HEAD variant (chain start): TAIL connects → omit 1 H from TAIL atom
-            #   CHAIN variant (middle):     both connect  → omit 1 H from each
-            #   TAIL variant (chain end):   HEAD connects → omit 1 H from HEAD atom
-            omit_head = self._get_one_omit_name(monomer, "<")  # 1 H on < port
-            omit_tail = self._get_one_omit_name(monomer, ">")  # 1 H on > port
 
             def _run_prepgen(
                 variant: str, output_file: str, control_file: str, resname: str
@@ -376,66 +463,58 @@ class AmberPolymerBuilder:
                         f"{r.stderr or r.stdout}"
                     )
 
-            if is_full or is_left_cap:
-                head_tail_name = tail_atom_name or head_atom_name
+            if "head" in variants:
+                _, tail_name, omit_names = variants["head"]
+                assert tail_name is not None
                 head_ctrl = monomer_dir / f"{label}.head"
                 head_prepi = monomer_dir / f"H{label}.prepi"
-                # A HEAD cap (chain start) connects FORWARD through its port atom,
-                # so that atom must be the main-chain *tail terminus*, not the tree
-                # root. If it is the root prepgen builds a faulty connection. Pin
-                # any heavy neighbour as HEAD_NAME so the main chain runs
-                # neighbour -> port atom and the port atom becomes the terminus.
-                # (A TAIL cap is the opposite: its port atom is the head/root and
-                # needs no pinning, so tail_name below stays degree-1-only.)
-                head_pin = (
-                    None
-                    if is_full
-                    else self._connect_pin_neighbor(monomer, head_atom_name)
-                )
+                # A HEAD residue connects forward through ``tail_name``. Pin a
+                # heavy neighbour as prepgen's tree root so a terminal connection
+                # atom remains the main-chain tail rather than becoming the root.
+                head_pin = self._connect_pin_neighbor(monomer, tail_name)
                 write_prepgen_control_file(
                     head_ctrl,
                     variant="head",
                     head_name=head_pin,
-                    tail_name=head_tail_name,
-                    omit_names=omit_tail if is_full else omit_head,
+                    tail_name=tail_name,
+                    omit_names=list(omit_names),
                     charge=net_charge,
                 )
                 _run_prepgen(
                     "head", f"H{label}.prepi", f"{label}.head", f"H{label[:2].upper()}"
                 )
 
-            if is_full:
+            if "chain" in variants:
+                head_name, tail_name, omit_names = variants["chain"]
+                assert head_name is not None and tail_name is not None
                 chain_ctrl = monomer_dir / f"{label}.chain"
                 chain_prepi = monomer_dir / f"{label}.prepi"
                 write_prepgen_control_file(
                     chain_ctrl,
                     variant="chain",
-                    head_name=head_atom_name,
-                    tail_name=tail_atom_name,
-                    omit_names=omit_head + omit_tail,
+                    head_name=head_name,
+                    tail_name=tail_name,
+                    omit_names=list(omit_names),
                     charge=net_charge,
                 )
                 _run_prepgen(
                     "chain", f"{label}.prepi", f"{label}.chain", label[:3].upper()
                 )
 
-            if is_full or is_right_cap:
-                tail_head_name = head_atom_name or tail_atom_name
+            if "tail" in variants:
+                head_name, _, omit_names = variants["tail"]
+                assert head_name is not None
                 tail_ctrl = monomer_dir / f"{label}.tail"
                 tail_prepi = monomer_dir / f"T{label}.prepi"
                 # Symmetric pinning for a right cap whose connect atom is a
                 # graph terminus (see the head-cap note above).
-                tail_pin = (
-                    None
-                    if is_full
-                    else self._terminus_neighbor_name(monomer, tail_atom_name)
-                )
+                tail_pin = self._terminus_neighbor_name(monomer, head_name)
                 write_prepgen_control_file(
                     tail_ctrl,
                     variant="tail",
-                    head_name=tail_head_name,
+                    head_name=head_name,
                     tail_name=tail_pin,
-                    omit_names=omit_head if is_full else omit_tail,
+                    omit_names=list(omit_names),
                     charge=net_charge,
                 )
                 _run_prepgen(
@@ -453,29 +532,6 @@ class AmberPolymerBuilder:
                 chain_resname=label[:3].upper() if chain_prepi else None,
                 tail_resname=f"T{label[:2].upper()}" if tail_prepi else None,
             )
-
-    def _get_omit_names(self, monomer: Atomistic, port: str) -> list[str]:
-        """Return names of ALL hydrogens bonded to the port atom."""
-        port_atom = None
-        for atom in monomer.atoms:
-            if atom.get("port") == port:
-                port_atom = atom
-                break
-        if port_atom is None:
-            return []
-
-        names = []
-        for bond in monomer.bonds:
-            other = None
-            if bond.itom is port_atom:
-                other = bond.jtom
-            elif bond.jtom is port_atom:
-                other = bond.itom
-            if other is not None and (
-                other.get("element") == "H" or other.get("symbol") == "H"
-            ):
-                names.append(other["name"])
-        return names
 
     def _terminus_neighbor_name(
         self, monomer: Atomistic, atom_name: str | None
@@ -526,31 +582,6 @@ class AmberPolymerBuilder:
             if other is not None and other.get("element") != "H":
                 return other["name"]
         return None
-
-    def _get_one_omit_name(self, monomer: Atomistic, port: str) -> list[str]:
-        """Return the name of ONE hydrogen bonded to the port atom.
-
-        When two residues connect, each side loses one H to free a
-        valence for the new bond.  Returning exactly one name is
-        correct for standard polymer linkages.
-        """
-        port_atom = None
-        for atom in monomer.atoms:
-            if atom.get("port") == port:
-                port_atom = atom
-                break
-        if port_atom is None:
-            return []
-
-        for bond in monomer.bonds:
-            other = None
-            if bond.itom is port_atom:
-                other = bond.jtom
-            elif bond.jtom is port_atom:
-                other = bond.itom
-            if other is not None and other.get("element") == "H":
-                return [other["name"]]
-        return []
 
     def _write_atomistic_pdb(self, atomistic: Atomistic, path: Path) -> None:
         """Write Atomistic to PDB format."""
@@ -627,7 +658,7 @@ class AmberPolymerBuilder:
             )
 
         # Load results
-        frame, forcefield = read_amber_prmtop(prmtop, inpcrd)
+        frame, forcefield = read_amber(prmtop, inpcrd)
 
         return AmberBuildResult(
             frame=frame,
@@ -643,11 +674,12 @@ class AmberPolymerBuilder:
         """Build tleap sequence from CGSmiles graph.
 
         Variant assignment:
-        - Cap with only ``<`` → always uses HEAD variant
-        - Cap with only ``>`` → always uses TAIL variant
-        - Full monomer at first position → HEAD variant
-        - Full monomer at last position → TAIL variant
-        - Full monomer in middle → CHAIN variant
+        - First residue → HEAD variant
+        - Last residue → TAIL variant
+        - Interior residue → CHAIN variant
+
+        The available variants were compiled from the MolPy reaction product;
+        position selects among them but never re-interprets chemistry.
         """
         nodes = graph.nodes
         n = len(nodes)
@@ -658,29 +690,20 @@ class AmberPolymerBuilder:
         residue_names = []
         for i, node in enumerate(nodes):
             prep = self._prepared_monomers[node.label]
-
-            # Cap monomers (only one variant available)
-            if prep.chain_prepi is None:
-                # This is a cap — use whichever variant was generated
-                if prep.head_resname is not None:
-                    residue_names.append(prep.head_resname)
-                elif prep.tail_resname is not None:
-                    residue_names.append(prep.tail_resname)
-                else:
-                    raise ValueError(
-                        f"Cap monomer '{node.label}' has no residue variant"
-                    )
-                continue
-
-            # Full monomers — position-based variant
             if n == 1:
-                residue_names.append(prep.chain_resname)
+                name = prep.chain_resname
             elif i == 0:
-                residue_names.append(prep.head_resname)
+                name = prep.head_resname
             elif i == n - 1:
-                residue_names.append(prep.tail_resname)
+                name = prep.tail_resname
             else:
-                residue_names.append(prep.chain_resname)
+                name = prep.chain_resname
+            if name is None:
+                raise ValueError(
+                    f"monomer {node.label!r} lacks the Amber residue variant "
+                    f"required at sequence position {i + 1}"
+                )
+            residue_names.append(name)
 
         return " ".join(residue_names)
 

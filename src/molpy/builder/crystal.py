@@ -248,12 +248,15 @@ def build_crystal(
         site_tiled = site_tiled[mask]
 
     for xyz, site in zip(carts, site_tiled):
-        out.def_atom(
+        attrs = dict(site.attrs or {})
+        # Canonical lattice fields win over optional annotations.
+        attrs.update(
             xyz=xyz.tolist(),
             element=site.species,
             charge=site.charge,
             label=site.label,
         )
+        out.def_atom(**attrs)
     return out
 
 

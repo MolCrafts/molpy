@@ -41,9 +41,6 @@ from molrs import (
     Type,
 )
 
-# Back-compat generic container utilities (independent of the FF hierarchy).
-from .utils import TypeBucket, get_nearest_type
-
 # ``AtomisticForcefield`` was a molpy-only subclass; the native molrs
 # ``ForceField`` now covers its responsibilities.
 AtomisticForcefield = ForceField
@@ -253,7 +250,4 @@ __all__ = [
     "PairLJClass2Style",
     "PairTholeStyle",
     "PairCoulTTStyle",
-    # Back-compat container utilities
-    "TypeBucket",
-    "get_nearest_type",
 ]

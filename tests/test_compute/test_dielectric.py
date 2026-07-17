@@ -7,7 +7,7 @@ import pytest
 
 from molpy.compute.result import ACFResult, DielectricSusceptibilityResult
 from molpy.core.box import Box
-from molpy.core.frame import Block, Frame
+from molrs import Block, Frame
 
 
 def make_test_trajectory(n_frames=10, n_atoms=5, with_charges=True, with_box=True):
@@ -24,7 +24,7 @@ def make_test_trajectory(n_frames=10, n_atoms=5, with_charges=True, with_box=Tru
         frame = Frame()
         frame["atoms"] = block
         if with_box:
-            frame.box = Box.cubic(10.0)
+            frame.simbox = Box.cubic(10.0)
         frames.append(frame)
 
     class ListTrajectory:

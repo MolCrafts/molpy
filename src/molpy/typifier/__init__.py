@@ -11,7 +11,7 @@ node type rather than deciding it, and is the second half of every force-field
 typifier.
 """
 
-from molrs.typifier import MMFFTypifier, OPLSAATypifier
+from molrs.typifier import MMFF94Typifier as MMFFTypifier, OPLSAATypifier
 
 from .ambertools import AmberToolsTypifier
 from .base import Match, Typifier

@@ -1,25 +1,17 @@
-"""Verify ``molpy.Block`` collapses onto the canonical ``molrs.Block``.
+"""Verify the canonical ``molrs.Block`` surface used by molpy.
 
-After the ``frame-block-sink`` cutover, ``molpy.core.frame.Block is
-molrs.Block`` — there is no molpy subclass and no Python-side object-column
-overflow. All columns (numeric / bool / string) live in the Rust Store and are
-visible to every ``molrs.*`` API; object / None / ragged columns are rejected
-fail-fast.
+All columns (numeric / bool / string) live in the Rust Store and are visible to
+every ``molrs.*`` API; object / None / ragged columns are rejected fail-fast.
 """
 
 import molrs
 import numpy as np
 import pytest
 
-from molpy.core.frame import Block
+from molrs import Block
 
 
-class TestBlockIdentityCollapse:
-    """``molpy.Block`` IS ``molrs.Block``."""
-
-    def test_block_is_molrs_block(self):
-        assert Block is molrs.Block
-
+class TestCanonicalBlock:
     def test_instance_is_molrs_block(self):
         assert isinstance(Block(), molrs.Block)
 

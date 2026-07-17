@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from molrs import MetaValue
 
 
 KB_KCAL_MOL_K = 1.987204e-3
@@ -246,7 +247,7 @@ def debye_pipeline_outputs():
     """Run the molpy DielectricSusceptibility pipeline on synthetic Debye data."""
     from molpy.compute.dielectric import DielectricSusceptibility
     from molpy.core.box import Box
-    from molpy.core.frame import Block, Frame
+    from molrs import Block, Frame
 
     dt = 0.05
     n_frames = 4096
@@ -281,8 +282,8 @@ def debye_pipeline_outputs():
         block["charge"] = np.array([q, -q], dtype=np.float64)
         frame = Frame()
         frame["atoms"] = block
-        frame.box = Box.cubic(box_length)
-        frame.metadata["dt"] = dt
+        frame.simbox = Box.cubic(box_length)
+        frame.meta = {"dt": MetaValue("f64", dt)}
         frames.append(frame)
 
     class ListTrajectory:

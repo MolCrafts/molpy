@@ -13,3 +13,5 @@ Passive project knowledge — kept across features, consumed by agents during sp
 - `assembly-guide-draft.md` — narrative for the `graph-assembler` chain's API; **ships as
   `docs/user-guide/02_assembly.md`** in `graph-assembler-03-purge` T11. Read this first to
   understand `GraphAssembler` / `TypeScope` / `RegionPatch` before reading the specs.
+- `polymer-topology-editing-design.md` — catalog of topology/network editing from a shared
+  PEO monomer kit (`PolymerBuilder` + `GraphAssembler` + Selectors); example suite + PR plan.

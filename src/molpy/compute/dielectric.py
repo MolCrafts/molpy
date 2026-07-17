@@ -25,6 +25,7 @@ from molrs import LinearFit as _MolrsLinearFit
 from molrs.dielectric import Dielectric
 from molrs.signal import acf_fft, apply_window, frequency_grid
 
+from .._frame_meta import get_frame_meta
 from ..core.box import Box
 from .base import Compute
 from .result import (
@@ -71,7 +72,7 @@ def _unwrap_inplace(coords: np.ndarray, frames: list) -> None:
     """
     cache: dict[bytes, Box] = {}
     for i in range(1, len(frames)):
-        rs_box = frames[i - 1].box
+        rs_box = frames[i - 1].simbox
         key = np.asarray(rs_box.matrix).tobytes()
         box = cache.get(key)
         if box is None:
@@ -111,7 +112,7 @@ class ACFAnalyzer(Compute):
             raise ValueError(f"Need at least 2 frames, got {n_frames}")
 
         frame0 = frames[0]
-        if self.unwrap and (frame0.box is None or frame0.box.is_free):
+        if self.unwrap and (frame0.simbox is None or frame0.simbox.is_free):
             raise ValueError(
                 "Trajectory frames must have a non-free Box when unwrap=True"
             )
@@ -121,7 +122,7 @@ class ACFAnalyzer(Compute):
 
         n_dim = len(self.columns)
         n_atoms = len(frame0["atoms"]["x"])
-        dt = frame0.metadata.get("dt", 1.0)
+        dt = get_frame_meta(frame0, "dt", 1.0)
 
         data = np.empty((n_frames, n_atoms, n_dim), dtype=np.float64)
         for i, frame in enumerate(frames):
@@ -205,7 +206,7 @@ class DielectricSusceptibility(Compute):
             before FFT.
         routes: Subset of `["einstein-helfand", "green-kubo"]`. Default
             runs both.
-        volume: System volume in **Å³**. If `None`, uses `frame.box.volume`
+        volume: System volume in **Å³**. If `None`, uses `frame.simbox.volume`
             from the first frame (assumes NVT/NVE).
 
     Inputs:
@@ -251,7 +252,7 @@ class DielectricSusceptibility(Compute):
             raise ValueError(f"Need at least 2 frames, got {n_frames}")
 
         frame0 = frames[0]
-        if frame0.box is None or frame0.box.is_free:
+        if frame0.simbox is None or frame0.simbox.is_free:
             raise ValueError("Trajectory frames must have a non-free Box")
 
         for col in ["x", "y", "z", "charge"]:
@@ -259,7 +260,7 @@ class DielectricSusceptibility(Compute):
                 raise ValueError(f"Missing column '{col}' in atoms block")
 
         n_atoms = len(frame0["atoms"]["x"])
-        volume = self._volume if self._volume is not None else frame0.box.volume()
+        volume = self._volume if self._volume is not None else frame0.simbox.volume()
 
         positions = np.empty((n_frames, n_atoms, 3), dtype=np.float64)
         # Charges are taken once from frame 0: the dipole / current formulas
@@ -372,7 +373,7 @@ class IonicConductivity(Compute):
         temperature: Temperature in **K**.
         max_correlation_time: Longest MSD lag in **frames** (clamped to
             ``n_frames - 1``). Practical choice: <= ``n_frames / 5``.
-        volume: System volume in **A^3**. If ``None``, uses ``frame.box.volume``
+        volume: System volume in **A^3**. If ``None``, uses ``frame.simbox.volume``
             from the first frame (assumes NVT/NVE).
         fit_start_frac: Fraction of ``max_lag`` where the linear-fit window
             over the diffusive regime starts (default 0.1).
@@ -419,7 +420,7 @@ class IonicConductivity(Compute):
             raise ValueError(f"Need at least 2 frames, got {n_frames}")
 
         frame0 = frames[0]
-        if frame0.box is None or frame0.box.is_free:
+        if frame0.simbox is None or frame0.simbox.is_free:
             raise ValueError("Trajectory frames must have a non-free Box")
 
         for col in ["x", "y", "z", "charge"]:
@@ -427,7 +428,7 @@ class IonicConductivity(Compute):
                 raise ValueError(f"Missing column '{col}' in atoms block")
 
         n_atoms = len(frame0["atoms"]["x"])
-        volume = self._volume if self._volume is not None else frame0.box.volume()
+        volume = self._volume if self._volume is not None else frame0.simbox.volume()
 
         positions = np.empty((n_frames, n_atoms, 3), dtype=np.float64)
         # Charges are taken once from frame 0: the dipole / current formulas

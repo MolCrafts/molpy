@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 
+import molrs
+
 import molpy as mp
 from molpy.compute import Persist
 from molpy.compute.base import Compute
@@ -21,14 +23,14 @@ def _pair_trajectory(j_positions, box_len=100.0):
     """Type-1 atom fixed at origin; type-2 atom at the given per-frame x."""
     frames = []
     for xj in j_positions:
-        frame = mp.Frame()
+        frame = molrs.Frame()
         frame["atoms"] = {
             "x": np.array([0.0, xj]),
             "y": np.array([0.0, 0.0]),
             "z": np.array([0.0, 0.0]),
             "type": np.array([1, 2]),
         }
-        frame.box = mp.Box.cubic(box_len)
+        frame.simbox = mp.Box.cubic(box_len)
         frames.append(frame)
     return Trajectory(frames)
 

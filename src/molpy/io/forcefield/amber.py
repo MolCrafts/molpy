@@ -3,9 +3,11 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import numpy as np
+from molrs import MetaValue
 
+from molpy._frame_meta import update_frame_meta
 from molpy.core.forcefield import AtomisticForcefield, DihedralFourierStyle
-from molpy.core.frame import Frame
+from molrs import Frame
 
 # AMBER stores charges multiplied by 18.2223 (sqrt of 332.0636 kcal*A/mol/e^2).
 CHARGE_CONVERSION_FACTOR = 18.2223
@@ -150,7 +152,7 @@ class AmberPrmtopReader:
         # Element symbols (from atomic number) so downstream consumers — packing,
         # visualisation, mass lookup — don't have to re-derive them.
         if "atomic_number" in atoms:
-            from molpy.core.element import Element
+            from molrs import Element
 
             atoms["element"] = np.array(
                 Element.get_symbols([int(z) for z in atoms["atomic_number"]])
@@ -282,8 +284,14 @@ class AmberPrmtopReader:
                 name=pair_name,
             )
 
-        # store in frame
-        frame.metadata.update(meta)
+        # POINTERS are integral by format; TITLE is the only string entry.
+        update_frame_meta(
+            frame,
+            {
+                key: MetaValue("string" if isinstance(value, str) else "i64", value)
+                for key, value in meta.items()
+            },
+        )
         frame["atoms"] = atoms
         frame["bonds"] = bonds
         frame["angles"] = angles

@@ -530,8 +530,9 @@ def _emit_class_builder(
                     "        _base = _a.get('name', '')",
                     f"        _key = {s.instance_name!r} + '/' + _base",
                     "        _a['name'] = _key",
-                    "        atoms[_key] = _a",
-                    "    tmpl += sub",
+                    "        atoms[_a.handle] = _key",
+                    "    _mapping = tmpl._merge_map(sub)",
+                    "    atoms.update({atoms.pop(_old): tmpl._intern_node(_new) for _old, _new in _mapping.items()})",
                 ]
             )
 

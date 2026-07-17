@@ -19,8 +19,8 @@ def test_lammps_log_reads_default_thermo(TEST_DATA_DIR: Path) -> None:
     log = LAMMPSLog(TEST_DATA_DIR / "lammps-log" / "thermo_style_default.log")
     log.read()
 
-    assert log["n_stages"] == 1
-    stage = log["stages"][0]
+    assert len(log.runs) == 1
+    stage = log.runs[0].thermo.data
     columns = stage.dtype.names
     assert "Step" in columns
     assert "Temp" in columns
@@ -33,9 +33,8 @@ def test_lammps_log_to_dict_is_json_friendly(TEST_DATA_DIR: Path) -> None:
     log = LAMMPSLog(TEST_DATA_DIR / "lammps-log" / "thermo_style_default.log").read()
     payload = log.to_dict()
 
-    assert payload["n_stages"] == 1
-    assert isinstance(payload["stages"], list)
-    stage = payload["stages"][0]
+    assert len(payload["runs"]) == 1
+    stage = payload["runs"][0]["thermo"]
     assert isinstance(stage["columns"], list)
     assert isinstance(stage["rows"], list)
     assert all(isinstance(row, list) for row in stage["rows"])
@@ -55,9 +54,8 @@ def test_lammps_log_handles_no_thermo_block(tmp_path: Path) -> None:
     log_file.write_text("LAMMPS (1 Jan 2026)\n# nothing happened\n")
     log = LAMMPSLog(log_file).read()
 
-    assert log["n_stages"] == 0
-    assert log["stages"] == []
-    assert log["version"].startswith("LAMMPS")
+    assert log.runs == ()
+    assert log.version.startswith("LAMMPS")
 
 
 def test_lammps_log_parses_two_stages(tmp_path: Path) -> None:
@@ -81,9 +79,9 @@ def test_lammps_log_parses_two_stages(tmp_path: Path) -> None:
     log_file.write_text(text)
     log = LAMMPSLog(log_file).read()
 
-    assert log["n_stages"] == 2
-    assert log["stages"][0]["Step"][0] == 0
-    assert log["stages"][1]["Step"][0] == 20
+    assert len(log.runs) == 2
+    assert log.runs[0].thermo.data["Step"][0] == 0
+    assert log.runs[1].thermo.data["Step"][0] == 20
 
 
 def test_read_LAMMPS_log_returns_nested_run_structure(tmp_path: Path) -> None:
@@ -171,4 +169,4 @@ Loop time of 0.1 on 1 procs for 0 steps with 1 atoms
     json.dumps(payload)
     assert payload["runs"][0]["thermo"]["columns"] == ["Step", "Temp"]
     assert payload["runs"][0]["CPU_use"] is None
-    assert payload["stages"][0]["rows"] == [[0.0, 300.0]]
+    assert payload["runs"][0]["thermo"]["rows"] == [[0.0, 300.0]]

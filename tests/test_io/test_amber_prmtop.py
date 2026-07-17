@@ -3,10 +3,17 @@
 import numpy as np
 import pytest
 
+import molpy.io as molpy_io
 from molpy import AngleType, AtomType, BondType
-from molpy.core.frame import Frame
 from molpy.io import read_amber
 from molpy.io.forcefield.amber import AmberPrmtopReader, CHARGE_CONVERSION_FACTOR
+from molrs import Frame
+
+
+def test_read_amber_is_the_only_combined_amber_entry_point():
+    assert molpy_io.read_amber is read_amber
+    assert "read_amber_prmtop" not in molpy_io.__all__
+    assert not hasattr(molpy_io, "read_amber_prmtop")
 
 
 @pytest.fixture
@@ -86,14 +93,14 @@ def test_prmtop_read_pointers(litfsi_prmtop):
     frame, ff = reader.read(frame)
 
     # LiTFSI has 16 atoms (15 TFSI + 1 Li)
-    assert frame.metadata["n_atoms"] == 16
+    assert frame.meta["n_atoms"].value == 16
     assert frame["atoms"].nrows == 16
 
     # Check that meta contains expected fields
-    assert "n_bonds" in frame.metadata
-    assert "n_angles" in frame.metadata
-    assert "n_dihedrals" in frame.metadata
-    assert "n_atomtypes" in frame.metadata
+    assert "n_bonds" in frame.meta
+    assert "n_angles" in frame.meta
+    assert "n_dihedrals" in frame.meta
+    assert "n_atomtypes" in frame.meta
 
 
 def test_prmtop_read_atom_names(litfsi_prmtop):
@@ -201,7 +208,7 @@ def test_prmtop_read_bonds(litfsi_prmtop):
     assert "type_id" in bonds
     assert "id" in bonds
 
-    n_bonds = frame.metadata["n_bonds"]
+    n_bonds = frame.meta["n_bonds"].value
     assert len(bonds["atomi"]) == n_bonds
     assert len(bonds["atomj"]) == n_bonds
 
@@ -224,7 +231,7 @@ def test_prmtop_read_angles(litfsi_prmtop):
     assert "type_id" in angles
     assert "id" in angles
 
-    n_angles = frame.metadata["n_angles"]
+    n_angles = frame.meta["n_angles"].value
     assert len(angles["atomi"]) == n_angles
     assert len(angles["atomj"]) == n_angles
     assert len(angles["atomk"]) == n_angles
@@ -250,7 +257,7 @@ def test_prmtop_read_dihedrals(litfsi_prmtop):
     assert "type_id" in dihedrals
     assert "id" in dihedrals
 
-    n_dihedrals = frame.metadata["n_dihedrals"]
+    n_dihedrals = frame.meta["n_dihedrals"].value
     assert len(dihedrals["atomi"]) == n_dihedrals
     assert len(dihedrals["atomj"]) == n_dihedrals
     assert len(dihedrals["atomk"]) == n_dihedrals
@@ -625,7 +632,7 @@ def test_bond_count_matches_pointers(litfsi_prmtop):
     frame = Frame()
     frame, _ = reader.read(frame)
     # NBONH=0, MBONA=14 → n_bonds=14
-    assert frame.metadata["n_bonds"] == 14
+    assert frame.meta["n_bonds"].value == 14
     assert len(frame["bonds"]["atomi"]) == 14
 
 
@@ -635,7 +642,7 @@ def test_bond_atom_indices_zero_based(litfsi_prmtop):
     frame = Frame()
     frame, _ = reader.read(frame)
     bonds = frame["bonds"]
-    n_atoms = frame.metadata["n_atoms"]
+    n_atoms = frame.meta["n_atoms"].value
     assert all(0 <= i < n_atoms for i in bonds["atomi"])
     assert all(0 <= j < n_atoms for j in bonds["atomj"])
 
@@ -697,7 +704,7 @@ def test_angle_count_matches_pointers(litfsi_prmtop):
     reader = AmberPrmtopReader(litfsi_prmtop)
     frame = Frame()
     frame, _ = reader.read(frame)
-    assert frame.metadata["n_angles"] == 25
+    assert frame.meta["n_angles"].value == 25
     assert len(frame["angles"]["atomi"]) == 25
 
 
@@ -762,7 +769,7 @@ def test_dihedral_count_matches_pointers(litfsi_prmtop):
     reader = AmberPrmtopReader(litfsi_prmtop)
     frame = Frame()
     frame, _ = reader.read(frame)
-    assert frame.metadata["n_dihedrals"] == 27
+    assert frame.meta["n_dihedrals"].value == 27
     assert len(frame["dihedrals"]["atomi"]) == 27
 
 
@@ -771,7 +778,7 @@ def test_dihedral_negative_atoms_in_litfsi(litfsi_prmtop):
     reader = AmberPrmtopReader(litfsi_prmtop)
     frame = Frame()
     frame, _ = reader.read(frame)
-    n_atoms = frame.metadata["n_atoms"]
+    n_atoms = frame.meta["n_atoms"].value
     for key in ("atomi", "atomj", "atomk", "atoml"):
         assert all(0 <= v < n_atoms for v in frame["dihedrals"][key]), (
             f"Dihedral {key} out of range"
@@ -956,13 +963,13 @@ def test_angle_residue_intra_fsi(litfsi_prmtop):
 # ---------------------------------------------------------------------------
 
 
-def test_title_preserved_in_metadata(litfsi_prmtop):
+def test_title_preserved_in_typed_meta(litfsi_prmtop):
     """TITLE section value survives POINTERS section overwriting self.meta."""
     reader = AmberPrmtopReader(litfsi_prmtop)
     frame = Frame()
     frame, _ = reader.read(frame)
-    assert "title" in frame.metadata
-    assert frame.metadata["title"] == "TFSI"
+    assert "title" in frame.meta
+    assert frame.meta["title"].value == "TFSI"
 
 
 # ---------------------------------------------------------------------------

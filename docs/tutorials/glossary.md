@@ -29,7 +29,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 :   A columnar table mapping string keys to NumPy arrays. All columns share the same row count. Used inside `Frame` to store atoms, bonds, angles, etc. See [Block and Frame](02_block_and_frame.md).
 
 **Frame**
-:   A named collection of `Block` objects plus free-form metadata. Represents one complete system snapshot. The universal exchange object for I/O. See [Block and Frame](02_block_and_frame.md).
+:   A named collection of `Block` objects plus an optional simulation box and exact-dtype `MetaValue` entries. Represents one complete system snapshot. The universal exchange object for I/O. See [Block and Frame](02_block_and_frame.md).
 
 **Box**
 :   A simulation cell defined by a 3x3 lattice matrix and periodic boundary conditions. Provides wrapping, minimum-image distances, and coordinate conversion. See [Box and Periodicity](03_box_and_periodicity.md).

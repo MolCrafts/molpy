@@ -1,4 +1,6 @@
 import numpy as np
+import molrs
+
 import molpy as mp
 
 
@@ -8,12 +10,12 @@ class TestAmberInpcrdReader:
     def test_amber_inpcrd_litfsi(self, TEST_DATA_DIR):
         """Test reading LiTFSI.inpcrd file."""
 
-        frame = mp.Frame()
+        frame = molrs.Frame()
         result = mp.io.read_amber_inpcrd(
             inpcrd=TEST_DATA_DIR / "inpcrd" / "LiTFSI.inpcrd", frame=frame
         )
 
-        assert isinstance(result, mp.Frame)
+        assert isinstance(result, molrs.Frame)
         assert "atoms" in result
 
         atoms = result["atoms"]

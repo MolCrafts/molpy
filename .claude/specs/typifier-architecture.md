@@ -7,6 +7,13 @@ depends_on: "graph-assembler-01/02/03 (code-complete)"
 blocks: "opls-typifier-downsink (它落进来的位置就是一个 match 实现)"
 ---
 
+> 2026-07-14 correction: the `capping` concept and both
+> `Atomistic.complete_valence()` / `CoarseGrain.complete_valence()` facades were
+> removed. A cut site that needs chemical completion invokes
+> `Atomistic.adopt(molrs.Perceive().find_hydrogens(region))` directly.
+> Coarse-grained graphs expose no no-op chemistry method. Older
+> `complete_valence` wording below records the superseded implementation plan.
+
 # `Typifier[G: MolGraph]` —— 一条流水线，只有 `match` 不一样
 
 > 只整理 `src/molpy/typifier/` 的类层级与文件边界（外加 `core/` 里三处必须先修的东西）。

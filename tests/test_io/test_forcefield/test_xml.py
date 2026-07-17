@@ -728,14 +728,9 @@ class TestXMLForceFieldReader:
 
         # Create a simple structure with opls_269 and opls_267 atoms
         asm = Atomistic()
-        atom1 = Atom(symbol="O")
-        atom1.data["type"] = "opls_269"  # class="O_3"
-        atom2 = Atom(symbol="C")
-        atom2.data["type"] = "opls_267"  # class="C"
-        asm.add_entity(atom1, atom2)
-
-        bond = Bond(atom1, atom2)
-        asm.add_link(bond)
+        atom1 = asm.def_atom(symbol="O", type="opls_269")  # class="O_3"
+        atom2 = asm.def_atom(symbol="C", type="opls_267")  # class="C"
+        bond = asm.def_bond(atom1, atom2)
 
         # Assign parameters from the atom types already on the graph. ``assign``
         # returns a new graph, so the input's bond stays untouched.

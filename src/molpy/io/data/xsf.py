@@ -10,10 +10,10 @@ from typing import Any
 
 import numpy as np
 
-from molpy.core.frame import Block
+from molrs import Block
 from molpy.core.box import Box
-from molpy.core.frame import Frame
-from molpy.core.element import Element
+from molrs import Frame
+from molrs import Element
 
 from .base import DataReader, DataWriter
 
@@ -132,7 +132,7 @@ class XsfReader(DataReader):
             # For molecular structures, use free box
             box = Box()  # Free box for non-periodic molecules
 
-        frame.box = box
+        frame.simbox = box
 
         return frame
 
@@ -210,7 +210,7 @@ class XsfWriter(DataWriter):
         frame : Frame
             Frame containing atomic data and optional box information
         """
-        box: Box | None = frame.box
+        box: Box | None = frame.simbox
 
         with open(self._file, "w") as f:
             # Write header comment

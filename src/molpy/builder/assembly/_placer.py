@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from molpy.core import fields
-from molpy.core.element import Element
+from molrs import Element
 
 if TYPE_CHECKING:
     from molpy.core.atomistic import Atom, Atomistic
@@ -97,8 +97,8 @@ class ResiduePlacer(Placer):
         """``(residue_a, residue_b, endpoint_a, endpoint_b)`` per forming bond."""
         edges: list[tuple[int, int, Atom, Atom]] = []
         for handle_a, handle_b in bonds:
-            atom_a = world._intern_atom(handle_a)
-            atom_b = world._intern_atom(handle_b)
+            atom_a = world._intern_node(handle_a)
+            atom_b = world._intern_node(handle_b)
             res_a = atom_a.get(fields.RES_ID)
             res_b = atom_b.get(fields.RES_ID)
             if res_a is None or res_b is None or int(res_a) == int(res_b):

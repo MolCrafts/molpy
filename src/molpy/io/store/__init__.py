@@ -42,9 +42,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator
 
 import numpy as np
+from molrs import MetaValue
+
+from molpy._frame_meta import get_frame_meta, update_frame_meta
 
 if TYPE_CHECKING:
-    from molpy.core import Box, Frame
+    from molrs import Frame
+
+    from molpy.core import Box
     from molpy.core.forcefield import AtomisticForcefield, ForceField
 
 PathLike = str | Path
@@ -233,7 +238,7 @@ class MolStore:
                     tg.write_array(key, data)
 
         # ── simbox ─────────────────────────────────────────────────────
-        box = frame.box
+        box = frame.simbox
         if box is not None:
             sb = fg.create_group("simbox")
             sb.write_array("h", np.asarray(box.matrix, dtype=np.float32))
@@ -241,8 +246,9 @@ class MolStore:
             sb.write_array("pbc", np.asarray(box.pbc, dtype=np.uint8))
 
     def read_frame(self) -> "Frame":
-        from molpy.core import Box, Frame
-        from molpy.core.frame import Block
+        from molrs import Block, Frame
+
+        from molpy.core import Box
 
         fg = self._get_backend()["frame"]
         frame = Frame()
@@ -276,12 +282,7 @@ class MolStore:
                 if "pbc" in sb.list_arrays()
                 else np.ones(3, dtype=bool)
             )
-            frame.box = Box(matrix=h, origin=origin, pbc=pbc.astype(bool))
-        elif fg.has("box"):
-            # Backward compat: old format stored box/matrix
-            matrix = fg["box"].read_array("matrix")
-            frame.box = Box(matrix=matrix)
-
+            frame.simbox = Box(matrix=h, origin=origin, pbc=pbc.astype(bool))
         return frame
 
     # ─────────────────────────────────────────────────────────────────
@@ -586,11 +587,11 @@ class MolStore:
             tg.write_array(key, stacked, chunks=(1, N))
 
         # ── box_h under trajectory/ ──────────────────────────────────
-        has_box = any("box" in f.metadata for f in frames)
+        has_box = any(f.simbox is not None for f in frames)
         if has_box:
             box_data = np.empty((T, 3, 3), dtype=np.float32)
             for t, f in enumerate(frames):
-                box = f.box
+                box = f.simbox
                 if box is not None:
                     box_data[t] = np.asarray(box)
                 else:
@@ -600,10 +601,10 @@ class MolStore:
 
         # ── scalar observables under trajectory/ ─────────────────────
         for key in _TRAJ_SCALAR_KEYS:
-            if key not in frames[0].metadata:
+            if key not in frames[0].meta:
                 continue
             arr = np.array(
-                [f.metadata.get(key, np.nan) for f in frames],
+                [get_frame_meta(f, key, np.nan) for f in frames],
                 dtype=np.float64,
             )
             tg.write_array(key, arr, chunks=(min(T, _SCALAR_CHUNK),))
@@ -620,8 +621,9 @@ class MolStore:
 
     def read_trajectory_frame(self, index: int) -> "Frame":
         """Read a single trajectory frame by index."""
-        from molpy.core import Box, Frame
-        from molpy.core.frame import Block
+        from molrs import Block, Frame
+
+        from molpy.core import Box
 
         T = self.n_trajectory_frames
 
@@ -635,11 +637,11 @@ class MolStore:
 
         # ── step/time metadata ───────────────────────────────────────
         step_arr = tg.read_array("step")
-        frame.metadata["timestep"] = int(step_arr[index])
+        typed_meta = {"timestep": MetaValue("i64", int(step_arr[index]))}
 
         if "time" in tg.list_arrays():
             time_arr = tg.read_array("time")
-            frame.metadata["time"] = float(time_arr[index])
+            typed_meta["time"] = MetaValue("f64", float(time_arr[index]))
 
         # ── per-atom data from trajectory/ arrays ────────────────────
         traj_arrays = set(tg.list_arrays())
@@ -655,13 +657,15 @@ class MolStore:
         # ── box_h ────────────────────────────────────────────────────
         if "box_h" in traj_arrays:
             box_arr = tg.read_array("box_h")
-            frame.box = Box(matrix=box_arr[index])
+            frame.simbox = Box(matrix=box_arr[index])
 
         # ── scalar observables ───────────────────────────────────────
         for key in _TRAJ_SCALAR_KEYS:
             if key in traj_arrays:
                 arr = tg.read_array(key)
-                frame.metadata[key] = float(arr[index])
+                typed_meta[key] = MetaValue("f64", float(arr[index]))
+
+        update_frame_meta(frame, typed_meta)
 
         return frame
 

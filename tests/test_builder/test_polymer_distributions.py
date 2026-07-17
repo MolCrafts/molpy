@@ -14,6 +14,16 @@ from molpy.builder.polymer.distributions import (
 )
 
 
+class TestDPDistribution:
+    def test_runtime_protocol_accepts_dp_capability(self):
+        assert isinstance(UniformPolydisperse(1, 2), DPDistribution)
+
+
+class TestMassDistribution:
+    def test_runtime_protocol_accepts_mass_capability(self):
+        assert isinstance(SchulzZimmPolydisperse(1000.0, 2000.0), MassDistribution)
+
+
 # ---- UniformPolydisperse Tests ----
 
 

@@ -19,6 +19,7 @@ import warnings
 import numpy as np
 import pytest
 
+import molrs
 import molpy as mp
 from molpy.compute import IonicConductivity, JACF
 from molpy.compute.result import ConductivityResult, JACFResult
@@ -32,14 +33,14 @@ def _ion_trajectory(n=400, drift=0.01):
     """Cation drifts linearly along x; anion fixed -> growing collective MSD."""
     frames = []
     for i in range(n):
-        f = mp.Frame()
+        f = molrs.Frame()
         f["atoms"] = {
             "x": np.array([1.0 + drift * i, 5.0]),
             "y": np.array([0.0, 0.0]),
             "z": np.array([0.0, 0.0]),
             "charge": np.array([1.0, -1.0]),
         }
-        f.box = mp.Box.cubic(30.0)
+        f.simbox = mp.Box.cubic(30.0)
         frames.append(f)
     return Trajectory(frames)
 
@@ -48,7 +49,7 @@ def _current_trajectory(n=11, box_len=10.0, vcat=1.0):
     """Constant current J=(vcat,0,0): flat ACF, plateau Green-Kubo integral."""
     frames = []
     for _ in range(n):
-        f = mp.Frame()
+        f = molrs.Frame()
         f["atoms"] = {
             "x": np.array([0.0, 5.0]),
             "y": np.array([0.0, 0.0]),
@@ -58,7 +59,7 @@ def _current_trajectory(n=11, box_len=10.0, vcat=1.0):
             "vz": np.array([0.0, 0.0]),
             "type": np.array([1, 2]),
         }
-        f.box = mp.Box.cubic(box_len)
+        f.simbox = mp.Box.cubic(box_len)
         frames.append(f)
     return Trajectory(frames)
 

@@ -24,6 +24,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+import molrs
 
 import molpy as mp
 import molpy.typifier as typifier_pkg
@@ -114,7 +115,7 @@ class TestGenericOverTheGraph:
 
         A radical is a perfectly good molecule, and a connectivity graph with no
         bond orders looks under-coordinated everywhere. So ``typify`` takes the
-        graph at face value and contains no valence completion at all.
+        graph at face value and contains no hydrogen perception at all.
         """
         tree = ast.parse(textwrap.dedent(inspect.getsource(Typifier.typify)))
         assert not [
@@ -122,12 +123,12 @@ class TestGenericOverTheGraph:
             for node in ast.walk(tree)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "complete_valence"
+            and node.func.attr == "find_hydrogens"
         ]
         assert not [n for n in ast.walk(tree) if isinstance(n, ast.If | ast.Try)]
 
     def test_the_party_that_cut_the_graph_completes_it_unconditionally(self):
-        """A region is a cut, always — so it caps, always, with no condition."""
+        """A region is a cut, so it perceives missing hydrogens unconditionally."""
         from molpy.typifier.region import RegionTypes
 
         tree = ast.parse(textwrap.dedent(inspect.getsource(RegionTypes.of.__func__)))
@@ -136,7 +137,7 @@ class TestGenericOverTheGraph:
             for node in ast.walk(tree)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "complete_valence"
+            and node.func.attr == "find_hydrogens"
         ]
         assert len(calls) == 1
         assert not [n for n in ast.walk(tree) if isinstance(n, ast.If | ast.Try)]
@@ -157,9 +158,9 @@ class TestCoarseGrainNeedsNoContractChange:
         assert all(bead["type"] == "B" for bead in typed.beads)
         assert all(bead.get("type") is None for bead in cg.beads)
 
-    def test_a_bead_has_no_valence_to_complete(self):
+    def test_a_bead_exposes_no_chemical_perception_facade(self):
         cg = _cg()
-        assert len(list(cg.complete_valence().nodes)) == len(list(cg.nodes))
+        assert not hasattr(cg, "complete_valence")
 
     def test_the_retype_cache_accepts_it(self):
         assert RetypeCache(_BeadTypifier()) is not None
@@ -191,6 +192,11 @@ class TestTypifyReturnsANewGraph:
 
 
 class TestNamingAndSurface:
+    def test_every_exported_typifier_inherits_the_molrs_base(self):
+        for name in typifier_pkg.__all__:
+            if name.endswith("Typifier") and name != "Typifier":
+                assert issubclass(getattr(typifier_pkg, name), molrs.Typifier)
+
     def test_every_exported_typifier_is_named_after_a_forcefield_or_a_tool(self):
         exported = {
             name

@@ -207,7 +207,7 @@ def test_lammps_reacts_a_molpy_written_bond_react_system(tmp_path):
     for i, atom in enumerate(world.atoms, start=1):
         atom["id"] = i
     frame = world.to_frame()
-    frame.box = mp.Box.cubic(40.0)
+    frame.simbox = mp.Box.cubic(40.0)
 
     n_atoms = frame["atoms"].nrows
     n_bonds = frame["bonds"].nrows

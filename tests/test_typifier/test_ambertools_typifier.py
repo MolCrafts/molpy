@@ -14,12 +14,17 @@ import types
 from unittest.mock import Mock
 
 import pytest
+import molrs
 
 import molpy as mp
 from molpy.typifier.affected_region import AffectedRegion
 from molpy.typifier.ambertools import AmberToolsTypifier
 from molpy.typifier.base import Typifier
 from molpy.typifier.region import RegionTypes
+
+
+def _find_hydrogens(graph: mp.Atomistic) -> mp.Atomistic:
+    return mp.Atomistic.adopt(molrs.Perceive().find_hydrogens(graph))
 
 
 class _EmptyForceField:
@@ -73,7 +78,7 @@ class TestContract:
 class TestGasCharges:
     def test_antechamber_is_driven_with_gas_charges(self):
         """No ``sqm`` solve: atom types and bonded params are charge-independent."""
-        molecule = _linear_carbon_region().complete_valence()
+        molecule = _find_hydrogens(_linear_carbon_region())
         amber = _amber_returning(molecule, charge=0.0)
 
         AmberToolsTypifier(amber).typify(molecule)
@@ -82,7 +87,7 @@ class TestGasCharges:
         assert kwargs["charge_method"] == "gas"
 
     def test_it_never_writes_a_charge_back(self):
-        molecule = _linear_carbon_region().complete_valence()
+        molecule = _find_hydrogens(_linear_carbon_region())
         amber = _amber_returning(molecule, charge=0.5)
 
         typed = AmberToolsTypifier(amber).typify(molecule)
@@ -94,7 +99,7 @@ class TestGasCharges:
 class TestSnapshot:
     def test_the_region_snapshot_records_types_not_charges(self):
         region = _linear_carbon_region()
-        amber = _amber_returning(region.complete_valence(), charge=0.5)
+        amber = _amber_returning(_find_hydrogens(region), charge=0.5)
 
         snap = RegionTypes.of(region, AmberToolsTypifier(amber))
 
@@ -103,14 +108,14 @@ class TestSnapshot:
             assert info.type == "c3"
             assert info.params == ()  # the charge on the frame was ignored
 
-    def test_the_region_completes_itself_before_antechamber_sees_it(self):
-        """antechamber must never be handed a raw slice; the region caps it once."""
+    def test_the_region_perceives_hydrogens_before_antechamber_sees_it(self):
+        """antechamber must never be handed a raw slice."""
         region = _linear_carbon_region()
-        capped = region.complete_valence()
-        amber = _amber_returning(capped)
+        perceived = _find_hydrogens(region)
+        amber = _amber_returning(perceived)
 
         RegionTypes.of(region, AmberToolsTypifier(amber))
 
         (given,), _ = amber.parameterize.call_args
-        assert len(list(given.atoms)) == len(list(capped.atoms))
+        assert len(list(given.atoms)) == len(list(perceived.atoms))
         assert len(list(given.atoms)) > len(list(region.atoms))

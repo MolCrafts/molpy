@@ -9,7 +9,7 @@ typifier does.
 **Types only, not charges.** Atom types + bonded params are charge-method
 independent, so the graph is typed with ``gas`` charges — no ``sqm``/AM1-BCC
 solve. Recomputing charges from a capped fragment would be both non-local and
-biased (capping a cut ether-O makes antechamber see a hydroxyl); charge is
+biased (adding H to a cut ether-O makes antechamber see a hydroxyl); charge is
 instead conserved by construction, by folding each cap's charge onto its site
 atom on the *template* so a deleted atom carries exactly zero. This typifier
 never writes a charge back.

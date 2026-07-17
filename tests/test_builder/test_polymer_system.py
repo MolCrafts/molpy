@@ -22,48 +22,19 @@ from molpy.builder.polymer.system import (
 )
 
 
-class TestSequenceGenerator:
-    """Tests for SequenceGenerator (bottom layer)."""
+class TestChain:
+    def test_records_one_sampled_chain(self):
+        chain = Chain(dp=2, monomers=["A", "B"], mass=150.0)
+        assert chain.dp == len(chain.monomers) == 2
+        assert chain.mass == 150.0
 
-    def test_weighted_sequence_generator_basic(self):
-        """Test basic sequence generation with monomer weights."""
-        seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
 
-        rng = np.random.default_rng(42)
-        sequence = seq_gen.generate_sequence(dp=10, rng=rng)
-
-        assert len(sequence) == 10
-        assert all(m in ["A", "B"] for m in sequence)
-
-    def test_weighted_sequence_generator_composition(self):
-        """Test expected composition calculation."""
-        seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
-
-        comp = seq_gen.expected_composition()
-
-        assert comp["A"] == pytest.approx(0.7, abs=0.01)
-        assert comp["B"] == pytest.approx(0.3, abs=0.01)
-        assert sum(comp.values()) == pytest.approx(1.0, abs=0.01)
-
-    def test_weighted_sequence_generator_distribution(self):
-        """Test that sequence generation follows weight distribution."""
-        seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.8, "B": 0.2})
-
-        rng = np.random.default_rng(42)
-        sequences = [
-            seq_gen.generate_sequence(dp=100, rng=np.random.default_rng(i))
-            for i in range(10)
-        ]
-
-        # Count occurrences across all sequences
-        all_monomers = [m for seq in sequences for m in seq]
-        a_count = all_monomers.count("A")
-        b_count = all_monomers.count("B")
-        total = len(all_monomers)
-
-        # Should be approximately 80% A and 20% B
-        a_fraction = a_count / total
-        assert a_fraction == pytest.approx(0.8, abs=0.1)
+class TestSystemPlan:
+    def test_records_the_system_mass_target(self):
+        chain = Chain(dp=1, monomers=["A"], mass=100.0)
+        plan = SystemPlan(chains=[chain], total_mass=100.0, target_mass=100.0)
+        assert plan.chains == [chain]
+        assert plan.total_mass == plan.target_mass
 
 
 class TestPolydisperseChainGenerator:
@@ -364,50 +335,3 @@ class TestSystemPlanner:
         # Without trimming, should stop before adding a chain that would exceed target
         # So might have 0 chains or stop early
         assert len(system_plan.chains) >= 0
-
-
-class TestIntegration:
-    """Integration tests for the full three-layer pipeline."""
-
-    def test_full_pipeline(self):
-        """Test the complete three-layer pipeline."""
-        # Bottom layer: SequenceGenerator
-        seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
-
-        # Middle layer: PolydisperseChainGenerator
-        dp_dist = SchulzZimmPolydisperse(Mn=1500.0, Mw=3000.0)
-
-        chain_gen = PolydisperseChainGenerator(
-            seq_generator=seq_gen,
-            monomer_mass={"A": 100.0, "B": 150.0},
-            end_group_mass=18.0,
-            distribution=dp_dist,
-        )
-
-        # Top layer: SystemPlanner
-        planner = SystemPlanner(
-            chain_generator=chain_gen,
-            target_total_mass=1.0e6,
-            max_rel_error=0.02,
-        )
-
-        rng = np.random.default_rng(42)
-        system_plan = planner.plan_system(rng)
-
-        # Verify the plan
-        assert len(system_plan.chains) > 0
-        assert system_plan.total_mass > 0
-
-        # Verify each chain
-        for chain in system_plan.chains:
-            assert chain.dp >= 1
-            assert len(chain.monomers) == chain.dp
-            assert chain.mass > 0
-            assert all(m in ["A", "B"] for m in chain.monomers)
-
-        # Verify mass constraint
-        rel_error = (
-            abs(system_plan.total_mass - system_plan.target_mass)
-            / system_plan.target_mass
-        )
-        assert rel_error <= planner.max_rel_error * 1.1

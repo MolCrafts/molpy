@@ -14,14 +14,15 @@ def _ethanol():
     return mol
 
 
-def test_typify_returns_atomistic_and_build_is_finite():
-    """typify returns a typed graph; build compiles finite potentials."""
+def test_typify_returns_atomistic_and_explicit_compilation_is_finite():
+    """Typification and typed-frame potential compilation compose explicitly."""
     typ = MMFFTypifier()
     mol = _ethanol()
     typed = typ.typify(mol)
     assert isinstance(typed, molrs.Atomistic)
-    pots = typ.build(mol)
-    energy = pots.calc_energy(molrs.extract_coords(typed.to_frame()))
+    frame = typed.to_frame()
+    pots = typ.forcefield().to_potentials(frame)
+    energy = pots.calc_energy(molrs.extract_coords(frame))
     assert np.isfinite(energy)
 
 

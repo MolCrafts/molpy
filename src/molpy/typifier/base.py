@@ -96,7 +96,7 @@ class Match:
             )
 
 
-class Typifier[G: molrs.Graph](ABC):
+class Typifier[G: molrs.Graph](molrs.Typifier, ABC):
     """Assign force-field types and parameters to a molecular graph.
 
     Subclasses implement :meth:`match` and nothing else. Specialise ``G`` to the

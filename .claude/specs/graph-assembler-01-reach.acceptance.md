@@ -28,7 +28,7 @@ criteria:
     status: pending
     last_checked: 2026-07-10
     evidence: |
-      OPLS-AA half VERIFIED: test_region_typing_reproduces_whole_graph_typing_at_the_declared_reach passes on PEO / p-xylene / methyl acrylate against the whole-graph oracle. GAFF half NOT RUN (needs @pytest.mark.external AmberTools). Note: region typing must CAP the ball (complete_valence) — a truncated fragment makes molrs OPLSAATypifier assign wrong types and then raise in bonded typing.
+      OPLS-AA half VERIFIED: test_region_typing_reproduces_whole_graph_typing_at_the_declared_reach passes on PEO / p-xylene / methyl acrylate against the whole-graph oracle. GAFF half NOT RUN (needs @pytest.mark.external AmberTools). Note: the cut site must run Perceive.find_hydrogens on the ball — a truncated fragment makes molrs OPLSAATypifier assign wrong types and then raise in bonded typing.
 
   - id: ac-003
     summary: reach 是实测出来的,不是抄来的

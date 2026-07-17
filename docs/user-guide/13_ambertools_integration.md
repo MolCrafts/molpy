@@ -156,26 +156,24 @@ print(
 ```
 
 
-## Three monomer variants define the chain start, interior, and end
+## MolPy chemistry defines the Amber residue variants
 
-Port markers in BigSMILES (`[>]` and `[<]`) define connection points. A monomer with both ports is an interior repeat unit; one with a single port is an end cap. The builder uses the port annotations to decide which prepgen variant (HEAD / CHAIN / TAIL) to generate.
+AmberTools does not have its own port or leaving-group semantics. Mark the
+monomer with `fields.SITE` and define the same `Reaction` used by
+`PolymerBuilder`; the Amber backend first compiles that molecular product, then
+translates its connection atoms and deleted atoms into prepgen HEAD, CHAIN, and
+TAIL inputs.
 
 ```python
-def parse_monomer_3d(bigsmiles):
-    mol = mp.parser.parse_monomer(bigsmiles)
-    return RDKitAdapter(internal=mol).generate_3d(add_hydrogens=True, optimize=True)
+from molpy.builder.assembly import SiteMap
+from molpy.conformer import Conformer
+from molpy.parser import parse_molecule
 
+eo, _ = Conformer(add_hydrogens=True, seed=42).generate(parse_molecule("COC"))
+SiteMap(eo).label_elements("C", "a", "b")
 
-# Head cap:  only < port → start of chain
-me_head = parse_monomer_3d("{[][<]C[]}")
-
-# Chain unit: both < and > → interior repeat
-eo_chain = parse_monomer_3d("{[][<]COC[>][]}")
-
-# Tail cap:  only > port → end of chain
-me_tail = parse_monomer_3d("{[]C[>][]}")
-
-library = {"MeH": me_head, "EO": eo_chain, "MeT": me_tail}
+STITCH = mp.Reaction("[C;%a:1][H].[C;%b:2][H]>>[C:1][C:2]")
+library = {"EO": eo}
 ```
 
 
@@ -191,6 +189,7 @@ polymer_dir.mkdir(exist_ok=True)
 
 builder = AmberPolymerBuilder(
     library=library,
+    reaction=STITCH,
     force_field="gaff2",
     charge_method="bcc",
     env="AmberTools25",
@@ -198,7 +197,7 @@ builder = AmberPolymerBuilder(
     work_dir=polymer_dir,
 )
 
-result = builder.build("{[#MeH][#EO]|10[#MeT]}")
+result = builder.build("{[#EO]|10}")
 ```
 
 `AmberPolymerBuilder.build()` internally runs antechamber, parmchk2, prepgen, and tleap. The result carries the polymer Frame, ForceField, and paths to the intermediate Amber files.
@@ -237,7 +236,7 @@ packer.def_target(li_frame, number=10, constraint=constraint)
 packer.def_target(tfsi_frame, number=10, constraint=constraint)
 
 system = packer(max_steps=20000, seed=12345)
-system.box = mp.Box.cubic(box_size)
+system.simbox = mp.Box.cubic(box_size)
 ```
 
 

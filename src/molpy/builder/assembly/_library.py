@@ -39,13 +39,20 @@ class MonomerLibrary:
                     f"monomer {label!r} marks no reaction site: set "
                     f"atom[fields.SITE] on the atoms that may react"
                 )
-        self._templates = dict(templates)
+        # A builder's compiled local-environment cache is only valid for the
+        # templates it validated. Keep private snapshots so later mutation of a
+        # caller-owned graph (or of a graph returned by ``__getitem__``) cannot
+        # silently stale that cache.
+        self._templates = {
+            label: template.copy() for label, template in templates.items()
+        }
 
     def __contains__(self, label: object) -> bool:
         return label in self._templates
 
     def __getitem__(self, label: str) -> Atomistic:
-        return self._templates[label]
+        """Return an independent copy of the named template."""
+        return self._templates[label].copy()
 
     def expand(self, topology: CGSmilesGraphIR) -> Atomistic:
         """Paste one copy of each topology node's template into a fresh world.

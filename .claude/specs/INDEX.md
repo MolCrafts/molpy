@@ -1,9 +1,5 @@
 # Specs
 
-- [graph-sink-01-wire-algorithms](graph-sink-01-wire-algorithms.md) — wire copy/merge/extract/CG spatial to molrs [done]
-- [graph-sink-02-def-sugar](graph-sink-02-def-sugar.md) — 图下沉 molpy 2/3（依赖 01）。API 切分 C：molrs=get/set 原语，molpy=`def_*` 糖衣；`atomistic.py`≲250 / `cg.py`≲200 LOC；禁止第二套 atom store [done]
-- [graph-sink-03-valence](graph-sink-03-valence.md) — 图下沉 molpy 3/3（依赖 01 + molrs graph-sink-04）。`complete_valence` 转发 `molrs.add_hydrogens`；删 Python 价态表/四面体放置 [done]
-
 - [incremental-typify-01-region](incremental-typify-01-region.md) — 增量分型 1/3（依赖 molrs region-support-01/02）。`AffectedRegion`（`Atomistic`/`CoarseGrain` 子类，IS-A MolGraph）：图编辑后由 `extract_subgraph(touched, radius)` 抽出的受影响区域（半径自适应=max(typifier.context_radius,4)），带 interior/boundary/entity_map + **结构 `__hash__`/`__eq__`**（molrs structural_hash/is_isomorphic）。生产者 Reacter/Crosslinker 从 molrs.Reaction.apply 返回的 touched handle 构建；取代扁平 ReactionResult.modified_atoms；因是 MolGraph 可直接喂 AmberTools。架构 notes/incremental-typification-design.md [done]
 - [incremental-typify-02-cache](incremental-typify-02-cache.md) — 增量分型 2/3（依赖 01）。`typify_region`（把区域当独立 Atomistic 分型，boundary 壳层给全环境，读 interior 类型，按 molrs canonical_order 排）+ `RetypeCache`（按结构哈希去重，is_isomorphic 确认碰撞）。重接 `_incremental_typify`：以区域+缓存取代整图原子分型 → 消除高分子增长 O(N²)（降到 O(#distinct junction)）；region 缺失回退旧路径 [done]
 - [incremental-typify-03-integration](incremental-typify-03-integration.md) — 增量分型 3/3（依赖 02）。把区域缓存接到三处：polymer builder（全程共享 RetypeCache → junction 跨链去重，O(N²) 修复落地）、crosslink（可选 typifier= 局部重分型，默认仍纯拓扑）、AmberTools（区域子图经 antechamber 分型、按哈希缓存、GAFF 类型经 entity_map 写回；Atomistic→PDB 桥不变）[done]

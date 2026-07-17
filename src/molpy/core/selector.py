@@ -2,9 +2,10 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 import numpy as np
+from molrs import NeighborQuery
 
 if TYPE_CHECKING:
-    from .frame import Block
+    from molrs import Block
 
 __all__ = [
     "AtomIndexSelector",
@@ -212,13 +213,20 @@ class DistanceSelector(MaskPredicate):
             )
 
         positions = np.column_stack([block["x"], block["y"], block["z"]])
-        distances = np.linalg.norm(positions - self.center, axis=1)
+        mask = np.zeros(block.nrows, dtype=bool)
+        if self.max_distance == 0.0:
+            # NeighborQuery requires a positive cell width. Exact coincidence
+            # is the only valid zero-radius result, so keep this API edge case
+            # as lightweight Python sugar.
+            return np.all(positions == self.center, axis=1)
 
-        mask = distances <= self.max_distance
-
+        neighbors = NeighborQuery.free(positions, self.max_distance).query(
+            self.center.reshape(1, 3)
+        )
+        selected = neighbors.point_indices
         if self.min_distance is not None:
-            mask &= distances >= self.min_distance
-
+            selected = selected[neighbors.distances >= self.min_distance]
+        mask[selected] = True
         return mask
 
 

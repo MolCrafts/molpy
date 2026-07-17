@@ -5,20 +5,62 @@ This file records API renames and breaking changes at the repository root.
 
 ## Unreleased
 
+### Added
+
+- **`CarbonTubeBuilder.build(n, m, ...)`** constructs zigzag, armchair, and
+  chiral single-wall nanotubes from exact rolled-graphene connectivity. Internal
+  lattice plans are cached but not exposed; the default leaves higher-order
+  topology deferred for large MD systems.
+
 ### Breaking
 
+- **`AmberPolymerBuilder` now requires the same `molpy.Reaction` used by
+  `PolymerBuilder`.** The Amber-only `port` convention, `reaction_preset`, and
+  leaving-hydrogen guesses are removed. AmberTools compiles the standard
+  `fields.SITE` + reaction product and translates its residue edits to prepgen
+  and tleap input.
+
+- **`molpy.core` no longer contains a second scientific kernel.** Element data,
+  unit parsing/conversion, Box/PBC geometry, graph alignment/replication,
+  regions, and CL&Pol scaleLJ now execute in molrs. The Pint runtime dependency
+  and runtime parsing of `clpol_fragments.ff` are removed. Pint-only contexts
+  other than the native `lj` compatibility context now raise explicitly.
+- **`molpy.TypeBucket` and `molpy.core.utils` are removed.** The generic Python
+  bucket had no production consumer; graph collections are live molrs handle
+  views and CSV parsing is `Block.from_csv`.
 - **`Atomistic.copy` / `CoarseGrain.copy`** preserve molrs handles (clone), no longer
   re-spawn every entity with new handles.
 - **`merge`** is structural (molrs): handles of `other` are remapped; Python view
   identity is not preserved; `other` is emptied. `a + b` merges a copy of `b` so
   operands stay intact.
-- **`complete_valence`** delegates to `molrs.add_hydrogens` (engine chemistry +
-  tetrahedral placement when coordinates exist).
+- **Detached `Atom` / relation objects and `add_*` registration are removed.**
+  `def_*` creates the graph handle first and returns its live, interned ref.
+  `NodeRef` / `RelationRef`, concrete atomistic/CG refs, mappings, collections,
+  and interning now have their sole implementation in `molrs.views`.
+- **`capping` and `complete_valence` are removed.** Hydrogen completion is the
+  explicit chemistry operation `molrs.Perceive().find_hydrogens(graph)`; callers
+  adopt its non-mutating graph result when they need the rich molpy facade.
 
 ### Changed
 
+- **Polymer assembly is compile-first.** `GraphAssembler` resolves every selected
+  local product against intact monomer templates, caches rooted per-atom typing
+  patches, executes one `Reaction.apply_many` batch, and then runs an explicit
+  finalization stage. `Finalization.ATOMS` defers topology,
+  `Finalization.TOPOLOGY` generates it once, and `Finalization.BONDED` also runs
+  `ForceFieldParams`. Local bonded rows are never copied from typing motifs.
+- Finalization is now a builder-wide stage shared by assembly and
+  nanostructures, and monomer libraries snapshot their templates so user-side
+  mutation cannot invalidate compiled environment caches.
+- `Frame` and `Block` are imported from molrs directly; molpy exports neither
+  type and has no `molpy.core.frame` module. Graph entity refs, `Element`, and
+  the native force-field hierarchy are identity re-exports. `Atomistic`, `CoarseGrain`, `Box`, Region,
+  `Trajectory`, selectors, and `UnitSystem` are native subclasses or stateless
+  Python syntax sugar; an executable ownership manifest prevents new Python
+  kernels or conversion facades from returning.
 - Graph extract / copy / merge / CG spatial ops are thin wrappers over molrs
-  (`graph-sink` chain). View types live in `molpy.core.atomistic_types`.
+  (`graph-sink` chain). The handle-view layer and domain ref types live in
+  `molrs.views`; `molpy.core.entity` is aliases only.
 - **Field convention**: keys set by the user are stored as given (no silent
   rename). Chemical identity for atomistic graphs is `fields.ELEMENT`
   (`molrs` `keys::ELEMENT`). Format-local names such as XYZ/PDB `symbol` are
@@ -29,6 +71,11 @@ This file records API renames and breaking changes at the repository root.
 Requires `molcrafts-molrs == 0.7.0` (molpy and molrs release as a pair).
 
 ### Breaking
+
+- **Frame schema hard cut.** The only cell attribute is `frame.simbox`;
+  `frame.box` is deleted. Exact-dtype metadata lives in `frame.meta` as
+  `molrs.MetaValue`; untyped `frame.metadata` is deleted. No aliases, shims, or
+  legacy decoders are provided.
 
 - **OPLS-AA and MMFF typifiers moved to molrs.** `molpy.typifier` now re-exports
   `OPLSAATypifier` and `MMFFTypifier` from `molrs.typifier`; the molpy-side
@@ -99,8 +146,8 @@ Requires `molcrafts-molrs == 0.7.0` (molpy and molrs release as a pair).
 ### Changed
 
 - **Pin `molcrafts-molrs==0.6.0`** (was `0.5.1`). molpy and molrs release as a
-  pair; `import molpy` calls `molpy.version.check_molrs_version()` and warns when
-  the installed molrs does not match. molrs 0.6.0 reorganizes its Rust `compute`
+  pair. That release only warned on mismatch; 0.7.0 replaced the warning path
+  with an unconditional `ImportError`. molrs 0.6.0 reorganizes its Rust `compute`
   module tree (freud-style categories) and removes its native GAFF/AMBER
   parameter estimator — molpy's public `molpy.compute` surface is unchanged (the
   molrs Python shim keeps the flat names), so no molpy code changes are required.
@@ -120,9 +167,9 @@ Requires `molcrafts-molrs == 0.7.0` (molpy and molrs release as a pair).
 ### Changed
 
 - **Pin `molcrafts-molrs==0.5.1`** (was `0.1.5`). molpy and molrs now share one
-  version line and release as a pair. `import molpy` calls
-  `molpy.version.check_molrs_version()` and warns when the installed molrs does
-  not match.
+  version line and release as a pair. That historical release warned on a
+  mismatch; 0.7.0 has no warning-mode compatibility path and raises
+  `ImportError` instead.
 
 ### Added
 

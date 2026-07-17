@@ -12,7 +12,7 @@ MolPy keeps both representations explicit rather than hiding the conversion. `At
 
 An `Atomistic` object is the right place to edit chemistry: add an atom, remove a bond, query neighbors. But once the chemistry is stable, the next question is usually numerical — distances, energies, file export. For that kind of work, aligned arrays are far more convenient than a graph of dictionary-like objects.
 
-MolPy uses two data structures for this purpose. A `Block` is one columnar table: column names map to NumPy arrays, and every column refers to the same set of rows. A `Frame` is a named collection of blocks plus free-form metadata, representing one complete system snapshot.
+MolPy uses two data structures for this purpose. A `Block` is one columnar table: column names map to NumPy arrays, and every column refers to the same set of rows. A `Frame` is a named collection of blocks plus exact-dtype metadata, representing one complete system snapshot.
 
 The split is deliberate. A block answers "what are the atoms?" or "what are the bonds?" — one table for one kind of data. A frame answers "what is the full state of this system right now?" by grouping related tables together.
 
@@ -22,10 +22,11 @@ The split is deliberate. A block answers "what are the atoms?" or "what are the 
 Creating a block is as simple as passing a dictionary of array-like values. Each value becomes a NumPy array automatically.
 
 ```python
+import molrs
 import molpy as mp
 import numpy as np
 
-atoms = mp.Block({
+atoms = molrs.Block({
     "element": ["O", "H", "H"],
     "x": [0.000, 0.957, -0.239],
     "y": [0.000, 0.000, 0.927],
@@ -91,7 +92,7 @@ print(list(atoms_with_r.keys()))   # ['element', 'x', 'y', 'z']
 `Block.rename()` changes a column key in place. This is used internally by the I/O formatter system to translate between format-specific and canonical field names.
 
 ```python
-b = mp.Block({"q": [0.1, -0.2], "x": [1.0, 2.0]})
+b = molrs.Block({"q": [0.1, -0.2], "x": [1.0, 2.0]})
 b.rename("q", "charge")
 print(list(b.keys()))   # ['x', 'charge']
 ```
@@ -111,7 +112,7 @@ If you need full independence, copy the arrays explicitly. The safest pattern is
 
 ```python
 # Rebuild clean data for the rest of the page
-atoms = mp.Block({
+atoms = molrs.Block({
     "element": ["O", "H", "H"],
     "x": [0.000, 0.957, -0.239],
     "y": [0.000, 0.000, 0.927],
@@ -133,28 +134,29 @@ print(atoms["x"][0])    # 0.0 — original unchanged
 A molecular system usually needs more than one table. Atom coordinates are one table, bond indices are another, and the snapshot itself has metadata — a timestep, a description, provenance. `Frame` groups all of that into one object.
 
 ```python
-frame = mp.Frame(
-    blocks={
-        "atoms": {
+frame = molrs.Frame({
+        "atoms": molrs.Block({
             "element": ["O", "H", "H"],
             "x": [0.000, 0.957, -0.239],
             "y": [0.000, 0.000, 0.927],
             "z": [0.000, 0.000, 0.000],
-        },
-        "bonds": {
+        }),
+        "bonds": molrs.Block({
             "atomi": [0, 0],
             "atomj": [1, 2],
-        },
-    },
-    timestep=0,
-    description="water",
-)
+        }),
+})
+frame.meta = {
+    "timestep": molrs.MetaValue("i64", 0),
+    "description": molrs.MetaValue("string", "water"),
+}
 ```
 
-Keyword arguments beyond `blocks` are stored in `frame.metadata`, a plain dictionary.
+Every metadata entry is an explicit `molrs.MetaValue`. Its `dtype` is one of the native scalar or fixed-width vector types, and its Python payload is read through `.value`.
 
 ```python
-print(frame.metadata)   # {'timestep': 0, 'description': 'water'}
+print(frame.meta["timestep"].dtype)       # i64
+print(frame.meta["description"].value)    # water
 ```
 
 Accessing a block by name returns a `Block`. From there, all column operations work the same way.
@@ -168,7 +170,7 @@ You can add, replace, or delete blocks at any time.
 
 ```python
 frame["tags"] = {"label": ["oxygen", "hydrogen", "hydrogen"]}
-print(type(frame["tags"]))   # <class 'molpy.core.frame.Block'>
+print(type(frame["tags"]))   # <class 'molrs.Block'>
 
 del frame["tags"]
 print("tags" in frame)       # False
@@ -177,18 +179,18 @@ print("tags" in frame)       # False
 
 ## Box is a first-class attribute
 
-A periodic simulation cell is attached directly to `frame.box`, not stored in metadata. This ensures `Frame.copy()` preserves the box and I/O round-trips work correctly.
+A periodic simulation cell is attached directly to `frame.simbox`, not stored in metadata. This ensures `Frame.copy()` preserves the box and I/O round-trips work correctly.
 
 ```python
-frame.box = mp.Box.cubic(20.0)
-print(frame.box.lengths)   # [20. 20. 20.]
+frame.simbox = mp.Box.cubic(20.0)
+print(frame.simbox.lengths)   # [20. 20. 20.]
 
 # copy() preserves box
 frame2 = frame.copy()
-print(frame2.box.lengths)   # [20. 20. 20.]
+print(frame2.simbox.lengths)   # [20. 20. 20.]
 ```
 
-`frame.box` is `None` when no box has been assigned (e.g., for isolated molecules).
+`frame.simbox` is `None` when no box has been assigned (e.g., for isolated molecules).
 
 
 ## Serialization round-trips through dictionaries
@@ -197,9 +199,9 @@ Both `Block` and `Frame` support `to_dict()` and `from_dict()` for JSON-friendly
 
 ```python
 payload = frame.to_dict()
-print(sorted(payload.keys()))   # ['blocks', 'metadata']
+print(sorted(payload.keys()))   # ['blocks', 'meta']
 
-restored = mp.Frame.from_dict(payload)
+restored = molrs.Frame.from_dict(payload)
 print(sorted(restored.to_dict()["blocks"].keys()))   # ['atoms', 'bonds']
 ```
 

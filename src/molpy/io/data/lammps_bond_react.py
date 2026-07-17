@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from molpy.core.atomistic import Atom, Atomistic
-    from molpy.core.frame import Frame
+    from molrs import Frame
 
 #: Total charge must be conserved by a reaction template to within this
 #: tolerance (elementary charge); a larger drift means an inconsistent template.

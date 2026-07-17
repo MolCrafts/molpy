@@ -6,7 +6,7 @@ import numpy as np
 from ..target import Target
 
 if TYPE_CHECKING:
-    from molpy.core.frame import Frame
+    from molrs import Frame
 
     from ..constraint import Constraint
 

@@ -25,7 +25,7 @@ CCOC(=O)C(C)(C){[>][<|8|]CC([>|8|])c1ccccc1, [<|2|]CC([>|2|])C(=O)OC [<]}|schulz
 ```python
 import molpy as mp
 from molpy.core import fields
-from molpy.core.element import Element
+from molrs import Element
 from molpy.typifier import OplsTypifier
 
 ff = mp.io.read_xml_forcefield("oplsaa.xml")
@@ -378,7 +378,7 @@ for chain in atomistic_chains:
     packer.def_target(chain.to_frame(), number=1, constraint=constraint)
 
 packed = packer(max_steps=10000, seed=42)
-packed.box = mp.Box.cubic(length=box_length)
+packed.simbox = mp.Box.cubic(length=box_length)
 
 mp.io.write_lammps_system("05_output/lammps", packed, ff)
 print(f"packed: {packed['atoms'].nrows} atoms, box: {box_length:.1f} A")

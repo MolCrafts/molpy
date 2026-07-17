@@ -43,7 +43,7 @@
 ### 新增
 
 - `molpy.compute` 新增多项分析计算算子：角度/二面角/距离及组合分布函数、空间分布函数、Van Hove 相关函数 `G(r, t)`、Legendre 再定向相关、氢键检测、包含域/空穴/电荷分析的 radical Voronoi 分割、振动光谱（VDOS、红外、拉曼、VCD、ROA、共振拉曼）。
-- `molpy.version.check_molrs_version()`：`import molpy` 时自动执行，若已安装的 `molcrafts-molrs` 版本不匹配则发出警告。
+- `molpy.version.check_molrs_version()`：`import molpy` 时自动执行；缺少精确配对的 `molcrafts-molrs` 版本或版本不匹配时，导入直接失败。
 
 ### 变更
 
@@ -102,9 +102,9 @@
 - **导入 molpy 子包不再预加载其他模块。** 顶级子模块（`molpy.io`、`molpy.engine`、`molpy.adapter`……）改为惰性加载（PEP 562）：`import molpy.reacter` 仅初始化 `core`（和 `potential`）。`mp.io.…` 属性访问和 `import molpy.io` 行为不变。`molpy.builder` / `reacter` / `pack` / `compute` 可作为惰性顶级属性访问（`mp.builder.…`）。
 - **Builder/reacter 术语与 API 整合。** `polymer()` / `polymer_system()` 作为文档化的单调用入口点，`PolymerBuilder` + `Connector` 仍保留为分步 API。原 Agent 专用的 Tool 类移至 `molpy.builder.polymer.tools`（移出公开 `__all__`）；`ReactionPresets` / `ReactionPresetSpec` 现为公共扩展点。`ReactionPresetSpec.site_selector_*` 更名为 `anchor_selector_*`，`molpy.reacter.find_port_atom` 更名为 `find_port`。实验阶段不提供弃用垫片，详情见仓库根目录的 `CHANGELOG.md`。
 - **REACTER 模板正确性。** `BondReactReacter` 后模板现在携带 impropers（sp2 平面性项在 `fix bond/react` 中正确处理）。`InitiatorIDs` 是确定性的且经过验证：恰好包含 2 个，且绝不位于模板边界上。边缘原子在反应前后检查类型和电荷是否一致。总电荷守恒检查（`CHARGE_CONSERVATION_TOL = 1e-6` e）。`run()` 不再修改调用方持有的 `left` / `right` 结构。
-- **molrs 现在是强制依赖。** `molcrafts-molrs` 从可选依赖移入核心 `dependencies`。移除了 `molpy[molrs]` 额外安装键——安装 molpy 时始终附带 molrs。`Frame`、`Block`、`Box` 由 molrs 类型支持（并继承自它们），`compute` 算子直接转发到 Rust 内核，不再提供纯 Python 后备方案。
+- **molrs 现在是精确版本的强制依赖。** 核心依赖固定为 `molcrafts-molrs==0.7.0`；缺少包元数据或任何版本不匹配都会直接导致导入失败。`Frame` / `Block` 仅由 molrs 拥有，计算算子直接在 Rust 中执行，不提供纯 Python 后备方案。
 - **移除基于 RDKit 的计算节点。** 删除了 `molpy.compute.rdkit`（通过 `RDKitAdapter` 的 `Generate3D` / `OptimizeGeometry`）。`molpy.compute.Generate3D` 改为基于 molrs 的主干算子，接收 `Atomistic` 图并返回新的 3D 结构。RDKit 适配器（`molpy.adapter.rdkit`）作为**可选**外部后端保留；`rdkit` 仍是可选依赖，非常驻依赖。
-- **`Frame` / `Block` 现在是 molrs 类型，而非 molpy 子类。** `molpy.core.frame.Frame` 就是 `molrs.Frame`，`Block` 就是 `molrs.Block`（轻量重导出）。Python 侧的对象列溢出（`_objects`）不复存在：列是**仅 numpy** 类型（float / int / bool / str）。写入对象 / `None` / 不规则列时会引发 `molrs.BlockDtypeError`，不再静默存储在 Python 侧。`frame.box` 返回 `molrs.Box`（携带 `is_free` / `style` / `volume()`）。molpy 原有更丰富的 box 几何通过 `molpy.Box` 保持可用，可通过 `Box.from_box(frame.box)` 升级。
+- **`Frame` / `Block` 直接从 molrs 导入。** molpy 顶层、`molpy.core` 和 `molpy.core.frame` 均不导出这两个类型；使用 `from molrs import Frame, Block`。列仅允许 numpy 可表示类型，非法对象列立即报错。唯一单元格属性是 `frame.simbox`，`frame.box` 已删除；精确类型元数据使用 `frame.meta` + `molrs.MetaValue`，无类型的 `frame.metadata` 已删除。不提供别名、兼容垫片或旧解码器。
 
 ### 类型分类器与力场
 
@@ -118,7 +118,7 @@
 
 - **力场模型完全迁移到 molrs 中；`molpy.potential` 变为外观模块。** `molpy.core.forcefield` 是原生 molrs `ForceField` / Style / Type 层级结构的轻量重导出（外加 `AtomisticForcefield` 别名和命名的专用 Style 类）。删除了 `potential/` 下的 Python 内核和能量计算代码。`molpy.potential[.bond|.angle|…]` 重导出基于 molrs 的 Style 类和 `Potentials`，用户无需直接导入 molrs。能量/力通过 `ff.to_potentials(frame).calc_energy(frame)` / `.calc_forces(frame)` 计算；`optimize.ForceFieldPotential` 包装了此流程（移除了 `potential_wrappers` 中各内核的包装器）。I/O 格式器改为按样式/内核名称分发（不再需要各内核的 `Type` 类），`def_type` 参数改为仅关键字参数。
 - **拓扑感知改用 molrs 图内核，移除了单独的 igraph 引擎。** `get_topo` 的角度/二面角感知委托给 `molrs.Atomistic.generate_topology`；`get_topo_neighbors` / `get_topo_distances` 和 `extract_subgraph` 使用 molrs 的 BFS 及邻接内核。删除了 `core/topology.py` 及公开的 `molpy.Topology` / `molpy.core.Topology` 导出。`get_topo` **始终返回 `Atomistic`**（无标志位表示简单复制），修复了无标志路径可能泄漏原始图对象的潜在缺陷。igraph 仅在 SMARTS 类型分类器内部保留。关系枚举改用 molrs 权威来源 `relation_ids()`——Python 侧的 `_rel_handles` 镜像及其句柄范围探测启发式已移除。
-- **`Trajectory` 改为继承 `molrs.Trajectory`。** 即时容器、惰性读取、LAMMPS/XYZ 轨迹解析等功能全部迁移到 molrs 中（`read_lammps_trajectory` / `read_xyz_trajectory`），删除了 molpy 中的重复读取器和 mmap 索引基础设施。molpy 保留了分割扩展（`SplitStrategy` / `TrajectorySplitter`）、拓扑/切片/映射便捷方法、XYZ 写入器和 HDF5 路径。`TimeIntervalStrategy` 读取原生 `.time` 数组（Python 的 `frame.metadata` 不会双向保留 molrs 存储）。
+- **`Trajectory` 改为继承 `molrs.Trajectory`。** 即时容器、惰性读取、LAMMPS/XYZ 轨迹解析等功能全部迁移到 molrs 中（`read_lammps_trajectory` / `read_xyz_trajectory`），删除了 molpy 中的重复读取器和 mmap 索引基础设施。molpy 保留了分割扩展（`SplitStrategy` / `TrajectorySplitter`）、拓扑/切片/映射便捷方法、XYZ 写入器和 HDF5 路径。`TimeIntervalStrategy` 读取原生 `.time` 数组；快照精确类型元数据使用 `frame.meta`。
 - **`Compute` 简化为普通类。** `__init__` 接收配置，`__call__` 接收输入，`dump()` 持久化结果。移除了单输入的 `_compute` 钩子、molexp 的 `execute()` / `input_key` / `output_key` 垫片、`Compute[InT, OutT]` 泛型，以及 17 个基于 molrs 的算子包装器中的废弃 `_compute` 存根。
 - **Box 和区域几何委托给 Rust 内核。** `Box.make_fractional` / `make_absolute` / `isin` 转发到继承的 molrs `to_frac` / `to_cart` / `isin`；体积、长度/倾斜、包装及最小映像差异使用 molrs 属性和 `Box.wrap` / `Box.delta`。`SphereRegion` 和 `BoxRegion` / `Cube` 的点归属判断基于 `molrs.Sphere.contains` / `molrs.Cuboid.contains`——molpy 仅保留布尔代数 / `MaskPredicate` 层。移除了 Python 侧的 `_is_free` 标志：自由 box 状态派生自 molrs `cell_defined`，因此非周期性边界框（`from_bounds`）现在能正确报告一个具有体积/长度的真实晶胞。`Atomistic.scale` 和 `align` 改用 `molrs.scale` / `molrs.rotate`（删除了逐原子的 Rodrigues 循环）。每次下沉前均验证了正交和三斜结果与之前 NumPy 路径的一致性。
 - **规范字段注册表改为使用 `molrs.fields`。** `molpy.core.fields` 不再定义并行的 `FieldSpec` / `FieldFormatter` 集，而是重导出统一的规范注册表（`molpy.core.fields.CHARGE` *就是* `molrs.fields.CHARGE`），仅在其上保留力场特定的 `ForceFieldFormatter`。这解决了三个注册表因长久未同步而漂移的问题。

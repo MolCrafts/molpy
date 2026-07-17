@@ -183,7 +183,7 @@ class AffectedRegion(_RegionMixin[Atom], Atomistic):
             if handle in seen:
                 continue
             seen.add(handle)
-            view = item if isinstance(item, Atom) else parent._intern_atom(handle)
+            view = item if isinstance(item, Atom) else parent._intern_node(handle)
             if not isinstance(view, Atom):
                 raise ValueError(f"handle {handle} did not intern to an Atom")
             centers.append(view)

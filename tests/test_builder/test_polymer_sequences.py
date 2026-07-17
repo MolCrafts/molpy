@@ -7,7 +7,25 @@ from molpy.builder.polymer.sequences import (
     AlternatingSequenceGenerator,
     BlockSequenceGenerator,
     SequenceGenerator,
+    WeightedSequenceGenerator,
 )
+
+
+class TestSequenceGenerator:
+    def test_concrete_generators_satisfy_the_protocol(self):
+        generator: SequenceGenerator = WeightedSequenceGenerator({"A": 1.0})
+        assert generator.expected_composition() == {"A": 1.0}
+
+
+class TestWeightedSequenceGenerator:
+    def test_weighted_sampling_uses_the_requested_composition(self):
+        generator = WeightedSequenceGenerator({"A": 0.8, "B": 0.2})
+        sequence = generator.generate_sequence(1000, np.random.default_rng(42))
+        assert sequence.count("A") / len(sequence) == pytest.approx(0.8, abs=0.05)
+
+    def test_expected_composition_is_normalized(self):
+        generator = WeightedSequenceGenerator({"A": 7.0, "B": 3.0})
+        assert generator.expected_composition() == pytest.approx({"A": 0.7, "B": 0.3})
 
 
 class TestAlternatingSequenceGenerator:

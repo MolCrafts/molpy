@@ -26,5 +26,5 @@ class MSD(Compute):
         self._impl = _MolrsMSD()
 
     def __call__(self, frames) -> _MolrsMSDTimeSeries:
-        # molpy.Frame IS-A molrs.Frame; molrs accepts the list as-is.
+        # Frames are canonical molrs.Frame objects; pass the list through.
         return self._impl.compute(frames)

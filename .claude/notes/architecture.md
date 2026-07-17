@@ -11,7 +11,7 @@ _Generated 2026-06-10 by /mol:map._
 ### Module list
 
 - **core** — Data-model foundation. `Atomistic`/`CoarseGrain` are handle-views that **subclass** the molrs Rust world (`class Atomistic(molrs.Atomistic, _GraphViews)`, `class CoarseGrain(molrs.CoarseGrain, _GraphViews)`); `Entity`/`Link` are dict-like views over molrs ECS nodes with identity hashing (`id(self)`). Holds `ForceField` + style/type hierarchy, `Box`, `Topology`, `Trajectory`, `Script`, `UnitSystem`, field formatters (`fields.py`), region/selector helpers. `core/ops/` holds pure-Python geometry helpers; `_handle.py`/`_columns.py` implement the molrs column ↔ Python-overflow proxy.
-- **core/frame.py** — Thin re-export shim. After the `frame-block-sink` cutover, molpy no longer subclasses Frame/Block: `from molrs import Block, Frame`. Identity contract is `molpy.core.frame.Frame is molrs.Frame`. No `_inner`, no `to_molrs()`/`from_molrs()`, and no `core/_molrs.py` (does not exist).
+- **molrs.Frame / molrs.Block** — Numerical containers are imported directly from molrs. `core/frame.py`, top-level aliases, and `molpy.core` aliases are deleted; no compatibility import path, `_inner`, or conversion bridge exists.
 - **adapter** — In-memory/file conversion to external libs (RDKit, OpenBabel). Data sync only; MUST NOT exec binaries. Optional imports with `None` fallbacks.
 - **builder** — System assembly. `crystal.py` (lattice/site builders) plus `builder/polymer/` (declarative `polymer()`/`polymer_system()` DSL, connectors, placers, sequence generators, distributions, AmberTools polymer). Major teardown: `polymer_builder.py`, `stochastic.py`, `stochastic_generator.py`, `growth_kernel.py`, `residue_manager.py`, `selectors.py`, `ambertools/polymer_amber.py` were deleted; `PolymerBuilder`/`PolymerBuildResult` now live in `polymer/core.py`.
 - **cli** — Command-line entry point (`molpy.cli:main`); `moltemplate.py` subcommand.
@@ -34,9 +34,8 @@ _Generated 2026-06-10 by /mol:map._
 
 ### Public surface (key symbols)
 
-- **molpy (top)**: re-exports submodules `adapter, data, engine, io, legacy, parser, potential, typifier`; core types `Angle, Atom, Atomistic, Bond, Dihedral, Improper, Box, Bead, CGBond, CoarseGrain, Entity, Link`; forcefield `ForceField, AtomisticForcefield, Style, Type, TypeBucket, Parameters, {Atom,Bond,Angle,Dihedral,Improper,Pair}{Style,Type}`; `Block, Frame, Script, ScriptLanguage, Topology, Trajectory, UnitSystem, version, release_date`; plus `potential.*`.
-- **core**: same atomistic/forcefield/box/cg/frame/topology/unit symbols (no `Trajectory` in `core.__init__` `__all__`, but exported at top level via `core.trajectory`).
-- **core.frame**: `Block, Frame` (both are the molrs types verbatim).
+- **molpy (top)**: re-exports submodules `adapter, data, engine, io, legacy, parser, potential, typifier`; core graph/forcefield/box types; and `Script`, `Trajectory`, `UnitSystem`, `version`, `release_date`. It does not export `Frame` or `Block`.
+- **core**: same atomistic/forcefield/box/cg/topology/unit symbols. It does not export `Frame` or `Block`.
 - **adapter**: `Adapter`; optionally `RDKitAdapter, MP_ID, Generate3D, OptimizeGeometry, generate_3d`, `OpenBabelAdapter` (guarded by `_HAS_RDKIT`/`_HAS_OPENBABEL`).
 - **builder**: `polymer, polymer_system, prepare_monomer, generate_3d, PrepareMonomer, BuildPolymer, BuildPolymerAmber, BuildSystem, PlanSystem, AmberPolymerBuilder, build_crystal, Lattice, Site, BoxRegion, Cube, SphereRegion, Region`.
 - **builder.polymer**: `Connector, ConnectorContext, Placer, LinearOrienter, CovalentSeparator, VdWSeparator, PolymerBuilder, PolymerBuildResult, SequenceGenerator, WeightedSequenceGenerator, DPDistribution, MassDistribution, FlorySchulzPolydisperse, PoissonPolydisperse, SchulzZimmPolydisperse, UniformPolydisperse, Chain, PolydisperseChainGenerator, SystemPlan, SystemPlanner` + DSL entry functions.
@@ -68,7 +67,7 @@ _Generated 2026-06-10 by /mol:map._
 | Package | Layer (per "Architecture Overview" / typical workflow) |
 |---|---|
 | core | Data-model foundation (Entity/Link/Struct, Frame/Block, ForceField) — base layer, molrs-backed |
-| core.frame / Block, Frame | Numerical container layer — re-exported verbatim from molrs Rust backend |
+| molrs / Block, Frame | Numerical container layer — imported directly from molrs Rust backend |
 | parser | Stage 1 — parse → Atomistic |
 | builder | Stage 1/2 — build & transform (system assembly) |
 | reacter | Stage 2 — transform (template reactions) |
@@ -92,7 +91,7 @@ _Generated 2026-06-10 by /mol:map._
 ### molrs dependency
 
 - Hard runtime dependency pinned at `molcrafts-molrs>=0.0.18` in `pyproject.toml`.
-- `Frame`/`Block` ARE molrs types: `molpy.core.frame` does `from molrs import Block, Frame` (no subclass, no `_inner`, no `to_molrs()`/`from_molrs()` bridge); `core/_molrs.py` does not exist. Object/None/ragged columns are rejected fail-fast at write time (`molrs.BlockDtypeError`).
+- `Frame`/`Block` are molrs-only exports: use `from molrs import Block, Frame`. Molpy defines no module, alias, subclass, `_inner`, or conversion bridge for them. Object/None/ragged columns are rejected fail-fast at write time (`molrs.BlockDtypeError`).
 - `Atomistic`/`CoarseGrain` subclass `molrs.Atomistic`/`molrs.CoarseGrain` (native pyo3 base must be first in MRO) and ARE molrs worlds, accepted directly by `molrs.*` free functions (`molrs.translate`, `molrs.rotate`). `Atomistic.adopt(graph: molrs.Atomistic)` re-wraps a Rust graph.
 - `Entity`/`Link` are handle-views over molrs ECS nodes; scalar columns route to molrs component columns (`core/_handle.py`, `core/_columns.py`), bool/object overflow kept Python-side.
 - `Conformer` subclasses `molrs.Conformer`; `ConformerReport`/`ConformerStageReport` re-exported from molrs unchanged.

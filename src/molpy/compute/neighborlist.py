@@ -39,10 +39,10 @@ class NeighborList(Compute):
         self.cutoff = float(cutoff)
 
     def __call__(self, frame) -> molrs.NeighborList:
-        if frame.box is None or frame.box.is_free:
-            raise ValueError("frame.box is required for spatial neighbor search")
+        if frame.simbox is None or frame.simbox.is_free:
+            raise ValueError("frame.simbox is required for spatial neighbor search")
         # Block list-indexing returns (N, 3) via np.column_stack — single
         # unavoidable copy. Box passes through directly (molpy.Box IS-A
         # molrs.Box).
         xyz = frame["atoms"][["x", "y", "z"]]
-        return molrs.NeighborQuery(frame.box, xyz, self.cutoff).query_self()
+        return molrs.NeighborQuery(frame.simbox, xyz, self.cutoff).query_self()

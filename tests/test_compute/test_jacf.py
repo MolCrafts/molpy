@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 
+import molrs
+
 import molpy as mp
 from molpy.compute import JACF
 from molpy.compute.base import Compute
@@ -20,7 +22,7 @@ def _current_trajectory(n_frames=11, box_len=10.0, vcat=1.0):
     """Cation (type 1) moves at +vcat in x; anion (type 2) fixed ⇒ J=(vcat,0,0)."""
     frames = []
     for _ in range(n_frames):
-        frame = mp.Frame()
+        frame = molrs.Frame()
         frame["atoms"] = {
             "x": np.array([0.0, 5.0]),
             "y": np.array([0.0, 0.0]),
@@ -30,7 +32,7 @@ def _current_trajectory(n_frames=11, box_len=10.0, vcat=1.0):
             "vz": np.array([0.0, 0.0]),
             "type": np.array([1, 2]),
         }
-        frame.box = mp.Box.cubic(box_len)
+        frame.simbox = mp.Box.cubic(box_len)
         frames.append(frame)
     return Trajectory(frames)
 

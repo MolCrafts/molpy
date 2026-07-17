@@ -80,7 +80,7 @@ class VirtualSiteBuilder(ABC):
 
     @abstractmethod
     def build_sites(self, struct: Atomistic, host: Atom) -> list[Atom]:
-        """Construct (unbound) virtual-site particles for one host."""
+        """Create live virtual-site particles in ``struct`` for one host."""
 
     @abstractmethod
     def redistribute(
@@ -144,7 +144,7 @@ class DrudeBuilder(VirtualSiteBuilder):
         for axis in ("x", "y", "z"):
             if host.get(axis) is not None:
                 attrs[axis] = host.get(axis)
-        return [DrudeParticle(**attrs)]
+        return [struct.def_virtual_site(kind=DrudeParticle, **attrs)]
 
     def redistribute(
         self, struct: Atomistic, host: Atom, sites: Sequence[Atom]
@@ -154,19 +154,16 @@ class DrudeBuilder(VirtualSiteBuilder):
         host.data[fields.CHARGE.key] = host[fields.CHARGE] - q_d
         if host.get("mass") is not None:
             host.data[fields.MASS.key] = host[fields.MASS] - shell[fields.MASS]
-        struct.add_atom(shell)
         # Spring constant is the host type's k_D (data-driven, from alpha.ff). The
         # spring carries its own bond type so the augmented structure is fully
         # typed (every core–shell spring shares the one ``DRUDE`` bond type).
-        struct.add_bond(
-            Bond(
-                host,
-                shell,
-                k=shell.get("k_D"),
-                r0=0.0,
-                style="drude",
-                type=self.drude_bond_type,
-            )
+        struct.def_bond(
+            host,
+            shell,
+            k=shell.get("k_D"),
+            r0=0.0,
+            style="drude",
+            type=self.drude_bond_type,
         )
 
 
@@ -211,7 +208,8 @@ class Tip4pBuilder(VirtualSiteBuilder):
         norm = sqrt(sum(c * c for c in bis)) or 1.0
         m = tuple(o + self.d_om * c / norm for o, c in zip((ox, oy, oz), bis))
         return [
-            MasslessSite(
+            struct.def_virtual_site(
+                kind=MasslessSite,
                 element="M",
                 charge=host[fields.CHARGE],
                 x=m[0],
@@ -225,4 +223,3 @@ class Tip4pBuilder(VirtualSiteBuilder):
     ) -> None:
         (msite,) = sites
         host.data["charge"] = 0.0
-        struct.add_atom(msite)

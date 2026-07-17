@@ -23,7 +23,7 @@ typed = mp.typifier.OplsTypifier(ff).typify(mol)         # assign force-field ty
 
 frame = typed.to_frame()   # simulation-ready columnar arrays
 # mp.io.write_lammps_system("output/", frame, ff) writes system.data + system.ff
-# (set frame.box and a per-atom mol_id first — see the Quickstart).
+# (set frame.simbox and a per-atom mol_id first — see the Quickstart).
 ```
 
 See also: [Parsing Chemistry](../user-guide/01_parsing_chemistry.md) ·
@@ -81,23 +81,48 @@ water4p = Tip4pBuilder(d_om=0.1546).apply(water)   # d_om: O–M distance in nm;
 
 See also: [Polarizable & Virtual-Site Models](../user-guide/10_polarizable.md).
 
-## Polymer chain — G-BigSMILES to a typed frame
+## Polymer topologies — one monomer, eleven architectures
 
-Build a polymer chain with 3D coordinates straight from a G-BigSMILES string,
-then type it.
+Guides and scripts share names under parallel trees:
 
-```python
-import molpy as mp
-from molpy.builder import polymer
+| Docs | Examples |
+|------|----------|
+| [`user-guide/topology/`](../user-guide/topology/index.md) | `examples/topology/` |
+| `01_linear.md` … `11_prepolymer_agent.md` | `01_linear.py` … `11_prepolymer_agent.py` |
 
-peo   = polymer("{[<]CCOCC[>]}|10|")             # PEO, degree of polymerization = 10
-ff    = mp.io.read_xml_forcefield("oplsaa.xml")
-typed = mp.typifier.OplsTypifier(ff).typify(peo)
-
-frame = typed.to_frame()   # write with mp.io.write_lammps_system(dir, frame, ff)
+```bash
+cd examples
+python topology/01_linear.py
+python topology/run_all.py          # smoke all 11
 ```
 
-See also: [Assembly](../user-guide/02_assembly.md).
+Minimal linear chain (`build_linear` ≡ `build("{[#EO]|10}")`):
+
+```python
+# run from examples/topology/ or put that dir on PYTHONPATH
+from eo_kit import eo_builder
+
+chain = eo_builder().build_linear("EO", 10)
+```
+
+See also: [Polymer Topologies](../user-guide/topology/index.md) ·
+[Assembly](../user-guide/02_assembly.md).
+
+## Carbon nanotubes — topology from chirality
+
+Build open or axially periodic zigzag, armchair, and chiral tubes without a
+public planning object:
+
+```python
+from molpy.builder import CarbonTubeBuilder
+
+builder = CarbonTubeBuilder()
+zigzag = builder.build(8, 0, length=30.0)
+armchair = builder.build(6, 6, cells=4, periodic=True)
+chiral = builder.build(6, 3, cells=2, finalize="topology")
+```
+
+See also: [Nanostructures](../user-guide/04_nanostructures.md).
 
 ## Polydisperse melt — Schulz-Zimm distribution
 

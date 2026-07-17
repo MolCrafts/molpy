@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from molpy.core.frame import Block, Frame
+from molrs import Block, Frame, MetaValue
 
 
 @pytest.fixture(
@@ -65,7 +65,7 @@ class TestPDBWriterRequiredFields:
             }
         )
         frame["atoms"] = atoms
-        frame.metadata["elements"] = "C C H"
+        frame.meta = {"elements": MetaValue("string", "C C H")}
 
         writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         writer.write(frame)
@@ -88,8 +88,8 @@ class TestPDBWriterRequiredFields:
                 assert abs(y - (4.0 + i)) < 0.001
                 assert abs(z - (7.0 + i)) < 0.001
 
-    def test_elements_from_metadata(self, tmp_path, pdb_backend):
-        """Test that elements are correctly extracted from metadata."""
+    def test_elements_from_typed_meta(self, tmp_path, pdb_backend):
+        """Test that elements are correctly extracted from typed metadata."""
         frame = Frame()
         atoms = Block(
             {
@@ -100,7 +100,7 @@ class TestPDBWriterRequiredFields:
             }
         )
         frame["atoms"] = atoms
-        frame.metadata["elements"] = "C O N H"
+        frame.meta = {"elements": MetaValue("string", "C O N H")}
 
         writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         writer.write(frame)
@@ -168,7 +168,7 @@ class TestPDBWriterRequiredFields:
                 "occupancy": np.array([0.0, 1.0]),
             }
         )
-        frame.metadata["elements"] = "X C"
+        frame.meta = {"elements": MetaValue("string", "X C")}
         pdb_backend.PDBWriter(tmp_path / "test.pdb").write(frame)
         assert (tmp_path / "test.pdb").exists()
 
@@ -184,7 +184,7 @@ class TestPDBWriterRequiredFields:
             }
         )
         frame["atoms"] = atoms
-        frame.metadata["elements"] = "C H"
+        frame.meta = {"elements": MetaValue("string", "C H")}
 
         writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         writer.write(frame)
@@ -207,7 +207,7 @@ class TestPDBWriterRequiredFields:
             }
         )
         frame["atoms"] = atoms
-        frame.metadata["elements"] = "C C H"
+        frame.meta = {"elements": MetaValue("string", "C C H")}
 
         writer = pdb_backend.PDBWriter(tmp_path / "test.pdb")
         writer.write(frame)

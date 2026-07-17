@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import numpy as np
 
+import molrs
+
 import molpy as mp
 
 
@@ -15,9 +17,9 @@ def random_periodic_frame(n=200, box_len=12.0, seed=0):
     """A frame of ``n`` uniformly random points in a cubic periodic box."""
     rng = np.random.default_rng(seed)
     xyz = rng.uniform(0.0, box_len, size=(n, 3))
-    frame = mp.Frame()
+    frame = molrs.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.box = mp.Box.cubic(box_len)
+    frame.simbox = mp.Box.cubic(box_len)
     return frame
 
 

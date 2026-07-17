@@ -7,8 +7,51 @@ requires. Tagged releases and installable artifacts live on
 
 ## Unreleased
 
+### Added
+
+- **Compile-first polymer assembly and deferred finalization.** The selector's
+  complete binding set is compiled into rooted local product motifs before the
+  assembled graph is edited. Distinct motifs are typed once and cache scalar
+  per-atom patches only; one batch reaction then builds the product.
+  `Finalization.ATOMS`, `TOPOLOGY` (default), and `BONDED` split atom write-back,
+  topology generation, and `ForceFieldParams` assignment so large MD systems
+  can defer the latter two stages until export.
+- **Carbon nanotube topology builder.** `CarbonTubeBuilder.build(n, m, ...)`
+  covers zigzag, armchair, and general chiral tubes, open or axially periodic.
+  Exact integer lattice quotienting closes seams without distance-guessed
+  bonds; immutable compiled geometry/connectivity is cached internally.
+- **`molpy.core` is now a Python surface over molrs, not a second kernel.**
+  `Frame`/`Block`, entity refs, `Element`, and force-field primitives preserve
+  molrs object identity; graph, Box, Region, trajectory, selector, and unit
+  conveniences are native subclasses or Python call-shape sugar. Element/unit
+  truth, PBC geometry, alignment/replication, and CL&Pol scaleLJ all execute in
+  Rust, with an architecture manifest and AST gate guarding that ownership.
+- **Polymer topology assembly helpers** on `PolymerBuilder`: `build_linear`,
+  `build_sequence`, `build_ring`, `build_star` format CGSmiles and call the sole
+  entry `build(cgsmiles)`. Supporting types: `SiteMap` (site labels + leaving-H
+  charge fold), `Replicas` (grid / linear multi-chain worlds), and
+  `linear_cgsmiles` / `ring_cgsmiles` / `star_cgsmiles` formatters.
+- **User-guide section [Polymer Topologies](user-guide/topology/index.md)** with
+  eleven pages paired 1:1 to `examples/topology/01_*.py` … `11_*.py` (linear,
+  block, ring, star, comb, telechelic, exhaustive/random gel, end-linked, dual
+  network, prepolymer + agent). Smoke with `python examples/topology/run_all.py`.
+
 ### BREAKING
 
+- **Amber polymer construction now uses MolPy chemistry directly.**
+  `AmberPolymerBuilder(library, reaction, ...)` and
+  `AmberTools.build_polymer(..., reaction=...)` require a `molpy.Reaction` over
+  `fields.SITE`. The private `port` language, `reaction_preset`, and
+  one-hydrogen leaving-group guess are removed; the backend translates the
+  shared compiled residue product into prepgen/tleap inputs.
+
+- **Pint and the runtime CL&Pol fragment file are removed.** `UnitSystem` uses
+  molrs' native unit registry; only the native `lj` compatibility context is
+  accepted. Custom scaleLJ data must be supplied as `FragmentScaling` values
+  instead of a parameter-file path.
+- **`TypeBucket` and `molpy.core.utils` are removed.** They belonged to the old
+  detached Python entity model; graph collections now come from molrs live
+  handle views, and CSV input is `Block.from_csv`.
 - **The typifier package has one contract: `Typifier` is `MolGraph -> MolGraph`.**
   `typify()` is concrete — copy, `match()`, write the annotations back — and
   `match()` is the single abstract method. Typifiers are generic over the graph,
@@ -45,11 +88,10 @@ requires. Tagged releases and installable artifacts live on
 
 ### Fixed
 
-- **`complete_valence()` silently dropped angles, dihedrals and impropers.**
-  It copied atoms and bonds only, so completing a 4-carbon fragment carrying 2
-  angles and 1 dihedral returned one carrying none — a function that promises a
-  completed molecule was throwing topology away. It now carries over every link
-  kind; a cap still adds bonds only, because a cap is context, not a term.
+- **Hydrogen perception preserves angles, dihedrals and impropers.** The old
+  `complete_valence()` facade copied atoms and bonds only. It has been removed;
+  cut sites now call `Perceive.find_hydrogens` directly, which returns a
+  non-mutating graph with every existing relation kind preserved.
 - **A region typed from a raw slice could not be typed at all.** Because the
   extracted ball is `interior_reach + reach` wide, an interior atom's receptive
   field reaches exactly to the boundary atoms, and a raw cut leaves those with
@@ -186,8 +228,8 @@ Requires `molcrafts-molrs == 0.5.1` (molpy and molrs now release as a pair).
   correlations, hydrogen-bond detection, radical Voronoi tessellation with
   domain/void/charge analysis, and vibrational spectra (VDOS, IR, Raman, VCD,
   ROA, resonance Raman).
-- `molpy.version.check_molrs_version()` — run on `import molpy`, warns when the
-  installed `molcrafts-molrs` does not match.
+- `molpy.version.check_molrs_version()` — run on `import molpy`; import fails
+  when the exact paired `molcrafts-molrs` version is missing or does not match.
 
 ### Changed
 
@@ -297,11 +339,11 @@ Requires `molcrafts-molrs == 0.1.0`.
   atoms are checked for identical pre/post type and charge, total charge is
   checked for conservation (`CHARGE_CONSERVATION_TOL = 1e-6` e), and `run()` no
   longer mutates caller-owned `left` / `right` structures.
-- **molrs is now a required dependency.** `molcrafts-molrs` moved from an
-  optional extra into the core `dependencies`. The `molpy[molrs]` extra key was
-  removed — installing molpy always installs molrs. `Frame`, `Block`, and `Box`
-  are backed by (and inherit from) molrs types, and the `compute` operators
-  forward directly into the Rust kernel. There is no pure-Python fallback.
+- **molrs is now an exact required dependency.** `molcrafts-molrs==0.7.0` is in
+  the core `dependencies`; missing package metadata or any version mismatch is
+  an import error. `Frame` and `Block` are owned only by molrs. Molpy's `Box`
+  remains geometry sugar over the native box, and compute operators execute in
+  Rust. There is no pure-Python fallback.
 - **The RDKit-backed compute node was removed.** `molpy.compute.rdkit`
   (`Generate3D` / `OptimizeGeometry` over `RDKitAdapter`) is gone.
   `molpy.compute.Generate3D` is now the molrs-backed trunk operator, taking an
@@ -309,14 +351,16 @@ Requires `molcrafts-molrs == 0.1.0`.
   (`molpy.adapter.rdkit`) is retained as an
   **optional** external backend; `rdkit` remains an optional extra, not a
   required dependency.
-- **`Frame` / `Block` are the canonical molrs types, not molpy subclasses.**
-  `molpy.core.frame.Frame is molrs.Frame` and `Block is molrs.Block` (thin
-  re-exports). The Python-side object-column overflow (`_objects`) is gone:
+- **`Frame` / `Block` are imported directly from molrs.** Molpy's former
+  top-level, `molpy.core`, and `molpy.core.frame` compatibility exports were
+  deleted; use `from molrs import Frame, Block`. The Python-side object-column
+  overflow (`_objects`) is gone:
   columns are **numpy-only** (float / int / bool / str). Assigning an
   object / `None` / ragged column now raises `molrs.BlockDtypeError` at write
-  time instead of being silently stored on the Python side. `frame.box` returns
-  a `molrs.Box` (carrying `is_free` / `style` / `volume()`); molpy's richer box
-  geometry stays available as `molpy.Box`, upgradable via `Box.from_box(frame.box)`.
+  time instead of being silently stored on the Python side. `frame.simbox` is
+  the only cell attribute and returns `molrs.Box`; `frame.box` is deleted.
+  Exact-dtype metadata uses `frame.meta` + `molrs.MetaValue`; untyped
+  `frame.metadata` is deleted. No aliases or compatibility shims remain.
 
 ### Typifiers & Force Fields
 
@@ -386,8 +430,7 @@ Requires `molcrafts-molrs == 0.1.0`.
   and the mmap-index infrastructure were deleted. molpy keeps the split
   extensions (`SplitStrategy` / `TrajectorySplitter`), topology/slice/map
   conveniences, the XYZ writer, and the HDF5 path. `TimeIntervalStrategy` reads
-  the native `.time` array (Python `frame.metadata` does not round-trip the
-  molrs store).
+  the native `.time` array; exact-dtype snapshot metadata uses `frame.meta`.
 - **`Compute` is a plain class.** `__init__` takes configuration, `__call__`
   takes inputs, `dump()` persists. The single-input `_compute` hook, the molexp
   `execute()` / `input_key` / `output_key` shim, and the `Compute[InT, OutT]`
@@ -426,10 +469,10 @@ Requires `molcrafts-molrs == 0.1.0`.
   of degrading to a match-anything wildcard (`*` stays reserved for the
   explicit no-element/no-number case).
 - **The LAMMPS data reader keeps force-field coefficients.**
-  Pair/Bond/Angle/Dihedral/Improper Coeffs sections are now stored on the
-  metadata `ForceField` (positionally-keyed, style-arity aware) so read → write
-  round-trips them; previously they were parsed and discarded. Malformed
-  (non-numeric) coeff lines raise `ValueError` instead of being swallowed.
+  `read_lammps_data` returns `LammpsDataResult`; coefficient sections live on
+  `result.forcefield`, while `result.frame` remains pure Frame state. Writers
+  accept `forcefield=` and `type_labels=` explicitly. Malformed coefficient
+  lines raise `ValueError` instead of being swallowed.
 - The dead `molpy.op` package (unused geometry helpers) was deleted.
 
 ### Added

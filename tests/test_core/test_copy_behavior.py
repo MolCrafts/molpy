@@ -1,278 +1,51 @@
-"""
-Tests for Atomistic copy behavior.
-
-Focus on verifying that copy operations correctly duplicate all entities and bonds,
-and that no orphan references remain.
-"""
-
-from molpy.core.atomistic import Atom, Atomistic, Bond
-
-
-class TestAtomisticCopy:
-    """Test Atomistic.copy() behavior."""
-
-    def test_copy_preserves_all_atoms(self):
-        """Test that copy duplicates all atoms."""
-        asm = Atomistic()
-        a1 = Atom(element="C")
-        a2 = Atom(element="H")
-        a3 = Atom(element="O")
-
-        asm.add_atom(a1)
-        asm.add_atom(a2)
-        asm.add_atom(a3)
-
-        # Copy
-        asm_copy = asm.copy()
-
-        atoms_orig = list(asm.atoms)
-        atoms_copy = list(asm_copy.atoms)
-
-        assert len(atoms_copy) == len(atoms_orig) == 3
-        assert all(a.get("element") in ["C", "H", "O"] for a in atoms_copy)
-
-    def test_copy_preserves_all_bonds(self):
-        """Test that copy duplicates all bonds."""
-        asm = Atomistic()
-        a1 = Atom(element="C")
-        a2 = Atom(element="H")
-        a3 = Atom(element="O")
-
-        asm.add_atom(a1)
-        asm.add_atom(a2)
-        asm.add_atom(a3)
-
-        b1 = Bond(a1, a2)
-        b2 = Bond(a1, a3)
-
-        asm.add_bond(b1)
-        asm.add_bond(b2)
-
-        # Copy
-        asm_copy = asm.copy()
-
-        bonds_orig = list(asm.bonds)
-        bonds_copy = list(asm_copy.bonds)
-
-        assert len(bonds_copy) == len(bonds_orig) == 2
-
-    def test_copy_bonds_reference_copied_atoms(self):
-        """Test that copied bonds reference copied atoms, not original atoms."""
-        asm = Atomistic()
-        a1 = Atom(element="C")
-        a2 = Atom(element="H")
-
-        asm.add_atom(a1)
-        asm.add_atom(a2)
-
-        b1 = Bond(a1, a2)
-        asm.add_bond(b1)
-
-        # Copy
-        asm_copy = asm.copy()
-
-        atoms_copy = list(asm_copy.atoms)
-        bonds_copy = list(asm_copy.bonds)
-
-        assert len(bonds_copy) == 1
-        bond = bonds_copy[0]
-
-        # Check that bond endpoints are in the copied atoms
-        assert bond.endpoints[0] in atoms_copy
-        assert bond.endpoints[1] in atoms_copy
-
-        # Check that bond endpoints are NOT the original atoms
-        assert bond.endpoints[0] is not a1
-        assert bond.endpoints[1] is not a2
-
-    def test_copy_no_orphan_bonds(self):
-        """Test that copy doesn't create orphan bonds (bonds with missing endpoints)."""
-        asm = Atomistic()
-        a1 = Atom(element="C")
-        a2 = Atom(element="H")
-        a3 = Atom(element="O")
-
-        asm.add_atom(a1)
-        asm.add_atom(a2)
-        asm.add_atom(a3)
-
-        b1 = Bond(a1, a2)
-        b2 = Bond(a1, a3)
-        b3 = Bond(a2, a3)
-
-        asm.add_bond(b1)
-        asm.add_bond(b2)
-        asm.add_bond(b3)
-
-        # Copy
-        asm_copy = asm.copy()
-
-        # Get all entities in a set
-        entities_set = set(asm_copy.atoms)
-
-        # Check that all bond endpoints are in entities
-        orphan_bonds = []
-        for bond in asm_copy.bonds:
-            for ep in bond.endpoints:
-                if ep not in entities_set:
-                    orphan_bonds.append(bond)
-                    break
-
-        assert len(orphan_bonds) == 0, (
-            f"Found {len(orphan_bonds)} orphan bonds after copy"
-        )
-
-    def test_copy_independence(self):
-        """Test that modifications to copy don't affect original."""
-        asm = Atomistic()
-        a1 = Atom(element="C")
-        a2 = Atom(element="H")
-
-        asm.add_atom(a1)
-        asm.add_atom(a2)
-
-        b1 = Bond(a1, a2)
-        asm.add_bond(b1)
-
-        # Copy
-        asm_copy = asm.copy()
-
-        # Modify copy
-        a3 = Atom(element="O")
-        asm_copy.add_atom(a3)
-
-        # Check original is unchanged
-        assert len(list(asm.atoms)) == 2
-        assert len(list(asm_copy.atoms)) == 3
-
-
-class TestAtomisticCopyWithPorts:
-    """Test Atomistic.copy() behavior with port markers."""
-
-    def test_copy_preserves_structure(self):
-        """Test that structure copy preserves all atoms and bonds."""
-        # Create structure
-        struct = Atomistic()
-        c1 = Atom(element="C")
-        c2 = Atom(element="C")
-        h1 = Atom(element="H")
-
-        struct.add_atom(c1)
-        struct.add_atom(c2)
-        struct.add_atom(h1)
-
-        b1 = Bond(c1, c2)
-        b2 = Bond(c1, h1)
-
-        struct.add_bond(b1)
-        struct.add_bond(b2)
-
-        # Copy
-        struct_copy = struct.copy()
-
-        # Check structure
-        atoms_copy = list(struct_copy.atoms)
-        bonds_copy = list(struct_copy.bonds)
-
-        assert len(atoms_copy) == 3
-        assert len(bonds_copy) == 2
-
-    def test_copy_no_orphan_bonds(self):
-        """Test that structure copy doesn't create orphan bonds."""
-        # Create structure
-        struct = Atomistic()
-        c1 = Atom(element="C")
-        c2 = Atom(element="C")
-        o1 = Atom(element="O")
-        h1 = Atom(element="H")
-
-        struct.add_atom(c1)
-        struct.add_atom(c2)
-        struct.add_atom(o1)
-        struct.add_atom(h1)
-
-        b1 = Bond(c1, c2)
-        b2 = Bond(c1, o1)
-        b3 = Bond(o1, h1)
-
-        struct.add_bond(b1)
-        struct.add_bond(b2)
-        struct.add_bond(b3)
-
-        # Mark port on atom
-        c1["port"] = "port_1"
-
-        # Copy
-        struct_copy = struct.copy()
-
-        # Check for orphan bonds
-        entities_set = set(struct_copy.atoms)
-
-        orphan_bonds = []
-        for bond in struct_copy.bonds:
-            for ep in bond.endpoints:
-                if ep not in entities_set:
-                    orphan_bonds.append(bond)
-                    break
-
-        assert len(orphan_bonds) == 0, (
-            f"Found {len(orphan_bonds)} orphan bonds in structure copy"
-        )
-
-    def test_copy_ports_remapped(self):
-        """Test that port markers are correctly preserved on copied atoms."""
-        # Create structure
-        struct = Atomistic()
-        c1 = Atom(element="C")
-        c2 = Atom(element="C")
-
-        struct.add_atom(c1)
-        struct.add_atom(c2)
-
-        b1 = Bond(c1, c2)
-        struct.add_bond(b1)
-
-        # Mark port on atom
-        c1["port"] = "port_1"
-
-        # Copy
-        struct_copy = struct.copy()
-
-        # Check port marker is preserved
-        atoms_copy = list(struct_copy.atoms)
-        port_atom = None
-        for atom in atoms_copy:
-            if atom.get("port") == "port_1":
-                port_atom = atom
-                break
-
-        assert port_atom is not None, "Port marker should be preserved in copy"
-        assert port_atom is not c1  # Should be a copied atom
-
-    def test_multiple_copies_independent(self):
-        """Test that multiple copies are independent."""
-        # Create structure
-        struct = Atomistic()
-        c1 = Atom(element="C")
-        h1 = Atom(element="H")
-
-        struct.add_atom(c1)
-        struct.add_atom(h1)
-
-        b1 = Bond(c1, h1)
-        struct.add_bond(b1)
-
-        # Create multiple copies
-        copy1 = struct.copy()
-        copy2 = struct.copy()
-        copy3 = struct.copy()
-
-        # Modify each copy
-        copy1.add_atom(Atom(element="O"))
-        copy2.add_atom(Atom(element="N"))
-
-        # Check independence
-        assert len(list(struct.atoms)) == 2
-        assert len(list(copy1.atoms)) == 3
-        assert len(list(copy2.atoms)) == 3
-        assert len(list(copy3.atoms)) == 2
+"""Copy behavior for live graph refs."""
+
+from molpy.core.atomistic import Atomistic
+
+
+def _molecule() -> tuple[Atomistic, object, object]:
+    struct = Atomistic()
+    carbon = struct.def_atom(element="C", port="port_1")
+    hydrogen = struct.def_atom(element="H")
+    oxygen = struct.def_atom(element="O")
+    struct.def_bond(carbon, hydrogen)
+    struct.def_bond(carbon, oxygen)
+    return struct, carbon, hydrogen
+
+
+def test_copy_preserves_nodes_relations_and_fields() -> None:
+    struct, carbon, _ = _molecule()
+    clone = struct.copy()
+
+    assert len(clone.atoms) == 3
+    assert len(clone.bonds) == 2
+    assert sorted(atom["element"] for atom in clone.atoms) == ["C", "H", "O"]
+    copied_carbon = next(atom for atom in clone.atoms if atom.get("port") == "port_1")
+    assert copied_carbon is not carbon
+
+
+def test_copy_relations_reference_copied_nodes() -> None:
+    struct, carbon, hydrogen = _molecule()
+    clone = struct.copy()
+    copied = set(clone.atoms)
+
+    assert all(
+        endpoint in copied for bond in clone.bonds for endpoint in bond.endpoints
+    )
+    assert all(
+        endpoint is not carbon and endpoint is not hydrogen
+        for bond in clone.bonds
+        for endpoint in bond.endpoints
+    )
+
+
+def test_multiple_copies_are_independent() -> None:
+    struct, _, _ = _molecule()
+    first = struct.copy()
+    second = struct.copy()
+    first.def_atom(element="N")
+    second.def_atom(element="F")
+
+    assert len(struct.atoms) == 3
+    assert len(first.atoms) == 4
+    assert len(second.atoms) == 4

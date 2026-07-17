@@ -18,7 +18,7 @@ PathLike = str | Path
 def _ensure_frame(frame):
     """Ensure a Frame object exists."""
     if frame is None:
-        from molpy.core.frame import Frame
+        from molrs import Frame
 
         return Frame()
     return frame
@@ -31,7 +31,7 @@ def _ensure_frame(frame):
 
 def read_lammps_data(file: PathLike, atom_style: str, frame: Any = None) -> Any:
     """
-    Read LAMMPS data file and return a Frame object.
+    Read a LAMMPS data file and return its explicit parse products.
 
     Args:
         file: Path to LAMMPS data file
@@ -39,7 +39,8 @@ def read_lammps_data(file: PathLike, atom_style: str, frame: Any = None) -> Any:
         frame: Optional existing Frame to populate
 
     Returns:
-        Populated Frame object
+        ``LammpsDataResult`` with ``frame``, ``forcefield``, ``counts``, and
+        ``type_labels``. Callers must select the product they consume.
     """
     from .data.lammps import LammpsDataReader
 
@@ -278,7 +279,7 @@ def read_xml_forcefield(file: PathLike) -> Any:
     return _read_xml(file)
 
 
-def read_amber_prmtop(
+def read_amber(
     prmtop: PathLike, inpcrd: PathLike | None = None, frame: Any = None
 ) -> Any:
     """
@@ -335,7 +336,7 @@ def read_top(file: PathLike, forcefield: Any = None) -> Any:
 # =============================================================================
 
 
-def read_lammps_trajectory(traj: PathLike, frame: Any = None) -> Any:
+def read_lammps_trajectory(traj: PathLike) -> Any:
     """
     Read LAMMPS trajectory file and return a trajectory reader.
 
@@ -343,9 +344,6 @@ def read_lammps_trajectory(traj: PathLike, frame: Any = None) -> Any:
 
     Args:
         traj: Path to LAMMPS trajectory file
-        frame: Unused; retained for backward compatibility. molrs handles the
-            canonical fields, so no reference Frame is needed.
-
     Returns:
         molrs ``TrajectoryReader`` object
     """

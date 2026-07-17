@@ -157,7 +157,7 @@ graph becomes exportable tables.
 
 ```python
 frame = water_box_atomistic.to_frame()
-frame.box = box  # box is a first-class Frame attribute; writers read frame.box
+frame.simbox = box  # box is a first-class Frame attribute; writers read frame.simbox
 
 atoms = frame['atoms']
 n_atoms = atoms.nrows

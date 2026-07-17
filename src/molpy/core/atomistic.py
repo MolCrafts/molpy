@@ -14,29 +14,23 @@ import numpy as np
 
 import molrs
 
-from molpy.core.ops.geometry import (
-    _cross,
-    _dot,
-    _norm,
-    _unit,
-    _vec_scale,
-    _vec_sub,
-)
-
-from .atomistic_types import (
+from molrs.views import (
     Angle,
     Atom,
     Bond,
     Dihedral,
     DrudeParticle,
+    Entities,
+    Entity,
     Improper,
+    Link,
     MasslessSite,
     VirtualSite,
+    _GraphViews,
 )
-from .entity import Entities, Entity, Link, _GraphViews
 
 if TYPE_CHECKING:
-    from .frame import Frame
+    from molrs import Frame
 
 __all__ = [
     "Angle",
@@ -61,13 +55,21 @@ class Atomistic(molrs.Atomistic, _GraphViews):
     the MRO regardless of order, so this preserves the spec's intent.
     """
 
-    _entity_cls = Atom
-    _link_classes = {
+    _node_cls = Atom
+    _relation_classes = {
         "bonds": Bond,
         "angles": Angle,
         "dihedrals": Dihedral,
         "impropers": Improper,
     }
+    _hidden_native_builders = frozenset(
+        {"add_atom", "add_bond", "add_angle", "add_dihedral", "add_improper"}
+    )
+
+    def __getattribute__(self, name: str) -> Any:
+        if name in object.__getattribute__(self, "_hidden_native_builders"):
+            raise AttributeError(f"{name} is not public; use def_{name[4:]} instead")
+        return super().__getattribute__(name)
 
     def __init__(self, **props: Any) -> None:
         _GraphViews.__init__(self, **props)
@@ -82,23 +84,23 @@ class Atomistic(molrs.Atomistic, _GraphViews):
     # ---------- collection views ----------
     @property
     def atoms(self) -> Entities[Atom]:
-        return self._atom_views()  # type: ignore[return-value]
+        return self._node_views()  # type: ignore[return-value]
 
     @property
     def bonds(self) -> Entities[Bond]:
-        return self._link_views("bonds")  # type: ignore[return-value]
+        return self._relation_views("bonds")  # type: ignore[return-value]
 
     @property
     def angles(self) -> Entities[Angle]:
-        return self._link_views("angles")  # type: ignore[return-value]
+        return self._relation_views("angles")  # type: ignore[return-value]
 
     @property
     def dihedrals(self) -> Entities[Dihedral]:
-        return self._link_views("dihedrals")  # type: ignore[return-value]
+        return self._relation_views("dihedrals")  # type: ignore[return-value]
 
     @property
     def impropers(self) -> Entities[Improper]:
-        return self._link_views("impropers")  # type: ignore[return-value]
+        return self._relation_views("impropers")  # type: ignore[return-value]
 
     @property
     def symbols(self) -> list[str]:
@@ -142,58 +144,36 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     # ---------- factory methods (def_*: create + register) ----------
     def def_atom(self, mapping: Any = None, /, **attrs: Any) -> Atom:
-        atom = Atom(mapping, **attrs)
-        return self._spawn_entity(atom)  # type: ignore[return-value]
+        return self._create_node(mapping, cls=Atom, **attrs)  # type: ignore[return-value]
+
+    def def_virtual_site(
+        self,
+        mapping: Any = None,
+        /,
+        *,
+        kind: type[VirtualSite] = VirtualSite,
+        **attrs: Any,
+    ) -> VirtualSite:
+        attrs.setdefault("vsite", kind._vsite_kind)
+        return self._create_node(mapping, cls=kind, **attrs)  # type: ignore[return-value]
 
     def def_bond(self, a: Atom, b: Atom, /, **attrs: Any) -> Bond:
-        bond = Bond(a, b, **attrs)
-        return self._spawn_link("bonds", bond)  # type: ignore[return-value]
+        return self._create_relation("bonds", (a, b), cls=Bond, **attrs)  # type: ignore[return-value]
 
     def def_angle(self, a: Atom, b: Atom, c: Atom, /, **attrs: Any) -> Angle:
-        angle = Angle(a, b, c, **attrs)
-        return self._spawn_link("angles", angle)  # type: ignore[return-value]
+        return self._create_relation("angles", (a, b, c), cls=Angle, **attrs)  # type: ignore[return-value]
 
     def def_dihedral(
         self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any
     ) -> Dihedral:
-        dihedral = Dihedral(a, b, c, d, **attrs)
-        return self._spawn_link("dihedrals", dihedral)  # type: ignore[return-value]
+        return self._create_relation("dihedrals", (a, b, c, d), cls=Dihedral, **attrs)  # type: ignore[return-value]
 
     def def_improper(
         self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any
     ) -> Improper:
-        improper = Improper(a, b, c, d, **attrs)
-        return self._spawn_link("impropers", improper)  # type: ignore[return-value]
+        return self._create_relation("impropers", (a, b, c, d), cls=Improper, **attrs)  # type: ignore[return-value]
 
-    # ---------- add methods (add_*: register existing views) ----------
-    def add_atom(self, atom: Atom, /) -> Atom:
-        return self._spawn_entity(atom)  # type: ignore[return-value]
-
-    def add_bond(self, bond: Bond, /) -> Bond:
-        return self._spawn_link("bonds", bond)  # type: ignore[return-value]
-
-    def add_angle(self, angle: Angle, /) -> Angle:
-        return self._spawn_link("angles", angle)  # type: ignore[return-value]
-
-    def add_dihedral(self, dihedral: Dihedral, /) -> Dihedral:
-        return self._spawn_link("dihedrals", dihedral)  # type: ignore[return-value]
-
-    def add_improper(self, improper: Improper, /) -> Improper:
-        return self._spawn_link("impropers", improper)  # type: ignore[return-value]
-
-    def add_entity(self, *atoms: Atom) -> None:
-        for atom in atoms:
-            self._spawn_entity(atom)
-
-    def add_link(self, *links: Link, include_endpoints: bool = True) -> None:
-        for link in links:
-            if include_endpoints:
-                for ep in link.endpoints:
-                    if not ep.is_bound:
-                        self._spawn_entity(ep)
-            self._spawn_link(link._kind, link)
-
-    # ---------- batch factory / add ----------
+    # ---------- batch factories ----------
     def def_atoms(self, atoms_data: list[dict[str, Any]], /) -> list[Atom]:
         return [self.def_atom(**a) for a in atoms_data]
 
@@ -230,54 +210,34 @@ class Atomistic(molrs.Atomistic, _GraphViews):
             out.append(self.def_dihedral(a, b, c, d, **attrs))
         return out
 
-    def add_atoms(self, atoms: list[Atom], /) -> list[Atom]:
-        for atom in atoms:
-            self._spawn_entity(atom)
-        return atoms
-
-    def add_bonds(self, bonds: list[Bond], /) -> list[Bond]:
-        for bond in bonds:
-            self._spawn_link("bonds", bond)
-        return bonds
-
-    def add_angles(self, angles: list[Angle], /) -> list[Angle]:
-        for angle in angles:
-            self._spawn_link("angles", angle)
-        return angles
-
-    def add_dihedrals(self, dihedrals: list[Dihedral], /) -> list[Dihedral]:
-        for dihedral in dihedrals:
-            self._spawn_link("dihedrals", dihedral)
-        return dihedrals
-
     # ---------- delete ----------
     def del_atom(self, *atoms: Atom) -> None:
         for atom in atoms:
-            self._remove_atom(atom)
+            self._remove_node(atom)
 
     def remove_entity(self, *atoms: Atom, drop_incident_links: bool = True) -> None:
         for atom in atoms:
-            self._remove_atom(atom)
+            self._remove_node(atom)
 
     def del_bond(self, *bonds: Bond) -> None:
         for bond in bonds:
-            self._remove_link(bond)
+            self._remove_relation(bond)
 
     def del_angle(self, *angles: Angle) -> None:
         for angle in angles:
-            self._remove_link(angle)
+            self._remove_relation(angle)
 
     def del_dihedral(self, *dihedrals: Dihedral) -> None:
         for dihedral in dihedrals:
-            self._remove_link(dihedral)
+            self._remove_relation(dihedral)
 
     def del_improper(self, *impropers: Improper) -> None:
         for improper in impropers:
-            self._remove_link(improper)
+            self._remove_relation(improper)
 
     def remove_link(self, *links: Link) -> None:
         for link in links:
-            self._remove_link(link)
+            self._remove_relation(link)
 
     # ---------- property / type / selection editing ----------
     def rename_type(self, old: str, new: str, *, kind: type = Atom) -> int:
@@ -316,7 +276,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     def _items_of_kind(self, kind: type) -> Entities[Any]:
         if isinstance(kind, type) and issubclass(kind, Link):
-            return self._link_views(kind._kind)
+            return self._relation_views(kind._kind)
         return self.atoms  # type: ignore[return-value]
 
     # ---------- connectivity / topology ----------
@@ -327,13 +287,13 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         if link_type is Bond:
             h = atom.handle
             return [
-                self._intern_atom(other)
+                self._intern_node(other)
                 for _, other in self.incident_relations(h, link_type._kind)
                 if other != h
             ]
         # Higher-arity link types are not in the adjacency index — fall back.
         out: list[Atom] = []
-        for link in self._link_views(link_type._kind):
+        for link in self._relation_views(link_type._kind):
             if any(ep is atom for ep in link.endpoints):
                 out.extend(ep for ep in link.endpoints if ep is not atom)
         return out
@@ -361,19 +321,6 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         )
         return new_struct
 
-    def complete_valence(self) -> "Atomistic":
-        """Return a copy with every dangling valence filled by hydrogen.
-
-        Under-coordinated atoms (bond degree below their element valence) are
-        capped with hydrogens, turning a sliced subgraph into a chemically valid
-        molecule an external tool can parameterise. Original atoms keep their
-        order (caps appended); ``self`` is untouched. See
-        :func:`molpy.core.capping.complete_valence`.
-        """
-        from molpy.core.capping import complete_valence
-
-        return complete_valence(self)
-
     def get_topo_neighbors(
         self,
         entity: Atom,
@@ -385,7 +332,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         # unreachable atoms are already excluded. Matches the prior semantics
         # (the source itself, at distance 0, is within any radius >= 0).
         return [
-            self._intern_atom(h)
+            self._intern_node(h)
             for h, _ in self.topo_distances(entity.handle, max_hops=radius)
         ]
 
@@ -396,7 +343,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         link_type: type[Link] = Bond,
     ) -> dict[Atom, int]:
         return {
-            self._intern_atom(h): int(d) for h, d in self.topo_distances(source.handle)
+            self._intern_node(h): int(d) for h, d in self.topo_distances(source.handle)
         }
 
     def extract_subgraph(
@@ -440,10 +387,10 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         molrs.Atomistic.adopt(new, res.graph)
 
         parent_by_old: dict[int, Atom] = {
-            old: self._intern_atom(old) for old in res.node_map
+            old: self._intern_node(old) for old in res.node_map
         }
         region_by_old: dict[int, Atom] = {
-            old: new._intern_atom(new_h)  # type: ignore[attr-defined]
+            old: new._intern_node(new_h)  # type: ignore[attr-defined]
             for old, new_h in res.node_map.items()
         }
         boundary = [region_by_old[h] for h in res.boundary if h in region_by_old]
@@ -473,11 +420,16 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         ``other`` is emptied and must not be used afterwards. Cross-graph
         identity is handle-based — Python view objects are **not** rebound.
         """
-        molrs.Atomistic.merge(self, other)
-        other._atom_intern.clear()
-        other._link_intern.clear()
-        other._props.clear()
+        self._merge_map(other)
         return self
+
+    def _merge_map(self, other: "Atomistic") -> dict[int, int]:
+        """Merge ``other`` and return its old-handle to new-handle mapping."""
+        mapping = molrs.Atomistic.merge(self, other)
+        other._node_refs.clear()
+        other._relation_refs.clear()
+        other._props.clear()
+        return mapping
 
     @staticmethod
     def adopt(graph: molrs.Atomistic) -> "Atomistic":
@@ -493,7 +445,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     @classmethod
     def from_frame(cls, frame: "Frame") -> "Atomistic":
-        """Build a molpy ``Atomistic`` from a :class:`~molpy.core.frame.Frame`.
+        """Build a molpy ``Atomistic`` from a :class:`molrs.Frame`.
 
         The inverse of :meth:`to_frame`. molrs' inherited ``from_frame`` returns a
         bare molrs graph; this override adopts it so the result is a molpy
@@ -519,7 +471,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         entity_type: type[Entity] = Atom,
     ) -> "Atomistic":
         o = [0.0, 0.0, 0.0] if about is None else list(about)
-        molrs.rotate(self, _unit(axis), float(angle), o)
+        molrs.rotate(self, axis, float(angle), o)
         return self
 
     def scale(
@@ -545,21 +497,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
     ) -> "Atomistic":
         pa = [a["x"], a["y"], a["z"]]
         pb = [b["x"], b["y"], b["z"]]
-        if a_dir is not None and b_dir is not None:
-            va = _unit(a_dir)
-            vb = _unit(b_dir)
-            if flip:
-                vb = _vec_scale(vb, -1.0)
-            axis = _cross(va, vb)
-            na = _norm(axis)
-            if na > 0:
-                from math import atan2
-
-                angle = atan2(na, _dot(va, vb))
-                # Rotate about pa via the molrs Rust kernel (was a per-atom
-                # Rodrigues loop reimplementing molrs.rotate).
-                molrs.rotate(self, _vec_scale(axis, 1.0 / na), angle, pa)
-        self.move(_vec_sub(pb, pa))
+        molrs.align_direction(self, pa, pb, a_dir, b_dir, flip)
         return self
 
     # ---------- composition ----------
@@ -573,6 +511,8 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         return result
 
     def replicate(self, n: int, transform: Any = None) -> "Atomistic":
+        if transform is None:
+            return type(self).adopt(molrs.Atomistic.replicate(self, n))
         result = type(self)()
         for i in range(n):
             replica = self.copy()
@@ -591,7 +531,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         column, so each block is materialized as numpy with zero Python-side
         conversion. ``atom_fields`` optionally restricts the atoms block columns.
         """
-        from .frame import Frame
+        from molrs import Frame
 
         # ``molrs.Atomistic.to_frame`` yields the bare pyo3 frame; upgrade it to
         # the rich ``Frame`` (metadata, box, rich Blocks) callers expect.

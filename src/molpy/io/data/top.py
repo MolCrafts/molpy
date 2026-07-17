@@ -10,9 +10,9 @@ from typing import Any
 
 import numpy as np
 
-from molpy.core.frame import Block
-from molpy.core.frame import Frame
-from molpy.core.element import Element
+from molrs import Block, Frame
+from molpy._frame_meta import get_frame_meta
+from molrs import Element
 
 from .base import DataReader, DataWriter, PathLike
 
@@ -447,7 +447,7 @@ class TopWriter(DataWriter):
             frame: Frame object containing ``"atoms"`` and optionally
                 ``"bonds"``, ``"pairs"``, ``"angles"``, ``"dihedrals"`` blocks.
         """
-        mol_name = frame.metadata.get("name", "MOL")
+        mol_name = get_frame_meta(frame, "name", "MOL")
         lines: list[str] = []
 
         # Header

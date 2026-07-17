@@ -300,7 +300,10 @@ def _region_disagreements(
         ball = sorted(hops)
         sub, _ = graph.extract_subgraph([seed], extract_radius)
         try:
-            got = _opls_types(typifier, sub.complete_valence() if cap else sub)
+            perceived = (
+                Atomistic.adopt(molrs.Perceive().find_hydrogens(sub)) if cap else sub
+            )
+            got = _opls_types(typifier, perceived)
         except ValueError:
             refused += 1
             continue
@@ -362,8 +365,8 @@ def test_a_raw_slice_of_an_aromatic_ring_cannot_be_typed_at_all():
     Cutting a ring leaves carbons whose valences do not add up; the matcher types
     them as something no bonded term covers, and the angle lookup fails. Neither
     PEO nor methyl acrylate shows this — an aliphatic cut still looks like a
-    plausible fragment — which is exactly why capping had to become the pipeline's
-    first step rather than a convenience of the AmberTools path.
+    plausible fragment — which is exactly why hydrogen perception belongs at the
+    cut site rather than in the AmberTools path.
     """
     typifier = molrs.typifier.OPLSAATypifier()
 

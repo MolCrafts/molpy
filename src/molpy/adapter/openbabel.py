@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from molpy.core.atomistic import Atomistic, Atom, Bond
-from molpy.core.element import Element
+from molrs import Element
 
 from .base import Adapter
 

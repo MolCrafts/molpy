@@ -1,6 +1,11 @@
 ---
 slug: typifier-architecture
 criteria:
+
+  # 2026-07-14 correction: acceptance requires exactly one unconditional
+  # Perceive.find_hydrogens call in RegionTypes.of, no complete_valence method
+  # on either graph leaf, and no core/capping.py. Older entries below preserve
+  # historical evidence for the superseded facade.
   - id: ac-001
     summary: Typifier 对图类型泛型;基类不假定原子体系(判据不是文本禁令)
     type: code

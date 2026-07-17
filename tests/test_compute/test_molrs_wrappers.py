@@ -37,12 +37,12 @@ from molpy.compute import (
 from molpy.compute.base import Compute
 
 
-def _frame(n: int, box_len: float, seed: int) -> molpy.Frame:
+def _frame(n: int, box_len: float, seed: int) -> molrs.Frame:
     rng = np.random.default_rng(seed)
     xyz = rng.uniform(0.0, box_len, size=(n, 3))
-    frame = molpy.Frame()
+    frame = molrs.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.box = molpy.Box.cubic(box_len)
+    frame.simbox = molpy.Box.cubic(box_len)
     return frame
 
 
@@ -97,9 +97,9 @@ def _clustered_frame():
     blob_a = rng.normal(loc=5.0, scale=0.3, size=(5, 3))
     blob_b = rng.normal(loc=20.0, scale=0.3, size=(5, 3))
     xyz = np.vstack([blob_a, blob_b])
-    f = molpy.Frame()
+    f = molrs.Frame()
     f["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    f.box = molpy.Box.cubic(30.0)
+    f.simbox = molpy.Box.cubic(30.0)
     return f, xyz
 
 
@@ -195,8 +195,8 @@ def test_pca_kmeans_roundtrip():
 
 def test_msd_does_not_mutate_input():
     frames = [_frame(20, 5.0, seed=i) for i in range(3)]
-    snapshots = [(f["atoms"]["x"].copy(), f.box.matrix.copy()) for f in frames]
+    snapshots = [(f["atoms"]["x"].copy(), f.simbox.matrix.copy()) for f in frames]
     MSD()(frames)
     for (x_before, m_before), f in zip(snapshots, frames):
         np.testing.assert_array_equal(f["atoms"]["x"], x_before)
-        np.testing.assert_array_equal(f.box.matrix, m_before)
+        np.testing.assert_array_equal(f.simbox.matrix, m_before)

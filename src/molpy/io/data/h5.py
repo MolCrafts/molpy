@@ -15,14 +15,11 @@ HDF5 Structure:
 │   └── bonds/              # Another block group
 │       ├── i               # Dataset
 │       └── j               # Dataset
-└── metadata/               # Group containing metadata
-    ├── timestep            # Attribute or dataset
-    └── ...                 # Other metadata
+├── simbox/                 # Optional simulation cell
+└── meta/                   # Exact-dtype MetaValue entries (schema v2)
 """
 
 from __future__ import annotations
-
-import json
 
 from pathlib import Path
 from typing import Any
@@ -34,14 +31,33 @@ try:
 except ImportError:
     h5py = None  # type: ignore[assignment, unused-ignore]
 
-from molpy.core import Block, Frame
-
-try:
-    from molpy.core import Box
-except ImportError:
-    Box = None  # type: ignore[assignment, unused-ignore]
+from molrs import Block, Frame, MetaValue
 
 from .base import PathLike
+
+FRAME_SCHEMA_VERSION = 2
+
+_META_DTYPES: dict[str, tuple[np.dtype | None, tuple[int, ...]]] = {
+    "bool": (np.dtype(np.bool_), ()),
+    "i32": (np.dtype(np.int32), ()),
+    "i64": (np.dtype(np.int64), ()),
+    "u32": (np.dtype(np.uint32), ()),
+    "u64": (np.dtype(np.uint64), ()),
+    "f32": (np.dtype(np.float32), ()),
+    "f64": (np.dtype(np.float64), ()),
+    "string": (None, ()),
+    "bool3": (np.dtype(np.bool_), (3,)),
+    "i32x3": (np.dtype(np.int32), (3,)),
+    "i64x3": (np.dtype(np.int64), (3,)),
+    "u32x3": (np.dtype(np.uint32), (3,)),
+    "u64x3": (np.dtype(np.uint64), (3,)),
+    "f32x3": (np.dtype(np.float32), (3,)),
+    "f64x3": (np.dtype(np.float64), (3,)),
+    "f32x6": (np.dtype(np.float32), (6,)),
+    "f64x6": (np.dtype(np.float64), (6,)),
+    "f32x9": (np.dtype(np.float32), (9,)),
+    "f64x9": (np.dtype(np.float64), (9,)),
+}
 
 # =============================================================================
 # Frame <-> HDF5 Conversion Functions (reusable for trajectory)
@@ -76,6 +92,8 @@ def frame_to_h5_group(
 
     if len(frame) == 0:
         raise ValueError("Cannot write empty frame (no blocks)")
+
+    h5_group.attrs["frame_schema_version"] = FRAME_SCHEMA_VERSION
 
     # Write blocks
     blocks_group = h5_group.create_group("blocks")
@@ -131,23 +149,19 @@ def frame_to_h5_group(
             # Store dtype information as attribute for better reconstruction
             dataset.attrs["dtype"] = str(data.dtype)
 
-    # Write box as a dedicated group
-    if frame.box is not None:
-        box_group = h5_group.create_group("box")
+    # Write the simulation cell as a dedicated group.
+    if frame.simbox is not None:
+        box_group = h5_group.create_group("simbox")
         box_group.create_dataset(
-            "matrix", data=np.asarray(frame.box.matrix, dtype=np.float64)
+            "matrix", data=np.asarray(frame.simbox.matrix, dtype=np.float64)
         )
         box_group.create_dataset(
-            "origin", data=np.asarray(frame.box.origin, dtype=np.float64)
+            "origin", data=np.asarray(frame.simbox.origin, dtype=np.float64)
         )
-        box_group.create_dataset("pbc", data=np.asarray(frame.box.pbc, dtype=bool))
+        box_group.create_dataset("pbc", data=np.asarray(frame.simbox.pbc, dtype=bool))
 
-    # Write metadata
-    if frame.metadata:
-        metadata_group = h5_group.create_group("metadata")
-        _write_metadata_to_group(
-            metadata_group, frame.metadata, compression, compression_opts
-        )
+    meta_group = h5_group.create_group("meta")
+    _write_typed_meta(meta_group, frame.meta)
 
 
 def h5_group_to_frame(h5_group: "h5py.Group", frame: Frame | None = None) -> Frame:
@@ -161,247 +175,244 @@ def h5_group_to_frame(h5_group: "h5py.Group", frame: Frame | None = None) -> Fra
         frame: Optional existing Frame to populate. If None, creates a new one.
 
     Returns:
-        Frame: Populated Frame object with blocks and metadata from HDF5 group.
+        Frame: Populated Frame object with blocks and typed metadata.
     """
     if h5py is None:
         raise ImportError(
             "h5py is required for HDF5 support. Install it with: pip install h5py"
         )
 
-    frame = frame or Frame()
+    _validate_frame_group(h5_group)
+    frame = frame if frame is not None else Frame()
 
     # Read blocks
-    if "blocks" in h5_group:
-        blocks_group = h5_group["blocks"]
-        for block_name in blocks_group.keys():
-            block_group = blocks_group[block_name]
-            block = Block()
+    blocks_group = h5_group["blocks"]
+    for block_name in blocks_group.keys():
+        block_group = blocks_group[block_name]
+        if not isinstance(block_group, h5py.Group):
+            raise ValueError(f"HDF5 block {block_name!r} must be a group")
+        if block_group.attrs:
+            raise ValueError(f"HDF5 block {block_name!r} has unknown attributes")
 
-            # Read all variables in this block
-            for var_name in block_group.keys():
-                dataset = block_group[var_name]
+        block = Block()
+        for var_name in block_group.keys():
+            dataset = block_group[var_name]
+            if not isinstance(dataset, h5py.Dataset):
+                raise ValueError(
+                    f"HDF5 block variable {block_name!r}/{var_name!r} must be a dataset"
+                )
+            if set(dataset.attrs) != {"dtype"}:
+                raise ValueError(
+                    f"HDF5 block variable {block_name!r}/{var_name!r} "
+                    "must have exactly one 'dtype' attribute"
+                )
 
-                # Restore original dtype if it was a Unicode string
-                if "dtype" in dataset.attrs:
-                    original_dtype_str = dataset.attrs["dtype"]
-                    if original_dtype_str.startswith(
-                        "<U"
-                    ) or original_dtype_str.startswith(">U"):
-                        # Use asstr() method for variable-length strings
-                        try:
-                            data = dataset.asstr()[:]
-                            # Convert to numpy array with original dtype
-                            data = np.array(data, dtype=original_dtype_str)
-                        except (AttributeError, TypeError):
-                            # Fallback: read as array and decode
-                            raw_data = np.array(dataset)
-                            if raw_data.dtype.kind == "O":  # Object dtype
-                                data = np.array(
-                                    [
-                                        (
-                                            s.decode("utf-8")
-                                            if isinstance(s, bytes)
-                                            else str(s)
-                                        )
-                                        for s in raw_data
-                                    ],
-                                    dtype=original_dtype_str,
-                                )
-                            else:
-                                data = raw_data.astype(original_dtype_str)
-                    else:
-                        # Read dataset as numpy array for non-string types
-                        data = np.array(dataset)
-                else:
-                    # Read dataset as numpy array
-                    data = np.array(dataset)
+            original_dtype_str = _read_string_attr(dataset, "dtype")
+            try:
+                original_dtype = np.dtype(original_dtype_str)
+            except TypeError as exc:
+                raise ValueError(
+                    f"Invalid NumPy dtype {original_dtype_str!r} for "
+                    f"{block_name!r}/{var_name!r}"
+                ) from exc
 
-                block[var_name] = data
+            if original_dtype.kind == "U":
+                string_info = h5py.check_string_dtype(dataset.dtype)
+                if string_info is None or string_info.encoding != "utf-8":
+                    raise ValueError(
+                        f"HDF5 block variable {block_name!r}/{var_name!r} "
+                        "must use UTF-8 storage"
+                    )
+                data = np.asarray(dataset.asstr()[...], dtype=original_dtype)
+            else:
+                if dataset.dtype != original_dtype:
+                    raise ValueError(
+                        f"HDF5 block variable {block_name!r}/{var_name!r} "
+                        f"declares {original_dtype} but stores {dataset.dtype}"
+                    )
+                data = np.asarray(dataset[...], dtype=original_dtype)
 
-            frame[block_name] = block
+            block[var_name] = data
 
-    # Read box
-    if "box" in h5_group:
+        frame[block_name] = block
+
+    if "simbox" in h5_group:
         from molpy.core.box import Box
 
-        box_grp = h5_group["box"]
-        frame.box = Box(
+        box_grp = h5_group["simbox"]
+        _validate_simbox_group(box_grp)
+        frame.simbox = Box(
             matrix=np.array(box_grp["matrix"]),
             origin=np.array(box_grp["origin"]),
             pbc=np.array(box_grp["pbc"]),
         )
 
-    # Read metadata
-    if "metadata" in h5_group:
-        metadata_group = h5_group["metadata"]
-        _read_metadata_from_group(metadata_group, frame.metadata)
+    frame.meta = _read_typed_meta(h5_group["meta"])
 
     return frame
 
 
-def _write_metadata_to_group(
-    metadata_group: "h5py.Group",
-    metadata_dict: dict,
-    compression: str | None = "gzip",
-    compression_opts: int = 4,
-) -> None:
-    """Recursively write metadata to HDF5 group.
+def _validate_frame_group(h5_group: "h5py.Group") -> None:
+    if set(h5_group.attrs) != {"frame_schema_version"}:
+        raise ValueError(
+            "HDF5 Frame requires exactly the 'frame_schema_version' attribute"
+        )
+    version = h5_group.attrs["frame_schema_version"]
+    if (
+        not isinstance(version, (int, np.integer))
+        or int(version) != FRAME_SCHEMA_VERSION
+    ):
+        raise ValueError(
+            f"Unsupported HDF5 Frame schema {version!r}; "
+            f"required schema is {FRAME_SCHEMA_VERSION}"
+        )
 
-    Args:
-        metadata_group: HDF5 group to write metadata to
-        metadata_dict: Dictionary containing metadata
-        compression: Compression algorithm
-        compression_opts: Compression level
-    """
-    for key, value in metadata_dict.items():
-        # Skip None values
-        if value is None:
-            continue
+    groups = set(h5_group.keys())
+    required = {"blocks", "meta"}
+    allowed = required | {"simbox"}
+    if missing := required - groups:
+        raise ValueError(f"HDF5 Frame is missing groups: {sorted(missing)}")
+    if unknown := groups - allowed:
+        raise ValueError(f"HDF5 Frame has unknown groups: {sorted(unknown)}")
+    for name in groups:
+        if not isinstance(h5_group[name], h5py.Group):
+            raise ValueError(f"HDF5 Frame entry {name!r} must be a group")
 
-        # Handle Box objects specially
-        if Box is not None and isinstance(value, Box):
-            # Store Box as a group with matrix, pbc, and origin
-            box_group = metadata_group.create_group(key)
-            # Use np.array(box) which will call __array__ method
-            box_matrix = np.array(value)
-            # lzf doesn't support compression_opts
-            create_kwargs = {
-                "compression": compression,
-            }
-            if compression == "gzip" and compression_opts is not None:
-                create_kwargs["compression_opts"] = compression_opts
-            elif compression == "lzf":
-                # lzf doesn't use compression_opts
-                pass
 
-            box_group.create_dataset("matrix", data=box_matrix, **create_kwargs)
-            box_group.create_dataset("pbc", data=value.pbc, **create_kwargs)
-            box_group.create_dataset("origin", data=value.origin, **create_kwargs)
-            box_group.attrs["_type"] = "Box"
-            continue
+def _validate_simbox_group(box_group: "h5py.Group") -> None:
+    if box_group.attrs:
+        raise ValueError("HDF5 simbox group has unknown attributes")
+    if set(box_group.keys()) != {"matrix", "origin", "pbc"}:
+        raise ValueError("HDF5 simbox must contain exactly matrix, origin, and pbc")
 
-        # Handle different types
-        if isinstance(value, (str, int, float, bool)):
-            # Store simple types as attributes
-            metadata_group.attrs[key] = value
-        elif isinstance(value, np.ndarray):
-            # Store numpy arrays as datasets
-            # lzf doesn't support compression_opts
-            create_kwargs = {
-                "compression": compression,
-            }
-            if compression == "gzip" and compression_opts is not None:
-                create_kwargs["compression_opts"] = compression_opts
-            elif compression == "lzf":
-                # lzf doesn't use compression_opts
-                pass
+    expected = {
+        "matrix": (np.dtype(np.float64), (3, 3)),
+        "origin": (np.dtype(np.float64), (3,)),
+        "pbc": (np.dtype(np.bool_), (3,)),
+    }
+    for name, (dtype, shape) in expected.items():
+        dataset = box_group[name]
+        if not isinstance(dataset, h5py.Dataset):
+            raise ValueError(f"HDF5 simbox/{name} must be a dataset")
+        if dataset.attrs:
+            raise ValueError(f"HDF5 simbox/{name} has unknown attributes")
+        if dataset.dtype != dtype or dataset.shape != shape:
+            raise ValueError(
+                f"HDF5 simbox/{name} must have dtype {dtype} and shape {shape}; "
+                f"got dtype {dataset.dtype} and shape {dataset.shape}"
+            )
 
-            metadata_group.create_dataset(key, data=value, **create_kwargs)
-        elif isinstance(value, (list, tuple)):
-            # Convert lists/tuples to numpy arrays
-            try:
-                arr = np.asarray(value)
-                # lzf doesn't support compression_opts
-                create_kwargs = {
-                    "compression": compression,
-                }
-                if compression == "gzip" and compression_opts is not None:
-                    create_kwargs["compression_opts"] = compression_opts
-                elif compression == "lzf":
-                    # lzf doesn't use compression_opts
-                    pass
 
-                metadata_group.create_dataset(key, data=arr, **create_kwargs)
-            except (ValueError, TypeError):
-                # If conversion fails, store as JSON string
-                metadata_group.attrs[key] = json.dumps(value)
-        elif isinstance(value, dict):
-            # Recursively write nested dictionaries as groups
-            nested_group = metadata_group.create_group(key)
-            _write_metadata_to_group(nested_group, value, compression, compression_opts)
+def _write_typed_meta(meta_group: "h5py.Group", meta: dict[str, MetaValue]) -> None:
+    meta_group.attrs["schema_version"] = FRAME_SCHEMA_VERSION
+    for index, (key, entry) in enumerate(sorted(meta.items())):
+        if not isinstance(key, str):
+            raise TypeError("Frame meta keys must be strings")
+        if not isinstance(entry, MetaValue):
+            raise TypeError(f"Frame meta {key!r} must be a molrs.MetaValue")
+
+        dtype_name = entry.dtype
+        if dtype_name not in _META_DTYPES:
+            raise ValueError(f"Frame meta {key!r} has unknown dtype {dtype_name!r}")
+        expected_dtype, expected_shape = _META_DTYPES[dtype_name]
+
+        dataset_name = f"{index:08d}"
+        if dtype_name == "string":
+            if not isinstance(entry.value, str):
+                raise TypeError(f"Frame meta {key!r} string value is not str")
+            dataset = meta_group.create_dataset(
+                dataset_name,
+                data=entry.value,
+                dtype=h5py.string_dtype(encoding="utf-8"),
+            )
         else:
-            # For other types, try to serialize as JSON
-            try:
-                json_str = json.dumps(value)
-                metadata_group.attrs[key] = json_str
-            except (TypeError, ValueError):
-                # If JSON serialization fails, convert to string
-                metadata_group.attrs[key] = str(value)
-
-
-def _read_metadata_from_group(
-    metadata_group: "h5py.Group", metadata_dict: dict
-) -> None:
-    """Recursively read metadata from HDF5 group.
-
-    Args:
-        metadata_group: HDF5 group containing metadata
-        metadata_dict: Dictionary to populate with metadata
-    """
-    for key in metadata_group.keys():
-        item = metadata_group[key]
-
-        if isinstance(item, h5py.Dataset):
-            # Read dataset
-            data = np.array(item)
-            # Convert scalar arrays to Python types
-            if data.shape == ():
-                metadata_dict[key] = data.item()
-            elif data.dtype.kind == "U":  # Unicode string
-                if data.shape == ():
-                    metadata_dict[key] = str(data.item())
-                else:
-                    metadata_dict[key] = [str(s) for s in data]
-            else:
-                metadata_dict[key] = data.tolist() if data.size < 1000 else data
-        elif isinstance(item, h5py.Group):
-            # Check if this is a Box object
-            if (
-                "_type" in item.attrs
-                and item.attrs["_type"] == "Box"
-                and Box is not None
-            ):
-                # Reconstruct Box object
-                matrix = np.array(item["matrix"])
-                pbc = np.array(item["pbc"])
-                origin = np.array(item["origin"])
-                metadata_dict[key] = Box(matrix=matrix, pbc=pbc, origin=origin)
-            else:
-                # Recursively read nested groups
-                nested_dict = {}
-                _read_metadata_from_group(item, nested_dict)
-                metadata_dict[key] = nested_dict
-
-    # Also read attributes
-    for attr_name in metadata_group.attrs.keys():
-        attr_value = metadata_group.attrs[attr_name]
-        # Skip internal type markers
-        if attr_name == "_type":
-            continue
-
-        # Convert numpy types to Python types
-        if isinstance(attr_value, np.ndarray):
-            if attr_value.shape == ():
-                metadata_dict[attr_name] = attr_value.item()
-            elif attr_value.dtype.kind == "U":  # Unicode string
-                if attr_value.shape == ():
-                    metadata_dict[attr_name] = str(attr_value.item())
-                else:
-                    metadata_dict[attr_name] = [str(s) for s in attr_value]
-            else:
-                metadata_dict[attr_name] = (
-                    attr_value.tolist() if attr_value.size < 1000 else attr_value
+            data = np.asarray(entry.value, dtype=expected_dtype)
+            if data.shape != expected_shape:
+                raise ValueError(
+                    f"Frame meta {key!r} dtype {dtype_name!r} requires shape "
+                    f"{expected_shape}, got {data.shape}"
                 )
-        elif isinstance(attr_value, (bytes, str)):
-            # Try to decode JSON strings
-            if isinstance(attr_value, bytes):
-                attr_value = attr_value.decode("utf-8")
-            try:
-                metadata_dict[attr_name] = json.loads(attr_value)
-            except (json.JSONDecodeError, TypeError):
-                metadata_dict[attr_name] = attr_value
+            dataset = meta_group.create_dataset(dataset_name, data=data)
+
+        dataset.attrs["key"] = key
+        dataset.attrs["dtype"] = dtype_name
+
+
+def _read_typed_meta(meta_group: "h5py.Group") -> dict[str, MetaValue]:
+    if set(meta_group.attrs) != {"schema_version"}:
+        raise ValueError(
+            "HDF5 Frame meta requires exactly the 'schema_version' attribute"
+        )
+    version = meta_group.attrs["schema_version"]
+    if (
+        not isinstance(version, (int, np.integer))
+        or int(version) != FRAME_SCHEMA_VERSION
+    ):
+        raise ValueError(
+            f"Unsupported HDF5 Frame meta schema {version!r}; "
+            f"required schema is {FRAME_SCHEMA_VERSION}"
+        )
+
+    names = sorted(meta_group.keys())
+    expected_names = [f"{index:08d}" for index in range(len(names))]
+    if names != expected_names:
+        raise ValueError("HDF5 Frame meta entries must use contiguous numeric names")
+
+    meta: dict[str, MetaValue] = {}
+    for name in names:
+        dataset = meta_group[name]
+        if not isinstance(dataset, h5py.Dataset):
+            raise ValueError(f"HDF5 Frame meta entry {name!r} must be a dataset")
+        if set(dataset.attrs) != {"key", "dtype"}:
+            raise ValueError(
+                f"HDF5 Frame meta entry {name!r} must have exactly key and dtype attrs"
+            )
+
+        key = _read_string_attr(dataset, "key")
+        if key in meta:
+            raise ValueError(f"Duplicate HDF5 Frame meta key {key!r}")
+        dtype_name = _read_string_attr(dataset, "dtype")
+        if dtype_name not in _META_DTYPES:
+            raise ValueError(
+                f"HDF5 Frame meta {key!r} has unknown dtype {dtype_name!r}"
+            )
+
+        expected_dtype, expected_shape = _META_DTYPES[dtype_name]
+        if dataset.shape != expected_shape:
+            raise ValueError(
+                f"HDF5 Frame meta {key!r} dtype {dtype_name!r} requires shape "
+                f"{expected_shape}, got {dataset.shape}"
+            )
+
+        if dtype_name == "string":
+            string_info = h5py.check_string_dtype(dataset.dtype)
+            if string_info is None or string_info.encoding != "utf-8":
+                raise ValueError(
+                    f"HDF5 Frame meta {key!r} must use UTF-8 string storage"
+                )
+            value = dataset.asstr()[()]
+            if not isinstance(value, str):
+                raise ValueError(f"HDF5 Frame meta {key!r} is not a scalar string")
         else:
-            metadata_dict[attr_name] = attr_value
+            if dataset.dtype != expected_dtype:
+                raise ValueError(
+                    f"HDF5 Frame meta {key!r} dtype {dtype_name!r} must store "
+                    f"{expected_dtype}, got {dataset.dtype}"
+                )
+            data = np.asarray(dataset[...], dtype=expected_dtype)
+            value = data.item() if expected_shape == () else data.tolist()
+
+        meta[key] = MetaValue(dtype_name, value)
+    return meta
+
+
+def _read_string_attr(dataset: "h5py.Dataset", name: str) -> str:
+    value = dataset.attrs[name]
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="strict")
+    if not isinstance(value, str):
+        raise ValueError(f"HDF5 attribute {name!r} must be a UTF-8 string")
+    return value
 
 
 class HDF5Reader:
@@ -409,7 +420,8 @@ class HDF5Reader:
 
     The HDF5 file structure should follow the format:
     - /blocks/{block_name}/{variable_name} for data arrays
-    - /metadata/ for frame metadata
+    - /simbox/ for the optional simulation cell
+    - /meta/ for exact-dtype frame metadata
 
     Examples:
         >>> reader = HDF5Reader("frame.h5")
@@ -451,7 +463,7 @@ class HDF5Reader:
             frame: Optional existing Frame to populate. If None, creates a new one.
 
         Returns:
-            Frame: Populated Frame object with blocks and metadata from HDF5 file.
+            Frame: Populated Frame object with blocks and typed metadata.
         """
         with h5py.File(self._path, "r") as f:
             return h5_group_to_frame(f, frame)
@@ -462,7 +474,8 @@ class HDF5Writer:
 
     The HDF5 file structure follows:
     - /blocks/{block_name}/{variable_name} for data arrays
-    - /metadata/ for frame metadata
+    - /simbox/ for the optional simulation cell
+    - /meta/ for exact-dtype frame metadata
 
     Examples:
         >>> frame = Frame(blocks={"atoms": {"x": [0, 1, 2], "y": [0, 0, 0]}})

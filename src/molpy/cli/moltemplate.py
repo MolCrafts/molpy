@@ -242,66 +242,17 @@ def _cmd_ltemplify(args: argparse.Namespace) -> int:
 
 def _load_lammps_system(data_path: Path, settings_path: Path | None):
     """Load an Atomistic + ForceField from a LAMMPS data + settings pair."""
-    from molpy.core.forcefield import ForceField
+    from molpy.core.atomistic import Atomistic
     from molpy.io.data.lammps import LammpsDataReader
 
-    frame = LammpsDataReader(data_path).read()
-    atomistic = (
-        frame.to_atomistic()
-        if hasattr(frame, "to_atomistic")
-        # Fallback: rebuild Atomistic from the Frame manually.
-        else (_atomistic_from_frame(frame))
-    )
-    ff = ForceField(name=data_path.stem, units="real")
-    ff.metadata = {}  # type: ignore[attr-defined]
+    result = LammpsDataReader(data_path).read()
+    atomistic = Atomistic.from_frame(result.frame)
+    ff = result.forcefield
     if settings_path is not None and settings_path.exists():
         from molpy.io.forcefield.lammps import LAMMPSForceFieldReader
 
         LAMMPSForceFieldReader(settings_path).read(ff)
     return atomistic, ff
-
-
-def _atomistic_from_frame(frame):
-    """Construct an ``Atomistic`` from a LAMMPS ``Frame`` (fallback helper)."""
-    from molpy.core.atomistic import Atomistic
-
-    system = Atomistic()
-    atoms = frame["atoms"]
-    keys = list(atoms.keys()) if hasattr(atoms, "keys") else []
-    n = atoms.nrows if hasattr(atoms, "nrows") else len(atoms[keys[0]])
-    atom_objs = []
-    for i in range(n):
-        kwargs = {k: atoms[k][i] for k in keys}
-        xyz = [
-            float(kwargs.pop("x", 0.0)),
-            float(kwargs.pop("y", 0.0)),
-            float(kwargs.pop("z", 0.0)),
-        ]
-        atom_objs.append(system.def_atom(xyz=xyz, **kwargs))
-    for name, adder in (
-        ("bonds", lambda a, b, **kw: system.def_bond(a, b, **kw)),
-        ("angles", None),
-        ("dihedrals", None),
-        ("impropers", None),
-    ):
-        if name not in frame:
-            continue
-        block = frame[name]
-        nrows = block.nrows
-        block_keys = list(block.keys()) if hasattr(block, "keys") else []
-        for i in range(nrows):
-            row = {k: block[k][i] for k in block_keys}
-            ids = [int(row.pop(f"atom{c}")) for c in "ijkl" if f"atom{c}" in row]
-            endpoints = [atom_objs[idx] for idx in ids if 0 <= idx < len(atom_objs)]
-            if name == "bonds" and len(endpoints) == 2:
-                system.def_bond(*endpoints, **row)
-            elif name == "angles" and len(endpoints) == 3:
-                system.def_angle(*endpoints, **row)
-            elif name == "dihedrals" and len(endpoints) == 4:
-                system.def_dihedral(*endpoints, **row)
-            elif name == "impropers" and len(endpoints) == 4:
-                system.def_improper(*endpoints, **row)
-    return system
 
 
 # ---------------------------------------------------------------------------

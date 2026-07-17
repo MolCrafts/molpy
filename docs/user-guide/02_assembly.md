@@ -20,35 +20,38 @@ of something already connected.
 Only the third input differs between the three jobs, and MolPy makes that literal: one
 assembler does the work, and you hand it a **selector** that answers only that question.
 `TopologySelector` pairs by chain adjacency. `RandomSelector` pairs within a distance cutoff.
-You can write one that pairs whatever you like. Everything downstream of that choice — placing
-the pieces, editing the graph, fixing up the force-field types around each new bond — is one
+You can write one that pairs whatever you like. Everything downstream of that choice — compiling
+the possible local products, editing the graph once, and optionally finalizing topology — is one
 code path you never touch.
 
-## Assembly is pasting, editing, and repairing, all locally
+## Assembly is compile, execute, finalize
 
-**An assembler pastes molecules into one world, applies your reaction wherever its `select`
-hook says to, and repairs the force-field types in the neighbourhood of each new bond.**
+**An assembler selects every reaction first, compiles its local product against intact
+monomer templates, executes the full reaction batch, and only then performs the requested
+whole-system finalization.**
 
-The word doing the work in that sentence is *neighbourhood*. Nothing in assembly ever walks
-the whole system. Adding the thousandth monomer to a chain costs what adding the second one
-cost, because the only atoms examined are the ones near the bond being formed.
+This order is the performance contract. The thousandth bond is never followed by a retype of
+the thousand-monomer graph. Before any real edit, MolPy overlays all planned forming bonds,
+extracts bounded motifs around them, and runs the typifier only for distinct rooted motifs.
+For a `PolymerBuilder`, each motif expands to complete user-defined residues: a dimer or short
+oligomer stays a chemically complete molecule, so no artificial completion of a cut monomer is
+needed. A generic atom-level `GraphAssembler` cut is completed only at the outer context shell.
 
-> **Under the hood: why nothing is recomputed globally**
->
-> A force field decides an atom's type from its surroundings, out to some small number of
-> bonds — for GAFF, about two; for a field with aromatic ring patterns, about three. So
-> forming a bond can only change the types of atoms within that distance of it. Everything
-> further away is provably unaffected.
->
-> MolPy therefore cuts out a ball around each new bond, retypes the atoms inside it, and
-> writes only those back. The ball is cut wider than the atoms it writes, because an atom at
-> the edge of the write-back region still needs its own full surroundings in view to be typed
-> correctly. How wide is read off the force field's own patterns; it is never a setting.
->
-> Two consequences leak into the API, and only two. A force field whose patterns ask "is this
-> atom in *any* ring?" has no bounded neighbourhood at all — closing one bond can put a
-> thousand atoms on a ring — so such a typifier is rejected outright. And a typifier MolPy
-> cannot inspect, like the AmberTools wrapper, has to be told how far it looks.
+The cached result contains scalar per-atom information only — atom type, charge, class, and pair
+parameters. It deliberately contains no bond, angle, dihedral, or improper rows. After the real
+`Reaction.apply_many` batch has formed every bond, those per-atom values are replayed by stable
+atom handle. Overlapping motifs must agree; disagreement means the declared `reach` was too
+small and raises instead of making write order decide the answer.
+
+Topology is a separate tail:
+
+- `Finalization.ATOMS` leaves bonds and per-atom force-field data only.
+- `Finalization.TOPOLOGY` (the default) generates complete angles and dihedrals once.
+- `Finalization.BONDED` additionally assigns their force-field types through
+  `ForceFieldParams`.
+
+This lets a very large system defer topology until its MD writer actually needs explicit bonded
+rows, without creating a second aggregation algorithm.
 
 ## What an assembler is not
 
@@ -60,7 +63,8 @@ It is **not a port system**. There is no `<` and `>`, no head and tail, no conne
 deciding that a hydroxyl may meet a carboxyl. Sites are unordered and undirected, and the
 reaction SMARTS is the only place chemistry is written down.
 
-It is **not a typifier**. It calls one, and it refuses the ones it cannot use.
+It is **not a typifier**. Every accepted implementation inherits the common `molrs.Typifier`
+base; the assembler only compiles the bounded graph on which it is invoked.
 
 ## A repeat unit is a molecule with a few marked atoms
 
@@ -133,13 +137,11 @@ guess away.
 
 ## Identical junctions are typed once
 
-Every EO–EO junction along a thousand-monomer chain has the same local chemistry. Typing each
-one separately would be a thousand identical passes over the same fragment.
-
-So each neighbourhood MolPy cuts out is hashed by its structure, and the types it yields are
-cached under that hash. The second junction hits the cache. So does the eight-hundredth, and
-so does the first junction of the next chain. The number of typing passes tracks the number of
-*distinct* chemical environments, not the number of bonds you formed.
+Every EO–EO junction along a thousand-monomer chain has the same local chemistry. The compiler
+builds these planned product motifs before the polymer exists and keys each by structure,
+chemical scalar labels, and the touched root. The second junction hits the cache. So does the
+eight-hundredth, and so does the first junction of the next chain. The number of typing passes
+tracks the number of *distinct* chemical environments, not the number of bonds formed.
 
 The cache lives on the assembler, not on the call. Reuse one assembler across a hundred chains
 and the EO–EO junction is typed exactly once for the whole melt.
@@ -151,10 +153,9 @@ stamps out one copy of each repeat unit, bonds the adjacent ones, and hands back
 Each pasted copy gets a residue id and name — a repeat unit *is* a residue, and that identity
 survives all the way into a PDB or a prmtop.
 
-AmberTools is a black box; antechamber will not tell MolPy how far it looks, so you tell it,
-once, in bonds. GAFF atom types are set by a one-to-two-bond environment, hence `reach=2`. A
-typifier MolPy can read, like `OPLSAATypifier`, works this out from its own patterns and takes
-no such argument.
+`reach` is part of the compilation boundary, not a property guessed by the assembler. GAFF
+atom types are set by a one-to-two-bond environment, hence `reach=2`. The compiler uses one
+additional shell of that width as context and writes only the inner atoms back.
 
 ```python
 import molpy as mp
@@ -163,12 +164,26 @@ from molpy.builder.ambertools import AmberTools
 from molpy.typifier import AmberToolsTypifier
 
 ether = mp.Reaction("[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]")
-gaff = AmberToolsTypifier(AmberTools(), reach=2)
-gaff.typify(eo)
+gaff = AmberToolsTypifier(AmberTools())
+eo = gaff.typify(eo)  # initial types for atoms unaffected by any junction
 
-builder = PolymerBuilder(MonomerLibrary({"EO": eo}), ether, typifier=gaff)
+builder = PolymerBuilder(
+    MonomerLibrary({"EO": eo}),
+    ether,
+    typifier=gaff,
+    reach=2,
+    finalize="atoms",  # defer full topology for this very large chain
+)
 chain = builder.build("{[#EO]|1000}")
-# -> Atomistic, 1000 EO residues, junction types already correct
+# -> bonds + cached junction atom types/charges; no angle/dihedral table yet
+```
+
+When explicit bonded rows are needed, finalize once:
+
+```python
+from molpy.builder import Finalization, StructureFinalizer
+
+chain = StructureFinalizer(Finalization.TOPOLOGY).apply(chain)
 ```
 
 The reaction reads: an `a`-site oxygen bearing a hydrogen, plus a `b`-site oxygen bearing a
@@ -185,7 +200,7 @@ have, and a rule for which sites pair up.
 ```python
 from molpy.builder import GraphAssembler, RandomSelector
 
-gel = GraphAssembler(ether, typifier=gaff).assemble(
+gel = GraphAssembler(ether, typifier=gaff, reach=2).assemble(
     melt, RandomSelector(conversion=0.8, cutoff=6.0, seed=1)
 )
 ```
@@ -208,10 +223,12 @@ were guessed.
 import molpy as mp
 from molpy.optimize import LBFGS, ForceFieldPotential
 
-builder = PolymerBuilder(MonomerLibrary({"EO": eo}), ether, typifier=gaff)
+builder = PolymerBuilder(
+    MonomerLibrary({"EO": eo}), ether, typifier=gaff, reach=2
+)
 melt = mp.pack.Packmol().pack([builder.build("{[#EO]|50}")] * 100, density=0.9)
 
-gel = GraphAssembler(ether, typifier=gaff).assemble(
+gel = GraphAssembler(ether, typifier=gaff, reach=2).assemble(
     melt, RandomSelector(conversion=0.8, cutoff=6.0, seed=1)
 )
 
@@ -232,13 +249,12 @@ the force field what that distance should be.
 
 ## When an assembler refuses
 
-Three refusals, all of them loud, all of them before any bond is formed.
+Three refusals, all of them loud, all of them before the real product graph is returned.
 
-Hand it a typifier whose force field asks about ring membership without a size — `[R]` rather
-than `[r6]` — and construction fails, naming the offending pattern. Such a field has no bounded
-neighbourhood, so there is no honest way to retype a junction with it. MolPy will not quietly
-fall back to retyping the whole system instead; that fallback is exactly what used to make
-long chains slow.
+Hand it a typifier without `reach` and construction fails: a bounded compiler cannot infer a
+black box's receptive field. If a typifier uses genuinely non-local information such as
+unbounded ring membership, it is not valid for local compilation; run it later as an explicit
+whole-graph operation instead.
 
 Hand it two reaction sites that share an atom and `assemble` raises, rather than applying one
 edit on top of handles the other already invalidated.
@@ -269,7 +285,7 @@ class NearestNeighborSelector(Selector):
 ```
 
 The matching has already happened — the assembler does it once, in linear time — so a selector
-never scans the system. It only decides. The neighbourhood extraction, the retyping, the cache,
+never scans the system. It only decides. Product-motif compilation, atom write-back, the cache,
 the charge check, and the non-overlapping guarantee all come for free, because none of them
 depend on how you chose the pairs.
 
@@ -278,6 +294,9 @@ want to change is the only part you can.
 
 ## See also
 
+- **[Polymer Topologies](topology/index.md)** — the same machine as a full section:
+  linear, block, ring, star, comb, telechelic, gels, end-linked, dual network, agent
+  (each page ↔ `examples/topology/<name>.py`).
 - **Force Field Typification** — which typifiers can be used during assembly, and how to
   declare `reach` for a black-box one.
 - **Geometry Optimization** — the step that converges the guessed bond lengths.

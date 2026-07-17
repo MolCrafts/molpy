@@ -1,12 +1,12 @@
 # 轨迹
 
-`Trajectory` 按时间顺序组织帧的序列，底层实现保持惰性——五帧的小列表和多 GB 的数据流，对外暴露的 API 完全一致。
+`Trajectory` 按时间顺序组织内存中的帧。惰性、可定位的文件访问由 molrs 轨迹读取器提供。
 
 ## 一帧远远不够
 
 单个 `Frame` 描述系统在某一时刻的状态。但模拟和分析几乎总是涉及一连串按时间排序的状态。把这些状态存成 Python 列表，小数据集没问题；规模一大，内存管理和惰性访问就成了绕不开的问题。
 
-**`Trajectory` 是一组有序的 `Frame` 对象，支持惰性求值。数据量再大，系统语义也不会走样。**
+**`Trajectory` 是一组即时具体化、有序的 `Frame` 对象。**
 
 核心思路是保持和 `Frame` 的连续性。轨迹的每个元素仍然是一个 `Frame`——包含命名的 `Block`、元数据和可选的 `Box`。时间没有替换快照模型，只是把快照按顺序串了起来。
 
@@ -15,44 +15,39 @@
 最简单的轨迹来自内存中的帧列表。支持随机访问、`len` 和切片。
 
 ```python
+import molrs
 import molpy as mp
 
 frames = []
 for i in range(5):
-    f = mp.Frame()
-    f["atoms"] = mp.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
-    f.metadata["time"] = i * 10.0
+    f = molrs.Frame()
+    f["atoms"] = molrs.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
+    f.meta = {"time": molrs.MetaValue("f64", i * 10.0)}
     frames.append(f)
 
 traj = mp.Trajectory(frames)
 print(len(traj))             # 5
-print(traj.has_length())     # True
 print(traj[0]["atoms"]["x"]) # [0.]
 ```
 
 
-## 基于生成器的轨迹保持惰性
+## 可迭代对象会立即具体化
 
-处理大规模或流式数据时，传生成器而不是列表。轨迹按需生成帧，不需要一次加载全部数据到内存。代价是：生成器具体化之前，没法用 `len` 和索引。
+构造器接受任意可迭代对象，但会立即将其具体化进原生容器。需要惰性、可定位的磁盘访问时，使用 `molrs.read_lammps_trajectory` 或 `molrs.read_xyz_trajectory`。
 
 ```python
 def make_frames(n):
     for i in range(n):
-        f = mp.Frame()
-        f["atoms"] = mp.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
-        f.metadata["time"] = i * 0.5
+        f = molrs.Frame()
+        f["atoms"] = molrs.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
+        f.meta = {"time": molrs.MetaValue("f64", i * 0.5)}
         yield f
 
-lazy_traj = mp.Trajectory(make_frames(1000))
-print(lazy_traj.has_length())   # False
-
-# 迭代而不一次性具体化所有帧
-for frame in lazy_traj:
-    if frame.metadata["time"] > 2.0:
-        break
+traj_from_iterable = mp.Trajectory(make_frames(1000))
+print(len(traj_from_iterable))   # 1000
 ```
 
-生成器在迭代过程中逐渐消耗。要多次读取同一批数据，可以具体化一个子集，或者每次新建一个生成器。
+生成器会在构造时被消耗；文件读取器不会进行这种即时具体化。
 
 
 ## 切片与索引
@@ -67,32 +62,30 @@ strided = traj[::2]
 print(len(strided))     # 3
 
 last = traj[-1]
-print(last.metadata["time"])   # 40.0
+print(last.meta["time"].value)   # 40.0
 ```
 
 步幅切片（`traj[::n]`）是降采样、快速预览数据的实用手段。
 
 
-## 使用 map 进行惰性变换
+## 使用 map 进行变换
 
-`map` 对每一帧应用一个函数并返回新的轨迹。变换是惰性的——函数只在访问帧时才执行，调用 `map` 时不会触发。多个变换可以链式组合，不需要预先承担全部计算开销。
+`map` 立即对每一帧应用函数并返回新的轨迹；原始帧保持不变。
 
 ```python
 def shift_x(frame):
-    new = mp.Frame()
+    new = molrs.Frame()
     x = frame["atoms"]["x"]
-    new["atoms"] = mp.Block({
+    new["atoms"] = molrs.Block({
         "x": x + 10.0,
         "y": frame["atoms"]["y"],
         "z": frame["atoms"]["z"],
     })
-    new.metadata = frame.metadata.copy()
+    new.meta = frame.meta
     return new
 
 shifted = traj.map(shift_x)
 ```
-
-由于 `map` 返回的是基于生成器的轨迹，需要迭代或具体化才能看到结果。
 
 ```python
 shifted_list = list(shifted)

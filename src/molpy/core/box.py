@@ -48,7 +48,7 @@ class Box(molrs.Box):
 
         Values are the canonical molrs style strings so a ``molpy.Box.Style``
         member compares equal to the string returned by ``molrs.Box.style``
-        (e.g. ``Box.Style.ORTHOGONAL == "orthogonal"``), letting ``frame.box``
+        (e.g. ``Box.Style.ORTHOGONAL == "orthogonal"``), letting ``frame.simbox``
         (a molrs box) interoperate with molpy style checks.
         """
 
@@ -93,9 +93,9 @@ class Box(molrs.Box):
         pbc: ArrayLike | None = None,
         origin: ArrayLike | None = None,
     ):
-        # State already set by molrs.Box during __new__; nothing to do.
-        # This shim only exists so ``Box(...)`` keyword forwarding to
-        # ``__init__`` does not error.
+        # PyO3 constructs the Rust base in __new__. The base exposes
+        # object.__init__, so this Python initializer deliberately consumes the
+        # constructor arguments after __new__ has completed the initialization.
         pass
 
     @classmethod
@@ -109,8 +109,8 @@ class Box(molrs.Box):
             raise ValueError(f"matrix must be (3, 3) or (3,), got {m.shape}")
         if np.allclose(m, 0.0):
             return True, cls._PLACEHOLDER_H.copy()
-        if np.isclose(np.linalg.det(m), 0.0):
-            raise ValueError("matrix must be non-singular")
+        # The molrs base constructor is the canonical matrix validator and
+        # rejects singular cells.
         return False, m
 
     @staticmethod
@@ -161,24 +161,6 @@ class Box(molrs.Box):
         # matrix has no meaningful volume, hence the guard above).
         return float(molrs.Box.volume(self))
 
-    # ── backward-compat private aliases ────────────────────────────────
-    # Internal methods (wrap / diff / make_fractional / transform / …)
-    # still reference ``self._matrix`` / ``self._origin`` / ``self._pbc``
-    # from the original implementation. Expose them as read-only aliases
-    # over the new property-backed accessors.
-
-    @property
-    def _matrix(self) -> np.ndarray:
-        return self.matrix
-
-    @property
-    def _origin(self) -> np.ndarray:
-        return np.asarray(self.origin)
-
-    @property
-    def _pbc(self) -> np.ndarray:
-        return np.asarray(self.pbc)
-
     # ────────────────────────────────────────────────────────────────────
     # dunder
     # ────────────────────────────────────────────────────────────────────
@@ -194,7 +176,11 @@ class Box(molrs.Box):
         return "<Box>"
 
     def __mul__(self, other: float):
-        return Box(self.matrix * other, self._pbc.copy(), self._origin.copy())
+        return Box(
+            self.matrix * other,
+            np.asarray(self.pbc).copy(),
+            np.asarray(self.origin).copy(),
+        )
 
     def __rmul__(self, other: float):
         return self.__mul__(other)
@@ -272,11 +258,11 @@ class Box(molrs.Box):
     def from_box(cls, box: "Box") -> "Box":
         """Copy / upgrade constructor.
 
-        Accepts a molpy ``Box`` or a bare ``molrs.Box`` (e.g. ``frame.box``),
+        Accepts a molpy ``Box`` or a bare ``molrs.Box`` (e.g. ``frame.simbox``),
         reading only the public ``matrix`` / ``pbc`` / ``origin`` accessors so it
         works across both. A free source box reconstructs a free molpy box.
         """
-        if getattr(box, "is_free", False):
+        if not getattr(box, "cell_defined", True):
             return cls()
         return cls(
             np.asarray(box.matrix).copy(),
@@ -298,12 +284,13 @@ class Box(molrs.Box):
         if coords.shape[0] == 0:
             raise ValueError("points must contain at least one coordinate")
 
-        pad = np.broadcast_to(np.asarray(padding, dtype=float), (3,))
-        mins = coords.min(axis=0) - pad
-        maxs = coords.max(axis=0) + pad
+        pad = np.ascontiguousarray(
+            np.broadcast_to(np.asarray(padding, dtype=float), (3,))
+        )
         if pbc is None:
             pbc = np.zeros(3, dtype=bool)
-        return cls(np.diag(maxs - mins), pbc=pbc, origin=mins)
+        native = molrs.Box.from_bounds(coords, pad, np.asarray(pbc, dtype=bool))
+        return cls.from_box(native)
 
     @classmethod
     def from_lengths_angles(cls, lengths: ArrayLike, angles: ArrayLike) -> "Box":
@@ -320,33 +307,31 @@ class Box(molrs.Box):
 
     @property
     def xlo(self) -> float:
-        return float(self._origin[0])
+        return float(self.bounds[0, 0])
 
     @property
     def xhi(self) -> float:
-        return float(self._matrix[0, 0] - self._origin[0])
+        return float(self.bounds[1, 0])
 
     @property
     def ylo(self) -> float:
-        return float(self._origin[1])
+        return float(self.bounds[0, 1])
 
     @property
     def yhi(self) -> float:
-        return float(self._matrix[1, 1] - self._origin[1])
+        return float(self.bounds[1, 1])
 
     @property
     def zlo(self) -> float:
-        return float(self._origin[2])
+        return float(self.bounds[0, 2])
 
     @property
     def zhi(self) -> float:
-        return float(self._matrix[2, 2] - self._origin[2])
+        return float(self.bounds[1, 2])
 
     @property
     def bounds(self) -> np.ndarray:
-        return np.array(
-            [[self.xlo, self.xhi], [self.ylo, self.yhi], [self.zlo, self.zhi]]
-        ).T
+        return np.asarray(super().bounds).T
 
     # ────────────────────────────────────────────────────────────────────
     # diagonal / off-diagonal accessors
@@ -354,19 +339,19 @@ class Box(molrs.Box):
 
     @property
     def lx(self) -> float:
-        return float(self._matrix[0, 0])
+        return float(self.matrix[0, 0])
 
     @property
     def ly(self) -> float:
-        return float(self._matrix[1, 1])
+        return float(self.matrix[1, 1])
 
     @property
     def lz(self) -> float:
-        return float(self._matrix[2, 2])
+        return float(self.matrix[2, 2])
 
     @property
     def l(self) -> np.ndarray:
-        return self._matrix.diagonal().copy()
+        return self.matrix.diagonal().copy()
 
     @property
     def l_inv(self) -> np.ndarray:
@@ -376,27 +361,27 @@ class Box(molrs.Box):
 
     @property
     def xy(self) -> float:
-        return float(self._matrix[0, 1])
+        return float(self.matrix[0, 1])
 
     @property
     def xz(self) -> float:
-        return float(self._matrix[0, 2])
+        return float(self.matrix[0, 2])
 
     @property
     def yz(self) -> float:
-        return float(self._matrix[1, 2])
+        return float(self.matrix[1, 2])
 
     @property
     def a(self) -> np.ndarray:
-        return self._matrix[:, 0].copy()
+        return self.matrix[:, 0].copy()
 
     @property
     def b(self) -> np.ndarray:
-        return self._matrix[:, 1].copy()
+        return self.matrix[:, 1].copy()
 
     @property
     def c(self) -> np.ndarray:
-        return self._matrix[:, 2].copy()
+        return self.matrix[:, 2].copy()
 
     @property
     def tilts(self) -> np.ndarray:
@@ -411,19 +396,19 @@ class Box(molrs.Box):
 
     @property
     def periodic(self) -> bool:
-        return bool(self._pbc.all())
+        return bool(np.asarray(self.pbc).all())
 
     @property
     def periodic_x(self) -> bool:
-        return bool(self._pbc[0])
+        return bool(self.pbc[0])
 
     @property
     def periodic_y(self) -> bool:
-        return bool(self._pbc[1])
+        return bool(self.pbc[1])
 
     @property
     def periodic_z(self) -> bool:
-        return bool(self._pbc[2])
+        return bool(self.pbc[2])
 
     @property
     def is_periodic(self) -> bool:
@@ -447,7 +432,9 @@ class Box(molrs.Box):
     @property
     def angles(self) -> np.ndarray:
         """Lattice angles ``[alpha, beta, gamma]`` in degrees."""
-        return self.calc_lengths_angles_from_matrix(self.matrix)[1]
+        if self.is_free:
+            return np.zeros(3)
+        return np.asarray(super().angles)
 
     # ────────────────────────────────────────────────────────────────────
     # static helpers
@@ -457,114 +444,48 @@ class Box(molrs.Box):
     def check_matrix(matrix: np.ndarray) -> np.ndarray:
         assert isinstance(matrix, np.ndarray), "matrix must be np.ndarray"
         assert matrix.shape == (3, 3), "matrix must be (3, 3)"
-        assert not np.isclose(np.linalg.det(matrix), 0), "matrix must be non-singular"
+        try:
+            molrs.Box(matrix)
+        except ValueError as exc:
+            raise AssertionError("matrix must be non-singular") from exc
         return matrix
 
     @staticmethod
     def general2restrict(matrix: np.ndarray) -> np.ndarray:
         """General → restricted-triclinic conversion (LAMMPS convention)."""
-        A = matrix[:, 0]
-        B = matrix[:, 1]
-        C = matrix[:, 2]
-        ax = np.linalg.norm(A)
-        uA = A / ax
-        bx = np.dot(B, uA)
-        by = np.linalg.norm(np.cross(uA, B))
-        cx = np.dot(C, uA)
-        AxB = np.cross(A, B)
-        uAxB = AxB / np.linalg.norm(AxB)
-        cy = np.dot(C, np.cross(uAxB, uA))
-        cz = np.dot(C, uAxB)
-        return np.array([[ax, bx, cx], [0, by, cy], [0, 0, cz]])
+        return np.asarray(molrs.Box.restricted_matrix(np.asarray(matrix, dtype=float)))
 
     @staticmethod
     def calc_matrix_from_lengths_angles(
         abc: ArrayLike, angles: ArrayLike
     ) -> np.ndarray:
-        a, b, c = abc
-        angles = alpha, beta, gamma = np.deg2rad(angles)
-        cos_a, cos_b, cos_c = np.cos(angles)
-
-        cos_check = cos_a**2 + cos_b**2 + cos_c**2 - 2 * cos_a * cos_b * cos_c
-        if cos_check >= 1.0:
-            raise ValueError(
-                f"Invalid box: angles produce non-physical volume. abc={abc}, angles={angles}"
-            )
-        if not (0 < alpha < np.pi):
-            raise ValueError("alpha must be in (0, 180)")
-        if not (0 < beta < np.pi):
-            raise ValueError("beta must be in (0, 180)")
-        if not (0 < gamma < np.pi):
-            raise ValueError("gamma must be in (0, 180)")
-
-        lx = a
-        xy = b * cos_c
-        xz = c * cos_b
-        ly = np.sqrt(b**2 - xy**2)
-        yz = (b * c * cos_a - xy * xz) / ly
-        tmp = c**2 - xz**2 - yz**2
-        lz = np.sqrt(tmp)
-        return np.array([[lx, xy, xz], [0.0, ly, yz], [0.0, 0.0, lz]])
+        return np.asarray(molrs.Box.matrix_from_lengths_angles(abc, angles))
 
     @staticmethod
     def calc_matrix_from_size_tilts(sizes, tilts) -> np.ndarray:
-        lx, ly, lz = sizes
-        xy, xz, yz = tilts
-        return np.array([[lx, xy, xz], [0, ly, yz], [0, 0, lz]])
+        return np.asarray(molrs.Box.matrix_from_lengths_tilts(sizes, tilts))
 
     @staticmethod
     def calc_lengths_angles_from_matrix(
         matrix: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
-        lx = matrix[0, 0]
-        ly = matrix[1, 1]
-        lz = matrix[2, 2]
-        xy = matrix[0, 1]
-        xz = matrix[0, 2]
-        yz = matrix[1, 2]
-
-        a = lx
-        b = (ly**2 + xy**2) ** 0.5
-        c = (lz**2 + xz**2 + yz**2) ** 0.5
-        cos_a = (xy * xz + ly * yz) / (b * c)
-        cos_b = xz / c
-        cos_c = xy / b
-        return np.array([a, b, c]), np.rad2deg(np.arccos([cos_a, cos_b, cos_c]))
+        native = molrs.Box(np.asarray(matrix, dtype=float))
+        return np.asarray(native.lengths), np.asarray(native.angles)
 
     @staticmethod
     def calc_style_from_matrix(matrix: np.ndarray) -> "Box.Style":
         if np.allclose(matrix, np.zeros(3)):
             return Box.Style.FREE
-        elif np.allclose(matrix, np.diag(np.diagonal(matrix))):
-            return Box.Style.ORTHOGONAL
-        elif (matrix[np.tril_indices(3, -1)] == 0).all() and (
-            matrix[np.triu_indices(3, 1)] != 0
-        ).any():
-            return Box.Style.TRICLINIC
-        else:
-            raise ValueError("Invalid box matrix")
+        return Box.Style(molrs.Box(np.asarray(matrix, dtype=float)).style)
 
     # ────────────────────────────────────────────────────────────────────
     # geometry — face distances, wrap, unwrap, diff, dist, fractional
     # ────────────────────────────────────────────────────────────────────
 
     def get_distance_between_faces(self) -> np.ndarray:
-        match self.style:
-            case Box.Style.FREE:
-                return np.zeros(3)
-            case Box.Style.ORTHOGONAL:
-                return self.lengths
-            case Box.Style.TRICLINIC:
-                a = self._matrix[:, 0]
-                b = self._matrix[:, 1]
-                c = self._matrix[:, 2]
-                na = np.cross(b, c)
-                nb = np.cross(c, a)
-                nc = np.cross(a, b)
-                na /= np.linalg.norm(na)
-                nb /= np.linalg.norm(nb)
-                nc /= np.linalg.norm(nc)
-                return np.array([np.dot(na, a), np.dot(nb, b), np.dot(nc, c)])
+        if self.is_free:
+            return np.zeros(3)
+        return np.asarray(self.nearest_plane_distance)
 
     def wrap(self, xyz: np.ndarray) -> np.ndarray:
         xyz = np.asarray(xyz)
@@ -591,14 +512,15 @@ class Box(molrs.Box):
         return molrs.Box.wrap(self, np.asarray(xyz))
 
     def unwrap(self, xyz: np.ndarray, image: np.ndarray) -> np.ndarray:
-        return xyz + image @ self._matrix.T
+        return molrs.Box.unwrap(
+            self, np.asarray(xyz), np.asarray(image, dtype=np.int64)
+        )
 
     def get_images(self, xyz: np.ndarray) -> np.ndarray:
-        fractional = self.make_fractional(xyz)
-        return np.floor(fractional + 1e-8).astype(int)
+        return molrs.Box.images(self, np.asarray(xyz))
 
     def get_inv(self) -> np.ndarray:
-        return np.linalg.inv(self._matrix)
+        return np.asarray(self.inverse)
 
     def diff_dr(self, dr: np.ndarray) -> np.ndarray:
         dr = np.asarray(dr, dtype=float)
@@ -617,20 +539,17 @@ class Box(molrs.Box):
         return self.diff_dr(r1 - r2)
 
     def diff_all(self, r1: np.ndarray, r2: np.ndarray) -> np.ndarray:
-        all_dr = r1[:, np.newaxis, :] - r2[np.newaxis, :, :]
-        original_shape = all_dr.shape
-        all_dr = all_dr.reshape(-1, 3)
-        all_dr = self.diff_dr(all_dr)
-        all_dr = all_dr.reshape(original_shape)
-        return all_dr
+        # Native pairwise_delta returns r2-r1; reverse the arguments to retain
+        # molpy's historical r1-r2 convention.
+        return molrs.Box.pairwise_delta(self, np.asarray(r2), np.asarray(r1)).transpose(
+            1, 0, 2
+        )
 
     def dist(self, r1: np.ndarray, r2: np.ndarray) -> np.ndarray:
-        dr = self.diff(r1, r2)
-        return np.linalg.norm(dr, axis=1)
+        return molrs.Box.distances(self, np.asarray(r1), np.asarray(r2))
 
     def dist_all(self, r1: np.ndarray, r2: np.ndarray) -> np.ndarray:
-        dr = self.diff_all(r1, r2)
-        return np.linalg.norm(dr, axis=-1)
+        return molrs.Box.pairwise_distances(self, np.asarray(r1), np.asarray(r2))
 
     def make_fractional(self, xyz: np.ndarray) -> np.ndarray:
         # Cartesian -> fractional via the inherited molrs Rust kernel (to_frac);
@@ -659,12 +578,13 @@ class Box(molrs.Box):
         return Box(matrix=other.matrix)
 
     def transform(self, transformation_matrix: np.ndarray) -> "Box":
-        new_matrix = self._matrix @ transformation_matrix
-        return Box(matrix=new_matrix, pbc=self._pbc.copy(), origin=self._origin.copy())
+        return Box.from_box(
+            molrs.Box.transformed(self, np.asarray(transformation_matrix, dtype=float))
+        )
 
     def to_dict(self) -> dict:
         return {
-            "matrix": self._matrix.tolist(),
-            "pbc": self._pbc.tolist(),
-            "origin": self._origin.tolist(),
+            "matrix": self.matrix.tolist(),
+            "pbc": list(self.pbc),
+            "origin": list(self.origin),
         }

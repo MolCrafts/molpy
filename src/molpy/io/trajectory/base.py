@@ -2,7 +2,7 @@ from abc import abstractmethod
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
-from molpy.core import Frame
+from molrs import Frame
 
 from ..base import BaseReader, PathLike
 

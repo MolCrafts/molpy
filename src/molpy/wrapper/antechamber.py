@@ -13,7 +13,7 @@ from typing import Literal
 import numpy as np
 
 from molpy.core.atomistic import Atomistic
-from molpy.core.frame import Block, Frame
+from molrs import Block, Frame
 from molpy.io.readers import read_amber_ac, read_mol2
 from molpy.io.utils import ensure_parent_dir
 from molpy.io.writers import write_pdb

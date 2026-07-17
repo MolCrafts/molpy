@@ -16,8 +16,9 @@ import molrs
 import numpy as np
 import pytest
 
+import molpy.engine as molpy_engine
 from molpy.core.forcefield import AtomStyle, BondStyle, ForceField, PairStyle
-from molpy.engine import LAMMPS, LAMMPSEngine
+from molpy.engine import LAMMPSEngine
 
 _LMP = next((c for c in ("lmp", "lmp_serial", "lmp_mpi") if shutil.which(c)), None)
 
@@ -59,10 +60,11 @@ def _dimer_system(separation: float = 2.2) -> tuple[molrs.Frame, ForceField]:
                     "atomj": np.array([1], dtype=np.int64),
                     "type": ["C-C"],
                 },
-            }
+            },
+            "meta": {},
         }
     )
-    frame.box = molrs.Box.cube(30.0)
+    frame.simbox = molrs.Box.cube(30.0)
     return frame, ff
 
 
@@ -70,13 +72,14 @@ def test_init_autodetects_executable() -> None:
     """``LAMMPSEngine()`` resolves a binary without an explicit name."""
     eng = LAMMPSEngine(check_executable=False)
     assert eng.executable in {"lmp", "lmp_serial", "lmp_mpi"}
-    assert LAMMPS is LAMMPSEngine
+    assert "LAMMPS" not in molpy_engine.__all__
+    assert not hasattr(molpy_engine, "LAMMPS")
 
 
 def test_minimize_requires_box() -> None:
     """A box-free frame is rejected before any subprocess is launched."""
     frame, ff = _dimer_system()
-    frame.box = None
+    frame.simbox = None
     with pytest.raises(ValueError, match="periodic box"):
         LAMMPSEngine(check_executable=False).minimize(frame, ff)
 
@@ -88,11 +91,11 @@ def test_minimize_restores_bond_length(tmp_path: Path) -> None:
     frame, ff = _dimer_system(separation=2.2)
     assert _bond_length(frame) == pytest.approx(2.2)  # off-equilibrium input
 
-    relaxed = LAMMPS(_LMP).minimize(frame, ff, workdir=tmp_path)
+    relaxed = LAMMPSEngine(_LMP).minimize(frame, ff, workdir=tmp_path)
 
     assert isinstance(relaxed, molrs.Frame)
     assert _bond_length(relaxed) == pytest.approx(_R0, abs=1e-3)
-    assert relaxed.box is not None  # box preserved
+    assert relaxed.simbox is not None  # box preserved
     assert _bond_length(frame) == pytest.approx(2.2)  # input not mutated
 
 
@@ -101,7 +104,7 @@ def test_minimize_restores_bond_length(tmp_path: Path) -> None:
 def test_md_nve_limit_returns_finite_frame(tmp_path: Path) -> None:
     """A short nve/limit run returns a finite, complete frame."""
     frame, ff = _dimer_system(separation=_R0)
-    relaxed = LAMMPS(_LMP).md(
+    relaxed = LAMMPSEngine(_LMP).md(
         frame, ff, ensemble="nve/limit", steps=50, workdir=tmp_path
     )
 

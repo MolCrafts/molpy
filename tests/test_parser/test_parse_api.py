@@ -201,5 +201,8 @@ class TestGenerateConvenience:
             pytest.skip("RDKit not installed")
 
         mol = mp.parser.parse_molecule("C")
-        result = RDKitAdapter(mol).generate_3d(add_hydrogens=False)
+        result = RDKitAdapter(mol).generate_3d(
+            add_hydrogens=False,
+            optimize=False,
+        )
         assert isinstance(result, Atomistic)

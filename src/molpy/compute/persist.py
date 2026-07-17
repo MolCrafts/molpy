@@ -97,9 +97,9 @@ class Persist(Compute):
             coords_list.append(np.column_stack([atoms["x"], atoms["y"], atoms["z"]]))
             if elems is None:
                 elems = np.asarray(atoms["type"])
-            if frame.box is None:
+            if frame.simbox is None:
                 raise ValueError("Frame must contain box information")
-            box_len_list.append(np.asarray(frame.box.lengths, dtype=np.float64))
+            box_len_list.append(np.asarray(frame.simbox.lengths, dtype=np.float64))
 
         coords_traj = np.asarray(coords_list, dtype=np.float64)  # (F, N, 3)
         box_lengths = np.ascontiguousarray(

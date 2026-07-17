@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from molpy.core.frame import Frame
+from molrs import Frame
 
 
 class ZipReader:

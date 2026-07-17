@@ -16,6 +16,14 @@
 - [多分散体系](05_polydisperse_systems.md) — 分子量分布采样、原子级链构建与盒子填充
 
 
+## Polymer Topologies（英文专节）
+
+与 `examples/topology/` 一一对应的拓扑手册：
+
+- [Section home](../../user-guide/topology/index.md)
+- [01 linear](../../user-guide/topology/01_linear.md) … [11 prepolymer+agent](../../user-guide/topology/11_prepolymer_agent.md)
+
+
 ## 参数化
 
 - [力场类型分配](06_typifier.md) — 基于 SMARTS 的原子类型分配与力场参数解析

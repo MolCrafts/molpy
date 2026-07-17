@@ -128,6 +128,7 @@ class TestExampleScripts:
             "03_polymer_topology.py",
             "04_crosslinking.py",
             "05_polydisperse.py",
+            "07_carbon_nanotube.py",
         ],
     )
     def test_example_runs(self, script, tmp_path, monkeypatch):

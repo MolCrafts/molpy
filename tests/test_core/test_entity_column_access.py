@@ -71,9 +71,8 @@ class TestIdentityInterning:
 
     def test_def_atom_returns_same_bound_view(self):
         s = Atomistic()
-        a = Atom(element="C", xyz=[0, 0, 0])
-        result = s.add_atom(a)
-        assert result is a  # same object becomes bound
+        a = s.def_atom(element="C", xyz=[0, 0, 0])
+        assert s.atoms[0] is a
 
     def test_bond_endpoints_are_interned_atoms(self):
         s = Atomistic()
@@ -98,7 +97,7 @@ class TestIdentityInterning:
     def test_membership_is_identity(self):
         s = Atomistic()
         a = s.def_atom(element="C")
-        other = Atom(element="C")
+        other = Atomistic().def_atom(element="C")
         assert a in s.atoms
         assert other not in s.atoms
 

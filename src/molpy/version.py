@@ -9,40 +9,36 @@ molrs matches this version; it is called once on ``import molpy`` so a stale
 editable build or an out-of-date pin surfaces immediately.
 """
 
-version = "0.7.0"
-release_date = "2026-07-08"
+version = "0.8.0"
+release_date = "2026-07-17"
 
 
-def check_molrs_version(*, strict: bool = False) -> str | None:
-    """Check that the installed ``molcrafts-molrs`` matches MolPy's version.
+def check_molrs_version() -> str:
+    """Require the installed ``molcrafts-molrs`` to match MolPy exactly.
 
     MolPy and molrs converge on one version number and are released as a pair, so
     a mismatch almost always means a stale editable molrs build or an out-of-date
     dependency pin.
 
-    Args:
-        strict: When ``True``, raise :class:`ImportError` on a mismatch instead of
-            emitting a warning.
-
     Returns:
-        The installed molrs version string when it does **not** match (after
-        warning), or ``None`` when the versions agree or molrs is not installed.
+        The exact installed molrs version.
+
+    Raises:
+        ImportError: If package metadata is missing or the version differs.
     """
-    try:
-        from importlib.metadata import PackageNotFoundError
-        from importlib.metadata import version as _pkg_version
-    except ImportError:  # pragma: no cover - importlib.metadata ships with 3.12
-        return None
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _pkg_version
 
     try:
         molrs_version = _pkg_version("molcrafts-molrs")
-    except PackageNotFoundError:
-        # molrs is a hard runtime dependency, but do not hard-fail the version
-        # check if metadata is unavailable (e.g. an unusual install layout).
-        return None
+    except PackageNotFoundError as exc:
+        raise ImportError(
+            "molpy requires the exact runtime dependency "
+            f"molcrafts-molrs=={version}, but its package metadata is missing"
+        ) from exc
 
     if molrs_version == version:
-        return None
+        return molrs_version
 
     message = (
         f"Version mismatch: molpy {version} but molcrafts-molrs {molrs_version}. "
@@ -50,13 +46,7 @@ def check_molrs_version(*, strict: bool = False) -> str | None:
         f"Install a matching molrs (`pip install molcrafts-molrs=={version}`) or "
         "rebuild the editable molrs (`maturin develop` in molrs-python)."
     )
-    if strict:
-        raise ImportError(message)
-
-    import warnings
-
-    warnings.warn(message, stacklevel=2)
-    return molrs_version
+    raise ImportError(message)
 
 
 def __str__() -> str:
@@ -77,10 +67,6 @@ __all__ = [
 ]
 
 
-# Run the compatibility check once, when this module is imported — and therefore
-# on ``import molpy``, which imports version first. Guarded so a version check
-# can never prevent import.
-try:
-    check_molrs_version()
-except Exception:  # pragma: no cover - defensive: never break import
-    pass
+# Exact dependency validation is part of import. Missing metadata and every
+# non-current version fail here; no warning or permissive fallback exists.
+check_molrs_version()

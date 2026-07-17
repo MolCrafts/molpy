@@ -185,7 +185,7 @@ One call per file: LAMMPS data plus force-field coefficients. GROMACS, PDB,
 and HDF5 writers share the same pattern.
 
 ```python
-packed.box = mp.Box.cubic(30.0)
+packed.simbox = mp.Box.cubic(30.0)
 mp.io.write_lammps_data("system.data", packed, atom_style="full")
 mp.io.write_lammps_forcefield("system.ff", ff)
 ```

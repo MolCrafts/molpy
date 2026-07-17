@@ -15,6 +15,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import molrs
+
 import molpy as mp
 from molpy.compute import PMFTXY, NeighborList, Nematic, SpatialDistribution
 from molpy.compute.base import Compute
@@ -36,9 +38,9 @@ def _axis_frame(n_particles: int = 8, box_len: float = 10.0, seed: int = 0):
     xyz = rng.uniform(0.0, box_len, size=(n, 3))
     for k in range(n_particles):
         xyz[2 * k + 1] = xyz[2 * k] + np.array([0.0, 0.0, 1.0])
-    frame = mp.Frame()
+    frame = molrs.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.box = mp.Box.cubic(box_len)
+    frame.simbox = mp.Box.cubic(box_len)
     heads = [2 * k + 1 for k in range(n_particles)]
     tails = [2 * k for k in range(n_particles)]
     attach_orientations(frame, heads=heads, tails=tails)
@@ -48,9 +50,9 @@ def _axis_frame(n_particles: int = 8, box_len: float = 10.0, seed: int = 0):
 def _random_frame(n: int, box_len: float, seed: int):
     rng = np.random.default_rng(seed)
     xyz = rng.uniform(0.0, box_len, size=(n, 3))
-    frame = mp.Frame()
+    frame = molrs.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.box = mp.Box.cubic(box_len)
+    frame.simbox = mp.Box.cubic(box_len)
     return frame
 
 

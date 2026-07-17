@@ -13,6 +13,9 @@ End state after the LAMMPS/XYZ trajectory readers were sunk to molrs:
 import numpy as np
 import pytest
 
+import molrs
+from molrs import MetaValue
+
 import molpy as mp
 from molpy.io.trajectory.base import BaseTrajectoryReader
 
@@ -20,9 +23,9 @@ from molpy.io.trajectory.base import BaseTrajectoryReader
 H5_ATOM_COUNTS = [2, 3]
 
 
-def _make_frame(n_atoms: int, timestep: int) -> mp.Frame:
+def _make_frame(n_atoms: int, timestep: int) -> molrs.Frame:
     """Build a tiny frame with ``n_atoms`` atoms and a 10 A cubic box."""
-    frame = mp.Frame()
+    frame = molrs.Frame()
     frame["atoms"] = {
         "id": list(range(1, n_atoms + 1)),
         "type": [1] * n_atoms,
@@ -30,8 +33,8 @@ def _make_frame(n_atoms: int, timestep: int) -> mp.Frame:
         "y": np.zeros(n_atoms, dtype=float),
         "z": np.zeros(n_atoms, dtype=float),
     }
-    frame.metadata["timestep"] = timestep
-    frame.box = mp.Box(np.eye(3) * 10.0)
+    frame.meta = {"timestep": MetaValue("i64", timestep)}
+    frame.simbox = mp.Box(np.eye(3) * 10.0)
     return frame
 
 

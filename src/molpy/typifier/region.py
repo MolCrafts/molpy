@@ -25,7 +25,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
+import molrs
+
 from molpy.core import fields
+from molpy.core.atomistic import Atomistic
 
 if TYPE_CHECKING:
     from molpy.typifier.affected_region import AffectedRegion
@@ -135,21 +138,21 @@ class RegionTypes:
         so ``typifier.typify(region)`` is already legal. The only thing region
         typing adds is this cacheable snapshot of what landed on the interior.
 
-        A region is a cut, always — so its valences are completed here, always,
-        with no condition to get wrong. The typifier is never asked to guess
-        whether what it holds is a fragment.
+        A region is a cut, always — so missing hydrogens are perceived here,
+        always, with no condition to get wrong. The typifier is never asked to
+        guess whether what it holds is a fragment.
 
-        Completion is not a convenience. ``extract_radius == interior_reach +
+        Hydrogen perception is not a convenience. ``extract_radius == interior_reach +
         reach`` means an interior atom's receptive field reaches *exactly* to the
         boundary atoms; a raw cut leaves those with unfilled valences, and a
         SMARTS matcher reads them as radicals. Measured on p-xylene at
         ``reach = 2``, 12 of 19 raw slices cannot be typed at all.
         """
-        capped = region.complete_valence()
+        perceived = Atomistic.adopt(molrs.Perceive().find_hydrogens(region))
         before = [dict(atom.data) for atom in region.atoms]
-        typed = typifier.typify(capped)
-        # The completion appended the caps, so the region's own atoms are the
-        # prefix. A cap is context; it is never part of the snapshot.
+        typed = typifier.typify(perceived)
+        # Perception appends hydrogens, so the region's own atoms stay the
+        # prefix. Added context is never part of the snapshot.
         after = [dict(atom.data) for atom in list(typed.atoms)[: len(before)]]
         return cls.capture(region, typed, before, after)
 

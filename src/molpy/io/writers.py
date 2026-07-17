@@ -19,7 +19,14 @@ PathLike = str | Path
 # =============================================================================
 
 
-def write_lammps_data(file: PathLike, frame: Any, atom_style: str = "full") -> None:
+def write_lammps_data(
+    file: PathLike,
+    frame: Any,
+    atom_style: str = "full",
+    *,
+    type_labels: dict[str, list[str]] | None = None,
+    forcefield: Any = None,
+) -> None:
     """
     Write a Frame object to a LAMMPS data file.
 
@@ -27,10 +34,17 @@ def write_lammps_data(file: PathLike, frame: Any, atom_style: str = "full") -> N
         file: Output file path
         frame: Frame object to write
         atom_style: LAMMPS atom style (default: 'full')
+        type_labels: Format-owned label inventory, including unused types.
+        forcefield: Optional ForceField whose coefficients belong in this data file.
     """
     from .data.lammps import LammpsDataWriter
 
-    writer = LammpsDataWriter(Path(file), atom_style=atom_style)
+    writer = LammpsDataWriter(
+        Path(file),
+        atom_style=atom_style,
+        type_labels=type_labels,
+        forcefield=forcefield,
+    )
     writer.write(frame)
 
 
@@ -280,7 +294,7 @@ def write_xtc(file: PathLike, frames: list) -> None:
     """Write frames to a GROMACS XTC (compressed) trajectory.
 
     Thin delegation to the native molrs writer. Each frame needs ``x``/``y``/
-    ``z`` (nm); quantization precision comes from ``frame.metadata['precision']``
+    ``z`` (nm); quantization precision comes from ``frame.meta['precision']``
     when present, else 1000 (0.001 nm).
 
     Args:
@@ -410,12 +424,9 @@ def write_lammps_bond_react_system(
 
     unified, type_maps = LammpsBondReactWriter.collect_type_maps(all_frames)
 
-    # -- Inject unified type labels so LammpsDataWriter uses them --
-    frame.metadata["type_labels"] = unified
-
     # -- Write system .data + .ff --
     file_stem = workdir_path / workdir_path.stem
-    write_lammps_data(file_stem.with_suffix(".data"), frame)
+    write_lammps_data(file_stem.with_suffix(".data"), frame, type_labels=unified)
 
     from .forcefield.lammps import LAMMPSForceFieldWriter
 

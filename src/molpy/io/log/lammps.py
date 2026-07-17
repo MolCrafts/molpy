@@ -244,16 +244,12 @@ class LAMMPSRun:
 
 @dataclass(slots=True, init=False)
 class LAMMPSLog:
-    """Parsed LAMMPS log.
+    """Parsed LAMMPS log with one structured entry per run.
 
     Args:
         file: Path to a LAMMPS log file.
         style: Thermo style. Only ``"default"`` is currently parsed.
 
-    Notes:
-        The class keeps the historical ``LAMMPSLog(path).read()`` workflow and
-        ``log["stages"]`` compatibility while exposing the new dataclass-shaped
-        result through attributes such as ``runs``.
     """
 
     path: Path
@@ -264,7 +260,6 @@ class LAMMPSLog:
     warnings: tuple[LAMMPSWarning, ...]
     raw_text: str
     style: str
-    info: dict[str, Any]
 
     def __init__(self, file: PathLike, style: str = "default"):
         self.path = Path(file)
@@ -275,12 +270,6 @@ class LAMMPSLog:
         self.warnings = ()
         self.raw_text = ""
         self.style = style
-        self.info = {"n_stages": 0, "stages": []}
-
-    @property
-    def file(self) -> Path:
-        """Compatibility alias for the historical ``file`` attribute."""
-        return self.path
 
     def read(self) -> "LAMMPSLog":
         """Read and parse the log file. Returns ``self`` for chaining."""
@@ -292,36 +281,10 @@ class LAMMPSLog:
         self.total_wall_time = parsed.total_wall_time
         self.warnings = parsed.warnings
         self.raw_text = parsed.raw_text
-        self.info = {
-            "version": self.version,
-            "n_stages": len(self.legacy_thermo_stages()),
-            "stages": self.legacy_thermo_stages(),
-        }
         return self
 
-    def legacy_thermo_stages(self) -> list[np.ndarray]:
-        """Return thermo arrays using the historical ``stages`` shape."""
-        return [run.thermo.data for run in self.runs if run.thermo is not None]
-
-    def read_version(self, text: str) -> None:
-        """Extract the LAMMPS version line into the compatibility mapping."""
-        self.version = _first_line(text)
-        self.info["version"] = self.version
-
-    def read_thermo(self, text: str, style: str) -> None:
-        """Parse thermo tables into the compatibility mapping."""
-        parsed = _parse_LAMMPS_log_text(self.path, text, style)
-        stages = [run.thermo.data for run in parsed.runs if run.thermo is not None]
-        self.info["stages"] = stages
-        self.info["n_stages"] = len(stages)
-
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-friendly representation.
-
-        ``stages`` and ``n_stages`` are retained for compatibility. New code
-        should prefer ``runs``.
-        """
-        stages = [run.thermo.to_dict() for run in self.runs if run.thermo is not None]
+        """Return a JSON-friendly representation."""
         return {
             "path": str(self.path),
             "version": self.version,
@@ -330,17 +293,7 @@ class LAMMPSLog:
             "total_wall_time": self.total_wall_time,
             "warnings": [warning.to_dict() for warning in self.warnings],
             "raw_text": self.raw_text,
-            "n_stages": len(stages),
-            "stages": stages,
         }
-
-    def __getitem__(self, key: str) -> Any:
-        """Get a compatibility info field by key."""
-        return self.info[key]
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        """Set a compatibility info field by key."""
-        self.info[key] = value
 
 
 def read_LAMMPS_log(file: PathLike) -> LAMMPSLog:
@@ -373,11 +326,6 @@ def _parse_LAMMPS_log_text(path: Path, text: str, style: str) -> LAMMPSLog:
     log.total_wall_time = total_wall_time
     log.warnings = tuple(_collect_warnings(lines, 0, None))
     log.raw_text = text
-    log.info = {
-        "version": log.version,
-        "n_stages": len(log.legacy_thermo_stages()),
-        "stages": log.legacy_thermo_stages(),
-    }
     return log
 
 

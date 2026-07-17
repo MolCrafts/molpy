@@ -11,13 +11,15 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import molrs
+
 import molpy as mp
 from molpy.compute import LegendreReorientation, VanHove
 
 pytestmark = pytest.mark.benchmark
 
 
-def _bonded_chain_frames(n_atoms: int = 20, n_frames: int = 6) -> list["mp.Frame"]:
+def _bonded_chain_frames(n_atoms: int = 20, n_frames: int = 6) -> list["molrs.Frame"]:
     """A bonded carbon chain over a few frames; ``(tail, head)`` pairs live in-frame."""
     frames = []
     for t in range(n_frames):

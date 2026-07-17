@@ -11,8 +11,8 @@ import numpy as np
 
 import molrs.io
 
-from molpy.core.element import Element
-from molpy.core.frame import Frame
+from molrs import Element
+from molrs import Frame
 
 from .base import DataReader, DataWriter
 
@@ -40,7 +40,7 @@ class XYZReader(DataReader):
 
     def read(self, frame: Frame | None = None) -> Frame:
         # molrs.io.read_xyz already returns the canonical rich Frame
-        # (molpy.Frame is molrs.Frame); no upgrade wrapping needed.
+        # The reader already returns the canonical molrs.Frame.
         molpy_frame = molrs.io.read_xyz(self._path)
 
         for block_name in list(molpy_frame.keys()):

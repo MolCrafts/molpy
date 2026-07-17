@@ -7,8 +7,7 @@ with force field types and charges.
 from pathlib import Path
 
 from molpy.core.fields import CHARGE, FieldFormatter
-from molpy.core.frame import Frame
-from molpy.core.element import Element
+from molrs import Element, Frame
 
 
 class AcFieldFormatter(FieldFormatter):
@@ -122,17 +121,22 @@ class AcReader(DataReader):
     def assign_atomic_numbers(self, atoms):
         """Assign atomic numbers by guessing from atom names/types."""
         for atom in atoms:
-            element_data = self._guess_atomic_number(atom["name"])
-            atomic_number = element_data.number
-            if atomic_number == 0:
-                element_data = self._guess_atomic_number(atom["type"])
-                atomic_number = element_data.number
-            atom["number"] = atomic_number
+            for source in (atom["name"], atom["type"]):
+                try:
+                    atom["number"] = self._guess_atomic_number(source).number
+                    break
+                except KeyError:
+                    continue
+            else:
+                raise ValueError(
+                    f"Cannot infer an element from AC atom name {atom['name']!r} "
+                    f"or type {atom['type']!r}"
+                )
 
     def _guess_atomic_number(self, name):
         """Guess element from atom name string."""
         name = "".join([c for c in name if c.isalpha()])
         try:
             return Element(name.capitalize())
-        except KeyError:
-            return Element(0)
+        except KeyError as exc:
+            raise KeyError(f"Unknown element identifier {name!r}") from exc

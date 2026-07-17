@@ -1,13 +1,13 @@
-"""The one assembly kernel: paste, match, pair, edit locally, repair locally.
+"""The one assembly kernel: match, compile local products, then execute once.
 
 Growing a chain, crosslinking a melt and closing a macrocycle differ only in
 which sites pair up. That difference is a :class:`~molpy.builder.assembly._selector.Selector`
 handed to :meth:`GraphAssembler.assemble`; everything else is this one code path.
 
-Nothing here walks the whole system per edit. Adding the thousandth bond costs
-what the second one cost, because the only atoms examined are the ones inside the
-ball :meth:`~molpy.typifier.affected_region.AffectedRegion.around` cuts for the
-declared ``reach``.
+Every prospective reaction environment is compiled while the user-defined
+monomers are still intact.  The growing world is edited only once; cached typing
+results write scalar per-atom data back afterwards.  Topology and bonded
+parameter finalization are a separate, optional tail.
 """
 
 from __future__ import annotations
@@ -17,52 +17,58 @@ from typing import TYPE_CHECKING
 
 import molrs
 from molpy.builder.assembly._context import MatchContext
+from molpy.builder.assembly._finalize import (
+    AssemblyFinalizer,
+    Finalization,
+)
+from molpy.builder.assembly._plan import AssemblyCompiler
 from molpy.builder.assembly._selector import Binding, Selector
 from molpy.core import fields
 from molpy.core.atomistic import Atomistic
-from molpy.typifier.affected_region import AffectedRegion
-from molpy.typifier.base import Typifier
 
 if TYPE_CHECKING:
     from molrs.fields import FieldSpec
 
     from molpy.builder.assembly._placer import Placer
+    from molpy.typifier.forcefield import ForceFieldParams
 
 #: Net charge drift that counts as zero (elementary charge).
 _CHARGE_TOL = 1e-9
 
 
 class GraphAssembler:
-    """Apply a reaction wherever a selector says, then repair types locally.
+    """Compile every selected local product, then apply the reaction once.
 
     Use it directly to crosslink an existing graph; subclass it to add an input
     format, as :class:`~molpy.builder.assembly._polymer.PolymerBuilder` does for
     CGSmiles + a monomer library.
 
-    ``typifier=None`` is a named mode — *pure-topology assembly* — not a
-    fallback: it skips retyping and nothing else. A typifier must be accompanied
-    by the ``reach`` it needs, because there is no honest way to cut a region
-    without knowing how far the typifier looks.
+    A typifier must be accompanied by the ``reach`` it needs.  ``finalize`` is
+    orthogonal: ``"atoms"`` stops after per-atom write-back, ``"topology"``
+    materializes angles/dihedrals once, and ``"bonded"`` also assigns their
+    force-field parameters.
     """
 
     def __init__(
         self,
         reaction: molrs.Reaction,
         *,
-        typifier: Typifier | None = None,
+        typifier: molrs.Typifier | None = None,
         reach: int | None = None,
         placer: Placer | None = None,
         label_field: FieldSpec = fields.SITE,
+        finalize: Finalization | str = Finalization.TOPOLOGY,
+        bonded: ForceFieldParams | None = None,
     ) -> None:
         if not isinstance(reaction, molrs.Reaction):
             raise TypeError(
                 "reaction must be a molpy.Reaction instance, not "
                 f"{type(reaction).__name__}; build it once with mp.Reaction(smirks)"
             )
-        if typifier is not None and not isinstance(typifier, Typifier):
+        if typifier is not None and not isinstance(typifier, molrs.Typifier):
             raise TypeError(
-                f"{type(typifier).__name__} is not a molpy.typifier.Typifier and "
-                "cannot type a region. There is no whole-graph fallback."
+                f"{type(typifier).__name__} is not a molrs.Typifier and "
+                "cannot compile a local product. There is no whole-graph fallback."
             )
         if typifier is not None and reach is None:
             raise TypeError(
@@ -71,11 +77,14 @@ class GraphAssembler:
                 "the extracted ball and the write-back set. Pass reach=2 for GAFF "
                 "and for SMARTS pattern sets without ring predicates."
             )
+        if reach is not None and reach < 0:
+            raise ValueError(f"reach must be >= 0, got {reach}")
         self._reaction = reaction
         self._typifier = typifier
         self._reach = reach
         self._placer = placer
         self._label_field = label_field
+        self._finalizer = AssemblyFinalizer(Finalization(finalize), bonded)
 
         forming = reaction.forming_bonds
         if not forming:
@@ -85,10 +94,10 @@ class GraphAssembler:
         self._comp_a = self._find_component(label_sets, self._map_a)
         self._comp_b = self._find_component(label_sets, self._map_b)
 
-        #: Memoised across ``assemble`` calls: it keys on the typifier and the
-        #: region's structure, never on the selector, so one builder can grow a
-        #: hundred chains of different lengths and type each junction once.
-        self._cache = self._new_cache()
+        self._compiler = AssemblyCompiler(reaction, typifier, reach)
+        # Kept as a readable inspection point: the cache belongs to the
+        # compiler and is shared across every build made by this assembler.
+        self._cache = self._compiler.cache
 
     # -- the verb ------------------------------------------------------------
 
@@ -120,47 +129,28 @@ class GraphAssembler:
             return work
         self._assert_disjoint(bindings)
 
-        formed = [(b[self._map_a], b[self._map_b]) for b in bindings]
+        # This is the compile-first boundary: all local products and their
+        # per-atom annotations are resolved before placement or graph mutation.
+        plan = self._compiler.compile(work, bindings, labels)
+        formed = [(b[self._map_a], b[self._map_b]) for b in plan.bindings]
         if self._placer is not None:
             self._placer.place(work, formed)
 
         charge_before = self._total_charge(work)
-        touched_sets: list[list[int]] = []
-        for binding in bindings:
-            # refresh=False: skip molrs' per-apply whole-graph angle/dihedral +
-            # aromaticity rebuild (O(N) each). Matching and region extraction
-            # need only bonds, which update in place.
-            touched = self._reaction.apply(work, binding, labels, refresh=False)
+        # The reaction compiles every leaving group against the intact world,
+        # then executes the disjoint transforms as one batch.  In particular,
+        # relation tables are scanned once for the union of deleted atoms rather
+        # than once per polymer bond.
+        touched_sets, created_sets = self._reaction.apply_many_detailed(
+            work, list(plan.bindings), labels, refresh=False
+        )
+        for binding, touched in zip(plan.bindings, touched_sets, strict=True):
             self._assert_touched_covers_forming_bond(binding, touched)
-            touched_sets.append(list(touched))
         self._assert_charge_conserved(work, charge_before)
-
-        if self._typifier is None:
-            # Pure-topology mode: nothing declares a region radius, so the new
-            # bonded terms are perceived with one whole-graph pass.
-            work.generate_topology(gen_angle=True, gen_dihedral=True)
-            molrs.perceive_aromaticity(work)
-            return work
-
-        # Regions are built AFTER every apply, so each one sees the final graph.
-        # Two overlapping regions then agree on a shared interior atom's type.
-        assert self._reach is not None  # guaranteed by __init__
-        regions = [
-            AffectedRegion.around(work, touched, reach=self._reach)
-            for touched in touched_sets
-        ]
-        inserted: set[tuple[str, tuple[int, ...]]] = set()
-        for region, bond in zip(regions, formed, strict=True):
-            self._cache.retype_and_apply(region)
-            self._insert_new_terms(work, region, bond, inserted)
-        return work
+        plan.write_atoms(work, created_sets)
+        return self._finalizer.apply(work)
 
     # -- construction helpers ------------------------------------------------
-
-    def _new_cache(self):
-        from molpy.typifier.cache import RetypeCache
-
-        return RetypeCache(self._typifier) if self._typifier is not None else None
 
     def _component_label_sets(self) -> list[set[int]]:
         return [
@@ -260,55 +250,3 @@ class GraphAssembler:
                 "the reaction deleted atoms that carry charge. Freeze the monomer "
                 "templates first so each cap's charge folds onto its site atom."
             )
-
-    # -- new bonded terms ----------------------------------------------------
-
-    def _insert_new_terms(
-        self,
-        world: Atomistic,
-        region: AffectedRegion,
-        bond: tuple[int, int],
-        inserted: set[tuple[str, tuple[int, ...]]],
-    ) -> None:
-        """Create the angles/dihedrals the new bond brought into existence.
-
-        Only terms that *contain* the formed bond are new: everything else either
-        survived the edit untouched or was removed with a deleted atom (molrs does
-        that even with ``refresh=False``). So this inserts and never deletes.
-
-        Overlapping regions can both own a dihedral that spans two formed bonds;
-        ``inserted`` makes the write idempotent.
-        """
-        parent_of = {
-            region_atom.handle: parent_atom
-            for region_atom, parent_atom in region.entity_map.items()
-        }
-        local_of = {parent.handle: handle for handle, parent in parent_of.items()}
-        if bond[0] not in local_of or bond[1] not in local_of:
-            return
-        u, v = local_of[bond[0]], local_of[bond[1]]
-        interior = {atom.handle for atom in region.interior}
-
-        for kind, views, adder in (
-            ("angle", region.angles, world.def_angle),
-            ("dihedral", region.dihedrals, world.def_dihedral),
-        ):
-            for term in views:
-                handles = [endpoint.handle for endpoint in term.endpoints]
-                if not self._spans_bond(handles, u, v):
-                    continue
-                if any(handle not in interior for handle in handles):
-                    continue
-                parents = tuple(parent_of[handle] for handle in handles)
-                key = (kind, tuple(p.handle for p in parents))
-                if key in inserted or (kind, key[1][::-1]) in inserted:
-                    continue
-                inserted.add(key)
-                adder(*parents)
-
-    @staticmethod
-    def _spans_bond(handles: list[int], u: int, v: int) -> bool:
-        """True when ``(u, v)`` is one of the term's consecutive bonds."""
-        return any(
-            {handles[i], handles[i + 1]} == {u, v} for i in range(len(handles) - 1)
-        )

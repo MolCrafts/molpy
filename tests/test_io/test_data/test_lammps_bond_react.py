@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+import molrs
+
 import molpy as mp
 from molpy.core.atomistic import Atomistic
 from molpy.core.entity import Link
@@ -231,13 +233,13 @@ def _build_forcefield(template: BondReactTemplate, product: Atomistic) -> mp.For
     return ff
 
 
-def _build_system() -> tuple[mp.Frame, mp.ForceField, BondReactTemplate]:
+def _build_system() -> tuple[molrs.Frame, mp.ForceField, BondReactTemplate]:
     """Fully deterministic (frame, forcefield, template) for the system writer."""
     template, product = _build_reaction()
     for i, atom in enumerate(product.atoms, start=1):
         atom["id"] = i
     frame = product.to_frame()
-    frame.box = mp.Box.cubic(20.0)
+    frame.simbox = mp.Box.cubic(20.0)
     ff = _build_forcefield(template, product)
     return frame, ff, template
 

@@ -674,9 +674,15 @@ def _build_template(
                 for a in list(sub_tmpl.atoms):
                     base_name = a.get("name", "")
                     key = f"{s.instance_name}/{base_name}"
-                    atoms[key] = a
+                    atoms[a.handle] = key  # type: ignore[index]
                     a["name"] = key
-                tmpl += sub_tmpl
+                mapping = tmpl._merge_map(sub_tmpl)
+                atoms.update(
+                    {
+                        atoms.pop(old): tmpl._intern_node(new)  # type: ignore[misc]
+                        for old, new in mapping.items()
+                    }
+                )
 
     # Pass 2: own Data Atoms / Bonds / Angles / Dihedrals / Impropers
     for s in cls_stmts:

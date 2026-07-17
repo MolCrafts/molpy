@@ -1,113 +1,54 @@
 # 扩展数据模型
 
-本文介绍如何向 MolPy 核心数据模型添加新的实体类型、连接类型和结构子类。
+MolPy 的图数据模型直接由 molrs 支撑。`Atomistic` 与 `CoarseGrain` 是 native
+world；`Atom`、`Bond`、`Bead` 等 Python 对象是稳定 handle 的实时视图。
 
 !!! note "实现前先讨论"
-    此层改动会波及 `TypeBucket` 注册、复制语义和格式化器分发。请在实现前打开 [GitHub issue](https://github.com/MolCrafts/molpy/issues) 描述扩展内容；[架构概览](architecture-overview.md) 解释了相关的约束条件。
+    新增可存储的节点或关系种类会同时改变 molrs schema、Rust 图算法、Python
+    绑定、Frame 投影和 I/O formatter。实现前请先提交
+    [GitHub issue](https://github.com/MolCrafts/molpy/issues)。
 
-## 架构回顾
+## Python 可以扩展什么
 
-MolPy 数据模型分三层：
+Python 子类可以围绕已有 native 类型添加无状态便利层：构造器别名、选择辅助、
+callback、展示方法和格式相关序列化。不得创建第二份属性存储、端点列表或 handle
+注册表。
 
-1. **Entity（节点）** — `UserDict` 的子类，使用身份标识哈希。例如 `Atom`、`Bead`。
-2. **Link（边）** — 持有有序的 `Entity` 端点元组。例如 `Bond`、`Angle`、`Dihedral`。
-3. **Struct（容器）** — 持有 `TypeBucket[Entity]` 和 `TypeBucket[Link]`，负责 CRUD 操作。例如 `Atomistic`、`CoarseGrain`。
-
-`TypeBucket` 按具体类型存储条目。注册 `Atom` 后，`bucket[Atom]` 返回所有 `Atom` 实例，子类也会包含在父类查询结果中。
-
-## 添加新的 Entity 类型
-
-继承 `Entity` 即可。基类已提供字典风格存储和基于身份标识的哈希，无需额外方法。
+所有数据都通过 graph factory 创建：
 
 ```python
-from molpy.core.entity import Entity
+from molpy import Atomistic
 
-class VirtualSite(Entity):
-    """一个无质量的相互作用位点（例如 TIP4P 氧孤对电子）。"""
+mol = Atomistic(name="water")
+oxygen = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
+hydrogen = mol.def_atom(element="H", x=0.96, y=0.0, z=0.0)
+bond = mol.def_bond(oxygen, hydrogen)
 
-    def __repr__(self) -> str:
-        name = self.data.get("name", id(self))
-        return f"<VirtualSite: {name}>"
+assert mol.atoms[0] is oxygen
+assert bond.atoms == (oxygen, hydrogen)
 ```
 
-## 添加新的 Link 类型
+通过 ref 写入会立即更新 native world；`.atoms`、`.bonds`、`.impropers` 等集合
+属性都是 molrs 实时视图。
 
-继承 `Link`，在 `__init__` 中约束端点数量和类型，添加命名的端点属性来提高可读性。
+## 新增可存储图类型
 
-```python
-from molpy.core.entity import Link
-from molpy.core.atomistic import Atom
+系统有意不提供 `TypeBucket.register_type` 钩子。真正的新类型需要依次完成：
 
-class Improper(Link):
-    """Improper 二面角：一个中心原子与三个外围原子。"""
+1. 在 molrs 定义存储和关系 arity。
+2. 让 native copy/merge/extract/topology 与 Frame 投影识别它。
+3. 在 `molrs.views` 暴露 handle view 与 graph factory。
+4. 从 `molpy.core` 重导出同一个对象；Python 侧只增加语法糖。
+5. 更新相关 reader/writer，并补 Rust、绑定与 molpy 集成测试。
 
-    def __init__(self, center: Atom, a: Atom, b: Atom, c: Atom, /, **attrs):
-        super().__init__([center, a, b, c], **attrs)
-
-    @property
-    def center(self) -> Atom:
-        return self.endpoints[0]
-
-    @property
-    def outer(self) -> tuple[Atom, Atom, Atom]:
-        return self.endpoints[1], self.endpoints[2], self.endpoints[3]
-```
-
-## 在 Struct 中注册类型
-
-新的实体和连接类型必须在结构体的 `__init__` 中注册，这样 `TypeBucket` 才会为其分配桶。未注册时，`bucket[MyType]` 返回空列表。
-
-```python
-from molpy.core.entity import Struct, MembershipMixin, ConnectivityMixin
-
-class ExtendedAtomistic(Atomistic):
-    """支持虚拟位点和 Improper 二面角的 Atomistic。"""
-
-    def __init__(self, **props):
-        super().__init__(**props)
-        self.entities.register_type(VirtualSite)
-        self.links.register_type(Improper)
-
-    @property
-    def virtual_sites(self):
-        return self.entities[VirtualSite]
-
-    @property
-    def impropers(self):
-        return self.links[Improper]
-
-    def def_virtual_site(self, **attrs) -> VirtualSite:
-        vs = VirtualSite(**attrs)
-        self.entities.add(vs)
-        return vs
-
-    def def_improper(self, center, a, b, c, /, **attrs) -> Improper:
-        imp = Improper(center, a, b, c, **attrs)
-        self.links.add(imp)
-        return imp
-```
-
-## TypeBucket 的工作原理
-
-`TypeBucket` 用 `get_nearest_type(item)` 确定桶的键（即条目的具体类）。关键行为：
-
-- `bucket.add(item)` — 将条目加入其具体类型对应的桶，已存在则跳过（基于身份标识判断）
-- `bucket[SomeType]` — 返回 `SomeType` 及其所有子类的条目
-- `bucket.register_type(SomeType)` — 确保桶存在，这样 `.atoms` 返回 `[]` 而不是抛异常
-- `bucket.remove(item)` — 通过身份标识（`is`）移除，不用相等性判断
-
-## Struct.copy() 与新类型
-
-`Struct.copy()` 会深拷贝所有实体和连接，并重新映射端点引用。只要新的 `Link` 子类的 `__init__` 能接受 `(*endpoints, **attrs)` 或 `(endpoints, **attrs)` 两种签名之一，这一机制就能正常工作。复制逻辑先尝试位置参数，不行再试列表形式。
-
-如果 Link 子类用了不同的构造器签名（比如命名参数），就需要在 Struct 子类中覆盖 `copy()`。
+如果概念只是标注，优先给已有节点或关系增加 typed field。例如组装 site 使用
+`fields.SITE`，不需要新的节点类。
 
 ## 检查清单
 
-- [ ] Entity 子类：`class MyEntity(Entity)` 并实现 `__repr__`
-- [ ] Link 子类：`class MyLink(Link)` 并添加端点断言和属性
-- [ ] 在 Struct 的 `__init__` 中注册：`self.entities.register_type(MyEntity)`
-- [ ] 在 Struct 上添加 `def_*` 工厂方法
-- [ ] 添加属性访问器（例如 `@property def my_links`）
-- [ ] 验证 `Struct.copy()` 能正确处理新类型
-- [ ] 在 `tests/test_core/` 中编写测试
+- [ ] 数据在 molrs 中只有一个 owner；没有 Python 镜像或 `_inner` facade。
+- [ ] 实时视图中的 handle 稳定，写入会更新 world。
+- [ ] native copy/merge/extract 与 Frame round trip 覆盖新类型。
+- [ ] molpy 使用 API 前已更新 PyO3 export 与类型 stub。
+- [ ] MolPy 只 re-export native 类型或添加真正的 native 子类。
+- [ ] Rust、molrs-python 与 molpy 集成测试全部通过。

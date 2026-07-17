@@ -4,7 +4,7 @@ Test CoarseGrain class API for creating and managing coarse-grained structures.
 Tests the redesigned CG module per spec
 ``docs/specs/cg-atomistic-mapping-redesign.md``:
 
-- ``Bead`` is a structurally empty :class:`Entity` (no mandatory fields).
+- ``Bead`` is a live :class:`NodeRef` created by ``CoarseGrain.def_bead``.
 - ``bead["atoms"]`` is a soft convention key (``tuple[Atom, ...]``); MolPy
   neither enforces nor writes it.
 - ``CGBond`` is a two-endpoint :class:`Link` between two beads.
@@ -13,116 +13,11 @@ Tests the redesigned CG module per spec
 - No ``from_atomistic`` / ``to_atomistic`` / ``Bead.atomistic`` field.
 """
 
-import copy
-
 import numpy as np
 import pytest
 
 from molpy.core.atomistic import Atomistic
 from molpy.core.cg import Bead, CGBond, CoarseGrain
-
-
-# ---------------------------------------------------------------------------
-# Bead — structurally empty Entity
-# ---------------------------------------------------------------------------
-
-
-class TestBeadEntity:
-    """Test Bead entity class — no required fields, dict-like."""
-
-    def test_bead_is_empty_entity(self):
-        """Bead() is creatable with zero arguments and has no required keys."""
-        bead = Bead()
-
-        assert isinstance(bead, Bead)
-        # The underlying data dict starts empty.
-        assert dict(bead) == {}
-
-    def test_bead_dict_interface(self):
-        """Bead exposes attributes through the dict interface."""
-        bead = Bead(type="A", x=1.0)
-
-        assert bead["type"] == "A"
-        assert bead["x"] == 1.0
-
-    def test_bead_deepcopy_produces_independent_object(self):
-        """Default Python deepcopy semantics apply: the clone is a separate
-        Bead with an independent dict. Bead has no custom ``__deepcopy__``
-        and therefore makes no opinion about which conventional keys
-        should be shared vs. cloned — that's the user's call."""
-        ato = Atomistic()
-        a = ato.def_atom(element="C", x=0.0, y=0.0, z=0.0)
-        b = ato.def_atom(element="H", x=1.0, y=0.0, z=0.0)
-
-        bead = Bead(atoms=(a, b), type="CH")
-        clone = copy.deepcopy(bead)
-
-        assert clone is not bead
-        assert clone["type"] == "CH"
-        # dict is independent: mutating the clone does not affect the original
-        clone["type"] = "MUTATED"
-        assert bead["type"] == "CH"
-
-    def test_create_bead_with_attributes(self):
-        """Beads carry arbitrary attributes via kwargs."""
-        bead = Bead(type="PEO", x=1.0, y=2.0, z=3.0)
-
-        assert isinstance(bead, Bead)
-        assert bead.get("type") == "PEO"
-        assert bead.get("x") == 1.0
-        assert bead.get("y") == 2.0
-        assert bead.get("z") == 3.0
-
-    def test_bead_repr_contains_class_name(self):
-        """Bead repr identifies the class."""
-        bead = Bead(type="PEO")
-        assert "Bead" in repr(bead)
-
-
-# ---------------------------------------------------------------------------
-# CGBond — two-endpoint Link
-# ---------------------------------------------------------------------------
-
-
-class TestCGBondLink:
-    """Test CGBond link class."""
-
-    def test_create_cgbond(self):
-        """Create a CGBond between two beads with attributes."""
-        bead1 = Bead(type="A")
-        bead2 = Bead(type="B")
-
-        bond = CGBond(bead1, bead2, type="harmonic")
-
-        assert isinstance(bond, CGBond)
-        assert bond.ibead is bead1
-        assert bond.jbead is bead2
-        assert bond.get("type") == "harmonic"
-
-    def test_cgbond_endpoints(self):
-        """CGBond.ibead / .jbead expose the endpoints in order."""
-        bead1 = Bead(type="A")
-        bead2 = Bead(type="B")
-        bond = CGBond(bead1, bead2)
-
-        assert bond.ibead is bead1
-        assert bond.jbead is bead2
-
-    def test_cgbond_repr(self):
-        """CGBond repr identifies the class."""
-        bead1 = Bead(type="A")
-        bead2 = Bead(type="B")
-        bond = CGBond(bead1, bead2)
-
-        assert "CGBond" in repr(bond)
-
-    def test_cgbond_requires_beads(self):
-        """CGBond rejects non-Bead endpoints."""
-        bead = Bead(type="A")
-        not_a_bead = object()
-
-        with pytest.raises(AssertionError):
-            CGBond(bead, not_a_bead)
 
 
 # ---------------------------------------------------------------------------
@@ -159,36 +54,8 @@ class TestCoarseGrainFactoryMethods:
         assert bond in cg.cgbonds
 
 
-class TestCoarseGrainAddMethods:
-    """Test add_* methods that register pre-built entity objects."""
-
-    def test_add_bead_adds_existing(self):
-        """add_bead registers an already-constructed Bead."""
-        cg = CoarseGrain()
-        bead = Bead(type="PEO", x=0, y=0, z=0)
-
-        result = cg.add_bead(bead)
-
-        assert result is bead
-        assert len(cg.beads) == 1
-        assert next(iter(cg.beads)) is bead
-
-    def test_add_cgbond_adds_existing(self):
-        """add_cgbond registers an already-constructed CGBond."""
-        cg = CoarseGrain()
-        b1 = cg.def_bead(type="A")
-        b2 = cg.def_bead(type="B")
-        bond = CGBond(b1, b2, type="harmonic")
-
-        result = cg.add_cgbond(bond)
-
-        assert result is bond
-        assert len(cg.cgbonds) == 1
-        assert next(iter(cg.cgbonds)) is bond
-
-
 class TestCoarseGrainBatchMethods:
-    """Test batch operations for creating and adding multiple entities."""
+    """Test batch factory operations."""
 
     def test_def_beads_batch_create(self):
         """def_beads creates multiple beads at once."""
@@ -223,36 +90,6 @@ class TestCoarseGrainBatchMethods:
 
         assert len(bonds) == 2
         assert all(isinstance(b, CGBond) for b in bonds)
-        assert len(cg.cgbonds) == 2
-
-    def test_add_beads_batch_add(self):
-        """add_beads adds multiple existing Bead objects."""
-        cg = CoarseGrain()
-        beads = [
-            Bead(type="A", x=0, y=0, z=0),
-            Bead(type="B", x=5, y=0, z=0),
-        ]
-
-        result = cg.add_beads(beads)
-
-        assert result == beads
-        assert len(cg.beads) == 2
-
-    def test_add_cgbonds_batch_add(self):
-        """add_cgbonds adds multiple existing CGBond objects."""
-        cg = CoarseGrain()
-        b1 = cg.def_bead(type="A")
-        b2 = cg.def_bead(type="B")
-        b3 = cg.def_bead(type="C")
-
-        bonds = [
-            CGBond(b1, b2),
-            CGBond(b2, b3),
-        ]
-
-        result = cg.add_cgbonds(bonds)
-
-        assert result == bonds
         assert len(cg.cgbonds) == 2
 
 
@@ -494,15 +331,15 @@ class TestBeadReprFallbacks:
     """Bead.__repr__ branches when ``type`` is absent."""
 
     def test_repr_uses_name_when_type_missing(self):
-        bead = Bead(name="POPC")
+        bead = CoarseGrain().def_bead(name="POPC")
         assert "POPC" in repr(bead)
         assert "Bead" in repr(bead)
 
     def test_repr_falls_back_to_id_when_type_and_name_missing(self):
-        bead = Bead()
+        bead = CoarseGrain().def_bead()
         rep = repr(bead)
         assert "Bead" in rep
-        assert str(id(bead)) in rep
+        assert str(bead.handle) in rep
 
 
 class TestCoarseGrainPostInit:
@@ -707,11 +544,10 @@ class TestCoarseGrainToFrame:
         cg = CoarseGrain()
         a = cg.def_bead(type="A")
         b = cg.def_bead(type="B")
-        bond = CGBond(a, b)
         cg2 = CoarseGrain()
 
         with pytest.raises(ValueError):
-            cg2.add_cgbond(bond)
+            cg2.def_cgbond(a, b)
 
 
 if __name__ == "__main__":
