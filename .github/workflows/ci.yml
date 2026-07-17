@@ -59,9 +59,7 @@ jobs:
         # molrs→molpy release the pinned molrs must reach PyPI *before* this
         # runs; otherwise the job fails transiently until the index propagates —
         # just re-run after molrs publishes.
-        # hdf5 extra runs schema-v2 HDF5 round-trips; without it those tests
-        # importorskip rather than fail the job.
-        run: pip install -e ".[dev,hdf5]"
+        run: pip install -e ".[dev]"
 
       # Fetch tests-data once, serially, before the parallel (-n auto) test run.
       # Under xdist the session fixture runs per-worker, so a git op there would

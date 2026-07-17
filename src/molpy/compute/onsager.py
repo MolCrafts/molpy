@@ -52,8 +52,8 @@ class Onsager(Compute):
             collective coordinates.
 
     Examples:
-        >>> from molpy.io import read_h5_trajectory
-        >>> traj = read_h5_trajectory("electrolyte.h5")
+        >>> from molpy.io import read_lammps_trajectory
+        >>> traj = read_lammps_trajectory("electrolyte.lammpstrj")
         >>> ons = Onsager(tags=["1,1", "1,2", "2,2"], max_dt=20.0, dt=0.01)
         >>> result = ons(traj)
         >>> result.correlations["1,2"]  # L_12(tau), shape (n_cache,)

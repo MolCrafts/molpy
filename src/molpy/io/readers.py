@@ -208,29 +208,6 @@ def read_xyz(file: PathLike, frame: Any = None) -> Any:
     return reader.read(frame)
 
 
-def read_h5(file: PathLike, frame: Any = None) -> Any:
-    """
-    Read HDF5 file and return a Frame object.
-
-    Args:
-        file: Path to HDF5 file
-        frame: Optional existing Frame to populate
-
-    Returns:
-        Populated Frame object
-
-    Examples:
-        >>> frame = read_h5("structure.h5")
-        >>> frame["atoms"]["x"]
-        array([0., 1., 2.])
-    """
-    from .data.h5 import HDF5Reader
-
-    frame = _ensure_frame(frame)
-    reader = HDF5Reader(Path(file))
-    return reader.read(frame)
-
-
 # =============================================================================
 # Force Field Readers
 # =============================================================================
@@ -429,27 +406,6 @@ def read_xtc_trajectory(file: PathLike) -> Any:
     import molrs.io
 
     return molrs.io.read_xtc_trajectory(str(file))
-
-
-def read_h5_trajectory(file: PathLike) -> Any:
-    """
-    Read HDF5 trajectory file and return a trajectory reader.
-
-    Args:
-        file: Path to HDF5 trajectory file
-
-    Returns:
-        HDF5TrajectoryReader object
-
-    Examples:
-        >>> reader = read_h5_trajectory("trajectory.h5")
-        >>> frame = reader.read_frame(0)
-        >>> for frame in reader:
-        ...     process(frame)
-    """
-    from .trajectory.h5 import HDF5TrajectoryReader
-
-    return HDF5TrajectoryReader(Path(file))
 
 
 # =============================================================================

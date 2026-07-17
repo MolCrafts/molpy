@@ -14,8 +14,8 @@ computational operations on molecular structures. The core abstractions are:
 
 Example: diffusion via mean displacement correlation:
     >>> from molpy.compute import MCDCompute
-    >>> from molpy.io import read_h5_trajectory
-    >>> traj = read_h5_trajectory("trajectory.h5")
+    >>> from molpy.io import read_lammps_trajectory
+    >>> traj = read_lammps_trajectory("dump.lammpstrj")
     >>> mcd = MCDCompute(tags=["1"], max_dt=30.0, dt=0.01)
     >>> result = mcd(traj)
     >>> print(result.correlations["1"])  # MSD values at each time lag

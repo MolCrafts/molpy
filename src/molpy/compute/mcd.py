@@ -40,8 +40,8 @@ class MCDCompute(Compute):
             Format: {element_type: mass}, e.g., {1: 1.008, 6: 12.011}
 
     Examples:
-        >>> from molpy.io import read_h5_trajectory
-        >>> traj = read_h5_trajectory("trajectory.h5")
+        >>> from molpy.io import read_lammps_trajectory
+        >>> traj = read_lammps_trajectory("dump.lammpstrj")
         >>>
         >>> # Compute self-diffusion MSD of atom type 3
         >>> mcd = MCDCompute(tags=["3"], max_dt=30.0, dt=0.01)

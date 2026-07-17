@@ -46,18 +46,13 @@ dependencies = [
     "molcrafts-molrs==0.8.0",
     "molcrafts-mollog>=1.0.0",
     "molcrafts-molcfg>=1.2.0",
+    "zarr>=3.0",
 ]
 
 [tool.setuptools.dynamic]
 version = { attr = "molpy.version.version" }
 
 [project.optional-dependencies]
-hdf5 = [
-    "h5py>=3.0.0",
-]
-zarr = [
-    "zarr>=3.0",
-]
 dev = [
     "pytest>=6.0.0",
     "pytest-cov>=3.0.0",
@@ -91,7 +86,7 @@ doc = [
     "scienceplots",
 ]
 all = [
-    "molcrafts-molpy[hdf5,zarr,dev,doc]",
+    "molcrafts-molpy[dev,doc]",
 ]
 
 [project.scripts]
@@ -177,7 +172,7 @@ root = ["./src"]
 [tool.ty.rules]
 all = "warn"
 
-# --- Ignored: untyped third-party stubs (lark, h5py, etc.) ---
+# --- Ignored: untyped third-party stubs (lark, zarr, etc.) ---
 unresolved-import = "ignore"
 unresolved-attribute = "ignore"
 invalid-argument-type = "ignore"
