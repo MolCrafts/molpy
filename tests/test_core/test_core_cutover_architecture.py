@@ -16,7 +16,9 @@ from molpy.core import atomistic, cg, entity, forcefield
 ROOT = Path(__file__).parents[2]
 CORE = ROOT / "src" / "molpy" / "core"
 MANIFEST = json.loads(
-    (ROOT / ".claude" / "specs" / "molrs-core-cutover.manifest.json").read_text()
+    (ROOT / ".claude" / "specs" / "molrs-core-cutover.manifest.json").read_text(
+        encoding="utf-8"
+    )
 )
 
 
@@ -83,7 +85,7 @@ def test_manifest_covers_public_top_level_definitions():
         module = ".".join(relative.with_suffix("").parts)
         if module in {"__init__", "ops.__init__", *MANIFEST["excluded_molpy_owned"]}:
             continue
-        tree = ast.parse(path.read_text(), filename=str(path))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         public = {
             node.name
             for node in tree.body
@@ -103,7 +105,7 @@ def test_removed_duplicate_kernels_stay_removed():
     for path in CORE.rglob("*.py"):
         if path.name in {"config.py", "logger.py", "script.py"}:
             continue
-        tree = ast.parse(path.read_text(), filename=str(path))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute):
                 assert node.attr not in forbidden_attributes, f"{path}: {node.attr}"
@@ -161,7 +163,7 @@ def test_production_never_reads_removed_frame_surface():
     for path in source_root.rglob("*.py"):
         if path.name == "version.py":
             continue
-        tree = ast.parse(path.read_text(), filename=str(path))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Attribute) or node.attr not in forbidden:
                 continue
