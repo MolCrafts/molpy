@@ -1,21 +1,4 @@
-# Mirrors every check in .github/workflows/ci.yml. Any divergence is a bug —
-# when you add/modify a CI step, update this file in the same commit.
-#
-# Stages:
-#   pre-commit (default): fast checks (ruff format, ruff lint, ty). Every commit.
-#   pre-push:             the test suite (matches CI's test job). Before push only.
-#
-# Install both stages:  pre-commit install --hook-type pre-commit --hook-type pre-push
-#
-# Tool versions are pinned to match CI exactly: ruff via the ruff-pre-commit
-# `rev` below (== the ci.yml pin and the [dev] extra), ty via the [dev] extra
-# (`ty==…`, picked up by the `language: system` hook). Bump all three together.
-#
-# KNOWN GAP — cannot be mirrored here: CI's test job does a clean `pip install`
-# that resolves the exact `molcrafts-molrs==X` pin from PyPI. Locally molrs is an
-# editable install of the sibling checkout, so the pin's *availability on PyPI*
-# is never exercised — only CI catches an unpublished / not-yet-propagated molrs.
-# On a coordinated release, publish molrs first, then re-run molpy CI.
+# Mirrors default CI only. Install: pre-commit install -t pre-commit -t pre-push
 default_install_hook_types: [pre-commit, pre-push]
 
 repos:
@@ -33,7 +16,6 @@ repos:
       - id: check-toml
       - id: check-json
 
-  # ─── ci.yml::lint — ruff format --check + ruff check src/ tests/ ──────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.13
     hooks:
@@ -46,8 +28,6 @@ repos:
 
   - repo: local
     hooks:
-      # ─── ci.yml::lint — ty check src/molpy/ ──────────────────────────────
-      # ty version is pinned via the [dev] extra (ty==…); this runs the dev-env ty.
       - id: ty
         name: ty (type check)
         entry: ty check src/molpy/
@@ -55,9 +35,8 @@ repos:
         types: [python]
         pass_filenames: false
 
-      # ─── ci.yml::test — pytest tests/ -m "not external" (pre-push) ───────
-      - id: pytest
-        name: pytest (mirrors CI test job)
+      - id: pytest-unit
+        name: pytest unit (not external)
         entry: pytest tests/ -m "not external" -n auto
         language: system
         pass_filenames: false

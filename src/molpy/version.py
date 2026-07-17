@@ -9,7 +9,7 @@ molrs matches this version; it is called once on ``import molpy`` so a stale
 editable build or an out-of-date pin surfaces immediately.
 """
 
-version = "0.8.0"
+version = "0.8.2"
 release_date = "2026-07-17"
 
 
