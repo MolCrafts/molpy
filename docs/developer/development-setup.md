@@ -48,7 +48,7 @@ maturin develop -m molrs-python/Cargo.toml --release   # installs `molrs` editab
 # back in molpy, the editable install now resolves the local molrs
 cd ../molpy
 pip install -e ".[dev]"
-python -c "import molrs, molpy as mp; print(mp.Box.cubic(10.0), isinstance(mp.Box.cubic(10.0), molrs.Box))"
+python -c "import molpy as mp; print(mp.version, mp.Frame(), mp.Element('C').symbol)"
 ```
 
 Re-run `maturin develop` after any change to the molrs Rust source to recompile

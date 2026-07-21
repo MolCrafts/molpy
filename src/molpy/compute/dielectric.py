@@ -72,7 +72,7 @@ def _unwrap_inplace(coords: np.ndarray, frames: list) -> None:
     """
     cache: dict[bytes, Box] = {}
     for i in range(1, len(frames)):
-        rs_box = frames[i - 1].simbox
+        rs_box = frames[i - 1].box
         key = np.asarray(rs_box.matrix).tobytes()
         box = cache.get(key)
         if box is None:
@@ -112,7 +112,7 @@ class ACFAnalyzer(Compute):
             raise ValueError(f"Need at least 2 frames, got {n_frames}")
 
         frame0 = frames[0]
-        if self.unwrap and (frame0.simbox is None or frame0.simbox.is_free):
+        if self.unwrap and (frame0.box is None or frame0.box.is_free):
             raise ValueError(
                 "Trajectory frames must have a non-free Box when unwrap=True"
             )
@@ -206,7 +206,7 @@ class DielectricSusceptibility(Compute):
             before FFT.
         routes: Subset of `["einstein-helfand", "green-kubo"]`. Default
             runs both.
-        volume: System volume in **Å³**. If `None`, uses `frame.simbox.volume`
+        volume: System volume in **Å³**. If `None`, uses `frame.box.volume`
             from the first frame (assumes NVT/NVE).
 
     Inputs:
@@ -252,7 +252,7 @@ class DielectricSusceptibility(Compute):
             raise ValueError(f"Need at least 2 frames, got {n_frames}")
 
         frame0 = frames[0]
-        if frame0.simbox is None or frame0.simbox.is_free:
+        if frame0.box is None or frame0.box.is_free:
             raise ValueError("Trajectory frames must have a non-free Box")
 
         for col in ["x", "y", "z", "charge"]:
@@ -260,7 +260,7 @@ class DielectricSusceptibility(Compute):
                 raise ValueError(f"Missing column '{col}' in atoms block")
 
         n_atoms = len(frame0["atoms"]["x"])
-        volume = self._volume if self._volume is not None else frame0.simbox.volume()
+        volume = self._volume if self._volume is not None else frame0.box.volume()
 
         positions = np.empty((n_frames, n_atoms, 3), dtype=np.float64)
         # Charges are taken once from frame 0: the dipole / current formulas
@@ -373,7 +373,7 @@ class IonicConductivity(Compute):
         temperature: Temperature in **K**.
         max_correlation_time: Longest MSD lag in **frames** (clamped to
             ``n_frames - 1``). Practical choice: <= ``n_frames / 5``.
-        volume: System volume in **A^3**. If ``None``, uses ``frame.simbox.volume``
+        volume: System volume in **A^3**. If ``None``, uses ``frame.box.volume``
             from the first frame (assumes NVT/NVE).
         fit_start_frac: Fraction of ``max_lag`` where the linear-fit window
             over the diffusive regime starts (default 0.1).
@@ -420,7 +420,7 @@ class IonicConductivity(Compute):
             raise ValueError(f"Need at least 2 frames, got {n_frames}")
 
         frame0 = frames[0]
-        if frame0.simbox is None or frame0.simbox.is_free:
+        if frame0.box is None or frame0.box.is_free:
             raise ValueError("Trajectory frames must have a non-free Box")
 
         for col in ["x", "y", "z", "charge"]:
@@ -428,7 +428,7 @@ class IonicConductivity(Compute):
                 raise ValueError(f"Missing column '{col}' in atoms block")
 
         n_atoms = len(frame0["atoms"]["x"])
-        volume = self._volume if self._volume is not None else frame0.simbox.volume()
+        volume = self._volume if self._volume is not None else frame0.box.volume()
 
         positions = np.empty((n_frames, n_atoms, 3), dtype=np.float64)
         # Charges are taken once from frame 0: the dipole / current formulas

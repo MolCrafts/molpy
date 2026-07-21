@@ -5,15 +5,20 @@ import pytest
 import molrs
 import molpy
 import molpy.core
-from molrs import Element
+from molpy import Element
 
 
 def test_element_has_one_public_owner():
+    """Element is a molrs type, identity-re-exported on the molpy facade.
+
+    Users import from molpy (never molrs). There is no molpy.core.element
+    module, no ElementData, and no second class.
+    """
     assert Element is molrs.Element
+    assert molpy.Element is molrs.Element
     assert not hasattr(molrs, "ElementData")
     assert not hasattr(molpy, "ElementData")
     assert not hasattr(molpy.core, "ElementData")
-    assert not hasattr(molpy, "Element")
     assert not hasattr(molpy.core, "Element")
     assert importlib.util.find_spec("molpy.core.element") is None
 

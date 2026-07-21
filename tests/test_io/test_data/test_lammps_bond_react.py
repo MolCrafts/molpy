@@ -239,7 +239,7 @@ def _build_system() -> tuple[molrs.Frame, mp.ForceField, BondReactTemplate]:
     for i, atom in enumerate(product.atoms, start=1):
         atom["id"] = i
     frame = product.to_frame()
-    frame.simbox = mp.Box.cubic(20.0)
+    frame.box = mp.Box.cubic(20.0)
     ff = _build_forcefield(template, product)
     return frame, ff, template
 

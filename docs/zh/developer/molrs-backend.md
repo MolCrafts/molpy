@@ -36,7 +36,7 @@ box = mp.Box.cubic(10.0)
 assert isinstance(box, molrs.Box)   # 它 *就是* 一个 molrs box
 ```
 
-同样，`frame.simbox` 可以直接传给 Rust 侧的函数，比如 `molrs.NeighborQuery`。molpy 在继承的 Rust 核心之上增加的方法（`Style`、`cubic`、`from_lengths_angles`、`diff_dr`……）也仍然可用。
+同样，`frame.box` 可以直接传给 Rust 侧的函数，比如 `molrs.NeighborQuery`。molpy 在继承的 Rust 核心之上增加的方法（`Style`、`cubic`、`from_lengths_angles`、`diff_dr`……）也仍然可用。
 
 ## 近邻列表来自 linked-cell 内核
 
@@ -52,7 +52,7 @@ xyz = rng.uniform(0.0, 20.0, size=(500, 3))
 
 frame = molrs.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.simbox = mp.Box.cubic(20.0)
+frame.box = mp.Box.cubic(20.0)
 
 neighbors = NeighborList(cutoff=8.0)(frame)
 print(neighbors.n_pairs)          # 找到的对数

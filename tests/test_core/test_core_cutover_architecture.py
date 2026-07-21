@@ -122,20 +122,30 @@ def test_dead_type_bucket_surface_is_not_exported():
     assert "TypeBucket" not in forcefield.__all__
 
 
-def test_frame_block_and_element_are_molrs_only_exports():
-    for package in (molpy, importlib.import_module("molpy.core")):
-        for name in ("Frame", "Block", "Element", "ElementData"):
-            assert not hasattr(package, name)
-            assert name not in package.__all__
+def test_frame_block_and_element_are_facade_reexports_not_core_modules():
+    """Storage types are molrs-owned, identity-re-exported on the molpy root.
+
+    Users write ``from molpy import Frame`` — never ``molpy.core.Frame`` and
+    never ``from molrs import Frame``. There is no ``core.frame`` /
+    ``core.element`` module and no ``ElementData``.
+    """
+    for name in ("Frame", "Block", "Element"):
+        assert getattr(molpy, name) is getattr(molrs, name)
+        assert name in molpy.__all__
+
+    core = importlib.import_module("molpy.core")
+    for name in ("Frame", "Block", "Element", "ElementData"):
+        assert not hasattr(core, name)
+        assert name not in core.__all__
+
+    assert not hasattr(molpy, "ElementData")
+    assert not hasattr(molrs, "ElementData")
 
 
-def test_removed_core_storage_and_element_imports_fail():
+def test_removed_core_storage_and_element_modules_fail():
     for statement in (
-        "from molpy import Frame",
-        "from molpy import Block",
         "from molpy.core import Frame",
         "from molpy.core import Block",
-        "from molpy import Element",
         "from molpy.core import Element",
     ):
         with pytest.raises(ImportError):
@@ -146,19 +156,17 @@ def test_removed_core_storage_and_element_imports_fail():
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module("molpy.core.element")
 
-    assert not hasattr(molrs, "ElementData")
 
-
-def test_frame_has_only_simbox_and_exact_dtype_meta_surface():
+def test_frame_has_only_box_and_exact_dtype_meta_surface():
     frame = molrs.Frame()
-    assert hasattr(frame, "simbox")
+    assert hasattr(frame, "box")
     assert hasattr(frame, "meta")
-    assert not hasattr(frame, "box")
     assert not hasattr(frame, "metadata")
 
 
 def test_production_never_reads_removed_frame_surface():
-    forbidden = {"box", "metadata"}
+    """Untyped ``frame.metadata`` is gone; cell is only ``frame.box``."""
+    forbidden = {"metadata"}
     source_root = ROOT / "src" / "molpy"
     for path in source_root.rglob("*.py"):
         if path.name == "version.py":
@@ -167,20 +175,12 @@ def test_production_never_reads_removed_frame_surface():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Attribute) or node.attr not in forbidden:
                 continue
-            if node.attr == "metadata":
-                # ForceField and result metadata remain independent public APIs.
-                if isinstance(node.value, ast.Name) and node.value.id in {
-                    "ff",
-                    "forcefield",
-                    "result",
-                    "r",
-                }:
-                    continue
-            if node.attr == "box":
-                # Scientific objects other than Frame may own a box.
-                if not (
-                    isinstance(node.value, ast.Name)
-                    and node.value.id.startswith("frame")
-                ):
-                    continue
+            # ForceField and result metadata remain independent public APIs.
+            if isinstance(node.value, ast.Name) and node.value.id in {
+                "ff",
+                "forcefield",
+                "result",
+                "r",
+            }:
+                continue
             pytest.fail(f"removed Frame surface in {path}: .{node.attr}")

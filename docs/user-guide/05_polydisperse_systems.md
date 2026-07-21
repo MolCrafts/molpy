@@ -25,7 +25,7 @@ Each monomer is parsed, expanded to 3D with hydrogens, and assigned force field 
 ```python
 import molpy as mp
 from molpy.core import fields
-from molrs import Element
+from molpy import Element
 from molpy.typifier import OplsTypifier
 
 ff = mp.io.read_xml_forcefield("oplsaa.xml")
@@ -378,7 +378,7 @@ for chain in atomistic_chains:
     packer.def_target(chain.to_frame(), number=1, constraint=constraint)
 
 packed = packer(max_steps=10000, seed=42)
-packed.simbox = mp.Box.cubic(length=box_length)
+packed.box = mp.Box.cubic(length=box_length)
 
 mp.io.write_lammps_system("05_output/lammps", packed, ff)
 print(f"packed: {packed['atoms'].nrows} atoms, box: {box_length:.1f} A")

@@ -6,6 +6,12 @@
 
 ### 破坏性变更
 
+- **`frame.simbox` 改名为 `frame.box`（与 molrs 配对）。** 单元格属性再次是
+  `frame.box`（`molrs.Box | None`）。没有 `simbox` 别名或垫片。C / CXX / WASM
+  入口同步改名。磁盘上的 MolStore 仍使用历史目录名 `simbox/`。
+- **存储类型重新出现在 molpy 顶层。** 支持 `from molpy import Frame, Block,
+  Element, MetaValue`（与 molrs 同对象的 identity re-export）。`molpy.core` 不导出
+  它们；用户代码不要直接 `import molrs`。
 - **移除 `molpy.reacter`。** 反应语义现在住在 `molpy.Reaction`（molrs SMIRKS 引擎的
   re-export）里，化学则住在 reaction SMARTS 本身。`Reacter`、`ReactionResult`、
   `TopologyDetector`、那 14 个 anchor/leaving selector、`BondReactReacter` 和

@@ -22,11 +22,10 @@ MolPy 提供两个工具来解决。`Block` 是一张列式表：列名映射到
 创建 Block 只需传一个字典，值用类数组对象即可。每个值自动转成 NumPy 数组。
 
 ```python
-import molrs
 import molpy as mp
 import numpy as np
 
-atoms = molrs.Block({
+atoms = mp.Block({
     "element": ["O", "H", "H"],
     "x": [0.000, 0.957, -0.239],
     "y": [0.000, 0.000, 0.927],
@@ -92,7 +91,7 @@ print(list(atoms_with_r.keys()))   # ['element', 'x', 'y', 'z']
 `Block.rename()` 就地改列名。I/O 格式化系统内部用它做字段名转换——把格式特定的名字换成规范名。
 
 ```python
-b = molrs.Block({"q": [0.1, -0.2], "x": [1.0, 2.0]})
+b = mp.Block({"q": [0.1, -0.2], "x": [1.0, 2.0]})
 b.rename("q", "charge")
 print(list(b.keys()))   # ['x', 'charge']
 ```
@@ -112,7 +111,7 @@ print(atoms["x"][0])    # 999.0 — 原始对象也被改变了！
 
 ```python
 # 为本页后续内容重建干净数据
-atoms = molrs.Block({
+atoms = mp.Block({
     "element": ["O", "H", "H"],
     "x": [0.000, 0.957, -0.239],
     "y": [0.000, 0.000, 0.927],
@@ -134,25 +133,25 @@ print(atoms["x"][0])    # 0.0 — 原始对象未改变
 一个分子系统往往不止一张表。原子坐标是一张表，键索引是另一张表，快照本身还有时间步、描述、来源等元数据。`Frame` 把所有这些塞到一个对象里。
 
 ```python
-frame = molrs.Frame({
-        "atoms": molrs.Block({
+frame = mp.Frame({
+        "atoms": mp.Block({
             "element": ["O", "H", "H"],
             "x": [0.000, 0.957, -0.239],
             "y": [0.000, 0.000, 0.927],
             "z": [0.000, 0.000, 0.000],
         }),
-        "bonds": molrs.Block({
+        "bonds": mp.Block({
             "atomi": [0, 0],
             "atomj": [1, 2],
         }),
 })
 frame.meta = {
-    "timestep": molrs.MetaValue("i64", 0),
-    "description": molrs.MetaValue("string", "water"),
+    "timestep": mp.MetaValue("i64", 0),
+    "description": mp.MetaValue("string", "water"),
 }
 ```
 
-每条元数据都必须显式构造为 `molrs.MetaValue`。`dtype` 是原生标量或定长向量类型，Python 值通过 `.value` 读取。
+每条元数据都必须显式构造为 `mp.MetaValue`。`dtype` 是原生标量或定长向量类型，Python 值通过 `.value` 读取。
 
 ```python
 print(frame.meta["timestep"].dtype)       # i64
@@ -170,7 +169,7 @@ print(atoms["x"])   # [0.000, 0.957, -0.239]
 
 ```python
 frame["tags"] = {"label": ["oxygen", "hydrogen", "hydrogen"]}
-print(type(frame["tags"]))   # <class 'molrs.Block'>
+print(type(frame["tags"]))   # <class 'mp.Block'>
 
 del frame["tags"]
 print("tags" in frame)       # False
@@ -179,18 +178,18 @@ print("tags" in frame)       # False
 
 ## Box 是一级属性
 
-周期性模拟盒直接挂在 `frame.simbox` 上，不塞进元数据里。这样 `Frame.copy()` 会带着盒子走，I/O 读写也不会丢。
+周期性模拟盒直接挂在 `frame.box` 上，不塞进元数据里。这样 `Frame.copy()` 会带着盒子走，I/O 读写也不会丢。
 
 ```python
-frame.simbox = mp.Box.cubic(20.0)
-print(frame.simbox.lengths)   # [20. 20. 20.]
+frame.box = mp.Box.cubic(20.0)
+print(frame.box.lengths)   # [20. 20. 20.]
 
 # copy() 保留盒子信息
 frame2 = frame.copy()
-print(frame2.simbox.lengths)   # [20. 20. 20.]
+print(frame2.box.lengths)   # [20. 20. 20.]
 ```
 
-没设盒子时（比如孤立分子），`frame.simbox` 是 `None`。
+没设盒子时（比如孤立分子），`frame.box` 是 `None`。
 
 
 ## 序列化通过字典往返
@@ -201,7 +200,7 @@ print(frame2.simbox.lengths)   # [20. 20. 20.]
 payload = frame.to_dict()
 print(sorted(payload.keys()))   # ['blocks', 'meta']
 
-restored = molrs.Frame.from_dict(payload)
+restored = mp.Frame.from_dict(payload)
 print(sorted(restored.to_dict()["blocks"].keys()))   # ['atoms', 'bonds']
 ```
 

@@ -4,7 +4,7 @@ These tests pin the direct dependency contract:
 
 1. The frame carries the rich molrs API (metadata dict, blocks, to_dict) and is
    accepted directly by every ``molrs.*`` API.
-2. ``frame.simbox`` returns the molrs box carrying the enriched accessors that were
+2. ``frame.box`` returns the molrs box carrying the enriched accessors that were
    sunk into molrs (``is_free`` / ``style`` / ``volume``).
 3. Object / None columns are rejected fail-fast (numpy-only Store contract).
 """
@@ -60,22 +60,23 @@ class TestRichFrameSurface:
 
 
 class TestBoxEnrichmentSunkIntoMolrs:
-    """``frame.simbox`` is the molrs box, now carrying is_free / style / volume."""
+    """``frame.box`` is the molrs box, now carrying is_free / style / volume."""
 
     def test_box_is_molrs_box_with_enriched_api(self):
         f = Frame()
-        f.simbox = molrs.Box.cube(10.0)
-        b = f.simbox
+        f.box = molrs.Box.cube(10.0)
+        b = f.box
         assert isinstance(b, molrs.Box)
         assert b.is_free is False
         assert b.style == "orthogonal"
         assert b.volume() == pytest.approx(1000.0, abs=1.0)
 
-    def test_removed_box_alias_is_absent(self):
+    def test_removed_simbox_alias_is_absent(self):
+        """``frame.simbox`` was the 0.7–0.8 name; the public cell attr is ``box``."""
         frame = Frame()
-        assert not hasattr(frame, "box")
+        assert not hasattr(frame, "simbox")
         with pytest.raises(AttributeError):
-            getattr(frame, "box")
+            getattr(frame, "simbox")
 
     def test_removed_untyped_metadata_alias_is_absent(self):
         frame = Frame()

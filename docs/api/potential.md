@@ -22,7 +22,6 @@ via `ff.to_potentials()`. There is no per-style `to_potential()` and no
 parameter-array lookup; the math runs in molrs.
 
 ```python
-import molrs
 import molpy as mp
 import numpy as np
 
@@ -35,13 +34,13 @@ bond_style = ff.def_bondstyle("harmonic")
 bond_style.def_type(ct, hc, k=340.0, r0=1.09)   # param name is "k", not "k0"
 
 # Build a typed frame (atoms block + bonds block carrying a "type" column).
-frame = molrs.Frame()
-atoms = molrs.Block()
+frame = mp.Frame()
+atoms = mp.Block()
 atoms.insert("x", np.array([0.0, 1.2]))
 atoms.insert("y", np.array([0.0, 0.0]))
 atoms.insert("z", np.array([0.0, 0.0]))
 frame["atoms"] = atoms
-bonds = molrs.Block()
+bonds = mp.Block()
 bonds.insert("atomi", np.array([0], dtype=np.uint32))
 bonds.insert("atomj", np.array([1], dtype=np.uint32))
 bonds.insert("type", np.array(["CT-HC"], dtype=str))

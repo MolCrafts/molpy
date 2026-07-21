@@ -39,7 +39,7 @@ Public APIs must have type hints. Private helpers should have them when the sign
 
 ## Imports
 
-Order: standard library, then third-party packages, then `molpy` imports. Separate groups with a blank line. Use absolute imports within `molpy` (`from molrs import Frame`, not relative imports).
+Order: standard library, then third-party packages, then `molpy` imports. Separate groups with a blank line. Use absolute imports within `molpy` (`from molpy import Frame`, not relative imports).
 
 
 ## Error handling

@@ -66,7 +66,7 @@ MolPy is a computational chemistry toolkit with explicit data flow and minimal m
 
 | Package | Purpose |
 |---------|---------|
-| `core` | Molpy-owned topology conveniences plus identity re-exports of molrs graph types. `Frame`/`Block`/`Element` are imported from molrs directly and are not exported by molpy (see below) |
+| `core` | Molpy-owned topology conveniences plus identity re-exports of molrs graph types. `Frame`/`Block`/`Element` are molrs-owned storage types, identity-re-exported on the molpy facade (users never import molrs) |
 | `io` | File I/O: readers/writers for PDB, GRO, LAMMPS DATA, XYZ, MOL2, AMBER (prmtop/inpcrd/prep/ac), GROMACS TOP, XSF, HDF5 formats |
 | `parser` | Grammar-based parsing: SMILES, SMARTS, BigSMILES, GBigSMILES, CGSmiles |
 | `builder` | System assembly: one `GraphAssembler` kernel + a `Selector` family (`PolymerBuilder`, crosslinking), AmberTools integration |
@@ -77,7 +77,7 @@ MolPy is a computational chemistry toolkit with explicit data flow and minimal m
 | `wrapper` | External tools: Antechamber, Prepgen, command-line wrappers |
 | `adapter` | Format bridges: RDKit, OpenBabel, and other external libraries |
 
-> **Hard runtime dependency**: `molcrafts-molrs==0.7.0` (Rust extension) is an exact required dependency declared in `pyproject.toml`. `Frame`, `Block`, and `Element` are owned and exported only by molrs; molpy has no `core/frame.py` or `core/element.py`, wrapper, alias, or compatibility import path. `ElementData` does not exist. Molpy does not run with missing or mismatched molrs package metadata.
+> **Hard runtime dependency**: `molcrafts-molrs==0.9.0` (Rust extension) is an exact required dependency declared in `pyproject.toml`. Every public molrs symbol is identity-re-exported on the molpy facade (`molpy.Frame is molrs.Frame`); users never import molrs. Molpy has no `core/frame.py` or `core/element.py` and no wrapper/`_inner` layer. `ElementData` does not exist. Molpy does not run with missing or mismatched molrs package metadata.
 
 ### Data Model Layer
 
@@ -95,13 +95,18 @@ The foundation is three class hierarchies:
    - Manages collections, provides selectors
    - Subclasses: `Atomistic`, `CoarseGrain`
 
-**Block**, **Frame**, and **Element** are molrs-owned core types. Import them
-directly with `from molrs import Block, Element, Frame`.
+**Block**, **Frame**, and **Element** are molrs-owned core types, identity-
+re-exported on the molpy facade. Import them from molpy:
 
-4. **Frame** (numerical container): Holds named Blocks + typed metadata + simbox
+```python
+import molpy as mp
+from molpy import Block, Element, Frame  # same objects as molrs.*
+```
+
+4. **Frame** (numerical container): Holds named Blocks + typed metadata + box
    - `frame["atoms"]`, `frame["bonds"]` → Block objects
-   - `frame.simbox` → `molrs.Box | None` (the only simulation-cell attribute)
-   - `frame.meta` → `dict[str, molrs.MetaValue]` with explicit dtype tags
+   - `frame.box` → `mp.Box | None` (the only simulation-cell attribute; molpy `Box` subclasses molrs)
+   - `frame.meta` → `dict[str, mp.MetaValue]` with explicit dtype tags
    - `Block.rename(old, new)` for in-place column key rename
 
 ### Typical Workflow
@@ -269,21 +274,21 @@ def test_adapter_fallback():
 - `Atomistic`: Struct subclass managing atoms, bonds, angles, dihedrals
 - All use identity-based hashing
 
-### `molrs.Frame` and `molrs.Block`
+### `Frame` and `Block` (molrs-backed, molpy facade)
 
-- **Owned and exported only by molrs**: import `Frame` and `Block` directly from `molrs`. Molpy deliberately has no `core.frame` module and does not re-export either type from `molpy` or `molpy.core`. There is no molpy subclass, alias, `.to_molrs()` / `_inner` / `_source` bridge, or compatibility import path. `molcrafts-molrs` is a hard runtime dependency.
+- **Owned by molrs, re-exported on molpy**: `molpy.Frame is molrs.Frame` (identity). Import from `molpy` / `import molpy as mp` — never from `molrs` in user code. Molpy has no `core.frame` module and no subclass, alias, `.to_molrs()` / `_inner` / `_source` bridge. `molcrafts-molrs` is a hard runtime dependency.
 - `Block`: **numpy-only** typed columns (float / int / bool / str) in the Rust Store, exposed as zero-copy numpy views. There is **no Python-side object-column overflow** — a non-representable column (object / None / ragged) is rejected fail-fast at write (`molrs.BlockDtypeError` / `TypeError`).
-- `Frame`: container of named Blocks + exact-dtype `meta` + `simbox`. Built from a molrs world via the world's native `to_frame()`; `Frame.from_dict` accepts exactly `{"blocks": ..., "meta": ...}`.
+- `Frame`: container of named Blocks + exact-dtype `meta` + `box`. Built from a molrs world via the world's native `to_frame()`; `Frame.from_dict` accepts exactly `{"blocks": ..., "meta": ...}`.
 - `Trajectory`: Sequence of Frames
 
-### `molrs.Element`
+### `Element` (molrs-backed, molpy facade)
 
-- **One public owner**: import `Element` directly from `molrs`; molpy has no
-  `Element` re-export or `core.element` module.
+- **One public owner, molpy facade**: `molpy.Element is molrs.Element` (identity re-export).
+  Import from `molpy`. There is no `molpy.core.element` module and no second class.
 - Valid identifiers resolve elements 1 through 118. `0`, `"X"`, unknown names,
   and out-of-range atomic numbers raise `KeyError`; there is no unknown-element
   sentinel or radius fallback.
-- **The simulation cell is only on `frame.simbox`**. `frame.box` and untyped `frame.metadata` do not exist.
+- **The simulation cell is only on `frame.box`** (Python name; Rust field is `simbox`). Untyped `frame.metadata` does not exist — use `frame.meta`.
 
 ### `io.forcefield` hierarchy
 
@@ -332,7 +337,7 @@ From `docs/developer/coding-style.md`:
 3. **External tools**: Mark tests with `@pytest.mark.external` if they need LAMMPS, Packmol, or AmberTools.
 4. **Formatter registration**: Custom styles need `_param_formatters` registered on the format's `ForceFieldFormatter` subclass. Custom data fields need `_field_formatters` on the `FieldFormatter` subclass.
 5. **Identity vs equality**: `Entity` and `Link` use identity-based hashing (`id(self)`), not value-based.
-6. **The only Frame cell field is `frame.simbox`**: `frame.box` is deleted, with no alias or fallback.
+6. **The only Frame cell field is `frame.box`**: no `simbox` alias on the Python surface; Rust may still call the field `simbox` internally.
 7. **Canonical field names**: Internal code uses `charge` (not `q`), `mol_id` (not `mol`). Readers/writers translate at the boundary via `FieldFormatter.canonicalize()`/`localize()`.
 
 ## Debugging Tips

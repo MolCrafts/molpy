@@ -38,6 +38,17 @@ requires. Tagged releases and installable artifacts live on
 
 ### BREAKING
 
+- **`frame.simbox` is renamed to `frame.box` (paired with molrs).** The cell
+  attribute is once again `frame.box` (`molrs.Box | None`). There is no
+  `simbox` alias or shim — assign and read `frame.box` only. C / CXX / WASM
+  entry points follow the same rename (`molrs_frame_set_box`, `frame_set_box`,
+  …). On-disk MolStore layout still uses the historical `simbox/` group name.
+- **Public storage types live on the molpy facade again.**
+  `from molpy import Frame, Block, Element, MetaValue` is the supported path;
+  they are identity re-exports of the molrs types (`molpy.Frame is molrs.Frame`).
+  `molpy.core` does **not** re-export them, and there is still no
+  `molpy.core.frame` / `molpy.core.element` module. User code must not import
+  molrs directly.
 - **Amber polymer construction now uses MolPy chemistry directly.**
   `AmberPolymerBuilder(library, reaction, ...)` and
   `AmberTools.build_polymer(..., reaction=...)` require a `molpy.Reaction` over

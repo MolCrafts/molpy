@@ -4,7 +4,7 @@
 **Status:** locked
 **Scope:** finish sinking molecular-graph engine to molrs; molpy keeps ergonomic constructors only.
 
-Companion to the migration plan discussed in session. Aligns with architecture iron laws 2 (system policy stays in molpy), 3 (experimental: no compat shims), 6 (users never import molrs).
+Companion to the migration plan discussed in session. Aligns with architecture iron laws 2 (system policy stays in molpy), 3 (experimental: no compat shims), 6 (users never import molpy as mp).
 
 ## Locked decisions
 

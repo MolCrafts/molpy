@@ -122,12 +122,12 @@ class JACF(Compute):
             a_mask = elems == self.anion_type
             j = np.sum(vel[c_mask], axis=0) - np.sum(vel[a_mask], axis=0)  # (3,)
             current_list.append(j)
-            if frame.simbox is None or frame.simbox.is_free:
+            if frame.box is None or frame.box.is_free:
                 raise ValueError(
                     "Frame must carry a non-free Box (volume is required for the "
                     "Green-Kubo conductivity prefactor)."
                 )
-            volumes.append(float(frame.simbox.volume()))
+            volumes.append(float(frame.box.volume()))
 
         current = np.asarray(current_list, dtype=np.float64)  # (F, 3)
         if current.shape[0] < 2:

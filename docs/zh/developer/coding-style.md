@@ -39,7 +39,7 @@ def add_hydrogens(mol):
 
 ## 导入
 
-导入顺序：标准库、第三方包、`molpy`，各组用空行隔开。`molpy` 内部用绝对导入（`from molrs import Frame`，不用相对导入）。
+导入顺序：标准库、第三方包、`molpy`，各组用空行隔开。`molpy` 内部用绝对导入（`from molpy import Frame`，不用相对导入）。
 
 
 ## 错误处理

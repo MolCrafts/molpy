@@ -16,7 +16,6 @@ Every selector implements the same protocol: call it on a block to get a filtere
 The simplest selectors filter by a single column value. `ElementSelector` matches element symbols, `AtomTypeSelector` matches type identifiers.
 
 ```python
-import molrs
 import molpy as mp
 from molpy.core.selector import (
     ElementSelector, AtomTypeSelector,
@@ -24,7 +23,7 @@ from molpy.core.selector import (
 )
 import numpy as np
 
-atoms = molrs.Block({
+atoms = mp.Block({
     "element": ["C", "C", "H", "H", "O", "N"],
     "type":    [1, 1, 2, 2, 3, 4],
     "x": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0],

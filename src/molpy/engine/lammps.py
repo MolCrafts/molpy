@@ -194,7 +194,7 @@ class LAMMPSEngine(Engine):
             relaxed = eng.minimize(pack_result.frame, ff)
 
         Args:
-            frame: Input structure; must carry a periodic box (``frame.simbox``).
+            frame: Input structure; must carry a periodic box (``frame.box``).
             ff: Typified force field providing pair/bond/angle/... coefficients.
             etol: Energy stopping tolerance (unitless).
             ftol: Force stopping tolerance (force units).
@@ -258,7 +258,7 @@ class LAMMPSEngine(Engine):
         ``nve``.
 
         Args:
-            frame: Input structure; must carry a periodic box (``frame.simbox``).
+            frame: Input structure; must carry a periodic box (``frame.box``).
             ff: Typified force field.
             ensemble: One of ``"nve"``, ``"nve/limit"``, ``"nvt"``.
             steps: Number of MD steps.
@@ -337,10 +337,10 @@ class LAMMPSEngine(Engine):
         from molpy.io.data.lammps import LammpsDataReader, LammpsDataWriter
         from molpy.io.writers import write_lammps_forcefield
 
-        if frame.simbox is None:
+        if frame.box is None:
             raise ValueError(
                 "LAMMPS relaxation needs a periodic box on the frame. Set it via "
-                "molpack's `with_periodic_box(...)` or assign `frame.simbox`. "
+                "molpack's `with_periodic_box(...)` or assign `frame.box`. "
                 "Box-free / shrink-wrap relaxation is not supported yet."
             )
 
@@ -469,5 +469,5 @@ def _splice_coords(original: Frame, relaxed: Frame) -> Frame:
 
     atoms["x"], atoms["y"], atoms["z"] = rx[sel], ry[sel], rz[sel]
     new = molrs.Frame.from_dict(data)
-    new.simbox = original.simbox
+    new.box = original.box
     return new

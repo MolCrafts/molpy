@@ -41,9 +41,9 @@ subclassing hook. See [Extending the Data Model](extending-core.md).
 
 ## The tabular layer: Block and Frame run on molrs
 
-`Frame` and `Block` belong exclusively to the [molrs](https://github.com/MolCrafts/molrs) Rust column store. Import them directly with `from molrs import Frame, Block`; molpy has no aliases or compatibility module for them. Columns are typed (float / int / bool / str) and exposed as zero-copy NumPy views; a non-representable column is rejected fail-fast at write. `molcrafts-molrs` is a hard runtime dependency: there is no pure-Python fallback.
+`Frame` and `Block` belong exclusively to the [molrs](https://github.com/MolCrafts/molrs) Rust column store. Import them from molpy (`from molpy import Frame, Block`); they are identity re-exports or compatibility module for them. Columns are typed (float / int / bool / str) and exposed as zero-copy NumPy views; a non-representable column is rejected fail-fast at write. `molcrafts-molrs` is a hard runtime dependency: there is no pure-Python fallback.
 
-The graph → arrays conversion is explicit: `Atomistic.to_frame()` delegates to the molrs world's native `to_frame()`. The box is a first-class attribute (`frame.simbox`), never metadata. The [molrs Backend](molrs-backend.md) page covers how neighbor lists, RDF, and the analysis catalog surface from Rust.
+The graph → arrays conversion is explicit: `Atomistic.to_frame()` delegates to the molrs world's native `to_frame()`. The box is a first-class attribute (`frame.box`), never metadata. The [molrs Backend](molrs-backend.md) page covers how neighbor lists, RDF, and the analysis catalog surface from Rust.
 
 ## Force field: parameters apart, kernels in Rust
 

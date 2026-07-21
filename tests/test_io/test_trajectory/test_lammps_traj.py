@@ -26,7 +26,7 @@ class TestWriteLammpsTrajectory:
             }
             frame["atoms"] = atoms_data
             frame.meta = {"timestep": MetaValue("i64", i * 100)}
-            frame.simbox = mp.Box(np.eye(3) * 10.0)
+            frame.box = mp.Box(np.eye(3) * 10.0)
             frames.append(frame)
 
         # Write trajectory
@@ -65,7 +65,7 @@ class TestWriteLammpsTrajectory:
         }
         frame["atoms"] = atoms_data
         frame.meta = {"timestep": MetaValue("i64", 0)}
-        frame.simbox = mp.Box(np.eye(3) * 5.0)
+        frame.box = mp.Box(np.eye(3) * 5.0)
 
         tmp_file = tmp_path / "test.dump"
         with LammpsTrajectoryWriter(str(tmp_file)) as writer:
@@ -88,7 +88,7 @@ class TestWriteLammpsTrajectory:
         }
         frame["atoms"] = atoms_data
         frame.meta = {"timestep": MetaValue("i64", 1000)}
-        frame.simbox = mp.Box(np.diag([5.0, 5.0, 5.0]))
+        frame.box = mp.Box(np.diag([5.0, 5.0, 5.0]))
 
         tmp_file = tmp_path / "test.dump"
         # Write
@@ -109,8 +109,8 @@ class TestWriteLammpsTrajectory:
         assert atoms.nrows == 4
 
         # Verify box
-        assert frame_read.simbox is not None
-        assert np.allclose(frame_read.simbox.matrix.diagonal(), [5.0, 5.0, 5.0])
+        assert frame_read.box is not None
+        assert np.allclose(frame_read.box.matrix.diagonal(), [5.0, 5.0, 5.0])
 
 
 class TestTrajectoryIntegration:
@@ -129,7 +129,7 @@ class TestTrajectoryIntegration:
         }
         frame["atoms"] = atoms_data
         frame.meta = {"timestep": MetaValue("i64", 0)}
-        frame.simbox = mp.Box(np.diag([10.0, 10.0, 10.0]))
+        frame.box = mp.Box(np.diag([10.0, 10.0, 10.0]))
 
         # Write as trajectory
         tmp_file = tmp_path / "test.dump"
@@ -143,7 +143,7 @@ class TestTrajectoryIntegration:
 
         assert frame_read.meta["timestep"].value == 0
         assert "atoms" in frame_read
-        assert frame_read.simbox is not None
+        assert frame_read.box is not None
 
     def test_multiple_formats_consistency(self, tmp_path):
         """Test that data and trajectory formats are consistent."""
@@ -160,7 +160,7 @@ class TestTrajectoryIntegration:
         }
         frame_original["atoms"] = atoms_data
         frame_original.meta = {"timestep": MetaValue("i64", 100)}
-        frame_original.simbox = mp.Box(np.eye(3) * 5.0)
+        frame_original.box = mp.Box(np.eye(3) * 5.0)
 
         # Write as trajectory and read back
         tmp_file = tmp_path / "test.dump"
@@ -174,11 +174,11 @@ class TestTrajectoryIntegration:
         # Both should have same basic structure
         assert frame_traj.meta["timestep"].value == 100
         assert "atoms" in frame_traj
-        assert frame_traj.simbox is not None
-        assert frame_original.simbox is not None
+        assert frame_traj.box is not None
+        assert frame_original.box is not None
 
         # Box dimensions should be similar
         assert np.allclose(
-            frame_traj.simbox.matrix.diagonal(),
-            frame_original.simbox.matrix.diagonal(),
+            frame_traj.box.matrix.diagonal(),
+            frame_original.box.matrix.diagonal(),
         )

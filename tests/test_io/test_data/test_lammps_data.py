@@ -66,8 +66,8 @@ class TestLammpsDataReader:
         assert len(z) == 12
 
         # Check box dimensions (0-20 in each direction)
-        assert frame.simbox is not None
-        box_lengths = frame.simbox.lengths
+        assert frame.box is not None
+        box_lengths = frame.box.lengths
         np.testing.assert_array_almost_equal(box_lengths, [20.0, 20.0, 20.0])
 
         # Check that molecule IDs are in the data (should be 0-3 based on file)
@@ -98,7 +98,7 @@ class TestLammpsDataReader:
         np.testing.assert_array_almost_equal([x, y, z], [5.0, 5.0, 5.0])
 
         # Check box (should be 10x10x10)
-        box_lengths = frame.simbox.lengths
+        box_lengths = frame.box.lengths
         np.testing.assert_array_almost_equal(box_lengths, [10.0, 10.0, 10.0])
 
     def test_triclinic_file(self, test_files):
@@ -108,9 +108,9 @@ class TestLammpsDataReader:
         reader = LammpsDataReader(test_files["triclinic_1"], atom_style="atomic")
         frame = reader.read().frame
 
-        assert frame.simbox is not None
-        np.testing.assert_array_almost_equal(frame.simbox.lengths, [34.0, 34.0, 34.0])
-        np.testing.assert_array_almost_equal(frame.simbox.tilts, [0.0, 0.0, 0.0])
+        assert frame.box is not None
+        np.testing.assert_array_almost_equal(frame.box.lengths, [34.0, 34.0, 34.0])
+        np.testing.assert_array_almost_equal(frame.box.tilts, [0.0, 0.0, 0.0])
 
         if "atoms" in frame:
             assert frame["atoms"].nrows == 0
@@ -122,13 +122,13 @@ class TestLammpsDataReader:
         reader = LammpsDataReader(test_files["triclinic_2"], atom_style="atomic")
         frame = reader.read().frame
 
-        assert frame.simbox is not None
-        assert frame.simbox.style == "triclinic"
-        np.testing.assert_array_almost_equal(frame.simbox.tilts, [5.0, -8.0, 3.0])
+        assert frame.box is not None
+        assert frame.box.style == "triclinic"
+        np.testing.assert_array_almost_equal(frame.box.tilts, [5.0, -8.0, 3.0])
         # Edge-vector norms reflect the tilt: |a|=lx, |b|=sqrt(xy^2+ly^2),
         # |c|=sqrt(xz^2+yz^2+lz^2).
         np.testing.assert_array_almost_equal(
-            frame.simbox.lengths,
+            frame.box.lengths,
             [34.0, np.sqrt(5.0**2 + 34.0**2), np.sqrt(8.0**2 + 3.0**2 + 34.0**2)],
         )
 
@@ -140,13 +140,13 @@ class TestLammpsDataReader:
         result = reader.read()
         frame = result.frame
 
-        assert frame.simbox is not None
+        assert frame.box is not None
         np.testing.assert_array_almost_equal(
-            frame.simbox.lengths,
+            frame.box.lengths,
             [33.920998 - (-0.103), 33.957998 - (-0.066), 162.150494 - (-0.885501)],
         )
         np.testing.assert_array_almost_equal(
-            frame.simbox.origin, [-0.103, -0.066, -0.885501]
+            frame.box.origin, [-0.103, -0.066, -0.885501]
         )
 
         assert frame["atoms"].nrows == 7772
@@ -167,9 +167,9 @@ class TestLammpsDataReader:
         result = reader.read()
         frame = result.frame
 
-        assert frame.simbox is not None
+        assert frame.box is not None
         np.testing.assert_array_almost_equal(
-            frame.simbox.lengths,
+            frame.box.lengths,
             [
                 15.532224567 - (-15.532224567),
                 15.532224567 - (-15.532224567),
@@ -294,10 +294,10 @@ class TestLammpsDataWriter:
         np.testing.assert_array_almost_equal(orig_atoms["z"], new_atoms["z"])
 
         # Compare box - skip for now as box handling may need more work
-        # assert original_frame.simbox is not None
-        # assert new_frame.simbox is not None
+        # assert original_frame.box is not None
+        # assert new_frame.box is not None
         # np.testing.assert_array_almost_equal(
-        #     original_frame.simbox.lengths, new_frame.simbox.lengths
+        #     original_frame.box.lengths, new_frame.box.lengths
         # )
 
     def test_read_from_frame_preserves_topology(self, tmp_path):
@@ -341,7 +341,7 @@ class TestLammpsDataWriter:
         }
 
         frame["atoms"] = molrs.Block(atoms_data)
-        frame.simbox = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # Write to temporary file
         tmp_file = tmp_path / "test.data"
@@ -374,7 +374,7 @@ class TestLammpsDataWriter:
         }
 
         frame["atoms"] = molrs.Block(atoms_data)
-        frame.simbox = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # Add bonds
         bonds_data = {
@@ -414,7 +414,7 @@ class TestLammpsDataWriter:
             "mass": np.array([12.0, 16.0]),
         }
         frame["atoms"] = molrs.Block(atoms_data)
-        frame.simbox = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # ForceField is an explicit writer input, never Frame metadata.
         forcefield = mp.ForceField()
@@ -495,8 +495,8 @@ class TestErrorHandling:
         reader = LammpsDataReader(tmp_file, atom_style="atomic")
         frame = reader.read().frame
 
-        assert frame.simbox is not None
-        np.testing.assert_array_almost_equal(frame.simbox.lengths, [25.0, 30.0, 35.0])
+        assert frame.box is not None
+        np.testing.assert_array_almost_equal(frame.box.lengths, [25.0, 30.0, 35.0])
 
     def test_malformed_header(self, tmp_path):
         """Test reading file with malformed header."""
@@ -562,7 +562,7 @@ class TestForceFieldIntegration:
             "mass": np.array([12.0]),
         }
         frame["atoms"] = molrs.Block(atoms_data)
-        frame.simbox = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # ForceField is an explicit writer input, never Frame metadata.
         forcefield = mp.ForceField()
@@ -595,7 +595,7 @@ class TestExplicitTypeLabels:
             "mass": np.array([12.0, 1.0, 16.0]),
         }
         frame["atoms"] = molrs.Block(atoms_data)
-        frame.simbox = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         tmp_file = tmp_path / "test.data"
         writer = LammpsDataWriter(tmp_file, atom_style="atomic")
@@ -624,7 +624,7 @@ class TestExplicitTypeLabels:
             "mass": np.array([12.0, 1.0]),
         }
         frame["atoms"] = molrs.Block(atoms_data)
-        frame.simbox = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         type_labels = {
             "atom_types": ["C", "H", "O", "N"],  # Includes types not in atoms
@@ -660,7 +660,7 @@ class TestExplicitTypeLabels:
             "mass": np.array([12.0, 1.0, 32.0]),
         }
         frame["atoms"] = molrs.Block(atoms_data)
-        frame.simbox = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         type_labels = {
             "atom_types": ["C", "H", "O", "N"],
@@ -706,7 +706,7 @@ class TestExplicitTypeLabels:
             "atomj": np.array([1, 2]),
         }
         frame["bonds"] = molrs.Block(bonds_data)
-        frame.simbox = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         type_labels = {
             "atom_types": ["C", "O"],
@@ -741,7 +741,7 @@ class TestExplicitTypeLabels:
             "mass": np.array([12.0, 1.0, 16.0]),
         }
         frame["atoms"] = molrs.Block(atoms_data)
-        frame.simbox = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box([10.0, 10.0, 10.0])
 
         type_labels = {
             "atom_types": ["H", "O", "C"],  # Different order

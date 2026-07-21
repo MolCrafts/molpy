@@ -10,7 +10,7 @@
 
 ```python
 from pathlib import Path
-from molrs import Frame, Block
+from molpy import Frame, Block
 from molpy.io.data.base import DataReader
 
 from molpy.core.fields import FieldFormatter, CHARGE
@@ -131,7 +131,7 @@ LammpsForceFieldFormatter.register_param_formatter(MorseBondStyle, _format_morse
 import mmap
 from molpy.io.trajectory.base import BaseTrajectoryReader
 from molpy.io.trajectory.index import FrameEntry
-from molrs import Frame
+from molpy import Frame
 
 class MyTrajectoryReader(BaseTrajectoryReader):
     _format_id = "myformat"
@@ -155,7 +155,7 @@ class MyTrajectoryReader(BaseTrajectoryReader):
 - [ ] 字段名与规范名不同时，定义 `FieldFormatter` 子类
 - [ ] 读取器返回前调用 `_formatter.canonicalize_frame(frame)`
 - [ ] 写入器入口处调用 `_formatter.localize_frame(frame)`（操作副本）
-- [ ] Box 存在 `frame.simbox`；精确类型元数据存在 `frame.meta`
+- [ ] Box 存在 `frame.box`；精确类型元数据存在 `frame.meta`
 - [ ] 在 `readers.py` / `writers.py` 中添加工厂函数
 - [ ] 新增自定义 Style 时，在 `ForceFieldFormatter` 子类上注册参数格式化器
 - [ ] 在 `tests/test_io/` 中编写往返测试（write → read → compare）

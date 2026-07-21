@@ -64,7 +64,7 @@ def _dimer_system(separation: float = 2.2) -> tuple[molrs.Frame, ForceField]:
             "meta": {},
         }
     )
-    frame.simbox = molrs.Box.cube(30.0)
+    frame.box = molrs.Box.cube(30.0)
     return frame, ff
 
 
@@ -79,7 +79,7 @@ def test_init_autodetects_executable() -> None:
 def test_minimize_requires_box() -> None:
     """A box-free frame is rejected before any subprocess is launched."""
     frame, ff = _dimer_system()
-    frame.simbox = None
+    frame.box = None
     with pytest.raises(ValueError, match="periodic box"):
         LAMMPSEngine(check_executable=False).minimize(frame, ff)
 
@@ -95,7 +95,7 @@ def test_minimize_restores_bond_length(tmp_path: Path) -> None:
 
     assert isinstance(relaxed, molrs.Frame)
     assert _bond_length(relaxed) == pytest.approx(_R0, abs=1e-3)
-    assert relaxed.simbox is not None  # box preserved
+    assert relaxed.box is not None  # box preserved
     assert _bond_length(frame) == pytest.approx(2.2)  # input not mutated
 
 

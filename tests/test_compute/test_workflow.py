@@ -104,7 +104,7 @@ def simple_frame():
     xyz = rng.uniform(0.0, 10.0, size=(10, 3))
     frame = molrs.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.simbox = molpy.Box.cubic(10.0)
+    frame.box = molpy.Box.cubic(10.0)
     return frame
 
 

@@ -112,7 +112,7 @@ def main() -> None:
         [frame["atoms"]["x"], frame["atoms"]["y"], frame["atoms"]["z"]]
     )
     length = float((xyz.max(0) - xyz.min(0)).max()) + 10.0
-    frame.simbox = mp.Box.cubic(length, origin=xyz.min(0) - 5.0)
+    frame.box = mp.Box.cubic(length, origin=xyz.min(0) - 5.0)
     paths = write_lammps_system(OUT, frame, result.forcefield)
     print(f"[5]   wrote {paths['data'].name} + {paths['ff'].name} -> {OUT}/")
 

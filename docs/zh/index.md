@@ -173,7 +173,7 @@ packed = Packmol()([target], seed=42)     # 一个无碰撞的 Frame
 每个文件一条命令：同时写出 LAMMPS data 文件和力场系数。GROMACS、PDB 和 Zarr 的写入接口也遵循同样的模式。
 
 ```python
-packed.simbox = mp.Box.cubic(30.0)
+packed.box = mp.Box.cubic(30.0)
 mp.io.write_lammps_data("system.data", packed, atom_style="full")
 mp.io.write_lammps_forcefield("system.ff", ff)
 ```

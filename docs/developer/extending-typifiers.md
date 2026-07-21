@@ -63,7 +63,7 @@ The eventual implementation should follow this shape:
 ```python
 from __future__ import annotations
 
-import molrs
+import molpy as mp
 
 
 class ClpTypifier:

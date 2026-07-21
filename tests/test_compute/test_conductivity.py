@@ -36,7 +36,7 @@ def make_ion_trajectory(n_frames=400, drift=0.01):
         block["charge"] = np.array([1.0, -1.0])
         frame = Frame()
         frame["atoms"] = block
-        frame.simbox = Box.cubic(30.0)
+        frame.box = Box.cubic(30.0)
         frames.append(frame)
     return ListTrajectory(frames)
 

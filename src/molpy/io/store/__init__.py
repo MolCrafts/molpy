@@ -229,7 +229,7 @@ class MolStore:
                     tg.write_array(key, data)
 
         # ── simbox ─────────────────────────────────────────────────────
-        box = frame.simbox
+        box = frame.box
         if box is not None:
             sb = fg.create_group("simbox")
             sb.write_array("h", np.asarray(box.matrix, dtype=np.float32))
@@ -273,7 +273,7 @@ class MolStore:
                 if "pbc" in sb.list_arrays()
                 else np.ones(3, dtype=bool)
             )
-            frame.simbox = Box(matrix=h, origin=origin, pbc=pbc.astype(bool))
+            frame.box = Box(matrix=h, origin=origin, pbc=pbc.astype(bool))
         return frame
 
     # ─────────────────────────────────────────────────────────────────
@@ -578,11 +578,11 @@ class MolStore:
             tg.write_array(key, stacked, chunks=(1, N))
 
         # ── box_h under trajectory/ ──────────────────────────────────
-        has_box = any(f.simbox is not None for f in frames)
+        has_box = any(f.box is not None for f in frames)
         if has_box:
             box_data = np.empty((T, 3, 3), dtype=np.float32)
             for t, f in enumerate(frames):
-                box = f.simbox
+                box = f.box
                 if box is not None:
                     box_data[t] = np.asarray(box)
                 else:
@@ -648,7 +648,7 @@ class MolStore:
         # ── box_h ────────────────────────────────────────────────────
         if "box_h" in traj_arrays:
             box_arr = tg.read_array("box_h")
-            frame.simbox = Box(matrix=box_arr[index])
+            frame.box = Box(matrix=box_arr[index])
 
         # ── scalar observables ───────────────────────────────────────
         for key in _TRAJ_SCALAR_KEYS:

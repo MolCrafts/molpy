@@ -15,14 +15,13 @@
 最简单的轨迹来自内存中的帧列表。支持随机访问、`len` 和切片。
 
 ```python
-import molrs
 import molpy as mp
 
 frames = []
 for i in range(5):
-    f = molrs.Frame()
-    f["atoms"] = molrs.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
-    f.meta = {"time": molrs.MetaValue("f64", i * 10.0)}
+    f = mp.Frame()
+    f["atoms"] = mp.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
+    f.meta = {"time": mp.MetaValue("f64", i * 10.0)}
     frames.append(f)
 
 traj = mp.Trajectory(frames)
@@ -38,9 +37,9 @@ print(traj[0]["atoms"]["x"]) # [0.]
 ```python
 def make_frames(n):
     for i in range(n):
-        f = molrs.Frame()
-        f["atoms"] = molrs.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
-        f.meta = {"time": molrs.MetaValue("f64", i * 0.5)}
+        f = mp.Frame()
+        f["atoms"] = mp.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
+        f.meta = {"time": mp.MetaValue("f64", i * 0.5)}
         yield f
 
 traj_from_iterable = mp.Trajectory(make_frames(1000))
@@ -74,9 +73,9 @@ print(last.meta["time"].value)   # 40.0
 
 ```python
 def shift_x(frame):
-    new = molrs.Frame()
+    new = mp.Frame()
     x = frame["atoms"]["x"]
-    new["atoms"] = molrs.Block({
+    new["atoms"] = mp.Block({
         "x": x + 10.0,
         "y": frame["atoms"]["y"],
         "z": frame["atoms"]["z"],

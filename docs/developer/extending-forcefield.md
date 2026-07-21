@@ -42,7 +42,6 @@ kernel automatically because it re-exports the molrs hierarchy.
 Once registered, the style name is usable directly with the generic helpers:
 
 ```python
-import molrs
 import molpy as mp
 
 ff = mp.ForceField(name="custom", units="real")
@@ -124,13 +123,13 @@ morse = ff.def_style(BondMorseStyle())
 morse.def_type(c, o, D=100.0, alpha=1.8, r0=1.43)
 
 # Two atoms exactly at r0 → Morse energy is 0.
-frame = molrs.Frame()
-atoms = molrs.Block()
+frame = mp.Frame()
+atoms = mp.Block()
 atoms.insert("x", np.array([0.0, 1.43]))
 atoms.insert("y", np.array([0.0, 0.0]))
 atoms.insert("z", np.array([0.0, 0.0]))
 frame["atoms"] = atoms
-bonds = molrs.Block()
+bonds = mp.Block()
 bonds.insert("atomi", np.array([0], dtype=np.uint32))
 bonds.insert("atomj", np.array([1], dtype=np.uint32))
 bonds.insert("type", np.array(["C-O"], dtype=str))

@@ -74,7 +74,7 @@ class TestXYZReader:
         assert frame["atoms"]["z"].shape == (192,), "z-coordinates should be 1D array"
 
         # Check box from Lattice
-        box = frame.simbox
+        box = frame.box
         assert isinstance(box, molrs.Box)
         assert box.matrix.shape == (3, 3)
         assert np.allclose(

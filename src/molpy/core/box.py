@@ -48,7 +48,7 @@ class Box(molrs.Box):
 
         Values are the canonical molrs style strings so a ``molpy.Box.Style``
         member compares equal to the string returned by ``molrs.Box.style``
-        (e.g. ``Box.Style.ORTHOGONAL == "orthogonal"``), letting ``frame.simbox``
+        (e.g. ``Box.Style.ORTHOGONAL == "orthogonal"``), letting ``frame.box``
         (a molrs box) interoperate with molpy style checks.
         """
 
@@ -258,7 +258,7 @@ class Box(molrs.Box):
     def from_box(cls, box: "Box") -> "Box":
         """Copy / upgrade constructor.
 
-        Accepts a molpy ``Box`` or a bare ``molrs.Box`` (e.g. ``frame.simbox``),
+        Accepts a molpy ``Box`` or a bare ``molrs.Box`` (e.g. ``frame.box``),
         reading only the public ``matrix`` / ``pbc`` / ``origin`` accessors so it
         works across both. A free source box reconstructs a free molpy box.
         """

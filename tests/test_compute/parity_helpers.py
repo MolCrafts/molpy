@@ -19,7 +19,7 @@ def random_periodic_frame(n=200, box_len=12.0, seed=0):
     xyz = rng.uniform(0.0, box_len, size=(n, 3))
     frame = molrs.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.simbox = mp.Box.cubic(box_len)
+    frame.box = mp.Box.cubic(box_len)
     return frame
 
 
