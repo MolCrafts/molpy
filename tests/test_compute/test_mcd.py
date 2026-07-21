@@ -32,7 +32,7 @@ def _linear_drift_trajectory(n_frames=13, box_len=10.0, velocity=1.0):
             "z": np.array([0.0]),
             "type": np.array([1]),
         }
-        frame.simbox = mp.Box.cubic(box_len)
+        frame.box = mp.Box.cubic(box_len)
         frames.append(frame)
     return Trajectory(frames)
 
@@ -74,7 +74,7 @@ def test_mcd_missing_type_field_raises():
         "y": np.array([0.0]),
         "z": np.array([0.0]),
     }
-    frame.simbox = mp.Box.cubic(10.0)
+    frame.box = mp.Box.cubic(10.0)
     traj = Trajectory([frame, frame])
     with pytest.raises(ValueError, match="type"):
         MCDCompute(tags=["1"], max_dt=2.0, dt=1.0)(traj)

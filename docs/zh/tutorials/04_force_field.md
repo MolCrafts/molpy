@@ -46,7 +46,6 @@ ForceField
 先创建 `ForceField`，定义原子类型。原子类型是基础——所有成键和非键相互作用都引用它们。
 
 ```python
-import molrs
 import molpy as mp
 
 ff = mp.AtomisticForcefield(name="tutorial", units="real")
@@ -124,14 +123,14 @@ print(f"CT-CT k={ct_ct['k']}")
 import numpy as np
 
 # 最小帧：两个原子相距 1.2 Å，由一个 CT-HC 键连接。
-frame = molrs.Frame()
-atoms = molrs.Block()
+frame = mp.Frame()
+atoms = mp.Block()
 atoms.insert("x", np.array([0.0, 1.2]))
 atoms.insert("y", np.array([0.0, 0.0]))
 atoms.insert("z", np.array([0.0, 0.0]))
 frame["atoms"] = atoms
 
-bonds = molrs.Block()
+bonds = mp.Block()
 bonds.insert("atomi", np.array([0], dtype=np.uint32))
 bonds.insert("atomj", np.array([1], dtype=np.uint32))
 bonds.insert("type", np.array(["CT-HC"], dtype=str))

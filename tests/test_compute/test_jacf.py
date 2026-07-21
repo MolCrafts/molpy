@@ -32,7 +32,7 @@ def _current_trajectory(n_frames=11, box_len=10.0, vcat=1.0):
             "vz": np.array([0.0, 0.0]),
             "type": np.array([1, 2]),
         }
-        frame.simbox = mp.Box.cubic(box_len)
+        frame.box = mp.Box.cubic(box_len)
         frames.append(frame)
     return Trajectory(frames)
 

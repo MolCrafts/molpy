@@ -47,7 +47,7 @@ box = mp.Box.cubic(10.0)
 assert isinstance(box, molrs.Box)   # it *is* a molrs box
 ```
 
-Likewise `frame.simbox` is accepted directly by Rust-side calls such as
+Likewise `frame.box` is accepted directly by Rust-side calls such as
 `molrs.NeighborQuery`. The enriched molpy methods (`Style`, `cubic`,
 `from_lengths_angles`, `diff_dr`, …) remain available on top of the inherited
 Rust core.
@@ -68,7 +68,7 @@ xyz = rng.uniform(0.0, 20.0, size=(500, 3))
 
 frame = molrs.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.simbox = mp.Box.cubic(20.0)
+frame.box = mp.Box.cubic(20.0)
 
 neighbors = NeighborList(cutoff=8.0)(frame)
 print(neighbors.n_pairs)          # number of pairs found

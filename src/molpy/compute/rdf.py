@@ -45,8 +45,8 @@ class RDF(Compute):
     def __call__(self, frames, neighbors) -> _MolrsRDFResult:
         frame_list = self._as_list(frames)
         for f in frame_list:
-            if f.simbox.is_free:
-                raise ValueError("frame.simbox is required for RDF computation")
+            if f.box.is_free:
+                raise ValueError("frame.box is required for RDF computation")
         # The canonical molrs.Frame passes directly through the PyO3 boundary.
         # with no conversion / column copy.
         return self._rdf.compute(frame_list, self._as_list(neighbors))

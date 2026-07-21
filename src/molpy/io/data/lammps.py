@@ -66,7 +66,7 @@ class LammpsDataReader(DataReader[LammpsDataResult]):
 
         # Parse header and set up box
         header_info = self._parse_header(sections.get("header", []))
-        frame.simbox = self._create_box(
+        frame.box = self._create_box(
             header_info["box_bounds"], header_info.get("tilts")
         )
 
@@ -888,8 +888,8 @@ class LammpsDataWriter(DataWriter):
 
     def _write_box_bounds(self, lines: list[str], frame: Frame) -> None:
         """Write box bounds."""
-        if frame.simbox is not None:
-            box = frame.simbox
+        if frame.box is not None:
+            box = frame.box
             lines.append(
                 f"{box.origin[0]:.6f} {box.origin[0] + box.lengths[0]:.6f} xlo xhi"
             )

@@ -123,10 +123,10 @@ def test_inpcrd_with_box(tmp_inpcrd_dir):
     reader = AmberInpcrdReader(inpcrd_file)
     frame = reader.read()
 
-    assert frame.simbox is not None
+    assert frame.box is not None
     # Box should use first 3 values as diagonal
     expected_box = np.diag([10.0, 20.0, 30.0])
-    np.testing.assert_array_almost_equal(frame.simbox.matrix, expected_box)
+    np.testing.assert_array_almost_equal(frame.box.matrix, expected_box)
 
 
 def test_inpcrd_with_velocities_and_box(tmp_inpcrd_dir):
@@ -150,7 +150,7 @@ def test_inpcrd_with_velocities_and_box(tmp_inpcrd_dir):
 
     assert frame["atoms"].nrows == 2
     assert "vel" in frame["atoms"]
-    assert frame.simbox is not None
+    assert frame.box is not None
     assert frame.meta["timestep"].value == 50
 
 

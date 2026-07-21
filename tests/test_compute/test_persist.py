@@ -30,7 +30,7 @@ def _pair_trajectory(j_positions, box_len=100.0):
             "z": np.array([0.0, 0.0]),
             "type": np.array([1, 2]),
         }
-        frame.simbox = mp.Box.cubic(box_len)
+        frame.box = mp.Box.cubic(box_len)
         frames.append(frame)
     return Trajectory(frames)
 

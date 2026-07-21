@@ -185,7 +185,7 @@ One call per file: LAMMPS data plus force-field coefficients. GROMACS, PDB,
 and Zarr (`MolStore`) writers share the same pattern.
 
 ```python
-packed.simbox = mp.Box.cubic(30.0)
+packed.box = mp.Box.cubic(30.0)
 mp.io.write_lammps_data("system.data", packed, atom_style="full")
 mp.io.write_lammps_forcefield("system.ff", ff)
 ```

@@ -47,7 +47,7 @@ class TestGROReaderComprehensive:
             "xyz": [[0.000, 0.000, 0.000], [0.100, 0.000, 0.000]],
         }
         frame["atoms"] = atoms_data
-        frame.simbox = mp.Box(np.eye(3) * 2.0)
+        frame.box = mp.Box(np.eye(3) * 2.0)
 
         tmp_file = tmp_path / "test.gro"
         writer = mp.io.data.GroWriter(str(tmp_file))
@@ -94,7 +94,7 @@ class TestGROReaderComprehensive:
         np.testing.assert_allclose(xyz, expected_xyz, rtol=1e-3)
 
         # Check box information
-        assert frame.simbox is not None
+        assert frame.box is not None
 
     def test_read_lysozyme_gro(self, TEST_DATA_DIR):
         """Test reading lysozyme.gro file."""
@@ -128,7 +128,7 @@ class TestGROReaderComprehensive:
         frame = mp.io.read_gro(fpath, frame=molrs.Frame())
 
         # Check that triclinic box is handled
-        assert frame.simbox is not None
+        assert frame.box is not None
         # Should have non-zero off-diagonal elements for triclinic
 
     def test_read_malformed_gro(self, TEST_DATA_DIR):
@@ -215,7 +215,7 @@ class TestGROWriter:
             ],
         }
         frame["atoms"] = atoms_data
-        frame.simbox = mp.Box(np.eye(3) * 2.0)
+        frame.box = mp.Box(np.eye(3) * 2.0)
 
         # Write to temporary file
         tmp_file = tmp_path / "test.gro"
@@ -278,7 +278,7 @@ class TestGROWriter:
         frame["atoms"] = atoms_data
 
         # Test orthogonal box
-        frame.simbox = mp.Box(np.diag([2.0, 3.0, 4.0]))
+        frame.box = mp.Box(np.diag([2.0, 3.0, 4.0]))
 
         tmp_file = tmp_path / "test.gro"
         writer = mp.io.data.GroWriter(str(tmp_file))
@@ -305,7 +305,7 @@ class TestGROEdgeCases:
 
         # Basic checks
         assert "atoms" in frame
-        assert frame.simbox is not None
+        assert frame.box is not None
 
         atoms = frame["atoms"]
         n_atoms = atoms.nrows
@@ -363,8 +363,8 @@ class TestGROEdgeCases:
         frame = mp.io.read_gro(fpath, frame=molrs.Frame())
 
         # Should have box
-        assert frame.simbox is not None
-        assert frame.simbox.matrix.shape == (3, 3)
+        assert frame.box is not None
+        assert frame.box.matrix.shape == (3, 3)
 
     def test_large_structures(self, TEST_DATA_DIR):
         """Test handling of large GRO structures."""

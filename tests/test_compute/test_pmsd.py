@@ -32,7 +32,7 @@ def _drift_trajectory(n_frames=13, box_len=10.0, velocity=1.0):
             "z": np.array([0.0, 0.0]),
             "type": np.array([1, 2]),
         }
-        frame.simbox = mp.Box.cubic(box_len)
+        frame.box = mp.Box.cubic(box_len)
         frames.append(frame)
     return Trajectory(frames)
 

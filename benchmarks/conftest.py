@@ -72,7 +72,7 @@ def random_frame(
     xyz = rng.uniform(0.0, box_len, size=(n, 3))
     frame = molrs.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.simbox = mp.Box.cubic(box_len)
+    frame.box = mp.Box.cubic(box_len)
     return frame
 
 
@@ -129,7 +129,7 @@ def _drift_trajectory(
             cols["vz"] = np.array([0.0, 0.0])
         frame = molrs.Frame()
         frame["atoms"] = cols
-        frame.simbox = mp.Box.cubic(box_len)
+        frame.box = mp.Box.cubic(box_len)
         frames.append(frame)
     return Trajectory(frames)
 
@@ -160,7 +160,7 @@ def pair_traj():
             "z": np.array([0.0, 0.0]),
             "type": np.array([1, 2]),
         }
-        frame.simbox = mp.Box.cubic(100.0)
+        frame.box = mp.Box.cubic(100.0)
         frames.append(frame)
     return Trajectory(frames)
 
@@ -176,7 +176,7 @@ def pos_traj() -> list["molrs.Frame"]:
         xyz = base + i * 0.2
         frame = molrs.Frame()
         frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-        frame.simbox = mp.Box.cubic(box_len)
+        frame.box = mp.Box.cubic(box_len)
         frames.append(frame)
     return frames
 
@@ -196,7 +196,7 @@ def charge_traj() -> list["molrs.Frame"]:
             "z": xyz[:, 2],
             "charge": np.ones(n) * 0.5,
         }
-        frame.simbox = mp.Box.cubic(box_len)
+        frame.box = mp.Box.cubic(box_len)
         frames.append(frame)
     return frames
 
@@ -213,7 +213,7 @@ def ion_traj() -> list["molrs.Frame"]:
             "z": np.array([0.0, 0.0]),
             "charge": np.array([1.0, -1.0]),
         }
-        frame.simbox = mp.Box.cubic(30.0)
+        frame.box = mp.Box.cubic(30.0)
         frames.append(frame)
     return frames
 

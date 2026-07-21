@@ -10,7 +10,7 @@ Subclass `DataReader` or `DataWriter` from `molpy.io.data.base`.
 
 ```python
 from pathlib import Path
-from molrs import Frame, Block
+from molpy import Frame, Block
 from molpy.io.data.base import DataReader
 
 from molpy.core.fields import FieldFormatter, CHARGE
@@ -131,7 +131,7 @@ Trajectory readers use memory-mapped files and a persistent frame index for effi
 import mmap
 from molpy.io.trajectory.base import BaseTrajectoryReader
 from molpy.io.trajectory.index import FrameEntry
-from molrs import Frame
+from molpy import Frame
 
 class MyTrajectoryReader(BaseTrajectoryReader):
     _format_id = "myformat"
@@ -155,7 +155,7 @@ The persistent index (`.tridx`) is built automatically on first read and cached 
 - [ ] Define `FieldFormatter` subclass if format uses non-canonical field names
 - [ ] Reader calls `_formatter.canonicalize_frame(frame)` before returning
 - [ ] Writer calls `_formatter.localize_frame(frame)` at entry (operates on copy)
-- [ ] Box stored on `frame.simbox`; exact-dtype metadata stored on `frame.meta`
+- [ ] Box stored on `frame.box`; exact-dtype metadata stored on `frame.meta`
 - [ ] Add factory function in `readers.py` / `writers.py`
 - [ ] Register param formatters on `ForceFieldFormatter` subclass if adding a custom Style
 - [ ] Write round-trip tests (`write → read → compare`) in `tests/test_io/`

@@ -22,7 +22,7 @@ def _uniform_frame(n: int, box_len: float, seed: int):
     xyz = rng.uniform(0.0, box_len, size=(n, 3))
     frame = molrs.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.simbox = molpy.Box.cubic(box_len)
+    frame.box = molpy.Box.cubic(box_len)
     return frame
 
 
@@ -77,12 +77,12 @@ def test_input_frame_immutable():
     frame = _uniform_frame(300, 15.0, seed=11)
     nlist = NeighborList(cutoff=4.0)(frame)
 
-    box_matrix_before = frame.simbox.matrix.copy()
+    box_matrix_before = frame.box.matrix.copy()
     x_before = frame["atoms"]["x"].copy()
 
     RDF(20, r_max=4.0)([frame], [nlist])
 
-    np.testing.assert_array_equal(frame.simbox.matrix, box_matrix_before)
+    np.testing.assert_array_equal(frame.box.matrix, box_matrix_before)
     np.testing.assert_array_equal(frame["atoms"]["x"], x_before)
 
 
@@ -92,7 +92,7 @@ def test_no_box_raises():
     rng = np.random.default_rng(0)
     xyz = rng.uniform(0.0, 10.0, size=(50, 3))
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    # frame.simbox left as None deliberately.
+    # frame.box left as None deliberately.
 
     with pytest.raises(ValueError, match="box"):
         NeighborList(cutoff=2.0)(frame)

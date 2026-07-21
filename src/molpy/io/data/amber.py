@@ -135,7 +135,7 @@ class AmberInpcrdReader(DataReader):
                 atoms_blk["vel"] = velocity_vals
             frame["atoms"] = atoms_blk
 
-        frame.simbox = box
+        frame.box = box
         meta = {"title": MetaValue("string", title)}
         if time is not None:
             meta["timestep"] = MetaValue("i64", int(time))

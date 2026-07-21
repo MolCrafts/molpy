@@ -49,7 +49,6 @@ The progression is always: define styles → fill in types → evaluate as poten
 Start by creating a `ForceField` and defining atom types. Atom types form the foundation — every bonded or nonbonded interaction references them.
 
 ```python
-import molrs
 import molpy as mp
 
 ff = mp.AtomisticForcefield(name="tutorial", units="real")
@@ -133,14 +132,14 @@ The numerical kernels run in the molrs Rust extension.
 import numpy as np
 
 # A minimal frame: two atoms 1.2 Å apart joined by one CT-HC bond.
-frame = molrs.Frame()
-atoms = molrs.Block()
+frame = mp.Frame()
+atoms = mp.Block()
 atoms.insert("x", np.array([0.0, 1.2]))
 atoms.insert("y", np.array([0.0, 0.0]))
 atoms.insert("z", np.array([0.0, 0.0]))
 frame["atoms"] = atoms
 
-bonds = molrs.Block()
+bonds = mp.Block()
 bonds.insert("atomi", np.array([0], dtype=np.uint32))
 bonds.insert("atomj", np.array([1], dtype=np.uint32))
 bonds.insert("type", np.array(["CT-HC"], dtype=str))

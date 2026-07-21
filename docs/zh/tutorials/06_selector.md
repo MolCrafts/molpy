@@ -15,7 +15,6 @@
 最简单的选择器按单列的值过滤。`ElementSelector` 匹配元素符号，`AtomTypeSelector` 匹配类型编号。
 
 ```python
-import molrs
 import molpy as mp
 from molpy.core.selector import (
     ElementSelector, AtomTypeSelector,
@@ -23,7 +22,7 @@ from molpy.core.selector import (
 )
 import numpy as np
 
-atoms = molrs.Block({
+atoms = mp.Block({
     "element": ["C", "C", "H", "H", "O", "N"],
     "type":    [1, 1, 2, 2, 3, 4],
     "x": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0],

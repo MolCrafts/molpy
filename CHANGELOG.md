@@ -14,6 +14,11 @@ This file records API renames and breaking changes at the repository root.
 
 ### Breaking
 
+- **`frame.simbox` → `frame.box`.** Paired with molrs; no alias. MolStore on-disk
+  group name remains `simbox/` for layout stability.
+- **`Frame` / `Block` / `Element` / `MetaValue` are top-level molpy exports again**
+  (identity re-exports of molrs). Do not import molrs; do not import them from
+  `molpy.core`.
 - **`AmberPolymerBuilder` now requires the same `molpy.Reaction` used by
   `PolymerBuilder`.** The Amber-only `port` convention, `reaction_preset`, and
   leaving-hydrogen guesses are removed. AmberTools compiles the standard

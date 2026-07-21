@@ -40,7 +40,7 @@ def _axis_frame(n_particles: int = 8, box_len: float = 10.0, seed: int = 0):
         xyz[2 * k + 1] = xyz[2 * k] + np.array([0.0, 0.0, 1.0])
     frame = molrs.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.simbox = mp.Box.cubic(box_len)
+    frame.box = mp.Box.cubic(box_len)
     heads = [2 * k + 1 for k in range(n_particles)]
     tails = [2 * k for k in range(n_particles)]
     attach_orientations(frame, heads=heads, tails=tails)
@@ -52,7 +52,7 @@ def _random_frame(n: int, box_len: float, seed: int):
     xyz = rng.uniform(0.0, box_len, size=(n, 3))
     frame = molrs.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.simbox = mp.Box.cubic(box_len)
+    frame.box = mp.Box.cubic(box_len)
     return frame
 
 

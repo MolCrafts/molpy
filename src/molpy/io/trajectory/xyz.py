@@ -24,7 +24,7 @@ class XYZTrajectoryWriter(TrajectoryWriter):
     def write_frame(self, frame: Frame):
         """Write a single frame to the XYZ file."""
         atoms = frame["atoms"]
-        box = frame.simbox
+        box = frame.box
         n_atoms = atoms.nrows
 
         self.fobj.write(f"{n_atoms}\n")

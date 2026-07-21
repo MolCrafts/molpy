@@ -20,7 +20,7 @@ def _make_random_frame(n: int = 200, box_len: float = 10.0, seed: int = 0):
     xyz = rng.uniform(0.0, box_len, size=(n, 3))
     frame = molrs.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.simbox = molpy.Box.cubic(box_len)
+    frame.box = molpy.Box.cubic(box_len)
     return frame, xyz
 
 
@@ -44,7 +44,7 @@ def test_parity_with_molrs_direct():
     frame, xyz = _make_random_frame(seed=42)
 
     via_molpy = NeighborList(cutoff=2.5)(frame)
-    via_molrs = molrs.NeighborQuery(frame.simbox, xyz, 2.5).query_self()
+    via_molrs = molrs.NeighborQuery(frame.box, xyz, 2.5).query_self()
 
     assert via_molpy.n_pairs == via_molrs.n_pairs
     np.testing.assert_array_equal(
@@ -54,19 +54,19 @@ def test_parity_with_molrs_direct():
 
 def test_input_frame_immutable():
     frame, xyz = _make_random_frame(seed=7)
-    box_matrix_before = frame.simbox.matrix.copy()
+    box_matrix_before = frame.box.matrix.copy()
     x_before = frame["atoms"]["x"].copy()
     y_before = frame["atoms"]["y"].copy()
     z_before = frame["atoms"]["z"].copy()
-    pbc_before = frame.simbox.pbc.copy()
+    pbc_before = frame.box.pbc.copy()
 
     NeighborList(cutoff=3.0)(frame)
 
-    np.testing.assert_array_equal(frame.simbox.matrix, box_matrix_before)
+    np.testing.assert_array_equal(frame.box.matrix, box_matrix_before)
     np.testing.assert_array_equal(frame["atoms"]["x"], x_before)
     np.testing.assert_array_equal(frame["atoms"]["y"], y_before)
     np.testing.assert_array_equal(frame["atoms"]["z"], z_before)
-    np.testing.assert_array_equal(frame.simbox.pbc, pbc_before)
+    np.testing.assert_array_equal(frame.box.pbc, pbc_before)
 
 
 def test_distances_within_cutoff():

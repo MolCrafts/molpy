@@ -162,7 +162,7 @@ import numpy as np
 from pathlib import Path
 
 frame = typed_mol.to_frame()
-frame.simbox = mp.Box.cubic(30.0)
+frame.box = mp.Box.cubic(30.0)
 
 # mol_id 不由类型化工具设置——为 LAMMPS full atom style 添加它
 atoms = frame["atoms"]

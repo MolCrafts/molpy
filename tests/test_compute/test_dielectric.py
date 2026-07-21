@@ -24,7 +24,7 @@ def make_test_trajectory(n_frames=10, n_atoms=5, with_charges=True, with_box=Tru
         frame = Frame()
         frame["atoms"] = block
         if with_box:
-            frame.simbox = Box.cubic(10.0)
+            frame.box = Box.cubic(10.0)
         frames.append(frame)
 
     class ListTrajectory:

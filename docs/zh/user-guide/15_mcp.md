@@ -17,7 +17,7 @@ MolCrafts MCP 套件把 MolPy 已安装的源码暴露为**结构化、图索引
 
 ## 为什么用代码图
 
-MolPy 不是扁平的函数列表。一个真实的工作流——比如构建聚合物、分配类型、再写入 LAMMPS 文件——需要遍历*关系*：`AmberPolymerBuilder` *包含* `build` 方法，该方法*调用* `tleap`，后者*生成*一个 `Frame`，其 `simbox` 属性被 `write_lammps_data` 读取。对 `"build"` 做 grep 给不了这些信息，扁平符号表也不行。
+MolPy 不是扁平的函数列表。一个真实的工作流——比如构建聚合物、分配类型、再写入 LAMMPS 文件——需要遍历*关系*：`AmberPolymerBuilder` *包含* `build` 方法，该方法*调用* `tleap`，后者*生成*一个 `Frame`，其 `box` 属性被 `write_lammps_data` 读取。对 `"build"` 做 grep 给不了这些信息，扁平符号表也不行。
 
 MCP 服务器把 MolPy 索引为**类型化的代码图**，让智能体能提出图状问题：
 
@@ -419,7 +419,7 @@ typifier = OplsTypifier(ff, skip_dihedral_typing=True, strict_typing=True)
 system = typifier.typify(system)
 
 frame = system.to_frame()
-frame.simbox = mp.Box.orth([1.28, 1.28, 1.28])
+frame.box = mp.Box.orth([1.28, 1.28, 1.28])
 frame["atoms"]["id"] = np.arange(1, frame["atoms"].nrows + 1, dtype=int)
 frame["atoms"]["mol_id"] = np.asarray(frame["atoms"]["mol_id"], dtype=int)
 frame["atoms"]["charge"] = np.asarray(frame["atoms"]["charge"], dtype=float)
@@ -656,7 +656,7 @@ molmcp_relations(
 )
 ```
 
-确认 `write_lammps_data` 最终读取了 `frame.simbox` 以及每个原子的 `charge`/`mol_id` 列——这就是生成的脚本在导出之前显式填充这些列的原因。
+确认 `write_lammps_data` 最终读取了 `frame.box` 以及每个原子的 `charge`/`mol_id` 列——这就是生成的脚本在导出之前显式填充这些列的原因。
 
 有了这些信息，Claude 就拥有了组装脚本所需的一切。
 

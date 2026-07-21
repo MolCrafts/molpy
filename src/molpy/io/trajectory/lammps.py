@@ -35,7 +35,7 @@ class LammpsTrajectoryWriter(TrajectoryWriter):
 
         # Write box bounds
         # The simulation box is a first-class Frame field.
-        box = frame.simbox
+        box = frame.box
         if box:
             matrix = box.matrix
             origin = box.origin

@@ -40,7 +40,7 @@ def _ion_trajectory(n=400, drift=0.01):
             "z": np.array([0.0, 0.0]),
             "charge": np.array([1.0, -1.0]),
         }
-        f.simbox = mp.Box.cubic(30.0)
+        f.box = mp.Box.cubic(30.0)
         frames.append(f)
     return Trajectory(frames)
 
@@ -59,7 +59,7 @@ def _current_trajectory(n=11, box_len=10.0, vcat=1.0):
             "vz": np.array([0.0, 0.0]),
             "type": np.array([1, 2]),
         }
-        f.simbox = mp.Box.cubic(box_len)
+        f.box = mp.Box.cubic(box_len)
         frames.append(f)
     return Trajectory(frames)
 

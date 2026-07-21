@@ -235,7 +235,7 @@ packer.def_target(li_frame, number=10, constraint=constraint)
 packer.def_target(tfsi_frame, number=10, constraint=constraint)
 
 system = packer(max_steps=20000, seed=12345)
-system.simbox = mp.Box.cubic(box_size)
+system.box = mp.Box.cubic(box_size)
 ```
 
 

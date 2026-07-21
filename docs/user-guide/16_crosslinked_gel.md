@@ -145,7 +145,7 @@ gel = ForceFieldParams(net_ff, strict=False).assign(
 frame = gel.to_frame()
 frame["atoms"]["id"] = np.arange(1, frame["atoms"].nrows + 1)
 xyz = frame["atoms"][["x", "y", "z"]]
-frame.simbox = mp.Box.cubic(float((xyz.max(0) - xyz.min(0)).max()) + 8.0, origin=xyz.min(0) - 4.0)
+frame.box = mp.Box.cubic(float((xyz.max(0) - xyz.min(0)).max()) + 8.0, origin=xyz.min(0) - 4.0)
 write_lammps_system("gel", frame, net_ff)            # gel/system.data + gel/system.ff
 ```
 
@@ -201,7 +201,7 @@ n_xlink = loops + (27 - len(sizes))                 # loops + chain-fusing bridg
 **What is the crosslink density?** Divide the crosslink count by the box volume for a number density, and by the chain count for a per-chain figure.
 
 ```python
-V = float(np.prod(frame.simbox.lengths))
+V = float(np.prod(frame.box.lengths))
 density = n_xlink / V                                # A^-3
 density_molar = density / 6.022e23 * 1e24            # mol/cm^3
 ```

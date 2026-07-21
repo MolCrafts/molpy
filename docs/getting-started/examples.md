@@ -23,7 +23,7 @@ typed = mp.typifier.OplsTypifier(ff).typify(mol)         # assign force-field ty
 
 frame = typed.to_frame()   # simulation-ready columnar arrays
 # mp.io.write_lammps_system("output/", frame, ff) writes system.data + system.ff
-# (set frame.simbox and a per-atom mol_id first — see the Quickstart).
+# (set frame.box and a per-atom mol_id first — see the Quickstart).
 ```
 
 See also: [Parsing Chemistry](../user-guide/01_parsing_chemistry.md) ·

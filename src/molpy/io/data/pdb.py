@@ -86,7 +86,7 @@ class PDBReader(DataReader):
     Minimal-yet-robust PDB reader.
 
     * ATOM / HETATM parsed per PDB v3.3 fixed columns
-    * CRYST1 -> frame.simbox
+    * CRYST1 -> frame.box
     * CONECT -> bond list
     """
 
@@ -467,7 +467,7 @@ class PDBWriter(DataWriter):
         - elements: space-separated string of element symbols (one per atom)
         - name: frame name (str)
 
-        The optional CRYST1 cell is read from ``frame.simbox``.
+        The optional CRYST1 cell is read from ``frame.box``.
 
         Raises:
             ValueError: If required fields (x, y, z) are missing or contain None
@@ -482,8 +482,8 @@ class PDBWriter(DataWriter):
             f.write(f"REMARK  {frame_name}\n")
 
             # Write CRYST1 record if box exists
-            if frame.simbox is not None:
-                f.write(self._format_cryst1_line(frame.simbox) + "\n")
+            if frame.box is not None:
+                f.write(self._format_cryst1_line(frame.box) + "\n")
             else:
                 f.write(self._format_cryst1_line(None) + "\n")
 

@@ -94,7 +94,7 @@ overriding one `select` hook (mirroring `DrudeBuilder`/`Tip4pBuilder` over `Virt
 ## 4. molpy crosslinker (consumes molrs)
 
 ```python
-import molrs
+import molpy as mp
 
 class Crosslinker(ABC):                                 # house-style, 仿 VirtualSiteBuilder
     def __init__(self, reaction: str, *, cutoff: float | None = None):

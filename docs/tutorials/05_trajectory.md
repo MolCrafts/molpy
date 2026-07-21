@@ -16,14 +16,13 @@ The key idea is continuity with `Frame`. Each element of a trajectory is still o
 The simplest trajectory comes from an in-memory list of frames. This supports random access, `len`, and slicing.
 
 ```python
-import molrs
 import molpy as mp
 
 frames = []
 for i in range(5):
-    f = molrs.Frame()
-    f["atoms"] = molrs.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
-    f.meta = {"time": molrs.MetaValue("f64", i * 10.0)}
+    f = mp.Frame()
+    f["atoms"] = mp.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
+    f.meta = {"time": mp.MetaValue("f64", i * 10.0)}
     frames.append(f)
 
 traj = mp.Trajectory(frames)
@@ -39,9 +38,9 @@ The constructor accepts any iterable, but materializes it immediately into the n
 ```python
 def make_frames(n):
     for i in range(n):
-        f = molrs.Frame()
-        f["atoms"] = molrs.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
-        f.meta = {"time": molrs.MetaValue("f64", i * 0.5)}
+        f = mp.Frame()
+        f["atoms"] = mp.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
+        f.meta = {"time": mp.MetaValue("f64", i * 0.5)}
         yield f
 
 traj_from_iterable = mp.Trajectory(make_frames(1000))
@@ -75,9 +74,9 @@ Slicing with a stride (`traj[::n]`) is a convenient way to downsample for quick 
 
 ```python
 def shift_x(frame):
-    new = molrs.Frame()
+    new = mp.Frame()
     x = frame["atoms"]["x"]
-    new["atoms"] = molrs.Block({
+    new["atoms"] = mp.Block({
         "x": x + 10.0,
         "y": frame["atoms"]["y"],
         "z": frame["atoms"]["z"],

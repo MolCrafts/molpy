@@ -34,15 +34,15 @@ class TestMolpyBoxInheritsFromMolrsBox:
 
 
 class TestFrameBoxPassesDirectlyToMolrs:
-    """frame.simbox must be accepted by molrs APIs without conversion."""
+    """frame.box must be accepted by molrs APIs without conversion."""
 
     def test_neighbor_query_accepts_frame_box_directly(self):
         frame = molrs.Frame()
-        frame.simbox = molpy.Box.cubic(10.0)
+        frame.box = molpy.Box.cubic(10.0)
         rng = np.random.default_rng(0)
         xyz = rng.uniform(0.0, 10.0, size=(50, 3))
-        # No adapter: pass molpy frame.simbox straight into molrs.
-        nq = molrs.NeighborQuery(frame.simbox, xyz, 2.0)
+        # No adapter: pass molpy frame.box straight into molrs.
+        nq = molrs.NeighborQuery(frame.box, xyz, 2.0)
         nlist = nq.query_self()
         assert nlist.n_pairs >= 0  # "no exception, returns nlist" check
 
