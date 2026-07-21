@@ -77,7 +77,7 @@ MolPy is a computational chemistry toolkit with explicit data flow and minimal m
 | `wrapper` | External tools: Antechamber, Prepgen, command-line wrappers |
 | `adapter` | Format bridges: RDKit, OpenBabel, and other external libraries |
 
-> **Hard runtime dependency**: `molcrafts-molrs==0.8.2` (Rust extension) is an exact required dependency declared in `pyproject.toml`. Every public molrs symbol is identity-re-exported on the molpy facade (`molpy.Frame is molrs.Frame`); users never import molrs. Molpy has no `core/frame.py` or `core/element.py` and no wrapper/`_inner` layer. `ElementData` does not exist. Molpy does not run with missing or mismatched molrs package metadata.
+> **Hard runtime dependency**: `molcrafts-molrs==0.9.0` (Rust extension) is an exact required dependency declared in `pyproject.toml`. Every public molrs symbol is identity-re-exported on the molpy facade (`molpy.Frame is molrs.Frame`); users never import molrs. Molpy has no `core/frame.py` or `core/element.py` and no wrapper/`_inner` layer. `ElementData` does not exist. Molpy does not run with missing or mismatched molrs package metadata.
 
 ### Data Model Layer
 
