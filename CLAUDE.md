@@ -133,6 +133,15 @@ For non-trivial work, prefer:
 <!-- Free-form additions below this line are preserved across re-runs.
      If a section grows past a screen, promote to .claude/notes/<topic>.md. -->
 
+<!-- mol:note:topic:release-molrs-first -->
+## Release with molrs (agent iron law)
+
+**molrs first, then molpy.** Never land molpy that needs molrs APIs not already
+on the **published** exact pin. A version that is allowed on `master` for
+co-release **must carry a tag** (`vX.Y.Z`); untagged tip + local maturin is
+not a release. **No scripts** for pin/API parity — agents **manually** check
+tag + index before pin bumps. Details: `.claude/notes/release.md`.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Quick Development Commands

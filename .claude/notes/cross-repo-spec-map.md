@@ -1,42 +1,16 @@
-# molpy ↔ molrs spec pairing
+# molpy ↔ molrs
 
-Updated: 2026-07-22 (close-out batch).
-
-## Version
-
-| | version |
-|--|--|
-| molpy | 0.9.0 |
-| molcrafts-molrs | ==0.9.0 |
+**Release order (2026-07-22):** molrs **first**, then molpy. Master landings
+for a version need a **tag**. No monorepo merge; no pin-parity scripts.
+See `.claude/notes/release.md`.
 
 ## Live specs
 
-| molrs | molpy | note |
-|-------|-------|------|
-| `chem-perceive-15-final-acceptance` (in-progress) | — | overall chain gate; gaff defect fixed separately |
-| `net-streaming` (approved, net deferred) | — | serde/stream shipped 0.7+; WebSocket deferred |
+| molrs | molpy |
+|-------|-------|
+| (see molrs `.claude/specs/INDEX.md`) | (see molpy `.claude/specs/INDEX.md`) |
 
-## Closed this batch (all ACs verified → deleted)
+## Version
 
-| Spec | Repo |
-|------|------|
-| graph-assembler-01-reach | molpy |
-| graph-assembler-02-kernel | molpy |
-| graph-assembler-03-purge | molpy |
-| graph-assembler-04-scope-from-molrs | molpy |
-| molrs-core-cutover | molpy |
-| pattern-syntax-01 | molrs |
-| gaff-electrostatics | molrs |
-| opls-typifier-downsink, mmff-native-01/02 | molpy (earlier) |
-
-## Delivered code
-
-- molrs: `SmartsPattern.max_bond_depth` / `ring_primitives` / `Atomistic.max_ring_system_size`
-- molpy: `TypeScope` + `SmartsTypifier` (`typifier/scope.py`, `typifier/smarts.py`)
-- molrs: GAFF `pair/coul/cut` + sander energy oracle tests
-- molpy: OPLS assembly oracle, MMFF improper region oracle, in-repo scaling check
-
-## Tests
-
-- molpy: `pytest tests/ -m "not external"` → **1796 passed**
-- molrs: `gaff_energy` + `pattern_syntax` green
+Exact pin in `pyproject.toml`: `molcrafts-molrs==X.Y.Z` must match a **published**
+molrs tag, not only a local rebuild with the same version string.
