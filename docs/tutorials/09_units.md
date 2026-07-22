@@ -12,8 +12,9 @@ force field authored in nanometres expects nm coordinates; an OPLS field in
 ångström expects Å. Mixing them silently produces wrong physics.
 
 **`UnitSystem` is the object that names a convention and converts between units.**
-It is a `pint.UnitRegistry` pre-loaded with MolPy/LAMMPS presets, so you get
-`pint` quantities and conversions with the right base units already registered.
+It is thin Python sugar over the molrs unit engine (`molrs.UnitRegistry` /
+`molrs.Unit` / `molrs.Quantity`): presets and LJ construction live on the molpy
+side; parsing, dimensional arithmetic, and conversion run in molrs.
 
 ## Using a preset
 
@@ -55,22 +56,26 @@ u = UnitSystem.preset("my_units")
 - `overwrite=False` refuses to clobber an existing preset (set `True` to replace).
 
 For coarse-grained work, `UnitSystem.lj(mass=..., sigma=..., epsilon=...)` builds
-a reduced (Lennard-Jones) unit system from your reference `pint` quantities.
+a reduced (Lennard-Jones) unit system from reference `molrs.Quantity` values
+(for example `39.948 * UnitSystem().amu`).
 
 ## Converting quantities
 
-Because a `UnitSystem` *is* a `pint` registry, you get the full `pint` API —
-attach units, convert, and check dimensionality:
+Quantities are `molrs.Quantity`. Multiply a number by a unit attribute, then
+`.to(...)` to convert; `.magnitude` reads the bare number:
 
 ```python
 u = UnitSystem.preset("metal")
 e = 2.5 * u.eV
 print(e.to("J"))                   # convert energy (per particle)
 print((5 * u.angstrom).to("nm"))   # convert length
-
-# eV is per particle; scale by Avogadro's number to reach a molar energy
-print((e * u.avogadro_constant).to("kJ/mol"))   # -> 241.2 kJ/mol
+print(e.magnitude)                 # 2.5
+print((1.0 * u.kilocalorie_per_mole).to("eV").magnitude)
 ```
+
+`UnitSystem` also exposes `parse`, `define`, `quantity`, and `convert` from the
+native registry when you need to register extra units or convert against the
+current LJ scales.
 
 ## Pitfalls
 
@@ -81,6 +86,8 @@ print((e * u.avogadro_constant).to("kJ/mol"))   # -> 241.2 kJ/mol
   nm coordinates.
 - `register_preset(..., overwrite=False)` raises if the name exists — pass
   `overwrite=True` deliberately.
+- **Not Pint.** There is no `pint` runtime dependency and no Pint-only context
+  API; unit math is the molrs engine.
 
 ## See also
 
