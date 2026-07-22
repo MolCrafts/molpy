@@ -146,7 +146,7 @@ class RegionTypes:
         reach`` means an interior atom's receptive field reaches *exactly* to the
         boundary atoms; a raw cut leaves those with unfilled valences, and a
         SMARTS matcher reads them as radicals. Measured on p-xylene at
-        ``reach = 2``, 12 of 19 raw slices cannot be typed at all.
+        reach equal to TERM_REACH (two bonds), 12 of 19 raw slices cannot be typed at all.
         """
         perceived = Atomistic.adopt(molrs.Perceive().find_hydrogens(region))
         before = [dict(atom.data) for atom in region.atoms]

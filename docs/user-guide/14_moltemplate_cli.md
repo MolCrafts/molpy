@@ -170,7 +170,7 @@ write_moltemplate(atomistic, ff, "water_regen.lt", class_name="Water")
 **Python hooks**: moltemplate's own `include "foo.py"` mechanism is not
 supported directly. Instead, use `molpy moltemplate convert foo.lt foo.py`
 and edit the emitted script — the output is plain MolPy so every MolPy
-Python API (builders, reacter, compute, wrapper) becomes available at the
+Python API (builders, assembly, compute, wrapper) becomes available at the
 same composition point you used to attach Python logic in moltemplate.
 
 Core editing primitives on `Atomistic` / `CoarseGrain` / `ForceField` (see `core.atomistic`, `core.cg`, `core.forcefield`) include:

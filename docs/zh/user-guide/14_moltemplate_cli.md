@@ -156,7 +156,7 @@ emit_python(parse_file("water.lt"), "water.py")
 write_moltemplate(atomistic, ff, "water_regen.lt", class_name="Water")
 ```
 
-**Python 钩子**：moltemplate 的 `include "foo.py"` 不直接对接 Python。改用 `molpy moltemplate convert foo.lt foo.py`，编辑生成的脚本即可。输出是纯粹的 MolPy，所有 MolPy Python API（builders、reacter、compute、wrapper）都可在原来挂接 Python 逻辑的地方继续使用。
+**Python 钩子**：moltemplate 的 `include "foo.py"` 不直接对接 Python。改用 `molpy moltemplate convert foo.lt foo.py`，编辑生成的脚本即可。输出是纯粹的 MolPy，所有 MolPy Python API（builders、assembly、compute、wrapper）都可在原来挂接 Python 逻辑的地方继续使用。
 
 `Atomistic` / `CoarseGrain` / `ForceField` 上的核心编辑原语（参见 `core.atomistic`、`core.cg`、`core.forcefield`）包括：
 

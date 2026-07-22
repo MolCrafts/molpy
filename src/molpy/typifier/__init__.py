@@ -17,12 +17,18 @@ from .ambertools import AmberToolsTypifier
 from .base import Match, Typifier
 from .clp import ClpTypifier
 from .forcefield import ForceFieldParams
+from .scope import TypeScope, UnboundedPatternSet
+from .smarts import LocalTypifier, SmartsTypifier
 
 __all__ = [
     # the contract
     "Typifier",
     "Match",
-    # typifiers, named after their force field or tool
+    "TypeScope",
+    "UnboundedPatternSet",
+    "LocalTypifier",
+    # typifiers, named after their force field or tool (plus SmartsTypifier base)
+    "SmartsTypifier",
     "ClpTypifier",
     "AmberToolsTypifier",
     "OPLSAATypifier",

@@ -198,17 +198,21 @@ class TestNamingAndSurface:
                 assert issubclass(getattr(typifier_pkg, name), molrs.Typifier)
 
     def test_every_exported_typifier_is_named_after_a_forcefield_or_a_tool(self):
+        # LocalTypifier / SmartsTypifier are scope-bearing bases, not force-field names.
+        bases = {"LocalTypifier", "SmartsTypifier"}
         exported = {
             name
             for name in typifier_pkg.__all__
             if name.endswith("Typifier") and name != "Typifier"
-        }
+        } - bases
         assert exported == {
             "ClpTypifier",
             "AmberToolsTypifier",
             "OPLSAATypifier",
             "MMFFTypifier",
         }
+        assert "SmartsTypifier" in typifier_pkg.__all__
+        assert "TypeScope" in typifier_pkg.__all__
 
     @pytest.mark.parametrize(
         "banned",
@@ -218,7 +222,6 @@ class TestNamingAndSurface:
             "AtomTypifier",
             "RegionTypifier",
             "ForceFieldTypifier",
-            "TypeScope",
             "PairTypifier",
         ],
     )
@@ -230,11 +233,16 @@ class TestNamingAndSurface:
         assert "ForceFieldParams" in typifier_pkg.__all__
 
     @pytest.mark.parametrize(
-        "dead", ["bond", "angle", "dihedral", "pair", "mmff", "atomistic", "scope"]
+        "dead", ["bond", "angle", "dihedral", "pair", "mmff", "atomistic"]
     )
     def test_the_dead_modules_are_gone(self, dead):
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module(f"molpy.typifier.{dead}")
+
+    def test_scope_module_is_alive(self):
+        import molpy.typifier.scope as scope_mod
+
+        assert scope_mod.TypeScope is typifier_pkg.TypeScope
 
     def test_no_symbol_is_defined_twice_in_the_package(self):
         seen: dict[str, str] = {}

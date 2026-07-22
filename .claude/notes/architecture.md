@@ -90,7 +90,7 @@ _Generated 2026-06-10 by /mol:map._
 
 ### molrs dependency
 
-- Hard runtime dependency pinned at `molcrafts-molrs>=0.0.18` in `pyproject.toml`.
+- Hard runtime dependency pinned at `molcrafts-molrs==0.9.0` in `pyproject.toml` (same version line as molrs).
 - `Frame`/`Block` are molrs-owned storage types, **identity-re-exported on the molpy facade** (`molpy.Frame is mp.Frame`). Users import from `molpy` only. Molpy defines no `core.frame` module, subclass, `_inner`, or conversion bridge. Object/None/ragged columns are rejected fail-fast at write time (`molpy.BlockDtypeError`).
 - `Atomistic`/`CoarseGrain` subclass `molrs.Atomistic`/`molrs.CoarseGrain` (native pyo3 base must be first in MRO) and ARE molrs worlds, accepted directly by `molrs.*` free functions (`molrs.translate`, `molrs.rotate`). `Atomistic.adopt(graph: molrs.Atomistic)` re-wraps a Rust graph.
 - `Entity`/`Link` are handle-views over molrs ECS nodes; scalar columns route to molrs component columns (`core/_handle.py`, `core/_columns.py`), bool/object overflow kept Python-side.
