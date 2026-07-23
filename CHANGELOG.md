@@ -5,6 +5,15 @@ This file records API renames and breaking changes at the repository root.
 
 ## Unreleased
 
+## 0.9.2 — 2026-07-23
+
+### Fixed
+
+- Docs build (Cloudflare Pages / Zensical) for Frame/Block re-exports; pin
+  `molcrafts-molrs==0.9.2`. Co-release with molrs 0.9.2 (`molrs._lib` private
+  extension rename; `module = "molrs"` on PyO3 classes).
+
+
 ### Added
 
 - **`CarbonTubeBuilder.build(n, m, ...)`** constructs zigzag, armchair, and

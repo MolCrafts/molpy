@@ -69,15 +69,18 @@ ct = style.def_type("CT", mass=12.011)
 
 ::: molpy.core.forcefield
 
-### Frame
+### Frame and Block
 
-::: mp.Frame
+Top-level exports — user code: `import molpy as mp` then `mp.Frame` / `mp.Block`.
+Autodoc uses the package name so mkdocstrings can resolve the re-exports:
 
-::: mp.Block
+::: molpy.Frame
+
+::: molpy.Block
 
 ### Trajectory
 
-::: molpy.core.trajectory
+::: molpy.Trajectory
 
 ### Coarse-Grain
 

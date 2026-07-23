@@ -203,7 +203,8 @@ link = "https://github.com/MolCrafts/molpy"
 default_handler = "python"
 
 [project.plugins.mkdocstrings.handlers.python]
-paths = ["src"]
+# Load molrs when resolving ``molpy.Frame → molrs.frame.Frame`` re-exports.
+load_external_modules = true
 
 [project.plugins.mkdocstrings.handlers.python.options]
 docstring_style = "google"
@@ -214,3 +215,5 @@ separate_signature = true
 heading_level = 3
 merge_init_into_class = true
 filters = ["!^_"]
+# Pre-load molrs so alias targets for Frame/Block resolve during collection.
+preload_modules = ["molrs"]

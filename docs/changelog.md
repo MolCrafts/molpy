@@ -5,7 +5,20 @@ and release as a pair — every entry lists the `molcrafts-molrs` version it
 requires. Tagged releases and installable artifacts live on
 [GitHub Releases](https://github.com/MolCrafts/molpy/releases).
 
+## 0.9.2 — 2026-07-23
+
+Requires `molcrafts-molrs==0.9.2`.
+
+### Fixed
+
+- **Cloudflare Pages / Zensical docs build.** Preload `molrs` for mkdocstrings
+  so `molpy.Frame` / `molpy.Block` re-export aliases resolve; document top-level
+  symbols as `molpy.Frame` while user code keeps `import molpy as mp`.
+- **Frame/Block import path** uses `molrs.frame` so static analysis can resolve
+  the pure-Python rich layer without a broken alias chain.
+
 ## Unreleased
+
 
 ### Added
 
