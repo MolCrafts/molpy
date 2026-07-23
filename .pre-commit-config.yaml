@@ -1,4 +1,13 @@
-# Mirrors default CI only. Install: pre-commit install -t pre-commit -t pre-push
+# CI / pre-commit parity. Every Python gate creates a *brand-new*
+# `python -m venv` via scripts/precommit-venv-run.sh (no reuse of the
+# developer env — same idea as a clean CI runner).
+#
+# Mirrors .github/workflows/ci.yml:
+#   lint: ruff format/check + ty  (pinned ruff==0.15.13, ty==0.0.37)
+#   test: pip install -e ".[dev]" + pytest -m "not external"
+#
+# Install: pre-commit install -t pre-commit -t pre-push
+
 default_install_hook_types: [pre-commit, pre-push]
 
 repos:
@@ -16,28 +25,18 @@ repos:
       - id: check-toml
       - id: check-json
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.13
-    hooks:
-      - id: ruff-format
-        args: [--check, src/, tests/]
-        pass_filenames: false
-      - id: ruff
-        args: [src/, tests/]
-        pass_filenames: false
-
   - repo: local
     hooks:
-      - id: ty
-        name: ty (type check)
-        entry: ty check src/molpy/
+      - id: ci-lint
+        name: "CI lint (fresh venv: ruff + ty)"
+        entry: bash scripts/precommit-ci-lint.sh
         language: system
-        types: [python]
         pass_filenames: false
+        stages: [pre-commit, pre-push]
 
-      - id: pytest-unit
-        name: pytest unit (not external)
-        entry: pytest tests/ -m "not external" -n auto
+      - id: ci-test
+        name: "CI test (fresh venv: pytest not external)"
+        entry: bash scripts/precommit-ci-test.sh
         language: system
         pass_filenames: false
         stages: [pre-push]
