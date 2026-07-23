@@ -341,9 +341,19 @@ tests/
 └─ test_engine/            # MD engines
 ```
 
-### Marking External Tests
+### No third-party scientific software in the default test gate
 
-Tests requiring external executables (LAMMPS, Packmol, AmberTools) must be marked:
+The default gate (`pytest tests/ -m "not external"` + `pip install -e ".[dev]"`)
+must pass **without** RDKit, AmberTools, freud, OpenMM, LAMMPS, Packmol, or any
+other third-party scientific package/executable. `dev` extras deliberately omit
+them. Optional backends (e.g. `pip install -e ".[rdkit]"`) are for users and
+docs notebooks only.
+
+- Unit-test wrappers with mocks — do **not** mark those `external`.
+- Tests that need a real binary: mark `@pytest.mark.external` (or live under a
+  path that `conftest.py` auto-marks).
+- Tests that optionally use a Python package when installed: `skipif` / soft
+  import, never hard-require it in `dev`.
 
 ```python
 import pytest

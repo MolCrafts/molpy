@@ -117,27 +117,26 @@ def find_test_data(tmp_path_factory, worker_id) -> Path:
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Mark tests requiring external software.
+    """Mark tests that need third-party *executables* as ``external``.
 
-    We use the `external` marker for tests that depend on third-party software
-    outside the Python environment (e.g. simulation engines, AmberTools).
+    Policy: the default gate (``pytest -m "not external"``) never requires
+    third-party scientific software — not RDKit, AmberTools, LAMMPS, Packmol,
+    OpenMM, freud, etc. Wrapper unit tests that mock ``subprocess`` stay in the
+    default gate. Only suites that must talk to a real external binary are
+    marked here (or with an explicit ``@pytest.mark.external``).
     """
 
     for item in items:
-        # Engine suite (may require external simulation engines / heavier runtime)
         try:
             fspath = Path(str(item.fspath))
         except Exception:  # pragma: no cover
             continue
+        # Engine suite talks to real MD engines when present.
         if "test_engine" in fspath.parts:
             item.add_marker(pytest.mark.external)
-
-        # AmberTools-dependent tests
-        if "test_wrapper" in fspath.parts and fspath.name in (
-            "test_antechamber.py",
-            "test_parmchk2.py",
-            "test_tleap.py",
-        ):
-            item.add_marker(pytest.mark.external)
+        # AmberTools polymer builder integration (real antechamber/tleap).
         if "test_builder" in fspath.parts and "amber" in fspath.name:
+            item.add_marker(pytest.mark.external)
+        # Nested ambertools builder package under polymer/ (same rule).
+        if "test_builder" in fspath.parts and "ambertools" in fspath.parts:
             item.add_marker(pytest.mark.external)
