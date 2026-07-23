@@ -1,11 +1,10 @@
 name: Full
 
-# Multi-OS unit matrix. Still no external binaries. No integration tree.
+# Multi-OS unit matrix (same tests as CI, broader platforms). No schedule —
+# runs on master push and on manual dispatch only.
 on:
   push:
     branches: [master]
-  schedule:
-    - cron: "0 5 * * *"
   workflow_dispatch:
 
 jobs:
