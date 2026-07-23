@@ -40,10 +40,3 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-push]
-
-  - repo: https://github.com/kynan/nbstripout
-    rev: 0.8.2
-    hooks:
-      - id: nbstripout
-        files: \.ipynb$
-        args: ["--extra-keys=metadata.kernelspec metadata.language_info"]
