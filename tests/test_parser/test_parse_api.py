@@ -151,9 +151,16 @@ class TestNamespaceExports:
         assert hasattr(mp.parser, "PolymerSpec")
 
     def test_tool_submodule_access(self):
-        """3D embedding is a method on mp.adapter.RDKitAdapter, not a free function."""
+        """3D embedding is a method on mp.adapter.RDKitAdapter, not a free function.
+
+        RDKit is optional: the name is always exported; the class is ``None`` when
+        the backend is not installed (default test gate never requires it).
+        """
         assert hasattr(mp.adapter, "RDKitAdapter")
-        assert callable(mp.adapter.RDKitAdapter.generate_3d)
+        adapter_cls = mp.adapter.RDKitAdapter
+        if adapter_cls is None:
+            return
+        assert callable(adapter_cls.generate_3d)
 
     def test_submodule_functions_work(self):
         mol = mp.parser.parse_molecule("CCO")

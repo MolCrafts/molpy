@@ -1,9 +1,10 @@
 """MolPy — Composable molecular modeling in Python.
 
 Core data structures (``Atom``, ``ForceField``, ``Frame``, …) are imported
-eagerly and exposed at the package root — users write ``molpy.Frame``, never
-``molpy.core.Frame`` or ``molrs.Frame``. Heavier subpackages (``io``,
-``engine``, ``parser``, …) load lazily on first attribute access (PEP 562).
+eagerly and exposed at the package root — users write ``import molpy as mp``
+then ``mp.Frame`` (never ``molpy.core.Frame`` or ``molrs.Frame``). Heavier
+subpackages (``io``, ``engine``, ``parser``, …) load lazily on first attribute
+access (PEP 562).
 """
 
 # Import version first: version.py runs the molcrafts-molrs compatibility check
@@ -175,6 +176,11 @@ from .conformer import Conformer
 # Subclasses with real molpy additions (Box, Atomistic, CoarseGrain, Trajectory,
 # Conformer, Region) come from core/ above, not from this block.
 
+# Import Frame/Block from the pure-Python layer path so static analysis
+# (griffe/mkdocstrings) resolves ``molpy.Frame → molrs.frame.Frame`` without
+# going through the top-level ``molrs.Frame`` re-export alias chain.
+from molrs.frame import Block, Frame  # noqa: E402
+
 from molrs import (  # noqa: E402
     # Exceptions
     BlockDtypeError,
@@ -183,10 +189,8 @@ from molrs import (  # noqa: E402
     LinkedCell,
     NeighborList,
     NeighborQuery,
-    # Block + Frame + units
-    Block,
+    # Frame units / schema (Frame/Block themselves imported above)
     FRAME_SCHEMA_VERSION,
-    Frame,
     MetaValue,
     Quantity,
     Unit,
