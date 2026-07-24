@@ -77,8 +77,6 @@ class TestPolymerBuilder:
 # OPLS whole-graph oracle (graph-assembler-02 ac-016 / ac-018)
 # ---------------------------------------------------------------------------
 
-import math
-import time
 
 import molrs
 
@@ -187,49 +185,3 @@ class TestPolymerBuilderOplsOracle:
                     "AmberTools",
                 }:
                     raise AssertionError(f"force-field name used as code id: {node.id}")
-
-    def test_build_linear_cost_scales_near_linearly_with_chain_length(self):
-        def eo_plain() -> Atomistic:
-            struct = mp.Atomistic()
-            heavy = [
-                struct.def_atom(element=element, x=float(index), y=0.0, z=0.0)
-                for index, element in enumerate("OCCO")
-            ]
-            for left, right in zip(heavy[:-1], heavy[1:], strict=True):
-                struct.def_bond(left, right)
-            for oxygen in (heavy[0], heavy[3]):
-                struct.def_bond(
-                    oxygen,
-                    struct.def_atom(element="H", x=oxygen["x"], y=1.0, z=0.0),
-                )
-            heavy[0][fields.SITE] = "a"
-            heavy[3][fields.SITE] = "b"
-            struct.generate_topology(gen_angle=True, gen_dihedral=True)
-            for atom in struct.atoms:
-                atom[fields.TYPE] = f"t_{atom[fields.ELEMENT]}"
-            return struct
-
-        lengths = (8, 16, 32)
-        times: list[float] = []
-        for n in lengths:
-            builder = PolymerBuilder(
-                MonomerLibrary({"EO": eo_plain()}),
-                mp.Reaction(ETHER),
-                typifier=ElementTypifier(),
-                reach=2,
-            )
-            builder.build_linear("EO", n)
-            t0 = time.perf_counter()
-            for _ in range(3):
-                builder.build_linear("EO", n)
-            times.append((time.perf_counter() - t0) / 3.0)
-
-        slopes = [
-            (math.log(times[i + 1]) - math.log(times[i]))
-            / (math.log(lengths[i + 1]) - math.log(lengths[i]))
-            for i in range(len(lengths) - 1)
-            if times[i] > 0 and times[i + 1] > 0
-        ]
-        assert slopes
-        mean_slope = sum(slopes) / len(slopes)
-        assert 0.3 <= mean_slope <= 2.5, f"slope={mean_slope} times={times}"

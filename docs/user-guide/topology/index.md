@@ -7,7 +7,6 @@ This section is a self-contained lab manual for MolPy’s polymer assembly stack
 ```bash
 cd examples
 python topology/01_linear.py
-python topology/run_all.py    # smoke the full catalogue
 ```
 
 ## How the pages and scripts line up
@@ -33,7 +32,7 @@ Layout (docs ↔ examples, same basenames):
 
 ```text
 docs/user-guide/topology/          examples/topology/
-  index.md                           README.md · eo_kit.py · run_all.py
+  index.md                           README.md · eo_kit.py
   01_linear.md                       01_linear.py
   02_block.md                        02_block.py
   …                                  …

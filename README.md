@@ -89,8 +89,11 @@ Optional: RDKit (3D geometry), AmberTools (GAFF charges).
 ```bash
 git clone https://github.com/MolCrafts/molpy.git
 cd molpy
-pip install -e ".[dev]"
-pre-commit install
+pip install -e ".[dev]"   # includes tox (gate driver)
+prek install
+# optional manual gates (same as prek/CI):
+#   uv run --extra dev tox -e lint
+#   uv run --extra dev tox -e py
 pytest tests/ -m "not external"
 ```
 

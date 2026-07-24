@@ -183,11 +183,6 @@ logo = "assets/molpy.png"
 [project.extra]
 generator = false
 
-alternate = [
-    { name = "English", link = "/", lang = "en" },
-    { name = "中文", link = "/zh/", lang = "zh" },
-]
-
 [project.extra.molcrafts]
 product = "molpy"
 accent = "#0284c7"                       # primary (主) — molpy signature colour

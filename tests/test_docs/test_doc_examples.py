@@ -117,16 +117,13 @@ def _run_example_main(script_name: str) -> None:
 
 
 class TestExampleScripts:
-    """examples/ scripts stay runnable. 01-05 are pure molpy (native molrs
+    """examples/ scripts stay runnable. 01/05/07 are pure molpy (native molrs
     conformer, no RDKit); 06 needs AmberTools and is not run here."""
 
     @pytest.mark.parametrize(
         "script",
         [
             "01_parse_chemistry.py",
-            "02_build_polymer.py",
-            "03_polymer_topology.py",
-            "04_crosslinking.py",
             "05_polydisperse.py",
             "07_carbon_nanotube.py",
         ],

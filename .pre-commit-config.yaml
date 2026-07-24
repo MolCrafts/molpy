@@ -1,12 +1,7 @@
-# CI / pre-commit parity. Every Python gate creates a *brand-new*
-# `python -m venv` via scripts/precommit-venv-run.sh (no reuse of the
-# developer env — same idea as a clean CI runner).
-#
-# Mirrors .github/workflows/ci.yml:
-#   lint: ruff format/check + ty  (pinned ruff==0.15.13, ty==0.0.37)
-#   test: pip install -e ".[dev]" + pytest -m "not external"
-#
-# Install: pre-commit install -t pre-commit -t pre-push
+# Managed by prek: `prek install`
+# Mirrors .github/workflows/ci.yml via tox (no scripts/ gate wrappers).
+#   commit / pre-push lint — tox -e lint
+#   pre-push test          — tox -e py  (non-editable wheel)
 
 default_install_hook_types: [pre-commit, pre-push]
 
@@ -27,16 +22,19 @@ repos:
 
   - repo: local
     hooks:
-      - id: ci-lint
-        name: "CI lint (fresh venv: ruff + ty)"
-        entry: bash scripts/precommit-ci-lint.sh
+      - id: tox-lint
+        name: "CI lint (tox -e lint: ruff + ty)"
+        # tox from optional-dependencies `dev`
+        entry: uv run --extra dev tox -e lint
         language: system
         pass_filenames: false
+        always_run: true
         stages: [pre-commit, pre-push]
 
-      - id: ci-test
-        name: "CI test (fresh venv: pytest not external)"
-        entry: bash scripts/precommit-ci-test.sh
+      - id: tox-py
+        name: "CI test (tox -e py: non-editable + pytest)"
+        entry: uv run --extra dev tox -e py
         language: system
         pass_filenames: false
+        always_run: true
         stages: [pre-push]

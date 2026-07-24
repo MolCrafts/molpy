@@ -93,7 +93,6 @@ Guides and scripts share names under parallel trees:
 ```bash
 cd examples
 python topology/01_linear.py
-python topology/run_all.py          # smoke all 11
 ```
 
 Minimal linear chain (`build_linear` ≡ `build("{[#EO]|10}")`):

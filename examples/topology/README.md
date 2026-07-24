@@ -22,8 +22,4 @@ Paired **1:1** with the user-guide section:
 ```bash
 cd examples
 python topology/01_linear.py
-python topology/run_all.py
 ```
-
-Entry wrappers at the examples root (`02_build_polymer.py`, `03_polymer_topology.py`,
-`04_crosslinking.py`) batch-run subsets of this catalogue.

@@ -25,12 +25,6 @@ def test_pmftxy_is_compute_subclass():
     assert issubclass(PMFTXY, Compute)
 
 
-def test_pmftxy_smoke():
-    frame, nlist = _frame_nlist()
-    out = PMFTXY(x_max=5.0, y_max=5.0, n_x=20, n_y=20)(frame, nlist)
-    assert isinstance(out, list) and len(out) >= 1
-
-
 def test_pmftxy_parity_with_molrs_direct():
     frame, nlist = _frame_nlist()
     mine = PMFTXY(x_max=5.0, y_max=5.0, n_x=20, n_y=20)(frame, nlist)

@@ -1,7 +1,7 @@
 name: CI
 
-# Default gate: lint + unit tests. No caches, no OS matrix, no coverage theater.
-# external (network/binaries) is the only exclude. There is no test_integration/.
+# Default gate: same as prek — tox -e lint + tox -e py.
+# external (network/binaries) is excluded inside tox env py.
 on:
   push:
     branches: [master, dev, dev-*]
@@ -18,14 +18,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install tools
-        run: pip install "ruff==0.15.13" "ty==0.0.37"
-      - name: Ruff format
-        run: ruff format --check src/ tests/
-      - name: Ruff lint
-        run: ruff check src/ tests/
-      - name: Type check
-        run: ty check src/molpy/
+      - uses: astral-sh/setup-uv@v6
+      - name: uv run --extra dev tox -e lint
+        run: uv run --extra dev tox -e lint
 
   test:
     runs-on: ubuntu-latest
@@ -34,15 +29,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-      - name: Fetch test data
-        shell: bash
-        run: |
-          dir=tests/tests-data
-          if [ -e "$dir/README.md" ]; then exit 0; fi
-          mkdir -p "$dir"
-          curl -fsSL https://github.com/molcrafts/tests-data/archive/refs/heads/master.tar.gz \
-            | tar -xz -C "$dir" --strip-components=1 --exclude='*/con' --exclude='*/con/*'
-      - name: Unit tests
-        run: pytest tests/ -m "not external" -n auto
+      - uses: astral-sh/setup-uv@v6
+      - name: uv run --extra dev tox -e py
+        run: uv run --extra dev tox -e py
