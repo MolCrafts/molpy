@@ -25,10 +25,6 @@ From one ethylene-glycol kit to every architecture the assembly stack supports. 
 - [Linear](topology/01_linear.md) · [Block](topology/02_block.md) · [Ring](topology/03_ring.md) · [Star](topology/04_star.md) · [Comb](topology/05_comb.md) · [Telechelic](topology/06_telechelic.md)
 - [Exhaustive gel](topology/07_gel_exhaustive.md) · [Random gel](topology/08_gel_random.md) · [End-linked](topology/09_end_linked.md) · [Dual network](topology/10_dual_network.md) · [Prepolymer + agent](topology/11_prepolymer_agent.md)
 
-```bash
-cd examples && python topology/run_all.py
-```
-
 
 ## Parameterization
 

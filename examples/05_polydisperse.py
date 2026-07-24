@@ -8,7 +8,7 @@ planner primitives do the sampling; you compose them directly (no wrapper):
     -> SystemPlanner.plan_system() -> a list of Chain (dp, monomers, mass)
 
 Each ``Chain`` carries its monomer sequence, which spells a CGSmiles string for
-``PolymerBuilder.build`` (see 02_build_polymer).
+``PolymerBuilder.build`` (see topology/01_linear.py).
 
 Guide: docs/user-guide/05_polydisperse_systems.md
 Run:   python 05_polydisperse.py
