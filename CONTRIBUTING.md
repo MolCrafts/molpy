@@ -17,7 +17,7 @@ entry point, so the rules have a single home and cannot drift:
 git clone https://github.com/YOUR_USERNAME/molpy.git
 cd molpy
 pip install -e ".[dev]"
-pre-commit install
+prek install
 pytest tests/ -m "not external"
 ```
 

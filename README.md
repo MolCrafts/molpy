@@ -90,7 +90,7 @@ Optional: RDKit (3D geometry), AmberTools (GAFF charges).
 git clone https://github.com/MolCrafts/molpy.git
 cd molpy
 pip install -e ".[dev]"
-pre-commit install
+prek install
 pytest tests/ -m "not external"
 ```
 

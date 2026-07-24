@@ -151,7 +151,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 git clone https://github.com/MolCrafts/molpy.git
 cd molpy
 pip install -e ".[dev]"
-pre-commit install
+prek install
 
 # Run tests
 pytest tests/ -v -m "not external"                    # All local tests
@@ -165,7 +165,7 @@ ruff format --check src tests     # Check formatting
 ruff format src tests             # Auto-format
 ruff check src tests              # Lint
 ty check src/molpy/               # Type check
-pre-commit run --all-files       # Run all pre-commit hooks
+prek run --all-files             # Run all hooks (prek reads .pre-commit-config.yaml)
 
 # Documentation (built with Zensical; configured by zensical.toml)
 pip install -e ".[doc]"
@@ -458,7 +458,7 @@ From `docs/developer/coding-style.md`:
 - [ ] Public APIs have type hints and docstrings
 - [ ] Helpers don't mutate caller-owned structures unexpectedly (`.copy()` when needed)
 - [ ] No hardcoded values (use config or constants)
-- [ ] Pre-commit hooks pass: `pre-commit run --all-files`
+- [ ] Hooks pass: `prek run --all-files`
 
 ## Common Gotchas
 

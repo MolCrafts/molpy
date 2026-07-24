@@ -64,10 +64,7 @@ dev = [
     "pytest-benchmark>=5.0",
     "pytest-xdist>=3.0",
     "filelock>=3.0",
-    "pre-commit>=4.0.0",
-    # Lint/type tools — pinned so local checks (the pre-commit `language: system`
-    # ty hook, and ruff) use exactly the versions CI lints with. Keep in sync
-    # with .github/workflows/ci.yml and the ruff-pre-commit rev.
+    # Lint/type tools — pinned so tox -e lint / CI use the same versions.
     "ruff==0.15.13",
     "ty==0.0.37",
 ]
@@ -227,4 +224,90 @@ filterwarnings = [
 markers = [
     "external: tests requiring external network/resources or executables",
     "benchmark: pytest-benchmark suite under benchmarks/ (not tests/)",
+]
+
+# Isolated gates — prek + CI:
+#   tox -e lint   # ruff + ty (no package install)
+#   tox -e py     # non-editable wheel of molpy + pytest -m "not external"
+[tool.tox]
+requires = ["tox>=4.23"]
+env_list = ["lint", "py"]
+
+[tool.tox.env.lint]
+description = "CI lint: ruff format/check + ty (pinned)"
+skip_install = true
+base_python = ["python3.12"]
+deps = [
+  "ruff==0.15.13",
+  "ty==0.0.37",
+]
+commands = [
+  ["ruff", "format", "--check", "src/", "tests/"],
+  ["ruff", "check", "src/", "tests/"],
+  ["ty", "check", "src/molpy/"],
+]
+
+[tool.tox.env.py]
+description = "CI test: non-editable package + pytest (not external)"
+package = "wheel"
+extras = ["dev"]
+base_python = ["python3.12"]
+pass_env = [
+  "HOME",
+  "PATH",
+  "SSH_AUTH_SOCK",
+  "TERM",
+]
+# Fetch MolCrafts/tests-data once if missing (same as former CI step).
+commands_pre = [
+  [
+    "{envpython}",
+    "-c",
+    """
+from pathlib import Path
+import tarfile
+import urllib.request
+import io
+
+root = Path(r'{toxinidir}')
+data = root / 'tests' / 'tests-data'
+if (data / 'README.md').is_file():
+    raise SystemExit(0)
+data.mkdir(parents=True, exist_ok=True)
+url = 'https://github.com/molcrafts/tests-data/archive/refs/heads/master.tar.gz'
+print(f'fetching {url} → {data}')
+with urllib.request.urlopen(url) as resp:
+    buf = io.BytesIO(resp.read())
+with tarfile.open(fileobj=buf, mode='r:gz') as tf:
+    for m in tf.getmembers():
+        parts = Path(m.name).parts
+        if len(parts) < 2:
+            continue
+        # strip top-level archive dir
+        rel = Path(*parts[1:])
+        if not rel.parts:
+            continue
+        # skip Windows reserved 'con' paths
+        if any(p.lower() == 'con' for p in rel.parts):
+            continue
+        dest = data / rel
+        if m.isdir():
+            dest.mkdir(parents=True, exist_ok=True)
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            f = tf.extractfile(m)
+            if f is None:
+                continue
+            dest.write_bytes(f.read())
+print('tests-data ready')
+""",
+  ],
+  [
+    "{envpython}",
+    "-c",
+    "import molpy, pathlib; r=pathlib.Path(molpy.__file__).resolve(); assert 'site-packages' in str(r), r",
+  ],
+]
+commands = [
+  ["{envpython}", "-m", "pytest", "tests/", "-m", "not external", "-n", "auto"],
 ]
