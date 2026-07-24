@@ -31,13 +31,6 @@ def test_cluster_properties_is_compute_subclass():
     assert issubclass(ClusterProperties, Compute)
 
 
-def test_cluster_properties_smoke():
-    frame, clusters = _frame_nlist_clusters()
-    out = ClusterProperties()(frame, [clusters])
-    assert isinstance(out, list) and isinstance(out[0], dict)
-    assert "sizes" in out[0] and "radii_of_gyration" in out[0]
-
-
 def test_cluster_properties_parity_with_molrs_direct():
     frame, clusters = _frame_nlist_clusters()
     mine = ClusterProperties()(frame, [clusters])

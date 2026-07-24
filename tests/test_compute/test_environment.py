@@ -25,12 +25,6 @@ def test_bondorder_is_compute_subclass():
     assert issubclass(BondOrder, Compute)
 
 
-def test_bondorder_smoke():
-    frame, nlist = _frame_nlist()
-    out = BondOrder(n_theta=6, n_phi=6)(frame, nlist)
-    assert isinstance(out, list) and len(out) >= 1
-
-
 def test_bondorder_parity_with_molrs_direct():
     frame, nlist = _frame_nlist()
     mine = BondOrder(n_theta=6, n_phi=6)(frame, nlist)

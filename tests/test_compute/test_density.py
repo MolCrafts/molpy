@@ -33,12 +33,6 @@ def test_density_classes_are_compute_subclasses():
     assert issubclass(GaussianDensity, Compute)
 
 
-def test_local_density_smoke(frame_and_nlist):
-    frame, nlist = frame_and_nlist
-    out = LocalDensity(r_max=3.0)(frame, nlist)
-    assert isinstance(out, list) and len(out) >= 1
-
-
 def test_local_density_parity_with_molrs_direct(frame_and_nlist):
     frame, nlist = frame_and_nlist
     mine = LocalDensity(r_max=3.0, diameter=0.0)(frame, nlist)

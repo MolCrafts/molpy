@@ -2,7 +2,7 @@
 
 Steinhardt / Hexatic / Nematic / SolidLiquid forward verbatim to
 ``molrs.compute.order.*``; parity vs the direct molrs call is the core
-guarantee, plus smoke and input-immutability.
+guarantee, plus input-immutability.
 """
 
 from __future__ import annotations
@@ -35,12 +35,6 @@ def test_order_classes_are_compute_subclasses():
     assert all(
         issubclass(c, Compute) for c in (Steinhardt, Hexatic, Nematic, SolidLiquid)
     )
-
-
-def test_steinhardt_smoke(frame_and_nlist):
-    frame, nlist = frame_and_nlist
-    out = Steinhardt([6])(frame, nlist)
-    assert isinstance(out, list) and len(out) >= 1
 
 
 def test_steinhardt_parity_with_molrs_direct(frame_and_nlist):
