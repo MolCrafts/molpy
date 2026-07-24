@@ -67,6 +67,9 @@ dev = [
     # Lint/type tools — pinned so tox -e lint / CI use the same versions.
     "ruff==0.15.13",
     "ty==0.0.37",
+    # Gate driver (prek pre-push / CI). After `pip install -e ".[dev]"`:
+    #   uv run --extra dev tox -e lint|py
+    "tox>=4.23",
 ]
 # Optional scientific backends for users / docs notebooks — never required by
 # the default CI or ``pytest -m "not external"`` gate.

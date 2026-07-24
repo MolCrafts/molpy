@@ -19,10 +19,8 @@ jobs:
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@v6
-      - name: tox -e lint
-        run: |
-          uv tool install tox
-          tox -e lint
+      - name: uv run --extra dev tox -e lint
+        run: uv run --extra dev tox -e lint
 
   test:
     runs-on: ubuntu-latest
@@ -32,7 +30,5 @@ jobs:
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@v6
-      - name: tox -e py
-        run: |
-          uv tool install tox
-          tox -e py
+      - name: uv run --extra dev tox -e py
+        run: uv run --extra dev tox -e py

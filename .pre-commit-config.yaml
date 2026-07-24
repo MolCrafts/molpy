@@ -24,7 +24,8 @@ repos:
     hooks:
       - id: tox-lint
         name: "CI lint (tox -e lint: ruff + ty)"
-        entry: tox -e lint
+        # tox from optional-dependencies `dev`
+        entry: uv run --extra dev tox -e lint
         language: system
         pass_filenames: false
         always_run: true
@@ -32,7 +33,7 @@ repos:
 
       - id: tox-py
         name: "CI test (tox -e py: non-editable + pytest)"
-        entry: tox -e py
+        entry: uv run --extra dev tox -e py
         language: system
         pass_filenames: false
         always_run: true

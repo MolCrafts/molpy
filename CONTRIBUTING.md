@@ -16,8 +16,9 @@ entry point, so the rules have a single home and cannot drift:
 ```bash
 git clone https://github.com/YOUR_USERNAME/molpy.git
 cd molpy
-pip install -e ".[dev]"
+pip install -e ".[dev]"   # includes tox
 prek install
+# manual: uv run --extra dev tox -e lint|py
 pytest tests/ -m "not external"
 ```
 
