@@ -330,13 +330,13 @@ molmcp_describe_symbol("molpy.io.read_xml_forcefield")
 ```
 
 ```
-signature: (filepath: str | Path, forcefield: AtomisticForcefield | None = None)
-           -> AtomisticForcefield
+signature: (filepath: str | Path, forcefield: ForceField | None = None)
+           -> ForceField
 docstring: Read an XML force field file. Relative filenames resolve against the
            package data directory, so passing "tip3p.xml" loads the built-in
            TIP3P force field.
-(签名: (filepath: str | Path, forcefield: AtomisticForcefield | None = None)
-       -> AtomisticForcefield
+(签名: (filepath: str | Path, forcefield: ForceField | None = None)
+       -> ForceField
 文档字符串: 读取一个 XML 力场文件。相对文件名会相对于包的数据目录解析，
            因此传入 "tip3p.xml" 会加载内置的 TIP3P 力场。)
 ```

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from molpy.core.frame import Block, Frame
-from molpy.core.forcefield import AtomisticForcefield
+from molpy.core.forcefield import ForceField
 from molpy.engine.openmm import OpenMMEngine, OpenMMSimulationConfig
 
 
@@ -36,8 +36,8 @@ def simple_frame():
 
 @pytest.fixture
 def empty_forcefield():
-    """Minimal AtomisticForcefield (no types) for XML serialisation tests."""
-    return AtomisticForcefield("test")
+    """Minimal ForceField (no types) for XML serialisation tests."""
+    return ForceField("test")
 
 
 @pytest.fixture

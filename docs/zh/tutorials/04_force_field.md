@@ -48,7 +48,7 @@ ForceField
 ```python
 import molpy as mp
 
-ff = mp.AtomisticForcefield(name="tutorial", units="real")
+ff = mp.ForceField(name="tutorial", units="real")
 
 # "full" 对应 LAMMPS atom_style full（每原子电荷 + 分子 ID）
 atom_style = ff.def_atomstyle("full")

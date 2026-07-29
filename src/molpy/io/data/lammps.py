@@ -16,7 +16,7 @@ import numpy as np
 from molpy.core.frame import Block
 from molpy.core.box import Box
 from molpy.core.fields import CHARGE, MOL_ID, FieldFormatter
-from molpy.core.forcefield import AtomisticForcefield, ForceField
+from molpy.core.forcefield import ForceField, ForceField
 from molpy.core.frame import Frame
 
 from .base import DataReader, DataWriter
@@ -347,7 +347,7 @@ class LammpsDataReader(DataReader):
         Malformed (non-numeric / too-short) lines raise ``ValueError`` rather
         than being swallowed; reading is total.
         """
-        forcefield = AtomisticForcefield()
+        forcefield = ForceField()
 
         # (section, category, def_style, canonical param names). LAMMPS coeff
         # arity is style-dependent and not declared in the data file, so the

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from molpy.core.forcefield import AtomisticForcefield, DihedralFourierStyle
+from molpy.core.forcefield import ForceField, DihedralFourierStyle
 from molpy.core.frame import Frame
 
 # AMBER stores charges multiplied by 18.2223 (sqrt of 332.0636 kcal*A/mol/e^2).
@@ -155,7 +155,7 @@ class AmberPrmtopReader:
             atoms["element"] = np.array(
                 Element.get_symbols([int(z) for z in atoms["atomic_number"]])
             )
-        ff = AtomisticForcefield()
+        ff = ForceField()
         ff.units = "real"
         atomstyle = ff.def_atomstyle("full")
         atomtype_map = {}  # atomtype id : atomtype

@@ -333,8 +333,8 @@ molmcp_describe_symbol("molpy.io.read_xml_forcefield")
 ```
 
 ```
-signature: (filepath: str | Path, forcefield: AtomisticForcefield | None = None)
-           -> AtomisticForcefield
+signature: (filepath: str | Path, forcefield: ForceField | None = None)
+           -> ForceField
 docstring: Read an XML force field file. Relative filenames resolve against the
            package data directory, so passing "tip3p.xml" loads the built-in
            TIP3P force field.

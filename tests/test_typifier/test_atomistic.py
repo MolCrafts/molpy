@@ -10,7 +10,7 @@ Tests cover:
 
 import pytest
 
-from molpy import Angle, Atom, Atomistic, AtomisticForcefield, AtomType, Bond, Dihedral
+from molpy import Angle, Atom, Atomistic, ForceField, AtomType, Bond, Dihedral
 from molpy.typifier.atomistic import (
     ForceFieldAngleTypifier,
     ForceFieldBondTypifier,
@@ -25,7 +25,7 @@ class TestAtomtypeMatches:
     @staticmethod
     def _atomtype(name, **params):
         # molrs Type instances must be created through a style.
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         return astyle.def_type(name, **params)
 
@@ -64,7 +64,7 @@ class TestForceFieldBondTypifier:
 
     def test_bond_typifier_initialization(self):
         """Test ForceFieldBondTypifier initialization."""
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")
         at2 = astyle.def_type("HA", type_="HA", class_="HC")
@@ -80,7 +80,7 @@ class TestForceFieldBondTypifier:
 
     def test_bond_typifier_typify(self):
         """Test ForceFieldBondTypifier.typify()."""
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")
         at2 = astyle.def_type("HA", type_="HA", class_="HC")
@@ -111,7 +111,7 @@ class TestForceFieldBondTypifier:
 
     def test_bond_typifier_typify_reverse_order(self):
         """Test bond typifier handles reverse atom order."""
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")
         at2 = astyle.def_type("HA", type_="HA", class_="HC")
@@ -140,7 +140,7 @@ class TestForceFieldBondTypifier:
 
     def test_bond_typifier_typify_missing_type(self):
         """Test bond typifier raises error when atoms lack type."""
-        ff = AtomisticForcefield()
+        ff = ForceField()
         typifier = ForceFieldBondTypifier(ff)
 
         asm = Atomistic()
@@ -162,7 +162,7 @@ class TestForceFieldBondTypifier:
         whose classes are absent from the force field no longer wildcard-matches
         the first type — the strict no-match branch is reachable.
         """
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")
         at2 = astyle.def_type("HA", type_="HA", class_="HC")
@@ -194,7 +194,7 @@ class TestForceFieldBondTypifier:
         match it. molrs drops the endpoint class, so matching is by endpoint
         name — which for class-keyed bonds is the class.
         """
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         # Real atom types an atom is assigned, sharing classes CT / HC.
         astyle.def_type("CB", type_="CB", class_="CT")
@@ -229,7 +229,7 @@ class TestForceFieldAngleTypifier:
 
     def test_angle_typifier_initialization(self):
         """Test ForceFieldAngleTypifier initialization."""
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("HA", type_="HA", class_="HC")
         at2 = astyle.def_type("CA", type_="CA", class_="CT")
@@ -246,7 +246,7 @@ class TestForceFieldAngleTypifier:
 
     def test_angle_typifier_typify(self):
         """Test ForceFieldAngleTypifier.typify()."""
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("HA", type_="HA", class_="HC")
         at2 = astyle.def_type("CA", type_="CA", class_="CT")
@@ -280,7 +280,7 @@ class TestForceFieldAngleTypifier:
 
     def test_angle_typifier_typify_reverse_order(self):
         """Test angle typifier handles reverse atom order."""
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("HA", type_="HA", class_="HC")
         at2 = astyle.def_type("CA", type_="CA", class_="CT")
@@ -312,7 +312,7 @@ class TestForceFieldAngleTypifier:
 
     def test_angle_typifier_typify_missing_type(self):
         """Test angle typifier raises error when atoms lack type."""
-        ff = AtomisticForcefield()
+        ff = ForceField()
         typifier = ForceFieldAngleTypifier(ff)
 
         asm = Atomistic()
@@ -334,7 +334,7 @@ class TestForceFieldAngleTypifier:
         Resolved: name/class-based matching makes the strict no-match branch
         reachable (no more wildcard match of the first angle type).
         """
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("HA", type_="HA", class_="HC")
         at2 = astyle.def_type("CA", type_="CA", class_="CT")
@@ -367,7 +367,7 @@ class TestForceFieldDihedralTypifier:
 
     def test_dihedral_typifier_initialization(self):
         """Test ForceFieldDihedralTypifier initialization."""
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")
         at2 = astyle.def_type("CA", type_="CA", class_="CT")
@@ -385,7 +385,7 @@ class TestForceFieldDihedralTypifier:
 
     def test_dihedral_typifier_typify(self):
         """Test ForceFieldDihedralTypifier.typify()."""
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")
         at2 = astyle.def_type("CA", type_="CA", class_="CT")
@@ -422,7 +422,7 @@ class TestForceFieldDihedralTypifier:
 
     def test_dihedral_typifier_typify_reverse_order(self):
         """Test dihedral typifier handles reverse atom order."""
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")
         at2 = astyle.def_type("CA", type_="CA", class_="CT")
@@ -457,7 +457,7 @@ class TestForceFieldDihedralTypifier:
 
     def test_dihedral_typifier_typify_missing_type(self):
         """Test dihedral typifier raises error when atoms lack type."""
-        ff = AtomisticForcefield()
+        ff = ForceField()
         typifier = ForceFieldDihedralTypifier(ff)
 
         asm = Atomistic()
@@ -482,7 +482,7 @@ class TestForceFieldDihedralTypifier:
         Resolved: name/class-based matching makes the strict no-match branch
         reachable (no more wildcard match of the first dihedral type).
         """
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", type_="CA", class_="CT")
         at2 = astyle.def_type("CA", type_="CA", class_="CT")

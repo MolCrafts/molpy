@@ -1,23 +1,11 @@
-"""
-Unit tests for forcefield core functionality.
+"""Unit tests for forcefield core functionality.
 
-molpy's old parallel ForceField hierarchy is DELETED; ``molpy.core.forcefield``
-now re-exports molrs's native classes. These tests exercise that molrs-backed
-surface through molpy's public re-exports.
-
-Key facts about the molrs-backed API (verified against the installed wheel):
-
-* Types are NEVER constructed standalone. They are always created through a
-  style: ``atomtype = atomstyle.def_type("CA", mass=12.0)`` and bond/angle/etc.
-  types take previously-defined AtomType handles as endpoints.
-* ``Parameters`` is keyword-only: ``Parameters({...})``; ``.args`` is always
-  ``[]`` and ``.kwargs`` is the supplied mapping.
-* ``style.types`` / ``ff.styles`` are plain lists; query via
-  ``style.get_types(cls)`` / ``ff.get_styles(cls)`` / ``ff.get_types(cls)``.
-* ``ff.to_potentials()`` with no frame is a *deferred* ``Potentials``
-  (``len()==0``, not iterable). To evaluate you must pass a typed ``Frame``.
-* ``TypeBucket`` remains a generic container (``molpy.core.utils``); it is
-  tested here directly with plain Python objects.
+* Types are created through a style (``atomstyle.def_type(...)``); bond/angle
+  types take AtomType handles as endpoints.
+* ``Parameters`` is keyword-only: ``Parameters({...})``.
+* Query via ``style.get_types`` / ``ff.get_styles`` / ``ff.get_types``.
+* ``ff.to_potentials()`` without a frame is deferred; pass a typed ``Frame``
+  to evaluate.
 """
 
 import numpy as np
@@ -28,7 +16,6 @@ import molrs
 from molpy import (
     AngleStyle,
     AngleType,
-    AtomisticForcefield,
     AtomStyle,
     AtomType,
     BondStyle,
@@ -426,55 +413,44 @@ class TestForceField:
         assert ff.get_style("atom", "nonexistent") is None
 
 
-class TestAtomisticForcefield:
-    """``AtomisticForcefield`` is an alias of the native ``ForceField``."""
-
-    def test_atomistic_ff_is_forcefield(self):
-        assert AtomisticForcefield is ForceField
-
-    def test_atomistic_ff_creation(self):
-        ff = AtomisticForcefield(name="OPLS-AA", units="real")
-        assert ff.name == "OPLS-AA"
-        assert ff.units == "real"
-
     def test_def_atomstyle(self):
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         assert isinstance(astyle, AtomStyle)
         assert astyle.name == "full"
 
     def test_def_bondstyle(self):
-        ff = AtomisticForcefield()
+        ff = ForceField()
         bstyle = ff.def_bondstyle("harmonic")
         assert isinstance(bstyle, BondStyle)
         assert bstyle.name == "harmonic"
 
     def test_def_anglestyle(self):
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_anglestyle("harmonic")
         assert isinstance(astyle, AngleStyle)
         assert astyle.name == "harmonic"
 
     def test_def_dihedralstyle(self):
-        ff = AtomisticForcefield()
+        ff = ForceField()
         dstyle = ff.def_dihedralstyle("opls")
         assert isinstance(dstyle, DihedralStyle)
         assert dstyle.name == "opls"
 
     def test_def_improperstyle(self):
-        ff = AtomisticForcefield()
+        ff = ForceField()
         istyle = ff.def_improperstyle("cvff")
         assert isinstance(istyle, ImproperStyle)
         assert istyle.name == "cvff"
 
     def test_def_pairstyle(self):
-        ff = AtomisticForcefield()
+        ff = ForceField()
         pstyle = ff.def_pairstyle("lj/cut")
         assert isinstance(pstyle, PairStyle)
         assert pstyle.name == "lj/cut"
 
     def test_get_atomtypes(self):
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA", mass=12.011)
         at2 = astyle.def_type("CB", mass=12.011)
@@ -485,7 +461,7 @@ class TestAtomisticForcefield:
         assert at2 in atom_types
 
     def test_get_bondtypes(self):
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA")
         at2 = astyle.def_type("CB")
@@ -497,7 +473,7 @@ class TestAtomisticForcefield:
         assert bt in bond_types
 
     def test_get_angletypes(self):
-        ff = AtomisticForcefield()
+        ff = ForceField()
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CA")
         at2 = astyle.def_type("CB")
@@ -511,7 +487,7 @@ class TestAtomisticForcefield:
 
     def test_complete_workflow(self):
         """Build a full force field through styles and verify type queries."""
-        ff = AtomisticForcefield(name="TestFF", units="real")
+        ff = ForceField(name="TestFF", units="real")
 
         astyle = ff.def_atomstyle("full")
         ca = astyle.def_type("CA", element="C", mass=12.011, sigma=0.355, epsilon=0.293)
@@ -557,7 +533,7 @@ class TestForceFieldToPotentials:
 
         ``len() == 0`` and iteration raises (it is not iterable).
         """
-        ff = AtomisticForcefield(name="TestFF")
+        ff = ForceField(name="TestFF")
         astyle = ff.def_atomstyle("full")
         at1 = astyle.def_type("CT")
         at2 = astyle.def_type("CT2")
@@ -590,7 +566,7 @@ class TestForceFieldToPotentials:
         molrs raises ``ValueError`` (message names the missing param) when the
         frame-bound potential is built from a type lacking ``r0``.
         """
-        ff = AtomisticForcefield(name="TestFF")
+        ff = ForceField(name="TestFF")
         astyle = ff.def_atomstyle("full")
         ca = astyle.def_type("CA")
         cb = astyle.def_type("CB")

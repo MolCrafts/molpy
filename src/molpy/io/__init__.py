@@ -224,7 +224,6 @@ __all__ = [
     "ForceFieldReader",
     "AmberPrmtopReader",
     "GromacsTopReader",
-    "LAMMPSForceFieldReader",
     "MolTemplateReader",
     "XMLForceFieldReader",
     "OPLSAAForceFieldReader",

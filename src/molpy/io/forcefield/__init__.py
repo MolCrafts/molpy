@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from .lammps import LAMMPSForceFieldReader, LAMMPSForceFieldWriter
+from .lammps import LAMMPSForceFieldWriter
 from .top import GromacsForceFieldWriter, GromacsTopReader
 from .xml import XMLForceFieldReader, XMLForceFieldWriter, read_xml_forcefield
 
@@ -12,7 +12,6 @@ PathLike = str | Path
 __all__ = [
     "GromacsForceFieldWriter",
     "GromacsTopReader",
-    "LAMMPSForceFieldReader",
     "LAMMPSForceFieldWriter",
     "XMLForceFieldReader",
     "XMLForceFieldWriter",
@@ -23,12 +22,7 @@ __all__ = [
 
 
 def read_lammps_forcefield(scripts: PathLike | list[PathLike]) -> Any:
-    """Read a LAMMPS force-field include (``*.ff``) into a ForceField.
-
-    Thin delegation to the native molrs reader — see
-    :func:`molpy.io.read_lammps_forcefield`. The LAMMPS force-field model lives
-    in molrs (Rust); molpy does not reimplement parsing here.
-    """
+    """Read a LAMMPS force-field include (``*.ff``) into a ForceField."""
     import molrs
 
     paths = scripts if isinstance(scripts, list) else [scripts]
@@ -50,11 +44,7 @@ def write_lammps_forcefield(
     dihedral_types: set[str] | None = None,
     improper_types: set[str] | None = None,
 ) -> None:
-    """Write a ForceField to a LAMMPS ``*.ff`` include.
-
-    Thin delegation to :func:`molrs.write_lammps_forcefield` — unit conversion
-    is the inverse of the native reader and lives in molrs.
-    """
+    """Write a ForceField to a LAMMPS ``*.ff`` include."""
     import molrs
 
     molrs.write_lammps_forcefield(

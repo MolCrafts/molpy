@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from molpy import AngleType, AtomisticForcefield, AtomType, BondType, PairType
+from molpy import AngleType, ForceField, AtomType, BondType, PairType
 from molpy.io.forcefield.xml import XMLForceFieldReader, read_xml_forcefield
 
 
@@ -631,7 +631,7 @@ class TestXMLForceFieldReader:
         assert xml_file.exists(), f"Test file not found: {xml_file}"
 
         ff = read_xml_forcefield(xml_file)
-        assert isinstance(ff, AtomisticForcefield)
+        assert isinstance(ff, ForceField)
         assert len(ff.get_types(AtomType)) > 0
 
     def test_read_xml_forcefield_with_existing_forcefield(
@@ -646,7 +646,7 @@ class TestXMLForceFieldReader:
         assert xml_file.exists(), f"Test file not found: {xml_file}"
 
         # Create existing force field
-        existing_ff = AtomisticForcefield(name="test", units="real")
+        existing_ff = ForceField(name="test", units="real")
 
         # Read XML into existing force field
         ff = read_xml_forcefield(xml_file, forcefield=existing_ff)

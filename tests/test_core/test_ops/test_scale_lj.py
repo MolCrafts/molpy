@@ -2,7 +2,7 @@
 
 import pytest
 
-from molpy import Atom, AtomisticForcefield
+from molpy import Atom, ForceField
 from molpy.core.forcefield import PairType
 from molpy.core.ops import (
     FragmentScaling,
@@ -14,7 +14,7 @@ from molpy.core.ops import (
 
 def _ff():
     """A tiny FF with one cross (CR-B) and one intra (CR-CR) pair type."""
-    ff = AtomisticForcefield()
+    ff = ForceField()
     astyle = ff.def_atomstyle("full")
     cr = astyle.def_type("CR", type_="CR", class_="CR")
     b = astyle.def_type("B", type_="B", class_="B")

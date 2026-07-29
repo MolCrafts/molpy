@@ -252,12 +252,12 @@ def _load_lammps_system(data_path: Path, settings_path: Path | None):
         # Fallback: rebuild Atomistic from the Frame manually.
         else (_atomistic_from_frame(frame))
     )
-    ff = ForceField(name=data_path.stem, units="real")
-    ff.metadata = {}  # type: ignore[attr-defined]
     if settings_path is not None and settings_path.exists():
-        from molpy.io.forcefield.lammps import LAMMPSForceFieldReader
+        from molpy.io.forcefield import read_lammps_forcefield
 
-        LAMMPSForceFieldReader(settings_path).read(ff)
+        ff = read_lammps_forcefield(settings_path)
+    else:
+        ff = ForceField(name=data_path.stem, units="real")
     return atomistic, ff
 
 

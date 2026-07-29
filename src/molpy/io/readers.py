@@ -239,20 +239,18 @@ def read_lammps_forcefield(scripts: PathLike | list[PathLike]) -> Any:
     """
     Read a LAMMPS force-field include (``*.ff``) into a ForceField.
 
-    Delegates to the native molrs reader (``molrs.read_lammps_forcefield``),
-    which parses the include directly into a ``molrs.ForceField`` in molrs units
-    (Å, kcal/mol, radians, e): LAMMPS harmonic ``K`` → molrs ``k = 2K``, angle
-    and dihedral-phase values stay in degrees, and ``dihedral_style fourier``
-    maps to the molrs ``periodic`` kernel. AMBER 1-4 scaling is recorded on the
-    force field's special bonds. Per-atom charge and mass live in the LAMMPS
-    *data* file, not this include, so they are not read here.
+    Parses into molrs units (Å, kcal/mol, radians, e): LAMMPS harmonic ``K`` →
+    molrs ``k = 2K``, angle and dihedral-phase values deg → rad, and
+    ``dihedral_style fourier`` maps to the molrs ``periodic`` kernel. AMBER 1-4
+    scaling is recorded on the force field's special bonds. Per-atom charge and
+    mass live in the LAMMPS *data* file, not this include.
 
     Args:
         scripts: Path (or list of paths) to LAMMPS force-field include(s). A
             list is concatenated and parsed as a single document.
 
     Returns:
-        ``molpy.ForceField`` (which is ``molrs.ForceField``).
+        :class:`~molpy.ForceField`.
     """
     import molrs
 
@@ -335,19 +333,15 @@ def read_top(file: PathLike, forcefield: Any = None) -> Any:
 # =============================================================================
 
 
-def read_lammps_trajectory(traj: PathLike, frame: Any = None) -> Any:
+def read_lammps_trajectory(traj: PathLike) -> Any:
     """
-    Read LAMMPS trajectory file and return a trajectory reader.
-
-    Backed by the molrs Rust lazy reader.
+    Read a LAMMPS trajectory file and return a trajectory reader.
 
     Args:
-        traj: Path to LAMMPS trajectory file
-        frame: Unused; retained for backward compatibility. molrs handles the
-            canonical fields, so no reference Frame is needed.
+        traj: Path to LAMMPS trajectory file.
 
     Returns:
-        molrs ``TrajectoryReader`` object
+        molrs ``TrajectoryReader``.
     """
     import molrs.io
 

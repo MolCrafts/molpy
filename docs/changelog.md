@@ -248,9 +248,9 @@ Requires `molcrafts-molrs == 0.1.0`.
 ### molrs Consolidation
 
 - **The force-field model now lives entirely in molrs; `molpy.potential` is a
-  facade.** `molpy.core.forcefield` is a thin re-export of the native molrs
-  `ForceField` / Style / Type hierarchy (plus the `AtomisticForcefield` alias
-  and named specialized Style classes). The parallel Python kernels and energy
+  facade.** `molpy.core.forcefield` re-exports the molrs
+  `ForceField` / Style / Type hierarchy (plus named specialized Style
+  classes). The parallel Python kernels and energy
   math under `potential/` were deleted; `molpy.potential[.bond|.angle|…]`
   re-exports the molrs-backed Style classes and `Potentials` so users never
   import molrs. Energy/forces are evaluated via

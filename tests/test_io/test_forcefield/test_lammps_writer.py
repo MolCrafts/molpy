@@ -112,12 +112,10 @@ def test_lammps_forcefield_writer_full():
 
 
 def test_lammps_forcefield_writer_angle_units_converted():
-    """Angle params convert from molrs internal units to LAMMPS on write.
+    """Angle params convert from molrs units to LAMMPS on write.
 
     molrs stores harmonic stiffness in the ``½k(θ−θ₀)²`` form and ``theta0`` in
-    radians; LAMMPS ``angle_coeff harmonic`` wants ``K = k/2`` and degrees. The
-    writer must apply both conversions -- guarding both the old missing rad->deg
-    conversion and a doubled force constant.
+    radians; LAMMPS ``angle_coeff harmonic`` wants ``K = k/2`` and degrees.
     """
     import re
 

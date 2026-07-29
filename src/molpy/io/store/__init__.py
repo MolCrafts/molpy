@@ -45,7 +45,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from molpy.core import Box, Frame
-    from molpy.core.forcefield import AtomisticForcefield, ForceField
+    from molpy.core.forcefield import ForceField, ForceField
 
 PathLike = str | Path
 
@@ -419,11 +419,11 @@ class MolStore:
         group.write_array("params", params)
         group.write_array("param_names", np.array(all_param_keys))
 
-    def read_forcefield(self) -> "AtomisticForcefield":
-        from molpy.core.forcefield import AtomisticForcefield, AtomType
+    def read_forcefield(self) -> "ForceField":
+        from molpy.core.forcefield import ForceField, AtomType
 
         ffg = self._get_backend()["forcefield"]
-        ff = AtomisticForcefield()
+        ff = ForceField()
 
         if ffg.has_attr("units_style_ref"):
             ff.units = ffg.read_attr("units_style_ref")
