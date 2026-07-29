@@ -1,7 +1,6 @@
-# Managed by prek: `prek install`
-# Mirrors .github/workflows/ci.yml via tox (no scripts/ gate wrappers).
-#   commit / pre-push lint — tox -e lint
-#   pre-push test          — tox -e py  (non-editable wheel)
+# prek install
+# pre-commit: tox -e lint
+# pre-push:   molrs pin on PyPI → tox -e lint → tox -e py
 
 default_install_hook_types: [pre-commit, pre-push]
 
@@ -23,16 +22,23 @@ repos:
   - repo: local
     hooks:
       - id: tox-lint
-        name: "CI lint (tox -e lint: ruff + ty)"
-        # tox from optional-dependencies `dev`
+        name: "CI lint (tox -e lint)"
         entry: uv run --extra dev tox -e lint
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-commit, pre-push]
 
+      - id: molrs-pin-on-pypi
+        name: "molrs pin on PyPI"
+        entry: python3 .pre-commit/check_molrs_pin_on_pypi.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
       - id: tox-py
-        name: "CI test (tox -e py: non-editable + pytest)"
+        name: "CI test (tox -e py)"
         entry: uv run --extra dev tox -e py
         language: system
         pass_filenames: false

@@ -274,9 +274,9 @@ def _style_var(kind: str, style_name: str) -> str:
 
 def _emit_forcefield_builder(flat: list) -> str:
     lines: list[str] = [
-        "def build_forcefield() -> mp.AtomisticForcefield:",
+        "def build_forcefield() -> mp.ForceField:",
         '    """Reconstruct the force field from the original ``.lt`` file."""',
-        '    ff = mp.AtomisticForcefield(name="moltemplate", units="real")',
+        '    ff = mp.ForceField(name="moltemplate", units="real")',
         "    ff.metadata = {}",
         "    atom_style = ff.def_atomstyle('full')",
         "    def _atom(name, **kw):",
@@ -635,7 +635,7 @@ def _emit_class_builder(
 
 def _emit_system_builder(doc: Document, classes: dict[str, ClassDef]) -> str:
     lines: list[str] = [
-        "def build_system() -> tuple[Atomistic, mp.AtomisticForcefield]:",
+        "def build_system() -> tuple[Atomistic, mp.ForceField]:",
         '    """Assemble the full system and apply By-Type rules."""',
         "    ff = build_forcefield()",
         "    system = Atomistic()",

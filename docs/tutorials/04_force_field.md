@@ -51,7 +51,7 @@ Start by creating a `ForceField` and defining atom types. Atom types form the fo
 ```python
 import molpy as mp
 
-ff = mp.AtomisticForcefield(name="tutorial", units="real")
+ff = mp.ForceField(name="tutorial", units="real")
 
 # "full" corresponds to LAMMPS atom_style full (charge + molecule ID per atom)
 atom_style = ff.def_atomstyle("full")

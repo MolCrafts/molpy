@@ -22,7 +22,8 @@ File readers and writers for molecular data, force fields, and trajectories.
 |----------|--------|-----------|
 | `read_xml_forcefield` | OpenMM/OPLS XML | read |
 | `XMLForceFieldWriter` | OpenMM/OPLS XML | write |
-| `LAMMPSForceFieldWriter` | LAMMPS coefficients | write |
+| `read_lammps_forcefield` | LAMMPS `*.ff` include | read (molrs) |
+| `write_lammps_forcefield` / `LAMMPSForceFieldWriter` | LAMMPS `*.ff` include | write (molrs; molrs units → LAMMPS `real`) |
 | `GromacsForceFieldWriter` | GROMACS .itp | write |
 | `read_amber` | AMBER prmtop + inpcrd | read |
 
@@ -48,10 +49,12 @@ import molpy as mp
 frame = mp.io.read_pdb("molecule.pdb")
 mp.io.write_lammps_data("system.data", frame, atom_style="full")
 
-# Read force field
+# Read force field (XML or LAMMPS *.ff)
 ff = mp.io.read_xml_forcefield("oplsaa.xml")
+ff = mp.io.read_lammps_forcefield("system.ff")
 
-# Write LAMMPS force field
+# Write LAMMPS *.ff (via molrs; optional type filter)
+mp.io.write_lammps_forcefield("system.ff", ff)
 from molpy.io.forcefield import LAMMPSForceFieldWriter
 LAMMPSForceFieldWriter("system.ff").write(ff, atom_types={"CT", "HC"})
 
