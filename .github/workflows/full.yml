@@ -1,7 +1,7 @@
 name: Full
 
-# Multi-OS unit matrix (same tests as CI, broader platforms). No schedule —
-# runs on master push and on manual dispatch only.
+# Multi-OS unit matrix (same tests as default CI, broader platforms).
+# master push + workflow_dispatch only. tests-data is owned by tests/conftest.py.
 on:
   push:
     branches: [master]
@@ -20,15 +20,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-      - name: Fetch test data
-        shell: bash
-        run: |
-          dir=tests/tests-data
-          if [ -e "$dir/README.md" ]; then exit 0; fi
-          mkdir -p "$dir"
-          curl -fsSL https://github.com/molcrafts/tests-data/archive/refs/heads/master.tar.gz \
-            | tar -xz -C "$dir" --strip-components=1 --exclude='*/con' --exclude='*/con/*'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+      - name: Install package
+        run: uv pip install --system -e ".[dev]"
       - name: Unit tests
         run: pytest tests/ -m "not external" -n auto

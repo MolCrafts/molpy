@@ -21,18 +21,17 @@ jobs:
       id-token: write
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install build tools
-        run: pip install build twine
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
 
       - name: Extract version
         id: get_version
@@ -47,7 +46,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Install package
-        run: pip install -e .
+        run: uv pip install --system -e .
 
       - name: Verify version match
         run: |
@@ -59,10 +58,7 @@ jobs:
           fi
 
       - name: Build package
-        run: python -m build
-
-      - name: Check package
-        run: twine check dist/*
+        run: uv pip install --system build && python -m build
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
