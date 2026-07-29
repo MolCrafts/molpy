@@ -231,6 +231,7 @@ from molrs import (  # noqa: E402
     # Native geometric regions (molpy Region / SphereRegion live in core/)
     Cuboid,
     HollowSphere,
+    Parallelepiped,
     Sphere,
     # Graph / chemistry
     Element,
@@ -272,6 +273,8 @@ from molrs import (  # noqa: E402
     read_forcefield_xml_str,
     read_lammps_forcefield,
     read_lammps_forcefield_str,
+    write_lammps_forcefield,
+    write_lammps_forcefield_str,
     read_opls_xml,
     read_opls_xml_str,
     # Signal helpers
@@ -481,6 +484,7 @@ __all__ = [
     "SmilesIR",
     "Cuboid",
     "HollowSphere",
+    "Parallelepiped",
     "Sphere",
     "Element",
     "ExtractedSubgraph",
@@ -518,6 +522,8 @@ __all__ = [
     "read_forcefield_xml_str",
     "read_lammps_forcefield",
     "read_lammps_forcefield_str",
+    "write_lammps_forcefield",
+    "write_lammps_forcefield_str",
     "read_opls_xml",
     "read_opls_xml_str",
     "signal_acf_fft",
