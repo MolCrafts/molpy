@@ -1,3 +1,4 @@
+import math
 from itertools import islice
 from pathlib import Path
 from typing import Callable, TextIO, cast
@@ -637,27 +638,36 @@ class TypeFilter:
 # ===================================================================
 #               Parameter Formatters
 # ===================================================================
+#
+# molrs stores force-field parameters in its own internal convention and the
+# reader normalizes to it at the boundary: harmonic stiffness as ``k`` in the
+# ``½k(x−x₀)²`` form (so ``k = 2·K_LAMMPS``) and every angle in **radians**.
+# LAMMPS wants the ``K(x−x₀)²`` form and degrees, so these formatters invert
+# both conversions — otherwise a read→write round-trip doubles every force
+# constant and writes angles in radians.
 
 
 def _format_bond_harmonic(typ) -> list[float]:
-    """Format a harmonic bond type's parameters: k r0.
+    """Format a harmonic bond type's parameters: K r0.
 
-    Dispatch is by style name (``harmonic``); the owning ``BondHarmonicStyle``
-    is resolved upstream in :meth:`ForceFieldFormatter.format_params`.
+    ``k`` is stored in the ``½k(x−x₀)²`` form; LAMMPS ``bond_coeff harmonic``
+    wants ``K = k/2``. Dispatch is by style name (``harmonic``); the owning
+    ``BondHarmonicStyle`` is resolved upstream in
+    :meth:`ForceFieldFormatter.format_params`.
     """
-    return [typ.params.kwargs["k"], typ.params.kwargs["r0"]]
+    kwargs = typ.params.kwargs
+    return [0.5 * kwargs["k"], kwargs["r0"]]
 
 
 def _format_angle_harmonic(typ) -> list[float]:
-    """Format a harmonic angle type's parameters: k theta0.
+    """Format a harmonic angle type's parameters: K theta0.
 
-    Following the molrs unit convention, ``theta0`` is stored in **degrees** —
-    the same unit LAMMPS ``angle_coeff harmonic`` expects — so it is written
-    through unchanged (no radian conversion). ``k`` is in kcal/mol/rad².
-    Dispatch is by style name (``harmonic``).
+    ``k`` is stored in the ``½k(θ−θ₀)²`` form, so LAMMPS wants ``K = k/2``;
+    ``theta0`` is stored in radians and LAMMPS ``angle_coeff harmonic`` wants
+    degrees. Dispatch is by style name (``harmonic``).
     """
     kwargs = typ.params.kwargs
-    return [kwargs.get("k", 0.0), kwargs.get("theta0", 0.0)]
+    return [0.5 * kwargs.get("k", 0.0), math.degrees(kwargs.get("theta0", 0.0))]
 
 
 def _format_dihedral_opls(typ) -> list[float]:
@@ -676,15 +686,18 @@ def _format_dihedral_opls(typ) -> list[float]:
 
 
 def _format_dihedral_fourier(typ) -> list:
-    """Format DihedralFourierType for LAMMPS fourier style.
+    """Format a fourier dihedral type for LAMMPS: m K n phase.
 
-    Stored kwargs: k1=K, k2=n (periodicity as float), k3=phase (degrees), k4=weight.
-    Output: [m, K, n, phase]  (m=1 for single-term AMBER dihedrals).
+    molrs stores each term of the fourier→periodic mapping under indexed keys
+    ``k<i>`` (amplitude), ``n<i>`` (periodicity) and ``d<i>`` (phase, in
+    radians). LAMMPS ``dihedral_coeff fourier`` wants ``m K1 n1 d1 [K2 n2 d2
+    ...]`` with the phase in degrees. Output: ``[m, K, n, phase_deg]`` for the
+    single-term AMBER dihedrals this reader produces.
     """
     kwargs = typ.params.kwargs
     k = float(kwargs.get("k1", 0.0))
-    n = int(kwargs.get("k2", 1))
-    phase = float(kwargs.get("k3", 0.0))
+    n = int(kwargs.get("n1", 1))
+    phase = math.degrees(float(kwargs.get("d1", 0.0)))
     return [1, k, n, phase]
 
 
@@ -854,19 +867,27 @@ class LAMMPSForceFieldWriter:
     def _get_style_params(self, style) -> list[float]:
         """Get positional style parameters (cutoffs, etc.).
 
-        molrs styles have no positional args, so this always returns an empty
-        list and callers fall back to :meth:`_get_default_style_params`.
+        A pair style carries its cutoff in ``style.params`` when the force field
+        was read from a source that records one. Dropping it here would emit a
+        bare ``pair_style lj/cut``, which LAMMPS rejects as an illegal command.
         """
-        return []
+        params = getattr(style, "params", None) or {}
+        cutoff = params.get("cutoff")
+        return [float(cutoff)] if cutoff is not None else []
 
     def _get_default_style_params(
         self, style_name: str, style_type: str
     ) -> list[float]:
-        """Get default parameters for a style if none are specified."""
+        """Get default parameters for a style if none are specified.
+
+        Every LAMMPS pair style below requires an explicit cutoff, so a style
+        with no recorded one still has to be written with a value rather than
+        bare.
+        """
         if style_type == "pair":
             if style_name in ["lj/cut/coul/cut", "lj/cut/coul/long"]:
                 return [10.0, 10.0]  # LJ cutoff, Coulomb cutoff
-            elif style_name in ["lj/cut", "lj126"]:
+            elif style_name in ["lj/cut", "lj126", "coul/cut", "coul/long"]:
                 return [10.0]  # Single cutoff
         return []
 
@@ -967,6 +988,45 @@ class LAMMPSForceFieldWriter:
             self._write_style_modify(lines, style, style_type)
         self._write_type_coeffs(lines, style, style_type, type_filter)
 
+    @staticmethod
+    def _is_combined_lj_coulomb(styles: list[Style], style_type: str) -> bool:
+        """True when the styles are one LJ + one Coulomb pair style.
+
+        These are the two halves of a LAMMPS ``lj/cut/coul/*`` kernel and are
+        written back combined, not as a hybrid.
+        """
+        if style_type != "pair" or len(styles) != 2:
+            return False
+        names = {s.name for s in styles}
+        return names == {"lj/cut", "coul/cut"} or names == {"lj/cut", "coul/long"}
+
+    def _write_combined_lj_coulomb_section(
+        self,
+        lines: list[str],
+        styles: list[Style],
+        type_filter: TypeFilter,
+    ) -> None:
+        """Write a split LJ + Coulomb pair as one ``lj/cut/coul/cut`` style."""
+        lj = next(s for s in styles if s.name == "lj/cut")
+        coul = next(s for s in styles if s.name != "lj/cut")
+        lj_cut = (self._get_style_params(lj) or self._get_default_style_params("lj/cut", "pair"))[0]
+        coul_params = self._get_style_params(coul) or self._get_default_style_params(coul.name, "pair")
+        coul_cut = coul_params[0] if coul_params else lj_cut
+        lines.append(f"pair_style lj/cut/coul/cut {lj_cut:f} {coul_cut:f}\n")
+        lines.append("\n")
+        # Only the LJ half carries per-type eps/sigma; Coulomb reads charges from
+        # the atoms. The combined kernel takes `pair_coeff i j eps sigma` and
+        # mixes cross terms itself.
+        seen: set[str] = set()
+        for typ in (t for t in lj.types if type_filter.includes(t)):
+            coeff_id = self._get_coeff_id(typ, "pair")
+            if coeff_id in seen:
+                continue
+            seen.add(coeff_id)
+            params = self._get_type_params(typ, lj)
+            lines.append(f"pair_coeff {coeff_id} {self._format_params(params)}\n")
+        lines.append("\n")
+
     def _write_hybrid_style_section(
         self,
         lines: list[str],
@@ -982,8 +1042,28 @@ class LAMMPSForceFieldWriter:
             style_type: Style type name
             type_filter: Filter to determine which types to include
         """
-        style_names = " ".join(s.name for s in styles)
-        lines.append(f"{style_type}_style hybrid {style_names}\n")
+        # A Lennard-Jones style paired with a Coulomb style is the split form of
+        # LAMMPS's combined `lj/cut/coul/cut` -- one kernel, one cutoff each,
+        # standard geometric mixing across atom types. Writing it as `hybrid`
+        # would break that mixing: a `pair_coeff * * coul/cut` wildcard marks
+        # every cross pair as explicitly set, so LAMMPS stops auto-mixing the LJ
+        # term into them and the off-diagonal pairs lose all repulsion. Emit the
+        # combined style instead, which mixes correctly and needs no wildcard.
+        if self._is_combined_lj_coulomb(styles, style_type):
+            self._write_combined_lj_coulomb_section(lines, styles, type_filter)
+            return
+
+        # Genuinely independent sub-styles: one hybrid line carrying each
+        # sub-style's own cutoff arguments.
+        substyles = []
+        for style in styles:
+            params = self._get_style_params(style) or self._get_default_style_params(
+                style.name, style_type
+            )
+            substyles.append(
+                f"{style.name} {self._format_params(params)}" if params else style.name
+            )
+        lines.append(f"{style_type}_style hybrid {' '.join(substyles)}\n")
         lines.append("\n")
 
         # Dedup coeff ids across every hybrid sub-style (see _write_type_coeffs).
