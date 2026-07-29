@@ -33,6 +33,31 @@ Docs deploy is Cloudflare Pages (builds from the repo), not a GitHub workflow.
   with inline flags (drift risk).
 - Install both hook stages: `pre-commit install --hook-type pre-commit --hook-type pre-push`.
 
+## Whole-tree gates: tox, never `language: system` pytest
+
+Canonical test gate: `uv run --extra dev tox -e py` with `package = "wheel"`.
+That throwaway env installs molpy as a wheel and resolves
+`molcrafts-molrs==X` from **PyPI** — it cannot see monorepo editables
+(`.venv` `molcrafts_molrs.pth` → sibling checkout).
+
+**2026-07-29 incident:** `dev` still used `entry: pytest … language: system`.
+Editable molrs hid missing PyPI APIs (`write_lammps_forcefield`); CI failed
+while local pre-push “passed”. **Never reintroduce system-pytest as the CI mirror.**
+
+`tox-lint` / `tox-py` / `molrs-pin-on-pypi` must keep `always_run: true`.
+
+## Ownership split (do not merge into tox)
+
+| Concern | Owner |
+|---|---|
+| Fetch / skip tests-data | `tests/conftest.py` (session fixture) |
+| `molcrafts-molrs==X` exists on PyPI | `.pre-commit-config.yaml` hook **`molrs-pin-on-pypi`** (pre-push) |
+| Non-editable wheel smoke | `tox -e py` `commands_pre` (molpy under `site-packages` only) |
+| Format / lint / type | `tox -e lint` |
+
+Do **not** put tests-data download or the PyPI pin probe into `pyproject.toml`
+tox commands.
+
 ## Escape hatch
 
 Hooks can be skipped per-commit without disabling them permanently:
@@ -41,6 +66,8 @@ Hooks can be skipped per-commit without disabling them permanently:
 SKIP=pytest git commit -m "wip: mid-feature"
 SKIP=ty,pytest git commit -m "wip: draft"
 ```
+
+Do **not** `SKIP=molrs-pin-on-pypi` to land features that need unpublished molrs.
 
 ## CI matrix convention
 

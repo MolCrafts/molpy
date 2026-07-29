@@ -14,7 +14,7 @@ Foundational data structures for molecular systems. All available via
 | `Trajectory` | Ordered sequence of Frames (eager or lazy) | Time-series analysis, streaming I/O | Single-snapshot work |
 | `CoarseGrain` | CG molecular graph (beads + CG bonds) | Coarse-grained modelling; mirrors `Atomistic` | All-atom work (use `Atomistic`) |
 | `Config` | Thread-safe global configuration singleton | Logging level, thread count settings | Per-run overrides (use `Config.temporary`) |
-| `AtomisticForcefield` | Force field container (styles → types → potentials) | Defining parameters before execution | Direct numerical computation |
+| `ForceField` | Force field container (styles → types → potentials) | Defining parameters before execution | Direct numerical computation |
 | `Entity` / `Link` | Base classes for graph nodes / edges (atoms are Entities, bonds are Links) | Custom graph element types | Everyday atom / bond editing |
 | `Region` | Geometric region (box, sphere, boolean combinations) | Spatial selection, packing constraints | Non-geometric masks (use a `Selector`) |
 | `UnitSystem` | LAMMPS-style unit-system registry (`real`, `metal`, …) | Unit conversions and custom presets | Unit-agnostic array math |
@@ -41,7 +41,7 @@ wrapped = box.wrap(coords)
 d = box.dist(r1, r2)  # minimum-image distance
 
 # ForceField: parameter data
-ff = mp.AtomisticForcefield(name="demo", units="real")
+ff = mp.ForceField(name="demo", units="real")
 style = ff.def_atomstyle("full")
 ct = style.def_type("CT", mass=12.011)
 ```

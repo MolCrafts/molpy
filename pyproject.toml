@@ -4,96 +4,58 @@ dynamic = ["version"]
 description = "Modern Python framework for molecular simulation and analysis"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "BSD-3-Clause"}
-
-authors = [
-    { name = "Roy Kid", email = "lijichen365@gmail.com" }
-]
-
-maintainers = [
-    { name = "Roy Kid", email = "lijichen365@gmail.com" }
-]
-
+license = { text = "BSD-3-Clause" }
+authors = [{ name = "Roy Kid", email = "lijichen365@gmail.com" }]
+maintainers = [{ name = "Roy Kid", email = "lijichen365@gmail.com" }]
 keywords = [
     "molecular-simulation",
     "computational-chemistry",
     "molecular-dynamics",
     "force-fields",
-    "scientific-computing"
+    "scientific-computing",
 ]
-
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "Intended Audience :: Developers",
     "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",
-    "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: Implementation :: CPython",
-    "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Chemistry",
-    "Topic :: Scientific/Engineering :: Physics",
-    "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
-
 dependencies = [
     "numpy>=2.0",
     "lark>=1.3.1",
-    "molcrafts-molrs==0.9.3",
+    "molcrafts-molrs==0.10.0",
     "molcrafts-mollog>=1.0.0",
     "molcrafts-molcfg>=1.2.0",
     "zarr>=3.0",
 ]
 
-[tool.setuptools.dynamic]
-version = { attr = "molpy.version.version" }
-
 [project.optional-dependencies]
 dev = [
-    # Default test gate tools only — no third-party scientific software
-    # (RDKit, freud, OpenMM, Packmol, AmberTools, …). Those stay optional
-    # extras or system executables; tests that need them skip or are marked
-    # ``external`` and are excluded by ``pytest -m "not external"``.
     "pytest>=6.0.0",
     "pytest-cov>=3.0.0",
     "pytest-mock>=3.10.0",
     "pytest-benchmark>=5.0",
     "pytest-xdist>=3.0",
     "filelock>=3.0",
-    # Lint/type tools — pinned so tox -e lint / CI use the same versions.
     "ruff==0.15.13",
     "ty==0.0.37",
-    # Gate driver (prek pre-push / CI). After `pip install -e ".[dev]"`:
-    #   uv run --extra dev tox -e lint|py
     "tox>=4.23",
 ]
-# Optional scientific backends for users / docs notebooks — never required by
-# the default CI or ``pytest -m "not external"`` gate.
 rdkit = ["rdkit"]
 doc = [
-    # Zensical is the static-site generator (successor to MkDocs by the Material
-    # team); it reads zensical.toml. Build with `zensical build` / `serve`.
     "zensical>=0.0.45",
-    # The molcrafts docs theme (zensical.toml sets `theme.name = "molcrafts"`).
     "molcrafts-zensical-theme>=0.2.3",
     "mkdocstrings[python]>=0.24.0",
-    # Notebook rendering: Zensical does not run the mkdocs-jupyter plugin, so the
-    # user-guide notebooks are pre-rendered to Markdown by scripts/render_notebooks.py.
-    # These deps are only needed to regenerate those pages, not to build the site.
     "nbconvert>=7.0",
     "ipykernel",
-    "packmol",
-    "rdkit",
     "matplotlib",
-    "scienceplots",
 ]
-all = [
-    "molcrafts-molpy[dev,doc]",
-]
+all = ["molcrafts-molpy[dev,doc]"]
 
 [project.scripts]
 molpy = "molpy.cli:main"
@@ -103,19 +65,16 @@ Homepage = "https://github.com/MolCrafts/molpy"
 Documentation = "https://molpy.molcrafts.org"
 Repository = "https://github.com/MolCrafts/molpy.git"
 Issues = "https://github.com/MolCrafts/molpy/issues"
-Changelog = "https://github.com/MolCrafts/molpy/releases"
 
 [build-system]
-requires = [
-    "setuptools>=42",
-    "wheel",
-    "ninja",
-    "numpy",
-]
+requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { attr = "molpy.version.version" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -126,84 +85,48 @@ where = ["src"]
 "molpy.data" = ["README.md"]
 "molpy.data.forcefield" = ["*.xml"]
 
-[tool.black]
-line-length = 88
-target-version = ['py312']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
-
-[tool.isort]
-profile = "black"
-line_length = 88
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
-
-# ruff linter — ignore rules that need gradual cleanup
 [tool.ruff.lint]
 ignore = [
-    "F401",   # unused imports (many are re-exports without __all__)
-    "F403",   # wildcard imports (used in __init__.py)
-    "F541",   # f-string without placeholders
-    "F811",   # redefinition of unused name
-    "F821",   # undefined name (forward refs, TYPE_CHECKING)
-    "F822",   # undefined name in __all__
-    "F841",   # unused variable (some are false positives)
-    "E402",   # import not at top (intentional lazy imports)
-    "E721",   # type comparison (use isinstance)
-    "E722",   # bare except
-    "E741",   # ambiguous variable name (I, l, O)
-    "E743",   # ambiguous function name
+    "F401",
+    "F403",
+    "F541",
+    "F811",
+    "F821",
+    "F822",
+    "F841",
+    "E402",
+    "E721",
+    "E722",
+    "E741",
+    "E743",
 ]
 
-# ty type checker (Astral) — start lenient, tighten over time
 [tool.ty.environment]
 python-version = "3.12"
 root = ["./src"]
 
 [tool.ty.rules]
 all = "warn"
-
-# --- Ignored: untyped third-party stubs (lark, zarr, etc.) ---
 unresolved-import = "ignore"
 unresolved-attribute = "ignore"
 invalid-argument-type = "ignore"
-
-# --- Ignored: codebase not fully annotated yet (long-term fix) ---
-# TODO: fix these incrementally and promote to "warn"
-invalid-assignment = "ignore"        # 26 warnings: Optional imports, dict subscript
-invalid-method-override = "ignore"   # 20 warnings: subclass signature mismatches
-invalid-return-type = "ignore"       # 17 warnings: return type mismatches
-unresolved-reference = "ignore"      # 9 warnings: forward refs in TYPE_CHECKING
-unsupported-operator = "ignore"      # 7 warnings: operator type mismatches
-not-iterable = "ignore"              # 7 warnings: iteration over non-iterable
-unknown-argument = "ignore"          # 4 warnings: unknown kwargs
-invalid-type-arguments = "ignore"    # 4 warnings: generic type arg issues
-not-subscriptable = "ignore"         # 3 warnings: subscript on non-subscriptable
-index-out-of-bounds = "ignore"       # 3 warnings: tuple index (false positives)
-no-matching-overload = "ignore"      # 2 warnings: overload resolution
-missing-argument = "ignore"          # 2 warnings: missing required args
-division-by-zero = "ignore"          # 2 warnings: guarded by if (false positives)
-invalid-parameter-default = "ignore" # 2 warnings: default value type mismatch
-too-many-positional-arguments = "ignore"  # 1 warning
-invalid-type-form = "ignore"         # 1 warning
-call-non-callable = "ignore"         # 1 warning: reassigned variable (false positive)
-
-# --- Minor / informational ---
+invalid-assignment = "ignore"
+invalid-method-override = "ignore"
+invalid-return-type = "ignore"
+unresolved-reference = "ignore"
+unsupported-operator = "ignore"
+not-iterable = "ignore"
+unknown-argument = "ignore"
+invalid-type-arguments = "ignore"
+not-subscriptable = "ignore"
+index-out-of-bounds = "ignore"
+no-matching-overload = "ignore"
+missing-argument = "ignore"
+division-by-zero = "ignore"
+invalid-parameter-default = "ignore"
+too-many-positional-arguments = "ignore"
+invalid-type-form = "ignore"
+call-non-callable = "ignore"
 unused-type-ignore-comment = "ignore"
 redundant-cast = "ignore"
 possibly-unresolved-reference = "ignore"
@@ -212,105 +135,43 @@ possibly-unresolved-reference = "ignore"
 output-format = "full"
 
 [tool.pytest.ini_options]
-pythonpath = [
-    "src",
-]
+pythonpath = ["src"]
 filterwarnings = [
     "error",
-    # pytest-benchmark cannot run under xdist; CI/pre-push use -n auto.
     "ignore:Benchmarks are automatically disabled because xdist plugin is active:pytest_benchmark.logger.PytestBenchmarkWarning",
-    # PyO3 `unsendable` types (molrs.Frame) may be finalised on an xdist
-    # worker teardown thread; pytest turns that into PytestUnraisableExceptionWarning.
-    # Seen on CI: test_clp_typifier_loads_builtin_forcefield (ubuntu-3.12, -n auto).
     "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 markers = [
     "external: tests requiring external network/resources or executables",
-    "benchmark: pytest-benchmark suite under benchmarks/ (not tests/)",
+    "benchmark: pytest-benchmark suite under benchmarks/",
 ]
 
-# Isolated gates — prek + CI:
-#   tox -e lint   # ruff + ty (no package install)
-#   tox -e py     # non-editable wheel of molpy + pytest -m "not external"
 [tool.tox]
 requires = ["tox>=4.23"]
 env_list = ["lint", "py"]
 
 [tool.tox.env.lint]
-description = "CI lint: ruff format/check + ty (pinned)"
 skip_install = true
 base_python = ["python3.12"]
-deps = [
-  "ruff==0.15.13",
-  "ty==0.0.37",
-]
+deps = ["ruff==0.15.13", "ty==0.0.37"]
 commands = [
-  ["ruff", "format", "--check", "src/", "tests/"],
-  ["ruff", "check", "src/", "tests/"],
-  ["ty", "check", "src/molpy/"],
+    ["ruff", "format", "--check", "src/", "tests/"],
+    ["ruff", "check", "src/", "tests/"],
+    ["ty", "check", "src/molpy/"],
 ]
 
 [tool.tox.env.py]
-description = "CI test: non-editable package + pytest (not external)"
 package = "wheel"
 extras = ["dev"]
 base_python = ["python3.12"]
-pass_env = [
-  "HOME",
-  "PATH",
-  "SSH_AUTH_SOCK",
-  "TERM",
-]
-# Fetch MolCrafts/tests-data once if missing (same as former CI step).
+pass_env = ["HOME", "PATH", "SSH_AUTH_SOCK", "TERM"]
 commands_pre = [
-  [
-    "{envpython}",
-    "-c",
-    """
-from pathlib import Path
-import tarfile
-import urllib.request
-import io
-
-root = Path(r'{toxinidir}')
-data = root / 'tests' / 'tests-data'
-if (data / 'README.md').is_file():
-    raise SystemExit(0)
-data.mkdir(parents=True, exist_ok=True)
-url = 'https://github.com/molcrafts/tests-data/archive/refs/heads/master.tar.gz'
-print(f'fetching {url} → {data}')
-with urllib.request.urlopen(url) as resp:
-    buf = io.BytesIO(resp.read())
-with tarfile.open(fileobj=buf, mode='r:gz') as tf:
-    for m in tf.getmembers():
-        parts = Path(m.name).parts
-        if len(parts) < 2:
-            continue
-        # strip top-level archive dir
-        rel = Path(*parts[1:])
-        if not rel.parts:
-            continue
-        # skip Windows reserved 'con' paths
-        if any(p.lower() == 'con' for p in rel.parts):
-            continue
-        dest = data / rel
-        if m.isdir():
-            dest.mkdir(parents=True, exist_ok=True)
-        else:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            f = tf.extractfile(m)
-            if f is None:
-                continue
-            dest.write_bytes(f.read())
-print('tests-data ready')
-""",
-  ],
-  [
-    "{envpython}",
-    "-c",
-    "import molpy, pathlib; r=pathlib.Path(molpy.__file__).resolve(); assert 'site-packages' in str(r), r",
-  ],
+    [
+        "{envpython}",
+        "-c",
+        "import molpy, pathlib; r=pathlib.Path(molpy.__file__).resolve(); assert 'site-packages' in str(r), r",
+    ],
 ]
 commands = [
-  ["{envpython}", "-m", "pytest", "tests/", "-m", "not external", "-n", "auto"],
+    ["{envpython}", "-m", "pytest", "tests/", "-m", "not external", "-n", "auto"],
 ]

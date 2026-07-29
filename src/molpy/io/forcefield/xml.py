@@ -8,7 +8,7 @@ from typing import Any
 
 from molpy.core.forcefield import (
     AngleHarmonicStyle,
-    AtomisticForcefield,
+    ForceField,
     AtomType,
     BondHarmonicStyle,
     DihedralOPLSStyle,
@@ -186,7 +186,7 @@ class XMLForceFieldReader:
     XML force field parser for atomistic force fields.
 
     Parses XML-formatted force field files (e.g., OPLS-AA) and populates
-    an AtomisticForcefield object with atom types, bond parameters, angle
+    a ForceField object with atom types, bond parameters, angle
     parameters, dihedral parameters, and nonbonded interactions.
 
     The parser handles:
@@ -230,13 +230,13 @@ class XMLForceFieldReader:
         # OPLS-AA).
         self._layer: int = 0
 
-        self._ff: AtomisticForcefield | None = None
+        self._ff: ForceField | None = None
 
     def read(
         self,
-        forcefield: AtomisticForcefield | None = None,
+        forcefield: ForceField | None = None,
         layer: int = 0,
-    ) -> AtomisticForcefield:
+    ) -> ForceField:
         """
         Read and parse the XML force field file.
 
@@ -249,7 +249,7 @@ class XMLForceFieldReader:
                 ``clp.xml`` (layer 1) → ``clpol.xml`` (layer 2).
 
         Returns:
-            Populated AtomisticForcefield object
+            Populated ForceField object
         """
         self._layer = layer
         if not self._file.exists():
@@ -265,7 +265,7 @@ class XMLForceFieldReader:
 
         # Create or use provided force field
         if forcefield is None:
-            self._ff = AtomisticForcefield(name=ff_name, units="real")
+            self._ff = ForceField(name=ff_name, units="real")
         else:
             self._ff = forcefield
 
@@ -839,9 +839,9 @@ class XMLForceFieldReader:
 
 def read_xml_forcefield(
     filepath: str | Path,
-    forcefield: AtomisticForcefield | None = None,
+    forcefield: ForceField | None = None,
     layer: int = 0,
-) -> AtomisticForcefield:
+) -> ForceField:
     """
     Convenience function to read an XML force field file.
 
@@ -854,7 +854,7 @@ def read_xml_forcefield(
             onto an already-loaded ``oplsaa.xml`` so CL&P types win conflicts.
 
     Returns:
-        Populated AtomisticForcefield object
+        Populated ForceField object
 
     Example:
         >>> # Load built-in OPLS-AA force field
@@ -1136,9 +1136,9 @@ class OPLSAAForceFieldReader(XMLForceFieldReader):
 
 def read_oplsaa_forcefield(
     filepath: str | Path,
-    forcefield: AtomisticForcefield | None = None,
+    forcefield: ForceField | None = None,
     layer: int = 0,
-) -> AtomisticForcefield:
+) -> ForceField:
     """
     Read OPLS-AA force field with proper unit conversions for LAMMPS.
 
@@ -1152,7 +1152,7 @@ def read_oplsaa_forcefield(
         forcefield: Optional existing force field to populate
 
     Returns:
-        Populated AtomisticForcefield object with LAMMPS-compatible units
+        Populated ForceField object with LAMMPS-compatible units
 
     Example:
         >>> ff = read_oplsaa_forcefield("oplsaa.xml")
@@ -1188,7 +1188,7 @@ class XMLForceFieldWriter:
     # public
     # ------------------------------------------------------------------
 
-    def write(self, forcefield: AtomisticForcefield) -> None:
+    def write(self, forcefield: ForceField) -> None:
         """Serialize *forcefield* to XML."""
         from molpy.core.forcefield import (
             AngleStyle,
@@ -1454,7 +1454,7 @@ class XMLForceFieldWriter:
                 elem.set(a, v)
 
 
-def write_xml_forcefield(filepath: str | Path, forcefield: AtomisticForcefield) -> None:
+def write_xml_forcefield(filepath: str | Path, forcefield: ForceField) -> None:
     """Convenience function to write a force field to XML.
 
     Args:

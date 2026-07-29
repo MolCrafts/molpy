@@ -1,10 +1,4 @@
-"""molpy's LAMMPS force-field reader is a thin sink to the native molrs reader.
-
-``molpy.io.read_lammps_forcefield`` and ``molpy.io.forcefield.read_lammps_forcefield``
-delegate to ``molrs.read_lammps_forcefield`` — the force-field model lives in
-molrs (Rust); molpy does not reimplement parsing. These tests assert the
-delegation returns a ``molrs.ForceField`` with correctly unit-normalized params.
-"""
+"""LAMMPS force-field include reader (molrs)."""
 
 import molpy.io as mpio
 import molpy.io.forcefield as mpff
@@ -30,9 +24,8 @@ def _write(tmp_path):
     return p
 
 
-def test_io_read_lammps_forcefield_sinks_to_molrs(tmp_path):
+def test_io_read_lammps_forcefield(tmp_path):
     ff = mpio.read_lammps_forcefield(_write(tmp_path))
-    # Sunk to molrs: the returned object is the native molrs ForceField.
     assert type(ff).__module__ == "molrs.forcefield"
     bt = ff.get_style("bond", "harmonic").get_type_by_name("c3-c3")
     assert abs(bt.params["k"] - 457.78) < 1e-2  # k = 2K

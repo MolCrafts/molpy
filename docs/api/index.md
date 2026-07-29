@@ -12,7 +12,7 @@ Auto-generated reference for every public symbol, with typed signatures througho
 | Define a periodic simulation cell | `Box` | [Core](core.md) |
 | Represent a time-ordered frame sequence | `Trajectory` | [Core](core.md) |
 | Query bond-graph relations (angles, paths, rings) | `get_topo`, `get_topo_neighbors`, `get_topo_distances` | [Core](core.md) |
-| Define and query force field parameters | `AtomisticForcefield`, `Style`, `Type` | [Core](core.md) |
+| Define and query force field parameters | `ForceField`, `Style`, `Type` | [Core](core.md) |
 | Parse SMILES / BigSMILES / SMARTS / CGSmiles | `parse_molecule`, `parse_monomer`, `parse_smarts`, `parse_cgsmiles` | [Parser](parser.md) |
 | Execute a chemical reaction (bond formation / removal) | `Reaction`, `GraphAssembler`, `Selector` | [Builder](builder.md) |
 | Generate `fix bond/react` pre/post topology templates | `BondReactTemplate`, `write_bond_react_map` | [IO](io.md) |
