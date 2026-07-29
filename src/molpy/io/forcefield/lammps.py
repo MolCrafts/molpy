@@ -1,7 +1,6 @@
-import math
 from itertools import islice
 from pathlib import Path
-from typing import Callable, TextIO, cast
+from typing import TextIO, cast
 
 from molpy import (
     AngleStyle,
@@ -13,21 +12,13 @@ from molpy import (
     ForceField,
     ImproperStyle,
     PairStyle,
-    Style,
 )
 from molpy.core.fields import ForceFieldFormatter
 from molpy.core.forcefield import (
-    AngleHarmonicStyle,
-    BondHarmonicStyle,
-    DihedralFourierStyle,
-    DihedralOPLSStyle,
     PairCoulTTStyle,
-    PairLJ126CoulCutStyle,
-    PairLJ126CoulLongStyle,
     PairTholeStyle,
 )
 from molpy.io.data.lammps import LammpsFieldFormatter
-from molpy.version import version
 
 
 class LAMMPSForceFieldReader:
@@ -574,189 +565,21 @@ class LAMMPSForceFieldReader:
 
 
 # ===================================================================
-#               Type Filter
-# ===================================================================
-
-
-class TypeFilter:
-    """Filter for selecting which types to include in LAMMPS output.
-
-    Supports multiple filtering modes:
-    - whitelist: Only include types whose names are in the set
-    - blacklist: Exclude types whose names are in the set
-    - custom: Use a custom function to determine inclusion
-    """
-
-    def __init__(
-        self,
-        whitelist: set[str] | None = None,
-        blacklist: set[str] | None = None,
-        custom: Callable | None = None,
-    ):
-        """
-        Args:
-            whitelist: Set of type names to include. If None, all types pass.
-            blacklist: Set of type names to exclude. Applied after whitelist.
-            custom: Custom filter function that takes (type_obj) -> bool.
-                   Applied after whitelist and blacklist.
-        """
-        self.whitelist = whitelist
-        self.blacklist = blacklist or set()
-        self.custom = custom
-
-    def includes(self, type_obj) -> bool:
-        """Check if a type should be included.
-
-        Args:
-            type_obj (Type): Type object to check.
-
-        Returns:
-            True if type should be included, False otherwise
-        """
-        # Apply whitelist
-        if self.whitelist is not None:
-            if type_obj.name not in self.whitelist:
-                return False
-
-        # Apply blacklist
-        if type_obj.name in self.blacklist:
-            return False
-
-        # Apply custom filter
-        if self.custom is not None:
-            if not self.custom(type_obj):
-                return False
-
-        return True
-
-    @classmethod
-    def from_whitelist(cls, whitelist: set[str] | None) -> "TypeFilter":
-        """Create a filter from a whitelist (backward compatibility)."""
-        return cls(whitelist=whitelist)
-
-
-# ===================================================================
-#               Parameter Formatters
+#               Parameter Formatters (CL&Pol / specialized)
 # ===================================================================
 #
-# molrs stores force-field parameters in its own internal convention and the
-# reader normalizes to it at the boundary: harmonic stiffness as ``k`` in the
-# ``½k(x−x₀)²`` form (so ``k = 2·K_LAMMPS``) and every angle in **radians**.
-# LAMMPS wants the ``K(x−x₀)²`` form and degrees, so these formatters invert
-# both conversions — otherwise a read→write round-trip doubles every force
-# constant and writes angles in radians.
-
-
-def _format_bond_harmonic(typ) -> list[float]:
-    """Format a harmonic bond type's parameters: K r0.
-
-    ``k`` is stored in the ``½k(x−x₀)²`` form; LAMMPS ``bond_coeff harmonic``
-    wants ``K = k/2``. Dispatch is by style name (``harmonic``); the owning
-    ``BondHarmonicStyle`` is resolved upstream in
-    :meth:`ForceFieldFormatter.format_params`.
-    """
-    kwargs = typ.params.kwargs
-    return [0.5 * kwargs["k"], kwargs["r0"]]
-
-
-def _format_angle_harmonic(typ) -> list[float]:
-    """Format a harmonic angle type's parameters: K theta0.
-
-    ``k`` is stored in the ``½k(θ−θ₀)²`` form, so LAMMPS wants ``K = k/2``;
-    ``theta0`` is stored in radians and LAMMPS ``angle_coeff harmonic`` wants
-    degrees. Dispatch is by style name (``harmonic``).
-    """
-    kwargs = typ.params.kwargs
-    return [0.5 * kwargs.get("k", 0.0), math.degrees(kwargs.get("theta0", 0.0))]
-
-
-def _format_dihedral_opls(typ) -> list[float]:
-    """Format an OPLS dihedral type's parameters: k1 k2 k3 k4.
-
-    The c1-c4 coefficients are emitted in LAMMPS k1-k4 order. Dispatch is by
-    style name (``opls``).
-    """
-    kwargs = typ.params.kwargs
-    return [
-        kwargs.get("c1", 0.0),
-        kwargs.get("c2", 0.0),
-        kwargs.get("c3", 0.0),
-        kwargs.get("c4", 0.0),
-    ]
-
-
-def _format_dihedral_fourier(typ) -> list:
-    """Format a fourier dihedral type for LAMMPS: m K n phase.
-
-    molrs stores each term of the fourier→periodic mapping under indexed keys
-    ``k<i>`` (amplitude), ``n<i>`` (periodicity) and ``d<i>`` (phase, in
-    radians). LAMMPS ``dihedral_coeff fourier`` wants ``m K1 n1 d1 [K2 n2 d2
-    ...]`` with the phase in degrees. Output: ``[m, K, n, phase_deg]`` for the
-    single-term AMBER dihedrals this reader produces.
-    """
-    kwargs = typ.params.kwargs
-    k = float(kwargs.get("k1", 0.0))
-    n = int(kwargs.get("n1", 1))
-    phase = math.degrees(float(kwargs.get("d1", 0.0)))
-    return [1, k, n, phase]
-
-
-def _format_pair_lj(typ) -> list[float]:
-    """Format an LJ 12-6 pair type's parameters: epsilon sigma.
-
-    Dispatch is by style name (``lj/cut`` and its coulomb variants).
-    """
-    kwargs = typ.params.kwargs
-    result = []
-    if "epsilon" in kwargs:
-        result.append(kwargs["epsilon"])
-    if "sigma" in kwargs:
-        result.append(kwargs["sigma"])
-    return result
-
-
-def _format_generic_bond(typ) -> list[float]:
-    """Format generic BondType parameters: k r0"""
-    kwargs = typ.params.kwargs
-    return [kwargs.get("k", 0.0), kwargs.get("r0", 0.0)]
-
-
-def _format_generic_angle(typ) -> list[float]:
-    """Format generic AngleType parameters: k theta0"""
-    kwargs = typ.params.kwargs
-    return [kwargs.get("k", 0.0), kwargs.get("theta0", 0.0)]
-
-
-def _format_generic_dihedral(typ) -> list[float]:
-    """Format generic DihedralType parameters: k1 k2 k3 k4"""
-    kwargs = typ.params.kwargs
-    return [
-        kwargs.get("k1", kwargs.get("c1", 0.0)),
-        kwargs.get("k2", kwargs.get("c2", 0.0)),
-        kwargs.get("k3", kwargs.get("c3", 0.0)),
-        kwargs.get("k4", kwargs.get("c4", 0.0)),
-    ]
-
-
-def _format_generic_pair(typ) -> list[float]:
-    """Format generic PairType parameters: epsilon sigma"""
-    kwargs = typ.params.kwargs
-    result = []
-    if "epsilon" in kwargs:
-        result.append(kwargs["epsilon"])
-    if "sigma" in kwargs:
-        result.append(kwargs["sigma"])
-    return result
+# Full ``*.ff`` write for the AMBER/GAFF flavour lives in molrs
+# (``molrs.write_lammps_forcefield``): unit conversion is the inverse of
+# ``LammpsFfReader`` and must not be reimplemented here. These formatters remain
+# for specialized pair styles (CL&Pol Thole / Tang−Toennies) that the native
+# writer does not yet emit — they feed ``LammpsForceFieldFormatter.format_params``
+# only, not the main include path.
 
 
 def _format_pair_thole(typ) -> list[float]:
     """Format a Thole pair type's parameters: alpha a_thole.
 
-    CL&Pol Thole core–shell screening (LAMMPS ``pair_style thole``). The
-    per-atom-type polarizability ``alpha`` (Å³) and Thole width ``a_thole``
-    drive the screened dipole interaction; the charge is written per-atom in the
-    data file, not in the pair coefficient. Dispatch is by style name
-    (``thole``).
+    CL&Pol Thole core–shell screening (LAMMPS ``pair_style thole``).
     """
     kwargs = typ.params.kwargs
     return [kwargs.get("alpha", 0.0), kwargs.get("a_thole", 2.6)]
@@ -766,39 +589,22 @@ def _format_pair_coul_tt(typ) -> list[float]:
     """Format a Tang−Toennies pair type's parameters: b n c.
 
     CL&Pol Tang−Toennies charge–dipole damping (LAMMPS ``pair_style coul/tt``).
-    The damping parameters ``b`` (1/Å), ``n`` and ``c`` are global to the style
-    in molrs; when a type carries them they are emitted per pair, otherwise the
-    Tang−Toennies defaults (b=4.5, n=4, c=1.0) are written. The charge is in the
-    data file. Dispatch is by style name (``coul/tt``).
     """
     kwargs = typ.params.kwargs
     return [kwargs.get("b", 4.5), kwargs.get("n", 4), kwargs.get("c", 1.0)]
 
 
 class LammpsForceFieldFormatter(LammpsFieldFormatter, ForceFieldFormatter):
-    """LAMMPS force-field formatter.
+    """LAMMPS force-field parameter formatter for specialized styles.
 
-    Inherits LAMMPS field-name mapping (``q`` ↔ ``charge``, ``mol`` ↔ ``mol_id``)
-    from :class:`LammpsFieldFormatter` and adds parameter formatters for
-    serializing Style/Type objects to LAMMPS coefficient lines.
+    AMBER/GAFF bond/angle/dihedral/pair serialization is owned by molrs
+    (``write_lammps_forcefield``). This registry keeps CL&Pol damping pair
+    formatters until those styles also sink into the native writer.
     """
 
     _param_formatters = {
-        # Specialized styles
-        BondHarmonicStyle: _format_bond_harmonic,
-        AngleHarmonicStyle: _format_angle_harmonic,
-        DihedralFourierStyle: _format_dihedral_fourier,
-        DihedralOPLSStyle: _format_dihedral_opls,
-        PairLJ126CoulCutStyle: _format_pair_lj,
-        PairLJ126CoulLongStyle: _format_pair_lj,
-        # CL&Pol damping potentials
         PairTholeStyle: _format_pair_thole,
         PairCoulTTStyle: _format_pair_coul_tt,
-        # Generic styles (fallback)
-        BondStyle: _format_generic_bond,
-        AngleStyle: _format_generic_angle,
-        DihedralStyle: _format_generic_dihedral,
-        PairStyle: _format_generic_pair,
     }
 
 
@@ -808,306 +614,22 @@ class LammpsForceFieldFormatter(LammpsFieldFormatter, ForceFieldFormatter):
 
 
 class LAMMPSForceFieldWriter:
-    """Writer for LAMMPS force field files.
+    """Writer for LAMMPS force-field includes (``*.ff``).
 
-    Converts ForceField objects to LAMMPS input format with support for:
-    - Multiple style types (bond, angle, dihedral, improper, pair)
-    - Hybrid styles
-    - Type filtering
-    - Specialized Style and Type classes
+    Thin shell over :func:`molrs.write_lammps_forcefield` /
+    :func:`molrs.write_lammps_forcefield_str`. Unit conversion (``K = k/2``,
+    angles radians → degrees, fourier phase, combined ``lj/cut/coul/cut``) lives
+    in molrs as the inverse of the native reader — molpy does not reimplement it.
     """
-
-    _formatter = LammpsForceFieldFormatter()
 
     def __init__(self, fpath: str | Path | TextIO, precision: int = 6):
         """
         Args:
-            fpath: Output file path or file-like object
-            precision: Number of decimal places for floating point values
+            fpath: Output file path or file-like object.
+            precision: Decimal places for floating-point coefficients.
         """
         self.precision = precision
         self._fpath = fpath
-
-    def _format_number(self, value: float | int) -> str:
-        """Format a single number with configured precision."""
-        if isinstance(value, float):
-            return f"{value:.{self.precision}f}"
-        return str(value)
-
-    def _format_params(self, params: list[float | int]) -> str:
-        """Format a list of parameters for LAMMPS output."""
-        return " ".join(self._format_number(p) for p in params)
-
-    def _get_type_params(self, typ, style) -> list[float]:
-        """Extract parameters from a Type object for LAMMPS coefficients.
-
-        Delegates to :meth:`LammpsForceFieldFormatter.format_params`.
-        """
-        return self._formatter.format_params(typ, style)
-
-    def _get_coeff_id(self, typ, style_type: str) -> str:
-        """Get coefficient identifier for a type.
-
-        Args:
-            typ: Type object
-            style_type: Style type name ("bond", "angle", "pair", etc.)
-
-        Returns:
-            Coefficient identifier string for LAMMPS
-        """
-        if style_type == "pair":
-            # Pair types need "I J" format
-            if hasattr(typ, "itom") and hasattr(typ, "jtom"):
-                return f"{typ.itom.name} {typ.jtom.name}"
-            raise ValueError(f"PairType {typ} missing itom/jtom attributes")
-        else:
-            # Other types use name directly
-            return typ.name
-
-    def _get_style_params(self, style) -> list[float]:
-        """Get positional style parameters (cutoffs, etc.).
-
-        A pair style carries its cutoff in ``style.params`` when the force field
-        was read from a source that records one. Dropping it here would emit a
-        bare ``pair_style lj/cut``, which LAMMPS rejects as an illegal command.
-        """
-        params = getattr(style, "params", None) or {}
-        cutoff = params.get("cutoff")
-        return [float(cutoff)] if cutoff is not None else []
-
-    def _get_default_style_params(
-        self, style_name: str, style_type: str
-    ) -> list[float]:
-        """Get default parameters for a style if none are specified.
-
-        Every LAMMPS pair style below requires an explicit cutoff, so a style
-        with no recorded one still has to be written with a value rather than
-        bare.
-        """
-        if style_type == "pair":
-            if style_name in ["lj/cut/coul/cut", "lj/cut/coul/long"]:
-                return [10.0, 10.0]  # LJ cutoff, Coulomb cutoff
-            elif style_name in ["lj/cut", "lj126", "coul/cut", "coul/long"]:
-                return [10.0]  # Single cutoff
-        return []
-
-    def _write_style_header(
-        self,
-        lines: list[str],
-        style: Style,
-        style_type: str,
-    ) -> None:
-        """Write style header line (e.g., 'bond_style harmonic').
-
-        Args:
-            lines: Output lines list
-            style: Style object
-            style_type: Style type name
-        """
-        params = self._get_style_params(style)
-        if not params:
-            params = self._get_default_style_params(style.name, style_type)
-
-        style_line = f"{style_type}_style {style.name}"
-        if params:
-            style_line += f" {self._format_params(params)}"
-        lines.append(style_line + "\n")
-
-    def _write_style_modify(
-        self,
-        lines: list[str],
-        style: Style,
-        style_type: str,
-    ) -> None:
-        """Write style modify line if present.
-
-        Args:
-            lines: Output lines list
-            style: Style object
-            style_type: Style type name
-        """
-        style_params = style._ff.style_params(style.category, style.name)
-        modified = style_params.get("modified")
-        if modified:
-            modify_args = " ".join(modified)
-            lines.append(f"{style_type}_modify {modify_args}\n")
-
-    def _write_type_coeffs(
-        self,
-        lines: list[str],
-        style: Style,
-        style_type: str,
-        type_filter: TypeFilter,
-    ) -> None:
-        """Write coefficient lines for all types in a style.
-
-        Args:
-            lines: Output lines list
-            style: Style object
-            style_type: Style type name
-            type_filter: Filter to determine which types to include
-        """
-        types = [t for t in style.types if type_filter.includes(t)]
-        if types:
-            # A merged force field carries one type object per contributing
-            # component (per-monomer parameterisation duplicates e.g. `c3`,
-            # `c-c3` many times). A labelmap LAMMPS file holds exactly one coeff
-            # per type name, so emit the first occurrence of each coeff id and
-            # drop the rest — the data file's Type Labels count then matches.
-            seen: set[str] = set()
-            for typ in types:
-                coeff_id = self._get_coeff_id(typ, style_type)
-                if coeff_id in seen:
-                    continue
-                seen.add(coeff_id)
-                params = self._get_type_params(typ, style)
-                lines.append(
-                    f"{style_type}_coeff {coeff_id} {self._format_params(params)}\n"
-                )
-            lines.append("\n")
-
-    def _write_single_style_section(
-        self,
-        lines: list[str],
-        style: Style,
-        style_type: str,
-        type_filter: TypeFilter,
-        skip_header: bool = False,
-    ) -> None:
-        """Write a section for a single style (non-hybrid).
-
-        Args:
-            lines: Output lines list
-            style: Style object
-            style_type: Style type name
-            type_filter: Filter to determine which types to include
-            skip_header: If True, omit the ``<style_type>_style`` header line.
-        """
-        if not skip_header:
-            self._write_style_header(lines, style, style_type)
-            self._write_style_modify(lines, style, style_type)
-        self._write_type_coeffs(lines, style, style_type, type_filter)
-
-    @staticmethod
-    def _is_combined_lj_coulomb(styles: list[Style], style_type: str) -> bool:
-        """True when the styles are one LJ + one Coulomb pair style.
-
-        These are the two halves of a LAMMPS ``lj/cut/coul/*`` kernel and are
-        written back combined, not as a hybrid.
-        """
-        if style_type != "pair" or len(styles) != 2:
-            return False
-        names = {s.name for s in styles}
-        return names == {"lj/cut", "coul/cut"} or names == {"lj/cut", "coul/long"}
-
-    def _write_combined_lj_coulomb_section(
-        self,
-        lines: list[str],
-        styles: list[Style],
-        type_filter: TypeFilter,
-    ) -> None:
-        """Write a split LJ + Coulomb pair as one ``lj/cut/coul/cut`` style."""
-        lj = next(s for s in styles if s.name == "lj/cut")
-        coul = next(s for s in styles if s.name != "lj/cut")
-        lj_cut = (self._get_style_params(lj) or self._get_default_style_params("lj/cut", "pair"))[0]
-        coul_params = self._get_style_params(coul) or self._get_default_style_params(coul.name, "pair")
-        coul_cut = coul_params[0] if coul_params else lj_cut
-        lines.append(f"pair_style lj/cut/coul/cut {lj_cut:f} {coul_cut:f}\n")
-        lines.append("\n")
-        # Only the LJ half carries per-type eps/sigma; Coulomb reads charges from
-        # the atoms. The combined kernel takes `pair_coeff i j eps sigma` and
-        # mixes cross terms itself.
-        seen: set[str] = set()
-        for typ in (t for t in lj.types if type_filter.includes(t)):
-            coeff_id = self._get_coeff_id(typ, "pair")
-            if coeff_id in seen:
-                continue
-            seen.add(coeff_id)
-            params = self._get_type_params(typ, lj)
-            lines.append(f"pair_coeff {coeff_id} {self._format_params(params)}\n")
-        lines.append("\n")
-
-    def _write_hybrid_style_section(
-        self,
-        lines: list[str],
-        styles: list[Style],
-        style_type: str,
-        type_filter: TypeFilter,
-    ) -> None:
-        """Write a section for hybrid styles.
-
-        Args:
-            lines: Output lines list
-            styles: List of Style objects
-            style_type: Style type name
-            type_filter: Filter to determine which types to include
-        """
-        # A Lennard-Jones style paired with a Coulomb style is the split form of
-        # LAMMPS's combined `lj/cut/coul/cut` -- one kernel, one cutoff each,
-        # standard geometric mixing across atom types. Writing it as `hybrid`
-        # would break that mixing: a `pair_coeff * * coul/cut` wildcard marks
-        # every cross pair as explicitly set, so LAMMPS stops auto-mixing the LJ
-        # term into them and the off-diagonal pairs lose all repulsion. Emit the
-        # combined style instead, which mixes correctly and needs no wildcard.
-        if self._is_combined_lj_coulomb(styles, style_type):
-            self._write_combined_lj_coulomb_section(lines, styles, type_filter)
-            return
-
-        # Genuinely independent sub-styles: one hybrid line carrying each
-        # sub-style's own cutoff arguments.
-        substyles = []
-        for style in styles:
-            params = self._get_style_params(style) or self._get_default_style_params(
-                style.name, style_type
-            )
-            substyles.append(
-                f"{style.name} {self._format_params(params)}" if params else style.name
-            )
-        lines.append(f"{style_type}_style hybrid {' '.join(substyles)}\n")
-        lines.append("\n")
-
-        # Dedup coeff ids across every hybrid sub-style (see _write_type_coeffs).
-        seen: set[str] = set()
-        for style in styles:
-            types = [t for t in style.types if type_filter.includes(t)]
-            for typ in types:
-                coeff_id = self._get_coeff_id(typ, style_type)
-                if coeff_id in seen:
-                    continue
-                seen.add(coeff_id)
-                params = self._get_type_params(typ, style)
-                lines.append(
-                    f"{style_type}_coeff {coeff_id} {style.name} {self._format_params(params)}\n"
-                )
-
-        lines.append("\n")
-
-    def _write_style_section(
-        self,
-        lines: list[str],
-        styles: list[Style],
-        style_type: str,
-        type_filter: TypeFilter,
-        skip_header: bool = False,
-    ) -> None:
-        """Write a complete style section.
-
-        Args:
-            lines: Output lines list
-            styles: List of Style objects
-            style_type: Style type name
-            type_filter: Filter to determine which types to include
-            skip_header: If True, omit the ``<style_type>_style`` header line.
-        """
-        if not styles:
-            return
-
-        if len(styles) == 1:
-            self._write_single_style_section(
-                lines, styles[0], style_type, type_filter, skip_header=skip_header
-            )
-        else:
-            self._write_hybrid_style_section(lines, styles, style_type, type_filter)
 
     def write(
         self,
@@ -1119,61 +641,29 @@ class LAMMPSForceFieldWriter:
         improper_types: set[str] | None = None,
         skip_pair_style: bool = False,
     ) -> None:
-        """Write forcefield to LAMMPS format.
+        """Write forcefield to LAMMPS format via molrs.
 
         Args:
-            forcefield: ForceField object to write
-            atom_types: Set of atom type names to include (for pair coeffs).
-                       If None, include all.
-            bond_types: Set of bond type names to include. If None, include all.
-            angle_types: Set of angle type names to include. If None, include all.
-            dihedral_types: Set of dihedral type names to include. If None, include all.
-            improper_types: Set of improper type names to include. If None, include all.
-            skip_pair_style: If True, omit the ``pair_style`` header line so the
-                calling input script can set ``pair_style`` independently.
+            forcefield: ForceField in molrs units.
+            atom_types: Optional atom-type whitelist for pair coeffs.
+            bond_types: Optional bond type-name whitelist.
+            angle_types: Optional angle type-name whitelist.
+            dihedral_types: Optional dihedral type-name whitelist.
+            improper_types: Optional improper type-name whitelist.
+            skip_pair_style: If True, omit the ``pair_style`` header line.
         """
-        lines = [f"# LAMMPS force field generated by molpy version {version}\n\n"]
+        import molrs
 
-        # Create type filters. Pair types are keyed by their constituent atom
-        # types (``itom``/``jtom``), not by the pair's own name: a GAFF self-pair
-        # is named e.g. ``"c3-c3"`` while the atom-type whitelist holds ``"c3"``,
-        # so a name-based whitelist would wrongly drop every pair coeff.
-        def _pair_includes(pt) -> bool:
-            if atom_types is None:
-                return True
-            names = {
-                t.name
-                for t in (getattr(pt, "itom", None), getattr(pt, "jtom", None))
-                if t is not None
-            }
-            return bool(names) and names <= atom_types
-
-        filters = {
-            "pair": TypeFilter(custom=_pair_includes),
-            "bond": TypeFilter.from_whitelist(bond_types),
-            "angle": TypeFilter.from_whitelist(angle_types),
-            "dihedral": TypeFilter.from_whitelist(dihedral_types),
-            "improper": TypeFilter.from_whitelist(improper_types),
-        }
-
-        # Get styles and write sections
-        style_configs = [
-            (forcefield.get_styles(PairStyle), "pair"),
-            (forcefield.get_styles(BondStyle), "bond"),
-            (forcefield.get_styles(AngleStyle), "angle"),
-            (forcefield.get_styles(DihedralStyle), "dihedral"),
-            (forcefield.get_styles(ImproperStyle), "improper"),
-        ]
-
-        for styles, style_type in style_configs:
-            skip = skip_pair_style and style_type == "pair"
-            self._write_style_section(
-                lines, styles, style_type, filters[style_type], skip_header=skip
-            )
-
-        # Write to file
+        kwargs = dict(
+            precision=self.precision,
+            skip_pair_style=skip_pair_style,
+            atom_types=atom_types,
+            bond_types=bond_types,
+            angle_types=angle_types,
+            dihedral_types=dihedral_types,
+            improper_types=improper_types,
+        )
         if isinstance(self._fpath, (str, Path)):
-            with open(self._fpath, "w") as f:
-                f.writelines(lines)
+            molrs.write_lammps_forcefield(str(self._fpath), forcefield, **kwargs)
         else:
-            self._fpath.writelines(lines)
+            self._fpath.write(molrs.write_lammps_forcefield_str(forcefield, **kwargs))
