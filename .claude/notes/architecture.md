@@ -90,7 +90,7 @@ _Generated 2026-06-10 by /mol:map._
 
 ### molrs dependency
 
-- Hard runtime dependency pinned at `molcrafts-molrs==0.9.0` in `pyproject.toml` (same version line as molrs).
+- Hard runtime dependency on `molcrafts-molrs` pinned to the shared **minor** line in `pyproject.toml` (`>=X.Y.0,<X.(Y+1)`); import-time check is major.minor only.
 - `Frame`/`Block` are molrs-owned storage types, **identity-re-exported on the molpy facade** (`molpy.Frame is mp.Frame`). Users import from `molpy` only. Molpy defines no `core.frame` module, subclass, `_inner`, or conversion bridge. Object/None/ragged columns are rejected fail-fast at write time (`molpy.BlockDtypeError`).
 - `Atomistic`/`CoarseGrain` subclass `molrs.Atomistic`/`molrs.CoarseGrain` (native pyo3 base must be first in MRO) and ARE molrs worlds, accepted directly by `molrs.*` free functions (`molrs.translate`, `molrs.rotate`). `Atomistic.adopt(graph: molrs.Atomistic)` re-wraps a Rust graph.
 - `Entity`/`Link` are handle-views over molrs ECS nodes; scalar columns route to molrs component columns (`core/_handle.py`, `core/_columns.py`), bool/object overflow kept Python-side.
@@ -177,7 +177,7 @@ molpy 拥有**体系判断**:力场语义、局域性判据、区域所有权、
 
 反应 / 交联 / 装配的公开 API 可以重新设计。不留 deprecated shim,不留双构造器
 (`connector=` 或 `reacter=` 二选一那种),不留 `last_regions` 之类的兼容侧信道。
-breaking change 记进 changelog + 版本号,然后往前走。
+breaking change 记进版本号 / git tag / GitHub Release,然后往前走（无手写 CHANGELOG）。
 
 ### 4. OOP,且是真 OOP
 

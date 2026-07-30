@@ -12,5 +12,6 @@ See `.claude/notes/release.md`.
 
 ## Version
 
-Exact pin in `pyproject.toml`: `molcrafts-molrs==X.Y.Z` must match a **published**
-molrs tag, not only a local rebuild with the same version string.
+Minor-line pin in `pyproject.toml`: `molcrafts-molrs>=X.Y.0,<X.(Y+1)` must
+include a **published** molrs release on that minor, not only a local rebuild
+with a matching version string. Runtime check is major.minor only.

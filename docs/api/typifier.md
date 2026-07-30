@@ -36,6 +36,9 @@ component, `ForceFieldParams`.
 | `AmberToolsTypifier` | GAFF atom types via antechamber; accumulates the force field it discovers | GAFF / AmberTools |
 | `ForceFieldParams` | **Not a typifier.** Annotates pair and bonded terms from node types | A graph whose types are already known |
 
+UFF lives in molrs (Rust / WASM `UFFTypifier`); MolPy re-exports it when the
+published molrs minor exposes a Python binding.
+
 ## Canonical example
 
 ```python

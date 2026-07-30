@@ -28,15 +28,19 @@ If all tests pass, the environment is ready.
 ## Building molrs from source
 
 The quick setup above resolves [molrs](molrs-backend.md) — molpy's required
-Rust compute core — from the published `molcrafts-molrs` wheel on PyPI. That is
-the right path for most molpy development.
+Rust compute core — from the published `molcrafts-molrs` wheel on PyPI within
+the **major.minor** range in `pyproject.toml` (`>=X.Y.0,<X.(Y+1)`). That is
+the right path for most molpy development. Import-time
+`check_molrs_version` accepts patch drift inside that minor.
 
 If you are changing the Rust core *and* molpy together, build molrs editable
-from a local checkout instead. molrs ships its Python bindings as a
-[maturin](https://www.maturin.rs/) project, so this step needs the Rust
-toolchain — install it via [`rustup`](https://rustup.rs/); molrs pins the
-toolchain channel and components in its `rust-toolchain.toml`, so no manual
-component setup is required inside the checkout.
+from a local checkout instead (local rebuilds do **not** count as a release
+for the pre-push pin gate — see [Release Process](release-process.md)). molrs
+ships its Python bindings as a [maturin](https://www.maturin.rs/) project, so
+this step needs the Rust toolchain — install it via
+[`rustup`](https://rustup.rs/); molrs pins the toolchain channel and components
+in its `rust-toolchain.toml`, so no manual component setup is required inside
+the checkout.
 
 ```bash
 # in a sibling checkout next to molpy

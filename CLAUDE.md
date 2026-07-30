@@ -122,7 +122,7 @@ For non-trivial work, prefer:
 ## What must never change casually
 
 - Identity re-exports: `molpy.Frame is molrs.Frame` (and Block/Element); no second Python storage layer
-- Hard dependency on exact `molcrafts-molrs` pin; users never `import molrs`
+- Hard dependency on `molcrafts-molrs` minor line (`>=X.Y.0,<X.(Y+1)`); users never `import molrs`
 - Canonical field names (`charge`, `mol_id`) and `FieldFormatter` boundary translation
 - Core data-model mutation semantics (in-place + `.copy()` opt-in)
 - `frame.box` as the only simulation-cell field on the Python surface
@@ -137,10 +137,11 @@ For non-trivial work, prefer:
 ## Release with molrs (agent iron law)
 
 **molrs first, then molpy.** Never land molpy that needs molrs APIs not already
-on the **published** exact pin. A version that is allowed on `master` for
-co-release **must carry a tag** (`vX.Y.Z`); untagged tip + local maturin is
-not a release. **No scripts** for pin/API parity — agents **manually** check
-tag + index before pin bumps. Details: `.claude/notes/release.md`.
+on a **published** minor line (`>=X.Y.0,<X.(Y+1)`). A version that is allowed
+on `master` for co-release **must carry a tag** (`vX.Y.Z`); untagged tip +
+local maturin is not a release. Runtime check is major.minor only (patch may
+differ). **No scripts** for pin/API parity — agents **manually** check tag +
+index before pin bumps. Details: `.claude/notes/release.md`.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -197,7 +198,14 @@ MolPy is a computational chemistry toolkit with explicit data flow and minimal m
 | `wrapper` | External tools: Antechamber, Prepgen, command-line wrappers |
 | `adapter` | Format bridges: RDKit, OpenBabel, and other external libraries |
 
-> **Hard runtime dependency**: `molcrafts-molrs==0.9.0` (Rust extension) is an exact required dependency declared in `pyproject.toml`. Every public molrs symbol is identity-re-exported on the molpy facade (`molpy.Frame is molrs.Frame`); users never import molrs. Molpy has no `core/frame.py` or `core/element.py` and no wrapper/`_inner` layer. `ElementData` does not exist. Molpy does not run with missing or mismatched molrs package metadata.
+> **Hard runtime dependency**: `molcrafts-molrs` (Rust extension) is required,
+> pinned to the same **minor** line in `pyproject.toml`
+> (`>=0.10.0,<0.11`). Import-time `check_molrs_version` enforces major.minor
+> only. Every public molrs symbol is identity-re-exported on the molpy facade
+> (`molpy.Frame is molrs.Frame`); users never import molrs. Molpy has no
+> `core/frame.py` or `core/element.py` and no wrapper/`_inner` layer.
+> `ElementData` does not exist. Molpy does not run with missing molrs metadata
+> or a different major.minor.
 
 ### Data Model Layer
 

@@ -37,8 +37,9 @@ Docs deploy is Cloudflare Pages (builds from the repo), not a GitHub workflow.
 
 Canonical test gate: `uv run --extra dev tox -e py` with `package = "wheel"`.
 That throwaway env installs molpy as a wheel and resolves
-`molcrafts-molrs==X` from **PyPI** — it cannot see monorepo editables
-(`.venv` `molcrafts_molrs.pth` → sibling checkout).
+`molcrafts-molrs` from **PyPI** within the minor range in `pyproject.toml` —
+it cannot see monorepo editables (`.venv` `molcrafts_molrs.pth` → sibling
+checkout).
 
 **2026-07-29 incident:** `dev` still used `entry: pytest … language: system`.
 Editable molrs hid missing PyPI APIs (`write_lammps_forcefield`); CI failed
@@ -51,7 +52,7 @@ while local pre-push “passed”. **Never reintroduce system-pytest as the CI m
 | Concern | Owner |
 |---|---|
 | Fetch / skip tests-data | `tests/conftest.py` (session fixture) |
-| `molcrafts-molrs==X` exists on PyPI | `.pre-commit-config.yaml` hook **`molrs-pin-on-pypi`** (pre-push) |
+| A published `molcrafts-molrs` on the minor line exists on PyPI | `.pre-commit-config.yaml` hook **`molrs-pin-on-pypi`** (pre-push) |
 | Non-editable wheel smoke | `tox -e py` `commands_pre` (molpy under `site-packages` only) |
 | Format / lint / type | `tox -e lint` |
 

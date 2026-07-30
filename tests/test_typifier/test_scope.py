@@ -17,7 +17,8 @@ def test_molrs_syntax_facts_ready():
     assert hasattr(molrs.SmartsPattern, "ring_primitives")
     assert hasattr(molrs.Atomistic, "max_ring_system_size")
     pin = Path("pyproject.toml").read_text(encoding="utf-8")
-    assert "molcrafts-molrs==" in pin
+    # Minor-line pin (patch may drift); not exact ==X.Y.Z.
+    assert "molcrafts-molrs>=" in pin or "molcrafts-molrs~=" in pin
 
 
 def test_type_scope_from_linear_patterns():
