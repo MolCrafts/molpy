@@ -20,9 +20,17 @@ dependency, a normal install already provides it:
 pip install molcrafts-molpy
 ```
 
-There is no `molpy[molrs]` extra to remember — that key was removed. If you are
-upgrading from an older release, see the [changelog](../../changelog.md): molrs
-moving from optional to required is a breaking change.
+There is no `molpy[molrs]` extra to remember — that key was removed. molrs is a
+hard runtime dependency (breaking change relative to older optional installs);
+see git history for the transition.
+
+### Version policy: same major.minor
+
+`pyproject.toml` pins the molrs **minor line**
+(`molcrafts-molrs>=X.Y.0,<X.(Y+1)`). On `import molpy`,
+`molpy.version.check_molrs_version()` fails only when major.minor differs —
+patch-level drift is allowed (e.g. molpy `0.10.0` with molrs `0.10.1`).
+There is no exact-patch requirement and no hand-written CHANGELOG.
 
 ## The box is a molrs object, not a copy of one
 

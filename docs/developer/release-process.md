@@ -12,6 +12,21 @@ version = "X.Y.Z"
 release_date = "YYYY-MM-DD"
 ```
 
+### molrs co-release: major.minor only
+
+MolPy and [molrs](https://github.com/MolCrafts/molrs) share a **major.minor**
+line when co-released. Patch may drift.
+
+| Mechanism | Rule |
+|-----------|------|
+| `pyproject.toml` | `molcrafts-molrs>=X.Y.0,<X.(Y+1)` (not `==X.Y.Z`) |
+| Import-time check | `check_molrs_version()` accepts any installed molrs with the same major.minor |
+| Pre-push hook | `molrs-pin-on-pypi` verifies that **some** published wheel on that minor line exists on PyPI |
+
+**Order:** ship molrs first (`master` + tag `vX.Y.Z` + publish), then land molpy
+APIs that need the new surface. Editable local molrs does not count as a release.
+There is no hand-written `CHANGELOG.md` — history is git tags / GitHub Releases.
+
 
 ## Pre-release checks
 
@@ -32,7 +47,7 @@ that is not reachable from `master`. So the release commit must land on `master`
 job fails. Order matters:
 
 ```bash
-# 1. Bump version.py + CHANGELOG on dev, commit.
+# 1. Bump version.py on dev, commit (history lives in git, no CHANGELOG).
 # 2. Get the release commit onto master via a PR (direct pushes are rejected):
 gh pr create --base master --head dev --title "Release vX.Y.Z"
 gh pr merge --merge            # after checks pass

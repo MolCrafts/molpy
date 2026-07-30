@@ -163,8 +163,6 @@ nav = [
       { "Extending the Force Field" = "developer/extending-forcefield.md" },
     ] },
   ] },
-
-  { "Changelog" = "changelog.md" },
 ]
 
 extra_javascript = [
