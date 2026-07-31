@@ -1,71 +1,76 @@
 name: Release
 
+# Tag push on MolCrafts/molpy → pure-Python wheel to PyPI (trusted publishing).
+# Requires molcrafts-molrs on the same major.minor already on PyPI (see release notes).
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (e.g., v0.2.4)'
-        required: true
-        type: string
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   release:
+    if: github.repository == 'MolCrafts/molpy'
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/molcrafts-molpy
-    permissions:
-      contents: read
-      id-token: write
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
-      - name: Install build tools
-        run: pip install build twine
+      - uses: astral-sh/setup-uv@v9.0.0
 
-      - name: Extract version
-        id: get_version
+      - name: Tag must be on master
+        if: github.event_name == "push"
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${{ github.ref }}"
-          fi
-          VERSION="${VERSION#refs/tags/}"
-          VERSION="${VERSION#v}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Install package
-        run: pip install -e .
-
-      - name: Verify version match
-        run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
-          PACKAGE_VERSION=$(python -c "from molpy.version import version; print(version)")
-          if [ "$VERSION" != "$PACKAGE_VERSION" ]; then
-            echo "::error::Tag version ($VERSION) != package version ($PACKAGE_VERSION)"
+          set -euo pipefail
+          git fetch origin master
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::Tag is not on master; merge release commit first."
             exit 1
           fi
 
-      - name: Build package
-        run: python -m build
+      - name: Version from tag / package
+        id: ver
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION=$(python -c "import pathlib,re; t=pathlib.Path('src/molpy/version.py').read_text(); print(re.search(r'version = \"([^\"]+)\"', t).group(1))")
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing molcrafts-molpy==$VERSION"
 
-      - name: Check package
-        run: twine check dist/*
+      - name: Verify package version matches tag
+        if: github.event_name == "push"
+        run: |
+          set -euo pipefail
+          PACKAGE_VERSION=$(python -c "import pathlib,re; t=pathlib.Path('src/molpy/version.py').read_text(); print(re.search(r'version = \"([^\"]+)\"', t).group(1))")
+          if [ "${{ steps.ver.outputs.version }}" != "$PACKAGE_VERSION" ]; then
+            echo "::error::Tag ${{ steps.ver.outputs.version }} != package $PACKAGE_VERSION"
+            exit 1
+          fi
 
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Build sdist + wheel
+        run: |
+          set -euo pipefail
+          uv pip install --system build twine
+          python -m build
+          twine check dist/*
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          skip-existing: true
           print-hash: true
