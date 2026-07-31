@@ -4,7 +4,7 @@ After following this page you will have a working local environment with editabl
 
 ## Prerequisites
 
-You need Python 3.12+, Git, and pip. Everything else is installed by the setup script below.
+You need Python 3.14+, Git, and pip. Everything else is installed by the setup script below.
 
 
 ## Quick setup
@@ -14,7 +14,7 @@ Clone the repository, create a virtualenv, install in editable mode with dev dep
 ```bash
 git clone https://github.com/MolCrafts/molpy.git
 cd molpy
-python3.12 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
 pip install -e ".[dev]"

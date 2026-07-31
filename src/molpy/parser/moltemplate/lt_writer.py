@@ -232,7 +232,7 @@ def _param_tokens(t) -> str | None:
             continue
         try:
             parts.append(_fmt(float(v)))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return " ".join(parts) if parts else None
 
@@ -383,7 +383,7 @@ def _fmt(v: float) -> str:
     """Format floats compactly but unambiguously."""
     try:
         f = float(v)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return str(v)
     if abs(f) >= 1e7 or (f != 0.0 and abs(f) < 1e-4):
         return f"{f:.6e}"

@@ -40,7 +40,7 @@ Error traceback here (if applicable)
 ## Environment
 
 - **MolPy version:** (e.g., 0.1.0)
-- **Python version:** (e.g., 3.12.0)
+- **Python version:** (e.g., 3.14.0)
 - **Operating System:** (e.g., Ubuntu 22.04, macOS 14.0, Windows 11)
 - **Installation method:** (pip, conda, source)
 

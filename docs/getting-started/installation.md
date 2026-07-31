@@ -1,6 +1,6 @@
 # Installation
 
-MolPy requires Python 3.12+. Install it with pip:
+MolPy requires Python 3.14+. Install it with pip:
 
 ```bash
 pip install molcrafts-molpy
