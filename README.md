@@ -71,6 +71,10 @@ it, analyze or minimize it, then read and write it across formats.
 
 ```bash
 pip install molcrafts-molpy
+
+# Browser (Pyodide) — needs molcrafts-molrs Pyodide wheel on PyPI:
+# await micropip.install("molcrafts-molrs")
+# await micropip.install("molcrafts-molpy")
 ```
 
 Core dependencies: NumPy, python-igraph, Lark, Pint, and
