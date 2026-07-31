@@ -30,7 +30,7 @@ jobs:
       - uses: astral-sh/setup-uv@v9.0.0
 
       - name: Tag must be on master
-        if: github.event_name == "push"
+        if: github.event_name == 'push'
         run: |
           set -euo pipefail
           git fetch origin master
@@ -53,7 +53,7 @@ jobs:
           echo "Publishing molcrafts-molpy==$VERSION"
 
       - name: Verify package version matches tag
-        if: github.event_name == "push"
+        if: github.event_name == 'push'
         run: |
           set -euo pipefail
           PACKAGE_VERSION=$(python -c "import pathlib,re; t=pathlib.Path('src/molpy/version.py').read_text(); print(re.search(r'version = \"([^\"]+)\"', t).group(1))")
