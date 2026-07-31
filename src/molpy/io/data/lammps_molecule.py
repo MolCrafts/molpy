@@ -422,7 +422,7 @@ class LammpsMoleculeReader(DataReader):
             elif "inertia" in line and not line.startswith("inertia"):
                 header_info["inertia"] = [float(p) for p in parts[:6]]
                 return True
-        except (ValueError, IndexError):
+        except ValueError, IndexError:
             pass
 
         return False

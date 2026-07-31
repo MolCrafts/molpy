@@ -199,7 +199,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
             else:
                 try:
                     atom_id_int = int(atom_id)
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     atoms_without_id.append(atom)
                     continue
                 max_id = max(max_id, atom_id_int)
@@ -220,7 +220,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                     if mp_id_int not in mp_id_to_atoms:
                         mp_id_to_atoms[mp_id_int] = []
                     mp_id_to_atoms[mp_id_int].append(atom)
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
 
         # If all mp_ids are unique and match ids, keep them
@@ -241,7 +241,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                         if int(mp_id) != int(atom_id):
                             needs_reassign = True
                             break
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         needs_reassign = True
                         break
 
@@ -252,7 +252,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                 if atom_id is not None:
                     try:
                         atom[MP_ID] = int(atom_id)
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         # Fallback to sequential if id is invalid
                         pass
 
@@ -302,7 +302,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                     if atom_id is not None:
                         try:
                             atom[MP_ID] = int(atom_id)
-                        except (ValueError, TypeError):
+                        except ValueError, TypeError:
                             atom[MP_ID] = next_mp_id
                             next_mp_id += 1
                     else:
@@ -501,7 +501,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                 continue
             try:
                 existing_id_int = int(existing_id)
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 continue
             max_existing_id = max(max_existing_id, existing_id_int)
 

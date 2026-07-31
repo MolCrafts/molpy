@@ -500,7 +500,7 @@ class LammpsDataReader(DataReader[LammpsDataResult]):
                         type_id_int = int(type_id)
                         converted_type = type_labels.get(type_id_int, str(type_id))
                         converted_types.append(converted_type)
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         converted_types.append(str(type_id))
                 block["type"] = np.array(converted_types)
 

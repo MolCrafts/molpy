@@ -219,7 +219,7 @@ class TestCP2KEngine:
                 assert engine.work_dir == Path(tmpdir)
                 assert len(engine.scripts) == 1
                 assert (Path(tmpdir) / "input.inp").exists()
-            except (FileNotFoundError, PermissionError):
+            except FileNotFoundError, PermissionError:
                 pass
 
 
@@ -243,7 +243,7 @@ class TestLAMMPSEngine:
             )
             try:
                 engine.run(script, capture_output=True, check=False, timeout=1)
-            except (FileNotFoundError, TimeoutError):
+            except FileNotFoundError, TimeoutError:
                 pass  # Expected: LAMMPS not installed or timed out
 
             # Script was saved regardless

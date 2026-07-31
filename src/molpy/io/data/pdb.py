@@ -72,7 +72,7 @@ def _dict_to_block(data: dict[str, list[Any] | np.ndarray]) -> Block:
                             else 1
                         )
                         blk[k] = np.asarray(vals, dtype=f"U{max_len}")
-                    except (TypeError, ValueError):
+                    except TypeError, ValueError:
                         # Fallback: use object dtype if conversion fails
                         blk[k] = np.asarray(vals, dtype=object)
     return blk

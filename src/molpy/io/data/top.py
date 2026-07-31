@@ -157,7 +157,7 @@ class TopReader(DataReader):
                 "charge": float(parts[6]),
                 "mass": float(parts[7]),
             }
-        except (ValueError, IndexError):
+        except ValueError, IndexError:
             return None
 
     def _parse_bond_line(self, line: str) -> dict[str, Any] | None:
@@ -187,7 +187,7 @@ class TopReader(DataReader):
                 "atomj": int(parts[1]),
                 "type": int(parts[2]),
             }
-        except (ValueError, IndexError):
+        except ValueError, IndexError:
             return None
 
     def _parse_pair_line(self, line: str) -> dict[str, Any] | None:
@@ -217,7 +217,7 @@ class TopReader(DataReader):
                 "atomj": int(parts[1]),
                 "type": int(parts[2]),
             }
-        except (ValueError, IndexError):
+        except ValueError, IndexError:
             return None
 
     def _parse_angle_line(self, line: str) -> dict[str, Any] | None:
@@ -248,7 +248,7 @@ class TopReader(DataReader):
                 "atomk": int(parts[2]),
                 "type": int(parts[3]),
             }
-        except (ValueError, IndexError):
+        except ValueError, IndexError:
             return None
 
     def _parse_dihedral_line(self, line: str) -> dict[str, Any] | None:
@@ -280,7 +280,7 @@ class TopReader(DataReader):
                 "atoml": int(parts[3]),
                 "type": int(parts[4]),
             }
-        except (ValueError, IndexError):
+        except ValueError, IndexError:
             return None
 
     def _dicts_to_block(self, data: list[dict[str, Any]]) -> Block:
@@ -339,7 +339,7 @@ class TopReader(DataReader):
                     )
                     result[key] = arr
                     continue
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
 
             # Fall back to string/object array
@@ -399,7 +399,7 @@ class TopReader(DataReader):
             try:
                 element = Element(element_name)
                 return element.number
-            except (KeyError, AttributeError):
+            except KeyError, AttributeError:
                 pass
 
         # Try first letter + rest lowercase for multi-character names
@@ -407,7 +407,7 @@ class TopReader(DataReader):
             try:
                 element = Element(element_name[0].upper() + element_name[1:].lower())
                 return element.number
-            except (KeyError, AttributeError):
+            except KeyError, AttributeError:
                 pass
 
         # Fallback to atom type
@@ -417,7 +417,7 @@ class TopReader(DataReader):
                 try:
                     element = Element(type_name)
                     return element.number
-                except (KeyError, AttributeError):
+                except KeyError, AttributeError:
                     pass
 
         return 0  # Unknown element

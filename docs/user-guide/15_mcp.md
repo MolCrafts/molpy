@@ -141,7 +141,7 @@ Install `molmcp` from PyPI. Pin to the 0.2 line:
 pip install "molcrafts-molmcp>=0.2,<0.3"
 ```
 
-Requires Python ≥ 3.12. The PyPI distribution is `molcrafts-molmcp`; the import name and CLI entry are both `molmcp`. The discovery engine adds no required runtime dependency — it uses the standard library.
+Requires Python ≥ 3.14. The PyPI distribution is `molcrafts-molmcp`; the import name and CLI entry are both `molmcp`. The discovery engine adds no required runtime dependency — it uses the standard library.
 
 Start the server in stdio mode (what MCP clients expect):
 
