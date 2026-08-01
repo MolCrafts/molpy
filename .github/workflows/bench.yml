@@ -4,13 +4,17 @@ name: Bench
 # Frame) and tracks it over time via github-action-benchmark (pytest-benchmark
 # JSON). The suite measures molpy's thin Python facade over the molrs kernels.
 #
-# Kept off the per-PR path (benchmarks are slow + noisy on shared runners);
-# tracks perf on canonical pushes + on demand. The normal `pytest tests/` run
-# does not pick up benchmarks/.
+# Kept off the per-PR path (benchmarks are slow + noisy on shared runners).
+# Release-only cadence: at ~180s it was the largest single cost on every
+# master push, and per-commit benchmark points on shared runners are noisy
+# enough that the dashboard was tracking runner variance as much as molpy.
+# One point per release is a cleaner signal; run it by hand between releases
+# when a change is expected to move performance. The normal `pytest tests/`
+# run does not pick up benchmarks/.
 
 on:
   push:
-    branches: [master, main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
