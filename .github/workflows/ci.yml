@@ -6,8 +6,11 @@ on:
   push:
     branches: [master, dev, dev-*]
     tags: ['v*']
+  # No `branches:` filter — every PR runs the gate regardless of its target.
+  # Integration lands on `dev`, so a `branches: [master]` filter left the
+  # actual integration path unguarded; an enumerated list is exactly the kind
+  # of thing that goes stale when a branch convention changes.
   pull_request:
-    branches: [master]
   workflow_dispatch:
 
 jobs:
