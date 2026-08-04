@@ -25,23 +25,25 @@ def _silence_import_warnings():
 
 # ---------- OPLSAA butane — full feature matrix (inherits, scoped $atom:x/y,
 # Data Bond List, nested `new` inside a class, 3-D array replication).
-class TestButane:
-    @pytest.fixture
-    def build(self):
-        return read_moltemplate_system(FIXTURES / "butane" / "system.lt")
+# 864× butane ≈ 12k atoms — parse once for all three assertions (was 3× setup).
+@pytest.fixture(scope="module")
+def butane_system():
+    return read_moltemplate_system(FIXTURES / "butane" / "system.lt")
 
-    def test_atom_count(self, build):
-        atomistic, _ = build
+
+class TestButane:
+    def test_atom_count(self, butane_system):
+        atomistic, _ = butane_system
         # 864 copies * 14 atoms (C4H10: 2 CH3 + 2 CH2 = 4*C + 10*H = 14)
         assert len(list(atomistic.atoms)) == 864 * 14
 
-    def test_bond_count(self, build):
-        atomistic, _ = build
+    def test_bond_count(self, butane_system):
+        atomistic, _ = butane_system
         # Each butane has 13 bonds (3 CH3 + 2 CH2 + 2 CH2 + 3 CH3 + 3 C-C)
         assert len(list(atomistic.bonds)) == 864 * 13
 
-    def test_ff_has_harmonic_styles(self, build):
-        _, ff = build
+    def test_ff_has_harmonic_styles(self, butane_system):
+        _, ff = butane_system
 
         assert ff.get_style("bond", "harmonic") is not None
         assert ff.get_style("angle", "harmonic") is not None

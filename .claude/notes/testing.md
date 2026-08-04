@@ -33,7 +33,8 @@ Parsers: known molecules parse correctly; invalid input gives clear errors;
 round-trip parse → serialize → parse → compare.
 
 Builders: topology correctness after building (bonds/angles consistent);
-external-tool paths marked `@pytest.mark.external`.
+external-tool paths use mocks or `# docs: skip` / explicit env skips — do **not**
+introduce a project-wide `@pytest.mark.external` marker.
 
 ## Physical limits that must hold (validation targets)
 

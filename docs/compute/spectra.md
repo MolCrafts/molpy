@@ -16,8 +16,11 @@ interval, and return the spectrum.
     - The sampling interval `dt_fs` is in **femtoseconds**; output frequencies are
       in wavenumbers (cm⁻¹).
     - You supply the raw ACF (built from the relevant time series — velocities,
-      dipole flux, polarizability). MolPy's
-      [`compute_acf`/`ACFAnalyzer`](transport.md) build ACFs from a column.
+      dipole flux, polarizability). Build ACFs with
+      `molrs.compute.transport.VACF` (per-particle velocities),
+      `GreenKuboConductivity` (collective current), or
+      `molpy.compute.signal.acf_fft` (single scalar series). See
+      [vacf.md](vacf.md) and [transport.md](transport.md).
 
 ---
 
@@ -56,11 +59,23 @@ Green–Kubo diffusion); the `dt_fs` and `cache_size` choices below follow
 [vacf.md §6 — Hyperparameter effects](vacf.md#6-hyperparameter-effects).
 
 ```python
-from molpy.compute import PowerSpectrum, compute_acf
+import numpy as np
 
-# velocities: (n_frames, n_atoms, 3); cache_size = max lag in frames
-vacf = compute_acf(velocities, cache_size=4096)  # raw velocity autocorrelation
-vdos = PowerSpectrum()(vacf, dt_fs=0.5)          # -> {frequency (cm^-1), intensity}
+rng = np.random.default_rng(0)
+velocities = rng.standard_normal((512, 64, 3))  # (n_frames, n_atoms, 3)
+dt, dt_fs = 0.5, 0.5  # sampling interval
+from molpy.compute import PowerSpectrum, signal
+
+# One scalar series per degree of freedom, averaged into one curve.
+dofs = velocities.reshape(velocities.shape[0], -1)
+vacf = np.mean(
+    [
+        signal.acf_fft(np.ascontiguousarray(dofs[:, k]), 256)
+        for k in range(dofs.shape[1])
+    ],
+    axis=0,
+)  # raw velocity ACF
+vdos = PowerSpectrum()(vacf, dt_fs=0.5)  # -> {frequency (cm^-1), intensity}
 ```
 
 ---
@@ -75,6 +90,11 @@ uses the molecular polarizability, split into isotropic and anisotropic parts:
 
 ```python
 from molpy.compute import IRSpectrum, RamanSpectrum
+
+# Each spectrum consumes a raw autocorrelation curve, built the same way as
+# the VDOS curve above — from the dipole flux and the polarizability instead
+# of the velocities.
+dipole_flux_acf = acf_iso = acf_aniso = vacf
 
 ir = IRSpectrum()(dipole_flux_acf, dt_fs=0.5)
 
@@ -98,9 +118,15 @@ and anisotropic invariants of the relevant response tensors:
 ```python
 from molpy.compute import VcdSpectrum, RoaSpectrum, ResonanceRamanSpectrum
 
+# VCD reads the electric-dipole/magnetic-dipole cross-correlation; like the
+# curves above it is one autocorrelation array, built from the two fluxes.
+electric_magnetic_acf = vacf
+
 vcd = VcdSpectrum()(electric_magnetic_acf, dt_fs=0.5)
 roa = RoaSpectrum(averaged=True)(acf_iso, acf_aniso, dt_fs=0.5)
-rr  = ResonanceRamanSpectrum(incident_frequency_cm1=20000.0)(acf_iso, acf_aniso, dt_fs=0.5)
+rr = ResonanceRamanSpectrum(incident_frequency_cm1=20000.0)(
+    acf_iso, acf_aniso, dt_fs=0.5
+)
 ```
 
 These reproduce the reference implementation's bulk-phase chiral-spectroscopy predictions, the first of

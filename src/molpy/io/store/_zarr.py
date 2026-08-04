@@ -128,7 +128,7 @@ class ZarrBackend:
                     if isinstance(parsed, list):
                         shape = tuple(attrs.get(shape_key, [len(parsed)]))
                         return np.array(parsed).reshape(shape)
-                except json.JSONDecodeError, ValueError:
+                except (json.JSONDecodeError, ValueError):
                     pass
                 # Scalar string
                 return np.array(val)

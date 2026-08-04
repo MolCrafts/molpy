@@ -143,6 +143,7 @@ molpy moltemplate run my_system.lt --emit lammps --out-dir out/
 Everything the CLI does is available programmatically.
 
 ```python
+# docs: skip — needs offline water.lt; moltemplate unit-tested with fixtures
 from molpy.io.forcefield.moltemplate import read_moltemplate_system
 from molpy.io.emit import emit, emit_all
 from molpy.parser.moltemplate import (

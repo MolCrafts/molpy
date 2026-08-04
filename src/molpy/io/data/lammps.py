@@ -500,7 +500,7 @@ class LammpsDataReader(DataReader[LammpsDataResult]):
                         type_id_int = int(type_id)
                         converted_type = type_labels.get(type_id_int, str(type_id))
                         converted_types.append(converted_type)
-                    except ValueError, TypeError:
+                    except (ValueError, TypeError):
                         converted_types.append(str(type_id))
                 block["type"] = np.array(converted_types)
 
@@ -700,12 +700,12 @@ class LammpsDataWriter(DataWriter):
             if name not in frame:
                 continue
             block = frame[name]
-            if block.nrows > 0 and "type" not in block:
+            if block.nrows > 0 and "type" not in block and "type_id" not in block:
                 warnings.warn(
-                    f"{name!r} block has {block.nrows} entries but no 'type' "
-                    f"column; these are untyped topology (a relation kind the "
-                    f"force field does not parameterize) and are omitted from the "
-                    f"LAMMPS data file.",
+                    f"{name!r} block has {block.nrows} entries but no 'type' or "
+                    f"'type_id' column; these are untyped topology (a relation "
+                    f"kind the force field does not parameterize) and are omitted "
+                    f"from the LAMMPS data file.",
                     stacklevel=2,
                 )
                 continue
@@ -854,6 +854,61 @@ class LammpsDataWriter(DataWriter):
             return {}
         return {type_name: type_idx + 1 for type_idx, type_name in enumerate(type_list)}
 
+    @staticmethod
+    def _atom_ids(atoms_data: Block) -> np.ndarray:
+        """Per-row LAMMPS atom IDs, numbering 1..N when the frame carries none.
+
+        An atom ID is an artifact of the *file*: it is what the Bonds/Angles/…
+        sections reference. A frame built from an :class:`~molpy.Atomistic` has
+        no ``id`` column because the graph identifies atoms by handle, so the
+        writer numbers the rows itself rather than demanding the caller invent
+        the column first. The frame is left untouched — the IDs belong to this
+        file, not to the caller's structure.
+        """
+        if "id" in atoms_data:
+            return np.asarray(atoms_data["id"])
+        return np.arange(1, atoms_data.nrows + 1, dtype=np.uint32)
+
+    def _row_type_ids(self, frame: Frame, section: str, type_key: str) -> np.ndarray:
+        """Per-row 1-based LAMMPS type IDs for ``frame[section]``.
+
+        A LAMMPS section line carries a type *number*, never a label. Two
+        canonical columns can supply it: ``type`` holds string labels and
+        ``type_id`` already *is* the number.
+
+        Labels win when both are present. A data file declares its own type
+        numbering in the ``* Type Labels`` and coefficient sections this writer
+        emits, so the numbers in the body have to be that numbering — a
+        ``type_id`` assigned elsewhere would contradict it. ``type_id`` is used
+        verbatim only when there are no labels to number.
+        """
+        block = frame[section]
+        if "type" not in block:
+            return np.asarray(block["type_id"]).astype(int)
+
+        types = np.asarray(block["type"])
+        type_list = self._get_merged_type_labels(frame).get(type_key, [])
+        type_to_id = self._get_type_to_id_mapping(type_list)
+        if not type_list:
+            # No label inventory (numeric or unlabelled types): number the
+            # distinct values that are actually present.
+            type_to_id = self._get_type_to_id_mapping(
+                sorted(str(t) for t in np.unique(types))
+            )
+
+        unique = np.unique(types)
+        # A type absent from the inventory cannot be numbered by it; fall back to
+        # numbering the present values so the file stays internally consistent.
+        fallback = (
+            {str(t): idx + 1 for idx, t in enumerate(sorted(unique))}
+            if any(str(t) not in type_to_id for t in unique)
+            else {}
+        )
+        per_type = {
+            str(t): type_to_id.get(str(t), fallback.get(str(t), 1)) for t in unique
+        }
+        return np.array([per_type[str(t)] for t in types], dtype=int)
+
     def _write_counts(self, lines: list[str], counts: dict[str, int]) -> None:
         """Write count lines."""
         if "atoms" in counts:
@@ -881,10 +936,17 @@ class LammpsDataWriter(DataWriter):
             if type_key in merged:
                 lines.append(f"{len(merged[type_key])} {label} types")
                 continue
-            if block_name in frame and "type" in frame[block_name]:
-                unique_types = np.unique(frame[block_name]["type"])
-                if block_name == "atoms" or len(unique_types) > 0:
-                    lines.append(f"{len(unique_types)} {label} types")
+            if block_name not in frame:
+                continue
+            block = frame[block_name]
+            # Without a label inventory the count is however many distinct types
+            # the block itself carries, whether they are labels or bare IDs.
+            column = "type" if "type" in block else "type_id"
+            if column not in block:
+                continue
+            unique_types = np.unique(block[column])
+            if block_name == "atoms" or len(unique_types) > 0:
+                lines.append(f"{len(unique_types)} {label} types")
 
     def _write_box_bounds(self, lines: list[str], frame: Frame) -> None:
         """Write box bounds."""
@@ -914,53 +976,53 @@ class LammpsDataWriter(DataWriter):
         lines.append("Masses")
         lines.append("")
 
-        merged_types = self._get_merged_type_labels(frame)
-        atom_type_list = merged_types.get("atom_types", [])
-
-        # Build type_to_id mapping from merged types
-        type_to_id = self._get_type_to_id_mapping(atom_type_list)
-
-        if not atom_type_list:
-            # Fallback: use actual types from atoms if no merged types
-            atoms_data = frame["atoms"]
-            unique_types = np.unique(atoms_data["type"])
-            atom_type_list = sorted([str(t) for t in unique_types])
-            type_to_id = self._get_type_to_id_mapping(atom_type_list)
-
         atoms_data = frame["atoms"]
-        # Create a dict of type -> mass for actual atoms
-        type_to_mass = {}
-        for atom_type in np.unique(atoms_data["type"]):
-            atom_type_str = str(atom_type)
-            mask = atoms_data["type"] == atom_type
+        type_ids = self._row_type_ids(frame, "atoms", "atom_types")
+        masses = self._row_masses(atoms_data)
 
-            # Get mass - prefer element field, fallback to mass field
-            if "element" in atoms_data:
-                from molrs import Element
+        # One line per type ID the file declares. A declared type carrying no
+        # atom (an unused label from the format-owned inventory) has no mass to
+        # read, so it gets the 1.0 placeholder.
+        declared = len(self._get_merged_type_labels(frame).get("atom_types", []))
+        n_types = max(declared, int(type_ids.max()) if len(type_ids) else 0)
 
-                element_symbol = atoms_data["element"][mask][0]
-                try:
-                    mass = Element(element_symbol).mass
-                except KeyError:
-                    # Non-physical element (e.g. a Drude shell "D") has no
-                    # periodic-table entry; use the stored per-atom mass.
-                    mass = atoms_data["mass"][mask][0] if "mass" in atoms_data else 1.0
-            elif "mass" in atoms_data:
-                mass = atoms_data["mass"][mask][0]
-            else:
-                mass = 1.0  # Default fallback
-            type_to_mass[atom_type_str] = mass
+        first_mass: dict[int, float] = {}
+        for type_id, mass in zip(type_ids, masses, strict=True):
+            first_mass.setdefault(int(type_id), float(mass))
 
-        # Write masses for all types in merged list
-        # For types not in atoms, use default mass
-        for atom_type in atom_type_list:
-            type_id = type_to_id[
-                atom_type
-            ]  # Should always exist since built from same list
-            mass = type_to_mass.get(atom_type, 1.0)  # Default to 1.0 if not in atoms
-            lines.append(f"{type_id} {mass:.6f}")
+        for type_id in range(1, n_types + 1):
+            lines.append(f"{type_id} {first_mass.get(type_id, 1.0):.6f}")
 
         lines.append("")
+
+    @staticmethod
+    def _row_masses(atoms_data: Block) -> np.ndarray:
+        """Per-row atomic mass, preferring the element's periodic-table value.
+
+        The stored ``mass`` column is the fallback, not the first choice, so a
+        frame that only carries elements still writes real masses. A
+        non-physical element (a Drude shell ``"D"``) has no periodic-table entry
+        and keeps whatever mass the frame stored for it.
+        """
+        masses = (
+            np.asarray(atoms_data["mass"], dtype=float)
+            if "mass" in atoms_data
+            else np.ones(atoms_data.nrows, dtype=float)
+        )
+        if "element" not in atoms_data:
+            return masses
+
+        from molrs import Element
+
+        elements = np.asarray(atoms_data["element"]).astype(str)
+        masses = masses.copy()
+        for symbol in np.unique(elements):
+            try:
+                element_mass = Element(symbol).mass
+            except KeyError:
+                continue
+            masses[elements == symbol] = element_mass
+        return masses
 
     def _write_type_labels_sections(self, lines: list[str], frame: Frame) -> None:
         """Write type-label sections inferred from the Frame blocks."""
@@ -1060,30 +1122,11 @@ class LammpsDataWriter(DataWriter):
 
         atoms_data = frame["atoms"]
 
-        # Require that all atoms have an 'id' field
-        if "id" not in atoms_data:
-            raise ValueError(
-                "Atoms in frame must have 'id' field. "
-                "This field is required for LAMMPS output to map indices to atom IDs."
-            )
-
-        merged_types = self._get_merged_type_labels(frame)
-        atom_type_list = merged_types.get("atom_types", [])
-
-        # Build type_to_id mapping from merged types
-        type_to_id = self._get_type_to_id_mapping(atom_type_list)
-
-        if not atom_type_list:
-            # Fallback: use actual types from atoms if no merged types
-            unique_types = np.unique(atoms_data["type"])
-            atom_type_list = sorted([str(t) for t in unique_types])
-            type_to_id = self._get_type_to_id_mapping(atom_type_list)
-
         # Materialise every column ONCE (each ``atoms_data[col]`` view rebuilds
         # the whole molrs column — indexing it per row is O(N^2), catastrophic
         # for the string ``type`` column on a large packed system).
-        ids = np.asarray(atoms_data["id"])
-        types = np.asarray(atoms_data["type"])
+        ids = self._atom_ids(atoms_data)
+        type_ids = self._row_type_ids(frame, "atoms", "atom_types")
         xs = np.asarray(atoms_data["x"], dtype=float)
         ys = np.asarray(atoms_data["y"], dtype=float)
         zs = np.asarray(atoms_data["z"], dtype=float)
@@ -1093,20 +1136,9 @@ class LammpsDataWriter(DataWriter):
         if self.atom_style in ("full", "charge"):
             charges = np.asarray(atoms_data["charge"], dtype=float)
 
-        # Resolve every type id up front (unique set is tiny vs N atoms).
-        fallback_mapping: dict[str, int] = {}
-        if any(str(t) not in type_to_id for t in np.unique(types)):
-            fallback_mapping = {
-                str(t): type_idx + 1
-                for type_idx, t in enumerate(sorted(np.unique(types)))
-            }
-
-        for idx in range(len(types)):
+        for idx in range(atoms_data.nrows):
             atom_id = int(ids[idx])
-            atom_type_str = str(types[idx])
-            atom_type = type_to_id.get(
-                atom_type_str, fallback_mapping.get(atom_type_str, 1)
-            )
+            atom_type = int(type_ids[idx])
             x = xs[idx]
             y = ys[idx]
             z = zs[idx]
@@ -1146,20 +1178,11 @@ class LammpsDataWriter(DataWriter):
 
         atoms_data = frame["atoms"]
 
-        # Require that all atoms have an 'id' field
-        if "id" not in atoms_data:
-            raise ValueError(
-                "Atoms in frame must have 'id' field. "
-                "This field is required for LAMMPS output to map indices to atom IDs."
-            )
-
         # Build index to ID mapping (0-based frame index -> LAMMPS atom ID).
         # Materialise the id column once; per-row ``atoms_data["id"][idx]`` would
         # rebuild the whole molrs column each iteration (O(N^2)).
-        atom_id_arr = np.asarray(atoms_data["id"])
+        atom_id_arr = self._atom_ids(atoms_data)
         index_to_id = {i: int(v) for i, v in enumerate(atom_id_arr)}
-
-        merged_types = self._get_merged_type_labels(frame)
 
         # Map section name to type key
         type_key_mapping = {
@@ -1170,26 +1193,12 @@ class LammpsDataWriter(DataWriter):
         }
         type_key = type_key_mapping.get(section_name, "")
 
-        # Get merged type list for this section
-        type_list = merged_types.get(type_key, [])
-
-        # Build type_to_id mapping from merged types
-        type_to_id = self._get_type_to_id_mapping(type_list)
-
-        if not type_list:
-            # Fallback: use actual types if no merged types
-            data = frame[section_name]
-            unique_types = np.unique(data["type"])
-            type_list = sorted([str(t) for t in unique_types])
-            type_to_id = self._get_type_to_id_mapping(type_list)
-
         data = frame[section_name]
 
-        # Validate that 'type' field exists
-        if "type" not in data:
+        if "type" not in data and "type_id" not in data:
             raise ValueError(
-                f"{section_name.capitalize()} data must have 'type' field. "
-                f"Available fields: {list(data.keys())}"
+                f"{section_name.capitalize()} data must have a 'type' or 'type_id' "
+                f"field. Available fields: {list(data.keys())}"
             )
 
         # Get number of items from the data block (not from type length)
@@ -1218,29 +1227,20 @@ class LammpsDataWriter(DataWriter):
                     f"fields (0-based atom indices)"
                 )
 
-        # Validate that type field has the same length as atom index fields
-        if len(data["type"]) != n_items:
-            raise ValueError(
-                f"{section_name.capitalize()} 'type' field has {len(data['type'])} values, "
-                f"but expected {n_items} (based on atom index fields)"
-            )
-
         # Materialise every column ONCE — per-row ``data[col][idx]`` on a molrs
         # Block rebuilds the whole column each iteration (O(N^2); the string
         # ``type`` column made this the dominant writer cost).
-        type_arr = np.asarray(data["type"])
+        type_ids = self._row_type_ids(frame, section_name, type_key)
+        if len(type_ids) != n_items:
+            raise ValueError(
+                f"{section_name.capitalize()} type field has {len(type_ids)} values, "
+                f"but expected {n_items} (based on atom index fields)"
+            )
         ai = np.asarray(data["atomi"])
         aj = np.asarray(data["atomj"])
         ak = np.asarray(data["atomk"]) if "atomk" in data else None
         al = np.asarray(data["atoml"]) if "atoml" in data else None
         n_atoms = len(atom_id_arr)
-
-        fallback_mapping: dict[str, int] = {}
-        if any(str(t) not in type_to_id for t in np.unique(type_arr)):
-            fallback_mapping = {
-                str(t): type_idx + 1
-                for type_idx, t in enumerate(sorted(np.unique(type_arr)))
-            }
 
         def _id(atom_idx: int, pos: str) -> int:
             if atom_idx not in index_to_id:
@@ -1252,10 +1252,7 @@ class LammpsDataWriter(DataWriter):
 
         for idx in range(n_items):
             item_id = idx + 1
-            item_type_str = str(type_arr[idx])
-            item_type = type_to_id.get(
-                item_type_str, fallback_mapping.get(item_type_str, 1)
-            )
+            item_type = int(type_ids[idx])
 
             if section_name == "bonds":
                 a1 = _id(int(ai[idx]), "atom_i")

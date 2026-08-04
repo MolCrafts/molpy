@@ -247,8 +247,8 @@ class TestXMLForceFieldReader:
                         "type1": type1,
                         "type2": type2,
                         "type3": type3,
-                        # XML stores radians; reader normalises to internal degrees.
-                        "angle": math.degrees(float(angle)) if angle else None,
+                        # XML stores radians, and radians are the internal unit.
+                        "angle": float(angle) if angle else None,
                         "k": float(k) if k else None,
                     }
                 )
@@ -482,8 +482,8 @@ class TestXMLForceFieldReader:
                         "type1": type1,
                         "type2": type2,
                         "type3": type3,
-                        # XML stores radians; reader normalises to internal degrees.
-                        "angle": math.degrees(float(angle)) if angle else None,
+                        # XML stores radians, and radians are the internal unit.
+                        "angle": float(angle) if angle else None,
                         "k": float(k) if k else None,
                     }
                 )
@@ -656,84 +656,79 @@ class TestXMLForceFieldReader:
         assert len(ff.get_types(AtomType)) > 0
 
     def test_parse_bond_with_class_only_creates_wildcard_atomtypes(
-        self, TEST_DATA_DIR: Path
+        self, tmp_path: Path
     ) -> None:
-        """Test that parsing bonds with only class attributes creates wildcard AtomTypes.
+        """Class-only bond endpoints create wildcard AtomTypes (type="*", class=…).
 
-        When a Bond element has class1/class2 but no type1/type2, the parser should
-        create wildcard AtomTypes (type="*", class=class_name) for both classes.
+        A three-element fixture is enough — loading full ``oplsaa.xml`` and
+        walking every AtomType.params was multi-second noise.
         """
-        xml_file = TEST_DATA_DIR / "xml" / "oplsaa.xml"
-        assert xml_file.exists(), f"Test file not found: {xml_file}"
-
-        ff = read_xml_forcefield(xml_file)
-
-        # Check that O_3 wildcard AtomType exists
-        o3_wildcard = None
-        for at in ff.get_types(AtomType):
-            at_class = at.params.kwargs.get("class_", "")
-            at_type = at.params.kwargs.get("type_", "")
-            if at_class == "O_3" and at_type == "*":
-                o3_wildcard = at
-                break
-
-        assert o3_wildcard is not None, (
-            "O_3 wildcard AtomType should be created when parsing bonds"
+        xml = tmp_path / "class_bond.xml"
+        xml.write_text(
+            """<?xml version="1.0"?>
+<ForceField>
+  <AtomTypes>
+    <Type name="opls_c" class="C" element="C" mass="12.01"/>
+    <Type name="opls_o" class="O_3" element="O" mass="16.00"/>
+  </AtomTypes>
+  <HarmonicBondForce>
+    <Bond class1="C" class2="O_3" length="0.14" k="1000.0"/>
+  </HarmonicBondForce>
+</ForceField>
+"""
         )
-        assert o3_wildcard.name == "O_3", "O_3 wildcard AtomType should have name 'O_3'"
+        ff = read_xml_forcefield(xml)
 
-        # Check that C wildcard AtomType exists
-        c_wildcard = None
-        for at in ff.get_types(AtomType):
-            at_class = at.params.kwargs.get("class_", "")
-            at_type = at.params.kwargs.get("type_", "")
-            if at_class == "C" and at_type == "*":
-                c_wildcard = at
-                break
+        wildcards = {
+            (
+                at.params.kwargs.get("class_", ""),
+                at.params.kwargs.get("type_", ""),
+            ): at
+            for at in ff.get_types(AtomType)
+        }
+        assert ("O_3", "*") in wildcards
+        assert ("C", "*") in wildcards
+        assert wildcards[("O_3", "*")].name == "O_3"
+        assert wildcards[("C", "*")].name == "C"
 
-        assert c_wildcard is not None, "C wildcard AtomType should exist"
-
-        # Check that C - O_3 bond type exists.
-        # NOTE: molrs reconstructs a BondType's endpoint AtomTypes, so
-        # ``bt.itom``/``bt.jtom`` are fresh objects without the original
-        # ``params`` or object identity. For these class-only wildcard atom
-        # types the AtomType name equals the class, so we match on endpoint
-        # name (which is the molrs-backed, stable representation).
+        # molrs rebuilds endpoint AtomTypes; class-only wildcards use name==class.
         bond_found = False
         for bt in ff.get_types(BondType):
-            n1 = bt.itom.name
-            n2 = bt.jtom.name
-            if {n1, n2} == {"C", "O_3"}:
+            if {bt.itom.name, bt.jtom.name} == {"C", "O_3"}:
                 bond_found = True
-                # The endpoint names correspond to the wildcard AtomTypes.
-                assert c_wildcard.name in (n1, n2)
-                assert o3_wildcard.name in (n1, n2)
                 break
-
         assert bond_found, "C - O_3 bond type should exist and use wildcard AtomTypes"
 
-    def test_class_based_bond_typing_works(self, TEST_DATA_DIR: Path) -> None:
-        """Test that class-based bond typing works after parsing.
-
-        This test verifies that bonds can be typed using class matching,
-        which requires wildcard AtomTypes to be created during parsing.
-        """
-        from molpy import Atom, Atomistic, Bond
+    def test_class_based_bond_typing_works(self, tmp_path: Path) -> None:
+        """Bonds type via class match once wildcard AtomTypes exist."""
+        from molpy import Atomistic
         from molpy.typifier import ForceFieldParams
 
-        xml_file = TEST_DATA_DIR / "xml" / "oplsaa.xml"
-        assert xml_file.exists(), f"Test file not found: {xml_file}"
+        xml = tmp_path / "class_bond.xml"
+        xml.write_text(
+            """<?xml version="1.0"?>
+<ForceField>
+  <AtomTypes>
+    <Type name="opls_267" class="C" element="C" mass="12.01"/>
+    <Type name="opls_269" class="O_3" element="O" mass="16.00"/>
+  </AtomTypes>
+  <HarmonicBondForce>
+    <Bond class1="C" class2="O_3" length="0.14" k="250000.0"/>
+  </HarmonicBondForce>
+  <NonbondedForce coulomb14scale="0.5" lj14scale="0.5">
+    <Atom type="opls_267" charge="0.0" sigma="0.35" epsilon="0.3"/>
+    <Atom type="opls_269" charge="-0.5" sigma="0.3" epsilon="0.7"/>
+  </NonbondedForce>
+</ForceField>
+"""
+        )
+        ff = read_xml_forcefield(xml)
 
-        ff = read_xml_forcefield(xml_file)
-
-        # Create a simple structure with opls_269 and opls_267 atoms
         asm = Atomistic()
         atom1 = asm.def_atom(symbol="O", type="opls_269")  # class="O_3"
         atom2 = asm.def_atom(symbol="C", type="opls_267")  # class="C"
         bond = asm.def_bond(atom1, atom2)
 
-        # Assign parameters from the atom types already on the graph. ``assign``
-        # returns a new graph, so the input's bond stays untouched.
         typed = ForceFieldParams(ff, strict=False).assign(asm)
         typed_bond = next(iter(typed.bonds))
 
@@ -745,9 +740,9 @@ class TestXMLForceFieldReader:
 
 
 class TestAngleUnitOption:
-    """Input angle unit is configurable; internal storage is always degrees."""
+    """Input angle unit is configurable; internal storage is always radians."""
 
-    def _theta0_deg(self, ff):
+    def _theta0_rad(self, ff):
         from molpy import AngleStyle
 
         for style in ff.get_styles(AngleStyle):
@@ -757,22 +752,26 @@ class TestAngleUnitOption:
                     return v
         return None
 
-    def test_radian_input_normalised_to_internal_degrees(self):
-        """The default (radian) XML input is stored internally in degrees."""
-        ff = XMLForceFieldReader("oplsaa.xml", angle_unit="radian").read()
-        theta0 = self._theta0_deg(ff)
-        assert theta0 is not None
-        assert 80.0 < theta0 < 180.0  # degrees, not the ~1.9 rad it was stored as
+    def test_radian_input_is_kept_as_the_internal_unit(self):
+        """The default (radian) XML input needs no conversion — radians are internal.
 
-    def test_degree_input_passes_through(self):
-        """Declaring degree input skips conversion (value kept as-is)."""
+        This asserted degrees, which is what let the reader ship a 104.52 that
+        molrs's LAMMPS writer then multiplied by 180/π into 5988.55.
+        """
+        ff = XMLForceFieldReader("oplsaa.xml", angle_unit="radian").read()
+        theta0 = self._theta0_rad(ff)
+        assert theta0 is not None
+        assert 1.4 < theta0 < math.pi  # radians — the molrs internal unit
+
+    def test_degree_input_is_converted_and_radian_input_is_not(self):
+        """A degree file converts at the boundary; a radian file passes through."""
         from molpy.io.forcefield.xml import _angle_to_internal
 
-        assert _angle_to_internal(109.5, "degree") == 109.5
-        assert abs(_angle_to_internal(math.radians(109.5), "radian") - 109.5) < 1e-9
+        assert abs(_angle_to_internal(109.5, "degree") - math.radians(109.5)) < 1e-12
+        assert _angle_to_internal(math.radians(109.5), "radian") == math.radians(109.5)
 
     def test_writer_inverts_to_output_unit(self):
-        """Reader(radian)->internal degrees->writer(radian) round-trips."""
+        """Reader(unit) -> internal radians -> writer(unit) round-trips."""
         from molpy.io.forcefield.xml import _angle_from_internal, _angle_to_internal
 
         for unit in ("radian", "degree"):
@@ -803,10 +802,10 @@ class TestAngleUnitDetection:
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")  # any warning becomes a failure
-            deg = _normalize_angle(
+            rad = _normalize_angle(
                 math.radians(109.5), "radian", kind="equilibrium", label="theta0"
             )
-        assert abs(deg - 109.5) < 1e-9
+        assert abs(rad - math.radians(109.5)) < 1e-9
 
     def test_phase_out_of_range_warns(self):
         from molpy.io.forcefield.xml import AngleUnitWarning, _normalize_angle
@@ -821,7 +820,49 @@ class TestAngleUnitDetection:
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            deg = _normalize_angle(
+            rad = _normalize_angle(
                 math.radians(180.0), "radian", kind="phase", label="phase1"
             )
-        assert abs(deg - 180.0) < 1e-9
+        assert abs(rad - math.pi) < 1e-9
+
+
+class TestAbsentChargeAttribute:
+    """A `charge` the file never states must not become an explicit ``0.0``.
+
+    TIP3P takes charge from the residue (`UseAttributeFromResidue`), so its
+    `<Atom>` entries under `NonbondedForce` carry sigma and epsilon and nothing
+    else. Recording a fabricated `charge=0.0` there made
+    `ForceFieldParams.assign` overwrite the charges already on the graph.
+    """
+
+    def test_nonbonded_type_has_no_charge_when_the_file_states_none(self):
+        ff = read_xml_forcefield("tip3p.xml")
+        pairstyle = next(iter(ff.get_styles("pair")))
+        for typ in pairstyle.types:
+            assert "charge" not in typ.params.kwargs, (
+                f"{typ.name} invented a charge the force-field file never gave"
+            )
+
+    def test_assign_leaves_the_graphs_own_charges_alone(self):
+        import molpy as mp
+        from molpy.typifier import ForceFieldParams
+
+        ff = read_xml_forcefield("tip3p.xml")
+        water = mp.Atomistic()
+        o = water.def_atom(
+            element="O", type="tip3p-O", x=0.0, y=0.0, z=0.0, charge=-0.834
+        )
+        h1 = water.def_atom(
+            element="H", type="tip3p-H", x=0.9572, y=0.0, z=0.0, charge=0.417
+        )
+        h2 = water.def_atom(
+            element="H", type="tip3p-H", x=-0.24, y=0.927, z=0.0, charge=0.417
+        )
+        water.def_bond(o, h1)
+        water.def_bond(o, h2)
+
+        typed = ForceFieldParams(ff).assign(water.get_topo(gen_angle=True))
+
+        assert [a["charge"] for a in typed.atoms] == [-0.834, 0.417, 0.417]
+        # and the parameters the file *does* state did arrive
+        assert typed.atoms[0]["epsilon"] == pytest.approx(0.635968)

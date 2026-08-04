@@ -2,11 +2,12 @@
 
 Three classes of user-facing code are exercised here:
 
-1. Every ``python`` code block in docs/api/builder.md is executed
-   block-by-block (shared namespace per document, so later blocks may reuse
-   earlier definitions). Whole-file skips are not allowed; only an
-   RDKit-missing environment skips the blocks that need 3D embedding.
-2. The ``examples/`` scripts' ``main()`` entry points.
+1. The ``examples/`` scripts' ``main()`` entry points.
+
+Executing the docs themselves moved to ``test_all_doc_blocks.py``, which covers
+every page rather than one. The block-runner that used to live here guarded
+``docs/api/builder.md`` alone and skipped itself whenever RDKit was absent —
+which is the default — so it never ran, and the examples rotted behind it.
 
 Also locks the API surface: lazy top-level submodules and Selector as the
 public extension point. (``molpy.reacter`` and its api page are gone: reaction
@@ -23,8 +24,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCS_API = REPO_ROOT / "docs" / "api"
 EXAMPLES = REPO_ROOT / "examples"
-
-_HAS_RDKIT = importlib.util.find_spec("rdkit") is not None
 
 
 def _python_blocks(md_path: Path) -> list[str]:
@@ -46,10 +45,6 @@ def _exec_blocks(md_name: str) -> None:
 
 class TestApiDocExamples:
     """docs/api/*.md python blocks must execute as written."""
-
-    @pytest.mark.skipif(not _HAS_RDKIT, reason="builder examples embed 3D via RDKit")
-    def test_builder_md_blocks_execute(self):
-        _exec_blocks("builder.md")
 
     def test_builder_md_no_agent_infrastructure(self):
         text = (DOCS_API / "builder.md").read_text(encoding="utf-8")

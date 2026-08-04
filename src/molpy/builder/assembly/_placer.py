@@ -152,9 +152,9 @@ class ResiduePlacer(Placer):
         moved = (child_coords - child_pos) @ rotation.T + target
 
         for atom, position in zip(child_atoms, moved, strict=True):
-            atom[fields.POS_X] = float(position[0])
-            atom[fields.POS_Y] = float(position[1])
-            atom[fields.POS_Z] = float(position[2])
+            atom[fields.X] = float(position[0])
+            atom[fields.Y] = float(position[1])
+            atom[fields.Z] = float(position[2])
 
     @classmethod
     def _coords(cls, atoms: list[Atom]) -> np.ndarray:
@@ -162,7 +162,7 @@ class ResiduePlacer(Placer):
 
     @staticmethod
     def _xyz(atom: Atom) -> tuple[float, float, float]:
-        return (atom[fields.POS_X], atom[fields.POS_Y], atom[fields.POS_Z])
+        return (atom[fields.X], atom[fields.Y], atom[fields.Z])
 
     @staticmethod
     def _outward(site_pos: np.ndarray, residue_coords: np.ndarray) -> np.ndarray:
@@ -215,7 +215,7 @@ class ResiduePlacer(Placer):
         symbol = atom.get(fields.ELEMENT)
         if not symbol:
             raise KeyError(
-                f"atom {atom.handle} has no {fields.ELEMENT.key}; placement needs "
+                f"atom {atom.handle} has no {fields.ELEMENT}; placement needs "
                 "the element to look up a covalent radius (it may not be guessed)"
             )
         return Element(str(symbol)).covalent

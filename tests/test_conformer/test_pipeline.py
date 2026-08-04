@@ -1,6 +1,6 @@
 """Integration tests for :mod:`molpy.conformer`.
 
-The molpy conformer module subclasses :class:`molrs.Conformer` (the molrs Rust
+The molpy conformer module subclasses :class:`molrs.conformer.Conformer` (the molrs Rust
 pipeline, built and shipped as the ``molrs`` binary extension) and adds molpy
 graph marshalling. These tests exercise the wrapper end-to-end on simple
 skeletons.
@@ -20,7 +20,14 @@ from molpy.conformer import Conformer, ConformerReport
 
 
 def _bond(mol: Atomistic, a, b, order: float):
-    return mol.def_bond(a, b, order=order)
+    """Bond helper taking the *old* float order, split into the two facts.
+
+    ``1.5`` said "aromatic" and "one-and-a-half bonds" at once; here it becomes
+    the aromatic class with no Kekulé phase, and every integer a localized count.
+    """
+    if order == 1.5:
+        return mol.def_bond(a, b, bond_type=4, bond_number=0)
+    return mol.def_bond(a, b, bond_type=int(order), bond_number=int(order))
 
 
 def _coords_of(mol: Atomistic) -> np.ndarray:
@@ -71,7 +78,7 @@ def _butane_skeleton() -> Atomistic:
 
 
 def test_conformer_subclasses_molrs():
-    assert issubclass(Conformer, molrs.Conformer)
+    assert issubclass(Conformer, molrs.conformer.Conformer)
 
 
 def test_generate_ethanol_assigns_coordinates():

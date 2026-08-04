@@ -1,15 +1,20 @@
-"""molpy.compute transport benchmarks: MSD, MCD, PMSD, Onsager, JACF, Persist.
+"""Transport benchmarks against molrs Computes (array API).
 
-These consume a small trajectory (a few frames, one or two species). Each
-asserts the result carries the expected lag axis so a windowing regression
-fails the bench.
+Recipe Trajectory wrappers are gone — bench the same surface as Rust/Python molrs.
 """
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
-from molpy.compute import JACF, MSD, MCDCompute, Onsager, Persist, PMSDCompute
+from molpy.compute import (
+    EinsteinConductivity,
+    GreenKuboConductivity,
+    MSD,
+    Onsager,
+    Persist,
+)
 
 pytestmark = pytest.mark.benchmark
 
@@ -19,31 +24,54 @@ def test_msd(benchmark, pos_traj) -> None:
     assert series.mean.shape == (len(pos_traj),)
 
 
-def test_mcd(benchmark, drift_traj) -> None:
-    op = MCDCompute(tags=["1"], max_dt=5.0, dt=1.0)
-    result = benchmark(op, drift_traj)
-    assert result.correlations["1"].shape == (5,)
+def test_msd_window(benchmark, pos_traj) -> None:
+    series = benchmark(MSD(method="window"), pos_traj)
+    assert series.mean.shape == (len(pos_traj),)
 
 
-def test_pmsd(benchmark, drift_traj) -> None:
-    op = PMSDCompute(cation_type=1, anion_type=2, max_dt=5.0, dt=1.0)
-    result = benchmark(op, drift_traj)
-    assert result.pmsd.shape == (5,)
+def test_einstein_conductivity(benchmark) -> None:
+    m = np.zeros((32, 3))
+    m[:, 0] = np.linspace(0.0, 1.0, 32)
+
+    def run():
+        return EinsteinConductivity().compute(m, 1.0, 10)
+
+    raw = benchmark(run)
+    assert raw["msd"].shape[0] == 11
 
 
-def test_onsager(benchmark, drift_traj) -> None:
-    op = Onsager(tags=["1,1", "1,2"], max_dt=5.0, dt=1.0)
-    result = benchmark(op, drift_traj)
-    assert result.correlations["1,1"].shape == (5,)
+def test_green_kubo_conductivity(benchmark) -> None:
+    j = np.ones((32, 3))
+    j[:, 1:] = 0.0
+
+    def run():
+        return GreenKuboConductivity().compute(j, 1.0, 10)
+
+    raw = benchmark(run)
+    assert raw["jacf"].shape[0] == 11
 
 
-def test_jacf(benchmark, current_traj) -> None:
-    op = JACF(cation_type=1, anion_type=2, max_dt=5.0, dt=1.0, temperature=300.0)
-    result = benchmark(op, current_traj)
-    assert result.jacf.shape == (5,)
+def test_onsager_correlation(benchmark) -> None:
+    p = np.zeros((32, 3))
+    p[:, 0] = np.arange(32, dtype=np.float64)
+
+    def run():
+        return Onsager.correlation(p, p, 1.0, 8)
+
+    out = benchmark(run)
+    assert out["correlation"].shape[0] == 9
 
 
-def test_persist(benchmark, pair_traj) -> None:
-    op = Persist(tags=["1,2:continuous:1.0"], max_dt=4.0, dt=1.0)
-    result = benchmark(op, pair_traj)
-    assert result.correlations["1,2:continuous:1.0"].shape == (4,)
+def test_persist_pair_survival(benchmark) -> None:
+    coords_i = np.zeros((16, 2, 3))
+    coords_j = np.zeros((16, 2, 3))
+    coords_j[:, :, 0] = 1.0
+    box = np.tile([[10.0, 10.0, 10.0]], (16, 1))
+
+    def run():
+        return Persist.pair_survival_tcf(
+            coords_i, coords_j, box, 0.1, 3.5, "intermittent", 1.0, 5, False
+        )
+
+    out = benchmark(run)
+    assert out["correlation"].shape[0] >= 1

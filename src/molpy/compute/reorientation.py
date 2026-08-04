@@ -49,7 +49,7 @@ class LegendreReorientation(Compute):
 
     def __init__(self, max_lag: int, stride: int = 1):
         super().__init__(max_lag=max_lag, stride=stride)
-        self._inner = molrs.LegendreReorientation(max_lag, stride)
+        self._inner = molrs.compute.order.LegendreReorientation(max_lag, stride)
 
     def __call__(self, frames):
         return self._inner.compute(frames)

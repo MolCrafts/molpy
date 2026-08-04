@@ -1,51 +1,61 @@
 # Parser
 
-Grammar-based parsing for chemical string notations. Convenience functions at `mp.parser.*`.
+Chemical string notation, parsed by `molrs`. Two notations are supported —
+SMILES and SMARTS — and both are reached through a **type**, not a helper
+function.
 
 ## Quick reference
 
-| Function | Input | Output | Use when |
-|----------|-------|--------|----------|
-| `parse_molecule(s)` | SMILES | `Atomistic` | One specific molecule |
-| `parse_mixture(s)` | dot-separated SMILES | `list[Atomistic]` | Multi-component (`[Li+].[F-]`) |
-| `parse_monomer(s)` | BigSMILES | `Atomistic` (with ports) | Repeat unit with `<`/`>`/`$` markers |
-| `parse_polymer(s)` | BigSMILES | `PolymerSpec` | Multi-monomer specification |
-| `parse_smarts(s)` | SMARTS | `SmartsIR` | Pattern matching / typification |
-| `parse_smiles(s)` | SMILES | `SmilesGraphIR` | IR-level inspection |
-| `parse_bigsmiles(s)` | BigSMILES | `BigSmilesMoleculeIR` | IR-level BigSMILES inspection |
-| `parse_cgsmiles(s)` | CGSmiles | `CGSmilesIR` | Topology architecture graphs |
-| `parse_gbigsmiles(s)` | GBigSMILES | `GBigSmilesSystemIR` | System specs with distributions |
+| Expression | Input | Output | Use when |
+|------------|-------|--------|----------|
+| `mp.io.read_smiles(s)` | SMILES, one component | `Atomistic` | One specific molecule |
+| `mp.SmilesIR(s)` | SMILES | `SmilesIR` | Inspect before converting |
+| `mp.SmilesIR(s).n_components` | SMILES | `int` | How many molecules the string names |
+| `mp.SmilesIR(s).to_atomistic()` | SMILES | `molrs.Atomistic` | Every component as one graph |
+| `mp.SmilesIR(s).components()` | dot-separated SMILES | `list[molrs.Atomistic]` | One graph per component (`[Li+].[F-]`) |
+| `mp.SmartsPattern(p)` | SMARTS | `SmartsPattern` | Pattern matching / typification |
+
+There is no `parse_smiles` / `parse_smarts` / `parse_molecule` /
+`parse_mixture`: each was a wrapper whose body was a constructor call. Name the
+type instead.
 
 ## Canonical example
 
 ```python
 import molpy as mp
 
-mol = mp.parser.parse_molecule("CCO")           # Atomistic
-ions = mp.parser.parse_mixture("[Li+].[F-]")    # [Atomistic, Atomistic]
-monomer = mp.parser.parse_monomer("{[][<]CCO[>][]}") # Atomistic with ports
-spec = mp.parser.parse_polymer("{[<]CC[>],[<]CC(C)[>]}") # PolymerSpec
+mol = mp.io.read_smiles("CCO")  # Atomistic (heavy atoms only)
+mol = mp.Perceive().find_hydrogens(mol)  # ... with hydrogens
+
+ions = [
+    mp.Atomistic.adopt(m)  # [Atomistic, Atomistic]
+    for m in mp.SmilesIR("[Li+].[F-]").components()
+]
+
+query = mp.SmartsPattern("[C;X4][O;H1]")  # compiled query
+query.find_matches(mol)  # -> list[SmartsMatch]
 ```
+
+`read_smiles` raises on a `.`-separated string: that names a *set* of molecules,
+not a molecule. Use `components()`.
+
+## Polymer notations
+
+BigSMILES, CGSmiles and G-BigSMILES are **no longer parsed**. Polymer
+architecture is built explicitly with
+[`molpy.builder.assembly`](builder.md) — `MonomerLibrary`, `PolymerBuilder`,
+`GraphAssembler` — where the architecture is code rather than a string to
+decode.
 
 ## Related
 
-- `smilesir_to_atomistic` — SMILES IR → Atomistic
-- `bigsmilesir_to_monomer` — BigSMILES IR → Atomistic
-- `bigsmilesir_to_polymerspec` — BigSMILES IR → PolymerSpec
+- `mp.Perceive` — hydrogens, aromaticity, rings, stereo (perceive *before* you
+  match: `X4` and `H1` count what is actually in the graph)
+- `mp.RingInfo` — ring / ring-system queries
 - [Guide: Parsing Chemistry](../user-guide/01_parsing_chemistry.md)
 
 ---
 
 ## Full API
 
-### Convenience layer
-
 ::: molpy.parser
-
-### SMARTS
-
-::: molpy.parser.smarts
-
-### SMILES / BigSMILES / CGSmiles
-
-::: molpy.parser.smiles

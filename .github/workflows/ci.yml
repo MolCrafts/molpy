@@ -1,7 +1,7 @@
 name: CI
 
 # Default gate: same as prek — tox -e lint + tox -e py.
-# external (network/binaries) is excluded inside tox env py.
+# Unit suite only: mocks for wrappers/engines; no third-party binaries.
 on:
   push:
     branches: [master, dev, dev-*]

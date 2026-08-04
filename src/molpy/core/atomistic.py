@@ -20,14 +20,13 @@ from molrs.views import (
     Bond,
     Dihedral,
     DrudeParticle,
-    Entities,
-    Entity,
     Improper,
-    Link,
     MasslessSite,
     VirtualSite,
     _GraphViews,
 )
+
+from molpy.core.entity import Entities, Entity, Link
 
 if TYPE_CHECKING:
     from molrs import Frame
@@ -104,10 +103,15 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     @property
     def symbols(self) -> list[str]:
-        """Element symbols for every atom (canonical :data:`~molpy.core.fields.ELEMENT`)."""
+        """Element symbols for every atom (canonical :data:`~molpy.core.fields.ELEMENT`).
+
+        Reads the world component store by handle — does **not** intern ``Atom``
+        views (see also :meth:`column` for dense numeric fields).
+        """
         from molpy.core import fields
 
-        return [str(a.get(fields.ELEMENT) or "") for a in self.atoms]
+        key = fields.ELEMENT
+        return [str(self.get(h, key) or "") for h in self.entities()]
 
     @property
     def xyz(self) -> np.ndarray:
@@ -127,20 +131,19 @@ class Atomistic(molrs.Atomistic, _GraphViews):
     def __repr__(self) -> str:
         from collections import Counter
 
-        atoms = list(self.atoms)
-        from molpy.core import fields
-
-        comp = Counter(a.get(fields.ELEMENT) or "?" for a in atoms)
+        # View-free: symbols/len via handles + n_relations, not list(self.atoms).
+        syms = self.symbols
+        n_atoms = len(syms)
+        comp = Counter(s or "?" for s in syms)
         if len(comp) <= 5:
             composition = " ".join(f"{s}:{n}" for s, n in sorted(comp.items()))
         else:
             composition = f"{len(comp)} types"
-        return (
-            f"<Atomistic, {len(atoms)} atoms ({composition}), {len(self.bonds)} bonds>"
-        )
+        n_bonds = self.n_relations("bonds") if "bonds" in self.kinds() else 0
+        return f"<Atomistic, {n_atoms} atoms ({composition}), {n_bonds} bonds>"
 
     def __len__(self) -> int:
-        return len(self.atoms)
+        return self.n_nodes
 
     # ---------- factory methods (def_*: create + register) ----------
     def def_atom(self, mapping: Any = None, /, **attrs: Any) -> Atom:
@@ -300,26 +303,37 @@ class Atomistic(molrs.Atomistic, _GraphViews):
 
     def get_topo(
         self,
-        entity_type: type[Atom] = Atom,
-        link_type: type[Link] = Bond,
+        *,
         gen_angle: bool = False,
         gen_dihe: bool = False,
         clear_existing: bool = False,
     ) -> "Atomistic":
-        """Return a copy with angle/dihedral relations perceived from the bonds.
+        """Perceive angles/dihedrals from the bond graph **in place**.
 
-        Angle/dihedral perception (2-edge / 3-edge paths over the bond graph) is
-        a molrs-native graph operation; this delegates to that Rust kernel on a
-        copy. With no ``gen_*`` flags it is a plain copy. Always returns an
-        :class:`Atomistic` (never a bare topology graph).
+        Angle/dihedral perception (2-edge / 3-edge paths over the bond graph)
+        runs in the molrs Rust kernel via :meth:`generate_topology`. Mutates
+        ``self`` and returns it for chaining — matching the core mutation
+        contract (``.copy()`` is the explicit opt-in for an independent graph).
+
+        With no ``gen_*`` flags this is a no-op that returns ``self``. Pass
+        ``clear_existing=True`` to drop previously generated angles/dihedrals
+        before re-perceiving.
+
+        Args:
+            gen_angle: When True, generate angle relations.
+            gen_dihe: When True, generate dihedral relations.
+            clear_existing: When True, clear existing angles/dihedrals first.
+
+        Returns:
+            ``self``, with any requested topology written in place.
         """
-        new_struct = self.copy()
-        new_struct.generate_topology(
-            gen_angle=gen_angle,
-            gen_dihedral=gen_dihe,
-            clear_existing=clear_existing,
-        )
-        return new_struct
+        if gen_angle or gen_dihe or clear_existing:
+            self.generate_topology(
+                gen_angle=gen_angle,
+                gen_dihedral=gen_dihe,
+                clear_existing=clear_existing,
+            )
+        return self
 
     def get_topo_neighbors(
         self,
@@ -352,9 +366,20 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         radius: int,
         entity_type: type[Atom] = Atom,
         link_type: type[Link] = Bond,
+        *,
+        max_ring_size: int | None = None,
     ) -> tuple["Atomistic", list[Atom]]:
+        """Induced radius-``radius`` ball around ``center_entities``.
+
+        With ``max_ring_size``, a ring of at most that many atoms which the
+        radius only partly reaches is pulled in whole (together with anything
+        fused or bridged to it), so the slice never contains a cut small ring.
+        Larger rings are cut like any other path — see
+        :meth:`molrs.Atomistic.extract_subgraph` for why the bound is part of
+        the claim rather than a tuning knob.
+        """
         sub, boundary, _, _ = self._extract_mapped(
-            list(center_entities), radius, type(self)
+            list(center_entities), radius, type(self), max_ring_size=max_ring_size
         )
         return sub, boundary
 
@@ -365,6 +390,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         out_cls: type[G],
         *,
         regenerate_topology: bool = False,
+        max_ring_size: int | None = None,
     ) -> tuple[G, list[Atom], dict[Atom, Atom], dict[int, int]]:
         """Induced radius-``radius`` ball plus a region-atom → parent-atom map.
 
@@ -372,9 +398,13 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         :meth:`molrs.Atomistic.extract_subgraph`. Returns
         ``(subgraph, boundary_atoms, {region_atom: parent_atom},
         {region_atom_handle: hops_from_nearest_center})``.
+
+        ``max_ring_size`` closes the ball on ring systems built from rings no
+        larger than that; the atoms it adds sit beyond ``radius``, so their hops
+        exceed it.
         """
         new = out_cls()
-        new._props = dict(self._props)
+        new.props = dict(self.props)
         if not centers:
             return new, [], {}, {}
 
@@ -383,6 +413,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
             [c.handle for c in centers],
             int(radius),
             regenerate_topology=regenerate_topology,
+            max_ring_size=max_ring_size,
         )
         molrs.Atomistic.adopt(new, res.graph)
 
@@ -410,7 +441,8 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         bare = molrs.Atomistic.copy(self)
         new = type(self)()
         molrs.Atomistic.adopt(new, bare)
-        new._props = dict(self._props)
+        # Whole-graph annotations live on ``props`` (see ``_GraphViews``).
+        new.props = dict(self.props)
         return new
 
     def merge(self, other: "Atomistic") -> Self:
@@ -428,7 +460,7 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         mapping = molrs.Atomistic.merge(self, other)
         other._node_refs.clear()
         other._relation_refs.clear()
-        other._props.clear()
+        other.props.clear()
         return mapping
 
     @staticmethod

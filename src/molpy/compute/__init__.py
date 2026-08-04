@@ -1,68 +1,55 @@
-"""Compute abstraction for molecular computations.
+"""Trajectory and structure analyses.
 
-This module provides a unified interface for defining and executing
-computational operations on molecular structures. The core abstractions are:
+Configure a compute, call it on frames or pre-assembled arrays, read typed
+fields. Analysis time is femtoseconds (LAMMPS real units).
 
-- Result, TimeSeriesResult, MCDResult, PMSDResult, ACFResult,
-  SpectralResult, DielectricResult, DielectricSusceptibilityResult:
-  result dataclasses returned by compute operations.
-- Compute: Base class for computation operations.
-- MCDCompute, PMSDCompute, RDF, NeighborList: structural / trajectory
-  analyses.
-- ACFAnalyzer, SpectralAnalyzer, DielectricSusceptibility: dielectric
-  spectroscopy from MD trajectories (Einstein-Helfand & Green-Kubo).
+Transport and dielectric quantities are composed explicitly::
 
-Example: diffusion via mean displacement correlation:
-    >>> from molpy.compute import MCDCompute
-    >>> from molpy.io import read_lammps_trajectory
-    >>> traj = read_lammps_trajectory("dump.lammpstrj")
-    >>> mcd = MCDCompute(tags=["1"], max_dt=30.0, dt=0.01)
-    >>> result = mcd(traj)
-    >>> print(result.correlations["1"])  # MSD values at each time lag
+    raw curve  →  Fit  →  optional SI scale in your script
 
-Example: dielectric spectrum:
-    >>> from molpy.compute import DielectricSusceptibility
-    >>> dc = DielectricSusceptibility(
-    ...     dt=0.001,                # ps
-    ...     temperature=300.0,       # K
-    ...     max_correlation_time=200,  # frames
-    ...     routes=["einstein-helfand", "green-kubo"],
-    ... )
-    >>> result = dc(trajectory)
-    >>> eh = result.results["EH-full"]
-    >>> # eh.frequency: rad/ps, eh.epsilon_real/imag: dimensionless
+Example::
+
+    >>> from molpy.compute import Onsager, EinsteinConductivity, LinearFit
+    >>> L = Onsager.correlation(P_i, P_j, dt=10.0, max_correlation_time=500)
+    >>> raw = EinsteinConductivity().compute(M, dt=10.0, max_correlation_time=500)
+    >>> fit = LinearFit(0.1, 0.5).fit(raw["lag_times"], raw["msd"])
+
 """
 
 from .base import Compute
 from .cluster import Cluster, ClusterCenters, ClusterProperties
 from .decomposition import DescriptorRow, KMeans, Pca
 from .dielectric import (
-    ACFAnalyzer,
-    DielectricSusceptibility,
-    IonicConductivity,
-    SpectralAnalyzer,
+    CumulativeTrapezoid,
+    DebyeFit,
+    DebyeRelaxation,
+    Dielectric,
+    EinsteinHelfandSpectrum,
+    GreenKuboSpectrum,
+    LinearFit,
+    acf_fft,
+    apply_window,
+    frequency_grid,
 )
 from .density import GaussianDensity, LocalDensity
 from .diffraction import StaticStructureFactorDebye
 from .environment import BondOrder
 from .order import Hexatic, Nematic, SolidLiquid, Steinhardt
 from .pmft import PMFTXY
-from .mcd import MCDCompute
 from .msd import MSD
 from .neighborlist import NeighborList
 from .onsager import Onsager
-from .jacf import JACF
+from .jacf import GreenKuboConductivity
 from .persist import Persist
-from .pmsd import PMSDCompute
+from .pmsd import EinsteinConductivity
 from .rdf import RDF
 from .result import (
     ACFResult,
     ConductivityResult,
-    DebyeFit,
+    DebyeSpectrumFit,
     DielectricResult,
     DielectricSusceptibilityResult,
     JACFResult,
-    MCDResult,
     OnsagerResult,
     PersistResult,
     PMSDResult,
@@ -76,7 +63,6 @@ from .shape import (
     InertiaTensor,
     RadiusOfGyration,
 )
-from .time_series import TimeAverage, TimeCache, compute_acf, compute_msd
 from .workflow import (
     Workflow,
     WorkflowCycleError,
@@ -85,9 +71,6 @@ from .workflow import (
     WorkflowMissingInputError,
 )
 
-# analysis-parity computes (geometric / combined / spatial distributions, Van Hove,
-# reorientation, hydrogen bonds, radical Voronoi, vibrational spectra). The
-# numerical kernels live in molrs; these are thin typed shells.
 from .distribution import (
     AngleDistribution,
     CombinedDistribution,
@@ -98,6 +81,25 @@ from .spatial import SpatialDistribution
 from .van_hove import VanHove
 from .reorientation import LegendreReorientation
 from .hbond import HBondCriterion, HBonds
+
+from molrs.compute.cluster import (
+    CenterOfMassResult,
+    ClusterCentersResult,
+    ClusterResult,
+)
+from molrs.compute.density import RDFResult
+from molrs.compute.dynamics import Acf, AcfResult
+from molrs.compute.ml import KMeansResult, Pca2, PcaResult
+from molrs.compute.msd import MSDResult, MSDTimeSeries
+from molrs.compute.spectroscopy import (
+    conductivity_sum_rule,
+    kramers_kronig,
+    polarizability_finite_field,
+    route_agreement,
+)
+from molrs.compute.voronoi import DensityGrid, MolecularMoments
+
+from . import signal
 from .voronoi import (
     RadicalVoronoi,
     VoronoiCells,
@@ -118,7 +120,6 @@ __all__ = [
     "Compute",
     "Result",
     "TimeSeriesResult",
-    "MCDResult",
     "PMSDResult",
     "OnsagerResult",
     "JACFResult",
@@ -128,16 +129,18 @@ __all__ = [
     "DielectricResult",
     "DielectricSusceptibilityResult",
     "ConductivityResult",
-    "DebyeFit",
-    "MCDCompute",
-    "PMSDCompute",
+    "DebyeSpectrumFit",
+    "EinsteinConductivity",
     "Onsager",
-    "JACF",
+    "GreenKuboConductivity",
     "Persist",
-    "ACFAnalyzer",
-    "SpectralAnalyzer",
-    "DielectricSusceptibility",
-    "IonicConductivity",
+    "Dielectric",
+    "DebyeRelaxation",
+    "DebyeFit",
+    "EinsteinHelfandSpectrum",
+    "GreenKuboSpectrum",
+    "LinearFit",
+    "CumulativeTrapezoid",
     "NeighborList",
     "RDF",
     "MSD",
@@ -150,15 +153,11 @@ __all__ = [
     "DescriptorRow",
     "Pca",
     "KMeans",
-    "TimeCache",
-    "TimeAverage",
     "Workflow",
     "WorkflowCycleError",
     "WorkflowDuplicateNodeError",
     "WorkflowError",
     "WorkflowMissingInputError",
-    "compute_msd",
-    "compute_acf",
     "Steinhardt",
     "Hexatic",
     "Nematic",
@@ -182,6 +181,25 @@ __all__ = [
     "RadicalVoronoi",
     "VoronoiCells",
     "VoronoiIntegration",
+    "DensityGrid",
+    "MolecularMoments",
+    "polarizability_finite_field",
+    "conductivity_sum_rule",
+    "kramers_kronig",
+    "route_agreement",
+    "Acf",
+    "AcfResult",
+    "Dielectric",
+    "CenterOfMassResult",
+    "ClusterCentersResult",
+    "ClusterResult",
+    "KMeansResult",
+    "Pca2",
+    "PcaResult",
+    "MSDResult",
+    "MSDTimeSeries",
+    "RDFResult",
+    "signal",
     "voronoi_domains",
     "voronoi_voids",
     "PowerSpectrum",

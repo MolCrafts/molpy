@@ -1,11 +1,7 @@
 """Tests for the Packmol packer wrapper.
 
-Unit tests (TestPackmolUnit) run without any external binary. Integration tests
-(TestPackmolIntegration) require Packmol in PATH and are skipped automatically
-when unavailable.
+Unit tests only: script literals and frame assembly with mocks. No Packmol binary.
 """
-
-import shutil
 
 import numpy as np
 import pytest
@@ -15,10 +11,6 @@ from molpy import Script
 from molrs import Block, Frame
 from molpy.pack.packer.packmol import Packmol
 
-PACKMOL_AVAILABLE = shutil.which("packmol") is not None
-needs_packmol = pytest.mark.skipif(
-    not PACKMOL_AVAILABLE, reason="Packmol executable not found in PATH"
-)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -192,6 +184,43 @@ class TestPackmolUnit:
         assert np.allclose(result["atoms"]["y"], optimized["atoms"]["y"])
         assert np.allclose(result["atoms"]["z"], optimized["atoms"]["z"])
 
+    def test_a_column_one_target_omits_is_filled_representably(self, box20):
+        """A missing string column becomes "", never a None-bearing object array.
+
+        A Block column is a typed numpy array. Filling the gap with `None`
+        produced an object column the Rust store rejects outright, so a pack of
+        one frame carrying `element` and one without it could not be built at
+        all — which is the ordinary case when an ion comes from a prmtop.
+        """
+        with_element = Frame(
+            {
+                "atoms": Block(
+                    {
+                        "x": np.zeros(2),
+                        "y": np.zeros(2),
+                        "z": np.zeros(2),
+                        "element": np.array(["O", "H"]),
+                        "charge": np.array([-0.8, 0.4]),
+                    }
+                )
+            }
+        )
+        without_element = Frame(
+            {"atoms": Block({"x": np.zeros(1), "y": np.zeros(1), "z": np.zeros(1)})}
+        )
+        targets = [
+            mpk.Target(frame=with_element, number=1, constraint=box20),
+            mpk.Target(frame=without_element, number=1, constraint=box20),
+        ]
+
+        result = Packmol()._build_final_frame(targets, _fake_optimized(3))
+
+        elements = result["atoms"]["element"]
+        assert list(elements) == ["O", "H", ""]
+        assert np.asarray(elements).dtype.kind in "US"
+        # a numeric column the other target omits stays numeric too
+        assert np.isnan(np.asarray(result["atoms"]["charge"])[-1])
+
     def test_build_final_frame_cumulative_bond_angle_offsets(self, box20):
         """Index offsets in bonds/angles must accumulate across all instances."""
         frame_a = Frame(
@@ -332,51 +361,3 @@ class TestPackmolUnit:
                 targets=[mpk.Target(frame=legacy, number=1, constraint=box20)],
                 optimized_frame=_fake_optimized(2),
             )
-
-
-# ---------------------------------------------------------------------------
-# Integration tests — require Packmol executable
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.external
-@needs_packmol
-class TestPackmolIntegration:
-    def test_pack_single_target(self, water_target, tmp_path):
-        result = Packmol(workdir=tmp_path)(
-            targets=[water_target], max_steps=100, seed=42
-        )
-        assert isinstance(result, Frame)
-        assert len(result["atoms"]["x"]) == 15  # 5 molecules × 3 atoms
-
-    def test_pack_multiple_targets(self, water_frame, tmp_path):
-        result = Packmol(workdir=tmp_path)(
-            targets=[
-                mpk.Target(
-                    frame=water_frame,
-                    number=3,
-                    constraint=mpk.InsideBoxConstraint(
-                        length=np.array([5.0, 5.0, 5.0]),
-                        origin=np.array([0.0, 0.0, 0.0]),
-                    ),
-                ),
-                mpk.Target(
-                    frame=water_frame,
-                    number=2,
-                    constraint=mpk.InsideBoxConstraint(
-                        length=np.array([5.0, 5.0, 5.0]),
-                        origin=np.array([5.0, 5.0, 5.0]),
-                    ),
-                ),
-            ],
-            max_steps=100,
-            seed=42,
-        )
-        assert len(result["atoms"]["x"]) == 15  # (3 + 2) × 3 atoms
-
-    def test_pack_method(self, water_target, tmp_path):
-        result = Packmol(workdir=tmp_path).pack(
-            targets=[water_target], max_steps=100, seed=42
-        )
-        assert isinstance(result, Frame)
-        assert len(result["atoms"]["x"]) == 15

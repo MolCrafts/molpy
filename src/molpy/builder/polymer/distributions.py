@@ -15,9 +15,19 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from molpy.parser.smiles.gbigsmiles_ir import DistributionIR
+from dataclasses import dataclass, field
+
+
+@dataclass
+class DistributionIR:
+    """Named distribution parameters (standalone; no gBigSMILES parser)."""
+
+    name: str
+    params: dict[str, float] = field(default_factory=dict)
+
 
 __all__ = [
+    "DistributionIR",
     "DPDistribution",
     "MassDistribution",
     "UniformPolydisperse",

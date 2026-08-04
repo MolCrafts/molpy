@@ -22,9 +22,9 @@ def _tip3p_ff() -> ForceField:
 
 def _water_frame() -> "molrs.Frame":
     s = Atomistic()
-    o = s.def_atom(symbol="O", xyz=[0.0, 0.0, 0.0], type="OW")
-    h1 = s.def_atom(symbol="H", xyz=[0.12, 0.0, 0.0], type="HW")
-    h2 = s.def_atom(symbol="H", xyz=[0.0, 0.12, 0.0], type="HW")
+    o = s.def_atom(symbol="O", x=0.0, y=0.0, z=0.0, type="OW")
+    h1 = s.def_atom(symbol="H", x=0.12, y=0.0, z=0.0, type="HW")
+    h2 = s.def_atom(symbol="H", x=0.0, y=0.12, z=0.0, type="HW")
     s.def_bond(o, h1, type="OW-HW")
     s.def_bond(o, h2, type="OW-HW")
     s.def_angle(h1, o, h2, type="HW-OW-HW")

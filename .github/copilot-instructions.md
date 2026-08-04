@@ -7,7 +7,7 @@
 ## Repo layout (what to touch)
 
 - Source: `src/molpy/` (package uses `src/` layout)
-- Tests: `tests/` (pytest; external-dependent tests are marked `external`)
+- Tests: `tests/` (pytest unit suite only — mock wrappers/engines; no third-party binaries)
 - Docs: `docs/` + `zensical.toml` (Zensical; notebooks pre-rendered to Markdown via `scripts/render_notebooks.py`)
 - CI/release: `.github/workflows/`
 
@@ -15,15 +15,15 @@
 
 - Install (dev): `pip install -e ".[dev]"`
 - Format check: `black --check src/ tests/`
-- Tests (unit/default): `pytest tests/ -v -m "not external"`
+- Tests: `pytest tests/ -v`
 - Release is tag-driven (`v*`) and validates `src/molpy/version.py` matches the tag.
 
 ## Project-specific patterns
 
 - Public API is re-exported from `src/molpy/__init__.py` (keep it import-safe; avoid importing optional deps unguarded).
 - Optional integrations should be import-guarded (pattern: `src/molpy/adapter/__init__.py` uses `try/except ModuleNotFoundError`).
-- External tests are classified automatically in `tests/conftest.py` (engine suite + RDKit-related tests).
-- Some tests may use `TEST_DATA_DIR` fixture which clones/pulls `https://github.com/molcrafts/tests-data.git` on demand; avoid requiring network for non-`external` tests.
+- Doc blocks that shell out must start with `# docs: skip — <reason>`.
+- Some tests may use `TEST_DATA_DIR` fixture which clones/pulls `https://github.com/molcrafts/tests-data.git` on demand.
 
 ## Hard restrictions (must follow)
 

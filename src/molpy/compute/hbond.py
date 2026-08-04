@@ -22,7 +22,7 @@ import molrs
 from .base import Compute
 
 # Re-export the configuration object so callers can tune the geometric criterion.
-HBondCriterion = molrs.HBondCriterion
+HBondCriterion = molrs.compute.hbond.HBondCriterion
 
 
 class HBonds(Compute):
@@ -46,7 +46,7 @@ class HBonds(Compute):
 
     def __init__(self, donors, acceptors, criterion=None):
         super().__init__(donors=donors, acceptors=acceptors, criterion=criterion)
-        self._inner = molrs.HBonds(donors, acceptors, criterion)
+        self._inner = molrs.compute.hbond.HBonds(donors, acceptors, criterion)
 
     def __call__(self, frames):
         return self._inner.compute(frames)

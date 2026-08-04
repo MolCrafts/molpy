@@ -23,7 +23,7 @@ def _chain_frame(n: int = 6, t: int = 0):
     mol = mp.Atomistic()
     amp = 0.3 + 0.1 * t
     atoms = [
-        mol.def_atom(element="C", xyz=[float(i), amp * (i % 2), 0.0]) for i in range(n)
+        mol.def_atom(element="C", x=float(i), y=amp * (i % 2), z=0.0) for i in range(n)
     ]
     for i in range(n - 1):
         mol.def_bond(atoms[i], atoms[i + 1])

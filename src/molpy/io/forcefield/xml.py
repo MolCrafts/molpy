@@ -14,16 +14,23 @@ from molpy.core.forcefield import (
     DihedralOPLSStyle,
     DihedralPeriodicStyle,
     ImproperPeriodicStyle,
-    PairLJ126CoulCutStyle,
-    PairLJ126CoulLongStyle,
+    PairLjCutCoulCutStyle,
+    PairLjCutCoulLongStyle,
 )
 from molpy.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Angles are stored internally in DEGREES (the molrs convention). A reader
-# declares the unit of its *input* file via ``angle_unit`` and converts to
-# degrees at the boundary; a writer converts degrees back to its output unit.
+# Angles are stored internally in RADIANS — that is the molrs convention, stated
+# by the LAMMPS force-field writer ("molrs units: Å, kcal/mol, radians, e") and
+# by every kernel that reads one (``theta0`` is documented as radians in
+# ``ff/potential/angle/harmonic.rs``). A reader declares the unit of its *input*
+# file via ``angle_unit`` and converts to radians at the boundary; a writer
+# converts radians back to its output unit.
+#
+# This module used to claim degrees were internal. molrs's LAMMPS writer then
+# applied its own ``to_degrees()`` on the way out, so a 104.52° equilibrium
+# angle was emitted as 5988.55.
 ANGLE_UNITS = ("radian", "degree")
 
 
@@ -36,29 +43,31 @@ def _check_angle_unit(angle_unit: str) -> str:
 
 
 def _angle_to_internal(value: float, angle_unit: str) -> float:
-    """Convert an input angle in *angle_unit* to the internal unit (degrees)."""
-    return math.degrees(value) if angle_unit == "radian" else value
+    """Convert an input angle in *angle_unit* to the internal unit (radians)."""
+    return value if angle_unit == "radian" else math.radians(value)
 
 
-def _angle_from_internal(value_deg: float, angle_unit: str) -> float:
-    """Convert an internal-degrees angle to *angle_unit* for serialisation."""
-    return math.radians(value_deg) if angle_unit == "radian" else value_deg
+def _angle_from_internal(value_rad: float, angle_unit: str) -> float:
+    """Convert an internal-radians angle to *angle_unit* for serialisation."""
+    return value_rad if angle_unit == "radian" else math.degrees(value_rad)
 
 
 class AngleUnitWarning(UserWarning):
     """An angle value looks inconsistent with its declared ``angle_unit``."""
 
 
-# Generous internal-degree sanity bounds per angle kind. These are deliberately
-# wide so genuine values (incl. linear 180° angles) never trip them; their job is
-# to catch order-of-magnitude unit mismatches (a degree value read as radians
-# becomes ~57x larger, e.g. 104.52 -> 5988), not to validate physical chemistry.
-_ANGLE_RANGES = {"equilibrium": (0.0, 360.0), "phase": (-360.0, 360.0)}
+# Generous internal-radian sanity bounds per angle kind. Deliberately wide so
+# genuine values (including a linear π angle) never trip them; their job is to
+# catch order-of-magnitude unit mismatches, not to validate chemistry.
+_ANGLE_RANGES = {
+    "equilibrium": (0.0, 2.0 * math.pi),
+    "phase": (-2.0 * math.pi, 2.0 * math.pi),
+}
 _TWO_PI = 2.0 * math.pi
 
 
 def _normalize_angle(raw: float, angle_unit: str, *, kind: str, label: str) -> float:
-    """Convert *raw* (in *angle_unit*) to internal degrees, warning on anomalies.
+    """Convert *raw* (in *angle_unit*) to internal radians, warning on anomalies.
 
     *kind* selects the plausible range: ``"equilibrium"`` (bond angle ``theta0``,
     0–180°) or ``"phase"`` (dihedral/improper phase, ±360°). An
@@ -73,7 +82,7 @@ def _normalize_angle(raw: float, angle_unit: str, *, kind: str, label: str) -> f
         label: Human-readable field name for diagnostics (e.g. ``"theta0"``).
 
     Returns:
-        The value in internal degrees.
+        The value in internal radians.
     """
     if angle_unit == "radian" and abs(raw) > _TWO_PI + 1e-6:
         warnings.warn(
@@ -82,17 +91,17 @@ def _normalize_angle(raw: float, angle_unit: str, *, kind: str, label: str) -> f
             AngleUnitWarning,
             stacklevel=3,
         )
-    deg = _angle_to_internal(raw, angle_unit)
+    rad = _angle_to_internal(raw, angle_unit)
     lo, hi = _ANGLE_RANGES[kind]
-    if not (lo - 1e-6 <= deg <= hi + 1e-6):
+    if not (lo - 1e-6 <= rad <= hi + 1e-6):
         warnings.warn(
-            f"{label}={deg:g}° is far outside the {kind} sanity bound "
-            f"[{lo:g}, {hi:g}]° (angle_unit='{angle_unit}'); likely an angle_unit "
+            f"{label}={rad:g} rad is far outside the {kind} sanity bound "
+            f"[{lo:g}, {hi:g}] rad (angle_unit='{angle_unit}'); likely an angle_unit "
             f"mismatch.",
             AngleUnitWarning,
             stacklevel=3,
         )
-    return deg
+    return rad
 
 
 def _normalize_to_wildcard(value: str | None) -> str:
@@ -823,15 +832,20 @@ class XMLForceFieldReader:
             sigma_str = atom_elem.get("sigma")
             epsilon_str = atom_elem.get("epsilon")
 
-            charge = float(charge_str) if charge_str else 0.0
             sigma = float(sigma_str) if sigma_str else 0.0
             epsilon = float(epsilon_str) if epsilon_str else 0.0
 
+            # An absent `charge` means this force field does not set one here —
+            # TIP3P, for instance, takes charge from the residue. Recording 0.0
+            # would make `ForceFieldParams.assign` overwrite the charges the
+            # caller already put on the graph with a value the file never gave.
+            params: dict[str, float] = {"epsilon": epsilon, "sigma": sigma}
+            if charge_str:
+                params["charge"] = float(charge_str)
+
             # Define pair parameters (self-interaction)
             # If atomtype exists, update its params; else create new pair type
-            pairstyle.def_type(
-                atomtype, atomtype, epsilon=epsilon, sigma=sigma, charge=charge
-            )
+            pairstyle.def_type(atomtype, atomtype, **params)
             count += 1
 
         logger.info(f"Parsed {count} nonbonded parameters")
@@ -927,14 +941,12 @@ class OPLSAAForceFieldReader(XMLForceFieldReader):
 
             # Convert units for LAMMPS
             # OPLS XML: E = 0.5 * k_opls * (r - r0)^2 (kJ/mol, nm)
-            # LAMMPS harmonic bond: E = 0.5 * k * (r - r0)^2 (kcal/mol, Å)
-            # Both have 0.5 factor, so only unit conversion needed
-            # k: kJ/mol/nm² -> kcal/mol/Å²: divide by (4.184 * 100)
-            # But if LAMMPS bond lacks the 0.5 factor, need: k = 0.5 * k_opls / (4.184 * 100)
+            # molrs stores the same ½-form, so only the units convert. There is
+            # no extra ½: OpenMM's HarmonicBondForce is E = ½k(r−r₀)² and so is
+            # molrs's, and halving here made every OPLS bond half as stiff
+            # (TIP3P 553 → 276.5 kcal/mol/Å²).
             r0 = r0_nm * 10.0  # nm to Angstrom
-            k = (
-                0.5 * k_opls / (4.184 * 100)
-            )  # kJ/mol/nm² to kcal/mol/Å² (accounting for 0.5 factor difference)
+            k = k_opls / (4.184 * 100)  # kJ/mol/nm² -> kcal/mol/Å²
 
             # Define bond type
             bondstyle.def_type(at1, at2, k=k, r0=r0)
@@ -992,12 +1004,10 @@ class OPLSAAForceFieldReader(XMLForceFieldReader):
             )  # input angle unit -> internal degrees
             k_opls = float(k_str) if k_str else 0.0
 
-            # Convert energy units only (k is per rad², independent of theta0's unit)
-            # OPLS XML: E = 0.5 * k_opls * (theta - theta0)^2 (kJ/mol, rad)
-            # LAMMPS: E = k * (theta - theta0)^2 (kcal/mol, rad)
-            # Conversion: k_lammps = 0.5 * k_opls / 4.184
+            # Energy units only — k is per rad², independent of theta0's unit.
+            # OpenMM and molrs both use E = ½k(θ−θ₀)², so no extra ½.
             k = (
-                0.5 * k_opls / 4.184
+                k_opls / 4.184
             )  # kJ/mol/rad² to kcal/mol/rad² (accounting for 0.5 factor difference)
 
             # Define angle type (theta0 in internal degrees)
@@ -1423,7 +1433,7 @@ class XMLForceFieldWriter:
                 elem.set(a, v)
 
     def _write_nonbonded(
-        self, root: ET.Element, style: PairLJ126CoulCutStyle | PairLJ126CoulLongStyle
+        self, root: ET.Element, style: PairLjCutCoulCutStyle | PairLjCutCoulLongStyle
     ) -> None:
         from molpy.core.forcefield import PairType
 

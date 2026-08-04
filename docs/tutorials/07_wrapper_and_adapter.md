@@ -17,6 +17,14 @@ Treating both as "calling another API" hides the part of the workflow that most 
 
 A `Wrapper` encapsulates a command-line tool. It handles locating the executable, setting up the environment, and running the command.
 
+The examples below share this setup:
+
+```python
+import molpy as mp
+
+mol = mp.io.read_smiles("CCO")
+```
+
 ```python
 from molpy.wrapper import Wrapper
 
@@ -24,7 +32,7 @@ echo = Wrapper(name="echo_tool", exe="echo")
 result = echo.run(args=["Hello", "from", "MolPy!"])
 
 if result.returncode == 0:
-    print(result.stdout.strip())   # Hello from MolPy!
+    print(result.stdout.strip())  # Hello from MolPy!
 else:
     print(result.stderr)
 ```
@@ -54,44 +62,43 @@ Here is a minimal adapter that converts a dictionary to a semicolon-separated st
 ```python
 from molpy.adapter import Adapter
 
+
 class StringDictAdapter(Adapter[dict[str, str], str]):
     def _do_sync_to_external(self):
-        self._external = ";".join(
-            f"{k}={v}" for k, v in self._internal.items()
-        )
+        self._external = ";".join(f"{k}={v}" for k, v in self._internal.items())
 
     def _do_sync_to_internal(self):
         self._internal = dict(
             item.split("=") for item in self._external.split(";") if item
         )
 
+
 adapter = StringDictAdapter(internal={"name": "MolPy", "role": "toolkit"})
 adapter.sync_to_external()
-print(adapter.get_external())   # name=MolPy;role=toolkit
+print(adapter.get_external())  # name=MolPy;role=toolkit
 
 adapter.set_external("name=MolPy;role=toolkit;version=0.2")
 adapter.sync_to_internal()
-print(adapter.get_internal())   # {'name': 'MolPy', 'role': 'toolkit', 'version': '0.2'}
+print(adapter.get_internal())  # {'name': 'MolPy', 'role': 'toolkit', 'version': '0.2'}
 ```
 
 The example is deliberately simple. The important point is not the data format — it is the synchronization protocol. No external process ran. No file was written. The concern is purely about keeping two representations of the same information consistent.
 
 
-## Real-world adapter: geometry optimization with RDKit
+## Real-world adapter: reaching RDKit's own algorithms
 
-A practical use case for adapters is leveraging external libraries for algorithms MolPy does not implement. Here, the `RDKitAdapter` bridges an `Atomistic` molecule to an RDKit `Mol` object, runs geometry optimization in RDKit, and brings the optimized coordinates back.
+An adapter earns its keep when you need an algorithm MolPy does not implement.
+`RDKitAdapter` bridges an `Atomistic` to an RDKit `Mol`, lets RDKit work on its
+own object, and brings the result back. RDKit is an optional extra — molpy
+never requires it.
 
 ```python
-from molpy import Atomistic
+# docs: skip — RDKit optional adapter example; not unit-tested
+import molpy as mp
 from molpy.adapter import RDKitAdapter
 from rdkit.Chem import AllChem
 
-mol = Atomistic()
-c1 = mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
-c2 = mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
-o  = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
-mol.def_bond(c1, c2, order=1.0)
-mol.def_bond(c2, o, order=2.0)
+mol = mp.io.read_smiles("CCO")
 
 adapter = RDKitAdapter(internal=mol)
 rd_mol = adapter.get_external()
@@ -101,16 +108,21 @@ AllChem.MMFFOptimizeMolecule(rd_mol)
 
 adapter.set_external(rd_mol)
 adapter.sync_to_internal()
-
 updated = adapter.get_internal()
-atoms = list(updated.atoms)
-print(f"C1: ({atoms[0]['x']:.2f}, {atoms[0]['y']:.2f}, {atoms[0]['z']:.2f})")
-print(f"O:  ({atoms[2]['x']:.2f}, {atoms[2]['y']:.2f}, {atoms[2]['z']:.2f})")
 ```
 
-!!! note
-    This example requires RDKit to be installed. MolPy treats RDKit as an optional dependency — the adapter gracefully fails if RDKit is not available.
+**But not for this one.** 3D embedding is native, and the native path is the
+supported one — no third-party install, and it returns a report of what each
+stage of the pipeline did:
 
+```python
+mol_3d, report = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
+```
+
+That is the line to remember about adapters: use one to reach *their*
+algorithms, not to repeat *ours*. The same applies to wrappers — Packmol is
+wrapped because packing is genuinely Packmol's, AmberTools because GAFF typing
+is genuinely antechamber's.
 
 ## Choosing the right boundary
 

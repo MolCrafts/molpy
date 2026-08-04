@@ -121,7 +121,9 @@ def _drift_trajectory(
             "x": np.array([xc, 0.0]),
             "y": np.array([0.0, 0.0]),
             "z": np.array([0.0, 0.0]),
-            "type": np.array([1, 2]),
+            # Numeric species id. The Frame schema declares `type` as a String
+            # label; the numeric column the transport computes read is `type_id`.
+            "type_id": np.array([1, 2], dtype=np.uint32),
         }
         if with_velocities:
             cols["vx"] = np.array([velocity, 0.0])
@@ -136,13 +138,13 @@ def _drift_trajectory(
 
 @pytest.fixture
 def drift_traj():
-    """Two-species drift Trajectory for MCD / PMSD / Onsager."""
+    """Two-species drift Trajectory for MCD / Einstein conductivity / Onsager."""
     return _drift_trajectory(velocity=1.0)
 
 
 @pytest.fixture
 def current_traj():
-    """Two-species Trajectory carrying velocities for JACF."""
+    """Two-species Trajectory carrying velocities for Green–Kubo conductivity."""
     return _drift_trajectory(velocity=1.0, with_velocities=True)
 
 
@@ -158,7 +160,7 @@ def pair_traj():
             "x": np.array([0.0, 0.5]),
             "y": np.array([0.0, 0.0]),
             "z": np.array([0.0, 0.0]),
-            "type": np.array([1, 2]),
+            "type_id": np.array([1, 2], dtype=np.uint32),
         }
         frame.box = mp.Box.cubic(100.0)
         frames.append(frame)
@@ -203,7 +205,7 @@ def charge_traj() -> list["molrs.Frame"]:
 
 @pytest.fixture
 def ion_traj() -> list["molrs.Frame"]:
-    """A drifting +/- ion pair over 40 frames for IonicConductivity."""
+    """A drifting +/- ion pair over 40 frames for Einstein conductivity."""
     frames = []
     for i in range(40):
         frame = molrs.Frame()
@@ -220,12 +222,16 @@ def ion_traj() -> list["molrs.Frame"]:
 
 @pytest.fixture
 def raw_acf() -> np.ndarray:
-    """A small raw autocorrelation curve (1-D) for the spectra transforms."""
-    from molpy.compute import compute_acf
+    """A small raw autocorrelation curve (1-D) for the spectra transforms.
+
+    ``acf_fft`` takes a 1-D series and returns ``max_lag + 1`` lags,
+    which is exactly the shape the spectral transforms consume.
+    """
+    from molpy.compute import signal
 
     rng = np.random.default_rng(7)
-    velocities = rng.standard_normal((40, 100, 3))
-    return compute_acf(velocities, cache_size=32)
+    series = np.ascontiguousarray(rng.standard_normal(512), dtype=np.float64)
+    return np.asarray(signal.acf_fft(series, 256))
 
 
 @pytest.fixture

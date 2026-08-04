@@ -16,12 +16,14 @@ Parse a SMILES string, add hydrogens and coordinates, and assign OPLS-AA types.
 ```python
 import molpy as mp
 
-mol   = mp.parser.parse_molecule("CCO")                  # ethanol from SMILES (heavy atoms)
-mol   = mp.adapter.RDKitAdapter(mol).generate_3d(add_hydrogens=True)  # add hydrogens + 3D coordinates
-ff    = mp.io.read_xml_forcefield("oplsaa.xml")          # bundled OPLS-AA
-typed = mp.typifier.OplsTypifier(ff).typify(mol)         # assign force-field types
+mol = mp.io.read_smiles("CCO")  # ethanol from SMILES (heavy atoms)
+mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
+    mol
+)  # add hydrogens + 3D coordinates
+ff = mp.io.read_xml_forcefield("oplsaa.xml")  # bundled OPLS-AA
+typed = mp.typifier.OPLSAATypifier().typify(mol)  # assign force-field types
 
-frame = typed.to_frame()   # simulation-ready columnar arrays
+frame = typed.to_frame()  # simulation-ready columnar arrays
 # mp.io.write_lammps_system("output/", frame, ff) writes system.data + system.ff
 # (set frame.box and a per-atom mol_id first — see the Quickstart).
 ```
@@ -43,7 +45,7 @@ import molpy as mp
 from molpy.pack import Packmol, InsideBoxConstraint
 
 water = mp.Atomistic(name="water")
-o  = water.def_atom(element="O", x=0.000, y=0.000, z=0.000)
+o = water.def_atom(element="O", x=0.000, y=0.000, z=0.000)
 h1 = water.def_atom(element="H", x=0.957, y=0.000, z=0.000)
 h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.000)
 water.def_bond(o, h1)
@@ -55,7 +57,7 @@ p.def_target(
     number=500,
     constraint=InsideBoxConstraint(length=30.0),  # a 30 Å cube
 )
-packed = p(max_steps=1000, seed=42)       # → one packed Frame (1500 atoms)
+packed = p(max_steps=1000, seed=42)  # → one packed Frame (1500 atoms)
 ```
 
 See also: [Packing Systems](../user-guide/09_packing.md).
@@ -70,13 +72,16 @@ import molpy as mp
 from molpy.builder.virtualsite import Tip4pBuilder
 
 water = mp.Atomistic(name="water")
-o  = water.def_atom(element="O", x=0.000, y=0.000, z=0.000)
-h1 = water.def_atom(element="H", x=0.957, y=0.000, z=0.000)
-h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.000)
+o = water.def_atom(element="O", x=0.000, y=0.000, z=0.000, charge=-0.834)
+h1 = water.def_atom(element="H", x=0.957, y=0.000, z=0.000, charge=0.417)
+h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.000, charge=0.417)
 water.def_bond(o, h1)
 water.def_bond(o, h2)
 
-water4p = Tip4pBuilder(d_om=0.1546).apply(water)   # d_om: O–M distance in nm; input unchanged
+# The M-site carries the oxygen's charge, so the input must already have one.
+water4p = Tip4pBuilder(d_om=0.1546).apply(
+    water
+)  # d_om: O–M distance in nm; input unchanged
 ```
 
 See also: [Polarizable & Virtual-Site Models](../user-guide/10_polarizable.md).
@@ -95,7 +100,7 @@ cd examples
 python topology/01_linear.py
 ```
 
-Minimal linear chain (`build_linear` ≡ `build("{[#EO]|10}")`):
+Minimal linear chain (`build_linear` ≡ `build(linear_topology(["EO"] * 10))`):
 
 ```python
 # run from examples/topology/ or put that dir on PYTHONPATH
@@ -115,10 +120,9 @@ public planning object:
 ```python
 from molpy.builder import CarbonTubeBuilder
 
-builder = CarbonTubeBuilder()
-zigzag = builder.build(8, 0, length=30.0)
-armchair = builder.build(6, 6, cells=4, periodic=True)
-chiral = builder.build(6, 3, cells=2, finalize="topology")
+zigzag = CarbonTubeBuilder(8, 0, length=30.0).build()
+armchair = CarbonTubeBuilder(6, 6, cells=4, periodic=True).build()
+chiral = CarbonTubeBuilder(6, 3, cells=2).build(finalize="topology")
 ```
 
 See also: [Nanostructures](../user-guide/04_nanostructures.md).
@@ -128,16 +132,28 @@ See also: [Nanostructures](../user-guide/04_nanostructures.md).
 Sample a reproducible chain population from a molecular-weight distribution.
 
 ```python
-import molpy as mp
-from molpy.builder import polymer_system
+import numpy as np
+from molpy.builder.polymer import (
+    PolydisperseChainGenerator,
+    SchulzZimmPolydisperse,
+    SystemPlanner,
+    WeightedSequenceGenerator,
+)
 
 # Mn = 1500 Da, Mw = 3000 Da, total mass ≈ 500 kDa
-chains = polymer_system(
-    "{[<]CCOCC[>]}|schulz_zimm(1500,3000)||5e5|",
-    random_seed=42,
+planner = SystemPlanner(
+    PolydisperseChainGenerator(
+        WeightedSequenceGenerator({"EO": 1.0}),
+        {"EO": 44.05},
+        distribution=SchulzZimmPolydisperse(1500, 3000),
+    ),
+    target_total_mass=5e5,
 )
-print(f"Built {len(chains)} chains")   # reproducible chain population
-frames = [c.to_frame() for c in chains]
+plan = planner.plan_system(np.random.default_rng(42))
+print(f"Planned {len(plan.chains)} chains")  # reproducible chain population
+
+# Each planned chain is a residue sequence; hand it to a builder to get a graph.
+lengths = [len(c.monomers) for c in plan.chains[:3]]
 ```
 
 See also: [Polydisperse Systems](../user-guide/05_polydisperse_systems.md) ·
@@ -153,17 +169,25 @@ topology with GAFF2 parameters and partial charges.
     AmberTools and activate its environment first.
 
 ```python
+# docs: skip — AmberPolymerBuilder shells out; builder unit-tested with mocks
 import molpy as mp
-from molpy.builder import polymer, prepare_monomer
+from molpy.builder import AmberPolymerBuilder
+from molpy.builder.assembly import SiteMap
+from molpy.conformer import Conformer
 
-eo = prepare_monomer("{[<]CCOCC[>]}")  # BigSMILES → 3D + ports
-
-result = polymer(
-    "{[#EO]|20}",
-    library={"EO": eo},
-    backend="amber",   # runs antechamber + parmchk2 + tleap
+eo, _ = Conformer(add_hydrogens=True, seed=42).generate(
+    mp.io.read_smiles("OCCO")
 )
-# result.prmtop_path, result.inpcrd_path, result.pdb_path
+SiteMap(eo).label_elements("O", "a", "b")
+
+builder = AmberPolymerBuilder(
+    library={"EO": eo},
+    reaction=mp.Reaction("[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]"),
+    force_field="gaff2",
+    charge_method="bcc",  # runs antechamber + parmchk2 + prepgen + tleap
+)
+result = builder.build("{[#EO]|20}")
+# result.frame, result.forcefield, and the Amber intermediates under work_dir
 ```
 
 See also: [AmberTools Integration](../user-guide/13_ambertools_integration.md).

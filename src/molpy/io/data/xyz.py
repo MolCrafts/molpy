@@ -2,7 +2,7 @@
 
 Reader/writer delegate to :mod:`molrs.io`. The reader normalizes molrs output to
 molpy conventions (merge split multi-columns, ``species``→``element``, atomic
-numbers); the writer ensures separate x/y/z coordinate columns.
+numbers).
 """
 
 from pathlib import Path
@@ -11,25 +11,11 @@ import numpy as np
 
 import molrs.io
 
+from molpy.core.fields import ATOMIC_NUMBER
 from molrs import Element
 from molrs import Frame
 
 from .base import DataReader, DataWriter
-
-
-def _ensure_xyz(frame: Frame) -> Frame:
-    """Return a frame whose atoms block has separate x/y/z columns (molrs
-    convention), deriving them from a combined ``xyz`` column if needed. Works
-    on a copy; never mutates the caller's frame."""
-    atoms = frame["atoms"]
-    if "x" in atoms or "xyz" not in atoms:
-        return frame
-    out = frame.copy()
-    xyz = np.asarray(out["atoms"]["xyz"])
-    out["atoms"]["x"] = xyz[:, 0]
-    out["atoms"]["y"] = xyz[:, 1]
-    out["atoms"]["z"] = xyz[:, 2]
-    return out
 
 
 class XYZReader(DataReader):
@@ -65,9 +51,9 @@ class XYZReader(DataReader):
                 block["element"] = np.asarray(block["species"])
 
             # Atomic numbers if missing
-            if "element" in block and "number" not in block:
+            if "element" in block and ATOMIC_NUMBER not in block:
                 z_list = [Element.get_atomic_number(str(s)) for s in block["element"]]
-                block["number"] = np.array(z_list, dtype=np.int64)
+                block[ATOMIC_NUMBER] = np.array(z_list, dtype=np.int64)
 
         return molpy_frame
 
@@ -79,4 +65,4 @@ class XYZWriter(DataWriter):
         super().__init__(Path(path), **kwargs)
 
     def write(self, frame: Frame) -> None:
-        molrs.io.write_xyz(str(self._path), _ensure_xyz(frame))
+        molrs.io.write_xyz(str(self._path), frame)

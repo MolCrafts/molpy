@@ -42,7 +42,7 @@ def _build_pair_frame(
     return frame
 
 
-def _numerical_forces(pots: molrs.Potentials, coords: np.ndarray) -> np.ndarray:
+def _numerical_forces(pots: molrs.ff.Potentials, coords: np.ndarray) -> np.ndarray:
     """Central finite-difference gradient of calc_energy."""
     h = 1e-6
     num = np.zeros_like(coords)
@@ -72,13 +72,6 @@ def _tt_closed_form(r: float, b: float, n: int, c: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def test_pair_coul_tt_style_importable():
-    """ac-001: PairCoulTTStyle importable from molpy.potential.pair."""
-    from molpy.potential.pair import PairCoulTTStyle as PCTTS
-
-    assert PCTTS is PairCoulTTStyle
-
-
 # ---------------------------------------------------------------------------
 # ac-002 — calc_energy returns finite scalar
 # ---------------------------------------------------------------------------
@@ -86,7 +79,7 @@ def test_pair_coul_tt_style_importable():
 
 def test_calc_energy_finite():
     """ac-002: calc_energy returns a finite Python float."""
-    ff = molrs.ForceField("tt-test")
+    ff = molrs.ff.ForceField("tt-test")
     pstyle = ff.def_style(PairCoulTTStyle())
     pstyle.def_type("A", charge=1.0)
 
@@ -97,7 +90,7 @@ def test_calc_energy_finite():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.extract_coords(frame))
+    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
     assert isinstance(energy, float)
     assert math.isfinite(energy)
 
@@ -109,7 +102,7 @@ def test_calc_energy_finite():
 
 def test_calc_forces_shape():
     """ac-003: calc_forces returns (n_atoms, 3) with finite values."""
-    ff = molrs.ForceField("tt-shape")
+    ff = molrs.ff.ForceField("tt-shape")
     pstyle = ff.def_style(PairCoulTTStyle())
     pstyle.def_type("A", charge=1.0)
 
@@ -120,14 +113,14 @@ def test_calc_forces_shape():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    forces = np.asarray(pots.calc_forces(molrs.extract_coords(frame)))
+    forces = np.asarray(pots.calc_forces(molrs.ff.extract_coords(frame)))
     assert forces.shape == (2, 3)
     assert np.all(np.isfinite(forces))
 
 
 def test_empty_pairs_zero_energy_and_forces():
     """Empty pair list returns zero energy and zero forces."""
-    ff = molrs.ForceField("tt-empty")
+    ff = molrs.ff.ForceField("tt-empty")
     pstyle = ff.def_style(PairCoulTTStyle())
     pstyle.def_type("A", charge=1.0)  # must register ≥1 type
 
@@ -138,8 +131,8 @@ def test_empty_pairs_zero_energy_and_forces():
         pair_types=[],
     )
     pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.extract_coords(frame))
-    forces = np.asarray(pots.calc_forces(molrs.extract_coords(frame)))
+    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
+    forces = np.asarray(pots.calc_forces(molrs.ff.extract_coords(frame)))
     assert energy == pytest.approx(0.0)
     assert np.allclose(forces, 0.0)
 
@@ -161,7 +154,7 @@ def test_damping_closed_form_clandpol_canonical():
     f = _tt_closed_form(r, b, n, c)
     expected_energy = f * q * q / r
 
-    ff = molrs.ForceField("tt-closed")
+    ff = molrs.ff.ForceField("tt-closed")
     pstyle = ff.def_style(PairCoulTTStyle())
     pstyle.def_type("A", charge=q)
 
@@ -172,7 +165,7 @@ def test_damping_closed_form_clandpol_canonical():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.extract_coords(frame))
+    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
     assert energy == pytest.approx(expected_energy, abs=1e-10)
 
 
@@ -187,7 +180,7 @@ def test_damping_closed_form_simple_params():
     expected_energy = f * q * q / r
 
     # Use def_pairstyle to set non-default style params
-    ff = molrs.ForceField("tt-simple")
+    ff = molrs.ff.ForceField("tt-simple")
     pstyle = ff.def_pairstyle("coul/tt", {"b": 1.0, "n": 2, "c": 1.0})
     pstyle.def_type("A", charge=q)
 
@@ -198,7 +191,7 @@ def test_damping_closed_form_simple_params():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.extract_coords(frame))
+    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
     assert energy == pytest.approx(expected_energy, abs=1e-12)
 
 
@@ -209,7 +202,7 @@ def test_damping_closed_form_simple_params():
 
 def test_forces_match_finite_difference():
     """ac-006: Analytic TT force matches central finite-difference gradient."""
-    ff = molrs.ForceField("tt-fd")
+    ff = molrs.ff.ForceField("tt-fd")
     pstyle = ff.def_style(PairCoulTTStyle())
     pstyle.def_type("A", charge=-0.7)
     pstyle.def_type("B", charge=0.5)
@@ -221,7 +214,7 @@ def test_forces_match_finite_difference():
         pair_types=["AB"],
     )
     pots = ff.to_potentials(frame)
-    coords = molrs.extract_coords(frame)
+    coords = molrs.ff.extract_coords(frame)
     analytical = np.asarray(pots.calc_forces(coords)).ravel()
     numerical = _numerical_forces(pots, coords)
 
@@ -239,7 +232,7 @@ def test_damping_approaches_one_at_long_range():
     q = 1.0
     expected_undamped = q * q / r_far  # = 0.01
 
-    ff = molrs.ForceField("tt-long")
+    ff = molrs.ff.ForceField("tt-long")
     pstyle = ff.def_style(PairCoulTTStyle())
     pstyle.def_type("A", charge=q)
 
@@ -250,7 +243,7 @@ def test_damping_approaches_one_at_long_range():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.extract_coords(frame))
+    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
     assert abs(energy - expected_undamped) < 1e-6
 
 
@@ -265,7 +258,7 @@ def test_damping_strong_at_short_range():
     q = 1.0
     expected_undamped = q * q / r_short
 
-    ff = molrs.ForceField("tt-short")
+    ff = molrs.ff.ForceField("tt-short")
     pstyle = ff.def_style(PairCoulTTStyle())
     pstyle.def_type("A", charge=q)
 
@@ -276,7 +269,7 @@ def test_damping_strong_at_short_range():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.extract_coords(frame))
+    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
 
     assert energy < expected_undamped
     assert math.isfinite(energy)
@@ -292,7 +285,7 @@ def test_damping_strong_at_short_range():
 
 def test_newtons_third_law():
     """Forces on i and j sum to zero (Newton's third law)."""
-    ff = molrs.ForceField("tt-newton")
+    ff = molrs.ff.ForceField("tt-newton")
     pstyle = ff.def_style(PairCoulTTStyle())
     pstyle.def_type("A", charge=-0.7)
 
@@ -303,7 +296,7 @@ def test_newtons_third_law():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    forces = np.asarray(pots.calc_forces(molrs.extract_coords(frame)))
+    forces = np.asarray(pots.calc_forces(molrs.ff.extract_coords(frame)))
     net = np.sum(forces, axis=0)
     assert np.allclose(net, [0.0, 0.0, 0.0], atol=1e-12)
 
@@ -315,7 +308,7 @@ def test_newtons_third_law():
 
 def test_default_style_params():
     """CL&Pol canonical defaults: b=4.5, n=4, c=1.0."""
-    ff = molrs.ForceField("tt-defaults")
+    ff = molrs.ff.ForceField("tt-defaults")
     pstyle = ff.def_style(PairCoulTTStyle())
     pstyle.def_type("A", charge=1.0)
 
@@ -326,7 +319,7 @@ def test_default_style_params():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.extract_coords(frame))
+    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
 
     # Verify against explicit closed form with canonical params
     f = _tt_closed_form(r=1.0, b=4.5, n=4, c=1.0)

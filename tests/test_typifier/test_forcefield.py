@@ -77,6 +77,27 @@ class TestBondMatching:
         assert annotation["k"] == 1000.0
         assert annotation["r0"] == 1.08
 
+    def test_the_types_own_id_is_not_written_onto_the_link(self):
+        """A reader keys its tables with `id=`; that is bookkeeping, not physics.
+
+        Splatting the whole kwargs bag stamped a force-field type index onto the
+        link's own `id` component — which corrupts link identity where the
+        dtypes agree, and raised outright where they do not (an AMBER prmtop
+        gives the type a float id, while a relation's `id` is an integer).
+        """
+        ff = mp.AtomisticForcefield()
+        astyle = ff.def_atomstyle("full")
+        ca = astyle.def_type("CA", type_="CA", class_="CT")
+        ha = astyle.def_type("HA", type_="HA", class_="HC")
+        bstyle = ff.def_bondstyle("harmonic")
+        bstyle.def_type(ca, ha, k=1000.0, r0=1.08, id=7)
+        bond = next(iter(_chain("CA", "HA").bonds))
+
+        annotation = _matcher(ff, BondType).annotate(bond)
+
+        assert "id" not in annotation
+        assert annotation["k"] == 1000.0  # the real parameters still arrive
+
     def test_the_reversed_orientation_matches_identically(self):
         ff, bond_type = self._ff()
         forward = next(iter(_chain("CA", "HA").bonds))

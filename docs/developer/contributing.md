@@ -16,7 +16,7 @@ Implement the change with tests. Run local checks before pushing:
 ```bash
 ruff format --check src tests
 ruff check src
-pytest tests/ -v -m "not external"
+pytest tests/ -v
 ```
 
 Open a pull request with a clear summary. The PR description should include what changed, why, and how to verify it.

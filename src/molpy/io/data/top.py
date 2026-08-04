@@ -8,6 +8,7 @@ Frame objects with Block containers.
 from pathlib import Path
 from typing import Any
 
+import molrs
 import numpy as np
 
 from molrs import Block, Frame
@@ -157,7 +158,7 @@ class TopReader(DataReader):
                 "charge": float(parts[6]),
                 "mass": float(parts[7]),
             }
-        except ValueError, IndexError:
+        except (ValueError, IndexError):
             return None
 
     def _parse_bond_line(self, line: str) -> dict[str, Any] | None:
@@ -187,7 +188,7 @@ class TopReader(DataReader):
                 "atomj": int(parts[1]),
                 "type": int(parts[2]),
             }
-        except ValueError, IndexError:
+        except (ValueError, IndexError):
             return None
 
     def _parse_pair_line(self, line: str) -> dict[str, Any] | None:
@@ -217,7 +218,7 @@ class TopReader(DataReader):
                 "atomj": int(parts[1]),
                 "type": int(parts[2]),
             }
-        except ValueError, IndexError:
+        except (ValueError, IndexError):
             return None
 
     def _parse_angle_line(self, line: str) -> dict[str, Any] | None:
@@ -248,7 +249,7 @@ class TopReader(DataReader):
                 "atomk": int(parts[2]),
                 "type": int(parts[3]),
             }
-        except ValueError, IndexError:
+        except (ValueError, IndexError):
             return None
 
     def _parse_dihedral_line(self, line: str) -> dict[str, Any] | None:
@@ -280,7 +281,7 @@ class TopReader(DataReader):
                 "atoml": int(parts[3]),
                 "type": int(parts[4]),
             }
-        except ValueError, IndexError:
+        except (ValueError, IndexError):
             return None
 
     def _dicts_to_block(self, data: list[dict[str, Any]]) -> Block:
@@ -322,6 +323,18 @@ class TopReader(DataReader):
             # Try to infer the best dtype
             non_none_values = [v for v in values if v is not None]
             if non_none_values:
+                # A canonical key's dtype is declared, not inferred. A `.top`
+                # whose `type` column happens to hold integers must still land
+                # as the force-field label the vocabulary says it is; guessing
+                # from content is how a column ends up typed by its data
+                # instead of by its meaning.
+                _spec = molrs.schema.column(key)
+                if _spec is not None and _spec.dtype == "string":
+                    result[key] = np.array(
+                        [str(v) if v is not None else "" for v in values]
+                    )
+                    continue
+
                 # Only use int if every value is already an int (not a float)
                 if all(isinstance(v, int) for v in non_none_values):
                     arr = np.array(
@@ -339,7 +352,7 @@ class TopReader(DataReader):
                     )
                     result[key] = arr
                     continue
-                except ValueError, TypeError:
+                except (ValueError, TypeError):
                     pass
 
             # Fall back to string/object array
@@ -381,7 +394,7 @@ class TopReader(DataReader):
             atomic_numbers.append(atomic_number)
 
         # Add atomic numbers to block
-        atoms_block["number"] = np.array(atomic_numbers, dtype=int)
+        atoms_block["atomic_number"] = np.array(atomic_numbers, dtype=np.uint32)
 
     def _guess_atomic_number(self, name: str, atom_type: str | None = None) -> int:
         """Guess atomic number from element name or type.
@@ -399,7 +412,7 @@ class TopReader(DataReader):
             try:
                 element = Element(element_name)
                 return element.number
-            except KeyError, AttributeError:
+            except (KeyError, AttributeError):
                 pass
 
         # Try first letter + rest lowercase for multi-character names
@@ -407,7 +420,7 @@ class TopReader(DataReader):
             try:
                 element = Element(element_name[0].upper() + element_name[1:].lower())
                 return element.number
-            except KeyError, AttributeError:
+            except (KeyError, AttributeError):
                 pass
 
         # Fallback to atom type
@@ -417,7 +430,7 @@ class TopReader(DataReader):
                 try:
                     element = Element(type_name)
                     return element.number
-                except KeyError, AttributeError:
+                except (KeyError, AttributeError):
                     pass
 
         return 0  # Unknown element

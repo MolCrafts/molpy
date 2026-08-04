@@ -30,13 +30,19 @@ returning a single packed `Frame`.**
 ## Packing a box
 
 ```python
+# docs: skip — Packmol binary; pack unit-tested with mocks and script literals
+import molpy as mp
+from molpy.conformer import Conformer
 from molpy.pack import Packmol, InsideBoxConstraint
 
-p = Packmol(workdir="pack_out")                      # workdir for Packmol's scratch files
+water, _ = Conformer(seed=1).generate(mp.io.read_smiles("O"))
+water = water.to_frame()  # one molecule, as a Frame
+
+p = Packmol(workdir="pack_out")  # workdir for Packmol's scratch files
 p.def_target(
-    water,                                   # a molrs Frame (one molecule)
-    number=500,                              # how many copies
-    constraint=InsideBoxConstraint(length=30.0),   # keep them inside a 30 Å cube
+    water,  # a molrs Frame (one molecule)
+    number=500,  # how many copies
+    constraint=InsideBoxConstraint(length=30.0),  # keep them inside a 30 Å cube
 )
 packed = p(max_steps=1000, seed=42)  # -> a single packed Frame
 ```

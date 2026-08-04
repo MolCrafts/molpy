@@ -82,7 +82,7 @@ class SoftPotential:
 
     def _evaluate(self, frame: molrs.Frame) -> tuple[float, np.ndarray]:
         """Compute ``(energy, forces)`` for the bond + repulsion terms."""
-        coords = np.asarray(molrs.extract_coords(frame), dtype=float).reshape(-1, 3)
+        coords = np.asarray(molrs.ff.extract_coords(frame), dtype=float).reshape(-1, 3)
         forces = np.zeros_like(coords)
         energy = 0.0
 
@@ -192,7 +192,7 @@ class SoftPotential:
                 "SoftPotential requires atoms.element or atoms.symbol when r0 is None"
             )
 
-        n_atoms = molrs.extract_coords(frame).reshape(-1, 3).shape[0]
+        n_atoms = molrs.ff.extract_coords(frame).reshape(-1, 3).shape[0]
         if len(symbols) != n_atoms:
             raise ValueError(
                 f"Element column has {len(symbols)} rows for {n_atoms} atoms"

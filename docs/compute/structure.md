@@ -68,22 +68,36 @@ for a [pair-persistence](persistence.md) or clustering analysis.
 `RDF` bins pair distances supplied by a `NeighborList`, so the workflow is always
 *build neighbours → histogram*. The neighbor cutoff must be at least `r_max`.
 
+The examples below share this setup:
+
+```python
+import numpy as np
+import molpy as mp
+
+rng = np.random.default_rng(0)
+xyz = rng.uniform(0.0, 20.0, size=(200, 3))
+frame = mp.Frame()
+frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
+frame.box = mp.Box.cubic(20.0)
+```
+
 ```python
 from molpy.compute import NeighborList, RDF
 
-nlist = NeighborList(cutoff=10.0)(frame)        # pairs within 10 Å
-rdf = RDF(n_bins=200, r_max=10.0)               # configure
-result = rdf([frame], [nlist])                  # call on data -> RDFResult
+nlist = NeighborList(cutoff=10.0)(frame)  # pairs within 10 Å
+rdf = RDF(n_bins=200, r_max=10.0)  # configure
+result = rdf([frame], [nlist])  # call on data -> RDFResult
 
-result.rdf          # g(r), shape (n_bins,)
+result.rdf  # g(r), shape (n_bins,)
 result.bin_centers  # r at each bin centre, Å
 ```
 
 Pass parallel lists of frames and neighbor lists to average over a trajectory:
 
 ```python
+frames = [frame]  # an ensemble is just a list of frames
 nlists = [NeighborList(cutoff=10.0)(f) for f in frames]
-result = RDF(n_bins=200, r_max=10.0)(frames, nlists)   # ensemble-averaged g(r)
+result = RDF(n_bins=200, r_max=10.0)(frames, nlists)  # ensemble-averaged g(r)
 ```
 
 `result.bin_edges`, `result.volume`, and `result.n_frames` carry the histogram
@@ -124,8 +138,8 @@ so it is exact for the chosen $k$ but $\mathcal{O}(N^2)$ per frame).
 import numpy as np
 from molpy.compute import StaticStructureFactorDebye
 
-k = np.linspace(0.2, 12.0, 300)             # Å^-1; avoid k = 0
-sk = StaticStructureFactorDebye(k)([frame]) # call on one or more frames
+k = np.linspace(0.2, 12.0, 300)  # Å^-1; avoid k = 0
+sk = StaticStructureFactorDebye(k)([frame])  # call on one or more frames
 ```
 
 Because the cost scales with the square of the particle count, use the
@@ -149,7 +163,7 @@ Two operators turn positions into a density field:
 from molpy.compute import LocalDensity, GaussianDensity
 
 nlist = NeighborList(cutoff=4.0)(frame)
-local = LocalDensity(r_max=4.0)([frame], [nlist])   # per-particle density
+local = LocalDensity(r_max=4.0)([frame], [nlist])  # per-particle density
 
 grid = GaussianDensity(nx=64, ny=64, nz=64, sigma=1.0)([frame])  # ρ(r) on a grid
 ```
@@ -169,9 +183,9 @@ cost and meaning.
 
 ```python
 nlist = NeighborList(cutoff=5.0)(frame)
-nlist.n_pairs            # number of pairs found
-nlist.pairs              # (n_pairs, 2) index array
-nlist.distances          # pair distances, Å
+nlist.n_pairs  # number of pairs found
+nlist.pairs  # (n_pairs, 2) index array
+nlist.distances  # pair distances, Å
 ```
 
 Build it once per frame and pass it to every cutoff-based analysis on that frame.
@@ -205,7 +219,9 @@ from molpy.compute import PMFTXY
 
 nlist = NeighborList(cutoff=6.0)(frame)
 pmft = PMFTXY(x_max=6.0, y_max=6.0, n_x=120, n_y=120)
-result = pmft([frame], [nlist])   # aligned if frame has an `orientations` block, else lab frame
+result = pmft(
+    [frame], [nlist]
+)  # aligned if frame has an `orientations` block, else lab frame
 ```
 
 ---

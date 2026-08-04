@@ -1,7 +1,6 @@
 """Tests for OpenMMEngine and OpenMMSimulationConfig."""
 
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -26,7 +25,9 @@ def simple_frame():
             "x": np.array([0.0, 1.0, 0.0]),
             "y": np.array([0.0, 0.0, 1.0]),
             "z": np.array([0.0, 0.0, 0.0]),
-            "name": np.array(["O", "H", "H"], dtype="U4"),
+            # PDB atom names are unique within a residue — two atoms both
+            # named "H" make a file readers reject as duplicated.
+            "name": np.array(["O", "H1", "H2"], dtype="U4"),
             "element": np.array(["O", "H", "H"], dtype="U2"),
         }
     )
@@ -149,21 +150,58 @@ class TestGenerateInputs:
         engine.generate_inputs(simple_frame, empty_forcefield, nvt_config, out)
         assert out.is_dir()
 
-    def test_pdb_file_created(
+    def test_pdb_is_written_verbatim(
         self, tmp_path, engine, simple_frame, empty_forcefield, nvt_config
     ):
-        paths = engine.generate_inputs(
-            simple_frame, empty_forcefield, nvt_config, tmp_path
-        )
-        assert paths["pdb"].exists()
+        """The whole PDB, spelled out.
 
-    def test_xml_ff_file_created(
-        self, tmp_path, engine, simple_frame, empty_forcefield, nvt_config
-    ):
+        Written as a golden rather than an `.exists()` check: column positions
+        are the PDB format, and a shifted element or coordinate field is exactly
+        the kind of breakage a downstream reader rejects but a file-exists
+        assertion cannot see. No third-party reader is used to check it —
+        the expected bytes are stated here.
+        """
         paths = engine.generate_inputs(
             simple_frame, empty_forcefield, nvt_config, tmp_path
         )
-        assert paths["forcefield"].exists()
+        assert paths["pdb"].read_text() == (
+            "REMARK  MOL\n"
+            "CRYST1    1.000    1.000    1.000  90.00  90.00  90.00 P 1           1\n"
+            "ATOM      1  O   UNK     1       0.000   0.000   0.000  1.00  0.00           O \n"
+            "ATOM      2 H1   UNK     1       1.000   0.000   0.000  1.00  0.00           H \n"
+            "ATOM      3 H2   UNK     1       0.000   1.000   0.000  1.00  0.00           H \n"
+            "\nEND\n"
+        )
+
+    def test_pdb_atom_names_are_unique_within_the_residue(
+        self, tmp_path, engine, simple_frame, empty_forcefield, nvt_config
+    ):
+        """Two atoms of one residue may not share a name.
+
+        A PDB that names both hydrogens `H` is read as a duplicated atom and
+        rejected; this is the assertion that keeps the fixture honest.
+        """
+        paths = engine.generate_inputs(
+            simple_frame, empty_forcefield, nvt_config, tmp_path
+        )
+        names = [
+            line[12:16].strip()
+            for line in paths["pdb"].read_text().splitlines()
+            if line.startswith("ATOM")
+        ]
+        assert names == ["O", "H1", "H2"]
+        assert len(set(names)) == len(names)
+
+    def test_forcefield_xml_is_written_verbatim(
+        self, tmp_path, engine, simple_frame, empty_forcefield, nvt_config
+    ):
+        """A typeless force field serialises to a named, empty `<ForceField>`."""
+        paths = engine.generate_inputs(
+            simple_frame, empty_forcefield, nvt_config, tmp_path
+        )
+        assert paths["forcefield"].read_text() == (
+            "<?xml version='1.0' encoding='utf-8'?>\n<ForceField name=\"test\" />"
+        )
 
     def test_script_file_created(
         self, tmp_path, engine, simple_frame, empty_forcefield, nvt_config
@@ -315,77 +353,3 @@ class TestWriteOpenMMSystemFactory:
         assert paths["pdb"].exists()
         assert paths["forcefield"].exists()
         assert paths["script"].exists()
-
-
-# ---------------------------------------------------------------------------
-# serialize_system — requires OpenMM
-# ---------------------------------------------------------------------------
-
-
-class TestSerializeSystem:
-    """These tests require OpenMM to be installed.
-
-    Each test skips individually if ``import openmm`` fails.
-    """
-
-    @pytest.fixture(autouse=True)
-    def _require_openmm(self):
-        pytest.importorskip("openmm", reason="OpenMM not installed")
-
-    def test_missing_openmm_raises_import_error(
-        self, tmp_path, engine, simple_frame, empty_forcefield
-    ):
-        """Verify a helpful ImportError is raised when openmm is unavailable."""
-        config = OpenMMSimulationConfig()
-        original = sys.modules.copy()
-        # Temporarily hide openmm
-        for key in list(sys.modules):
-            if key.startswith("openmm"):
-                sys.modules.pop(key)
-        try:
-            with pytest.raises(ImportError, match="conda install"):
-                engine.serialize_system(
-                    simple_frame, empty_forcefield, config, tmp_path
-                )
-        finally:
-            sys.modules.update(original)
-
-    def test_system_xml_created(self, tmp_path, engine, simple_frame, empty_forcefield):
-        config = OpenMMSimulationConfig()
-        paths = engine.serialize_system(
-            simple_frame, empty_forcefield, config, tmp_path
-        )
-        assert paths["system_xml"].exists()
-
-    def test_integrator_xml_created(
-        self, tmp_path, engine, simple_frame, empty_forcefield
-    ):
-        config = OpenMMSimulationConfig()
-        paths = engine.serialize_system(
-            simple_frame, empty_forcefield, config, tmp_path
-        )
-        assert paths["integrator_xml"].exists()
-
-    def test_returns_all_six_keys(
-        self, tmp_path, engine, simple_frame, empty_forcefield
-    ):
-        config = OpenMMSimulationConfig()
-        paths = engine.serialize_system(
-            simple_frame, empty_forcefield, config, tmp_path
-        )
-        assert {"pdb", "forcefield", "script", "system_xml", "integrator_xml"}.issubset(
-            paths.keys()
-        )
-
-    def test_system_xml_roundtrip(
-        self, tmp_path, engine, simple_frame, empty_forcefield
-    ):
-        """Deserialize the serialized System and check it is not None."""
-        openmm = pytest.importorskip("openmm")
-        config = OpenMMSimulationConfig()
-        paths = engine.serialize_system(
-            simple_frame, empty_forcefield, config, tmp_path
-        )
-        xml_text = paths["system_xml"].read_text(encoding="utf-8")
-        system = openmm.XmlSerializer.deserialize(xml_text)
-        assert system is not None

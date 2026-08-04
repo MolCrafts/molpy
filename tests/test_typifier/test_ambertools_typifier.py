@@ -24,7 +24,7 @@ from molpy.typifier.region import RegionTypes
 
 
 def _find_hydrogens(graph: mp.Atomistic) -> mp.Atomistic:
-    return mp.Atomistic.adopt(molrs.Perceive().find_hydrogens(graph))
+    return mp.Perceive().find_hydrogens(graph)
 
 
 class _EmptyForceField:
@@ -56,7 +56,7 @@ def _amber_returning(graph, *, charge: float | None = None) -> Mock:
         frame["atoms"]["charge"] = [charge] * n
     amber = Mock()
     amber.parameterize.return_value = types.SimpleNamespace(
-        frame=frame, ff=_EmptyForceField()
+        frame=frame, forcefield=_EmptyForceField()
     )
     return amber
 

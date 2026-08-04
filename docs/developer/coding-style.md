@@ -3,23 +3,43 @@
 MolPy values explicitness over cleverness. Code should be readable without external context, testable in isolation, and safe from hidden side effects.
 
 
-## Immutability
+## Mutation: core vs helpers
 
-This is the most important rule. Transformations return new objects. Inputs are never modified in place.
+Two layers, two rules — do not mix them up.
+
+### Core data model (`Atomistic`, `Frame`, …) — mutate in place
+
+`def_atom`, `def_bond`, `get_topo`, `move`, `rotate`, `merge`, and friends
+modify the receiver and return `self` (or the created entity) for chaining.
+`.copy()` is the **explicit** opt-in for an independent deep copy.
 
 ```python
-# wrong: mutates input
-def add_hydrogens(mol):
-    mol.add_atoms(...)
+import molpy as mp
 
-# right: returns new object
+mol = mp.io.read_smiles("CCO")
+mol.get_topo(gen_angle=True, gen_dihe=True)   # writes angles/dihedrals on mol
+work = mol.copy().get_topo(gen_angle=True)    # independent graph + topology
+```
+
+### Higher-level helpers (`builder`, `typifier`, `op`, …) — do not surprise the caller
+
+Workflow helpers must not mutate a caller-owned structure unexpectedly. Copy
+first, or build and return a new structure.
+
+```python
+# wrong: helper silently mutates the caller's mol
+def add_hydrogens(mol):
+    mol.def_atom(...)  # caller did not ask for this
+
+# right: return a new object
 def add_hydrogens(mol):
     new_mol = mol.copy()
     # ... populate new_mol
     return new_mol
 ```
 
-The `typify()` method returns a new `Atomistic`. The `Struct.copy()` method deep-copies entities and links. Follow these patterns in new code.
+`typify()` returns a new `Atomistic`. Follow the helper rule in `builder` /
+`typifier` / similar packages; follow the core rule inside `molpy.core`.
 
 
 ## Functions and files
@@ -63,7 +83,7 @@ A change is ready when:
 
 - [ ] Code is readable without extra explanation
 - [ ] Functions are under 50 lines
-- [ ] No mutation of input objects
+- [ ] Core APIs mutate in place intentionally; helpers do not mutate caller-owned inputs
 - [ ] Tests cover the changed behavior
 - [ ] Public APIs have type hints and docstrings
 - [ ] `ruff format --check src tests` passes

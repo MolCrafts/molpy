@@ -17,6 +17,18 @@ import molpy as mp
 from molpy.io.data.lammps import LammpsDataReader, LammpsDataWriter
 
 
+def _section_rows(text: str, heading: str) -> list[list[str]]:
+    """Split the whitespace-delimited rows of one named data-file section."""
+    lines = text.splitlines()
+    start = lines.index(heading) + 2  # heading + blank line
+    rows = []
+    for line in lines[start:]:
+        if not line.strip():
+            break
+        rows.append(line.split())
+    return rows
+
+
 @pytest.fixture
 def test_files(TEST_DATA_DIR) -> dict[str, Path]:
     """Provide paths to test files."""
@@ -333,7 +345,7 @@ class TestLammpsDataWriter:
         # Add atoms data with separate x, y, z coordinates
         atoms_data = {
             "id": np.array([1, 2, 3]),
-            "type": np.array([1, 1, 2]),
+            "type_id": np.array([1, 1, 2]),
             "x": np.array([0.0, 1.0, 0.0]),
             "y": np.array([0.0, 0.0, 1.0]),
             "z": np.array([0.0, 0.0, 0.0]),
@@ -356,6 +368,33 @@ class TestLammpsDataWriter:
             assert "3 atoms" in content
             assert "2 atom types" in content
             assert "Atoms" in content
+
+    def test_write_numbers_atoms_without_mutating_the_frame(self, tmp_path):
+        """An absent ``id`` is numbered per file, not written back to the frame.
+
+        Atom IDs are an artifact of the LAMMPS file (they are what the Bonds
+        section references), so a frame built from an ``Atomistic`` — which has
+        no ``id`` column — must still write, and must come back unchanged.
+        """
+        asm = mp.Atomistic()
+        atoms = [
+            asm.def_atom(element="C", type="CT", charge=0.0, x=float(i), y=0.0, z=0.0)
+            for i in range(3)
+        ]
+        asm.def_bond(atoms[0], atoms[1], type="CT-CT")
+        asm.def_bond(atoms[1], atoms[2], type="CT-CT")
+        frame = asm.to_frame()
+        assert "id" not in frame["atoms"]
+
+        path = tmp_path / "unnumbered.data"
+        LammpsDataWriter(path, atom_style="atomic").write(frame)
+
+        assert "id" not in frame["atoms"], "writer mutated the caller's frame"
+        atoms_section = _section_rows(path.read_text(), "Atoms")
+        assert [row[0] for row in atoms_section] == ["1", "2", "3"]
+        # Bonds reference those same 1-based IDs.
+        bonds_section = _section_rows(path.read_text(), "Bonds")
+        assert [row[2:] for row in bonds_section] == [["1", "2"], ["2", "3"]]
 
     def test_write_full_style(self, tmp_path):
         """Test writing with full atom style including molecule IDs and charges."""

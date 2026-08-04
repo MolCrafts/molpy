@@ -32,7 +32,7 @@ The Amber workflow for small molecules is: antechamber (assign types + charges) 
 ```python
 from pathlib import Path
 import molpy as mp
-from molpy.adapter import RDKitAdapter
+from molpy.conformer import Conformer
 from molpy.io.writers import write_pdb
 from molpy.wrapper import AntechamberWrapper, Parmchk2Wrapper, TLeapWrapper
 
@@ -41,14 +41,15 @@ ions_dir = output_dir / "ions"
 ions_dir.mkdir(parents=True, exist_ok=True)
 
 # Create TFSI from SMILES and generate 3D coordinates
-tfsi = mp.parser.parse_molecule("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F")
-tfsi = RDKitAdapter(internal=tfsi).generate_3d(add_hydrogens=False, optimize=True)
+tfsi = mp.io.read_smiles("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F")
+tfsi = Conformer(add_hydrogens=False, seed=42).generate(tfsi)[0]
 
 # Write PDB for antechamber input
 write_pdb(ions_dir / "tfsi.pdb", tfsi.to_frame())
 ```
 
 ```python
+# docs: skip — AmberTools / Packmol offline electrolyte workflow; not unit-tested
 conda_env = "AmberTools25"
 
 # Step 1: antechamber — assign GAFF types and BCC charges
@@ -98,6 +99,7 @@ These were fitted to hydration free energies and are the standard choice for pol
 | ε         | 0.0183 kcal/mol |
 
 ```python
+# docs: skip — AmberTools / Packmol offline electrolyte workflow; not unit-tested
 from molpy.io import read_amber
 
 li_dir = output_dir / "li"
@@ -167,9 +169,8 @@ TAIL inputs.
 ```python
 from molpy.builder.assembly import SiteMap
 from molpy.conformer import Conformer
-from molpy.parser import parse_molecule
 
-eo, _ = Conformer(add_hydrogens=True, seed=42).generate(parse_molecule("COC"))
+eo, _ = Conformer(add_hydrogens=True, seed=42).generate(mp.io.read_smiles("COC"))
 SiteMap(eo).label_elements("C", "a", "b")
 
 STITCH = mp.Reaction("[C;%a:1][H].[C;%b:2][H]>>[C:1][C:2]")
@@ -182,6 +183,7 @@ library = {"EO": eo}
 `AmberPolymerBuilder` wraps the monomer library, connector rules, and Amber tool chain (prepgen + tleap) into one builder that produces fully parameterized chains. Each unique chain length writes its Amber intermediate files into its own subdirectory under `work_dir` to prevent file conflicts.
 
 ```python
+# docs: skip — AmberTools / Packmol offline electrolyte workflow; not unit-tested
 from molpy.builder.polymer.ambertools import AmberPolymerBuilder
 
 polymer_dir = output_dir / "polymer"
@@ -203,6 +205,7 @@ result = builder.build("{[#EO]|10}")
 `AmberPolymerBuilder.build()` internally runs antechamber, parmchk2, prepgen, and tleap. The result carries the polymer Frame, ForceField, and paths to the intermediate Amber files.
 
 ```python
+# docs: skip — AmberTools / Packmol offline electrolyte workflow; not unit-tested
 peo_frame = result.frame
 peo_ff = result.forcefield
 print(f"PEO 10-mer: {peo_frame['atoms'].nrows} atoms")
@@ -214,6 +217,7 @@ print(f"PEO 10-mer: {peo_frame['atoms'].nrows} atoms")
 Merging is done before packing rather than after because Packmol operates on coordinates only — it has no awareness of force field types. If two components share an atom type name with different parameters, a post-packing merge would silently overwrite one of them. Merging first makes any type name collision an error before coordinates are generated.
 
 ```python
+# docs: skip — AmberTools / Packmol offline electrolyte workflow; not unit-tested
 import numpy as np
 from molpy.io import read_amber
 from molpy.pack import Packmol, InsideBoxConstraint
@@ -243,6 +247,7 @@ system.box = mp.Box.cubic(box_size)
 ## Exporting skips pair_style because long-range electrostatics need it in the script
 
 ```python
+# docs: skip — AmberTools / Packmol offline electrolyte workflow; not unit-tested
 from molpy.io.writers import write_lammps_data, write_lammps_forcefield
 
 lammps_dir = output_dir / "lammps"

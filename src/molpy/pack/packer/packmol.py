@@ -467,13 +467,26 @@ class Packmol(Packer):
                         arrays.append(p[key])
                     else:
                         n_rows = part_len(p)
-                        dtype = ref_dtype[key]
-                        if np.issubdtype(dtype, np.floating):
+                        dtype = np.dtype(ref_dtype[key])
+                        # The fill has to be *representable*: a Block column is
+                        # a typed numpy array, so `None` would turn the whole
+                        # column into an object array the store rejects. Each
+                        # kind gets its own way of saying "this target did not
+                        # state one" — nan, zero, False, the empty string.
+                        if dtype.kind == "f":
                             arrays.append(np.full(n_rows, np.nan, dtype=dtype))
-                        elif np.issubdtype(dtype, np.integer):
+                        elif dtype.kind in "iu":
                             arrays.append(np.zeros(n_rows, dtype=dtype))
+                        elif dtype.kind == "b":
+                            arrays.append(np.zeros(n_rows, dtype=bool))
+                        elif dtype.kind in "US":
+                            arrays.append(np.full(n_rows, "", dtype=dtype))
                         else:
-                            arrays.append(np.full(n_rows, None, dtype=object))
+                            raise TypeError(
+                                f"cannot pack column {key!r}: one target omits it "
+                                f"and its dtype {dtype} has no representable "
+                                "missing value"
+                            )
                 combined[key] = np.concatenate(arrays, axis=0)
             return combined
 

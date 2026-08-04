@@ -46,7 +46,9 @@ class Workflow:
     # Registration
     # ------------------------------------------------------------------
 
-    def add(self, name: str, compute: Any, inputs: dict[str, str] | None = None) -> str:
+    def add(
+        self, name: str, compute: Any, inputs: dict[str, str] | None = None
+    ) -> "Workflow":
         """Register a compute node.
 
         Args:
@@ -57,7 +59,7 @@ class Workflow:
                     external input name.
 
         Returns:
-            *name*, for fluent chaining.
+            ``self``, so calls chain.
 
         Raises:
             WorkflowDuplicateNodeError: *name* already registered.
@@ -103,7 +105,7 @@ class Workflow:
                 f"Adding node {name!r} creates a cycle: {exc}"
             ) from exc
 
-        return name
+        return self
 
     # ------------------------------------------------------------------
     # Introspection

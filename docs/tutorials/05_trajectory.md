@@ -26,14 +26,14 @@ for i in range(5):
     frames.append(f)
 
 traj = mp.Trajectory(frames)
-print(len(traj))             # 5
-print(traj[0]["atoms"]["x"]) # [0.]
+print(len(traj))  # 5
+print(traj[0]["atoms"]["x"])  # [0.]
 ```
 
 
 ## Iterables are materialized
 
-The constructor accepts any iterable, but materializes it immediately into the native container. Use `molrs.read_lammps_trajectory` or `molrs.read_xyz_trajectory` when data must remain lazy and seekable on disk.
+The constructor accepts any iterable, but materializes it immediately into the native container. Use `molrs.io.read_lammps_trajectory` or `molrs.io.read_xyz_trajectory` when data must remain lazy and seekable on disk.
 
 ```python
 def make_frames(n):
@@ -43,8 +43,9 @@ def make_frames(n):
         f.meta = {"time": mp.MetaValue("f64", i * 0.5)}
         yield f
 
+
 traj_from_iterable = mp.Trajectory(make_frames(1000))
-print(len(traj_from_iterable))   # 1000
+print(len(traj_from_iterable))  # 1000
 ```
 
 The generator is consumed during construction. File readers avoid that eager materialization.
@@ -56,13 +57,13 @@ For list-backed trajectories, standard Python indexing and slicing work as expec
 
 ```python
 first_two = traj[:2]
-print(len(first_two))   # 2
+print(len(first_two))  # 2
 
 strided = traj[::2]
-print(len(strided))     # 3
+print(len(strided))  # 3
 
 last = traj[-1]
-print(last.meta["time"].value)   # 40.0
+print(last.meta["time"].value)  # 40.0
 ```
 
 Slicing with a stride (`traj[::n]`) is a convenient way to downsample for quick inspection.
@@ -76,21 +77,24 @@ Slicing with a stride (`traj[::n]`) is a convenient way to downsample for quick 
 def shift_x(frame):
     new = mp.Frame()
     x = frame["atoms"]["x"]
-    new["atoms"] = mp.Block({
-        "x": x + 10.0,
-        "y": frame["atoms"]["y"],
-        "z": frame["atoms"]["z"],
-    })
+    new["atoms"] = mp.Block(
+        {
+            "x": x + 10.0,
+            "y": frame["atoms"]["y"],
+            "z": frame["atoms"]["z"],
+        }
+    )
     new.meta = frame.meta
     return new
+
 
 shifted = traj.map(shift_x)
 ```
 
 ```python
 shifted_list = list(shifted)
-print(shifted_list[0]["atoms"]["x"])   # [10.]
-print(traj[0]["atoms"]["x"])           # [0.] — original unchanged
+print(shifted_list[0]["atoms"]["x"])  # [10.]
+print(traj[0]["atoms"]["x"])  # [0.] — original unchanged
 ```
 
 

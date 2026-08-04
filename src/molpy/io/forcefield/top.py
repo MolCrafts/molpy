@@ -1,7 +1,91 @@
+import math
 import re
 from pathlib import Path
 
 from molpy.core.forcefield import ForceField
+
+
+#: GROMACS states lengths in nm, energies in kJ/mol and equilibrium angles in
+#: degrees; molrs is Å, kcal/mol and radians throughout. A reader normalizes at
+#: its own boundary — nothing downstream should have to ask which file a
+#: parameter came from.
+_NM_TO_ANGSTROM = 10.0
+_KJ_TO_KCAL = 4.184
+
+#: Per parameter name: the factor that takes a GROMACS value to molrs units.
+#: A force constant's factor follows the units of the coordinate it is per —
+#: kJ/mol/nm² → kcal/mol/Å² divides by 4.184·10², while kJ/mol/rad² only
+#: divides by 4.184.
+_TOP_TO_INTERNAL: dict[str, float] = {
+    "r0": _NM_TO_ANGSTROM,
+    "k_ub": 1.0 / (_KJ_TO_KCAL * _NM_TO_ANGSTROM**2),
+    "De": 1.0 / _KJ_TO_KCAL,
+    "alpha": 1.0 / _NM_TO_ANGSTROM,
+}
+
+
+def _bond_params_to_internal(params: dict[str, float]) -> dict[str, float]:
+    """Normalize a `[bondtypes]` parameter set to molrs units."""
+    out = dict(params)
+    if "r0" in out:
+        out["r0"] = out["r0"] * _NM_TO_ANGSTROM
+    for key in ("k", "k2"):
+        if key in out:
+            out[key] = out[key] / (_KJ_TO_KCAL * _NM_TO_ANGSTROM**2)
+    if "k3" in out:
+        out["k3"] = out["k3"] / (_KJ_TO_KCAL * _NM_TO_ANGSTROM**3)
+    if "k4" in out:
+        out["k4"] = out["k4"] / (_KJ_TO_KCAL * _NM_TO_ANGSTROM**4)
+    for key, factor in (("De", 1.0 / _KJ_TO_KCAL), ("alpha", 1.0 / _NM_TO_ANGSTROM)):
+        if key in out:
+            out[key] = out[key] * factor
+    return out
+
+
+def _bond_params_from_internal(params: dict[str, float]) -> dict[str, float]:
+    """Inverse of :func:`_bond_params_to_internal` — molrs units back to GROMACS'."""
+    out = dict(params)
+    if "r0" in out:
+        out["r0"] = out["r0"] / _NM_TO_ANGSTROM
+    for key in ("k", "k2"):
+        if key in out:
+            out[key] = out[key] * (_KJ_TO_KCAL * _NM_TO_ANGSTROM**2)
+    if "k3" in out:
+        out["k3"] = out["k3"] * (_KJ_TO_KCAL * _NM_TO_ANGSTROM**3)
+    if "k4" in out:
+        out["k4"] = out["k4"] * (_KJ_TO_KCAL * _NM_TO_ANGSTROM**4)
+    for key, factor in (("De", _KJ_TO_KCAL), ("alpha", _NM_TO_ANGSTROM)):
+        if key in out:
+            out[key] = out[key] * factor
+    return out
+
+
+def _angle_params_from_internal(params: dict[str, float]) -> dict[str, float]:
+    """Inverse of :func:`_angle_params_to_internal`."""
+    out = dict(params)
+    if "theta0" in out:
+        out["theta0"] = math.degrees(out["theta0"])
+    if "k" in out:
+        out["k"] = out["k"] * _KJ_TO_KCAL
+    if "r0" in out:
+        out["r0"] = out["r0"] / _NM_TO_ANGSTROM
+    if "k_ub" in out:
+        out["k_ub"] = out["k_ub"] * (_KJ_TO_KCAL * _NM_TO_ANGSTROM**2)
+    return out
+
+
+def _angle_params_to_internal(params: dict[str, float]) -> dict[str, float]:
+    """Normalize an `[angletypes]` parameter set to molrs units."""
+    out = dict(params)
+    if "theta0" in out:
+        out["theta0"] = math.radians(out["theta0"])
+    if "k" in out:  # kJ/mol/rad² -> kcal/mol/rad²
+        out["k"] = out["k"] / _KJ_TO_KCAL
+    if "r0" in out:  # Urey-Bradley 1-3 distance
+        out["r0"] = out["r0"] * _NM_TO_ANGSTROM
+    if "k_ub" in out:
+        out["k_ub"] = out["k_ub"] / (_KJ_TO_KCAL * _NM_TO_ANGSTROM**2)
+    return out
 
 
 class GromacsTopReader:
@@ -246,7 +330,9 @@ class GromacsTopReader:
             name = f"{itype.name}-{jtype.name}"
 
             param_names = param_specs[style_name]
-            param_dict = {n: v for n, v in zip(param_names, params)}
+            param_dict = _bond_params_to_internal(
+                {n: v for n, v in zip(param_names, params)}
+            )
 
             # Register the bond type in the force‑field object
             bondstyle.def_type(itype, jtype, name=name, **param_dict)
@@ -291,7 +377,9 @@ class GromacsTopReader:
 
             name = f"{itype.name}-{jtype.name}-{ktype.name}"
             param_names = param_specs[style_name]
-            param_dict = {n: v for n, v in zip(param_names, params)}
+            param_dict = _angle_params_to_internal(
+                {n: v for n, v in zip(param_names, params)}
+            )
 
             anglestyle.def_type(itype, jtype, ktype, name=name, **param_dict)
 
@@ -475,7 +563,9 @@ class GromacsForceFieldWriter:
                     # Find style name
                     style_name = self._find_style_name(forcefield, BondStyle, bt)
                     funct = _BOND_FUNC.get(style_name, "1")
-                    params = self._extract_params(bt, _BOND_PARAMS.get(style_name, ()))
+                    params = self._extract_params(
+                        bt, _BOND_PARAMS.get(style_name, ()), kind="bond"
+                    )
                     f.write(f"  {i}  {j}  {funct}  {params}\n")
                 f.write("\n")
 
@@ -490,7 +580,9 @@ class GromacsForceFieldWriter:
                     k = at_index.get(id(at.ktom), 0)
                     style_name = self._find_style_name(forcefield, AngleStyle, at)
                     funct = _ANGLE_FUNC.get(style_name, "1")
-                    params = self._extract_params(at, _ANGLE_PARAMS.get(style_name, ()))
+                    params = self._extract_params(
+                        at, _ANGLE_PARAMS.get(style_name, ()), kind="angle"
+                    )
                     f.write(f"  {i}  {j}  {k}  {funct}  {params}\n")
                 f.write("\n")
 
@@ -507,7 +599,7 @@ class GromacsForceFieldWriter:
                     style_name = self._find_style_name(forcefield, DihedralStyle, dt)
                     funct = _DIHEDRAL_FUNC.get(style_name, "1")
                     params = self._extract_params(
-                        dt, _DIHEDRAL_PARAMS.get(style_name, ())
+                        dt, _DIHEDRAL_PARAMS.get(style_name, ()), kind="dihedral"
                     )
                     f.write(f"  {i}  {j}  {k}  {l_}  {funct}  {params}\n")
                 f.write("\n")
@@ -522,7 +614,9 @@ class GromacsForceFieldWriter:
                     j = at_index.get(id(pt.jtom), 0)
                     style_name = self._find_style_name(forcefield, PairStyle, pt)
                     funct = _PAIR_FUNC.get(style_name, "1")
-                    params = self._extract_params(pt, _PAIR_PARAMS.get(style_name, ()))
+                    params = self._extract_params(
+                        pt, _PAIR_PARAMS.get(style_name, ()), kind="pair"
+                    )
                     f.write(f"  {i}  {j}  {funct}  {params}\n")
                 f.write("\n")
 
@@ -531,10 +625,20 @@ class GromacsForceFieldWriter:
             return f"{v:.{self._prec}f}"
         return str(v)
 
-    def _extract_params(self, typ: object, param_names: tuple[str, ...]) -> str:
+    def _extract_params(
+        self, typ: object, param_names: tuple[str, ...], *, kind: str
+    ) -> str:
         kw = typ.params.kwargs  # type: ignore[attr-defined]
-        vals = [kw.get(name, 0.0) for name in param_names]
-        return "  ".join(self._fmt(v) for v in vals)
+        # Exact inverse of the reader: internal molrs units back to GROMACS'.
+        internal = {name: kw.get(name, 0.0) for name in param_names}
+        out = (
+            _bond_params_from_internal(internal)
+            if kind == "bond"
+            else _angle_params_from_internal(internal)
+            if kind == "angle"
+            else internal
+        )
+        return "  ".join(self._fmt(out[name]) for name in param_names)
 
     @staticmethod
     def _find_style_name(forcefield: ForceField, style_class: type, typ: object) -> str:

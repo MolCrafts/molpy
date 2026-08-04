@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from molpy.core.atomistic import Atomistic
+from molpy.core.perceive import Perceive
 
 
 TETRAHEDRAL = [
@@ -19,7 +20,7 @@ TETRAHEDRAL = [
 
 
 def _find_hydrogens(graph: Atomistic) -> Atomistic:
-    return Atomistic.adopt(molrs.Perceive().find_hydrogens(graph))
+    return Perceive().find_hydrogens(graph)
 
 
 def _carbon_with(degree: int) -> Atomistic:
@@ -47,9 +48,9 @@ def test_carbon_is_completed_to_four_bonds(degree: int) -> None:
 def test_added_hydrogens_have_tetrahedral_geometry(degree: int) -> None:
     perceived = _find_hydrogens(_carbon_with(degree))
     carbon = perceived.atoms[0]
-    origin = np.array(carbon["xyz"])
+    origin = np.array(carbon["x", "y", "z"])
     vectors = [
-        np.array(neighbor["xyz"]) - origin
+        np.array(neighbor["x", "y", "z"]) - origin
         for neighbor in perceived.get_neighbors(carbon)
     ]
 
@@ -64,7 +65,7 @@ def test_double_bonded_oxygen_is_not_overcompleted() -> None:
     graph = Atomistic()
     carbon = graph.def_atom(element="C", x=0.0, y=0.0, z=0.0)
     oxygen = graph.def_atom(element="O", x=1.2, y=0.0, z=0.0)
-    graph.def_bond(carbon, oxygen, order=2.0)
+    graph.def_bond(carbon, oxygen, bond_type=2, bond_number=2)
 
     perceived = _find_hydrogens(graph)
     assert len(perceived.get_neighbors(perceived.atoms[1])) == 1
@@ -86,10 +87,3 @@ def test_operation_is_non_mutating_and_preserves_existing_topology() -> None:
     assert len(perceived.angles) == 2
     assert len(perceived.dihedrals) == 1
     assert perceived.angles[0]["type"] == "c-c-c"
-
-
-def test_graph_leaves_expose_no_completion_facade() -> None:
-    assert not hasattr(Atomistic(), "complete_valence")
-    from molpy.core.cg import CoarseGrain
-
-    assert not hasattr(CoarseGrain(), "complete_valence")

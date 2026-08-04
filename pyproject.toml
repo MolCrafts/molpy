@@ -3,7 +3,7 @@ name = "molcrafts-molpy"
 dynamic = ["version"]
 description = "Modern Python framework for molecular simulation and analysis"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 license = { text = "BSD-3-Clause" }
 authors = [{ name = "Roy Kid", email = "lijichen365@gmail.com" }]
 maintainers = [{ name = "Roy Kid", email = "lijichen365@gmail.com" }]
@@ -20,18 +20,20 @@ classifiers = [
     "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3 :: Only",
     "Topic :: Scientific/Engineering :: Chemistry",
     "Typing :: Typed",
 ]
+# Runtime: numpy (scientific baseline) + MolCrafts ecosystem only.
+# No lark / zarr / RDKit / etc. as hard deps — those live in molrs or optional extras.
 dependencies = [
     "numpy>=2.0",
-    "lark>=1.3.1",
-    "molcrafts-molrs>=0.11.2,<0.12",
+    "molcrafts-molrs>=0.12.0,<0.13",
     "molcrafts-mollog>=1.0.0",
     "molcrafts-molcfg>=1.2.0",
-    "zarr>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -46,7 +48,7 @@ dev = [
     "ty==0.0.65",
     "tox>=4.23",
 ]
-rdkit = ["rdkit"]
+rdkit = ["rdkit"]  # optional: exercises the RDKitAdapter example only
 doc = [
     "zensical>=0.0.45",
     "molcrafts-zensical-theme>=0.2.3",
@@ -80,13 +82,13 @@ version = { attr = "molpy.version.version" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-"molpy.parser" = ["grammar/*.lark"]
-"molpy.parser.smiles" = ["grammars/*.lark"]
 "molpy.data" = ["README.md"]
 "molpy.data.forcefield" = ["*.xml"]
 
 [tool.ruff]
-target-version = "py314"
+# Matches requires-python: the lint gate must reject syntax the floor
+# (3.12) cannot parse — PEP 758 `except A, B:` slipped in exactly this way.
+target-version = "py312"
 line-length = 88
 
 [tool.ruff.lint]
@@ -152,7 +154,6 @@ filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 markers = [
-    "external: tests requiring external network/resources or executables",
     "benchmark: pytest-benchmark suite under benchmarks/",
 ]
 
@@ -183,5 +184,5 @@ commands_pre = [
     ],
 ]
 commands = [
-    ["{envpython}", "-m", "pytest", "tests/", "-m", "not external", "-n", "auto"],
+    ["{envpython}", "-m", "pytest", "tests/", "-n", "auto"],
 ]

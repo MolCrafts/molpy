@@ -87,19 +87,40 @@ Shape operators consume a cluster assignment and a per-cluster center, so they
 chain after a neighbor list and a clustering step. Each particle's molecule (or a
 connected aggregate) is one cluster.
 
+The examples below share this setup:
+
+```python
+import numpy as np
+import molpy as mp
+
+rng = np.random.default_rng(0)
+xyz = rng.uniform(0.0, 20.0, size=(200, 3))
+frame = mp.Frame()
+frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
+frame.box = mp.Box.cubic(20.0)
+```
+
 ```python
 from molpy.compute import (
-    NeighborList, Cluster, CenterOfMass, RadiusOfGyration,
-    GyrationTensor, InertiaTensor,
+    NeighborList,
+    Cluster,
+    ClusterCenters,
+    CenterOfMass,
+    RadiusOfGyration,
+    GyrationTensor,
+    InertiaTensor,
 )
 
-nlist = NeighborList(cutoff=1.6)(frame)
-clusters = Cluster(min_cluster_size=10)([frame], [nlist])     # one ClusterResult / frame
+masses = np.full(len(xyz), 12.011)  # per-atom mass (amu)
 
-com = CenterOfMass(masses)([frame], clusters)                 # mass-weighted centers
-rg  = RadiusOfGyration(masses)([frame], clusters, com)        # R_g per cluster
-S   = GyrationTensor()([frame], clusters, com)                # 3×3 tensor per cluster
-I   = InertiaTensor(masses)([frame], clusters, com)           # inertia tensor per cluster
+nlist = NeighborList(cutoff=1.6)(frame)
+clusters = Cluster(min_cluster_size=10)([frame], [nlist])  # one ClusterResult / frame
+centers = ClusterCenters()([frame], clusters)  # geometric centers
+
+com = CenterOfMass(masses)([frame], clusters)  # mass-weighted centers
+rg = RadiusOfGyration(masses)([frame], clusters, com)  # R_g about the COM
+S = GyrationTensor()([frame], clusters, centers)  # 3×3 tensor, geometric
+I = InertiaTensor(masses)([frame], clusters, com)  # inertia tensor about the COM
 ```
 
 Pass `masses=None` to fall back to unit mass (geometric, unweighted descriptors).
@@ -118,7 +139,9 @@ gyration tensor, and $R_g$ in one call.
 from molpy.compute import ClusterProperties
 
 clusters = Cluster(min_cluster_size=20)([frame], [nlist])
-props = ClusterProperties()([frame], clusters)   # one dict of per-cluster properties / frame
+props = ClusterProperties()(
+    [frame], clusters
+)  # one dict of per-cluster properties / frame
 ```
 
 The neighbor cutoff *is* the physical definition of "connected", so choose it from
@@ -138,8 +161,9 @@ vectors onto its two leading components:
 ```python
 from molpy.compute import Pca, DescriptorRow
 
-rows = [DescriptorRow(r) for r in descriptor_matrix]   # each r is a 1-D float array
-pca = Pca()(rows)                                       # 2-component projection
+descriptor_matrix = rng.normal(size=(50, 8))  # one descriptor row / structure
+rows = [DescriptorRow(r) for r in descriptor_matrix]  # each r is a 1-D float array
+pca = Pca()(rows)  # 2-component projection
 ```
 
 Scale or standardize the descriptors before PCA — otherwise a single

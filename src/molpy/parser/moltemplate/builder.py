@@ -19,6 +19,8 @@ All other sections are preserved as raw text in ``ForceField.metadata[section]``
 
 from __future__ import annotations
 
+import math
+
 import re
 from copy import deepcopy
 from pathlib import Path
@@ -417,7 +419,7 @@ def _get_or_def_style(
     try:
         return ff.def_style(style_cls())
     except TypeError:
-        # Style needs kwargs (e.g. PairLJ126CoulCutStyle)
+        # Style needs kwargs (e.g. PairLjCutCoulCutStyle)
         return ff.def_style(style_cls())
 
 
@@ -440,6 +442,23 @@ _PARAM_NAMES: dict[tuple[str, str], list[str]] = {
     ("pair", "buck"): ["a", "rho", "c"],
     ("pair", "morse"): ["d0", "alpha", "r0"],
 }
+
+
+#: Parameters a LAMMPS-style ``*_coeff`` line states in **degrees**. molrs is
+#: radians throughout, and a reader normalizes at its own boundary — exactly as
+#: molrs's own LAMMPS force-field reader does (`readers/lammps.rs`, which calls
+#: `.to_radians()` on `theta0` and every dihedral phase).
+_DEGREE_PARAMS = frozenset({"theta0", "phi0", "chi0"})
+
+
+def _to_internal_units(params: dict[str, float]) -> dict[str, float]:
+    """Normalize a parsed ``*_coeff`` parameter set to molrs units."""
+    return {
+        name: math.radians(value)
+        if name in _DEGREE_PARAMS and isinstance(value, (int, float))
+        else value
+        for name, value in params.items()
+    }
 
 
 def _call_def_type(
@@ -471,7 +490,7 @@ def _call_def_type(
         for i, value in enumerate(params):
             kwargs[f"p{i}"] = value
 
-    return style.def_type(*atom_types, **kwargs)
+    return style.def_type(*atom_types, **_to_internal_units(kwargs))
 
 
 # Static lookup table of Style subclasses keyed by (kind, name).
@@ -498,8 +517,8 @@ def _init_style_registry() -> None:
         ImproperHarmonicStyle,
         ImproperPeriodicStyle,
         PairBuckStyle,
-        PairLJ126CoulCutStyle,
-        PairLJ126CoulLongStyle,
+        PairLjCutCoulCutStyle,
+        PairLjCutCoulLongStyle,
         PairLJClass2Style,
         PairMorseStyle,
     )
@@ -520,8 +539,8 @@ def _init_style_registry() -> None:
             ("improper", "harmonic"): ImproperHarmonicStyle,
             ("improper", "cvff"): ImproperCvffStyle,
             ("improper", "class2"): ImproperClass2Style,
-            ("pair", "lj/cut/coul/cut"): PairLJ126CoulCutStyle,
-            ("pair", "lj/cut/coul/long"): PairLJ126CoulLongStyle,
+            ("pair", "lj/cut/coul/cut"): PairLjCutCoulCutStyle,
+            ("pair", "lj/cut/coul/long"): PairLjCutCoulLongStyle,
             ("pair", "buck"): PairBuckStyle,
             ("pair", "morse"): PairMorseStyle,
             ("pair", "lj/class2"): PairLJClass2Style,
@@ -699,11 +718,9 @@ def _build_template(
                         name=aid,
                         type=eff_type,
                         charge=float(m.group("charge")),
-                        xyz=[
-                            float(m.group("x")),
-                            float(m.group("y")),
-                            float(m.group("z")),
-                        ],
+                        x=float(m.group("x")),
+                        y=float(m.group("y")),
+                        z=float(m.group("z")),
                     )
                     atoms[aid] = atom
         elif s.section in ("Data Bonds", "Data Bond List"):

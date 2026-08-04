@@ -35,6 +35,7 @@ Every public function/class/method needs a Google-style docstring with:
 
 - Distances: Å. Energies: kcal/mol (unless otherwise specified).
 - Forces: kcal/(mol·Å). Charges: elementary charge (e).
+- Analysis time / `dt` for compute kernels: **fs** (LAMMPS real).
 - Angles: radians internally, degrees user-facing.
 - Convention documented when ambiguous (e.g. LAMMPS `K` vs standard `k/2`
   for harmonic potentials).

@@ -114,10 +114,11 @@ One line of SMILES or BigSMILES becomes an editable structure — a single
 molecule or a whole polymer chain.
 
 ```python
-from molpy.builder import polymer
+import molpy as mp
+from molpy.conformer import Conformer
 
-mol = mp.parser.parse_molecule("CCO")   # one molecule from SMILES
-peo = polymer("{[<]CCOCC[>]}|10|")      # or a whole chain, DP = 10
+mol = mp.io.read_smiles("CCO")  # one molecule from SMILES
+mol, report = Conformer(seed=42).generate(mol)  # hydrogens + 3D coordinates
 ```
 
 </article>
@@ -132,10 +133,8 @@ Merge structures, form and break bonds, drop leaving groups — then re-derive
 angles and dihedrals across the new junction.
 
 ```python
-chain = mon_a.merge(mon_b)                # combine two monomers
-chain.def_bond(anchor_C, port_O)          # form the new C–O bond
-chain.del_atom(o_leave, h1, h2)           # remove the leaving water
-chain = chain.get_topo(gen_angle=True, gen_dihe=True)
+dimer = mol.copy().merge(mol.copy())  # combine two copies
+dimer.get_topo(gen_angle=True, gen_dihe=True)  # derive angles/dihedrals in place
 ```
 
 </article>
@@ -150,8 +149,10 @@ SMARTS matching maps every atom, bond, angle, and dihedral to force-field
 parameters — inspectable and checkable before anything is exported.
 
 ```python
-ff    = mp.io.read_xml_forcefield("oplsaa.xml")      # bundled OPLS-AA
-typed = mp.typifier.OplsTypifier(ff).typify(chain)
+ff = mp.io.read_xml_forcefield("oplsaa.xml")  # bundled OPLS-AA
+typed = mp.typifier.OPLSAATypifier().typify(mol)
+system = typed.to_frame()  # the numeric Frame
+system.box = mp.Box.cubic(30.0)
 ```
 
 </article>
@@ -167,10 +168,11 @@ executable from Python. Prefer pure Rust? Our own
 [molpack](https://molcrafts.github.io/molpack/) packer is in beta — try it.
 
 ```python
+# docs: skip — Packmol binary; pack unit-tested with mocks and script literals
 from molpy.pack import Packmol, Target, InsideBoxConstraint
 
-target = Target(typed.to_frame(), 500, InsideBoxConstraint(length=30.0))
-packed = Packmol()([target], seed=42)     # one clash-free Frame
+target = Target(system, 500, InsideBoxConstraint(length=30.0))
+system = Packmol()([target], seed=42)  # 500 copies, clash-free
 ```
 
 </article>
@@ -185,8 +187,11 @@ One call per file: LAMMPS data plus force-field coefficients. GROMACS, PDB,
 and Zarr (`MolStore`) writers share the same pattern.
 
 ```python
-packed.box = mp.Box.cubic(30.0)
-mp.io.write_lammps_data("system.data", packed, atom_style="full")
+import numpy as np
+
+atoms = system["atoms"]
+atoms["mol_id"] = np.ones(atoms.nrows, dtype=np.uint32)  # `full` needs a molecule id
+mp.io.write_lammps_data("system.data", system, atom_style="full")
 mp.io.write_lammps_forcefield("system.ff", ff)
 ```
 
@@ -204,8 +209,9 @@ search and g(r) in two calls, thirty more analyses behind them.
 ```python
 from molpy.compute import NeighborList, RDF
 
-neighbors = NeighborList(cutoff=8.0)(packed)
-result    = RDF(n_bins=50, r_max=8.0)(packed, neighbors)   # g(r) over the box
+system.box = mp.Box.cubic(30.0)
+neighbors = NeighborList(cutoff=8.0)(system)
+result = RDF(n_bins=50, r_max=8.0)([system], [neighbors])  # g(r) over the box
 ```
 
 </article>

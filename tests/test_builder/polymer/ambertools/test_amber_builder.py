@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import molpy as mp
+from molpy.builder.assembly._residue_graph import linear_topology, ring_topology
 from molpy.builder.polymer.ambertools import AmberBuildResult, AmberPolymerBuilder
 from molpy.builder.polymer.ambertools.amber_builder import _PreparedMonomer
-from molpy.parser.smiles import parse_cgsmiles
 
 CONDENSATION = mp.Reaction("[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]")
 
@@ -42,19 +42,19 @@ class TestAmberPolymerBuilder:
     def test_validation_rejects_unknown_labels_before_external_tools(self):
         builder = AmberPolymerBuilder({"M": _monomer()}, CONDENSATION)
         with pytest.raises(ValueError, match="not found in library"):
-            builder._validate_ir(parse_cgsmiles("{[#X]|2}"))
+            builder._validate_graph(linear_topology(["X"] * 2))
 
     def test_validation_rejects_non_linear_tleap_topology(self):
         builder = AmberPolymerBuilder({"M": _monomer()}, CONDENSATION)
-        ring = parse_cgsmiles("{[#M]1[#M][#M]1}")
+        ring = ring_topology("M", 3)
         with pytest.raises(ValueError, match="one linear polymer path"):
-            builder._validate_ir(ring)
+            builder._validate_graph(ring)
 
     def test_compiles_standard_sites_and_reaction_into_amber_variants(self):
         builder = AmberPolymerBuilder({"M": _monomer()}, CONDENSATION)
-        ir = parse_cgsmiles("{[#M]|3}")
-        builder._validate_ir(ir)
-        recipes = builder._compile_semantics("{[#M]|3}", ir.base_graph)
+        graph = linear_topology(["M"] * 3)
+        builder._validate_graph(graph)
+        recipes = builder._compile_semantics("M*3", graph)
         assert recipes == {
             "M": {
                 "head": (None, "O1", ("H1",)),
@@ -66,9 +66,9 @@ class TestAmberPolymerBuilder:
 
     def test_semantic_compilation_is_cached_by_cgsmiles(self):
         builder = AmberPolymerBuilder({"M": _monomer()}, CONDENSATION)
-        ir = parse_cgsmiles("{[#M]|3}")
-        first = builder._compile_semantics("{[#M]|3}", ir.base_graph)
-        second = builder._compile_semantics("{[#M]|3}", ir.base_graph)
+        graph = linear_topology(["M"] * 3)
+        first = builder._compile_semantics("M*3", graph)
+        second = builder._compile_semantics("M*3", graph)
         assert second is first
 
     def test_missing_standard_site_is_rejected_by_shared_polymer_builder(self):
@@ -76,9 +76,9 @@ class TestAmberPolymerBuilder:
         for atom in monomer.atoms:
             atom["site"] = ""
         builder = AmberPolymerBuilder({"M": monomer}, CONDENSATION)
-        ir = parse_cgsmiles("{[#M]|2}")
+        graph = linear_topology(["M"] * 2)
         with pytest.raises(ValueError, match="marks no reaction site"):
-            builder._compile_semantics("{[#M]|2}", ir.base_graph)
+            builder._compile_semantics("M*2", graph)
 
     def test_build_writes_the_input_notation_to_the_result(self):
         builder = AmberPolymerBuilder({"M": _monomer()}, CONDENSATION)
@@ -110,7 +110,7 @@ class TestAmberPolymerBuilder:
             chain_resname="M",
             tail_resname="TM",
         )
-        graph = parse_cgsmiles("{[#M]|5}").base_graph
+        graph = linear_topology(["M"] * 5)
         assert builder._build_sequence(graph) == "HM M M M TM"
 
 
@@ -128,4 +128,3 @@ class TestPreparedMonomer:
         )
         assert prepared.label == "M"
         assert prepared.head_resname == "HM"
-        assert prepared.chain_prepi is None

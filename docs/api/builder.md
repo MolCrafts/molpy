@@ -1,7 +1,7 @@
 # Builder
 
-System assembly: select every reaction, compile and cache its local product,
-execute the graph edits as one batch, then optionally finalize topology. Growing
+System assembly: select every reaction, execute the graph edits as one batch,
+retype the region each edit disturbed, then optionally finalize topology. Growing
 a chain and crosslinking a melt are the same algorithm with a different pairing
 rule, so there is one kernel and one variation point.
 
@@ -10,7 +10,7 @@ rule, so there is one kernel and one variation point.
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
 | `GraphAssembler` | The kernel: `assemble(world, selector)` | Crosslinking an existing graph |
-| `PolymerBuilder` | Library + reaction; `.build(cgsmiles)` is the sole expand + assemble path; `.build_*` only format CGSmiles | Ruled polymer topologies |
+| `PolymerBuilder` | Library + reaction; `.build(topology)` is the sole expand + assemble path; `.build_*` only build that topology | Ruled polymer topologies |
 | `Finalization` | `ATOMS`, `TOPOLOGY` (default), or `BONDED` | Choosing when topology is materialized |
 | `StructureFinalizer` | Run the shared topology/bonded tail later | Deferred MD export for large systems |
 | `AssemblyFinalizer` | Assembly finalizer with aromaticity perception | Molecular reaction products |
@@ -24,7 +24,8 @@ rule, so there is one kernel and one variation point.
 | `ResiduePlacer` | Lays fresh template copies out in space | Building from templates |
 | `SystemPlanner` / `PolydisperseChainGenerator` | Sample a polydisperse chain plan | Bulk / MW-distributed systems |
 | `AmberPolymerBuilder` | GAFF-parameterised build via AmberTools | AMBER/LAMMPS-bound workflows |
-| `CarbonTubeBuilder` | `.build(n, m, ...)` rolled-graphene topology | Zigzag, armchair, and chiral nanotubes |
+| `CarbonTubeBuilder` | `CarbonTubeBuilder(n, m, ...)` → `.build()` graph + `.cell()` box | Zigzag, armchair, and chiral nanotubes (molrs) |
+| `GrapheneBuilder` | `GrapheneBuilder(nx, ny, ...)` → `.build()` graph + `.cell()` box | Rectangular graphene honeycomb sheet (molrs) |
 | `DrudeBuilder` / `Tip4pBuilder` / `VirtualSiteBuilder` | Virtual-site augmentation | Polarizable / 4-site models |
 
 ## Canonical example
@@ -35,18 +36,22 @@ the chemistry lives, and `%a` / `%b` bind it to the atoms you marked.
 
 ```python
 import molpy as mp
-from molpy.builder.assembly import MonomerLibrary, PolymerBuilder, ResiduePlacer, SiteMap
+from molpy.builder.assembly import (
+    MonomerLibrary,
+    PolymerBuilder,
+    ResiduePlacer,
+    SiteMap,
+)
 from molpy.conformer import Conformer
 from molpy.core import fields
-from molpy.parser import parse_molecule
 
-eo, _ = Conformer(add_hydrogens=True, seed=42).generate(parse_molecule("OCCO"))
+eo, _ = Conformer(add_hydrogens=True, seed=42).generate(
+    mp.io.read_smiles("OCCO")
+)
 SiteMap(eo).label_elements("O", "a", "b")
 
 ether = mp.Reaction("[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]")
-builder = PolymerBuilder(
-    MonomerLibrary({"EO": eo}), ether, placer=ResiduePlacer()
-)
+builder = PolymerBuilder(MonomerLibrary({"EO": eo}), ether, placer=ResiduePlacer())
 chain = builder.build_linear("EO", 5)
 
 assert chain.__class__.__name__ == "Atomistic"
@@ -56,13 +61,19 @@ assert len({int(a[fields.RES_ID]) for a in chain.atoms}) == 5
 Each repeat unit is a residue, and that identity survives into a PDB or a
 prmtop — it is output, not a build-time marker to scrub afterwards.
 
-## Compile first; finalize when needed
+## React first; finalize when needed
 
-`typifier=` never receives the growing polymer. The builder first compiles all
-selected junction motifs against the intact monomer templates, caches distinct
-rooted environments, and records scalar per-atom changes only. It then executes
-all reactions in one batch. Local bond/angle/dihedral annotations are not copied
-from a motif into the world.
+`typifier=` never receives the growing polymer. The builder executes all selected
+reactions in one batch against the intact world, then cuts an
+`AffectedRegion` around each edit and types that. The order matters: a region cut
+*before* the edit would have to model the edit itself — including every
+neighbouring reaction close enough to change a type, and the unmapped atoms each
+one consumes — while a region cut afterwards inherits a graph on which those
+edits already succeeded.
+
+Structurally identical junctions share one typing pass via `RetypeCache`, and
+only the region's interior is written back. Bond/angle/dihedral annotations are
+never copied out of a region.
 
 The default finalization generates complete angle/dihedral topology once. For a
 large system that will be written to an MD format later, select
@@ -82,18 +93,20 @@ star, comb, gels, dual network — is the user-guide section
 
 ## Nanostructure topology
 
-Nanostructure builders keep their lattice planning private and expose one verb:
+Nanostructure builders keep their lattice planning private and expose two
+products: the molecular graph, and the simulation cell it was laid out in.
 
 ```python
 from molpy.builder import CarbonTubeBuilder
 
-tube = CarbonTubeBuilder().build(6, 6, cells=2, periodic=True)
+tube_builder = CarbonTubeBuilder(6, 6, cells=2, periodic=True)
+tube = tube_builder.build()
 assert len(tube.atoms) == 48
 assert len(tube.bonds) == 72
-assert tube["box"].pbc.tolist() == [False, False, True]
+assert tube_builder.cell().pbc.tolist() == [False, False, True]
 ```
 
-The same call accepts zigzag `(n, 0)`, armchair `(n, n)`, and general chiral
+The same builder accepts zigzag `(n, 0)`, armchair `(n, n)`, and general chiral
 `(n, m)` tubes. See [Nanostructures](../user-guide/04_nanostructures.md) for
 open ends, length selection, and deferred topology.
 
@@ -143,7 +156,7 @@ planner = SystemPlanner(
     target_total_mass=5e3,
 )
 plan = planner.plan_system(np.random.default_rng(42))
-chains = [builder.build("{[#EO]|%d}" % len(c.monomers)) for c in plan.chains[:2]]
+chains = [builder.build_linear("EO", len(c.monomers)) for c in plan.chains[:2]]
 assert len(chains) == 2
 ```
 
@@ -156,6 +169,7 @@ once, in linear time — so a selector never scans the system, it only decides.
 ```python
 from molpy.builder.assembly import Selector
 
+
 class FirstPairSelector(Selector):
     """React exactly one pairing: the first site of each reactant."""
 
@@ -163,6 +177,7 @@ class FirstPairSelector(Selector):
         a_sites = context.occurrences[context.comp_a]
         b_sites = context.occurrences[context.comp_b]
         yield {**a_sites[0], **b_sites[0]}
+
 
 one = GraphAssembler(mp.Reaction("[N:1].[O:2]>>[N:1][O:2]")).assemble(
     melt, FirstPairSelector()

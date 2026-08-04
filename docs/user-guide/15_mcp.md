@@ -323,7 +323,7 @@ matches:
   • molpy.io.read_xml_forcefield        (function)
   • molpy.io.write_lammps_data          (function)
   • molpy.io.write_lammps_forcefield    (function)
-  • molpy.typifier.OplsTypifier (class)
+  • molpy.typifier.OPLSAATypifier (class)
 ```
 
 **Step 2 — confirm the built-in TIP3P file path**
@@ -346,10 +346,11 @@ docstring: Read an XML force field file. Relative filenames resolve against the
 molmcp_describe_symbol("molpy.core.atomistic.Atomistic.get_topo")
 ```
 
-The docstring makes one subtle point clear: when `gen_angle=True`,
-`get_topo()` returns a *new* `Atomistic` instead of mutating the existing one.
-Claude therefore writes `system = system.get_topo(...)` rather than calling it
-in place.
+The docstring makes the mutation contract clear: `get_topo()` writes
+angles/dihedrals **in place** and returns `self` for chaining. Claude can call
+`system.get_topo(...)` directly, or write `system = system.get_topo(...)` —
+both are correct. Use `system.copy().get_topo(...)` only when an independent
+graph is required.
 
 **Step 4 — check the box and typing APIs**
 
@@ -363,14 +364,11 @@ molmcp_describe_symbol("molpy.core.Box.orth")
 ```
 
 ```
-molmcp_describe_symbol("molpy.typifier.OplsTypifier.__init__")
+molmcp_describe_symbol("molpy.typifier.OPLSAATypifier.__init__")
 ```
 
 ```
-(forcefield: ForceField, skip_atom_typing: bool = False,
- skip_pair_typing: bool = False, skip_bond_typing: bool = False,
- skip_angle_typing: bool = False, skip_dihedral_typing: bool = False,
- strict_typing: bool = True)
+(source: str | PathLike | None = None, *, strict: bool = True)
 ```
 
 With that information Claude writes the script below.
@@ -383,7 +381,7 @@ from pathlib import Path
 import numpy as np
 import molpy as mp
 from molpy.io import read_xml_forcefield, write_lammps_data, write_lammps_forcefield
-from molpy.typifier import OplsTypifier
+from molpy.typifier import ForceFieldParams
 
 theta = 1.82421813418
 r_oh = 0.09572  # nm
@@ -414,11 +412,14 @@ for iz in range(4):
             system.merge(mol)
             mol_id += 1
 
-system = system.get_topo(gen_angle=True, gen_dihe=False)
+system.get_topo(gen_angle=True, gen_dihe=False)  # in place
 
 ff = read_xml_forcefield("tip3p.xml")
-typifier = OplsTypifier(ff, skip_dihedral_typing=True, strict_typing=True)
-system = typifier.typify(system)
+# Rigid TIP3P: the three sites are named by construction, so this spends types
+# rather than deciding them.
+for atom in system.atoms:
+    atom["type"] = "tip3p-O" if atom["element"] == "O" else "tip3p-H"
+system = ForceFieldParams(ff).assign(system)
 
 frame = system.to_frame()
 frame.box = mp.Box.orth([1.28, 1.28, 1.28])

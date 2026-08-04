@@ -168,3 +168,9 @@ docs/assets/vendor/model-viewer.min.js
 # Scratch output from external-tool runs (AmberTools/antechamber) and browser automation
 amber_work/
 .playwright-mcp/
+
+# Local AmberTools / LAMMPS scratch (never commit)
+/amber/
+/gel/
+/push/
+/[0-9][0-9]_output/

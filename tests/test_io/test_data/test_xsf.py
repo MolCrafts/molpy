@@ -60,7 +60,6 @@ class TestXSFCore:
         frame["atoms"] = molrs.Block(
             {
                 "atomic_number": np.array([1, 8]),
-                "xyz": np.array([[0.0, 0.0, 0.0], [1.5, 1.5, 1.5]]),
                 "element": np.array(["H", "O"]),
                 "x": np.array([0.0, 1.5]),
                 "y": np.array([0.0, 1.5]),
@@ -95,7 +94,6 @@ class TestXSFCore:
         frame["atoms"] = molrs.Block(
             {
                 "atomic_number": np.array([1, 1]),
-                "xyz": np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
                 "element": np.array(["H", "H"]),
                 "x": np.array([0.0, 1.0]),
                 "y": np.array([0.0, 0.0]),
@@ -128,15 +126,6 @@ class TestXSFCore:
         frame["atoms"] = molrs.Block(
             {
                 "atomic_number": np.array([6, 1, 1, 1, 1]),
-                "xyz": np.array(
-                    [
-                        [0.0, 0.0, 0.0],
-                        [1.0, 0.0, 0.0],
-                        [-1.0, 0.0, 0.0],
-                        [0.0, 1.0, 0.0],
-                        [0.0, -1.0, 0.0],
-                    ]
-                ),
                 "element": np.array(["C", "H", "H", "H", "H"]),
                 "x": np.array([0.0, 1.0, -1.0, 0.0, 0.0]),
                 "y": np.array([0.0, 0.0, 0.0, 1.0, -1.0]),

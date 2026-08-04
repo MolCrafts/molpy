@@ -49,7 +49,7 @@ class TestSpectralResult:
         assert dataclasses.is_dataclass(SpectralResult)
 
     def test_extends_result(self):
-        # Frequency-domain results no longer inherit from TimeSeriesResult
+        # Frequency-domain results do not inherit from TimeSeriesResult
         # (the inherited `time` field was always populated with frequency
         # values, which made the API misleading).
         assert issubclass(SpectralResult, Result)

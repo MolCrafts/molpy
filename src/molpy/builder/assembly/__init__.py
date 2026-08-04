@@ -1,9 +1,9 @@
-"""Assembly: compile local products, execute one reaction batch, then finalize.
+"""Assembly: execute one reaction batch, retype what it disturbed, then finalize.
 
 One kernel (:class:`GraphAssembler`) and one variation point
 (:class:`Selector`). Crosslinking is the kernel plus a proximity selector;
-:class:`PolymerBuilder` is the kernel plus a monomer library and CGSmiles.
-Typing caches scalar per-atom patches only; topology/bonded finalization is an
+:class:`PolymerBuilder` is the kernel plus a monomer library and a residue topology.
+Typing writes scalar per-atom data back only; topology/bonded finalization is an
 explicit independent stage.
 """
 
@@ -22,7 +22,15 @@ from ._proximity import (
 )
 from ._random import RandomSelector
 from ._replicas import Replicas
-from ._residue_graph import linear_cgsmiles, ring_cgsmiles, star_cgsmiles
+from ._residue_graph import (
+    linear_cgsmiles,
+    linear_topology,
+    ring_cgsmiles,
+    ring_topology,
+    star_cgsmiles,
+    star_topology,
+)
+from ._cgsmiles_ir import CGSmilesBondIR, CGSmilesGraphIR, CGSmilesNodeIR
 from ._selector import Binding, Selector
 from ._sites import SiteMap
 from ._topology import TopologySelector
@@ -47,7 +55,13 @@ __all__ = [
     "SiteMap",
     "SpacingSelector",
     "TopologySelector",
+    "CGSmilesBondIR",
+    "CGSmilesGraphIR",
+    "CGSmilesNodeIR",
     "linear_cgsmiles",
+    "linear_topology",
     "ring_cgsmiles",
+    "ring_topology",
     "star_cgsmiles",
+    "star_topology",
 ]

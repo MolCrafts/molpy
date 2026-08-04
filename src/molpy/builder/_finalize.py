@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-import molrs
 
 from molpy.core.atomistic import Atomistic
+from molpy.core.perceive import Perceive
 from molpy.typifier.forcefield import ForceFieldParams
 
 
@@ -53,7 +53,7 @@ class StructureFinalizer:
             clear_existing=True,
         )
         if self.perceive_aromaticity:
-            molrs.perceive_aromaticity(graph)
+            graph = Perceive().find_aromaticity(graph)
         if self.stage is Finalization.BONDED:
             assert self.bonded is not None
             return self.bonded.assign(graph)

@@ -23,7 +23,7 @@ def _chain_frame(n: int = 6):
     """A small carbon chain with coordinates + perceived angle/dihedral topology."""
     mol = mp.Atomistic()
     atoms = [
-        mol.def_atom(element="C", xyz=[float(i), 0.3 * (i % 2), 0.0]) for i in range(n)
+        mol.def_atom(element="C", x=float(i), y=0.3 * (i % 2), z=0.0) for i in range(n)
     ]
     for i in range(n - 1):
         mol.def_bond(atoms[i], atoms[i + 1])

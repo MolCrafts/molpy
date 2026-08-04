@@ -7,9 +7,6 @@ is no single-input restriction:
 
     >>> rdf = RDF(n_bins=100, r_max=10.0)
     >>> result = rdf(frames, neighbors)      # two data inputs
-
-The heavy numerics live in molrs; molpy operators are thin, typed shells that
-forward to the Rust kernels and return the molrs native result unchanged.
 """
 
 from __future__ import annotations

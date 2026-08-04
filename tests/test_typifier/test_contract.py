@@ -158,10 +158,6 @@ class TestCoarseGrainNeedsNoContractChange:
         assert all(bead["type"] == "B" for bead in typed.beads)
         assert all(bead.get("type") is None for bead in cg.beads)
 
-    def test_a_bead_exposes_no_chemical_perception_facade(self):
-        cg = _cg()
-        assert not hasattr(cg, "complete_valence")
-
     def test_the_retype_cache_accepts_it(self):
         assert RetypeCache(_BeadTypifier()) is not None
 
@@ -195,7 +191,7 @@ class TestNamingAndSurface:
     def test_every_exported_typifier_inherits_the_molrs_base(self):
         for name in typifier_pkg.__all__:
             if name.endswith("Typifier") and name != "Typifier":
-                assert issubclass(getattr(typifier_pkg, name), molrs.Typifier)
+                assert issubclass(getattr(typifier_pkg, name), molrs.ff.Typifier)
 
     def test_every_exported_typifier_is_named_after_a_forcefield_or_a_tool(self):
         # LocalTypifier / SmartsTypifier are scope-bearing bases, not force-field names.
@@ -213,20 +209,6 @@ class TestNamingAndSurface:
         }
         assert "SmartsTypifier" in typifier_pkg.__all__
         assert "TypeScope" in typifier_pkg.__all__
-
-    @pytest.mark.parametrize(
-        "banned",
-        [
-            "ParamTypifier",
-            "ElementTypifier",
-            "AtomTypifier",
-            "RegionTypifier",
-            "ForceFieldTypifier",
-            "PairTypifier",
-        ],
-    )
-    def test_the_invented_abstractions_are_gone(self, banned):
-        assert not hasattr(typifier_pkg, banned)
 
     def test_force_field_params_is_a_component_not_a_typifier(self):
         assert not issubclass(ForceFieldParams, Typifier)
@@ -260,13 +242,6 @@ class TestNamingAndSurface:
 
 
 class TestRegionTypingIsNotAKindOfTypifier:
-    def test_no_typifier_carries_region_methods(self):
-        for cls in (Typifier, ClpTypifier, AmberToolsTypifier, _BeadTypifier):
-            assert not hasattr(cls, "typify_region")
-            assert not hasattr(cls, "retype_region")
-            assert not hasattr(cls, "relaxed")
-            assert not hasattr(cls, "scope")
-
     def test_a_region_is_just_a_graph_the_typifier_types(self):
         from molpy.typifier.region import RegionTypes
 

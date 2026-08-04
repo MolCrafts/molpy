@@ -63,7 +63,7 @@ It is **not a port system**. There is no `<` and `>`, no head and tail, no conne
 deciding that a hydroxyl may meet a carboxyl. Sites are unordered and undirected, and the
 reaction SMARTS is the only place chemistry is written down.
 
-It is **not a typifier**. Every accepted implementation inherits the common `molrs.Typifier`
+It is **not a typifier**. Every accepted implementation inherits the common `molrs.ff.Typifier`
 base; the assembler only compiles the bounded graph on which it is invoked.
 
 ## A repeat unit is a molecule with a few marked atoms
@@ -76,12 +76,12 @@ An ethylene-oxide repeat unit is a real, capped molecule: ethylene glycol. Its t
 oxygens are the sites; the hydroxyl hydrogens are the caps the reaction will remove.
 
 ```python
+import molpy as mp
 from molpy.core import fields
-from molpy.parser import parse_smiles, smilesir_to_atomistic
 
-eo = smilesir_to_atomistic(parse_smiles("OCCO"))   # ethylene glycol
-eo.atoms[0][fields.SITE] = "a"                     # one hydroxyl oxygen
-eo.atoms[3][fields.SITE] = "b"                     # the other
+eo = mp.io.read_smiles("OCCO")  # ethylene glycol
+eo.atoms[0][fields.SITE] = "a"  # one hydroxyl oxygen
+eo.atoms[3][fields.SITE] = "b"  # the other
 ```
 
 Nothing here says "head" or "tail", and `a` and `b` carry no direction — they are labels the
@@ -108,8 +108,31 @@ MolPy will not paper over a template you forgot to freeze. If the reaction is ab
 a charged atom, `assemble` raises and says so:
 
 ```python
-builder.build("{[#EO]|3}")
-# ValueError: assembly changed the net charge by -0.6 e: the reaction deleted atoms
+import pytest
+from molpy.builder.assembly import (
+    MonomerLibrary,
+    PolymerBuilder,
+    ResiduePlacer,
+    SiteMap,
+    linear_topology,
+)
+from molpy.conformer import Conformer
+
+# A template with hydrogens and charges, but never frozen:
+eo, _ = Conformer(add_hydrogens=True, seed=42).generate(
+    mp.io.read_smiles("OCCO")
+)
+SiteMap(eo).label_elements("O", "a", "b")
+for atom in eo.atoms:
+    atom[fields.CHARGE] = -0.3 if atom.get("element") == "H" else 0.2
+
+ether = mp.Reaction("[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]")
+builder = PolymerBuilder(MonomerLibrary({"EO": eo}), ether, placer=ResiduePlacer())
+
+# Unfrozen templates lose the charge carried by the atoms the reaction deletes:
+with pytest.raises(ValueError, match="net charge"):
+    builder.build(linear_topology(["EO"] * 3))
+# ValueError: assembly changed the net charge by +0.8 e: the reaction deleted atoms
 # that carry charge. Freeze the monomer templates first so each cap's charge folds
 # onto its site atom.
 ```
@@ -158,6 +181,7 @@ atom types are set by a one-to-two-bond environment, hence `reach=2`. The compil
 additional shell of that width as context and writes only the inner atoms back.
 
 ```python
+# docs: skip — AmberToolsTypifier shells out; typifier unit-tested with stubs
 import molpy as mp
 from molpy.builder import MonomerLibrary, PolymerBuilder, ResiduePlacer
 from molpy.builder.ambertools import AmberTools
@@ -174,7 +198,7 @@ builder = PolymerBuilder(
     reach=2,
     finalize="atoms",  # defer full topology for this very large chain
 )
-chain = builder.build("{[#EO]|1000}")
+chain = builder.build_linear("EO", 1000)
 # -> bonds + cached junction atom types/charges; no angle/dihedral table yet
 ```
 
@@ -182,8 +206,20 @@ When explicit bonded rows are needed, finalize once:
 
 ```python
 from molpy.builder import Finalization, StructureFinalizer
+from molpy.builder.assembly import MonomerLibrary, PolymerBuilder, ResiduePlacer
+
+# Any atoms-only graph takes the same tail — nothing here is GAFF-specific:
+neutral, _ = Conformer(add_hydrogens=True, seed=42).generate(
+    mp.io.read_smiles("OCCO")
+)
+SiteMap(neutral).label_elements("O", "a", "b")
+chain = PolymerBuilder(
+    MonomerLibrary({"EO": neutral}), ether, placer=ResiduePlacer(), finalize="atoms"
+).build_linear("EO", 5)
+assert not list(chain.angles)
 
 chain = StructureFinalizer(Finalization.TOPOLOGY).apply(chain)
+assert list(chain.angles)
 ```
 
 The reaction reads: an `a`-site oxygen bearing a hydrogen, plus a `b`-site oxygen bearing a
@@ -198,7 +234,10 @@ away and you have the assembler itself, which is all crosslinking needs: a graph
 have, and a rule for which sites pair up.
 
 ```python
-from molpy.builder import GraphAssembler, RandomSelector
+# docs: skip — needs AmberToolsTypifier (gaff) from offline block above
+from molpy.builder import GraphAssembler, RandomSelector, Replicas
+
+melt = Replicas(chain).grid(3, spacing=9.5, jitter=1.0, seed=7)
 
 gel = GraphAssembler(ether, typifier=gaff, reach=2).assemble(
     melt, RandomSelector(conversion=0.8, cutoff=6.0, seed=1)
@@ -220,13 +259,16 @@ Build chains, pack them, crosslink, then relax — the crosslinks are the bonds 
 were guessed.
 
 ```python
+# docs: skip — Packmol / write_lammps offline packing; pack unit-tested with mocks
 import molpy as mp
 from molpy.optimize import LBFGS, ForceFieldPotential
 
+# `neutral` above, not the deliberately-unfrozen `eo` — that one exists to
+# demonstrate the net-charge guard, and would trip it here.
 builder = PolymerBuilder(
-    MonomerLibrary({"EO": eo}), ether, typifier=gaff, reach=2
+    MonomerLibrary({"EO": neutral}), ether, typifier=gaff, reach=2
 )
-melt = mp.pack.Packmol().pack([builder.build("{[#EO]|50}")] * 100, density=0.9)
+melt = mp.pack.Packmol().pack([builder.build_linear("EO", 50)] * 100, density=0.9)
 
 gel = GraphAssembler(ether, typifier=gaff, reach=2).assemble(
     melt, RandomSelector(conversion=0.8, cutoff=6.0, seed=1)
@@ -276,12 +318,13 @@ grouped by reactant, and yields the pairs it wants bonded.
 from molpy.builder import Selector
 from molpy.core.atomistic import Atomistic
 
+
 class NearestNeighborSelector(Selector):
     def select(self, world: Atomistic, occurrences: list[list[dict[int, int]]]):
         a_sites, b_sites = occurrences
         for occ_a in a_sites:
             occ_b = self._nearest(world, occ_a, b_sites)
-            yield {**occ_a, **occ_b}       # {map_number: atom handle}
+            yield {**occ_a, **occ_b}  # {map_number: atom handle}
 ```
 
 The matching has already happened — the assembler does it once, in linear time — so a selector

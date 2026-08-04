@@ -87,7 +87,7 @@ class AcReader(DataReader):
         name = tokens[2]
         resname = tokens[3]
         res_id = int(tokens[4])
-        xyz = tuple(map(float, tokens[5:8]))
+        x, y, z = (float(token) for token in tokens[5:8])
         charge = float(tokens[8])
         atom_type = tokens[9]
 
@@ -96,7 +96,9 @@ class AcReader(DataReader):
             "name": name,
             "resName": resname,
             "resSeq": res_id,
-            "xyz": xyz,
+            "x": x,
+            "y": y,
+            "z": z,
             "q": charge,
             "type": atom_type,
         }

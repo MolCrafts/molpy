@@ -6,29 +6,12 @@ Rust). :class:`GroFieldFormatter` is retained for the formatter hierarchy.
 
 from pathlib import Path
 
-import numpy as np
-
 import molrs.io
 
 from molpy.core.fields import RES_ID, RES_NAME, FieldFormatter
 from molrs import Frame
 
 from .base import DataReader, DataWriter
-
-
-def _ensure_xyz(frame: Frame) -> Frame:
-    """Return a frame whose atoms block has separate x/y/z columns (the molrs
-    coordinate convention), deriving them from a combined ``xyz`` column if
-    needed. Works on a copy; never mutates the caller's frame."""
-    atoms = frame["atoms"]
-    if "x" in atoms or "xyz" not in atoms:
-        return frame
-    out = frame.copy()
-    xyz = np.asarray(out["atoms"]["xyz"])
-    out["atoms"]["x"] = xyz[:, 0]
-    out["atoms"]["y"] = xyz[:, 1]
-    out["atoms"]["z"] = xyz[:, 2]
-    return out
 
 
 class GroFieldFormatter(FieldFormatter):
@@ -52,14 +35,10 @@ class GroReader(DataReader):
         frames = molrs.io.read_gro(self._path)
         if not frames:
             raise OSError(f"no frames parsed from GRO file: {self._path}")
-        molpy_frame = frames[0]  # already a canonical rich Frame from molrs.io
-
-        atoms = molpy_frame["atoms"]
-        if "number" not in atoms and "id" in atoms:
-            atoms["number"] = atoms["id"].astype(np.int64, copy=False)
-        if "xyz" not in atoms and "x" in atoms and "y" in atoms and "z" in atoms:
-            atoms["xyz"] = np.column_stack([atoms["x"], atoms["y"], atoms["z"]])
-        return molpy_frame
+        # Already a canonical rich Frame from molrs.io: coordinates in x/y/z,
+        # and no element information (a GRO file carries none), so no atomic
+        # number either.
+        return frames[0]
 
 
 class GroWriter(DataWriter):
@@ -71,4 +50,4 @@ class GroWriter(DataWriter):
         super().__init__(Path(path), **kwargs)
 
     def write(self, frame: Frame) -> None:
-        molrs.io.write_gro(self._path, _ensure_xyz(frame))
+        molrs.io.write_gro(self._path, frame)

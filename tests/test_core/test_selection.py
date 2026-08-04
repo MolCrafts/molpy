@@ -11,8 +11,8 @@ class TestMaskPredicate:
     def test_mask_predicate_composition(self):
         """Test that MaskPredicate can be combined with & | ~ operators."""
         # Create concrete instances for testing
-        type1 = AtomTypeSelector(1)
-        type2 = AtomTypeSelector(2)
+        type1 = AtomTypeSelector(1, field="type_id")
+        type2 = AtomTypeSelector(2, field="type_id")
 
         # Test AND operator
         and_pred = type1 & type2
@@ -33,18 +33,18 @@ class TestMaskPredicate:
         """Test that MaskPredicate.__call__ returns filtered Block."""
         block = Block(
             {
-                "type": np.array([1, 2, 1, 3]),
+                "type_id": np.array([1, 2, 1, 3]),
                 "id": np.array([0, 1, 2, 3]),
-                "xyz": np.random.random((4, 3)),
+                "vec": np.random.random((4, 3)),
             }
         )
 
-        type1 = AtomTypeSelector(1)
+        type1 = AtomTypeSelector(1, field="type_id")
         filtered_block = type1(block)
 
         assert isinstance(filtered_block, Block)
-        assert len(filtered_block["type"]) == 2  # Only type 1 atoms
-        assert np.all(filtered_block["type"] == 1)
+        assert len(filtered_block["type_id"]) == 2  # Only type 1 atoms
+        assert np.all(filtered_block["type_id"] == 1)
 
 
 class TestAtomTypeSelector:
@@ -53,9 +53,9 @@ class TestAtomTypeSelector:
     def test_atom_type_init(self):
         """Test AtomTypeSelector initialization."""
         # Test with integer type
-        pred1 = AtomTypeSelector(1)
+        pred1 = AtomTypeSelector(1, field="type_id")
         assert pred1.atom_type == 1
-        assert pred1.field == "type"
+        assert pred1.field == "type_id"
 
         # Test with string type
         pred2 = AtomTypeSelector("C")
@@ -69,9 +69,9 @@ class TestAtomTypeSelector:
 
     def test_atom_type_mask(self):
         """Test AtomTypeSelector.mask method."""
-        block = Block({"type": np.array([1, 2, 1, 3, 1]), "id": np.arange(5)})
+        block = Block({"type_id": np.array([1, 2, 1, 3, 1]), "id": np.arange(5)})
 
-        pred = AtomTypeSelector(1)
+        pred = AtomTypeSelector(1, field="type_id")
         mask = pred.mask(block)
 
         expected = np.array([True, False, True, False, True])
@@ -91,12 +91,14 @@ class TestAtomTypeSelector:
         """Test AtomTypeSelector with custom field name."""
         block = Block(
             {
-                "element": np.array([6, 8, 6, 7]),  # C, O, C, N atomic numbers
+                # Atomic numbers belong in `atomic_number`; `element` is the
+                # IUPAC symbol. The vocabulary keeps them apart.
+                "atomic_number": np.array([6, 8, 6, 7], dtype=np.uint32),
                 "id": np.arange(4),
             }
         )
 
-        pred = AtomTypeSelector(6, field="element")
+        pred = AtomTypeSelector(6, field="atomic_number")
         mask = pred.mask(block)
 
         expected = np.array([True, False, True, False])
@@ -120,7 +122,12 @@ class TestAtomIndexSelector:
 
     def test_atom_index_mask(self):
         """Test AtomIndexSelector.mask method."""
-        block = Block({"id": np.array([10, 20, 30, 40, 50]), "type": np.ones(5)})
+        block = Block(
+            {
+                "id": np.array([10, 20, 30, 40, 50]),
+                "type_id": np.ones(5, dtype=np.uint32),
+            }
+        )
 
         pred = AtomIndexSelector([20, 40])
         mask = pred.mask(block)
@@ -130,7 +137,12 @@ class TestAtomIndexSelector:
 
     def test_atom_index_custom_field(self):
         """Test AtomIndexSelector with custom id field."""
-        block = Block({"atom_id": np.array([100, 200, 300]), "type": np.ones(3)})
+        block = Block(
+            {
+                "atom_id": np.array([100, 200, 300]),
+                "type_id": np.ones(3, dtype=np.uint32),
+            }
+        )
 
         pred = AtomIndexSelector([200], id_field="atom_id")
         mask = pred.mask(block)
@@ -146,15 +158,15 @@ class TestBooleanComposition:
         """Set up test data."""
         self.block = Block(
             {
-                "type": np.array([1, 2, 1, 3, 2]),
+                "type_id": np.array([1, 2, 1, 3, 2]),
                 "id": np.array([10, 20, 30, 40, 50]),
-                "xyz": np.random.random((5, 3)),
+                "vec": np.random.random((5, 3)),
             }
         )
 
     def test_and_composition(self):
         """Test AND composition of predicates."""
-        type1 = AtomTypeSelector(1)
+        type1 = AtomTypeSelector(1, field="type_id")
         indices = AtomIndexSelector([10, 30])  # First and third atoms
 
         # Both type=1 AND id in [10, 30]
@@ -167,8 +179,8 @@ class TestBooleanComposition:
 
     def test_or_composition(self):
         """Test OR composition of predicates."""
-        type1 = AtomTypeSelector(1)
-        type2 = AtomTypeSelector(2)
+        type1 = AtomTypeSelector(1, field="type_id")
+        type2 = AtomTypeSelector(2, field="type_id")
 
         # Either type=1 OR type=2
         combined = type1 | type2
@@ -180,7 +192,7 @@ class TestBooleanComposition:
 
     def test_not_composition(self):
         """Test NOT composition of predicates."""
-        type1 = AtomTypeSelector(1)
+        type1 = AtomTypeSelector(1, field="type_id")
 
         # NOT type=1
         negated = ~type1
@@ -192,8 +204,8 @@ class TestBooleanComposition:
 
     def test_complex_composition(self):
         """Test complex boolean expressions."""
-        type1 = AtomTypeSelector(1)
-        type2 = AtomTypeSelector(2)
+        type1 = AtomTypeSelector(1, field="type_id")
+        type2 = AtomTypeSelector(2, field="type_id")
         indices = AtomIndexSelector([20, 40])  # Second and fourth atoms
 
         # (type=1 OR type=2) AND id in [20, 40]
@@ -208,16 +220,16 @@ class TestBooleanComposition:
 
     def test_filter_block_with_composition(self):
         """Test filtering Block with composed predicates."""
-        type1 = AtomTypeSelector(1)
+        type1 = AtomTypeSelector(1, field="type_id")
         filtered_block = type1(self.block)
 
         # Should get only atoms with type=1
         expected_types = np.array([1, 1])
         expected_ids = np.array([10, 30])
 
-        assert np.array_equal(filtered_block["type"], expected_types)
+        assert np.array_equal(filtered_block["type_id"], expected_types)
         assert np.array_equal(filtered_block["id"], expected_ids)
-        assert filtered_block["xyz"].shape == (2, 3)
+        assert filtered_block["vec"].shape == (2, 3)
 
 
 class TestSelectorFailFast:

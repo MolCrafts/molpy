@@ -277,9 +277,9 @@ def test_prmtop_read_residues(litfsi_prmtop):
     frame, ff = reader.read(frame)
 
     atoms = frame["atoms"]
-    assert "residue" in atoms
+    assert "res_id" in atoms
 
-    residues = atoms["residue"]
+    residues = atoms["res_id"]
     assert len(residues) == 16
 
     # Should have residue assignments for all atoms
@@ -921,7 +921,7 @@ def test_residue_atom_assignment_fsi(litfsi_prmtop):
     reader = AmberPrmtopReader(litfsi_prmtop)
     frame = Frame()
     frame, _ = reader.read(frame)
-    residues = np.asarray(frame["atoms"]["residue"])
+    residues = np.asarray(frame["atoms"]["res_id"])
     assert all(residues[:15] == 0), f"FSI atoms not all in residue 0: {residues[:15]}"
     assert residues[15] == 1, f"Li+ not in residue 1: {residues[15]}"
 
@@ -931,20 +931,28 @@ def test_residue_count(litfsi_prmtop):
     reader = AmberPrmtopReader(litfsi_prmtop)
     frame = Frame()
     frame, _ = reader.read(frame)
-    n_residues = len(np.unique(np.asarray(frame["atoms"]["residue"])))
+    n_residues = len(np.unique(np.asarray(frame["atoms"]["res_id"])))
     assert n_residues == 2
 
 
 def test_bond_residue_intra_fsi(litfsi_prmtop):
-    """Bonds within FSI have residue=0; no bond spans FSI↔Li in LiTFSI."""
+    """Bonds within FSI have residue 0; no bond spans FSI↔Li in LiTFSI.
+
+    Derived from the atoms' ``res_id`` rather than read off a precomputed bond
+    column: only atoms carry a residue, and a term's residue is one comparison
+    away from theirs.
+    """
     reader = AmberPrmtopReader(litfsi_prmtop)
     frame = Frame()
     frame, _ = reader.read(frame)
-    bond_residues = np.asarray(frame["bonds"]["residue"])
-    # LiTFSI has no Li-FSI bonds, so all bonds are intra-FSI (residue 0)
-    assert all(bond_residues == 0), (
-        f"Unexpected bond residue values: {np.unique(bond_residues)}"
+    res_of_atom = np.asarray(frame["atoms"]["res_id"])
+    bonds = frame["bonds"]
+    ends = (
+        res_of_atom[np.asarray(bonds["atomi"], dtype=int)],
+        res_of_atom[np.asarray(bonds["atomj"], dtype=int)],
     )
+    assert np.array_equal(*ends), "a bond spans two residues in LiTFSI"
+    assert np.all(ends[0] == 0), f"bonds outside residue 0: {np.unique(ends[0])}"
 
 
 def test_angle_residue_intra_fsi(litfsi_prmtop):
@@ -952,10 +960,14 @@ def test_angle_residue_intra_fsi(litfsi_prmtop):
     reader = AmberPrmtopReader(litfsi_prmtop)
     frame = Frame()
     frame, _ = reader.read(frame)
-    angle_residues = np.asarray(frame["angles"]["residue"])
-    assert all(angle_residues == 0), (
-        f"Unexpected angle residue values: {np.unique(angle_residues)}"
-    )
+    res_of_atom = np.asarray(frame["atoms"]["res_id"])
+    angles = frame["angles"]
+    corners = [
+        res_of_atom[np.asarray(angles[key], dtype=int)]
+        for key in ("atomi", "atomj", "atomk")
+    ]
+    assert all(np.array_equal(corners[0], other) for other in corners[1:])
+    assert np.all(corners[0] == 0), f"angles outside residue 0: {np.unique(corners[0])}"
 
 
 # ---------------------------------------------------------------------------
@@ -993,3 +1005,47 @@ def test_nonexistent_file_raises():
     reader = AmberPrmtopReader("/nonexistent/path/file.prmtop")
     with pytest.raises(FileNotFoundError):
         reader.read(Frame())
+
+
+# ---------------------------------------------------------------------------
+# ATOMIC_NUMBER: AMBER's "I don't know" is -1
+# ---------------------------------------------------------------------------
+
+
+def _with_unknown_element(text: str) -> str:
+    """Rewrite a prmtop's first ATOMIC_NUMBER entry to AMBER's "unknown" (-1)."""
+    lines = text.splitlines(keepends=True)
+    flag = next(i for i, l in enumerate(lines) if l.startswith("%FLAG ATOMIC_NUMBER"))
+    data = flag + 2  # skip the %FORMAT line
+    numbers = lines[data].split()
+    numbers[0] = "-1"
+    lines[data] = "".join(f"{int(v):8d}" for v in numbers) + "\n"
+    return "".join(lines)
+
+
+def test_known_elements_become_an_atomic_number_column(litfsi_prmtop):
+    frame, _ = AmberPrmtopReader(litfsi_prmtop).read(Frame())
+
+    numbers = frame["atoms"]["atomic_number"]
+    assert len(numbers) == frame["atoms"].nrows
+    assert min(numbers) >= 1
+
+
+def test_an_unknown_element_leaves_the_column_off_rather_than_inventing_one(
+    litfsi_prmtop, tmp_path
+):
+    """tleap writes -1 for an ion it loaded from a mol2 that named no element.
+
+    The column is unsigned and has no way to say "unknown", so a file that does
+    not know every element contributes no column at all: 0 would claim a
+    nonexistent element, and a wrapped 4294967295 a nonsensical one.
+    """
+    probe = tmp_path / "unknown_element.prmtop"
+    probe.write_text(_with_unknown_element(litfsi_prmtop.read_text()))
+
+    frame, _ = AmberPrmtopReader(probe).read(Frame())
+
+    assert "atomic_number" not in frame["atoms"].keys()
+    # everything the file *does* state still arrives
+    assert frame["atoms"].nrows > 0
+    assert "mass" in frame["atoms"].keys()

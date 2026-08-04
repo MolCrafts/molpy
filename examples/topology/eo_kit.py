@@ -17,7 +17,6 @@ from molpy.builder.assembly import (
 )
 from molpy.conformer import Conformer
 from molpy.core import fields
-from molpy.parser import parse_molecule
 
 # Main-chain growth (ether condensation).
 ETHER = "[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]"
@@ -32,7 +31,9 @@ XLINK2 = "[C;%y:1][H;%k].[C;%y:2][H;%k]>>[C:1][C:2]"
 
 def ethylene_glycol(*, seed: int = 42) -> mp.Atomistic:
     """Bifunctional EO: OCCO, hydroxyl O labelled a / b."""
-    eo, _ = Conformer(add_hydrogens=True, seed=seed).generate(parse_molecule("OCCO"))
+    eo, _ = Conformer(add_hydrogens=True, seed=seed).generate(
+        mp.io.read_smiles("OCCO")
+    )
     SiteMap(eo).label_elements("O", "a", "b")
     return eo
 
@@ -45,7 +46,9 @@ def monofunctional_cap(*, end: str = "b", seed: int = 7) -> mp.Atomistic:
     """
     if end not in ("a", "b"):
         raise ValueError("end must be 'a' or 'b'")
-    cap, _ = Conformer(add_hydrogens=True, seed=seed).generate(parse_molecule("CO"))
+    cap, _ = Conformer(add_hydrogens=True, seed=seed).generate(
+        mp.io.read_smiles("CO")
+    )
     SiteMap(cap).label_elements("O", end)
     return cap
 
@@ -53,7 +56,7 @@ def monofunctional_cap(*, end: str = "b", seed: int = 7) -> mp.Atomistic:
 def trifunctional_core(*, seed: int = 1) -> mp.Atomistic:
     """Star / branch core: glycerol OCC(O)CO, three O SITE a."""
     core, _ = Conformer(add_hydrogens=True, seed=seed).generate(
-        parse_molecule("OCC(O)CO")
+        mp.io.read_smiles("OCC(O)CO")
     )
     oxygens = [a for a in core.atoms if a.get(fields.ELEMENT) == "O"]
     if len(oxygens) < 3:
@@ -66,7 +69,7 @@ def tetrafunctional_agent(*, seed: int = 2) -> mp.Atomistic:
     """Four-arm agent: pentaerythritol-like C(CO)4 motif via C(CO)(CO)(CO)CO."""
     # 2,2-bis(hydroxymethyl)propane-1,3-diol ≈ four primary OH
     agent, _ = Conformer(add_hydrogens=True, seed=seed).generate(
-        parse_molecule("C(CO)(CO)(CO)CO")
+        mp.io.read_smiles("C(CO)(CO)(CO)CO")
     )
     oxygens = [a for a in agent.atoms if a.get(fields.ELEMENT) == "O"]
     if len(oxygens) < 4:
@@ -78,7 +81,7 @@ def tetrafunctional_agent(*, seed: int = 2) -> mp.Atomistic:
 def branch_unit(*, seed: int = 3) -> mp.Atomistic:
     """Comb junction: three OH (two chain + one graft) as a,a,b."""
     unit, _ = Conformer(add_hydrogens=True, seed=seed).generate(
-        parse_molecule("OCC(O)CO")
+        mp.io.read_smiles("OCC(O)CO")
     )
     oxygens = [a for a in unit.atoms if a.get(fields.ELEMENT) == "O"]
     SiteMap(unit).label_atoms(oxygens[:3], "a", "a", "b")

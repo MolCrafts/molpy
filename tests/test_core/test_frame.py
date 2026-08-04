@@ -10,7 +10,7 @@ from molrs import Block, Frame, MetaValue
 def simple_frame() -> Frame:
     f = Frame()
     f["atoms"] = Block()
-    f["atoms"]["xyz"] = np.arange(9).reshape(3, 3)
+    f["atoms"]["vec"] = np.arange(9).reshape(3, 3)
     f["atoms"]["charge"] = np.array([-1.0, 0.5, 0.5])
     f["bonds"] = Block()
     f["bonds"]["atomi"] = np.arange(3)
@@ -163,7 +163,10 @@ Charlie,35,1.75"""
         block = Block.from_csv(csv_io)
 
         # Test type inference
-        assert block["id"].dtype == np.dtype("int32")  # molrs native int
+        # `id` is UInt in the Frame vocabulary, so CSV parsing adopts the
+        # declared dtype instead of inferring one from the digits. Inference
+        # would type a canonical column by its data rather than its meaning.
+        assert block["id"].dtype == np.dtype("uint32")
         assert block["name"].dtype.kind == "U"  # Should be string
         assert block["age"].dtype == np.dtype("int32")  # Should be int
         assert block["height"].dtype == np.dtype("float64")  # Should be float
@@ -186,7 +189,10 @@ Charlie,35,1.75"""
         block = Block.from_csv(csv_io, header=["id", "name", "score", "active"])
 
         # Test type inference
-        assert block["id"].dtype == np.dtype("int32")  # molrs native int
+        # `id` is UInt in the Frame vocabulary, so CSV parsing adopts the
+        # declared dtype instead of inferring one from the digits. Inference
+        # would type a canonical column by its data rather than its meaning.
+        assert block["id"].dtype == np.dtype("uint32")
         assert block["name"].dtype.kind == "U"  # Should be string
         assert block["score"].dtype == np.dtype("float64")  # Should be float
         assert block["active"].dtype.kind == "U"  # Should be string
@@ -540,24 +546,24 @@ Charlie,35,1.75"""
         assert np.array_equal(all_blk["type"], blk["type"])
         assert np.array_equal(all_blk["mol"], blk["mol"])
 
-    def test_block_mask_with_xyz_coordinates(self):
-        """Test Block mask with xyz coordinates."""
+    def test_block_mask_keeps_multi_column_fields_aligned(self):
+        """A row mask must slice a 2-D column's rows, not its components."""
         blk = Block(
             {
                 "id": np.array([1, 2, 3]),
-                "xyz": np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+                "vec": np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
                 "type": np.array(["C", "H", "H"]),
             }
         )
 
-        # Select atoms with x > 0.5
-        x_mask = blk["xyz"][:, 0] > 0.5
+        # Select rows whose first component is > 0.5
+        x_mask = blk["vec"][:, 0] > 0.5
         masked_blk = blk[x_mask]
 
         assert masked_blk.nrows == 1
         assert np.array_equal(masked_blk["id"], np.array([2]))
         assert np.array_equal(masked_blk["type"], np.array(["H"]))
-        assert np.array_equal(masked_blk["xyz"], np.array([[1.0, 0.0, 0.0]]))
+        assert np.array_equal(masked_blk["vec"], np.array([[1.0, 0.0, 0.0]]))
 
     def test_block_mask_real_world_example(self):
         """Test Block mask with real-world molecular example."""
@@ -624,10 +630,10 @@ class TestFrame:
     def test_get_block(self, simple_frame):
         blk = simple_frame["atoms"]
         assert isinstance(blk, Block)
-        assert set(blk) == {"xyz", "charge"}
+        assert set(blk) == {"vec", "charge"}
 
     def test_variables(self, simple_frame):
-        assert set(simple_frame["atoms"].keys()) == {"xyz", "charge"}
+        assert set(simple_frame["atoms"].keys()) == {"vec", "charge"}
         assert set(simple_frame["bonds"].keys()) == {"atomi"}
 
     def test_blocks_iter_and_len(self, simple_frame):
@@ -762,7 +768,7 @@ class TestFrame:
                 "mass": [12.01, 1.008, 1.008, 1.008],
                 "charge": [0.0, 0.0, 0.0, 0.0],
             },
-            "bonds": {"atomi": [0, 0, 0], "atomj": [1, 2, 3], "type": [1, 1, 1]},
+            "bonds": {"atomi": [0, 0, 0], "atomj": [1, 2, 3], "type_id": [1, 1, 1]},
             "angles": {"atomi": [1, 1, 2], "atomj": [0, 0, 0], "atomk": [2, 3, 3]},
         }
 

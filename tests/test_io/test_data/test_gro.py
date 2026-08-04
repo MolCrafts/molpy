@@ -26,9 +26,13 @@ class TestGMXGroReader:
         assert str(first_atom["res_id"]) == "1"
         assert str(first_atom["res_name"]) == "LIG"
         assert str(first_atom["name"]) == "S"
-        assert int(first_atom["number"]) == 1
-        xyz = np.asarray(first_atom["xyz"])
-        expected_xyz = np.array([0.310, 0.862, 1.316])
+        # The serial is `id`; the element is inferred into `element`. The
+        # atomic-*number* column is a different quantity and stays absent.
+        assert int(first_atom["id"]) == 1
+        # The file says 0.310 0.862 1.316 — GRO is nm and the reader normalises
+        # to Å, so a frame in memory is 10x those numbers.
+        xyz = np.array([first_atom[k] for k in ("x", "y", "z")])
+        expected_xyz = np.array([3.10, 8.62, 13.16])
         np.testing.assert_allclose(xyz, expected_xyz, rtol=1e-3)
 
 
@@ -43,8 +47,10 @@ class TestGROReaderComprehensive:
             "res_id": [1, 1],
             "res_name": ["WAT", "WAT"],
             "name": ["OW", "HW1"],
-            "number": [1, 2],
-            "xyz": [[0.000, 0.000, 0.000], [0.100, 0.000, 0.000]],
+            "id": [1, 2],
+            "x": [0.000, 0.100],
+            "y": [0.000, 0.000],
+            "z": [0.000, 0.000],
         }
         frame["atoms"] = atoms_data
         frame.box = mp.Box(np.eye(3) * 2.0)
@@ -78,19 +84,22 @@ class TestGROReaderComprehensive:
         assert "res_id" in atoms
         assert "res_name" in atoms
         assert "name" in atoms
-        assert "number" in atoms
-        assert "xyz" in atoms
+        assert "id" in atoms
+        assert "number" not in atoms, (
+            "GRO carries no element information; the atom serial is `id`"
+        )
+        assert all(k in atoms for k in ("x", "y", "z"))
 
         # Check first atom data
         first_atom = atoms[0]
         assert "res_id" in first_atom
         assert "res_name" in first_atom
         assert "name" in first_atom
-        assert "number" in first_atom
+        assert "id" in first_atom
 
-        # Check coordinates
-        xyz = np.asarray(first_atom["xyz"])
-        expected_xyz = np.array([0.310, 0.862, 1.316])
+        # Check coordinates — file nm (0.310 0.862 1.316) → frame Å.
+        xyz = np.array([first_atom[k] for k in ("x", "y", "z")])
+        expected_xyz = np.array([3.10, 8.62, 13.16])
         np.testing.assert_allclose(xyz, expected_xyz, rtol=1e-3)
 
         # Check box information
@@ -116,8 +125,7 @@ class TestGROReaderComprehensive:
 
         # Check data integrity
         assert len(atoms["name"]) == n_atoms
-        assert len(atoms["xyz"]) == n_atoms
-        assert atoms["xyz"].shape == (n_atoms, 3)
+        assert atoms["x", "y", "z"].shape == (n_atoms, 3)
 
     def test_read_triclinic_gro(self, TEST_DATA_DIR):
         """Test reading triclinic unit cell GRO file."""
@@ -169,7 +177,7 @@ class TestGROReaderComprehensive:
         atoms = frame["atoms"]
 
         # Check that coordinates are reasonable floats
-        xyz = atoms["xyz"]
+        xyz = atoms["x", "y", "z"]
         assert xyz.dtype == np.float64
         assert not np.any(np.isnan(xyz))
         assert not np.any(np.isinf(xyz))
@@ -207,12 +215,10 @@ class TestGROWriter:
             "res_id": [1, 1, 1],
             "res_name": ["WAT", "WAT", "WAT"],
             "name": ["OW", "HW1", "HW2"],
-            "number": [1, 2, 3],
-            "xyz": [
-                [0.000, 0.000, 0.000],
-                [0.100, 0.000, 0.000],
-                [-0.033, 0.094, 0.000],
-            ],
+            "atomic_number": [1, 2, 3],
+            "x": [0.000, 0.100, -0.033],
+            "y": [0.000, 0.000, 0.094],
+            "z": [0.000, 0.000, 0.000],
         }
         frame["atoms"] = atoms_data
         frame.box = mp.Box(np.eye(3) * 2.0)
@@ -260,8 +266,8 @@ class TestGROWriter:
         assert orig_n_atoms == rt_n_atoms
 
         # Coordinates should be approximately the same
-        orig_xyz = orig_atoms["xyz"]
-        rt_xyz = rt_atoms["xyz"]
+        orig_xyz = orig_atoms["x", "y", "z"]
+        rt_xyz = rt_atoms["x", "y", "z"]
         np.testing.assert_allclose(orig_xyz, rt_xyz, rtol=1e-3)
 
     def test_write_gro_with_box(self, tmp_path):
@@ -272,13 +278,16 @@ class TestGROWriter:
             "res_id": [1],
             "res_name": ["MOL"],
             "name": ["C"],
-            "number": [1],
-            "xyz": [[0.0, 0.0, 0.0]],
+            "atomic_number": [1],
+            "x": [0.0],
+            "y": [0.0],
+            "z": [0.0],
         }
         frame["atoms"] = atoms_data
 
-        # Test orthogonal box
-        frame.box = mp.Box(np.diag([2.0, 3.0, 4.0]))
+        # Test orthogonal box. A frame's box is Å; GRO is nm, so the writer
+        # divides by ten on the way out: 20 Å is the file's 2.000.
+        frame.box = mp.Box(np.diag([20.0, 30.0, 40.0]))
 
         tmp_file = tmp_path / "test.gro"
         writer = mp.io.data.GroWriter(str(tmp_file))
@@ -338,7 +347,7 @@ class TestGROEdgeCases:
         atoms = frame["atoms"]
 
         # Should still work without velocities
-        assert "xyz" in atoms
+        assert all(k in atoms for k in ("x", "y", "z"))
         assert "name" in atoms
 
     def test_coordinate_precision(self, TEST_DATA_DIR):
@@ -350,7 +359,7 @@ class TestGROEdgeCases:
         frame = mp.io.read_gro(fpath, frame=molrs.Frame())
         atoms = frame["atoms"]
 
-        xyz = atoms["xyz"]
+        xyz = atoms["x", "y", "z"]
         assert xyz.dtype in [np.float32, np.float64]
         assert not np.any(np.isnan(xyz))
 
@@ -380,4 +389,4 @@ class TestGROEdgeCases:
         assert n_atoms > 1000
 
         # Data consistency
-        assert len(atoms["xyz"]) == n_atoms
+        assert len(atoms["x"]) == n_atoms

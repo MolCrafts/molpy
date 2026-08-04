@@ -25,10 +25,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
-import molrs
 
 from molpy.core import fields
 from molpy.core.atomistic import Atomistic
+from molpy.core.perceive import Perceive
 
 if TYPE_CHECKING:
     from molpy.typifier.affected_region import AffectedRegion
@@ -68,7 +68,7 @@ class TypeInfo:
             value = cls.as_param(data.get(key))
             if value is not None:
                 params.append((key, value))
-        raw_type = data.get(fields.TYPE.key)
+        raw_type = data.get(fields.TYPE)
         return cls(
             type=raw_type if isinstance(raw_type, str) else None,
             params=tuple(params),
@@ -78,7 +78,7 @@ class TypeInfo:
         """Flatten back to a ``data`` patch (``params`` plus ``type``)."""
         patch: dict[str, ParamValue] = dict(self.params)
         if self.type is not None:
-            patch[fields.TYPE.key] = self.type
+            patch[fields.TYPE] = self.type
         return patch
 
 
@@ -95,12 +95,12 @@ class BondedTypeInfo:
         """Capture a bonded term's type + scalar params at ``positions``."""
         params: list[tuple[str, ParamValue]] = []
         for key, value in data.items():
-            if key == fields.TYPE.key:
+            if key == fields.TYPE:
                 continue
             scalar = TypeInfo.as_param(value)
             if scalar is not None:
                 params.append((key, scalar))
-        raw_type = data.get(fields.TYPE.key)
+        raw_type = data.get(fields.TYPE)
         return cls(
             positions=positions,
             info=TypeInfo(
@@ -145,10 +145,14 @@ class RegionTypes:
         Hydrogen perception is not a convenience. ``extract_radius == interior_reach +
         reach`` means an interior atom's receptive field reaches *exactly* to the
         boundary atoms; a raw cut leaves those with unfilled valences, and a
-        SMARTS matcher reads them as radicals. Measured on p-xylene at
-        reach equal to TERM_REACH (two bonds), 12 of 19 raw slices cannot be typed at all.
+        SMARTS matcher reads them as radicals. Measured on p-xylene at reach
+        equal to TERM_REACH (two bonds), the raw slices mistype 36 interior
+        atoms with **zero** refusals — the failure is silent, not loud. (Before
+        the extraction closed on ring systems it read 12 refusals instead; the
+        cut ring was the loud half, and closing rings removed only that half.)
+        See ``tests/test_typifier/test_region_radii.py``.
         """
-        perceived = Atomistic.adopt(molrs.Perceive().find_hydrogens(region))
+        perceived = Perceive().find_hydrogens(region)
         before = [dict(atom.data) for atom in region.atoms]
         typed = typifier.typify(perceived)
         # Perception appends hydrogens, so the region's own atoms stay the
@@ -183,7 +187,7 @@ class RegionTypes:
         canon_of_pos = {pos_of_handle[handle]: idx for idx, handle in enumerate(canon)}
         interior = {atom.handle for atom in region.interior}
 
-        param_keys = tuple(sorted(cls._scalar_delta(before, after) - {fields.TYPE.key}))
+        param_keys = tuple(sorted(cls._scalar_delta(before, after) - {fields.TYPE}))
 
         entries: list[tuple[int, TypeInfo]] = []
         for pos, region_atom in enumerate(region_atoms):
@@ -270,7 +274,7 @@ class RegionTypes:
         n_region = len(region_atoms)
         out: list[BondedTypeInfo] = []
         for link in links:
-            if link.get(fields.TYPE.key) is None:
+            if link.get(fields.TYPE) is None:
                 # Undecided, not "typed as None". Writing that back would erase
                 # whatever the parent's term already carried.
                 continue

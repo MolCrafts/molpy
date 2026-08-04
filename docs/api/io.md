@@ -43,6 +43,7 @@ File readers and writers for molecular data, force fields, and trajectories.
 ## Canonical examples
 
 ```python
+# docs: skip — reads offline artifact files; I/O unit-tested with fixtures
 import molpy as mp
 
 # Read/write structure

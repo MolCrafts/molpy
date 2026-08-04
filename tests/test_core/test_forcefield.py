@@ -2,8 +2,7 @@
 Unit tests for forcefield core functionality.
 
 molpy's old parallel ForceField hierarchy is DELETED; ``molpy.core.forcefield``
-now re-exports molrs's native classes. These tests exercise that molrs-backed
-surface through molpy's public re-exports.
+These tests exercise the ForceField surface through molpy public APIs.
 
 Key facts about the molrs-backed API (verified against the installed wheel):
 
@@ -292,7 +291,7 @@ class TestForceField:
     def test_forcefield_def_style(self):
         """def_style registers an unbound style and returns a bound handle."""
         ff = ForceField()
-        style = ff.def_style(molrs.BondHarmonicStyle())
+        style = ff.def_style(molrs.ff.BondHarmonicStyle())
         assert isinstance(style, Style)
         assert style.name == "harmonic"
         assert style.category == "bond"
@@ -300,8 +299,8 @@ class TestForceField:
     def test_forcefield_def_style_idempotent(self):
         """Re-registering the same (category, name) returns an equal handle."""
         ff = ForceField()
-        style1 = ff.def_style(molrs.BondHarmonicStyle())
-        style2 = ff.def_style(molrs.BondHarmonicStyle())
+        style1 = ff.def_style(molrs.ff.BondHarmonicStyle())
+        style2 = ff.def_style(molrs.ff.BondHarmonicStyle())
         assert style1 == style2
         assert len(ff.get_styles(Style)) == 1
 
@@ -363,10 +362,7 @@ class TestForceField:
 
 
 class TestAtomisticForcefield:
-    """``AtomisticForcefield`` is an alias of the native ``ForceField``."""
-
-    def test_atomistic_ff_is_forcefield(self):
-        assert AtomisticForcefield is ForceField
+    """``AtomisticForcefield`` construction and style definition."""
 
     def test_atomistic_ff_creation(self):
         ff = AtomisticForcefield(name="OPLS-AA", units="real")
@@ -510,14 +506,14 @@ class TestForceFieldToPotentials:
 
         Two atoms 2.0 apart, k=300, r0=1.5 -> 0.5*k*(r-r0)^2 = 37.5.
         """
-        ff = molrs.ForceField("bond-only")
+        ff = molrs.ff.ForceField("bond-only")
         ff.def_bondtype("harmonic", "CT", "CT", {"k": 300.0, "r0": 1.5})
 
         frame = _build_bonded_frame("CT-CT")
         pots = ff.to_potentials(frame)
         assert len(pots) == 1
 
-        energy = pots.calc_energy(molrs.extract_coords(frame))
+        energy = pots.calc_energy(molrs.ff.extract_coords(frame))
         assert energy == pytest.approx(37.5)
 
     def test_to_potentials_raises_on_missing_params(self):

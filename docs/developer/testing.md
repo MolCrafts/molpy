@@ -6,14 +6,15 @@ MolPy uses pytest. Tests live under `tests/`, mirroring the package structure: `
 ## Running tests
 
 ```bash
-pytest tests/ -v -m "not external"                     # standard local run
+pytest tests/ -v                                       # standard local run
 pytest tests/test_core/test_frame.py -v                # one file
 pytest tests/test_core/test_frame.py::test_creation -v # one test
 pytest tests/ -k "lammps" -v                           # keyword filter
 pytest --cov=src/molpy tests/ -v --cov-report=term     # with coverage
 ```
 
-The `-m "not external"` flag excludes tests that require external executables (LAMMPS, Packmol, AmberTools). This is the default for local development and CI.
+The suite is pure unit tests: wrappers and engines mock `subprocess`; they never
+require LAMMPS, Packmol, AmberTools, or RDKit on the machine.
 
 
 ## What to test
@@ -47,20 +48,13 @@ def test_pdb_round_trip(tmp_path):
 ```
 
 
-## Markers
+## Wrappers, engines, and docs
 
-Tests that require external executables must be marked with `@pytest.mark.external`:
-
-```python
-import pytest
-
-@pytest.mark.external
-def test_lammps_integration():
-    # requires lmp_serial on PATH
-    ...
-```
-
-This keeps the default test suite stable on machines without those tools.
+- **Wrappers / engines**: mock `subprocess` and assert argv / script *literals*
+  written to disk. Never launch antechamber, tleap, lmp, or packmol in unit tests.
+- **Doc code blocks**: every ` ```python ` block under `docs/` is executed by
+  `tests/test_docs/test_all_doc_blocks.py`. Blocks that shell out or need
+  offline artifacts declare `# docs: skip — <reason>` as the first non-empty line.
 
 
 ## Writing good tests

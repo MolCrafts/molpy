@@ -36,7 +36,10 @@ The matcher is an implementation detail of a typifier, not the typifier itself.
 Use molrs SMARTS matching directly:
 
 ```python
-pattern = molrs.SmartsPattern("[C:1][O:2]")
+import molpy as mp
+
+mol = mp.io.read_smiles("CCO")
+pattern = mp.SmartsPattern("[C:1][O:2]")
 matches = pattern.find_matches(mol)
 ```
 
@@ -54,8 +57,9 @@ The current shell only loads the force field:
 ```python
 from molpy.typifier import ClpTypifier
 
-typifier = ClpTypifier()
-ff = typifier.ff
+# load_forcefield() is the overlay only; constructing ClpTypifier() also builds
+# ForceFieldParams indexes over full OPLS-AA (expensive — unit tests cache it).
+ff = ClpTypifier.load_forcefield()
 ```
 
 The eventual implementation should follow this shape:
@@ -83,7 +87,7 @@ class ClpTypifier:
         return typed
 
     def typify_atoms(self, mol: molrs.Atomistic) -> molrs.Atomistic:
-        # Use molrs.SmartsPattern and CL&P-specific priority rules.
+        # Use molrs.perceive.SmartsPattern and CL&P-specific priority rules.
         raise NotImplementedError
 
     def typify_bonds(self, mol: molrs.Atomistic) -> molrs.Atomistic:

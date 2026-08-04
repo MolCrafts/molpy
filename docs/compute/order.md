@@ -67,17 +67,30 @@ neighbour shell of range.
 
 ## 3. Computing Steinhardt order with `Steinhardt`
 
+The examples below share this setup:
+
+```python
+import numpy as np
+import molpy as mp
+
+rng = np.random.default_rng(0)
+xyz = rng.uniform(0.0, 20.0, size=(200, 3))
+frame = mp.Frame()
+frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
+frame.box = mp.Box.cubic(20.0)
+```
+
 ```python
 from molpy.compute import NeighborList, Steinhardt
 
-nlist = NeighborList(cutoff=1.5)(frame)        # first-shell neighbours
-q = Steinhardt(l=[4, 6])([frame], [nlist])     # per-particle q_4 and q_6
+nlist = NeighborList(cutoff=1.5)(frame)  # first-shell neighbours
+q = Steinhardt(l=[4, 6])([frame], [nlist])  # per-particle q_4 and q_6
 ```
 
 Switch to the averaged and third-order variants through the constructor flags:
 
 ```python
-q_avg = Steinhardt(l=[6], average=True)          # Lechner–Dellago averaged q_6
+q_avg = Steinhardt(l=[6], average=True)  # Lechner–Dellago averaged q_6
 w = Steinhardt(l=[6], wl=True, wl_normalize=True)  # normalized w_6
 ```
 
@@ -150,7 +163,11 @@ and the full $Q$-tensor:
 ```python
 from molpy.compute import Nematic
 
-# `frame` must carry an `orientations` block, e.g. one (head, tail) row per particle.
+# One (head, tail) atom-index row per particle, in the same two-endpoint schema
+# as `bonds`; each axis is normalize(pos[head] - pos[tail]).
+idx = np.arange(len(xyz), dtype=np.uint32)
+frame["orientations"] = {"atomi": idx, "atomj": (idx + 1) % len(xyz)}
+
 order, eigenvalues, director, q_tensor = Nematic()([frame])
 ```
 

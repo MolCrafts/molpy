@@ -1,40 +1,51 @@
 # Diffusion & Ionic Transport
 
-This page is a self-contained, textbook-style introduction to how MolPy turns an
-equilibrium molecular-dynamics (MD) trajectory into **transport coefficients** —
-diffusion coefficients, Onsager phenomenological coefficients, and ionic
-conductivity. It starts from the random walk and builds up to the collective
-correlation functions used in modern electrolyte analysis. No background beyond
-undergraduate statistical mechanics and a little linear algebra is assumed.
+This page is a self-contained, textbook-style introduction to how MolPy / molrs
+turn an equilibrium MD trajectory into **transport coefficients** — diffusion,
+Onsager coefficients, and ionic conductivity. It starts from the random walk and
+builds up to the collective correlation functions used in modern electrolyte
+analysis.
 
-It is the conceptual companion to the [Dielectric Spectroscopy](dielectric.md)
-guide: that page derives the *frequency-dependent* response and the two
-conductivity routes in depth; this page focuses on *diffusion* and the
-*displacement* picture, and points back to the dielectric page for the spectral
-machinery.
+It is the conceptual companion to [Dielectric Spectroscopy](dielectric.md): that
+page derives the *frequency-dependent* response; this page focuses on
+*diffusion* and the *displacement* picture.
 
-As with all MolPy analyses, the heavy numerics run in Rust (`molrs`); the MolPy
-layer extracts coordinates, unwraps periodic images, builds the collective
-quantities, and returns typed result objects.
+**molrs is the single source of truth.** MolPy re-exports the same Compute types
+identity-style. There is no parallel recipe layer (`IonicConductivity`,
+trajectory-scanning recipe classes). You assemble collective arrays, call
+a **raw Compute**, then **compose** a Fit and an SI scale.
 
 !!! note "Conventions used throughout"
-    - Position of atom $i$ at time $t$: $\mathbf{r}_i(t)$; displacement over a lag
+    - Position of atom $i$ at time $t$: $\mathbf{r}_i(t)$; displacement over lag
       $\tau$: $\Delta\mathbf{r}_i(\tau) = \mathbf{r}_i(t+\tau) - \mathbf{r}_i(t)$.
     - $\langle\cdots\rangle_t$ denotes an average over **time origins** $t$.
-    - Units (LAMMPS *real*): length Å, time ps, charge $e$, volume Å³,
-      temperature K. Diffusion coefficients come out in Å²·ps⁻¹; conductivity in
-      S·m⁻¹.
+    - Units (LAMMPS *real*): length **Å**, **time fs**, charge $e$, volume Å³,
+      temperature K. Diffusion comes out in Å²·fs⁻¹ (or convert); conductivity
+      in S·m⁻¹ after the SI prefactor.
     - $d = 3$ spatial dimensions; the Einstein factor $1/(2d) = 1/6$.
+    - Displacement kernels need **unwrapped** coordinates (no MIC inside the MSD
+      kernel).
+
+---
+
+## 0. Compose pattern (read this first)
+
+| Route | Raw Compute | Fit | Scale (your script) |
+|-------|-------------|-----|---------------------|
+| Self-diffusion (Einstein) | `MSD(method="window")` or `EinsteinDiffusion` | `LinearFit` | $D = \mathrm{slope}/(2d)$ |
+| Self-diffusion (Green–Kubo) | `VACF` / `GreenKuboDiffusion` | `CumulativeTrapezoid` | $D = (1/d)\int C_{vv}$ |
+| Onsager $L_{ij}$ | `Onsager.correlation(P_i, P_j, …)` | `LinearFit` on $L(\tau)$ | $\Omega_{ij} = \mathrm{slope}/(6 k_B T V N_A)$ |
+| $\sigma$ Einstein | `EinsteinConductivity` | `LinearFit` | $\sigma = \mathrm{slope}/(6 V k_B T)\times$ SI |
+| $\sigma$ Green–Kubo | `GreenKuboConductivity` | `CumulativeTrapezoid` | $\sigma = \int C/(3 V k_B T)\times$ SI |
 
 ---
 
 ## 1. The random walk and the Einstein relation
 
 A particle in a liquid is kicked around by its neighbours. Over a short time it
-moves *ballistically* (it remembers its velocity), but after many uncorrelated
-kicks its motion becomes a **random walk**: the *direction* is forgotten while
-the *spread* keeps growing. The natural measure of that spread is the
-**mean-squared displacement (MSD)**:
+moves *ballistically*, but after many uncorrelated kicks its motion becomes a
+**random walk**. The natural measure of that spread is the **mean-squared
+displacement (MSD)**:
 
 $$
 \mathrm{MSD}(\tau) = \big\langle\,|\mathbf{r}_i(t+\tau) - \mathbf{r}_i(t)|^2\,\big\rangle_{i,t}.
@@ -48,118 +59,78 @@ $$
        = \lim_{\tau\to\infty}\frac{1}{6\tau}\big\langle|\Delta\mathbf{r}(\tau)|^2\big\rangle\;}
 $$
 
-The factor $1/6 = 1/(2d)$ with $d=3$ counts the three independent directions the
-walker can spread into.
-
 ### 1.1 The three regimes
 
-A real MSD curve has three parts, and only the middle one is physical diffusion:
+- **Ballistic** (short $\tau$): $\mathrm{MSD}\propto\tau^2$.
+- **Diffusive** (intermediate $\tau$): $\mathrm{MSD}\propto\tau$ — **fit the slope here**.
+- **Noisy** (long $\tau$): few time origins remain.
 
-- **Ballistic** (short $\tau$): $\mathrm{MSD}\propto\tau^2$ — the particle still
-  moves at roughly constant velocity.
-- **Diffusive** (intermediate $\tau$): $\mathrm{MSD}\propto\tau$ — the linear
-  regime; **fit the slope here**.
-- **Noisy** (long $\tau$): few time origins remain, so the estimate is dominated
-  by statistical scatter.
-
-Choosing the linear window is the single most important judgement call in a
-diffusion calculation. The transport computes return the **full correlation
-curve** so you can inspect it before fitting; `IonicConductivity` exposes a
-fraction-based fit window (`fit_start_frac`/`fit_end_frac`) for exactly this
-reason (see [§6](#6-parameters-and-hyperparameters)).
+Raw Computes return the **full correlation curve** so you can inspect it before
+fitting. Place the linear window yourself with `LinearFit(start_frac, end_frac)`.
 
 ### 1.2 Averaging over time origins
-
-At equilibrium the dynamics are stationary, so every frame can serve as a time
-origin $t$. Averaging over **all** origins (a "windowed" MSD) uses the data far
-more efficiently than measuring displacement from frame 0 only:
 
 $$
 \mathrm{MSD}(\tau) = \frac{1}{N_\text{origins}}\sum_{t} |\mathbf{r}(t+\tau)-\mathbf{r}(t)|^2,
 \qquad N_\text{origins} = N_\text{frames}-\tau.
 $$
 
-The number of usable origins shrinks as $\tau$ grows — which is exactly why the
-long-$\tau$ tail is noisy.
+Use `MSD(method="window")` for this average.
 
 ### 1.3 Minimum-image unwrapping (the usual trap)
 
-MD runs in a periodic box: when an atom leaves one face it re-enters the
-opposite one, so its stored coordinate jumps by a box length $L$. A naive MSD
-built from such coordinates registers a spurious $L$-sized displacement at every
-crossing. The fix is to accumulate **minimum-image** steps,
-
-$$
-\Delta\mathbf{r}_k = \mathbf{r}(t_k)-\mathbf{r}(t_{k-1}) - L\,\mathrm{round}\!\Big(\tfrac{\mathbf{r}(t_k)-\mathbf{r}(t_{k-1})}{L}\Big),
-\qquad
-\mathbf{r}_\text{unwrap}(t_k) = \mathbf{r}_\text{unwrap}(t_{k-1}) + \Delta\mathbf{r}_k,
-$$
-
-valid as long as a particle moves less than $L/2$ per frame. MolPy does this with
-`Box.delta(p1, p2, minimum_image=True)`; it is shared by every displacement-based
-transport compute. (See [Dielectric §2.1](dielectric.md#21-a-critical-detail-minimum-image-unwrapping)
-for the same argument in the dipole context.)
+Periodic images must be unwrapped **before** displacement MSD. Crossing a box
+face by $L$ is a real continuous path, not a jump. Unwrap with successive
+minimum-image steps (or dump unwrapped coordinates from the engine). molrs MSD /
+Einstein kernels do **not** apply MIC inside the lag loop.
 
 ---
 
-## 2. Self vs distinct diffusion: the MDC
+## 2. Self vs distinct diffusion
 
-A single diffusion coefficient hides a lot of physics. In a multi-component
-system the displacements of *different* particles are correlated — ions drag
-their counter-ions, solvent flows around them. The **mean displacement
-correlation (MDC)** generalises the MSD to expose this.[^gudla]
+A single diffusion coefficient hides multi-component coupling. The **mean
+displacement correlation** generalises the MSD:
 
-**Self (tag `"3"`)** — the ordinary MSD of one species, giving the self-diffusion
-coefficient $D^\mathrm{s}_\alpha$:
+**Self** — ordinary MSD of one species → $D^\mathrm{s}_\alpha$.
 
-$$
-D^\mathrm{s}_{\alpha} = \lim_{\tau\to\infty}\frac{1}{6\tau N}
-   \sum_i\big\langle|\Delta\mathbf{r}_{i,\alpha}(\tau)|^2\big\rangle.
-$$
+**Distinct** — cross-correlation of displacements of species $\alpha$ and
+$\beta$ → $D^\mathrm{d}_{\alpha\beta}$ (collective).
 
-**Distinct (tag `"3,4"`)** — the *cross*-correlation between the displacements of
-species $\alpha$ and $\beta$, giving the distinct-diffusion coefficient
-$D^\mathrm{d}_{\alpha\beta}$:
-
-$$
-D^\mathrm{d}_{\alpha\beta} = \lim_{\tau\to\infty}\frac{1}{6\tau N}
-   \sum_i\sum_{j\ne i}\big\langle\Delta\mathbf{r}_{i,\alpha}(\tau)\cdot\Delta\mathbf{r}_{j,\beta}(\tau)\big\rangle.
-$$
-
-The distinct term is a **collective** quantity: it is dominated by how the
-species move *together*, not by any single particle.
-
-!!! note "Normalization convention (MolPy vs tame)"
-    For different species, MolPy evaluates the distinct term as the collective
-    cross-correlation $\big\langle(\sum_i\Delta\mathbf{r}_i)\cdot(\sum_j\Delta\mathbf{r}_j)\big\rangle$
-    — the physically meaningful form that feeds directly into the Onsager
-    coefficients of [§3](#3-onsager-phenomenological-coefficients). The original
-    [tame](https://github.com/Roy-Kid/tame) `mdc` recipe averages (rather than
-    sums) over the reference species $i$, i.e. it carries an extra factor
-    $1/N_i$; MolPy deliberately uses the un-normalized collective form. For fully
-    normalized Onsager coefficients use [`Onsager`](#3-onsager-phenomenological-coefficients).
+MolPy evaluates the distinct term as the collective cross-correlation
+$\big\langle(\sum_i\Delta\mathbf{r}_i)\cdot(\sum_j\Delta\mathbf{r}_j)\big\rangle$
+— the form that feeds Onsager coefficients. For normalized $\Omega_{\alpha\beta}$
+use §3.
 
 ```python
-from molpy.compute import MCDCompute
+import numpy as np
+from molpy.compute import MSD, Onsager
 
-mdc = MCDCompute(tags=["3", "4", "3,4"], max_dt=20.0, dt=0.01)
-result = mdc(trajectory)
-result.correlations["3"]    # self MSD of species 3, vs lag time
-result.correlations["3,4"]  # distinct cross-correlation of 3 and 4
+rng = np.random.default_rng(0)
+# Collective unwrapped coordinates P_alpha: (n_frames, 3)
+P_cat = np.ascontiguousarray(np.cumsum(rng.normal(0, 0.01, size=(40, 3)), axis=0))
+P_an = np.ascontiguousarray(np.cumsum(rng.normal(0, 0.01, size=(40, 3)), axis=0))
+L11 = Onsager.correlation(P_cat, P_cat, dt=10.0, max_correlation_time=10)
+L12 = Onsager.correlation(P_cat, P_an, dt=10.0, max_correlation_time=10)
+L11["lag_times"], L11["correlation"]  # L_11(tau)
+
+# Single-particle MSD needs a frame list with unwrapped positions
+import molpy as mp
+frames = []
+for step in range(12):
+    xyz = rng.uniform(0.0, 10.0, size=(20, 3)) + 0.05 * step
+    f = mp.Frame()
+    f["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
+    f.box = mp.Box.cubic(10.0)
+    frames.append(f)
+series = MSD(method="window")(frames)
+series.mean  # <|r(tau+t)-r(tau)|^2>
 ```
 
 ---
 
 ## 3. Onsager phenomenological coefficients
 
-The cleanest way to describe coupled transport in an electrolyte is Onsager's
-**phenomenological coefficients** $\Omega_{\alpha\beta}$ (also written
-$L_{\alpha\beta}$). They are the proper, normalized version of the collective
-displacement correlation: $\Omega_{\alpha\beta}$ relates the flux of species
-$\alpha$ to the thermodynamic driving force on species $\beta$.
-
-Define the **collective coordinate** of a species — the summed (unwrapped)
-position of all its atoms,
+Define the **collective coordinate** of a species (summed unwrapped positions),
 
 $$
 \mathbf{P}_\alpha(t) = \sum_{i\in\alpha}\mathbf{r}_i(t),
@@ -167,121 +138,98 @@ $$
 \Delta\mathbf{P}_\alpha(\tau) = \mathbf{P}_\alpha(t+\tau)-\mathbf{P}_\alpha(t).
 $$
 
-The collective displacement correlation and the Onsager coefficient are then
-
 $$
-\mathrm{corr}_{\alpha\beta}(\tau) = \big\langle\,\Delta\mathbf{P}_\alpha(\tau)\cdot\Delta\mathbf{P}_\beta(\tau)\,\big\rangle_t,
+L_{\alpha\beta}(\tau) = \big\langle\,\Delta\mathbf{P}_\alpha(\tau)\cdot\Delta\mathbf{P}_\beta(\tau)\,\big\rangle_t,
 \qquad
-\boxed{\;\Omega_{\alpha\beta} = \lim_{\tau\to\infty}\frac{\mathrm{corr}_{\alpha\beta}(\tau)}{6\,k_B T\,V\,N_A\,\tau}\;}
+\boxed{\;\Omega_{\alpha\beta} = \lim_{\tau\to\infty}\frac{L_{\alpha\beta}(\tau)}{6\,k_B T\,V\,N_A\,\tau}\;}
 $$
 
-- The **diagonal** $\Omega_{\alpha\alpha}$ is the collective MSD of species
-  $\alpha$ — it contains the self term **plus** the like-ion cross terms.
-- The **off-diagonal** $\Omega_{\alpha\beta}$ ($\alpha\ne\beta$) captures
-  cation–anion coupling. A negative value (anticorrelated drift) is the signature
-  of ion pairing.
+- Diagonal $\Omega_{\alpha\alpha}$: collective MSD of species $\alpha$.
+- Off-diagonal: cation–anion coupling (negative → ion pairing signature).
 
-`Onsager` returns the correlation curves $\mathrm{corr}_{\alpha\beta}(\tau)$; you
-take the long-time slope and apply the $1/(6 k_B T V N_A)$ prefactor for the
-coefficient itself.
-
-```python
-from molpy.compute import Onsager
-
-ons = Onsager(tags=["1,1", "1,2", "2,2"], max_dt=20.0, dt=0.01)
-result = ons(trajectory)
-result.correlations["1,2"]  # cation-anion collective correlation L_12(tau)
-```
+`Onsager.correlation` returns the raw $L_{\alpha\beta}(\tau)$ curve only — take
+the long-time slope with `LinearFit` and apply the prefactor yourself.
 
 ### 3.1 From Onsager coefficients to conductivity
-
-The ionic conductivity is a weighted sum of the Onsager coefficients over the
-ion charges $z_\alpha$:
 
 $$
 \sigma = \frac{e^2}{V k_B T}\sum_{\alpha\beta} z_\alpha z_\beta\,\Omega_{\alpha\beta}.
 $$
 
-If the off-diagonal (distinct) terms vanish — ions moving independently — this
-collapses to the **Nernst–Einstein** estimate $\sigma_\text{NE}$ built from the
-self-diffusion coefficients alone. The ratio $\sigma/\sigma_\text{NE}$ (the
-*ionicity* or *Haven ratio*) measures how strongly ion correlations suppress (or
-enhance) conduction — a number you cannot get from single-particle diffusion
-alone, which is the whole reason the Onsager picture exists.
+If off-diagonal terms vanish this collapses to the **Nernst–Einstein** estimate
+from self-diffusion alone. The ratio $\sigma/\sigma_\text{NE}$ (ionicity / Haven
+ratio) measures correlation suppression of conduction.
 
 ---
 
-## 4. Ionic conductivity: the two equivalent routes
+## 4. Ionic conductivity: two equivalent routes
 
-Conductivity can be obtained from the **collective charge transport** directly,
-without going through individual $\Omega_{\alpha\beta}$. There are two equivalent
-routes (a general consequence of the fluctuation–dissipation theorem; see
-[Dielectric §1.3](dielectric.md#13-the-fluctuationdissipation-theorem)).
+Both routes start from **pre-assembled** charge-weighted series. There is no
+`cation_type=` / trajectory-scanning recipe in the public API.
 
-### 4.1 Einstein route — polarization MSD (PMSD)
+### 4.1 Einstein route — polarization / charge-dipole MSD
 
-Build the **collective charge displacement** (a.k.a. the translational dipole)
-of the ions,
+Build the collective charge displacement (translational dipole) of the ions
+from **unwrapped** positions,
 
 $$
-\mathbf{P}(t) = \sum_\text{cations}\mathbf{r}_i(t) - \sum_\text{anions}\mathbf{r}_j(t),
+\mathbf{M}(t) = \sum_a q_a\,\mathbf{r}_a(t),
 $$
 
-and measure its MSD. Its long-time slope gives the conductivity by an Einstein
-relation:
+then
 
 $$
-\mathrm{PMSD}(\tau) = \big\langle|\mathbf{P}(t+\tau)-\mathbf{P}(t)|^2\big\rangle_t,
+\mathrm{MSD}_M(\tau) = \big\langle|\mathbf{M}(t+\tau)-\mathbf{M}(t)|^2\big\rangle_t,
 \qquad
-\sigma = \lim_{\tau\to\infty}\frac{1}{6\,V k_B T}\,\frac{d}{d\tau}\,\mathrm{PMSD}(\tau).
+\sigma = \lim_{\tau\to\infty}\frac{1}{6\,V k_B T}\,\frac{d}{d\tau}\,\mathrm{MSD}_M(\tau).
 $$
 
 ```python
-from molpy.compute import PMSDCompute, IonicConductivity
+import numpy as np
+from molpy.compute import EinsteinConductivity, LinearFit
 
-# The PMSD curve itself:
-pmsd = PMSDCompute(cation_type=1, anion_type=2, max_dt=30.0, dt=0.01)(trajectory)
-
-# The conductivity (Einstein-Helfand), fitted and converted to S/m:
-sigma = IonicConductivity(dt=0.01, temperature=298.15, max_correlation_time=1000)(ion_trajectory)
-sigma.sigma  # S/m
+rng = np.random.default_rng(1)
+# M: (n_frames, 3) — sum q_i * r_i_unwrapped; dt in fs
+M = np.ascontiguousarray(np.cumsum(rng.normal(0, 0.02, size=(60, 3)), axis=0))
+raw = EinsteinConductivity().compute(M, dt=10.0, max_correlation_time=20)
+lags, msd = raw["lag_times"], raw["msd"]
+fit = LinearFit(start_frac=0.1, end_frac=0.5).fit(lags, msd)
+slope = fit["slope"]  # e^2 Å^2 / fs
+# sigma = slope / (6 * V * k_B * T) * SI_prefactor
 ```
 
-`PMSDCompute` returns the curve; `IonicConductivity` does the fit and unit
-conversion. See [Dielectric §7](dielectric.md#7-ionic-conductivity-einsteinhelfand)
-for the full derivation, the diffusive-window caveat, and the SI prefactor.
+Full SI bookkeeping is in
+[Dielectric §7](dielectric.md#7-ionic-conductivity-einsteinhelfand).
 
-### 4.2 Green–Kubo route — current autocorrelation (JACF)
-
-Equivalently, integrate the autocorrelation of the **charge current**
-$\mathbf{J}(t)=\sum_a q_a\mathbf{v}_a(t)$:
+### 4.2 Green–Kubo route — current autocorrelation
 
 $$
+\mathbf{J}(t)=\sum_a q_a\mathbf{v}_a(t),
+\qquad
 \boxed{\;\sigma = \frac{1}{3\,V k_B T}\int_0^\infty \big\langle\mathbf{J}(0)\cdot\mathbf{J}(t)\big\rangle\,dt\;}
 $$
 
-The integrand $C(\tau)=\langle\mathbf{J}(0)\cdot\mathbf{J}(\tau)\rangle$ is the
-current autocorrelation function (JACF); the factor $1/3$ is the Green–Kubo
-analogue of the Einstein $1/6$ (one comes from integrating the ACF, the other
-from differentiating the MSD). The single-particle analogue — the Green–Kubo
-route to $D$ via the velocity autocorrelation — is derived in
-[Velocity Autocorrelation & VDOS](vacf.md).
-
 ```python
-from molpy.compute import JACF
+import numpy as np
+from molpy.compute import GreenKuboConductivity, CumulativeTrapezoid
 
-jacf = JACF(cation_type=1, anion_type=2, max_dt=30.0, dt=0.01, temperature=298.15)
-result = jacf(trajectory)        # requires per-atom velocities vx, vy, vz
-result.jacf                      # <J(0).J(t)>
-result.sigma                     # DC conductivity, S/m (the GK integral)
-result.sigma_running             # running integral sigma(tau), to check convergence
+rng = np.random.default_rng(2)
+# J: (n_frames, 3) — sum q_i * v_i; velocities in Å/fs for real units
+J = np.ascontiguousarray(rng.normal(0, 1.0, size=(60, 3)))
+raw = GreenKuboConductivity().compute(J, dt=10.0, max_correlation_time=20)
+C = raw["jacf"]  # <J(0)·J(t)>
+running = CumulativeTrapezoid().fit(C, dt=10.0)["integral"]
+# Quote sigma at the plateau of running / (3 V k_B T) * SI_prefactor
 ```
 
-The Einstein (PMSD) and Green–Kubo (JACF) routes are mathematically identical;
-in practice the Einstein route is more robust at coarse sampling, while the JACF
-exposes the current memory directly and lets you watch the integral converge.
-[Dielectric §8](dielectric.md#8-spectrum-route-ii-greenkubo-current-autocorrelation)
-derives the frequency-dependent generalisation $\sigma(\omega)$.
+The Einstein and Green–Kubo routes are mathematically identical; Einstein is
+often more robust at coarse
+sampling, while the current ACF exposes memory and integral convergence.
+Frequency-dependent $\sigma(\omega)$ is in
+[Dielectric §8](dielectric.md#8-spectrum-route-ii-greenkubo-current-autocorrelation).
+
+The single-particle Green–Kubo route to $D$ via the VACF is in
+[Velocity Autocorrelation & VDOS](vacf.md).
 
 ---
 
@@ -289,123 +237,83 @@ derives the frequency-dependent generalisation $\sigma(\omega)$.
 
 | Quantity | Compute | Physical meaning |
 |---|---|---|
-| $\mathrm{MSD}(\tau)$ / $D^\mathrm{s}$ | `MCDCompute` (single tag) | single-particle diffusion |
-| $D^\mathrm{d}_{\alpha\beta}$ | `MCDCompute` (pair tag) | distinct (collective) diffusion |
-| $\mathrm{corr}_{\alpha\beta}(\tau)$ / $\Omega_{\alpha\beta}$ | `Onsager` | coupled transport; ion pairing (off-diagonal) |
-| $\mathrm{PMSD}(\tau)$ | `PMSDCompute` | collective charge transport |
-| $\sigma$ (Einstein) | `IonicConductivity` | DC conductivity, S/m |
-| $C(\tau)$, $\sigma$ (Green–Kubo) | `JACF` | current memory + DC conductivity |
+| $\mathrm{MSD}(\tau)$ / $D^\mathrm{s}$ | `MSD(method="window")` + `LinearFit` | single-particle diffusion |
+| $L_{\alpha\beta}(\tau)$ / $\Omega_{\alpha\beta}$ | `Onsager.correlation` + `LinearFit` | coupled transport; ion pairing |
+| $\mathrm{MSD}_M(\tau)$ | `EinsteinConductivity` | collective charge transport |
+| $\sigma$ (Einstein) | + `LinearFit` + SI scale | DC conductivity, S/m |
+| $C(\tau)=\langle J\cdot J\rangle$ | `GreenKuboConductivity` | current memory |
+| $\sigma$ (Green–Kubo) | + `CumulativeTrapezoid` + SI scale | DC conductivity, S/m |
 
-**Cross-checks.** The Einstein (`IonicConductivity`/`PMSDCompute`) and
-Green–Kubo (`JACF`) conductivities must agree within statistics. The
-Nernst–Einstein estimate (from `MCDCompute` self terms) should exceed the
-correlated conductivity from `Onsager`/`JACF` when ion pairing is significant —
-their ratio is the ionicity.
+**Cross-checks.** Einstein and Green–Kubo $\sigma$ must agree within statistics.
+Nernst–Einstein (from self-MSD) should exceed the correlated conductivity when
+ion pairing is significant — their ratio is the ionicity.
 
 ---
 
 ## 6. Parameters and hyperparameters
 
-### 6.1 Parameters and their meaning
+### 6.1 Parameters
 
-| Parameter | Compute(s) | Meaning |
+| Parameter | Where | Meaning |
 |---|---|---|
-| `tags` | `MCDCompute`, `Onsager` | species selectors: `"3"` = self / like-species collective term of type 3; `"3,4"` = distinct cross-correlation of types 3 and 4 |
-| `max_dt` | `MCDCompute`, `Onsager`, `PMSDCompute`, `JACF` | longest correlation lag, **ps**; the returned curve has `n_cache = int(max_dt / dt)` points |
-| `dt` | all transport computes | trajectory frame spacing, **ps** (the *capture* interval, not the MD timestep) |
-| `center_of_mass` | `MCDCompute`, `Onsager` | optional `{type: mass}` map; when given, the system centre of mass is removed each frame before building displacements (default `None`) |
-| `cation_type` / `anion_type` | `PMSDCompute`, `JACF` | atom-type indices assigned charge $+1$ / $-1$ in the collective coordinate $\mathbf{P}(t)$ or current $\mathbf{J}(t)$ |
-| `temperature` | `JACF`, `IonicConductivity` | $T$ in the $1/(V k_B T)$ prefactor, **K** — $\sigma$ scales as $1/T$ |
-| `volume` | `JACF`, `IonicConductivity` | system volume, **Å³**; `None` → mean box volume over the trajectory (`JACF`) or first-frame box volume (`IonicConductivity`, assumes NVT/NVE) |
-| `max_correlation_time` | `IonicConductivity` | longest MSD lag **in frames** (clamped to `n_frames − 1`); practical choice ≤ `n_frames / 5` |
-| `fit_start_frac`, `fit_end_frac` | `IonicConductivity` | linear-fit window over the diffusive regime, as fractions of the maximum lag (defaults `0.1`, `0.5`) |
+| `dt` | all transport Computes / Fits | frame spacing, **fs** (capture interval, not MD timestep) |
+| `max_correlation_time` | Einstein / GK / Onsager / Persist | longest lag **in frames** (clamped to $N-1$) |
+| `start_frac`, `end_frac` | `LinearFit` | linear-fit window as fractions of the lag axis (typical `0.1`, `0.5`) |
+| `p_i`, `p_j` | `Onsager.correlation` | collective coordinates `(n_frames, 3)`, unwrapped |
+| `translational_dipole` / `current` | Einstein / GK `.compute` | `M(t)` or `J(t)` as `(n_frames, 3)` |
 
-`MCDCompute`, `Onsager` and `PMSDCompute` return **raw correlation curves** —
-the $1/(2d\,\tau)$ slope, the $1/(6 k_B T V N_A)$ Onsager prefactor, and any
-unit conversion are applied by *you*, which is what keeps the fit window under
-your eyes. Only `IonicConductivity` and `JACF` fit and convert internally.
+Raw curves do **not** include volume normalization or SI conversion — that is
+intentional so the fit window stays under your eyes.
 
 ### 6.2 Hyperparameter effects
 
-- **Fit window placement.** Fitting **too early** includes the ballistic/caged
-  head where the local exponent $d\ln\mathrm{MSD}/d\ln\tau \ne 1$ — the
-  extracted slope is systematically biased (check that the log–log slope is ≈ 1
-  across your window before trusting $D$). Fitting **too late** trades bias for
-  variance: the number of independent time origins falls as
-  $N_\text{origins} = N_\text{frames} - \tau/\Delta t$, so the statistical
-  error grows roughly like $\sqrt{\tau/T_\text{traj}}$. Move
-  `fit_start_frac`/`fit_end_frac` (or your manual window) and report the spread
-  — for few-carrier collective quantities it is rarely below several percent.
-- **`max_dt` vs trajectory length.** Lags approaching the trajectory length
-  average over almost no origins; keep `max_dt` a small fraction of the run
-  (the `≤ n_frames / 5` rule from `IonicConductivity` is a good default for
-  every curve on this page). Doubling the trajectory beats doubling `max_dt`.
-- **Frame spacing `dt`.** The Einstein/MSD routes are robust at coarse `dt` —
-  displacement is cumulative. The Green–Kubo `JACF` is not: the current ACF
-  decays in ~0.1–1 ps, so coarse frames under-resolve the integrand and $\sigma$
-  drifts. The same sampling-rate trade-offs as for the VACF apply — see
-  [vacf.md §6](vacf.md#6-hyperparameter-effects).
-- **Dimensionality.** The prefactors on this page assume $d = 3$
-  ($1/(2d) = 1/6$ Einstein, $1/3$ Green–Kubo). For quasi-2-D systems (confined
-  films, membranes) apply the $d = 2$ factors to the raw curves yourself —
-  using the 3-D factor on 2-D motion underestimates $D$ by $2/3$.
-- **Centre-of-mass drift (`center_of_mass`).** Collective quantities (Onsager,
-  PMSD, JACF) are a *single* realization per species — a net COM drift adds a
-  coherent $\propto \tau^2$ contamination that never averages out. Remove it
-  (pass the mass map, or pre-clean the trajectory) before quoting off-diagonal
-  coefficients.
-- **`temperature` / `volume`.** $\sigma \propto 1/(V\,T)$: a 3 % error in
-  either rescales the conductivity linearly. Use the *production-run* averages,
-  not the target thermostat values, for NPT data.
-- **Green–Kubo integration limit (`JACF.max_dt`).** Quote $\sigma$ at the
-  plateau of `result.sigma_running`, never at the last lag — integrating ACF
-  tail noise makes the estimate drift linearly (same plateau rule as the
-  running-integral $D(\tau)$ in [vacf.md §2](vacf.md#2-the-greenkubo-route-to-the-diffusion-coefficient)).
-
-The scattered warnings in [§7](#7-pitfalls-checklist) are the failure modes of
-exactly these knobs.
+- **Fit window.** Too early → ballistic bias; too late → few origins, high
+  variance. Report sensitivity when carriers are few.
+- **`max_correlation_time` vs trajectory length.** Keep lags ≪ run length
+  (rule of thumb $\le N_\text{frames}/5$).
+- **Frame spacing.** Einstein/MSD is robust at coarse `dt`. Green–Kubo current
+  ACF decays in ~0.1–1 ps — under-resolving it biases $\sigma$.
+- **Dimensionality.** Prefactors assume $d=3$; use $d=2$ factors for quasi-2-D.
+- **COM drift.** Collective quantities are one realization per species; remove
+  net COM motion before quoting off-diagonal Onsager terms or $\sigma$.
+- **$T$ / $V$.** $\sigma \propto 1/(V T)$ — use production-run averages for NPT.
+- **GK integration limit.** Quote $\sigma$ at the plateau of the running
+  integral, never the last lag.
 
 ---
 
 ## 7. Pitfalls checklist
 
 1. **No unwrapping** → boundary crossings inject $L$-sized jumps; every MSD is
-   garbage. (MolPy unwraps automatically via `Box.delta`.)
-2. **Fitting outside the diffusive window** → the ballistic head or the noisy
-   tail biases $D$ and $\sigma$. Always inspect the curve first.
-3. **Too few carriers / too short a trajectory** → collective quantities
-   (PMSD, Onsager off-diagonal, JACF) are intrinsically noisy because there is
-   only *one* collective coordinate per species. Report a range, not a digit.
-4. **Wrong velocity units in `JACF`** → the current must be in $e\cdot$Å·ps⁻¹
-   (velocities in Å/ps); $\sigma$ scales linearly, so a unit slip rescales the
-   answer.
-5. **Ignoring distinct diffusion** → quoting only Nernst–Einstein conductivity
-   ignores ion correlations and typically overestimates $\sigma$.
+   garbage.
+2. **Fitting outside the diffusive window** → ballistic head or noisy tail.
+3. **Too few carriers / short trajectory** → collective curves are noisy; report
+   a range.
+4. **Wrong velocity / time units** → current must match $e\cdot$Å·fs⁻¹ with
+   `dt` in fs for real-unit SI factors; a unit slip rescales $\sigma$ linearly.
+5. **Ignoring distinct diffusion** → Nernst–Einstein alone overestimates $\sigma$
+   when ions pair.
+6. **Expecting a trajectory-scanning recipe** — species selection and charge
+   weighting are **your** preprocessing; the Compute only sees arrays.
 
 ---
 
 ## 8. References
 
-- A. Einstein, *Ann. Phys.* **322**, 549 (1905) — the diffusion/MSD relation.
-- M. P. Allen, D. J. Tildesley, *Computer Simulation of Liquids*, 2nd ed. (2017)
-  — MSD, time-origin averaging, transport coefficients.
-- J.-P. Hansen, I. R. McDonald, *Theory of Simple Liquids*, 4th ed. — Green–Kubo
-  relations and the current correlation function.
-- D. Frenkel, B. Smit, *Understanding Molecular Simulation*, 2nd ed. (2002),
-  §4.4 — Einstein relations for transport coefficients.
-- L. Onsager, *Phys. Rev.* **37**, 405 (1931); **38**, 2265 (1931) —
-  reciprocal relations and phenomenological coefficients.
+- A. Einstein, *Ann. Phys.* **322**, 549 (1905).
+- M. P. Allen, D. J. Tildesley, *Computer Simulation of Liquids*, 2nd ed. (2017).
+- J.-P. Hansen, I. R. McDonald, *Theory of Simple Liquids*, 4th ed.
+- D. Frenkel, B. Smit, *Understanding Molecular Simulation*, 2nd ed. (2002), §4.4.
+- L. Onsager, *Phys. Rev.* **37**, 405 (1931); **38**, 2265 (1931).
 
 [^gudla]: H. Gudla, Y. Shao et al., *J. Phys. Chem. Lett.* **12**, 8460 (2021) —
-    distinct diffusion combined with a persistence function to extract the
-    pairing contribution to transport.
+    distinct diffusion with persistence to extract pairing transport.
 
 ## See also
 
-- [Dielectric Spectroscopy](dielectric.md) — the spectral machinery
-  ($\varepsilon^*(\omega)$, autocorrelation, FFT) and the full conductivity
-  derivations.
-- [Pair Persistence](persistence.md) — residence times and the survival
-  functions that resolve the *pairing* contribution to diffusion.
-- [Compute overview](index.md) — the Compute → Result pattern.
+- [Dielectric Spectroscopy](dielectric.md) — $\varepsilon^*(\omega)$ and full
+  conductivity derivations.
+- [Pair Persistence](persistence.md) — residence times and pairing.
+- [Velocity Autocorrelation & VDOS](vacf.md) — Green–Kubo $D$ via VACF.
+- [Compute overview](index.md) — patterns and catalogue.
 - [API reference: Compute](../api/compute.md).

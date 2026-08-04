@@ -100,7 +100,7 @@ The diagram below illustrates the standard data flow through a MolPy pipeline. E
 | Layer | What it is | In depth |
 |-------|-----------|----------|
 | **Entity & Link** — `Atom`, `Bond`, `Angle`, `Dihedral` | Identity-first graph model for building and editing | [Atomistic and Topology](01_atomistic_and_topology.md) |
-| **Topology** | Angles/dihedrals and k-hop queries *derived* from the bond graph — there is no standalone class; use `get_topo()` / `get_topo_neighbors()` / `get_topo_distances()` | [Atomistic and Topology](01_atomistic_and_topology.md) |
+| **Topology** | Angles/dihedrals *derived* from the bond graph and written in place by `get_topo()`; k-hop queries via `get_topo_neighbors()` / `get_topo_distances()` — no standalone topology class | [Atomistic and Topology](01_atomistic_and_topology.md) |
 | **Block & Frame** | Columnar tables (`atoms`, `bonds`, …) plus box and metadata — the exchange object that writers and compute operate on | [Block and Frame](02_block_and_frame.md) |
 | **Box** | Simulation cell + periodic boundaries (wrapping, minimum-image distances) | [Box and Periodicity](03_box_and_periodicity.md) |
 | **ForceField & Typifier** | A parameter catalog (styles + type tables) and the rule engine that assigns types onto a structure | [Force Field](04_force_field.md) |

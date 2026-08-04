@@ -5,7 +5,7 @@ The trajectory *container* sinks to molrs: :class:`molpy.Trajectory` subclasses
 optional ``step`` / ``time`` arrays. molpy adds Python-side conveniences: an
 associated topology, slice indexing that returns a sub-trajectory, and frame
 mapping. Lazy, seekable reading from disk lives in molrs as ``TrajectoryReader``
-(``molrs.read_lammps_trajectory`` / ``read_xyz_trajectory``), not here.
+(``molrs.io.read_lammps_trajectory`` / ``read_xyz_trajectory``), not here.
 
 Trajectory *splitting* stays in molpy as an extension layer that operates on the
 molrs-backed container (:class:`SplitStrategy` and :class:`TrajectorySplitter`).
@@ -32,7 +32,7 @@ class Trajectory(molrs.Trajectory):
 
     Frames must be :class:`molrs.Frame` objects — the Rust container copies
     each into its column store on construction. For lazy, seekable reading from
-    disk use ``molrs.read_lammps_trajectory`` / ``read_xyz_trajectory``, which
+    disk use ``molrs.io.read_lammps_trajectory`` / ``read_xyz_trajectory``, which
     return a lazy ``TrajectoryReader`` instead of materializing every frame.
 
     Args:

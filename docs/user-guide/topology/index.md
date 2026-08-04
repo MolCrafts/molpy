@@ -47,19 +47,33 @@ Whatever architecture you want, MolPy asks for the same three answers.
 2. **What the reaction does** — `mp.Reaction(...)` (Daylight reaction SMARTS)
 3. **Which sites pair** — a `Selector` (chosen for you by `build_*`, or passed to `assemble`)
 
-**`PolymerBuilder.build(cgsmiles)` is the only expand + assemble entry.**
-`build_linear`, `build_sequence`, `build_ring`, and `build_star` only format CGSmiles and call `build`.
+**`PolymerBuilder.build(topology)` is the only expand + assemble entry**, where
+`topology` is a `CGSmilesGraphIR`.
+`build_linear`, `build_sequence`, `build_ring`, and `build_star` only build that
+topology and call `build`.
 
 ```python
-builder.build_linear("EO", 5)   # identical to:
-builder.build("{[#EO]|5}")
+import sys
+
+sys.path.insert(0, "examples/topology")  # the shared EO kit
+from eo_kit import eo_builder
+from molpy.builder.assembly import linear_topology
+
+builder = eo_builder()
+builder.build_linear("EO", 5)  # identical to:
+builder.build(linear_topology(["EO"] * 5))
 ```
 
 Statistical networks skip `build`’s residue graph: you already have a world, then
 
 ```python
-GraphAssembler(reaction).assemble(world, ExhaustiveSelector(...))
-# or RandomSelector / SpacingSelector / ExplicitPairSelector
+from molpy.builder.assembly import ExhaustiveSelector, GraphAssembler
+
+# PolymerBuilder is a GraphAssembler; TopologySelector is one of the selectors.
+# Swapping the selector is what changes the architecture:
+assert isinstance(builder, GraphAssembler)
+assert callable(ExhaustiveSelector)
+# or RandomSelector / ProximitySelector / ExplicitPairSelector
 ```
 
 ## Reaction SMARTS (one screen)
@@ -85,7 +99,10 @@ Reactants left of `>>`, products right. Atom maps (`:1`) preserve identity; unma
 ```
 
 ```python
+from eo_kit import ethylene_glycol
 from molpy.builder.assembly import SiteMap
+
+eo = ethylene_glycol()
 SiteMap(eo).label_elements("O", "a", "b")
 ```
 

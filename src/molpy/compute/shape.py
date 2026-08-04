@@ -7,6 +7,11 @@ Thin wrappers around ``molrs.compute.cluster``:
 - ``InertiaTensor`` (frames, clusters, com) → 3×3 tensors per cluster
 - ``RadiusOfGyration`` (frames, clusters, com) → Rg per cluster
 
+The two reference points are not interchangeable: ``centers`` is the geometric
+``ClusterCentersResult`` from ``ClusterCenters``, while ``com`` is the
+``CenterOfMassResult`` from ``CenterOfMass``. Inertia and Rg are defined about
+the center of mass and take the latter.
+
 References
 ----------
 - V. Ramasubramani et al., *Comput. Phys. Commun.* **254**, 107275 (2020) — the

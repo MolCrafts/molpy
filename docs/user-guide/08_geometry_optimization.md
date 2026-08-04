@@ -19,14 +19,20 @@ quasi-Newton minimizer, evaluating a force field through `ForceFieldPotential`.
 `molpy.optimize` is imported directly (it is not exposed as `mp.optimize`):
 
 ```python
+import molpy as mp
+from molpy.conformer import Conformer
 from molpy.optimize import LBFGS, ForceFieldPotential
 
-potential = ForceFieldPotential(forcefield)      # wraps a molrs ForceField
+mol, _ = Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
+forcefield = mp.io.read_xml_forcefield("oplsaa.xml")
+frame = mp.typifier.OPLSAATypifier().typify(mol).to_frame()
+
+potential = ForceFieldPotential(forcefield)  # wraps a molrs ForceField
 opt = LBFGS(potential)
-result = opt.run(frame, fmax=0.05, steps=200)    # relaxes frame in place
+result = opt.run(frame, fmax=0.05, steps=200)  # relaxes frame in place
 
 print(result.converged, result.energy, result.fmax, result.nsteps)
-print(result.reason)                             # why it stopped
+print(result.reason)  # why it stopped
 ```
 
 `run` returns an `OptimizationResult`; by default it optimizes `frame` **in
@@ -59,7 +65,7 @@ and `reason`. Always check `converged`: a run that hit the `steps` cap
 To watch progress, attach a callback that fires every `interval` steps:
 
 ```python
-opt.attach(lambda: print(opt.step(frame)), interval=10)   # (energy, fmax) per call
+opt.attach(lambda: print(opt.step(frame)), interval=10)  # (energy, fmax) per call
 ```
 
 ## Pitfalls

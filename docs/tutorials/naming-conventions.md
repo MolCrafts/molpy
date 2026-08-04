@@ -8,12 +8,24 @@ MolPy intentionally supports two complementary representations of molecular topo
 
 At the Frame and Block level, topology is expressed purely in terms of integer atom indices. These indices are always 0-based and refer to rows in the atoms block. For this representation, MolPy uses the field names `atomi`, `atomj`, `atomk`, and `atoml`. For example, a bond stored in a frame is represented as:
 
+The examples below share this setup:
+
 ```python
-frame["bonds"] = Block({
-    "type": ["C-H"],
-    "atomi": [0],
-    "atomj": [1],
-})
+import molpy as mp
+from molpy import Block
+
+frame = mp.Frame()
+frame["atoms"] = {"x": [0.0, 1.0], "y": [0.0, 0.0], "z": [0.0, 0.0]}
+```
+
+```python
+frame["bonds"] = Block(
+    {
+        "type": ["C-H"],
+        "atomi": [0],
+        "atomj": [1],
+    }
+)
 ```
 
 Here, `atomi` and `atomj` are integers that refer to positions in the atoms block. A strict rule applies: `atomi`, `atomj`, `atomk`, and `atoml` must always store integers and must never store Atom objects.
@@ -104,6 +116,9 @@ Field names within a namespace use lowercase with underscore separators for mult
 At the Entity level, MolPy's topology objects (Bond, Angle, Dihedral, Improper) operate directly on Atom instances. These objects are used during molecular construction, editing, and chemical reasoning. For entity-level topology, MolPy uses the field names `itom`, `jtom`, `ktom`, and `ltom`, which correspond to the Frame-level `atomi`, `atomj`, `atomk`, and `atoml` but store object references instead of integer indices. For example:
 
 ```python
+mol = mp.Atomistic()
+atom1 = mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
+atom2 = mol.def_atom(element="H", x=1.1, y=0.0, z=0.0)
 bond = mol.def_bond(atom1, atom2)
 print(bond.itom)  # Atom object
 print(bond.jtom)  # Atom object
@@ -129,23 +144,29 @@ MolPy provides explicit conversion paths between these two representations. When
 
 ```python
 # Entity to Frame conversion for bonds
+atoms, bonds = list(mol.atoms), list(mol.bonds)
 atomi_list = [atoms.index(bond.itom) for bond in bonds]
 atomj_list = [atoms.index(bond.jtom) for bond in bonds]
 
-frame["bonds"] = Block({
-    "atomi": atomi_list,
-    "atomj": atomj_list,
-})
+frame["bonds"] = Block(
+    {
+        "atomi": atomi_list,
+        "atomj": atomj_list,
+    }
+)
 ```
 
-When converting from Frame to Entity, each index is resolved back to an Atom object using the atoms container. The namespace structure in the Frame guides which Entity types to construct:
+When converting from Frame to Entity, each index is resolved back to an Atom object using the atoms container. A `Bond` is a view onto a graph's relation, so the graph creates it — `def_bond` is the conversion, and the namespace structure in the Frame guides which Entity types to ask for:
 
 ```python
 # Frame to Entity conversion for bonds
+rebuilt = mp.Atomistic()
+rebuilt_atoms = [rebuilt.def_atom(element=atom["element"]) for atom in atoms]
+
 for i in range(len(frame["bonds"]["atomi"])):
-    atomi = frame["bonds"]["atomi"][i]
-    atomj = frame["bonds"]["atomj"][i]
-    bond = Bond(itom=atoms[atomi], jtom=atoms[atomj])
+    atomi = int(frame["bonds"]["atomi"][i])
+    atomj = int(frame["bonds"]["atomj"][i])
+    bond = rebuilt.def_bond(rebuilt_atoms[atomi], rebuilt_atoms[atomj])
 ```
 
 These conversions must be explicit and localized at the boundary between Frame and Entity layers. Mixing the two representations inside the same object is not allowed. The namespace structure in Frame ensures that all related fields (such as bond indices and bond types) are kept together during conversion, simplifying the logic and reducing the chance of misalignment errors.

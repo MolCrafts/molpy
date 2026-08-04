@@ -23,8 +23,8 @@ class TestMol2Reader:
         assert atoms["y"][0] == pytest.approx(0.6530)
         assert atoms["z"][0] == pytest.approx(-8.5260)
         assert atoms["type"][0] == "c3"
-        assert int(atoms["subst_id"][0]) == 1
-        assert atoms["subst_name"][0] == "ETH"
+        assert int(atoms["res_id"][0]) == 1
+        assert atoms["res_name"][0] == "ETH"
         assert atoms["charge"][0] == pytest.approx(-0.094100)
 
 
@@ -106,8 +106,8 @@ class TestMol2Comprehensive:
                 atoms = frame["atoms"]
 
                 # Should have atomic numbers assigned
-                if "number" in atoms:
-                    atomic_numbers = atoms["number"]
+                if "atomic_number" in atoms:
+                    atomic_numbers = atoms["atomic_number"]
                     assert all(an > 0 for an in atomic_numbers)
                 break
         else:
@@ -179,13 +179,13 @@ class TestMol2Comprehensive:
         atoms = frame["atoms"]
 
         # Check substructure fields
-        if "subst_id" in atoms:
-            subst_ids = atoms["subst_id"]
-            assert len(subst_ids) > 0
+        if "res_id" in atoms:
+            res_ids = atoms["res_id"]
+            assert len(res_ids) > 0
 
-        if "subst_name" in atoms:
-            subst_names = atoms["subst_name"]
-            assert len(subst_names) > 0
+        if "res_name" in atoms:
+            res_names = atoms["res_name"]
+            assert len(res_names) > 0
 
     def test_atomic_number_assignment(self, TEST_DATA_DIR):
         """Test atomic number assignment from atom types."""
@@ -197,8 +197,8 @@ class TestMol2Comprehensive:
         atoms = frame["atoms"]
 
         # Should have atomic numbers
-        if "number" in atoms:
-            atomic_numbers = atoms["number"]
+        if "atomic_number" in atoms:
+            atomic_numbers = atoms["atomic_number"]
             assert all(an > 0 for an in atomic_numbers)
 
             # For ethane, should have carbon (6) and hydrogen (1)

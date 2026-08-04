@@ -20,8 +20,8 @@ from molpy.builder.assembly._topology import TopologySelector
 from molpy.core import fields
 from molpy.core.atomistic import Atomistic
 from molpy.io.readers import read_amber
-from molpy.parser.smiles import parse_cgsmiles
-from molpy.parser.smiles.cgsmiles_ir import CGSmilesGraphIR, CGSmilesIR
+from molpy.builder.assembly._cgsmiles_ir import CGSmilesGraphIR
+from molpy.builder.assembly._residue_graph import linear_topology
 
 from .types import AmberBuildResult
 
@@ -151,43 +151,55 @@ class AmberPolymerBuilder:
         self._prepared_monomers: dict[str, _PreparedMonomer] = {}
         self._semantic_cache: dict[str, _ResidueRecipes] = {}
 
-    def build(self, cgsmiles: str) -> AmberBuildResult:
-        """Build a polymer from a CGSmiles string.
+    def build(self, topology: CGSmilesGraphIR | str) -> AmberBuildResult:
+        """Build a polymer from a residue topology.
 
         Args:
-            cgsmiles: CGSmiles notation string (e.g., "{[#EO]|10}")
+            topology: :class:`CGSmilesGraphIR`, or a simple linear string
+                ``{[#LABEL]|n}`` / ``{[#A][#B]…}``.
 
         Returns:
             AmberBuildResult containing Frame, ForceField, and file paths.
-
-        Raises:
-            ValueError: If CGSmiles is invalid or labels not in library.
         """
-        # Parse CGSmiles
-        ir = parse_cgsmiles(cgsmiles)
+        graph = (
+            self._coerce_topology(topology)
+            if not isinstance(topology, CGSmilesGraphIR)
+            else topology
+        )
+        self._validate_graph(graph)
 
-        # Validate
-        self._validate_ir(ir)
+        recipes = self._compile_semantics(str(topology), graph)
 
-        recipes = self._compile_semantics(cgsmiles, ir.base_graph)
-
-        # Prepare all monomers (antechamber → parmchk2 → prepgen)
-        self._prepare_monomers(ir.base_graph, recipes)
-
-        # Generate and run tleap
-        result = self._build_with_tleap(ir.base_graph, output_prefix="polymer")
-
-        result.cgsmiles = cgsmiles
+        self._prepare_monomers(graph, recipes)
+        result = self._build_with_tleap(graph, output_prefix="polymer")
+        result.cgsmiles = str(topology)
         return result
 
-    def _validate_ir(self, ir: CGSmilesIR) -> None:
-        """Validate CGSmiles IR."""
-        graph = ir.base_graph
+    @staticmethod
+    def _coerce_topology(spec: str) -> CGSmilesGraphIR:
+        """Accept only the linear homopolymer / sequence forms used by helpers."""
+        import re
 
+        s = spec.strip()
+        m = re.fullmatch(r"\{\[#([A-Za-z0-9_]+)\]\|(\d+)\}", s)
+        if m:
+            return linear_topology([m.group(1)] * int(m.group(2)))
+        m = re.fullmatch(r"\{((?:\[#([A-Za-z0-9_]+)\])+)\}", s)
+        if m:
+            labels = re.findall(r"\[#([A-Za-z0-9_]+)\]", s)
+            if labels:
+                return linear_topology(labels)
+        raise ValueError(
+            "AmberPolymerBuilder does not parse free-form CGSmiles. "
+            "Pass a CGSmilesGraphIR from linear_topology / ring_topology / star_topology, "
+            f"or a simple linear string like '{{[#EO]|10}}'. Got: {spec!r}"
+        )
+
+    def _validate_graph(self, graph: CGSmilesGraphIR) -> None:
+        """Validate topology graph against the monomer library."""
         if not graph.nodes:
-            raise ValueError("CGSmiles graph is empty")
+            raise ValueError("topology graph is empty")
 
-        # Check all labels exist in library
         missing_labels = set()
         for node in graph.nodes:
             if node.label not in self.library:
@@ -231,7 +243,7 @@ class AmberPolymerBuilder:
             self.library,
             self.reaction,
             finalize=Finalization.ATOMS,
-        ).build(cgsmiles)
+        ).build(graph)
         atoms_by_residue: dict[int, list] = {}
         for atom in product.atoms:
             residue = atom.get(fields.RES_ID)

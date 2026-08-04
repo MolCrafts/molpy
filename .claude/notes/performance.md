@@ -9,8 +9,8 @@ and the `optimizer` agent. Migrated from the former local `molpy-perf` skill and
 - **Compute operators** (RDF, MSD, dielectric, …): called per-frame, must be fast.
 - **Pairwise distance**: the most common inner loop across compute/ and builder/.
 - **Builder placement**: coordinate transforms in tight loops.
-- **Parser**: Lark grammar compilation — compile once and cache, never per-call;
-  transformers should avoid unnecessary intermediate objects.
+- **Parser / SMARTS**: SMILES/SMARTS run in molrs — avoid re-compiling the same
+  SMARTS pattern in a hot loop; reuse `SmartsPattern` instances.
 
 ## Vectorization rules
 

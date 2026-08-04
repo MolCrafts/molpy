@@ -2,7 +2,7 @@
 
 molrs (the Rust extension) natively owns the entire force-field model:
 ``ForceField``, the ``Style`` tree, the ``Type`` tree and ``Parameters``.
-molpy no longer maintains a parallel Python hierarchy; this module simply
+molpy maintains no parallel Python hierarchy; this module simply
 re-exports the molrs classes and adds the handful of thin specialized
 ``Style`` subclasses that molrs does not ship a named class for (e.g.
 ``morse``, ``class2``, ``fourier``, ``periodic`` variants).
@@ -15,7 +15,7 @@ molrs via ``ff.to_potentials().calc_energy(frame)`` / ``.calc_forces(frame)``.
 
 from __future__ import annotations
 
-from molrs import (
+from molrs.ff import (
     AngleHarmonicStyle,
     AngleStyle,
     AngleType,
@@ -31,9 +31,6 @@ from molrs import (
     ImproperStyle,
     ImproperType,
     PairCoulLongStyle,
-    PairLJ126CoulCutStyle,
-    PairLJ126CoulLongStyle,
-    PairLJ126Style,
     PairStyle,
     PairType,
     Parameters,
@@ -150,6 +147,20 @@ class ImproperClass2Style(ImproperStyle):
         return "class2"
 
 
+class PairLjCutCoulCutStyle(PairStyle):
+    """Pair ``lj/cut/coul/cut`` (LAMMPS combined LJ + Coulomb cutoff)."""
+
+    def _name_default(self) -> str:
+        return "lj/cut/coul/cut"
+
+
+class PairLjCutCoulLongStyle(PairStyle):
+    """Pair ``lj/cut/coul/long`` (LAMMPS LJ cutoff + long-range Coulomb)."""
+
+    def _name_default(self) -> str:
+        return "lj/cut/coul/long"
+
+
 class PairBuckStyle(PairStyle):
     """Pair ``buck`` (Buckingham) style."""
 
@@ -226,9 +237,6 @@ __all__ = [
     "BondHarmonicStyle",
     "AngleHarmonicStyle",
     "DihedralOPLSStyle",
-    "PairLJ126Style",
-    "PairLJ126CoulCutStyle",
-    "PairLJ126CoulLongStyle",
     "PairCoulLongStyle",
     # Thin specialized styles (molpy-defined, gap fillers)
     "BondMorseStyle",
@@ -245,6 +253,8 @@ __all__ = [
     "ImproperHarmonicStyle",
     "ImproperCvffStyle",
     "ImproperClass2Style",
+    "PairLjCutCoulCutStyle",
+    "PairLjCutCoulLongStyle",
     "PairBuckStyle",
     "PairMorseStyle",
     "PairLJClass2Style",

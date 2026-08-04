@@ -1,6 +1,6 @@
 """Physical sanity of molrs-backed conformer generation.
 
-``molpy.conformer.Conformer`` subclasses :class:`molrs.Conformer` (distance
+``molpy.conformer.Conformer`` subclasses :class:`molrs.conformer.Conformer` (distance
 geometry + minimization), operating on a :class:`molpy.Atomistic` graph and
 returning a fresh structure. The RDKit adapter (``molpy.adapter.rdkit``) remains
 available as a separate external backend, but is not the trunk.
@@ -11,8 +11,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import molpy as mp
 from molpy.conformer import Conformer
-from molpy.parser import parse_molecule
 
 # Equilibrium bond lengths (Angstrom) from standard references
 # (CRC Handbook / Allen et al., J. Chem. Soc. Perkin Trans. 2, 1987).
@@ -38,7 +38,7 @@ def _bond_lengths_by_pair(mol):
 
 
 def test_generate_returns_3d_coords():
-    mol = parse_molecule("CCO")  # ethanol, heavy-atom graph
+    mol = mp.io.read_smiles("CCO")  # ethanol, heavy-atom graph
     out, _ = Conformer(seed=42).generate(mol)
 
     atoms = list(out.atoms)
@@ -50,7 +50,7 @@ def test_generate_returns_3d_coords():
 
 
 def test_input_molecule_immutable():
-    mol = parse_molecule("CCO")
+    mol = mp.io.read_smiles("CCO")
     n_before = len(list(mol.atoms))
     coords_before = [(a.get("x"), a.get("y"), a.get("z")) for a in mol.atoms]
 
@@ -68,7 +68,7 @@ def test_input_molecule_immutable():
 )
 def test_conformer_physical_sanity(smiles, name):
     """Generated geometries have bond lengths within 10% of literature."""
-    mol = parse_molecule(smiles)
+    mol = mp.io.read_smiles(smiles)
     out, _ = Conformer(seed=42).generate(mol)
 
     pairs = _bond_lengths_by_pair(out)

@@ -14,8 +14,20 @@ Spatial packing of molecules into periodic simulation boxes via Packmol.
 ## Canonical example
 
 ```python
+# docs: skip — Packmol binary; pack unit-tested with mocks and script literals
 import numpy as np
+import molpy as mp
 from molpy.pack import Packmol, InsideBoxConstraint
+
+water = mp.Atomistic(name="water")
+o = water.def_atom(element="O", x=0.0, y=0.0, z=0.0)
+water.def_bond(o, water.def_atom(element="H", x=0.957, y=0.0, z=0.0))
+water.def_bond(o, water.def_atom(element="H", x=-0.239, y=0.927, z=0.0))
+water_frame = water.to_frame()
+
+ion = mp.Atomistic(name="sodium")
+ion.def_atom(element="Na", x=0.0, y=0.0, z=0.0, charge=1.0)
+ion_frame = ion.to_frame()
 
 packer = Packmol(workdir="pack_output")
 constraint = InsideBoxConstraint(

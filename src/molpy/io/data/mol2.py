@@ -4,7 +4,25 @@ import numpy as np
 
 from molrs import Element, Frame
 
+from molpy.core.fields import ATOMIC_NUMBER, RES_ID, RES_NAME, FieldFormatter
+
 from .base import DataReader
+
+
+class Mol2FieldFormatter(FieldFormatter):
+    """TRIPOS MOL2 field name translation.
+
+    A MOL2 *substructure* is a residue — that is what ``subst_id`` /
+    ``subst_name`` hold — so they are the canonical residue pair under another
+    spelling, not extra format metadata. ``status_bit`` / ``status_bits`` are
+    SYBYL bookkeeping with no molpy meaning and keep their own names.
+    """
+
+    _field_formatters = {
+        "subst_id": RES_ID,
+        "subst_name": RES_NAME,
+        "number": ATOMIC_NUMBER,
+    }
 
 
 class Mol2Reader(DataReader):
@@ -18,6 +36,8 @@ class Mol2Reader(DataReader):
     - Supports partial files with missing sections
     - Assigns atomic numbers from atom names/types
     """
+
+    _formatter = Mol2FieldFormatter()
 
     def __init__(self, file: str | Path):
         super().__init__(Path(file))
@@ -77,17 +97,10 @@ class Mol2Reader(DataReader):
         # Build datasets
         if self.atoms:
             # Convert atom list to Frame Block structure
-            atoms_dict = {}
-            for key in self.atoms[0]:
-                values = [atom[key] for atom in self.atoms]
-                if key == "xyz":
-                    # Convert tuples to separate x, y, z arrays
-                    xyz_array = np.array(values)
-                    atoms_dict["x"] = xyz_array[:, 0]
-                    atoms_dict["y"] = xyz_array[:, 1]
-                    atoms_dict["z"] = xyz_array[:, 2]
-                else:
-                    atoms_dict[key] = np.array(values)
+            atoms_dict = {
+                key: np.array([atom[key] for atom in self.atoms])
+                for key in self.atoms[0]
+            }
 
             frame["atoms"] = atoms_dict
 
@@ -98,6 +111,8 @@ class Mol2Reader(DataReader):
                 bonds_dict[key] = np.array([bond[key] for bond in self.bonds])
             frame["bonds"] = bonds_dict
 
+        # Reader exit: TRIPOS's spelling stops here, molpy's starts.
+        self._formatter.canonicalize_frame(frame)
         return frame
 
     def _parse_molecule_section(self, line: str, line_num: int) -> None:
@@ -141,7 +156,6 @@ class Mol2Reader(DataReader):
 
             # Coordinates - must be present
             x, y, z = float(data[2]), float(data[3]), float(data[4])
-            xyz = (x, y, z)
 
             atom_type = data[5]
 
@@ -157,7 +171,9 @@ class Mol2Reader(DataReader):
                 {
                     "id": index,
                     "name": name,
-                    "xyz": xyz,
+                    "x": x,
+                    "y": y,
+                    "z": z,
                     "type": atom_type,
                     "subst_id": subst_id,
                     "subst_name": subst_name,

@@ -8,6 +8,9 @@ Producers (``Reacter``, ``Crosslinker``) build it from the atoms an edit touched
 
 import inspect
 
+import molrs
+import pytest
+
 import molpy as mp
 from molpy.typifier.affected_region import AffectedRegion
 from molpy.core.atomistic import Atom, Atomistic
@@ -24,7 +27,7 @@ def _carbon_chain(m: int) -> tuple[Atomistic, list[Atom]]:
         c = s.def_atom(element="C", x=float(i), y=0.0, z=0.0)
         s.def_bond(c, s.def_atom(element="H", x=float(i), y=1.0, z=0.0))
         if prev is not None:
-            s.def_bond(prev, c, order=1.0)
+            s.def_bond(prev, c, bond_type=1, bond_number=1)
         carbons.append(c)
         prev = c
     return s, carbons
@@ -114,6 +117,149 @@ def test_extraction_radius_is_derived_from_reach_not_guessed():
 
 
 # --------------------------------------------------------------------------
+# A ring is not divisible: a radius may not take half of one
+# --------------------------------------------------------------------------
+
+
+def _methylbenzene() -> tuple[Atomistic, list[Atom], Atom]:
+    """Six-carbon ring with a methyl carbon on ring atom 0. Returns
+    ``(graph, ring_atoms, methyl)``; ring index == hops from the methyl minus 1.
+    """
+    s = mp.Atomistic()
+    ring = [s.def_atom(element="C", x=float(i), y=0.0, z=0.0) for i in range(6)]
+    for i in range(6):
+        s.def_bond(ring[i], ring[(i + 1) % 6], bond_type=4, bond_number=0)
+    methyl = s.def_atom(element="C", x=0.0, y=1.5, z=0.0)
+    s.def_bond(ring[0], methyl, bond_type=1, bond_number=1)
+    return s, ring, methyl
+
+
+def _rings_of(graph: Atomistic) -> list[set[int]]:
+    return [set(ring) for ring in molrs.perceive.RingInfo(graph).rings()]
+
+
+def test_region_never_splits_a_ring():
+    # reach=1 gives extract_radius 3, which from the methyl carbon reaches the
+    # meta atoms and stops one short of para — half a ring, without closure.
+    graph, ring, methyl = _methylbenzene()
+    region = AffectedRegion.around(graph, [methyl], reach=1)
+    assert region.extract_radius == 3
+
+    selected = {region.entity_map[a].handle for a in region.atoms}
+    for whole_ring in _rings_of(graph):
+        inside = whole_ring & selected
+        assert inside in (set(), whole_ring), (
+            f"ring split: {len(inside)} of {len(whole_ring)} atoms"
+        )
+    assert {a.handle for a in ring} <= selected
+    assert methyl.handle in selected
+
+
+def test_every_seed_keeps_every_ring_whole():
+    graph, _, _ = _methylbenzene()
+    rings = _rings_of(graph)
+    for seed in list(graph.atoms):
+        region = AffectedRegion.around(graph, [seed], reach=1)
+        selected = {region.entity_map[a].handle for a in region.atoms}
+        for whole_ring in rings:
+            inside = whole_ring & selected
+            assert inside in (set(), whole_ring), f"ring split at seed {seed.handle}"
+
+
+def test_ring_closure_atoms_are_context_never_interior():
+    """Closing the ring widens the view, not the write-back set.
+
+    The atoms a ring drags in sit past ``extract_radius`` by construction, so
+    ``interior`` stays exactly ``ball(touched, interior_reach)``.
+    """
+    graph, ring, methyl = _methylbenzene()
+    region = AffectedRegion.around(graph, [methyl], reach=1)
+
+    inside = {h for h, _ in graph.topo_distances(methyl.handle, max_hops=2)}
+    assert {region.entity_map[a].handle for a in region.interior} == inside
+    # para is four hops from the methyl: it is in the region, out of the interior.
+    para = ring[3].handle
+    assert para in {region.entity_map[a].handle for a in region.atoms}
+    assert para not in {region.entity_map[a].handle for a in region.interior}
+
+
+def test_a_fused_ring_system_comes_in_whole():
+    # Naphthalene: ring A 0-1-2-3-4-5, ring B 3-4-6-7-8-9 share the 3-4 bond.
+    s = mp.Atomistic()
+    ids = [s.def_atom(element="C", x=float(i), y=0.0, z=0.0) for i in range(10)]
+    for i in range(5):
+        s.def_bond(ids[i], ids[i + 1], bond_type=4, bond_number=0)
+    s.def_bond(ids[5], ids[0], bond_type=4, bond_number=0)
+    for a, b in ((ids[3], ids[6]), (ids[6], ids[7]), (ids[7], ids[8])):
+        s.def_bond(a, b, bond_type=4, bond_number=0)
+    s.def_bond(ids[8], ids[9], bond_type=4, bond_number=0)
+    s.def_bond(ids[9], ids[4], bond_type=4, bond_number=0)
+
+    # A radius-1 ball around one atom of ring A cannot see ring B at all.
+    region = AffectedRegion._from(s, [ids[0]], extract_radius=1, interior_reach=1)
+    selected = {region.entity_map[a].handle for a in region.atoms}
+    assert selected == {a.handle for a in ids}, (
+        "a fused system is one unit: touching ring A brings ring B"
+    )
+
+
+def _macrocycle(m: int) -> tuple[Atomistic, list[Atom]]:
+    """One `m`-membered carbocycle — a ring topologically, a chain locally."""
+    s = mp.Atomistic()
+    ring = [s.def_atom(element="C", x=float(i), y=0.0, z=0.0) for i in range(m)]
+    for i in range(m):
+        s.def_bond(ring[i], ring[(i + 1) % m], bond_type=1, bond_number=1)
+    return s, ring
+
+
+@pytest.mark.parametrize("size", [50, 500, 5000])
+def test_a_macrocycle_does_not_drag_its_whole_loop_into_the_ball(size):
+    """The bound is what keeps a region a region.
+
+    Closure used to run on *any* ring, so a ball of nine atoms on a 5000-ring
+    extracted all 5000 — and one crosslink joining two chains is all it takes to
+    create that ring. The extracted ball must stay the size the radius asked
+    for, and must not grow with the loop.
+    """
+    graph, ring = _macrocycle(size)
+    region = AffectedRegion.around(graph, [ring[0]], reach=2)
+
+    assert region.extract_radius == 4
+    # A ball of radius 4 on a plain cycle: the seed plus four atoms each way.
+    assert len(list(region.atoms)) == 9, (
+        f"a {size}-membered ring pulled {len(list(region.atoms))} atoms into a "
+        "ball that asked for 9"
+    )
+    assert len(region.interior) == 5
+
+
+def test_the_bound_is_the_only_thing_separating_the_two_cases():
+    """Same graph, same ball — only ``MAX_RING_SIZE`` decides.
+
+    Guards against the ball staying small for some unrelated reason: raise the
+    bound past the ring and the whole loop comes back.
+    """
+    graph, ring = _macrocycle(12)
+    assert AffectedRegion.MAX_RING_SIZE == 8
+
+    bounded, _ = graph.extract_subgraph(
+        [ring[0]], 4, max_ring_size=AffectedRegion.MAX_RING_SIZE
+    )
+    assert len(list(bounded.atoms)) == 9
+
+    generous, _ = graph.extract_subgraph([ring[0]], 4, max_ring_size=12)
+    assert len(list(generous.atoms)) == 12
+
+
+def test_a_small_ring_is_still_indivisible_under_the_bound():
+    """The bound must not cost the behaviour it was added to preserve."""
+    graph, ring, methyl = _methylbenzene()
+    region = AffectedRegion.around(graph, [methyl], reach=1)
+    selected = {region.entity_map[a].handle for a in region.atoms}
+    assert {a.handle for a in ring} <= selected
+
+
+# --------------------------------------------------------------------------
 # ac-002 — structural __hash__ / __eq__ (dedup key); Entity identity preserved
 # --------------------------------------------------------------------------
 
@@ -139,6 +285,33 @@ def test_different_junctions_are_not_equal():
     big = AffectedRegion._from(chain, [carbons[2]], extract_radius=3, interior_reach=0)
     assert small != big
     assert hash(small) != hash(big)
+
+
+def test_same_graph_with_a_different_write_back_set_is_a_different_region():
+    """Equality is the cache key, and the cache replays a *write-back set*.
+
+    Two edits on one small molecule extract the same graph — the whole
+    molecule — while disturbing opposite ends of it. A snapshot records only
+    its own interior, keyed by canonical position, so replaying one onto the
+    other would retype the first edit's atoms a second time and leave the
+    second edit's atoms untouched. That is a silent wrong answer, not a slow
+    one: nothing downstream can tell an unwritten type from an unchanged one.
+    """
+    chain, carbons = _carbon_chain(5)
+    # An asymmetric terminus, so the two write-back sets cannot be related by an
+    # automorphism of the chain — a symmetric molecule's two ends genuinely are
+    # interchangeable, and a snapshot taken at one does apply at the other.
+    chain.def_bond(carbons[0], chain.def_atom(element="O", x=0.0, y=-1.0, z=0.0))
+
+    head = AffectedRegion._from(chain, [carbons[0]], extract_radius=9, interior_reach=1)
+    tail = AffectedRegion._from(chain, [carbons[4]], extract_radius=9, interior_reach=1)
+
+    def covered(region):
+        return {atom.handle for atom in region.entity_map.values()}
+
+    assert covered(head) == covered(tail)  # same extracted graph
+    assert head != tail
+    assert hash(head) != hash(tail)
 
 
 def test_member_atoms_keep_identity_hashing():

@@ -19,7 +19,7 @@ class TestWriteLammpsTrajectory:
             # Create atoms data using Block structure
             atoms_data = {
                 "id": [0, 1, 2],
-                "type": [1, 1, 2],
+                "type_id": [1, 1, 2],
                 "x": [0.0 + i * 0.1, 1.0 + i * 0.1, 0.5 + i * 0.1],
                 "y": [0.0, 0.0, 1.0],
                 "z": [0.0, 0.0, 0.0],
@@ -58,7 +58,7 @@ class TestWriteLammpsTrajectory:
         frame = molrs.Frame()
         atoms_data = {
             "id": [0, 1],
-            "type": [1, 1],
+            "type_id": [1, 1],
             "x": [0.0, 1.0],
             "y": [0.0, 0.0],
             "z": [0.0, 0.0],
@@ -78,7 +78,7 @@ class TestWriteLammpsTrajectory:
 
         atoms_data = {
             "id": [0, 1, 2, 3],
-            "type": [1, 1, 2, 2],
+            "type_id": [1, 1, 2, 2],
             "x": [0.0, 1.0, 0.5, 1.5],
             "y": [0.0, 0.0, 1.0, 1.0],
             "z": [0.0, 0.0, 0.0, 0.0],
@@ -121,7 +121,7 @@ class TestTrajectoryIntegration:
 
         atoms_data = {
             "id": [0, 1, 2],
-            "type": [1, 1, 2],  # Use numeric types for LAMMPS
+            "type_id": [1, 1, 2],  # Use numeric types for LAMMPS
             "x": [0.0, 0.816, -0.816],
             "y": [0.0, 0.577, 0.577],
             "z": [0.0, 0.0, 0.0],
@@ -153,7 +153,7 @@ class TestTrajectoryIntegration:
 
         atoms_data = {
             "id": [0, 1],
-            "type": [1, 2],
+            "type_id": [1, 2],
             "x": [0.0, 1.0],
             "y": [0.0, 0.0],
             "z": [0.0, 0.0],

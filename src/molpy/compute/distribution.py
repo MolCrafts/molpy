@@ -37,7 +37,7 @@ class DistanceDistribution(Compute):
 
     def __init__(self, n_bins: int, min: float, max: float):
         super().__init__(n_bins=n_bins, min=min, max=max)
-        self._inner = molrs.DistanceDistribution(n_bins, min, max)
+        self._inner = molrs.compute.distribution.DistanceDistribution(n_bins, min, max)
 
     def __call__(self, frames):
         return self._inner.compute(frames)
@@ -60,7 +60,7 @@ class AngleDistribution(Compute):
 
     def __init__(self, n_bins: int, min: float = 0.0, max: float = 180.0):
         super().__init__(n_bins=n_bins, min=min, max=max)
-        self._inner = molrs.AngleDistribution(n_bins, min, max)
+        self._inner = molrs.compute.distribution.AngleDistribution(n_bins, min, max)
 
     def __call__(self, frames):
         return self._inner.compute(frames)
@@ -79,7 +79,7 @@ class DihedralDistribution(Compute):
 
     def __init__(self, n_bins: int, min: float = -180.0, max: float = 180.0):
         super().__init__(n_bins=n_bins, min=min, max=max)
-        self._inner = molrs.DihedralDistribution(n_bins, min, max)
+        self._inner = molrs.compute.distribution.DihedralDistribution(n_bins, min, max)
 
     def __call__(self, frames):
         return self._inner.compute(frames)
@@ -104,7 +104,7 @@ class CombinedDistribution(Compute):
 
     def __init__(self, axes: Sequence[tuple[str, int, float, float, bool]]):
         super().__init__(axes=axes)
-        self._inner = molrs.CombinedDistribution(axes)
+        self._inner = molrs.compute.distribution.CombinedDistribution(axes)
 
     def __call__(self, frames):
         return self._inner.compute(frames)

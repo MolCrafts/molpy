@@ -9,11 +9,10 @@ new one whose elements carry force-field types and parameters. Every typifier
 runs the same flow — copy, match, write the annotations back — so `typify()` is
 written once, on the base class, and `match()` is the single abstract step.
 
-```python
+```text
 class Typifier[G: MolGraph](ABC):
-    def typify(self, graph: G) -> G: ...      # concrete: copy, match, write back
-    @abstractmethod
-    def match(self, graph: G) -> Match: ...   # the only thing that differs
+    def typify(self, graph: G) -> G           # concrete: copy, match, write back
+    def match(self, graph: G) -> Match        # abstract: the only thing that differs
 ```
 
 The pipeline is generic over the graph. An `Atomistic` and a `CoarseGrain` are
@@ -30,8 +29,8 @@ component, `ForceFieldParams`.
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
 | `Typifier` | The contract: one abstract `match` | Writing your own |
-| `OPLSAATypifier` | Full OPLS-AA typing pipeline re-exported from `molrs.typifier` | OPLS-AA all-atom force fields |
-| `MMFFTypifier` | Full MMFF94 typing pipeline re-exported from `molrs.typifier` | MMFF all-atom force fields |
+| `OPLSAATypifier` | Full OPLS-AA typing pipeline re-exported from `molrs.ff.typifier` | OPLS-AA all-atom force fields |
+| `MMFFTypifier` | Full MMFF94 typing pipeline re-exported from `molrs.ff.typifier` | MMFF all-atom force fields |
 | `ClpTypifier` | CL&P ionic-liquid overlay: molrs SMARTS types + MolPy parameters | Ionic-liquid force fields |
 | `AmberToolsTypifier` | GAFF atom types via antechamber; accumulates the force field it discovers | GAFF / AmberTools |
 | `ForceFieldParams` | **Not a typifier.** Annotates pair and bonded terms from node types | A graph whose types are already known |
@@ -44,6 +43,10 @@ published molrs minor exposes a Python binding.
 ```python
 import molpy as mp
 from molpy.typifier import OPLSAATypifier
+
+mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
+    mp.io.read_smiles("CCO")
+)
 
 typifier = OPLSAATypifier(strict=True)
 typed_mol = typifier.typify(mol)  # returns a new Atomistic
@@ -68,6 +71,7 @@ should receive, positional against `graph.nodes` and `graph.links.bucket(cls)`.
 
 ```python
 from molpy.typifier import ForceFieldParams, Match, Typifier
+
 
 class MyTypifier(Typifier[mp.Atomistic]):
     def __init__(self, forcefield):

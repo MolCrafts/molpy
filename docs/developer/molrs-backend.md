@@ -36,12 +36,31 @@ There is no exact-patch requirement and no hand-written CHANGELOG.
 
 `molpy.Box` does not wrap a molrs box; it **inherits** from it:
 
+The examples below share this setup:
+
+```python
+import numpy as np
+import molpy as mp
+
+
+def _frame(step: int) -> mp.Frame:
+    rng = np.random.default_rng(0)
+    xyz = rng.uniform(0.0, 20.0, size=(200, 3)) + 0.1 * step
+    frame = mp.Frame()
+    frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
+    frame.box = mp.Box.cubic(20.0)
+    return frame
+
+
+frames = [_frame(step) for step in range(20)]
+```
+
 ```python
 import molrs
 from molpy.core.box import Box
 
-class Box(molrs.Box):
-    ...
+
+class Box(molrs.Box): ...
 ```
 
 The practical consequence is that a molpy box can be handed to any molrs API
@@ -52,7 +71,7 @@ import molrs
 import molpy as mp
 
 box = mp.Box.cubic(10.0)
-assert isinstance(box, molrs.Box)   # it *is* a molrs box
+assert isinstance(box, molrs.Box)  # it *is* a molrs box
 ```
 
 Likewise `frame.box` is accepted directly by Rust-side calls such as
@@ -79,8 +98,8 @@ frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = mp.Box.cubic(20.0)
 
 neighbors = NeighborList(cutoff=8.0)(frame)
-print(neighbors.n_pairs)          # number of pairs found
-print(neighbors.distances[:5])    # pair distances, borrowed from Rust
+print(neighbors.n_pairs)  # number of pairs found
+print(neighbors.distances[:5])  # pair distances, borrowed from Rust
 ```
 
 A periodic box is required: calling `NeighborList` on a free box raises
@@ -100,8 +119,8 @@ and lets you reuse a single search for several analyses:
 from molpy.compute import RDF
 
 result = RDF(n_bins=50, r_max=8.0)(frame, neighbors)
-print(result.bin_centers)   # r at each bin centre
-print(result.rdf)           # g(r)
+print(result.bin_centers)  # r at each bin centre
+print(result.rdf)  # g(r)
 ```
 
 For an ideal gas (uniformly random points) the middle bins of `result.rdf`
@@ -134,12 +153,23 @@ neighbor-based operators take `(frames, nlists)`; a few take other inputs
 block, `ClusterProperties` takes the `Cluster` result):
 
 ```python
-from molpy.compute import MSD, GyrationTensor, Steinhardt, StaticStructureFactorDebye
+from molpy.compute import (
+    MSD,
+    Cluster,
+    ClusterCenters,
+    GyrationTensor,
+    Steinhardt,
+    StaticStructureFactorDebye,
+)
 
-msd = MSD()(frames)                            # time series over a trajectory
-rg2 = GyrationTensor()(frame)                  # gyration tensor for one frame
-q6 = Steinhardt([6])(frame, neighbors)         # Steinhardt q6 per particle
-sk = StaticStructureFactorDebye(k_values)(frame)   # structure factor S(k)
+trajectory = mp.Trajectory([frame, frame])
+clusters = Cluster(min_cluster_size=5)([frame], [neighbors])
+centers = ClusterCenters()([frame], clusters)
+
+msd = MSD(method="window")(trajectory)  # time series over a trajectory
+rg2 = GyrationTensor()([frame], clusters, centers)  # gyration tensor per cluster
+q6 = Steinhardt(l=[6])([frame], [neighbors])  # Steinhardt q6 per particle
+sk = StaticStructureFactorDebye(np.linspace(0.5, 6.0, 32))([frame])  # S(k)
 ```
 
 ## One coordinate copy, and only one
@@ -156,16 +186,18 @@ mutate the frame you pass in.
 ## 3D structures are generated through molrs embed
 
 Generating coordinates from a connectivity-only graph also runs on molrs.
-`molpy.compute.Generate3D` wraps the molrs distance-geometry + minimization
-pipeline:
+`molpy.conformer.Conformer` wraps the molrs distance-geometry + minimization
+pipeline (ETKDGv3 → torsion refinement → MMFF94 cleanup):
 
 ```python
-from molpy.parser import parse_molecule
-from molpy.compute import Generate3D
+from molpy.conformer import Conformer
 
-mol = parse_molecule("CCO")          # ethanol, heavy-atom graph
-mol_3d = Generate3D(seed=42)(mol)    # fresh structure, input untouched
+mol = mp.io.read_smiles("CCO")  # ethanol, heavy-atom graph
+mol_3d, report = Conformer(add_hydrogens=True, seed=42).generate(mol)
 ```
+
+`generate` returns the new structure and a report of what each stage did; the
+input is untouched.
 
 The RDKit adapter (`molpy.adapter.rdkit`) remains available as an optional
 external backend, but the molrs pipeline is the default trunk.

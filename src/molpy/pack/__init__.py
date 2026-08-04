@@ -8,7 +8,7 @@ from .constraint import (
     OutsideBoxConstraint,
     OutsideSphereConstraint,
 )
-from .packer import Packmol, get_packer
+from .packer import Packmol
 from .target import Target
 
 __all__ = [
@@ -22,5 +22,4 @@ __all__ = [
     "OutsideSphereConstraint",
     "Packmol",
     "Target",
-    "get_packer",
 ]

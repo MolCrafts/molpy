@@ -27,10 +27,10 @@ class Box(molrs.Box):
       ``dist``, ``make_fractional``, ``make_absolute``,
       ``get_distance_between_faces``, ``get_images``).
 
-    **Immutable.** State lives in the molrs base; per-axis setters and
-    ``set_*`` methods were removed in this refactor (use one of the
-    classmethod factories to construct a new ``Box`` instead). This
-    matches molpy's own ``coding-style.md`` "avoid mutation" rule.
+    **Immutable.** State lives in the molrs base; there are no per-axis
+    setters — construct a new ``Box`` through one of the classmethod
+    factories instead. This matches molpy's own ``coding-style.md``
+    "avoid mutation" rule.
 
     Args:
         matrix: A ``(3, 3)`` upper-triangular box matrix (lattice vectors

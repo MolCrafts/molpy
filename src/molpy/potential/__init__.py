@@ -13,7 +13,7 @@ returns.
 
 from __future__ import annotations
 
-from molrs import Potentials
+from molrs.ff import Potentials
 
 from . import angle, bond, dihedral, improper, pair
 from .angle import *  # noqa: F401,F403

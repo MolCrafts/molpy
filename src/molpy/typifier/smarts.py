@@ -34,7 +34,7 @@ class SmartsTypifier(LocalTypifier):
     """Typifier whose receptive field is derived from a SMARTS pattern set.
 
     Args:
-        patterns: SMARTS strings or compiled :class:`molrs.SmartsPattern`
+        patterns: SMARTS strings or compiled :class:`molrs.perceive.SmartsPattern`
             instances. At least one pattern is required.
 
     Raises:
@@ -42,8 +42,10 @@ class SmartsTypifier(LocalTypifier):
         ValueError: if ``patterns`` is empty.
     """
 
-    def __init__(self, patterns: Iterable[str | molrs.SmartsPattern]) -> None:
-        compiled: list[molrs.SmartsPattern] = [_compile_pattern(p) for p in patterns]
+    def __init__(self, patterns: Iterable[str | molrs.perceive.SmartsPattern]) -> None:
+        compiled: list[molrs.perceive.SmartsPattern] = [
+            _compile_pattern(p) for p in patterns
+        ]
         if not compiled:
             raise ValueError("SmartsTypifier requires at least one pattern")
         try:
@@ -54,7 +56,7 @@ class SmartsTypifier(LocalTypifier):
                 f"property, so this typifier has no finite receptive field and cannot "
                 f"be used for region typing. Replace [R] with a sized [r6]."
             ) from exc
-        self._patterns: tuple[molrs.SmartsPattern, ...] = tuple(compiled)
+        self._patterns: tuple[molrs.perceive.SmartsPattern, ...] = tuple(compiled)
 
     @property
     def scope(self) -> TypeScope:
@@ -62,7 +64,7 @@ class SmartsTypifier(LocalTypifier):
         return self._scope
 
     @property
-    def patterns(self) -> Sequence[molrs.SmartsPattern]:
+    def patterns(self) -> Sequence[molrs.perceive.SmartsPattern]:
         """Compiled SMARTS patterns owned by this typifier."""
         return self._patterns
 

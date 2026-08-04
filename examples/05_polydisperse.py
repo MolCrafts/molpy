@@ -7,7 +7,7 @@ planner primitives do the sampling; you compose them directly (no wrapper):
     distribution + sequence generator -> PolydisperseChainGenerator
     -> SystemPlanner.plan_system() -> a list of Chain (dp, monomers, mass)
 
-Each ``Chain`` carries its monomer sequence, which spells a CGSmiles string for
+Each ``Chain`` carries its monomer sequence, which is a monomer sequence; use linear_topology + build string for
 ``PolymerBuilder.build`` (see topology/01_linear.py).
 
 Guide: docs/user-guide/05_polydisperse_systems.md
@@ -48,7 +48,7 @@ def main() -> None:
     print(f"sampled {len(plan.chains)} chains for target mass {plan.target_mass:.0f}")
     print(f"  Mn={Mn:.0f}  Mw={Mw:.0f}  PDI={Mw / Mn:.3f}")
 
-    # Each Chain is (dp, monomer sequence, mass); the sequence spells a CGSmiles
+    # Each Chain is (dp, monomer sequence, mass); the sequence is a monomer sequence; use linear_topology + build
     # string, so `builder.build("{" + labels + "}")` turns it into an Atomistic.
     first = plan.chains[0]
     labels = " ".join(f"[#{m}]" for m in first.monomers[:8])

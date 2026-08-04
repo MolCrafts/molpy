@@ -2,27 +2,43 @@
 
 # Parsing Chemistry
 
-From a one-line string to an editable structure: `mp.parser` reads SMILES, SMARTS, BigSMILES, and CGSmiles — and this guide shows which to reach for when.
+From a one-line string to an editable structure. MolPy reads two chemical
+notations — **SMILES** for one concrete molecule, **SMARTS** for a structural
+query — and both are parsed by `molrs`, exposed as types rather than helper
+functions.
 
-## Four notations, four purposes
+## Two notations, two purposes
 
-Chemical notation is a compression scheme: each format answers a specific question and encodes exactly the information that question requires. SMILES asks "what is this exact molecule?" and encodes atoms, bonds, and stereochemistry. SMARTS asks "what structural pattern should I match?" and encodes logical constraints rather than physical atoms. BigSMILES asks "what is this repeat unit, and where does it attach?" and encodes polymer connectivity intent. CGSmiles asks "how are building blocks arranged?" and encodes topology without any chemistry at all.
+Chemical notation is a compression scheme, and each format answers a different
+question. SMILES asks *"what is this exact molecule?"* and encodes atoms, bonds
+and stereochemistry. SMARTS asks *"what structural pattern should I match?"* and
+encodes logical constraints rather than physical atoms — it never builds a
+structure.
 
-MolPy's parser module, available as `mp.parser`, provides one function for each question. Convenience functions return `Atomistic` objects directly; IR-level functions return intermediate representations for advanced inspection and are covered at the end of this chapter.
+There is no parser *function* to look up: you name the type you want.
+`mp.io.read_smiles` gives you a graph, `SmilesIR` gives you the parsed
+intermediate representation, `SmartsPattern` gives you a compiled query.
+
+> **Polymer notations.** BigSMILES and CGSmiles are no longer parsed by MolPy.
+> Polymer architecture is built explicitly with `molpy.builder.assembly`
+> (`MonomerLibrary`, `PolymerBuilder`, `GraphAssembler`) — see
+> *Assembly* and *Polymer topologies* in this guide.
 
 ## SMILES describes one specific molecule
 
-`parse_molecule` is the right choice whenever you have a single, fully specified molecule and want to work with it immediately. It parses the SMILES string and returns an `Atomistic` object containing atoms and bonds. Hydrogens are implicit in SMILES and can be added later during coordinate generation.
+`mp.io.read_smiles` is the right choice whenever you have a single, fully
+specified molecule. It parses the string and returns an `Atomistic` containing
+atoms and bonds.
 
 
 ```python
 import molpy as mp
 
-mol = mp.parser.parse_molecule("CC(=O)OCC")  # ethyl acetate
+mol = mp.io.read_smiles("CC(=O)OCC")  # ethyl acetate
 print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")
 
 elements = [atom.get("element") for atom in mol.atoms]
-print(elements)  # ['C', 'C', 'O', 'O', 'C', 'C']
+print(elements)
 ```
 
 ```text
@@ -31,192 +47,166 @@ atoms: 6, bonds: 5
 ```
 
 
-When the input contains dot-separated components — a common SMILES convention for ion pairs and solvent mixtures — use `parse_mixture` instead, which always returns a list.
+**Hydrogens are not added.** A SMILES string states connectivity; filling
+open valences is a separate perception step, so `read_smiles` gives you exactly
+the heavy-atom skeleton the string names. Ask for the hydrogens when you want
+them:
 
 
 ```python
-ions = mp.parser.parse_mixture("[Li+].[F-]")
-print(len(ions))  # 2
+skeleton = mp.io.read_smiles("CCO")
+filled = mp.Perceive().find_hydrogens(skeleton)
 
-# parse_mixture also works for single molecules
-mols = mp.parser.parse_mixture("CCO")
-print(len(mols))  # 1
+print(f"skeleton: {len(skeleton.atoms)} atoms")  # C, C, O
+print(f"filled:   {len(filled.atoms)} atoms")  # + 6 H
+print("the input is untouched:", len(skeleton.atoms))
 ```
 
 ```text
-2
-1
+skeleton: 3 atoms
+filled:   9 atoms
+the input is untouched: 3
 ```
 
 
-Aromatic atoms are lowercase in SMILES. The ring closure digits must match: the first occurrence opens the ring and the second closes it. Parsing benzene this way preserves aromaticity flags on each atom, which downstream typifiers rely on.
+A `.`-separated SMILES names a *set* of molecules, not a molecule — ion
+pairs and solvent mixtures use this. `read_smiles` refuses it rather than
+silently returning a disconnected graph; `SmilesIR.components()` takes it
+apart.
 
 
 ```python
-benzene = mp.parser.parse_molecule("c1ccccc1")
-for atom in benzene.atoms:
-    print(f"{atom.get('element')}, aromatic={atom.get('aromatic')}")
+try:
+    mp.io.read_smiles("[Li+].[F-]")
+except ValueError as exc:
+    print("refused:", exc)
+
+ions = [mp.Atomistic.adopt(m) for m in mp.SmilesIR("[Li+].[F-]").components()]
+print(f"components: {len(ions)} -> {[len(i.atoms) for i in ions]}")
 ```
 
 ```text
-C, aromatic=True
-C, aromatic=True
-C, aromatic=True
-C, aromatic=True
-C, aromatic=True
-C, aromatic=True
+refused: read_smiles needs one component, '[Li+].[F-]' has 2. Use mp.SmilesIR(smiles).components() and adopt each, or pass one component at a time.
+components: 2 -> [1, 1]
 ```
 
 
-Stereochemical information defined in SMILES/SMARTS (e.g., tetrahedral and double-bond stereochemistry) is parsed and preserved during topology construction when explicitly specified.
+### Aromaticity comes from the notation, and perception can revise it
 
-SMILES is the right starting point for small molecules with known connectivity. When you need to describe a recurring structural motif rather than one specific structure, SMARTS is the appropriate notation.
+Aromatic atoms are lowercase in SMILES, and the parser records that as
+`is_aromatic` on each atom. Ring-closure digits must match: the first
+occurrence opens the ring, the second closes it.
+
+
+```python
+benzene = mp.io.read_smiles("c1ccccc1")
+print([atom.get("is_aromatic") for atom in benzene.atoms])
+```
+
+```text
+[1, 1, 1, 1, 1, 1]
+```
+
+
+`Perceive().find_aromaticity()` **re-derives** the flag from valence rather
+than trusting the notation — so run it on a structure that has its hydrogens.
+On the bare skeleton those six carbons have open valences and are, correctly,
+not aromatic:
+
+
+```python
+def aromatic_count(graph):
+    return sum(bool(atom.get("is_aromatic")) for atom in graph.atoms)
+
+
+print(
+    "skeleton, re-perceived:", aromatic_count(mp.Perceive().find_aromaticity(benzene))
+)
+
+with_h = mp.Perceive().find_hydrogens(benzene)
+print("with hydrogens:        ", aromatic_count(mp.Perceive().find_aromaticity(with_h)))
+```
+
+```text
+skeleton, re-perceived: 0
+with hydrogens:         6
+```
+
 
 ## SMARTS: pattern matching, not structure building
 
-SMARTS shares SMILES syntax on the surface, but its semantics are entirely different. Where SMILES encodes one concrete molecule, SMARTS encodes a query: a set of constraints that may match many different molecules. Each atom specification can carry logical operators, property tests, and wildcard matches.
-
-The parser returns a `SmartsIR` object, not an `Atomistic`. This distinction is intentional and matters: a SMARTS expression is a matching rule used by the typifier, not a physical structure you can simulate.
-
-
-```python
-query = mp.parser.parse_smarts("[C;X4][O;H1]")
-
-print(f"query atoms: {len(query.atoms)}")
-print(f"query bonds: {len(query.bonds)}")
-
-for i, atom in enumerate(query.atoms):
-    print(f"  atom {i}: {atom.expression}")
-```
-
-```text
-query atoms: 2
-query bonds: 1
-  atom 0: AtomExpressionIR(op='weak_and', children=[AtomPrimitiveIR(type='symbol', value='C'), AtomPrimitiveIR(type='neighbor_count', value=4)])
-  atom 1: AtomExpressionIR(op='weak_and', children=[AtomPrimitiveIR(type='symbol', value='O'), AtomPrimitiveIR(type='hydrogen_count', value=1)])
-```
-
-
-SMARTS is the language of force-field typification: SMARTS patterns map atom environments to force-field types. Once you have typed atoms and assigned parameters, you may want to model how those atoms repeat into a polymer chain — which is what BigSMILES is for.
-
-## BigSMILES: monomers with connection intent
-
-Standard SMILES has no concept of a repeating unit or a connection point. BigSMILES introduces port markers (`<`, `>`, `$`) directly into the string to make polymer connectivity explicit. Each marker designates an atom as a terminal that can bond to another repeat unit.
-
-`parse_monomer` produces an `Atomistic` with port metadata on the relevant atoms, ready for a polymer builder to chain together.
+SMARTS shares SMILES syntax on the surface, but its semantics are entirely
+different. Where SMILES encodes one concrete molecule, SMARTS encodes a query:
+`[C;X4][O;H1]` means "an sp3 carbon bonded to a hydroxyl oxygen" and matches
+*any* molecule containing that environment. A `SmartsPattern` has no atoms to
+read — it has matches to find.
 
 
 ```python
-monomer = mp.parser.parse_monomer("{[][<]CC(c1ccccc1)[>][]}")
+query = mp.SmartsPattern("[C;X4][O;H1]")
+print(f"query atoms: {query.num_query_atoms}, max bond depth: {query.max_bond_depth}")
 
-print(f"atoms: {len(monomer.atoms)}")
-ports = [a for a in monomer.atoms if a.get("port")]
-print(f"ports: {len(ports)}")
-for p in ports:
-    print(f"  port '{p.get('port')}' on {p.get('element')}")
+ethanol = mp.Perceive().find_hydrogens(mp.io.read_smiles("CCO"))
+print("matches ethanol:", query.has_match(ethanol))
+for match in query.find_matches(ethanol):
+    print("  matched atom handles:", match.atoms)
 ```
 
 ```text
-atoms: 8
-ports: 2
-  port '<' on C
-  port '>' on C
+query atoms: 2, max bond depth: 1
+matches ethanol: True
+  matched atom handles: [4294967298, 4294967299]
 ```
 
 
-For copolymer systems that specify multiple distinct monomers in one string, `parse_polymer` preserves the segment-level organization so that each monomer type remains independently accessible.
+Note the pattern is matched against the **hydrogen-filled** structure:
+`X4` counts connections and `H1` counts hydrogens, so both are answered wrong on
+a bare skeleton. This is the same rule as aromaticity — perceive first, query
+after.
+
+SMARTS is the language of force-field typification: patterns map atom
+environments to force-field types. See *Typifier* in this guide.
+
+## Splitting parse from convert
+
+`mp.io.read_smiles` parses and converts in one call, which suits most
+workflows. `SmilesIR` is the step in between, for when you want to know what the
+string said before committing to a graph — how many molecules it names, and
+whether to take them together or separately.
 
 
 ```python
-spec = mp.parser.parse_polymer("{[<]CC[>],[<]CC(C)[>]}")
+ir = mp.SmilesIR("CCO.O")
+print(f"components: {ir.n_components}")
 
-print(f"topology:  {spec.topology}")
-print(f"monomers:  {len(spec.all_monomers())}")
+together = mp.Atomistic.adopt(ir.to_atomistic())
+print(f"to_atomistic(): one graph of {len(together.atoms)} atoms")
+
+separate = [mp.Atomistic.adopt(m) for m in ir.components()]
+print(
+    f"components():   {len(separate)} graphs of {[len(m.atoms) for m in separate]} atoms"
+)
 ```
 
 ```text
-topology:  random_copolymer
-monomers:  2
+components: 2
+to_atomistic(): one graph of 4 atoms
+components():   2 graphs of [3, 1] atoms
 ```
 
 
-BigSMILES captures the chemistry of each block: its atoms, its bonds, its connection ports. When you need to step back further and describe how those blocks are arranged at the architectural level — without specifying their internal chemistry at all — CGSmiles takes over.
+## Choosing the right entry point
 
-## CGSmiles describes how blocks connect, not what they are
+| You have | You want | Use |
+| --- | --- | --- |
+| A SMILES string, one molecule | An editable graph | `mp.io.read_smiles(s)` |
+| A SMILES string, several molecules | One graph each | `mp.SmilesIR(s).components()` |
+| A SMILES string | To inspect before converting | `mp.SmilesIR(s)` |
+| A structural rule | To find where it matches | `mp.SmartsPattern(p)` |
+| Missing hydrogens / aromaticity | A perceived structure | `mp.Perceive().find_*(mol)` |
+| A repeat unit and an architecture | A polymer | `molpy.builder.assembly` |
 
-CGSmiles operates at a higher level of abstraction than any notation seen so far. Nodes in a CGSmiles string are labeled building blocks; edges between them are connections. The string says nothing about the atoms inside each block. Fragment definitions, supplied after a period, bind each label to its chemistry.
-
-
-```python
-from molpy.parser import parse_cgsmiles
-
-# Linear chain: 5 copies of PEO with a fragment definition
-cg = parse_cgsmiles("{[#PEO]|5}.{#PEO=[$]COC[$]}")
-
-print(f"nodes: {len(cg.base_graph.nodes)}")
-print(f"bonds: {len(cg.base_graph.bonds)}")
-print(f"fragments: {len(cg.fragments)}")
-```
-
-```text
-nodes: 5
-bonds: 4
-fragments: 1
-```
-
-
-The syntax is compact but precise. `[#LABEL]` references a named block; `|n` repeats it; parentheses introduce a branch; matched digits close rings, exactly as in SMILES. CGSmiles is the input to `PolymerBuilder`: BigSMILES defines what each block is, while CGSmiles defines how those blocks are arranged.
-
-## Splitting parse and convert exposes the intermediate representation
-
-The convenience functions (`parse_molecule`, `parse_monomer`) perform parsing and conversion in a single call, which is appropriate for most workflows. For diagnostics — inspecting aromaticity perception, verifying port assignment, or debugging unexpected atom counts — you can separate these into two explicit steps.
-
-
-```python
-from molpy.parser import parse_smiles, smilesir_to_atomistic
-
-# parse_smiles returns SmilesGraphIR (single molecule) or list[SmilesGraphIR]
-# (dot-separated mixture). For guaranteed single-molecule input, index [0] is
-# not needed — a bare SMILES string always returns a single IR object.
-ir = parse_smiles("CCO")
-print(f"IR atoms: {len(ir.atoms)}")
-
-for atom_ir in ir.atoms:
-    print(f"  element={atom_ir.element}, aromatic={atom_ir.aromatic}")
-
-mol = smilesir_to_atomistic(ir)
-print(f"Atomistic atoms: {len(mol.atoms)}")
-```
-
-```text
-IR atoms: 3
-  element=C, aromatic=False
-  element=C, aromatic=False
-  element=O, aromatic=False
-Atomistic atoms: 3
-```
-
-
-The same pattern is available for BigSMILES, where inspecting the IR before conversion reveals how port markers were resolved and which atoms were assigned connection roles.
-
-
-```python
-from molpy.parser import parse_bigsmiles, bigsmilesir_to_polymerspec
-
-ir = parse_bigsmiles("{[<]CC[>],[<]CC(C)[>]}")
-spec = bigsmilesir_to_polymerspec(ir)
-print(f"topology: {spec.topology}")
-```
-
-```text
-topology: random_copolymer
-```
-
-
-## Choosing the right parser
-
-The four notations cover a spectrum from fully specified chemistry to pure topology. Use `parse_molecule` or `parse_mixture` whenever you have a concrete small molecule in SMILES. Move to `parse_monomer` or `parse_polymer` the moment connectivity ports become relevant — that is, whenever your molecule is a polymer repeat unit. Reserve `parse_smarts` for matching rules that feed into the typifier, never for structure creation. Use `parse_cgsmiles` when you need to express architectural arrangements of named blocks, leaving the internal chemistry to the fragment definitions.
-
-For 3D coordinates after parsing, use `mp.adapter.RDKitAdapter(mol).generate_3d()` (requires RDKit).
-
-See also: [Stepwise Polymer Construction](02_assembly.md), [Atomistic and Topology](../tutorials/01_atomistic_and_topology.md).
+Reach for `SmartsPattern` only for matching rules that feed the typifier, never
+for structure creation. And when the molecule is a polymer repeat unit, stop
+looking for a notation to express the whole chain — build it in
+`molpy.builder.assembly`, where the architecture is code you can read.

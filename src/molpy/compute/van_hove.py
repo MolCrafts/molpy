@@ -47,7 +47,7 @@ class VanHove(Compute):
         self, n_rbins: int, r_max: float, lags: Sequence[int], stride: int = 1
     ):
         super().__init__(n_rbins=n_rbins, r_max=r_max, lags=lags, stride=stride)
-        self._inner = molrs.VanHove(n_rbins, r_max, lags, stride)
+        self._inner = molrs.compute.dynamics.VanHove(n_rbins, r_max, lags, stride)
 
     def __call__(self, frames):
         return self._inner.compute(frames)

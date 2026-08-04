@@ -2,7 +2,7 @@
 
 Polymer construction composes the real engine classes directly (there is
 no ``polymer()`` dispatcher): prepare monomers with
-:func:`molpy.parser.parse_monomer` + :func:`molpy.adapter.rdkit.generate_3d`,
+:class:`molrs.io.SmilesIR` / :func:`molpy.io.read_smiles`,
 mark the atoms that may react with ``fields.SITE``, then
 :meth:`PolymerBuilder.build` a CGSmiles string. Crosslinking is the same
 kernel with a different :class:`Selector`. Polydisperse systems drive
@@ -20,7 +20,7 @@ from molpy.core.region import BoxRegion, Cube, Region, SphereRegion
 from ._finalize import Finalization, StructureFinalizer
 from .ambertools import AmberResult, AmberTools
 from .crystal import Lattice, Site, SpaceGroup, build_crystal
-from .nanostructure import CarbonTubeBuilder
+from .nanostructure import CarbonTubeBuilder, GrapheneBuilder
 from .polymer import (
     AlternatingSequenceGenerator,
     BlockSequenceGenerator,
@@ -78,6 +78,7 @@ __all__ = [
     "build_crystal",
     # Nanostructure builders
     "CarbonTubeBuilder",
+    "GrapheneBuilder",
     # Polymer planning primitives
     "AlternatingSequenceGenerator",
     "BlockSequenceGenerator",

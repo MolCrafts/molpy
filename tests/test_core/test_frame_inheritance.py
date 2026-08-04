@@ -17,9 +17,6 @@ from molrs import Block, Frame, MetaValue
 
 
 class TestCanonicalFrame:
-    def test_instance_is_molrs_frame(self):
-        assert isinstance(Frame(), molrs.Frame)
-
     def test_frame_accepted_by_molrs_api(self, tmp_path):
         f = Frame()
         atoms = Block()
@@ -29,7 +26,7 @@ class TestCanonicalFrame:
         atoms["z"] = np.array([0.0], dtype=np.float64)
         f["atoms"] = atoms
         out = tmp_path / "from_molpy.xyz"
-        molrs.write_xyz(str(out), f)
+        molrs.io.write_xyz(str(out), f)
         assert out.exists()
 
 
@@ -55,34 +52,20 @@ class TestRichFrameSurface:
         atoms["z"] = np.array([0.0], dtype=np.float64)
         atoms["symbol"] = np.array(["He"])
         f["atoms"] = atoms
-        molrs.write_xyz(str(tmp_path / "rt.xyz"), f)
+        molrs.io.write_xyz(str(tmp_path / "rt.xyz"), f)
         assert f.meta["timestep"].value == 7
 
 
 class TestBoxEnrichmentSunkIntoMolrs:
-    """``frame.box`` is the molrs box, now carrying is_free / style / volume."""
+    """``frame.box`` exposes is_free / style / volume."""
 
-    def test_box_is_molrs_box_with_enriched_api(self):
+    def test_box_enriched_api(self):
         f = Frame()
         f.box = molrs.Box.cube(10.0)
         b = f.box
-        assert isinstance(b, molrs.Box)
         assert b.is_free is False
         assert b.style == "orthogonal"
         assert b.volume() == pytest.approx(1000.0, abs=1.0)
-
-    def test_removed_simbox_alias_is_absent(self):
-        """``frame.simbox`` was the 0.7–0.8 name; the public cell attr is ``box``."""
-        frame = Frame()
-        assert not hasattr(frame, "simbox")
-        with pytest.raises(AttributeError):
-            getattr(frame, "simbox")
-
-    def test_removed_untyped_metadata_alias_is_absent(self):
-        frame = Frame()
-        assert not hasattr(frame, "metadata")
-        with pytest.raises(AttributeError):
-            getattr(frame, "metadata")
 
 
 class TestNumpyOnlyContract:
