@@ -18,7 +18,7 @@ Auto-generated reference for every public symbol, with typed signatures througho
 | Execute a chemical reaction (bond formation / removal) | `Reaction`, `GraphAssembler`, `Selector` | [Builder](builder.md) |
 | Generate `fix bond/react` pre/post topology templates | `BondReactTemplate`, `write_bond_react_map` | [IO](io.md) |
 | Assemble polymer chains | `MonomerLibrary`, `PolymerBuilder`, `Selector`, `Placer` | [Builder](builder.md) |
-| Pack molecules into a periodic simulation box | `Packmol`, `InsideBoxConstraint` | [Pack](pack.md) |
+| Pack molecules into a simulation box | `molpack.Molpack`, `Target`, restraints | [Pack](pack.md) |
 | Generate 3D conformers from a molecular graph | `Conformer` | [Conformer](conformer.md) |
 | Assign force field atom types via SMARTS matching | `OPLSAATypifier`, `ClpTypifier`, `MMFFTypifier` | [Typifier](typifier.md) |
 | Evaluate bond, angle, and pair potentials | `BondHarmonicStyle`, `LJ126Style`, `Potentials` | [Potential](potential.md) |
@@ -38,7 +38,7 @@ Auto-generated reference for every public symbol, with typed signatures througho
 | [Core](core.md) | Foundational data structures: `Atomistic`, `Frame`, `Block`, `Box`, `Trajectory`, `Entity`/`Link`, `Region`, `UnitSystem`, `ForceField` |
 | [Parser](parser.md) | SMILES / SMARTS (`SmilesIR`, `SmartsPattern`); moltemplate |
 | [Builder](builder.md) | Polymer system construction: builders, port connectors, geometric placers |
-| [Pack](pack.md) | Spatial packing of molecular ensembles via the Packmol executable |
+| [Pack](pack.md) | Spatial packing via molpack (`molcrafts-molpack`) |
 | [Conformer](conformer.md) | 3D conformer generation from molecular graphs |
 | [Typifier](typifier.md) | Atom typing for OPLS-AA, CL&P, and MMFF (GAFF via AmberTools wrappers) |
 | [Potential](potential.md) | Numerical potential kernels for bonds, angles, dihedrals, and non-bonded interactions |

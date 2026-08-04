@@ -81,7 +81,7 @@ at build time). After editing one, regenerate its page with
 
 ## External tools
 
-LAMMPS, Packmol, and AmberTools are optional for *using* MolPy offline recipes;
+LAMMPS and AmberTools are optional for *using* MolPy offline recipes; packing uses molpack (`pip install molcrafts-molpack`).
 they are **not** part of the unit suite. Wrappers and engines are tested with
 mocks and script literals. Doc blocks that would shell out declare
 `# docs: skip`.
@@ -102,4 +102,4 @@ zensical build                            # build static doc site into site/
 
 ## Troubleshooting
 
-If imports fail after pulling new code, reinstall the editable package: `pip install -e ".[dev]"`. To regenerate the user-guide notebook pages, run `python scripts/render_notebooks.py` (needs the `[doc]` extras, including RDKit and Packmol). If formatting checks fail in CI, run `ruff format src tests` locally before pushing.
+If imports fail after pulling new code, reinstall the editable package: `pip install -e ".[dev]"`. Docs site build is `pip install ".[doc]"` + `zensical build` (theme + mkdocstrings only — no notebook/matplotlib stack). If formatting checks fail in CI, run `ruff format src tests` locally before pushing.

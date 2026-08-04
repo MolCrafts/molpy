@@ -74,7 +74,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 :   A composable predicate that filters atoms in a `Block` by element, type, coordinate range, or distance. Combinable with `&`, `|`, `~`. See [Selector](06_selector.md).
 
 **Wrapper**
-:   Runs an external executable (antechamber, tleap, Packmol) as a subprocess and captures its results. Crosses an execution boundary. See [Wrapper and Adapter](07_wrapper_and_adapter.md).
+:   Runs an external executable (antechamber, tleap, …) as a subprocess and captures its results. Crosses an execution boundary. Packing uses molpack in-process, not a wrapper. See [Wrapper and Adapter](07_wrapper_and_adapter.md).
 
 **Adapter**
 :   Translates between MolPy objects and another library's in-memory objects (RDKit, OpenBabel). Crosses a representation boundary. See [Wrapper and Adapter](07_wrapper_and_adapter.md).

@@ -3,7 +3,7 @@
 From a target molecular-weight distribution to a packed, LAMMPS-ready box: sample the chains, build each one, re-typify the junctions, pack, export.
 
 !!! note "Prerequisites"
-    This guide requires RDKit, Packmol, and the `oplsaa.xml` force field. Familiarity with [Assembly](02_assembly.md) is assumed.
+    This guide requires RDKit, `molcrafts-molpack`, and the `oplsaa.xml` force field. Familiarity with [Assembly](02_assembly.md) is assumed.
 
 ## From distribution to simulation box
 
@@ -289,9 +289,9 @@ print(f"built {len(atomistic_chains)} chains, total atoms: {total_atoms}")
 The box size follows from total molecular weight and target density. Each chain is added to the packer as an individual target with count 1, and the packed frame is written as a LAMMPS data file together with the force field.
 
 
-```
-from pathlib import Path
-from molpy.pack import InsideBoxConstraint, Packmol
+```python
+# docs: skip — continues polydisperse guide (needs atomistic_chains from above)
+from molpack import InsideBoxRestraint, Molpack, Target
 
 total_mw = sum(
     sum(Element(a.get("element")).mass for a in c.atoms) for c in atomistic_chains
@@ -300,15 +300,12 @@ target_density = 0.05  # g/cm^3 (use ~1.0 for production)
 volume = (total_mw / 6.022e23) / target_density * 1e24
 box_length = volume ** (1 / 3)
 
-packer = Packmol(workdir=Path("05_output/packmol"))
-constraint = InsideBoxConstraint(
-    length=np.array([box_length] * 3),
-    origin=np.zeros(3),
-)
-for chain in atomistic_chains:
-    packer.def_target(chain.to_frame(), number=1, constraint=constraint)
-
-packed = packer(max_steps=10000, seed=42)
+box = InsideBoxRestraint([0.0, 0.0, 0.0], [box_length] * 3)
+targets = [
+    Target(chain.to_frame(), count=1).with_restraint(box)
+    for chain in atomistic_chains
+]
+packed = Molpack().with_seed(42).pack(targets, max_loops=200)
 packed.box = mp.Box.cubic(length=box_length)
 
 mp.io.write_lammps_system("05_output/lammps", packed, ff)

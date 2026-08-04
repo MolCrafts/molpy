@@ -33,17 +33,14 @@ See also: [Parsing Chemistry](../user-guide/01_parsing_chemistry.md) ·
 
 ## Solvent box — pack 500 waters
 
-Build one molecule, then fill a periodic cube with clash-free copies through the
-Packmol backend.
-
-!!! note "Requires the `packmol` executable"
-    Packing shells out to Packmol. Install it and make sure `packmol` is on your
-    `PATH`.
+Build one molecule, then fill a cube with clash-free copies through
+**[molpack](https://molcrafts.github.io/molpack/)**
+(`pip install molcrafts-molpack`).
 
 ```python
-# docs: skip — requires packmol executable on PATH
+# docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
 import molpy as mp
-from molpy.pack import Packmol, InsideBoxConstraint
+from molpack import InsideBoxRestraint, Molpack, Target
 
 water = mp.Atomistic(name="water")
 o = water.def_atom(element="O", x=0.000, y=0.000, z=0.000)
@@ -52,13 +49,13 @@ h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.000)
 water.def_bond(o, h1)
 water.def_bond(o, h2)
 
-p = Packmol(workdir="pack_out")
-p.def_target(
-    water.to_frame(),
-    number=500,
-    constraint=InsideBoxConstraint(length=30.0),  # a 30 Å cube
+target = (
+    Target(water.to_frame(), count=500)
+    .with_name("water")
+    .with_restraint(InsideBoxRestraint([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
 )
-packed = p(max_steps=1000, seed=42)  # → one packed Frame (1500 atoms)
+packed = Molpack().with_seed(42).pack([target], max_loops=200)
+# → one packed Frame (1500 atoms)
 ```
 
 See also: [Packing Systems](../user-guide/09_packing.md).

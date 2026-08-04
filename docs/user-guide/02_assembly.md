@@ -259,8 +259,9 @@ Build chains, pack them, crosslink, then relax — the crosslinks are the bonds 
 were guessed.
 
 ```python
-# docs: skip — Packmol / write_lammps offline packing; pack unit-tested with mocks
+# docs: skip — full gel workflow (molpack + write_lammps); pack unit-tested elsewhere
 import molpy as mp
+from molpack import InsideBoxRestraint, Molpack, Target
 from molpy.optimize import LBFGS, ForceFieldPotential
 
 # `neutral` above, not the deliberately-unfrozen `eo` — that one exists to
@@ -268,7 +269,10 @@ from molpy.optimize import LBFGS, ForceFieldPotential
 builder = PolymerBuilder(
     MonomerLibrary({"EO": neutral}), ether, typifier=gaff, reach=2
 )
-melt = mp.pack.Packmol().pack([builder.build_linear("EO", 50)] * 100, density=0.9)
+chains = [builder.build_linear("EO", 50).to_frame() for _ in range(100)]
+box = InsideBoxRestraint([0.0, 0.0, 0.0], [80.0, 80.0, 80.0])
+targets = [Target(c, count=1).with_restraint(box) for c in chains]
+melt = Molpack().with_seed(1).pack(targets, max_loops=200)
 
 gel = GraphAssembler(ether, typifier=gaff, reach=2).assemble(
     melt, RandomSelector(conversion=0.8, cutoff=6.0, seed=1)

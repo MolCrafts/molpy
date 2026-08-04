@@ -4,8 +4,9 @@ Bidirectional sync between MolPy objects and an external library's
 representation — the in-memory half of MolPy's two bridging patterns. The other
 half is the [wrapper](wrapper.md), which shells out to a binary instead.
 
-MolPy keeps **one worked example of each**: `RDKitAdapter` here, and the Packmol
-packer on the wrapper side. An example is not a dependency — RDKit is an
+MolPy keeps **one worked example of adapter**: `RDKitAdapter` here. Packing is
+**not** an adapter — use [molpack](https://molcrafts.github.io/molpack/)
+(`pip install molcrafts-molpack`). An example is not a dependency — RDKit is an
 optional extra (`pip install "molcrafts-molpy[rdkit]"`), importing molpy never
 requires it, and no molpy code path routes through it.
 

@@ -3,7 +3,8 @@
 Parameterize the ions with antechamber, grow PEO chains with tleap, and assemble a PEO-LiTFSI electrolyte at target density — a complete AmberTools workflow driven from MolPy.
 
 !!! warning "External dependencies"
-    This guide requires **AmberTools** (via conda), **RDKit**, and **Packmol**. All three must be installed and accessible. Without AmberTools, no code on this page will run.
+    This guide requires **AmberTools** (via conda), **RDKit**, and
+    **molcrafts-molpack**. Without AmberTools, no code on this page will run.
 
 ??? note "Setting up AmberTools"
     Install AmberTools in a dedicated conda environment:
@@ -22,7 +23,7 @@ Parameterize the ions with antechamber, grow PEO chains with tleap, and assemble
 
 ## Workflow overview
 
-The workflow begins with parameterization of TFSI, the anion, using the standard Amber small-molecule sequence of antechamber, parmchk2, and tleap. Li⁺ is treated separately: its nonbonded parameters are taken from Åqvist (1990) and written to an frcmod file. With both ions parameterized, PEO chains are built using `AmberPolymerBuilder`, which wraps prepgen and tleap internally. The resulting component force fields are then merged, Packmol places the molecules at the target density, and the final system is exported to LAMMPS.
+The workflow begins with parameterization of TFSI, the anion, using the standard Amber small-molecule sequence of antechamber, parmchk2, and tleap. Li⁺ is treated separately: its nonbonded parameters are taken from Åqvist (1990) and written to an frcmod file. With both ions parameterized, PEO chains are built using `AmberPolymerBuilder`, which wraps prepgen and tleap internally. The resulting component force fields are then merged, molpack places the molecules at the target density, and the final system is exported to LAMMPS.
 
 
 ## Antechamber assigns GAFF types and BCC charges to TFSI
@@ -49,7 +50,7 @@ write_pdb(ions_dir / "tfsi.pdb", tfsi.to_frame())
 ```
 
 ```python
-# docs: skip — AmberTools / Packmol offline electrolyte workflow; not unit-tested
+# docs: skip — AmberTools offline electrolyte workflow; not unit-tested
 conda_env = "AmberTools25"
 
 # Step 1: antechamber — assign GAFF types and BCC charges
@@ -99,7 +100,7 @@ These were fitted to hydration free energies and are the standard choice for pol
 | ε         | 0.0183 kcal/mol |
 
 ```python
-# docs: skip — AmberTools / Packmol offline electrolyte workflow; not unit-tested
+# docs: skip — AmberTools offline electrolyte workflow; not unit-tested
 from molpy.io import read_amber
 
 li_dir = output_dir / "li"
@@ -183,7 +184,7 @@ library = {"EO": eo}
 `AmberPolymerBuilder` wraps the monomer library, connector rules, and Amber tool chain (prepgen + tleap) into one builder that produces fully parameterized chains. Each unique chain length writes its Amber intermediate files into its own subdirectory under `work_dir` to prevent file conflicts.
 
 ```python
-# docs: skip — AmberTools / Packmol offline electrolyte workflow; not unit-tested
+# docs: skip — AmberTools offline electrolyte workflow; not unit-tested
 from molpy.builder.polymer.ambertools import AmberPolymerBuilder
 
 polymer_dir = output_dir / "polymer"
@@ -205,7 +206,7 @@ result = builder.build("{[#EO]|10}")
 `AmberPolymerBuilder.build()` internally runs antechamber, parmchk2, prepgen, and tleap. The result carries the polymer Frame, ForceField, and paths to the intermediate Amber files.
 
 ```python
-# docs: skip — AmberTools / Packmol offline electrolyte workflow; not unit-tested
+# docs: skip — AmberTools offline electrolyte workflow; not unit-tested
 peo_frame = result.frame
 peo_ff = result.forcefield
 print(f"PEO 10-mer: {peo_frame['atoms'].nrows} atoms")
@@ -214,13 +215,17 @@ print(f"PEO 10-mer: {peo_frame['atoms'].nrows} atoms")
 
 ## Merging three force fields before packing prevents type conflicts
 
-Merging is done before packing rather than after because Packmol operates on coordinates only — it has no awareness of force field types. If two components share an atom type name with different parameters, a post-packing merge would silently overwrite one of them. Merging first makes any type name collision an error before coordinates are generated.
+Merging is done before packing rather than after because packing operates on
+coordinates only — it has no awareness of force field types. If two components
+share an atom type name with different parameters, a post-packing merge would
+silently overwrite one of them. Merging first makes any type name collision an
+error before coordinates are generated.
 
 ```python
-# docs: skip — AmberTools / Packmol offline electrolyte workflow; not unit-tested
+# docs: skip — AmberTools offline electrolyte workflow; packing via molpack
 import numpy as np
 from molpy.io import read_amber
-from molpy.pack import Packmol, InsideBoxConstraint
+from molpack import InsideBoxRestraint, Molpack, Target
 
 # Read TFSI from Amber files generated in Stage 1
 tfsi_frame, tfsi_ff = read_amber(
@@ -231,15 +236,15 @@ tfsi_frame, tfsi_ff = read_amber(
 # Merge all three force fields: PEO + TFSI + Li+
 combined_ff = peo_ff.merge(tfsi_ff).merge(li_ff)
 
-# Pack system
+# Pack system with molpack
 box_size = 60.0
-packer = Packmol(workdir=output_dir / "packmol")
-constraint = InsideBoxConstraint(length=[box_size] * 3, origin=[0.0] * 3)
-packer.def_target(peo_frame, number=3, constraint=constraint)
-packer.def_target(li_frame, number=10, constraint=constraint)
-packer.def_target(tfsi_frame, number=10, constraint=constraint)
-
-system = packer(max_steps=20000, seed=12345)
+box = InsideBoxRestraint([0.0, 0.0, 0.0], [box_size] * 3)
+targets = [
+    Target(peo_frame, count=3).with_name("peo").with_restraint(box),
+    Target(li_frame, count=10).with_name("li").with_restraint(box),
+    Target(tfsi_frame, count=10).with_name("tfsi").with_restraint(box),
+]
+system = Molpack().with_seed(12345).pack(targets, max_loops=200)
 system.box = mp.Box.cubic(box_size)
 ```
 
@@ -247,7 +252,7 @@ system.box = mp.Box.cubic(box_size)
 ## Exporting skips pair_style because long-range electrostatics need it in the script
 
 ```python
-# docs: skip — AmberTools / Packmol offline electrolyte workflow; not unit-tested
+# docs: skip — AmberTools offline electrolyte workflow; not unit-tested
 from molpy.io.writers import write_lammps_data, write_lammps_forcefield
 
 lammps_dir = output_dir / "lammps"

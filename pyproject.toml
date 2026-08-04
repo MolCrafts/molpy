@@ -53,9 +53,6 @@ doc = [
     "zensical>=0.0.45",
     "molcrafts-zensical-theme>=0.2.3",
     "mkdocstrings[python]>=0.24.0",
-    "nbconvert>=7.0",
-    "ipykernel",
-    "matplotlib",
 ]
 all = ["molcrafts-molpy[dev,doc]"]
 

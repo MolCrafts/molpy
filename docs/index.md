@@ -161,18 +161,21 @@ system.box = mp.Box.cubic(30.0)
 
 <div class="molcrafts-workflow-list__meta">04 · Pack</div>
 
-### [Fill a periodic box with Packmol](user-guide/09_packing/)
+### [Fill a periodic box with molpack](user-guide/09_packing/)
 
-Clash-free placement at target density, driving the battle-tested Packmol
-executable from Python. Prefer pure Rust? Our own
-[molpack](https://molcrafts.github.io/molpack/) packer is in beta — try it.
+Clash-free placement at target density via
+[molpack](https://molcrafts.github.io/molpack/) — Packmol-grade packing in
+Rust, no external binary (`pip install molcrafts-molpack`).
 
 ```python
-# docs: skip — Packmol binary; pack unit-tested with mocks and script literals
-from molpy.pack import Packmol, Target, InsideBoxConstraint
+# docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
+from molpack import InsideBoxRestraint, Molpack, Target
 
-target = Target(system, 500, InsideBoxConstraint(length=30.0))
-system = Packmol()([target], seed=42)  # 500 copies, clash-free
+target = (
+    Target(system, count=500)
+    .with_restraint(InsideBoxRestraint([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
+)
+system = Molpack().with_seed(42).pack([target], max_loops=200)
 ```
 
 </article>
@@ -353,7 +356,7 @@ integration optional, every boundary visible.
 <dd>antechamber, parmchk2, and tleap driven programmatically for GAFF charges and topologies.</dd>
 </div>
 <div>
-<dt><a href="user-guide/09_packing/">Packmol</a></dt>
+<dt><a href="user-guide/09_packing/">molpack</a></dt>
 <dd>Clash-free packing into periodic boxes through a typed constraint interface.</dd>
 </div>
 <div>

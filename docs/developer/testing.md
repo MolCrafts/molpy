@@ -14,7 +14,7 @@ pytest --cov=src/molpy tests/ -v --cov-report=term     # with coverage
 ```
 
 The suite is pure unit tests: wrappers and engines mock `subprocess`; they never
-require LAMMPS, Packmol, AmberTools, or RDKit on the machine.
+require LAMMPS, AmberTools, or RDKit on the machine (packing is molpack, pure wheel).
 
 
 ## What to test
@@ -51,7 +51,7 @@ def test_pdb_round_trip(tmp_path):
 ## Wrappers, engines, and docs
 
 - **Wrappers / engines**: mock `subprocess` and assert argv / script *literals*
-  written to disk. Never launch antechamber, tleap, lmp, or packmol in unit tests.
+  written to disk. Never launch antechamber, tleap, or lmp in unit tests.
 - **Doc code blocks**: every ` ```python ` block under `docs/` is executed by
   `tests/test_docs/test_all_doc_blocks.py`. Blocks that shell out or need
   offline artifacts declare `# docs: skip — <reason>` as the first non-empty line.

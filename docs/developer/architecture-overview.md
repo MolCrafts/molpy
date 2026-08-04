@@ -13,7 +13,7 @@ Each package has one clear responsibility with minimal coupling to its siblings:
 | `builder` | System assembly: `GraphAssembler`, polymers, crosslinking, virtual sites, AmberTools |
 | `conformer` | 3D conformer generation |
 | `typifier` | Graph typification: OPLS-AA / MMFF re-exports, CL&P overlays, AmberTools GAFF |
-| `pack` | Packing workflows: Packmol integration, density targets |
+| `pack` | Legacy packing helpers; new packing is **molpack** (`molcrafts-molpack`) |
 | `io` | File I/O: molecular data, trajectories, force-field formats |
 | `compute` | Analysis operators (structure, transport, dielectric, spectra, …) |
 | `engine` | MD abstractions: LAMMPS, CP2K, OpenMM input generation and execution |
