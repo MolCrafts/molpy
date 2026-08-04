@@ -41,6 +41,7 @@ Packmol backend.
     `PATH`.
 
 ```python
+# docs: skip — requires packmol executable on PATH
 import molpy as mp
 from molpy.pack import Packmol, InsideBoxConstraint
 
