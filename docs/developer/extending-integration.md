@@ -116,4 +116,4 @@ This way the module can be imported without the dependency, and the error only t
 - [ ] Optional deps: guard imports, fail at usage not import
 - [ ] Tests: round-trip fidelity for adapters, return-code checking for wrappers
 - [ ] Add tests in `tests/test_wrapper/` or `tests/test_adapter/`
-- [ ] Mark tests requiring external tools with `@pytest.mark.external`
+- [ ] Unit-test wrappers/engines with mocks and script literals (never launch the binary)

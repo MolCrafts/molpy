@@ -17,7 +17,7 @@ b2 = cg.def_bead(type="C1", x=4.7, y=0.0, z=0.0)
 cg.def_cgbond(b1, b2, k=120.0)
 
 cg.move([1, 0, 0])
-print(b1["x"])   # 1.0
+print(b1["x"])  # 1.0
 ```
 
 ## Beads carry whatever fields you decide they should carry
@@ -52,12 +52,15 @@ a = ato.def_atom(element="C")
 b = ato.def_atom(element="C")
 c = ato.def_atom(element="O")
 
-bead_ab = cg.def_bead(atoms=(a, b), type="CC")
-bead_c  = cg.def_bead(atoms=(c,),     type="O")
+# Membership names atoms of *one* atomistic world, so a mapping onto a new
+# world is a new coarse-grained graph, not more beads on the previous one.
+mapped = mp.CoarseGrain(name="mapping")
+bead_ab = mapped.def_bead(atoms=(a, b), type="CC")
+bead_c = mapped.def_bead(atoms=(c,), type="O")
 
-cg.beads_of(a)   # (bead_ab,)
-cg.beads_of(c)   # (bead_c,)
-cg.beads_of(b)   # (bead_ab,)
+mapped.beads_of(a)  # (bead_ab,)
+mapped.beads_of(c)  # (bead_c,)
+mapped.beads_of(b)  # (bead_ab,)
 ```
 
 The lookup is a linear scan; for hot loops over many atoms, the user is expected to build a private `id(atom) → list[Bead]` index. The data structure deliberately does not cache, because cache invalidation would introduce coupling with every factory method on `CoarseGrain`.
@@ -65,8 +68,8 @@ The lookup is a linear scan; for hot loops over many atoms, the user is expected
 `beads_of` returns multiple beads if the mapping has overlap, and an empty tuple if the atom is not referenced by any bead.
 
 ```python
-shared = cg.def_bead(atoms=(a,), type="virtual")
-cg.beads_of(a)   # (bead_ab, shared)
+shared = mapped.def_bead(atoms=(a,), type="virtual")
+mapped.beads_of(a)  # (bead_ab, shared)
 ```
 
 Shared atoms are real in production force fields. Martini uses them in fused aromatic rings; AdResS-style hybrid resolution uses them at the AA/CG boundary. The data structure does not need to know any of that — it only needs to permit the user to express it.
@@ -80,6 +83,7 @@ The framework's role is to make your projection easy to express, not to choose i
 ```python
 import numpy as np
 
+
 def my_coarsegrain(ato, mask):
     """A simple disjoint-partition projection with COG positions and
     crossing-bond inference. Adapt freely."""
@@ -90,7 +94,9 @@ def my_coarsegrain(ato, mask):
         pos = np.mean([[a["x"], a["y"], a["z"]] for a in atoms], axis=0)
         bead_of[int(idx)] = cg.def_bead(
             atoms=atoms,
-            x=float(pos[0]), y=float(pos[1]), z=float(pos[2]),
+            x=float(pos[0]),
+            y=float(pos[1]),
+            z=float(pos[2]),
         )
 
     atom_to_idx = {id(a): i for i, a in enumerate(ato.atoms)}

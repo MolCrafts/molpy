@@ -16,7 +16,7 @@ mol_project:
     install: pip install -e ".[dev]"
     format: ruff format src tests
     check: ruff check src tests && ty check src/molpy/
-    test: pytest tests/ -m "not external" -v
+    test: pytest tests/ -v
     test_single: pytest {path} -v
     coverage: pytest --cov=src/molpy tests/ -v --cov-report=html
 ---
@@ -155,7 +155,7 @@ pip install -e ".[dev]"
 prek install
 
 # Run tests
-pytest tests/ -v -m "not external"                    # All local tests
+pytest tests/ -v                    # All local tests
 pytest tests/test_core/ -v                             # Single module
 pytest tests/test_core/test_atomistic.py::test_atom -v # Single test
 pytest -k "pattern" -v                                 # Tests matching pattern
@@ -187,25 +187,23 @@ MolPy is a computational chemistry toolkit with explicit data flow and minimal m
 
 | Package | Purpose |
 |---------|---------|
-| `core` | Molpy-owned topology conveniences plus identity re-exports of molrs graph types. `Frame`/`Block`/`Element` are molrs-owned storage types, identity-re-exported on the molpy facade (users never import molrs) |
-| `io` | File I/O: readers/writers for PDB, GRO, LAMMPS DATA, XYZ, MOL2, AMBER (prmtop/inpcrd/prep/ac), GROMACS TOP, XSF, HDF5 formats |
-| `parser` | Grammar-based parsing: SMILES, SMARTS, BigSMILES, GBigSMILES, CGSmiles |
-| `builder` | System assembly: one `GraphAssembler` kernel + a `Selector` family (`PolymerBuilder`, crosslinking), AmberTools integration |
-| `typifier` | Atom typing: OPLS-AA, GAFF, custom SMARTS/SMIRKS-based typifiers |
-| `compute` | Analysis: distance, angles, RDF, MSD, cross-correlation, and custom operators |
-| `pack` | Packing workflows: Packmol integration, density targets |
-| `engine` | MD abstractions: LAMMPS, CP2K, simulation management |
-| `wrapper` | External tools: Antechamber, Prepgen, command-line wrappers |
-| `adapter` | Format bridges: RDKit, OpenBabel, and other external libraries |
+| `core` | Topology conveniences + facade re-exports (`Frame`/`Block`/`Box`/`Atomistic`, …) |
+| `io` | File I/O: PDB, GRO, LAMMPS DATA, XYZ, MOL2, AMBER, GROMACS TOP, trajectories, force fields |
+| `parser` | SMILES / SMARTS (`SmilesIR`, `SmartsPattern`); moltemplate `.lt` |
+| `builder` | System assembly: `GraphAssembler`, polymers, crosslinking, AmberTools |
+| `conformer` | 3D generation (ETKDG + MMFF) |
+| `typifier` | Atom typing: OPLS-AA, CL&P, MMFF, GAFF (AmberTools) |
+| `compute` | Trajectory analysis: RDF, MSD, transport, dielectric, spectra, order, … |
+| `pack` | Packing: Packmol, constraints, density targets |
+| `engine` | MD abstractions: LAMMPS, CP2K, OpenMM |
+| `wrapper` | External CLIs: Antechamber, Prepgen, Parmchk2, TLeap |
+| `adapter` | Optional in-memory bridge: RDKit (worked example only) |
 
 > **Hard runtime dependency**: `molcrafts-molrs` (Rust extension) is required,
 > pinned to the same **minor** line in `pyproject.toml`
-> (`>=0.10.0,<0.11`). Import-time `check_molrs_version` enforces major.minor
-> only. Every public molrs symbol is identity-re-exported on the molpy facade
-> (`molpy.Frame is molrs.Frame`); users never import molrs. Molpy has no
-> `core/frame.py` or `core/element.py` and no wrapper/`_inner` layer.
-> `ElementData` does not exist. Molpy does not run with missing molrs metadata
-> or a different major.minor.
+> (`>=0.12.0,<0.13`). Import-time `check_molrs_version` enforces major.minor
+> only. Public molrs symbols are re-exported on the molpy facade
+> (`molpy.Frame is molrs.Frame`); application code imports `molpy`, not `molrs`.
 
 ### Data Model Layer
 
@@ -251,12 +249,11 @@ from molpy import Block, Element, Frame  # same objects as molrs.*
 
 ### Pattern: Adapter + Adapter Registry
 
-For integrating external libraries (RDKit, LAMMPS, OpenBabel):
-- Each integration is a separate adapter class under `adapter/` or `wrapper/`
-- Adapters wrap the external tool with a consistent interface
+For integrating external libraries (RDKit, LAMMPS, …):
+- **Adapter** = in-memory data sync only (`adapter/`); **Wrapper** = subprocess CLI (`wrapper/`)
 - Optional import with fallback (don't force dependency unless needed)
 
-**Example**: RDKit is optional; `RDKitAdapter` gracefully fails if not installed.
+**Example**: RDKit is optional; `RDKitAdapter` is absent when the extra is not installed.
 
 ### Pattern: ForceField I/O
 
@@ -349,30 +346,21 @@ tests/
 └─ test_engine/            # MD engines
 ```
 
-### No third-party scientific software in the default test gate
+### No third-party scientific software in the test gate
 
-The default gate (`pytest tests/ -m "not external"` + `pip install -e ".[dev]"`)
-must pass **without** RDKit, AmberTools, freud, OpenMM, LAMMPS, Packmol, or any
-other third-party scientific package/executable. `dev` extras deliberately omit
-them. Optional backends (e.g. `pip install -e ".[rdkit]"`) are for users and
-docs notebooks only.
+The gate (`pytest tests/` + `pip install -e ".[dev]"`) must pass **without**
+RDKit, AmberTools, freud, OpenMM, LAMMPS, Packmol, or any other third-party
+scientific package/executable. `dev` extras deliberately omit them. Optional
+backends (e.g. `pip install -e ".[rdkit]"`) are for users and docs notebooks only.
 
-- Unit-test wrappers with mocks — do **not** mark those `external`.
-- Tests that need a real binary: mark `@pytest.mark.external` (or live under a
-  path that `conftest.py` auto-marks).
-- Tests that optionally use a Python package when installed: `skipif` / soft
-  import, never hard-require it in `dev`.
+- Unit-test wrappers and engines with **mocks** and **script literals** — never
+  launch a real binary.
+- There is **no** `@pytest.mark.external` marker and no dual suite. If it needs
+  a binary, it does not belong in `tests/`.
+- Doc blocks that would shell out use `# docs: skip — <reason>` (see
+  `tests/test_docs/test_all_doc_blocks.py`).
 
-```python
-import pytest
-
-@pytest.mark.external
-def test_lammps_integration():
-    # requires LAMMPS executable
-    pass
-```
-
-Run only local tests with: `pytest tests/ -m "not external"`
+Run tests with: `pytest tests/`
 
 ### Common Test Patterns
 
@@ -437,9 +425,9 @@ def test_adapter_fallback():
 
 ### `parser` module
 
-- Grammar-based: uses Lark for SMILES/SMARTS/BigSMILES
-- Grammar files in `parser/grammar/` and `parser/smiles/grammars/`
-- Direct parser instantiation (not singleton)
+- SMILES / SMARTS via molrs types (`SmilesIR`, `SmartsPattern`)
+- Local moltemplate `.lt` reader under `parser/moltemplate/`
+- No free-function parse aliases (`parse_smiles` etc. removed)
 
 ### `builder` module
 
@@ -472,7 +460,7 @@ From `docs/developer/coding-style.md`:
 
 1. **Optional imports**: If adding a new external tool, follow the adapter pattern and test graceful fallback.
 2. **Notebook output in git**: Pre-commit uses `nbstripout` to strip output; don't commit notebook output.
-3. **External tools**: Mark tests with `@pytest.mark.external` if they need LAMMPS, Packmol, or AmberTools.
+3. **External tools**: mock wrappers/engines in unit tests; put offline recipes under docs with `# docs: skip`.
 4. **Formatter registration**: Custom styles need `_param_formatters` registered on the format's `ForceFieldFormatter` subclass. Custom data fields need `_field_formatters` on the `FieldFormatter` subclass.
 5. **Identity vs equality**: `Entity` and `Link` use identity-based hashing (`id(self)`), not value-based.
 6. **The only Frame cell field is `frame.box`**: no `simbox` alias on the Python surface; Rust may still call the field `simbox` internally.
@@ -482,7 +470,6 @@ From `docs/developer/coding-style.md`:
 
 - **Import errors in tests**: Reinstall with `pip install -e ".[dev]"` to ensure editable mode
 - **Notebook doc build fails**: Run `pip install -e ".[doc]"` for doc deps
-- **LAMMPS/Packmol tests fail**: Expected if executable not installed; use `-m "not external"`
 - **Type checking**: Run locally with `ty check src/molpy/` (Astral's `ty`, also run in CI); config under `[tool.ty]` in `pyproject.toml`
 
 ---

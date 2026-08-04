@@ -141,6 +141,7 @@ print(distances)
 A box is attached to a Frame as `frame.box`, not stored in metadata. This is the standard way to associate a simulation cell with molecular data.
 
 ```python
+# docs: skip — reads system.data offline artifact; I/O unit-tested with fixtures
 frame = mp.Frame(blocks={
     "atoms": {"x": [1.0, 9.5], "y": [1.0, 9.5], "z": [1.0, 9.5]},
 })

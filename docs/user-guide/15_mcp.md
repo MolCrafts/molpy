@@ -231,7 +231,7 @@ Tell the agent what you want to build. Do not tell it which function names to ca
 | Too low-level | Better |
 | --- | --- |
 | `Use PolymerBuilder to build a PEG chain` | `Build a PEG chain with 15 repeat units` |
-| `Call Packmol to pack molecules` | `Pack 15 chains into a 20 nm cubic box` |
+| `Call molpack to pack molecules` | `Pack 15 chains into a 20 nm cubic box` |
 | `Use the Box class` | `Create a periodic simulation box for the system` |
 
 If your prompt names specific MolPy functions, it is usually too low-level. The point of `molmcp_find_capability` is that the agent maps the *task* onto the right symbol — feeding it the symbol up front bypasses the strongest part of the pipeline.
@@ -323,7 +323,7 @@ matches:
   • molpy.io.read_xml_forcefield        (function)
   • molpy.io.write_lammps_data          (function)
   • molpy.io.write_lammps_forcefield    (function)
-  • molpy.typifier.OplsTypifier (class)
+  • molpy.typifier.OPLSAATypifier (class)
 ```
 
 **Step 2 — confirm the built-in TIP3P file path**
@@ -346,10 +346,11 @@ docstring: Read an XML force field file. Relative filenames resolve against the
 molmcp_describe_symbol("molpy.core.atomistic.Atomistic.get_topo")
 ```
 
-The docstring makes one subtle point clear: when `gen_angle=True`,
-`get_topo()` returns a *new* `Atomistic` instead of mutating the existing one.
-Claude therefore writes `system = system.get_topo(...)` rather than calling it
-in place.
+The docstring makes the mutation contract clear: `get_topo()` writes
+angles/dihedrals **in place** and returns `self` for chaining. Claude can call
+`system.get_topo(...)` directly, or write `system = system.get_topo(...)` —
+both are correct. Use `system.copy().get_topo(...)` only when an independent
+graph is required.
 
 **Step 4 — check the box and typing APIs**
 
@@ -363,14 +364,11 @@ molmcp_describe_symbol("molpy.core.Box.orth")
 ```
 
 ```
-molmcp_describe_symbol("molpy.typifier.OplsTypifier.__init__")
+molmcp_describe_symbol("molpy.typifier.OPLSAATypifier.__init__")
 ```
 
 ```
-(forcefield: ForceField, skip_atom_typing: bool = False,
- skip_pair_typing: bool = False, skip_bond_typing: bool = False,
- skip_angle_typing: bool = False, skip_dihedral_typing: bool = False,
- strict_typing: bool = True)
+(source: str | PathLike | None = None, *, strict: bool = True)
 ```
 
 With that information Claude writes the script below.
@@ -383,7 +381,7 @@ from pathlib import Path
 import numpy as np
 import molpy as mp
 from molpy.io import read_xml_forcefield, write_lammps_data, write_lammps_forcefield
-from molpy.typifier import OplsTypifier
+from molpy.typifier import ForceFieldParams
 
 theta = 1.82421813418
 r_oh = 0.09572  # nm
@@ -414,11 +412,14 @@ for iz in range(4):
             system.merge(mol)
             mol_id += 1
 
-system = system.get_topo(gen_angle=True, gen_dihe=False)
+system.get_topo(gen_angle=True, gen_dihe=False)  # in place
 
 ff = read_xml_forcefield("tip3p.xml")
-typifier = OplsTypifier(ff, skip_dihedral_typing=True, strict_typing=True)
-system = typifier.typify(system)
+# Rigid TIP3P: the three sites are named by construction, so this spends types
+# rather than deciding them.
+for atom in system.atoms:
+    atom["type"] = "tip3p-O" if atom["element"] == "O" else "tip3p-H"
+system = ForceFieldParams(ff).assign(system)
 
 frame = system.to_frame()
 frame.box = mp.Box.orth([1.28, 1.28, 1.28])
@@ -441,7 +442,7 @@ angles 64
 files ['water_box_tip3p.data', 'water_box_tip3p.ff']
 ```
 
-This example stays completely local: no AmberTools, no Packmol, and no
+This example stays completely local: no AmberTools, and no
 literature lookup. It is usually the fastest way to confirm that the MCP client
 can inspect MolPy, synthesize a correct script, and export a real simulation
 input.
@@ -465,7 +466,7 @@ for the PEO monomer and polymer chains, using GAFF with chemically correct
 linkage and end-group handling. Add LiTFSI salt at a fixed composition of
 EO:Li = 20:1, and compute the exact number of LiTFSI molecules from the total
 number of EO repeat units in the sampled polymer ensemble. Look up literature
-for Li+ nonbond parameters. Pack with Packmol at a very low initial density of
+for Li+ nonbond parameters. Pack with molpack at a very low initial density of
 0.10 g/cm³. The workflow should be fully end-to-end: define the PEO repeat unit
 and LiTFSI, sample chain lengths from the Schulz–Zimm distribution, build all
 PEO chains, assign parameters with AmberTools, add LiTFSI, pack the full system,
@@ -487,7 +488,7 @@ Returns MolPy's top-level packages and modules (excerpt):
 ```
 molpy.builder   Crystal and polymer builders (AmberTools integration, stochastic generation)
 molpy.io        I/O for AMBER, LAMMPS, PDB, GRO, MOL2, XYZ ...
-molpy.pack      Packing (constraints, targets, Packmol integration)
+molpack         Packing (Molpack, Target, restraints)
 molpy.parser    Parsers for SMILES, BigSMILES, CGSmiles, GBigSMILES
 molpy.wrapper   External tool wrappers (antechamber, parmchk2, prepgen, tleap)
 ```
@@ -615,8 +616,8 @@ molmcp_outline(path="molpy/pack")
 ```
 
 ```
-Packmol                  High-level Packmol packing interface
-InsideBoxConstraint      Place molecules inside a rectangular box
+Molpack                  High-level molpack packing interface
+InsideBoxRestraint       Place molecules inside a rectangular box
 OutsideBoxConstraint     Keep molecules outside a box
 InsideSphereConstraint   Sphere constraint
 MinDistanceConstraint    Minimum pairwise distance
@@ -624,7 +625,7 @@ Target                   One packing target (frame + count + constraint)
 ```
 
 ```
-molmcp_describe_symbol("molpy.pack.Packmol.pack")
+molmcp_describe_symbol("molpack.Molpack.pack")
 ```
 
 ```
@@ -680,7 +681,7 @@ those columns before exporting.
 With this information Claude has everything it needs to assemble the script.
 
 !!! note "The full generated script"
-    The full end-to-end script is at `docs/user-guide/08_peo_litfsi_electrolyte.py`. It runs antechamber/parmchk2/tleap for TFSI⁻, builds a Li⁺ frcmod from Åqvist parameters, samples 40 chain lengths from a Schulz–Zimm distribution, calls `AmberPolymerBuilder` per unique DP, merges the three force fields, packs with Packmol at 0.10 g/cm³, and exports a LAMMPS data file and `system.ff` to `peo_litfsi_output/lammps/`. Running it requires AmberTools and Packmol in a conda environment named `AmberTools25`.
+    The full end-to-end script is at `docs/user-guide/08_peo_litfsi_electrolyte.py`. It runs antechamber/parmchk2/tleap for TFSI⁻, builds a Li⁺ frcmod from Åqvist parameters, samples 40 chain lengths from a Schulz–Zimm distribution, calls `AmberPolymerBuilder` per unique DP, merges the three force fields, packs with molpack at 0.10 g/cm³, and exports a LAMMPS data file and `system.ff` to `peo_litfsi_output/lammps/`. Running it requires AmberTools (conda env `AmberTools25`) and `pip install molcrafts-molpack`.
 
 ## See Also
 

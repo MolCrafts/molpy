@@ -18,7 +18,12 @@ The simplest workflow is a straight pipeline.  Node *a* runs first; node *b*
 takes *a*'s output as its `x` parameter.
 
 ```python
-from molpy.compute import Workflow
+from molpy.compute import (
+    Workflow,
+    WorkflowCycleError,
+    WorkflowDuplicateNodeError,
+    WorkflowMissingInputError,
+)
 from molpy.compute.base import Compute
 
 
@@ -28,7 +33,7 @@ class Square(Compute):
     def __init__(self):
         super().__init__()
 
-    def _compute(self, x):
+    def __call__(self, x):
         return x * x
 
 
@@ -38,37 +43,41 @@ class AddOne(Compute):
     def __init__(self):
         super().__init__()
 
-    def _compute(self, x):
+    def __call__(self, x):
         return x + 1
 
 
 wf = Workflow()
-wf.add("square", Square())
+wf.add("square", Square(), inputs={"x": "x"})
 wf.add("add_one", AddOne(), inputs={"x": "square"})
 
 results = wf.run(x=3)
 print(results)  # {'square': 9, 'add_one': 10}
 ```
 
-`wf.add()` returns the node name, so you can chain calls:
+`wf.add()` returns the workflow, so calls chain:
 
 ```python
 wf = Workflow()
-(wf
- .add("square", Square())
- .add("add_one", AddOne(), inputs={"x": "square"}))
+(
+    wf.add("square", Square(), inputs={"x": "x"}).add(
+        "add_one", AddOne(), inputs={"x": "square"}
+    )
+)
 ```
 
 ## External inputs
 
-When a parameter name in `inputs` does not match any registered node, the
-workflow treats it as an *external input*. You must supply it to `run()`.
+Every parameter a node needs must appear in its `inputs` — including the ones
+that come from outside the workflow. When the source name does not match any
+registered node, the workflow treats it as an *external input*, and you supply
+it to `run()`.
 
 ```python
 wf = Workflow()
-wf.add("square", Square())
+wf.add("square", Square(), inputs={"x": "x"})
 
-# The parameter name "x" does not match any node → external input
+# "x" maps to no registered node, so it is an external input
 results = wf.run(x=5)
 print(results)  # {'square': 25}
 ```
@@ -96,14 +105,14 @@ class Count(Compute):
         super().__init__()
         self.call_count = 0
 
-    def _compute(self, x):
+    def __call__(self, x):
         self.call_count += 1
         return x
 
 
 wf = Workflow()
 upstream = Count()
-wf.add("upstream", upstream)
+wf.add("upstream", upstream, inputs={"x": "x"})
 wf.add("branch_a", AddOne(), inputs={"x": "upstream"})
 wf.add("branch_b", AddOne(), inputs={"x": "upstream"})
 
@@ -131,16 +140,17 @@ frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = molpy.Box.cubic(10.0)
 
 wf = Workflow()
-wf.add("nlist", NeighborList(cutoff=5.0))
-wf.add("rdf", RDF(n_bins=100, r_max=10.0),
-       inputs={"frames": "frame", "neighbors": "nlist"})
+wf.add("nlist", NeighborList(cutoff=5.0), inputs={"frame": "frame"})
+wf.add(
+    "rdf", RDF(n_bins=100, r_max=10.0), inputs={"frames": "frame", "neighbors": "nlist"}
+)
 
 results = wf.run(frame=frame)
 rdf_array = np.asarray(results["rdf"].rdf)
 print(f"g(r) has {len(rdf_array)} bins, max value {rdf_array.max():.3f}")
 ```
 
-`NeighborList` needs only the frame, so it appears as a single external input.
+`NeighborList` needs only the frame, so `frame` is its one external input — and `RDF` takes that same frame plus the neighbour list the first node produced.
 `RDF` needs both the original frame (for box dimensions) and the neighbour
 list — so its `inputs` map references both `"frame"` (external) and `"nlist"`
 (upstream node).
@@ -150,7 +160,7 @@ list — so its `inputs` map references both `"frame"` (external) and `"nlist"`
 You can inspect the workflow before running it.
 
 ```python
-wf.nodes            # ['nlist', 'rdf'] — insertion order
+wf.nodes  # ['nlist', 'rdf'] — insertion order
 wf.external_inputs  # {'frame'} — all unregistered source names
 wf.topological_order()  # ['nlist', 'rdf'] — execution order
 wf.predecessors("rdf")  # {'nlist'} — node predecessors only (no externals)
@@ -166,7 +176,7 @@ and rolls back — the workflow state is unchanged.
 
 ```python
 wf = Workflow()
-wf.add("a", Square())
+wf.add("a", Square(), inputs={"x": "x"})
 
 # b depends on a → OK
 wf.add("b", Square(), inputs={"x": "a"})

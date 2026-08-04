@@ -16,7 +16,7 @@ molrs backend. Available via `import molpy as mp` (`mp.conformer.Conformer`).
 ## Related
 
 - [Builder](builder.md) — `PolymerBuilder` consumes 3D monomers; embed them
-  with `Conformer` (this module) or `RDKitAdapter.generate_3d`.
+  with `Conformer` (this module). It is the only embedder MolPy ships.
 
 ---
 

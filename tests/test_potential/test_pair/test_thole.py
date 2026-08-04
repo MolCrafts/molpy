@@ -41,7 +41,7 @@ def _build_pair_frame(
     return frame
 
 
-def _numerical_forces(pots: molrs.Potentials, coords: np.ndarray) -> np.ndarray:
+def _numerical_forces(pots: molrs.ff.Potentials, coords: np.ndarray) -> np.ndarray:
     """Central finite-difference gradient of calc_energy."""
     h = 1e-6
     num = np.zeros_like(coords)
@@ -59,13 +59,6 @@ def _numerical_forces(pots: molrs.Potentials, coords: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def test_pair_thole_style_importable():
-    """ac-001: PairTholeStyle importable from molpy.potential.pair."""
-    from molpy.potential.pair import PairTholeStyle as PTS
-
-    assert PTS is PairTholeStyle
-
-
 # ---------------------------------------------------------------------------
 # ac-002 — calc_energy returns finite scalar
 # ---------------------------------------------------------------------------
@@ -73,7 +66,7 @@ def test_pair_thole_style_importable():
 
 def test_calc_energy_finite():
     """ac-002: calc_energy returns a finite Python float."""
-    ff = molrs.ForceField("thole-test")
+    ff = molrs.ff.ForceField("thole-test")
     pstyle = ff.def_style(PairTholeStyle())
     pstyle.def_type("A", charge=1.0, alpha=1.0, a_thole=2.6)
 
@@ -84,7 +77,7 @@ def test_calc_energy_finite():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.extract_coords(frame))
+    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
     assert isinstance(energy, float)
     assert math.isfinite(energy)
 
@@ -96,7 +89,7 @@ def test_calc_energy_finite():
 
 def test_calc_forces_shape():
     """ac-003: calc_forces returns (n_atoms, 3) with finite values."""
-    ff = molrs.ForceField("thole-test")
+    ff = molrs.ff.ForceField("thole-test")
     pstyle = ff.def_style(PairTholeStyle())
     pstyle.def_type("A", charge=1.0, alpha=1.0, a_thole=2.6)
 
@@ -107,14 +100,14 @@ def test_calc_forces_shape():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    forces = np.asarray(pots.calc_forces(molrs.extract_coords(frame)))
+    forces = np.asarray(pots.calc_forces(molrs.ff.extract_coords(frame)))
     assert forces.shape == (2, 3)
     assert np.all(np.isfinite(forces))
 
 
 def test_empty_pairs_zero_energy_and_forces():
     """Empty pair list returns zero energy and zero forces."""
-    ff = molrs.ForceField("thole-empty")
+    ff = molrs.ff.ForceField("thole-empty")
     pstyle = ff.def_style(PairTholeStyle())
     pstyle.def_type("A", charge=1.0, alpha=1.0, a_thole=2.6)  # must register ≥1 type
 
@@ -125,8 +118,8 @@ def test_empty_pairs_zero_energy_and_forces():
         pair_types=[],
     )
     pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.extract_coords(frame))
-    forces = np.asarray(pots.calc_forces(molrs.extract_coords(frame)))
+    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
+    forces = np.asarray(pots.calc_forces(molrs.ff.extract_coords(frame)))
     assert energy == pytest.approx(0.0)
     assert np.allclose(forces, 0.0)
 
@@ -151,7 +144,7 @@ def test_damping_closed_form():
     t = 1.0 - (1.0 + x / 2.0) * math.exp(-x)
     expected_energy = t * q * q / r
 
-    ff = molrs.ForceField("thole-closed")
+    ff = molrs.ff.ForceField("thole-closed")
     pstyle = ff.def_style(PairTholeStyle())
     pstyle.def_type("A", charge=q, alpha=1.0, a_thole=2.6)
 
@@ -162,7 +155,7 @@ def test_damping_closed_form():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.extract_coords(frame))
+    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
     assert energy == pytest.approx(expected_energy, abs=1e-12)
 
 
@@ -182,7 +175,7 @@ def test_damping_with_asymmetric_atom_types():
     t = 1.0 - (1.0 + x / 2.0) * math.exp(-x)
     expected_energy = t * qi * qj / r
 
-    ff = molrs.ForceField("thole-asym")
+    ff = molrs.ff.ForceField("thole-asym")
     pstyle = ff.def_style(PairTholeStyle())
     pstyle.def_type("A", charge=qi, alpha=1.0, a_thole=2.6)
     pstyle.def_type("B", charge=qj, alpha=8.0, a_thole=2.2)
@@ -194,7 +187,7 @@ def test_damping_with_asymmetric_atom_types():
         pair_types=["AB"],
     )
     pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.extract_coords(frame))
+    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
     assert energy == pytest.approx(expected_energy, abs=1e-12)
 
 
@@ -205,7 +198,7 @@ def test_damping_with_asymmetric_atom_types():
 
 def test_forces_match_finite_difference():
     """ac-006: Analytic force matches central finite-difference gradient."""
-    ff = molrs.ForceField("thole-fd")
+    ff = molrs.ff.ForceField("thole-fd")
     pstyle = ff.def_style(PairTholeStyle())
     pstyle.def_type("A", charge=-0.7, alpha=1.3, a_thole=2.6)
     pstyle.def_type("B", charge=0.5, alpha=0.8, a_thole=2.4)
@@ -217,7 +210,7 @@ def test_forces_match_finite_difference():
         pair_types=["AB"],
     )
     pots = ff.to_potentials(frame)
-    coords = molrs.extract_coords(frame)
+    coords = molrs.ff.extract_coords(frame)
     analytical = np.asarray(pots.calc_forces(coords)).ravel()
     numerical = _numerical_forces(pots, coords)
 
@@ -236,7 +229,7 @@ def test_damping_approaches_one_at_long_range():
     # At r=100, T ≈ 1, so energy ≈ q²/r = 0.01
     expected_undamped = q * q / r_far
 
-    ff = molrs.ForceField("thole-long")
+    ff = molrs.ff.ForceField("thole-long")
     pstyle = ff.def_style(PairTholeStyle())
     pstyle.def_type("A", charge=q, alpha=1.0, a_thole=2.6)
 
@@ -247,7 +240,7 @@ def test_damping_approaches_one_at_long_range():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.extract_coords(frame))
+    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
     # Damped energy should be very close to undamped Coulomb (|T - 1| < 1e-6)
     assert abs(energy - expected_undamped) < 1e-6
 
@@ -263,7 +256,7 @@ def test_damping_strong_at_short_range():
     q = 1.0
     expected_undamped = q * q / r_short  # = 10.0
 
-    ff = molrs.ForceField("thole-short")
+    ff = molrs.ff.ForceField("thole-short")
     pstyle = ff.def_style(PairTholeStyle())
     pstyle.def_type("A", charge=q, alpha=1.0, a_thole=2.6)
 
@@ -274,7 +267,7 @@ def test_damping_strong_at_short_range():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.extract_coords(frame))
+    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
 
     # Damped energy must be strictly less than undamped (damping << 1)
     assert energy < expected_undamped
@@ -291,7 +284,7 @@ def test_damping_strong_at_short_range():
 
 def test_newtons_third_law():
     """Forces on i and j sum to zero (Newton's third law)."""
-    ff = molrs.ForceField("thole-newton")
+    ff = molrs.ff.ForceField("thole-newton")
     pstyle = ff.def_style(PairTholeStyle())
     pstyle.def_type("A", charge=-0.7, alpha=1.3, a_thole=2.6)
 
@@ -302,6 +295,6 @@ def test_newtons_third_law():
         pair_types=["A"],
     )
     pots = ff.to_potentials(frame)
-    forces = np.asarray(pots.calc_forces(molrs.extract_coords(frame)))
+    forces = np.asarray(pots.calc_forces(molrs.ff.extract_coords(frame)))
     net = np.sum(forces, axis=0)
     assert np.allclose(net, [0.0, 0.0, 0.0], atol=1e-12)

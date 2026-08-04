@@ -174,7 +174,7 @@ class TestTopWriter:
         frame["bonds"] = {
             "atomi": np.array([1]),
             "atomj": np.array([2]),
-            "type": np.array([1]),
+            "type_id": np.array([1]),
         }
         return frame
 
@@ -245,7 +245,7 @@ class TestTopWriter:
         frame["pairs"] = {
             "atomi": np.array([1]),
             "atomj": np.array([2]),
-            "type": np.array([1]),
+            "type_id": np.array([1]),
         }
         out_file = tmp_path / "out.top"
         TopWriter(out_file).write(frame)
@@ -260,7 +260,7 @@ class TestTopWriter:
             "atomi": np.array([1]),
             "atomj": np.array([2]),
             "atomk": np.array([3]),
-            "type": np.array([1]),
+            "type_id": np.array([1]),
         }
         out_file = tmp_path / "out.top"
         TopWriter(out_file).write(frame)
@@ -276,7 +276,7 @@ class TestTopWriter:
             "atomj": np.array([2]),
             "atomk": np.array([3]),
             "atoml": np.array([4]),
-            "type": np.array([1]),
+            "type_id": np.array([1]),
         }
         out_file = tmp_path / "out.top"
         TopWriter(out_file).write(frame)

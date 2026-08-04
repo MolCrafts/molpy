@@ -14,25 +14,27 @@ from typing import Callable
 
 import numpy as np
 
-from molrs.fields import *  # noqa: F401,F403  (re-export canonical registry)
-from molrs.fields import FieldFormatter, FieldSpec, __all__ as _MOLRS_FIELDS_ALL
+from molrs.fields import *  # noqa: F401,F403  (re-export the formatters)
+from molrs.fields import FieldFormatter, __all__ as _MOLRS_FIELDS_ALL
+from molrs import keys as _keys
+
+# Canonical column names come from molrs — one table, projected. Re-exported
+# flat so `from molpy.core.fields import RES_ID` keeps resolving.
+globals().update({_n: getattr(_keys, _n) for _n in dir(_keys) if _n.isupper()})
 
 # ===================================================================
 #                    molpy-owned canonical fields
 # ===================================================================
 # Assembly is a molpy concept, so its field lives here rather than in the molrs
-# registry. It is a real ``FieldSpec``, not a ``site_field: str`` constructor
-# knob: field names are never strings passed around.
+# vocabulary. It is a plain column name: `molrs.schema` owns canonical columns
+# and their dtypes, and a molpy-local column is just a key the vocabulary does
+# not constrain.
 
 #: Reaction-site label on an atom. Sparse: only the atoms a reaction may bind
 #: carry a name (``"a"``, ``"b"``, …); every other atom holds the empty string,
 #: which means *unmarked* and never matches a ``%site`` predicate. A missing
 #: ``site`` column is an error, not "no sites".
-SITE = FieldSpec(
-    key="site",
-    dtype=np.dtype("U16"),
-    doc="Assembly site label; empty string means the atom is not a site.",
-)
+SITE = "site"
 
 # ===================================================================
 #                    ForceFieldFormatter

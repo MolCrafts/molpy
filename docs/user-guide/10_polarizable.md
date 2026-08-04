@@ -22,7 +22,14 @@ Every builder follows the same four-step pipeline and exposes one entry point,
 `apply`:
 
 ```python
-new_struct = builder.apply(struct)      # struct: Atomistic -> Atomistic (a copy)
+import molpy as mp
+from molpy.builder.virtualsite import DrudeBuilder, load_polarizability
+from molpy.conformer import Conformer
+
+struct, _ = Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
+builder = DrudeBuilder(polarizability=load_polarizability(), drude_prefix="D")
+
+new_struct = builder.apply(struct)  # struct: Atomistic -> Atomistic (a copy)
 ```
 
 Internally `apply` runs `select` (which hosts?) → `build_sites` (make the extra
@@ -37,7 +44,7 @@ atom, driven by per-atom-type polarizabilities:
 ```python
 from molpy.builder.virtualsite import DrudeBuilder, load_polarizability
 
-alpha = load_polarizability()                 # bundled alpha.ff parameters
+alpha = load_polarizability()  # bundled alpha.ff parameters
 drude = DrudeBuilder(polarizability=alpha, drude_prefix="D")
 polarized = drude.apply(struct)
 ```
@@ -55,7 +62,12 @@ protocol, a different rule:
 ```python
 from molpy.builder.virtualsite import Tip4pBuilder
 
-tip4p = Tip4pBuilder(d_om=0.1546)     # O–M distance in nm
+water, _ = Conformer(add_hydrogens=True, seed=1).generate(mp.io.read_smiles("O"))
+# The M-site carries the oxygen's charge, so the input must already have one.
+for atom in water.atoms:
+    atom["charge"] = -0.834 if atom["element"] == "O" else 0.417
+
+tip4p = Tip4pBuilder(d_om=0.1546)  # O–M distance in nm
 water4p = tip4p.apply(water)
 ```
 

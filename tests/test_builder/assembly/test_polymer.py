@@ -34,10 +34,12 @@ class TestPolymerBuilder:
             range(1, 7)
         )
 
-    def test_build_linear_is_only_notation_sugar(self, builder_factory):
+    def test_build_linear_matches_explicit_topology(self, builder_factory):
+        from molpy.builder.assembly import linear_topology
+
         builder = builder_factory()
         via_helper = builder.build_linear("EO", 5)
-        via_build = builder.build("{[#EO]|5}")
+        via_build = builder.build(linear_topology(["EO"] * 5))
         assert via_helper.n_atoms == via_build.n_atoms
         assert len(list(via_helper.bonds)) == len(list(via_build.bonds))
 
@@ -56,8 +58,9 @@ class TestPolymerBuilder:
         ring = builder_factory().build_ring("EO", 4)
         assert len(list(ring.bonds)) == len(list(ring.atoms))
 
-    def test_difunctional_monomer_cannot_create_a_branch(self, builder_factory):
-        chain = builder_factory().build("{[#EO]([#EO])[#EO]}")
+    def test_linear_path_has_tree_bond_count(self, builder_factory):
+        # Branching CGSmiles strings are gone with Lark; a linear path stays a tree.
+        chain = builder_factory().build_linear("EO", 3)
         assert len(list(chain.bonds)) == len(list(chain.atoms)) - 1
 
     def test_build_star_uses_every_core_site(self, eo_factory):
@@ -95,16 +98,16 @@ class ElementTypifier(Typifier):
     def match(self, graph) -> Match:
         return Match(
             nodes=tuple(
-                {fields.TYPE.key: f"t_{atom[fields.ELEMENT]}"} for atom in graph.atoms
+                {fields.TYPE: f"t_{atom[fields.ELEMENT]}"} for atom in graph.atoms
             )
         )
 
 
 class OplsTypifier(Typifier[Atomistic]):
-    """molpy Typifier façade over molrs.OPLSAATypifier."""
+    """molpy Typifier façade over molrs.ff.OPLSAATypifier."""
 
     def __init__(self) -> None:
-        self._inner = molrs.OPLSAATypifier()
+        self._inner = molrs.ff.OPLSAATypifier()
 
     def typify(self, graph: Atomistic) -> Atomistic:
         typed = self._inner.typify(graph)
@@ -113,7 +116,7 @@ class OplsTypifier(Typifier[Atomistic]):
     def match(self, graph: Atomistic) -> Match:
         typed = self.typify(graph)
         return Match(
-            nodes=tuple({fields.TYPE.key: str(atom["type"])} for atom in typed.atoms)
+            nodes=tuple({fields.TYPE: str(atom["type"])} for atom in typed.atoms)
         )
 
 
@@ -174,9 +177,9 @@ class TestPolymerBuilderOplsOracle:
         import ast
         import inspect
 
-        from molpy.builder.assembly import _assembler, _plan
+        from molpy.builder.assembly import _assembler
 
-        for module in (_assembler, _plan):
+        for module in (_assembler,):
             tree = ast.parse(inspect.getsource(module))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Name) and node.id in {

@@ -43,7 +43,7 @@ class PowerSpectrum(Compute):
 
     def __init__(self):
         super().__init__()
-        self._inner = molrs.PowerSpectrum()
+        self._inner = molrs.compute.spectroscopy.PowerSpectrum()
 
     def __call__(self, acf, dt_fs):
         return self._inner.fit(acf, dt_fs)
@@ -57,7 +57,7 @@ class IRSpectrum(Compute):
 
     def __init__(self):
         super().__init__()
-        self._inner = molrs.IRSpectrum()
+        self._inner = molrs.compute.spectroscopy.IRSpectrum()
 
     def __call__(self, acf, dt_fs):
         return self._inner.fit(acf, dt_fs)
@@ -89,7 +89,7 @@ class RamanSpectrum(Compute):
             temperature_k=temperature_k,
             averaged=averaged,
         )
-        self._inner = molrs.RamanSpectrum(
+        self._inner = molrs.compute.spectroscopy.RamanSpectrum(
             incident_frequency_cm1, temperature_k, averaged
         )
 
@@ -105,7 +105,7 @@ class VcdSpectrum(Compute):
 
     def __init__(self):
         super().__init__()
-        self._inner = molrs.VcdSpectrum()
+        self._inner = molrs.compute.spectroscopy.VcdSpectrum()
 
     def __call__(self, acf, dt_fs):
         return self._inner.fit(acf, dt_fs)
@@ -129,7 +129,9 @@ class RoaSpectrum(Compute):
             temperature_k=temperature_k,
             averaged=averaged,
         )
-        self._inner = molrs.RoaSpectrum(incident_frequency_cm1, temperature_k, averaged)
+        self._inner = molrs.compute.spectroscopy.RoaSpectrum(
+            incident_frequency_cm1, temperature_k, averaged
+        )
 
     def __call__(self, acf_iso, acf_aniso, dt_fs):
         return self._inner.fit(acf_iso, acf_aniso, dt_fs)
@@ -153,7 +155,7 @@ class ResonanceRamanSpectrum(Compute):
             temperature_k=temperature_k,
             averaged=averaged,
         )
-        self._inner = molrs.ResonanceRamanSpectrum(
+        self._inner = molrs.compute.spectroscopy.ResonanceRamanSpectrum(
             incident_frequency_cm1, temperature_k, averaged
         )
 

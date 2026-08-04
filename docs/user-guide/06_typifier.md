@@ -13,7 +13,7 @@ A molecular structure has atoms and bonds, but a simulation needs *types* — id
 
 **A Typifier examines the chemical environment of each atom via SMARTS pattern matching and assigns the corresponding force field type.**
 
-MolPy's `OplsTypifier` handles the full assignment in one call: atom types first, then pair parameters, then bond/angle/dihedral types derived from the atom type assignments.
+MolPy's `OPLSAATypifier` handles the full assignment in one call: atom types first, then pair parameters, then bond/angle/dihedral types derived from the atom type assignments.
 
 ## What typification looks like end to end
 
@@ -22,12 +22,12 @@ The workflow is always the same: build the structure, load a force field, create
 
 ```python
 import molpy as mp
-from molpy.typifier import OplsTypifier
+from molpy.typifier import OPLSAATypifier
 
 # 1. Build the structure
-mol = mp.parser.parse_molecule("CCO")
-mol = mp.adapter.RDKitAdapter(mol).generate_3d(add_hydrogens=True, optimize=True)
-mol = mol.get_topo(gen_angle=True, gen_dihe=True)
+mol = mp.io.read_smiles("CCO")
+mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
+mol.get_topo(gen_angle=True, gen_dihe=True)  # angles/dihedrals in place
 
 print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")
 print(f"angles: {len(mol.angles)}, dihedrals: {len(mol.dihedrals)}")
@@ -46,7 +46,7 @@ Loading the force field is a separate step from building the structure because t
 # 2. Load force field and typify
 # "oplsaa.xml" is bundled with MolPy — no separate download needed
 ff = mp.io.read_xml_forcefield("oplsaa.xml")
-typifier = OplsTypifier(ff, strict_typing=True)
+typifier = OPLSAATypifier(strict=True)
 
 typed_mol = typifier.typify(mol)
 ```
@@ -126,9 +126,9 @@ Once atom types are assigned, bonded interactions follow mechanically. A bond be
 
 ## Strict vs. non-strict mode
 
-In strict mode (`strict_typing=True`), any untyped atom raises an error immediately. This is the right default during development — it catches missing force field parameters before they become silent errors in production.
+In strict mode (`strict=True`), any untyped atom raises an error immediately. This is the right default during development — it catches missing force field parameters before they become silent errors in production.
 
-In non-strict mode (`strict_typing=False`), untyped atoms are silently skipped. Use this when you know some atoms will not match — for example, when using a general-purpose force field on a molecule with exotic functional groups.
+In non-strict mode (`strict=False`), untyped atoms are silently skipped. Use this when you know some atoms will not match — for example, when using a general-purpose force field on a molecule with exotic functional groups.
 
 ## Every atom, bond, angle, and dihedral carries its assigned type
 
@@ -216,7 +216,7 @@ builder = PolymerBuilder(
     reach=2,                     # GAFF: a 1-2 bond environment names an atom type
     placer=ResiduePlacer(),
 )
-chain = builder.build("{[#EO]|20}")
+chain = builder.build_linear("EO", 20)
 ```
 
 Omit the typifier and assembly assigns no types at all; typify the finished chain instead. That gives the same answer, at a cost proportional to the whole chain rather than to its junctions.

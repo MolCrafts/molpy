@@ -201,11 +201,17 @@ class TestBuildCrystalRepeats:
 
     def test_super_cell_box(self):
         lat = Lattice.sc(a=3.0, species="Cu")
-        structure = build_crystal(lat, repeats=(2, 2, 2))
 
-        box = structure["box"]
+        box = lat.supercell((2, 2, 2))
         assert isinstance(box, Box)
         assert np.allclose(box.matrix, 6.0 * np.eye(3))
+
+    def test_the_cell_is_never_written_onto_the_structure(self):
+        """A structure is topology and chemistry; the cell lives on ``frame.box``."""
+        lat = Lattice.sc(a=3.0, species="Cu")
+        structure = build_crystal(lat, repeats=(2, 2, 2))
+
+        assert "box" not in structure.props
 
     def test_positions(self):
         lat = Lattice.sc(a=2.0, species="Cu")

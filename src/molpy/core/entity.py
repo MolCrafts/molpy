@@ -1,15 +1,15 @@
-"""Identity exports for the molrs-owned live graph view layer."""
+"""Identity exports for the molrs-owned live graph view layer.
 
-from molrs.views import (
-    Entities,
-    Entity,
-    GraphViews,
-    Link,
-    NodeRef,
-    Refs,
-    RelationRef,
-    _GraphViews,
-)
+Molrs exposes NodeRef / RelationRef / Refs only. MolPy keeps Entity / Link /
+Entities as **local** domain names (single definition site here).
+"""
+
+from molrs.views import GraphViews, NodeRef, Refs, RelationRef, _GraphViews
+
+# Domain vocabulary — not dual APIs on molrs.
+Entity = NodeRef
+Link = RelationRef
+Entities = Refs
 
 __all__ = [
     "Entities",

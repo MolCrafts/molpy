@@ -4,18 +4,16 @@ from molpy.core.forcefield import (
     PairBuckStyle,
     PairCoulLongStyle,
     PairCoulTTStyle,
-    PairLJ126CoulCutStyle,
-    PairLJ126CoulLongStyle,
-    PairLJ126Style,
+    PairLjCutCoulCutStyle,
+    PairLjCutCoulLongStyle,
     PairLJClass2Style,
     PairMorseStyle,
     PairTholeStyle,
 )
 
 __all__ = [
-    "PairLJ126Style",
-    "PairLJ126CoulCutStyle",
-    "PairLJ126CoulLongStyle",
+    "PairLjCutCoulCutStyle",
+    "PairLjCutCoulLongStyle",
     "PairCoulLongStyle",
     "PairBuckStyle",
     "PairMorseStyle",

@@ -2,32 +2,41 @@
 
 This page shows how to add reusable analysis operations (`Compute`) to MolPy.
 
+!!! important "Science lives in molrs"
+    Transport, dielectric, VACF, and spectral kernels are implemented once in
+    **molrs** and re-exported (identity) into `molpy.compute`. Do **not** add a
+    parallel Python recipe class that reimplements Green–Kubo, Einstein
+    conductivity, or dielectric spectra. Prefer a molrs `Compute` + `Fit`
+    composition; molpy only wraps frame extraction when needed.
+
 ## Which base class to use
 
 | Need | Base class | Example |
 |------|-----------|---------|
-| Reusable analysis on array data | `Compute` | `MSD`, `DisplacementCorrelation` |
-| One-off calculation with no config | plain function | `compute_msd(positions)` |
+| Frame-oriented analysis (molrs kernel behind a shell) | `Compute` | `MSD`, `RDF` |
+| Array-oriented transport / dielectric | re-export molrs type | `EinsteinConductivity`, `Onsager` |
+| Pure array math with no owner | module function | `signal.acf_fft` |
 
-`Compute` is a frozen dataclass. Configuration is set at construction and cannot change. Execution goes through `run()` (or `__call__`).
+`Compute` is a configurable callable. Construction parameters go to `__init__` and are handed to `super().__init__(**config)` so `dump()` can round-trip them; data inputs go to `__call__`, which is the one abstract method.
 
 ## Adding a Compute operation
 
-Subclass `Compute`, declare configuration as frozen dataclass fields, implement `run()`.
+Subclass `Compute`, take configuration in `__init__`, implement `__call__` with a concrete typed signature — one parameter per data input.
 
 ```python
-from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 from molpy.compute import Compute
 
-@dataclass(frozen=True)
+
 class RadiusOfGyration(Compute):
     """Compute radius of gyration for each frame."""
 
-    use_masses: bool = True
+    def __init__(self, use_masses: bool = True) -> None:
+        super().__init__(use_masses=use_masses)
+        self.use_masses = use_masses
 
-    def run(self, positions: NDArray, masses: NDArray | None = None) -> NDArray:
+    def __call__(self, positions: NDArray, masses: NDArray | None = None) -> float:
         """Compute Rg for a set of positions.
 
         Args:
@@ -44,28 +53,33 @@ class RadiusOfGyration(Compute):
 
         com = (positions * w[:, None]).sum(axis=0)
         dr = positions - com
-        rg2 = (w * (dr ** 2).sum(axis=1)).sum()
+        rg2 = (w * (dr**2).sum(axis=1)).sum()
         return float(np.sqrt(rg2))
 ```
 
 Usage:
 
 ```python
+rng = np.random.default_rng(0)
+positions = rng.uniform(0.0, 10.0, size=(50, 3))
+masses = np.full(len(positions), 12.011)
+
 rg = RadiusOfGyration(use_masses=True)
-value = rg(positions, masses)   # __call__ delegates to run()
+value = rg(positions, masses)
+assert rg.dump() == {"use_masses": True}
 ```
 
 ## Design rules
 
-1. **Configuration goes in fields** — set once at init, frozen forever
-2. **Runtime data goes through `run()`** — different inputs, same protocol
-3. **No mutation** — `run()` returns new objects, never modifies inputs
-4. **Keep `run()` focused** — one clear task, not a workflow engine
+1. **Configuration goes to `__init__`** — set once, and forwarded to `super().__init__` so `dump()` can serialize it
+2. **Runtime data goes through `__call__`** — different inputs, same protocol
+3. **No mutation** — `__call__` returns new objects, never modifies inputs
+4. **Keep `__call__` focused** — one clear task, not a workflow engine
 5. **Test in isolation** — each Compute should be testable with synthetic data
 
 ## Checklist
 
 - [ ] Subclass `Compute`
-- [ ] Add `@dataclass(frozen=True)` decorator
-- [ ] Implement `run()` with type hints
+- [ ] Pass construction parameters to `super().__init__(**config)`
+- [ ] Implement `__call__` with type hints
 - [ ] Write tests in `tests/test_compute/`

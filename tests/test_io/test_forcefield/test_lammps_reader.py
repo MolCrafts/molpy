@@ -26,14 +26,14 @@ def _write(tmp_path):
 
 def test_io_read_lammps_forcefield(tmp_path):
     ff = mpio.read_lammps_forcefield(_write(tmp_path))
-    assert type(ff).__module__ == "molrs.forcefield"
+    assert type(ff).__module__ == "molrs.ff.forcefield"
     bt = ff.get_style("bond", "harmonic").get_type_by_name("c3-c3")
     assert abs(bt.params["k"] - 457.78) < 1e-2  # k = 2K
 
 
 def test_forcefield_namespace_read_lammps_forcefield(tmp_path):
     ff = mpff.read_lammps_forcefield(_write(tmp_path))
-    assert type(ff).__module__ == "molrs.forcefield"
+    assert type(ff).__module__ == "molrs.ff.forcefield"
     assert len(ff.get_style("dihedral", "fourier").types) == 1
 
 

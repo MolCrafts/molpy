@@ -19,8 +19,9 @@ for the DDF. No separate index array is passed.
     - Distances are in Å, angles and dihedrals in degrees, densities in Å⁻³.
     - The atom tuples come from the frame's topology blocks — pairs `(i, j)` from
       `bonds`, triplets `(i, j, k)` from `angles` (vertex at `j`), quadruplets
-      from `dihedrals`. Perceive them with
-      `Atomistic.get_topo(gen_angle=True, gen_dihe=True)`.
+      from `dihedrals`. Perceive them in place with
+      `mol.get_topo(gen_angle=True, gen_dihe=True)` (or chain into
+      `.to_frame()`).
     - Angular distributions carry a trivial `sin θ` solid-angle weighting; the
       result's `density_sin_corrected` removes it so a structureless distribution
       is flat.
@@ -51,18 +52,30 @@ structure.
 Perceive the topology (so the frame carries `bonds` / `angles` / `dihedrals`),
 then call the operator on one or more frames:
 
+The examples below share this setup:
+
+```python
+import molpy as mp
+
+mol = mp.io.read_smiles("CCO")
+```
+
 ```python
 from molpy.compute import AngleDistribution, DihedralDistribution, DistanceDistribution
 
 # The frame must carry the relevant topology block, e.g. from a built structure:
-frame = mol.get_topo(gen_angle=True, gen_dihe=True).to_frame()
+from molpy.conformer import Conformer
+
+mol, _ = Conformer(seed=42).generate(mol)  # coordinates for the geometry
+mol.get_topo(gen_angle=True, gen_dihe=True)  # angles/dihedrals in place
+frame = mol.to_frame()
 
 adf = AngleDistribution(n_bins=180, min=0.0, max=180.0)
-result = adf([frame])        # angle triplets read from frame["angles"]
+result = adf([frame])  # angle triplets read from frame["angles"]
 
-result.bin_centers           # angle at each bin, degrees
-result.density               # normalized p(theta)
-result.density_sin_corrected # solid-angle-corrected distribution
+result.bin_centers  # angle at each bin, degrees
+result.density  # normalized p(theta)
+result.density_sin_corrected  # solid-angle-corrected distribution
 ```
 
 `DistanceDistribution(n_bins, min, max)` and
@@ -83,16 +96,22 @@ $$
 p(x_1, x_2, \dots) = \frac{1}{N}\Big\langle\sum_\text{groups}\prod_a \delta\big(x_a - x_a^\text{group}\big)\Big\rangle.
 $$
 
-Each axis is declared as `(kind, n_bins, min, max, sin_weight)`:
+Each axis is declared as `(kind, n_bins, min, max, sin_weight)`. Every axis reads
+the tuples of its kind's topology block, and all axes must describe the *same*
+tuples — so they share a kind, and the histogram is over one population measured
+along several coordinates:
 
 ```python
 from molpy.compute import CombinedDistribution
 
-cdf = CombinedDistribution([
-    ("distance", 100, 2.0, 4.0, False),   # read from frame["bonds"]
-    ("angle",     90, 90.0, 180.0, True), # read from frame["angles"] (sin-weighted)
-])
-result = cdf([frame])   # each axis reads the tuples of its kind's topology block
+cdf = CombinedDistribution(
+    [
+        ("angle", 90, 0.0, 180.0, True),  # read from frame["angles"] (sin-weighted)
+        ("angle", 45, 90.0, 180.0, True),  # the same triplets, binned more coarsely
+    ]
+)
+result = cdf([frame])
+assert result.ndim == 2
 ```
 
 The result carries the multi-dimensional histogram plus helpers
@@ -114,16 +133,16 @@ import numpy as np
 from molpy.compute import SpatialDistribution
 
 sdf = SpatialDistribution(
-    reference=[o, h1, h2],            # atoms defining the body frame
-    template=np.array([[0,0,0],[0.76,0.59,0],[-0.76,0.59,0]]),  # ideal geometry
-    target=[o],                       # density of neighbouring O atoms
-    n=(64, 64, 64),                   # grid resolution
-    extent=(8.0, 8.0, 8.0),           # half-extent per axis, Å
-    bulk_density=0.033,               # optional -> result.g_sdf
+    reference=[0, 1, 2],  # atom *indices* defining the body frame
+    template=np.array([[0.0, 0.0, 0.0], [0.76, 0.59, 0.0], [-0.76, 0.59, 0.0]]),
+    target=[2],  # density of this atom, on that frame
+    n=(32, 32, 32),  # grid resolution
+    extent=(8.0, 8.0, 8.0),  # half-extent per axis, Å
+    bulk_density=0.033,  # optional -> result.g_sdf
 )
-result = sdf(frames)
-result.density   # target density on the body-fixed grid
-result.g_sdf     # normalized by bulk_density (if supplied)
+result = sdf([frame])
+result.density  # target density on the body-fixed grid
+result.g_sdf  # normalized by bulk_density (if supplied)
 ```
 
 If the frames carry an `orientations` topology block (one `(head, tail)` atom

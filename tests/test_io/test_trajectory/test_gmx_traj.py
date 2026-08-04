@@ -53,9 +53,12 @@ def test_xtc_write_then_read(tmp_path):
 
     reader = read_xtc_trajectory(path)
     assert reader.n_frames == 2
-    # XTC is lossy at 1/precision (default 1000 → 1e-3 nm).
+    # XTC is lossy at 1/precision, and precision is a property of the *file*,
+    # which stores nm: the default 1000 quantises to 1e-3 nm. Frames are Å, so
+    # that same quantum is 1e-2 Å — the resolution did not change, the unit the
+    # tolerance is written in did.
     got = reader.read_frame(1)["atoms"].view("x")
-    assert np.allclose(got, frames[1]["atoms"].view("x"), atol=2e-3)
+    assert np.allclose(got, frames[1]["atoms"].view("x"), atol=2e-2)
 
 
 def test_trr_reader_slicing_and_iteration(tmp_path):

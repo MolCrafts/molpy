@@ -4,8 +4,8 @@ import pytest
 
 import molpy as mp
 from molpy.builder.assembly import MonomerLibrary
+from molpy.builder.assembly._residue_graph import linear_topology
 from molpy.core import fields
-from molpy.parser.smiles import parse_cgsmiles
 
 
 class TestMonomerLibrary:
@@ -20,13 +20,13 @@ class TestMonomerLibrary:
             MonomerLibrary({"X": naked})
 
     def test_expand_stamps_contiguous_residue_identity(self, eo_factory):
-        topology = parse_cgsmiles("{[#EO]|3}").base_graph
+        topology = linear_topology(["EO"] * 3)
         world = MonomerLibrary({"EO": eo_factory()}).expand(topology)
         assert sorted({int(atom[fields.RES_ID]) for atom in world.atoms}) == [1, 2, 3]
         assert {str(atom[fields.RES_NAME]) for atom in world.atoms} == {"EO"}
 
     def test_unknown_topology_label_is_rejected(self, eo_factory):
-        topology = parse_cgsmiles("{[#ZZ]|2}").base_graph
+        topology = linear_topology(["ZZ"] * 2)
         with pytest.raises(ValueError, match="lacks"):
             MonomerLibrary({"EO": eo_factory()}).expand(topology)
 
@@ -40,6 +40,6 @@ class TestMonomerLibrary:
 
         template.atoms[0][fields.TYPE] = "caller-mutation"
         exposed.atoms[0][fields.TYPE] = "returned-copy-mutation"
-        topology = parse_cgsmiles("{[#EO]}").base_graph
+        topology = linear_topology(["EO"])
         expanded = library.expand(topology)
         assert [atom.get(fields.TYPE) for atom in expanded.atoms] == original_types

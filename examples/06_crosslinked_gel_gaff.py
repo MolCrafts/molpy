@@ -34,7 +34,6 @@ from molpy.builder.ambertools import AmberTools
 from molpy.builder.assembly import GraphAssembler, RandomSelector
 from molpy.conformer import Conformer
 from molpy.io import write_lammps_system
-from molpy.parser import parse_molecule
 
 AMBER_ENV = "AmberTools25"  # conda env providing antechamber/parmchk2/tleap
 CHAIN_SMILES = "OCCOCCOCCO"  # HO-(CH2CH2O)3-H, a PEO oligomer
@@ -62,7 +61,7 @@ def main() -> None:
     # 1. PEO chain straight from SMILES; Conformer (molpy's native molrs
     #    embedder) produces a physical 3D conformer.
     peo, _ = Conformer(add_hydrogens=True, seed=42).generate(
-        parse_molecule(CHAIN_SMILES)
+        mp.io.read_smiles(CHAIN_SMILES)
     )
 
     # 2. Replicate into a grid of independent chains (each its own mol_id).

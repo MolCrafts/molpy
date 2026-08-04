@@ -38,19 +38,6 @@ class TimeSeriesResult(Result):
 
 
 @dataclass
-class MCDResult(TimeSeriesResult):
-    """Results from Mean Displacement Correlation calculation.
-
-    Attributes:
-        time: Time lag values (in ps)
-        correlations: Dictionary mapping tag names to correlation function arrays (MSD values).
-            Each array has shape (n_time_lags,)
-    """
-
-    correlations: dict[str, NDArray[np.float64]] = field(default_factory=dict)
-
-
-@dataclass
 class PMSDResult(TimeSeriesResult):
     """Results from Polarization Mean Square Displacement calculation.
 
@@ -165,7 +152,7 @@ class DielectricResult(Result):
     component: str = ""
     conductivity: NDArray[np.float64] | None = None
 
-    def fit_debye(self) -> "DebyeFit":
+    def fit_debye(self) -> "DebyeSpectrumFit":
         """Fit a single Debye relaxation to this spectrum (NumPy only).
 
         Uses the exact single-Debye identity
@@ -178,10 +165,10 @@ class DielectricResult(Result):
 
         No SciPy: the estimator is closed-form linear regression. For broadened
         or skewed (Cole-Cole / Havriliak-Negami) line shapes do a nonlinear fit
-        in your analysis script using :meth:`DebyeFit.epsilon` as the model.
+        in your analysis script using :meth:`DebyeSpectrumFit.epsilon` as the model.
 
         Returns:
-            DebyeFit with tau (ps), delta_eps, eps_inf, eps_static, omega_peak.
+            DebyeSpectrumFit with tau, delta_eps, eps_inf, eps_static, omega_peak.
         """
         w = np.asarray(self.frequency, dtype=np.float64)
         er = np.asarray(self.epsilon_real, dtype=np.float64)
@@ -214,7 +201,7 @@ class DielectricResult(Result):
         if not np.isfinite(tau) or tau <= 0.0:
             tau = 1.0 / omega_peak if omega_peak > 0.0 else float("nan")
 
-        return DebyeFit(
+        return DebyeSpectrumFit(
             tau=tau,
             delta_eps=delta_eps,
             eps_inf=eps_inf,
@@ -224,15 +211,18 @@ class DielectricResult(Result):
 
 
 @dataclass
-class DebyeFit:
-    """Single-Debye relaxation parameters fitted from a dielectric spectrum.
+class DebyeSpectrumFit:
+    """Single-Debye parameters fitted from a frequency-domain spectrum.
+
+    Distinct from :class:`molrs.compute.transport.DebyeFit`, which fits the
+    **time-domain** normalized ACF Φ(t). Prefer that Fit for compose pipelines.
 
     Attributes:
-        tau: Relaxation time (ps).
+        tau: Relaxation time (same time base as the spectrum).
         delta_eps: Relaxation strength epsilon(0) - epsilon_inf (dimensionless).
         eps_inf: High-frequency permittivity used in the fit.
         eps_static: Static permittivity epsilon(0) (dimensionless).
-        omega_peak: Angular frequency of the dielectric-loss peak (rad/ps).
+        omega_peak: Angular frequency of the dielectric-loss peak.
     """
 
     tau: float = float("nan")

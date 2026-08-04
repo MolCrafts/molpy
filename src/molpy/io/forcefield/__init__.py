@@ -27,9 +27,9 @@ def read_lammps_forcefield(scripts: PathLike | list[PathLike]) -> Any:
 
     paths = scripts if isinstance(scripts, list) else [scripts]
     if len(paths) == 1:
-        return molrs.read_lammps_forcefield(str(paths[0]))
+        return molrs.ff.read_lammps_forcefield(str(paths[0]))
     text = "\n".join(Path(p).read_text() for p in paths)
-    return molrs.read_lammps_forcefield_str(text)
+    return molrs.ff.read_lammps_forcefield_str(text)
 
 
 def write_lammps_forcefield(
@@ -47,7 +47,7 @@ def write_lammps_forcefield(
     """Write a ForceField to a LAMMPS ``*.ff`` include."""
     import molrs
 
-    molrs.write_lammps_forcefield(
+    molrs.ff.write_lammps_forcefield(
         str(path),
         forcefield,
         precision=precision,

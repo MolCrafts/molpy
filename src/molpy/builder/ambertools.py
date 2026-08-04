@@ -41,10 +41,6 @@ class AmberResult:
     prmtop: Any = None
     inpcrd: Any = None
 
-    @property
-    def ff(self) -> Any:
-        return self.forcefield
-
 
 def _neutralize(frame: Any, target: float) -> None:
     q = np.asarray(frame["atoms"]["charge"], dtype=float)
@@ -259,7 +255,21 @@ class AmberTools:
             )
             self._polymer_builders[key] = builder
         result = builder.build(cgsmiles)
-        _neutralize(result.frame, 0.0)
+        # Default net 0 (neutral / zwitterionic recipes). With ``net_charges``,
+        # shift to the formal chain charge so ionic blocks stay consistent when
+        # free counter-ions are packed separately.
+        target = 0.0
+        if net_charges:
+            import re
+
+            labels = re.findall(r"\[#([A-Za-z0-9_]+)\]", str(cgsmiles))
+            # ``{[#X]|n}`` form: single label, multiplicity in the pipe clause.
+            if not labels:
+                m = re.search(r"\[#([A-Za-z0-9_]+)\]\|(\d+)", str(cgsmiles))
+                if m:
+                    labels = [m.group(1)] * int(m.group(2))
+            target = float(sum(int(net_charges.get(lab, 0)) for lab in labels))
+        _neutralize(result.frame, target)
         return AmberResult(
             result.frame,
             result.forcefield,

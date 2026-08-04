@@ -47,9 +47,9 @@ def test_tip3p_water_optimization():
     struct = Atomistic()
     # Atoms carry string type labels that match the force-field type names so
     # molrs can match topology rows to FF types when compiling the potentials.
-    o_atom = struct.def_atom(symbol="O", xyz=[0.0, 0.0, 0.0], type="OW")
-    h1_atom = struct.def_atom(symbol="H", xyz=[0.12, 0.0, 0.0], type="HW")
-    h2_atom = struct.def_atom(symbol="H", xyz=[0.0, 0.12, 0.0], type="HW")
+    o_atom = struct.def_atom(symbol="O", x=0.0, y=0.0, z=0.0, type="OW")
+    h1_atom = struct.def_atom(symbol="H", x=0.12, y=0.0, z=0.0, type="HW")
+    h2_atom = struct.def_atom(symbol="H", x=0.0, y=0.12, z=0.0, type="HW")
 
     struct.def_bond(o_atom, h1_atom, type="OW-HW")
     struct.def_bond(o_atom, h2_atom, type="OW-HW")

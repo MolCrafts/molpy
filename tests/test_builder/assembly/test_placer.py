@@ -21,14 +21,14 @@ class TestPlacer:
 
 class TestResiduePlacer:
     def test_spreads_overlapping_residue_templates(self, builder_factory):
-        stacked = builder_factory().build("{[#EO]|5}")
-        spread = builder_factory(placer=ResiduePlacer()).build("{[#EO]|5}")
+        stacked = builder_factory().build_linear("EO", 5)
+        spread = builder_factory(placer=ResiduePlacer()).build_linear("EO", 5)
 
         assert self._minimum_separation(stacked) < 1e-9
         assert self._minimum_separation(spread) > 0.5
 
     def test_initial_bond_length_is_the_sum_of_covalent_radii(self, builder_factory):
-        chain = builder_factory(placer=ResiduePlacer()).build("{[#EO]|4}")
+        chain = builder_factory(placer=ResiduePlacer()).build_linear("EO", 4)
         lengths = [
             float(
                 np.linalg.norm(

@@ -36,7 +36,7 @@ From one ethylene-glycol kit to every architecture the assembly stack supports. 
 - [Nanostructures](04_nanostructures.md) — zigzag, armchair, and chiral carbon nanotubes with open or periodic axial topology
 - [3D Conformer Generation](07_conformers.md) — embedding chemically valid 3D coordinates for a parsed or constructed structure
 - [Geometry Optimization](08_geometry_optimization.md) — force-field-driven structure minimization and how to read the optimization report
-- [Packing Systems](09_packing.md) — filling a simulation cell with molecules under geometric constraints via the Packmol backend
+- [Packing Systems](09_packing.md) — filling a simulation cell with molecules under geometric restraints via molpack
 - [Polarizable & Virtual-Site Models](10_polarizable.md) — Drude shells and TIP4P M-sites through the virtual-site builder protocol
 
 

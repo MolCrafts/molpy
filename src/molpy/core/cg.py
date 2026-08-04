@@ -22,7 +22,9 @@ import numpy as np
 
 import molrs
 
-from molrs.views import Bead, CGBond, Entities, Entity, Link, _GraphViews
+from molrs.views import Bead, CGBond, _GraphViews
+
+from molpy.core.entity import Entities, Entity, Link
 
 if TYPE_CHECKING:
     from molrs import Frame
@@ -73,15 +75,18 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
     def __repr__(self) -> str:
         from collections import Counter
 
-        types = Counter(b.get("type") or "?" for b in self.beads)
+        # View-free: read ``type`` by handle, not by interning every Bead.
+        handles = self.entities()
+        types = Counter(self.get(h, "type") or "?" for h in handles)
         if len(types) <= 5:
             comp = " ".join(f"{t}:{n}" for t, n in sorted(types.items()))
         else:
             comp = f"{len(types)} types"
-        return f"<CoarseGrain, {len(self.beads)} beads ({comp}), {len(self.cgbonds)} bonds>"
+        n_bonds = self.n_relations("bonds") if "bonds" in self.kinds() else 0
+        return f"<CoarseGrain, {len(handles)} beads ({comp}), {n_bonds} bonds>"
 
     def __len__(self) -> int:
-        return len(self.beads)
+        return self.n_nodes
 
     # ---------- factory / add ----------
     def def_bead(self, mapping: Any = None, /, **attrs: Any) -> Bead:
@@ -204,7 +209,7 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
     def _subset(self, selected: list[Bead]) -> "CoarseGrain":
         selected_set = set(selected)
         new = type(self)()
-        new._props = dict(self._props)
+        new.props = dict(self.props)
         bead_map: dict[Bead, Bead] = {}
         for bead in selected:
             bead_map[bead] = new.def_bead(dict(bead.data))
@@ -220,7 +225,7 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
         bare = molrs.CoarseGrain.copy(self)
         new = type(self)()
         molrs.CoarseGrain.adopt(new, bare)
-        new._props = dict(self._props)
+        new.props = dict(self.props)
         new._member_world = self._member_world
         return new
 
@@ -234,7 +239,7 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
             self._member_world = other._member_world
         other._node_refs.clear()
         other._relation_refs.clear()
-        other._props.clear()
+        other.props.clear()
         other._member_world = None
         return self
 

@@ -1,132 +1,50 @@
-"""Unified parser API for SMILES, BigSMILES, GBigSMILES, CGSmiles, and SMARTS.
+"""Parsing façade — SMILES / SMARTS from molrs; moltemplate stays local.
 
-Convenience wrappers live here so downstream code can do::
+Chemistry notation is parsed by ``molrs`` only, and it is parsed by **types**,
+not by helper functions:
 
-    from molpy.parser import parse_molecule, parse_polymer, parse_smarts
+* :class:`molrs.io.SmilesIR` — ``SmilesIR("CCO")`` parses; ``.to_atomistic()`` /
+  ``.components()`` / ``.n_components`` read the result.
+* :class:`~molpy.core.atomistic.Atomistic` — ``mp.io.read_smiles("CCO")``
+  when a molpy graph is what you want.
+* :class:`molrs.perceive.SmartsPattern` — ``SmartsPattern("[#6]")`` compiles a query.
+
+There is deliberately nothing else here. ``parse_smiles`` / ``parse_smarts`` /
+``parse_molecule`` / ``parse_mixture`` / ``smiles_to_atomistic`` /
+``smilesir_to_atomistic`` were wrappers whose bodies were a constructor call —
+one was literally ``return SmartsPattern(pattern)``, and two were aliases of a
+third. A free function that only forwards to a constructor is a second name for
+that constructor, and a second name is a thing to keep in sync.
+
+``parse_mixture`` also *split the string on* ``'.'`` and re-parsed each piece,
+which decides what a separator is before the parser has said so;
+``SmilesIR.components()`` splits the parsed components instead.
+
+:mod:`molpy.parser.moltemplate` is a separate, non-Lark ``.lt`` reader and is
+not chemistry-notation parsing.
+
+Migration:
+
+=============================  ==============================================
+was                            now
+=============================  ==============================================
+``parse_smiles(s)``            ``SmilesIR(s)``
+``parse_smarts(p)``            ``SmartsPattern(p)``
+``parse_molecule(s)``          ``mp.io.read_smiles(s)``
+``smiles_to_atomistic(s)``     ``mp.io.read_smiles(s)``
+``smilesir_to_atomistic(ir)``  ``Atomistic.adopt(ir.to_atomistic())``
+``parse_mixture(s)``           ``[Atomistic.adopt(m) for m in``
+                               ``SmilesIR(s).components()]``
+=============================  ==============================================
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from .smarts import SmartsParser
-from .smiles import (
-    PolymerSpec,
-    PolymerSegment,
-    bigsmilesir_to_monomer,
-    bigsmilesir_to_polymerspec,
-    parse_bigsmiles,
-    parse_cgsmiles,
-    parse_gbigsmiles,
-    parse_smiles,
-    smilesir_to_atomistic,
-)
-
-if TYPE_CHECKING:
-    from molpy.core.atomistic import Atomistic
-    from .smarts import SmartsIR
-
-
-# ---------------------------------------------------------------------------
-# Singleton parser instances
-# ---------------------------------------------------------------------------
-_smarts_parser = SmartsParser()
-
-
-# ---------------------------------------------------------------------------
-# Free-function wrappers
-# ---------------------------------------------------------------------------
-
-
-def parse_smarts(pattern: str) -> "SmartsIR":
-    """Parse a SMARTS pattern string into :class:`SmartsIR`.
-
-    This is a thin wrapper around ``SmartsParser().parse_smarts(pattern)``.
-
-    Args:
-        pattern: SMARTS string.
-
-    Returns:
-        Parsed :class:`SmartsIR` representation.
-    """
-    return _smarts_parser.parse_smarts(pattern)
-
-
-def parse_molecule(smiles: str) -> "Atomistic":
-    """Parse a SMILES string and return a single :class:`Atomistic` structure.
-
-    Args:
-        smiles: SMILES string for a single molecule (no dots).
-
-    Returns:
-        :class:`Atomistic` structure.
-    """
-    ir = parse_smiles(smiles)
-    if isinstance(ir, list):
-        # Dot-separated: take the first component
-        ir = ir[0]
-    return smilesir_to_atomistic(ir)
-
-
-def parse_mixture(smiles: str) -> "list[Atomistic]":
-    """Parse a (possibly dot-separated) SMILES string into a list of molecules.
-
-    Args:
-        smiles: SMILES string, components separated by ``'.'``.
-
-    Returns:
-        List of :class:`Atomistic` structures (always a list, even for one).
-    """
-    ir = parse_smiles(smiles)
-    if not isinstance(ir, list):
-        ir = [ir]
-    return [smilesir_to_atomistic(component) for component in ir]
-
-
-def parse_monomer(bigsmiles: str) -> "Atomistic":
-    """Parse a BigSMILES string and return the first monomer as :class:`Atomistic`.
-
-    Args:
-        bigsmiles: BigSMILES string.
-
-    Returns:
-        Monomer :class:`Atomistic` structure with port annotations.
-    """
-    ir = parse_bigsmiles(bigsmiles)
-    return bigsmilesir_to_monomer(ir)
-
-
-def parse_polymer(bigsmiles: str) -> PolymerSpec:
-    """Parse a BigSMILES string and return a :class:`PolymerSpec`.
-
-    Args:
-        bigsmiles: BigSMILES string.
-
-    Returns:
-        :class:`PolymerSpec` describing segments, topology, and monomers.
-    """
-    ir = parse_bigsmiles(bigsmiles)
-    return bigsmilesir_to_polymerspec(ir)
-
+from molrs.io import SmilesIR
+from molrs.perceive import SmartsMatch, SmartsPattern
 
 __all__ = [
-    # Parser classes
-    "SmartsParser",
-    # Free functions
-    "parse_smiles",
-    "parse_bigsmiles",
-    "parse_gbigsmiles",
-    "parse_cgsmiles",
-    "parse_smarts",
-    "parse_molecule",
-    "parse_mixture",
-    "parse_monomer",
-    "parse_polymer",
-    # Conversion helpers
-    "smilesir_to_atomistic",
-    "bigsmilesir_to_monomer",
-    "bigsmilesir_to_polymerspec",
-    # Data classes
-    "PolymerSpec",
-    "PolymerSegment",
+    "SmartsMatch",
+    "SmartsPattern",
+    "SmilesIR",
 ]

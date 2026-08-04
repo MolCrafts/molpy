@@ -1,7 +1,9 @@
 # Nanostructures
 
-`CarbonTubeBuilder` constructs a single-wall carbon nanotube directly from its
-graphene topology. The user-facing operation is one `build()` call; chirality,
+Nanotubes and graphene sheets are built in **molrs** (`molrs.builder`) and
+re-exported by MolPy. `CarbonTubeBuilder` rolls an exact graphene lattice into a
+single-wall carbon nanotube; `GrapheneBuilder` emits a flat honeycomb sheet.
+The tube's shape is fixed when the builder is constructed;
 unit-cell enumeration, seam closure, and connectivity are implementation
 details.
 
@@ -10,13 +12,13 @@ details.
 The usual `(n, m)` indices select the topology:
 
 ```python
-from molpy.builder import CarbonTubeBuilder
+from molpy.builder import CarbonTubeBuilder, GrapheneBuilder
 
-builder = CarbonTubeBuilder()
+zigzag = CarbonTubeBuilder(8, 0, length=30.0).build()
+armchair = CarbonTubeBuilder(6, 6, cells=4).build()
+chiral = CarbonTubeBuilder(6, 3, cells=3).build()
 
-zigzag = builder.build(8, 0, length=30.0)
-armchair = builder.build(6, 6, cells=4)
-chiral = builder.build(6, 3, cells=3)
+sheet = GrapheneBuilder(8, 8, periodic_xy=True).build()
 ```
 
 `length` rounds up to complete translational cells. Use `cells` when the exact
@@ -25,14 +27,25 @@ tubes are open along the axis and have dangling end valences.
 
 ## Periodic tubes
 
-Set `periodic=True` to close the axial bonds and mark only the box's z axis as
-periodic:
+Set `periodic=True` to close the axial bonds. `build()` returns the molecular
+graph; `cell()` returns the simulation cell those coordinates were laid out in,
+with only the z axis periodic:
 
 ```python
-periodic = builder.build(10, 10, length=50.0, periodic=True, vacuum=12.0)
+builder = CarbonTubeBuilder(10, 10, length=50.0, periodic=True)
+periodic = builder.build()
+box = builder.cell(vacuum=12.0)
 
-assert periodic["box"].pbc.tolist() == [False, False, True]
+assert box.pbc.tolist() == [False, False, True]
 assert all(len(periodic.get_neighbors(atom)) == 3 for atom in periodic.atoms)
+```
+
+The two are separate products because a molecular graph is topology and
+chemistry — the cell describes the simulation, and its one home is `frame.box`:
+
+```python
+frame = periodic.to_frame()
+frame.box = box
 ```
 
 The circumference is part of the molecular topology, not a simulation-box
@@ -46,8 +59,8 @@ The scalable default creates atoms and bonds only. Per-atom data can be written
 at build time, while angles and dihedrals remain optional:
 
 ```python
-atoms_only = builder.build(8, 0, cells=20, atom_type="CA", charge=0.0)
-with_topology = builder.build(8, 0, cells=2, finalize="topology")
+atoms_only = CarbonTubeBuilder(8, 0, cells=20).build(atom_type="CA", charge=0.0)
+with_topology = CarbonTubeBuilder(8, 0, cells=2).build(finalize="topology")
 
 assert not list(atoms_only.angles)
 assert list(with_topology.angles)

@@ -3,9 +3,8 @@
 A ``fix bond/react`` template is a pre-reaction subgraph, the same subgraph after
 the reaction, and the atom map between them. That is an **IO artifact**, not
 reaction machinery: it is one serialization of the local environment a graph edit
-disturbed. It used to live in ``molpy.reacter`` because a ``Reacter`` subclass
-produced it; nothing produces it now but the caller, so it lives with the writer
-that consumes it.
+disturbed. Nothing produces it but the caller, so it lives with the writer that
+consumes it.
 
 File format references:
     - LAMMPS ``fix bond/react``: https://docs.lammps.org/fix_bond_react.html
@@ -137,11 +136,14 @@ class LammpsBondReactWriter:
         type_maps: dict[str, dict[str, int]],
         template_name: str = "",
     ) -> None:
-        """Convert string ``type`` columns to unified numeric IDs, in place.
+        """Resolve string ``type`` labels to unified numeric ``type_id``s, in place.
+
+        The number goes in ``type_id``, which is what the Frame vocabulary calls
+        a numeric type ordinal; ``type`` keeps the labels it was given. The IDs
+        must match the system data file for template matching.
 
         Rows whose type is absent from the mapping (boundary topology with
-        untyped terms) are dropped with a warning. The numeric IDs must match the
-        system data file for template matching.
+        untyped terms) are dropped with a warning.
         """
         for section, tmap in type_maps.items():
             if section not in frame or frame[section].nrows == 0:
@@ -149,7 +151,10 @@ class LammpsBondReactWriter:
             block = frame[section]
             if "type" not in block:
                 continue
-            keep = [i for i in range(block.nrows) if str(block["type"][i]) in tmap]
+            # Materialise the label column once — a molrs string column is
+            # rebuilt on every ``block["type"]`` access.
+            labels = [str(t) for t in block["type"]]
+            keep = [i for i, label in enumerate(labels) if label in tmap]
             if len(keep) < block.nrows:
                 dropped = block.nrows - len(keep)
                 warnings.warn(
@@ -160,9 +165,9 @@ class LammpsBondReactWriter:
                 )
                 for key in list(block.keys()):
                     block[key] = block[key][keep]
-            block["type"] = np.array(
-                [tmap[str(block["type"][i])] for i in range(block.nrows)],
-                dtype=np.int64,
+                labels = [labels[i] for i in keep]
+            block["type_id"] = np.array(
+                [tmap[label] for label in labels], dtype=np.uint32
             )
 
     # -- the .map file -------------------------------------------------------

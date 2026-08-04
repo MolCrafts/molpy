@@ -222,7 +222,7 @@ def test_duplicate_node_name_raises():
 
 
 def test_multi_input_node_rdf(simple_frame):
-    """Chain NeighborList -> RDF; results['rdf'] is a molrs.RDFResult
+    """Chain NeighborList -> RDF; results['rdf'] is a molrs.compute.density.RDFResult
     with non-negative entries."""
     nlist = NeighborList(cutoff=5.0)
     rdf_compute = RDF(n_bins=100, r_max=10.0)
@@ -296,3 +296,40 @@ def test_rerun_does_not_mutate_nodes():
     # Node dumps must be unchanged after run (Workflow does not mutate nodes)
     dump_after = {"a": a.dump(), "b": b.dump()}
     assert dump_before == dump_after, "Node dump changed after run"
+
+
+class _Square(Compute):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def __call__(self, x):
+        return x * x
+
+
+class _AddOne(Compute):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def __call__(self, x):
+        return x + 1
+
+
+class TestWorkflowAddIsChainable:
+    """``add`` returns ``self``, which is what "fluent chaining" requires.
+
+    It used to return the node *name* while its docstring promised chaining;
+    a ``str`` has no ``.add``, so the documented form raised ``AttributeError``
+    and the docs example had never run.
+    """
+
+    def test_add_returns_the_workflow(self):
+        wf = Workflow()
+        assert wf.add("a", _Square(), inputs={"x": "x"}) is wf
+
+    def test_the_documented_chain_actually_chains(self):
+        wf = Workflow()
+        returned = wf.add("square", _Square(), inputs={"x": "x"}).add(
+            "add_one", _AddOne(), inputs={"x": "square"}
+        )
+        assert returned is wf
+        assert wf.run(x=3) == {"square": 9, "add_one": 10}

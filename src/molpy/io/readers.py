@@ -217,10 +217,11 @@ def read_lammps_forcefield(scripts: PathLike | list[PathLike]) -> Any:
     """
     Read a LAMMPS force-field include (``*.ff``) into a ForceField.
 
-    Delegates to the native molrs reader (``molrs.read_lammps_forcefield``),
-    which parses the include directly into a ``molrs.ForceField`` in molrs units
+    Delegates to the native molrs reader (``molrs.ff.read_lammps_forcefield``),
+    which parses the include directly into a ``molrs.ff.ForceField`` in molrs units
     (Å, kcal/mol, radians, e): LAMMPS harmonic ``K`` → molrs ``k = 2K``, angle
-    and dihedral-phase values stay in degrees, and ``dihedral_style fourier``
+    and dihedral-phase values are converted degrees → radians, and
+    ``dihedral_style fourier``
     maps to the molrs ``periodic`` kernel. AMBER 1-4 scaling is recorded on the
     force field's special bonds. Per-atom charge and mass live in the LAMMPS
     *data* file, not this include, so they are not read here.
@@ -230,15 +231,15 @@ def read_lammps_forcefield(scripts: PathLike | list[PathLike]) -> Any:
             list is concatenated and parsed as a single document.
 
     Returns:
-        ``molpy.ForceField`` (which is ``molrs.ForceField``).
+        ``molpy.ForceField`` (which is ``molrs.ff.ForceField``).
     """
     import molrs
 
     paths = scripts if isinstance(scripts, list) else [scripts]
     if len(paths) == 1:
-        return molrs.read_lammps_forcefield(str(paths[0]))
+        return molrs.ff.read_lammps_forcefield(str(paths[0]))
     text = "\n".join(Path(p).read_text() for p in paths)
-    return molrs.read_lammps_forcefield_str(text)
+    return molrs.ff.read_lammps_forcefield_str(text)
 
 
 def read_xml_forcefield(file: PathLike) -> Any:
@@ -426,3 +427,47 @@ def read_LAMMPS_log(file: PathLike) -> "LAMMPSLog":
     from .log.lammps import read_LAMMPS_log as _read_LAMMPS_log
 
     return _read_LAMMPS_log(Path(file))
+
+
+def read_smiles(smiles: str) -> Any:
+    """Parse a single-component SMILES string into an :class:`Atomistic`.
+
+    Connectivity only: hydrogens implicit in the SMILES are **not** added, and
+    no coordinates are generated. Filling open valences is a separate
+    perception step (``mp.Perceive().find_hydrogens(mol)``), and 3D embedding a
+    separate conformer step — :class:`~molpy.io.SmilesReader` composes all
+    three when you want the finished molecule.
+
+    This is an **io** entry point, not a constructor on the graph. A SMILES
+    string is a file format, and the layering runs io → core: a core type that
+    could parse one would make the graph depend on the parser.
+
+    Args:
+        smiles: A SMILES string naming exactly one connected molecule.
+
+    Returns:
+        The parsed graph.
+
+    Raises:
+        ValueError: if ``smiles`` is syntactically invalid, or names more than
+            one component. A ``'.'``-separated string is a *set* of molecules,
+            not a molecule; take them apart with
+            ``mp.SmilesIR(smiles).components()``.
+
+    Examples:
+        >>> import molpy as mp
+        >>> len(list(mp.io.read_smiles("CCO").atoms))
+        3
+    """
+    import molrs
+
+    from molpy.core.atomistic import Atomistic
+
+    ir = molrs.io.SmilesIR(smiles)
+    if ir.n_components != 1:
+        raise ValueError(
+            f"read_smiles needs one component, {smiles!r} has "
+            f"{ir.n_components}. Use mp.SmilesIR(smiles).components() and "
+            "adopt each, or pass one component at a time."
+        )
+    return Atomistic.adopt(ir.to_atomistic())

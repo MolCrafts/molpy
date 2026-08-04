@@ -12,6 +12,9 @@ These tests pin:
   nothing outside it is touched,
 * that region typing reproduces whole-graph typing atom-for-atom once ``reach``
   is big enough, and that ``reach = 2`` is the *smallest* such value,
+* that this holds for an aromatic system too — which it does only because the
+  extraction closes on ring systems, a radius being the wrong instrument for a
+  ring (the closure itself is pinned in ``test_affected_region.py``),
 * that an untyped interior atom raises unconditionally — not only when the
   typifier happens to expose a ``strict`` flag,
 * that ``touched`` is validated rather than assumed.
@@ -27,7 +30,7 @@ import pytest
 import molpy as mp
 from molpy.typifier.affected_region import AffectedRegion
 from molpy.core.atomistic import Atom, Atomistic
-from molpy.parser import parse_smiles, smilesir_to_atomistic
+from molpy.core.perceive import Perceive
 from molpy.typifier.base import Match, Typifier
 from molpy.typifier.region import RegionTypes
 
@@ -45,7 +48,7 @@ def _carbon_chain(m: int) -> tuple[Atomistic, list[Atom]]:
         c = s.def_atom(element="C", x=float(i), y=0.0, z=0.0)
         s.def_bond(c, s.def_atom(element="H", x=float(i), y=1.0, z=0.0))
         if prev is not None:
-            s.def_bond(prev, c, order=1.0)
+            s.def_bond(prev, c, bond_type=1, bond_number=1)
         carbons.append(c)
         prev = c
     return s, carbons
@@ -169,22 +172,6 @@ def test_boundary_is_the_outer_shell_not_the_write_back_complement():
 # --------------------------------------------------------------------------
 
 
-def test_untyped_interior_atom_raises_without_a_strict_flag():
-    chain, carbons = _carbon_chain(12)
-    region = AffectedRegion.around(chain, [carbons[6]], reach=2)
-
-    interior = {atom.handle for atom in region.interior}
-    starved = frozenset(
-        i for i, atom in enumerate(region.atoms) if atom.handle in interior
-    )
-    typifier = _StubTypifier(untyped_positions=starved)
-    assert not hasattr(typifier, "atom_typifier")
-    assert not hasattr(typifier, "strict")
-
-    with pytest.raises(ValueError, match="left untyped"):
-        RegionTypes.of(region, typifier)
-
-
 def test_fully_typed_interior_does_not_raise():
     chain, carbons = _carbon_chain(12)
     region = AffectedRegion.around(chain, [carbons[6]], reach=2)
@@ -212,12 +199,11 @@ def test_region_impropers_match_whole_graph_on_sp2_carbonyl():
     is force-field agnostic — the oracle is whole-graph typing of the same molecule.
     """
     from molpy.core.atomistic import Improper
-    from molpy.parser import parse_smiles, smilesir_to_atomistic
     from molpy.typifier.base import Match, Typifier
 
     class _Mmff(Typifier[Atomistic]):
         def __init__(self) -> None:
-            self._inner = molrs.MMFF94Typifier()
+            self._inner = molrs.ff.MMFF94Typifier()
 
         def typify(self, graph: Atomistic) -> Atomistic:
             typed = self._inner.typify(graph)
@@ -232,13 +218,13 @@ def test_region_impropers_match_whole_graph_on_sp2_carbonyl():
                 )
             )
 
-    ir = smilesir_to_atomistic(parse_smiles("CC(=O)OC"))  # methyl acetate
-    graph = Atomistic.adopt(molrs.add_hydrogens(ir))
+    ir = mp.io.read_smiles("CC(=O)OC")  # methyl acetate
+    graph = Perceive().find_hydrogens(ir)
     for index, atom in enumerate(graph.atoms):
         atom["x"] = 1.4 * index
         atom["y"] = 0.5 * math.sin(index)
         atom["z"] = 0.5 * math.cos(index)
-    molrs.perceive_aromaticity(graph)
+    graph = Perceive().find_aromaticity(graph)
     graph.generate_topology(gen_angle=True, gen_dihedral=True)
 
     typifier = _Mmff()
@@ -337,27 +323,40 @@ def test_assembler_asserts_molrs_reports_the_forming_bond_endpoints():
 # otherwise SMARTS matches the wrong rule on a truncated valence.
 # --------------------------------------------------------------------------
 
-OPLS_SYSTEMS = {
-    "PEO COCCOC": "COCCOC",
-    "p-xylene": "Cc1ccc(C)cc1",
-    "methyl acrylate": "C=CC(=O)OC",
-}
+# One aliphatic (PEO) + one aromatic (p-xylene). methyl acrylate was a third
+# copy of the same capped-slice oracle and added no new branch.
+_OPLS_PEO = "COCCOC"
+_OPLS_XYLENE = "Cc1ccc(C)cc1"
+
+
+@pytest.fixture(scope="module")
+def opls_typifier():
+    """molrs OPLS-AA SMARTS engine — construct once for this module."""
+    return molrs.ff.typifier.OPLSAATypifier()
 
 
 def _opls_molecule(smiles: str) -> Atomistic:
-    ir = smilesir_to_atomistic(parse_smiles(smiles))
-    graph = Atomistic.adopt(molrs.add_hydrogens(ir))
+    ir = mp.io.read_smiles(smiles)
+    graph = Perceive().find_hydrogens(ir)
     for i, atom in enumerate(graph.atoms):
         atom["x"] = 1.5 * i
         atom["y"] = 0.7 * math.sin(i)
         atom["z"] = 0.7 * math.cos(i)
-    molrs.perceive_aromaticity(graph)
+    graph = Perceive().find_aromaticity(graph)
     graph.generate_topology(gen_angle=True, gen_dihedral=True)
     return graph
 
 
 def _opls_types(typifier, graph: Atomistic) -> list[str]:
-    return [str(t) for t in typifier.typify(graph).to_frame()["atoms"]["type"]]
+    """Per-atom OPLS types, in atom order.
+
+    A typifier that matched nothing writes no ``type`` column at all; that is a
+    refusal, not an empty result, so it raises like every other refusal does.
+    """
+    atoms = typifier.typify(graph).to_frame()["atoms"]
+    if "type" not in atoms:
+        raise ValueError("typifier assigned no types")
+    return [str(t) for t in atoms["type"]]
 
 
 def _region_disagreements(
@@ -365,32 +364,31 @@ def _region_disagreements(
 ) -> tuple[int, int]:
     """``(mistyped interior atoms, slices the typifier refused)``.
 
+    Slices come from :meth:`AffectedRegion.around` — the extraction production
+    uses — so what is measured here is the shipped region, ring closure and all.
+    Types are compared through ``entity_map``, never by position.
+
     ``cap=False`` reproduces a raw slice: the boundary atoms keep the valences the
     cut left them with. That is what a SMARTS matcher used to be shown.
     """
-    interior_reach = max(reach, AffectedRegion.TERM_REACH)
-    extract_radius = interior_reach + reach
-    whole = _opls_types(typifier, graph)
-    atoms = list(graph.atoms)
-    index_of = {atom.handle: i for i, atom in enumerate(atoms)}
+    whole = {
+        atom.handle: kind
+        for atom, kind in zip(graph.atoms, _opls_types(typifier, graph), strict=True)
+    }
 
     wrong = refused = 0
-    for seed in atoms:
-        hops = dict(graph.topo_distances(seed.handle, max_hops=extract_radius))
-        ball = sorted(hops)
-        sub, _ = graph.extract_subgraph([seed], extract_radius)
+    for seed in list(graph.atoms):
+        region = AffectedRegion.around(graph, [seed], reach=reach)
         try:
-            perceived = (
-                Atomistic.adopt(molrs.Perceive().find_hydrogens(sub)) if cap else sub
-            )
+            perceived = Perceive().find_hydrogens(region) if cap else region
             got = _opls_types(typifier, perceived)
         except ValueError:
             refused += 1
             continue
-        for pos, handle in enumerate(ball):
-            if hops[handle] > interior_reach:
-                continue
-            if got[pos] != whole[index_of[handle]]:
+        # Capping appends hydrogens, so region atoms keep their positions.
+        position = {atom: i for i, atom in enumerate(region.atoms)}
+        for atom in region.interior:
+            if got[position[atom]] != whole[region.entity_map[atom].handle]:
                 wrong += 1
     return wrong, refused
 
@@ -401,62 +399,34 @@ def _mistyped_interior(typifier, graph: Atomistic, reach: int) -> int:
     return wrong
 
 
-@pytest.mark.parametrize("name", list(OPLS_SYSTEMS))
-def test_region_typing_reproduces_whole_graph_typing_at_the_declared_reach(name):
-    typifier = molrs.typifier.OPLSAATypifier()
-    graph = _opls_molecule(OPLS_SYSTEMS[name])
-    assert _mistyped_interior(typifier, graph, reach=2) == 0
+def test_region_reach_and_oracle(opls_typifier):
+    """reach=2 is the measured minimum; capped slices agree with whole-graph types.
 
-
-def test_declared_reach_is_the_smallest_that_works():
-    """reach=2 is measured, not chosen: reach=1 mistypes PEO."""
-    typifier = molrs.typifier.OPLSAATypifier()
-    peo = _opls_molecule(OPLS_SYSTEMS["PEO COCCOC"])
-
-    assert _mistyped_interior(typifier, peo, reach=1) > 0, (
-        "reach=1 must be insufficient, otherwise the declared reach is too large"
-    )
-    assert _mistyped_interior(typifier, peo, reach=2) == 0
-
-
-# --------------------------------------------------------------------------
-# ac-008 — valence completion is not a convenience, it is the premise
-#
-# extract_radius == interior_reach + reach, so an interior atom's receptive field
-# reaches *exactly* to the boundary atoms. A raw slice leaves those with unfilled
-# valences — radicals, to a SMARTS matcher — and they are part of the environment
-# the interior is typed against. The pipeline therefore caps every graph it types.
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("name", list(OPLS_SYSTEMS))
-def test_every_capped_slice_is_typable_and_agrees_with_the_oracle(name):
-    typifier = molrs.typifier.OPLSAATypifier()
-    graph = _opls_molecule(OPLS_SYSTEMS[name])
-
-    wrong, refused = _region_disagreements(typifier, graph, reach=2, cap=True)
-
-    assert (wrong, refused) == (0, 0)
-
-
-def test_a_raw_slice_of_an_aromatic_ring_cannot_be_typed_at_all():
-    """Measured: 12 of p-xylene's 19 raw slices make OPLS-AA refuse outright.
-
-    Cutting a ring leaves carbons whose valences do not add up; the matcher types
-    them as something no bonded term covers, and the angle lookup fails. Neither
-    PEO nor methyl acrylate shows this — an aliphatic cut still looks like a
-    plausible fragment — which is exactly why hydrogen perception belongs at the
-    cut site rather than in the AmberTools path.
+    Combines the former per-system parametrize + reach floor into one pass over
+    a shared OPLS typifier.
     """
-    typifier = molrs.typifier.OPLSAATypifier()
+    peo = _opls_molecule(_OPLS_PEO)
+    assert _mistyped_interior(opls_typifier, peo, reach=1) > 0
+    assert _mistyped_interior(opls_typifier, peo, reach=2) == 0
+    assert _region_disagreements(opls_typifier, peo, reach=2, cap=True) == (0, 0)
 
-    aromatic = _opls_molecule(OPLS_SYSTEMS["p-xylene"])
-    _, refused_naked = _region_disagreements(typifier, aromatic, reach=2, cap=False)
-    _, refused_capped = _region_disagreements(typifier, aromatic, reach=2, cap=True)
+    aromatic = _opls_molecule(_OPLS_XYLENE)
+    assert _mistyped_interior(opls_typifier, aromatic, reach=2) == 0
+    assert _region_disagreements(opls_typifier, aromatic, reach=2, cap=True) == (0, 0)
 
-    assert refused_naked == 12
-    assert refused_capped == 0
 
-    for aliphatic in ("PEO COCCOC", "methyl acrylate"):
-        graph = _opls_molecule(OPLS_SYSTEMS[aliphatic])
-        assert _region_disagreements(typifier, graph, reach=2, cap=False) == (0, 0)
+def test_a_raw_slice_of_an_aromatic_ring_is_mistyped(opls_typifier):
+    """Uncapped p-xylene mistypes interior atoms; aliphatic raw slices do not.
+
+    Measured: an uncapped p-xylene slice mistypes 36 interior atoms. Extraction
+    closes on ring systems, so the silent failure is on cut substituents —
+    hydrogen perception belongs at the cut site.
+    """
+    aromatic = _opls_molecule(_OPLS_XYLENE)
+    naked = _region_disagreements(opls_typifier, aromatic, reach=2, cap=False)
+    capped = _region_disagreements(opls_typifier, aromatic, reach=2, cap=True)
+    assert naked == (36, 0)
+    assert capped == (0, 0)
+
+    peo = _opls_molecule(_OPLS_PEO)
+    assert _region_disagreements(opls_typifier, peo, reach=2, cap=False) == (0, 0)

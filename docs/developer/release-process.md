@@ -33,7 +33,7 @@ There is no hand-written `CHANGELOG.md` — history is git tags / GitHub Release
 Run all three validation steps locally before creating the release branch.
 
 ```bash
-pytest tests/ -v -m "not external"    # tests pass
+pytest tests/ -v    # tests pass
 zensical build                         # docs build
 python -m build && twine check dist/*  # package is valid
 ```

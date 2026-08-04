@@ -41,14 +41,16 @@ class UnboundedPatternSet(Exception):
         )
 
 
-def _compile_pattern(item: str | molrs.SmartsPattern) -> molrs.SmartsPattern:
-    if isinstance(item, molrs.SmartsPattern):
+def _compile_pattern(
+    item: str | molrs.perceive.SmartsPattern,
+) -> molrs.perceive.SmartsPattern:
+    if isinstance(item, molrs.perceive.SmartsPattern):
         return item
     try:
-        return molrs.SmartsPattern(item)
+        return molrs.perceive.SmartsPattern(item)
     except Exception:
         # OPLS-style bare atom expressions often need brackets.
-        return molrs.SmartsPattern(f"[{item}]")
+        return molrs.perceive.SmartsPattern(f"[{item}]")
 
 
 def _format_primitive(kind: str, n: int | None) -> str:
@@ -88,7 +90,9 @@ class TypeScope:
         return self.interior_reach + self.reach
 
     @classmethod
-    def from_patterns(cls, patterns: Iterable[str | molrs.SmartsPattern]) -> Self:
+    def from_patterns(
+        cls, patterns: Iterable[str | molrs.perceive.SmartsPattern]
+    ) -> Self:
         """Synthesise a scope from molrs syntax facts on each pattern.
 
         Raises:

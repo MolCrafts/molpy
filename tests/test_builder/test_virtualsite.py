@@ -1,22 +1,27 @@
-"""Tests for VirtualSiteBuilder / DrudeBuilder / Tip4pBuilder.
+"""VirtualSiteBuilder / DrudeBuilder / Tip4pBuilder — no per-test CL&P rebuild.
 
-DrudeBuilder is the CL&Pol polarizer: it turns a CL&P-typed structure into a
-Drude system. Tip4pBuilder proves the base class is not Drude-specific.
+Drude tests need a CL&P-typed cation; that graph is typified **once** at module
+import via the shared production-cached ``ClpTypifier``. Tip4p uses plain water.
 """
+
+from __future__ import annotations
 
 import math
 
 import pytest
 
-from molpy import Atom, Atomistic, Bond
+from molpy import Atomistic
 from molpy.builder import DrudeBuilder, Tip4pBuilder, VirtualSiteBuilder
 from molpy.builder.virtualsite import FOUR_PI_EPS0, K_DRUDE, load_polarizability
 from molpy.data.forcefield import get_forcefield_path
 from molpy.typifier import ClpTypifier
 
+# ---------------------------------------------------------------------------
+# one typed cation for the whole module
+# ---------------------------------------------------------------------------
 
-def _c4c1im_typed():
-    """A CL&P atom+pair-typed [C4C1im]+ (types, charges, masses assigned)."""
+
+def _c4c1im_graph() -> Atomistic:
     el = [
         "N",
         "C",
@@ -75,12 +80,19 @@ def _c4c1im_typed():
     atoms = [asm.def_atom(element=e) for e in el]
     for i, j in edges:
         asm.def_bond(atoms[i], atoms[j])
-    # No skip_* knobs: a term this force field cannot match is left undecided,
-    # which is what "skip bonded typing" used to spell.
-    return ClpTypifier(strict=False).typify(asm)
+    return asm
 
 
-def _water(charge_o=-0.8, charge_h=0.4):
+# Typed once. ``ClpTypifier`` construction is production-cached; ``.typify`` is cheap.
+_TYPED_CATION = ClpTypifier(strict=False).typify(_c4c1im_graph())
+
+
+def _typed_cation() -> Atomistic:
+    """Return a copy so a test can never poison the shared graph."""
+    return _TYPED_CATION.copy()
+
+
+def _water(charge_o: float = -0.8, charge_h: float = 0.4):
     asm = Atomistic()
     o = asm.def_atom(element="O", charge=charge_o, x=0.0, y=0.0, z=0.0)
     h1 = asm.def_atom(element="H", charge=charge_h, x=0.757, y=0.586, z=0.0)
@@ -114,13 +126,23 @@ class TestTip4pBuilder:
         assert issubclass(Tip4pBuilder, VirtualSiteBuilder)
 
 
+def test_builders_are_subclasses():
+    assert issubclass(DrudeBuilder, VirtualSiteBuilder)
+    assert issubclass(Tip4pBuilder, VirtualSiteBuilder)
+
+
+def test_alpha_ff_resolves_and_loads():
+    path = get_forcefield_path("alpha.ff")
+    table = load_polarizability(path)
+    assert table["CR"]["k_D"] == 4184.0 and table["CR"]["alpha"] > 0
+    assert table["HC"]["k_D"] == 0.0
+
+
 def test_drude_shell_is_typed_from_core():
-    """Each Drude shell gets its own atom type ``D<core-type>`` (no untyped site)."""
-    out = DrudeBuilder().apply(_c4c1im_typed())
+    out = DrudeBuilder().apply(_typed_cation())
     shells = _drudes(out)
     assert shells
     assert all(s.get("type") and s.get("type").startswith("D") for s in shells)
-    # The shell type is the core type with the prefix.
     for bond in _drude_bonds(out):
         core, shell = bond.itom, bond.jtom
         if core.get("vsite") == "drude":
@@ -129,27 +151,12 @@ def test_drude_shell_is_typed_from_core():
 
 
 def test_drude_shell_prefix_is_configurable():
-    out = DrudeBuilder(drude_prefix="DP_").apply(_c4c1im_typed())
+    out = DrudeBuilder(drude_prefix="DP_").apply(_typed_cation())
     assert all(s.get("type").startswith("DP_") for s in _drudes(out))
 
 
-# --- ac-009: data file --------------------------------------------------------
-def test_alpha_ff_resolves_and_loads():
-    path = get_forcefield_path("alpha.ff")
-    table = load_polarizability(path)
-    assert table["CR"]["k_D"] == 4184.0 and table["CR"]["alpha"] > 0
-    assert table["HC"]["k_D"] == 0.0  # hydrogen: no Drude
-
-
-# --- builders are VirtualSiteBuilder subclasses -------------------------------
-def test_builders_are_subclasses():
-    assert issubclass(DrudeBuilder, VirtualSiteBuilder)
-    assert issubclass(Tip4pBuilder, VirtualSiteBuilder)
-
-
-# --- ac-003: apply does not mutate input -------------------------------------
 def test_drude_apply_does_not_mutate_input():
-    struct = _c4c1im_typed()
+    struct = _typed_cation()
     n_before = len(list(struct.atoms))
     q_before = sum(a.get("charge") for a in struct.atoms)
     out = DrudeBuilder().apply(struct)
@@ -158,47 +165,42 @@ def test_drude_apply_does_not_mutate_input():
     assert sum(a.get("charge") for a in struct.atoms) == q_before
 
 
-# --- ac-004: Drude count == polarizable heavy atoms; H excluded ---------------
 def test_drude_count_matches_heavy_atoms_no_hydrogen():
-    struct = _c4c1im_typed()
+    struct = _typed_cation()
     out = DrudeBuilder().apply(struct)
     heavy = [a for a in struct.atoms if a.get("element") != "H"]
     assert len(_drudes(out)) == len(heavy)
-    # No hydrogen received a Drude: every Drude's core (bond partner) is heavy.
     for a in out.atoms:
         if a.get("element") == "H":
             assert a.get("vsite") is None
 
 
-# --- ac-005: each Drude has one core-shell harmonic bond, K = 4184 ------------
 def test_drude_spring_force_constant():
-    out = DrudeBuilder().apply(_c4c1im_typed())
+    """alpha.ff is kJ/mol; molrs stores kcal/mol (÷4.184)."""
+    out = DrudeBuilder().apply(_typed_cation())
     springs = _drude_bonds(out)
     assert len(springs) == len(_drudes(out))
-    assert all(b.get("k") == K_DRUDE == 4184.0 for b in springs)
+    assert K_DRUDE == 4184.0
+    assert all(b.get("k") == pytest.approx(K_DRUDE / 4.184) for b in springs)
     assert all(b.get("r0") == 0.0 for b in springs)
 
 
-# --- ac-006: alpha recovered from assigned q_D, k_D ---------------------------
 def test_alpha_recovered_from_drude_params():
-    out = DrudeBuilder().apply(_c4c1im_typed())
+    out = DrudeBuilder().apply(_typed_cation())
     table = load_polarizability()
     for shell in _drudes(out):
         q_d, k_d, alpha = shell.get("charge"), shell.get("k_D"), shell.get("alpha")
-        assert q_d**2 / (FOUR_PI_EPS0 * k_d) == alpha  # exact by construction
+        assert q_d**2 / (FOUR_PI_EPS0 * k_d) == alpha
         assert alpha > 0
-    # alpha values came from alpha.ff (sanity: CR alpha present in table)
     assert table["CR"]["alpha"] == 1.122
 
 
-# --- ac-007: ion net charge stays integer +1 after augmentation ---------------
 def test_cation_charge_conserved():
-    out = DrudeBuilder().apply(_c4c1im_typed())
+    out = DrudeBuilder().apply(_typed_cation())
     total = sum(a.get("charge") for a in out.atoms)
     assert math.isclose(total, 1.0, abs_tol=1e-9)
 
 
-# --- ac-008: Tip4pBuilder emits M-site on bisector, moves O charge, no spring -
 def test_tip4p_msite_placement_and_charge_transfer():
     water, o = _water()
     q_o = o.get("charge")
@@ -207,11 +209,9 @@ def test_tip4p_msite_placement_and_charge_transfer():
     msites = [a for a in out.atoms if a.get("vsite") == "massless"]
     assert len(msites) == 1
     m = msites[0]
-    # M on the +y HOH bisector, below O by d_om
     assert math.isclose(m.get("x"), 0.0, abs_tol=1e-9)
     assert m.get("y") > 0.0
     assert math.isclose(m.get("charge"), q_o, abs_tol=1e-12)
-    # O left neutral; no new bond added (rigid geometric, not a spring)
     out_o = next(a for a in out.atoms if a.get("element") == "O")
     assert math.isclose(out_o.get("charge"), 0.0, abs_tol=1e-12)
     assert len(list(out.bonds)) == n_bonds_before

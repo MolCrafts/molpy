@@ -12,9 +12,6 @@ from molrs import Block
 
 
 class TestCanonicalBlock:
-    def test_instance_is_molrs_block(self):
-        assert isinstance(Block(), molrs.Block)
-
     def test_block_accepted_by_molrs_frame(self):
         b = Block({"x": np.array([1.0, 2.0], dtype=np.float64)})
         frame = molrs.Frame()
@@ -54,7 +51,3 @@ class TestNumpyOnlyRejection:
         b = Block()
         with pytest.raises(molrs.BlockDtypeError):
             b["c"] = np.array([1.0, None])
-
-    def test_no_objects_overflow_attribute(self):
-        b = Block({"x": np.array([1.0, 2.0], dtype=np.float64)})
-        assert not hasattr(b, "_objects")

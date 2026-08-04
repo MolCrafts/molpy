@@ -1,6 +1,6 @@
 """Handle-view contract tests for the ECS-backed structure layer.
 
-Replaces the removed standalone-``Entity``/``TypeBucket`` value model with the
+Covers the
 handle-view model from spec ``molgraph-ecs-03-molpy``: identity via interning,
 stable removal (no reindex), zero-copy ``adopt``, column reads through the molrs
 world, and no ``"X"`` placeholder for a missing element.
@@ -50,12 +50,12 @@ class TestEntitiesColumnAccess:
         assert sliced[0] is b
         assert sliced[1] is c
 
-    def test_xyz_column_is_vectors(self):
+    def test_coordinate_keys_read_as_one_array(self):
         s = Atomistic()
-        s.def_atom(element="C", xyz=[0.0, 0.0, 0.0])
-        s.def_atom(element="N", xyz=[1.5, 0.0, 0.0])
+        s.def_atom(element="C", x=0.0, y=0.0, z=0.0)
+        s.def_atom(element="N", x=1.5, y=0.0, z=0.0)
 
-        positions = s.atoms["xyz"]
+        positions = s.atoms["x", "y", "z"]
         assert len(positions) == 2
         assert np.array_equal(positions[0], [0.0, 0.0, 0.0])
         assert np.array_equal(positions[1], [1.5, 0.0, 0.0])
@@ -71,7 +71,7 @@ class TestIdentityInterning:
 
     def test_def_atom_returns_same_bound_view(self):
         s = Atomistic()
-        a = s.def_atom(element="C", xyz=[0, 0, 0])
+        a = s.def_atom(element="C", x=0, y=0, z=0)
         assert s.atoms[0] is a
 
     def test_bond_endpoints_are_interned_atoms(self):
@@ -148,9 +148,6 @@ class TestAdoptZeroCopy:
         assert len(m.bonds) == 1
         assert set(m.atoms["element"]) == {"C", "O"}
 
-    def test_from_molrs_graph_removed(self):
-        assert not hasattr(Atomistic, "from_molrs_graph")
-
 
 class TestColumnZeroCopy:
     """Scalar columns route through the molrs world; ``column`` is a view."""
@@ -160,14 +157,14 @@ class TestColumnZeroCopy:
         s.def_atom(element="C", charge=0.0)
         s.def_atom(element="N", charge=-0.5)
 
-        col = s.column(fields.CHARGE.key)
+        col = s.column(fields.CHARGE)
         assert isinstance(col, np.ndarray)
         assert np.allclose(col, [0.0, -0.5])
 
     def test_x_column_writethrough(self):
         s = Atomistic()
-        a = s.def_atom(element="C", xyz=[1.0, 2.0, 3.0])
-        col = s.column(fields.X.key)
+        a = s.def_atom(element="C", x=1.0, y=2.0, z=3.0)
+        col = s.column(fields.X)
         col[0] = 9.0
         assert a.get("x") == 9.0
 
@@ -178,8 +175,8 @@ class TestNoPlaceholder:
     def test_missing_element_is_none(self):
         s = Atomistic()
         a = s.def_atom()  # no chemical identity
-        assert a.get(fields.ELEMENT.key) is None
-        assert s.get(a.handle, fields.ELEMENT.key) is None
+        assert a.get(fields.ELEMENT) is None
+        assert s.get(a.handle, fields.ELEMENT) is None
 
     def test_missing_field_getitem_raises(self):
         s = Atomistic()

@@ -19,7 +19,7 @@ cd molpy
 pip install -e ".[dev]"   # includes tox
 prek install
 # manual: uv run --extra dev tox -e lint|py
-pytest tests/ -m "not external"
+pytest tests/
 ```
 
 ## Code of Conduct

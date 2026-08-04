@@ -99,14 +99,23 @@ class _TermMatcher:
         Raises:
             ValueError: if no force-field type matches and ``strict`` is on.
         """
-        atom_types = [endpoint.get(fields.TYPE.key) for endpoint in link.endpoints]
+        atom_types = [endpoint.get(fields.TYPE) for endpoint in link.endpoints]
         if any(atom_type is None for atom_type in atom_types):
             return {}
         resolved = [str(atom_type) for atom_type in atom_types]
 
         best = self._best(resolved)
         if best is not None:
-            return {fields.TYPE.key: best.name, **best.params.kwargs}
+            # A force-field type's parameters describe the *interaction*. Its
+            # own bookkeeping — the `id` a reader gave it to key its tables —
+            # is not a parameter, and stamping it here would overwrite the
+            # link's identity with a force-field type index.
+            params = {
+                key: value
+                for key, value in best.params.kwargs.items()
+                if key != fields.ID
+            }
+            return {fields.TYPE: best.name, **params}
         if not self._strict:
             return {}
         raise ValueError(
@@ -150,7 +159,7 @@ class _PairMatcher:
             ValueError: if the node carries no type, or its type has no pair
                 parameters, and ``strict`` is on.
         """
-        node_type = node.get(fields.TYPE.key)
+        node_type = node.get(fields.TYPE)
         if node_type is None:
             if self._strict:
                 raise ValueError(f"node must carry a type before pair typing: {node}")
@@ -158,7 +167,13 @@ class _PairMatcher:
 
         pair_type = self._table.get(node_type)
         if pair_type is not None:
-            return dict(pair_type.params.kwargs)
+            # As for bonded terms: the type's own `id` is bookkeeping, not a
+            # nonbonded parameter, and the node already has an identity.
+            return {
+                key: value
+                for key, value in pair_type.params.kwargs.items()
+                if key != fields.ID
+            }
         if self._strict:
             raise ValueError(f"No PairType found for node type: {node_type}")
         return {}

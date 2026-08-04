@@ -6,13 +6,6 @@ from molpy import Box
 
 
 class TestBoxConstruction:
-    def test_removed_private_state_aliases_are_absent(self):
-        box = Box.cubic(2.0)
-        for name in ("_matrix", "_origin", "_pbc"):
-            assert not hasattr(box, name)
-            with pytest.raises(AttributeError):
-                getattr(box, name)
-
     def test_matrix_construction(self):
         matrix = np.diag([1, 2, 3])
         box = Box(matrix)

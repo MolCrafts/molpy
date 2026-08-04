@@ -17,6 +17,26 @@ exactly ``ball(touched, reach)``.
 ``reach``-ball in view. The farthest one sits ``reach`` hops out, and its ball
 reaches ``reach`` hops further — so the extracted ball has radius ``2 * reach``.
 
+*Small rings are not divisible.* A radius is the wrong instrument for a ring:
+cut one and the remainder is not a truncated environment, it is a **different
+molecule**. Ring perception on the slice finds no ring, so aromaticity — which
+the RDKit model applies to "a ring, or fused ring system" as a whole, never atom
+by atom — is not perceived, and every ring-aware atom type silently becomes the
+aliphatic one. So the extracted ball is closed on **ring systems**: any ring of
+at most :attr:`AffectedRegion.MAX_RING_SIZE` atoms that the radius only partly
+reaches arrives whole, together with everything fused or bridged to it. Those
+atoms are context by construction: they sit past ``extract_radius``, so their
+``hops`` can never put them in ``interior``. The write-back set is exactly what
+the two radii say it is; only the view around it grew.
+
+The size bound is load-bearing, not a convenience. "A cut ring is a different
+molecule" is a claim about *small* rings; a macrocycle is locally a chain, and
+closing on one would pull an unbounded number of atoms into a bounded ball —
+which is exactly what a single crosslink between two chains creates. With the
+bound, the closure is a local flood along bonds that lie on a small ring, so
+building a region costs the ball and its chemical neighbourhood, never the size
+of the parent graph.
+
 :meth:`AffectedRegion.around` is the **only** place in molpy that does this
 arithmetic. It **is** an
 :class:`~molpy.core.atomistic.Atomistic` — so it hands straight to third-party
@@ -91,6 +111,25 @@ class AffectedRegion(_RegionMixin[Atom], Atomistic):
     #: :class:`~molpy.core.atomistic.Atomistic` carries, minus two.
     TERM_REACH: ClassVar[int] = 2
 
+    #: Largest ring the extraction refuses to cut. Also not a magic number: it
+    #: is where "ring" stops being a *local* fact. Every explicit ring-size
+    #: query in the shipped chemistry asks about a small one — MMFF's atom
+    #: typing asks 3, 4 and 6, UFF asks 3 and 4, aromaticity runs Hückel on
+    #: SSSR rings and fuses at most six of them — and 8 covers the largest
+    #: single ring that model calls aromatic (cyclooctatetraene's antiaromatic
+    #: 8). Past that, a ring is a topological fact with no chemical shadow: a
+    #: 5000-membered macrocycle is locally a chain, no typifier here can tell
+    #: the two apart, and closing on it would drag the whole loop into a ball
+    #: that asked for nine atoms — which is precisely what one crosslink
+    #: between two chains creates. Region typing exists to bound work per edit;
+    #: an unbounded closure would defeat it.
+    #:
+    #: The cost of the bound is a bare SMARTS ``[R]`` (ring membership, any
+    #: size): on an atom of a macrocycle, a region slice reads it as acyclic.
+    #: No in-tree typifier depends on that; a force field that did would need
+    #: its own, larger bound.
+    MAX_RING_SIZE: ClassVar[int] = 8
+
     @classmethod
     def around(
         cls, graph: Atomistic, touched: Iterable[Atom | int], *, reach: int
@@ -148,7 +187,11 @@ class AffectedRegion(_RegionMixin[Atom], Atomistic):
             )
         centers = cls._resolve_centers(parent, touched)
         sub, boundary, region_to_parent, hops = parent._extract_mapped(
-            centers, extract_radius, cls, regenerate_topology=True
+            centers,
+            extract_radius,
+            cls,
+            regenerate_topology=True,
+            max_ring_size=cls.MAX_RING_SIZE,
         )
         sub.hops = hops
         sub.interior = tuple(
@@ -191,11 +234,36 @@ class AffectedRegion(_RegionMixin[Atom], Atomistic):
             raise ValueError("touched is empty: an edit must report its seed atoms")
         return centers
 
+    def canonical_interior(self) -> tuple[int, ...]:
+        """The write-back set as positions in this region's canonical order.
+
+        A cached snapshot is replayed by canonical position, so this tuple — not
+        the parent handles, which differ between two isomorphic junctions — is
+        what says *which* atoms a snapshot speaks for.
+        """
+        position = {
+            handle: index for index, handle in enumerate(self.canonical_order())
+        }
+        return tuple(sorted(position[atom.handle] for atom in self.interior))
+
     def __hash__(self) -> int:
-        # Isomorphism-invariant molrs Weisfeiler–Lehman hash — the dedup key.
-        return self.structural_hash()
+        # Isomorphism-invariant molrs Weisfeiler–Lehman hash, rooted at the
+        # write-back set — the dedup key.
+        return hash((self.structural_hash(), self.canonical_interior()))
 
     def __eq__(self, other: object) -> bool:
         # Graph equality (resolves the rare hash collision); only regions of the
         # same kind compare — a region never equals a plain Atomistic.
-        return isinstance(other, AffectedRegion) and self.is_isomorphic(other)
+        #
+        # The interior is part of the identity, not an attribute of it. One
+        # graph can be extracted twice around different edits — two crosslinks
+        # onto the same pair of chains close a macrocycle, and from then on
+        # every junction on it extracts the *whole* ring. Those regions are
+        # isomorphic and must still not share a snapshot: the snapshot holds
+        # one interior's types, and replaying it on the other writes the first
+        # edit's atoms again while the second's stay untyped.
+        return (
+            isinstance(other, AffectedRegion)
+            and self.canonical_interior() == other.canonical_interior()
+            and self.is_isomorphic(other)
+        )

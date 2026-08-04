@@ -26,12 +26,14 @@ oxygen = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
 hydrogen = mol.def_atom(element="H", x=0.96, y=0.0, z=0.0)
 bond = mol.def_bond(oxygen, hydrogen)
 
-assert mol.atoms[0] is oxygen
-assert bond.atoms == (oxygen, hydrogen)
+assert mol.atoms[0] == oxygen
+assert bond.endpoints == (oxygen, hydrogen)
 ```
 
 Writes through a ref immediately update the native world. Collection properties
-such as `.atoms`, `.bonds`, and `.impropers` are live molrs views.
+such as `.atoms`, `.bonds`, and `.impropers` are lazy handle collections: they
+intern live views on integer access and support column-style field reads
+(`atoms["x"]`) without building every view up front.
 
 ## Adding a stored graph kind
 

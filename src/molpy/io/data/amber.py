@@ -124,7 +124,7 @@ class AmberInpcrdReader(DataReader):
         else:
             atoms_blk = Block(
                 {
-                    "id": np.arange(1, n_atoms + 1, dtype=int),
+                    "id": np.arange(1, n_atoms + 1, dtype=np.uint32),
                     "name": np.array([f"ATM{i + 1}" for i in range(n_atoms)], "U6"),
                     "x": coords[:, 0],
                     "y": coords[:, 1],

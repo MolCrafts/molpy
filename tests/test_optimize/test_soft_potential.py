@@ -14,7 +14,7 @@ from molpy.optimize import LBFGS, SoftPotential
 
 
 def _coords(frame: "molrs.Frame") -> np.ndarray:
-    return np.asarray(molrs.extract_coords(frame), dtype=float).reshape(-1, 3)
+    return np.asarray(molrs.ff.extract_coords(frame), dtype=float).reshape(-1, 3)
 
 
 def _cc_frame(length: float) -> "molrs.Frame":
@@ -22,7 +22,7 @@ def _cc_frame(length: float) -> "molrs.Frame":
     s = Atomistic()
     a = s.def_atom(element="C", x=0.0, y=0.0, z=0.0)
     b = s.def_atom(element="C", x=length, y=0.0, z=0.0)
-    s.def_bond(a, b, order=1.0)
+    s.def_bond(a, b, bond_type=1, bond_number=1)
     return s.to_frame()
 
 

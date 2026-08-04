@@ -45,6 +45,24 @@ print(f"{len(mol.atoms)} atoms, {len(mol.bonds)} bonds")
 At this point `mol` holds the heavy-atom skeleton of ethanol. Atoms and bonds are live objects inside the graph — not copies of data. The next sections show what you can do with them.
 
 
+## Column-style reads without materializing every view
+
+`mol.atoms` and `mol.bonds` are lazy handle collections. Indexing an integer
+interns a live `Atom`/`Bond` view; reading a field name pulls a NumPy column
+from the molrs world **without** building every view first:
+
+```python
+x = mol.atoms["x"]           # dense f64 column (or object array if sparse)
+elements = mol.atoms["element"]
+xyz = mol.xyz                # (N, 3) from dense x/y/z columns
+symbols = mol.symbols        # list[str] via handles, not Atom views
+```
+
+Prefer `mol.column("x")` / `mol.atoms["x"]` / `mol.xyz` for bulk numeric work.
+Hold `list(mol.atoms)` only when you need identity-stable Python objects for
+editing or graph algorithms.
+
+
 ## Atoms and bonds behave like dictionaries
 
 Every `Atom` and `Bond` is a dictionary-like object. You read and write properties with bracket notation or `.get()`.
@@ -176,13 +194,19 @@ print(f"{len(box.atoms)} atoms")  # 12
 ```
 
 
-## Topology is derived, not stored
+## Topology is derived, then written in place
 
 Molecular dynamics needs more than bonds. It needs angles (three-atom sequences) and dihedrals (four-atom sequences). Maintaining those by hand is error-prone — every time you add or remove a bond, every angle and dihedral list would need updating.
 
-MolPy treats topology as a *derived view*. You call `get_topo` on an `Atomistic` object, and it reads the current bond graph to produce a **new** `Atomistic` carrying the full set of angles and dihedrals (the original is left untouched). If the graph changes, you re-derive. The perception itself (2-edge and 3-edge paths over the bond graph) runs in the molrs Rust kernels.
+MolPy treats bonded topology as *derived from the bond graph*. `get_topo` reads the current bonds and writes the perceived angles and dihedrals **into the same** `Atomistic` (core mutation contract: in-place + return `self` for chaining). If the bond graph changes later, call `get_topo` again (optionally with `clear_existing=True`). The perception itself (2-edge and 3-edge paths) runs in the molrs Rust kernels.
 
-Let's see this on a fresh molecule where all the heavy atoms are still present.
+Need an independent graph with topology? Copy first:
+
+```python
+topo = mol.copy().get_topo(gen_angle=True, gen_dihe=True)
+```
+
+Let's see the in-place path on a fresh molecule.
 
 ```python
 propane = mp.Atomistic(name="propane")
@@ -195,7 +219,7 @@ propane.def_bond(cb, cc)
 print(f"Before: {len(propane.angles)} angles, {len(propane.dihedrals)} dihedrals")
 # Before: 0 angles, 0 dihedrals
 
-propane = propane.get_topo(gen_angle=True, gen_dihe=True)
+propane.get_topo(gen_angle=True, gen_dihe=True)
 
 print(f"After:  {len(propane.angles)} angles, {len(propane.dihedrals)} dihedrals")
 # After:  1 angles, 0 dihedrals
@@ -213,7 +237,7 @@ for angle in propane.angles:
 
 ## Graph queries on the bond graph
 
-There is no separate topology object — `get_topo` always returns an `Atomistic`, and graph queries run directly on the structure via the molrs Rust kernels. `get_topo_neighbors` collects every atom within a bond-count radius, and `get_topo_distances` returns the bond-graph (BFS) distance from a source atom to every reachable atom.
+There is no separate topology object — `get_topo` mutates and returns the same `Atomistic`, and graph queries run directly on the structure via the molrs Rust kernels. `get_topo_neighbors` collects every atom within a bond-count radius, and `get_topo_distances` returns the bond-graph (BFS) distance from a source atom to every reachable atom.
 
 ```python
 print("within 1 bond of C2:", [a["name"] for a in propane.get_topo_neighbors(cb, radius=1)])

@@ -17,7 +17,7 @@ from molpy.builder.assembly._topology import TopologySelector
 from molpy.core.atomistic import Atomistic
 
 if TYPE_CHECKING:
-    from molpy.parser.smiles.cgsmiles_ir import CGSmilesGraphIR
+    from molpy.builder.assembly._cgsmiles_ir import CGSmilesGraphIR
 
 
 class MonomerLibrary:

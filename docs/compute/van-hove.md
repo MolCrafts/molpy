@@ -42,16 +42,35 @@ $$
 
 ## 2. Computing the Van Hove function
 
+The examples below share this setup:
+
+```python
+import numpy as np
+import molpy as mp
+
+
+def _frame(step: int) -> mp.Frame:
+    rng = np.random.default_rng(0)
+    xyz = rng.uniform(0.0, 20.0, size=(200, 3)) + 0.1 * step
+    frame = mp.Frame()
+    frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
+    frame.box = mp.Box.cubic(20.0)
+    return frame
+
+
+frames = [_frame(step) for step in range(20)]
+```
+
 ```python
 from molpy.compute import VanHove
 
 vh = VanHove(n_rbins=200, r_max=15.0, lags=[1, 5, 10, 50, 100])
 result = vh(frames)
 
-result.r_centers    # radial grid, Å
-result.lags         # the time lags (frames)
-result.g_self       # G_s(r, t): rows are lags, columns radial bins
-result.g_distinct   # G_d(r, t) (present when result.has_distinct)
+result.r_centers  # radial grid, Å
+result.lags  # the time lags (frames)
+result.g_self  # G_s(r, t): rows are lags, columns radial bins
+result.g_distinct  # G_d(r, t) (present when result.has_distinct)
 ```
 
 Choose `lags` to straddle the dynamics of interest — a few short lags to resolve
@@ -84,13 +103,17 @@ correlation time $\tau_\ell$; in the diffusive limit $\tau_1/\tau_2 = 3$.
 import numpy as np
 from molpy.compute import LegendreReorientation
 
-pairs = np.array([[o, h1], [o, h2]], dtype=np.int64)   # O–H bond vectors
-reor = LegendreReorientation(max_lag=500)
-result = reor(frames, pairs)
+# The (tail, head) endpoints of each tracked vector come from the frame's own
+# `bonds` topology block, so the compute takes frames and nothing else.
+for f in frames:
+    f["bonds"] = {"atomi": np.array([0, 0]), "atomj": np.array([1, 2])}
 
-result.lags   # lags (frames)
-result.c1     # C_1(t)
-result.c2     # C_2(t)
+reor = LegendreReorientation(max_lag=5)
+result = reor(frames)
+
+result.lags  # lags (frames)
+result.c1  # C_1(t)
+result.c2  # C_2(t)
 ```
 
 ---

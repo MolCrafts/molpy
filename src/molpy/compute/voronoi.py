@@ -31,9 +31,9 @@ import molrs
 from .base import Compute
 
 # Re-export the per-cell result type and the domain/void reductions.
-VoronoiCells = molrs.VoronoiCells
-voronoi_domains = molrs.voronoi_domains
-voronoi_voids = molrs.voronoi_voids
+VoronoiCells = molrs.compute.voronoi.VoronoiCells
+voronoi_domains = molrs.compute.voronoi.voronoi_domains
+voronoi_voids = molrs.compute.voronoi.voronoi_voids
 
 
 class RadicalVoronoi(Compute):
@@ -47,7 +47,7 @@ class RadicalVoronoi(Compute):
 
     def __init__(self):
         super().__init__()
-        self._inner = molrs.RadicalVoronoi()
+        self._inner = molrs.compute.voronoi.RadicalVoronoi()
 
     def __call__(self, positions, radii, box):
         return self._inner.build(positions, radii, box)
@@ -68,7 +68,7 @@ class VoronoiIntegration(Compute):
 
     def __init__(self):
         super().__init__()
-        self._inner = molrs.VoronoiIntegration()
+        self._inner = molrs.compute.voronoi.VoronoiIntegration()
 
     def __call__(self, positions, radii, atomic_numbers, atom_to_mol, n_mol, grid, box):
         return self._inner.integrate(

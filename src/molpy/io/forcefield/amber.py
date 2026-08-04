@@ -6,6 +6,7 @@ import numpy as np
 from molrs import MetaValue
 
 from molpy._frame_meta import update_frame_meta
+from molpy.core.fields import RES_ID, FieldFormatter
 from molpy.core.forcefield import AtomisticForcefield, DihedralFourierStyle
 from molrs import Frame
 
@@ -13,7 +14,22 @@ from molrs import Frame
 CHARGE_CONVERSION_FACTOR = 18.2223
 
 
+class AmberFieldFormatter(FieldFormatter):
+    """AMBER prmtop field name translation.
+
+    ``RESIDUE_POINTER`` slices atoms into residues; molpy names that ``res_id``.
+    Without this mapping the column arrived spelled ``residue``, which every
+    consumer reading the canonical name saw as *absent* rather than as wrong.
+    """
+
+    _field_formatters = {
+        "residue": RES_ID,
+    }
+
+
 class AmberPrmtopReader:
+    _formatter = AmberFieldFormatter()
+
     def __init__(
         self,
         file: str | Path,
@@ -104,7 +120,16 @@ class AmberPrmtopReader:
                     atoms["charge"] = self.read_section(value, float)
 
                 case "ATOMIC_NUMBER":
-                    atoms["atomic_number"] = self.read_section(value, int)
+                    # AMBER writes -1 for an atom whose element it could not
+                    # determine — an extra point, or an ion loaded from a mol2
+                    # that never named one. That is routine, not a broken file.
+                    # `atomic_number` is an unsigned column with no way to say
+                    # "unknown", so a file that does not know every element
+                    # contributes no such column: absent is true, 0 or a
+                    # wrapped 4294967295 would not be.
+                    numbers = np.asarray(self.read_section(value, int), dtype=np.int64)
+                    if numbers.size and numbers.min() >= 0:
+                        atoms["atomic_number"] = numbers.astype(np.uint32)
 
                 case "MASS":
                     atoms["mass"] = self.read_section(value, float)
@@ -147,7 +172,7 @@ class AmberPrmtopReader:
             )
 
         # def forcefield
-        atoms["id"] = np.arange(meta["n_atoms"], dtype=int) + 1
+        atoms["id"] = np.arange(meta["n_atoms"], dtype=np.uint32) + 1
         atoms["charge"] = np.array(atoms["charge"]) / CHARGE_CONVERSION_FACTOR
         # Element symbols (from atomic number) so downstream consumers — packing,
         # visualisation, mass lookup — don't have to re-derive them.
@@ -180,7 +205,10 @@ class AmberPrmtopReader:
                     atomtype_map[atom_i_type_name],
                     atomtype_map[atom_j_type_name],
                     name=bond_name,
-                    k=f,
+                    # AMBER: E = K_r(r−r_eq)², no ½. molrs: E = ½k(r−r₀)².
+                    # So k = 2·K_prmtop; passing K through halved every
+                    # constant (GAFF c3-c3 228.89 → 114.4).
+                    k=2.0 * f,
                     r0=r_min,
                     id=bond_type,
                 )
@@ -188,7 +216,7 @@ class AmberPrmtopReader:
             bonds["atomi"].append(i - 1)
             bonds["atomj"].append(j - 1)
             bonds["type"].append(bond_name)
-        bonds["id"] = np.arange(meta["n_bonds"], dtype=int) + 1
+        bonds["id"] = np.arange(meta["n_bonds"], dtype=np.uint32) + 1
 
         anglestyle = ff.def_anglestyle("harmonic")
         for angle_type, i, j, k, f, theta_min in self.parse_angle_params():
@@ -200,13 +228,17 @@ class AmberPrmtopReader:
             )
             angle_name = f"{atom_i_type_name}-{atom_j_type_name}-{atom_k_type_name}"
             if anglestyle.get_type_by_name(angle_name) is None:
+                # molrs stores angle equilibria in **radians**; the LAMMPS
+                # writer converts with ``to_degrees``. ``parse_angle_params``
+                # returns degrees — convert back here.
                 anglestyle.def_type(
                     atomtype_map[atom_i_type_name],
                     atomtype_map[atom_j_type_name],
                     atomtype_map[atom_k_type_name],
                     name=angle_name,
-                    k=f,
-                    theta0=theta_min,
+                    # AMBER: E = K_θ(θ−θ_eq)², no ½ — same ×2 as the bond.
+                    k=2.0 * f,
+                    theta0=math.radians(float(theta_min)),
                     id=angle_type,
                 )
 
@@ -216,9 +248,16 @@ class AmberPrmtopReader:
             angles["atomk"].append(k - 1)
             angles["type"].append(angle_name)
 
-        angles["id"] = np.arange(meta["n_angles"], dtype=int) + 1
+        angles["id"] = np.arange(meta["n_angles"], dtype=np.uint32) + 1
 
+        # molrs ``fourier`` / ``periodic`` dihedrals use k{m}/n{m}/d{m} (phase in
+        # radians). Multi-term Fourier series share one type name and stack as
+        # k1/n1/d1, k2/n2/d2, … — one row per distinct prmtop type index.
         dihedralstyle = ff.def_style(DihedralFourierStyle())
+        # name -> (atomtype handles, ordered {iType: (k, n, d_rad)})
+        dihe_type_defs: dict[
+            str, tuple[tuple, dict[int, tuple[float, float, float]]]
+        ] = {}
         for (
             dihe_type,
             i,
@@ -236,39 +275,51 @@ class AmberPrmtopReader:
             if atom_j_type_name > atom_k_type_name:
                 atom_j_type_name, atom_k_type_name = atom_k_type_name, atom_j_type_name
                 atom_i_type_name, atom_l_type_name = atom_l_type_name, atom_i_type_name
-            dihe_name = f"{atom_i_type_name}-{atom_j_type_name}-{atom_k_type_name}-{atom_l_type_name}"
-            if dihedralstyle.get_type_by_name(dihe_name) is None:
-                dihedralstyle.def_type(
-                    atomtype_map[atom_i_type_name],
-                    atomtype_map[atom_j_type_name],
-                    atomtype_map[atom_k_type_name],
-                    atomtype_map[atom_l_type_name],
-                    name=dihe_name,
-                    k1=f,
-                    k2=float(int(abs(periodicity))),
-                    k3=float(round(math.degrees(phase))),
-                    k4=0.5,
-                    id=dihe_type,
-                )
+            dihe_name = (
+                f"{atom_i_type_name}-{atom_j_type_name}-"
+                f"{atom_k_type_name}-{atom_l_type_name}"
+            )
+            handles = (
+                atomtype_map[atom_i_type_name],
+                atomtype_map[atom_j_type_name],
+                atomtype_map[atom_k_type_name],
+                atomtype_map[atom_l_type_name],
+            )
+            if dihe_name not in dihe_type_defs:
+                dihe_type_defs[dihe_name] = (handles, {})
+            terms = dihe_type_defs[dihe_name][1]
+            # First sighting of this prmtop type index wins (instances share it).
+            if dihe_type not in terms:
+                terms[dihe_type] = (float(f), float(abs(periodicity)), float(phase))
             dihedrals["type_id"].append(dihe_type)
             dihedrals["atomi"].append(i - 1)
             dihedrals["atomj"].append(j - 1)
             dihedrals["atomk"].append(k - 1)
             dihedrals["atoml"].append(l - 1)
             dihedrals["type"].append(dihe_name)
-        dihedrals["id"] = np.arange(meta["n_dihedrals"], dtype=int) + 1
+        for dihe_name, (handles, terms) in dihe_type_defs.items():
+            params: dict[str, float] = {}
+            for m, (kval, nval, dval) in enumerate(terms.values(), start=1):
+                params[f"k{m}"] = kval
+                params[f"n{m}"] = nval
+                params[f"d{m}"] = dval  # radians (LAMMPS writer converts to deg)
+            dihedralstyle.def_type(*handles, name=dihe_name, **params)
+        dihedrals["id"] = np.arange(meta["n_dihedrals"], dtype=np.uint32) + 1
 
-        atoms, bonds, angles, dihedrals = self._parse_residues(
-            self.raw_data["RESIDUE_POINTER"], meta, atoms, bonds, angles, dihedrals
-        )
+        atoms = self._parse_residues(self.raw_data["RESIDUE_POINTER"], meta, atoms)
 
         # Atom-connectivity indices are UNSIGNED, matching molrs's UInt index
         # columns (molrs ff reads atomi/atomj/... via get_uint). Mask/sentinel
         # columns that use -1 stay signed and are deliberately left untouched.
+        # Empty Python lists become float64 under np.asarray — monatomic ions
+        # (no bonds/angles/dihedrals) must still emit schema-typed empty columns
+        # (type: string, indices: uint32).
         for _block in (bonds, angles, dihedrals):
-            for _col in ("atomi", "atomj", "atomk", "atoml", "id"):
+            for _col in ("atomi", "atomj", "atomk", "atoml", "id", "type_id"):
                 if _col in _block:
                     _block[_col] = np.asarray(_block[_col], dtype=np.uint32)
+            if "type" in _block:
+                _block["type"] = np.asarray(_block["type"], dtype="U")
         atoms["id"] = np.asarray(atoms["id"], dtype=np.uint32)
 
         pairstyle = ff.def_pairstyle(
@@ -296,6 +347,8 @@ class AmberPrmtopReader:
         frame["bonds"] = bonds
         frame["angles"] = angles
         frame["dihedrals"] = dihedrals
+        # Reader exit: prmtop's spelling stops here, molpy's starts.
+        self._formatter.canonicalize_frame(frame)
 
         return frame, ff
 
@@ -355,46 +408,24 @@ class AmberPrmtopReader:
 
         return names
 
-    def _parse_residues(self, pointer, meta, atoms, bonds, angles, dihedrals):
+    def _parse_residues(self, pointer, meta, atoms):
+        """Slice atoms into residues from ``RESIDUE_POINTER`` (1-indexed).
+
+        Only atoms carry a residue. A bonded term's residue — "the residue this
+        term lies wholly inside, else none" — used to be precomputed here onto
+        the bonds and angles blocks, with ``-1`` for the terms that span two.
+        Nothing read it, it is one comparison away from the atom column, and its
+        sentinel cannot survive translation to ``res_id``, which the schema
+        declares unsigned. Derive it where it is needed instead.
+        """
         pointer = " ".join(pointer).split()
         pointer.append(meta["n_atoms"] + 1)
-        # residue_slice = list((map(lambda x: int(x) - 1, pointer))) + [
-        #     meta["n_atoms"]
-        # ]  # pointer is 1-indexed
-        # n_atoms = meta["n_atoms"]
-        # assert (
-        #     n_atoms == residue_slice[-1]
-        # ), f"Number of atoms does not match residue pointers, {n_atoms} != {residue_slice[-1]}"
-        # segment_lengths = np.diff(residue_slice)
-        # atom_residue_mask = np.repeat(np.arange(len(pointer)) + 1, segment_lengths)
         residue_slice = np.array(pointer, dtype=int) - 1
         segment_lengths = np.diff(residue_slice)
-        atom_residue_mask = np.repeat(np.arange(len(segment_lengths)), segment_lengths)
-
-        # Bond residue assignment: intra-residue when both atoms share the same residue
-        bi = np.asarray(bonds["atomi"], dtype=int)
-        bj = np.asarray(bonds["atomj"], dtype=int)
-        bond_residue_mask = np.full(len(bi), -1, dtype=int)
-        for residue in np.unique(atom_residue_mask):
-            in_res = atom_residue_mask == residue
-            bond_residue_mask[in_res[bi] & in_res[bj]] = residue
-
-        atoms["residue"] = atom_residue_mask
-        bonds["residue"] = bond_residue_mask
-
-        # Angle residue assignment: intra-residue when all three atoms share the same residue
-        ai = np.asarray(angles["atomi"], dtype=int)
-        aj = np.asarray(angles["atomj"], dtype=int)
-        ak = np.asarray(angles["atomk"], dtype=int)
-        angle_residue_mask = np.full(len(ai), -1, dtype=int)
-        for residue in np.unique(atom_residue_mask):
-            in_res = atom_residue_mask == residue
-            if len(ai):
-                angle_residue_mask[in_res[ai] & in_res[aj] & in_res[ak]] = residue
-
-        angles["residue"] = angle_residue_mask
-
-        return atoms, bonds, angles, dihedrals
+        atoms["residue"] = np.repeat(
+            np.arange(len(segment_lengths)), segment_lengths
+        ).astype(np.uint32)
+        return atoms
 
     def _parse_bond_params(self, bondPointers):
         forceConstant = self.raw_data["BOND_FORCE_CONSTANT"]

@@ -68,7 +68,7 @@ class SpatialDistribution(Compute):
             extent=extent,
             bulk_density=bulk_density,
         )
-        self._inner = molrs.SpatialDistribution(
+        self._inner = molrs.compute.density.SpatialDistribution(
             reference, template, target, n, extent, bulk_density
         )
 

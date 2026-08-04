@@ -1,5 +1,6 @@
 import numpy as np
 import molrs
+import pytest
 
 from molrs import Block
 from molpy.core.region import (
@@ -41,49 +42,52 @@ class TestRegion:
         assert hasattr(box, "__or__")
         assert hasattr(box, "__invert__")
 
-    def test_region_mask_integration(self):
-        """Test that Region.mask works with Block."""
-        # Create a block with coordinates
-        block = Block(
+    @staticmethod
+    def _canonical_block() -> Block:
+        """Three points — inside, outside, inside — in canonical x/y/z columns.
+
+        Coordinates live in three scalar columns. A block built around a packed
+        ``xyz`` column is a shape no reader and no graph produces, so a masking
+        test written on one cannot notice that masking does not work on real
+        data.
+        """
+        return Block(
             {
-                "xyz": np.array(
-                    [
-                        [0.5, 0.5, 0.5],  # Inside
-                        [3.0, 3.0, 3.0],  # Outside
-                        [1.0, 1.0, 1.0],  # Inside
-                    ]
-                ),
-                "type": np.array([1, 2, 3]),
+                "x": np.array([0.5, 3.0, 1.0]),
+                "y": np.array([0.5, 3.0, 1.0]),
+                "z": np.array([0.5, 3.0, 1.0]),
+                "type_id": np.array([1, 2, 3]),
             }
         )
 
+    def test_region_mask_integration(self):
+        """Test that Region.mask works with Block."""
         box = BoxRegion(np.array([2.0, 2.0, 2.0]))
-        mask = box.mask(block)
+        mask = box.mask(self._canonical_block())
 
         expected = np.array([True, False, True])
         assert np.array_equal(mask, expected)
 
     def test_region_call_filters_block(self):
         """Test that Region.__call__ filters the Block."""
-        block = Block(
-            {
-                "xyz": np.array(
-                    [
-                        [0.5, 0.5, 0.5],  # Inside
-                        [3.0, 3.0, 3.0],  # Outside
-                        [1.0, 1.0, 1.0],  # Inside
-                    ]
-                ),
-                "type": np.array([1, 2, 3]),
-            }
-        )
-
         box = BoxRegion(np.array([2.0, 2.0, 2.0]))
-        filtered = box(block)
+        filtered = box(self._canonical_block())
 
         assert isinstance(filtered, Block)
-        assert len(filtered["type"]) == 2
-        assert np.array_equal(filtered["type"], np.array([1, 3]))
+        assert len(filtered["type_id"]) == 2
+        assert np.array_equal(filtered["type_id"], np.array([1, 3]))
+
+    def test_a_region_has_no_coordinate_field_knob(self):
+        """Coordinates are ``x``/``y``/``z``. There is no other place to look.
+
+        ``coord_field`` let a region be pointed at a packed Nx3 column that
+        parallels the canonical three — and defaulted to it, so masking a
+        canonical block raised ``KeyError: 'xyz'``.
+        """
+        import inspect
+
+        assert not hasattr(BoxRegion(np.array([1.0, 1.0, 1.0])), "coord_field")
+        assert "coord_field" not in inspect.signature(BoxRegion.__init__).parameters
 
 
 class TestBoxRegion:
@@ -94,11 +98,10 @@ class TestBoxRegion:
         lengths = np.array([2.0, 3.0, 4.0])
         origin = np.array([1.0, 1.0, 1.0])
 
-        box = BoxRegion(lengths, origin, coord_field="xyz")
+        box = BoxRegion(lengths, origin)
 
         assert np.array_equal(box.lengths, lengths)
         assert np.array_equal(box.origin, origin)
-        assert box.coord_field == "xyz"
 
     def test_box_region_default_origin(self):
         """Test BoxRegion with default origin."""
@@ -147,11 +150,10 @@ class TestSphereRegion:
         radius = 2.5
         center = np.array([1.0, 2.0, 3.0])
 
-        sphere = SphereRegion(radius, center, coord_field="coords")
+        sphere = SphereRegion(radius, center)
 
         assert sphere.radius == radius
         assert np.array_equal(sphere.center, center)
-        assert sphere.coord_field == "coords"
 
     def test_sphere_region_default_center(self):
         """Test SphereRegion with default center."""
@@ -201,12 +203,11 @@ class TestCube:
         edge = 3.0
         origin = np.array([1.0, 1.0, 1.0])
 
-        cube = Cube(edge, origin, coord_field="positions")
+        cube = Cube(edge, origin)
 
         assert cube.edge == edge
         assert np.array_equal(cube.lengths, np.array([edge, edge, edge]))
         assert np.array_equal(cube.origin, origin)
-        assert cube.coord_field == "positions"
 
     def test_cube_default_origin(self):
         """Test Cube with default origin."""
@@ -350,25 +351,12 @@ class TestRegionComposition:
 class TestRegionWithBlock:
     """Test Region integration with Block objects."""
 
-    def test_custom_coord_field(self):
-        """Test Region with custom coordinate field."""
-        block = Block(
-            {
-                "positions": np.array(
-                    [
-                        [0.5, 0.5, 0.5],
-                        [3.0, 3.0, 3.0],
-                    ]
-                ),
-                "type": np.array([1, 2]),
-            }
-        )
+    def test_a_block_without_coordinates_names_the_missing_column(self):
+        """Masking a block that carries no x/y/z names the column it wanted."""
+        block = Block({"type_id": np.array([1, 2])})
 
-        box = BoxRegion(np.array([2.0, 2.0, 2.0]), coord_field="positions")
-        filtered = box(block)
-
-        assert len(filtered["type"]) == 1
-        assert filtered["type"][0] == 1
+        with pytest.raises(KeyError, match=r"'x' not found"):
+            BoxRegion(np.array([2.0, 2.0, 2.0])).mask(block)
 
     def test_region_as_selection(self):
         """Test that Region works as a MaskPredicate/Selection."""
@@ -376,30 +364,26 @@ class TestRegionWithBlock:
 
         block = Block(
             {
-                "xyz": np.array(
-                    [
-                        [0.5, 0.5, 0.5],  # Inside
-                        [3.0, 3.0, 3.0],  # Outside
-                        [1.0, 1.0, 1.0],  # Inside
-                    ]
-                ),
-                "type": np.array([1, 1, 2]),
+                "x": np.array([0.5, 3.0, 1.0]),
+                "y": np.array([0.5, 3.0, 1.0]),
+                "z": np.array([0.5, 3.0, 1.0]),
+                "type_id": np.array([1, 1, 2]),
             }
         )
 
         box = BoxRegion(np.array([2.0, 2.0, 2.0]))
-        type1 = AtomTypeSelector(1)
+        type1 = AtomTypeSelector(1, field="type_id")
 
         # Test region and selection separately first
         box_filtered = box(block)
         type_filtered = type1(block)
 
         # Region should filter by spatial location
-        assert len(box_filtered["type"]) == 2  # Inside atoms
+        assert len(box_filtered["type_id"]) == 2  # Inside atoms
 
         # Selection should filter by type
-        assert len(type_filtered["type"]) == 2  # Type 1 atoms
-        assert np.all(type_filtered["type"] == 1)
+        assert len(type_filtered["type_id"]) == 2  # Type 1 atoms
+        assert np.all(type_filtered["type_id"] == 1)
 
         # Note: Direct composition of Region & AtomTypeSelector requires
         # both to implement the same interface consistently

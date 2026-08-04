@@ -64,15 +64,15 @@ class AmberToolsTypifier(Typifier[Atomistic]):
             charge_method="gas",
         )
         if self._forcefield is None:
-            self._forcefield = result.ff
+            self._forcefield = result.forcefield
         else:
-            self._forcefield.merge(result.ff)
+            self._forcefield.merge(result.forcefield)
 
         # antechamber preserves atom order, so its i-th atom is the graph's i-th.
         # strict=False: a cap sits at the edge of a sliced fragment and may carry
         # a bonded term GAFF does not parameterise; the region's interior guard,
         # not this matcher, is what forbids an undecided type where it matters.
-        params = ForceFieldParams(result.ff, strict=False)
+        params = ForceFieldParams(result.forcefield, strict=False)
         return params.match(graph, self._atom_types(result))
 
     @staticmethod
@@ -80,6 +80,6 @@ class AmberToolsTypifier(Typifier[Atomistic]):
         """The GAFF type antechamber gave each atom. Charges are not harvested."""
         block = result.frame["atoms"]
         return [
-            {fields.TYPE.key: str(name)} if name not in (None, "") else {}
-            for name in block[fields.TYPE.key]
+            {fields.TYPE: str(name)} if name not in (None, "") else {}
+            for name in block[fields.TYPE]
         ]

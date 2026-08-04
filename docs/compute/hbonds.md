@@ -43,18 +43,39 @@ whose populated region *defines* the bond.
 Supply the donor `(D, H)` pairs and the acceptor indices; tune the geometry with
 an optional `HBondCriterion`:
 
+The example below shares this setup:
+
+```python
+import numpy as np
+import molpy as mp
+
+
+def _frame(step: int) -> mp.Frame:
+    rng = np.random.default_rng(0)
+    xyz = rng.uniform(0.0, 20.0, size=(30, 3)) + 0.1 * step
+    frame = mp.Frame()
+    frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
+    frame.box = mp.Box.cubic(20.0)
+    return frame
+
+
+frames = [_frame(step) for step in range(10)]
+```
+
 ```python
 import numpy as np
 from molpy.compute import HBonds, HBondCriterion
 
-donors = np.array([[o1, h1], [o1, h2]], dtype=np.int64)   # (D, H) pairs
+o1, h1, h2 = 0, 1, 2  # one donor water
+o2, o3, o4 = 3, 6, 9  # three acceptor oxygens
+donors = np.array([[o1, h1], [o1, h2]], dtype=np.int64)  # (D, H) pairs
 acceptors = np.array([o2, o3, o4], dtype=np.int64)
 
 hb = HBonds(donors, acceptors, HBondCriterion(dist_cutoff=3.5, angle_cutoff=150.0))
 result = hb(frames)
 
-result.counts      # number of H-bonds per frame
-result.per_frame   # lists of (D, H, A, distance, angle) per frame
+result.counts  # number of H-bonds per frame
+result.per_frame  # lists of (D, H, A, distance, angle) per frame
 ```
 
 The per-frame tuples let you build the bond network (degree distribution,

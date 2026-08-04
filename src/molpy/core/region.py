@@ -13,20 +13,23 @@ from .selector import MaskPredicate
 
 
 class Region(MaskPredicate):
-    """Mixin that adds ``coord_field`` and ``mask(Block)`` to native regions."""
+    """Mixin that adds ``mask(Block)`` to native regions.
 
-    coord_field: str
+    A block stores coordinates in ``x``/``y``/``z``, so that is where a region
+    reads them. There is no configurable coordinate field: the alternative it
+    used to allow — one packed Nx3 column paralleling the canonical three —
+    is not a second convention molpy supports, and defaulting to it meant
+    masking an ordinary block raised ``KeyError``.
+    """
 
     def mask(self, block: Block) -> np.ndarray:  # type: ignore[override]
-        return self.isin(block[self.coord_field])
+        return self.isin(block["x", "y", "z"])
 
     @abstractmethod
     def isin(self, xyz: np.ndarray) -> np.ndarray: ...
 
 
 class _NativeRegionSugar:
-    coord_field: str
-
     def isin(self, xyz: np.ndarray):
         array = np.asarray(xyz, dtype=float)
         if array.ndim == 1:
@@ -44,16 +47,16 @@ class _NativeRegionSugar:
         return np.asarray(native).T
 
     def mask(self, block: Block) -> np.ndarray:
-        return self.isin(block[self.coord_field])
+        return self.isin(block["x", "y", "z"])
 
     def __and__(self, other):
-        return AndRegion(self, other, self.coord_field)
+        return AndRegion(self, other)
 
     def __or__(self, other):
-        return OrRegion(self, other, self.coord_field)
+        return OrRegion(self, other)
 
     def __invert__(self):
-        return NotRegion(self, self.coord_field)
+        return NotRegion(self)
 
 
 class BoxRegion(molrs.Cuboid, _NativeRegionSugar, Region):
@@ -68,9 +71,7 @@ class BoxRegion(molrs.Cuboid, _NativeRegionSugar, Region):
         cls,
         lengths: ArrayLike,
         origin: ArrayLike | None = None,
-        coord_field: str = "xyz",
     ):
-        del coord_field
         lengths_array = np.asarray(lengths, dtype=float)
         origin_array = (
             np.zeros(3) if origin is None else np.asarray(origin, dtype=float)
@@ -81,39 +82,32 @@ class BoxRegion(molrs.Cuboid, _NativeRegionSugar, Region):
         self,
         lengths: ArrayLike,
         origin: ArrayLike | None = None,
-        coord_field: str = "xyz",
     ) -> None:
         self.lengths = np.asarray(lengths, dtype=float)
         self.origin = np.zeros(3) if origin is None else np.asarray(origin, dtype=float)
-        self.coord_field = coord_field
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, BoxRegion) and bool(
             np.allclose(self.lengths, other.lengths)
             and np.allclose(self.origin, other.origin)
-            and self.coord_field == other.coord_field
         )
 
     def __repr__(self) -> str:
-        return f"BoxRegion(lengths={self.lengths}, origin={self.origin}, coord_field='{self.coord_field}')"
+        return f"BoxRegion(lengths={self.lengths}, origin={self.origin})"
 
 
 class Cube(BoxRegion):
-    def __new__(
-        cls, edge: float, origin: ArrayLike | None = None, coord_field: str = "xyz"
-    ):
-        return super().__new__(cls, np.full(3, edge), origin, coord_field)
+    def __new__(cls, edge: float, origin: ArrayLike | None = None):
+        return super().__new__(cls, np.full(3, edge), origin)
 
-    def __init__(
-        self, edge: float, origin: ArrayLike | None = None, coord_field: str = "xyz"
-    ) -> None:
+    def __init__(self, edge: float, origin: ArrayLike | None = None) -> None:
         if edge <= 0:
             raise ValueError(f"edge must be positive, got {edge}")
-        super().__init__(np.full(3, edge), origin, coord_field)
+        super().__init__(np.full(3, edge), origin)
         self.edge = float(edge)
 
     def __repr__(self) -> str:
-        return f"Cube(edge={self.edge}, origin={self.origin}, coord_field='{self.coord_field}')"
+        return f"Cube(edge={self.edge}, origin={self.origin})"
 
 
 class SphereRegion(molrs.Sphere, _NativeRegionSugar, Region):
@@ -128,9 +122,7 @@ class SphereRegion(molrs.Sphere, _NativeRegionSugar, Region):
         cls,
         radius: float,
         center: ArrayLike | None = None,
-        coord_field: str = "xyz",
     ):
-        del coord_field
         center_array = (
             np.zeros(3) if center is None else np.asarray(center, dtype=float)
         )
@@ -140,23 +132,20 @@ class SphereRegion(molrs.Sphere, _NativeRegionSugar, Region):
         self,
         radius: float,
         center: ArrayLike | None = None,
-        coord_field: str = "xyz",
     ) -> None:
         if radius <= 0:
             raise ValueError(f"radius must be positive, got {radius}")
         self.radius = float(radius)
         self.center = np.zeros(3) if center is None else np.asarray(center, dtype=float)
-        self.coord_field = coord_field
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, SphereRegion) and bool(
             np.isclose(self.radius, other.radius)
             and np.allclose(self.center, other.center)
-            and self.coord_field == other.coord_field
         )
 
     def __repr__(self) -> str:
-        return f"SphereRegion(radius={self.radius}, center={self.center}, coord_field='{self.coord_field}')"
+        return f"SphereRegion(radius={self.radius}, center={self.center})"
 
 
 class _ComposedRegion(molrs.Region, _NativeRegionSugar, Region):
@@ -169,8 +158,7 @@ class _ComposedRegion(molrs.Region, _NativeRegionSugar, Region):
 
 
 class AndRegion(_ComposedRegion):
-    def __new__(cls, a, b, coord_field: str = "xyz"):
-        del coord_field
+    def __new__(cls, a, b):
         return super().__new__(
             cls,
             molrs.Cuboid.__and__(a, b)
@@ -180,13 +168,12 @@ class AndRegion(_ComposedRegion):
             else molrs.Region.__and__(a, b),
         )
 
-    def __init__(self, a, b, coord_field: str = "xyz") -> None:
-        self.a, self.b, self.coord_field = a, b, coord_field
+    def __init__(self, a, b) -> None:
+        self.a, self.b = a, b
 
 
 class OrRegion(_ComposedRegion):
-    def __new__(cls, a, b, coord_field: str = "xyz"):
-        del coord_field
+    def __new__(cls, a, b):
         return super().__new__(
             cls,
             molrs.Cuboid.__or__(a, b)
@@ -196,13 +183,12 @@ class OrRegion(_ComposedRegion):
             else molrs.Region.__or__(a, b),
         )
 
-    def __init__(self, a, b, coord_field: str = "xyz") -> None:
-        self.a, self.b, self.coord_field = a, b, coord_field
+    def __init__(self, a, b) -> None:
+        self.a, self.b = a, b
 
 
 class NotRegion(_ComposedRegion):
-    def __new__(cls, a, coord_field: str = "xyz"):
-        del coord_field
+    def __new__(cls, a):
         return super().__new__(
             cls,
             molrs.Cuboid.__invert__(a)
@@ -212,8 +198,8 @@ class NotRegion(_ComposedRegion):
             else molrs.Region.__invert__(a),
         )
 
-    def __init__(self, a, coord_field: str = "xyz") -> None:
-        self.a, self.coord_field = a, coord_field
+    def __init__(self, a) -> None:
+        self.a = a
 
 
 __all__ = [

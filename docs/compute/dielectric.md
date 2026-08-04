@@ -10,14 +10,18 @@ is assumed beyond undergraduate electromagnetism, a little statistical
 mechanics, and the Fourier transform.
 
 All spectral physics — autocorrelation, windowing, FFT, prefactors — runs in
-Rust inside `molrs`. The MolPy layer (`molpy.compute.DielectricSusceptibility`)
-only extracts positions and charges, unwraps coordinates, and assembles the
-dipole series before delegating to `molrs.dielectric`.
+Rust inside **molrs**. MolPy re-exports the same types identity-style
+(`Dielectric`, `DebyeRelaxation`, `EinsteinHelfandSpectrum`,
+`GreenKuboSpectrum`, `EinsteinConductivity`, `GreenKuboConductivity`,
+`LinearFit`, `CumulativeTrapezoid`). There is **no** all-in-one
+`DielectricSusceptibility` / `IonicConductivity` recipe class: assemble
+$\mathbf{M}(t)$ / $\mathbf{J}(t)$ yourself, then compose raw Compute → Fit →
+optional SI scale.
 
 !!! note "Conventions used throughout"
     - Complex permittivity: $\varepsilon^*(\omega) = \varepsilon'(\omega) - i\,\varepsilon''(\omega)$ (**positive-loss** convention, so $\varepsilon'' \ge 0$).
     - Fourier transform: $X(\omega) = \int_0^\infty f(t)\,e^{-i\omega t}\,dt$.
-    - Units (LAMMPS *real*): length Å, charge $e$, time ps, volume Å³, temperature K, angular frequency rad·ps⁻¹. GROMACS trajectories are read in native **nm**, so scale lengths by 10 before handing them to the kernels.
+    - Units (LAMMPS *real*): length **Å**, charge $e$, **time fs**, volume Å³, temperature K. Frequency axes from spectral Fits follow the kernel (rad·fs⁻¹ or as documented). GROMACS trajectories are **nm**-native — scale lengths ×10 before analysis. Displacement series need **unwrapped** coordinates.
 
 ---
 
@@ -425,32 +429,36 @@ This is exactly the quantity `gmx current` reports as "Einstein–Helfand".
 
 ### 7.1 Procedure
 
-1. **Collective MSD**:
+1. **Collective MSD** via `EinsteinConductivity().compute(M_J, dt, max_correlation_time)`:
    $\text{MSD}(k)=\langle|\mathbf{M}_J(t{+}k)-\mathbf{M}_J(t)|^2\rangle$,
-   averaged over all time origins $t$ (`collective_msd`).
-2. **Linear fit for the slope**: the MSD is *ballistic* at short times,
-   *diffusive* in the middle, and *noisy* at long times. Fit a straight line only
-   in the diffusive window $\lbrack\text{fit\_start\_frac},\text{fit\_end\_frac}\rbrack\cdot
-   \text{max\_lag}$, typically $[0.1, 0.5]$.
-3. **Convert to S/m** (SI constants fold Å, ps into m, s):
+   averaged over all time origins $t$. `dt` is the frame spacing in **fs**.
+2. **Linear fit for the slope** with `LinearFit(start_frac, end_frac)`: the MSD is
+   *ballistic* at short times, *diffusive* in the middle, and *noisy* at long
+   times. Fit only the diffusive window, typically $[0.1, 0.5]$ of the max lag.
+3. **Convert to S/m** (SI constants fold Å and **fs** into m, s — matching molrs
+   `FEMTOSECOND_S`):
 
 $$
-\sigma\,[\text{S/m}] = \text{slope}\,[(e\text{Å})^2/\text{ps}]\cdot
-\frac{e^2\cdot 10^{-8}}{6\,V[\text{Å}^3]\cdot 10^{-30}\,k_B T},
+\sigma\,[\text{S/m}] = \text{slope}\,[(e\text{Å})^2/\text{fs}]\cdot
+\frac{e^2}{6\,V[\text{Å}^3]\,k_B T}\times
+\frac{(10^{-10})^2}{10^{-15}},
 $$
 
-with $e=1.602\times10^{-19}$ C, $k_B=1.381\times10^{-23}$ J/K; the $10^{-8}$
-folds the Å²→m² and ps→s conversions.
+with $e=1.602\times10^{-19}$ C, $k_B=1.381\times10^{-23}$ J/K. Equivalently apply
+the documented molrs prefactor
+$(e^2\cdot\mathrm{Å}^2/\mathrm{fs})/(6\cdot\mathrm{Å}^3\cdot k_B)$ then divide
+by $T$ (and fold volume). **If you pass `dt` in ps by mistake, $\sigma$ is off by
+$10^3$.**
 
 ### 7.2 An honest caveat: few carriers → uncertain $\sigma$
 
 The example has only **32 ions over 20 ns**. The ion-dipole MSD is mildly
 super-diffusive, so $\sigma$ is sensitive to the fit window: it drifts from
-≈ 5.8 to ≈ 10 S/m as the window moves from `[50,200]` to `[1000,3000]` ps. **Report
-a range, not a single digit.** The default `[100,400]` ps window gives
-$\sigma \approx 6.1$ S/m (matching `gmx current`'s 6.12 S/m to 1.2 %); longer
-windows approach ≈ 8.5 S/m (the experimental value for 1 M NaCl). Tighter
-convergence requires more carriers and longer trajectories.
+≈ 5.8 to ≈ 10 S/m as the window moves across short vs long lag ranges. **Report
+a range, not a single digit.** A mid-trajectory window can give
+$\sigma \approx 6.1$ S/m (matching `gmx current`'s 6.12 S/m to ~1 %); longer
+windows approach ≈ 8.5 S/m (experimental ~1 M NaCl). Tighter convergence needs
+more carriers and longer trajectories.
 
 ---
 
@@ -467,11 +475,13 @@ discretized by finite difference:
 $$
 \mathbf{J}(t) = \frac{\dot{\mathbf{M}}}{V}
 \approx \frac{\mathbf{M}(t)-\mathbf{M}(t-\Delta t)}{V\,\Delta t},
-\qquad [\mathbf{J}] = e\cdot\text{Å}^{-2}\text{ps}^{-1}.
+\qquad [\mathbf{J}] = e\cdot\text{Å}^{-2}\text{fs}^{-1}
+\quad\text{(with $\Delta t$ in fs)}.
 $$
 
-`compute_current_density` does this. **Row 0 is `NaN`** (no previous frame), and
-all consumers must skip it (the Green–Kubo kernel does so internally).
+`Dielectric.compute_current_density` does this. **Row 0 is `NaN`** (no previous
+frame), and consumers must skip it (or use a current series assembled from
+velocities, which has no leading NaN).
 
 ### 8.2 Conductivity spectrum → permittivity
 
@@ -501,66 +511,82 @@ unit test).
 
 ---
 
-## 9. End-to-end with MolPy
+## 9. End-to-end compose API
 
-The high-level `DielectricSusceptibility` compute packages extraction →
-unwrapping → dipole assembly → both routes → static $\varepsilon$ in one call;
-the physics still runs in `molrs`.
+molrs exposes **raw** observables and **Fits**. You (or a short analysis
+script) unwrap coordinates, assemble $\mathbf{M}(t)$ / $\mathbf{J}(t)$, then
+compose. MolPy re-exports the same names from `molpy.compute`.
 
 ```python
-from molpy.compute import DielectricSusceptibility
-
-dc = DielectricSusceptibility(
-    dt=0.01,                  # ps between kept frames (10 fs here)
-    temperature=298.15,       # K
-    max_correlation_time=2000,# frames (sets the resolution; keep <= n_frames/4)
-    epsilon_inf=1.0,          # non-polarizable SPC water
-    window_type="cosine_sq",
-    routes=["einstein-helfand", "green-kubo"],
+import numpy as np
+from molpy.compute import (
+    Dielectric,
+    DebyeRelaxation,
+    EinsteinHelfandSpectrum,
+    GreenKuboConductivity,
+    GreenKuboSpectrum,
+    EinsteinConductivity,
+    LinearFit,
+    CumulativeTrapezoid,
+    DebyeFit,
 )
-result = dc(trajectory)       # a molpy Trajectory of unwrapped frames
 
-eh = result.results["EH-full"]
-# eh.frequency      -> rad/ps
-# eh.epsilon_real   -> epsilon'(omega)
-# eh.epsilon_imag   -> epsilon''(omega)
-# eh.epsilon_static -> epsilon(0) (Neumann), attached to every route
+rng = np.random.default_rng(0)
+# Synthetic unwrapped dipoles / currents (n_frames, 3)
+M_water = np.ascontiguousarray(np.cumsum(rng.normal(0, 0.05, size=(120, 3)), axis=0))
+J_ions = np.ascontiguousarray(rng.normal(0, 1.0, size=(120, 3)))
+M_ions = np.ascontiguousarray(np.cumsum(rng.normal(0, 0.02, size=(120, 3)), axis=0))
+dt = 10.0          # fs
+T = 298.15         # K
+V = 2.69e4         # Å³
+eps_inf = 1.0
 
-# Debye relaxation time, fitted in NumPy (no SciPy) -- see section 10.1
-fit = eh.fit_debye()        # fit.tau (ps), fit.delta_eps, fit.omega_peak
+# Static ε(0) — Neumann fluctuation formula on solvent dipole only
+eps0 = Dielectric.static_dielectric_constant(
+    M_water, volume=V, temperature=T, epsilon_inf=eps_inf
+)
+
+# Route I — Einstein–Helfand spectrum
+debye = DebyeRelaxation(V, T).compute(M_water, dt=dt, max_correlation_time=40)
+eh = EinsteinHelfandSpectrum(
+    dt, V, T, eps_inf, debye["zero_lag_variance"]
+).fit(debye["acf"])
+
+# Optional time-domain Debye τ on the *normalized* ACF Φ(t)
+phi = debye["acf"] / debye["acf"][0]
+tau_fit = DebyeFit().fit(phi, dt=dt)
+
+# Route II — Green–Kubo spectrum from current ACF
+jacf = GreenKuboConductivity().compute(J_ions, dt=dt, max_correlation_time=40)
+gk = GreenKuboSpectrum(dt, V, T, eps_inf).fit(jacf["jacf"])
+
+# DC ionic conductivity (Einstein)
+raw_msd = EinsteinConductivity().compute(M_ions, dt=dt, max_correlation_time=40)
+fit = LinearFit(0.1, 0.5).fit(raw_msd["lag_times"], raw_msd["msd"])
+# sigma_S_per_m = fit["slope"] / (6 * V * k_B * T) * SI_prefactor
+
+running = CumulativeTrapezoid().fit(jacf["jacf"], dt=dt)["integral"]
+# sigma from plateau of running / (3 * V * k_B * T) * SI_prefactor
+assert eps0 == eps0 and fit["slope"] == fit["slope"]
 ```
 
-The **ionic conductivity** has its own compute, `IonicConductivity`, wrapping
-the Einstein-Helfand kernel ([§7](#7-ionic-conductivity-einsteinhelfand)). Pass
-it an ion-only trajectory (decomposition by *selection*, [§5](#5-the-electrolyte-step-decompose-the-dipole)):
+| Step | Entry point |
+|------|-------------|
+| Dipole $\mathbf{M}=\sum q_i\mathbf{r}_i$ | `Dielectric.compute_dipole_moment` |
+| Current density | `Dielectric.compute_current_density` |
+| Split water/ion current | `Dielectric.decompose_current` |
+| Static $\varepsilon(0)$ | `Dielectric.static_dielectric_constant` |
+| Raw dipole ACF | `DebyeRelaxation` |
+| $\varepsilon^*(\omega)$ EH | `EinsteinHelfandSpectrum` |
+| Raw current ACF | `GreenKuboConductivity` |
+| $\varepsilon^*(\omega)$ GK | `GreenKuboSpectrum` |
+| Raw charge-dipole MSD | `EinsteinConductivity` |
+| MSD slope | `LinearFit` |
+| Running $\int C$ | `CumulativeTrapezoid` |
 
-```python
-from molpy.compute import IonicConductivity
-
-sigma = IonicConductivity(
-    dt=0.01, temperature=298.15, max_correlation_time=1000,
-    fit_start_frac=0.1, fit_end_frac=0.5,
-)(ion_trajectory)
-# sigma.sigma (S/m), sigma.slope, sigma.msd, sigma.time (lag ps)
-```
-
-Each frame's `atoms` block must carry `x, y, z` (Å) and `charge` (e), and a
-non-free `Box`. For an electrolyte, build two trajectories (or two dipole series)
-restricted to the water and ion atoms as in [§5](#5-the-electrolyte-step-decompose-the-dipole),
-run the dielectric routes on the water dipole, and the conductivity on the ion
-dipole.
-
-For full manual control, the underlying kernels are callable directly:
-
-| Step | `molrs.dielectric` function |
-|------|------------------------------|
-| Total / sub-system dipole $\mathbf{M}=\sum q_i\mathbf{r}_i$ | `compute_dipole_moment` |
-| Current density $\mathbf{J}=\dot{\mathbf{M}}/V$ | `compute_current_density` |
-| Split water/ion current | `decompose_current` |
-| Static $\varepsilon(0)$ | `static_dielectric_constant` |
-| Spectrum (dipole route) | `einstein_helfand_spectrum` |
-| Spectrum (current route) | `green_kubo_spectrum` |
-| Ionic conductivity $\sigma$ | `einstein_helfand_conductivity` |
+For an electrolyte, **decompose** solvent vs ion dipoles before the static
+formula and spectra ([§5](#5-the-electrolyte-step-decompose-the-dipole)); feed
+conductivity only the ion series.
 
 ---
 
@@ -590,12 +616,10 @@ $$
 - $\varepsilon'$ steps down from $\varepsilon(0)$ to $\varepsilon_\infty$, inflecting at $\omega\tau=1$.
 - $\varepsilon''$ is a peak (symmetric on a log axis) at $\omega_\text{peak}=1/\tau$, height $\Delta\varepsilon/2$.
 - **Fastest estimate**: read the loss-peak position → $\tau = 1/\omega_\text{peak}$.
-- **In MolPy**: `DielectricResult.fit_debye()` returns $\tau$, $\Delta\varepsilon$,
-  and $\omega_\text{peak}$ using only NumPy — $\tau$ is the least-squares slope of
-  the exact identity $\varepsilon''/(\varepsilon'-\varepsilon_\infty)=\omega\tau$
-  over the rising branch (more robust than a single bin), with a loss-peak
-  fallback. `DebyeFit.epsilon(omega)` evaluates the fitted model. SciPy is only
-  needed for the broadened/skewed fits below.
+- **In MolPy / molrs**: `DebyeFit` fits the **normalized** time-domain ACF
+  $\Phi(t)=A\,e^{-t/\tau}$ (log-linear least squares on the leading positive
+  run) and returns $\tau$ and $A$. Frequency-domain HN/Cole–Cole fits still
+  live in your script (`scipy.optimize.curve_fit`).
 
 !!! example "Running example"
     The water ($\mathbf{M}_D$) loss peak gives $\tau \approx 6.5$ ps (with clean
@@ -649,11 +673,14 @@ the low-frequency end of $\varepsilon''$.
 
 ### 10.5 The conductivity "fit" = MSD slope
 
-The `IonicConductivity` compute does this end-to-end: it fits the
-$\mathbf{M}_J$ MSD over the diffusive window $[0.1,0.5]\cdot\text{max\_lag}$
-and applies the §7.1 prefactor, returning $\sigma$ in S/m. Always verify
-(a) the window lies in the linear diffusive regime, and (b) the window
-sensitivity (§7.2).
+There is no end-to-end conductivity class. Compose:
+
+1. `EinsteinConductivity().compute(M_ions, dt, max_correlation_time)` → raw MSD
+2. `LinearFit(0.1, 0.5).fit(lag_times, msd)` → slope
+3. $\sigma = \mathrm{slope}/(6 V k_B T)\times$ SI prefactor (fs time base)
+
+Always verify (a) the window lies in the linear diffusive regime, and (b)
+window sensitivity (§7.2).
 
 ---
 

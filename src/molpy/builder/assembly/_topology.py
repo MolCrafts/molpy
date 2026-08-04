@@ -16,7 +16,7 @@ from molpy.core import fields
 
 if TYPE_CHECKING:
     from molpy.builder.assembly._context import MatchContext
-    from molpy.parser.smiles.cgsmiles_ir import CGSmilesGraphIR
+    from molpy.builder.assembly._cgsmiles_ir import CGSmilesGraphIR
 
 
 class TopologySelector(Selector):
@@ -103,11 +103,11 @@ class TopologySelector(Selector):
         out: dict[int, list[Binding]] = {}
         for occurrence in context.occurrences[component]:
             handle = occurrence[map_number]
-            residue = context.world.get(handle, fields.RES_ID.key)
+            residue = context.world.get(handle, fields.RES_ID)
             if residue is None:
                 raise ValueError(
                     f"atom {handle} matched a reactant site but carries no "
-                    f"{fields.RES_ID.key}; expand the monomer library first"
+                    f"{fields.RES_ID}; expand the monomer library first"
                 )
             out.setdefault(int(residue), []).append(occurrence)
         for occurrences in out.values():

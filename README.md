@@ -54,18 +54,17 @@ it, analyze or minimize it, then read and write it across formats.
 
 | Module | Capability |
 |---|---|
-| **`core`** | Explicit data model — editable `Atomistic` topology graph (atoms, bonds, angles, dihedrals), `Frame`/`Block` columnar arrays, `ForceField`, `Box` |
-| **`parser`** | Grammar-based parsing — SMILES, SMARTS, BigSMILES, G-BigSMILES, CGSmiles |
-| **`builder`** | System assembly — linear / branched / cyclic polymers, polydispersity sampling (Schulz-Zimm, Poisson, Flory-Schulz), residue management |
-| **`embed`** | 3D coordinate generation for parsed or built topologies |
-| **`op` · `reacter`** | Structure editing — geometric transforms; template-based reactions with leaving-group selectors and LAMMPS `fix bond/react` templates |
-| **`typifier`** | Atom typing — OPLS-AA, GAFF / GAFF2, custom SMARTS / SMIRKS typifiers |
+| **`core`** | Explicit data model — editable `Atomistic` topology graph, `Frame`/`Block` columnar arrays, `ForceField`, `Box` |
+| **`parser`** | SMILES / SMARTS (via molrs types: `SmilesIR`, `SmartsPattern`); moltemplate `.lt` reader |
+| **`builder`** | System assembly — polymers, crosslinking, polydispersity, virtual sites, AmberTools facade |
+| **`conformer`** | 3D coordinate generation (molrs ETKDG + MMFF cleanup) |
+| **`typifier`** | Atom typing — OPLS-AA, CL&P, MMFF, GAFF via AmberTools |
 | **`potential` · `optimize`** | Energy & force potentials with L-BFGS minimization |
-| **`compute`** | Analysis — RDF, MSD, clustering, shape & gyration, dielectric, neighbor lists, custom operators |
+| **`compute`** | Analysis — RDF, MSD, transport, dielectric, spectra, order, Voronoi (molrs kernels) |
 | **`pack`** | Packmol-based packing with density targets |
-| **`io`** | **Read and write** — PDB, GRO, LAMMPS data, XYZ, JSON, HDF5, force fields, and trajectories |
-| **`engine`** | MD input generation & run management — LAMMPS, CP2K |
-| **`wrapper` · `adapter`** | External CLIs (Antechamber, Prepgen) and library bridges (RDKit, OpenBabel) |
+| **`io`** | Read/write — PDB, GRO, LAMMPS data, XYZ, force fields, trajectories, … |
+| **`engine`** | MD input generation & run management — LAMMPS, CP2K, OpenMM |
+| **`wrapper` · `adapter`** | External CLIs (Antechamber, tleap, …) and optional RDKit in-memory bridge |
 
 ## Install
 
@@ -77,9 +76,10 @@ pip install molcrafts-molpy
 # await micropip.install("molcrafts-molpy")
 ```
 
-Core dependencies: NumPy, python-igraph, Lark, Pint, and
-[molrs](https://github.com/MolCrafts/molrs) (the Rust numerical core).
-Optional: RDKit (3D geometry), AmberTools (GAFF charges).
+Core dependencies: NumPy and
+[molrs](https://github.com/MolCrafts/molrs) (`molcrafts-molrs>=0.12.0,<0.13`)
+plus the MolCrafts logging/config packages. Optional: RDKit (adapter example),
+AmberTools (GAFF charges).
 
 > **Nightly builds.** Bleeding-edge snapshots are published to the separate
 > project `molcrafts-molpy-nightly` (versioned `X.Y.Z.devN`) on every push to
@@ -98,7 +98,7 @@ prek install
 # optional manual gates (same as prek/CI):
 #   uv run --extra dev tox -e lint
 #   uv run --extra dev tox -e py
-pytest tests/ -m "not external"
+pytest tests/
 ```
 
 `pip install -e ".[dev]"` pulls the published `molcrafts-molrs` wheel from
@@ -128,7 +128,7 @@ Parse a SMILES string, assign OPLS-AA types, and write LAMMPS input files:
 ```python
 import molpy as mp
 
-mol   = mp.parser.parse_molecule("CCO")          # ethanol from SMILES
+mol   = mp.Atomistic.from_smiles("CCO")          # ethanol from SMILES
 ff    = mp.io.read_xml_forcefield("oplsaa.xml")  # bundled OPLS-AA
 typed = mp.typifier.OplsAtomisticTypifier(ff).typify(mol)
 

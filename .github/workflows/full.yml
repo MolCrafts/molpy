@@ -17,8 +17,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # ubuntu covered by ci.yml default gate; Full only multi-OS.
         os: [macos-latest, windows-latest]
-        python-version: ['3.14']
+        # Both ends of the supported range.
+        python-version: ['3.12', '3.14']
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -35,4 +37,4 @@ jobs:
           curl -fsSL https://github.com/molcrafts/tests-data/archive/refs/heads/master.tar.gz \
             | tar -xz -C "$dir" --strip-components=1 --exclude='*/con' --exclude='*/con/*'
       - name: Unit tests
-        run: pytest tests/ -m "not external" -n auto
+        run: pytest tests/ -n auto

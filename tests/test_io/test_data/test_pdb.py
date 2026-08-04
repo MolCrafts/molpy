@@ -60,9 +60,11 @@ class TestPDBIO:
         assert all(f["atoms"]["name"].shape[0] == n_atoms for f in frames)
 
     def test_write_and_read_roundtrip(self, tmp_path, pdb_test_files, pdb_backend):
-        if "1avg.pdb" not in pdb_test_files:
-            pytest.skip("1avg.pdb not found")
-        reader = pdb_backend.PDBReader(pdb_test_files["1avg.pdb"])
+        # MOF-5 is small (~65 atoms). Round-tripping 1avg (3730 atoms) spends
+        # seconds in PDBWriter alone and does not cover more format surface.
+        if "MOF-5.pdb" not in pdb_test_files:
+            pytest.skip("MOF-5.pdb not found")
+        reader = pdb_backend.PDBReader(pdb_test_files["MOF-5.pdb"])
         frame = reader.read()
         out_path = tmp_path / "roundtrip.pdb"
         writer = pdb_backend.PDBWriter(out_path)

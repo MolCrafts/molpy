@@ -26,7 +26,7 @@ def _bonded_chain_frames(n_atoms: int = 20, n_frames: int = 6) -> list["molrs.Fr
         mol = mp.Atomistic()
         amp = 0.3 + 0.1 * t
         atoms = [
-            mol.def_atom(element="C", xyz=[float(i), amp * (i % 2), 0.0])
+            mol.def_atom(element="C", x=float(i), y=amp * (i % 2), z=0.0)
             for i in range(n_atoms)
         ]
         for i in range(n_atoms - 1):

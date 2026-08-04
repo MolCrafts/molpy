@@ -53,20 +53,7 @@ class Target:
             # Return empty array with correct shape for empty frames
             return np.empty((0, 3))
 
-        if "xyz" in atoms:
-            coords = atoms["xyz"].values
-        elif all(coord in atoms for coord in ["x", "y", "z"]):
-            # Extract coordinates using simple array stacking
-            x = atoms["x"].values
-            y = atoms["y"].values
-            z = atoms["z"].values
-            coords = np.column_stack([x, y, z])
-        else:
-            raise ValueError(
-                "Frame must contain either 'xyz' or 'x', 'y', 'z' coordinates"
-            )
-
-        return coords
+        return atoms["x", "y", "z"]
 
     @property
     def points(self) -> np.ndarray:

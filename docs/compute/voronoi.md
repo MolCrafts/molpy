@@ -34,11 +34,23 @@ so a larger atom (bigger $R_i$) claims a proportionally larger cell. Each atom's
 cell volume is a meaningful local volume — the basis for local density, packing
 fraction, and the analyses below.
 
+The examples below share this setup:
+
+```python
+import numpy as np
+import molpy as mp
+
+rng = np.random.default_rng(0)
+positions = rng.uniform(0.0, 20.0, size=(200, 3))
+radii = np.full(len(positions), 1.0)
+box = mp.Box.cubic(20.0)
+```
+
 ```python
 from molpy.compute import RadicalVoronoi
 
-cells = RadicalVoronoi()(positions, radii, box)   # -> VoronoiCells
-cells.neighbors(i)    # cells sharing a face with cell i
+cells = RadicalVoronoi()(positions, radii, box)  # -> VoronoiCells
+cells.neighbors(0)  # cells sharing a face with cell 0
 ```
 
 ---
@@ -54,7 +66,8 @@ sizes and volumes:
 ```python
 from molpy.compute import voronoi_domains
 
-domains = voronoi_domains(cells, labels)   # labels: per-atom integer label
+labels = np.arange(len(positions)) % 3  # per-atom integer label
+domains = voronoi_domains(cells, labels)
 ```
 
 ---
@@ -68,7 +81,9 @@ gas solubility, and porosity:
 ```python
 from molpy.compute import voronoi_voids
 
-voids = voronoi_voids(cells, is_void, box_volume)   # is_void: per-cell bool
+is_void = np.zeros(len(positions), dtype=bool)  # per-cell bool
+box_volume = box.volume
+voids = voronoi_voids(cells, is_void, box_volume)
 ```
 
 ---
@@ -84,7 +99,19 @@ from an *ab initio* MD electron density (e.g. a cube trajectory) to a predicted 
 spectrum.
 
 ```python
-from molpy.compute import VoronoiIntegration
+from molpy.compute import DensityGrid, VoronoiIntegration
+
+atomic_numbers = np.full(len(positions), 8, dtype=np.int64)  # per-atom Z
+atom_to_mol = np.arange(len(positions), dtype=np.int64) // 4  # 4 atoms / molecule
+n_mol = int(atom_to_mol[-1]) + 1
+
+dims = (16, 16, 16)
+grid = DensityGrid(
+    np.zeros(3),  # origin (Å)
+    (20.0 / 16) * np.eye(3),  # voxel edge vectors (rows, Å)
+    dims,
+    rng.uniform(0.0, 0.1, size=16 * 16 * 16),  # row-major densities
+)
 
 moments = VoronoiIntegration()(
     positions, radii, atomic_numbers, atom_to_mol, n_mol, grid, box

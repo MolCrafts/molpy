@@ -32,52 +32,6 @@ _TWO_CHR_ELEMENTS = {
 }
 
 
-def _dict_to_block(data: dict[str, list[Any] | np.ndarray]) -> Block:
-    """Convert 'column -> list/array' dict into a Block of ndarrays.
-
-    Args:
-        data: Dictionary where values can be lists or numpy arrays
-
-    Returns:
-        Block with all values converted to numpy arrays
-    """
-    blk = Block()
-    for k, vals in data.items():
-        # If already a numpy array, use it directly (after ensuring it's the right dtype)
-        if isinstance(vals, np.ndarray):
-            if k == "xyz":
-                blk[k] = vals.astype(float)
-            elif k in {"id", "resSeq"}:
-                blk[k] = vals.astype(int)
-            else:
-                # Keep as is, Block will handle dtype conversion if needed
-                blk[k] = vals
-        else:
-            # Convert from list
-            if k == "xyz":
-                blk[k] = np.asarray(vals, dtype=float)
-            elif k in {"id", "resSeq"}:
-                blk[k] = np.asarray(vals, dtype=int)
-            else:
-                # variable-width unicode for strings
-                # Handle empty list case
-                if not vals:
-                    blk[k] = np.array([], dtype="U1")
-                else:
-                    # Convert list to array, handling mixed types
-                    try:
-                        max_len = (
-                            max(len(str(v)) for v in vals if v is not None)
-                            if vals
-                            else 1
-                        )
-                        blk[k] = np.asarray(vals, dtype=f"U{max_len}")
-                    except TypeError, ValueError:
-                        # Fallback: use object dtype if conversion fails
-                        blk[k] = np.asarray(vals, dtype=object)
-    return blk
-
-
 # ──────────────────────────────────────────────────────────────────────
 # main reader
 # ──────────────────────────────────────────────────────────────────────

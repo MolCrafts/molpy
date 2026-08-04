@@ -556,8 +556,8 @@ def _emit_class_builder(
                 lines.append(
                     f"    _a = tmpl.def_atom(name={aid!r}, type={eff_type!r}, "
                     f"charge={float(m.group('charge'))!r}, "
-                    f"xyz=[{float(m.group('x'))!r}, {float(m.group('y'))!r}, "
-                    f"{float(m.group('z'))!r}])"
+                    f"x={float(m.group('x'))!r}, y={float(m.group('y'))!r}, "
+                    f"z={float(m.group('z'))!r})"
                 )
                 lines.append(f"    atoms[{aid!r}] = _a")
         elif s.section in ("Data Bonds", "Data Bond List"):

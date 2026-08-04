@@ -23,7 +23,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 :   Base class that aggregates entities and links into a container. Subclasses: `Atomistic`, `CoarseGrain`.
 
 **Topology**
-:   The derived view of an `Atomistic`'s bond graph, computed by the molrs Rust kernels. `get_topo()` returns a new `Atomistic` with angles/dihedrals perceived from the bonds; `get_topo_neighbors()` / `get_topo_distances()` answer k-hop graph queries. There is no standalone topology class. See [Atomistic and Topology](01_atomistic_and_topology.md).
+:   Bonded terms derived from an `Atomistic`'s bond graph by the molrs Rust kernels. `get_topo()` perceives angles/dihedrals **in place** and returns the same `Atomistic` (use `.copy().get_topo(...)` when you need an independent graph); `get_topo_neighbors()` / `get_topo_distances()` answer k-hop graph queries. There is no standalone topology class. See [Atomistic and Topology](01_atomistic_and_topology.md).
 
 **Block**
 :   A columnar table mapping string keys to NumPy arrays. All columns share the same row count. Used inside `Frame` to store atoms, bonds, angles, etc. See [Block and Frame](02_block_and_frame.md).
@@ -68,13 +68,13 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 :   A name (`fields.SITE`) on an atom that may react. Sites have no direction and no role — a linear chain, a branch point and a ring closure differ only in how many sites a monomer carries and how the topology pairs them.
 
 **Typifier**
-:   Assigns force field types to atoms, bonds, angles, and dihedrals via SMARTS pattern matching. Subclasses: `OplsTypifier`, `ClpTypifier`, `MMFFTypifier`, `PairTypifier`. (GAFF atom types are *not* a Typifier — they come from AmberTools/antechamber; see [AmberTools Integration](../user-guide/13_ambertools_integration.md).) See [Force Field Typification](../user-guide/06_typifier.md).
+:   Assigns force field types to atoms, bonds, angles, and dihedrals via SMARTS pattern matching. Subclasses: `OPLSAATypifier`, `ClpTypifier`, `MMFFTypifier`, `PairTypifier`. (GAFF atom types are *not* a Typifier — they come from AmberTools/antechamber; see [AmberTools Integration](../user-guide/13_ambertools_integration.md).) See [Force Field Typification](../user-guide/06_typifier.md).
 
 **Selector**
 :   A composable predicate that filters atoms in a `Block` by element, type, coordinate range, or distance. Combinable with `&`, `|`, `~`. See [Selector](06_selector.md).
 
 **Wrapper**
-:   Runs an external executable (antechamber, tleap, Packmol) as a subprocess and captures its results. Crosses an execution boundary. See [Wrapper and Adapter](07_wrapper_and_adapter.md).
+:   Runs an external executable (antechamber, tleap, …) as a subprocess and captures its results. Crosses an execution boundary. Packing uses molpack in-process, not a wrapper. See [Wrapper and Adapter](07_wrapper_and_adapter.md).
 
 **Adapter**
 :   Translates between MolPy objects and another library's in-memory objects (RDKit, OpenBabel). Crosses a representation boundary. See [Wrapper and Adapter](07_wrapper_and_adapter.md).
@@ -108,8 +108,14 @@ Acronyms used across the [Compute](../compute/index.md) analyses.
 **MCD** — mean-displacement correlation (distinct diffusion)
 :   Cross-correlated displacements between different species — the *distinct* part of diffusion, beyond the single-particle MSD. See [Diffusion & Ionic Transport](../compute/transport.md).
 
-**PMSD** — polarization mean-squared displacement
-:   MSD of the collective charge dipole; the Einstein route to ionic conductivity. See [Dielectric Spectroscopy](../compute/dielectric.md).
+**PMSD** — polarization / charge-dipole mean-squared displacement
+:   MSD of $\mathbf{M}(t)=\sum q_a\mathbf{r}_a$ (unwrapped); raw curve from
+    `EinsteinConductivity`. Fit $\sigma$ with `LinearFit` + SI scale. See
+    [Diffusion & Ionic Transport](../compute/transport.md).
+
+**Current ACF** — $\langle\mathbf{J}(0)\cdot\mathbf{J}(t)\rangle$
+:   From `GreenKuboConductivity` with $\mathbf{J}=\sum q\mathbf{v}$. Integrate
+    with `CumulativeTrapezoid` then SI-scale for $\sigma$.
 
 **SDF** — spatial distribution function
 :   Three-dimensional density of neighbours around a reference frame (angular structure, not just radial). See [Distribution Functions](../compute/distributions.md).

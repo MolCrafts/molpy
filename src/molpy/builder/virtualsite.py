@@ -151,16 +151,19 @@ class DrudeBuilder(VirtualSiteBuilder):
     ) -> None:
         (shell,) = sites
         q_d = shell.get("charge")
-        host.data[fields.CHARGE.key] = host[fields.CHARGE] - q_d
+        host.data[fields.CHARGE] = host[fields.CHARGE] - q_d
         if host.get("mass") is not None:
-            host.data[fields.MASS.key] = host[fields.MASS] - shell[fields.MASS]
+            host.data[fields.MASS] = host[fields.MASS] - shell[fields.MASS]
         # Spring constant is the host type's k_D (data-driven, from alpha.ff). The
         # spring carries its own bond type so the augmented structure is fully
         # typed (every core–shell spring shares the one ``DRUDE`` bond type).
         struct.def_bond(
             host,
             shell,
-            k=shell.get("k_D"),
+            # alpha.ff states k_D in kJ/mol/Å² ("units: kJ/mol, A"); molrs is
+            # kcal/mol in the same ½-form, so the spring crosses a unit
+            # boundary the charge does not.
+            k=shell.get("k_D") / 4.184,
             r0=0.0,
             style="drude",
             type=self.drude_bond_type,
@@ -180,7 +183,7 @@ class Tip4pBuilder(VirtualSiteBuilder):
 
     @staticmethod
     def _xyz(atom: Atom) -> tuple[float, float, float]:
-        return (atom[fields.POS_X], atom[fields.POS_Y], atom[fields.POS_Z])
+        return (atom[fields.X], atom[fields.Y], atom[fields.Z])
 
     def _hydrogens(self, struct: Atomistic, o: Atom) -> list[Atom]:
         hs: list[Atom] = []

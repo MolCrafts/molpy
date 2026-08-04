@@ -1,7 +1,7 @@
 """LAMMPS force-field include (``*.ff``) I/O.
 
 Read/write of the AMBER/GAFF-style include is implemented in molrs
-(:func:`molrs.read_lammps_forcefield`, :func:`molrs.write_lammps_forcefield`).
+(:func:`molrs.ff.read_lammps_forcefield`, :func:`molrs.ff.write_lammps_forcefield`).
 This module exposes the molpy entry points and parameter formatters for
 specialized pair styles (CL&Pol Thole / Tang−Toennies).
 """
@@ -81,6 +81,8 @@ class LAMMPSForceFieldWriter:
             improper_types=improper_types,
         )
         if isinstance(self._fpath, (str, Path)):
-            molrs.write_lammps_forcefield(str(self._fpath), forcefield, **kwargs)
+            molrs.ff.write_lammps_forcefield(str(self._fpath), forcefield, **kwargs)
         else:
-            self._fpath.write(molrs.write_lammps_forcefield_str(forcefield, **kwargs))
+            self._fpath.write(
+                molrs.ff.write_lammps_forcefield_str(forcefield, **kwargs)
+            )

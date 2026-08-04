@@ -34,12 +34,7 @@ def frames():
 
 
 class TestTrajectory:
-    """Test the molrs-backed Trajectory container."""
-
-    def test_is_molrs_trajectory_subclass(self):
-        import molrs
-
-        assert issubclass(Trajectory, molrs.Trajectory)
+    """Test the Trajectory container (init, index, split)."""
 
     def test_init_with_list(self, frames):
         traj = Trajectory(frames)

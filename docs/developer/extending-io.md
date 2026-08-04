@@ -15,11 +15,14 @@ from molpy.io.data.base import DataReader
 
 from molpy.core.fields import FieldFormatter, CHARGE
 
+
 class MyFieldFormatter(FieldFormatter):
     """Field name translation for .myformat."""
+
     _field_formatters = {
-        "q": CHARGE,   # .myformat uses "q" for charge
+        "q": CHARGE,  # .myformat uses "q" for charge
     }
+
 
 class MyFormatReader(DataReader):
     """Read .myformat files into a Frame."""
@@ -38,12 +41,14 @@ class MyFormatReader(DataReader):
             lines = f.readlines()
 
         # Populate blocks using format-native field names
-        frame["atoms"] = Block({
-            "element": [...],
-            "x": [...],
-            "y": [...],
-            "z": [...],
-        })
+        frame["atoms"] = Block(
+            {
+                "element": [...],
+                "x": [...],
+                "y": [...],
+                "z": [...],
+            }
+        )
 
         # Translate format-specific field names to canonical names
         self._formatter.canonicalize_frame(frame)
@@ -54,6 +59,7 @@ class MyFormatReader(DataReader):
 
 ```python
 from molpy.io.data.base import DataWriter
+
 
 class MyFormatWriter(DataWriter):
     """Write a Frame to .myformat."""
@@ -83,12 +89,13 @@ Add your reader/writer to `molpy/io/readers.py` and `molpy/io/writers.py` so the
 The internal data model uses canonical field names defined in `molpy.core.fields`. When your format uses different column names, define a `FieldFormatter` subclass with a `_field_formatters` mapping:
 
 ```python
-from molpy.core.fields import FieldFormatter, FieldSpec, CHARGE, MOL_ID
+from molpy.core.fields import FieldFormatter, CHARGE, MOL_ID
+
 
 class MyFieldFormatter(FieldFormatter):
     _field_formatters = {
-        "q":   CHARGE,    # format "q" → canonical "charge"
-        "mol": MOL_ID,    # format "mol" → canonical "mol_id"
+        "q": CHARGE,  # format "q" → canonical "charge"
+        "mol": MOL_ID,  # format "mol" → canonical "mol_id"
     }
 ```
 
@@ -102,7 +109,7 @@ If your format's field names already match the canonical names (e.g., MOL2 uses 
 The force field export system uses a **two-level formatter hierarchy** defined in `molpy.core.fields`:
 
 ```
-FieldFormatter                         — data field mapping: {format_key: FieldSpec}
+FieldFormatter                         — data field mapping: {format_key: canonical_key}
     ↓
 ForceFieldFormatter(FieldFormatter)    — inherits field mapping + {StyleType: Callable}
 ```
@@ -114,10 +121,14 @@ Each format's `ForceFieldFormatter` subclass inherits the data field mapping fro
 ```python
 from molpy.io.forcefield.lammps import LammpsForceFieldFormatter
 
+
 def _format_morse_bond(typ) -> list[float]:
     return [typ.params.kwargs["D"], typ.params.kwargs["alpha"], typ.params.kwargs["r0"]]
 
-LammpsForceFieldFormatter.register_param_formatter(MorseBondStyle, _format_morse_bond)
+
+from molpy import BondMorseStyle
+
+LammpsForceFieldFormatter.register_param_formatter(BondMorseStyle, _format_morse_bond)
 ```
 
 Registrations are **isolated per subclass** — adding a formatter to one writer does not affect another. This isolation is enforced by `__init_subclass__` copying the registry.
@@ -125,33 +136,39 @@ Registrations are **isolated per subclass** — adding a formatter to one writer
 
 ## Trajectory readers and writers
 
-Trajectory readers use memory-mapped files and a persistent frame index for efficient random access. Subclass `BaseTrajectoryReader` and implement `_scan_frames` (build byte-offset index) and `_parse_frame_bytes` (parse one frame):
+`BaseTrajectoryReader` is storage-agnostic: it is a lazy `Iterable[Frame]` derived
+entirely from two members you implement — `n_frames` and `read_frame(index)`.
+Iteration, slicing, `read_frames` / `read_range` / `read_all` and `__len__` all
+come for free, and how you find frame `i` (byte offsets, an mmap, a network
+range request) is yours to choose:
 
 ```python
-import mmap
 from molpy.io.trajectory.base import BaseTrajectoryReader
-from molpy.io.trajectory.index import FrameEntry
 from molpy import Frame
 
+
 class MyTrajectoryReader(BaseTrajectoryReader):
-    _format_id = "myformat"
+    def __init__(self, fpath):
+        super().__init__(fpath)
+        self._offsets = []  # built once, however your format allows
 
-    def _scan_frames(self, file_idx: int, mm: mmap.mmap) -> list[FrameEntry]:
-        entries = []
-        # scan file for frame boundaries, record byte offsets
-        return entries
+    @property
+    def n_frames(self) -> int:
+        return len(self._offsets)
 
-    def _parse_frame_bytes(self, mm: mmap.mmap, entry: FrameEntry) -> Frame:
-        # parse one frame from mm[entry.offset:entry.offset+entry.length]
-        return frame
+    def read_frame(self, index: int) -> Frame:
+        # negative indices are the subclass's to normalize
+        offset = self._offsets[index]
+        return Frame()
 ```
 
-The persistent index (`.tridx`) is built automatically on first read and cached for subsequent accesses. Subclass `TrajectoryWriter` and implement `write_frame()` for writing.
+Subclass `TrajectoryWriter` and implement `write_frame()` for writing.
 
 
 ## Checklist
 
 - [ ] Subclass `DataReader`/`DataWriter` or `BaseTrajectoryReader`/`TrajectoryWriter`
+- [ ] A trajectory reader implements exactly `n_frames` and `read_frame(index)`
 - [ ] Define `FieldFormatter` subclass if format uses non-canonical field names
 - [ ] Reader calls `_formatter.canonicalize_frame(frame)` before returning
 - [ ] Writer calls `_formatter.localize_frame(frame)` at entry (operates on copy)

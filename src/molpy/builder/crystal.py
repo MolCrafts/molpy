@@ -102,6 +102,18 @@ class Lattice:
         """Cartesian → fractional: ``cart @ cell⁻¹``."""
         return np.asarray(cart, dtype=float) @ np.linalg.inv(self.cell)
 
+    def supercell(self, repeats: tuple[int, int, int]) -> Box:
+        """The :class:`~molpy.core.box.Box` spanned by ``repeats`` unit cells.
+
+        This is the simulation cell for a structure tiled with the same
+        ``repeats``; ask the lattice for it rather than the built structure,
+        which carries topology and chemistry but no cell of its own.
+        """
+        nx, ny, nz = (int(r) for r in repeats)
+        if nx <= 0 or ny <= 0 or nz <= 0:
+            raise ValueError(f"repeats must be positive, got {repeats}")
+        return Box(matrix=self.cell * np.array([nx, ny, nz], dtype=float)[:, None])
+
     @classmethod
     def sc(cls, a: float, species: str) -> Lattice:
         """Simple cubic lattice (1 atom / cell)."""
@@ -214,8 +226,9 @@ def build_crystal(
             must be provided.
 
     Returns:
-        :class:`Atomistic` containing the kept atoms and a ``box`` set to the
-        full tiled super-cell (``cell`` scaled row-wise by ``repeats``).
+        :class:`Atomistic` containing the kept atoms. The tiled super-cell is
+        :meth:`Lattice.supercell`, which the caller sets on ``frame.box`` when
+        the structure becomes a simulation.
     """
     if region is None and repeats is None:
         raise ValueError("Provide `region`, `repeats`, or both.")
@@ -227,10 +240,7 @@ def build_crystal(
     if nx <= 0 or ny <= 0 or nz <= 0:
         raise ValueError(f"repeats must be positive, got {repeats}")
 
-    super_cell = lattice.cell * np.array([nx, ny, nz], dtype=float)[:, None]
-
     out = Atomistic()
-    out["box"] = Box(matrix=super_cell)
 
     if not lattice.basis:
         return out
@@ -250,8 +260,11 @@ def build_crystal(
     for xyz, site in zip(carts, site_tiled):
         attrs = dict(site.attrs or {})
         # Canonical lattice fields win over optional annotations.
+        x, y, z = (float(component) for component in xyz)
         attrs.update(
-            xyz=xyz.tolist(),
+            x=x,
+            y=y,
+            z=z,
             element=site.species,
             charge=site.charge,
             label=site.label,

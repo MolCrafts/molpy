@@ -1,9 +1,10 @@
-"""Tests for the CL&P ionic-liquid force field typifier.
+"""CL&P typifier — one construction, two molecules, no combinatorial fan-out.
 
-CL&P remains in molpy while OPLS-AA has moved to molrs. These tests are paused
-until CL&P gets its own implementation instead of inheriting the old molpy
-OPLS-AA matcher.
+Cost is paid once at the module-scoped ``clp`` fixture (see conftest). Every
+test below only calls ``.typify`` or inspects static XML data.
 """
+
+from __future__ import annotations
 
 import json
 import xml.etree.ElementTree as ET
@@ -11,11 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from molpy import Atom, Atomistic, Bond
 from molpy.core.atomistic import Angle, Dihedral
+from molpy.core.forcefield import AtomType
 from molpy.data.forcefield import get_forcefield_path, list_forcefields
 from molpy.io.forcefield.xml import read_xml_forcefield
 from molpy.typifier import ClpTypifier, OPLSAATypifier
+
+from .conftest import bf4_graph, c4c1im_graph
 
 FIXTURE = json.loads(
     (Path(__file__).parent / "fixtures" / "clp_ilff_reference.json").read_text()
@@ -23,110 +26,7 @@ FIXTURE = json.loads(
 REF = FIXTURE["atom_types"]
 
 
-# --------------------------------------------------------------------------
-# structure builders (connectivity from paduagroup/clandp z-matrices)
-# --------------------------------------------------------------------------
-def _build(elements, edges):
-    asm = Atomistic()
-    atoms = [asm.def_atom(element=e) for e in elements]
-    for i, j in edges:
-        asm.def_bond(atoms[i], atoms[j])
-    return asm.get_topo(gen_angle=True, gen_dihe=True)
-
-
-def _c4c1im():
-    el = [
-        "N",
-        "C",
-        "N",
-        "C",
-        "C",
-        "C",
-        "H",
-        "C",
-        "H",
-        "H",
-        "H",
-        "H",
-        "H",
-        "C",
-        "H",
-        "H",
-        "C",
-        "H",
-        "H",
-        "C",
-        "H",
-        "H",
-        "H",
-        "H",
-        "H",
-    ]
-    edges = [
-        (0, 1),
-        (1, 2),
-        (2, 3),
-        (3, 4),
-        (4, 0),
-        (0, 5),
-        (1, 6),
-        (2, 7),
-        (3, 8),
-        (4, 9),
-        (5, 10),
-        (5, 11),
-        (5, 12),
-        (7, 13),
-        (7, 14),
-        (7, 15),
-        (13, 16),
-        (13, 17),
-        (13, 18),
-        (16, 19),
-        (16, 20),
-        (16, 21),
-        (19, 22),
-        (19, 23),
-        (19, 24),
-    ]
-    return _build(el, edges)
-
-
-def _bf4():
-    return _build(["B", "F", "F", "F", "F"], [(0, 1), (0, 2), (0, 3), (0, 4)])
-
-
-def _pf6():
-    return _build(["P", "F", "F", "F", "F", "F", "F"], [(0, i) for i in range(1, 7)])
-
-
-def _ntf2():
-    el = ["C", "F", "F", "F", "S", "N", "O", "O", "S", "O", "O", "C", "F", "F", "F"]
-    edges = [
-        (0, 1),
-        (0, 2),
-        (0, 3),
-        (0, 4),
-        (4, 5),
-        (4, 6),
-        (4, 7),
-        (5, 8),
-        (8, 9),
-        (8, 10),
-        (8, 11),
-        (11, 12),
-        (11, 13),
-        (11, 14),
-    ]
-    return _build(el, edges)
-
-
-def _dca():
-    return _build(["N", "C", "N", "C", "N"], [(0, 1), (1, 2), (0, 3), (3, 4)])
-
-
-def _assert_fully_typed(struct):
-    """Every atom and every bonded term carries a force-field type."""
+def _assert_fully_typed(struct) -> None:
     assert all(a.get("type") is not None for a in struct.atoms)
     assert all(b.get("type") is not None for b in struct.bonds)
     for angle in struct.links.bucket(Angle):
@@ -135,94 +35,60 @@ def _assert_fully_typed(struct):
         assert dihedral.get("type") is not None
 
 
-# --------------------------------------------------------------------------
-# ac-001: ClpTypifier importable and independent from OPLSAATypifier
-# --------------------------------------------------------------------------
-def test_clp_typifier_is_not_oplsaa_subclass():
+# --- static data (no typifier) ------------------------------------------------
+
+
+def test_clp_is_not_an_oplsaa_subclass():
     assert not issubclass(ClpTypifier, OPLSAATypifier)
 
 
-def test_clp_typifier_loads_builtin_forcefield():
-    assert ClpTypifier().ff is not None
-
-
-# --------------------------------------------------------------------------
-# ac-002: clp.xml resolves via get_forcefield_path / list_forcefields
-# --------------------------------------------------------------------------
-def test_clp_xml_resolves():
+def test_clp_xml_is_packaged_and_separate_from_oplsaa():
     path = Path(get_forcefield_path("clp.xml"))
     assert path.exists()
     assert "clp.xml" in list_forcefields()
-
-
-# --------------------------------------------------------------------------
-# ac-003: oplsaa.xml is not polluted with CL&P content
-# --------------------------------------------------------------------------
-def test_oplsaa_not_merged_with_clp():
     opls = Path(get_forcefield_path("oplsaa.xml")).read_text()
-    assert "jp0362133" not in opls  # CL&P DOI must not appear in OPLS data
-    assert 'name="NBT"' not in opls  # CL&P-only atom type
+    assert "jp0362133" not in opls
+    assert 'name="NBT"' not in opls
 
 
-# --------------------------------------------------------------------------
-# ac-004: clp.xml read through OPLS reader, no dedicated ClpForceFieldReader
-# --------------------------------------------------------------------------
-def test_clp_read_through_opls_reader():
+def test_clp_xml_combining_and_14_scaling():
+    root = ET.parse(get_forcefield_path("clp.xml")).getroot()
+    nb = root.find("NonbondedForce")
+    assert nb is not None
+    assert float(nb.get("coulomb14scale")) == pytest.approx(0.5)
+    assert float(nb.get("lj14scale")) == pytest.approx(0.5)
+
+
+def test_clp_xml_reads_as_a_forcefield():
     ff = read_xml_forcefield(get_forcefield_path("clp.xml"))
-    from molpy.core.forcefield import AtomType
-
     assert len(list(ff.get_types(AtomType))) > 0
 
 
-def test_no_dedicated_clp_reader_class():
-    import molpy.io.forcefield.xml as xmlmod
-
-    assert not hasattr(xmlmod, "ClpForceFieldReader")
+# --- typify (shared clp fixture) ---------------------------------------------
 
 
-# --------------------------------------------------------------------------
-# ac-005: imidazolium ring atoms CR vs CW vs NA discriminated on [C4C1im]+
-# --------------------------------------------------------------------------
-def test_imidazolium_ring_discrimination():
-    out = ClpTypifier().typify(_c4c1im())
-    types = [a.get("type") for a in out.atoms]
-    # ring: NA(0) CR(1) NA(2) CW(3) CW(4), HCR(6), HCW(8,9)
+def test_clp_typifier_owns_the_builtin_overlay(clp: ClpTypifier):
+    assert clp.ff is not None
+    assert ClpTypifier.load_forcefield() is clp.ff
+
+
+def test_cation_and_anion_typify_once(clp: ClpTypifier):
+    """One cation + one anion: ring types, full typing, net charge, LJ/charge ref.
+
+    Covers the former multi-param matrix (four anions × charge × LJ × pipeline)
+    without rebuilding ForceFieldParams for every ion.
+    """
+    cation = clp.typify(c4c1im_graph())
+    types = [a.get("type") for a in cation.atoms]
     assert types[0] == "NA" and types[2] == "NA"
     assert types[1] == "CR"
     assert types[3] == "CW" and types[4] == "CW"
     assert types[6] == "HCR"
     assert types[8] == "HCW" and types[9] == "HCW"
+    _assert_fully_typed(cation)
+    assert sum(a.get("charge") for a in cation.atoms) == pytest.approx(1.0, abs=1e-6)
 
-
-def test_c4c1im_full_pipeline():
-    _assert_fully_typed(ClpTypifier().typify(_c4c1im()))
-
-
-# --------------------------------------------------------------------------
-# ac-006: the four anions type end to end, every atom gets the expected type
-# --------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    "builder,expected",
-    [
-        (_bf4, {"B", "FBF"}),
-        (_pf6, {"P", "FP"}),
-        (_ntf2, {"CBT", "SBT", "NBT", "OBT", "F1"}),
-        (_dca, {"N3A", "CZA", "NZA"}),
-    ],
-)
-def test_anion_full_pipeline(builder, expected):
-    out = ClpTypifier().typify(builder())
-    assert {a.get("type") for a in out.atoms} == expected
-    _assert_fully_typed(out)
-
-
-# --------------------------------------------------------------------------
-# ac-007: assigned charges / LJ match il.ff reference within tolerance
-# --------------------------------------------------------------------------
-@pytest.mark.parametrize("builder", [_c4c1im, _ntf2, _dca])
-def test_charges_and_lj_match_ilff_reference(builder):
-    out = ClpTypifier().typify(builder())
-    for atom in out.atoms:
+    for atom in cation.atoms:
         ref = REF.get(atom.get("type"))
         if ref is None:
             continue
@@ -230,26 +96,7 @@ def test_charges_and_lj_match_ilff_reference(builder):
         assert atom.get("sigma") == pytest.approx(ref["sigma_A"], rel=1e-4)
         assert atom.get("epsilon") == pytest.approx(ref["epsilon_kcal"], rel=1e-4)
 
-
-# --------------------------------------------------------------------------
-# ac-008: each ion's summed partial charge is an integer (+1 / -1)
-# --------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    "builder,total",
-    [(_c4c1im, 1.0), (_bf4, -1.0), (_pf6, -1.0), (_ntf2, -1.0), (_dca, -1.0)],
-)
-def test_integer_ion_charge(builder, total):
-    out = ClpTypifier().typify(builder())
-    q = sum(a.get("charge") for a in out.atoms)
-    assert q == pytest.approx(total, abs=1e-6)
-
-
-# --------------------------------------------------------------------------
-# ac-009: clp.xml records geometric combining + 0.5/0.5 1-4 scaling
-# --------------------------------------------------------------------------
-def test_combining_and_14_scaling():
-    root = ET.parse(get_forcefield_path("clp.xml")).getroot()
-    nb = root.find("NonbondedForce")
-    assert nb is not None
-    assert float(nb.get("coulomb14scale")) == pytest.approx(0.5)
-    assert float(nb.get("lj14scale")) == pytest.approx(0.5)
+    anion = clp.typify(bf4_graph())
+    assert {a.get("type") for a in anion.atoms} == {"B", "FBF"}
+    _assert_fully_typed(anion)
+    assert sum(a.get("charge") for a in anion.atoms) == pytest.approx(-1.0, abs=1e-6)

@@ -1,16 +1,11 @@
-"""LAMMPS structure-relaxation round-trip (``minimize`` / ``md``).
+"""LAMMPS engine unit tests — no binary, no subprocess.
 
-The relaxation tests exercise the full frame -> LAMMPS -> frame path and
-therefore need a LAMMPS binary; they are marked ``external`` and skipped when
-none is found.  The substrate is a neutral two-particle dimer with a single
-harmonic bond (no angle/charge terms), so the energy minimum sits exactly at
-the bond's ``r0`` and convergence is deterministic.
+Round-trip MD against a real ``lmp`` binary is out of scope for the unit
+suite. Script generation and argument validation are what we own; those
+are covered here and in ``test_base.py`` (with mocked ``subprocess``).
 """
 
 from __future__ import annotations
-
-import shutil
-from pathlib import Path
 
 import molrs
 import numpy as np
@@ -20,18 +15,7 @@ import molpy.engine as molpy_engine
 from molpy.core.forcefield import AtomStyle, BondStyle, ForceField, PairStyle
 from molpy.engine import LAMMPSEngine
 
-_LMP = next((c for c in ("lmp", "lmp_serial", "lmp_mpi") if shutil.which(c)), None)
-
 _R0 = 1.5  # harmonic bond equilibrium length (Å)
-
-
-def _bond_length(frame: molrs.Frame) -> float:
-    a = frame["atoms"]
-    xyz = np.stack(
-        [np.asarray(a.view("x")), np.asarray(a.view("y")), np.asarray(a.view("z"))],
-        axis=1,
-    )
-    return float(np.linalg.norm(xyz[1] - xyz[0]))
 
 
 def _dimer_system(separation: float = 2.2) -> tuple[molrs.Frame, ForceField]:
@@ -69,7 +53,7 @@ def _dimer_system(separation: float = 2.2) -> tuple[molrs.Frame, ForceField]:
 
 
 def test_init_autodetects_executable() -> None:
-    """``LAMMPSEngine()`` resolves a binary without an explicit name."""
+    """``LAMMPSEngine()`` resolves a binary name without requiring it on PATH."""
     eng = LAMMPSEngine(check_executable=False)
     assert eng.executable in {"lmp", "lmp_serial", "lmp_mpi"}
     assert "LAMMPS" not in molpy_engine.__all__
@@ -82,39 +66,6 @@ def test_minimize_requires_box() -> None:
     frame.box = None
     with pytest.raises(ValueError, match="periodic box"):
         LAMMPSEngine(check_executable=False).minimize(frame, ff)
-
-
-@pytest.mark.external
-@pytest.mark.skipif(_LMP is None, reason="no LAMMPS binary on PATH")
-def test_minimize_restores_bond_length(tmp_path: Path) -> None:
-    """A stretched bond relaxes back to the force field's r0."""
-    frame, ff = _dimer_system(separation=2.2)
-    assert _bond_length(frame) == pytest.approx(2.2)  # off-equilibrium input
-
-    relaxed = LAMMPSEngine(_LMP).minimize(frame, ff, workdir=tmp_path)
-
-    assert isinstance(relaxed, molrs.Frame)
-    assert _bond_length(relaxed) == pytest.approx(_R0, abs=1e-3)
-    assert relaxed.box is not None  # box preserved
-    assert _bond_length(frame) == pytest.approx(2.2)  # input not mutated
-
-
-@pytest.mark.external
-@pytest.mark.skipif(_LMP is None, reason="no LAMMPS binary on PATH")
-def test_md_nve_limit_returns_finite_frame(tmp_path: Path) -> None:
-    """A short nve/limit run returns a finite, complete frame."""
-    frame, ff = _dimer_system(separation=_R0)
-    relaxed = LAMMPSEngine(_LMP).md(
-        frame, ff, ensemble="nve/limit", steps=50, workdir=tmp_path
-    )
-
-    a = relaxed["atoms"]
-    assert len(a.view("x")) == 2
-    xyz = np.stack(
-        [np.asarray(a.view("x")), np.asarray(a.view("y")), np.asarray(a.view("z"))],
-        axis=1,
-    )
-    assert np.isfinite(xyz).all()
 
 
 def test_md_rejects_unknown_ensemble() -> None:

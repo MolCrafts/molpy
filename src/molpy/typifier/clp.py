@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 from functools import lru_cache
 from typing import TYPE_CHECKING, override
 
-from molrs.typifier import OPLSAATypifier
+from molrs.ff.typifier import OPLSAATypifier
 
 from molpy.core import fields
 from molpy.core.atomistic import Atomistic
@@ -60,6 +60,23 @@ def _clp_molrs_typifier() -> OPLSAATypifier:
     return OPLSAATypifier(_clp_atomtypes_xml(), strict=False)
 
 
+@lru_cache(maxsize=1)
+def _load_clp_forcefield() -> ForceField:
+    """Parse ``oplsaa.xml`` + ``clp.xml`` once; the overlay is read-only after load."""
+    from molpy.data.forcefield import get_forcefield_path
+    from molpy.io.forcefield.xml import read_oplsaa_forcefield, read_xml_forcefield
+
+    ff = read_oplsaa_forcefield("oplsaa.xml")
+    return read_xml_forcefield(get_forcefield_path("clp.xml"), ff, layer=1)
+
+
+@lru_cache(maxsize=2)
+def _default_clp_params(strict: bool) -> ForceFieldParams:
+    """``ForceFieldParams`` over the built-in overlay is expensive (TypeClassIndex
+    walks every OPLS atom type). Cache one instance per ``strict`` flag."""
+    return ForceFieldParams(_load_clp_forcefield(), strict=strict)
+
+
 class ClpTypifier(Typifier[Atomistic]):
     """CL&P ionic-liquid typifier — molrs SMARTS atom typing + molpy parameters.
 
@@ -72,10 +89,14 @@ class ClpTypifier(Typifier[Atomistic]):
     def __init__(
         self, forcefield: ForceField | None = None, *, strict: bool = True
     ) -> None:
-        self.ff = forcefield if forcefield is not None else self.load_forcefield()
         self._strict = strict
-        self._params = ForceFieldParams(self.ff, strict=strict)
         self._smarts = _clp_molrs_typifier()
+        if forcefield is None:
+            self.ff = _load_clp_forcefield()
+            self._params = _default_clp_params(strict)
+        else:
+            self.ff = forcefield
+            self._params = ForceFieldParams(forcefield, strict=strict)
 
     @override
     def match(self, graph: Atomistic) -> Match:
@@ -84,7 +105,7 @@ class ClpTypifier(Typifier[Atomistic]):
     def _atom_types(self, graph: Atomistic) -> list[Mapping[str, Annotation]]:
         """Ask molrs which CL&P type (and class) each atom carries."""
         typed = self._smarts.typify(graph).to_frame()["atoms"]
-        names = typed[fields.TYPE.key]
+        names = typed[fields.TYPE]
         classes = typed["class"] if "class" in typed else [None] * len(names)
 
         out: list[Mapping[str, Annotation]] = []
@@ -94,7 +115,7 @@ class ClpTypifier(Typifier[Atomistic]):
                     raise ValueError(f"CL&P: no atom type matched for atom {atom}")
                 out.append({})
                 continue
-            annotation: dict[str, Annotation] = {fields.TYPE.key: str(name)}
+            annotation: dict[str, Annotation] = {fields.TYPE: str(name)}
             if class_name not in (None, ""):
                 annotation["class"] = str(class_name)
             out.append(annotation)
@@ -103,11 +124,7 @@ class ClpTypifier(Typifier[Atomistic]):
     @staticmethod
     def load_forcefield() -> ForceField:
         """Load the built-in CL&P force field as an OPLS-AA overlay."""
-        from molpy.data.forcefield import get_forcefield_path
-        from molpy.io.forcefield.xml import read_oplsaa_forcefield, read_xml_forcefield
-
-        ff = read_oplsaa_forcefield("oplsaa.xml")
-        return read_xml_forcefield(get_forcefield_path("clp.xml"), ff, layer=1)
+        return _load_clp_forcefield()
 
 
 __all__ = ["ClpTypifier"]

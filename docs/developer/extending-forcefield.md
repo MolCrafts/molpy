@@ -13,7 +13,14 @@ maintain a parallel Python potential layer. There is no `style.to_potential()` a
 no Python kernel class; evaluation always goes through
 
 ```python
-ff.to_potentials().calc_energy(frame)   # and .calc_forces(frame)
+import molpy as mp
+from molpy.conformer import Conformer
+
+ff = mp.io.read_xml_forcefield("oplsaa.xml")
+mol, _ = Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
+frame = mp.typifier.OPLSAATypifier().typify(mol).to_frame()
+
+ff.to_potentials().calc_energy(frame)  # and .calc_forces(frame)
 ```
 
 This changes what "extending the force field" means:
@@ -49,7 +56,7 @@ a_style = ff.def_atomstyle("full")
 c = a_style.def_type("C", mass=12.011)
 o = a_style.def_type("O", mass=15.999)
 
-bond_style = ff.def_bondstyle("morse")          # dispatches to the molrs kernel
+bond_style = ff.def_bondstyle("morse")  # dispatches to the molrs kernel
 bond_style.def_type(c, o, D=100.0, alpha=1.8, r0=1.43)
 ```
 
@@ -63,6 +70,7 @@ via `_name_default`. Add it next to the other specialized styles in
 
 ```python
 from molpy.core.forcefield import BondStyle
+
 
 class BondMorseStyle(BondStyle):
     """Bond ``morse`` style (LAMMPS ``bond_style morse``)."""
@@ -92,10 +100,12 @@ Register your style's param formatter on the appropriate subclass:
 from molpy.core.forcefield import BondMorseStyle
 from molpy.io.forcefield.lammps import LammpsForceFieldFormatter
 
+
 def _format_morse_bond(typ) -> list[float]:
     """Format morse bond parameters for LAMMPS: D alpha r0"""
     p = typ.params.kwargs
     return [p["D"], p["alpha"], p["r0"]]
+
 
 LammpsForceFieldFormatter.register_param_formatter(BondMorseStyle, _format_morse_bond)
 ```
@@ -136,7 +146,7 @@ bonds.insert("type", np.array(["C-O"], dtype=str))
 frame["bonds"] = bonds
 
 pots = ff.to_potentials()
-print(pots.calc_energy(frame))   # 0.0 at r0
+print(pots.calc_energy(frame))  # 0.0 at r0
 ```
 
 

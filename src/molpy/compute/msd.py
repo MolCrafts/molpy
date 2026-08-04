@@ -1,8 +1,4 @@
-"""Mean Squared Displacement — molrs-backed.
-
-Returns ``molrs.compute.msd.MSDTimeSeries`` directly. Frame[0] is the
-reference; ``series.mean[i]`` is ⟨|r(i) - r(0)|²⟩ averaged over particles.
-"""
+"""Mean squared displacement of particle positions."""
 
 from __future__ import annotations
 
@@ -13,18 +9,25 @@ from .base import Compute
 
 
 class MSD(Compute):
-    """Mean squared displacement against frame[0].
+    """Mean squared displacement.
+
+    Two estimators, chosen by ``method`` — they are not interchangeable:
+
+    - ``"direct"`` (default): ``<|r(t) - r(0)|^2>``, frame 0 the one time origin.
+    - ``"window"``: ``<|r(tau+t) - r(tau)|^2>`` averaged over **every** time
+      origin. Better statistics at long lag, which is what a diffusion
+      coefficient needs, and O(T log T) rather than O(T^2).
 
     Examples
     --------
-    >>> series = MSD()(trajectory_frames)
+    >>> series = MSD(method="window")(trajectory_frames)
     >>> series.mean.shape    # (n_frames,)
     """
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._impl = _MolrsMSD()
+    def __init__(self, method: str = "direct") -> None:
+        super().__init__(method=method)
+        self.method = method
+        self._impl = _MolrsMSD(method=method)
 
     def __call__(self, frames) -> _MolrsMSDTimeSeries:
-        # Frames are canonical molrs.Frame objects; pass the list through.
         return self._impl.compute(frames)

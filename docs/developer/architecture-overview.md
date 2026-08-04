@@ -8,16 +8,17 @@ Each package has one clear responsibility with minimal coupling to its siblings:
 
 | Package | Purpose |
 |---------|---------|
-| `core` | molrs-backed graph refs/worlds, `Frame`, `Block`, `Box`, units, and force-field surfaces |
-| `parser` | Grammar-based parsing: SMILES, SMARTS, BigSMILES, G-BigSMILES, CGSmiles |
-| `builder` | System assembly: one `GraphAssembler` kernel + a `Selector` family, virtual sites, AmberTools integration |
-| `typifier` | Graph typification: one `Typifier` contract (`MolGraph -> MolGraph`), molrs OPLS-AA/MMFF re-exports, and MolPy-side overlays such as CL&P |
-| `pack` | Packing workflows: Packmol integration, density targets |
-| `io` | File I/O: readers/writers for molecular data, trajectories, and force-field formats |
-| `compute` | Analysis operators over `Frame`/`Block` data |
+| `core` | Graph refs/worlds, `Frame`, `Block`, `Box`, units, force-field surfaces |
+| `parser` | SMILES / SMARTS (`SmilesIR`, `SmartsPattern`); moltemplate `.lt` |
+| `builder` | System assembly: `GraphAssembler`, polymers, crosslinking, virtual sites, AmberTools |
+| `conformer` | 3D conformer generation |
+| `typifier` | Graph typification: OPLS-AA / MMFF re-exports, CL&P overlays, AmberTools GAFF |
+| `pack` | Legacy packing helpers; new packing is **molpack** (`molcrafts-molpack`) |
+| `io` | File I/O: molecular data, trajectories, force-field formats |
+| `compute` | Analysis operators (structure, transport, dielectric, spectra, …) |
 | `engine` | MD abstractions: LAMMPS, CP2K, OpenMM input generation and execution |
 | `wrapper` | Subprocess boundaries to external CLI tools (antechamber, packmol, …) |
-| `adapter` | In-memory bridges to external object models (RDKit, OpenBabel, …) |
+| `adapter` | Optional in-memory bridge (RDKit worked example) |
 | `data` | Bundled package data: force-field XML files, parameter tables |
 
 `core` depends on nothing above it; everything else builds on `core`. `compute`, `io`, and `engine` operate on the tabular layer (`Frame`/`Block`); `parser`, `builder`, and `typifier` operate on the graph layer (`Atomistic`). `wrapper` and `adapter` sit at the outer edge and never leak external types into `core`.
@@ -32,8 +33,10 @@ three cooperating surfaces:
 2. **Relation refs** — `Bond`, `Angle`, `Dihedral`, `Improper`, and `CGBond`
    resolve endpoint handles in the same world.
 3. **Worlds** — `Atomistic` and `CoarseGrain` own nodes, relations, columns, and
-   graph algorithms. Their `.atoms`, `.bonds`, and related properties are live
-   molrs view collections, not Python buckets or mirrored lists.
+   graph algorithms. Their `.atoms`, `.bonds`, and related properties are lazy
+   handle collections: integer access interns a view (weak-interned per handle);
+   string field access (`atoms["x"]`) reads the dense component store without
+   materializing every view. There is no mirrored Python property bag.
 
 There is no `Struct`/`TypeBucket` registration layer. Adding a new stored node
 or relation kind changes the molrs schema and bindings; it is not a Python
@@ -54,9 +57,9 @@ The graph → arrays conversion is explicit: `Atomistic.to_frame()` delegates to
 Canonical field names (`charge`, not `q`; `mol_id`, not `mol`) are used everywhere inside MolPy; format-specific names exist only at the I/O boundary. The translation machinery lives in `core/fields.py`:
 
 ```text
-FieldSpec                              — canonical field definition (key, dtype, shape, doc)
+molpy.fields                           — the canonical column names (CHARGE, MOL_ID, …)
     ↓
-FieldFormatter                         — data field mapping: {format_key: FieldSpec}
+FieldFormatter                         — data field mapping: {format_key: canonical_key}
     ↓                                     canonicalize() / localize() on Block
 ForceFieldFormatter(FieldFormatter)    — adds param formatters: {StyleType: Callable}
 ```

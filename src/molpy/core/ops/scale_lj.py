@@ -12,8 +12,8 @@ if TYPE_CHECKING:
     from molpy.core.atomistic import Atom
     from molpy.core.forcefield import ForceField
 
-FragmentScaling = molrs.FragmentScaling
-compute_k_ij = molrs.compute_k_ij
+FragmentScaling = molrs.ff.FragmentScaling
+compute_k_ij = molrs.ff.compute_k_ij
 
 
 def load_fragment_scaling_data(
@@ -21,14 +21,15 @@ def load_fragment_scaling_data(
 ) -> dict[str, FragmentScaling]:
     """Return molrs' compiled CL&Pol fragment table.
 
-    Runtime parameter-file parsing was removed; pass explicit
+    The table is compiled in, not parsed at runtime; pass explicit
     ``FragmentScaling`` objects to :func:`scale_lj` for custom data.
     """
     if path is not None:
         raise ValueError(
-            "runtime CL&Pol table parsing was removed; pass frag_data explicitly"
+            "the CL&Pol table is compiled in, not read from a file; pass "
+            "frag_data explicitly for custom data"
         )
-    return molrs.fragment_scaling_data()
+    return molrs.ff.fragment_scaling_data()
 
 
 def scale_lj(
@@ -54,7 +55,7 @@ def scale_lj(
         )
         for label, atoms in fragments.items()
     }
-    return molrs.scale_lj(ff, payload, frag_data, scale_sigma)
+    return molrs.ff.scale_lj(ff, payload, frag_data, scale_sigma)
 
 
 __all__ = [

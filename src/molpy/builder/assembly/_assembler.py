@@ -1,13 +1,24 @@
-"""The one assembly kernel: match, compile local products, then execute once.
+"""The one assembly kernel: match, execute one reaction batch, then retype.
 
 Growing a chain, crosslinking a melt and closing a macrocycle differ only in
 which sites pair up. That difference is a :class:`~molpy.builder.assembly._selector.Selector`
 handed to :meth:`GraphAssembler.assemble`; everything else is this one code path.
 
-Every prospective reaction environment is compiled while the user-defined
-monomers are still intact.  The growing world is edited only once; cached typing
-results write scalar per-atom data back afterwards.  Topology and bonded
-parameter finalization are a separate, optional tail.
+The reaction is applied to the intact world **once**, as a batch, and only then
+is each junction cut out and typed. Order is the whole design. A region cut
+before the edit has to model the edit itself — every reaction near enough to
+matter, including the unmapped atoms each one consumes — and a radius that
+reaches a neighbouring junction's site atom but not its leaving atom describes a
+graph edit that cannot be applied. Cutting afterwards asks nothing of the
+region: the edits already happened, on the one graph that held every atom they
+needed. What remains is the ripple, and
+:meth:`~molpy.typifier.affected_region.AffectedRegion.around` is the single place
+in molpy that sizes it.
+
+Typing writes scalar per-atom data back through
+:class:`~molpy.typifier.cache.RetypeCache`, so structurally identical junctions
+are typed once. Topology and bonded parameter finalization are a separate,
+optional tail.
 """
 
 from __future__ import annotations
@@ -21,14 +32,13 @@ from molpy.builder.assembly._finalize import (
     AssemblyFinalizer,
     Finalization,
 )
-from molpy.builder.assembly._plan import AssemblyCompiler
 from molpy.builder.assembly._selector import Binding, Selector
 from molpy.core import fields
 from molpy.core.atomistic import Atomistic
+from molpy.typifier.affected_region import AffectedRegion
+from molpy.typifier.cache import RetypeCache
 
 if TYPE_CHECKING:
-    from molrs.fields import FieldSpec
-
     from molpy.builder.assembly._placer import Placer
     from molpy.typifier.forcefield import ForceFieldParams
 
@@ -53,10 +63,10 @@ class GraphAssembler:
         self,
         reaction: molrs.Reaction,
         *,
-        typifier: molrs.Typifier | None = None,
+        typifier: molrs.ff.Typifier | None = None,
         reach: int | None = None,
         placer: Placer | None = None,
-        label_field: FieldSpec = fields.SITE,
+        label_field: str = fields.SITE,
         finalize: Finalization | str = Finalization.TOPOLOGY,
         bonded: ForceFieldParams | None = None,
     ) -> None:
@@ -65,9 +75,9 @@ class GraphAssembler:
                 "reaction must be a molpy.Reaction instance, not "
                 f"{type(reaction).__name__}; build it once with mp.Reaction(smirks)"
             )
-        if typifier is not None and not isinstance(typifier, molrs.Typifier):
+        if typifier is not None and not isinstance(typifier, molrs.ff.Typifier):
             raise TypeError(
-                f"{type(typifier).__name__} is not a molrs.Typifier and "
+                f"{type(typifier).__name__} is not a molrs.ff.Typifier and "
                 "cannot compile a local product. There is no whole-graph fallback."
             )
         if typifier is not None and reach is None:
@@ -77,8 +87,12 @@ class GraphAssembler:
                 "the extracted ball and the write-back set. Pass reach=2 for GAFF "
                 "and for SMARTS pattern sets without ring predicates."
             )
-        if reach is not None and reach < 0:
-            raise ValueError(f"reach must be >= 0, got {reach}")
+        if reach is not None and reach < 1:
+            # Not an off-by-one from "no context needed": a junction's dihedrals
+            # span two bonds either side of the new bond, so the write-back set
+            # is floored at AffectedRegion.TERM_REACH whatever the typifier
+            # claims, and a zero-radius extraction cannot supply it.
+            raise ValueError(f"reach must be >= 1, got {reach}")
         self._reaction = reaction
         self._typifier = typifier
         self._reach = reach
@@ -94,10 +108,10 @@ class GraphAssembler:
         self._comp_a = self._find_component(label_sets, self._map_a)
         self._comp_b = self._find_component(label_sets, self._map_b)
 
-        self._compiler = AssemblyCompiler(reaction, typifier, reach)
-        # Kept as a readable inspection point: the cache belongs to the
-        # compiler and is shared across every build made by this assembler.
-        self._cache = self._compiler.cache
+        # Shared across every build made by this assembler, so a config matrix
+        # that grows the same junction repeatedly types it once. Kept public-ish
+        # as a readable inspection point.
+        self._cache = RetypeCache(typifier) if typifier is not None else None
 
     # -- the verb ------------------------------------------------------------
 
@@ -129,26 +143,38 @@ class GraphAssembler:
             return work
         self._assert_disjoint(bindings)
 
-        # This is the compile-first boundary: all local products and their
-        # per-atom annotations are resolved before placement or graph mutation.
-        plan = self._compiler.compile(work, bindings, labels)
-        formed = [(b[self._map_a], b[self._map_b]) for b in plan.bindings]
+        formed = [(b[self._map_a], b[self._map_b]) for b in bindings]
         if self._placer is not None:
             self._placer.place(work, formed)
 
         charge_before = self._total_charge(work)
-        # The reaction compiles every leaving group against the intact world,
+        # The reaction resolves every leaving group against the intact world,
         # then executes the disjoint transforms as one batch.  In particular,
         # relation tables are scanned once for the union of deleted atoms rather
         # than once per polymer bond.
-        touched_sets, created_sets = self._reaction.apply_many_detailed(
-            work, list(plan.bindings), labels, refresh=False
+        touched_sets, _created_sets = self._reaction.apply_many_detailed(
+            work, bindings, labels, refresh=False
         )
-        for binding, touched in zip(plan.bindings, touched_sets, strict=True):
+        for binding, touched in zip(bindings, touched_sets, strict=True):
             self._assert_touched_covers_forming_bond(binding, touched)
         self._assert_charge_conserved(work, charge_before)
-        plan.write_atoms(work, created_sets)
+        self._retype(work, touched_sets)
         return self._finalizer.apply(work)
+
+    def _retype(self, work: Atomistic, touched_sets: list[list[int]]) -> None:
+        """Retype the ripple each edit raised, writing interior types back.
+
+        ``touched`` is what the reaction reports it disturbed — the atoms it
+        bonded, the atoms it created, and the survivors it orphaned by deleting
+        a neighbour. That is the seed set a region is sized around; the radii
+        are the region's own business, not this kernel's.
+        """
+        if self._cache is None:
+            return
+        assert self._reach is not None
+        for touched in touched_sets:
+            region = AffectedRegion.around(work, touched, reach=self._reach)
+            self._cache.retype_and_apply(region)
 
     # -- construction helpers ------------------------------------------------
 
@@ -186,7 +212,7 @@ class GraphAssembler:
         Only atoms carrying a non-empty label enter the table: an empty string
         means *unmarked* and must not match a ``%site`` predicate.
         """
-        key = self._label_field.key
+        key = self._label_field
         return {
             atom.handle: str(value) for atom in graph.atoms if (value := atom.get(key))
         }

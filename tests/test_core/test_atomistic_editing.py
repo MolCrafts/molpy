@@ -9,10 +9,10 @@ from molpy import Angle, Atom, Atomistic, Bond, Dihedral
 
 def _ethane() -> Atomistic:
     mol = Atomistic()
-    c1 = mol.def_atom(element="C", type="CT", xyz=[0.0, 0.0, 0.0])
-    c2 = mol.def_atom(element="C", type="CT", xyz=[1.54, 0.0, 0.0])
+    c1 = mol.def_atom(element="C", type="CT", x=0.0, y=0.0, z=0.0)
+    c2 = mol.def_atom(element="C", type="CT", x=1.54, y=0.0, z=0.0)
     h = [
-        mol.def_atom(element="H", type="HC", xyz=[0.0, float(i), 0.0]) for i in range(6)
+        mol.def_atom(element="H", type="HC", x=0.0, y=float(i), z=0.0) for i in range(6)
     ]
     mol.def_bond(c1, c2, type="CT-CT")
     for hh in h[:3]:

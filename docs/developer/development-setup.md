@@ -19,7 +19,7 @@ source .venv/bin/activate
 pip install -U pip
 pip install -e ".[dev]"
 pre-commit install
-pytest tests/ -v -m "not external"
+pytest tests/ -v
 ```
 
 If all tests pass, the environment is ready.
@@ -81,14 +81,10 @@ at build time). After editing one, regenerate its page with
 
 ## External tools
 
-Some tests and workflows require external executables that are not Python packages: LAMMPS, Packmol, and AmberTools. These are not needed for core development. Tests that depend on them are marked `@pytest.mark.external` and excluded from the default test run via `-m "not external"`.
-
-If you have one of these tools installed and want to run its tests:
-
-```bash
-pytest tests/ -v                          # all tests including external
-pytest tests/ -v -k "lammps"              # only LAMMPS-related tests
-```
+LAMMPS and AmberTools are optional for *using* MolPy offline recipes; packing uses molpack (`pip install molcrafts-molpack`).
+they are **not** part of the unit suite. Wrappers and engines are tested with
+mocks and script literals. Doc blocks that would shell out declare
+`# docs: skip`.
 
 
 ## Common commands
@@ -97,7 +93,7 @@ pytest tests/ -v -k "lammps"              # only LAMMPS-related tests
 ruff format --check src tests             # check formatting
 ruff format src tests                     # auto-format
 ruff check src                            # lint source tree
-pytest tests/ -v -m "not external"        # local test suite
+pytest tests/ -v        # local test suite
 pytest --cov=src/molpy tests/ -v          # with coverage
 pre-commit run --all-files                # all pre-commit hooks
 zensical build                            # build static doc site into site/
@@ -106,4 +102,4 @@ zensical build                            # build static doc site into site/
 
 ## Troubleshooting
 
-If imports fail after pulling new code, reinstall the editable package: `pip install -e ".[dev]"`. To regenerate the user-guide notebook pages, run `python scripts/render_notebooks.py` (needs the `[doc]` extras, including RDKit and Packmol). If formatting checks fail in CI, run `ruff format src tests` locally before pushing.
+If imports fail after pulling new code, reinstall the editable package: `pip install -e ".[dev]"`. Docs site build is `pip install ".[doc]"` + `zensical build` (theme + mkdocstrings only — no notebook/matplotlib stack). If formatting checks fail in CI, run `ruff format src tests` locally before pushing.

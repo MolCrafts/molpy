@@ -13,8 +13,8 @@ from molpy.typifier.scope import TypeScope as TypeScopeDirect
 
 
 def test_molrs_syntax_facts_ready():
-    assert hasattr(molrs.SmartsPattern, "max_bond_depth")
-    assert hasattr(molrs.SmartsPattern, "ring_primitives")
+    assert hasattr(molrs.perceive.SmartsPattern, "max_bond_depth")
+    assert hasattr(molrs.perceive.SmartsPattern, "ring_primitives")
     assert hasattr(molrs.Atomistic, "max_ring_system_size")
     pin = Path("pyproject.toml").read_text(encoding="utf-8")
     # Minor-line pin (patch may drift); not exact ==X.Y.Z.
@@ -136,5 +136,5 @@ def test_mmff_like_bounded_ring_exports_sized_contrib():
     """Sized aromatic six-ring contributes ⌊6/2⌋+1 = 4, not unbounded membership."""
     scope = TypeScope.from_patterns(["[c]1[c][c][c][c][c]1", "[r6]"])
     assert scope.reach == max(
-        2, molrs.SmartsPattern("[c]1[c][c][c][c][c]1").max_bond_depth, 4
+        2, molrs.perceive.SmartsPattern("[c]1[c][c][c][c][c]1").max_bond_depth, 4
     )

@@ -30,6 +30,19 @@ For LAMMPS and CP2K the two steps are fully decoupled: you build a `Script` obje
 
 The `Script` class holds the text of an input file and knows how to write it to disk. `Script.from_text` creates one from a string. Before saving you can call `script.preview()` to inspect the content — useful when the script is assembled programmatically from many fragments.
 
+The examples below share this setup:
+
+```python
+import numpy as np
+import molpy as mp
+
+rng = np.random.default_rng(0)
+xyz = rng.uniform(0.0, 20.0, size=(200, 3))
+frame = mp.Frame()
+frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
+frame.box = mp.Box.cubic(20.0)
+```
+
 ```python
 import molpy as mp
 from molpy.engine import LAMMPSEngine
@@ -49,7 +62,7 @@ run             500000
 """
 
 script = Script.from_text("input", lammps_input, language="other")
-print(script.preview())          # inspect before saving
+print(script.preview())  # inspect before saving
 
 script.save("./submit/input.lmp")
 # -> ./submit/input.lmp written
@@ -70,13 +83,18 @@ OpenMM's workflow is more tightly integrated because the three required files ar
 The configuration is a Pydantic model — `OpenMMSimulationConfig` — whose fields document their units explicitly. It round-trips through JSON, which makes it easy to store alongside the generated files for reproducibility.
 
 ```python
+from pathlib import Path
+
 from molpy.engine import OpenMMEngine, OpenMMSimulationConfig
+
+Path("./omm_run").mkdir(parents=True, exist_ok=True)
+ff = mp.ForceField("water")
 
 config = OpenMMSimulationConfig(
     ensemble="NPT",
-    temperature=300.0,       # K
-    pressure=1.0,            # bar
-    timestep_fs=2.0,         # fs
+    temperature=300.0,  # K
+    pressure=1.0,  # bar
+    timestep_fs=2.0,  # fs
     n_steps=500_000,
     platform="CUDA",
 )
@@ -102,6 +120,7 @@ The returned `paths` dictionary maps string keys to `Path` objects. You can pass
 When the MD binary is available locally, `engine.run()` writes the script to a working directory and launches the subprocess. The return value is a standard `subprocess.CompletedProcess`, so you can inspect the exit code, stdout, and stderr without any MolPy-specific handling.
 
 ```python
+# docs: skip — engine.run launches an MD binary; engines unit-tested with mocks / script literals
 engine = LAMMPSEngine("lmp")
 
 result = engine.run(
@@ -110,7 +129,7 @@ result = engine.run(
     capture_output=True,
     check=True,
 )
-print(result.returncode)          # 0 on success
+print(result.returncode)  # 0 on success
 if result.stderr:
     print(result.stderr[:500])
 ```
@@ -122,6 +141,7 @@ if result.stderr:
 MPI parallelism is configured at engine construction, not at runtime. Passing `launcher` prepends the MPI command before the LAMMPS executable in the subprocess call.
 
 ```python
+# docs: skip — engine.run launches an MD binary; engines unit-tested with mocks / script literals
 # OpenMPI
 engine = LAMMPSEngine("lmp", launcher=["mpirun", "-np", "16"])
 
@@ -138,6 +158,7 @@ The command that runs is `mpirun -np 16 lmp -in input.lmp -log log.lammps -scree
 Some HPC workflows install LAMMPS or OpenMM inside a Conda environment that is not active in the submission environment. Providing both `env` and `env_manager` wraps the subprocess call with `conda run`:
 
 ```python
+# docs: skip — engine.run launches an MD binary; engines unit-tested with mocks / script literals
 engine = LAMMPSEngine(
     "lmp",
     env="lammps-env",
@@ -156,8 +177,14 @@ Once `generate_inputs()` has produced the files, calling `run()` with the script
 ```python
 engine = OpenMMEngine("python", env="openmm-env", env_manager="conda")
 paths = engine.generate_inputs(frame, ff, config, "./omm_run")
+assert paths["script"].exists()
 
-result = engine.run(paths["script"], workdir="./omm_run", capture_output=True)
+# The launch itself is a real simulation, so it is the one step this page does
+# not perform for you:
+#
+#     result = engine.run(paths["script"], workdir="./omm_run", capture_output=True)
+#
+# which becomes: conda run --no-capture-output -n openmm-env python simulate.py
 ```
 
 The driver script is self-contained — it imports OpenMM, reads the PDB and XML files from the same directory, and runs. You can edit `simulate.py` by hand between `generate_inputs` and `run` without touching Python.
@@ -181,6 +208,7 @@ from molpy.engine.base import Engine
 import subprocess
 from pathlib import Path
 
+
 class GromacsEngine(Engine):
     @property
     def name(self) -> str:
@@ -189,15 +217,20 @@ class GromacsEngine(Engine):
     def _get_default_extension(self) -> str:
         return ".mdp"
 
-    def _execute(self, run_dir: Path, capture_output=False,
-                 check=True, timeout=None, **kwargs):
+    def _execute(
+        self, run_dir: Path, capture_output=False, check=True, timeout=None, **kwargs
+    ):
         cmd = self._build_full_command(
-            ["grompp", "-f", self.input_script.path.name,
-             "-o", "topol.tpr"]
+            ["grompp", "-f", self.input_script.path.name, "-o", "topol.tpr"]
         )
-        return subprocess.run(cmd, cwd=run_dir,
-                              capture_output=capture_output,
-                              text=True, check=check, timeout=timeout)
+        return subprocess.run(
+            cmd,
+            cwd=run_dir,
+            capture_output=capture_output,
+            text=True,
+            check=check,
+            timeout=timeout,
+        )
 ```
 
 `_build_full_command` prepends the launcher and Conda wrapper automatically.

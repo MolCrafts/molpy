@@ -106,16 +106,14 @@ class XsfReader(DataReader):
 
         # Create atoms block
         if atoms_data:
-            # Store coordinates as separate x, y, z fields only
-            coords_array = np.array([atom["xyz"] for atom in atoms_data])
             atoms_dict = {
                 "atomic_number": np.array(
                     [atom["atomic_number"] for atom in atoms_data]
                 ),
                 "element": np.array([atom["element"] for atom in atoms_data]),
-                "x": coords_array[:, 0],
-                "y": coords_array[:, 1],
-                "z": coords_array[:, 2],
+                "x": np.array([atom["x"] for atom in atoms_data]),
+                "y": np.array([atom["y"] for atom in atoms_data]),
+                "z": np.array([atom["z"] for atom in atoms_data]),
             }
             frame["atoms"] = Block(atoms_dict)
 
@@ -176,7 +174,9 @@ class XsfReader(DataReader):
                 atoms.append(
                     {
                         "atomic_number": atomic_number,
-                        "xyz": np.array([x, y, z]),
+                        "x": x,
+                        "y": y,
+                        "z": z,
                         "element": element,
                     }
                 )

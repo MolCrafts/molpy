@@ -17,14 +17,14 @@ the input graph is never mutated (molrs clones it internally).
 ## Generating a conformer
 
 ```python
-from molpy.parser import parse_molecule
+import molpy as mp
 from molpy.conformer import Conformer
 
-mol = parse_molecule("CCO")                    # ethanol graph (heavy atoms only)
+mol = mp.io.read_smiles("CCO")  # ethanol graph (heavy atoms only)
 mol_3d, report = Conformer(seed=42).generate(mol)
 
-print(mol_3d.n_atoms)          # 9  — heavy atoms + added hydrogens
-print(report.final_energy)     # energy of the returned structure
+print(mol_3d.n_atoms)  # 9  — heavy atoms + added hydrogens
+print(report.final_energy)  # energy of the returned structure
 ```
 
 `generate` returns a **tuple**: the new `Atomistic` (with coordinates and any
@@ -33,13 +33,13 @@ you can generate several independent conformers from the same graph.
 
 ## Constructor parameters
 
-`Conformer` subclasses `molrs.Conformer`; the constructor parameters are
+`Conformer` subclasses `molrs.conformer.Conformer`; the constructor parameters are
 inherited unchanged:
 
 | Parameter | Meaning |
 |---|---|
 | `speed` | Speed/quality trade-off for the embedding + refinement passes. Faster settings do fewer refinement steps. |
-| `add_hydrogens` | Whether to fill valences with explicit hydrogens before embedding. Leave on unless your graph already carries all H. |
+| `Perceive.find_hydrogens` | Whether to fill valences with explicit hydrogens before embedding. Leave on unless your graph already carries all H. |
 | `seed` | RNG seed for the stochastic embedding. **Set it for reproducible geometries** — omitting it gives a different conformer each run. |
 
 Charged atoms must already carry the canonical integer `"formal_charge"` key
@@ -59,8 +59,10 @@ Each `ConformerStageReport` records `stage`, `steps`, `converged`,
 ```python
 for s in report.stages:
     status = "converged" if s.converged else "hit step limit"
-    print(f"{s.stage}: {s.energy_before:.3f} -> {s.energy_after:.3f} "
-          f"({s.steps} steps, {status})")
+    # A stage that never ran an energy model reports None rather than 0.0.
+    before = "n/a" if s.energy_before is None else f"{s.energy_before:.3f}"
+    after = "n/a" if s.energy_after is None else f"{s.energy_after:.3f}"
+    print(f"{s.stage}: {before} -> {after} ({s.steps} steps, {status})")
 ```
 
 A stage that reports `converged = False` means it exhausted its step budget —

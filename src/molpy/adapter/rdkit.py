@@ -21,38 +21,53 @@ from .base import Adapter
 
 MP_ID = "mp_id"
 
-BOND_ORDER_TO_RDKIT: dict[float, Chem.BondType] = {
-    1.0: Chem.BondType.SINGLE,
-    2.0: Chem.BondType.DOUBLE,
-    3.0: Chem.BondType.TRIPLE,
-    1.5: Chem.BondType.AROMATIC,
+#: Bond class codes, mirroring ``molrs.system.bond.BondType``.
+BOND_TYPE_UNKNOWN = 0
+BOND_TYPE_SINGLE = 1
+BOND_TYPE_DOUBLE = 2
+BOND_TYPE_TRIPLE = 3
+BOND_TYPE_AROMATIC = 4
+
+#: RDKit models aromaticity the same way molpy does — as a bond *type*
+#: alongside single/double/triple, never as a fractional order. The two
+#: alphabets therefore map one-to-one.
+BOND_TYPE_TO_RDKIT: dict[int, Chem.BondType] = {
+    BOND_TYPE_SINGLE: Chem.BondType.SINGLE,
+    BOND_TYPE_DOUBLE: Chem.BondType.DOUBLE,
+    BOND_TYPE_TRIPLE: Chem.BondType.TRIPLE,
+    BOND_TYPE_AROMATIC: Chem.BondType.AROMATIC,
 }
 
-RDKIT_TO_BOND_ORDER: dict[Chem.BondType, float] = {
-    Chem.BondType.SINGLE: 1.0,
-    Chem.BondType.DOUBLE: 2.0,
-    Chem.BondType.TRIPLE: 3.0,
-    Chem.BondType.AROMATIC: 1.5,
+RDKIT_TO_BOND_TYPE: dict[Chem.BondType, int] = {
+    rd: mp for mp, rd in BOND_TYPE_TO_RDKIT.items()
+}
+
+#: The localized number a class implies. Aromatic implies none — the Kekulé
+#: phase is a separate fact, and RDKit keeps its own.
+_IMPLIED_NUMBER: dict[int, int] = {
+    BOND_TYPE_SINGLE: 1,
+    BOND_TYPE_DOUBLE: 2,
+    BOND_TYPE_TRIPLE: 3,
 }
 
 
-def _rdkit_bond_type(order: float) -> Chem.BondType:
-    order_float = float(order)
-    if order_float not in BOND_ORDER_TO_RDKIT:
+def _rdkit_bond_type(bond_type: int) -> Chem.BondType:
+    code = int(bond_type)
+    if code not in BOND_TYPE_TO_RDKIT:
         raise ValueError(
-            f"Bond order {order_float} is not supported. "
-            f"Supported orders: {list(BOND_ORDER_TO_RDKIT.keys())}"
+            f"Bond type {code} is not supported. "
+            f"Supported types: {sorted(BOND_TYPE_TO_RDKIT)}"
         )
-    return BOND_ORDER_TO_RDKIT[order_float]
+    return BOND_TYPE_TO_RDKIT[code]
 
 
-def _order_from_rdkit(bt: Chem.BondType) -> float:
-    if bt not in RDKIT_TO_BOND_ORDER:
+def _bond_type_from_rdkit(bt: Chem.BondType) -> int:
+    if bt not in RDKIT_TO_BOND_TYPE:
         raise ValueError(
             f"RDKit bond type {bt} is not supported. "
-            f"Supported types: {list(RDKIT_TO_BOND_ORDER.keys())}"
+            f"Supported types: {list(RDKIT_TO_BOND_TYPE.keys())}"
         )
-    return RDKIT_TO_BOND_ORDER[bt]
+    return RDKIT_TO_BOND_TYPE[bt]
 
 
 class _AtomMapper:
@@ -199,7 +214,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
             else:
                 try:
                     atom_id_int = int(atom_id)
-                except ValueError, TypeError:
+                except (ValueError, TypeError):
                     atoms_without_id.append(atom)
                     continue
                 max_id = max(max_id, atom_id_int)
@@ -220,7 +235,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                     if mp_id_int not in mp_id_to_atoms:
                         mp_id_to_atoms[mp_id_int] = []
                     mp_id_to_atoms[mp_id_int].append(atom)
-                except ValueError, TypeError:
+                except (ValueError, TypeError):
                     pass
 
         # If all mp_ids are unique and match ids, keep them
@@ -241,7 +256,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                         if int(mp_id) != int(atom_id):
                             needs_reassign = True
                             break
-                    except ValueError, TypeError:
+                    except (ValueError, TypeError):
                         needs_reassign = True
                         break
 
@@ -252,7 +267,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                 if atom_id is not None:
                     try:
                         atom[MP_ID] = int(atom_id)
-                    except ValueError, TypeError:
+                    except (ValueError, TypeError):
                         # Fallback to sequential if id is invalid
                         pass
 
@@ -302,7 +317,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                     if atom_id is not None:
                         try:
                             atom[MP_ID] = int(atom_id)
-                        except ValueError, TypeError:
+                        except (ValueError, TypeError):
                             atom[MP_ID] = next_mp_id
                             next_mp_id += 1
                     else:
@@ -363,7 +378,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
             if begin_idx is None or end_idx is None:
                 continue
 
-            bt = _rdkit_bond_type(bond.get("order"))
+            bt = _rdkit_bond_type(bond.get("bond_type", BOND_TYPE_SINGLE))
             mol.AddBond(begin_idx, end_idx, bt)
 
         # Optional coordinates: expect x/y/z on atoms
@@ -461,9 +476,13 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
             begin_idx = rd_bond.GetBeginAtomIdx()
             end_idx = rd_bond.GetEndAtomIdx()
 
-            bond_type = rd_bond.GetBondType()
-            order = _order_from_rdkit(bond_type)
-            atomistic.def_bond(created[begin_idx], created[end_idx], order=order)
+            bond_type = _bond_type_from_rdkit(rd_bond.GetBondType())
+            atomistic.def_bond(
+                created[begin_idx],
+                created[end_idx],
+                bond_type=bond_type,
+                bond_number=_IMPLIED_NUMBER.get(bond_type, 0),
+            )
 
         return atomistic
 
@@ -501,7 +520,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                 continue
             try:
                 existing_id_int = int(existing_id)
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 continue
             max_existing_id = max(max_existing_id, existing_id_int)
 
@@ -583,8 +602,13 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                         "RDKit bond references an atom missing from the mapping."
                     )
 
-                order = _order_from_rdkit(rd_bond.GetBondType())
-                atomistic.def_bond(itom, jtom, order=order)
+                bond_type = _bond_type_from_rdkit(rd_bond.GetBondType())
+                atomistic.def_bond(
+                    itom,
+                    jtom,
+                    bond_type=bond_type,
+                    bond_number=_IMPLIED_NUMBER.get(bond_type, 0),
+                )
 
         # Rebuild atom mapper after updating atomistic (new atoms may have been added)
         self._rebuild_atom_mapper()
@@ -662,10 +686,9 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
 # RDKit 3D generation / geometry optimization
 # ---------------------------------------------------------------------------
 #
-# These plain frozen-dataclass operators run on RDKitAdapter instances. They
-# were formerly the ``molpy.tool.rdkit`` Tool subclasses; the adapter layer
-# must not depend on the builder ``Tool`` framework, so they are plain classes
-# here with the same public API (callable, frozen, ``run``).
+# These plain frozen-dataclass operators run on RDKitAdapter instances. The
+# adapter layer must not depend on the builder ``Tool`` framework, so they are
+# plain classes (callable, frozen, ``run``).
 
 
 def _sanitize(mol: Chem.Mol) -> Chem.Mol:

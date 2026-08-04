@@ -14,7 +14,7 @@ same commit.
 | Format | `ruff format --check src/ tests/` | required (pre-commit stage) | required |
 | Lint | `ruff check src/ tests/` | required (pre-commit stage) | required |
 | Type | `ty check src/molpy/` | required (pre-commit stage) | required |
-| Tests | `pytest tests/ -v -m "not external"` | required (**pre-push stage**) | required |
+| Tests | `pytest tests/ -v` | required (**pre-push stage**) | required |
 | Notebook strip | `nbstripout` | required when `.ipynb` present | intentionally absent |
 | File hygiene | `pre-commit-hooks` (trailing-ws, eof, merge-conflict, …) | required | intentionally absent |
 | Docs build | `zensical build` | intentionally absent (too slow) | required when `docs/` present |

@@ -5,9 +5,8 @@ candidate pairs — the only O(sites²) step in assembly, and the reason the
 assembler does not build them for everyone — and a subclass decides which of
 them react.
 
-Splitting the old ``DeterministicCrosslinker(spacing=…, pairs=…)`` into one class
-per rule makes the illegal states unrepresentable: there is no longer a
-constructor that accepts two mutually exclusive knobs and silently prefers one.
+One class per rule makes the illegal states unrepresentable: no constructor
+accepts two mutually exclusive knobs and silently prefers one.
 """
 
 from __future__ import annotations
