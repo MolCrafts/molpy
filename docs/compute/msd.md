@@ -93,12 +93,17 @@ layer:
       x: {field: t}
       y: {field: msd}
 
-  # |———| chords ON the curve (matplotlib annotate-along-path style)
+  # |———| parallel to the local curve chord, offset in log–log space so the
+  # bar does not sit on the line (matplotlib: translate along path normal).
+  # End-caps are ⊥ to the bar in the same log–log metric.
   - data:
       values:
-        - {t: 0.18, msd: 0.0324, t2: 0.65, msd2: 0.4225}   # ballistic
-        - {t: 2.2,  msd: 2.2,    t2: 12,   msd2: 12}        # diffusive
-        - {t: 28,   msd: 24.4,   t2: 80,   msd2: 53}        # noisy
+        # ballistic  (offset from (0.18,0.0324)→(0.65,0.4225))
+        - {t: 0.1236, msd: 0.03909, t2: 0.4464, msd2: 0.5098}
+        # diffusive  (offset from (2.2,2.2)→(12,12))
+        - {t: 1.635,  msd: 2.961,   t2: 8.917,  msd2: 16.15}
+        # noisy      (offset from (28,24.4)→(80,53))
+        - {t: 21.82,  msd: 34.21,   t2: 62.33,  msd2: 74.3}
     mark: {type: rule, strokeWidth: 2.2, color: "#18432b", strokeCap: butt}
     encoding:
       x: {field: t}
@@ -106,15 +111,15 @@ layer:
       x2: {field: t2}
       y2: {field: msd2}
 
-  # end-caps ⊥ segment in log–log space
+  # end-caps ⊥ bar (log–log)
   - data:
       values:
-        - {t: 0.1532, msd: 0.03512, t2: 0.2114, msd2: 0.02989}
-        - {t: 0.5533, msd: 0.4579,  t2: 0.7635, msd2: 0.3898}
-        - {t: 1.937,  msd: 2.499,   t2: 2.499,  msd2: 1.937}
-        - {t: 10.57,  msd: 13.63,   t2: 13.63,  msd2: 10.57}
-        - {t: 25.16,  msd: 28.2,    t2: 31.16,  msd2: 21.11}
-        - {t: 71.88,  msd: 61.26,   t2: 89.03,  msd2: 45.86}
+        - {t: 0.1071, msd: 0.04199, t2: 0.1427, msd2: 0.0364}
+        - {t: 0.3869, msd: 0.5476,  t2: 0.5151, msd2: 0.4746}
+        - {t: 1.46,   msd: 3.315,   t2: 1.831,  msd2: 2.644}
+        - {t: 7.963,  msd: 18.08,   t2: 9.985,  msd2: 14.42}
+        - {t: 19.84,  msd: 38.9,    t2: 23.99,  msd2: 30.07}
+        - {t: 56.68,  msd: 84.5,    t2: 68.55,  msd2: 65.33}
     mark: {type: rule, strokeWidth: 2.2, color: "#18432b"}
     encoding:
       x: {field: t}
@@ -122,12 +127,12 @@ layer:
       x2: {field: t2}
       y2: {field: msd2}
 
-  # labels (Times roman), offset above the chord midpoint
+  # labels further out along the same offset normal (Times roman)
   - data:
       values:
-        - {t: 0.342, msd: 0.181, label: "ballistic"}
-        - {t: 5.14,  msd: 7.96,  label: "diffusive"}
-        - {t: 47.3,  msd: 55.7,  label: "noisy"}
+        - {t: 0.1765, msd: 0.1629, label: "ballistic"}
+        - {t: 3.045,  msd: 8.671,  label: "diffusive"}
+        - {t: 30.49,  msd: 65.21,  label: "noisy"}
     mark:
       type: text
       font: "Times New Roman, Times, STIX Two Text, STIXGeneral, serif"
@@ -135,8 +140,7 @@ layer:
       fontSize: 22
       color: "#18432b"
       align: center
-      baseline: bottom
-      dy: -8
+      baseline: middle
     encoding:
       x: {field: t}
       y: {field: msd}
