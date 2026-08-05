@@ -1,6 +1,5 @@
-# prek install
-# pre-commit: tox -e lint
-# pre-push:   molrs pin on PyPI → tox -e lint → tox -e py
+# prek: pre-commit = lint; pre-push = molrs pin + tests
+# CI: lint job + 3 OS × 3.12–3.14 matrix (ci.yml)
 
 default_install_hook_types: [pre-commit, pre-push]
 
@@ -11,9 +10,9 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
-        args: ['--unsafe']
+        args: ["--unsafe"]
       - id: check-added-large-files
-        args: ['--maxkb=1024']
+        args: ["--maxkb=1024"]
       - id: check-merge-conflict
       - id: mixed-line-ending
       - id: check-toml
@@ -22,15 +21,15 @@ repos:
   - repo: local
     hooks:
       - id: tox-lint
-        name: "CI lint (tox -e lint)"
+        name: tox -e lint
         entry: uv run --extra dev tox -e lint
         language: system
         pass_filenames: false
         always_run: true
-        stages: [pre-commit, pre-push]
+        stages: [pre-commit]
 
       - id: molrs-pin-on-pypi
-        name: "molrs pin on PyPI"
+        name: molrs pin on PyPI
         entry: python3 .pre-commit/check_molrs_pin_on_pypi.py
         language: system
         pass_filenames: false
@@ -38,7 +37,7 @@ repos:
         stages: [pre-push]
 
       - id: tox-py
-        name: "CI test (tox -e py)"
+        name: tox -e py
         entry: uv run --extra dev tox -e py
         language: system
         pass_filenames: false

@@ -51,7 +51,7 @@ dev = [
 rdkit = ["rdkit"]  # optional: exercises the RDKitAdapter example only
 doc = [
     "zensical>=0.0.53",
-    "molcrafts-zensical-theme>=0.2.5",
+    "molcrafts-zensical-theme>=0.2.6",
     "mkdocstrings[python]>=0.24.0",
 ]
 all = ["molcrafts-molpy[dev,doc]"]
@@ -171,7 +171,6 @@ commands = [
 [tool.tox.env.py]
 package = "wheel"
 extras = ["dev"]
-# Follow the runner interpreter so CI matrix 3.12/3.13/3.14 all exercise tox -e py.
 base_python = ["python3"]
 pass_env = ["HOME", "PATH", "SSH_AUTH_SOCK", "TERM"]
 commands_pre = [

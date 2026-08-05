@@ -46,6 +46,28 @@ encoding:
   x: {field: t, type: quantitative, scale: {type: log}, title: "lag τ"}
   y: {field: msd, type: quantitative, scale: {type: log}, title: MSD}
   color: {value: "#0284c7"}
+annotations:
+  - kind: scaleBar
+    x: 20
+    y: 0.03
+    length: 30
+    label: "Δτ"
+    color: "#18432b"
+    tick: 0.008
+  - kind: arrow
+    x: 0.35
+    y: 0.05
+    x2: 1.2
+    y2: 0.8
+    label: "ballistic"
+    color: "#64748b"
+  - kind: arrow
+    x: 3
+    y: 2
+    x2: 12
+    y2: 12
+    label: "diffusive"
+    color: "#18432b"
 ```
 
 </div>
