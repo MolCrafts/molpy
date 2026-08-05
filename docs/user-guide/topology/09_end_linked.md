@@ -1,6 +1,6 @@
 # End-linked network
 
-**Script:** [`examples/topology/09_end_linked.py`](../../../examples/topology/09_end_linked.py)
+**Script:** [`examples/topology/09_end_linked.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/09_end_linked.py)
 
 Telechelic strands; only **end residue** carbons are marked for crosslinking. Mid-chain carbons never react — network vertices are the ends you chose.
 

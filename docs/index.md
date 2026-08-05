@@ -164,7 +164,7 @@ system.box = mp.Box.cubic(30.0)
 ### [Fill a periodic box](user-guide/09_packing/)
 
 Clash-free placement at a target density via
-[molpack](https://molcrafts.github.io/molpack/) — Packmol-grade packing in
+[molpack](https://docs.molcrafts.org/molpack/) — Packmol-grade packing in
 Rust, no external binary (`pip install molcrafts-molpack`).
 
 ```python
@@ -323,7 +323,7 @@ H  -0.2555  -3.5916  -0.7337</template>
 
 <dl class="molcrafts-tile-grid">
 <div>
-<dt><a href="https://molcrafts.github.io/molpack/">molpack</a></dt>
+<dt><a href="https://docs.molcrafts.org/molpack/">molpack</a></dt>
 <dd>Clash-free packing as a CLI, a Rust crate, and a Python package — same engine everywhere.</dd>
 </div>
 <div>

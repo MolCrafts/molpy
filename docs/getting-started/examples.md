@@ -34,7 +34,7 @@ See also: [Parsing Chemistry](../user-guide/01_parsing_chemistry.md) ·
 ## Solvent box — pack 500 waters
 
 Build one molecule, then fill a cube with clash-free copies through
-**[molpack](https://molcrafts.github.io/molpack/)**
+**[molpack](https://docs.molcrafts.org/molpack/)**
 (`pip install molcrafts-molpack`).
 
 ```python

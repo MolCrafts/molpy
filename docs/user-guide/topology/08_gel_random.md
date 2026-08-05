@@ -1,6 +1,6 @@
 # Random crosslinked gel
 
-**Script:** [`examples/topology/08_gel_random.py`](../../../examples/topology/08_gel_random.py)
+**Script:** [`examples/topology/08_gel_random.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/08_gel_random.py)
 
 Same melt as the exhaustive gel; pairing is `RandomSelector` to a target **conversion** (fraction of the limiting reactant’s sites) with a **seed** for reproducibility.
 

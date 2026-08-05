@@ -10,8 +10,8 @@ It is called once on ``import molpy`` so a stale major/minor pin surfaces
 immediately.
 """
 
-version = "0.12.0"
-release_date = "2026-08-04"
+version = "0.12.1"
+release_date = "2026-08-05"
 
 
 def _minor_tuple(ver: str) -> tuple[int, int]:
@@ -28,10 +28,16 @@ def _minor_tuple(ver: str) -> tuple[int, int]:
 
 
 def check_molrs_version() -> str:
-    """Require installed ``molcrafts-molrs`` to match MolPy's major.minor.
+    """Require installed ``molcrafts-molrs`` to match MolPy's **major.minor** only.
 
-    Patch versions may differ (e.g. molpy ``0.10.0`` with molrs ``0.10.1``).
-    A different major or minor fails hard.
+    Compatibility rule (SemVer-style for the 0.x line)::
+
+        molpy X.Y.*  ↔  molrs X.Y.*
+
+    * **Patch is ignored** — e.g. molpy ``0.12.1`` works with molrs ``0.12.0``
+      or ``0.12.3``.
+    * **Major or minor mismatch fails hard** — e.g. molpy ``0.12.1`` rejects
+      molrs ``0.11.9`` or ``0.13.0``.
 
     Returns:
         The exact installed molrs version string.
@@ -66,7 +72,8 @@ def check_molrs_version() -> str:
     raise ImportError(
         f"Minor-version mismatch: molpy {version} (expects {major}.{minor}.*) "
         f"but molcrafts-molrs {molrs_version}. "
-        f"Install a matching minor of molrs "
+        f"Patch versions are not part of the check — install any "
+        f"molrs {major}.{minor}.* "
         f"(`pip install 'molcrafts-molrs>={major}.{minor}.0,<{major}.{minor + 1}'`) "
         "or rebuild the editable molrs (`maturin develop` in molrs-python)."
     )

@@ -19,7 +19,6 @@ Day-to-day development practices:
 - [Coding Style](coding-style.md) — identifier style, formatting requirements, and the mutation contract
 - [Testing](testing.md) — pytest conventions, test markers, coverage requirements, and the distinction between local and external tests
 - [Release Process](release-process.md) — the shared molpy/molrs minor line and CI-driven package publication
-- [Third-Party Attributions](attribution.md) — licenses of ported code and bundled parameter data
 
 ## Architecture
 

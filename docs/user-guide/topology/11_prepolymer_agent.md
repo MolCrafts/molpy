@@ -1,6 +1,6 @@
 # Prepolymer + tetrafunctional agent
 
-**Script:** [`examples/topology/11_prepolymer_agent.py`](../../../examples/topology/11_prepolymer_agent.py)
+**Script:** [`examples/topology/11_prepolymer_agent.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/11_prepolymer_agent.py)
 
 Linear EO chains keep free hydroxyl ends. A small-molecule agent (`X4`, four SITE `a`) is merged into the world; the same **ETHER** reaction couples ends to the agent through a proximity selector — agent curing is assembly, not a special API.
 

@@ -122,7 +122,7 @@ mol_3d, report = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mo
 That is the line to remember about adapters: use one to reach *their*
 algorithms, not to repeat *ours*. Wrappers are for genuine external programs
 (AmberTools / antechamber). Packing is native
-[molpack](https://molcrafts.github.io/molpack/), not a subprocess wrapper.
+[molpack](https://docs.molcrafts.org/molpack/), not a subprocess wrapper.
 
 ## Choosing the right boundary
 

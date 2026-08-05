@@ -94,37 +94,37 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 Acronyms used across the [Compute](../compute/index.md) analyses.
 
 **RDF** — radial distribution function `g(r)`
-:   Probability of finding a neighbour at distance `r` relative to an ideal gas. See [Structural Analysis](../compute/structure.md).
+:   Probability of finding a neighbour at distance `r` relative to an ideal gas. See [RDF](../compute/rdf.md).
 
 **MSD** — mean-squared displacement
-:   `⟨|r(t) − r(0)|²⟩`; its slope gives the self-diffusion coefficient. See [Diffusion & Ionic Transport](../compute/transport.md).
+:   `⟨|r(t) − r(0)|²⟩`; its slope gives the self-diffusion coefficient. See [MSD](../compute/msd.md).
 
 **VACF** — velocity autocorrelation function
-:   `⟨v(0)·v(t)⟩`; its integral (Green–Kubo) gives diffusion, its FFT gives the VDOS. See [Velocity Autocorrelation & VDOS](../compute/vacf.md).
+:   `⟨v(0)·v(t)⟩`; its integral (Green–Kubo) gives diffusion, its FFT gives the VDOS. See [MSD](../compute/msd.md) (VACF via molrs).
 
 **VDOS** — vibrational density of states
-:   Spectral density of atomic motion, `∝ FFT[VACF]`. See [Velocity Autocorrelation & VDOS](../compute/vacf.md).
+:   Spectral density of atomic motion, `∝ FFT[VACF]`. See [MSD](../compute/msd.md) (VACF via molrs).
 
 **MCD** — mean-displacement correlation (distinct diffusion)
-:   Cross-correlated displacements between different species — the *distinct* part of diffusion, beyond the single-particle MSD. See [Diffusion & Ionic Transport](../compute/transport.md).
+:   Cross-correlated displacements between different species — the *distinct* part of diffusion, beyond the single-particle MSD. See [MSD](../compute/msd.md).
 
 **PMSD** — polarization / charge-dipole mean-squared displacement
 :   MSD of $\mathbf{M}(t)=\sum q_a\mathbf{r}_a$ (unwrapped); raw curve from
     `EinsteinConductivity`. Fit $\sigma$ with `LinearFit` + SI scale. See
-    [Diffusion & Ionic Transport](../compute/transport.md).
+    [MSD](../compute/msd.md).
 
 **Current ACF** — $\langle\mathbf{J}(0)\cdot\mathbf{J}(t)\rangle$
 :   From `GreenKuboConductivity` with $\mathbf{J}=\sum q\mathbf{v}$. Integrate
     with `CumulativeTrapezoid` then SI-scale for $\sigma$.
 
 **SDF** — spatial distribution function
-:   Three-dimensional density of neighbours around a reference frame (angular structure, not just radial). See [Distribution Functions](../compute/distributions.md).
+:   Three-dimensional density of neighbours around a reference frame (angular structure, not just radial). See [Distribution](../compute/distribution.md).
 
 **CDF** — combined distribution function
-:   A joint histogram over two geometric observables (e.g. distance × angle). See [Distribution Functions](../compute/distributions.md).
+:   A joint histogram over two geometric observables (e.g. distance × angle). See [Distribution](../compute/distribution.md).
 
 **PMFT** — potential of mean force and torque
-:   Free energy `−k_BT ln g` over relative position/orientation coordinates. See [Distribution Functions](../compute/distributions.md).
+:   Free energy `−k_BT ln g` over relative position/orientation coordinates. See [Distribution](../compute/distribution.md).
 
 **ROA / VCD** — Raman optical activity / vibrational circular dichroism
-:   Chiroptical vibrational spectra derived from correlation functions of the polarizability / magnetic-dipole responses. See [Vibrational Spectra](../compute/spectra.md).
+:   Chiroptical vibrational spectra derived from correlation functions of the polarizability / magnetic-dipole responses. See [Spectra](../compute/spectra.md).

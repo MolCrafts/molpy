@@ -2,7 +2,7 @@
 
 `pip install molcrafts-molpy` is enough for the default path: parse, build,
 embed, typify, pack, export, and analyze on the **molrs** stack (plus
-[molpack](https://molcrafts.github.io/molpack/) for packing). No system
+[molpack](https://docs.molcrafts.org/molpack/) for packing). No system
 scientific binaries are required.
 
 Anything that shells out to another package or executable is **optional**.
@@ -99,4 +99,3 @@ These are Python package groups, not scientific executables:
 
 - [Installation](installation.md)
 - [Wrapper and Adapter](../tutorials/07_wrapper_and_adapter.md) — how wrappers differ from adapters
-- [Third-Party Attributions](../developer/attribution.md) — licenses for ported algorithms and bundled FF data

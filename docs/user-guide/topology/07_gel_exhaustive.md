@@ -1,6 +1,6 @@
 # Exhaustive crosslinked gel
 
-**Script:** [`examples/topology/07_gel_exhaustive.py`](../../../examples/topology/07_gel_exhaustive.py)
+**Script:** [`examples/topology/07_gel_exhaustive.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/07_gel_exhaustive.py)
 
 Statistical network: grow strands, mark backbone carbons, replicate, then pair every allowed inter-chain site within a cutoff.
 

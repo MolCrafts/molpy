@@ -1,6 +1,6 @@
 # Linear homopolymer
 
-**Script:** [`examples/topology/01_linear.py`](../../../examples/topology/01_linear.py)
+**Script:** [`examples/topology/01_linear.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/01_linear.py)
 
 A path of identical residues is the simplest ruled topology. `build_linear` is a shortcut that formats CGSmiles and calls the sole entry `build`.
 
