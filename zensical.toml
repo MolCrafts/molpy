@@ -189,11 +189,13 @@ nav = [
   ] },
 ]
 
-# Theme injects MathJax config + document$ re-typeset; only the library is listed.
-# MolVis / MolPlot WC bundles load from CDN (fences live in molcrafts-zensical-theme).
+# Theme injects MathJax config + document$ re-typeset.
+# MolPlot: theme stages monorepo ../molplot/core/dist (or MOLPLOT_ELEMENTS_DIR /
+# node_modules) into docs/assets/molplot at build — gitignored, not vendored.
+# MolVis still CDN until a monorepo stage path is wired the same way.
 extra_javascript = [
   { path = "https://cdn.jsdelivr.net/npm/@molcrafts/molvis-stage@latest/dist/viewer.js", type = "module" },
-  { path = "https://cdn.jsdelivr.net/npm/@molcrafts/molplot@latest/dist/elements.js", type = "module" },
+  { path = "assets/molplot/elements.js", type = "module" },
   "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
 ]
 

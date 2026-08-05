@@ -151,6 +151,16 @@ docs/**
 !docs/assets/**/*.glb
 !docs/assets/**/*.js
 !docs/assets/**/*.sdf
+# molplot browser bundle: staged from monorepo molplot/core/dist (or npm) by
+# molcrafts-zensical-theme at zensical build — do not commit.
+docs/assets/molplot/
+# molplot fence $file data (JSON/CSV/YAML under docs/data/)
+!docs/data/
+!docs/data/**/
+!docs/data/**/*.json
+!docs/data/**/*.csv
+!docs/data/**/*.yaml
+!docs/data/**/*.yml
 
 # Demo Notebooks
 notebooks/

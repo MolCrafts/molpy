@@ -32,25 +32,82 @@ a continuous path, not a jump.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:9"
-mark:
-  type: line
-  strokeWidth: 2.2
-  interpolate: monotone
-data:
-  values:
-    - {t: 0.1, msd: 0.01}
-    - {t: 1.0, msd: 1.0}
-    - {t: 10.0, msd: 10.0}
-    - {t: 100.0, msd: 95.0}
+# annotations → VL rule/text layers (pan/zoom with the curve)
+config:
+  font: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
+  axis:
+    titleFont: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
+    labelFont: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
+    titleFontStyle: normal
+    labelFontStyle: normal
+    titleFontSize: 28
+    labelFontSize: 24
+    titlePadding: 14
+    labelPadding: 8
+    tickSize: 10
+    tickCount: 6
+    gridOpacity: 0.3
+  text:
+    font: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
+    fontStyle: normal
+    fontSize: 22
 encoding:
-  x: {field: t, type: quantitative, scale: {type: log}, title: "lag τ"}
-  y: {field: msd, type: quantitative, scale: {type: log}, title: MSD}
-  color: {value: "#0284c7"}
+  x:
+    type: quantitative
+    scale: {type: log, domain: [0.1, 100]}
+    title: "lag τ"
+    axis: {titleFontStyle: normal}
+  y:
+    type: quantitative
+    scale: {type: log, domain: [0.008, 120]}
+    title: "MSD"
+    axis: {titleFontStyle: normal}
+# Chord on the curve; yOffset lifts the |———| above the line (data space).
+annotations:
+  - kind: scaleBar
+    orientation: along
+    x: 0.18
+    y: 0.0324
+    x2: 0.65
+    y2: 0.4225
+    yOffset: 1.5
+    label: ballistic
+    color: "#18432b"
+    strokeWidth: 2
+    fontSize: 16
+  - kind: scaleBar
+    orientation: along
+    x: 2.2
+    y: 2.2
+    x2: 12
+    y2: 12
+    yOffset: 1.5
+    label: diffusive
+    color: "#18432b"
+    strokeWidth: 2
+    fontSize: 16
+  - kind: scaleBar
+    orientation: along
+    x: 28
+    y: 24.4
+    x2: 80
+    y2: 53
+    yOffset: 1.5
+    label: noisy
+    color: "#18432b"
+    strokeWidth: 2
+    fontSize: 16
+layer:
+  - data: {$file: data/msd/curve.json}
+    mark: {type: line, strokeWidth: 3, interpolate: monotone, color: "#0c5da5"}
+    encoding:
+      x: {field: x}
+      y: {field: y}
 ```
 
 </div>
 
-**Figure 1.** Schematic MSD: ballistic, linear diffusive window, noisy long lag.
+**Figure 1.** Schematic MSD with regimes marked by scale bars: ballistic $\propto\tau^{2}$, linear diffusive window (fit here), noisy long lag.
 </figure>
 
 ---
@@ -77,16 +134,3 @@ series = MSD(method="window")(frames)
 
 Green–Kubo $D$ from velocities: [VACF](vacf.md). Collective coupling:
 [Onsager](onsager.md).
-
----
-
-## 3. Pitfalls
-
-1. Wrapped coordinates → MSD saturates at the box size.
-2. Fitting the ballistic or noisy regime.
-3. Thermostat-heavy sampling for comparison with NVE [VACF](vacf.md).
-
-## See also
-
-- [VACF](vacf.md) · [Onsager](onsager.md) · [PMSD](pmsd.md) · [Van Hove](van_hove.md)
-- [API reference](../api/compute.md)

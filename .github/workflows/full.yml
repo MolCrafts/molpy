@@ -1,11 +1,8 @@
 name: Full
 
-# Same 3 OS × 3.12 / 3.13 / 3.14 unit matrix as CI, on master push and
-# manual dispatch. Kept as an explicit multi-platform smoke after land so
-# master always re-runs the full grid even when CI was skipped or rebased.
+# Manual multi-platform smoke. CI already covers master on every push —
+# do not auto-run here (avoids a second 3×3 matrix on the same commit).
 on:
-  push:
-    branches: [master]
   workflow_dispatch:
 
 jobs:
@@ -15,14 +12,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ['3.12', '3.13', '3.14']
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
+      - uses: astral-sh/setup-uv@v9.0.0
       - name: Fetch test data
         shell: bash
         run: |
@@ -31,5 +27,4 @@ jobs:
           mkdir -p "$dir"
           curl -fsSL https://github.com/molcrafts/tests-data/archive/refs/heads/master.tar.gz \
             | tar -xz -C "$dir" --strip-components=1 --exclude='*/con' --exclude='*/con/*'
-      - name: Unit tests
-        run: pytest tests/ -n auto
+      - run: uv run --extra dev tox -e py
