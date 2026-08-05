@@ -32,9 +32,8 @@ a continuous path, not a jump.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:9"
-# Matplotlib-style: |———| is a chord ON the curve (x,y)→(x2,y2), end-caps
-# perpendicular in log–log space. Times New Roman, roman (not italic).
-# Large type sizes so docs stay readable even before host fontScale updates.
+# annotations: one scaleBar = full |———| (spine + ⊥ caps + label), like
+# matplotlib FancyArrowPatch(arrowstyle='|-|'). Never hand-draw caps.
 config:
   font: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
   axis:
@@ -64,8 +63,42 @@ encoding:
     scale: {type: log, domain: [0.008, 120]}
     title: "MSD"
     axis: {titleFontStyle: normal}
+# reference chords on the curve; scaleBar offsets them off-path and draws caps
+annotations:
+  - kind: scaleBar
+    orientation: along
+    x: 0.18
+    y: 0.0324
+    x2: 0.65
+    y2: 0.4225
+    offsetLog: 0.42
+    capLog: 0.16
+    label: ballistic
+    color: "#18432b"
+    strokeWidth: 2.2
+  - kind: scaleBar
+    orientation: along
+    x: 2.2
+    y: 2.2
+    x2: 12
+    y2: 12
+    offsetLog: 0.42
+    capLog: 0.16
+    label: diffusive
+    color: "#18432b"
+    strokeWidth: 2.2
+  - kind: scaleBar
+    orientation: along
+    x: 28
+    y: 24.4
+    x2: 80
+    y2: 53
+    offsetLog: 0.42
+    capLog: 0.16
+    label: noisy
+    color: "#18432b"
+    strokeWidth: 2.2
 layer:
-  # schematic: ballistic ∝τ² → linear diffusive ∝τ → noisy long lag
   - data:
       values:
         - {t: 0.10, msd: 0.010}
@@ -92,59 +125,6 @@ layer:
     encoding:
       x: {field: t}
       y: {field: msd}
-
-  # |———| parallel to the local curve chord, offset in log–log space so the
-  # bar does not sit on the line (matplotlib: translate along path normal).
-  # End-caps are ⊥ to the bar in the same log–log metric.
-  - data:
-      values:
-        # ballistic  (offset from (0.18,0.0324)→(0.65,0.4225))
-        - {t: 0.1236, msd: 0.03909, t2: 0.4464, msd2: 0.5098}
-        # diffusive  (offset from (2.2,2.2)→(12,12))
-        - {t: 1.635,  msd: 2.961,   t2: 8.917,  msd2: 16.15}
-        # noisy      (offset from (28,24.4)→(80,53))
-        - {t: 21.82,  msd: 34.21,   t2: 62.33,  msd2: 74.3}
-    mark: {type: rule, strokeWidth: 2.2, color: "#18432b", strokeCap: butt}
-    encoding:
-      x: {field: t}
-      y: {field: msd}
-      x2: {field: t2}
-      y2: {field: msd2}
-
-  # end-caps ⊥ bar (log–log)
-  - data:
-      values:
-        - {t: 0.1071, msd: 0.04199, t2: 0.1427, msd2: 0.0364}
-        - {t: 0.3869, msd: 0.5476,  t2: 0.5151, msd2: 0.4746}
-        - {t: 1.46,   msd: 3.315,   t2: 1.831,  msd2: 2.644}
-        - {t: 7.963,  msd: 18.08,   t2: 9.985,  msd2: 14.42}
-        - {t: 19.84,  msd: 38.9,    t2: 23.99,  msd2: 30.07}
-        - {t: 56.68,  msd: 84.5,    t2: 68.55,  msd2: 65.33}
-    mark: {type: rule, strokeWidth: 2.2, color: "#18432b"}
-    encoding:
-      x: {field: t}
-      y: {field: msd}
-      x2: {field: t2}
-      y2: {field: msd2}
-
-  # labels further out along the same offset normal (Times roman)
-  - data:
-      values:
-        - {t: 0.1765, msd: 0.1629, label: "ballistic"}
-        - {t: 3.045,  msd: 8.671,  label: "diffusive"}
-        - {t: 30.49,  msd: 65.21,  label: "noisy"}
-    mark:
-      type: text
-      font: "Times New Roman, Times, STIX Two Text, STIXGeneral, serif"
-      fontStyle: normal
-      fontSize: 22
-      color: "#18432b"
-      align: center
-      baseline: middle
-    encoding:
-      x: {field: t}
-      y: {field: msd}
-      text: {field: label, type: nominal}
 ```
 
 </div>
