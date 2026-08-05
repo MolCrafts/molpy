@@ -4,7 +4,7 @@
 
 From a one-line string to an editable structure. MolPy reads two chemical
 notations — **SMILES** for one concrete molecule, **SMARTS** for a structural
-query — and both are parsed by `molrs`, exposed as types rather than helper
+query — and both are parsed by the chemistry engine, exposed as types rather than helper
 functions.
 
 ## Two notations, two purposes
@@ -30,11 +30,10 @@ intermediate representation, `SmartsPattern` gives you a compiled query.
 specified molecule. It parses the string and returns an `Atomistic` containing
 atoms and bonds.
 
-
 ```python
 import molpy as mp
 
-mol = mp.io.read_smiles("CC(=O)OCC")  # ethyl acetate
+mol = mp.io.read_smiles("CC(=O)OCC") # ethyl acetate
 print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")
 
 elements = [atom.get("element") for atom in mol.atoms]
@@ -46,40 +45,36 @@ atoms: 6, bonds: 5
 ['C', 'C', 'O', 'O', 'C', 'C']
 ```
 
-
 **Hydrogens are not added.** A SMILES string states connectivity; filling
 open valences is a separate perception step, so `read_smiles` gives you exactly
 the heavy-atom skeleton the string names. Ask for the hydrogens when you want
 them:
 
-
 ```python
 skeleton = mp.io.read_smiles("CCO")
 filled = mp.Perceive().find_hydrogens(skeleton)
 
-print(f"skeleton: {len(skeleton.atoms)} atoms")  # C, C, O
-print(f"filled:   {len(filled.atoms)} atoms")  # + 6 H
+print(f"skeleton: {len(skeleton.atoms)} atoms") # C, C, O
+print(f"filled: {len(filled.atoms)} atoms") # + 6 H
 print("the input is untouched:", len(skeleton.atoms))
 ```
 
 ```text
 skeleton: 3 atoms
-filled:   9 atoms
+filled: 9 atoms
 the input is untouched: 3
 ```
-
 
 A `.`-separated SMILES names a *set* of molecules, not a molecule — ion
 pairs and solvent mixtures use this. `read_smiles` refuses it rather than
 silently returning a disconnected graph; `SmilesIR.components()` takes it
 apart.
 
-
 ```python
 try:
-    mp.io.read_smiles("[Li+].[F-]")
+ mp.io.read_smiles("[Li+].[F-]")
 except ValueError as exc:
-    print("refused:", exc)
+ print("refused:", exc)
 
 ions = [mp.Atomistic.adopt(m) for m in mp.SmilesIR("[Li+].[F-]").components()]
 print(f"components: {len(ions)} -> {[len(i.atoms) for i in ions]}")
@@ -90,13 +85,11 @@ refused: read_smiles needs one component, '[Li+].[F-]' has 2. Use mp.SmilesIR(sm
 components: 2 -> [1, 1]
 ```
 
-
 ### Aromaticity comes from the notation, and perception can revise it
 
 Aromatic atoms are lowercase in SMILES, and the parser records that as
 `is_aromatic` on each atom. Ring-closure digits must match: the first
 occurrence opens the ring, the second closes it.
-
 
 ```python
 benzene = mp.io.read_smiles("c1ccccc1")
@@ -107,31 +100,27 @@ print([atom.get("is_aromatic") for atom in benzene.atoms])
 [1, 1, 1, 1, 1, 1]
 ```
 
-
 `Perceive().find_aromaticity()` **re-derives** the flag from valence rather
 than trusting the notation — so run it on a structure that has its hydrogens.
 On the bare skeleton those six carbons have open valences and are, correctly,
 not aromatic:
 
-
 ```python
 def aromatic_count(graph):
-    return sum(bool(atom.get("is_aromatic")) for atom in graph.atoms)
-
+ return sum(bool(atom.get("is_aromatic")) for atom in graph.atoms)
 
 print(
-    "skeleton, re-perceived:", aromatic_count(mp.Perceive().find_aromaticity(benzene))
+ "skeleton, re-perceived:", aromatic_count(mp.Perceive().find_aromaticity(benzene))
 )
 
 with_h = mp.Perceive().find_hydrogens(benzene)
-print("with hydrogens:        ", aromatic_count(mp.Perceive().find_aromaticity(with_h)))
+print("with hydrogens: ", aromatic_count(mp.Perceive().find_aromaticity(with_h)))
 ```
 
 ```text
 skeleton, re-perceived: 0
-with hydrogens:         6
+with hydrogens: 6
 ```
-
 
 ## SMARTS: pattern matching, not structure building
 
@@ -141,7 +130,6 @@ different. Where SMILES encodes one concrete molecule, SMARTS encodes a query:
 *any* molecule containing that environment. A `SmartsPattern` has no atoms to
 read — it has matches to find.
 
-
 ```python
 query = mp.SmartsPattern("[C;X4][O;H1]")
 print(f"query atoms: {query.num_query_atoms}, max bond depth: {query.max_bond_depth}")
@@ -149,15 +137,14 @@ print(f"query atoms: {query.num_query_atoms}, max bond depth: {query.max_bond_de
 ethanol = mp.Perceive().find_hydrogens(mp.io.read_smiles("CCO"))
 print("matches ethanol:", query.has_match(ethanol))
 for match in query.find_matches(ethanol):
-    print("  matched atom handles:", match.atoms)
+ print(" matched atom handles:", match.atoms)
 ```
 
 ```text
 query atoms: 2, max bond depth: 1
 matches ethanol: True
-  matched atom handles: [4294967298, 4294967299]
+ matched atom handles: [4294967298, 4294967299]
 ```
-
 
 Note the pattern is matched against the **hydrogen-filled** structure:
 `X4` counts connections and `H1` counts hydrogens, so both are answered wrong on
@@ -174,7 +161,6 @@ workflows. `SmilesIR` is the step in between, for when you want to know what the
 string said before committing to a graph — how many molecules it names, and
 whether to take them together or separately.
 
-
 ```python
 ir = mp.SmilesIR("CCO.O")
 print(f"components: {ir.n_components}")
@@ -184,16 +170,15 @@ print(f"to_atomistic(): one graph of {len(together.atoms)} atoms")
 
 separate = [mp.Atomistic.adopt(m) for m in ir.components()]
 print(
-    f"components():   {len(separate)} graphs of {[len(m.atoms) for m in separate]} atoms"
+ f"components(): {len(separate)} graphs of {[len(m.atoms) for m in separate]} atoms"
 )
 ```
 
 ```text
 components: 2
 to_atomistic(): one graph of 4 atoms
-components():   2 graphs of [3, 1] atoms
+components(): 2 graphs of [3, 1] atoms
 ```
-
 
 ## Choosing the right entry point
 

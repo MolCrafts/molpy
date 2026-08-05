@@ -22,8 +22,6 @@ MPI and job-scheduler launchers are supported via the ``launcher`` parameter::
     engine = LAMMPSEngine("lmp", launcher=["srun", "--ntasks", "16"])
 """
 
-import os
-import shutil
 import subprocess
 import tempfile
 from abc import ABC, abstractmethod
@@ -32,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from molpy.core.script import Script
+from molpy.wrapper.env import EnvSpec
 
 
 class Engine(ABC):
@@ -42,6 +41,11 @@ class Engine(ABC):
     normalization, working-directory management, and command prefixing
     (launcher + environment wrapper).
 
+    Environment isolation uses the shared
+    :class:`~molpy.wrapper.env.EnvSpec` contract (same as wrappers): omit
+    both ``env`` and ``env_manager`` for the system ``PATH``, or set both
+    explicitly (``"conda"``, ``"venv"`` / ``"pip"`` / ``"virtualenv"``).
+
     Attributes:
         executable: Path or command to the engine binary.
         work_dir: Default working directory; ``None`` means a temporary
@@ -50,8 +54,8 @@ class Engine(ABC):
             executable, e.g. ``["mpirun", "-np", "16"]`` or
             ``["srun", "--ntasks", "16"]``.
         env_vars: Extra environment variables forwarded to the subprocess.
-        env: Conda / virtual-environment name to activate before execution.
-        env_manager: Environment manager; currently ``"conda"`` is supported.
+        env: Conda env name / prefix, or venv prefix, for isolation.
+        env_manager: Environment manager (``"conda"``, ``"venv"``, …).
         scripts: Scripts registered by the last :meth:`run` call (or ``[]``
             before the first call).
         input_script: Primary input script resolved by the last :meth:`run`
@@ -79,7 +83,7 @@ class Engine(ABC):
         workdir: str | Path | None = None,
         launcher: list[str] | None = None,
         env_vars: dict[str, str] | None = None,
-        env: str | None = None,
+        env: str | Path | None = None,
         env_manager: str | None = None,
         check_executable: bool = True,
     ) -> None:
@@ -92,32 +96,30 @@ class Engine(ABC):
             launcher: MPI or scheduler prefix prepended before the executable,
                 e.g. ``["mpirun", "-np", "16"]`` or ``["srun", "--ntasks", "8"]``.
             env_vars: Extra environment variables set for the subprocess.
-            env: Conda / virtual-environment name to activate.  Must be
-                provided together with *env_manager*.
-            env_manager: Environment manager type.  ``"conda"`` is currently
-                supported; activation uses ``conda run -n <env>``.
-            check_executable: Verify the executable is on PATH at construction
-                time.  Set to ``False`` in tests or when the binary is only
-                available on a remote node.
+            env: Conda env name / prefix, or venv prefix.  Must be provided
+                together with *env_manager* (see
+                :class:`~molpy.wrapper.env.EnvSpec`).
+            env_manager: ``"conda"``, ``"venv"``, ``"pip"``, or
+                ``"virtualenv"``.  Conda isolation uses
+                ``conda run --no-capture-output``; venv injects ``PATH``.
+            check_executable: Verify the executable is available at construction
+                time (system ``PATH`` or the configured env).  Set to
+                ``False`` in tests or when the binary is only available on a
+                remote node.
 
         Raises:
             FileNotFoundError: If *check_executable* is ``True`` and the
                 executable is not found.
-            ValueError: If exactly one of *env* / *env_manager* is provided.
+            ValueError: If exactly one of *env* / *env_manager* is provided,
+                or *env_manager* is unsupported.
         """
-        if (env is None) != (env_manager is None):
-            raise ValueError(
-                "Both 'env' and 'env_manager' must be set together, or both omitted "
-                "(environment configuration is incomplete).  "
-                "Got env=%r, env_manager=%r." % (env, env_manager)
-            )
-
+        spec = EnvSpec.resolve(env, env_manager)
         self.executable = executable
         self.work_dir = Path(workdir) if workdir is not None else None
         self.launcher = launcher
         self.env_vars: dict[str, str] = env_vars or {}
-        self.env = env
-        self.env_manager = env_manager
+        self.env = spec.env
+        self.env_manager = spec.env_manager
 
         # Initialised here so attribute access is always valid.
         self.scripts: list[Script] = []
@@ -187,16 +189,24 @@ class Engine(ABC):
     # Public methods
     # ------------------------------------------------------------------
 
+    def process_env(self) -> EnvSpec:
+        """Return the validated :class:`~molpy.wrapper.env.EnvSpec` for this engine."""
+        return EnvSpec.resolve(self.env, self.env_manager)
+
     def check_executable(self) -> None:
-        """Verify the executable is available on PATH.
+        """Verify the executable is available in the configured environment.
+
+        Uses system ``PATH`` when no isolation is set; otherwise resolves
+        inside the configured conda / venv via :class:`~molpy.wrapper.env.EnvSpec`.
 
         Raises:
             FileNotFoundError: If the executable cannot be found.
         """
-        if not shutil.which(self.executable):
+        if self.process_env().resolve_executable(self.executable) is None:
             raise FileNotFoundError(
-                f"Executable '{self.executable}' not found in PATH. "
-                "Install the engine or provide the full path."
+                f"Executable '{self.executable}' not found in the configured "
+                "environment.  Install the engine, put it on PATH, set "
+                "env/env_manager, or provide the full path."
             )
 
     def run(
@@ -290,9 +300,9 @@ class Engine(ABC):
 
             [env_wrapper...] [launcher...] executable [engine_args...]
 
-        where *env_wrapper* is only present when :attr:`env_manager` is set.
-        Currently ``"conda"`` activates the environment via
-        ``conda run --no-capture-output -n <env>``.
+        where *env_wrapper* comes from :meth:`EnvSpec.command_prefix`
+        (conda uses ``conda run --no-capture-output``; venv has an empty
+        prefix and injects ``PATH`` via :meth:`_merged_env`).
 
         Args:
             engine_args: Engine-specific flags that follow the executable,
@@ -301,9 +311,7 @@ class Engine(ABC):
         Returns:
             Full command list suitable for :func:`subprocess.run`.
         """
-        cmd: list[str] = []
-        if self.env_manager == "conda":
-            cmd = ["conda", "run", "--no-capture-output", "-n", self.env]
+        cmd = self.process_env().command_prefix(no_capture_output=True)
         cmd += self.launcher or []
         cmd += [self.executable] + engine_args
         return cmd
@@ -325,12 +333,12 @@ class Engine(ABC):
     def _merged_env(self, extra: dict[str, str] | None = None) -> dict[str, str] | None:
         """Build the environment dict for :func:`subprocess.run`.
 
-        Merge order (later entries win): ``os.environ`` → :attr:`env_vars`
-        → *extra*.
+        Delegates to :class:`~molpy.wrapper.env.EnvSpec` (venv ``PATH`` /
+        ``VIRTUAL_ENV`` injection, then :attr:`env_vars`, then *extra*).
 
-        Returns ``None`` when both :attr:`env_vars` and *extra* are empty so
-        that the subprocess inherits the parent environment without an
-        unnecessary full copy.
+        Returns ``None`` when isolation is off and both :attr:`env_vars` and
+        *extra* are empty so the subprocess inherits the parent environment
+        without an unnecessary full copy.
 
         Args:
             extra: Additional variables to merge on top of :attr:`env_vars`.
@@ -338,13 +346,13 @@ class Engine(ABC):
         Returns:
             Merged environment dict, or ``None`` if nothing to override.
         """
-        if not self.env_vars and not extra:
+        spec = self.process_env()
+        if spec.is_system and not self.env_vars and not extra:
             return None
-        merged = dict(os.environ)
-        merged.update(self.env_vars)
+        overlay = dict(self.env_vars)
         if extra:
-            merged.update(extra)
-        return merged
+            overlay.update(extra)
+        return spec.merge_environ(extra=overlay)
 
     def __repr__(self) -> str:
         parts = [f"executable='{self.executable}'"]

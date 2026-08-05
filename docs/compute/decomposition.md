@@ -1,42 +1,50 @@
 # Decomposition
 
-Overview
+Textbook guide to **PCA and k-means** on descriptor tables — reducing
+trajectories to a handful of structural coordinates and discrete states.
 
-| Class / entry | Description |
-|---------------|-------------|
-| [`Pca`](#pca) | Two-component PCA over a list of `DescriptorRow`. |
-| [`KMeans`](#kmeans) | k-means over a `Pca` result. |
+---
 
-Details
+## 1. PCA
 
-The `molpy.compute.decomposition` module: PCA and k-means on descriptor rows.
+A trajectory analyzed with [Shape](shape.md) / [Order](order.md) yields a
+high-dimensional table (one row of descriptors per configuration). **Principal
+component analysis** re-expresses that table in the orthogonal directions of
+greatest variance. The first two components usually capture the dominant motion.
 
-## `Pca`
+**Always standardize columns** before PCA — otherwise one large-magnitude
+feature dominates.
 
-Two-component PCA over a list of `DescriptorRow`.
+## 2. K-means
+
+Given reduced coordinates, **k-means** partitions into $k$ clusters (Lloyd).
+It turns a continuous PCA map into discrete states (folded/unfolded,
+paired/free). $k$ is a modelling choice: try several and check stability.
+
+---
+
+## 3. Usage
 
 ```python
 import numpy as np
-from molpy.compute import DescriptorRow, Pca, KMeans
+from molpy.compute import Pca, DescriptorRow, KMeans
 
 rng = np.random.default_rng(0)
-rows_a = rng.normal(loc=[0, 0, 0, 0], scale=0.1, size=(20, 4))
-rows_b = rng.normal(loc=[5, 5, 5, 5], scale=0.1, size=(20, 4))
-rows = [DescriptorRow(r.astype(np.float64)) for r in np.vstack([rows_a, rows_b])]
-
+descriptor_matrix = rng.normal(size=(50, 8))
+rows = [DescriptorRow(r) for r in descriptor_matrix]
 pca = Pca()(rows)
-pca.coords.shape  # (40, 2)
+labels = KMeans(k=3, max_iter=100, seed=0)(pca)
 ```
 
-## `KMeans`
+---
 
-k-means over a `Pca` result.
+## 4. Pitfalls
 
-```python
-labels = KMeans(k=2, seed=42)(pca).labels
-```
+1. Unscaled features before PCA/k-means.
+2. Reading too much into $k$ — k-means always returns $k$ clusters.
+3. Mixing incomparable units across columns.
 
 ## See also
 
-- [Shape](shape.md)
-- [Cluster](cluster.md)
+- [Shape](shape.md) · [Cluster](cluster.md) · [Order](order.md)
+- [API reference](../api/compute.md)

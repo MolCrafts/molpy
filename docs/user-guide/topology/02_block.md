@@ -10,7 +10,7 @@ from eo_kit import eo_builder, ethylene_glycol
 a, b = ethylene_glycol(seed=42), ethylene_glycol(seed=43)
 builder = eo_builder(extra={"A": a, "B": b})
 block = builder.build_sequence(["A"] * 6 + ["B"] * 4)
-# → build_sequence(["A"] * 6 + ["B"] * 4)  →  residue sequence AAAAAABBBB
+# → build_sequence(["A"] * 6 + ["B"] * 4) → residue sequence AAAAAABBBB
 ```
 
 Use `build_sequence` when a polydispersity planner has already emitted a list of monomer ids ([Polydisperse Systems](../05_polydisperse_systems.md)).

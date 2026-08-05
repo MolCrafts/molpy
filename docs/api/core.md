@@ -29,20 +29,20 @@ mol = mp.Atomistic(name="water")
 o = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
 h = mol.def_atom(element="H", x=0.957, y=0.0, z=0.0)
 mol.def_bond(o, h)
-mol.get_topo(gen_angle=True)  # write angles on mol; returns self
+mol.get_topo(gen_angle=True) # write angles on mol; returns self
 # bulk reads: mol.atoms["x"] / mol.xyz — no full view materialization
 
 # Block + Frame: tabular snapshot. `meta` is explicitly typed, so a scalar
 # annotation goes in as a MetaValue rather than a bare Python object.
 frame = mp.Frame(
-    blocks={"atoms": {"element": ["O", "H"], "x": [0.0, 0.957]}},
-    meta={"timestep": mp.MetaValue("i64", 0)},
+ blocks={"atoms": {"element": ["O", "H"], "x": [0.0, 0.957]}},
+ meta={"timestep": mp.MetaValue("i64", 0)},
 )
 
 # Box: periodic cell
 box = mp.Box.cubic(20.0)
 wrapped = box.wrap([[21.0, 0.0, 0.0]])
-d = box.dist([[0.0, 0.0, 0.0]], [[19.5, 0.0, 0.0]])  # minimum-image distance
+d = box.dist([[0.0, 0.0, 0.0]], [[19.5, 0.0, 0.0]]) # minimum-image distance
 
 # ForceField: parameter data
 ff = mp.ForceField(name="demo", units="real")

@@ -1,7 +1,7 @@
 # 3D Conformer Generation
 
 Between SMILES and simulation stands one hard step: real coordinates.
-`Conformer` takes it with the molrs generator — and reports every stage of the
+`Conformer` takes it with the conformer generator — and reports every stage of the
 attempt.
 
 ## What conformer generation solves
@@ -10,9 +10,9 @@ A parsed molecule is a *graph*: elements and bonds, but no geometry. Almost
 everything downstream — typification's SMARTS matching that needs 3D, packing,
 force-field evaluation, export to a simulation engine — needs real coordinates.
 
-**`Conformer` embeds a graph into 3D using the molrs Rust generator and returns a
+**`Conformer` embeds a graph into 3D using the native generator and returns a
 fresh `Atomistic` plus a per-stage report.** Hydrogens are added as needed and
-the input graph is never mutated (molrs clones it internally).
+the input graph is never mutated (the input is not mutated).
 
 ## Generating a conformer
 
@@ -20,11 +20,11 @@ the input graph is never mutated (molrs clones it internally).
 import molpy as mp
 from molpy.conformer import Conformer
 
-mol = mp.io.read_smiles("CCO")  # ethanol graph (heavy atoms only)
+mol = mp.io.read_smiles("CCO") # ethanol graph (heavy atoms only)
 mol_3d, report = Conformer(seed=42).generate(mol)
 
-print(mol_3d.n_atoms)  # 9  — heavy atoms + added hydrogens
-print(report.final_energy)  # energy of the returned structure
+print(mol_3d.n_atoms) # 9 — heavy atoms + added hydrogens
+print(report.final_energy) # energy of the returned structure
 ```
 
 `generate` returns a **tuple**: the new `Atomistic` (with coordinates and any
@@ -33,7 +33,7 @@ you can generate several independent conformers from the same graph.
 
 ## Constructor parameters
 
-`Conformer` subclasses `molrs.conformer.Conformer`; the constructor parameters are
+`Conformer` subclasses `the conformer engine`; the constructor parameters are
 inherited unchanged:
 
 | Parameter | Meaning |
@@ -43,7 +43,7 @@ inherited unchanged:
 | `seed` | RNG seed for the stochastic embedding. **Set it for reproducible geometries** — omitting it gives a different conformer each run. |
 
 Charged atoms must already carry the canonical integer `"formal_charge"` key
-(the parsers emit it) so molrs fills the right hydrogen count for `[N+]` / `[N-]`.
+(the parsers emit it) so the generator fills the right hydrogen count for `[N+]` / `[N-]`.
 
 ## Reading the report
 
@@ -58,11 +58,11 @@ Each `ConformerStageReport` records `stage`, `steps`, `converged`,
 
 ```python
 for s in report.stages:
-    status = "converged" if s.converged else "hit step limit"
-    # A stage that never ran an energy model reports None rather than 0.0.
-    before = "n/a" if s.energy_before is None else f"{s.energy_before:.3f}"
-    after = "n/a" if s.energy_after is None else f"{s.energy_after:.3f}"
-    print(f"{s.stage}: {before} -> {after} ({s.steps} steps, {status})")
+ status = "converged" if s.converged else "hit step limit"
+ # A stage that never ran an energy model reports None rather than 0.0.
+ before = "n/a" if s.energy_before is None else f"{s.energy_before:.3f}"
+ after = "n/a" if s.energy_after is None else f"{s.energy_after:.3f}"
+ print(f"{s.stage}: {before} -> {after} ({s.steps} steps, {status})")
 ```
 
 A stage that reports `converged = False` means it exhausted its step budget —
@@ -71,14 +71,14 @@ the geometry is usable but not fully relaxed; try a slower `speed`.
 ## Pitfalls
 
 - **No `seed` = non-reproducible.** Two runs give different (both valid)
-  conformers. Pin `seed` whenever you compare or cache geometries.
+ conformers. Pin `seed` whenever you compare or cache geometries.
 - **A graph with no atoms raises `ValueError`.** Parse before you generate.
 - This is a *single*-conformer embedder, not a conformer-ensemble search; call
-  it repeatedly with different seeds if you need diversity.
+ it repeatedly with different seeds if you need diversity.
 
 ## See also
 
 - [Parsing Chemistry](01_parsing_chemistry.md) — building the input graph.
 - [Force Field Typification](06_typifier.md) — the next step, which needs 3D.
 - [Geometry Optimization](08_geometry_optimization.md) — force-field
-  relaxation once the molecule has a force field.
+ relaxation once the molecule has a force field.

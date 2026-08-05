@@ -20,11 +20,11 @@ frame["atoms"] = {"x": [0.0, 1.0], "y": [0.0, 0.0], "z": [0.0, 0.0]}
 
 ```python
 frame["bonds"] = Block(
-    {
-        "type": ["C-H"],
-        "atomi": [0],
-        "atomj": [1],
-    }
+ {
+ "type": ["C-H"],
+ "atomi": [0],
+ "atomj": [1],
+ }
 )
 ```
 
@@ -120,8 +120,8 @@ mol = mp.Atomistic()
 atom1 = mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
 atom2 = mol.def_atom(element="H", x=1.1, y=0.0, z=0.0)
 bond = mol.def_bond(atom1, atom2)
-print(bond.itom)  # Atom object
-print(bond.jtom)  # Atom object
+print(bond.itom) # Atom object
+print(bond.jtom) # Atom object
 ```
 
 In this context, `itom` and `jtom` are explicit references to Atom objects, not indices. The naming is intentionally short because these fields are accessed frequently during structure manipulation, and the `tom` suffix signals that the value is an object rather than a numeric identifier. A corresponding strict rule applies: `itom`, `jtom`, `ktom`, and `ltom` must always store Atom references and must never store integers.
@@ -149,10 +149,10 @@ atomi_list = [atoms.index(bond.itom) for bond in bonds]
 atomj_list = [atoms.index(bond.jtom) for bond in bonds]
 
 frame["bonds"] = Block(
-    {
-        "atomi": atomi_list,
-        "atomj": atomj_list,
-    }
+ {
+ "atomi": atomi_list,
+ "atomj": atomj_list,
+ }
 )
 ```
 
@@ -164,13 +164,12 @@ rebuilt = mp.Atomistic()
 rebuilt_atoms = [rebuilt.def_atom(element=atom["element"]) for atom in atoms]
 
 for i in range(len(frame["bonds"]["atomi"])):
-    atomi = int(frame["bonds"]["atomi"][i])
-    atomj = int(frame["bonds"]["atomj"][i])
-    bond = rebuilt.def_bond(rebuilt_atoms[atomi], rebuilt_atoms[atomj])
+ atomi = int(frame["bonds"]["atomi"][i])
+ atomj = int(frame["bonds"]["atomj"][i])
+ bond = rebuilt.def_bond(rebuilt_atoms[atomi], rebuilt_atoms[atomj])
 ```
 
 These conversions must be explicit and localized at the boundary between Frame and Entity layers. Mixing the two representations inside the same object is not allowed. The namespace structure in Frame ensures that all related fields (such as bond indices and bond types) are kept together during conversion, simplifying the logic and reducing the chance of misalignment errors.
-
 
 ### For contributors
 

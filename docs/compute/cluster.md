@@ -1,63 +1,53 @@
 # Cluster
 
-Overview
+Textbook guide to **connectivity clustering** — finding aggregates from a
+neighbor graph before shape or property reductions.
 
-| Class / entry | Description |
-|---------------|-------------|
-| [`Cluster`](#cluster) | Connected components from a neighbor list. |
-| [`ClusterCenters`](#clustercenters) | Geometric centers of clusters. |
-| [`ClusterProperties`](#clusterproperties) | Size and shape properties of clusters. |
+---
 
-Details
+## 1. Connected components as aggregates
 
-The `molpy.compute.cluster` module: connected components and cluster properties.
+`Cluster` builds a graph from a [NeighborList](neighborlist.md) and returns
+connected components larger than `min_cluster_size` — micelles, droplets,
+percolating networks. The neighbor cutoff **is** the physical definition of
+"bonded"; read it from the first minimum of $g(r)$ ([RDF](rdf.md)).
 
-## `Cluster`
+`ClusterProperties` reduces each cluster to size, center, mass, gyration tensor,
+and $R_g$ in one call. Shape operators on [Shape](shape.md) consume the same
+cluster assignment.
 
-Connected components from a neighbor list.
+---
+
+## 2. Usage
 
 ```python
 import numpy as np
 import molpy as mp
 
 rng = np.random.default_rng(0)
-xyz = rng.uniform(0.0, 10.0, size=(40, 3))
+xyz = rng.uniform(0.0, 20.0, size=(200, 3))
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(10.0)
+frame.box = mp.Box.cubic(20.0)
 ```
 
 ```python
-from molpy.compute import NeighborList, Cluster
+from molpy.compute import NeighborList, Cluster, ClusterProperties
 
-nlist = NeighborList(cutoff=3.0)(frame)
-clusters = Cluster(min_cluster_size=1)(frame, nlist)
-clusters.num_clusters
+nlist = NeighborList(cutoff=1.6)(frame)
+clusters = Cluster(min_cluster_size=20)([frame], [nlist])
+props = ClusterProperties()([frame], clusters)
 ```
 
-## `ClusterCenters`
+---
 
-Geometric centers of clusters.
+## 3. Pitfalls
 
-```python
-from molpy.compute import ClusterCenters
-
-centers = ClusterCenters()(frame, clusters)
-centers.centers
-```
-
-## `ClusterProperties`
-
-Size and shape properties of clusters.
-
-```python
-from molpy.compute import ClusterProperties
-
-# Sequence of frames + matching ClusterResult sequence
-props = ClusterProperties()([frame], [clusters])
-```
+1. Cutoff too large merges distinct aggregates; too small fragments one.
+2. Ignoring the cluster-size distribution when validating the cutoff.
+3. PBC-split clusters without unwrapping.
 
 ## See also
 
-- [Shape](shape.md)
-- [NeighborList](neighborlist.md)
+- [Shape](shape.md) · [NeighborList](neighborlist.md) · [RDF](rdf.md)
+- [API reference](../api/compute.md)

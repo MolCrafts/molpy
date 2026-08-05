@@ -6,7 +6,7 @@ Statistical network: grow strands, mark backbone carbons, replicate, then pair e
 
 ```text
 build_linear → mark_backbone_crosslink_sites → Replicas.grid
-  → GraphAssembler(XLINK).assemble(..., ExhaustiveSelector)
+ → GraphAssembler(XLINK).assemble(..., ExhaustiveSelector)
 ```
 
 ```python
@@ -19,8 +19,8 @@ mark_backbone_crosslink_sites(strand, step=2)
 melt = Replicas(strand).grid(2, spacing=6.0, jitter=0.4, seed=3)
 
 gel = GraphAssembler(mp.Reaction(XLINK)).assemble(
-    melt,
-    ExhaustiveSelector(cutoff=6.0, exclude_same_molecule=True),
+ melt,
+ ExhaustiveSelector(cutoff=6.0, exclude_same_molecule=True),
 )
 ```
 

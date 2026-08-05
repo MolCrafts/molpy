@@ -16,8 +16,8 @@ mark_residue_crosslink_sites(strand, {"CAPA", "CAPB"}, site="x", leaving="h")
 melt = Replicas(strand).times(6, spacing=5.0)
 
 gel = GraphAssembler(mp.Reaction(XLINK)).assemble(
-    melt,
-    ExhaustiveSelector(cutoff=8.0, exclude_same_molecule=True),
+ melt,
+ ExhaustiveSelector(cutoff=8.0, exclude_same_molecule=True),
 )
 ```
 

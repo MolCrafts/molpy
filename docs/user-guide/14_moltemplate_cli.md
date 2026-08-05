@@ -14,13 +14,13 @@ molpy moltemplate run water.lt --emit lammps --out-dir out/
 # Generate every engine at once
 molpy moltemplate run water.lt --emit all --out-dir out/
 
-# FF-only: convert .lt force field to MolPy XML
+# FF-only: convert.lt force field to MolPy XML
 molpy moltemplate convert gaff2.lt gaff2.xml
 
-# .lt → MolPy Python script (inverse of moltemplate — hand-editable)
+#.lt → MolPy Python script (inverse of moltemplate — hand-editable)
 molpy moltemplate convert water.lt water.py
 
-# MolPy system → .lt (ltemplify: bundle an Atomistic+ForceField back as .lt)
+# MolPy system →.lt (ltemplify: bundle an Atomistic+ForceField back as.lt)
 molpy moltemplate ltemplify water.lt water_regen.lt
 
 # Dump parsed IR (debug)
@@ -32,16 +32,16 @@ molpy moltemplate parse water.lt --json ir.json
 ### `run` — emit engine inputs
 
 ```
-molpy moltemplate run SCRIPT [--emit ENGINE ...] [--out-dir DIR] [--prefix NAME]
+molpy moltemplate run SCRIPT [--emit ENGINE...] [--out-dir DIR] [--prefix NAME]
 ```
 
-| Engine    | Files produced (given `--prefix system`)                               |
+| Engine | Files produced (given `--prefix system`) |
 |-----------|------------------------------------------------------------------------|
-| `lammps`  | `system.data`, `system.in.settings`, `system.in.init`, `system.in`     |
-| `openmm`  | `system.xml`, `system.pdb`, `system.py`                                |
-| `gromacs` | `system.gro`, `system.top`, `em.mdp`, `nvt.mdp`                        |
-| `xml`     | `system.xml`, `system.pdb` (MolPy canonical)                           |
-| `all`     | every engine above                                                     |
+| `lammps` | `system.data`, `system.in.settings`, `system.in.init`, `system.in` |
+| `openmm` | `system.xml`, `system.pdb`, `system.py` |
+| `gromacs` | `system.gro`, `system.top`, `em.mdp`, `nvt.mdp` |
+| `xml` | `system.xml`, `system.pdb` (MolPy canonical) |
+| `all` | every engine above |
 
 `--emit` may be repeated: `--emit lammps --emit openmm`.
 
@@ -71,8 +71,8 @@ Output format is inferred from the destination extension:
 
 | Extension | Output |
 |-----------|--------|
-| `.xml`    | MolPy canonical XML force field (FF-only). |
-| `.py`     | Self-contained MolPy Python script with `build_forcefield()`, one `build_<ClassName>()` per moltemplate class, and a top-level `build_system()`. The emitted script has no runtime dependency on the original `.lt` file — users can edit freely. |
+| `.xml` | MolPy canonical XML force field (FF-only). |
+| `.py` | Self-contained MolPy Python script with `build_forcefield()`, one `build_<ClassName>()` per moltemplate class, and a top-level `build_system()`. The emitted script has no runtime dependency on the original `.lt` file — users can edit freely. |
 
 ### `ltemplify` — `.lt` / `.data` → `.lt`
 
@@ -92,31 +92,31 @@ Tested against real examples in the
 directory. Coverage is intentionally incremental — the table below tracks
 what has been validated on upstream fixtures versus what silently degrades.
 
-| Feature                                              | Status |
+| Feature | Status |
 |------------------------------------------------------|--------|
-| `ClassName { ... }`, nested classes                  | ✔      |
-| `inherits Parent1, Parent2`                          | ✔      |
-| `import "file.lt"` (recursive)                       | ✔      |
-| `write("...")`, `write_once("...")`                  | ✔      |
-| `write('...')` single-quoted section names           | ✔      |
-| Section names containing `(...)`                     | ✔      |
-| `Data Masses`, `Data Charges`, `In Charges`          | ✔      |
-| `In Settings` coeff lines (pair/bond/angle/…)        | ✔      |
-| `Data Atoms`, `Data Bonds`, `Data Angles`            | ✔      |
-| `Data Dihedrals`, `Data Impropers`                   | ✔      |
-| `inst = new Cls`                                     | ✔      |
-| `.move(x,y,z)`, `.rot(θ,ax,ay,az)`, `.scale(s)`      | ✔      |
-| `new Cls [N].move(dx,dy,dz)` 1-D array               | ✔      |
-| `new Cls [N].move(...) [M].move(...) [K].move(...)` (3-D array) | ✔      |
-| `.rotvv(v1,v2)`                                      | partial (parsed but unused) |
-| `new random([Cls1, Cls2], [w1, w2] [, seed])`        | ✔      |
-| `$atom:submol/atom` scoped references                | ✔      |
-| `Data Bond List` (no `@bond:T` column)               | ✔      |
+| `ClassName {... }`, nested classes | ✔ |
+| `inherits Parent1, Parent2` | ✔ |
+| `import "file.lt"` (recursive) | ✔ |
+| `write("...")`, `write_once("...")` | ✔ |
+| `write('...')` single-quoted section names | ✔ |
+| Section names containing `(...)` | ✔ |
+| `Data Masses`, `Data Charges`, `In Charges` | ✔ |
+| `In Settings` coeff lines (pair/bond/angle/…) | ✔ |
+| `Data Atoms`, `Data Bonds`, `Data Angles` | ✔ |
+| `Data Dihedrals`, `Data Impropers` | ✔ |
+| `inst = new Cls` | ✔ |
+| `.move(x,y,z)`, `.rot(θ,ax,ay,az)`, `.scale(s)` | ✔ |
+| `new Cls [N].move(dx,dy,dz)` 1-D array | ✔ |
+| `new Cls [N].move(...) [M].move(...) [K].move(...)` (3-D array) | ✔ |
+| `.rotvv(v1,v2)` | partial (parsed but unused) |
+| `new random([Cls1, Cls2], [w1, w2] [, seed])` | ✔ |
+| `$atom:submol/atom` scoped references | ✔ |
+| `Data Bond List` (no `@bond:T` column) | ✔ |
 | `Bonds/Angles/Dihedrals/Impropers By Type` wildcards | ✔ (rule matching applied after auto-topology) |
-| `replace{ @atom:A @atom:B }`                         | ✔ (decoration applied during Data Atoms) |
-| `create_var`, `delete_var`, `category`               | ✘ (silently ignored) |
-| `Impropers` as first-class `Improper` link           | ✔      |
-| oplsaa.lt (full ~10k line file)                      | parses; FF load OK; bond/angle/dihedral types resolved via By-Type wildcards |
+| `replace{ @atom:A @atom:B }` | ✔ (decoration applied during Data Atoms) |
+| `create_var`, `delete_var`, `category` | ✘ (silently ignored) |
+| `Impropers` as first-class `Improper` link | ✔ |
+| oplsaa.lt (full ~10k line file) | parses; FF load OK; bond/angle/dihedral types resolved via By-Type wildcards |
 
 ### Honest caveat
 
@@ -133,8 +133,8 @@ match still fall back to the synthetic placeholder name generated from
 ### Verifying your own `.lt` file
 
 ```bash
-molpy moltemplate parse my_system.lt         # IR summary
-molpy moltemplate info my_system.lt          # atom/bond counts after expansion
+molpy moltemplate parse my_system.lt # IR summary
+molpy moltemplate info my_system.lt # atom/bond counts after expansion
 molpy moltemplate run my_system.lt --emit lammps --out-dir out/
 ```
 
@@ -147,10 +147,10 @@ Everything the CLI does is available programmatically.
 from molpy.io.forcefield.moltemplate import read_moltemplate_system
 from molpy.io.emit import emit, emit_all
 from molpy.parser.moltemplate import (
-    emit_python,      # .lt → .py
-    ltemplify,        # (atomistic, ff) → .lt string
-    parse_file,       # .lt → IR Document
-    write_moltemplate,  # (atomistic, ff) → .lt file
+ emit_python, #.lt →.py
+ ltemplify, # (atomistic, ff) →.lt string
+ parse_file, #.lt → IR Document
+ write_moltemplate, # (atomistic, ff) →.lt file
 )
 
 atomistic, ff = read_moltemplate_system("water.lt")
@@ -161,10 +161,10 @@ emit("lammps", atomistic, ff, "out/", prefix="w")
 # All engines
 emit_all(atomistic, ff, "out/", prefix="w")
 
-# .lt → .py
+#.lt →.py
 emit_python(parse_file("water.lt"), "water.py")
 
-# ltemplify: back to a .lt template
+# ltemplify: back to a.lt template
 write_moltemplate(atomistic, ff, "water_regen.lt", class_name="Water")
 ```
 

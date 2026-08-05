@@ -2,7 +2,6 @@
 
 Auto-generated reference for every public symbol, with typed signatures throughout. Start from the tables below: find your task, get the symbol and its package.
 
-
 ## Index of Operations and Symbols
 
 | Operation | Primary symbols | Package |
@@ -29,7 +28,6 @@ Auto-generated reference for every public symbol, with typed signatures througho
 | Compute mean-squared displacement, correlations, RDF, clustering | `MSD`, `Onsager`, `RDF` | [Compute](compute.md) |
 | Locate bundled data files and built-in force fields | `get_forcefield_path`, `get_path` | [Data](data.md) |
 | Generate LAMMPS, CP2K, or OpenMM input decks | `LAMMPSEngine`, `CP2KEngine`, `OpenMMEngine` | [Engine](engine.md) |
-
 
 ## Package Responsibilities
 

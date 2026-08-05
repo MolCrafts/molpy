@@ -92,7 +92,7 @@ nav = [
     ] },
   ] },
 
-  # freud-style: section categories; page titles = package short names (no "Module" suffix).
+  # freud-style categories + short names; pages are textbook (theory → usage → figures).
   { "Compute" = [
     "compute/index.md",
     { "Structure" = [
@@ -125,6 +125,7 @@ nav = [
       { "JACF" = "compute/jacf.md" },
       { "Onsager" = "compute/onsager.md" },
       { "Persist" = "compute/persist.md" },
+      { "VACF" = "compute/vacf.md" },
     ] },
     { "Dynamics" = [
       { "Van Hove" = "compute/van_hove.md" },
@@ -139,6 +140,7 @@ nav = [
       { "Workflow" = "compute/workflow.md" },
     ] },
   ] },
+
 
   { "API Reference" = [
     "api/index.md",
