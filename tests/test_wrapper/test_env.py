@@ -28,18 +28,25 @@ class TestEnvSpecResolve:
     def test_conda_name(self):
         spec = EnvSpec.resolve("AmberTools25", "conda")
         assert spec.env == "AmberTools25"
+        assert isinstance(spec.env, str)
         assert spec.env_manager == "conda"
         assert not spec.is_system
 
-    def test_conda_prefix_path(self):
+    def test_conda_prefix_str_becomes_path(self):
         spec = EnvSpec.resolve("/opt/conda/envs/at", "conda")
         assert spec.env_manager == "conda"
-        assert spec.command_prefix()[1:4] == ["run", "-p", "/opt/conda/envs/at"]
+        assert isinstance(spec.env, Path)
+        assert spec.env == Path("/opt/conda/envs/at")
+        prefix = spec.command_prefix()
+        assert prefix[1:3] == ["run", "-p"]
+        assert Path(prefix[3]) == Path("/opt/conda/envs/at")
 
-    def test_venv_aliases_normalise(self):
+    def test_venv_aliases_normalise_to_path(self):
         for alias in ("venv", "pip", "virtualenv", "Venv", "PIP"):
             spec = EnvSpec.resolve("/path/to/.venv", alias)
             assert spec.env_manager == "venv"
+            assert isinstance(spec.env, Path)
+            assert spec.env == Path("/path/to/.venv")
 
     def test_unsupported_manager(self):
         with pytest.raises(ValueError, match="Unsupported env_manager"):
@@ -56,8 +63,12 @@ class TestEnvSpecCommandPrefix:
         assert prefix[1:4] == ["run", "-n", "AmberTools25"]
 
     def test_conda_path_object_uses_p(self):
-        prefix = EnvSpec.resolve(Path("/opt/envs/at"), "conda").command_prefix()
-        assert prefix[1:4] == ["run", "-p", "/opt/envs/at"]
+        env_path = Path("/opt/envs/at")
+        prefix = EnvSpec.resolve(env_path, "conda").command_prefix()
+        assert prefix[1:3] == ["run", "-p"]
+        # Internal storage is Path; argv boundary is str(path) (OS-native).
+        assert Path(prefix[3]) == env_path
+        assert prefix[3] == str(env_path)
 
     def test_no_capture_output_flag(self):
         prefix = EnvSpec.resolve("e", "conda").command_prefix(no_capture_output=True)
@@ -69,11 +80,19 @@ class TestEnvSpecMergeEnviron:
     def test_venv_injects_path_and_virtual_env(self, tmp_path: Path):
         venv = tmp_path / "venv"
         spec = EnvSpec.resolve(venv, "venv")
+        assert isinstance(spec.env, Path)
         merged = spec.merge_environ(base={"PATH": "/usr/bin", "HOME": "/home"})
         bin_dir = venv / ("Scripts" if os.name == "nt" else "bin")
         assert merged["PATH"].split(os.pathsep)[0] == str(bin_dir)
         assert merged["VIRTUAL_ENV"] == str(venv)
+        assert Path(merged["VIRTUAL_ENV"]) == venv
         assert merged["HOME"] == "/home"
+
+    def test_venv_str_input_becomes_path(self, tmp_path: Path):
+        venv = tmp_path / "venv"
+        spec = EnvSpec.resolve(str(venv), "venv")
+        assert isinstance(spec.env, Path)
+        assert spec.env == venv
 
     def test_extra_overrides(self):
         merged = EnvSpec.system().merge_environ(
@@ -93,7 +112,8 @@ class TestEnvSpecResolveExecutable:
         exe = tmp_path / "tool"
         exe.write_text("#!/bin/sh\n")
         exe.chmod(0o755)
-        assert EnvSpec.system().resolve_executable(str(exe)) == str(exe)
+        assert EnvSpec.system().resolve_executable(str(exe)) == str(exe.resolve())
+        assert EnvSpec.system().resolve_executable(exe) == str(exe.resolve())
 
     def test_venv_bin_lookup(self, tmp_path: Path):
         bin_dir = tmp_path / ("Scripts" if os.name == "nt" else "bin")
@@ -102,7 +122,7 @@ class TestEnvSpecResolveExecutable:
         tool.write_text("#!/bin/sh\n")
         tool.chmod(0o755)
         found = EnvSpec.resolve(tmp_path, "venv").resolve_executable("antechamber")
-        assert found == str(tool)
+        assert found == str(tool.resolve())
 
     def test_system_which(self):
         # `echo` is on PATH in all reasonable environments used for tests.

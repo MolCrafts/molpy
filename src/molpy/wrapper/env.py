@@ -11,6 +11,14 @@ Supported managers
   (or ``Scripts`` on Windows) into ``PATH``.  Covers standard venv,
   virtualenv, and uv-created environments (same layout).
 
+Path contract
+-------------
+Public entry points accept ``str | Path`` (path-like).  On resolve, any
+value that is a path (or looks like one) is converted to
+:class:`~pathlib.Path` and stored/used as ``Path`` only.  Conda *env
+names* (no path separators) remain plain ``str``.  Subprocess argv
+receives ``str(path)`` at the OS boundary only.
+
 This module is the single owner of env-isolation logic used by
 :class:`~molpy.wrapper.base.Wrapper` and higher-level facades that
 construct wrappers.
@@ -37,8 +45,16 @@ def _looks_like_path(value: str) -> bool:
         (os.sep in value)
         or ("/" in value)
         or ("\\" in value)
-        or value.startswith((".", "~", "/"))
+        or value.startswith((".", "~"))
+        or (len(value) >= 2 and value[1] == ":")  # Windows drive letter
     )
+
+
+def _as_path(value: str | Path) -> Path:
+    """Convert path-like input to :class:`Path` (expand ``~``)."""
+    if isinstance(value, Path):
+        return value.expanduser()
+    return Path(value).expanduser()
 
 
 def _bin_dir(prefix: Path) -> Path:
@@ -58,9 +74,11 @@ def _conda_exe() -> str:
 class EnvSpec:
     """Validated subprocess environment isolation.
 
-    Construct via :meth:`resolve` (or :meth:`system`).  Fields after
-    resolve are either both ``None`` (system) or a concrete manager kind
-    plus a non-``None`` ``env``.
+    Construct via :meth:`resolve` (or :meth:`system`).  After resolve:
+
+    * system — both fields ``None``
+    * conda name — ``env: str``, ``env_manager: "conda"``
+    * conda prefix / venv — ``env: Path``, ``env_manager: "conda"|"venv"``
     """
 
     env: str | Path | None = None
@@ -83,9 +101,10 @@ class EnvSpec:
 
         Both must be set together, or both omitted for the system
         environment.  Manager type is never inferred from ``env``.
+        Path-like values are stored as :class:`~pathlib.Path`.
 
         Args:
-            env: Conda env name / prefix, or venv prefix path.
+            env: Conda env name / prefix, or venv prefix (``str | Path``).
             env_manager: ``"conda"``, ``"venv"``, ``"pip"``, or
                 ``"virtualenv"``.
 
@@ -116,7 +135,15 @@ class EnvSpec:
                 f"Unsupported env_manager {env_manager!r}. "
                 f"Supported values: {_SUPPORTED}."
             )
-        return cls(env=env, env_manager=kind)
+
+        # venv always needs a filesystem prefix → Path
+        if kind == "venv":
+            return cls(env=_as_path(env), env_manager=kind)
+
+        # conda: Path / path-like str → Path prefix; bare name stays str
+        if isinstance(env, Path) or _looks_like_path(str(env)):
+            return cls(env=_as_path(env), env_manager=kind)
+        return cls(env=str(env), env_manager=kind)
 
     # -- queries ------------------------------------------------------------
 
@@ -125,6 +152,16 @@ class EnvSpec:
         """True when no isolation is configured."""
         return self.env_manager is None
 
+    def _prefix_path(self) -> Path:
+        """Filesystem prefix for venv / conda -p (must be a :class:`Path`)."""
+        assert self.env is not None
+        if not isinstance(self.env, Path):
+            raise TypeError(
+                f"EnvSpec.env must be Path for manager {self.env_manager!r}, "
+                f"got {type(self.env).__name__}: {self.env!r}"
+            )
+        return self.env
+
     # -- subprocess helpers -------------------------------------------------
 
     def command_prefix(self, *, no_capture_output: bool = False) -> list[str]:
@@ -132,6 +169,7 @@ class EnvSpec:
 
         For conda this is ``[conda, run, (-n|-p), <env>]``.  For venv /
         system the prefix is empty (isolation is via :meth:`merge_environ`).
+        Path prefixes are emitted as ``str(path)`` for the OS.
 
         Args:
             no_capture_output: When True, insert
@@ -149,11 +187,7 @@ class EnvSpec:
 
         if isinstance(self.env, Path):
             return [*prefix, "-p", str(self.env)]
-
-        env_str = str(self.env)
-        if _looks_like_path(env_str):
-            return [*prefix, "-p", env_str]
-        return [*prefix, "-n", env_str]
+        return [*prefix, "-n", self.env]
 
     def merge_environ(
         self,
@@ -169,8 +203,7 @@ class EnvSpec:
         merged = dict(base if base is not None else os.environ)
 
         if self.env_manager == "venv":
-            assert self.env is not None
-            prefix = self.env if isinstance(self.env, Path) else Path(str(self.env))
+            prefix = self._prefix_path()
             bin_dir = _bin_dir(prefix)
             existing = merged.get("PATH", "")
             merged["PATH"] = str(bin_dir) + (os.pathsep + existing if existing else "")
@@ -180,35 +213,39 @@ class EnvSpec:
             merged.update(extra)
         return merged
 
-    def resolve_executable(self, exe: str) -> str | None:
+    def resolve_executable(self, exe: str | Path) -> str | None:
         """Best-effort absolute path for *exe* inside this environment.
 
-        Returns ``None`` if the executable cannot be found.
+        *exe* may be path-like at the public boundary; filesystem paths are
+        converted to :class:`~pathlib.Path` immediately.  Returns a ``str``
+        suitable for subprocess argv, or ``None`` if not found.
         """
-        exe_path = Path(exe)
-        if exe_path.is_file():
-            return str(exe_path)
+        # Explicit path (Path object or path-like string) — no PATH search.
+        if isinstance(exe, Path) or (isinstance(exe, str) and _looks_like_path(exe)):
+            exe_path = _as_path(exe)
+            return str(exe_path.resolve()) if exe_path.is_file() else None
+
+        name = str(exe)
 
         if self.is_system:
-            return shutil.which(exe)
+            return shutil.which(name)
 
         if self.env_manager == "venv":
-            assert self.env is not None
-            prefix = self.env if isinstance(self.env, Path) else Path(str(self.env))
+            prefix = self._prefix_path()
             bin_dir = _bin_dir(prefix)
-            candidates = [bin_dir / exe]
-            if os.name == "nt" and not exe.lower().endswith(".exe"):
-                candidates.append(bin_dir / f"{exe}.exe")
+            candidates = [bin_dir / name]
+            if os.name == "nt" and not name.lower().endswith(".exe"):
+                candidates.append(bin_dir / f"{name}.exe")
             for candidate in candidates:
                 if candidate.is_file():
-                    return str(candidate)
-            return shutil.which(exe, path=self.merge_environ().get("PATH"))
+                    return str(candidate.resolve())
+            return shutil.which(name, path=self.merge_environ().get("PATH"))
 
         # conda: ask the env via ``conda run … which``
         cmd_prefix = self.command_prefix()
         try:
             proc = subprocess.run(
-                [*cmd_prefix, "which", exe],
+                [*cmd_prefix, "which", name],
                 capture_output=True,
                 text=True,
                 check=False,
