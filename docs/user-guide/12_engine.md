@@ -175,6 +175,7 @@ result = engine.run(script, workdir="./calc")
 Once `generate_inputs()` has produced the files, calling `run()` with the script path launches the generated Python driver under the configured interpreter.
 
 ```python
+# docs: skip — needs conda env `openmm-env` with OpenMM; engines unit-tested with mocks
 engine = OpenMMEngine("python", env="openmm-env", env_manager="conda")
 paths = engine.generate_inputs(frame, ff, config, "./omm_run")
 assert paths["script"].exists()

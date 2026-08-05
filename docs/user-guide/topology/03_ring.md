@@ -5,7 +5,7 @@
 Ring digits in CGSmiles add one more residue edge. Bifunctional glycol is enough — the closing bond reuses free ends.
 
 ```python
-from eo_kit import eo_builder  # examples/topology/
+from eo_kit import eo_builder # examples/topology/
 from molpy.builder.assembly import ring_topology
 
 ring = eo_builder().build_ring("EO", 6)

@@ -6,7 +6,9 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from molpy.wrapper import Wrapper
+import pytest
+
+from molpy.wrapper import EnvSpec, Wrapper
 
 
 class MockWrapper(Wrapper):  # noqa: D101
@@ -26,6 +28,7 @@ def test_wrapper_initialization():
     assert wrapper.env_vars == {}
     assert getattr(wrapper, "env", None) is None
     assert getattr(wrapper, "env_manager", None) is None
+    assert wrapper.process_env().is_system
 
 
 def test_wrapper_with_workdir(tmp_path: Path):
@@ -131,6 +134,18 @@ def test_wrapper_run_with_pip_env_injects_virtualenv_path(tmp_path: Path):
         assert env["VIRTUAL_ENV"] == str(venv_prefix)
         expected_bin = venv_prefix / ("Scripts" if os.name == "nt" else "bin")
         assert env["PATH"].split(os.pathsep)[0] == str(expected_bin)
+
+
+def test_wrapper_process_env_uses_env_spec():
+    wrapper = MockWrapper(name="test", exe="echo", env="at", env_manager="conda")
+    assert isinstance(wrapper.process_env(), EnvSpec)
+    assert wrapper.process_env().env_manager == "conda"
+
+
+def test_wrapper_incomplete_env_raises_on_run():
+    wrapper = MockWrapper(name="test", exe="echo", env="only-env")
+    with pytest.raises(ValueError, match="incomplete"):
+        wrapper.run(args=["hello"])
 
 
 def test_wrapper_repr():

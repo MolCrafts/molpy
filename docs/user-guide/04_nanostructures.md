@@ -1,6 +1,6 @@
 # Nanostructures
 
-Nanotubes and graphene sheets are built in **molrs** (`molrs.builder`) and
+Nanotubes and graphene sheets are built natively (`the structure builders`) and
 re-exported by MolPy. `CarbonTubeBuilder` rolls an exact graphene lattice into a
 single-wall carbon nanotube; `GrapheneBuilder` emits a flat honeycomb sheet.
 The tube's shape is fixed when the builder is constructed;

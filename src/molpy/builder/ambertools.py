@@ -1,7 +1,8 @@
 """``AmberTools`` — one object for GAFF parameterisation via the Amber suite.
 
-A single facade owning the conda-env / force-field / charge-method config, with
-member functions for the three things every GAFF workflow needs:
+A single facade owning force-field / charge-method config (and an optional
+named env for AmberTools binaries), with member functions for the three things
+every GAFF workflow needs:
 
 * :meth:`parameterize` — a small molecule (antechamber → parmchk2 → tleap).
 * :meth:`parameterize_ion` — a monatomic ion from literature Lennard-Jones
@@ -48,7 +49,13 @@ def _neutralize(frame: Any, target: float) -> None:
 
 
 class AmberTools:
-    """GAFF parameterisation facade over antechamber / parmchk2 / tleap / prepgen."""
+    """GAFF parameterisation facade over antechamber / parmchk2 / tleap / prepgen.
+
+    By default Amber binaries are resolved from the **system** environment
+    (``PATH``).  To isolate, pass both ``env`` and ``env_manager`` — same
+    contract as :class:`~molpy.wrapper.EnvSpec` / :class:`~molpy.wrapper.Wrapper`
+    (no auto-detection of manager type).
+    """
 
     def __init__(
         self,
@@ -59,8 +66,11 @@ class AmberTools:
         charge_method: str = "bcc",
         work_dir: str | Path = "amber_work",
     ) -> None:
-        self.env = env
-        self.env_manager = env_manager
+        from molpy.wrapper import EnvSpec
+
+        spec = EnvSpec.resolve(env, env_manager)
+        self.env = spec.env
+        self.env_manager = spec.env_manager
         self.force_field = force_field
         self.charge_method = charge_method
         self.work_dir = Path(work_dir).resolve()

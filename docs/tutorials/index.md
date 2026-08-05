@@ -18,7 +18,7 @@ If MolPy is installed, this runs as-is — no optional dependencies, not even RD
 import molpy as mp
 
 water = mp.Atomistic(name="water")
-o  = water.def_atom(element="O", x=0.000, y=0.000, z=0.000)
+o = water.def_atom(element="O", x=0.000, y=0.000, z=0.000)
 h1 = water.def_atom(element="H", x=0.957, y=0.000, z=0.000)
 h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.000)
 water.def_bond(o, h1)
@@ -55,34 +55,34 @@ The typical flow:
 The diagram below illustrates the standard data flow through a MolPy pipeline. Each node represents a core data structure; each edge represents an explicit transformation.
 
 ```text
-                    ┌─────────────────────────┐
-  SMILES / file     │  Atomistic              │
-  ────parser────>   │  (editable molecular    │
-                    │   graph: atoms + bonds)  │
-                    └───────────┬─────────────┘
-                                │
-                  typifier + ForceField
-                                │
-                    ┌───────────▼─────────────┐
-                    │  Typed Atomistic         │
-                    │  (atoms carry type,      │
-                    │   charge, ff parameters) │
-                    └───────────┬─────────────┘
-                                │
-                          .to_frame()
-                                │
-                    ┌───────────▼─────────────┐
-                    │  Frame                   │
-                    │  (Block tables +         │
-                    │   Box + metadata)        │
-                    └───────────┬─────────────┘
-                                │
-                          io.write_*
-                                │
-                    ┌───────────▼─────────────┐
-                    │  LAMMPS / GROMACS /      │
-                    │  PDB / HDF5 files        │
-                    └─────────────────────────┘
+ ┌─────────────────────────┐
+ SMILES / file │ Atomistic │
+ ────parser────> │ (editable molecular │
+ │ graph: atoms + bonds) │
+ └───────────┬─────────────┘
+ │
+ typifier + ForceField
+ │
+ ┌───────────▼─────────────┐
+ │ Typed Atomistic │
+ │ (atoms carry type, │
+ │ charge, ff parameters) │
+ └───────────┬─────────────┘
+ │
+.to_frame()
+ │
+ ┌───────────▼─────────────┐
+ │ Frame │
+ │ (Block tables + │
+ │ Box + metadata) │
+ └───────────┬─────────────┘
+ │
+ io.write_*
+ │
+ ┌───────────▼─────────────┐
+ │ LAMMPS / GROMACS / │
+ │ PDB / HDF5 files │
+ └─────────────────────────┘
 ```
 
 **`Atomistic`** is the primary editing surface. Atom addition and removal, bond formation, reaction execution, and structure assembly all operate on this representation.

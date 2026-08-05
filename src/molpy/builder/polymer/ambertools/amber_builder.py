@@ -71,6 +71,13 @@ class AmberPolymerBuilder:
     4. Run tleap to build the polymer; read back Frame + ForceField.
 
     Example:
+        >>> # system PATH (default) — AmberTools already on PATH
+        >>> builder = AmberPolymerBuilder(
+        ...     library={"EO": eo_monomer},
+        ...     reaction=ether_reaction,
+        ...     force_field="gaff2",
+        ... )
+        >>> # isolated conda env — both env and env_manager required
         >>> builder = AmberPolymerBuilder(
         ...     library={"EO": eo_monomer},
         ...     reaction=ether_reaction,
@@ -105,14 +112,19 @@ class AmberPolymerBuilder:
             force_field: Force field to use (gaff or gaff2).
             charge_method: Charge method for antechamber.
             work_dir: Directory for intermediate files.
-            env: Conda environment name or path for AmberTools.
-            env_manager: Environment manager type ("conda" for conda environments).
+            env: Conda env name / prefix, or venv prefix.  Pair with
+                ``env_manager``; omit both for the system ``PATH``.
+            env_manager: ``"conda"``, ``"venv"``, ``"pip"``, or
+                ``"virtualenv"``.  Same contract as
+                :class:`~molpy.wrapper.EnvSpec`.
             net_charges: Optional mapping from CGSmiles label to the formal net
                 charge of that monomer/residue, passed to antechamber's AM1-BCC
                 step. Defaults to 0 for any label not present. Required for
                 charged residues (e.g. cationic / anionic monomers) so the
                 computed partial charges sum to the correct integer.
         """
+        from molpy.wrapper import EnvSpec
+
         if not isinstance(reaction, molrs.Reaction):
             raise TypeError("reaction must be a molpy.Reaction instance")
         self.reaction = reaction
@@ -144,8 +156,9 @@ class AmberPolymerBuilder:
         self.work_dir = (
             Path(work_dir) if work_dir is not None else Path("amber_work")
         ).resolve()
-        self.env = env
-        self.env_manager = env_manager
+        spec = EnvSpec.resolve(env, env_manager)
+        self.env = spec.env
+        self.env_manager = spec.env_manager
 
         # Internal state
         self._prepared_monomers: dict[str, _PreparedMonomer] = {}

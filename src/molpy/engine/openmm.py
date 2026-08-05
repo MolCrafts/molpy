@@ -197,7 +197,7 @@ class OpenMMEngine(Engine):
         workdir: str | Path | None = None,
         launcher: list[str] | None = None,
         env_vars: dict[str, str] | None = None,
-        env: str | None = None,
+        env: str | Path | None = None,
         env_manager: str | None = None,
         check_executable: bool = True,
     ) -> None:
@@ -210,9 +210,11 @@ class OpenMMEngine(Engine):
             launcher: MPI / scheduler prefix, e.g. ``["mpirun", "-np", "4"]``.
                 Prepended before *executable* when running the script.
             env_vars: Extra environment variables forwarded to the subprocess.
-            env: Conda / virtual-environment name to activate.
-            env_manager: Environment manager (``"conda"`` supported).
-            check_executable: Verify *executable* is on PATH at construction.
+            env: Conda env name / prefix, or venv prefix (with ``env_manager``).
+            env_manager: ``"conda"``, ``"venv"``, ``"pip"``, or
+                ``"virtualenv"`` — same contract as
+                :class:`~molpy.wrapper.env.EnvSpec`.
+            check_executable: Verify *executable* is available at construction.
                 Set ``False`` when only using :meth:`generate_inputs`.
         """
         super().__init__(

@@ -5,7 +5,7 @@
 A path of identical residues is the simplest ruled topology. `build_linear` is a shortcut that formats CGSmiles and calls the sole entry `build`.
 
 ```python
-from eo_kit import eo_builder  # examples/topology/
+from eo_kit import eo_builder # examples/topology/
 from molpy.builder.assembly import linear_topology
 
 builder = eo_builder()

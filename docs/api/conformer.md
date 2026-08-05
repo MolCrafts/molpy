@@ -3,7 +3,7 @@
 3D conformer generation from a molecular graph. `Conformer` takes an
 `Atomistic` (typically from a SMILES / BigSMILES parse, which carries no
 coordinates) and returns a structure with embedded 3D positions, using the
-molrs backend. Available via `import molpy as mp` (`mp.conformer.Conformer`).
+ backend. Available via `import molpy as mp` (`mp.conformer.Conformer`).
 
 ## Quick reference
 
@@ -16,7 +16,7 @@ molrs backend. Available via `import molpy as mp` (`mp.conformer.Conformer`).
 ## Related
 
 - [Builder](builder.md) — `PolymerBuilder` consumes 3D monomers; embed them
-  with `Conformer` (this module). It is the only embedder MolPy ships.
+ with `Conformer` (this module). It is the only embedder MolPy ships.
 
 ---
 

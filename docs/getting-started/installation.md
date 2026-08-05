@@ -31,12 +31,12 @@ the two **cannot be installed at the same time** (the same trade-off as
 `tensorflow` vs `tf-nightly`). Uninstall `molcrafts-molpy` first, or use a
 dedicated virtual environment for nightly testing.
 
-## molrs is installed with MolPy
+## Backend package
 
-MolPy depends on the Rust backend [`molcrafts-molrs`](https://github.com/MolCrafts/molrs)
-on the same **major.minor** line (patch may differ). A normal `pip install`
-pulls a compatible wheel; `import molpy` fails fast if the installed molrs is
-on a different minor.
+MolPy depends on a native backend package on the same **major.minor** line
+(patch may differ). A normal `pip install` pulls a compatible wheel;
+`import molpy` fails fast if the installed backend is on a different minor.
+
 
 ## Verify installation
 

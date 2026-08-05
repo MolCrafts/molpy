@@ -1,24 +1,24 @@
 # Optional external tools
 
 `pip install molcrafts-molpy` is enough for the default path: parse, build,
-embed, typify, pack, export, and analyze on the **molrs** stack (plus
+embed, typify, pack, export, and analyze on the default MolPy stack (plus
 [molpack](https://docs.molcrafts.org/molpack/) for packing). No system
 scientific binaries are required.
 
 Anything that shells out to another package or executable is **optional**.
 This page is the only place those integrations are documented as prerequisites.
 
-## Default path (molrs)
+## Default path
 
 | Task | Use |
 |------|-----|
 | Parse SMILES / SMARTS | `molpy.parser` (`SmilesIR`, `SmartsPattern`) |
 
-| 3D coordinates | `molpy.conformer.Conformer` (molrs) |
+| 3D coordinates | `molpy.conformer.Conformer` |
 | Graph assembly / polymers | `molpy.builder` (native) |
 | Pack a box | `molpy.pack` → molpack |
 | OPLS-AA / CL&P / MMFF typing | `molpy.typifier` |
-| Trajectory analysis | `molpy.compute` (molrs kernels) |
+| Trajectory analysis | `molpy.compute` (kernels) |
 | Files (PDB, LAMMPS data, XML FF, …) | `molpy.io` |
 
 Workflow guides and the [Quickstart](quickstart.md) assume only this path.
@@ -50,8 +50,8 @@ import molpy as mp
 from molpy.builder import AmberTools
 
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
-    mp.io.read_smiles("CCO")
-)  # antechamber needs 3D coordinates
+ mp.io.read_smiles("CCO")
+) # antechamber needs 3D coordinates
 amber = AmberTools(work_dir="amber_work", env="AmberTools25", env_manager="conda")
 result = amber.parameterize(mol, name="ligand", net_charge=0)
 # result.frame, result.forcefield, and the Amber intermediates under work_dir
@@ -80,8 +80,8 @@ a binary is optional:
 ```python
 from molpy.engine import LAMMPSEngine
 
-engine = LAMMPSEngine(check_executable=False)  # generate / write only
-# engine.run(script, workdir="run")          # needs a LAMMPS binary
+engine = LAMMPSEngine(check_executable=False) # generate / write only
+# engine.run(script, workdir="run") # needs a LAMMPS binary
 ```
 
 See [Simulation Engines](../user-guide/12_engine.md).

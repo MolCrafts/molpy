@@ -19,7 +19,6 @@ MolPy's `OPLSAATypifier` handles the full assignment in one call: atom types fir
 
 The workflow is always the same: build the structure, load a force field, create a typifier, call `typify`.
 
-
 ```python
 import molpy as mp
 from molpy.typifier import OPLSAATypifier
@@ -27,7 +26,7 @@ from molpy.typifier import OPLSAATypifier
 # 1. Build the structure
 mol = mp.io.read_smiles("CCO")
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
-mol.get_topo(gen_angle=True, gen_dihe=True)  # angles/dihedrals in place
+mol.get_topo(gen_angle=True, gen_dihe=True) # angles/dihedrals in place
 
 print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")
 print(f"angles: {len(mol.angles)}, dihedrals: {len(mol.dihedrals)}")
@@ -38,9 +37,7 @@ atoms: 9, bonds: 8
 angles: 13, dihedrals: 12
 ```
 
-
 Loading the force field is a separate step from building the structure because the force field is an independent object — it can be shared across multiple molecules, swapped for a different variant, or inspected before any typification takes place. Once the force field is in hand, the typifier is constructed with it and `typify` is called on the molecule.
-
 
 ```python
 # 2. Load force field and typify
@@ -55,60 +52,48 @@ typed_mol = typifier.typify(mol)
 2026-06-30 21:11:37,176 - molpy.io.forcefield.xml - INFO - Using built-in force field: /Users/roykid/work/molcrafts/molpy/src/molpy/data/forcefield/oplsaa.xml
 ```
 
-
 ```text
 2026-06-30 21:11:37,181 - molpy.io.forcefield.xml - INFO - Parsing force field: OPLS-AA v0.1.0
 
-
 2026-06-30 21:11:37,181 - molpy.io.forcefield.xml - INFO - Combining rule: geometric
-
 
 2026-06-30 21:11:37,187 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types
 
-
 2026-06-30 21:11:37,188 - molpy.io.forcefield.xml - INFO - Parsed 307 bond types (OPLS-AA with unit conversion)
-
 
 2026-06-30 21:11:37,190 - molpy.io.forcefield.xml - INFO - Parsed 964 angle types (OPLS-AA with unit conversion)
 
-
 2026-06-30 21:11:37,192 - molpy.io.forcefield._rb_opls - WARNING - RB coefficients do not lie on the ideal 4-term OPLS manifold (C0+C1+C2+C3+C4 = 10.041600, expected ≈ 0). Conversion will preserve forces and relative energies exactly, but will introduce a constant energy offset of ΔE = 10.041600 kJ/mol. This does not affect MD simulations.
-
 
 2026-06-30 21:11:37,195 - molpy.io.forcefield.xml - INFO - Parsed 1089 dihedral types (OPLS-AA with unit conversion)
 
-
 2026-06-30 21:11:37,197 - molpy.io.forcefield.xml - INFO - Parsed 825 nonbonded parameters (OPLS-AA with unit conversion)
-
 
 2026-06-30 21:11:37,197 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types (by type)
 ```
 
-
 `typify` modifies the structure in-place and returns it — atoms in the returned object carry a `type` key and associated parameters.
-
 
 ```python
 # 3. Inspect results
 for atom in typed_mol.atoms:
-    element = atom.get("element", "?")
-    atype = atom.get("type", "untyped")
-    charge = atom.get("charge") or 0.0
-    print(f"  {element:2s} -> {atype:15s}  q={charge:+.4f}")
+ element = atom.get("element", "?")
+ atype = atom.get("type", "untyped")
+ charge = atom.get("charge") or 0.0
+ print(f" {element:2s} -> {atype:15s} q={charge:+.4f}")
 ```
 
 ```text
-  C  -> opls_135         q=-0.1800
-  C  -> opls_157         q=+0.1450
-  O  -> opls_154         q=-0.6830
-  H  -> opls_140         q=+0.0600
-  H  -> opls_140         q=+0.0600
-  H  -> opls_140         q=+0.0600
-  H  -> opls_140         q=+0.0600
-  H  -> opls_140         q=+0.0600
-  H  -> opls_155         q=+0.4180
+ C -> opls_135 q=-0.1800
+ C -> opls_157 q=+0.1450
+ O -> opls_154 q=-0.6830
+ H -> opls_140 q=+0.0600
+ H -> opls_140 q=+0.0600
+ H -> opls_140 q=+0.0600
+ H -> opls_140 q=+0.0600
+ H -> opls_140 q=+0.0600
+ H -> opls_155 q=+0.4180
 ```
-
 
 ## How atom typing works
 
@@ -134,36 +119,33 @@ In non-strict mode (`strict=False`), untyped atoms are silently skipped. Use thi
 
 After typification, you can iterate over bonds, angles, and dihedrals to see their assigned types.
 
-
 ```python
 # Bond types
 for bond in typed_mol.bonds[:3]:
-    i_sym = bond.itom.get("element")
-    j_sym = bond.jtom.get("element")
-    btype = bond.get("type", "untyped")
-    print(f"  {i_sym}-{j_sym} -> {btype}")
+ i_sym = bond.itom.get("element")
+ j_sym = bond.jtom.get("element")
+ btype = bond.get("type", "untyped")
+ print(f" {i_sym}-{j_sym} -> {btype}")
 
 # Angle types
 for angle in typed_mol.angles[:3]:
-    names = [a.get("type", "?") for a in angle.endpoints]
-    atype = angle.get("type", "untyped")
-    print(f"  {'-'.join(names)} -> {atype}")
+ names = [a.get("type", "?") for a in angle.endpoints]
+ atype = angle.get("type", "untyped")
+ print(f" {'-'.join(names)} -> {atype}")
 ```
 
 ```text
-  C-C -> CT-CT
-  C-O -> CT-OH
-  C-H -> CT-HC
-  opls_157-opls_135-opls_140 -> CT-CT-HC
-  opls_157-opls_135-opls_140 -> CT-CT-HC
-  opls_157-opls_135-opls_140 -> CT-CT-HC
+ C-C -> CT-CT
+ C-O -> CT-OH
+ C-H -> CT-HC
+ opls_157-opls_135-opls_140 -> CT-CT-HC
+ opls_157-opls_135-opls_140 -> CT-CT-HC
+ opls_157-opls_135-opls_140 -> CT-CT-HC
 ```
-
 
 ## A typed structure is ready for simulation export
 
 A typed structure is ready for simulation export. Convert to a `Frame`, attach a box, and write to LAMMPS or GROMACS format.
-
 
 ```python
 import numpy as np
@@ -175,7 +157,7 @@ frame.box = mp.Box.cubic(30.0)
 # mol_id is not set by typifier — add it for LAMMPS full atom style
 atoms = frame["atoms"]
 if "mol_id" not in atoms:
-    atoms["mol_id"] = np.ones(atoms.nrows, dtype=int)
+ atoms["mol_id"] = np.ones(atoms.nrows, dtype=int)
 
 outdir = Path("06_output")
 outdir.mkdir(exist_ok=True)
@@ -188,7 +170,6 @@ print(f"exported to {outdir}")
 ```text
 exported to 06_output
 ```
-
 
 The `write_lammps_system` convenience function automatically filters the force field to only include types present in the frame, and translates canonical field names (`charge`, `mol_id`) to LAMMPS-specific names (`q`, `mol`) via the formatter system.
 
@@ -210,11 +191,11 @@ To enable this, pass the typifier to the builder at construction:
 from molpy.typifier import AmberToolsTypifier
 
 builder = PolymerBuilder(
-    MonomerLibrary({"EO": eo}),
-    mp.Reaction(ETHER),
-    typifier=AmberToolsTypifier(amber),
-    reach=2,                     # GAFF: a 1-2 bond environment names an atom type
-    placer=ResiduePlacer(),
+ MonomerLibrary({"EO": eo}),
+ mp.Reaction(ETHER),
+ typifier=AmberToolsTypifier(amber),
+ reach=2, # GAFF: a 1-2 bond environment names an atom type
+ placer=ResiduePlacer(),
 )
 chain = builder.build_linear("EO", 20)
 ```

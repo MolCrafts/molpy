@@ -22,9 +22,9 @@ File readers and writers for molecular data, force fields, and trajectories.
 |----------|--------|-----------|
 | `read_xml_forcefield` | OpenMM/OPLS XML | read |
 | `XMLForceFieldWriter` | OpenMM/OPLS XML | write |
-| `read_lammps_forcefield` | LAMMPS `*.ff` include | read (molrs) |
-| `write_lammps_forcefield` / `LAMMPSForceFieldWriter` | LAMMPS `*.ff` include | write (molrs; molrs units → LAMMPS `real`) |
-| `GromacsForceFieldWriter` | GROMACS .itp | write |
+| `read_lammps_forcefield` | LAMMPS `*.ff` include | read |
+| `write_lammps_forcefield` / `LAMMPSForceFieldWriter` | LAMMPS `*.ff` include | write (engine units → LAMMPS `real`) |
+| `GromacsForceFieldWriter` | GROMACS.itp | write |
 | `read_amber` | AMBER prmtop + inpcrd | read |
 
 ### Trajectories
@@ -54,7 +54,7 @@ mp.io.write_lammps_data("system.data", frame, atom_style="full")
 ff = mp.io.read_xml_forcefield("oplsaa.xml")
 ff = mp.io.read_lammps_forcefield("system.ff")
 
-# Write LAMMPS *.ff (via molrs; optional type filter)
+# Write LAMMPS *.ff (; optional type filter)
 mp.io.write_lammps_forcefield("system.ff", ff)
 from molpy.io.forcefield import LAMMPSForceFieldWriter
 LAMMPSForceFieldWriter("system.ff").write(ff, atom_types={"CT", "HC"})
@@ -62,7 +62,7 @@ LAMMPSForceFieldWriter("system.ff").write(ff, atom_types={"CT", "HC"})
 # Read trajectory (lazy)
 traj = mp.io.read_lammps_trajectory("dump.lammpstrj")
 for frame in traj:
-    process(frame)
+ process(frame)
 
 # Read LAMMPS run output
 log = mp.io.read_LAMMPS_log("log.lammps")
@@ -85,14 +85,14 @@ mp.io.write_lammps_system("output_dir", frame, ff)
 ### Factory Functions
 
 ::: molpy.io.readers
-    options:
-      members: true
-      filters:
-        - "!^Base"
+ options:
+ members: true
+ filters:
+ - "!^Base"
 
 ::: molpy.io.writers
-    options:
-      members: true
+ options:
+ members: true
 
 ### ForceField Modules
 

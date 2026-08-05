@@ -1,9 +1,8 @@
 # Compute
 
-Trajectory and structure analyses. Import with `from molpy.compute import ...`.
+Trajectory and structure analyses. Import with `from molpy.compute import...`.
 
-Numerical kernels live in **molrs** (Rust). MolPy re-exports the same types
-identity-style for a stable Python import path — there is no second science
+Numerical kernels live in the high-performance backend. The public types are identity-style for a stable Python import path — there is no second science
 implementation in molpy. Compose **raw Computes** with **Fits** (and an optional
 SI scale) the same way the Rust API does.
 
@@ -27,15 +26,15 @@ shared base / result types.
 | Scale | MD → SI prefactor in your script | $1/(6 V k_B T)$, $1/(3 V k_B T)$, $1/d$ |
 
 There is **no** all-in-one `IonicConductivity` / `DielectricSusceptibility` recipe
-class. Historical tame names remain as **aliases** of the molrs types:
+class. Historical tame names remain as **aliases** of the public types:
 
-| Alias (deprecated name) | Canonical molrs type |
+| Alias (deprecated name) | Canonical type |
 |-------------------------|----------------------|
 | `JACF` | `GreenKuboConductivity` |
 | `PMSDCompute` | `EinsteinConductivity` |
 
-`VACF` / `GreenKuboDiffusion` / `EinsteinDiffusion` are **not** re-exported;
-import them from `molrs.compute.transport`.
+Self-diffusion uses `MSD` (Einstein) and `Acf` / `signal.acf_fft` (Green–Kubo);
+see the [MSD](../compute/msd.md) and [VACF](../compute/vacf.md) guides.
 
 ## Module index
 

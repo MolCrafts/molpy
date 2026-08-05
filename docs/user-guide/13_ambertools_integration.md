@@ -13,8 +13,8 @@ Parameterize the ions with antechamber, grow PEO chains with tleap, and assemble
     conda create -n AmberTools25 -c conda-forge ambertools=25
     conda activate AmberTools25
     # Verify installation
-    which antechamber   # should print a path
-    which tleap         # should print a path
+    which antechamber # should print a path
+    which tleap # should print a path
     ```
 
     MolPy's wrapper classes activate the conda environment automatically when running commands, so you do not need to keep it active in your shell. The `env="AmberTools25"` parameter in the code below tells the wrapper which environment to activate.
@@ -24,7 +24,6 @@ Parameterize the ions with antechamber, grow PEO chains with tleap, and assemble
 ## Workflow overview
 
 The workflow begins with parameterization of TFSI, the anion, using the standard Amber small-molecule sequence of antechamber, parmchk2, and tleap. Li⁺ is treated separately: its nonbonded parameters are taken from Åqvist (1990) and written to an frcmod file. With both ions parameterized, PEO chains are built using `AmberPolymerBuilder`, which wraps prepgen and tleap internally. The resulting component force fields are then merged, molpack places the molecules at the target density, and the final system is exported to LAMMPS.
-
 
 ## Antechamber assigns GAFF types and BCC charges to TFSI
 
@@ -55,21 +54,21 @@ conda_env = "AmberTools25"
 
 # Step 1: antechamber — assign GAFF types and BCC charges
 ac = AntechamberWrapper(
-    name="antechamber", workdir=ions_dir, env=conda_env, env_manager="conda"
+ name="antechamber", workdir=ions_dir, env=conda_env, env_manager="conda"
 )
 ac.atomtype_assign(
-    input_file=(ions_dir / "tfsi.pdb").absolute(),
-    output_file=(ions_dir / "tfsi.mol2").absolute(),
-    input_format="pdb",
-    output_format="mol2",
-    charge_method="bcc",
-    atom_type="gaff2",
-    net_charge=-1,
+ input_file=(ions_dir / "tfsi.pdb").absolute(),
+ output_file=(ions_dir / "tfsi.mol2").absolute(),
+ input_format="pdb",
+ output_format="mol2",
+ charge_method="bcc",
+ atom_type="gaff2",
+ net_charge=-1,
 )
 
 # Step 2: parmchk2 — generate missing parameters
 parmchk2 = Parmchk2Wrapper(
-    name="parmchk2", workdir=ions_dir, env=conda_env, env_manager="conda"
+ name="parmchk2", workdir=ions_dir, env=conda_env, env_manager="conda"
 )
 parmchk2.run(args=["-i", "tfsi.mol2", "-o", "tfsi.frcmod", "-f", "mol2", "-s", "gaff2"])
 
@@ -86,7 +85,6 @@ tleap = TLeapWrapper(name="tleap", workdir=ions_dir, env=conda_env, env_manager=
 tleap.run(args=["-f", "tfsi_leap.in"])
 ```
 
-
 ## Li⁺ needs no charge calculation — literature parameters go directly into an frcmod file
 
 Li⁺ has no bonded terms and no partial charges to compute, so antechamber is not needed. Instead, write the nonbond parameters from Åqvist (1990) directly into an frcmod file and create the prmtop with tleap.
@@ -96,8 +94,8 @@ These were fitted to hydration free energies and are the standard choice for pol
 
 | Parameter | Value |
 |-----------|-------|
-| Rmin/2    | 1.137 Å |
-| ε         | 0.0183 kcal/mol |
+| Rmin/2 | 1.137 Å |
+| ε | 0.0183 kcal/mol |
 
 ```python
 # docs: skip — AmberTools offline electrolyte workflow; not unit-tested
@@ -109,7 +107,7 @@ li_dir.mkdir(parents=True, exist_ok=True)
 # Write Åqvist (1990) frcmod — NONBON uses Rmin/2 and epsilon
 li_frcmod = """Li+ Aqvist 1990 parameters
 MASS
-LI    6.941               0.0000000
+LI 6.941 0.0000000
 
 BOND
 
@@ -120,7 +118,7 @@ DIHE
 IMPROPER
 
 NONBON
-  LI        1.137        0.0183
+ LI 1.137 0.0183
 
 """
 (li_dir / "li.frcmod").write_text(li_frcmod)
@@ -133,7 +131,7 @@ SMALL
 USER_CHARGES
 
 @<TRIPOS>ATOM
-      1 LI          0.0000    0.0000    0.0000 LI    1  LIT      1.000000
+ 1 LI 0.0000 0.0000 0.0000 LI 1 LIT 1.000000
 @<TRIPOS>BOND
 """
 (li_dir / "li.mol2").write_text(li_mol2)
@@ -148,16 +146,15 @@ quit
 (li_dir / "li_leap.in").write_text(li_leap)
 
 tleap_li = TLeapWrapper(
-    name="tleap", workdir=li_dir, env=conda_env, env_manager="conda"
+ name="tleap", workdir=li_dir, env=conda_env, env_manager="conda"
 )
 tleap_li.run(args=["-f", "li_leap.in"])
 
 li_frame, li_ff = read_amber(li_dir / "li.prmtop", li_dir / "li.inpcrd")
 print(
-    f"Li+: {li_frame['atoms'].nrows} atom, charge={li_frame['atoms']['charge'][0]:.1f}"
+ f"Li+: {li_frame['atoms'].nrows} atom, charge={li_frame['atoms']['charge'][0]:.1f}"
 )
 ```
-
 
 ## MolPy chemistry defines the Amber residue variants
 
@@ -178,7 +175,6 @@ STITCH = mp.Reaction("[C;%a:1][H].[C;%b:2][H]>>[C:1][C:2]")
 library = {"EO": eo}
 ```
 
-
 ## AmberPolymerBuilder runs the full Amber pipeline internally
 
 `AmberPolymerBuilder` wraps the monomer library, connector rules, and Amber tool chain (prepgen + tleap) into one builder that produces fully parameterized chains. Each unique chain length writes its Amber intermediate files into its own subdirectory under `work_dir` to prevent file conflicts.
@@ -191,13 +187,13 @@ polymer_dir = output_dir / "polymer"
 polymer_dir.mkdir(exist_ok=True)
 
 builder = AmberPolymerBuilder(
-    library=library,
-    reaction=STITCH,
-    force_field="gaff2",
-    charge_method="bcc",
-    env="AmberTools25",
-    env_manager="conda",
-    work_dir=polymer_dir,
+ library=library,
+ reaction=STITCH,
+ force_field="gaff2",
+ charge_method="bcc",
+ env="AmberTools25",
+ env_manager="conda",
+ work_dir=polymer_dir,
 )
 
 result = builder.build("{[#EO]|10}")
@@ -211,7 +207,6 @@ peo_frame = result.frame
 peo_ff = result.forcefield
 print(f"PEO 10-mer: {peo_frame['atoms'].nrows} atoms")
 ```
-
 
 ## Merging three force fields before packing prevents type conflicts
 
@@ -229,8 +224,8 @@ from molpack import InsideBoxRestraint, Molpack, Target
 
 # Read TFSI from Amber files generated in Stage 1
 tfsi_frame, tfsi_ff = read_amber(
-    ions_dir / "tfsi.prmtop",
-    ions_dir / "tfsi.inpcrd",
+ ions_dir / "tfsi.prmtop",
+ ions_dir / "tfsi.inpcrd",
 )
 
 # Merge all three force fields: PEO + TFSI + Li+
@@ -240,14 +235,13 @@ combined_ff = peo_ff.merge(tfsi_ff).merge(li_ff)
 box_size = 60.0
 box = InsideBoxRestraint([0.0, 0.0, 0.0], [box_size] * 3)
 targets = [
-    Target(peo_frame, count=3).with_name("peo").with_restraint(box),
-    Target(li_frame, count=10).with_name("li").with_restraint(box),
-    Target(tfsi_frame, count=10).with_name("tfsi").with_restraint(box),
+ Target(peo_frame, count=3).with_name("peo").with_restraint(box),
+ Target(li_frame, count=10).with_name("li").with_restraint(box),
+ Target(tfsi_frame, count=10).with_name("tfsi").with_restraint(box),
 ]
 system = Molpack().with_seed(12345).pack(targets, max_loops=200)
 system.box = mp.Box.cubic(box_size)
 ```
-
 
 ## Exporting skips pair_style because long-range electrostatics need it in the script
 
@@ -262,7 +256,6 @@ write_lammps_forcefield(lammps_dir / "system.ff", combined_ff, skip_pair_style=T
 ```
 
 `skip_pair_style=True` omits the `pair_style` line from the force-field file. This is required when using kspace (long-range electrostatics), because the `pair_style` must be set by the simulation input script rather than the force-field file.
-
 
 ## Troubleshooting
 

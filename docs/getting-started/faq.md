@@ -14,14 +14,14 @@ MolPy keeps the whole preparation layer in one explicit representation, built
 on three principles:
 
 1. **One data model.** `Atomistic`, `Frame`, `Block`, and `Box` carry explicit
-   topology and typed attributes — the same objects from first parse to final
-   export, across polymers, electrolytes, crystals, and mixtures.
+ topology and typed attributes — the same objects from first parse to final
+ export, across polymers, electrolytes, crystals, and mixtures.
 2. **Force fields as data.** Parameters live in a queryable structure separate
-   from the chemistry, so you can inspect and validate a model *before* an
-   expensive simulation, not after it fails.
+ from the chemistry, so you can inspect and validate a model *before* an
+ expensive simulation, not after it fails.
 3. **Explicit editing.** Building, packing, polymerization, and reaction-based
-   transformations are programmatic operations with no hidden state between
-   them.
+ transformations are programmatic operations with no hidden state between
+ them.
 
 MolPy does not replace specialized packages — it is the preparation layer that
 keeps them composable. The comparisons below draw the boundaries precisely.
@@ -86,16 +86,16 @@ MDTraj territory.
 
 ### Capability summary
 
-| Task / Capability                | ASE     | mBuild    | ParmEd  | RDKit   | MDAnalysis | MolPy   |
+| Task / Capability | ASE | mBuild | ParmEd | RDKit | MDAnalysis | MolPy |
 | -------------------------------- | ------- | --------- | ------- | ------- | ---------- | ------- |
-| Atomic structure editing         | partial | yes       | partial | limited | no         | **yes** |
-| Simulation topology              | minimal | limited   | yes     | no      | no         | **yes** |
-| Polymer builder                  | no      | yes       | no      | no      | no         | **yes** |
+| Atomic structure editing | partial | yes | partial | limited | no | **yes** |
+| Simulation topology | minimal | limited | yes | no | no | **yes** |
+| Polymer builder | no | yes | no | no | no | **yes** |
 | Reaction transforms / topology editing | no | partial | no | SMIRKS-style | no | **yes** |
-| Force-field typing               | no      | via Foyer | yes     | MMFF/UFF | no        | **yes** |
-| System packing / assembly        | limited | yes       | no      | no      | no         | **yes** |
-| Trajectory analysis              | basic   | no        | no      | no      | yes        | broad, Rust-backed |
-| Periodic system representation   | limited | partial   | yes     | no      | analysis-oriented | **yes** |
+| Force-field typing | no | via Foyer | yes | MMFF/UFF | no | **yes** |
+| System packing / assembly | limited | yes | no | no | no | **yes** |
+| Trajectory analysis | basic | no | no | no | yes | broad, Rust-backed |
+| Periodic system representation | limited | partial | yes | no | analysis-oriented | **yes** |
 
 ## When should I use something else?
 

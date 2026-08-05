@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import molpy as mp
 from molpy.builder.ambertools import AmberResult, AmberTools
 
@@ -15,6 +17,15 @@ class TestAmberResult:
 
 
 class TestAmberTools:
+    def test_default_uses_system_environment(self, tmp_path):
+        amber = AmberTools(work_dir=tmp_path)
+        assert amber.env is None
+        assert amber.env_manager is None
+
+    def test_env_requires_manager(self, tmp_path):
+        with pytest.raises(ValueError, match="incomplete"):
+            AmberTools(env="AmberTools25", work_dir=tmp_path)
+
     def test_constructor_owns_one_reusable_backend_configuration(self, tmp_path):
         amber = AmberTools(
             env="AmberTools25",
@@ -26,7 +37,13 @@ class TestAmberTools:
         assert amber.work_dir == tmp_path.resolve()
         assert amber.force_field == "gaff2"
         assert amber.charge_method == "bcc"
+        assert amber.env == "AmberTools25"
+        assert amber.env_manager == "conda"
         assert amber._polymer_builders == {}
+
+    def test_env_manager_without_env_is_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="incomplete"):
+            AmberTools(env_manager="conda", work_dir=tmp_path)
 
     def test_amber_atom_names_are_added_to_a_copy(self, tmp_path):
         struct = mp.Atomistic()
