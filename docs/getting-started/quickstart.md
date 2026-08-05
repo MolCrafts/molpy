@@ -9,15 +9,15 @@ export — so you see every boundary you will later automate.
 ```python
 import molpy as mp
 
-mol = mp.io.read_smiles("CCO")  # ethanol from SMILES (heavy atoms)
+mol = mp.io.read_smiles("CCO") # ethanol from SMILES (heavy atoms)
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
-    mol
-)  # add hydrogens + 3D coordinates
-ff = mp.io.read_xml_forcefield("oplsaa.xml")  # bundled OPLS-AA
-typed = mp.typifier.OPLSAATypifier().typify(mol)  # assign force-field types
+ mol
+) # add hydrogens + 3D coordinates
+ff = mp.io.read_xml_forcefield("oplsaa.xml") # bundled OPLS-AA
+typed = mp.typifier.OPLSAATypifier().typify(mol) # assign force-field types
 
-frame = typed.to_frame()  # columnar arrays
-print(frame["atoms"].nrows, "typed atoms")  # 9 typed atoms
+frame = typed.to_frame() # columnar arrays
+print(frame["atoms"].nrows, "typed atoms") # 9 typed atoms
 ```
 
 That is the entire MolPy story — parse, embed, typify, convert. Every guide in
@@ -50,18 +50,18 @@ is in **nm**, so we build coordinates in **nm** to match.
 ```python
 water_template = mp.Atomistic(name="water_tip3p")
 
-theta = 1.82421813418  # rad (TIP3P H-O-H angle)
-r_oh = 0.09572  # nm (TIP3P O-H bond length)
+theta = 1.82421813418 # rad (TIP3P H-O-H angle)
+r_oh = 0.09572 # nm (TIP3P O-H bond length)
 
 o = water_template.def_atom(element="O", name="O", x=0.0, y=0.0, z=0.0, charge=-0.834)
 h1 = water_template.def_atom(element="H", name="H1", x=r_oh, y=0.0, z=0.0, charge=0.417)
 h2 = water_template.def_atom(
-    element="H",
-    name="H2",
-    x=r_oh * float(np.cos(theta)),
-    y=r_oh * float(np.sin(theta)),
-    z=0.0,
-    charge=0.417,
+ element="H",
+ name="H2",
+ x=r_oh * float(np.cos(theta)),
+ y=r_oh * float(np.sin(theta)),
+ z=0.0,
+ charge=0.417,
 )
 
 water_template.def_bond(o, h1, order=1)
@@ -90,7 +90,7 @@ Load the bundled `tip3p.xml` and spend its types on the template.
 ff = read_xml_forcefield("tip3p.xml")
 
 for atom, atom_type in zip(water_template.atoms, ["tip3p-O", "tip3p-H", "tip3p-H"]):
-    atom["type"] = atom_type
+ atom["type"] = atom_type
 
 water_template = ForceFieldParams(ff).assign(water_template)
 
@@ -98,8 +98,8 @@ print("atom types:", [a.get("type") for a in water_template.atoms])
 print("bond types:", [b.get("type") for b in water_template.bonds])
 print("angle types:", [a.get("type") for a in water_template.links.bucket(mp.Angle)])
 print(
-    "example LJ params on O:",
-    {k: water_template.atoms[0].get(k) for k in ["sigma", "epsilon"]},
+ "example LJ params on O:",
+ {k: water_template.atoms[0].get(k) for k in ["sigma", "epsilon"]},
 )
 ```
 
@@ -112,7 +112,7 @@ larger system. Transforms are deterministic rigid-body operations:
 water_instance = water_template.copy()
 
 water_instance.rotate(
-    axis=[0.0, 0.0, 1.0], angle=float(np.pi / 2.0), about=[0.0, 0.0, 0.0]
+ axis=[0.0, 0.0, 1.0], angle=float(np.pi / 2.0), about=[0.0, 0.0, 0.0]
 )
 water_instance.move(delta=[0.5, 0.0, 0.0])
 
@@ -128,7 +128,7 @@ density, see [Packing Systems](../user-guide/09_packing.md).)
 
 ```python
 nx, ny, nz = 4, 4, 4
-spacing = 0.32  # nm
+spacing = 0.32 # nm
 n_total = nx * ny * nz
 
 water_box_atomistic = mp.Atomistic(name="water_box_tip3p")
@@ -136,28 +136,28 @@ mol_id = 1
 idx = 0
 
 for iz in range(nz):
-    for iy in range(ny):
-        for ix in range(nx):
-            mol = water_template.copy()
-            mol.rotate(
-                axis=[0.0, 0.0, 1.0], angle=float(0.1 * idx), about=[0.0, 0.0, 0.0]
-            )
-            mol.move(delta=[ix * spacing, iy * spacing, iz * spacing])
-            for atom in mol.atoms:
-                atom["mol_id"] = mol_id
-            water_box_atomistic.merge(mol)
-            mol_id += 1
-            idx += 1
+ for iy in range(ny):
+ for ix in range(nx):
+ mol = water_template.copy()
+ mol.rotate(
+ axis=[0.0, 0.0, 1.0], angle=float(0.1 * idx), about=[0.0, 0.0, 0.0]
+)
+ mol.move(delta=[ix * spacing, iy * spacing, iz * spacing])
+ for atom in mol.atoms:
+ atom["mol_id"] = mol_id
+ water_box_atomistic.merge(mol)
+ mol_id += 1
+ idx += 1
 
 water_box_atomistic = ForceFieldParams(ff).assign(water_box_atomistic)
 
 box = mp.Box.orth([nx * spacing, ny * spacing, nz * spacing])
 print("box lengths (nm):", box.lengths.tolist())
 print(
-    "box atoms:",
-    len(water_box_atomistic.atoms),
-    "box bonds:",
-    len(water_box_atomistic.bonds),
+ "box atoms:",
+ len(water_box_atomistic.atoms),
+ "box bonds:",
+ len(water_box_atomistic.bonds),
 )
 ```
 
@@ -169,7 +169,7 @@ graph becomes exportable tables.
 
 ```python
 frame = water_box_atomistic.to_frame()
-frame.box = box  # box is a first-class Frame attribute; writers read frame.box
+frame.box = box # box is a first-class Frame attribute; writers read frame.box
 
 atoms = frame["atoms"]
 n_atoms = atoms.nrows
@@ -184,7 +184,7 @@ print("bonds rows:", frame["bonds"].nrows)
 # template carries bonds but no explicit angle links, so there is no
 # 'angles' block — guard before accessing it.
 if "angles" in frame:
-    print("angles rows:", frame["angles"].nrows)
+ print("angles rows:", frame["angles"].nrows)
 ```
 
 ### 6. Export to LAMMPS files
@@ -203,7 +203,7 @@ print("wrote:", out_dir / "water_box_tip3p.ff")
 ## What you built
 
 - A TIP3P water molecule as an editable `Atomistic` graph — then types,
-  parameters, and derived angles from the bundled `tip3p.xml`.
+ parameters, and derived angles from the bundled `tip3p.xml`.
 - 64 molecules placed deterministically in a periodic box.
 - A `Frame` with box attached, exported as LAMMPS data + force-field files.
 

@@ -19,13 +19,15 @@ from molpy.wrapper import Wrapper
 
 echo = Wrapper(name="echo", exe="echo")
 result = echo.run(args=["hello", "world"])
-print(result.stdout)    # "hello world\n"
+print(result.stdout) # "hello world\n"
 print(result.returncode) # 0
 ```
 
 ## Key behavior
 
-- Wrappers handle conda/virtualenv activation via `env` and `env_manager` parameters
+- Environment isolation is owned by `EnvSpec` (`env` + `env_manager`); no auto-detection of manager type
+- Both parameters must be set together, or both omitted for the system `PATH`
+- Supported managers: `conda`, `venv` (aliases: `pip`, `virtualenv`)
 - Safe to instantiate even if executable is missing (failure at `.run()` time)
 - All wrappers accept `workdir` for controlling working directory
 
@@ -37,6 +39,10 @@ print(result.returncode) # 0
 ---
 
 ## Full API
+
+### Environment
+
+::: molpy.wrapper.env
 
 ### Base
 

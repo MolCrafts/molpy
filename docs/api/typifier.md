@@ -11,12 +11,12 @@ written once, on the base class, and `match()` is the single abstract step.
 
 ```text
 class Typifier[G: MolGraph](ABC):
-    def typify(self, graph: G) -> G           # concrete: copy, match, write back
-    def match(self, graph: G) -> Match        # abstract: the only thing that differs
+ def typify(self, graph: G) -> G # concrete: copy, match, write back
+ def match(self, graph: G) -> Match # abstract: the only thing that differs
 ```
 
 The pipeline is generic over the graph. An `Atomistic` and a `CoarseGrain` are
-both molrs graph leaves, and a concrete typifier specialises `G` to the one it
+both graph leaves, and a concrete typifier specialises `G` to the one it
 understands. Nothing in the contract mentions bonds, angles or dihedrals: that
 decomposition belongs to a force field, not to typification.
 
@@ -29,14 +29,14 @@ component, `ForceFieldParams`.
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
 | `Typifier` | The contract: one abstract `match` | Writing your own |
-| `OPLSAATypifier` | Full OPLS-AA typing pipeline re-exported from `molrs.ff.typifier` | OPLS-AA all-atom force fields |
-| `MMFFTypifier` | Full MMFF94 typing pipeline re-exported from `molrs.ff.typifier` | MMFF all-atom force fields |
-| `ClpTypifier` | CL&P ionic-liquid overlay: molrs SMARTS types + MolPy parameters | Ionic-liquid force fields |
+| `OPLSAATypifier` | Full OPLS-AA typing pipeline | OPLS-AA all-atom force fields |
+| `MMFFTypifier` | Full MMFF94 typing pipeline | MMFF all-atom force fields |
+| `ClpTypifier` | CL&P ionic-liquid overlay: SMARTS types + MolPy parameters | Ionic-liquid force fields |
 | `AmberToolsTypifier` | GAFF atom types via antechamber; accumulates the force field it discovers | GAFF / AmberTools |
 | `ForceFieldParams` | **Not a typifier.** Annotates pair and bonded terms from node types | A graph whose types are already known |
 
-UFF lives in molrs (Rust / WASM `UFFTypifier`); MolPy re-exports it when the
-published molrs minor exposes a Python binding.
+UFF is provided by the backend (`UFFTypifier`); MolPy re-exports it when the
+published minor exposes a Python binding.
 
 ## Canonical example
 
@@ -45,11 +45,11 @@ import molpy as mp
 from molpy.typifier import OPLSAATypifier
 
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
-    mp.io.read_smiles("CCO")
+ mp.io.read_smiles("CCO")
 )
 
 typifier = OPLSAATypifier(strict=True)
-typed_mol = typifier.typify(mol)  # returns a new Atomistic
+typed_mol = typifier.typify(mol) # returns a new Atomistic
 frame = typed_mol.to_frame()
 ```
 
@@ -57,12 +57,12 @@ frame = typed_mol.to_frame()
 
 - `typify()` returns a **new** graph — the original is not modified
 - A typifier never asks whether its graph is a *fragment*. Truncation is a fact
-  about provenance, not something readable off a graph's valences: a radical is a
-  perfectly good molecule. The party that cut the graph completes it — see
-  `RegionTypes.of`, which caps every region it types because every region is a cut
+ about provenance, not something readable off a graph's valences: a radical is a
+ perfectly good molecule. The party that cut the graph completes it — see
+ `RegionTypes.of`, which caps every region it types because every region is a cut
 - A term the force field does not parameterise is left **undecided**, never
-  stamped with `None`
-- SMARTS matching is implemented in molrs; MolPy no longer carries a matcher
+ stamped with `None`
+- SMARTS matching is implemented in the high-performance backend; MolPy does not carry a second matcher
 
 ## Writing a typifier
 
@@ -72,14 +72,13 @@ should receive, positional against `graph.nodes` and `graph.links.bucket(cls)`.
 ```python
 from molpy.typifier import ForceFieldParams, Match, Typifier
 
-
 class MyTypifier(Typifier[mp.Atomistic]):
-    def __init__(self, forcefield):
-        self._params = ForceFieldParams(forcefield)
+ def __init__(self, forcefield):
+ self._params = ForceFieldParams(forcefield)
 
-    def match(self, graph):
-        node_types = [{"type": decide(atom)} for atom in graph.atoms]
-        return self._params.match(graph, node_types)
+ def match(self, graph):
+ node_types = [{"type": decide(atom)} for atom in graph.atoms]
+ return self._params.match(graph, node_types)
 ```
 
 `ForceFieldParams` is the tail every force-field typifier ends with. It is also

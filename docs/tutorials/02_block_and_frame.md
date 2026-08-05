@@ -16,7 +16,6 @@ MolPy uses two data structures for this purpose. A `Block` is one columnar table
 
 The split is deliberate. A block answers "what are the atoms?" or "what are the bonds?" — one table for one kind of data. A frame answers "what is the full state of this system right now?" by grouping related tables together.
 
-
 ## Block: a columnar table backed by NumPy
 
 Creating a block is as simple as passing a dictionary of array-like values. Each value becomes a NumPy array automatically.
@@ -26,31 +25,30 @@ import molpy as mp
 import numpy as np
 
 atoms = mp.Block({
-    "element": ["O", "H", "H"],
-    "x": [0.000, 0.957, -0.239],
-    "y": [0.000, 0.000, 0.927],
-    "z": [0.000, 0.000, 0.000],
+ "element": ["O", "H", "H"],
+ "x": [0.000, 0.957, -0.239],
+ "y": [0.000, 0.000, 0.927],
+ "z": [0.000, 0.000, 0.000],
 })
 
-print(atoms.nrows)          # 3
-print(list(atoms.keys()))   # ['element', 'x', 'y', 'z']
+print(atoms.nrows) # 3
+print(list(atoms.keys())) # ['element', 'x', 'y', 'z']
 ```
 
 Reading a column returns an `np.ndarray`. This means all of NumPy is immediately available — no conversion step, no special accessor.
 
 ```python
-print(atoms["x"].dtype)         # float64
-print(atoms["element"].dtype)   # <U1 (Unicode string)
+print(atoms["x"].dtype) # float64
+print(atoms["element"].dtype) # <U1 (Unicode string)
 ```
 
 A common pattern is stacking numeric columns into a 2D array for vectorized computation.
 
 ```python
-xyz = atoms[["x", "y", "z"]]   # shape (3, 3)
+xyz = atoms[["x", "y", "z"]] # shape (3, 3)
 r = np.linalg.norm(xyz, axis=1)
 print(r)
 ```
-
 
 ## Row selection returns a new Block
 
@@ -58,19 +56,18 @@ Slicing, boolean masks, and fancy indexing all produce a new `Block`. The origin
 
 ```python
 hydrogens = atoms[atoms["element"] == "H"]
-print(hydrogens.nrows)           # 2
-print(hydrogens["x"])            # [0.957, -0.239]
+print(hydrogens.nrows) # 2
+print(hydrogens["x"]) # [0.957, -0.239]
 
 first_two = atoms[0:2]
-print(first_two["element"])      # ['O', 'H']
+print(first_two["element"]) # ['O', 'H']
 ```
 
 If you need a single scalar value, index the column first, then the row.
 
 ```python
-print(atoms["x"][0])   # 0.0
+print(atoms["x"][0]) # 0.0
 ```
-
 
 ## Adding and removing columns
 
@@ -79,12 +76,11 @@ Setting a key inserts or overwrites a column. Deleting a key removes it. Both op
 ```python
 atoms_with_r = atoms.copy()
 atoms_with_r["r"] = np.linalg.norm(atoms_with_r[["x", "y", "z"]], axis=1)
-print(list(atoms_with_r.keys()))   # ['element', 'x', 'y', 'z', 'r']
+print(list(atoms_with_r.keys())) # ['element', 'x', 'y', 'z', 'r']
 
 del atoms_with_r["r"]
-print(list(atoms_with_r.keys()))   # ['element', 'x', 'y', 'z']
+print(list(atoms_with_r.keys())) # ['element', 'x', 'y', 'z']
 ```
-
 
 ## Renaming columns
 
@@ -93,9 +89,8 @@ print(list(atoms_with_r.keys()))   # ['element', 'x', 'y', 'z']
 ```python
 b = mp.Block({"q": [0.1, -0.2], "x": [1.0, 2.0]})
 b.rename("q", "charge")
-print(list(b.keys()))   # ['x', 'charge']
+print(list(b.keys())) # ['x', 'charge']
 ```
-
 
 ## Copy semantics matter
 
@@ -104,7 +99,7 @@ print(list(b.keys()))   # ['x', 'charge']
 ```python
 shallow = atoms.copy()
 shallow["x"][0] = 999.0
-print(atoms["x"][0])    # 999.0 — original changed too!
+print(atoms["x"][0]) # 999.0 — original changed too!
 ```
 
 If you need full independence, copy the arrays explicitly. The safest pattern is to copy each column you intend to modify:
@@ -112,21 +107,20 @@ If you need full independence, copy the arrays explicitly. The safest pattern is
 ```python
 # Rebuild clean data for the rest of the page
 atoms = mp.Block({
-    "element": ["O", "H", "H"],
-    "x": [0.000, 0.957, -0.239],
-    "y": [0.000, 0.000, 0.927],
-    "z": [0.000, 0.000, 0.000],
+ "element": ["O", "H", "H"],
+ "x": [0.000, 0.957, -0.239],
+ "y": [0.000, 0.000, 0.927],
+ "z": [0.000, 0.000, 0.000],
 })
 
 deep = atoms.copy()
 deep["x"] = deep["x"].copy()
 deep["x"][0] = 999.0
-print(atoms["x"][0])    # 0.0 — original unchanged
+print(atoms["x"][0]) # 0.0 — original unchanged
 ```
 
 !!! tip "Avoiding mutation"
     The idiomatic MolPy pattern is to avoid in-place array mutation entirely. Instead of modifying a column, assign a new array: `block["x"] = block["x"] + 1.0`. This always produces an independent copy and is consistent with MolPy's immutable-data philosophy.
-
 
 ## Frame: a named collection of Blocks
 
@@ -134,47 +128,46 @@ A molecular system usually needs more than one table. Atom coordinates are one t
 
 ```python
 frame = mp.Frame({
-        "atoms": mp.Block({
-            "element": ["O", "H", "H"],
-            "x": [0.000, 0.957, -0.239],
-            "y": [0.000, 0.000, 0.927],
-            "z": [0.000, 0.000, 0.000],
-        }),
-        "bonds": mp.Block({
-            "atomi": [0, 0],
-            "atomj": [1, 2],
-        }),
+ "atoms": mp.Block({
+ "element": ["O", "H", "H"],
+ "x": [0.000, 0.957, -0.239],
+ "y": [0.000, 0.000, 0.927],
+ "z": [0.000, 0.000, 0.000],
+ }),
+ "bonds": mp.Block({
+ "atomi": [0, 0],
+ "atomj": [1, 2],
+ }),
 })
 frame.meta = {
-    "timestep": mp.MetaValue("i64", 0),
-    "description": mp.MetaValue("string", "water"),
+ "timestep": mp.MetaValue("i64", 0),
+ "description": mp.MetaValue("string", "water"),
 }
 ```
 
 Every metadata entry is an explicit `mp.MetaValue`. Its `dtype` is one of the native scalar or fixed-width vector types, and its Python payload is read through `.value`.
 
 ```python
-print(frame.meta["timestep"].dtype)       # i64
-print(frame.meta["description"].value)    # water
+print(frame.meta["timestep"].dtype) # i64
+print(frame.meta["description"].value) # water
 ```
 
 Accessing a block by name returns a `Block`. From there, all column operations work the same way.
 
 ```python
 atoms = frame["atoms"]
-print(atoms["x"])   # [0.000, 0.957, -0.239]
+print(atoms["x"]) # [0.000, 0.957, -0.239]
 ```
 
 You can add, replace, or delete blocks at any time.
 
 ```python
 frame["tags"] = {"label": ["oxygen", "hydrogen", "hydrogen"]}
-print(type(frame["tags"]))   # <class 'mp.Block'>
+print(type(frame["tags"])) # <class 'mp.Block'>
 
 del frame["tags"]
-print("tags" in frame)       # False
+print("tags" in frame) # False
 ```
-
 
 ## Box is a first-class attribute
 
@@ -182,15 +175,14 @@ A periodic simulation cell is attached directly to `frame.box`, not stored in me
 
 ```python
 frame.box = mp.Box.cubic(20.0)
-print(frame.box.lengths)   # [20. 20. 20.]
+print(frame.box.lengths) # [20. 20. 20.]
 
 # copy() preserves box
 frame2 = frame.copy()
-print(frame2.box.lengths)   # [20. 20. 20.]
+print(frame2.box.lengths) # [20. 20. 20.]
 ```
 
 `frame.box` is `None` when no box has been assigned (e.g., for isolated molecules).
-
 
 ## Serialization round-trips through dictionaries
 
@@ -198,12 +190,11 @@ Both `Block` and `Frame` support `to_dict()` and `from_dict()` for JSON-friendly
 
 ```python
 payload = frame.to_dict()
-print(sorted(payload.keys()))   # ['blocks', 'meta']
+print(sorted(payload.keys())) # ['blocks', 'meta']
 
 restored = mp.Frame.from_dict(payload)
-print(sorted(restored.to_dict()["blocks"].keys()))   # ['atoms', 'bonds']
+print(sorted(restored.to_dict()["blocks"].keys())) # ['atoms', 'bonds']
 ```
-
 
 ## When Block and Frame are the right choice
 

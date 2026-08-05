@@ -40,8 +40,8 @@ ion.def_atom(element="Na", x=0.0, y=0.0, z=0.0, charge=1.0)
 
 box = InsideBoxRestraint([0.0, 0.0, 0.0], [30.0, 30.0, 30.0])
 targets = [
-    Target(water.to_frame(), count=100).with_name("water").with_restraint(box),
-    Target(ion.to_frame(), count=10).with_name("na").with_restraint(box),
+ Target(water.to_frame(), count=100).with_name("water").with_restraint(box),
+ Target(ion.to_frame(), count=10).with_name("na").with_restraint(box),
 ]
 packed = Molpack().with_seed(42).pack(targets, max_loops=200)
 ```

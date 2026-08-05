@@ -27,12 +27,12 @@ mol, _ = Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
 forcefield = mp.io.read_xml_forcefield("oplsaa.xml")
 frame = mp.typifier.OPLSAATypifier().typify(mol).to_frame()
 
-potential = ForceFieldPotential(forcefield)  # wraps a molrs ForceField
+potential = ForceFieldPotential(forcefield) # wraps a ForceField
 opt = LBFGS(potential)
-result = opt.run(frame, fmax=0.05, steps=200)  # relaxes frame in place
+result = opt.run(frame, fmax=0.05, steps=200) # relaxes frame in place
 
 print(result.converged, result.energy, result.fmax, result.nsteps)
-print(result.reason)  # why it stopped
+print(result.reason) # why it stopped
 ```
 
 `run` returns an `OptimizationResult`; by default it optimizes `frame` **in
@@ -65,22 +65,22 @@ and `reason`. Always check `converged`: a run that hit the `steps` cap
 To watch progress, attach a callback that fires every `interval` steps:
 
 ```python
-opt.attach(lambda: print(opt.step(frame)), interval=10)  # (energy, fmax) per call
+opt.attach(lambda: print(opt.step(frame)), interval=10) # (energy, fmax) per call
 ```
 
 ## Pitfalls
 
 - **Not converged ≠ minimized.** A `False` `converged` with `reason` naming the
-  step limit means you stopped early.
+ step limit means you stopped early.
 - **`fmax` units are eV/Å.** A threshold that is too tight for a coarse force
-  field never converges; too loose leaves residual strain.
+ field never converges; too loose leaves residual strain.
 - Optimization needs a *typified* frame with a force field — run a typifier first,
-  otherwise `ForceFieldPotential` has nothing to evaluate.
+ otherwise `ForceFieldPotential` has nothing to evaluate.
 
 ## See also
 
 - [Force Field](../tutorials/04_force_field.md) — building the `ForceField` you optimize
-  against.
+ against.
 - [3D Conformer Generation](07_conformers.md) — the graph-embedding
-  step that precedes force-field relaxation.
+ step that precedes force-field relaxation.
 - [Engine](12_engine.md) — running full dynamics after minimization.

@@ -14,8 +14,8 @@ agent = full_library()["X4"]
 world = Replicas(chain).times(4, spacing=8.0)
 # merge agent copies …
 cured = GraphAssembler(mp.Reaction(ETHER)).assemble(
-    world,
-    ExhaustiveSelector(cutoff=10.0, exclude_same_molecule=True),
+ world,
+ ExhaustiveSelector(cutoff=10.0, exclude_same_molecule=True),
 )
 ```
 

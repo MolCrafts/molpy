@@ -4,7 +4,7 @@ Numerical potential energy functions for bonds, angles, dihedrals, and pairs.
 
 ## Quick reference
 
-The numerical kernels live in the molrs Rust extension; `molpy.potential` exposes
+The numerical kernels live in the high-performance backend; `molpy.potential` exposes
 the thin `Style` classes that name them plus the `Potentials` evaluator.
 
 | Symbol | Summary | Preferred for |
@@ -19,7 +19,7 @@ the thin `Style` classes that name them plus the `Potentials` evaluator.
 
 Define styles and types on a `ForceField`, then evaluate against a typed `Frame`
 via `ff.to_potentials()`. There is no per-style `to_potential()` and no
-parameter-array lookup; the math runs in molrs.
+parameter-array lookup; the math runs in the high-performance backend.
 
 ```python
 import molpy as mp
@@ -28,10 +28,10 @@ import numpy as np
 ff = mp.ForceField(name="demo", units="real")
 astyle = ff.def_atomstyle("full")
 ct = astyle.def_type("CT", mass=12.011, charge=-0.18, element="C")
-hc = astyle.def_type("HC", mass=1.008,  charge=0.06,  element="H")
+hc = astyle.def_type("HC", mass=1.008, charge=0.06, element="H")
 
 bond_style = ff.def_bondstyle("harmonic")
-bond_style.def_type(ct, hc, k=340.0, r0=1.09)   # param name is "k", not "k0"
+bond_style.def_type(ct, hc, k=340.0, r0=1.09) # param name is "k", not "k0"
 
 # Build a typed frame (atoms block + bonds block carrying a "type" column).
 frame = mp.Frame()

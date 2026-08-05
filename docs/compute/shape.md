@@ -1,73 +1,82 @@
 # Shape
 
-Overview
+Textbook guide to **molecular shape descriptors**: gyration tensor, radius of
+gyration, asphericity, and the inertia tensor.
 
-| Class / entry | Description |
-|---------------|-------------|
-| [`CenterOfMass`](#centerofmass) | Center of mass per cluster. |
-| [`GyrationTensor`](#gyrationtensor) | Gyration tensor per cluster (pass `ClusterCenters` result). |
-| [`InertiaTensor`](#inertiatensor) | Inertia tensor per cluster (pass `CenterOfMass` result). |
-| [`RadiusOfGyration`](#radiusofgyration) | Scalar $R_g$ per cluster. |
+!!! note "Conventions"
+    - Length Å; $R_g$ in Å; tensors $3\times 3$.
+    - Descriptors are **per cluster** — find aggregates first ([Cluster](cluster.md)).
 
-Details
+---
 
-The `molpy.compute.shape` module: shape tensors of **clusters** (needs a `Cluster` result).
+## 1. Gyration tensor and $R_g$
 
-## `CenterOfMass`
+$$
+S = \frac{1}{N}\sum_{i=1}^N
+(\mathbf{r}_i-\mathbf{r}_c)\otimes(\mathbf{r}_i-\mathbf{r}_c),
+\qquad
+R_g^2 = \operatorname{tr} S.
+$$
 
-Center of mass per cluster.
+Mass-weighted form uses COM and masses $\{m_i\}$. For polymers
+$R_g\sim N^\nu$ with Flory exponent $\nu$ (swollen $\approx 3/5$, $\theta=1/2$,
+globule $1/3$).
+
+Eigenvalues $\lambda_1\le\lambda_2\le\lambda_3$ define asphericity
+$b=\lambda_3-\tfrac12(\lambda_1+\lambda_2)$, acylindricity
+$c=\lambda_2-\lambda_1$, and relative shape anisotropy
+
+$$
+\kappa^2 = (b^2 + \tfrac34 c^2)/R_g^4
+$$
+
+($0$ sphere → $1$ rod).
+
+The **inertia tensor** is the mass-weighted cousin; its eigenvectors are
+principal axes for molecular frames and orientational analyses.
+
+---
+
+## 2. Usage
 
 ```python
 import numpy as np
 import molpy as mp
 
 rng = np.random.default_rng(0)
-xyz = rng.uniform(0.0, 10.0, size=(40, 3))
+xyz = rng.uniform(0.0, 20.0, size=(200, 3))
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(10.0)
+frame.box = mp.Box.cubic(20.0)
 ```
 
 ```python
-from molpy.compute import NeighborList, Cluster, CenterOfMass, ClusterCenters
+from molpy.compute import (
+    NeighborList, Cluster, ClusterCenters, CenterOfMass,
+    RadiusOfGyration, GyrationTensor, InertiaTensor,
+)
 
-nlist = NeighborList(cutoff=3.0)(frame)
-clusters = Cluster(min_cluster_size=1)(frame, nlist)
-com = CenterOfMass()(frame, clusters)
-centers = ClusterCenters()(frame, clusters)
+masses = np.full(len(xyz), 12.011)
+nlist = NeighborList(cutoff=1.6)(frame)
+clusters = Cluster(min_cluster_size=10)([frame], [nlist])
+centers = ClusterCenters()([frame], clusters)
+com = CenterOfMass(masses)([frame], clusters)
+rg = RadiusOfGyration(masses)([frame], clusters, com)
+S = GyrationTensor()([frame], clusters, centers)
+I = InertiaTensor(masses)([frame], clusters, com)
 ```
 
-## `GyrationTensor`
+Pass `masses=None` for geometric (unit-mass) descriptors.
 
-Gyration tensor per cluster (pass `ClusterCenters` result).
+---
 
-```python
-from molpy.compute import GyrationTensor
+## 3. Pitfalls
 
-G = GyrationTensor()(frame, clusters, centers)
-```
-
-## `InertiaTensor`
-
-Inertia tensor per cluster (pass `CenterOfMass` result).
-
-```python
-from molpy.compute import InertiaTensor
-
-I = InertiaTensor()(frame, clusters, com)
-```
-
-## `RadiusOfGyration`
-
-Scalar $R_g$ per cluster.
-
-```python
-from molpy.compute import RadiusOfGyration
-
-rg = RadiusOfGyration()(frame, clusters, com)
-```
+1. Molecule split across PBC → unwrap relative to cluster center.
+2. Mass convention not reported.
+3. Cluster cutoff wrong → garbage aggregates.
 
 ## See also
 
-- [Cluster](cluster.md)
-- [Decomposition](decomposition.md)
+- [Cluster](cluster.md) · [Decomposition](decomposition.md) · [RDF](rdf.md)
+- [API reference](../api/compute.md)

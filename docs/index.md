@@ -164,8 +164,8 @@ system.box = mp.Box.cubic(30.0)
 ### [Fill a periodic box](user-guide/09_packing/)
 
 Clash-free placement at a target density via
-[molpack](https://docs.molcrafts.org/molpack/) — Packmol-grade packing in
-Rust, no external binary (`pip install molcrafts-molpack`).
+[molpack](https://docs.molcrafts.org/molpack/) — Packmol-grade packing as a
+library, no external binary (`pip install molcrafts-molpack`).
 
 ```python
 # docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
@@ -206,8 +206,8 @@ mp.io.write_lammps_forcefield("system.ff", ff)
 
 ### [Turn trajectories into observables](compute/)
 
-Feed the same Frame into the Rust-backed compute layer — neighbor search and
-$g(r)$ in two calls, with many more analyses behind them.
+Feed the same Frame into the compute layer — neighbor search and $g(r)$ in two
+calls, with many more analyses behind them.
 
 ```python
 from molpy.compute import NeighborList, RDF
@@ -231,8 +231,9 @@ result = RDF(n_bins=50, r_max=8.0)([system], [neighbors])  # g(r) over the box
 
 ## Built to be composed, not locked in
 
-A library first: one shared data model, a Rust core, and explicit seams. Take
-one piece, leave the rest, or extend any layer without forking the package.
+A library first: one shared data model, a high-performance core, and explicit
+seams. Take one piece, leave the rest, or extend any layer without forking the
+package.
 
 </div>
 
@@ -240,12 +241,12 @@ one piece, leave the rest, or extend any layer without forking the package.
 <div>
 <span class="molcrafts-feature-matrix__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg></span>
 <dt><a href="tutorials/02_block_and_frame/">One data structure across the ecosystem</a></dt>
-<dd>molpack, molvis, and molmcp speak the same molrs-backed <code>Frame</code> / <code>Block</code>. No converters between libraries.</dd>
+<dd>molpack, molvis, and molmcp speak the same <code>Frame</code> / <code>Block</code>. No converters between libraries.</dd>
 </div>
 <div>
 <span class="molcrafts-feature-matrix__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
-<dt><a href="developer/molrs-backend/">A Rust kernel underneath</a></dt>
-<dd>Storage and compute live in molrs. Python sees zero-copy NumPy views and the same objects identity-re-exported on the molpy facade.</dd>
+<dt><a href="developer/molrs-backend/">A high-performance kernel underneath</a></dt>
+<dd>Storage and compute live in the high-performance backend. Python sees zero-copy NumPy views on the public facade.</dd>
 </div>
 <div>
 <span class="molcrafts-feature-matrix__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></span>
@@ -286,8 +287,8 @@ browser — drag to rotate (needs the published molvis-stage Web Component).
 
 </div>
 
-<figure id="fig-aspirin" class="molcrafts-figure">
-  <div class="molcrafts-figure__body">
+<figure id="fig-aspirin" class="molcrafts-figure" markdown>
+<div class="molcrafts-figure__body">
     <!-- XYZ must start on the same line as <template> (no leading blank line). -->
     <molvis-viewer format="xyz" representation="ball-and-stick" controls="view" height="280px">
       <template data-molvis-source>21
@@ -315,24 +316,22 @@ H   3.7105  -0.3659   0.6426
 H  -0.2555  -3.5916  -0.7337</template>
     </molvis-viewer>
   </div>
-  <figcaption>
-    <span class="molcrafts-figure__label">Figure 1.</span>
-    Aspirin (PubChem) in molvis, ball-and-stick, from inline XYZ.
-  </figcaption>
+
+**Figure 1.** Aspirin (PubChem) in molvis, ball-and-stick, from inline XYZ.
 </figure>
 
 <dl class="molcrafts-tile-grid">
 <div>
 <dt><a href="https://docs.molcrafts.org/molpack/">molpack</a></dt>
-<dd>Clash-free packing as a CLI, a Rust crate, and a Python package — same engine everywhere.</dd>
+<dd>Clash-free packing as a CLI, a library crate, and a Python package — same engine everywhere.</dd>
 </div>
 <div>
 <dt><a href="https://github.com/MolCrafts/molmcp">molmcp</a></dt>
 <dd>MCP server for LLM agents: code discovery plus live ecosystem providers.</dd>
 </div>
 <div>
-<dt><a href="https://github.com/MolCrafts/molrs">molrs</a></dt>
-<dd>The shared Rust molecular kernel — Frame, Block, and compute, with Python and other bindings.</dd>
+<dt><a href="developer/molrs-backend/">Native backend</a></dt>
+<dd>The shared high-performance molecular kernel — Frame, Block, and compute, with Python and other bindings.</dd>
 </div>
 </dl>
 
@@ -369,8 +368,8 @@ beyond the default install; every seam is visible in the API.
 <dd>Ready-to-run input decks generated from MolPy data objects.</dd>
 </div>
 <div>
-<dt><a href="developer/molrs-backend/">molrs · MCP</a></dt>
-<dd>Rust column store and compute underneath; MCP exposes symbols and docs to agents.</dd>
+<dt><a href="developer/molrs-backend/">Native backend · MCP</a></dt>
+<dd>High-performance column store and compute underneath; MCP exposes symbols and docs to agents.</dd>
 </div>
 </dl>
 

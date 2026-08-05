@@ -54,12 +54,18 @@ class TestEngineInit:
         )
 
         # Only env set -> raises
-        with pytest.raises(ValueError, match="environment configuration is incomplete"):
+        with pytest.raises(ValueError, match="incomplete"):
             LAMMPSEngine(executable="lmp", env="myenv", check_executable=False)
 
         # Only env_manager set -> raises
-        with pytest.raises(ValueError, match="environment configuration is incomplete"):
+        with pytest.raises(ValueError, match="incomplete"):
             LAMMPSEngine(executable="lmp", env_manager="conda", check_executable=False)
+
+        # Unsupported manager -> raises
+        with pytest.raises(ValueError, match="Unsupported env_manager"):
+            LAMMPSEngine(
+                executable="lmp", env="x", env_manager="uv", check_executable=False
+            )
 
     def test_check_executable_missing(self):
         with pytest.raises(FileNotFoundError):
@@ -98,8 +104,36 @@ class TestEngineInit:
             check_executable=False,
         )
         merged = engine._merged_env({"VAR2": "value2"})
+        assert merged is not None
         assert merged["VAR1"] == "value1"
         assert merged["VAR2"] == "value2"
+
+    def test_process_env_is_env_spec(self):
+        from molpy.wrapper import EnvSpec
+
+        engine = LAMMPSEngine(
+            executable="lmp",
+            env="myenv",
+            env_manager="conda",
+            check_executable=False,
+        )
+        assert isinstance(engine.process_env(), EnvSpec)
+        assert engine.process_env().env_manager == "conda"
+
+    def test_merged_env_venv_injects_path(self, tmp_path):
+        import os
+
+        engine = LAMMPSEngine(
+            executable="lmp",
+            env=tmp_path / "venv",
+            env_manager="venv",
+            check_executable=False,
+        )
+        merged = engine._merged_env()
+        assert merged is not None
+        bin_dir = tmp_path / "venv" / ("Scripts" if os.name == "nt" else "bin")
+        assert merged["PATH"].split(os.pathsep)[0] == str(bin_dir)
+        assert merged["VIRTUAL_ENV"] == str(tmp_path / "venv")
 
     def test_prepare_removed(self):
         """Engine has no prepare() step."""
@@ -207,10 +241,30 @@ class TestEngineRun:
             with patch("subprocess.run", return_value=_completed()) as mock_run:
                 engine.run(script, capture_output=True, check=False)
             cmd = mock_run.call_args[0][0]
-            assert "conda" in cmd
+            # EnvSpec: conda run --no-capture-output -n <env>
+            assert "run" in cmd
+            assert "--no-capture-output" in cmd
             assert "lammps-env" in cmd
             assert "mpirun" in cmd
             assert "lmp" in cmd
+
+    def test_run_venv_injects_env_without_conda_prefix(self, tmp_path):
+        script = Script.from_text("input", "units real\n")
+        venv = tmp_path / "venv"
+        engine = LAMMPSEngine(
+            executable="lmp",
+            workdir=tmp_path,
+            env=venv,
+            env_manager="venv",
+            check_executable=False,
+        )
+        with patch("subprocess.run", return_value=_completed()) as mock_run:
+            engine.run(script, capture_output=True, check=False)
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "lmp"
+        assert "conda" not in cmd
+        env = mock_run.call_args.kwargs["env"]
+        assert env["VIRTUAL_ENV"] == str(venv)
 
 
 class TestCP2KEngine:

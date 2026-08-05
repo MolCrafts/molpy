@@ -31,12 +31,12 @@ Shared chemistry: `examples/topology/eo_kit.py` · examples index:
 Layout (docs ↔ examples, same basenames):
 
 ```text
-docs/user-guide/topology/          examples/topology/
-  index.md                           README.md · eo_kit.py
-  01_linear.md                       01_linear.py
-  02_block.md                        02_block.py
-  …                                  …
-  11_prepolymer_agent.md             11_prepolymer_agent.py
+docs/user-guide/topology/ examples/topology/
+ index.md README.md · eo_kit.py
+ 01_linear.md 01_linear.py
+ 02_block.md 02_block.py
+ … …
+ 11_prepolymer_agent.md 11_prepolymer_agent.py
 ```
 
 ## The three decisions
@@ -55,12 +55,12 @@ topology and call `build`.
 ```python
 import sys
 
-sys.path.insert(0, "examples/topology")  # the shared EO kit
+sys.path.insert(0, "examples/topology") # the shared EO kit
 from eo_kit import eo_builder
 from molpy.builder.assembly import linear_topology
 
 builder = eo_builder()
-builder.build_linear("EO", 5)  # identical to:
+builder.build_linear("EO", 5) # identical to:
 builder.build(linear_topology(["EO"] * 5))
 ```
 
@@ -83,7 +83,7 @@ Reactants left of `>>`, products right. Atom maps (`:1`) preserve identity; unma
 **Ether condensation** (ruled topologies + agent cure):
 
 ```text
-[O;%a:1][H] . [C:2][O;%b][H]  >>  [O:1][C:2]
+[O;%a:1][H]. [C:2][O;%b][H] >> [O:1][C:2]
 ```
 
 | Piece | Meaning |
@@ -95,7 +95,7 @@ Reactants left of `>>`, products right. Atom maps (`:1`) preserve identity; unma
 **C–C crosslink** (after marking carbons `x` and leaving H `h`):
 
 ```text
-[C;%x:1][H;%h] . [C;%x:2][H;%h]  >>  [C:1][C:2]
+[C;%x:1][H;%h]. [C;%x:2][H;%h] >> [C:1][C:2]
 ```
 
 ```python

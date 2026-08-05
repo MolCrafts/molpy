@@ -16,7 +16,6 @@ A snapshot of atoms has positions, but positions in a periodic system carry a hi
 
 MolPy keeps the box explicit rather than burying periodicity inside a flag or a helper function. The box is not an optional annotation. It is part of the physical model.
 
-
 ## Creating a box
 
 `Box` offers factory constructors for the three common cell types.
@@ -27,19 +26,19 @@ import numpy as np
 
 cubic = mp.Box.cubic(20.0)
 ortho = mp.Box.orth([10.0, 20.0, 30.0])
-tric  = mp.Box.tric(lengths=[10.0, 12.0, 15.0], tilts=[1.0, 0.5, 0.2])
+tric = mp.Box.tric(lengths=[10.0, 12.0, 15.0], tilts=[1.0, 0.5, 0.2])
 
-print(cubic)    # <Orthogonal Box: [20. 20. 20.]>
-print(ortho)    # <Orthogonal Box: [10. 20. 30.]>
-print(tric)     # <Triclinic Box: ...>
+print(cubic) # <Orthogonal Box: [20. 20. 20.]>
+print(ortho) # <Orthogonal Box: [10. 20. 30.]>
+print(tric) # <Triclinic Box:...>
 ```
 
 You can also pass a 3×3 matrix directly. Columns are lattice vectors.
 
 ```python
 matrix = np.array([[10.0, 1.0, 0.5],
-                   [0.0, 12.0, 0.2],
-                   [0.0,  0.0, 15.0]])
+ [0.0, 12.0, 0.2],
+ [0.0, 0.0, 15.0]])
 box = mp.Box(matrix=matrix)
 print(box.lengths)
 ```
@@ -48,9 +47,8 @@ Every box carries a `pbc` array — three booleans controlling which axes are pe
 
 ```python
 slab = mp.Box.orth([20.0, 20.0, 50.0], pbc=[True, True, False])
-print(slab.pbc)   # [ True  True False]
+print(slab.pbc) # [ True True False]
 ```
-
 
 ## Derived properties
 
@@ -59,10 +57,9 @@ A box exposes geometric quantities computed from the lattice matrix: `lengths`, 
 ```python
 box = mp.Box.orth([10.0, 12.0, 15.0])
 print(f"lengths: {box.lengths}")
-print(f"volume:  {box.volume}")
-print(f"style:   {box.style}")
+print(f"volume: {box.volume}")
+print(f"style: {box.style}")
 ```
-
 
 ## Wrapping coordinates into the primary cell
 
@@ -72,8 +69,8 @@ Atoms that have drifted outside the box during a simulation can be mapped back w
 box = mp.Box.cubic(10.0)
 
 points = np.array([
-    [12.0, -2.0, 5.0],
-    [25.0,  8.0, -3.0],
+ [12.0, -2.0, 5.0],
+ [25.0, 8.0, -3.0],
 ])
 
 wrapped = box.wrap(points)
@@ -86,9 +83,8 @@ If you need to reconstruct the unwrapped trajectory later, `get_images` tells yo
 ```python
 images = box.get_images(points)
 unwrapped = box.unwrap(wrapped, images)
-print(np.allclose(unwrapped, points))   # True
+print(np.allclose(unwrapped, points)) # True
 ```
-
 
 ## Fractional coordinates
 
@@ -99,10 +95,9 @@ absolute = np.array([[5.0, 3.0, 7.0]])
 fractional = box.make_fractional(absolute)
 restored = box.make_absolute(fractional)
 
-print(fractional)                          # [[0.5, 0.3, 0.7]]
-print(np.allclose(restored, absolute))     # True
+print(fractional) # [[0.5, 0.3, 0.7]]
+print(np.allclose(restored, absolute)) # True
 ```
-
 
 ## Minimum-image distances
 
@@ -119,10 +114,10 @@ Without periodic awareness, these two points appear to be about 14.7 Å apart. U
 
 ```python
 dr = box.diff(r1, r2)
-d  = box.dist(r1, r2)
+d = box.dist(r1, r2)
 
 print(f"displacement: {dr}")
-print(f"distance:     {d}")
+print(f"distance: {d}")
 ```
 
 For pairwise distances between two sets of points, `dist_all` returns an (N, M) matrix.
@@ -131,10 +126,9 @@ For pairwise distances between two sets of points, `dist_all` returns an (N, M) 
 set_a = np.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]])
 set_b = np.array([[9.5, 9.5, 9.5], [8.0, 8.0, 8.0]])
 distances = box.dist_all(set_a, set_b)
-print(distances.shape)   # (2, 2)
+print(distances.shape) # (2, 2)
 print(distances)
 ```
-
 
 ## Box on Frame
 
@@ -143,17 +137,16 @@ A box is attached to a Frame as `frame.box`, not stored in metadata. This is the
 ```python
 # docs: skip — reads system.data offline artifact; I/O unit-tested with fixtures
 frame = mp.Frame(blocks={
-    "atoms": {"x": [1.0, 9.5], "y": [1.0, 9.5], "z": [1.0, 9.5]},
+ "atoms": {"x": [1.0, 9.5], "y": [1.0, 9.5], "z": [1.0, 9.5]},
 })
 frame.box = mp.Box.cubic(10.0)
 
 # I/O readers set frame.box automatically
 frame = mp.io.read_lammps_data("system.data", atom_style="full").frame
-print(frame.box.lengths)   # from the data file header
+print(frame.box.lengths) # from the data file header
 ```
 
 All compute operators (MSD, RDF, etc.) read the box from `frame.box`.
-
 
 ## When the box matters
 

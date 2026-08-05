@@ -14,13 +14,13 @@ mark_backbone_crosslink_sites(strand, step=2)
 melt = Replicas(strand).grid(2, spacing=6.0, jitter=0.4, seed=3)
 
 gel = GraphAssembler(mp.Reaction(XLINK)).assemble(
-    melt,
-    RandomSelector(
-        conversion=0.5,
-        seed=7,
-        cutoff=6.0,
-        exclude_same_molecule=True,
-    ),
+ melt,
+ RandomSelector(
+ conversion=0.5,
+ seed=7,
+ cutoff=6.0,
+ exclude_same_molecule=True,
+),
 )
 # same seed → same atom count
 ```
