@@ -1,6 +1,6 @@
 # Comb polymer
 
-**Script:** [`examples/topology/05_comb.py`](../../../examples/topology/05_comb.py)
+**Script:** [`examples/topology/05_comb.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/05_comb.py)
 
 Combs use multifunctional backbone units (`BR` in the kit) and **hand-written** CGSmiles through the sole entry `build` — irregular graphs that the `build_*` shortcuts do not cover.
 

@@ -239,7 +239,14 @@ class AmberTools:
         """Assemble a chain from MolPy monomers + reaction semantics (cached)."""
         from .polymer.ambertools import AmberPolymerBuilder
 
-        key = (*self._polymer_builder_key(library, net_charges), id(reaction))
+        # Content-stable key (no id(...)): same chemistry → same work_dir digest
+        # across process restarts so monomer antechamber + chain tleap disk caches hit.
+        key = (
+            *self._polymer_builder_key(library, net_charges),
+            str(reaction),
+            self.force_field,
+            self.charge_method,
+        )
         builder = self._polymer_builders.get(key)
         if builder is None:
             digest = hashlib.sha1(repr(key).encode("utf-8")).hexdigest()[:12]
@@ -282,6 +289,13 @@ class AmberTools:
         library: Mapping[str, Atomistic],
         net_charges: Mapping[str, int] | None,
     ) -> tuple[Any, ...]:
+        """Content-stable key so disk monomer caches survive process restarts.
+
+        Must **not** include ``id(struct)``: a fresh ``SmilesReader`` each run
+        yields a new object id and would re-hash the work_dir, forcing
+        antechamber again even when chemistry is identical.
+        """
+
         def monomer_key(label: str, struct: Atomistic) -> tuple[Any, ...]:
             try:
                 structural = int(struct.structural_hash())
@@ -289,7 +303,6 @@ class AmberTools:
                 structural = None
             return (
                 label,
-                id(struct),
                 structural,
                 getattr(struct, "n_atoms", None),
                 len(getattr(struct, "bonds", ())),

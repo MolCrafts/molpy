@@ -614,10 +614,35 @@ class AmberPolymerBuilder:
         parameters come from GAFF base (``source leaprc.gaff2``); with residues
         cut on backbone c3-c3 bonds this always resolves. See the class
         ``DESIGN CONTRACT`` — do NOT add a parmchk2 pass over the assembly.
+
+        Sequence-level disk cache: identical ``sequence {…}`` reuses an existing
+        prmtop/inpcrd under ``work_dir/chains/<seq_hash>/`` so re-runs skip tleap.
         """
+        import hashlib
+
+        from molpy.io import read_amber
         from molpy.wrapper.tleap import TLeapWrapper
 
         work_dir = self.work_dir
+        sequence = self._build_sequence(graph)
+        seq_hash = hashlib.sha1(sequence.encode("utf-8")).hexdigest()[:16]
+        chain_dir = work_dir / "chains" / seq_hash
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        prmtop = chain_dir / f"{output_prefix}.prmtop"
+        inpcrd = chain_dir / f"{output_prefix}.inpcrd"
+
+        if prmtop.exists() and inpcrd.exists():
+            frame, ff = read_amber(prmtop, inpcrd)
+            return AmberBuildResult(
+                frame=frame,
+                forcefield=ff,
+                prmtop_path=prmtop,
+                inpcrd_path=inpcrd,
+                pdb_path=None,
+                monomer_count=len(graph.nodes),
+                cgsmiles=None,
+            )
+
         output_dir = work_dir / "output"
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -637,23 +662,23 @@ class AmberPolymerBuilder:
                 load_lines.append(f"loadamberprep {prep.tail_prepi}")
         load_lines.append("")
 
-        sequence = self._build_sequence(graph)
         seq_line = f"mol = sequence {{{sequence}}}"
 
-        prmtop = output_dir / f"{output_prefix}.prmtop"
-        inpcrd = output_dir / f"{output_prefix}.inpcrd"
-        pdb = output_dir / f"{output_prefix}.pdb"
+        # tleap still writes under output/; we then promote into chains/.
+        prmtop_tmp = output_dir / f"{output_prefix}.prmtop"
+        inpcrd_tmp = output_dir / f"{output_prefix}.inpcrd"
+        pdb = output_dir / f"{output_prefix}.pdb"  # optional debug only; not written
 
         tleap = TLeapWrapper(
             name="tleap", workdir=work_dir, env=self.env, env_manager=self.env_manager
         )
 
         # --- Build the topology in one pass: per-monomer params + GAFF base. ---
+        # No savepdb: PDB export is slow and unused by the packing pipeline.
         script_lines = load_lines + [
             seq_line,
             "",
-            f"savepdb mol {pdb}",
-            f"saveamberparm mol {prmtop} {inpcrd}",
+            f"saveamberparm mol {prmtop_tmp} {inpcrd_tmp}",
             "quit",
         ]
         script = "\n".join(script_lines)
@@ -661,7 +686,7 @@ class AmberPolymerBuilder:
         script_path.write_text(script)
 
         r = tleap.run_from_script(script)
-        if r.returncode != 0 or not prmtop.exists():
+        if r.returncode != 0 or not prmtop_tmp.exists():
             raise RuntimeError(
                 f"tleap failed to build polymer (prmtop not created).\n"
                 f"Script: {script_path}\n"
@@ -669,7 +694,11 @@ class AmberPolymerBuilder:
                 f"{r.stderr or r.stdout}"
             )
 
-        # Load results
+        # Promote into sequence cache and load.
+        import shutil
+
+        shutil.copy2(prmtop_tmp, prmtop)
+        shutil.copy2(inpcrd_tmp, inpcrd)
         frame, forcefield = read_amber(prmtop, inpcrd)
 
         return AmberBuildResult(
@@ -677,7 +706,7 @@ class AmberPolymerBuilder:
             forcefield=forcefield,
             prmtop_path=prmtop,
             inpcrd_path=inpcrd,
-            pdb_path=pdb if pdb.exists() else None,
+            pdb_path=None,
             monomer_count=len(graph.nodes),
             cgsmiles=None,
         )

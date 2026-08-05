@@ -1,6 +1,6 @@
 # Telechelic oligomer
 
-**Script:** [`examples/topology/06_telechelic.py`](../../../examples/topology/06_telechelic.py)
+**Script:** [`examples/topology/06_telechelic.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/06_telechelic.py)
 
 Head and tail caps must carry **complementary** single sites so both path ends can form ether bonds with `EO`.
 

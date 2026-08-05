@@ -16,9 +16,9 @@
 </p>
 
 <p>
-  <a href="https://molpy.molcrafts.org/"><b>Documentation</b></a> &nbsp;&middot;&nbsp;
+  <a href="https://docs.molcrafts.org/molpy/"><b>Documentation</b></a> &nbsp;&middot;&nbsp;
   <a href="#quick-start"><b>Quick start</b></a> &nbsp;&middot;&nbsp;
-  <a href="https://molpy.molcrafts.org/getting-started/examples/"><b>Examples</b></a> &nbsp;&middot;&nbsp;
+  <a href="https://docs.molcrafts.org/molpy/getting-started/examples/"><b>Examples</b></a> &nbsp;&middot;&nbsp;
   <a href="#molcrafts-ecosystem"><b>Ecosystem</b></a>
 </p>
 
@@ -60,7 +60,7 @@ it, analyze or minimize it, then read and write it across formats.
 | **`conformer`** | 3D coordinate generation (molrs ETKDG + MMFF cleanup) |
 | **`typifier`** | Atom typing — OPLS-AA, CL&P, MMFF, GAFF via AmberTools |
 | **`potential` · `optimize`** | Energy & force potentials with L-BFGS minimization |
-| **`compute`** | Analysis — RDF, MSD, transport, dielectric, spectra, order, Voronoi (molrs kernels) |
+| **`compute`** | Analysis modules under `molpy.compute` — `rdf`/`msd`/`dielectric`/`spectra`/`order`/`voronoi`/… (molrs kernels) |
 | **`pack`** | Packmol-based packing with density targets |
 | **`io`** | Read/write — PDB, GRO, LAMMPS data, XYZ, force fields, trajectories, … |
 | **`engine`** | MD input generation & run management — LAMMPS, CP2K, OpenMM |
@@ -116,7 +116,7 @@ cd ../molpy
 pip install -e ".[dev]"                                # resolves molrs from the local build
 ```
 
-See [docs/developer/development-setup](https://molpy.molcrafts.org/developer/development-setup/)
+See [docs/developer/development-setup](https://docs.molcrafts.org/molpy/developer/development-setup/)
 for the full workflow.
 
 </details>
@@ -139,19 +139,19 @@ mp.io.write_lammps_system("output/", typed.to_frame(), ff)
 More workflows — packed solvent boxes, virtual-site models, polymer chains and
 networks (the stress test for MolPy's editing machinery), AmberTools
 parameterization — are in the
-**[Example Gallery](https://molpy.molcrafts.org/getting-started/examples/)**
-and the task-oriented [Guides](https://molpy.molcrafts.org/user-guide/).
+**[Example Gallery](https://docs.molcrafts.org/molpy/getting-started/examples/)**
+and the task-oriented [Guides](https://docs.molcrafts.org/molpy/user-guide/).
 
 ## Documentation
 
 Full documentation, including executable notebooks:
-**[molpy.molcrafts.org](https://molpy.molcrafts.org/)**
+**[docs.molcrafts.org/molpy](https://docs.molcrafts.org/molpy/)**
 
-- [Getting Started](https://molpy.molcrafts.org/getting-started/) — install and first example
-- [Example Gallery](https://molpy.molcrafts.org/getting-started/examples/) — short copy-paste workflows
-- [Guides](https://molpy.molcrafts.org/user-guide/) — task-oriented notebooks
-- [Concepts](https://molpy.molcrafts.org/tutorials/) — data model deep dives
-- [API Reference](https://molpy.molcrafts.org/api/) — full API
+- [Getting Started](https://docs.molcrafts.org/molpy/getting-started/) — install and first example
+- [Example Gallery](https://docs.molcrafts.org/molpy/getting-started/examples/) — short copy-paste workflows
+- [Guides](https://docs.molcrafts.org/molpy/user-guide/) — task-oriented notebooks
+- [Concepts](https://docs.molcrafts.org/molpy/tutorials/) — data model deep dives
+- [API Reference](https://docs.molcrafts.org/molpy/api/) — full API
 
 ## MolCrafts ecosystem
 
@@ -173,16 +173,11 @@ Full documentation, including executable notebooks:
 ## Contributing
 
 Issues and pull requests are welcome — see
-[Contributing](https://molpy.molcrafts.org/developer/contributing/).
+[Contributing](https://docs.molcrafts.org/molpy/developer/contributing/).
 
 ## License
 
 BSD-3-Clause — see [LICENSE](LICENSE).
-
-MolPy ports or adapts code, algorithms, and data from other projects (freud,
-foyer, OpenMM, moltemplate, RDKit, and others). All third-party attributions and
-their license terms are consolidated in
-[Third-Party Attributions](docs/developer/attribution.md).
 
 <hr>
 

@@ -1,6 +1,6 @@
 # Dual network
 
-**Script:** [`examples/topology/10_dual_network.py`](../../../examples/topology/10_dual_network.py)
+**Script:** [`examples/topology/10_dual_network.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/10_dual_network.py)
 
 Two `assemble` steps, two SITE namespaces — complex materials are stacks of simple edits.
 

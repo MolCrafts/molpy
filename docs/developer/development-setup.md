@@ -57,7 +57,7 @@ python -c "import molpy as mp; print(mp.version, mp.Frame(), mp.Element('C').sym
 
 Re-run `maturin develop` after any change to the molrs Rust source to recompile
 the extension. See the
-[molrs build-from-source guide](https://molrs.molcrafts.org/getting-started/installation/)
+[molrs build-from-source guide](https://docs.molcrafts.org/molrs/getting-started/installation/)
 for the native-crate and WASM build targets.
 
 

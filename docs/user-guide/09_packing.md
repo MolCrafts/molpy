@@ -1,7 +1,7 @@
 # Packing Systems into a Box
 
 Fill a simulation cell with hundreds of molecules under geometric restraints —
-from Python, through **[molpack](https://molcrafts.github.io/molpack/)**
+from Python, through **[molpack](https://docs.molcrafts.org/molpack/)**
 (`pip install molcrafts-molpack`).
 
 !!! note "Prerequisites"
@@ -78,7 +78,7 @@ c = InsideSphereRestraint([0.0, 0.0, 0.0], 20.0)
 target = Target(water_frame, count=100).with_restraint(c)
 ```
 
-Full restraint reference: [molpack docs — restraints](https://molcrafts.github.io/molpack/python/guide/restraints/).
+Full restraint reference: [molpack docs — restraints](https://docs.molcrafts.org/molpack/python/guide/restraints/).
 
 ## Parameters that matter
 
@@ -101,7 +101,7 @@ Full restraint reference: [molpack docs — restraints](https://molcrafts.github
 
 ## See also
 
-- [molpack documentation](https://molcrafts.github.io/molpack/) — full Python +
+- [molpack documentation](https://docs.molcrafts.org/molpack/) — full Python +
   Rust guide, CLI, Packmol-script parity.
 - [Assembly](02_assembly.md) — producing the molecules you pack.
 - [Polydisperse Systems](05_polydisperse_systems.md) — packing a chain-length

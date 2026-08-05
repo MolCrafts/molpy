@@ -92,32 +92,52 @@ nav = [
     ] },
   ] },
 
+  # freud-style: section categories; page titles = package short names (no "Module" suffix).
   { "Compute" = [
     "compute/index.md",
-    # Groups mirror src/molpy/compute/ module organization:
-    # Structure  = neighborlist/rdf/density/diffraction/pmft, distribution/spatial,
-    #              order/environment, shape/cluster/decomposition, hbond, voronoi
-    # Dynamics   = msd/mcd/onsager/jacf/pmsd, time_series, van_hove/reorientation, persist
-    # Spectroscopy = dielectric, spectra
     { "Structure" = [
-      { "Structural Analysis" = "compute/structure.md" },
-      { "Distribution Functions" = "compute/distributions.md" },
-      { "Bond-Orientational Order" = "compute/order.md" },
-      { "Shape, Clustering & Decomposition" = "compute/descriptors.md" },
-      { "Hydrogen-Bond Networks" = "compute/hbonds.md" },
-      { "Radical Voronoi" = "compute/voronoi.md" },
+      { "NeighborList" = "compute/neighborlist.md" },
+      { "RDF" = "compute/rdf.md" },
+      { "Density" = "compute/density.md" },
+      { "Diffraction" = "compute/diffraction.md" },
+      { "PMFT" = "compute/pmft.md" },
+    ] },
+    { "Distributions" = [
+      { "Distribution" = "compute/distribution.md" },
+      { "Spatial" = "compute/spatial.md" },
+    ] },
+    { "Order" = [
+      { "Order" = "compute/order.md" },
+      { "Environment" = "compute/environment.md" },
+    ] },
+    { "Shape & Clustering" = [
+      { "Shape" = "compute/shape.md" },
+      { "Cluster" = "compute/cluster.md" },
+      { "Decomposition" = "compute/decomposition.md" },
+    ] },
+    { "Bonds & Voronoi" = [
+      { "HBond" = "compute/hbond.md" },
+      { "Voronoi" = "compute/voronoi.md" },
+    ] },
+    { "Transport" = [
+      { "MSD" = "compute/msd.md" },
+      { "PMSD" = "compute/pmsd.md" },
+      { "JACF" = "compute/jacf.md" },
+      { "Onsager" = "compute/onsager.md" },
+      { "Persist" = "compute/persist.md" },
     ] },
     { "Dynamics" = [
-      { "Diffusion & Ionic Transport" = "compute/transport.md" },
-      { "Velocity Autocorrelation & VDOS" = "compute/vacf.md" },
-      { "Van Hove & Reorientation" = "compute/van-hove.md" },
-      { "Pair Persistence" = "compute/persistence.md" },
+      { "Van Hove" = "compute/van_hove.md" },
+      { "Reorientation" = "compute/reorientation.md" },
     ] },
     { "Spectroscopy" = [
-      { "Dielectric Spectroscopy" = "compute/dielectric.md" },
-      { "Vibrational Spectra" = "compute/spectra.md" },
+      { "Dielectric" = "compute/dielectric.md" },
+      { "Spectra" = "compute/spectra.md" },
+      { "Signal" = "compute/signal.md" },
     ] },
-    { "Compute Workflows" = "compute/workflows.md" },
+    { "Workflow" = [
+      { "Workflow" = "compute/workflow.md" },
+    ] },
   ] },
 
   { "API Reference" = [
@@ -151,7 +171,6 @@ nav = [
       { "Coding Style" = "developer/coding-style.md" },
       { "Testing" = "developer/testing.md" },
       { "Release Process" = "developer/release-process.md" },
-      { "Third-Party Attributions" = "developer/attribution.md" },
     ] },
     { "Architecture" = [
       { "Architecture Overview" = "developer/architecture-overview.md" },

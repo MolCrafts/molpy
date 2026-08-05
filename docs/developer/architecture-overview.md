@@ -15,7 +15,7 @@ Each package has one clear responsibility with minimal coupling to its siblings:
 | `typifier` | Graph typification: OPLS-AA / MMFF re-exports, CL&P overlays, AmberTools GAFF |
 | `pack` | Legacy packing helpers; new packing is **molpack** (`molcrafts-molpack`) |
 | `io` | File I/O: molecular data, trajectories, force-field formats |
-| `compute` | Analysis operators (structure, transport, dielectric, spectra, …) |
+| `compute` | Analysis operators — flat modules under `src/molpy/compute/` (`rdf`, `msd`, `dielectric`, `spectra`, …; molrs kernels) |
 | `engine` | MD abstractions: LAMMPS, CP2K, OpenMM input generation and execution |
 | `wrapper` | Subprocess boundaries to external CLI tools (antechamber, packmol, …) |
 | `adapter` | Optional in-memory bridge (RDKit worked example) |

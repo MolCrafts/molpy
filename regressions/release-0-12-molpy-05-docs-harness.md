@@ -14,6 +14,6 @@ grep -n 'molcrafts-molrs>=0.12.0,<0.13' pyproject.toml CLAUDE.md
 Verified 2026-08-04:
 
 - README capabilities match live packages; deps: numpy + molrs 0.12 line.
-- `docs/compute/vacf.md` / `docs/compute/index.md` use VACF / compose API (no `compute_acf`).
+- `docs/compute/msd.md` / `docs/compute/index.md` use VACF / compose API (no `compute_acf`).
 - `.claude/notes/architecture.md` inventory rewritten for post-parser-sink tree.
 - CLAUDE Architecture pin example `>=0.12.0,<0.13`.

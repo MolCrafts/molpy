@@ -7,8 +7,10 @@ identity-style for a stable Python import path — there is no second science
 implementation in molpy. Compose **raw Computes** with **Fits** (and an optional
 SI scale) the same way the Rust API does.
 
-See the [Compute overview](../compute/index.md) for the configure → call pattern,
-and the domain guides under `docs/compute/` for derivations.
+Like freud’s [API modules](https://freud.readthedocs.io/en/stable/), each
+`molpy.compute` module has its own page under [Compute](../compute/index.md)
+with an overview table and full signatures. This page is the **index** plus the
+shared base / result types.
 
 !!! note "Analysis units (LAMMPS *real*)"
     Length **Å**, charge **e**, **time fs**, volume Å³, temperature K.
@@ -20,7 +22,7 @@ and the domain guides under `docs/compute/` for derivations.
 
 | Layer | Role | Examples |
 |-------|------|----------|
-| Raw Compute | Correlation / MSD / ACF curve only | `EinsteinConductivity`, `GreenKuboConductivity`, `DebyeRelaxation`, `VACF`, `MSD` |
+| Raw Compute | Correlation / MSD / ACF curve only | `EinsteinConductivity`, `GreenKuboConductivity`, `DebyeRelaxation`, `MSD` |
 | Fit | Integrate or slope-fit the curve | `CumulativeTrapezoid`, `LinearFit`, `DebyeFit`, `EinsteinHelfandSpectrum`, `GreenKuboSpectrum` |
 | Scale | MD → SI prefactor in your script | $1/(6 V k_B T)$, $1/(3 V k_B T)$, $1/d$ |
 
@@ -32,48 +34,42 @@ class. Historical tame names remain as **aliases** of the molrs types:
 | `JACF` | `GreenKuboConductivity` |
 | `PMSDCompute` | `EinsteinConductivity` |
 
-## Quick reference
+`VACF` / `GreenKuboDiffusion` / `EinsteinDiffusion` are **not** re-exported;
+import them from `molrs.compute.transport`.
 
-| Symbol | Summary | Returns |
-|--------|---------|---------|
-| `Compute` | Base class for frame-oriented analyses | typed result |
-| `Dielectric` | Dipole / current / Neumann $\varepsilon(0)$ (static methods) | arrays / scalar |
-| `DebyeRelaxation` | Raw fluctuation-dipole ACF + $\langle M^2\rangle$ metadata | ACF + invariants |
-| `EinsteinHelfandSpectrum` | Fit: dipole ACF → $\varepsilon^*(\omega)$ (EH) | spectrum |
-| `GreenKuboSpectrum` | Fit: current ACF → $\varepsilon^*(\omega)$ (GK) | spectrum |
-| `DebyeFit` | Time-domain Debye $\tau$ on normalized $\Phi(t)$ | $\tau$, $A$ |
-| `EinsteinConductivity` (`PMSDCompute`) | Raw collective charge-dipole MSD | `lag_times`, MSD curve |
-| `GreenKuboConductivity` (`JACF`) | Raw current ACF $\langle J(0)\cdot J(t)\rangle$ | `lag_times`, `jacf` |
-| `LinearFit` | OLS slope over a fractional window | slope, intercept |
-| `CumulativeTrapezoid` | Running $\int_0^\tau y\,dt$ | running integral |
-| `Onsager` | `Onsager.correlation(P_i, P_j, dt, max_lag)` | $L_{ij}(\tau)$ |
-| `Persist` | `Persist.pair_survival_tcf(...)` | residence $C(\tau)$ |
-| `RDF` | Radial distribution $g(r)$ | structural result |
-| `MSD` | Single-particle MSD (`direct` / `window`) | `MSDTimeSeries` |
-| `StaticStructureFactorDebye` | $S(k)$ (Debye) | structural result |
-| `NeighborList` | Cutoff neighbor pairs | pair list |
-| `LocalDensity`, `GaussianDensity` | Number-density fields | density field |
-| `Steinhardt`, `Hexatic`, `Nematic`, `SolidLiquid` | Bond-orientational order | per-particle order |
-| `BondOrder` | $(\theta,\phi)$ bond diagram | spherical histogram |
-| `PMFTXY` | Potential of mean force & torque | free-energy field |
-| Shape / cluster / PCA | `RadiusOfGyration`, `Cluster`, `Pca`, `KMeans`, … | tensors / labels |
-| Geometric distributions | `DistanceDistribution`, `AngleDistribution`, … | histograms |
-| `SpatialDistribution` | SDF (body-fixed density) | 3-D grid |
-| `VanHove` | $G(r,t)$ | time-resolved $g$ |
-| `LegendreReorientation` | $C_1(t)$, $C_2(t)$ | TCFs |
-| `HBonds`, `HBondCriterion` | Geometric H-bonds | bond lists |
-| Radical Voronoi | `RadicalVoronoi`, `voronoi_domains`, … | cells / domains |
-| Vibrational spectra | `PowerSpectrum`, `IRSpectrum`, `RamanSpectrum`, … | spectrum (cm⁻¹) |
-| `signal` | `acf_fft`, `apply_window`, `frequency_grid` | arrays |
-| `Workflow` | Directed graph of chained computes | per-node results |
+## Module index
 
-Diffusion Green–Kubo / raw VACF types (`VACF`, `GreenKuboDiffusion`,
-`EinsteinDiffusion`) live on `molrs.compute.transport` and are the SSOT for those
-kernels; re-export them only if you need a molpy-local name.
+| Module | Primary exports | Guide |
+|--------|-----------------|-------|
+| `neighborlist` | `NeighborList` | [NeighborList](../compute/neighborlist.md) |
+| `rdf` | `RDF` | [RDF](../compute/rdf.md) |
+| `density` | `LocalDensity`, `GaussianDensity` | [Density](../compute/density.md) |
+| `diffraction` | `StaticStructureFactorDebye` | [Diffraction](../compute/diffraction.md) |
+| `pmft` | `PMFTXY` | [PMFT](../compute/pmft.md) |
+| `distribution` | distance / angle / dihedral / combined DF | [Distribution](../compute/distribution.md) |
+| `spatial` | `SpatialDistribution` | [Spatial](../compute/spatial.md) |
+| `order` | Steinhardt family | [Order](../compute/order.md) |
+| `environment` | `BondOrder` | [Environment](../compute/environment.md) |
+| `shape` | COM, gyration, inertia, $R_g$ | [Shape](../compute/shape.md) |
+| `cluster` | `Cluster`, `ClusterCenters`, `ClusterProperties` | [Cluster](../compute/cluster.md) |
+| `decomposition` | `DescriptorRow`, `Pca`, `KMeans` | [Decomposition](../compute/decomposition.md) |
+| `hbond` | `HBonds`, `HBondCriterion` | [HBond](../compute/hbond.md) |
+| `voronoi` | radical Voronoi tessellation | [Voronoi](../compute/voronoi.md) |
+| `msd` | `MSD` | [MSD](../compute/msd.md) |
+| `pmsd` | `EinsteinConductivity` | [PMSD](../compute/pmsd.md) |
+| `jacf` | `GreenKuboConductivity` | [JACF](../compute/jacf.md) |
+| `onsager` | `Onsager` | [Onsager](../compute/onsager.md) |
+| `persist` | `Persist` | [Persist](../compute/persist.md) |
+| `van_hove` | `VanHove` | [Van Hove](../compute/van_hove.md) |
+| `reorientation` | `LegendreReorientation` | [Reorientation](../compute/reorientation.md) |
+| `dielectric` | dielectric raw/fit helpers | [Dielectric](../compute/dielectric.md) |
+| `spectra` | VDOS / IR / Raman / VCD / ROA | [Spectra](../compute/spectra.md) |
+| `signal` | `acf_fft`, windows, frequency grid | [Signal](../compute/signal.md) |
+| `workflow` | `Workflow` | [Workflow](../compute/workflow.md) |
 
 ---
 
-## Full API
+## Shared base types
 
 ### Base
 
@@ -82,103 +78,3 @@ kernels; re-export them only if you need a molpy-local name.
 ### Result types
 
 ::: molpy.compute.result
-
-### Dielectric & spectroscopy fits
-
-::: molpy.compute.dielectric
-
-### Einstein conductivity (polarization MSD)
-
-::: molpy.compute.pmsd
-
-### Onsager coefficients
-
-::: molpy.compute.onsager
-
-### Green–Kubo conductivity (current ACF)
-
-::: molpy.compute.jacf
-
-### Pair persistence
-
-::: molpy.compute.persist
-
-### Radial distribution
-
-::: molpy.compute.rdf
-
-### Mean-squared displacement
-
-::: molpy.compute.msd
-
-### Static structure factor
-
-::: molpy.compute.diffraction
-
-### Neighbor list
-
-::: molpy.compute.neighborlist
-
-### Local & grid density
-
-::: molpy.compute.density
-
-### Bond-orientational order parameters
-
-::: molpy.compute.order
-
-### Bond-orientational environment
-
-::: molpy.compute.environment
-
-### Potential of mean force & torque
-
-::: molpy.compute.pmft
-
-### Shape descriptors
-
-::: molpy.compute.shape
-
-### Decomposition
-
-::: molpy.compute.decomposition
-
-### Clustering
-
-::: molpy.compute.cluster
-
-### Distribution functions (ADF / DDF / distance / combined)
-
-::: molpy.compute.distribution
-
-### Spatial distribution function
-
-::: molpy.compute.spatial
-
-### Van Hove correlation
-
-::: molpy.compute.van_hove
-
-### Reorientational correlations
-
-::: molpy.compute.reorientation
-
-### Hydrogen bonds
-
-::: molpy.compute.hbond
-
-### Radical Voronoi
-
-::: molpy.compute.voronoi
-
-### Vibrational spectra
-
-::: molpy.compute.spectra
-
-### Signal processing
-
-::: molpy.compute.signal
-
-### Workflow
-
-::: molpy.compute.workflow

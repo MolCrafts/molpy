@@ -1,7 +1,7 @@
 # Pack
 
 Spatial packing of molecules into simulation boxes via
-**[molpack](https://molcrafts.github.io/molpack/)** (`molcrafts-molpack`).
+**[molpack](https://docs.molcrafts.org/molpack/)** (`molcrafts-molpack`).
 
 Install separately:
 
@@ -11,7 +11,7 @@ pip install molcrafts-molpack
 
 Packing is **not** a molpy runtime dependency and is **not** part of the docs
 build. Examples below are frozen illustrations — full API lives in the
-[molpack Python guide](https://molcrafts.github.io/molpack/python/).
+[molpack Python guide](https://docs.molcrafts.org/molpack/python/).
 
 ## Quick reference
 
@@ -51,4 +51,4 @@ packed = Molpack().with_seed(42).pack(targets, max_loops=200)
 - [Guide: Packing Systems](../user-guide/09_packing.md)
 - [Guide: Assembly](../user-guide/02_assembly.md)
 - [Guide: Polydisperse Systems](../user-guide/05_polydisperse_systems.md)
-- [molpack documentation](https://molcrafts.github.io/molpack/)
+- [molpack documentation](https://docs.molcrafts.org/molpack/)

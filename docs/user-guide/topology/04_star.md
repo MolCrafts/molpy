@@ -1,6 +1,6 @@
 # Star polymer
 
-**Script:** [`examples/topology/04_star.py`](../../../examples/topology/04_star.py)
+**Script:** [`examples/topology/04_star.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/04_star.py)
 
 A star needs a **multifunctional core** (enough `fields.SITE` atoms for the arm count). Arms are ordinary bifunctional `EO`.
 

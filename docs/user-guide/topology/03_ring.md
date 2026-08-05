@@ -1,6 +1,6 @@
 # Macrocycle
 
-**Script:** [`examples/topology/03_ring.py`](../../../examples/topology/03_ring.py)
+**Script:** [`examples/topology/03_ring.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/03_ring.py)
 
 Ring digits in CGSmiles add one more residue edge. Bifunctional glycol is enough — the closing bond reuses free ends.
 

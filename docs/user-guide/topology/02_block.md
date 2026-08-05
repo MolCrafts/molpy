@@ -1,6 +1,6 @@
 # Block and sequence copolymers
 
-**Script:** [`examples/topology/02_block.py`](../../../examples/topology/02_block.py)
+**Script:** [`examples/topology/02_block.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/02_block.py)
 
 Architecture is the **label sequence**. Two library keys may share the same chemistry; only residue names differ.
 

@@ -23,15 +23,34 @@ def test_matching_minor_same_patch_is_accepted(
 def test_same_minor_different_patch_is_accepted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # molpy 0.10.0 may pair with molrs 0.10.1
+    # molpy 0.12.1 may pair with molrs 0.12.0 or 0.12.99 — patch is ignored
     major, minor, *_ = version_module.version.split(".")
-    newer_patch = f"{major}.{minor}.99"
-    monkeypatch.setattr(importlib.metadata, "version", lambda _name: newer_patch)
-    assert version_module.check_molrs_version() == newer_patch
+    for patch in ("0", "1", "99"):
+        molrs_ver = f"{major}.{minor}.{patch}"
+        monkeypatch.setattr(importlib.metadata, "version", lambda _n, v=molrs_ver: v)
+        assert version_module.check_molrs_version() == molrs_ver
+
+
+def test_older_patch_molrs_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """molpy 0.12.1 + molrs 0.12.0 must work (patch not in the check)."""
+    major, minor, *_ = version_module.version.split(".")
+    older = f"{major}.{minor}.0"
+    monkeypatch.setattr(importlib.metadata, "version", lambda _name: older)
+    assert version_module.check_molrs_version() == older
 
 
 def test_different_minor_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(importlib.metadata, "version", lambda _name: "0.6.0")
+    with pytest.raises(ImportError, match="Minor-version mismatch"):
+        version_module.check_molrs_version()
+
+
+def test_different_major_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    major, minor, *_ = version_module.version.split(".")
+    other_major = f"{int(major) + 1}.{minor}.0"
+    monkeypatch.setattr(importlib.metadata, "version", lambda _name: other_major)
     with pytest.raises(ImportError, match="Minor-version mismatch"):
         version_module.check_molrs_version()
 
