@@ -32,35 +32,33 @@ a continuous path, not a jump.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:9"
-# Times New Roman + math-serif stack (LaTeX-like axis type).
+# Font family only — sizes come from molplot fontScaleForWidth (2× paper,
+# tracks host width). Axis titles roman (not italic).
 config:
   font: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
   axis:
     titleFont: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
     labelFont: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
-    titleFontStyle: italic
-    titleFontSize: 15
-    labelFontSize: 12
-    titlePadding: 10
+    titleFontStyle: normal
+    labelFontStyle: normal
     tickCount: 6
     gridOpacity: 0.35
   text:
     font: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
-    fontSize: 12
-# Shared log domains so the |———| bars and the curve share axes.
+    fontStyle: normal
 encoding:
   x:
     type: quantitative
     scale: {type: log, domain: [0.1, 100]}
     title: "lag τ"
-    axis: {titleFontStyle: italic}
+    axis: {titleFontStyle: normal}
   y:
     type: quantitative
     scale: {type: log, domain: [0.008, 120]}
     title: "MSD"
-    axis: {titleFontStyle: italic}
+    axis: {titleFontStyle: normal}
 layer:
-  # —— curve: ballistic (∝τ²) → linear diffusive (∝τ) → noisy long lag ——
+  # curve: ballistic (∝τ²) → linear diffusive (∝τ) → noisy long lag
   - data:
       values:
         - {t: 0.10, msd: 0.010}
@@ -75,53 +73,56 @@ layer:
         - {t: 30.0, msd: 26}
         - {t: 55.0, msd: 42}
         - {t: 100.0, msd: 70}
-    mark: {type: line, strokeWidth: 2.4, interpolate: monotone, color: "#0c5da5"}
+    mark: {type: line, strokeWidth: 2.6, interpolate: monotone, color: "#0c5da5"}
     encoding:
       x: {field: t}
       y: {field: msd}
 
-  # —— |———| region bars (bottom of plot) ——
+  # |———| along the curve: each bar at the local MSD height of that regime
+  # (slightly above the line so the stroke stays readable).
   - data:
       values:
-        - {t: 0.12, t2: 0.85, msd: 0.012}   # ballistic
-        - {t: 1.5,  t2: 14,   msd: 0.012}   # linear diffusive
-        - {t: 22,   t2: 90,   msd: 0.012}   # noisy long lag
-    mark: {type: rule, strokeWidth: 1.5, color: "#18432b", strokeCap: butt}
+        # ballistic ~ τ²: bar rides the rising flank
+        - {t: 0.15, t2: 0.70, msd: 0.22}
+        # linear diffusive window
+        - {t: 2.0,  t2: 12,   msd: 9.5}
+        # noisy long lag
+        - {t: 28,   t2: 85,   msd: 48}
+    mark: {type: rule, strokeWidth: 1.8, color: "#18432b", strokeCap: butt}
     encoding:
       x: {field: t}
       x2: {field: t2}
       y: {field: msd}
 
-  # end-caps |   |  (geometric half-height on log-y)
+  # end-caps |   |  (geometric half-height on log-y, local to each bar)
   - data:
       values:
-        - {t: 0.12, msd: 0.0095, msd2: 0.015}
-        - {t: 0.85, msd: 0.0095, msd2: 0.015}
-        - {t: 1.5,  msd: 0.0095, msd2: 0.015}
-        - {t: 14,   msd: 0.0095, msd2: 0.015}
-        - {t: 22,   msd: 0.0095, msd2: 0.015}
-        - {t: 90,   msd: 0.0095, msd2: 0.015}
-    mark: {type: rule, strokeWidth: 1.5, color: "#18432b"}
+        - {t: 0.15, msd: 0.16, msd2: 0.30}
+        - {t: 0.70, msd: 0.16, msd2: 0.30}
+        - {t: 2.0,  msd: 7.0,  msd2: 13}
+        - {t: 12,   msd: 7.0,  msd2: 13}
+        - {t: 28,   msd: 36,   msd2: 64}
+        - {t: 85,   msd: 36,   msd2: 64}
+    mark: {type: rule, strokeWidth: 1.8, color: "#18432b"}
     encoding:
       x: {field: t}
       y: {field: msd}
       y2: {field: msd2}
 
-  # region names under each |———|
+  # region names (Times New Roman, roman — not italic), next to each bar
   - data:
       values:
-        - {t: 0.32, msd: 0.012, label: "ballistic"}
-        - {t: 4.6,  msd: 0.012, label: "diffusive"}
-        - {t: 45,   msd: 0.012, label: "noisy"}
+        - {t: 0.32, msd: 0.35, label: "ballistic"}
+        - {t: 4.9,  msd: 14,   label: "diffusive"}
+        - {t: 49,   msd: 70,   label: "noisy"}
     mark:
       type: text
-      dy: 14
-      fontSize: 12
+      dy: -10
       font: "Times New Roman, Times, STIX Two Text, STIXGeneral, serif"
+      fontStyle: normal
       color: "#18432b"
       align: center
-      baseline: top
-      fontStyle: italic
+      baseline: bottom
     encoding:
       x: {field: t}
       y: {field: msd}
