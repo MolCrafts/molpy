@@ -1,6 +1,9 @@
 [project]
 site_name = "MolPy"
-site_url = "https://molpy.molcrafts.org"
+# Public docs live under docs.molcrafts.org/<product>/ (legacy host
+# molpy.molcrafts.org permanently redirects here). Trailing slash required so
+# absolute URLs in sitemap/canonical match the product prefix.
+site_url = "https://docs.molcrafts.org/molpy/"
 repo_url = "https://github.com/MolCrafts/molpy"
 repo_name = "MolCrafts/molpy"
 site_description = "A Python toolkit for building, editing, and parameterizing complex molecular systems."
@@ -165,8 +168,11 @@ nav = [
   ] },
 ]
 
+# Theme injects MathJax config + document$ re-typeset; only the library is listed.
+# MolVis / MolPlot WC bundles load from CDN (fences live in molcrafts-zensical-theme).
 extra_javascript = [
-  "assets/javascripts/mathjax.js",
+  { path = "https://cdn.jsdelivr.net/npm/@molcrafts/molvis-stage@latest/dist/viewer.js", type = "module" },
+  { path = "https://cdn.jsdelivr.net/npm/@molcrafts/molplot@latest/dist/elements.js", type = "module" },
   "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
 ]
 
@@ -189,6 +195,43 @@ accent_soft = "rgba(2, 132, 199, 0.14)"  # secondary (副) — soft fill behind 
 [[project.extra.social]]
 icon = "fontawesome/brands/github"
 link = "https://github.com/MolCrafts/molpy"
+
+# Declaring markdown_extensions replaces Zensical defaults — keep the standard
+# set, then add MolVis / MolPlot fences from the shared theme.
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+
+[project.markdown_extensions.toc]
+permalink = true
+
+[project.markdown_extensions.pymdownx]
+betterem = {}
+caret = {}
+details = {}
+inlinehilite = {}
+keys = {}
+magiclink = {}
+mark = {}
+smartsymbols = {}
+tilde = {}
+arithmatex = { generic = true }
+emoji = { emoji_generator = "zensical.extensions.emoji.to_svg", emoji_index = "zensical.extensions.emoji.twemoji" }
+highlight = { anchor_linenums = true, line_spans = "__span", pygments_lang_class = true }
+tabbed = { alternate_style = true, combine_header_slug = true }
+tasklist = { custom_checkbox = true }
+
+[project.markdown_extensions.pymdownx.superfences]
+custom_fences = [
+  { name = "mermaid", class = "mermaid" },
+  { name = "molvis", class = "molvis", format = "molcrafts_zensical_theme.formatters.molvis_fence" },
+  { name = "molvis-gallery", class = "molvis-gallery", format = "molcrafts_zensical_theme.formatters.molvis_gallery_fence" },
+  { name = "molplot", class = "molplot", format = "molcrafts_zensical_theme.formatters.molplot_fence", validator = "molcrafts_zensical_theme.formatters.molplot_validator" },
+]
 
 [project.plugins.search]
 
