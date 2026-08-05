@@ -1,11 +1,8 @@
 name: Full
 
-# Multi-OS unit matrix (same tests as CI, broader platforms). No schedule —
-# runs on master push and on manual dispatch only.
-#
-# ubuntu-latest is deliberately absent: ci.yml's `test` job already ran the
-# identical `pytest tests/ -m "not external" -n auto` on ubuntu for this same
-# push. This matrix exists to cover the platforms CI does not.
+# Same 3 OS × 3.12 / 3.13 / 3.14 unit matrix as CI, on master push and
+# manual dispatch. Kept as an explicit multi-platform smoke after land so
+# master always re-runs the full grid even when CI was skipped or rebased.
 on:
   push:
     branches: [master]
@@ -17,10 +14,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ubuntu covered by ci.yml default gate; Full only multi-OS.
-        os: [macos-latest, windows-latest]
-        # Both ends of the supported range.
-        python-version: ['3.12', '3.14']
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.12', '3.13', '3.14']
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
