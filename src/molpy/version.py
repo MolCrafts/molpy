@@ -10,7 +10,7 @@ It is called once on ``import molpy`` so a stale major/minor pin surfaces
 immediately.
 """
 
-version = "0.12.1"
+version = "0.12.2"
 release_date = "2026-08-05"
 
 
