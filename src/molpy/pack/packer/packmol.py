@@ -50,7 +50,8 @@ class Packmol(Packer):
         """
         Packer.__init__(self)
         self.executable = executable
-        self.workdir = workdir
+        # Public boundary accepts path-like; store Path only.
+        self.workdir = Path(workdir) if workdir is not None else None
 
     def __call__(
         self,

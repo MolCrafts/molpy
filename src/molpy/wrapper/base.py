@@ -27,10 +27,15 @@ class Wrapper(ABC):
 
     name: str
     exe: str
-    workdir: Path | None = None
+    workdir: str | Path | None = None
     env_vars: dict[str, str] = field(default_factory=dict)
     env: str | Path | None = None
     env_manager: str | None = None
+
+    def __post_init__(self) -> None:
+        # Public boundary accepts str | Path; internals always store Path.
+        if self.workdir is not None and not isinstance(self.workdir, Path):
+            self.workdir = Path(self.workdir)
 
     def process_env(self) -> EnvSpec:
         """Return the validated :class:`EnvSpec` for this wrapper."""
