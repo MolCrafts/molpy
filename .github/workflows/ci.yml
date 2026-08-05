@@ -1,15 +1,12 @@
 name: CI
 
-# Default gate: same as prek — tox -e lint + tox -e py.
+# Default gate: lint once + unit matrix over 3 OS × Python 3.12 / 3.13 / 3.14.
 # Unit suite only: mocks for wrappers/engines; no third-party binaries.
 on:
   push:
     branches: [master, dev, dev-*]
     tags: ['v*']
   # No `branches:` filter — every PR runs the gate regardless of its target.
-  # Integration lands on `dev`, so a `branches: [master]` filter left the
-  # actual integration path unguarded; an enumerated list is exactly the kind
-  # of thing that goes stale when a branch convention changes.
   pull_request:
   workflow_dispatch:
 
@@ -26,12 +23,26 @@ jobs:
         run: uv run --extra dev tox -e lint
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.12', '3.13', '3.14']
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.14'
+          python-version: ${{ matrix.python-version }}
       - uses: astral-sh/setup-uv@v9.0.0
+      - name: Fetch test data
+        shell: bash
+        run: |
+          dir=tests/tests-data
+          if [ -e "$dir/README.md" ]; then exit 0; fi
+          mkdir -p "$dir"
+          curl -fsSL https://github.com/molcrafts/tests-data/archive/refs/heads/master.tar.gz \
+            | tar -xz -C "$dir" --strip-components=1 --exclude='*/con' --exclude='*/con/*'
       - name: uv run --extra dev tox -e py
+        # tox uses the runner's Python (matrix.python-version) as base.
         run: uv run --extra dev tox -e py

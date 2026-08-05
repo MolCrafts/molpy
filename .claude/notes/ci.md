@@ -72,6 +72,12 @@ Do **not** `SKIP=molrs-pin-on-pypi` to land features that need unpublished molrs
 
 ## CI matrix convention
 
-Test job runs on ubuntu + macos × Python 3.12/3.13 with
-`pytest tests/ -v -m "not external" --cov=src/molpy`; coverage upload only from
-ubuntu / 3.12.
+**Do not skip a minor** of `requires-python` (`>=3.12` → **3.12, 3.13, 3.14**).
+
+| Workflow | Matrix |
+|---|---|
+| `ci.yml` `test` | **3 OS** (`ubuntu` / `macos` / `windows`) × **3.12 / 3.13 / 3.14** |
+| `full.yml` `test` | same 3×3 on master push |
+| `release.yml` | same 3×3 **before** PyPI publish |
+
+Lint stays single-job on ubuntu + 3.14. Never drop 3.13 “because ends only”.
