@@ -151,6 +151,13 @@ docs/**
 !docs/assets/**/*.glb
 !docs/assets/**/*.js
 !docs/assets/**/*.sdf
+# molplot fence $file data (JSON/CSV/YAML under docs/data/)
+!docs/data/
+!docs/data/**/
+!docs/data/**/*.json
+!docs/data/**/*.csv
+!docs/data/**/*.yaml
+!docs/data/**/*.yml
 
 # Demo Notebooks
 notebooks/
