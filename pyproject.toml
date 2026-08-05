@@ -171,7 +171,8 @@ commands = [
 [tool.tox.env.py]
 package = "wheel"
 extras = ["dev"]
-base_python = ["python3.14"]
+# Follow the runner interpreter so CI matrix 3.12/3.13/3.14 all exercise tox -e py.
+base_python = ["python3"]
 pass_env = ["HOME", "PATH", "SSH_AUTH_SOCK", "TERM"]
 commands_pre = [
     [
