@@ -32,8 +32,9 @@ a continuous path, not a jump.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:9"
-# Font family only — sizes come from molplot fontScaleForWidth (2× paper,
-# tracks host width). Axis titles roman (not italic).
+# Matplotlib-style: |———| is a chord ON the curve (x,y)→(x2,y2), end-caps
+# perpendicular in log–log space. Times New Roman, roman (not italic).
+# Large type sizes so docs stay readable even before host fontScale updates.
 config:
   font: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
   axis:
@@ -41,11 +42,17 @@ config:
     labelFont: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
     titleFontStyle: normal
     labelFontStyle: normal
+    titleFontSize: 28
+    labelFontSize: 24
+    titlePadding: 14
+    labelPadding: 8
+    tickSize: 10
     tickCount: 6
-    gridOpacity: 0.35
+    gridOpacity: 0.3
   text:
     font: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
     fontStyle: normal
+    fontSize: 22
 encoding:
   x:
     type: quantitative
@@ -58,71 +65,78 @@ encoding:
     title: "MSD"
     axis: {titleFontStyle: normal}
 layer:
-  # curve: ballistic (∝τ²) → linear diffusive (∝τ) → noisy long lag
+  # schematic: ballistic ∝τ² → linear diffusive ∝τ → noisy long lag
   - data:
       values:
         - {t: 0.10, msd: 0.010}
+        - {t: 0.15, msd: 0.0225}
         - {t: 0.20, msd: 0.040}
-        - {t: 0.40, msd: 0.16}
-        - {t: 0.80, msd: 0.64}
-        - {t: 1.20, msd: 1.15}
-        - {t: 2.00, msd: 2.0}
-        - {t: 4.00, msd: 4.0}
-        - {t: 8.00, msd: 8.0}
-        - {t: 15.0, msd: 14.5}
-        - {t: 30.0, msd: 26}
-        - {t: 55.0, msd: 42}
-        - {t: 100.0, msd: 70}
-    mark: {type: line, strokeWidth: 2.6, interpolate: monotone, color: "#0c5da5"}
+        - {t: 0.30, msd: 0.090}
+        - {t: 0.45, msd: 0.2025}
+        - {t: 0.65, msd: 0.4225}
+        - {t: 0.90, msd: 0.81}
+        - {t: 1.20, msd: 1.20}
+        - {t: 1.80, msd: 1.80}
+        - {t: 2.50, msd: 2.50}
+        - {t: 4.00, msd: 4.00}
+        - {t: 6.00, msd: 6.00}
+        - {t: 9.00, msd: 9.00}
+        - {t: 12.0, msd: 12.0}
+        - {t: 18.0, msd: 18.0}
+        - {t: 28.0, msd: 24.4}
+        - {t: 40.0, msd: 31.0}
+        - {t: 55.0, msd: 39.25}
+        - {t: 75.0, msd: 50.25}
+        - {t: 100,  msd: 64.0}
+    mark: {type: line, strokeWidth: 3, interpolate: monotone, color: "#0c5da5"}
     encoding:
       x: {field: t}
       y: {field: msd}
 
-  # |———| along the curve: each bar at the local MSD height of that regime
-  # (slightly above the line so the stroke stays readable).
+  # |———| chords ON the curve (matplotlib annotate-along-path style)
   - data:
       values:
-        # ballistic ~ τ²: bar rides the rising flank
-        - {t: 0.15, t2: 0.70, msd: 0.22}
-        # linear diffusive window
-        - {t: 2.0,  t2: 12,   msd: 9.5}
-        # noisy long lag
-        - {t: 28,   t2: 85,   msd: 48}
-    mark: {type: rule, strokeWidth: 1.8, color: "#18432b", strokeCap: butt}
+        - {t: 0.18, msd: 0.0324, t2: 0.65, msd2: 0.4225}   # ballistic
+        - {t: 2.2,  msd: 2.2,    t2: 12,   msd2: 12}        # diffusive
+        - {t: 28,   msd: 24.4,   t2: 80,   msd2: 53}        # noisy
+    mark: {type: rule, strokeWidth: 2.2, color: "#18432b", strokeCap: butt}
     encoding:
       x: {field: t}
+      y: {field: msd}
       x2: {field: t2}
-      y: {field: msd}
-
-  # end-caps |   |  (geometric half-height on log-y, local to each bar)
-  - data:
-      values:
-        - {t: 0.15, msd: 0.16, msd2: 0.30}
-        - {t: 0.70, msd: 0.16, msd2: 0.30}
-        - {t: 2.0,  msd: 7.0,  msd2: 13}
-        - {t: 12,   msd: 7.0,  msd2: 13}
-        - {t: 28,   msd: 36,   msd2: 64}
-        - {t: 85,   msd: 36,   msd2: 64}
-    mark: {type: rule, strokeWidth: 1.8, color: "#18432b"}
-    encoding:
-      x: {field: t}
-      y: {field: msd}
       y2: {field: msd2}
 
-  # region names (Times New Roman, roman — not italic), next to each bar
+  # end-caps ⊥ segment in log–log space
   - data:
       values:
-        - {t: 0.32, msd: 0.35, label: "ballistic"}
-        - {t: 4.9,  msd: 14,   label: "diffusive"}
-        - {t: 49,   msd: 70,   label: "noisy"}
+        - {t: 0.1532, msd: 0.03512, t2: 0.2114, msd2: 0.02989}
+        - {t: 0.5533, msd: 0.4579,  t2: 0.7635, msd2: 0.3898}
+        - {t: 1.937,  msd: 2.499,   t2: 2.499,  msd2: 1.937}
+        - {t: 10.57,  msd: 13.63,   t2: 13.63,  msd2: 10.57}
+        - {t: 25.16,  msd: 28.2,    t2: 31.16,  msd2: 21.11}
+        - {t: 71.88,  msd: 61.26,   t2: 89.03,  msd2: 45.86}
+    mark: {type: rule, strokeWidth: 2.2, color: "#18432b"}
+    encoding:
+      x: {field: t}
+      y: {field: msd}
+      x2: {field: t2}
+      y2: {field: msd2}
+
+  # labels (Times roman), offset above the chord midpoint
+  - data:
+      values:
+        - {t: 0.342, msd: 0.181, label: "ballistic"}
+        - {t: 5.14,  msd: 7.96,  label: "diffusive"}
+        - {t: 47.3,  msd: 55.7,  label: "noisy"}
     mark:
       type: text
-      dy: -10
       font: "Times New Roman, Times, STIX Two Text, STIXGeneral, serif"
       fontStyle: normal
+      fontSize: 22
       color: "#18432b"
       align: center
       baseline: bottom
+      dy: -8
     encoding:
       x: {field: t}
       y: {field: msd}
