@@ -190,7 +190,8 @@ nav = [
 ]
 
 # Theme injects MathJax config + document$ re-typeset.
-# MolPlot: local staged bundle (docs/assets/molplot from monorepo core/dist).
+# MolPlot: theme stages monorepo ../molplot/core/dist (or MOLPLOT_ELEMENTS_DIR /
+# node_modules) into docs/assets/molplot at build — gitignored, not vendored.
 # MolVis still CDN until a monorepo stage path is wired the same way.
 extra_javascript = [
   { path = "https://cdn.jsdelivr.net/npm/@molcrafts/molvis-stage@latest/dist/viewer.js", type = "module" },

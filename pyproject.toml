@@ -51,6 +51,7 @@ dev = [
 rdkit = ["rdkit"]  # optional: exercises the RDKitAdapter example only
 doc = [
     "zensical>=0.0.53",
+    # Prefer monorepo editable install for latest stage filters; PyPI floor is 0.2.6.
     "molcrafts-zensical-theme>=0.2.6",
     "mkdocstrings[python]>=0.24.0",
 ]

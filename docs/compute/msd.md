@@ -32,8 +32,7 @@ a continuous path, not a jump.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:9"
-# Pure VL for the curve; `annotations` is a molplot extension (stripped
-# before embed, drawn in screen space after layout so end-caps stay ⊥).
+# annotations → VL rule/text layers (pan/zoom with the curve)
 config:
   font: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
   axis:
@@ -63,8 +62,7 @@ encoding:
     scale: {type: log, domain: [0.008, 120]}
     title: "MSD"
     axis: {titleFontStyle: normal}
-# Chord endpoints on the curve (data coords). molplot offsets & draws |———|
-# with screen-space perpendicular caps (matplotlib arrowstyle='|-|').
+# Chord on the curve; yOffset lifts the |———| above the line (data space).
 annotations:
   - kind: scaleBar
     orientation: along
@@ -72,36 +70,33 @@ annotations:
     y: 0.0324
     x2: 0.65
     y2: 0.4225
-    offset: 0.05
-    capSize: 10
-    fontSize: 16
+    yOffset: 1.5
     label: ballistic
     color: "#18432b"
     strokeWidth: 2
+    fontSize: 16
   - kind: scaleBar
     orientation: along
     x: 2.2
     y: 2.2
     x2: 12
     y2: 12
-    offset: 0.05
-    capSize: 10
-    fontSize: 16
+    yOffset: 1.5
     label: diffusive
     color: "#18432b"
     strokeWidth: 2
+    fontSize: 16
   - kind: scaleBar
     orientation: along
     x: 28
     y: 24.4
     x2: 80
     y2: 53
-    offset: 0.05
-    capSize: 10
-    fontSize: 16
+    yOffset: 1.5
     label: noisy
     color: "#18432b"
     strokeWidth: 2
+    fontSize: 16
 layer:
   - data: {$file: data/msd/curve.json}
     mark: {type: line, strokeWidth: 3, interpolate: monotone, color: "#0c5da5"}
