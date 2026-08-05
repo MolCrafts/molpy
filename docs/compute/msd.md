@@ -32,47 +32,105 @@ a continuous path, not a jump.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:9"
-mark:
-  type: line
-  strokeWidth: 2.2
-  interpolate: monotone
-data:
-  values:
-    - {t: 0.1, msd: 0.01}
-    - {t: 1.0, msd: 1.0}
-    - {t: 10.0, msd: 10.0}
-    - {t: 100.0, msd: 95.0}
+# Times New Roman + math-serif stack (LaTeX-like axis type).
+config:
+  font: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
+  axis:
+    titleFont: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
+    labelFont: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
+    titleFontStyle: italic
+    titleFontSize: 15
+    labelFontSize: 12
+    titlePadding: 10
+    tickCount: 6
+    gridOpacity: 0.35
+  text:
+    font: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
+    fontSize: 12
+# Shared log domains so the |———| bars and the curve share axes.
 encoding:
-  x: {field: t, type: quantitative, scale: {type: log}, title: "lag τ"}
-  y: {field: msd, type: quantitative, scale: {type: log}, title: MSD}
-  color: {value: "#0284c7"}
-annotations:
-  - kind: scaleBar
-    x: 20
-    y: 0.03
-    length: 30
-    label: "Δτ"
-    color: "#18432b"
-    tick: 0.008
-  - kind: arrow
-    x: 0.35
-    y: 0.05
-    x2: 1.2
-    y2: 0.8
-    label: "ballistic"
-    color: "#64748b"
-  - kind: arrow
-    x: 3
-    y: 2
-    x2: 12
-    y2: 12
-    label: "diffusive"
-    color: "#18432b"
+  x:
+    type: quantitative
+    scale: {type: log, domain: [0.1, 100]}
+    title: "lag τ"
+    axis: {titleFontStyle: italic}
+  y:
+    type: quantitative
+    scale: {type: log, domain: [0.008, 120]}
+    title: "MSD"
+    axis: {titleFontStyle: italic}
+layer:
+  # —— curve: ballistic (∝τ²) → linear diffusive (∝τ) → noisy long lag ——
+  - data:
+      values:
+        - {t: 0.10, msd: 0.010}
+        - {t: 0.20, msd: 0.040}
+        - {t: 0.40, msd: 0.16}
+        - {t: 0.80, msd: 0.64}
+        - {t: 1.20, msd: 1.15}
+        - {t: 2.00, msd: 2.0}
+        - {t: 4.00, msd: 4.0}
+        - {t: 8.00, msd: 8.0}
+        - {t: 15.0, msd: 14.5}
+        - {t: 30.0, msd: 26}
+        - {t: 55.0, msd: 42}
+        - {t: 100.0, msd: 70}
+    mark: {type: line, strokeWidth: 2.4, interpolate: monotone, color: "#0c5da5"}
+    encoding:
+      x: {field: t}
+      y: {field: msd}
+
+  # —— |———| region bars (bottom of plot) ——
+  - data:
+      values:
+        - {t: 0.12, t2: 0.85, msd: 0.012}   # ballistic
+        - {t: 1.5,  t2: 14,   msd: 0.012}   # linear diffusive
+        - {t: 22,   t2: 90,   msd: 0.012}   # noisy long lag
+    mark: {type: rule, strokeWidth: 1.5, color: "#18432b", strokeCap: butt}
+    encoding:
+      x: {field: t}
+      x2: {field: t2}
+      y: {field: msd}
+
+  # end-caps |   |  (geometric half-height on log-y)
+  - data:
+      values:
+        - {t: 0.12, msd: 0.0095, msd2: 0.015}
+        - {t: 0.85, msd: 0.0095, msd2: 0.015}
+        - {t: 1.5,  msd: 0.0095, msd2: 0.015}
+        - {t: 14,   msd: 0.0095, msd2: 0.015}
+        - {t: 22,   msd: 0.0095, msd2: 0.015}
+        - {t: 90,   msd: 0.0095, msd2: 0.015}
+    mark: {type: rule, strokeWidth: 1.5, color: "#18432b"}
+    encoding:
+      x: {field: t}
+      y: {field: msd}
+      y2: {field: msd2}
+
+  # region names under each |———|
+  - data:
+      values:
+        - {t: 0.32, msd: 0.012, label: "ballistic"}
+        - {t: 4.6,  msd: 0.012, label: "diffusive"}
+        - {t: 45,   msd: 0.012, label: "noisy"}
+    mark:
+      type: text
+      dy: 14
+      fontSize: 12
+      font: "Times New Roman, Times, STIX Two Text, STIXGeneral, serif"
+      color: "#18432b"
+      align: center
+      baseline: top
+      fontStyle: italic
+    encoding:
+      x: {field: t}
+      y: {field: msd}
+      text: {field: label, type: nominal}
 ```
 
 </div>
 
-**Figure 1.** Schematic MSD: ballistic, linear diffusive window, noisy long lag.
+**Figure 1.** Schematic MSD with regimes marked by scale bars: ballistic $\propto\tau^{2}$, linear diffusive window (fit here), noisy long lag.
 </figure>
 
 ---
