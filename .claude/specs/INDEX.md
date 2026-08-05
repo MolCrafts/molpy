@@ -17,3 +17,8 @@
 | `release-0-12-molpy-04-compute-tests` | rewrite as identity asserts against molrs types |
 
 > Closed historically: graph-assembler-01..04 + molrs-core-cutover (2026-07-22).
+
+## smiles-emit (molrs-first reverse SMILES/SMARTS) — **done** 2026-08-05
+
+Closed: molpy io surface (`write_smiles` / `SmilesWriter` / `write_smarts` / `write_local_smarts`).
+Depends on **molcrafts-molrs >= 0.12.1** (smiles-emit-01..04). Spec artifact deleted after verification.

@@ -68,7 +68,7 @@ from .data.lammps_molecule import (
     LammpsMoleculeWriter,
 )
 from .data.mol2 import Mol2Reader
-from .data.smiles import SmilesReader
+from .data.smiles import SmilesReader, SmilesWriter
 from .data.pdb import PDBReader, PDBWriter
 from .data.top import TopReader
 from .data.xsf import XsfReader, XsfWriter
@@ -135,7 +135,10 @@ from .writers import (
     write_lammps_bond_react_system,
     write_lammps_system,
     write_lammps_trajectory,
+    write_local_smarts,
     write_pdb,
+    write_smarts,
+    write_smiles,
     write_top,
     write_trr,
     write_xsf,
@@ -180,7 +183,10 @@ __all__ = [
     "write_lammps_bond_react_system",
     "write_lammps_system",
     "write_lammps_trajectory",
+    "write_local_smarts",
     "write_pdb",
+    "write_smarts",
+    "write_smiles",
     "write_top",
     "write_xsf",
     "write_xyz_trajectory",
@@ -198,6 +204,7 @@ __all__ = [
     "LammpsMoleculeReader",
     "Mol2Reader",
     "SmilesReader",
+    "SmilesWriter",
     "PDBReader",
     "TopReader",
     "XsfReader",

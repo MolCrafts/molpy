@@ -71,12 +71,18 @@ class AmberPolymerBuilder:
     4. Run tleap to build the polymer; read back Frame + ForceField.
 
     Example:
+        >>> # system PATH (default) — AmberTools already on PATH
+        >>> builder = AmberPolymerBuilder(
+        ...     library={"EO": eo_monomer},
+        ...     reaction=ether_reaction,
+        ...     force_field="gaff2",
+        ... )
+        >>> # optional named conda env
         >>> builder = AmberPolymerBuilder(
         ...     library={"EO": eo_monomer},
         ...     reaction=ether_reaction,
         ...     force_field="gaff2",
         ...     env="AmberTools25",
-        ...     env_manager="conda",
         ... )
         >>> result = builder.build("{[#EO]|10}")
     """
@@ -105,14 +111,18 @@ class AmberPolymerBuilder:
             force_field: Force field to use (gaff or gaff2).
             charge_method: Charge method for antechamber.
             work_dir: Directory for intermediate files.
-            env: Conda environment name or path for AmberTools.
-            env_manager: Environment manager type ("conda" for conda environments).
+            env: Optional conda environment name or prefix for AmberTools.
+                ``None`` (default) uses the system environment / ``PATH``.
+            env_manager: Environment manager (``"conda"``, ``"venv"``, …).
+                Defaults to ``"conda"`` when ``env`` is provided.
             net_charges: Optional mapping from CGSmiles label to the formal net
                 charge of that monomer/residue, passed to antechamber's AM1-BCC
                 step. Defaults to 0 for any label not present. Required for
                 charged residues (e.g. cationic / anionic monomers) so the
                 computed partial charges sum to the correct integer.
         """
+        from molpy.builder.ambertools import _resolve_amber_env
+
         if not isinstance(reaction, molrs.Reaction):
             raise TypeError("reaction must be a molpy.Reaction instance")
         self.reaction = reaction
@@ -144,8 +154,7 @@ class AmberPolymerBuilder:
         self.work_dir = (
             Path(work_dir) if work_dir is not None else Path("amber_work")
         ).resolve()
-        self.env = env
-        self.env_manager = env_manager
+        self.env, self.env_manager = _resolve_amber_env(env, env_manager)
 
         # Internal state
         self._prepared_monomers: dict[str, _PreparedMonomer] = {}

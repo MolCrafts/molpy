@@ -9,6 +9,16 @@ not by helper functions:
   when a molpy graph is what you want.
 * :class:`molrs.perceive.SmartsPattern` — ``SmartsPattern("[#6]")`` compiles a query.
 
+**Writing** (graph → string) is an **io** concern, not a core method and not a
+second name here:
+
+* ``molpy.io.write_smiles(mol, **flags)`` / :class:`~molpy.io.SmilesWriter`
+  (delegates to ``SmilesIR.from_atomistic(mol, **flags).write_smiles()``)
+* ``molpy.io.write_smarts(mol, center, **flags)`` — local topology SMARTS
+
+Do **not** add ``Atomistic.to_smiles`` / ``from_smiles`` on core (dependency
+inversion: parser/io → core only).
+
 There is deliberately nothing else here. ``parse_smiles`` / ``parse_smarts`` /
 ``parse_molecule`` / ``parse_mixture`` / ``smiles_to_atomistic`` /
 ``smilesir_to_atomistic`` were wrappers whose bodies were a constructor call —

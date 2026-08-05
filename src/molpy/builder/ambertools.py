@@ -1,7 +1,8 @@
 """``AmberTools`` — one object for GAFF parameterisation via the Amber suite.
 
-A single facade owning the conda-env / force-field / charge-method config, with
-member functions for the three things every GAFF workflow needs:
+A single facade owning force-field / charge-method config (and an optional
+named env for AmberTools binaries), with member functions for the three things
+every GAFF workflow needs:
 
 * :meth:`parameterize` — a small molecule (antechamber → parmchk2 → tleap).
 * :meth:`parameterize_ion` — a monatomic ion from literature Lennard-Jones
@@ -47,8 +48,33 @@ def _neutralize(frame: Any, target: float) -> None:
     frame["atoms"]["charge"] = q - (q.sum() - target) / len(q)
 
 
+def _resolve_amber_env(
+    env: str | Path | None,
+    env_manager: str | None,
+) -> tuple[str | Path | None, str | None]:
+    """Use the system environment by default; activate only when *env* is set.
+
+    Providing ``env`` without ``env_manager`` implies ``env_manager="conda"``.
+    ``env_manager`` without ``env`` is rejected.
+    """
+    if env is None and env_manager is None:
+        return None, None
+    if env is None:
+        raise ValueError(
+            "env_manager requires env; omit both to use the system environment."
+        )
+    if env_manager is None:
+        return env, "conda"
+    return env, env_manager
+
+
 class AmberTools:
-    """GAFF parameterisation facade over antechamber / parmchk2 / tleap / prepgen."""
+    """GAFF parameterisation facade over antechamber / parmchk2 / tleap / prepgen.
+
+    By default Amber binaries are resolved from the **system** environment
+    (``PATH``).  Pass ``env`` only when they live in a named conda env or
+    prefix; ``env_manager`` then defaults to ``"conda"``.
+    """
 
     def __init__(
         self,
@@ -59,8 +85,7 @@ class AmberTools:
         charge_method: str = "bcc",
         work_dir: str | Path = "amber_work",
     ) -> None:
-        self.env = env
-        self.env_manager = env_manager
+        self.env, self.env_manager = _resolve_amber_env(env, env_manager)
         self.force_field = force_field
         self.charge_method = charge_method
         self.work_dir = Path(work_dir).resolve()

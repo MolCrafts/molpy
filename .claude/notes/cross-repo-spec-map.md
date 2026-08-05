@@ -9,6 +9,14 @@ See `.claude/notes/release.md`.
 | molrs | molpy |
 |-------|-------|
 | (see molrs `.claude/specs/INDEX.md`) | (see molpy `.claude/specs/INDEX.md`) |
+| **smiles-emit-01-ir-write** → **02-from-atomistic** → **03-local-smarts** → **04-python** | **smiles-emit-01-io-surface** (after molrs tag + pin) |
+
+### smiles-emit cross-repo contract
+
+- **Order:** molrs chain fully landed + **tagged publish** → bump molpy `molcrafts-molrs` pin → molpy io surface.
+- **Dependency direction:** `io` / `parser` → `core` only. **Forbidden:** `Atomistic.to_smiles` / `from_smiles` / `to_smarts` on core (either repo).
+- **Flags:** all science/representation knobs are explicit options (`SmilesEmitOptions`, `LocalSmartsOptions` / kwargs); no silent policy in core.
+- **Engine ownership:** parse/write/local SMARTS live in molrs `io::smiles`; molpy only delegates.
 
 ## Version
 

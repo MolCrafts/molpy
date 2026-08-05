@@ -161,3 +161,78 @@ class SmilesReader:
                 "Parse each component separately."
             )
         return Atomistic.adopt(ir.to_atomistic())
+
+
+class SmilesWriter:
+    """Write an :class:`~molpy.core.atomistic.Atomistic` graph to a SMILES string.
+
+    Delegates to molrs::
+
+        SmilesIR.from_atomistic(mol, **flags).write_smiles()
+
+    All science/representation choices are **keyword-only flags** forwarded to
+    molrs — this class does not invent a second printer.
+
+    This is an **io** surface. It is deliberately *not* a method on
+    :class:`~molpy.core.atomistic.Atomistic` (that would invert
+    ``io → core`` into ``core → io``).
+
+    Parameters
+    ----------
+    mol:
+        Atomistic (or molrs Atomistic-compatible) graph.
+    **flags:
+        Forwarded to :meth:`molrs.io.SmilesIR.from_atomistic`: ``canonical``,
+        ``root``, ``aromatic``, ``hydrogens``, ``include_stereo``,
+        ``multi_component``, ``organic_subset``. See molrs docs for defaults.
+    """
+
+    def __init__(self, mol: "Atomistic", /, **flags: Any) -> None:
+        self.mol = mol
+        self.flags = flags
+
+    def write(self) -> str:
+        """Return the SMILES string for ``mol`` under the configured flags."""
+        import molrs
+
+        ir = molrs.io.SmilesIR.from_atomistic(self.mol, **self.flags)
+        return ir.write_smiles()
+
+
+def write_smarts(
+    mol: "Atomistic",
+    center: Any,
+    /,
+    **flags: Any,
+) -> str:
+    """Encode local topology around ``center`` as a SMARTS string.
+
+    Prefer ``molrs.io.write_local_smarts`` when available; fall back to
+    ``molrs.io.write_smarts``. ``center`` may be an
+    :class:`~molpy.core.atomistic.Atom` view or an integer handle.
+
+    Parameters
+    ----------
+    mol:
+        Parent graph.
+    center:
+        Atom view or handle.
+    **flags:
+        Forwarded to molrs local-SMARTS options (``reach``, ``atomic_number``,
+        ``include_degree``, …).
+    """
+    import molrs
+
+    handle = int(getattr(center, "handle", center))
+    write = getattr(molrs.io, "write_local_smarts", None) or molrs.io.write_smarts
+    return write(mol, handle, **flags)
+
+
+def write_local_smarts(
+    mol: "Atomistic",
+    center: Any,
+    /,
+    **flags: Any,
+) -> str:
+    """Alias of :func:`write_smarts`."""
+    return write_smarts(mol, center, **flags)

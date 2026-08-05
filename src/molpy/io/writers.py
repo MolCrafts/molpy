@@ -48,6 +48,34 @@ def write_lammps_data(
     writer.write(frame)
 
 
+def write_smiles(mol: Any, /, **flags: Any) -> str:
+    """Write an Atomistic graph to a SMILES string (molrs-backed).
+
+    Io-layer sugar around :class:`~molpy.io.data.smiles.SmilesWriter`.
+    All science options are keyword-only flags forwarded to molrs.
+    Not a core ``Atomistic`` method — dependency direction is ``io → core``.
+    """
+    from .data.smiles import SmilesWriter
+
+    return SmilesWriter(mol, **flags).write()
+
+
+def write_smarts(mol: Any, center: Any, /, **flags: Any) -> str:
+    """Write a local-topology SMARTS for ``center`` (molrs-backed).
+
+    See :func:`molpy.io.data.smiles.write_smarts`. Io surface only — not a
+    core ``Atom`` / ``Atomistic`` method.
+    """
+    from .data.smiles import write_smarts as _write_smarts
+
+    return _write_smarts(mol, center, **flags)
+
+
+def write_local_smarts(mol: Any, center: Any, /, **flags: Any) -> str:
+    """Alias of :func:`write_smarts`."""
+    return write_smarts(mol, center, **flags)
+
+
 def write_pdb(file: PathLike, frame: Any) -> None:
     """
     Write a Frame object to a PDB file.
