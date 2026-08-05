@@ -20,8 +20,11 @@ optional SI scale.
 
 !!! note "Conventions used throughout"
     - Complex permittivity: $\varepsilon^*(\omega) = \varepsilon'(\omega) - i\,\varepsilon''(\omega)$ (**positive-loss** convention, so $\varepsilon'' \ge 0$).
-    - Fourier transform: $X(\omega) = \int_0^\infty f(t)\,e^{-i\omega t}\,dt$.
-    - Units (LAMMPS *real*): length **Å**, charge $e$, **time fs**, volume Å³, temperature K. Frequency axes from spectral Fits follow the kernel (rad·fs⁻¹ or as documented). GROMACS trajectories are **nm**-native — scale lengths ×10 before analysis. Displacement series need **unwrapped** coordinates.
+    - Fourier transform: $X(\omega) = \int_0^\infty f(t)\,e^{-i\omega t}\,dt$ (physics / Caillol convention).
+    - **Analysis time base is femtoseconds (fs)** for every molrs/molpy dielectric and transport kernel — `dt`, lag axes, SI prefactors (`FEMTOSECOND_S`), and spectral $\omega$ all share that unit. Passing `dt` in ps makes $\sigma$ and every $\omega$ bin off by $10^3$.
+    - Units (LAMMPS *real*): length **Å**, charge $e$, time **fs**, volume Å³, temperature K, energy kcal·mol⁻¹. Spectral Fits return $\omega$ in **rad·fs⁻¹** when `dt` is in fs.
+    - Static/spectrum formulas below use the MD-real Coulomb constant $\kappa$ (not bare SI $\varepsilon_0$). Section 1.1 quotes the SI definition of $\mathbf{P}$ only as physical motivation.
+    - GROMACS trajectories are **nm**-native — scale lengths ×10 before analysis. Displacement series need **unwrapped** coordinates.
 
 ---
 
@@ -56,11 +59,16 @@ Two properties of this system drive every methodological choice below:
 
 Place a dielectric in a field $\mathbf{E}$ and its charges rearrange — molecular
 dipoles reorient, electron clouds shift — producing a **polarization**
-$\mathbf{P}$ (dipole moment per unit volume). In the linear regime,
+$\mathbf{P}$ (dipole moment per unit volume). In **SI** linear response,
 
 $$
 \mathbf{P} = \varepsilon_0\,(\varepsilon - 1)\,\mathbf{E}.
 $$
+
+(In Gaussian / many MD textbooks the same statement is
+$\mathbf{P}=(\varepsilon-1)\mathbf{E}/(4\pi)$; the molrs kernels use LAMMPS
+*real* units with an explicit Coulomb constant $\kappa$ instead — see
+[§3](#3-static-permittivity-varepsilon0).)
 
 A larger relative permittivity $\varepsilon$ means the medium is more easily
 polarized and screens fields more strongly. Real water has $\varepsilon \approx
@@ -231,6 +239,79 @@ In one sentence: **the dielectric spectrum is the Fourier transform of the
 dipole-fluctuation autocorrelation function.** The slower $C(t)$ decays (the
 longer the dipole "remembers"), the stronger the low-frequency response.
 
+[Figure 1](#fig-debye-spectrum) shows the closed-form **Debye** shape that SPC
+water's main peak resembles: $\varepsilon'$ steps from $\varepsilon(0)$ down to
+$\varepsilon_\infty$, while $\varepsilon''$ peaks at $\omega\tau=1$.
+
+<figure id="fig-debye-spectrum" class="molcrafts-figure">
+<div class="molcrafts-figure__body molcrafts-figure__body--chart" markdown>
+
+```molplot preset="molplot" theme="auto" aspect="16:9"
+transform:
+  - fold: [eps_real, eps_imag]
+    as: [part, value]
+mark:
+  type: line
+  strokeWidth: 2.2
+  interpolate: monotone
+data:
+  values:
+    - {omega: 0.001, eps_real: 54.0, eps_imag: 0.34}
+    - {omega: 0.0016, eps_real: 53.99, eps_imag: 0.55}
+    - {omega: 0.0025, eps_real: 53.99, eps_imag: 0.87}
+    - {omega: 0.004, eps_real: 53.97, eps_imag: 1.37}
+    - {omega: 0.0063, eps_real: 53.91, eps_imag: 2.17}
+    - {omega: 0.01, eps_real: 53.78, eps_imag: 3.43}
+    - {omega: 0.016, eps_real: 53.44, eps_imag: 5.40}
+    - {omega: 0.025, eps_real: 52.62, eps_imag: 8.43}
+    - {omega: 0.04, eps_real: 50.67, eps_imag: 12.85}
+    - {omega: 0.063, eps_real: 46.37, eps_imag: 18.61}
+    - {omega: 0.1, eps_real: 38.26, eps_imag: 24.22}
+    - {omega: 0.154, eps_real: 27.5, eps_imag: 26.5}
+    - {omega: 0.25, eps_real: 15.46, eps_imag: 23.61}
+    - {omega: 0.4, eps_real: 7.89, eps_imag: 17.82}
+    - {omega: 0.63, eps_real: 3.97, eps_imag: 12.20}
+    - {omega: 1.0, eps_real: 2.23, eps_imag: 7.97}
+    - {omega: 1.6, eps_real: 1.50, eps_imag: 5.10}
+    - {omega: 2.5, eps_real: 1.20, eps_imag: 3.23}
+    - {omega: 4.0, eps_real: 1.08, eps_imag: 2.05}
+    - {omega: 6.3, eps_real: 1.03, eps_imag: 1.29}
+    - {omega: 10.0, eps_real: 1.01, eps_imag: 0.82}
+encoding:
+  x:
+    field: omega
+    type: quantitative
+    scale: {type: log, nice: false}
+    title: ω (rad/ps)
+  y:
+    field: value
+    type: quantitative
+    title: Permittivity
+    scale: {zero: false}
+  color:
+    field: part
+    type: nominal
+    title: Component
+    scale:
+      domain: [eps_real, eps_imag]
+      range: ["#0284c7", "#c8841d"]
+    legend:
+      labelExpr: "datum.label === 'eps_real' ? \"ε′ (storage)\" : \"ε″ (loss)\""
+  tooltip:
+    - {field: omega, type: quantitative, title: "ω (rad/ps)", format: ".3g"}
+    - {field: part, type: nominal, title: Component}
+    - {field: value, type: quantitative, title: ε, format: ".2f"}
+```
+
+</div>
+<figcaption>
+  <span class="molcrafts-figure__label">Figure 1.</span>
+  Ideal Debye spectrum with $\varepsilon_\infty=1$, $\Delta\varepsilon=53$,
+  $\tau=6.5$&nbsp;ps (SPC-like). Loss peak at $\omega=1/\tau\approx 0.15$&nbsp;rad/ps.
+  Real MD spectra from route I add high-frequency librations on top of this envelope.
+</figcaption>
+</figure>
+
 ### 4.2 The key trick: transform the ACF *derivative*
 
 Naively forming $i\omega X(\omega)$ blows up numerically: the discrete transform
@@ -327,9 +408,11 @@ $$
   it to the Einstein relation ([§7](#7-ionic-conductivity-einsteinhelfand)) for
   the conductivity $\sigma$.
 
-The sum $\mathbf{M}_D + \mathbf{M}_J$ equals the system current to
-floating-point precision, so the decomposition is lossless — it merely separates
-two physically distinct processes (orientation vs conduction).
+The sum $\mathbf{M}_D + \mathbf{M}_J$ equals the **total system dipole**
+$\mathbf{M}_\text{tot}$ to floating-point precision (not a current — the ionic
+**current** is $\dot{\mathbf{M}}_J$ or $\sum_i q_i\mathbf{v}_i$). The
+decomposition is lossless; it merely separates two physically distinct processes
+(orientation vs conduction).
 
 ---
 
@@ -436,7 +519,7 @@ This is exactly the quantity `gmx current` reports as "Einstein–Helfand".
    *ballistic* at short times, *diffusive* in the middle, and *noisy* at long
    times. Fit only the diffusive window, typically $[0.1, 0.5]$ of the max lag.
 3. **Convert to S/m** (SI constants fold Å and **fs** into m, s — matching molrs
-   `FEMTOSECOND_S`):
+   `FEMTOSECOND_S`; the slope unit is therefore $(e\cdot\text{Å})^2/\text{fs}$):
 
 $$
 \sigma\,[\text{S/m}] = \text{slope}\,[(e\text{Å})^2/\text{fs}]\cdot
@@ -447,8 +530,9 @@ $$
 with $e=1.602\times10^{-19}$ C, $k_B=1.381\times10^{-23}$ J/K. Equivalently apply
 the documented molrs prefactor
 $(e^2\cdot\mathrm{Å}^2/\mathrm{fs})/(6\cdot\mathrm{Å}^3\cdot k_B)$ then divide
-by $T$ (and fold volume). **If you pass `dt` in ps by mistake, $\sigma$ is off by
-$10^3$.**
+by $T$ (and fold volume). **`dt` must be in fs** — the same unit the SI
+prefactor assumes. Passing picoseconds scales $\sigma$ (and every spectral
+$\omega$) by $10^3$ the wrong way.
 
 ### 7.2 An honest caveat: few carriers → uncertain $\sigma$
 
@@ -467,7 +551,15 @@ more carriers and longer trajectories.
 The second route starts from the **current** and is the equivalent path for
 conducting systems, plus a natural cross-check of route I.
 
-### 8.1 Current density
+!!! warning "Two different current series"
+    Do **not** mix them up — the prefactor changes by powers of $V$:
+
+    | Series | Definition | Unit (real) | Use with |
+    |---|---|---|---|
+    | Total current $\dot{\mathbf{M}}$ | $\sum_i q_i\mathbf{v}_i$ | $e\cdot\text{Å}\cdot\text{fs}^{-1}$ | **DC** Green–Kubo $\sigma$ via `GreenKuboConductivity` + `CumulativeTrapezoid` with prefactor $1/(3 V k_B T)$ — same as [Transport §4.2](transport.md#42-greenkubo-route-current-autocorrelation) |
+    | Current density $\mathbf{J}$ | $\dot{\mathbf{M}}/V$ | $e\cdot\text{Å}^{-2}\cdot\text{fs}^{-1}$ | **$\varepsilon^*(\omega)$** via `GreenKuboSpectrum` with prefactor $V/(3 k_B T)$ |
+
+### 8.1 Current density (for $\varepsilon^*(\omega)$)
 
 The current density is the time derivative of the dipole, per volume,
 discretized by finite difference:
@@ -479,21 +571,25 @@ $$
 \quad\text{(with $\Delta t$ in fs)}.
 $$
 
-`Dielectric.compute_current_density` does this. **Row 0 is `NaN`** (no previous
-frame), and consumers must skip it (or use a current series assembled from
-velocities, which has no leading NaN).
+`Dielectric.compute_current_density(dipole_moments, dt, volume)` does this.
+**Row 0 is `NaN`** (no previous frame); consumers must skip it, or assemble
+$\mathbf{J}=(\sum q_i\mathbf{v}_i)/V$ from velocities (no leading NaN).
 
 ### 8.2 Conductivity spectrum → permittivity
+
+`GreenKuboSpectrum` expects the ACF of **current density** $\mathbf{J}=\dot{\mathbf{M}}/V$:
 
 $$
 \sigma(\omega) = \frac{V}{3 k_B T}\int_0^\infty \langle\mathbf{J}(0)\cdot\mathbf{J}(t)\rangle e^{-i\omega t}dt
 = \sigma'(\omega) + i\sigma''(\omega).
 $$
 
-(The prefactor is $V/(3k_BT)$ because the input is current density
-$\mathbf{J}=\dot{\mathbf{M}}/V$; for the total $\dot{\mathbf{M}}$ it would be
-$1/(3Vk_BT)$, differing by $V^2$ since $\langle\dot M\dot M\rangle=V^2\langle JJ\rangle$.)
-Maxwell's relation links conductivity to permittivity:
+(If the input were total $\dot{\mathbf{M}}$ instead, the prefactor would be
+$1/(3 V k_B T)$; they differ by $V^2$ because
+$\langle\dot M\cdot\dot M\rangle = V^2\langle J\cdot J\rangle$.)
+
+Maxwell's relation (Hansen & McDonald) links conductivity to permittivity under
+the same $e^{-i\omega t}$ / positive-loss conventions:
 
 $$
 \boxed{\;\varepsilon^*(\omega) - \varepsilon_\infty = -\frac{i\,\sigma(\omega)}{\omega\,\varepsilon_0}\;}
@@ -503,11 +599,11 @@ $$
 \varepsilon''(\omega) = \frac{\sigma'(\omega)}{\omega\varepsilon_0},
 $$
 
-with $1/\varepsilon_0 = 4\pi\kappa$. The DC bin ($\omega=0$) is the indeterminate
-$\sigma/\omega = 0/0$ and is regularized to $(\varepsilon_\infty, 0)$; the true
-static value comes from [§3](#3-static-permittivity-varepsilon0) or low-$\omega$
-extrapolation. In the Debye limit this route agrees with route I (verified by a
-unit test).
+with $1/\varepsilon_0 = 4\pi\kappa$ in MD-real units. The DC bin ($\omega=0$) is
+the indeterminate $\sigma/\omega = 0/0$ and is regularized to
+$(\varepsilon_\infty, 0)$; the true static value comes from
+[§3](#3-static-permittivity-varepsilon0) or low-$\omega$ extrapolation. In the
+Debye limit this route agrees with route I (verified by a unit test).
 
 ---
 
@@ -534,9 +630,12 @@ from molpy.compute import (
 rng = np.random.default_rng(0)
 # Synthetic unwrapped dipoles / currents (n_frames, 3)
 M_water = np.ascontiguousarray(np.cumsum(rng.normal(0, 0.05, size=(120, 3)), axis=0))
-J_ions = np.ascontiguousarray(rng.normal(0, 1.0, size=(120, 3)))
 M_ions = np.ascontiguousarray(np.cumsum(rng.normal(0, 0.02, size=(120, 3)), axis=0))
-dt = 10.0          # fs
+# Total ionic current Ṁ_J = Σ q v  (e·Å·fs⁻¹) — for DC Green–Kubo σ
+Mdot_ions = np.ascontiguousarray(rng.normal(0, 1.0, size=(120, 3)))
+# Current density J = Ṁ/V  (e·Å⁻²·fs⁻¹) — for GreenKuboSpectrum → ε*(ω)
+J_density = Mdot_ions / 2.69e4
+dt = 10.0          # fs  (analysis frame spacing — never ps)
 T = 298.15         # K
 V = 2.69e4         # Å³
 eps_inf = 1.0
@@ -546,26 +645,35 @@ eps0 = Dielectric.static_dielectric_constant(
     M_water, volume=V, temperature=T, epsilon_inf=eps_inf
 )
 
-# Route I — Einstein–Helfand spectrum
+# Route I — Einstein–Helfand spectrum (solvent dipole ACF)
 debye = DebyeRelaxation(V, T).compute(M_water, dt=dt, max_correlation_time=40)
 eh = EinsteinHelfandSpectrum(
     dt, V, T, eps_inf, debye["zero_lag_variance"]
 ).fit(debye["acf"])
+# eh frequencies are rad·fs⁻¹ when dt is in fs
 
 # Optional time-domain Debye τ on the *normalized* ACF Φ(t)
+# τ is returned in the same unit as dt (here fs); convert to ps with /1000
 phi = debye["acf"] / debye["acf"][0]
 tau_fit = DebyeFit().fit(phi, dt=dt)
 
-# Route II — Green–Kubo spectrum from current ACF
-jacf = GreenKuboConductivity().compute(J_ions, dt=dt, max_correlation_time=40)
-gk = GreenKuboSpectrum(dt, V, T, eps_inf).fit(jacf["jacf"])
+# Route II — Green–Kubo spectrum from *current-density* ACF
+jacf_density = GreenKuboConductivity().compute(
+    J_density, dt=dt, max_correlation_time=40
+)
+gk = GreenKuboSpectrum(dt, V, T, eps_inf).fit(jacf_density["jacf"])
 
-# DC ionic conductivity (Einstein)
+# DC ionic conductivity (Einstein–Helfand on ion dipole MSD)
 raw_msd = EinsteinConductivity().compute(M_ions, dt=dt, max_correlation_time=40)
 fit = LinearFit(0.1, 0.5).fit(raw_msd["lag_times"], raw_msd["msd"])
 # sigma_S_per_m = fit["slope"] / (6 * V * k_B * T) * SI_prefactor
+# with SI_prefactor from molrs (fs time base; see §7.1)
 
-running = CumulativeTrapezoid().fit(jacf["jacf"], dt=dt)["integral"]
+# DC Green–Kubo σ from *total* current Ṁ (prefactor 1/(3 V k_B T), not V/(3 k_B T))
+jacf_total = GreenKuboConductivity().compute(
+    Mdot_ions, dt=dt, max_correlation_time=40
+)
+running = CumulativeTrapezoid().fit(jacf_total["jacf"], dt=dt)["integral"]
 # sigma from plateau of running / (3 * V * k_B * T) * SI_prefactor
 assert eps0 == eps0 and fit["slope"] == fit["slope"]
 ```
@@ -573,16 +681,16 @@ assert eps0 == eps0 and fit["slope"] == fit["slope"]
 | Step | Entry point |
 |------|-------------|
 | Dipole $\mathbf{M}=\sum q_i\mathbf{r}_i$ | `Dielectric.compute_dipole_moment` |
-| Current density | `Dielectric.compute_current_density` |
-| Split water/ion current | `Dielectric.decompose_current` |
+| Current density $\mathbf{J}=\dot{\mathbf{M}}/V$ | `Dielectric.compute_current_density` |
+| Split water/ion series | `Dielectric.decompose_current` |
 | Static $\varepsilon(0)$ | `Dielectric.static_dielectric_constant` |
 | Raw dipole ACF | `DebyeRelaxation` |
 | $\varepsilon^*(\omega)$ EH | `EinsteinHelfandSpectrum` |
-| Raw current ACF | `GreenKuboConductivity` |
-| $\varepsilon^*(\omega)$ GK | `GreenKuboSpectrum` |
+| Raw current ACF (pass $\mathbf{J}$ or $\dot{\mathbf{M}}$ consistently) | `GreenKuboConductivity` |
+| $\varepsilon^*(\omega)$ GK (needs **density** ACF) | `GreenKuboSpectrum` |
 | Raw charge-dipole MSD | `EinsteinConductivity` |
 | MSD slope | `LinearFit` |
-| Running $\int C$ | `CumulativeTrapezoid` |
+| Running $\int C$ (DC $\sigma$ needs **total** $\dot{\mathbf{M}}$ ACF) | `CumulativeTrapezoid` |
 
 For an electrolyte, **decompose** solvent vs ion dipoles before the static
 formula and spectra ([§5](#5-the-electrolyte-step-decompose-the-dipole)); feed
@@ -615,16 +723,18 @@ $$
 
 - $\varepsilon'$ steps down from $\varepsilon(0)$ to $\varepsilon_\infty$, inflecting at $\omega\tau=1$.
 - $\varepsilon''$ is a peak (symmetric on a log axis) at $\omega_\text{peak}=1/\tau$, height $\Delta\varepsilon/2$.
-- **Fastest estimate**: read the loss-peak position → $\tau = 1/\omega_\text{peak}$.
+- **Fastest estimate**: read the loss-peak position → $\tau = 1/\omega_\text{peak}$
+  (with $\omega$ in rad per the same time unit as `dt`).
 - **In MolPy / molrs**: `DebyeFit` fits the **normalized** time-domain ACF
   $\Phi(t)=A\,e^{-t/\tau}$ (log-linear least squares on the leading positive
-  run) and returns $\tau$ and $A$. Frequency-domain HN/Cole–Cole fits still
-  live in your script (`scipy.optimize.curve_fit`).
+  run) and returns $\tau$ and $A$ **in the same unit as `dt`** (fs when
+  `dt` is in fs — divide by 1000 for ps). Frequency-domain HN/Cole–Cole fits
+  still live in your script (`scipy.optimize.curve_fit`).
 
 !!! example "Running example"
-    The water ($\mathbf{M}_D$) loss peak gives $\tau \approx 6.5$ ps (with clean
-    10 fs data; coarse 2 ps sampling underestimates it to ≈ 4.7 ps), consistent
-    with the known SPC relaxation time.
+    The water ($\mathbf{M}_D$) loss peak gives $\tau \approx 6.5\times10^3$ fs
+    $= 6.5$ ps (with clean 10 fs sampling; coarse 2 ps sampling underestimates
+    it to ≈ 4.7 ps), consistent with the known SPC relaxation time.
 
 ### 10.2 Non-Debye: Cole–Cole / Cole–Davidson / Havriliak–Negami
 
@@ -711,12 +821,17 @@ those, and matched setups agreed to ≈ 1 %.
    diverges to thousands. Electrolytes *must* decompose ([§5](#5-the-electrolyte-step-decompose-the-dipole)).
 3. **Hann/Blackman on the dielectric ACF** → kills $C(0)$. Use cos² ([§6.3](#63-windowing-which-window-and-why)).
 4. **Forgetting the $\Delta t$ factor or nm→Å** → wrong magnitude by powers of ten.
-5. **`max_lag` too large** → noise dominates the spectral tail. Keep ≤ ¼ of frames.
-6. **Current row 0 is NaN** → must be skipped (the GK kernel does this).
-7. **Reporting $\sigma$ as one exact number** → it is window-sensitive with few
+5. **`dt` in ps instead of fs** → $\sigma$ and $\omega$ off by $10^3$.
+6. **Mixing total current and current density** → $\varepsilon^*(\omega)$ from
+   `GreenKuboSpectrum` needs $\mathbf{J}=\dot{\mathbf{M}}/V$; DC Green–Kubo
+   needs $\dot{\mathbf{M}}$ with the $1/(3Vk_BT)$ prefactor ([§8](#8-spectrum-route-ii-greenkubo-current-autocorrelation)).
+7. **`max_lag` too large** → noise dominates the spectral tail. Keep ≤ ¼ of frames.
+8. **Current-density row 0 is NaN** → must be skipped (the GK kernel does this
+   when consuming the series from `compute_current_density`).
+9. **Reporting $\sigma$ as one exact number** → it is window-sensitive with few
    carriers; report a range ([§7.2](#72-an-honest-caveat-few-carriers-uncertain-sigma)).
-8. **Wrong $T$ or $V$** (e.g. GROMACS internally using 300 K, $V=26.952$ nm³) →
-   systematic offsets in $\varepsilon$ and $\sigma$.
+10. **Wrong $T$ or $V$** (e.g. GROMACS internally using 300 K, $V=26.952$ nm³) →
+    systematic offsets in $\varepsilon$ and $\sigma$.
 
 ---
 

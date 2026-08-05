@@ -50,8 +50,8 @@ dev = [
 ]
 rdkit = ["rdkit"]  # optional: exercises the RDKitAdapter example only
 doc = [
-    "zensical>=0.0.45",
-    "molcrafts-zensical-theme>=0.2.3",
+    "zensical>=0.0.53",
+    "molcrafts-zensical-theme>=0.2.5",
     "mkdocstrings[python]>=0.24.0",
 ]
 all = ["molcrafts-molpy[dev,doc]"]

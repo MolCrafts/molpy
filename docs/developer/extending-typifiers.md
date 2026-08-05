@@ -44,7 +44,7 @@ matches = pattern.find_matches(mol)
 ```
 
 Matches are bindings: atom ids plus optional mapping labels. They are not
-graphs and not frames. Do not reintroduce the old Python igraph matcher or
+graphs and not frames. Do not use a Python igraph matcher or
 MolPy-side layered matcher classes; OPLS-AA and MMFF matching now live in molrs.
 
 ## CL&P as a MolPy-Side Extension

@@ -20,9 +20,7 @@ dependency, a normal install already provides it:
 pip install molcrafts-molpy
 ```
 
-There is no `molpy[molrs]` extra to remember — that key was removed. molrs is a
-hard runtime dependency (breaking change relative to older optional installs);
-see git history for the transition.
+There is no `molpy[molrs]` extra. molrs is a hard runtime dependency.
 
 ### Version policy: same major.minor
 

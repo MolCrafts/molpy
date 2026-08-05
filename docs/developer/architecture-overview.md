@@ -44,7 +44,7 @@ subclassing hook. See [Extending the Data Model](extending-core.md).
 
 ## The tabular layer: Block and Frame run on molrs
 
-`Frame` and `Block` belong exclusively to the [molrs](https://github.com/MolCrafts/molrs) Rust column store. Import them from molpy (`from molpy import Frame, Block`); they are identity re-exports or compatibility module for them. Columns are typed (float / int / bool / str) and exposed as zero-copy NumPy views; a non-representable column is rejected fail-fast at write. `molcrafts-molrs` is a hard runtime dependency: there is no pure-Python fallback.
+`Frame` and `Block` belong exclusively to the [molrs](https://github.com/MolCrafts/molrs) Rust column store. Import them from molpy (`from molpy import Frame, Block`); they are identity re-exports of the molrs types. Columns are typed (float / int / bool / str) and exposed as zero-copy NumPy views; a non-representable column is rejected fail-fast at write. `molcrafts-molrs` is a hard runtime dependency: there is no pure-Python fallback.
 
 The graph → arrays conversion is explicit: `Atomistic.to_frame()` delegates to the molrs world's native `to_frame()`. The box is a first-class attribute (`frame.box`), never metadata. The [molrs Backend](molrs-backend.md) page covers how neighbor lists, RDF, and the analysis catalog surface from Rust.
 
@@ -94,10 +94,9 @@ Assembly is linear in chain length because the growing graph is never retyped pe
   that needs it, and `TopologySelector` indexes by residue instead.
 
 
-Nothing per-connection scales with chain length. The old builder copied the accumulated
-structure once per bond and remapped its entities, which made a DP=N chain cost O(N²) in
-copying alone. The compile-first kernel performs bounded local work per binding, a single
-batch reaction, and at most one requested whole-graph finalization pass.
+Nothing per-connection scales with chain length. The compile-first kernel performs
+bounded local work per binding, a single batch reaction, and at most one requested
+whole-graph finalization pass — not O(N²) structure copies for a DP=N chain.
 
 ## Where extension happens
 
