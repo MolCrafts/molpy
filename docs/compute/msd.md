@@ -32,7 +32,8 @@ a continuous path, not a jump.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:9"
-# Vega-Lite only. Data via $file (relative to docs/) — not inlined in the fence.
+# Pure VL for the curve; `annotations` is a molplot extension (stripped
+# before embed, drawn in screen space after layout so end-caps stay ⊥).
 config:
   font: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
   axis:
@@ -62,41 +63,51 @@ encoding:
     scale: {type: log, domain: [0.008, 120]}
     title: "MSD"
     axis: {titleFontStyle: normal}
-resolve:
-  scale: {x: shared, y: shared}
+# Chord endpoints on the curve (data coords). molplot offsets & draws |———|
+# with screen-space perpendicular caps (matplotlib arrowstyle='|-|').
+annotations:
+  - kind: scaleBar
+    orientation: along
+    x: 0.18
+    y: 0.0324
+    x2: 0.65
+    y2: 0.4225
+    offset: 0.05
+    capSize: 10
+    fontSize: 16
+    label: ballistic
+    color: "#18432b"
+    strokeWidth: 2
+  - kind: scaleBar
+    orientation: along
+    x: 2.2
+    y: 2.2
+    x2: 12
+    y2: 12
+    offset: 0.05
+    capSize: 10
+    fontSize: 16
+    label: diffusive
+    color: "#18432b"
+    strokeWidth: 2
+  - kind: scaleBar
+    orientation: along
+    x: 28
+    y: 24.4
+    x2: 80
+    y2: 53
+    offset: 0.05
+    capSize: 10
+    fontSize: 16
+    label: noisy
+    color: "#18432b"
+    strokeWidth: 2
 layer:
   - data: {$file: data/msd/curve.json}
     mark: {type: line, strokeWidth: 3, interpolate: monotone, color: "#0c5da5"}
     encoding:
       x: {field: x}
       y: {field: y}
-  - data: {$file: data/msd/spines.json}
-    mark: {type: rule, strokeWidth: 2.2, color: "#18432b", strokeCap: butt}
-    encoding:
-      x: {field: x}
-      y: {field: y}
-      x2: {field: x2}
-      y2: {field: y2}
-  - data: {$file: data/msd/caps.json}
-    mark: {type: rule, strokeWidth: 2.2, color: "#18432b"}
-    encoding:
-      x: {field: x}
-      y: {field: y}
-      x2: {field: x2}
-      y2: {field: y2}
-  - data: {$file: data/msd/labels.json}
-    mark:
-      type: text
-      font: "Times New Roman, Times, STIX Two Text, STIXGeneral, serif"
-      fontStyle: normal
-      fontSize: 22
-      color: "#18432b"
-      align: center
-      baseline: middle
-    encoding:
-      x: {field: x}
-      y: {field: y}
-      text: {field: label, type: nominal}
 ```
 
 </div>
