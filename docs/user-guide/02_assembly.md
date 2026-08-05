@@ -48,7 +48,7 @@ Topology is a separate tail:
 - `Finalization.ATOMS` leaves bonds and per-atom force-field data only.
 - `Finalization.TOPOLOGY` (the default) generates complete angles and dihedrals once.
 - `Finalization.BONDED` additionally assigns their force-field types through
- `ForceFieldParams`.
+  `ForceFieldParams`.
 
 This lets a very large system defer topology until its MD writer actually needs explicit bonded
 rows, without creating a second aggregation algorithm.
@@ -63,7 +63,7 @@ It is **not a port system**. There is no `<` and `>`, no head and tail, no conne
 deciding that a hydroxyl may meet a carboxyl. Sites are unordered and undirected, and the
 reaction SMARTS is the only place chemistry is written down.
 
-It is **not a typifier**. Every accepted implementation inherits the common typifier base class
+It is **not a typifier**. Every accepted implementation inherits the common `molrs.ff.Typifier`
 base; the assembler only compiles the bounded graph on which it is invoked.
 
 ## A repeat unit is a molecule with a few marked atoms
@@ -79,9 +79,9 @@ oxygens are the sites; the hydroxyl hydrogens are the caps the reaction will rem
 import molpy as mp
 from molpy.core import fields
 
-eo = mp.io.read_smiles("OCCO") # ethylene glycol
-eo.atoms[0][fields.SITE] = "a" # one hydroxyl oxygen
-eo.atoms[3][fields.SITE] = "b" # the other
+eo = mp.io.read_smiles("OCCO")  # ethylene glycol
+eo.atoms[0][fields.SITE] = "a"  # one hydroxyl oxygen
+eo.atoms[3][fields.SITE] = "b"  # the other
 ```
 
 Nothing here says "head" or "tail", and `a` and `b` carry no direction — they are labels the
@@ -110,28 +110,28 @@ a charged atom, `assemble` raises and says so:
 ```python
 import pytest
 from molpy.builder.assembly import (
- MonomerLibrary,
- PolymerBuilder,
- ResiduePlacer,
- SiteMap,
- linear_topology,
+    MonomerLibrary,
+    PolymerBuilder,
+    ResiduePlacer,
+    SiteMap,
+    linear_topology,
 )
 from molpy.conformer import Conformer
 
 # A template with hydrogens and charges, but never frozen:
 eo, _ = Conformer(add_hydrogens=True, seed=42).generate(
- mp.io.read_smiles("OCCO")
+    mp.io.read_smiles("OCCO")
 )
 SiteMap(eo).label_elements("O", "a", "b")
 for atom in eo.atoms:
- atom[fields.CHARGE] = -0.3 if atom.get("element") == "H" else 0.2
+    atom[fields.CHARGE] = -0.3 if atom.get("element") == "H" else 0.2
 
 ether = mp.Reaction("[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]")
 builder = PolymerBuilder(MonomerLibrary({"EO": eo}), ether, placer=ResiduePlacer())
 
 # Unfrozen templates lose the charge carried by the atoms the reaction deletes:
 with pytest.raises(ValueError, match="net charge"):
- builder.build(linear_topology(["EO"] * 3))
+    builder.build(linear_topology(["EO"] * 3))
 # ValueError: assembly changed the net charge by +0.8 e: the reaction deleted atoms
 # that carry charge. Freeze the monomer templates first so each cap's charge folds
 # onto its site atom.
@@ -189,14 +189,14 @@ from molpy.typifier import AmberToolsTypifier
 
 ether = mp.Reaction("[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]")
 gaff = AmberToolsTypifier(AmberTools())
-eo = gaff.typify(eo) # initial types for atoms unaffected by any junction
+eo = gaff.typify(eo)  # initial types for atoms unaffected by any junction
 
 builder = PolymerBuilder(
- MonomerLibrary({"EO": eo}),
- ether,
- typifier=gaff,
- reach=2,
- finalize="atoms", # defer full topology for this very large chain
+    MonomerLibrary({"EO": eo}),
+    ether,
+    typifier=gaff,
+    reach=2,
+    finalize="atoms",  # defer full topology for this very large chain
 )
 chain = builder.build_linear("EO", 1000)
 # -> bonds + cached junction atom types/charges; no angle/dihedral table yet
@@ -210,11 +210,11 @@ from molpy.builder.assembly import MonomerLibrary, PolymerBuilder, ResiduePlacer
 
 # Any atoms-only graph takes the same tail — nothing here is GAFF-specific:
 neutral, _ = Conformer(add_hydrogens=True, seed=42).generate(
- mp.io.read_smiles("OCCO")
+    mp.io.read_smiles("OCCO")
 )
 SiteMap(neutral).label_elements("O", "a", "b")
 chain = PolymerBuilder(
- MonomerLibrary({"EO": neutral}), ether, placer=ResiduePlacer(), finalize="atoms"
+    MonomerLibrary({"EO": neutral}), ether, placer=ResiduePlacer(), finalize="atoms"
 ).build_linear("EO", 5)
 assert not list(chain.angles)
 
@@ -240,7 +240,7 @@ from molpy.builder import GraphAssembler, RandomSelector, Replicas
 melt = Replicas(chain).grid(3, spacing=9.5, jitter=1.0, seed=7)
 
 gel = GraphAssembler(ether, typifier=gaff, reach=2).assemble(
- melt, RandomSelector(conversion=0.8, cutoff=6.0, seed=1)
+    melt, RandomSelector(conversion=0.8, cutoff=6.0, seed=1)
 )
 ```
 
@@ -267,7 +267,7 @@ from molpy.optimize import LBFGS, ForceFieldPotential
 # `neutral` above, not the deliberately-unfrozen `eo` — that one exists to
 # demonstrate the net-charge guard, and would trip it here.
 builder = PolymerBuilder(
- MonomerLibrary({"EO": neutral}), ether, typifier=gaff, reach=2
+    MonomerLibrary({"EO": neutral}), ether, typifier=gaff, reach=2
 )
 chains = [builder.build_linear("EO", 50).to_frame() for _ in range(100)]
 box = InsideBoxRestraint([0.0, 0.0, 0.0], [80.0, 80.0, 80.0])
@@ -275,7 +275,7 @@ targets = [Target(c, count=1).with_restraint(box) for c in chains]
 melt = Molpack().with_seed(1).pack(targets, max_loops=200)
 
 gel = GraphAssembler(ether, typifier=gaff, reach=2).assemble(
- melt, RandomSelector(conversion=0.8, cutoff=6.0, seed=1)
+    melt, RandomSelector(conversion=0.8, cutoff=6.0, seed=1)
 )
 
 frame = gel.to_frame()
@@ -322,12 +322,13 @@ grouped by reactant, and yields the pairs it wants bonded.
 from molpy.builder import Selector
 from molpy.core.atomistic import Atomistic
 
+
 class NearestNeighborSelector(Selector):
- def select(self, world: Atomistic, occurrences: list[list[dict[int, int]]]):
- a_sites, b_sites = occurrences
- for occ_a in a_sites:
- occ_b = self._nearest(world, occ_a, b_sites)
- yield {**occ_a, **occ_b} # {map_number: atom handle}
+    def select(self, world: Atomistic, occurrences: list[list[dict[int, int]]]):
+        a_sites, b_sites = occurrences
+        for occ_a in a_sites:
+            occ_b = self._nearest(world, occ_a, b_sites)
+            yield {**occ_a, **occ_b}  # {map_number: atom handle}
 ```
 
 The matching has already happened — the assembler does it once, in linear time — so a selector
@@ -341,10 +342,10 @@ want to change is the only part you can.
 ## See also
 
 - **[Polymer Topologies](topology/index.md)** — the same machine as a full section:
- linear, block, ring, star, comb, telechelic, gels, end-linked, dual network, agent
- (each page ↔ `examples/topology/<name>.py`).
+  linear, block, ring, star, comb, telechelic, gels, end-linked, dual network, agent
+  (each page ↔ `examples/topology/<name>.py`).
 - **Force Field Typification** — which typifiers can be used during assembly, and how to
- declare `reach` for a black-box one.
+  declare `reach` for a black-box one.
 - **Geometry Optimization** — the step that converges the guessed bond lengths.
 - **Building a Crosslinked Gel** — the workflow above, with packing and equilibration.
 - `molpy.Reaction` — reaction SMARTS semantics, leaving groups, and `%label` predicates.

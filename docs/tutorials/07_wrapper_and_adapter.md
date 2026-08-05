@@ -12,6 +12,7 @@ A wrapper runs an external executable — `antechamber`, `tleap`, `lmp_serial` �
 
 Treating both as "calling another API" hides the part of the workflow that most often fails. MolPy keeps the distinction explicit so you know what kind of failure to expect and which layer to inspect.
 
+
 ## Wrapper: controlled execution across a process boundary
 
 A `Wrapper` encapsulates a command-line tool. It handles locating the executable, setting up the environment, and running the command.
@@ -31,9 +32,9 @@ echo = Wrapper(name="echo_tool", exe="echo")
 result = echo.run(args=["Hello", "from", "MolPy!"])
 
 if result.returncode == 0:
- print(result.stdout.strip()) # Hello from MolPy!
+    print(result.stdout.strip())  # Hello from MolPy!
 else:
- print(result.stderr)
+    print(result.stderr)
 ```
 
 The example uses `echo` because it requires no installation, but the real use cases are tools like Antechamber and tleap. The wrapper pattern is the same: create the wrapper with the executable name, run it with arguments, check the result.
@@ -43,13 +44,14 @@ For tools installed in isolated environments, wrappers handle Conda or virtualen
 ```python
 # Example (not runnable without AmberTools installed):
 # ac = Wrapper(
-# name="antechamber",
-# exe="antechamber",
-# env="AmberTools22",
-# env_manager="conda",
-#)
+#     name="antechamber",
+#     exe="antechamber",
+#     env="AmberTools22",
+#     env_manager="conda",
+# )
 # ac.run(args=["-i", "input.pdb", "-fi", "pdb", "-o", "out.mol2", "-fo", "mol2"])
 ```
+
 
 ## Adapter: synchronized state across two object models
 
@@ -60,25 +62,28 @@ Here is a minimal adapter that converts a dictionary to a semicolon-separated st
 ```python
 from molpy.adapter import Adapter
 
-class StringDictAdapter(Adapter[dict[str, str], str]):
- def _do_sync_to_external(self):
- self._external = ";".join(f"{k}={v}" for k, v in self._internal.items())
 
- def _do_sync_to_internal(self):
- self._internal = dict(
- item.split("=") for item in self._external.split(";") if item
-)
+class StringDictAdapter(Adapter[dict[str, str], str]):
+    def _do_sync_to_external(self):
+        self._external = ";".join(f"{k}={v}" for k, v in self._internal.items())
+
+    def _do_sync_to_internal(self):
+        self._internal = dict(
+            item.split("=") for item in self._external.split(";") if item
+        )
+
 
 adapter = StringDictAdapter(internal={"name": "MolPy", "role": "toolkit"})
 adapter.sync_to_external()
-print(adapter.get_external()) # name=MolPy;role=toolkit
+print(adapter.get_external())  # name=MolPy;role=toolkit
 
 adapter.set_external("name=MolPy;role=toolkit;version=0.2")
 adapter.sync_to_internal()
-print(adapter.get_internal()) # {'name': 'MolPy', 'role': 'toolkit', 'version': '0.2'}
+print(adapter.get_internal())  # {'name': 'MolPy', 'role': 'toolkit', 'version': '0.2'}
 ```
 
 The example is deliberately simple. The important point is not the data format — it is the synchronization protocol. No external process ran. No file was written. The concern is purely about keeping two representations of the same information consistent.
+
 
 ## Real-world adapter: reaching RDKit's own algorithms
 

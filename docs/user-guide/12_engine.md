@@ -49,23 +49,23 @@ from molpy.engine import LAMMPSEngine
 from molpy.core.script import Script
 
 lammps_input = """\
-units real
-atom_style full
-read_data system.data
-include system.ff
+units           real
+atom_style      full
+read_data       system.data
+include         system.ff
 
-pair_style lj/cut/coul/long 12.0
-kspace_style pppm 1.0e-4
+pair_style      lj/cut/coul/long 12.0
+kspace_style    pppm 1.0e-4
 
-thermo 1000
-run 500000
+thermo          1000
+run             500000
 """
 
 script = Script.from_text("input", lammps_input, language="other")
-print(script.preview()) # inspect before saving
+print(script.preview())  # inspect before saving
 
 script.save("./submit/input.lmp")
-# ->./submit/input.lmp written
+# -> ./submit/input.lmp written
 ```
 
 The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_system` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
@@ -91,20 +91,20 @@ Path("./omm_run").mkdir(parents=True, exist_ok=True)
 ff = mp.ForceField("water")
 
 config = OpenMMSimulationConfig(
- ensemble="NPT",
- temperature=300.0, # K
- pressure=1.0, # bar
- timestep_fs=2.0, # fs
- n_steps=500_000,
- platform="CUDA",
+    ensemble="NPT",
+    temperature=300.0,  # K
+    pressure=1.0,  # bar
+    timestep_fs=2.0,  # fs
+    n_steps=500_000,
+    platform="CUDA",
 )
 config.to_json("./omm_run/config.json")
 
 engine = OpenMMEngine(check_executable=False)
 paths = engine.generate_inputs(frame, ff, config, "./omm_run")
 # paths -> {"pdb": Path("./omm_run/system.pdb"),
-# "forcefield": Path("./omm_run/forcefield.xml"),
-# "script": Path("./omm_run/simulate.py")}
+#            "forcefield": Path("./omm_run/forcefield.xml"),
+#            "script": Path("./omm_run/simulate.py")}
 ```
 
 `check_executable=False` tells the engine not to verify that `python` is on PATH at construction time. This is the right choice whenever you are only generating files — the Python interpreter that will eventually run the simulation may be on a different machine entirely.
@@ -124,14 +124,14 @@ When the MD binary is available locally, `engine.run()` writes the script to a w
 engine = LAMMPSEngine("lmp")
 
 result = engine.run(
- script,
- workdir="./calc",
- capture_output=True,
- check=True,
+    script,
+    workdir="./calc",
+    capture_output=True,
+    check=True,
 )
-print(result.returncode) # 0 on success
+print(result.returncode)  # 0 on success
 if result.stderr:
- print(result.stderr[:500])
+    print(result.stderr[:500])
 ```
 
 `check=True` causes `run()` to raise `subprocess.CalledProcessError` on a non-zero exit code — the same semantics as `subprocess.run`. Set `check=False` during automated parameter scans where you want to continue after a failed run and inspect the log file yourself.
@@ -153,32 +153,23 @@ result = engine.run(script, workdir="./calc")
 
 The command that runs is `mpirun -np 16 lmp -in input.lmp -log log.lammps -screen none`. The `-screen none` flag is added automatically to prevent LAMMPS from writing per-timestep data to stdout, which avoids pipe-buffer deadlocks when `capture_output=True`.
 
-### Environment isolation
+### Conda environment activation
 
-Engines share the same :class:`~molpy.wrapper.env.EnvSpec` contract as wrappers.
-Omit both parameters for the system `PATH`, or set both explicitly — there is
-no auto-detection of manager type.
+Some HPC workflows install LAMMPS or OpenMM inside a Conda environment that is not active in the submission environment. Providing both `env` and `env_manager` wraps the subprocess call with `conda run`:
 
 ```python
 # docs: skip — engine.run launches an MD binary; engines unit-tested with mocks / script literals
-# conda named env
 engine = LAMMPSEngine(
- "lmp",
- env="lammps-env",
- env_manager="conda",
+    "lmp",
+    env="lammps-env",
+    env_manager="conda",
 )
 result = engine.run(script, workdir="./calc")
-# runs: conda run --no-capture-output -n lammps-env lmp -in input.lmp...
-
-# venv / uv-created prefix (PATH injection, no conda run)
-engine = LAMMPSEngine(
- "lmp",
- env="/path/to/.venv",
- env_manager="venv",
-)
+# runs: conda run --no-capture-output -n lammps-env lmp -in input.lmp ...
 ```
 
 `env` and `env_manager` must be provided together or omitted together — the engine raises `ValueError` if only one is given.
+
 ### Running OpenMM after generating inputs
 
 Once `generate_inputs()` has produced the files, calling `run()` with the script path launches the generated Python driver under the configured interpreter.
@@ -191,7 +182,7 @@ assert paths["script"].exists()
 # The launch itself is a real simulation, so it is the one step this page does
 # not perform for you:
 #
-# result = engine.run(paths["script"], workdir="./omm_run", capture_output=True)
+#     result = engine.run(paths["script"], workdir="./omm_run", capture_output=True)
 #
 # which becomes: conda run --no-capture-output -n openmm-env python simulate.py
 ```
@@ -217,28 +208,29 @@ from molpy.engine.base import Engine
 import subprocess
 from pathlib import Path
 
+
 class GromacsEngine(Engine):
- @property
- def name(self) -> str:
- return "GROMACS"
+    @property
+    def name(self) -> str:
+        return "GROMACS"
 
- def _get_default_extension(self) -> str:
- return ".mdp"
+    def _get_default_extension(self) -> str:
+        return ".mdp"
 
- def _execute(
- self, run_dir: Path, capture_output=False, check=True, timeout=None, **kwargs
-):
- cmd = self._build_full_command(
- ["grompp", "-f", self.input_script.path.name, "-o", "topol.tpr"]
-)
- return subprocess.run(
- cmd,
- cwd=run_dir,
- capture_output=capture_output,
- text=True,
- check=check,
- timeout=timeout,
-)
+    def _execute(
+        self, run_dir: Path, capture_output=False, check=True, timeout=None, **kwargs
+    ):
+        cmd = self._build_full_command(
+            ["grompp", "-f", self.input_script.path.name, "-o", "topol.tpr"]
+        )
+        return subprocess.run(
+            cmd,
+            cwd=run_dir,
+            capture_output=capture_output,
+            text=True,
+            check=check,
+            timeout=timeout,
+        )
 ```
 
 `_build_full_command` prepends the launcher and Conda wrapper automatically.

@@ -33,9 +33,9 @@ This is the central capability the MCP server provides. The six tools described 
 
 ```
 MolPy source ─► SourceResolver ─► Snapshot ─► Extractor ─► Resolver ─► GraphStore
- pkg:molpy (immutable, (phase 1) (phase 2) (SQLite
- or local content- graph.db)
- checkout hashed)
+  pkg:molpy                       (immutable,  (phase 1)   (phase 2)   (SQLite
+  or local                         content-                            graph.db)
+  checkout                         hashed)
 ```
 
 1. **Source resolution.** The MolPy source — either the installed `pkg:molpy` or a local checkout — resolves to an immutable `Snapshot`. The snapshot is keyed on a **content hash** of the files, never a branch name; a cached graph is therefore always tied to exact source.
@@ -105,30 +105,30 @@ The tools compose. A few patterns the agent uses repeatedly on MolPy:
 
 ```text
 molmcp_find_capability("compute a radial distribution function")
- → matches: [molpy.compute.rdf.RDF, …]
+  → matches: [molpy.compute.rdf.RDF, …]
 molmcp_describe_symbol("molpy.compute.rdf.RDF")
- → signature + docstring
+  → signature + docstring
 ```
 
 **"How is this actually used?"**
 
 ```text
 molmcp_relations("molpy.core.Box.orth", relation="examples")
- → docstring examples + tests that exercise it
+  → docstring examples + tests that exercise it
 ```
 
 **"What does my change break?"**
 
 ```text
 molmcp_relations("molpy.io.read_xml_forcefield", relation="callers", depth=2)
- → every site, two hops out, that depends on the function
+  → every site, two hops out, that depends on the function
 ```
 
 **"Show me the structure of a subpackage."**
 
 ```text
 molmcp_outline(path="molpy/builder/polymer")
- → modules + classes + functions, scoped to one subtree
+  → modules + classes + functions, scoped to one subtree
 ```
 
 These are not search hits — they are graph walks. That is the point of indexing MolPy as a graph rather than a list.
@@ -180,12 +180,12 @@ Edit Claude Desktop's `mcpServers` block:
 
 ```json
 {
- "mcpServers": {
- "molpy": {
- "command": "python",
- "args": ["-m", "molmcp", "--source", "pkg:molpy"]
- }
- }
+  "mcpServers": {
+    "molpy": {
+      "command": "python",
+      "args": ["-m", "molmcp", "--source", "pkg:molpy"]
+    }
+  }
 }
 ```
 
@@ -215,8 +215,8 @@ molmcp discovery verify pkg:molpy
 Inspect or rebuild the graph from the CLI without going through an MCP client:
 
 ```bash
-molmcp discovery index pkg:molpy # build the graph
-molmcp discovery outline pkg:molpy # high-level map
+molmcp discovery index pkg:molpy        # build the graph
+molmcp discovery outline pkg:molpy      # high-level map
 molmcp discovery query pkg:molpy "radial distribution function"
 ```
 
@@ -320,10 +320,10 @@ molmcp_find_capability("read an XML force field and write LAMMPS data + ff")
 
 ```
 matches:
- • molpy.io.read_xml_forcefield (function)
- • molpy.io.write_lammps_data (function)
- • molpy.io.write_lammps_forcefield (function)
- • molpy.typifier.OPLSAATypifier (class)
+  • molpy.io.read_xml_forcefield        (function)
+  • molpy.io.write_lammps_data          (function)
+  • molpy.io.write_lammps_forcefield    (function)
+  • molpy.typifier.OPLSAATypifier (class)
 ```
 
 **Step 2 — confirm the built-in TIP3P file path**
@@ -334,10 +334,10 @@ molmcp_describe_symbol("molpy.io.read_xml_forcefield")
 
 ```
 signature: (filepath: str | Path, forcefield: ForceField | None = None)
- -> ForceField
+           -> ForceField
 docstring: Read an XML force field file. Relative filenames resolve against the
- package data directory, so passing "tip3p.xml" loads the built-in
- TIP3P force field.
+           package data directory, so passing "tip3p.xml" loads the built-in
+           TIP3P force field.
 ```
 
 **Step 3 — verify the non-obvious topology step**
@@ -359,7 +359,7 @@ molmcp_describe_symbol("molpy.core.Box.orth")
 ```
 
 ```
-(lengths: ArrayLike, pbc: ArrayLike =..., origin: ArrayLike =...,
+(lengths: ArrayLike, pbc: ArrayLike = ..., origin: ArrayLike = ...,
  central: bool = False) -> Box
 ```
 
@@ -384,18 +384,18 @@ from molpy.io import read_xml_forcefield, write_lammps_data, write_lammps_forcef
 from molpy.typifier import ForceFieldParams
 
 theta = 1.82421813418
-r_oh = 0.09572 # nm
+r_oh = 0.09572  # nm
 
 water = mp.Atomistic(name="water_tip3p")
 o = water.def_atom(element="O", name="O", x=0.0, y=0.0, z=0.0, charge=-0.834)
 h1 = water.def_atom(element="H", name="H1", x=r_oh, y=0.0, z=0.0, charge=0.417)
 h2 = water.def_atom(
- element="H",
- name="H2",
- x=r_oh * float(np.cos(theta)),
- y=r_oh * float(np.sin(theta)),
- z=0.0,
- charge=0.417,
+    element="H",
+    name="H2",
+    x=r_oh * float(np.cos(theta)),
+    y=r_oh * float(np.sin(theta)),
+    z=0.0,
+    charge=0.417,
 )
 water.def_bond(o, h1, order=1)
 water.def_bond(o, h2, order=1)
@@ -403,22 +403,22 @@ water.def_bond(o, h2, order=1)
 system = mp.Atomistic(name="water_box_tip3p")
 mol_id = 1
 for iz in range(4):
- for iy in range(4):
- for ix in range(4):
- mol = water.copy()
- mol.move(delta=[ix * 0.32, iy * 0.32, iz * 0.32])
- for atom in mol.atoms:
- atom["mol_id"] = mol_id
- system.merge(mol)
- mol_id += 1
+    for iy in range(4):
+        for ix in range(4):
+            mol = water.copy()
+            mol.move(delta=[ix * 0.32, iy * 0.32, iz * 0.32])
+            for atom in mol.atoms:
+                atom["mol_id"] = mol_id
+            system.merge(mol)
+            mol_id += 1
 
-system.get_topo(gen_angle=True, gen_dihe=False) # in place
+system.get_topo(gen_angle=True, gen_dihe=False)  # in place
 
 ff = read_xml_forcefield("tip3p.xml")
 # Rigid TIP3P: the three sites are named by construction, so this spends types
 # rather than deciding them.
 for atom in system.atoms:
- atom["type"] = "tip3p-O" if atom["element"] == "O" else "tip3p-H"
+    atom["type"] = "tip3p-O" if atom["element"] == "O" else "tip3p-H"
 system = ForceFieldParams(ff).assign(system)
 
 frame = system.to_frame()
@@ -486,11 +486,11 @@ molmcp_outline()
 Returns MolPy's top-level packages and modules (excerpt):
 
 ```
-molpy.builder Crystal and polymer builders (AmberTools integration, stochastic generation)
-molpy.io I/O for AMBER, LAMMPS, PDB, GRO, MOL2, XYZ...
-molpack Packing (Molpack, Target, restraints)
-molpy.parser Parsers for SMILES, BigSMILES, CGSmiles, GBigSMILES
-molpy.wrapper External tool wrappers (antechamber, parmchk2, prepgen, tleap)
+molpy.builder   Crystal and polymer builders (AmberTools integration, stochastic generation)
+molpy.io        I/O for AMBER, LAMMPS, PDB, GRO, MOL2, XYZ ...
+molpack         Packing (Molpack, Target, restraints)
+molpy.parser    Parsers for SMILES, BigSMILES, CGSmiles, GBigSMILES
+molpy.wrapper   External tool wrappers (antechamber, parmchk2, prepgen, tleap)
 ```
 
 **Step 2 — find the distribution and polymer-builder classes**
@@ -500,42 +500,42 @@ molmcp_outline(path="molpy/builder/polymer")
 ```
 
 ```
-SchulzZimmPolydisperse Schulz-Zimm molecular weight distribution for polydisperse polymer chains
-UniformPolydisperse Uniform distribution over degree of polymerization
-PoissonPolydisperse Poisson distribution for degree of polymerization
-FlorySchulzPolydisperse Flory-Schulz (geometric) distribution
-PolydisperseChainGenerator Middle layer: samples DP/mass, generates monomer sequences
-SystemPlanner Top layer: accumulates chains until a target total mass is reached
-AmberPolymerBuilder Polymer builder backed by the AmberTools pipeline
-PolymerBuilder CGSmiles-based polymer builder with pluggable typifier
+SchulzZimmPolydisperse    Schulz-Zimm molecular weight distribution for polydisperse polymer chains
+UniformPolydisperse       Uniform distribution over degree of polymerization
+PoissonPolydisperse       Poisson distribution for degree of polymerization
+FlorySchulzPolydisperse   Flory-Schulz (geometric) distribution
+PolydisperseChainGenerator  Middle layer: samples DP/mass, generates monomer sequences
+SystemPlanner             Top layer: accumulates chains until a target total mass is reached
+AmberPolymerBuilder       Polymer builder backed by the AmberTools pipeline
+PolymerBuilder            CGSmiles-based polymer builder with pluggable typifier
 ```
 
 **Step 3 — read the Schulz–Zimm signature and docstring**
 
 ```
 molmcp_describe_symbol(
- "molpy.builder.polymer.distributions.SchulzZimmPolydisperse",
- include_source=False,
+    "molpy.builder.polymer.distributions.SchulzZimmPolydisperse",
+    include_source=False,
 )
 ```
 
 ```
 signature: (Mn: float, Mw: float, random_seed: int | None = None)
 docstring:
- Schulz-Zimm molecular weight distribution for polydisperse polymer chains.
- Implements MassDistribution — sampling is done directly in molecular-weight space.
+  Schulz-Zimm molecular weight distribution for polydisperse polymer chains.
+  Implements MassDistribution — sampling is done directly in molecular-weight space.
 
- The PDF is:
- f(M) = z^(z+1)/Γ(z+1) · M^(z−1)/Mn^z · exp(−zM/Mn)
- where z = Mn/(Mw − Mn). Equivalent to Gamma(shape=z, scale=Mw−Mn).
+  The PDF is:
+      f(M) = z^(z+1)/Γ(z+1) · M^(z−1)/Mn^z · exp(−zM/Mn)
+  where z = Mn/(Mw − Mn).  Equivalent to Gamma(shape=z, scale=Mw−Mn).
 
- Args:
- Mn: Number-average molecular weight (g/mol).
- Mw: Weight-average molecular weight (g/mol), must satisfy Mw > Mn.
+  Args:
+      Mn: Number-average molecular weight (g/mol).
+      Mw: Weight-average molecular weight (g/mol), must satisfy Mw > Mn.
 
- Methods:
- sample_mass(rng) → float draw one mass sample
- mass_pdf(mass_array) → ndarray
+  Methods:
+      sample_mass(rng) → float     draw one mass sample
+      mass_pdf(mass_array) → ndarray
 ```
 
 Claude notes: z = 1/(PDI − 1) = 5.0 for PDI = 1.20.
@@ -555,11 +555,11 @@ molmcp_describe_symbol("molpy.builder.polymer.ambertools.AmberPolymerBuilder")
 
 ```
 signature: (library: dict[str, Atomistic],
- force_field: str = "gaff2",
- charge_method: str = "bcc",
- work_dir: Path = Path("amber_work"),
- env: str = "AmberTools25",
- env_manager: str = "conda")
+            force_field: str = "gaff2",
+            charge_method: str = "bcc",
+            work_dir: Path = Path("amber_work"),
+            env: str = "AmberTools25",
+            env_manager: str = "conda")
 ```
 
 ```
@@ -568,20 +568,20 @@ molmcp_describe_symbol("molpy.builder.polymer.ambertools.AmberPolymerBuilder.bui
 
 ```
 docstring:
- Build a polymer from a CGSmiles string.
+  Build a polymer from a CGSmiles string.
 
- Args:
- cgsmiles: CGSmiles notation, e.g. "{[#MeH][#EO]|10[#MeT]}"
- |N means N repeat units of the preceding monomer.
+  Args:
+      cgsmiles: CGSmiles notation, e.g. "{[#MeH][#EO]|10[#MeT]}"
+                |N means N repeat units of the preceding monomer.
 
- Returns:
- AmberBuildResult with.frame (Frame) and.forcefield (ForceField).
+  Returns:
+      AmberBuildResult with .frame (Frame) and .forcefield (ForceField).
 
- Pipeline (automatic):
- antechamber → GAFF atom types + BCC charges (mol2 + ac files)
- parmchk2 → missing torsion/vdW parameters (frcmod)
- prepgen → HEAD / CHAIN / TAIL residue variants (prepi)
- tleap → build polymer and generate prmtop / inpcrd
+  Pipeline (automatic):
+      antechamber  → GAFF atom types + BCC charges (mol2 + ac files)
+      parmchk2     → missing torsion/vdW parameters (frcmod)
+      prepgen      → HEAD / CHAIN / TAIL residue variants (prepi)
+      tleap        → build polymer and generate prmtop / inpcrd
 ```
 
 **Step 5 — pin Li⁺ parameters via the `tests` edge**
@@ -595,13 +595,13 @@ molmcp_search_symbols("Aqvist")
 ```
 
 ```
-test_e2e_peo_litfsi.test_li_frcmod (test, tests/test_e2e_peo_litfsi.py:147)
- "Write Åqvist (1990) Li+ frcmod and build prmtop via tleap."
+test_e2e_peo_litfsi.test_li_frcmod   (test, tests/test_e2e_peo_litfsi.py:147)
+    "Write Åqvist (1990) Li+ frcmod and build prmtop via tleap."
 ```
 
 ```
 molmcp_describe_symbol(
- "test_e2e_peo_litfsi.test_li_frcmod", include_source=True
+    "test_e2e_peo_litfsi.test_li_frcmod", include_source=True
 )
 ```
 
@@ -616,12 +616,12 @@ molmcp_outline(path="molpy/pack")
 ```
 
 ```
-Molpack High-level molpack packing interface
-InsideBoxRestraint Place molecules inside a rectangular box
-OutsideBoxConstraint Keep molecules outside a box
-InsideSphereConstraint Sphere constraint
-MinDistanceConstraint Minimum pairwise distance
-Target One packing target (frame + count + constraint)
+Molpack                  High-level molpack packing interface
+InsideBoxRestraint       Place molecules inside a rectangular box
+OutsideBoxConstraint     Keep molecules outside a box
+InsideSphereConstraint   Sphere constraint
+MinDistanceConstraint    Minimum pairwise distance
+Target                   One packing target (frame + count + constraint)
 ```
 
 ```
@@ -649,7 +649,7 @@ Claude notes: `skip_pair_style=True` is needed so the LAMMPS input script can co
 
 ```
 molmcp_relations(
- "molpy.core.forcefield.ForceField.merge", relation="examples"
+    "molpy.core.forcefield.ForceField.merge", relation="examples"
 )
 ```
 
@@ -658,8 +658,8 @@ fields, confirming the contract:
 
 ```
 docstring:
- Merge two ForceField objects. Returns a new ForceField containing all
- styles and parameters from both. Raises if incompatible styles are found.
+  Merge two ForceField objects.  Returns a new ForceField containing all
+  styles and parameters from both.  Raises if incompatible styles are found.
 ```
 
 **Step 8 — sanity-check impact before committing**
@@ -670,7 +670,7 @@ understands the dependencies it is about to wire together:
 
 ```
 molmcp_relations(
- "molpy.io.write_lammps_data", relation="impact", depth=2
+    "molpy.io.write_lammps_data", relation="impact", depth=2
 )
 ```
 

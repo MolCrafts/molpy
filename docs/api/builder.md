@@ -24,8 +24,8 @@ rule, so there is one kernel and one variation point.
 | `ResiduePlacer` | Lays fresh template copies out in space | Building from templates |
 | `SystemPlanner` / `PolydisperseChainGenerator` | Sample a polydisperse chain plan | Bulk / MW-distributed systems |
 | `AmberPolymerBuilder` | GAFF-parameterised build via AmberTools | AMBER/LAMMPS-bound workflows |
-| `CarbonTubeBuilder` | `CarbonTubeBuilder(n, m,...)` → `.build()` graph + `.cell()` box | Zigzag, armchair, and chiral nanotubes |
-| `GrapheneBuilder` | `GrapheneBuilder(nx, ny,...)` → `.build()` graph + `.cell()` box | Rectangular graphene honeycomb sheet |
+| `CarbonTubeBuilder` | `CarbonTubeBuilder(n, m, ...)` → `.build()` graph + `.cell()` box | Zigzag, armchair, and chiral nanotubes (molrs) |
+| `GrapheneBuilder` | `GrapheneBuilder(nx, ny, ...)` → `.build()` graph + `.cell()` box | Rectangular graphene honeycomb sheet (molrs) |
 | `DrudeBuilder` / `Tip4pBuilder` / `VirtualSiteBuilder` | Virtual-site augmentation | Polarizable / 4-site models |
 
 ## Canonical example
@@ -37,16 +37,16 @@ the chemistry lives, and `%a` / `%b` bind it to the atoms you marked.
 ```python
 import molpy as mp
 from molpy.builder.assembly import (
- MonomerLibrary,
- PolymerBuilder,
- ResiduePlacer,
- SiteMap,
+    MonomerLibrary,
+    PolymerBuilder,
+    ResiduePlacer,
+    SiteMap,
 )
 from molpy.conformer import Conformer
 from molpy.core import fields
 
 eo, _ = Conformer(add_hydrogens=True, seed=42).generate(
- mp.io.read_smiles("OCCO")
+    mp.io.read_smiles("OCCO")
 )
 SiteMap(eo).label_elements("O", "a", "b")
 
@@ -121,11 +121,11 @@ from molpy.builder.assembly import GraphAssembler, RandomSelector
 
 melt = mp.Atomistic()
 for i in range(4):
- melt.def_atom(element="N", x=float(i), y=0.0, z=0.0)
- melt.def_atom(element="O", x=float(i), y=1.0, z=0.0)
+    melt.def_atom(element="N", x=float(i), y=0.0, z=0.0)
+    melt.def_atom(element="O", x=float(i), y=1.0, z=0.0)
 
 gel = GraphAssembler(mp.Reaction("[N:1].[O:2]>>[N:1][O:2]")).assemble(
- melt, RandomSelector(conversion=1.0, seed=1, cutoff=2.0)
+    melt, RandomSelector(conversion=1.0, seed=1, cutoff=2.0)
 )
 assert len(list(gel.bonds)) == 4
 ```
@@ -141,19 +141,19 @@ Sample a chain plan, then loop `build`:
 ```python
 import numpy as np
 from molpy.builder.polymer import (
- PolydisperseChainGenerator,
- SchulzZimmPolydisperse,
- SystemPlanner,
- WeightedSequenceGenerator,
+    PolydisperseChainGenerator,
+    SchulzZimmPolydisperse,
+    SystemPlanner,
+    WeightedSequenceGenerator,
 )
 
 planner = SystemPlanner(
- PolydisperseChainGenerator(
- WeightedSequenceGenerator({"EO": 1.0}),
- {"EO": 44.05},
- distribution=SchulzZimmPolydisperse(1500, 3000),
-),
- target_total_mass=5e3,
+    PolydisperseChainGenerator(
+        WeightedSequenceGenerator({"EO": 1.0}),
+        {"EO": 44.05},
+        distribution=SchulzZimmPolydisperse(1500, 3000),
+    ),
+    target_total_mass=5e3,
 )
 plan = planner.plan_system(np.random.default_rng(42))
 chains = [builder.build_linear("EO", len(c.monomers)) for c in plan.chains[:2]]
@@ -169,16 +169,18 @@ once, in linear time — so a selector never scans the system, it only decides.
 ```python
 from molpy.builder.assembly import Selector
 
-class FirstPairSelector(Selector):
- """React exactly one pairing: the first site of each reactant."""
 
- def select(self, context):
- a_sites = context.occurrences[context.comp_a]
- b_sites = context.occurrences[context.comp_b]
- yield {**a_sites[0], **b_sites[0]}
+class FirstPairSelector(Selector):
+    """React exactly one pairing: the first site of each reactant."""
+
+    def select(self, context):
+        a_sites = context.occurrences[context.comp_a]
+        b_sites = context.occurrences[context.comp_b]
+        yield {**a_sites[0], **b_sites[0]}
+
 
 one = GraphAssembler(mp.Reaction("[N:1].[O:2]>>[N:1][O:2]")).assemble(
- melt, FirstPairSelector()
+    melt, FirstPairSelector()
 )
 assert len(list(one.bonds)) == 1
 ```
