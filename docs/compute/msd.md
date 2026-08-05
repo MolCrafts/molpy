@@ -32,8 +32,7 @@ a continuous path, not a jump.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:9"
-# annotations: one scaleBar = full |———| (spine + ⊥ caps + label), like
-# matplotlib FancyArrowPatch(arrowstyle='|-|'). Never hand-draw caps.
+# Pure Vega-Lite (layered). Formatter only YAML→JSON embeds this spec.
 config:
   font: "Times New Roman, Times, STIX Two Text, STIXGeneral, Latin Modern Roman, serif"
   axis:
@@ -63,68 +62,84 @@ encoding:
     scale: {type: log, domain: [0.008, 120]}
     title: "MSD"
     axis: {titleFontStyle: normal}
-# reference chords on the curve; scaleBar offsets them off-path and draws caps
-annotations:
-  - kind: scaleBar
-    orientation: along
-    x: 0.18
-    y: 0.0324
-    x2: 0.65
-    y2: 0.4225
-    offsetLog: 0.42
-    capLog: 0.16
-    label: ballistic
-    color: "#18432b"
-    strokeWidth: 2.2
-  - kind: scaleBar
-    orientation: along
-    x: 2.2
-    y: 2.2
-    x2: 12
-    y2: 12
-    offsetLog: 0.42
-    capLog: 0.16
-    label: diffusive
-    color: "#18432b"
-    strokeWidth: 2.2
-  - kind: scaleBar
-    orientation: along
-    x: 28
-    y: 24.4
-    x2: 80
-    y2: 53
-    offsetLog: 0.42
-    capLog: 0.16
-    label: noisy
-    color: "#18432b"
-    strokeWidth: 2.2
+resolve:
+  scale: {x: shared, y: shared}
 layer:
+  # curve: ballistic ∝τ² → linear diffusive ∝τ → noisy long lag
   - data:
       values:
-        - {t: 0.10, msd: 0.010}
-        - {t: 0.15, msd: 0.0225}
-        - {t: 0.20, msd: 0.040}
-        - {t: 0.30, msd: 0.090}
-        - {t: 0.45, msd: 0.2025}
-        - {t: 0.65, msd: 0.4225}
-        - {t: 0.90, msd: 0.81}
-        - {t: 1.20, msd: 1.20}
-        - {t: 1.80, msd: 1.80}
-        - {t: 2.50, msd: 2.50}
-        - {t: 4.00, msd: 4.00}
-        - {t: 6.00, msd: 6.00}
-        - {t: 9.00, msd: 9.00}
-        - {t: 12.0, msd: 12.0}
-        - {t: 18.0, msd: 18.0}
-        - {t: 28.0, msd: 24.4}
-        - {t: 40.0, msd: 31.0}
-        - {t: 55.0, msd: 39.25}
-        - {t: 75.0, msd: 50.25}
-        - {t: 100,  msd: 64.0}
+        - {x: 0.10, y: 0.010}
+        - {x: 0.15, y: 0.0225}
+        - {x: 0.20, y: 0.040}
+        - {x: 0.30, y: 0.090}
+        - {x: 0.45, y: 0.2025}
+        - {x: 0.65, y: 0.4225}
+        - {x: 0.90, y: 0.81}
+        - {x: 1.20, y: 1.20}
+        - {x: 1.80, y: 1.80}
+        - {x: 2.50, y: 2.50}
+        - {x: 4.00, y: 4.00}
+        - {x: 6.00, y: 6.00}
+        - {x: 9.00, y: 9.00}
+        - {x: 12.0, y: 12.0}
+        - {x: 18.0, y: 18.0}
+        - {x: 28.0, y: 24.4}
+        - {x: 40.0, y: 31.0}
+        - {x: 55.0, y: 39.25}
+        - {x: 75.0, y: 50.25}
+        - {x: 100,  y: 64.0}
     mark: {type: line, strokeWidth: 3, interpolate: monotone, color: "#0c5da5"}
     encoding:
-      x: {field: t}
-      y: {field: msd}
+      x: {field: x}
+      y: {field: y}
+
+  # |———| spines: parallel to local chord, offset off the curve (data coords)
+  - data:
+      values:
+        - {x: 0.12363, y: 0.039095, x2: 0.44644, y2: 0.5098}
+        - {x: 1.6347,  y: 2.9607,   x2: 8.9167,  y2: 16.15}
+        - {x: 21.815,  y: 34.205,   x2: 62.329,  y2: 74.298}
+    mark: {type: rule, strokeWidth: 2.2, color: "#18432b", strokeCap: butt}
+    encoding:
+      x: {field: x}
+      y: {field: y}
+      x2: {field: x2}
+      y2: {field: y2}
+
+  # end-caps ⊥ to each spine (same stroke)
+  - data:
+      values:
+        - {x: 0.10715, y: 0.041995, x2: 0.14265, y2: 0.036395}
+        - {x: 0.38691, y: 0.54762,  x2: 0.51513, y2: 0.4746}
+        - {x: 1.4599,  y: 3.3154,   x2: 1.8305,  y2: 2.644}
+        - {x: 7.9628,  y: 18.084,   x2: 9.9847,  y2: 14.422}
+        - {x: 19.837,  y: 38.902,   x2: 23.991,  y2: 30.075}
+        - {x: 56.676,  y: 84.501,   x2: 68.547,  y2: 65.327}
+    mark: {type: rule, strokeWidth: 2.2, color: "#18432b"}
+    encoding:
+      x: {field: x}
+      y: {field: y}
+      x2: {field: x2}
+      y2: {field: y2}
+
+  # regime labels (Times roman)
+  - data:
+      values:
+        - {x: 0.17646, y: 0.1629, label: "ballistic"}
+        - {x: 3.0448,  y: 8.6706, label: "diffusive"}
+        - {x: 30.489,  y: 65.209, label: "noisy"}
+    mark:
+      type: text
+      font: "Times New Roman, Times, STIX Two Text, STIXGeneral, serif"
+      fontStyle: normal
+      fontSize: 22
+      color: "#18432b"
+      align: center
+      baseline: middle
+    encoding:
+      x: {field: x}
+      y: {field: y}
+      text: {field: label, type: nominal}
 ```
 
 </div>
