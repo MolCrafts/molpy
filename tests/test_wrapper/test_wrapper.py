@@ -112,7 +112,10 @@ def test_wrapper_run_with_conda_env_prefix_prefixes_command():
 
         mock_run.assert_called_once()
         argv = mock_run.call_args[0][0]
-        assert argv[1:4] == ["run", "-p", "/opt/conda/envs/AmberTools25"]
+        assert argv[1:3] == ["run", "-p"]
+        # Path-like env is stored as Path; argv boundary is OS-native str(path).
+        assert Path(argv[3]) == Path("/opt/conda/envs/AmberTools25")
+        assert argv[3] == str(Path("/opt/conda/envs/AmberTools25"))
         assert argv[4:] == ["echo", "hello"]
 
 
