@@ -1,230 +1,157 @@
 # Workflow
 
-Analysis tasks often need more than a single compute step. Radial distribution
-functions require neighbour lists; cluster analysis feeds on per-frame
-descriptors; mean-squared displacements chain into autocorrelation functions.
-Doing this by hand — calling each node, threading outputs into inputs,
-checking that upstream ran before downstream — is tedious and easy to get
-wrong.
+A real analysis is rarely one compute. You build a neighbour list, then feed it
+to $g(r)$, to `LocalDensity`, and to `Steinhardt`; you cluster, then measure
+shapes of the clusters. Written as a script that is a pile of intermediate
+variables in the right order, and the ordering is implicit in where you happened
+to put the lines.
 
-`molpy.compute.Workflow` makes this mechanical. You register named compute
-nodes, declare which parameters come from which upstream node (or from an
-external input), and the workflow handles topological order and result caching.
-It adds zero dependencies beyond Python's standard library.
+`Workflow` makes the ordering explicit. You declare which node consumes which,
+and it works out the execution order itself.
 
-## Mental model
+## What it is, and what it deliberately is not
 
-A workflow is a **directed acyclic graph (DAG)** of `Compute` callables:
+A `Workflow` is a directed acyclic graph of callables. Each node has a name, a
+callable, and a mapping from *its own parameter names* to the names of upstream
+nodes or external inputs. On `run()` the graph is topologically sorted, each
+node is called as `node(**resolved)`, and every result is returned in a dict
+keyed by node name.
 
-- Each **node** is a named `Compute` instance.
-- Each node has an `inputs` map: *parameter name* → *source name*.
-- A source is either another node’s name (upstream result) or an **external**
-  key you pass to `run(**externals)`.
-- Execution order is the topological sort; each node runs **once** and its
-  result is cached for all dependents.
+That is the whole model. There is no scheduler, no caching, no parallelism, no
+progress bar, and no attempt to inspect your function signatures — binding is by
+name, and if the names do not line up you get an error rather than a guess.
 
-This is the same idea as a build system or a dataflow pipeline — without
-parallelism, conditionals, or streaming (see [When not to use Workflow](#when-not-to-use-workflow)).
+The value is not automation, it is that **the dependency structure becomes a
+declaration you can read**, and that a missing input fails before anything runs
+instead of halfway through a long job.
 
-## A linear chain
-
-The simplest workflow is a straight pipeline. Node *a* runs first; node *b*
-takes *a*'s output as its `x` parameter.
-
-```python
-from molpy.compute import (
-    Workflow,
-    WorkflowCycleError,
-    WorkflowDuplicateNodeError,
-    WorkflowMissingInputError,
-)
-from molpy.compute.base import Compute
-
-class Square(Compute):
-    """Return the square of a number."""
-
-    def __init__(self):
-        super().__init__()
-
-    def __call__(self, x):
-        return x * x
-
-class AddOne(Compute):
-    """Add one."""
-
-    def __init__(self):
-        super().__init__()
-
-    def __call__(self, x):
-        return x + 1
-
-wf = Workflow()
-wf.add("square", Square(), inputs={"x": "x"})
-wf.add("add_one", AddOne(), inputs={"x": "square"})
-
-results = wf.run(x=3)
-print(results)  # {'square': 9, 'add_one': 10}
-```
-
-`wf.add()` returns the workflow, so calls chain:
-
-```python
-wf = Workflow()
-(
-    wf.add("square", Square(), inputs={"x": "x"}).add(
-        "add_one", AddOne(), inputs={"x": "square"}
-    )
-)
-```
-
-## External inputs
-
-Every parameter a node needs must appear in its `inputs` — including the ones
-that come from outside the workflow. When the source name does not match any
-registered node, the workflow treats it as an *external input*, and you supply
-it to `run()`.
-
-```python
-wf = Workflow()
-wf.add("square", Square(), inputs={"x": "x"})
-
-# "x" maps to no registered node, so it is an external input
-results = wf.run(x=5)
-print(results)  # {'square': 25}
-```
-
-If you forget an external input, `run()` raises `WorkflowMissingInputError`
-*before* executing any node — no partial execution.
-
-```python
-try:
-    wf.run()
-except WorkflowMissingInputError as exc:
-    print(exc.missing)  # {'x'}
-```
-
-## Diamond reuse
-
-When two downstream nodes share an upstream, the upstream runs exactly once.
-This is not a special code path — it falls out of the result cache naturally.
-
-```python
-class Count(Compute):
-    """Counts how many times it was called."""
-
-    def __init__(self):
-        super().__init__()
-        self.call_count = 0
-
-    def __call__(self, x):
-        self.call_count += 1
-        return x
-
-wf = Workflow()
-upstream = Count()
-wf.add("upstream", upstream, inputs={"x": "x"})
-wf.add("branch_a", AddOne(), inputs={"x": "upstream"})
-wf.add("branch_b", AddOne(), inputs={"x": "upstream"})
-
-results = wf.run(x=1)
-assert upstream.call_count == 1  # not 2
-```
-
-## Real example: radial distribution function
-
-A radial distribution function $g(r)$ needs both a frame (for the box) and a
-neighbour list (for the pair distances). We express this as a two-node
-workflow.
+## Building one
 
 ```python
 import numpy as np
-from molpy.compute import Workflow, NeighborList, RDF
 import molpy as mp
+from molpy.compute import NeighborList, RDF, Workflow
 
-# Build a simple test frame — 10 atoms in a 10 Å cube
-rng = np.random.default_rng(42)
-xyz = rng.uniform(0.0, 10.0, size=(10, 3))
+rng = np.random.default_rng(0)
+xyz = rng.uniform(0.0, 20.0, size=(300, 3))
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(10.0)
+frame.box = mp.Box.cubic(20.0)
+```
 
-wf = Workflow()
-wf.add("nlist", NeighborList(cutoff=5.0), inputs={"frame": "frame"})
-wf.add(
-    "rdf",
-    RDF(n_bins=100, r_max=5.0),
-    inputs={"frames": "frame", "neighbors": "nlist"},
+Each `add` call names the node, gives the callable, and maps parameter names to
+sources:
+
+```python
+workflow = (
+    Workflow()
+    .add("nlist", lambda frame: [NeighborList(cutoff=8.0)(frame)],
+         {"frame": "frame"})
+    .add("rdf", lambda frames, neighbors: RDF(n_bins=80, r_max=8.0)(frames, neighbors),
+         {"frames": "frames", "neighbors": "nlist"})
 )
 
-results = wf.run(frame=frame)
-rdf_array = np.asarray(results["rdf"].rdf)
-print(f"g(r) has {len(rdf_array)} bins, max value {rdf_array.max():.3f}")
+print(sorted(workflow.nodes))              # -> ['nlist', 'rdf']
+print(sorted(workflow.external_inputs))    # -> ['frame', 'frames']
+print(list(workflow.topological_order()))  # -> ['nlist', 'rdf']
 ```
 
-`NeighborList` needs only the frame, so `frame` is its one external input.
-`RDF` needs both the original frame (for box dimensions) and the neighbour
-list — so its `inputs` map references both `"frame"` (external) and `"nlist"`
-(upstream node). Parameter names in `inputs` must match the `__call__`
-signature (`frame` vs `frames` / `neighbors`).
+Two details in that snippet are worth pausing on, because they are the whole
+example. The `nlist` lambda wraps its result in a **list** because the consumer
+is `RDF`, which takes parallel lists of frames and neighbour lists — the node
+must hand on the shape the next node expects, and `Workflow` does no adapting.
+And the same frame is supplied twice, as `frame=` for the neighbour search
+(which takes one frame) and as `frames=[frame]` for `RDF` (which takes a list);
+on a real trajectory those would be one frame and the whole list.
 
-## Introspection
+`add` returns `self`, so the calls chain. Read the second node's mapping as:
+"my parameter `neighbors` comes from the node called `nlist`; my parameter
+`frames` comes from outside." Anything not matching a registered node name
+becomes an **external input**, which is how `external_inputs` gets computed —
+and it is worth printing, because a typo in a source name shows up there as an
+unexpected external rather than as a crash.
 
-You can inspect the workflow before running it.
+Mind the inconsistency while you are here: `nodes` and `external_inputs` are
+plain attributes, while `topological_order()` and `predecessors()` are methods.
+
+Then run it, supplying the externals as keyword arguments:
 
 ```python
-wf.nodes                 # ['nlist', 'rdf'] — insertion order
-wf.external_inputs       # {'frame'} — all unregistered source names
-wf.topological_order()   # ['nlist', 'rdf'] — execution order
-wf.predecessors("rdf")   # {'nlist'} — node predecessors only (no externals)
+results = workflow.run(frame=frame, frames=[frame])
+print(sorted(results))                   # -> ['nlist', 'rdf']
+print(results["rdf"].n_frames)           # -> 1
 ```
 
-`predecessors()` deliberately excludes external inputs — it describes the
-internal DAG topology, not every dependency.
+Every node's output is in the dict, not just the last one — intermediates are
+usually worth keeping.
 
-## Cycle detection
-
-If adding a node would create a cycle, `add()` raises `WorkflowCycleError`
-and rolls back — the workflow state is unchanged.
+Forget an external and it says so up front:
 
 ```python
-wf = Workflow()
-wf.add("a", Square(), inputs={"x": "x"})
-
-# b depends on a → OK
-wf.add("b", Square(), inputs={"x": "a"})
-
-# Linear extension remains acyclic
 try:
-    wf.add("c", Square(), inputs={"x": "b"})  # OK, linear
-except WorkflowCycleError:
-    pass  # not reached — this is valid
+    workflow.run(frame=frame)
+except Exception as error:
+    print(type(error).__name__)          # -> WorkflowMissingInputError
 ```
 
-Cycle detection happens at registration time, not at execution time. You get
-immediate feedback.
+The other two failure modes are `WorkflowDuplicateNodeError` for a repeated node
+name and `WorkflowCycleError` if an edge would close a loop — both raised at
+`add` time, before any computation happens.
 
-## Immutability contract
+## When it earns its keep
 
-The workflow never mutates registered compute nodes. Calling `run()` twice
-with the same external inputs produces identical results, and `node.dump()`
-(which serialises the node's configuration) returns the same dictionary before
-and after.
+Honestly: not for two nodes. The example above is longer than the four lines it
+replaces, and for a linear pipeline you should just write the four lines.
 
-```python
-results1 = wf.run(x=5)
-results2 = wf.run(x=5)
-assert results1 == results2  # always true
-```
+It starts paying when
 
-## When not to use Workflow
+- **several consumers share one expensive input** — one neighbour list feeding
+  RDF, density, and order parameters, where you want to be sure it is built once
+  and not silently rebuilt;
+- **the graph branches and rejoins**, so the correct execution order is no longer
+  obvious from reading top to bottom;
+- **the same analysis runs over many systems**, and you want the pipeline
+  defined once and the inputs varied;
+- **you want the dependency structure to be inspectable** — `topological_order()`
+  and `external_inputs` are a description of your analysis that cannot drift out
+  of date with the code, unlike a comment.
 
-`Workflow` is serial and synchronous. It does not (yet) support parallel
-execution, conditional nodes, or streaming. For those patterns, use
-`TopologicalSorter.get_ready()` / `.done()` directly, or wait for a future
-version.
+If none of those apply, a script is the better tool, and the
+[compute overview](index.md) shows the direct style used throughout these pages.
+
+## When it goes wrong
+
+**`WorkflowMissingInputError` naming something you thought was a node.**
+The source name in an `inputs` mapping did not match any registered node, so it
+was treated as an external. Check spelling, and check ordering — a node can only
+be referenced by name after it is added.
+
+**A node gets the wrong argument.**
+Binding is by parameter name, not position. The keys of the `inputs` dict must
+match your callable's parameter names exactly.
+
+**`WorkflowCycleError` on a graph you believe is acyclic.**
+Two nodes reference each other, usually via an intermediate. Print
+`workflow.predecessors(name)` for the node named in the error.
+
+**It is no faster than the script it replaced.**
+It will not be. Execution is sequential and nothing is cached; the win is
+structure, not speed.
+
+**A node runs twice.**
+It does not — each node executes exactly once per `run()`. If work is being
+repeated, it is inside one of your callables.
+
+## Check yourself
+
+- Print `topological_order()` and confirm it matches the order you would have
+  written by hand. If it does not, one of your `inputs` mappings is wrong.
+- Print `external_inputs` before running. Everything there should be something
+  you intend to supply; anything unexpected is a typo'd node name.
+- Add a deliberate cycle and confirm it is rejected at `add` time.
 
 ## See also
 
-- [Compute overview](index.md) — patterns and guide index.
-- [Structural Analysis](rdf.md) — RDF + neighbor list theory.
-- [API reference: Compute](../api/compute.md).
+- [Compute overview](index.md) — the direct, un-orchestrated style
+- [NeighborList](neighborlist.md) — the input most often shared between nodes
+- [API reference](../api/compute.md)

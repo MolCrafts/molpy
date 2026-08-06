@@ -1,302 +1,328 @@
-# Order
+# Order parameters
 
-This page is a self-contained, textbook-style introduction to MolPy's
-**bond-orientational order parameters** — the tools that quantify how *ordered* a
-local environment is, and of *what kind*. Where the [structural guide](rdf.md)
-asks how many neighbours sit at a given distance, these operators ask how those
-neighbours are **arranged in angle**: are they on a crystal lattice, a hexagonal
-film, or pointing along a common nematic axis? The canonical applications are
-crystallization and melting, 2-D phase transitions, and liquid-crystal alignment.
+Is this configuration a crystal?
 
-As with every `compute` operator, the spherical-harmonic sums run in the high-performance backend; MolPy supplies coordinates, the box, and a neighbor list and returns a
-typed result. Each of these analyses takes **two inputs** — frames and a
-`NeighborList` — because "order" is defined relative to a particle's neighbours.
+You cannot answer from the coordinates, and — perhaps surprisingly — not
+reliably from [$g(r)$](rdf.md) either. A supercooled liquid and a defective
+crystal can have similar radial distributions, and averaging over all atoms
+hides the case that usually matters most: a system that is *part* solid and
+*part* liquid, with an interface in between.
 
-!!! note "Conventions used throughout"
-    - Length is in Å. Order parameters are dimensionless.
-    - A particle's **bonds** are the vectors to the neighbours in its
-    `NeighborList`; the cutoff defining those neighbours is the single most
-    consequential choice (see Pitfalls).
-    - $Y_{\ell m}$ are the spherical harmonics; $\ell$ is the harmonic degree.
+What you need is a number for **each atom**, describing how symmetric its own
+neighbourhood is. That is what an order parameter is.
 
----
+## Why spherical harmonics
 
-## 1. Local order lives in the spherical harmonics of the bonds
+Start from the obvious idea and watch it fail. You could describe an atom's
+environment by the list of directions to its neighbours. But rotate the whole
+crystal and every direction changes, while the crystal is obviously still a
+crystal. A useful order parameter must be **invariant under global rotation**.
 
-Steinhardt, Nelson and Ronchetti's insight (1983) is to expand the directions of
-a particle's bonds in spherical harmonics. For particle $i$ with $N_b(i)$
-neighbours at directions $(\theta_{ij}, \phi_{ij})$,
+The standard construction gets there in two steps. First expand the bond
+directions in spherical harmonics — for atom $i$ with $N_b(i)$ neighbours,
 
 $$
-q_{\ell m}(i) = \frac{1}{N_b(i)}\sum_{j=1}^{N_b(i)} Y_{\ell m}\big(\theta_{ij}, \phi_{ij}\big).
+q_{\ell m}(i) = \frac{1}{N_b(i)}\sum_{j=1}^{N_b(i)}
+Y_{\ell m}\big(\theta_{ij},\varphi_{ij}\big),
 $$
 
-These complex coefficients rotate with the coordinate frame, so they are not
-observables on their own. The physics is in their **rotational invariants**.
-
----
-
-## 2. q_ℓ and w_ℓ are the rotationally invariant order parameters
-
-The second- and third-order invariants are frame-independent fingerprints of the
-local symmetry:
+where $(\theta_{ij},\varphi_{ij})$ are the polar angles of the bond from $i$ to
+$j$. These coefficients still change under rotation, but in a controlled way:
+rotating the system mixes the $2\ell+1$ values of $m$ among themselves without
+changing their total magnitude. So take that magnitude:
 
 $$
-q_\ell(i) = \sqrt{\frac{4\pi}{2\ell+1}\sum_{m=-\ell}^{\ell}\big|q_{\ell m}(i)\big|^2},
-\qquad
-w_\ell(i) = \sum_{m_1+m_2+m_3=0}
- \begin{pmatrix}\ell&\ell&\ell\\ m_1&m_2&m_3\end{pmatrix}
- q_{\ell m_1}q_{\ell m_2}q_{\ell m_3}.
+\boxed{\;q_\ell(i) = \sqrt{\frac{4\pi}{2\ell+1}
+\sum_{m=-\ell}^{\ell}\big|q_{\ell m}(i)\big|^{2}}\;}
 $$
 
-The degree $\ell$ selects the symmetry you are sensitive to:
+Now the answer depends on the *shape* of the neighbourhood, not on how it is
+oriented in the box. This is the **Steinhardt order parameter**.
 
-- **$q_6$** is the workhorse for close-packed order — it takes large, distinct
- values for fcc, hcp, and bcc, and small values in a liquid.
-- **$q_4$** together with $q_6$ separates fcc from hcp from bcc.
-- **$w_\ell$** (the third-order invariant) sharpens that discrimination further;
- its sign distinguishes crystal structures that share similar $q_\ell$.
+The choice of $\ell$ selects which symmetry you are sensitive to. $\ell = 6$ is
+the workhorse for close-packed structures; $\ell = 4$ helps separate FCC from
+HCP and BCC. Odd $\ell$ vanishes for centrosymmetric environments and is rarely
+used.
 
-The **locally averaged** variant of Lechner & Dellago (2008) first averages
-$q_{\ell m}$ over a particle *and its neighbours* before taking the invariant:
+Two variants appear in the literature and both are available here. The
+**third-order invariant** $w_\ell$ is built from triple products of the same
+$q_{\ell m}$ rather than their squared magnitude; it is also rotationally
+invariant, and it is *signed*, which is what makes it able to separate FCC from
+HCP where $q_6$ alone struggles. Ask for it with `wl=True`, and normalize it
+with `wl_normalize=True`. The **locally averaged** variant of Lechner and
+Dellago first averages $q_{\ell m}$ over an atom and its neighbours before
+taking the magnitude, which suppresses thermal noise dramatically; ask for it
+with `average=True`. Both change the numbers, so neither is comparable with the
+plain values tabulated below.
 
-$$
-\bar q_{\ell m}(i)
-= \frac{1}{N_b(i)+1}
-\Biggl(
-  q_{\ell m}(i)
-  + \sum_{j\in\mathcal{N}(i)} q_{\ell m}(j)
-\Biggr),
-\qquad
-\bar q_\ell(i)
-= \sqrt{\frac{4\pi}{2\ell+1}\sum_m\big|\bar q_{\ell m}(i)\big|^2}.
-$$
+## The reference values are exact — and depend on the cutoff
 
-Local averaging dramatically sharpens the solid/liquid separation at the cost of
-one extra neighbour shell of range — almost always worth it for
-crystallization detection.
+Order parameters are worth learning because ideal lattices have known values you
+can check against:
 
-### 2.1 Typical numerical ranges (close-packed crystals)
-
-Order-parameter magnitudes depend on the neighbour definition, but rough
-landmarks for 3-D metals/colloids with a first-shell cutoff:
-
-| Structure | $q_4$ | $q_6$ | notes |
+| Structure | neighbours | $q_4$ | $q_6$ |
 |---|---|---|---|
-| Ideal fcc | ~0.19 | ~0.57 | large $q_6$ |
-| Ideal hcp | ~0.10 | ~0.48 | use $w_6$ sign vs fcc |
-| Ideal bcc | ~0.04 | ~0.51 | low $q_4$ |
-| Supercooled liquid | broad | $\lesssim 0.3$ | no crystal peak |
+| FCC | 12 | 0.1909 | 0.5745 |
+| BCC | 14 | 0.0364 | 0.5107 |
+| HCP | 12 | 0.0972 | 0.4848 |
+| Liquid | first shell | small | small |
 
-Always calibrate thresholds on your own perfect-crystal and liquid references
-with the **same** neighbour cutoff.
+Running `Steinhardt` on a perfect FCC lattice reproduces $q_4 = 0.1909$ and
+$q_6 = 0.5745$ to four decimal places, and on BCC with a 14-neighbour cutoff,
+$0.0364$ and $0.5107$. When a compute has an analytic answer available, check it
+there before trusting it anywhere else.
 
----
+Now the part that ruins reproducibility if you skip it. Those BCC numbers assume
+the conventional **14**-neighbour definition — the 8 nearest plus the 6
+next-nearest, which in BCC are only 15 % further away. Tighten the cutoff to
+capture just the 8 nearest and the same perfect lattice gives
 
+$$
+q_4 = 0.5092, \qquad q_6 = 0.6285,
+$$
 
-<figure id="fig-ql" class="molcrafts-figure" markdown>
+nothing like the tabulated values. Same crystal, same code, different neighbour
+definition. **A $q_\ell$ value without its cutoff is not comparable to
+anything** — not to a table, not to a paper, not to your own earlier run.
+
+## What a liquid looks like
+
+Liquid argon at its first-shell cutoff gives $q_6 = 0.340 \pm 0.064$.
+
+<figure id="fig-q6" class="molcrafts-figure" markdown>
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
-```molplot preset="molplot" theme="auto" aspect="16:9"
-mark:
-  type: line
-  strokeWidth: 2.2
-  interpolate: monotone
-data:
-  values:
-    - {q: 0.1, P: 0.2}
-    - {q: 0.2, P: 0.8}
-    - {q: 0.3, P: 1.5}
-    - {q: 0.35, P: 1.2}
-    - {q: 0.4, P: 0.5}
-    - {q: 0.5, P: 0.8}
-    - {q: 0.55, P: 1.8}
-    - {q: 0.6, P: 1.0}
-    - {q: 0.7, P: 0.2}
+```molplot preset="molplot" theme="auto" aspect="16:10"
+config:
+  legend:
+    orient: bottom
+    direction: horizontal
+    title: null
+data: {$file: data/order/steinhardt_q6.json}
+mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
-    field: q
+    field: q6
     type: quantitative
-    title: q₆
+    title: "q₆"
+    scale: {domain: [0, 0.7]}
   y:
-    field: P
+    field: p
     type: quantitative
-    scale: {zero: false}
-    title: P(q₆)
+    title: "pdf"
   color:
-    value: "#0284c7"
+    field: phase
+    type: nominal
+    title: null
 ```
 
 </div>
 
-**Figure 1.** Schematic $q_6$ histogram: liquid-like low-$q$ peak and crystal-like high-$q$ peak (Lechner–Dellago averaging sharpens the split).
+**Figure 1.** Per-atom $q_6$ for a perfect FCC crystal (a single spike at
+0.5745) and for liquid argon at 85 K (broad, centred on 0.34). The gap between
+them is what makes per-atom classification possible.
 </figure>
 
-## 3. Computing Steinhardt order with `Steinhardt`
+Two things to read off. The crystal is a **delta function**: every atom has an
+identical environment, so there is no distribution at all. The liquid is broad
+and does **not** reach zero — a disordered environment still gives a small
+$q_6$, because a finite number of neighbours never averages perfectly to
+nothing. That residual is of order $1/\sqrt{N_b}$, so it shrinks as coordination
+grows, which is another reason $q_\ell$ from different cutoffs cannot be
+compared.
 
-The examples below share this setup:
+The two distributions barely overlap, and that is precisely what you need in
+order to label individual atoms.
+
+## Computing it
+
+`Steinhardt` takes a **list** of degrees — `l=[4, 6]`. Passing `l=6` raises
+`TypeError: argument 'l': 'int' object is not an instance of 'Sequence'`.
 
 ```python
 import numpy as np
 import molpy as mp
-
-rng = np.random.default_rng(0)
-xyz = rng.uniform(0.0, 20.0, size=(200, 3))
-frame = mp.Frame()
-frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(20.0)
-```
-
-```python
 from molpy.compute import NeighborList, Steinhardt
 
-nlist = NeighborList(cutoff=1.5)(frame) # first-shell neighbours
-q = Steinhardt(l=[4, 6])([frame], [nlist]) # per-particle q_4 and q_6
+a = 5.26
+basis = np.array([[0, 0, 0], [0.5, 0.5, 0], [0.5, 0, 0.5], [0, 0.5, 0.5]])
+xyz = np.array(
+    [(np.array([i, j, k]) + b) * a
+     for i in range(5) for j in range(5) for k in range(5) for b in basis]
+)
+crystal = mp.Frame()
+crystal["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
+crystal.box = mp.Box.cubic(5 * a)
 ```
 
-Switch to the averaged and third-order variants through the constructor flags:
+The result is a list with one **dict** per frame, holding the degrees you asked
+for and a `(n_degrees, n_atoms)` array of per-atom values:
 
 ```python
-q_avg = Steinhardt(l=[6], average=True) # Lechner–Dellago averaged q_6
-w = Steinhardt(l=[6], wl=True, wl_normalize=True) # normalized w_6
+nlist = NeighborList(cutoff=4.5)(crystal)
+result, = Steinhardt(l=[4, 6])([crystal], [nlist])
+
+print(sorted(result))                        # -> ['l', 'ql']
+q = np.asarray(result["ql"])
+print(q.shape)                               # -> (2, 500)
+print(round(float(q[0].mean()), 4), round(float(q[1].mean()), 4))  # -> 0.1909 0.5745
 ```
 
-A per-particle order parameter becomes a phase diagnostic by histogramming it: a
-bimodal $q_6$ distribution is the signature of solid and liquid coexisting.
-
----
-
-## 4. Two-dimensional order: the hexatic parameter
-
-In a 2-D film the relevant symmetry is six-fold, and the order parameter is the
-**hexatic** $\psi_k$ (with $k=6$):
-
-$$
-\psi_k(i) = \frac{1}{N_b(i)}\sum_{j=1}^{N_b(i)} e^{\,i k\,\theta_{ij},
-$$
-
-where $\theta_{ij}$ is the in-plane bond angle. $|\psi_6|\to 1$ for a perfect
-triangular lattice and $\to 0$ in an isotropic liquid; its spatial correlations
-are the order parameter of the KTHNY melting scenario.
+Confirm the cutoff caught the shell you meant, using the identity from
+[NeighborList](neighborlist.md):
 
 ```python
-from molpy.compute import Hexatic
-
-psi6 = Hexatic(k=6)([frame], [nlist])
+print(2 * nlist.n_pairs / crystal["atoms"].nrows)   # -> 12.0
 ```
 
----
+Twelve neighbours per atom — the FCC first shell, so the reference values apply.
 
-## 5. Distinguishing solid from liquid particle-by-particle
+### Classifying atoms one by one
 
-To **label** each particle as solid- or liquid-like, `SolidLiquid` implements the
-ten Wolde–Ruiz-Montero–Frenkel criterion. Two particles share a *solid-like bond*
-when the normalized complex vectors $\mathbf q_\ell$ of their environments are
-sufficiently aligned,
+`SolidLiquid` builds on $q_\ell$: two neighbouring atoms form a *solid-like
+bond* when their $q_{\ell m}$ vectors are sufficiently aligned, and an atom
+counts as solid when it has enough such bonds.
 
-$$
-s_{ij} = \frac{\sum_m q_{\ell m}(i)\,q_{\ell m}^{*}(j)}
- {\big|\mathbf q_\ell(i)\big|\,\big|\mathbf q_\ell(j)\big|} > q_\text{threshold},
-$$
-
-and a particle is **solid** when it has at least `n_threshold` such bonds.
+Note the argument, because it is genuinely inconsistent with `Steinhardt`:
+`SolidLiquid` computes one bond correlation at a single degree, so its `l` is a
+plain **int**. `Steinhardt` evaluates several degrees at once, so its `l` is a
+**Sequence**. `SolidLiquid(l=[6])` is as much an error as `Steinhardt(l=6)`.
 
 ```python
 from molpy.compute import SolidLiquid
 
-sl = SolidLiquid(l=6, q_threshold=0.7, n_threshold=6)([frame], [nlist])
+n_solid_bonds, is_solid = SolidLiquid(l=6)([crystal], [nlist])[0]
+n_solid_bonds, is_solid = np.asarray(n_solid_bonds), np.asarray(is_solid)
+print(int(n_solid_bonds[0]), bool(is_solid.all()))    # -> 12 True
 ```
 
-This is the standard way to track a growing crystalline nucleus inside a melt.
+Every atom in the perfect crystal has all 12 of its bonds solid-like. The same
+calculation on liquid argon averages 0.28 solid-like bonds per atom and
+classifies **no** atom as solid. The defaults (`q_threshold=0.7`,
+`n_threshold=6`) separate those two cases with an enormous margin — which is
+exactly why you must retune them on a real system, where the margin is narrow
+and the answer depends on where you put the line.
 
----
+### Orientational order of anisotropic particles
 
-## 6. Orientational order of anisotropic particles: the nematic Q-tensor
+`Nematic` asks whether elongated particles point the same way, regardless of
+where they sit. It reads per-particle directors from the frame's `orientations`
+block — the same `(atomi, atomj)` schema and the same **one row per atom** rule
+described on the [PMFT](pmft.md) page.
 
-When particles carry an intrinsic direction $\mathbf u_i$ (rods, mesogens, bonded
-segments), collective alignment is measured by the **nematic order tensor**
-
-$$
-Q = \frac{1}{N}\sum_i \Big(\tfrac{3}{2}\,\mathbf u_i\otimes\mathbf u_i - \tfrac{1}{2}\,\mathbf I\Big).
-$$
-
-Its largest eigenvalue is the scalar nematic order parameter $S$ (0 isotropic, 1
-perfectly aligned) and the corresponding eigenvector is the **director**.
-`Nematic` reads each particle's orientation axis from the frame's `orientations`
-topology block (one `(head, tail)` atom pair per particle; the director is the
-unit `head - tail` vector) and returns the order, the eigenvalues, the director,
-and the full $Q$-tensor:
+It also breaks the pattern of every other compute here: it returns a **single
+tuple aggregated over all frames**, not one entry per frame.
 
 ```python
 from molpy.compute import Nematic
 
-# One (head, tail) atom-index row per particle, in the same two-endpoint schema
-# as `bonds`; each axis is normalize(pos[head] - pos[tail]).
-idx = np.arange(len(xyz), dtype=np.uint32)
-frame["orientations"] = {"atomi": idx, "atomj": (idx + 1) % len(xyz)}
+rng = np.random.default_rng(0)
+n_rods = 400
+centres = rng.uniform(0.0, 30.0, size=(n_rods, 3))
 
+# Each rod is two atoms joined by an `orientations` pair (atomi, atomj).
+isotropic = rng.normal(size=(n_rods, 3))
+isotropic /= np.linalg.norm(isotropic, axis=1, keepdims=True)
+pos = np.concatenate([centres + 0.5 * isotropic, centres - 0.5 * isotropic])
+frame = mp.Frame()
+frame["atoms"] = {"x": pos[:, 0], "y": pos[:, 1], "z": pos[:, 2]}
+frame.box = mp.Box.cubic(30.0)
+frame["orientations"] = {
+    "atomi": np.arange(n_rods),
+    "atomj": np.arange(n_rods, 2 * n_rods),
+}
 order, eigenvalues, director, q_tensor = Nematic()([frame])
+print(round(float(order), 3))                # -> 0.058
 ```
 
----
-
-## 7. The bond-orientational diagram visualizes the local geometry
-
-Where the invariants compress a local environment to a number, **`BondOrder`**
-keeps the full picture: it histograms every bond direction onto a spherical
-$(\theta, \phi)$ grid, accumulated over the chosen particles and frames. The
-resulting diagram shows the angular signature of the coordination shell directly —
-the four lobes of a tetrahedral environment, the six of an octahedral one.
+$S \approx 0$ for randomly oriented rods, as it must be. Align them along $z$
+with a little jitter and it jumps:
 
 ```python
-from molpy.compute import BondOrder
-
-diagram = BondOrder(n_theta=80, n_phi=160)([frame], [nlist])
+aligned = np.array([0.0, 0.0, 1.0]) + rng.normal(0.0, 0.15, size=(n_rods, 3))
+aligned /= np.linalg.norm(aligned, axis=1, keepdims=True)
+pos = np.concatenate([centres + 0.5 * aligned, centres - 0.5 * aligned])
+frame["atoms"] = {"x": pos[:, 0], "y": pos[:, 1], "z": pos[:, 2]}
+order, _, director, _ = Nematic()([frame])
+print(round(float(order), 3))                # -> 0.934
+print(np.round(np.abs(director), 2).tolist())  # -> [0.01, 0.01, 1.0]
 ```
 
----
+$S = 0.934$, and the recovered `director` is the $z$ axis — the compute found
+the alignment direction without being told it. $S$ runs from 0 (isotropic) to 1
+(perfectly aligned); real nematic liquid crystals sit around 0.4–0.7.
 
-## 8. Pitfalls checklist
+Note the 0.058 for the isotropic case. That is not zero, and with $N$ particles
+it never will be: $S$ has a finite-size floor of roughly $1/\sqrt{N}$. Always
+compare weak order against a randomized control at the same $N$.
 
-1. **Neighbor cutoff sets the answer.** $q_\ell$ depends strongly on which bonds
- are counted. Choose the cutoff at the first minimum of $g(r)$ (see the
- [structural guide](rdf.md)), or use a fixed neighbour count, and keep it
- consistent across systems you compare.
-2. **Wrong $\ell$ for the symmetry** → $q_6$ for close packing, $\psi_6$ for 2-D
- hexagonal, $q_4\!+\!q_6$ to separate fcc/hcp/bcc. A single $\ell$ rarely
- resolves everything.
-3. **Skipping the averaged variant** → unaveraged $q_6$ has broad, overlapping
- solid/liquid peaks; the Lechner–Dellago average is usually worth its extra range.
-4. **Normalization conventions** → $w_\ell$ values differ between normalized and
- unnormalized definitions; report which (`wl_normalize`).
-5. **Finite size and surfaces** → particles near a free surface or interface have
- truncated neighbour shells and artificially low order; exclude or flag them.
-6. **Nematic axis endpoints reversed** → the director is `head - tail` (block
- columns `atomi`/`atomj`); the $Q$-tensor is sign-independent so $S$ is
- unaffected, but the reported director points along the head-to-tail sense.
+### Two-dimensional systems
 
----
+`Hexatic(k=6)` is the 2-D analogue, measuring six-fold bond-orientational order
+in a monolayer or slab:
 
-## 9. References
+$$
+\psi_k(i) = \frac{1}{N_b(i)}\sum_{j=1}^{N_b(i)} e^{\,i k\,\theta_{ij}},
+$$
 
-- P. J. Steinhardt, D. R. Nelson, M. Ronchetti, *Phys. Rev. B* **28**, 784 (1983)
- — bond-orientational order parameters $q_\ell$, $w_\ell$.
-- D. R. Nelson, B. I. Halperin, *Phys. Rev. B* **19**, 2457 (1979) — hexatic order
- and 2-D melting (KTHNY).
-- P. R. ten Wolde, M. J. Ruiz-Montero, D. Frenkel, *J. Chem. Phys.* **104**, 9932
- (1996) — solid-like bond criterion for nucleation.
-- W. Lechner, C. Dellago, *J. Chem. Phys.* **129**, 114707 (2008) — locally
- averaged order parameters.
+with $\theta_{ij}$ the in-plane bond angle. $|\psi_6| \to 1$ for a triangular
+lattice, $\to 0$ for a 2-D liquid. The intermediate hexatic phase — orientational
+order surviving after positional order is lost — is the reason the parameter
+exists at all.
+
+## When it goes wrong
+
+**Your crystal does not reproduce the reference $q_\ell$.**
+Almost always the cutoff. Check `2 * n_pairs / n_atoms` against the coordination
+number of your lattice before anything else.
+
+**`TypeError: argument 'l': 'int' object is not an instance of 'Sequence'`.**
+Pass `l=[6]`, not `l=6` — but only to `Steinhardt`. `SolidLiquid` takes a bare
+int, and giving *it* a list fails the other way. The two differ because one
+evaluates several degrees and the other exactly one.
+
+**Liquid $q_6$ is not zero and you expected zero.**
+It should not be zero. Finite coordination leaves a residual of order
+$1/\sqrt{N_b}$. Compare against a liquid reference, not against 0.
+
+**Everything classifies as solid, or nothing does.**
+The `SolidLiquid` thresholds are defaults, not physical constants. Plot the
+distribution of solid-like bond counts and put the threshold in the valley
+between the peaks.
+
+**Your $q_\ell$ disagrees with a published value.**
+Check three things in order: the cutoff, whether the paper used the locally
+averaged variant (`average=True`, Lechner–Dellago), and whether $w_\ell$ was
+normalized. All three change the numbers, and papers often omit which was used.
+
+## Check yourself
+
+- Run `Steinhardt(l=[4, 6])` on a perfect FCC lattice and confirm 0.1909 and
+  0.5745. Then build BCC and reproduce 0.0364 and 0.5107 — but only with a
+  14-neighbour cutoff.
+- Take that same BCC lattice, tighten the cutoff to 8 neighbours, and watch the
+  numbers become 0.5092 and 0.6285. Nothing about the crystal changed.
+- Shuffle your rod directors and confirm the nematic $S$ falls to the
+  finite-size floor rather than to zero.
+
+## References
+
+- P. J. Steinhardt, D. R. Nelson, M. Ronchetti, *Phys. Rev. B* **28**, 784
+  (1983) — the original bond-orientational order parameters and the reference
+  table above.
+- W. Lechner, C. Dellago, *J. Chem. Phys.* **129**, 114707 (2008) — the locally
+  averaged variant, which separates FCC/HCP/BCC far better.
+- P. R. ten Wolde, M. J. Ruiz-Montero, D. Frenkel, *J. Chem. Phys.* **104**,
+  9932 (1996) — the solid-liquid bond criterion.
+- D. R. Nelson, B. I. Halperin, *Phys. Rev. B* **19**, 2457 (1979) — hexatic
+  order.
 - P. G. de Gennes, J. Prost, *The Physics of Liquid Crystals*, 2nd ed. (1993) —
- the nematic $Q$-tensor and order parameter.
-- V. Ramasubramani et al., *Comput. Phys. Commun.* **254**, 107275 (2020) —
-  freud: reference algorithms for bond-orientational order.
+  the nematic order parameter.
 
 ## See also
 
-- [Structural Analysis](rdf.md) — $g(r)$ to choose the neighbour cutoff,
- plus $S(k)$ and density fields.
-- [Molecular Shape, Clustering & Decomposition](shape.md) — grouping the
- ordered particles into nuclei and domains.
-- [Compute overview](index.md) — the Compute → Result pattern.
-- [API reference: Compute](../api/compute.md).
+- [Environment](environment.md) — the bond-orientational diagram behind $q_\ell$
+- [RDF](rdf.md) — where the first-shell cutoff comes from
+- [Cluster](cluster.md) — grouping the atoms an order parameter has labelled
+- [PMFT](pmft.md) — the `orientations` block contract
+- [API reference](../api/compute.md)

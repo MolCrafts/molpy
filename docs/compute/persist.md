@@ -1,279 +1,218 @@
-# Persist
+# Pair survival
 
-This page is a self-contained, textbook-style introduction to **pair persistence
-analysis** — how MolPy measures how long two particles stay associated (within a
-distance cutoff) and turns that into a residence-time correlation function.
-Canonical applications: hydrogen-bond dynamics in water, ion-pair lifetimes in
-electrolytes, and solvation-shell exchange.
+[RDF](rdf.md) tells you that an argon atom has about 13 neighbours. It cannot
+tell you whether they are the *same* 13 neighbours a picosecond later.
 
-Bookkeeping is provided by `Persist`. You pass **coordinate arrays** (not a
-tag-string recipe).
+That distinction matters. A crystal and a liquid can have similar coordination
+numbers and completely different lifetimes. An ion pair that survives
+nanoseconds behaves like a neutral molecule; one that survives femtoseconds does
+not. Structure is a snapshot; **persistence is the movie**.
 
-!!! note "Conventions used throughout"
-    - A *pair* is one reference particle $i$ and one partner $j$.
-    - Bonded if the minimum-image distance is within a cutoff. Inner $r_0$
-      (formation) and outer $r_1\ge r_0$ (breaking) may differ.
-    - $\langle\cdots\rangle_t$ averages over time origins; $\tau$ is the lag.
-    - Length **Å**, time **fs**. $C(\tau)$ is dimensionless.
-      `max_correlation_time` is in **frames**.
+## Turning "still together" into a correlation function
 
----
-
-## 1. Why lifetimes need their own tool
-
-Diffusion and conductivity ([transport](msd.md)) tell you how *far*
-things move, not how *long* a contact survives. Proton transfer, ion-pair
-stability, and shell exchange are governed by **lifetimes**. Near a sharp
-cutoff, coordinates **rattle** in and out of the bonded region on a
-sub-picosecond scale. A lifetime measure must define, carefully, what counts as
-the same bond surviving through that noise.
-
-Persistence analysis answers:
-
-> Given that pair $(i,j)$ was associated at time origin $t$, what is the
-> probability it is still considered associated at $t+\tau$?
-
----
-
-## 2. The survival correlation function
-
-Define a Boolean survival for one pair and one origin:
+Define an indicator $h_{ij}(t)$ that is 1 when atoms $i$ and $j$ count as paired
+at time $t$ and 0 otherwise. Then correlate it with itself:
 
 $$
-S_{ij}(t, t+\tau) =
-\begin{cases}
-1 & \text{pair still “alive” at } t+\tau\text{ under the chosen definition},\\
-0 & \text{otherwise.}
-\end{cases}
+C(\tau) = \Big\langle \sum_j h_{ij}(t)\,h_{ij}(t+\tau)\Big\rangle_{i,\,t}.
 $$
 
-The **survival correlation** is the origin- and pair-averaged survival:
+Because $h$ is an indicator rather than a fluctuation, $C(0)$ is not 1 — it is
+the **mean number of partners**, which is the coordination number. That makes
+the zero-lag value a free cross-check against [RDF](rdf.md), and it is the first
+thing to look at. $C(\tau)/C(0)$ then decays from 1 as pairs break, and its
+decay time is the residence time you were after.
 
-$$
-\boxed{\;
-C(\tau)
-= \Big\langle
-  \frac{1}{N_i}\sum_i\sum_j S_{ij}(t,\,t+\tau)
-\Big\rangle_t
-\;}
-$$
+## Continuous or intermittent: two different questions
 
-Properties:
+The subtlety is what happens when a pair breaks and later re-forms. There are
+two defensible answers, and they measure different physics.
 
-- **$C(0)$** equals the mean number of partners per reference particle at the
-  formation criterion — a coordination number.
-- **$C(\tau)$ decays** as associations break; the shape encodes the lifetime
-  distribution.
-- A single-exponential tail $C(\tau)\approx C(0)\,e^{-\tau/\tau_\mathrm{res}$
-  defines a mean residence time $\tau_\mathrm{res}$.
-- The integral estimator
-  $\tau_\mathrm{res}=\int_0^\infty C(\tau)/C(0)\,\mathrm{d}\tau$ is robust when
-  the tail is noisy but the decay is complete.
+**Continuous** requires $h$ to have been 1 at *every* intervening step. It
+measures how long a bond survives without interruption: once broken, always
+broken. This is the definition of a lifetime.
 
-<figure id="fig-persist" class="molcrafts-figure" markdown>
+**Intermittent** looks only at the endpoints. A pair counts as together at
+$\tau$ even if it separated and came back. This measures how long two partners
+stay in each other's *neighbourhood*, and it is the right choice for structural
+relaxation, being insensitive to brief rattling.
+
+Continuous always decays at least as fast as intermittent. The gap between them
+is a direct measure of how much re-formation is happening.
+
+There is a second knob for the same problem. With a single distance threshold, a
+pair sitting right at the cutoff flickers on and off many times per picosecond
+and the continuous lifetime collapses to noise. So `Persist` takes **two** radii:
+a pair becomes bonded inside $r_0$ and is only considered broken once it leaves
+$r_1 > r_0$. Take $r_0$ at the first minimum of $g(r)$ and $r_1$ a little beyond.
+
+## Reading a real curve
+
+Below is first-shell survival in liquid argon, with $r_0 = 5.4$ Å (the first
+minimum of $g(r)$) and $r_1 = 5.9$ Å.
+
+<figure id="fig-persist-argon" class="molcrafts-figure" markdown>
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
-```molplot preset="molplot" theme="auto" aspect="16:9"
-mark:
-  type: line
-  strokeWidth: 2.2
-  interpolate: monotone
-data:
-  values:
-    - {t: 0, C: 1.0}
-    - {t: 0.5, C: 0.7}
-    - {t: 1.0, C: 0.45}
-    - {t: 2.0, C: 0.25}
-    - {t: 4.0, C: 0.1}
-    - {t: 8.0, C: 0.03}
-    - {t: 12.0, C: 0.01}
+```molplot preset="molplot" theme="auto" aspect="16:10"
+config:
+  legend:
+    orient: bottom
+    direction: horizontal
+    title: null
+data: {$file: data/persist/argon_survival.json}
+mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
     field: t
     type: quantitative
-    title: τ (ps)
+    title: "lag τ (fs)"
   y:
-    field: C
+    field: c
     type: quantitative
-    scale: {zero: false}
-    title: C(τ) / C(0)
+    title: "C(τ)/C(0)"
+    scale: {domain: [0.45, 1.0]}
   color:
-    value: "#0284c7"
+    field: series
+    type: nominal
+    title: null
 ```
 
 </div>
 
-**Figure 1.** Schematic normalised pair-survival correlation: integral of $C(\tau)/C(0)$ estimates the mean residence time.
+**Figure 1.** First-shell pair survival in liquid argon at 85 K, by the
+continuous and intermittent definitions. They separate as soon as pairs begin
+breaking and re-forming.
 </figure>
 
----
+$C(0) = 12.88$, against the coordination number 12.89 that [RDF](rdf.md) gets by
+integrating $g(r)$. To be clear about what that check is worth: these are the
+same physical quantity — the mean number of partners within $r_0$ — reached by
+two different code paths, one counting indicator functions directly and the
+other histogramming distances and integrating. Agreement confirms that your
+$r_0$ matches the radius you integrated to and that `exclude_self` is set
+correctly. It is an implementation check, not new physics, and it is the fastest
+way to catch the two mistakes that most often silently wreck this analysis.
 
-## 3. Three definitions of survival
+The decay is slow. The continuous curve falls to 0.91 at 1 ps, 0.73 at 3 ps and
+0.54 at 6 ps. Fitting the tail gives a continuous residence time of about
+9.7 ps — already a mild extrapolation, since the curve only just reaches half
+its initial value inside the window. The intermittent curve decays more slowly
+still and has not come close to $1/e$ by 6 ps, so this trajectory cannot pin its
+lifetime down; treat it as "longer than 6 ps" and lengthen the run if you need
+the number. That restraint is the same one the troubleshooting section below
+asks of you.
 
-All three share the same **birth** condition (within $r_0$ at the time origin)
-and differ in what keeps the bond alive. The choice is physics, not a
-hyperparameter to “tune for nicer plots”.
+The physical picture is clear even so. An argon atom keeps most of its
+neighbours for many picoseconds while itself moving very little: [MSD](msd.md)
+gives 8.0 Å², an rms displacement of 2.8 Å, over that same 6 ps — less than one
+atomic diameter. So the shell is not being left behind; it travels *with* the
+atom. That is what "cage" means quantitatively, and it is the same cage
+[VACF](vacf.md) sees as a negative lobe at 440 fs.
 
-### 3.1 Continuous (`continuous`, also `cr` / `rf`)
+## Computing it
 
-Strict definition (Rapaport, 1983): the pair must remain within $r_1$ at
-**every** frame from $t$ to $t+\tau$. The first exit kills the bond for that
-origin.
-
-$$
-S^\mathrm{cont}_{ij}(t,t+\tau)
-= \prod_{s=0}^{n_\tau}
-  \mathbf{1}\!\bigl[r_{ij}(t+s\Delta t)\le r_1\bigr],
-$$
-
-with birth requiring $r_{ij}(t)\le r_0$. Set $r_1=r_0$ for the classic form.
-**Sensitive to rattling**: one brief excursion zeros $S$ forever for that
-origin, so continuous lifetimes are short and dump-interval dependent.
-
-### 3.2 Intermittent (`intermittent`, also `imm`)
-
-Permissive definition (Luzar & Chandler, 1996): only the endpoints matter —
-bonded at $t$ and bonded at $t+\tau$, regardless of intermediate breaks.
-
-$$
-S^\mathrm{int}_{ij}(t,t+\tau)
-= \mathbf{1}\!\bigl[r_{ij}(t)\le r_0\bigr]\,
-  \mathbf{1}\!\bigl[r_{ij}(t+\tau)\le r_1\bigr].
-$$
-
-This is the **structural** lifetime: it includes re-crossings and answers
-“is the pair still associated after time $\tau$?”. Standard for hydrogen-bond
-$\tau_\mathrm{HB}$.
-
-### 3.3 Stable-states picture (`ssp`)
-
-Laage & Hynes (2008): born within $r_0$, and remains alive while staying within
-a larger outer cutoff $r_1\ge r_0$. The annulus $r_0 < r \le r_1$ is a buffer
-that suppresses rattling without fully ignoring intermediate history the way
-intermittent does.
-
-$$
-S^\mathrm{ssp}_{ij}(t,t+\tau)
-= \mathbf{1}\!\bigl[r_{ij}(t)\le r_0\bigr]
-  \prod_{s=1}^{n_\tau}
-  \mathbf{1}\!\bigl[r_{ij}(t+s\Delta t)\le r_1\bigr].
-$$
-
-**Recommended default for ion pairs** and any system where a single hard cutoff
-is noisy. Choose $r_0$ at the first $g(r)$ minimum and $r_1$ slightly larger
-(or at a clear plateau of the potential of mean force).
-
-### 3.4 Relation to older “tolerance time” recipes
-
-Some codes allow intermittent bonds to be “dead” for at most a tolerance
-$\Delta t_\mathrm{tol}$ without counting as broken. MolPy’s three methods are
-explicit and time-tolerance-free; they match the physics layer used by the
-`tame` / Luzar–Chandler / Laage–Hynes literature without a hidden grace period.
-
----
-
-## 4. Choosing $r_0$ and $r_1$
-
-| Rule | Practice |
-|---|---|
-| Inner $r_0$ | first minimum of the relevant $g_{ij}(r)$ |
-| Outer $r_1$ | $=r_0$ (continuous/intermittent classic) or $r_0+\delta$ with $\delta\sim 0.5$–$1$ Å (SSP) |
-| Validation | $C(0)$ should match the coordination number from integrating $g(r)$ to $r_0$ |
-| Sensitivity | report $\tau$ at neighbouring cutoffs; large swings mean the basin is ill-defined |
-
-For hydrogen bonds, prefer the geometric $(r,\theta)$ criterion of
-[HBonds](hbond.md) for detection, then persistence on the accepted pairs — or
-use a pure distance persistence when angle information is unavailable.
-
----
-
-## 5. Using `Persist`
-
-Distances use the orthorhombic minimum-image convention per axis.
-
-| Argument | Type | Meaning |
-|----------|------|---------|
-| `coords_i`, `coords_j` | `(n_frames, n, 3)` | per-species coordinates (wrapped OK) |
-| `box_lengths` | `(n_frames, 3)` | orthorhombic edges (≤ 0 disables an axis) |
-| `r0`, `r1` | float | inner / outer cutoff, Å (`r0 > 0`, `r1 ≥ r0`) |
-| `method` | str | `"continuous"`, `"intermittent"`, or `"ssp"` |
-| `dt` | float | frame spacing, **fs** |
-| `max_correlation_time` | int | longest lag in frames |
-| `exclude_self` | bool | drop $i=j$ when both species are identical |
+`Persist.pair_survival_tcf` is a static method over two coordinate arrays. Watch
+the shapes — the argument that catches everyone is `box_lengths`, which is
+**per frame**, shape `(n_frames, 3)`, not a single box vector:
 
 ```python
 import numpy as np
 from molpy.compute import Persist
 
 rng = np.random.default_rng(0)
-# coords_cat, coords_an: (n_frames, n_ions, 3); box: (n_frames, 3)
-coords_cat = np.ascontiguousarray(rng.random((30, 8, 3)) * 20.0)
-coords_an = np.ascontiguousarray(rng.random((30, 8, 3)) * 20.0)
-box = np.ascontiguousarray(np.full((30, 3), 20.0))
-res = Persist.pair_survival_tcf(
-    coords_cat,
-    coords_an,
-    box,
-    r0=3.0,
-    r1=4.0,
-    method="ssp",
-    dt=10.0,  # fs
-    max_correlation_time=10,
-    exclude_self=False,
+n_frames = 300
+# Five sites of each species, jittering around a fixed 3.2 Å separation.
+coords_i = np.ascontiguousarray(rng.normal(0.0, 0.3, size=(n_frames, 5, 3)))
+coords_j = np.ascontiguousarray(
+    rng.normal(0.0, 0.3, size=(n_frames, 5, 3)) + np.array([3.2, 0.0, 0.0])
 )
-C = res["correlation"]  # C(tau); C[0] = mean coordination number
-tau = res["lag_times"]  # fs
+box = np.tile(np.array([[30.0, 30.0, 30.0]]), (n_frames, 1))
+
+result = Persist.pair_survival_tcf(
+    coords_i, coords_j, box, 3.5, 4.0, "continuous", 10.0, 40
+)
+print(sorted(result))                       # -> ['correlation', 'lag_times']
+print(round(float(result["correlation"][0]), 2))   # -> 3.48
 ```
 
-When both species are the same set, pass `exclude_self=True` so $i=j$ is not
-counted as a pair.
+Pass a plain `(3,)` box and you get
+`TypeError: argument 'box_lengths': 'ndarray' object is not an instance of
+'ndarray'` — a thoroughly unhelpful message for what is really a shape error. If
+you see it, tile your box to one row per frame.
 
----
+The positional arguments in order are `coords_i`, `coords_j`, `box_lengths`,
+`r0`, `r1`, `method`, `dt`, `max_correlation_time`, and optionally
+`exclude_self`. Set `exclude_self=True` whenever the two coordinate arrays are
+the same set of atoms, or every atom is found paired with itself at distance
+zero forever.
 
-## 6. From persistence to pairing diffusion
+Now compare the two definitions on identical data:
 
-Combining distinct-diffusion correlations
-([Onsager](onsager.md) / distinct diffusion) with a survival
-weight yields a **pairing contribution** to diffusion (Gudla et al., 2021):
-only those pairs that are still alive contribute to a correlated displacement
-term. Interpret only where **both** the persistence count has converged **and**
-the displacement correlation is linear in time.
+```python
+curves = {}
+for method in ("continuous", "intermittent"):
+    out = Persist.pair_survival_tcf(
+        coords_i, coords_j, box, 3.5, 4.0, method, 10.0, 40
+    )
+    curve = np.asarray(out["correlation"])
+    curves[method] = curve / curve[0]
 
----
+print(round(float(curves["continuous"][20]), 2))     # -> 0.41
+print(round(float(curves["intermittent"][20]), 2))   # -> 0.96
+```
 
-## 7. Pitfalls checklist
+At the same lag, intermittent has barely moved while continuous has more than
+halved. These sites never actually leave each other's neighbourhood; they only
+rattle across the threshold. That is precisely the situation the two definitions
+exist to tell apart, and it is why quoting "the lifetime" without saying which
+one you used is meaningless.
 
-1. **Single cutoff with rattling** → continuous lifetime collapses toward the
-   frame spacing. Prefer `ssp` with $r_1>r_0$, or `intermittent`.
-2. **Cutoff off the RDF** → pick $r_0$ at the first $g(r)$ minimum.
-3. **`max_correlation_time` shorter than the lifetime** → $C(\tau)$ never fully
-   decays; $\tau_\mathrm{res}$ is truncated.
-4. **Sparse sampling** → miss fast re-crossings; continuous is especially
-   dump-dependent.
-5. **Comparing definitions** → continuous / intermittent / SSP give different
-   numbers by construction; always report which one.
-6. **Self-pairs** → forget `exclude_self` on identical species and $C(0)$ is
-   polluted by $i=j$.
+## When it goes wrong
 
----
+**$C(0)$ does not match the coordination number from [RDF](rdf.md).**
+Either $r_0$ differs from the radius you integrated to, or `exclude_self` is
+wrong for a same-species calculation.
 
-## 8. References
+**The continuous lifetime is absurdly short.**
+$r_0$ and $r_1$ are too close, so boundary rattling breaks pairs. Widen the
+buffer.
 
-- D. C. Rapaport, *Mol. Phys.* **50**, 1151 (1983).
-- A. Luzar, D. Chandler, *Nature* **379**, 55 (1996); *Phys. Rev. Lett.* **76**,
-  928 (1996).
-- A. Luzar, *J. Chem. Phys.* **113**, 10663 (2000).
-- R. W. Impey, P. A. Madden, I. R. McDonald, *J. Phys. Chem.* **87**, 5071
-  (1983) — residence times of water around ions.
-- D. Laage, J. T. Hynes, *J. Phys. Chem. B* **112**, 14230 (2008) — stable-states
-  picture of H-bond exchange.
-- H. Gudla, Y. Shao et al., *J. Phys. Chem. Lett.* **12**, 8460 (2021) — pairing
-  contribution to diffusion.
+**Continuous and intermittent lie on top of each other.**
+Nothing is re-forming — plausible in a dilute gas, suspicious in a dense liquid.
+Check that the buffer is not so wide that pairs can never break.
+
+**The curve is still near 1 at the longest lag.**
+`max_correlation_time` is too short to see the decay. You cannot fit a residence
+time you have not observed; extend the window, or the trajectory.
+
+**It takes minutes.**
+It does. The kernel examines pairs at every lag, so cost grows with frames,
+particles, and lag window together. The argon figure above takes several minutes
+to generate. Reduce `max_correlation_time` first.
+
+## Check yourself
+
+- Confirm $C(0)$ equals your coordination number. If it does not, nothing else
+  on the page is trustworthy.
+- Run both methods. Continuous must decay at least as fast as intermittent at
+  every lag; if it does not, something is wrong.
+- Set $r_1 = r_0$ and watch the continuous lifetime collapse. That is the
+  flicker problem, and it is why the buffer exists.
+
+## References
+
+- F. H. Stillinger, A. Rahman, *J. Chem. Phys.* **60**, 1545 (1974) — the
+  two-threshold bonded criterion.
+- D. C. Rapaport, *Mol. Phys.* **50**, 1151 (1983) — continuous and intermittent
+  correlation functions.
+- A. Luzar, D. Chandler, *Nature* **379**, 55 (1996) — the reactive-flux view of
+  bond lifetimes.
 
 ## See also
 
-- [Hydrogen-Bond Networks](hbond.md)
-- [Diffusion & Ionic Transport](msd.md)
-- [Structural Analysis](rdf.md) — $g(r)$ for choosing $r_0$
-- [Compute overview](index.md)
-- [API reference: Compute](../api/compute.md)
+- [RDF](rdf.md) — where $r_0$ and the $C(0)$ cross-check come from
+- [HBond](hbond.md) — the same idea with an angle-aware geometric criterion
+- [VACF](vacf.md) — the cage, seen in the velocity correlation
+- [Onsager](onsager.md) — whether pairing shows up in transport
+- [API reference](../api/compute.md)

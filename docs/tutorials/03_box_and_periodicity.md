@@ -1,24 +1,29 @@
 # Box and Periodicity
 
-Positions only mean something relative to a simulation cell. `Box` carries that cell, wraps coordinates into the primary image, and computes minimum-image distances.
+Two atoms sit at $x = 1$ and $x = 9$ in a cell of length 10. Are they 8 Å
+apart, or 2 Å through the periodic image?
+
+Without the cell, the question is undefined. **`Box` is the simulation cell**:
+it wraps positions into the primary image and computes minimum-image distances.
+
+What it is **not**: a dump format, a neighbour list, or a substitute for
+unwrapped trajectories in displacement analysis (see
+[MSD](../compute/msd.md)).
 
 ## Why periodicity matters
 
-Molecular dynamics simulates bulk materials — liquids, polymers, crystals — using a small box of atoms (typically thousands to millions). To avoid surface effects that would dominate such a small sample, the box is replicated infinitely in all directions using *periodic boundary conditions*. An atom leaving the right side re-enters from the left. The distance between two atoms is always the shortest path, which may cross a periodic boundary.
+Bulk MD uses a small sample and tiles space with *periodic boundary conditions*
+so the sample has no free surface. An atom leaving one face re-enters the
+opposite face. The distance that enters physics is always the shortest path —
+which may cross a boundary.
 
-This means that raw coordinates alone are ambiguous. Two atoms at positions 1.0 and 9.0 in a box of length 10.0 are not 8.0 apart — they are 2.0 apart through the periodic image. Every distance calculation, neighbor list, and structural analysis must account for this.
-
-## Coordinates alone are not enough
-
-A snapshot of atoms has positions, but positions in a periodic system carry a hidden dependency: they only make sense relative to the simulation cell. Two atoms that appear far apart in raw coordinates may actually be nearest neighbors once periodic wrapping is taken into account. Distances, displacements, and neighbor lists all become ambiguous without the box.
-
-**`Box` defines the simulation cell and gives coordinates their periodic meaning.**
-
-MolPy keeps the box explicit rather than burying periodicity inside a flag or a helper function. The box is not an optional annotation. It is part of the physical model.
+Raw coordinates alone are therefore ambiguous. Every distance, neighbour list,
+and structural analysis must know the box. MolPy keeps that object explicit:
+periodicity is part of the physical model, not a hidden flag.
 
 ## Creating a box
 
-`Box` offers factory constructors for the three common cell types.
+Factories cover the common cells: cubic, orthorhombic, and triclinic.
 
 ```python
 import molpy as mp

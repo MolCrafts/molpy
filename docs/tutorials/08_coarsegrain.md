@@ -1,12 +1,16 @@
 # Coarse-Grained Structure
 
-`CoarseGrain` is `Atomistic` with beads instead of atoms — the same factories, transforms, and composition, with no mapping convention forced on you.
+You have a Martini lipid or a DPD scaffold. Do you need a second library API,
+or the same graph tools with a coarser unit?
 
-## A coarse-grained structure is the same kind of object as an atomistic one
+**`CoarseGrain` is `Atomistic` with beads instead of atoms** — the same
+factories, transforms, and composition. A bead may map to a group of atoms
+(Martini, VOTCA-style) or have no atomistic precursor (DPD, scaffolds awaiting
+backmapping).
 
-In MolPy, `CoarseGrain` is the analog of `Atomistic` for systems where the basic unit is a *bead* rather than an atom. A bead may correspond to a group of atoms in a fine-grained model (Martini, MARTINI 3, VOTCA-style mappings), or it may have no atomistic precursor at all (DPD, equilibrated Martini snapshots, polymer scaffolds awaiting backmapping).
-
-The shape of `CoarseGrain` is identical to that of `Atomistic`. The same factory methods, the same spatial operations, the same composition operators, the same dict-based property access. If you know how to build an atomistic system, you already know how to build a coarse-grained one.
+What it is **not**: a forced mapping convention, and not a different
+connectivity model. If you can build an atomistic graph, you can build a
+coarse-grained one.
 
 ```python
 import molpy as mp
@@ -17,12 +21,14 @@ b2 = cg.def_bead(type="C1", x=4.7, y=0.0, z=0.0)
 cg.def_cgbond(b1, b2, k=120.0)
 
 cg.move([1, 0, 0])
-print(b1["x"])  # 1.0
+print(b1["x"])  # -> 1.0
 ```
 
-## Beads carry whatever fields you decide they should carry
+## Beads carry the fields you choose
 
-`Bead` is a dict-like object with no mandatory fields. Position, mass, charge, type label, atom-level provenance — every one of these is a key you set or omit, just like on `Atom`. There is no force-field-specific schema; there is no built-in opinion about how a bead's position relates to the atoms it represents.
+`Bead` is dict-like, like `Atom`: position, mass, charge, type, provenance —
+set or omit what your workflow needs. There is no force-field schema baked into
+the type.
 
 This deliberate absence of structure is the design point. A Martini 3 bead uses the geometric centre of its constituent heavy atoms (with hydrogens). A Martini 2 bead uses the mass-weighted centre. A VOTCA-style bead uses arbitrary per-atom weights. A DPD bead has no atoms at all and stores its position directly. MolPy refuses to pick one of these conventions for you, because each is correct in its own context.
 

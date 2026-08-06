@@ -1,19 +1,19 @@
 # Trajectory
 
-A `Trajectory` stacks an in-memory sequence of frames in time order. Lazy, seekable file access is provided by molrs trajectory readers.
+Analysis almost never cares about a single snapshot. How do you hold *many*
+frames in time order without inventing a second data model?
 
-## One frame is rarely enough
+**A `Trajectory` is an eager, ordered sequence of `Frame` objects.** Each element
+is still one frame — blocks, metadata, optional box. Time stacks snapshots; it
+does not replace them.
 
-A single `Frame` captures the state of a system at one instant. Simulation and analysis almost always involve many such states ordered in time. Storing them as a plain Python list would work for small datasets, but it hides two concerns that become important at scale: memory management and lazy access.
-
-**A `Trajectory` is an eager, ordered sequence of `Frame` objects.**
-
-The key idea is continuity with `Frame`. Each element of a trajectory is still one frame — named blocks, exact-dtype metadata, and optionally a box. Time does not replace the snapshot model. It stacks snapshots in order.
-
+What it is **not**: a lazy file cursor. Seekable readers live under
+`molpy.io` / molrs trajectory readers; construct a `Trajectory` when you want
+an in-memory sequence with `len`, indexing, and slicing.
 
 ## Building a trajectory from a list
 
-The simplest trajectory comes from an in-memory list of frames. This supports random access, `len`, and slicing.
+Pass a list (or any iterable that is materialised on construction):
 
 ```python
 import molpy as mp

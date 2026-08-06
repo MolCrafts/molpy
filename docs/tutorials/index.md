@@ -1,8 +1,9 @@
 # Tutorials
 
-Everything you need to learn MolPy, in order: get it running first, then
-understand the data model it rests on. When you have a concrete task in hand
-instead — build, typify, pack, export — go straight to
+Learn MolPy in order: get it running, then understand the data model.
+Each data-model chapter opens with a **question**, a one-line **definition**,
+and what the object is **not** — then builds from there. When you have a
+concrete task (build, typify, pack, export), go to
 [Guides](../user-guide/index.md), which assume these tutorials.
 
 ## Get running

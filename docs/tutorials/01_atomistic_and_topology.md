@@ -1,212 +1,97 @@
 # Atomistic and Topology
 
-A molecule in MolPy is a graph you edit: atoms are nodes, bonds are edges, and angles, dihedrals, and rings are derived from connectivity on demand.
+How do you add a leaving group, break a bond, or ask “is this carbon aromatic”
+before any coordinates go near an engine?
+
+A coordinate list cannot answer. You need a **connectivity model**: which atoms
+are bonded, and what follows from that. In MolPy that model is an editable
+molecular graph.
+
+**`Atomistic` is a molecular graph you edit.** Atoms are nodes, bonds are edges.
+Angles, dihedrals, and rings are *derived* from connectivity when you ask — not
+hand-maintained tables that go stale.
+
+What it is **not**: a simulation snapshot, a force-field file, or a packed box.
+Those live on `Frame` and friends after the chemistry is settled
+([Block and Frame](02_block_and_frame.md)).
 
 ## Why a graph?
 
-Molecular simulation tools must answer two kinds of questions. *Geometric* questions — "how far apart are these two atoms?" — only need coordinates. *Chemical* questions — "which atoms share a covalent bond?", "is this carbon part of an aromatic ring?", "what happens when I break this bond?" — need a connectivity model.
+Simulation tools face two kinds of question.
 
-A plain list of positions cannot answer chemical questions. A molecular graph can. That is why MolPy starts with a graph representation: it is the natural data structure for building, editing, and reasoning about molecular topology before the system is handed off to a simulation engine.
+*Geometric* questions — “how far apart are these two atoms?” — need coordinates.
+*Chemical* questions — “which atoms share a covalent bond?”, “what happens when
+I break this bond?” — need connectivity.
 
+A plain list of positions answers only the first kind. A molecular graph answers
+both *identities* and *relations*: you know *which* carbon is bonded to *which*
+oxygen, not merely that row 3 sits near row 5. That is why building, editing,
+and reacting molecules happen here, before the system is handed to an engine.
 
-## A molecule is a graph you can edit
+## Building a molecule
 
-In MolPy, `Atomistic` is an editable molecular graph. Atoms are nodes, bonds are edges. Unlike a table of coordinates, this representation preserves identity: you know *which* carbon is bonded to *which* oxygen, not just that row 3 happens to sit near row 5.
-
-The reason this matters is practical. At the start of most workflows, the molecule is not finished. You still need to add atoms, remove leaving groups, mark reactive sites, or check connectivity. All of those operations are graph operations. `Atomistic` is the layer where you do them.
-
-Building a molecule starts with an empty container.
+Start empty, then add atoms and bonds. Properties are free-form keywords —
+`element`, coordinates, `charge`, or anything else your workflow needs.
 
 ```python
 import molpy as mp
 
 mol = mp.Atomistic(name="ethanol")
-```
-
-`def_atom` creates an atom and adds it to the graph. You pass whatever properties you need as keyword arguments — `element`, coordinates, `charge`, or anything else. There is no fixed schema.
-
-```python
 c1 = mol.def_atom(element="C", name="C1", x=0.0, y=0.0, z=0.0)
 c2 = mol.def_atom(element="C", name="C2", x=1.54, y=0.0, z=0.0)
-o  = mol.def_atom(element="O", name="O1", x=2.0, y=1.4, z=0.0)
+o = mol.def_atom(element="O", name="O1", x=2.0, y=1.4, z=0.0)
 h_o = mol.def_atom(element="H", name="HO", x=2.9, y=1.4, z=0.0)
-```
 
-`def_bond` connects two existing atoms. Like atoms, bonds accept arbitrary keyword attributes.
-
-```python
 mol.def_bond(c1, c2, order=1)
 mol.def_bond(c2, o, order=1)
 mol.def_bond(o, h_o, order=1)
 print(f"{len(mol.atoms)} atoms, {len(mol.bonds)} bonds")
-# 4 atoms, 3 bonds
+# -> 4 atoms, 3 bonds
 ```
 
-At this point `mol` holds the heavy-atom skeleton of ethanol. Atoms and bonds are live objects inside the graph — not copies of data. The next sections show what you can do with them.
-
-
-## Column-style reads without materializing every view
-
-`mol.atoms` and `mol.bonds` are lazy handle collections. Indexing an integer
-interns a live `Atom`/`Bond` view; reading a field name pulls a NumPy column
-from the molrs world **without** building every view first:
+Those atoms and bonds are live objects inside the graph — not detached copies.
+Change a property and the molecule changes immediately.
 
 ```python
-x = mol.atoms["x"]           # dense f64 column (or object array if sparse)
-elements = mol.atoms["element"]
-xyz = mol.xyz                # (N, 3) from dense x/y/z columns
-symbols = mol.symbols        # list[str] via handles, not Atom views
-```
-
-Prefer `mol.column("x")` / `mol.atoms["x"]` / `mol.xyz` for bulk numeric work.
-Hold `list(mol.atoms)` only when you need identity-stable Python objects for
-editing or graph algorithms.
-
-
-## Atoms and bonds behave like dictionaries
-
-Every `Atom` and `Bond` is a dictionary-like object. You read and write properties with bracket notation or `.get()`.
-
-```python
-print(c1["element"])      # "C"
-print(c1.get("charge"))   # None — charge was never set
-
+print(c1["element"])  # -> C
 c1["charge"] = -0.18
-print(c1["charge"])       # -0.18
-```
+print(c1["charge"])  # -> -0.18
 
-This works for bonds too. A `Bond` exposes its two endpoints through `.itom` and `.jtom`.
-
-```python
 bond = mol.bonds[0]
-print(bond.itom, bond.jtom)   # <Atom: C> <Atom: C>
-print(bond.get("order"))      # 1
+print(bond.itom["name"], bond.jtom["name"], bond.get("order"))
+# -> C1 C2 1
 ```
 
-Because atoms are references, modifying an atom object immediately changes the graph. There is no separate "commit" step.
+## Connectivity lives in the molecule, not in the atom
 
-```python
-for atom in mol.atoms:
-    if atom["element"] == "C":
-        atom["hybridization"] = "sp3"
-
-print(c2["hybridization"])  # "sp3"
-```
-
-
-## Connectivity lives in the container, not in the atom
-
-An atom does not know its own neighbors. The `Atomistic` container manages all connectivity. This separation keeps atoms lightweight and makes graph operations explicit.
-
-`get_neighbors` returns a list of atoms directly bonded to a given atom.
+An atom does not store its own neighbour list. The container owns connectivity,
+so graph operations stay explicit and consistent.
 
 ```python
 neighbors = mol.get_neighbors(c2)
-print([n["name"] for n in neighbors])  # ['C1', 'O1']
+print([n["name"] for n in neighbors])
+# -> ['C1', 'O1']
 ```
 
-You can combine this with a loop to inspect the bonds around an atom.
-
-```python
-for bond in mol.bonds:
-    if c2 in bond.endpoints:
-        partner = bond.itom if bond.jtom is c2 else bond.jtom
-        print(f"C2 —({bond.get('order')})— {partner['name']}")
-```
-
-Because neighbors are ordinary Python objects, building higher-level queries is straightforward. Here is a function that collects all atoms within *n* hops of a starting atom.
-
-```python
-def n_hop_neighbors(mol, start, n):
-    visited = {start}
-    shell = {start}
-    for _ in range(n):
-        next_shell = set()
-        for atom in shell:
-            for nb in mol.get_neighbors(atom):
-                if nb not in visited:
-                    visited.add(nb)
-                    next_shell.add(nb)
-        shell = next_shell
-    return visited - {start}
-
-print({a["name"] for a in n_hop_neighbors(mol, c1, 2)})
-# {'O1', 'C2'}
-```
-
-
-## Removing an atom keeps the graph consistent
-
-Deleting an atom with `remove_entity` automatically removes all incident bonds. You never end up with a dangling bond pointing to a missing atom.
+Removing an atom removes incident bonds with it — you never keep a dangling edge.
 
 ```python
 print(f"Before: {len(mol.atoms)} atoms, {len(mol.bonds)} bonds")
-# Before: 4 atoms, 3 bonds
-
+# -> Before: 4 atoms, 3 bonds
 mol.remove_entity(h_o)
-
 print(f"After:  {len(mol.atoms)} atoms, {len(mol.bonds)} bonds")
-# After:  3 atoms, 2 bonds
-
-print([n["name"] for n in mol.get_neighbors(o)])  # ['C2']
+# -> After:  3 atoms, 2 bonds
 ```
 
-The O–H bond disappeared along with the hydrogen. The remaining graph is internally consistent.
+## Topology is derived from bonds
 
+Engines need angles and dihedrals as well as bonds. Maintaining those lists by
+hand is brittle: every bond edit would require a matching update.
 
-## Copying produces an independent clone
-
-`copy()` deep-copies all atoms and bonds into a new `Atomistic` object. The two graphs are fully independent — modifying one does not affect the other.
-
-```python
-mol_copy = mol.copy()
-
-c1_copy = [a for a in mol_copy.atoms if a["name"] == "C1"][0]
-c1_copy["name"] = "C1_copy"
-
-print(c1["name"])       # "C1" — original unchanged
-print(c1_copy["name"])  # "C1_copy"
-```
-
-
-## Systems compose with + and replicate
-
-Two `Atomistic` objects can be merged with `+`. The result is a new object containing all atoms and bonds from both sides.
-
-```python
-water = mp.Atomistic(name="water")
-ow = water.def_atom(element="O", x=0.0, y=0.0, z=0.0)
-h1 = water.def_atom(element="H", x=0.957, y=0.0, z=0.0)
-h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.0)
-water.def_bond(ow, h1)
-water.def_bond(ow, h2)
-
-two_waters = water + water.copy().move([5.0, 0.0, 0.0])
-print(f"{len(two_waters.atoms)} atoms, {len(two_waters.bonds)} bonds")
-# 6 atoms, 4 bonds
-```
-
-For many copies, `replicate` is more convenient. It takes a count and an optional transform function.
-
-```python
-box = water.replicate(4, lambda mol, i: mol.move([i * 4.0, 0.0, 0.0]))
-print(f"{len(box.atoms)} atoms")  # 12
-```
-
-
-## Topology is derived, then written in place
-
-Molecular dynamics needs more than bonds. It needs angles (three-atom sequences) and dihedrals (four-atom sequences). Maintaining those by hand is error-prone — every time you add or remove a bond, every angle and dihedral list would need updating.
-
-MolPy treats bonded topology as *derived from the bond graph*. `get_topo` reads the current bonds and writes the perceived angles and dihedrals **into the same** `Atomistic` (core mutation contract: in-place + return `self` for chaining). If the bond graph changes later, call `get_topo` again (optionally with `clear_existing=True`). The perception itself (2-edge and 3-edge paths) runs in the molrs Rust kernels.
-
-Need an independent graph with topology? Copy first:
-
-```python
-topo = mol.copy().get_topo(gen_angle=True, gen_dihe=True)
-```
-
-Let's see the in-place path on a fresh molecule.
+MolPy treats bonded topology as **derived from the bond graph**. `get_topo`
+reads the current bonds and writes perceived angles and dihedrals into the same
+`Atomistic` (in place; returns `self` for chaining). If the bond graph changes
+later, call `get_topo` again.
 
 ```python
 propane = mp.Atomistic(name="propane")
@@ -216,45 +101,73 @@ cc = propane.def_atom(element="C", name="C3", x=3.08, y=0.0, z=0.0)
 propane.def_bond(ca, cb)
 propane.def_bond(cb, cc)
 
-print(f"Before: {len(propane.angles)} angles, {len(propane.dihedrals)} dihedrals")
-# Before: 0 angles, 0 dihedrals
-
+print(len(propane.angles), len(propane.dihedrals))
+# -> 0 0
 propane.get_topo(gen_angle=True, gen_dihe=True)
+print(len(propane.angles), len(propane.dihedrals))
+# -> 1 0
 
-print(f"After:  {len(propane.angles)} angles, {len(propane.dihedrals)} dihedrals")
-# After:  1 angles, 0 dihedrals
-```
-
-Each `Angle` and `Dihedral` holds references to its endpoint atoms through `.endpoints`, just like a `Bond`.
-
-```python
 for angle in propane.angles:
-    names = [a["name"] for a in angle.endpoints]
-    print(" — ".join(names))
-# C1 — C2 — C3
+    print(" — ".join(a["name"] for a in angle.endpoints))
+# -> C1 — C2 — C3
 ```
 
-
-## Graph queries on the bond graph
-
-There is no separate topology object — `get_topo` mutates and returns the same `Atomistic`, and graph queries run directly on the structure via the molrs Rust kernels. `get_topo_neighbors` collects every atom within a bond-count radius, and `get_topo_distances` returns the bond-graph (BFS) distance from a source atom to every reachable atom.
+Graph-distance queries (neighbours within $n$ bonds, BFS distances) run on the
+same structure once connectivity is defined:
 
 ```python
-print("within 1 bond of C2:", [a["name"] for a in propane.get_topo_neighbors(cb, radius=1)])
-# within 1 bond of C2: ['C1', 'C2', 'C3']
-
+print([a["name"] for a in propane.get_topo_neighbors(cb, radius=1)])
+# -> ['C1', 'C2', 'C3']
 dists = propane.get_topo_distances(ca)
 print({a["name"]: d for a, d in dists.items()})
-# {'C1': 0, 'C2': 1, 'C3': 2}
+# -> {'C1': 0, 'C2': 1, 'C3': 2}
 ```
 
-For a larger molecule the same tools scale naturally: checking connectivity after a bond deletion or measuring topological distances between functional groups reduce to k-hop queries on the `Atomistic` itself.
+## Composition and copies
 
+Independent clones use `copy()`. Merges use `+`; many copies use `replicate`.
 
-## When to stay here, when to move on
+```python
+water = mp.Atomistic(name="water")
+ow = water.def_atom(element="O", x=0.0, y=0.0, z=0.0)
+h1 = water.def_atom(element="H", x=0.957, y=0.0, z=0.0)
+h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.0)
+water.def_bond(ow, h1)
+water.def_bond(ow, h2)
 
-Use `Atomistic` as long as the structure itself is under discussion — adding atoms, defining bonds, inspecting connectivity, running reactions. This is the layer for *chemical editing*.
+two = water + water.copy().move([5.0, 0.0, 0.0])
+print(len(two.atoms), len(two.bonds))
+# -> 6 4
 
-Once the chemistry is stable and your next task is export, analysis, or simulation, the right representation changes. [Block and Frame](02_block_and_frame.md) carry the same system as aligned arrays with explicit metadata — a better fit for numerical work and file I/O.
+box = water.replicate(4, lambda m, i: m.move([i * 4.0, 0.0, 0.0]))
+print(len(box.atoms))
+# -> 12
+```
 
-See also: [Block and Frame](02_block_and_frame.md), [API Reference: Core](../api/index.md).
+!!! note "Bulk numeric access"
+    When you need every $x$ coordinate as an array — not each atom as a Python
+    object — use `mol.atoms["x"]`, `mol.xyz`, or `mol.column("x")`. Prefer
+    `list(mol.atoms)` only when you need identity-stable objects for editing or
+    graph algorithms.
+
+## When to stay here, when to leave
+
+Stay on `Atomistic` while the **chemistry** is still under discussion: add
+atoms, define bonds, inspect connectivity, run reactions.
+
+When the chemistry is stable and the next job is export, analysis, or
+simulation, move to arrays: [Block and Frame](02_block_and_frame.md).
+
+## Check yourself
+
+1. Why can two atoms with identical element and coordinates still be different
+   atoms in MolPy?
+2. After `remove_entity` on a terminal hydrogen, how many bonds should remain on
+   the heavy-atom skeleton of the ethanol example above?
+3. If you add a bond after `get_topo`, are the angle lists automatically up to
+   date? What do you call?
+
+## See also
+
+- [Block and Frame](02_block_and_frame.md) — arrays for compute and I/O
+- [API: Core](../api/core.md) — full surface of `Atomistic`, `Atom`, `Bond`

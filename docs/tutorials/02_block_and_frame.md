@@ -1,24 +1,33 @@
 # Block and Frame
 
-When chemistry stops changing and numbers start mattering, work moves to aligned tables: a `Block` is one NumPy-backed table, a `Frame` is the complete snapshot.
+The chemistry is finished. You need distances, an energy, or a file the engine
+will accept. How do you leave the molecular graph without losing structure?
+
+Engines do not read graphs. They read **aligned tables**: coordinates, types,
+and index-based topology. MolPy makes that hand-off explicit.
+
+**A `Block` is one columnar table** (every column is a NumPy array over the same
+rows). **A `Frame` is a named set of blocks plus metadata** — one complete
+snapshot of the system.
+
+What they are **not**: an editable bond graph. Editing chemistry stays on
+[`Atomistic`](01_atomistic_and_topology.md). Convert with `to_frame()` when the
+structure is stable.
 
 ## Why two representations?
 
-Molecular dynamics engines (LAMMPS, GROMACS, OpenMM) do not read molecular graphs. They read flat tables of coordinates, atom types, and index-based topology. Conversely, building a molecule from SMILES or assembling a polymer requires graph traversal, not array slicing.
+*Build and edit* needs graph traversal (SMILES, polymer growth, reactions).
+*Compute and export* needs arrays (distances, RDF, LAMMPS data). Hiding the
+conversion invites silent mismatch; keeping both representations keeps the
+boundary honest.
 
-MolPy keeps both representations explicit rather than hiding the conversion. `Atomistic` is the graph you edit; `Block` and `Frame` are the tables you export. If you are familiar with other tools: a `Frame` plays a similar role to a LAMMPS data file, a GROMACS `.gro` + `.top` pair, or an MDAnalysis `Universe` snapshot — but as a pure in-memory data structure rather than a file format.
-
-## From graph to table
-
-An `Atomistic` object is the right place to edit chemistry: add an atom, remove a bond, query neighbors. But once the chemistry is stable, the next question is usually numerical — distances, energies, file export. For that kind of work, aligned arrays are far more convenient than a graph of dictionary-like objects.
-
-MolPy uses two data structures for this purpose. A `Block` is one columnar table: column names map to NumPy arrays, and every column refers to the same set of rows. A `Frame` is a named collection of blocks plus exact-dtype metadata, representing one complete system snapshot.
-
-The split is deliberate. A block answers "what are the atoms?" or "what are the bonds?" — one table for one kind of data. A frame answers "what is the full state of this system right now?" by grouping related tables together.
+A block answers “what are the atoms?” or “what are the bonds?” — one table per
+kind of data. A frame answers “what is the full state right now?” by grouping
+those tables (and a box, when present).
 
 ## Block: a columnar table backed by NumPy
 
-Creating a block is as simple as passing a dictionary of array-like values. Each value becomes a NumPy array automatically.
+Pass a dictionary of array-like values; each value becomes a NumPy array.
 
 ```python
 import molpy as mp

@@ -1,18 +1,18 @@
 # Selector
 
-Ask for "all carbons within 3 Å of this point" as a composable expression, not a hand-written loop.
+You need every carbon within 3 Å of a point — without a page of nested
+`if` statements. How do you write that as a *query*?
 
-## Selecting atoms without loops
+**Selectors are composable predicates over `Block` columns.** They return a
+filtered block, or a boolean mask via `.mask()`, and combine with `&`, `|`,
+and `~`.
 
-Analysis workflows constantly need to answer questions like "give me all carbons," "give me atoms within 3 Å of this point," or "give me heavy atoms in the left half of the box." Writing manual loops with if-statements works, but it scales poorly and obscures intent.
-
-**Selectors are composable predicates that produce boolean masks over `Block` columns.** They combine with `&`, `|`, and `~` to build complex queries without manual loops.
-
-Every selector implements the same protocol: call it on a block to get a filtered block, or call `.mask()` to get a boolean array.
+What they are **not**: a second copy of the system, or a replacement for
+topology. They filter rows of an existing table.
 
 ## Property-based selectors
 
-The simplest selectors filter by a single column value. `ElementSelector` matches element symbols, `AtomTypeSelector` matches type identifiers.
+The simplest filters match one column: element symbols, type labels, and so on.
 
 ```python
 import molpy as mp
