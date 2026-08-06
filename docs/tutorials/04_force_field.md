@@ -1,26 +1,29 @@
 # Force Field
 
-A force field in MolPy is data you can query and validate — long before it becomes numbers in an engine file.
+A wrong atom type will not always crash the run — it will produce a plausible
+wrong trajectory. How do you inspect the parameters *before* they become engine
+arrays?
+
+**In MolPy a force field is data you can query and validate**, layered as styles,
+types, and potentials, long before anything is compiled for LAMMPS or OpenMM.
+
+What it is **not**: the molecular graph (that is `Atomistic`), and not the
+numeric forces on a frame (that comes after typing and evaluation).
 
 ## Why separate structure from parameters?
 
-In classical molecular dynamics, the physics is entirely determined by the force field — the set of equations and numerical parameters that define how atoms interact. Getting these parameters wrong is the most common source of silent errors in simulation workflows. A misassigned atom type or a missing dihedral term does not crash the program; it produces wrong results that look plausible.
+Classical MD is entirely defined by the force field: functional forms and the
+numbers that go with them. Most tools bury those numbers inside a single
+topology or data file, so you cannot easily compare assignments or catch a
+missing dihedral until after an expensive run.
 
-Most simulation tools bundle structure and parameters together in a single file (LAMMPS data + coefficients, GROMACS topology). This makes it hard to inspect or compare parameter assignments before running an expensive simulation. MolPy keeps them separate so you can validate the model before committing to a computation.
-
-
-## Parameters first, execution later
-
-Many libraries collapse force-field definition and execution into a single layer. You set a parameter and immediately get a numerical object, with no intermediate state you can inspect or validate. MolPy separates the two steps deliberately.
-
-**A force field should remain inspectable as data before it is compiled into executable numerical objects.**
-
-This matters because parameterization is where silent mistakes become expensive. If an atom type is wrong, a key is missing, or a bond parameter is inconsistent, you want to find out while the model is still a transparent data structure — not after it has been baked into arrays or engine-specific files.
-
+MolPy keeps structure and parameters apart on purpose. If a type is wrong or a
+key is missing, you want that while the model is still transparent data — not
+after it is baked into engine-specific arrays.
 
 ## The three layers: Style, Type, Potential
 
-MolPy organizes force field data in three nested layers:
+Force-field data nests in three layers:
 
 ```text
 ForceField

@@ -1,22 +1,21 @@
 # Wrapper and Adapter
 
-Calling an external executable and converting to another library's objects are different problems — MolPy names them differently and gives each its own layer.
+You need `antechamber` for charges and RDKit for a fingerprint. Are those the
+same kind of “integration”?
 
-## Two kinds of external boundary
+No. One starts a **process**; the other maps **in-memory objects**. Conflating
+them hides the failures that cost the most time.
 
-No molecular workflow stays inside one library forever. At some point you call an external program, convert to another object model, or both. These are fundamentally different operations, and MolPy names them differently.
+**Wrappers cross execution boundaries** (subprocess, working directory, return
+codes). **Adapters cross representation boundaries** (field mapping between
+MolPy and RDKit, OpenBabel, …).
 
-**Wrappers cross execution boundaries. Adapters cross representation boundaries.**
-
-A wrapper runs an external executable — `antechamber`, `tleap`, `lmp_serial` — and deals with subprocesses, return codes, working directories, and files on disk. An adapter translates between MolPy objects and another library's in-memory objects — RDKit molecules, OpenBabel structures — and deals with field mapping and synchronization.
-
-Treating both as "calling another API" hides the part of the workflow that most often fails. MolPy keeps the distinction explicit so you know what kind of failure to expect and which layer to inspect.
-
+What they are **not**: each other — and neither replaces I/O readers that only
+parse files into `Frame`s.
 
 ## Wrapper: controlled execution across a process boundary
 
-A `Wrapper` encapsulates a command-line tool. It handles locating the executable, setting up the environment, and running the command.
-
+A `Wrapper` locates an executable, sets the environment, and runs the command.
 The examples below share this setup:
 
 ```python

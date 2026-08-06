@@ -1,24 +1,23 @@
 # Unit Systems
 
-A `Frame` stores bare numbers. `UnitSystem` names the convention that gives
-them meaning — and converts explicitly when two conventions meet.
+A frame stores `x = 3.0`. Is that 3 Å or 3 nm? The array does not say.
 
-## Coordinates are unitless; a convention gives them meaning
+**`UnitSystem` names the convention that gives bare numbers meaning**, and
+converts explicitly when two conventions meet (for example LAMMPS `real` vs
+`metal`).
 
-A `Frame` stores plain numbers: `x/y/z`, `mass`, `charge` are arrays with **no
-attached unit**. MolPy does not force a length unit on you — the *convention* you
-work in (and the force field you load) fixes what those numbers mean. A TIP3P
-force field authored in nanometres expects nm coordinates; an OPLS field in
-ångström expects Å. Mixing them silently produces wrong physics.
+What it is **not**: automatic unit tracking on every `Frame` column. Numbers stay
+plain; *you* attach a convention when you convert or compare.
 
-**`UnitSystem` is the object that names a convention and converts between units.**
-It is thin Python sugar over the unit engine (`UnitRegistry` /
-`Unit` / `Quantity`): presets and LJ construction live on the molpy
-side; parsing, dimensional arithmetic, and conversion run in the unit engine.
+## Why conventions matter
+
+A TIP3P field authored in nanometres expects nm coordinates; an OPLS field in
+ångström expects Å. Mixing them silently produces wrong physics. MolPy does not
+guess: the force field and the unit system you choose fix the interpretation.
 
 ## Using a preset
 
-`UnitSystem` ships the LAMMPS `units` conventions as named presets:
+Named presets mirror common LAMMPS `units` lines:
 
 ```python
 from molpy.core.unit import UnitSystem

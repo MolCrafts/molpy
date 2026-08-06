@@ -1,312 +1,165 @@
-# HBond
+# Hydrogen bonds
 
-This page is a self-contained, textbook-style introduction to **hydrogen-bond
-detection** in MolPy. A hydrogen bond is identified geometrically — by a
-donor–acceptor distance and a donor–H···acceptor angle — and the per-frame bond
-list it produces is the starting point for counting coordination, mapping
-networks, and (combined with the [persistence](persist.md) analysis) measuring
-hydrogen-bond lifetimes. Canonical applications: water, alcohols, amides, and
-protic ionic liquids.
+A hydrogen bond is not a term in your force field. In a classical simulation
+there is no "H-bond" interaction — only Coulomb and Lennard-Jones — so a
+hydrogen bond is something *you* define, by drawing a box in geometry space and
+declaring everything inside it bonded.
 
-The geometric search runs in the high-performance backend; the MolPy layer feeds
-it the donor/acceptor selections and returns a typed result.
+That makes this page unusual. The compute is simple; the definition is the hard
+part, and almost every disagreement in the literature about hydrogen-bond
+numbers is a disagreement about the definition rather than about the physics.
 
-!!! note "Conventions used throughout"
-    - Distances are in Å, angles in **degrees**.
-    - A **donor** is a `(D, H)` pair (heavy atom + its bonded hydrogen); an
-      **acceptor** is a single heavy atom (often O, N, F, Cl).
-    - Default geometric criterion is Luzar–Chandler: donor–acceptor distance
-      $r_{D\cdots A}\le 3.5$ Å and $\angle(D\text{–}H\cdots A)\ge 150^\circ$.
-    - Pair these counts with [Persist](persist.md) for lifetimes; detection
-      alone is a *static* geometric event.
+## The geometric criterion, and why it is a choice
 
----
-
-## 1. Physical picture: what is a hydrogen bond in MD?
-
-There is no quantum-mechanical operator that is $1$ on a hydrogen bond and $0$
-off it. In condensed-phase MD the bond is an **operational definition**: a
-donor–hydrogen–acceptor geometry that lies in the populated basin of the joint
-distance–angle distribution. That basin is real — it shows up as a peak in the
-[combined distribution function](distribution.md) — but its boundary is a
-modelling choice.
-
-Why geometry works:
-
-1. **Electrostatics + Pauli exclusion** create a preferred short $D\cdots A$
-   contact with a near-linear $D$–$H\cdots A$ arrangement.
-2. The first minimum of $g_{D A}(r)$ is a natural outer shell edge for
-   “associated”.
-3. An angle cutoff rejects accidental short contacts that are bent (not
-   H-bond-like).
-
-The goal of detection is therefore not a unique truth but a **reproducible,
-reportable criterion** whose counts and lifetimes can be compared across systems.
-
----
-
-## 2. Geometric criterion
-
-A donor `(D, H)` and acceptor `A` form a hydrogen bond at a given frame when
+The standard criterion puts two conditions on a donor–hydrogen–acceptor triple
+$D{-}H\cdots A$:
 
 $$
-\boxed{\;
-r_{DA} \le r_c
-\quad\text{and}\quad
-\theta_{DHA} \ge \theta_c
-\;}
+r_{DA} < r_c, \qquad \theta_{DHA} > \theta_c ,
 $$
 
-with
+close enough, and straight enough. The Luzar–Chandler values, $r_c = 3.5$ Å and
+$\theta_c = 150°$, are the defaults here and the most widely used — but they are
+conventions calibrated on SPC water, not constants of nature.
 
-$$
-r_{DA} = \min_{\text{images}|\mathbf{r}_A - \mathbf{r}_D|,
-\qquad
-\theta_{DHA}
-= \angle(\mathbf{r}_H-\mathbf{r}_D,\;\mathbf{r}_A-\mathbf{r}_H)
-$$
+Two details trip people up.
 
-(or the equivalent hydrogen-centred distance $r_{HA}$ when that convention is
-chosen). MolPy’s `HBondCriterion` stores the cutoffs; defaults match the
-Luzar–Chandler water literature:
+**Which distance.** $r_{DA}$ (donor to acceptor, used here) and $r_{HA}$
+(hydrogen to acceptor) differ by roughly an O–H bond length, so a criterion
+quoted as "3.5 Å" means different things depending on which was meant. Always
+say which.
 
-| Parameter | Symbol | Default | Role |
-|---|---|---|---|
-| Distance cutoff | $r_c$ | $3.5$ Å | first-shell edge of $g_{\mathrm{OO}$ in water |
-| Angle cutoff | $\theta_c$ | $150^\circ$ | near-linear $D$–$H\cdots A$ |
+**Where the cutoff should come from.** Not from folklore — from your own
+$g_{DA}(r)$. The first minimum of the donor–acceptor radial distribution is the
+defensible boundary, exactly as for [Cluster](cluster.md), and it moves between
+force fields, between solvents, and with temperature. A criterion transplanted
+from a water paper into an ionic liquid will silently miscount.
 
-### 2.1 Distance convention: $D\cdots A$ vs $H\cdots A$
+Because the definition is binary, the count is discontinuous: a pair at 3.49 Å
+is bonded, at 3.51 Å it is not, and nothing physical happens in between. That is
+why instantaneous H-bond counts are noisier than they look, and why lifetimes
+need the two-threshold treatment on [Persist](persist.md).
 
-Two common practices:
+!!! note "No figure on this page yet — TODO"
+    The figure this section needs is your own measured $g_{DA}(r)$ with the
+    first minimum marked, because reading the cutoff off a real curve is the
+    entire argument. It cannot be produced here: hydrogen bonding requires a
+    molecular liquid with donors and acceptors, and the reference trajectory
+    behind the other compute pages is monatomic argon. A sketched curve would be
+    exactly the folklore this section warns against. Produce it for your own
+    system with [RDF](rdf.md) restricted to donor and acceptor atoms, following
+    the partial-distribution recipe in the [compute overview](index.md).
 
-- **Donor–acceptor** ($r_{DA}$): robust when H positions are noisy; standard for
-  classical water models.
-- **Hydrogen–acceptor** ($r_{HA}$): closer to the H-bond “length” of structural
-  chemistry; more sensitive to librations of H.
+## Computing it
 
-They are **not interchangeable** at fixed numerical cutoffs. Pick one, document
-it, and keep it fixed when comparing systems.
-
-### 2.2 Why cutoffs must come from data
-
-The “right” $(r_c,\theta_c)$ is the contour that encloses the associated basin
-of the joint distribution $p(r,\theta)$. In practice:
-
-1. Compute $g_{DA}(r)$ and read the **first minimum** for a candidate $r_c$.
-2. Build the distance–angle [CDF](distribution.md) for donor–H–acceptor triples.
-3. Draw $(r_c,\theta_c)$ so the bond region is a connected high-density patch,
-   not an arbitrary rectangle through noise.
-
-A criterion chosen from folklore without checking $p(r,\theta)$ will silently
-mis-count mixed solvents, ionic liquids, and force fields with shifted
-solvation shells.
-
-<figure id="fig-hbond-geom" class="molcrafts-figure" markdown>
-<div class="molcrafts-figure__body molcrafts-figure__body--chart">
-
-```molplot preset="molplot" theme="auto" aspect="16:9"
-mark:
-  type: line
-  strokeWidth: 2.2
-  interpolate: monotone
-data:
-  values:
-    - {r: 2.4, g: 0.0}
-    - {r: 2.6, g: 0.3}
-    - {r: 2.8, g: 2.8}
-    - {r: 3.0, g: 1.2}
-    - {r: 3.2, g: 0.7}
-    - {r: 3.5, g: 0.5}
-    - {r: 4.0, g: 0.9}
-    - {r: 4.5, g: 1.05}
-    - {r: 5.5, g: 1.0}
-encoding:
-  x:
-    field: r
-    type: quantitative
-    title: r_DA (Å)
-  y:
-    field: g
-    type: quantitative
-    scale: {zero: false}
-    title: g_DA(r)
-  color:
-    value: "#0284c7"
-```
-
-</div>
-
-**Figure 1.** Schematic $g_{DA}(r)$: first peak (H-bonded shell) and first minimum (~3.5 Å in SPC water) that sets a natural $r_c$.
-</figure>
-
----
-
-## 3. From geometry to kinetics: Luzar–Chandler
-
-A single-frame bond list answers *how many* bonds exist. Kinetics ask *how long*
-a tagged donor–acceptor pair stays bonded. Define the indicator
-
-$$
-h_{ij}(t) =
-\begin{cases}
-1 & \text{pair }(i,j)\text{ satisfies the geometric criterion at }t,\\
-0 & \text{otherwise.}
-\end{cases}
-$$
-
-Two classical correlation functions follow (see also
-[persistence](persist.md)):
-
-$$
-c(t) = \frac{\langle h(0)\,h(t)\rangle}{\langle h\rangle}
-\qquad\text{(intermittent / structural)},
-$$
-
-$$
-c_c(t) = \frac{\langle h(0)\,H(t)\rangle}{\langle h\rangle}
-\qquad\text{(continuous / first-break)},
-$$
-
-where $H(t)=1$ only if the pair was bonded **at every** intermediate frame
-between $0$ and $t$. Intermittent $c(t)$ allows reformation after a brief break;
-continuous $c_c(t)$ dies at the first exit.
-
-Luzar and Chandler showed that the reactive flux of the continuous population
-separates into:
-
-1. a **fast librational transient** (sub-picosecond rattling in the well), and
-2. a slower **activated breaking rate** — the chemical lifetime of interest.
-
-Reporting **both** continuous and intermittent lifetimes, with the geometric
-criterion stated in full, is the standard characterization of H-bond dynamics.
-
-### 3.1 Mean lifetime
-
-Integrate or fit the intermittent correlation:
-
-$$
-\tau_\mathrm{HB}
-= \int_0^\infty c(t)\,\mathrm{d}t
-\quad\text{or}\quad
-c(t)\approx e^{-t/\tau_\mathrm{HB}\ \text{(long-time tail)}.
-$$
-
-Do **not** fit the librational head of $c_c(t)$ and call it the chemical
-lifetime.
-
----
-
-## 4. Network observables from a bond list
-
-Once each frame yields a set of edges $(D,H,A)$, the H-bond network is an
-undirected graph on heavy atoms (or on molecules):
-
-| Observable | Definition | Why it matters |
-|---|---|---|
-| Mean degree $\langle n_\mathrm{HB}\rangle$ | average bonds per donor/acceptor | bulk coordination |
-| Per-molecule $n_\mathrm{HB}$ | bonds donated + accepted | local defects, interfaces |
-| Shared pairs / rings | closed loops in the graph | water rings, ice-like order |
-| Percolation | giant connected component | network spanning in mixtures |
-
-MolPy’s `HBonds` result exposes `counts` and `per_frame` tuples
-`(D, H, A, distance, angle)` so you can build these reductions in a few lines of
-NumPy / NetworkX without re-running the geometric search.
-
----
-
-## 5. Detecting hydrogen bonds
-
-Supply donor `(D, H)` pairs and acceptor indices; tune geometry with
-`HBondCriterion`:
+`HBonds` takes the chemistry explicitly: an array of `(D, H)` index pairs and an
+array of acceptor indices. It does not guess which atoms are donors — that is
+your topology's job, and being made to state it is a feature.
 
 ```python
 import numpy as np
 import molpy as mp
+from molpy.compute import HBonds
 
-def _frame(step: int) -> mp.Frame:
-    rng = np.random.default_rng(0)
-    xyz = rng.uniform(0.0, 20.0, size=(30, 3)) + 0.1 * step
-    frame = mp.Frame()
-    frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.box = mp.Box.cubic(20.0)
-    return frame
+# One ideal water dimer: O–H pointing straight at a second oxygen 2.8 Å away.
+xyz = np.array([
+    [0.00, 0.0, 0.0],    # 0: donor O
+    [0.96, 0.0, 0.0],    # 1: its H
+    [2.80, 0.0, 0.0],    # 2: acceptor O
+    [3.20, 0.9, 0.0],    # 3: an H on the acceptor
+]) + 10.0
 
-frames = [_frame(step) for step in range(10)]
+frame = mp.Frame()
+frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
+frame.box = mp.Box.cubic(30.0)
+
+result = HBonds(donors=np.array([[0, 1]]), acceptors=np.array([2]))([frame])
+print(list(result.counts))            # -> [1]
 ```
+
+One frame, one hydrogen bond. The geometry of each detection comes back too,
+which is how you check the criterion is doing what you think:
 
 ```python
-from molpy.compute import HBonds, HBondCriterion
-
-o1, h1, h2 = 0, 1, 2          # one donor water
-o2, o3, o4 = 3, 6, 9          # three acceptor oxygens
-donors = np.array([[o1, h1], [o1, h2]], dtype=np.int64)  # (D, H) pairs
-acceptors = np.array([o2, o3, o4], dtype=np.int64)
-
-hb = HBonds(
-    donors,
-    acceptors,
-    HBondCriterion(dist_cutoff=3.5, angle_cutoff=150.0),
-)
-result = hb(frames)
-
-result.counts      # number of H-bonds per frame
-result.per_frame   # lists of (D, H, A, distance, angle) per frame
+donor, hydrogen, acceptor, distance, angle = result.per_frame[0][0]
+print(round(distance, 2), round(angle, 1))   # -> 2.8 180.0
 ```
 
-A heavy atom with two hydrogens contributes **two** donor rows. Exclude
-intramolecular $(D,A)$ combinations when you want intermolecular bonds only.
+2.8 Å and 180° — a perfectly linear bond, comfortably inside both cutoffs.
+Build this dimer, tilt it, and watch the detection switch off; that is the
+fastest way to see where the boundary actually sits.
 
----
+To use a different criterion, pass one:
 
-## 6. From a bond list to lifetimes
+```python
+from molpy.compute import HBondCriterion
 
-Treat each detected donor–acceptor pair as an association and run
-[pair-persistence](persist.md) survival analysis:
+strict = HBondCriterion(dist_cutoff=3.0, angle_cutoff=160.0)
+tighter = HBonds(np.array([[0, 1]]), np.array([2]), strict)([frame])
+print(list(tighter.counts))           # -> [1]
+```
 
-- **`intermittent`** → structural $\tau_\mathrm{HB}$ (Luzar–Chandler).
-- **`continuous`** → first-break time (much shorter under rattling).
-- **`ssp`** → stable-states picture with $r_1 > r_0$ buffer (recommended for
-  noisy cutoffs / ion pairs).
+`counts` is the per-frame bond count and `per_frame` the full
+`(D, H, A, distance, angle)` tuples. Averaging `counts` over a trajectory and
+dividing by the number of donors gives hydrogen bonds per molecule — about 3.5
+for bulk water with the Luzar–Chandler criterion, which is the number to
+sanity-check against.
 
-Feed the same $r_c$ that defined the geometric bond (or a slightly larger outer
-$r_1$ for SSP). Always report definition + criterion together.
+## From a bond list to lifetimes
 
----
+Counting bonds is the easy half; how long they last is the interesting half, and
+it is the same machinery as [Persist](persist.md). Build an indicator $h(t)$
+that is 1 while a pair is bonded and correlate it with itself.
 
-## 7. Pitfalls checklist
+The continuous-versus-intermittent distinction matters more here than for plain
+contacts, because hydrogen bonds break and re-form constantly at the threshold.
+Luzar and Chandler's reactive-flux treatment exists precisely to separate
+genuine breaking from threshold flicker, and a lifetime quoted without saying
+which definition produced it is not comparable with anything.
 
-1. **Criterion sensitivity** → counts and lifetimes depend strongly on
-   $(r_c,\theta_c)$; choose them from the distance–angle CDF and state them.
-2. **Donor list must pair D with its H** → each entry is `(heavy, hydrogen)`.
-3. **Self-pairs** → drop intramolecular donor/acceptor if only intermolecular
-   bonds are wanted.
-4. **Distance convention** → $D\cdots A$ vs $H\cdots A$ cutoffs are not
-   interchangeable.
-5. **Lifetime ≠ count** → a high instantaneous count can coexist with a short
-   lifetime.
-6. **Comparing definitions** → continuous / intermittent / SSP are different
-   numbers by construction.
-7. **Sparse dump interval** → miss sub-picosecond re-crossings; dump denser
-   than the lifetime you claim.
+## When it goes wrong
 
----
+**Zero bonds detected.**
+Check the donor array shape — it must be `(n_donor, 2)` pairs of `(D, H)`, not a
+flat list of donor atoms. Then check the angle convention: 150° means nearly
+linear, so if the geometry looks right but the reported angle is near 30° you
+are measuring the supplement.
 
-## 8. References
+**The count is far above literature values.**
+Usually the distance convention: a 3.5 Å cutoff applied to $r_{HA}$ rather than
+$r_{DA}$ admits many more pairs.
 
-- A. Luzar, D. Chandler, *Nature* **379**, 55 (1996); *Phys. Rev. Lett.* **76**,
-  928 (1996) — geometric criterion and hydrogen-bond kinetics.
-- D. C. Rapaport, *Mol. Phys.* **50**, 1151 (1983) — continuous vs intermittent
-  bond correlation functions.
-- A. Luzar, *J. Chem. Phys.* **113**, 10663 (2000) — resolving H-bond kinetics.
-- F. H. Stillinger, *Adv. Chem. Phys.* **31**, 1 (1975) — network picture of
-  water connectivity.
-- M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — AIMD analysis feature set (distributions, H-bonds, spectra).
+**The count jumps between frames.**
+Real, and inherent to a binary criterion. Average over many frames and do not
+over-interpret the fluctuations of an instantaneous count.
+
+**Lifetimes come out implausibly short.**
+Threshold flicker. Use the two-radius treatment from [Persist](persist.md).
+
+**Bonds are missed across a periodic boundary.**
+Check `frame.box` is set; the criterion uses minimum-image distances.
+
+## Check yourself
+
+- Build the linear dimer above and confirm 2.8 Å / 180°. Then rotate the
+  acceptor until the angle falls below the cutoff and confirm the bond vanishes.
+- Compute $g_{DA}(r)$ for your own system and find the first minimum. If it is
+  not near 3.5 Å, do not use 3.5 Å.
+- Count bonds per donor in bulk water; you should get roughly 3.5 with the
+  default criterion.
+
+## References
+
+- A. Luzar, D. Chandler, *Nature* **379**, 55 (1996) — the geometric criterion
+  and reactive-flux lifetimes used as defaults here.
+- A. Luzar, D. Chandler, *Phys. Rev. Lett.* **76**, 928 (1996) — hydrogen-bond
+  kinetics in water.
+- R. Kumar, J. R. Schmidt, J. L. Skinner, *J. Chem. Phys.* **126**, 204107
+  (2007) — how much the answer depends on which definition you pick.
 
 ## See also
 
-- [Pair Persistence](persist.md) — turn the bond list into a lifetime.
-- [Distribution Functions](distribution.md) — distance–angle CDF that defines
-  the criterion.
-- [Compute overview](index.md) — the Compute → Result pattern.
-- [API reference: Compute](../api/compute.md).
+- [RDF](rdf.md) — where a defensible cutoff comes from
+- [Persist](persist.md) — lifetimes, and the two-threshold treatment
+- [Distribution](distribution.md) — the underlying angle histograms
+- [API reference](../api/compute.md)

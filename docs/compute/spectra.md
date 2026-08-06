@@ -1,348 +1,301 @@
 # Spectra
 
-This page is a self-contained, textbook-style introduction to predicting
-**vibrational spectra** from molecular-dynamics trajectories — the
-time-correlation route pioneered for *ab initio* MD analysis. Every spectrum
-here is the Fourier transform of an autocorrelation (or cross-correlation) of a
-fluctuating quantity, dressed with the appropriate prefactor: a velocity ACF
-gives the vibrational density of states, a dipole-flux ACF gives the infrared
-spectrum, a polarizability ACF gives Raman, and cross-correlations give the
-chiral spectra (VCD, ROA).
+A normal-mode calculation gives you a stick spectrum of a molecule frozen at the
+bottom of a well: harmonic, at 0 K, one conformer. Real spectra are none of
+those things. They are broadened by the environment, shifted by anharmonicity,
+and averaged over every configuration the molecule actually visits.
 
-The spectral transforms run in the high-performance backend. Unlike the
-structural operators, they do **not** take frames — they take a *precomputed ACF*
-and the sampling interval, and return the spectrum.
+Molecular dynamics gives you all of that for free — if you know how to read a
+spectrum out of a trajectory. The route is always the same, and it is worth
+seeing the shape of it before any of the individual spectra:
 
-!!! note "Conventions used throughout"
-    - The sampling interval `dt_fs` is in **femtoseconds**; output frequencies are
-    in wavenumbers (cm⁻¹).
-    - You supply the raw ACF (built from the relevant time series — velocities,
-    dipole flux, polarizability). Build ACFs with
-    `molpy.compute.signal.acf_fft` (scalar series) or the multi-DOF helpers
-    documented in [vacf.md](vacf.md) and [msd.md](msd.md).
-    - Classical MD intensities usually need a **harmonic quantum correction**
-    $Q(\omega)$ before comparing to experiment (see §1.1).
+**Pick the fluctuating quantity the light couples to. Correlate it with its own
+past. Fourier transform. Multiply by a prefactor.**
 
----
+## One recipe, five spectra
 
-## 1. Every vibrational spectrum is the Fourier transform of an ACF
-
-The linear-response/Wiener–Khinchin result is that a spectral density is the
-Fourier transform of the time-correlation function of the corresponding dynamical
-variable $A(t)$:
+Formally, the spectral density of any dynamical variable $A(t)$ is the Fourier
+transform of its time-correlation function,
 
 $$
-I(\omega) \;\propto\; Q(\omega)\int_{-\infty}^{\infty}\!\big\langle A(0)\,A(t)\big\rangle\,e^{-i\omega t}\,\mathrm{d}t,
+I(\omega) \;\propto\; Q(\omega)\int_{-\infty}^{\infty}
+\big\langle A(0)\,A(t)\big\rangle\,e^{-i\omega t}\,\mathrm{d}t ,
 $$
 
-where $Q(\omega)$ is a method-specific prefactor (a harmonic quantum correction and,
-for Raman, a frequency/temperature factor). The choice of $A$ is what distinguishes
-the spectra:
+with $Q(\omega)$ a method-specific prefactor. Every spectrum on this page is
+that expression with a different $A$:
 
-| Spectrum | Dynamical variable $A$ | Operator |
+| Spectrum | $A$ — the quantity light couples to | Compute |
 |---|---|---|
-| VDOS (power) | atomic velocities | `PowerSpectrum` |
-| Infrared | total dipole derivative (flux) | `IRSpectrum` |
+| VDOS | atomic velocities | `PowerSpectrum` |
+| Infrared | dipole flux $\dot{\mathbf{M}}$ | `IRSpectrum` |
 | Raman | polarizability (iso + aniso) | `RamanSpectrum` |
 | VCD | electric ⊗ magnetic dipole | `VcdSpectrum` |
-| ROA | ROA invariants (iso + aniso) | `RoaSpectrum` |
+| ROA | ROA invariants | `RoaSpectrum` |
 | Resonance Raman | resonant polarizability | `ResonanceRamanSpectrum` |
 
-### 1.1 Prefactors, quantum corrections, and resolution
+So the physics of "which modes are visible" is not in the algorithm at all — it
+is in the choice of $A$. A mode that does not modulate the dipole contributes
+nothing to $\langle\dot{\mathbf M}(0)\cdot\dot{\mathbf M}(t)\rangle$ and is
+therefore infrared-silent. That is the familiar selection rule, arriving here as
+a property of a correlation function rather than as a symmetry table — and
+unlike the symmetry table, it comes with anharmonicity and temperature already
+included.
 
-Three numerical facts control every spectrum below.
+These computes do **not** take frames. They take a correlation function you have
+already built and the frame spacing in fs, and they return frequencies in
+wavenumbers.
 
-**Nyquist limit.** With sampling interval $\Delta t$ (fs), the highest
-resolvable wavenumber is
+## The vibrational density of states
 
-$$
-\tilde\nu_{\max}\;\approx\;\frac{1}{2c\,\Delta t}
-\;\approx\;\frac{16678}{\Delta t/\mathrm{fs}\;\mathrm{cm}^{-1}.
-$$
-
-Reaching C–H stretches (~3000 cm⁻¹) needs $\Delta t\lesssim 2.5$ fs; sub-fs
-dumps are typical for AIMD.
-
-**Spectral resolution.** An ACF of length $T$ resolves features no narrower
-than $\Delta\tilde\nu\sim 1/(cT)$. Truncating the ACF without a window produces
-sinc ringing; apply a Hann / Blackman taper (`signal.apply_window`) before the
-FFT when the ACF has not fully decayed.
-
-**Quantum correction.** Classical $\langle A(0)A(t)\rangle$ underweights high
-frequencies. A common harmonic factor is
+The simplest case needs no electronic structure at all — only velocities:
 
 $$
-Q(\omega)=\frac{\beta\hbar\omega}{1-e^{-\beta\hbar\omega},
-\qquad \beta=1/(k_B T),
+\boxed{\;g(\omega) \propto \int_{-\infty}^{\infty}
+\big\langle \mathbf{v}(0)\cdot\mathbf{v}(t)\big\rangle\,
+e^{-i\omega t}\,\mathrm{d}t\;}
 $$
 
-multiplied into $I(\omega)$ after the transform (and already partially
-included by some Raman prefactors when `temperature_k` is set).
-
-
+Because velocities couple to everything, the VDOS shows **every** mode the atoms
+execute, IR-active or not. That makes it the natural first spectrum to compute
+and the natural reference against which to ask "why is this peak missing from my
+IR?"
 
 <figure id="fig-vdos" class="molcrafts-figure" markdown>
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
-```molplot preset="molplot" theme="auto" aspect="16:9"
-mark:
-  type: line
-  strokeWidth: 2.2
-  interpolate: monotone
-data:
-  values:
-    - {nu: 0, I: 0.4}
-    - {nu: 200, I: 0.5}
-    - {nu: 400, I: 0.3}
-    - {nu: 600, I: 1.2}
-    - {nu: 800, I: 0.4}
-    - {nu: 1000, I: 0.2}
-    - {nu: 1600, I: 0.9}
-    - {nu: 2000, I: 0.15}
-    - {nu: 3000, I: 0.6}
-    - {nu: 3500, I: 0.1}
+```molplot preset="molplot" theme="auto" aspect="16:10"
+data: {$file: data/spectra/argon_vdos.json}
+mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
     field: nu
     type: quantitative
-    title: ν̃ (cm⁻¹)
+    title: "ν̃ (cm⁻¹)"
+    scale: {domain: [0, 200]}
   y:
     field: I
     type: quantitative
-    scale: {zero: false}
-    title: intensity (arb.)
-  color:
-    value: "#0284c7"
+    title: "g(ν̃)"
 ```
 
 </div>
 
-**Figure 1.** Schematic VDOS: low-frequency intermolecular band, fingerprint region, and high-frequency intramolecular stretches.
+**Figure 1.** Vibrational density of states of liquid argon at 85 K, from the
+velocity autocorrelation of the trajectory used on the [VACF](vacf.md) page. The
+band peaks at 18 cm⁻¹ and has died away by 150 cm⁻¹.
 </figure>
 
----
+Two features carry the physics. The spectrum is **non-zero at zero frequency** —
+0.81 of the peak height — because $g(0) \propto D$ and a liquid diffuses; a
+solid, after removing drift, goes to zero there. And the whole band lies below
+about 150 cm⁻¹, because argon is monatomic and has no internal vibrations at
+all: everything visible is atoms rattling in their cages, the same motion the
+[VACF](vacf.md) shows as a negative lobe at 440 fs. A molecular liquid adds
+sharp intramolecular bands one to two orders of magnitude higher.
 
-## 2. Vibrational density of states from velocities
+## Three numbers that decide whether your spectrum is meaningful
 
-The simplest spectrum is the **power spectrum** of the velocity ACF — the
-vibrational density of states (VDOS):
+Before computing anything, settle these. They are not tuning parameters; they
+are hard limits set by how you sampled.
+
+**The ceiling is your timestep.** With frame spacing $\Delta t$ in fs,
 
 $$
-\boxed{\;
-g(\omega)
-\propto
-\int_{-\infty}^{\infty}
-\big\langle \mathbf{v}(0)\cdot\mathbf{v}(t)\big\rangle
-\,e^{-i\omega t}\,\mathrm{d}t
-\;}
+\tilde\nu_{\max} \approx \frac{1}{2c\,\Delta t}
+\approx \frac{16678}{\Delta t/\mathrm{fs}}\ \mathrm{cm}^{-1}.
 $$
 
-It needs no electronic information — only velocities — and locates **every**
-vibrational mode, IR-active or not. The zero-frequency weight is proportional to
-the diffusion coefficient (solids: $g(0)=0$ after COM removal). Full VACF theory
-(cage effect, Green–Kubo $D$): [vacf.md](vacf.md). Sampling choices follow
-[vacf.md §6](vacf.md#6-hyperparameter-effects).
+At $\Delta t = 0.5$ fs that is 33 356 cm⁻¹ — everything. At 10 fs it is
+1668 cm⁻¹, so C–H and O–H stretches near 3000 cm⁻¹ do not merely come out
+inaccurate, they **alias** back into the fingerprint region as fake peaks.
+Reaching 3000 cm⁻¹ needs $\Delta t \lesssim 2.5$ fs.
+
+**The resolution is your total correlation length.** An ACF of duration $T$
+resolves no better than $\Delta\tilde\nu \approx 1/(cT)$: about 33 cm⁻¹ for a
+1 ps correlation, 3.3 cm⁻¹ for 10 ps. Sampling faster does not help here — only
+correlating longer does. These are independent knobs and it is easy to reach for
+the wrong one.
+
+**Classical intensities are wrong at high frequency**, because classical
+mechanics puts $k_BT$ into every mode while quantum mechanics does not.
+The usual harmonic correction is
+
+$$
+Q(\omega)=\frac{\beta\hbar\omega}{1-e^{-\beta\hbar\omega}},
+\qquad \beta=1/(k_B T),
+$$
+
+applied after the transform. It matters most where $\hbar\omega \gtrsim k_BT$ —
+above roughly 200 cm⁻¹ at room temperature, which is to say for every
+intramolecular band.
+
+None of the computes here apply it, because none of them takes a temperature.
+Multiplying `intensities` by $Q(\omega)$ is a line in your own script, and
+whether you did it belongs in your methods section.
+
+## Computing them
+
+Build the correlation function first. For a VDOS, one scalar ACF per degree of
+freedom, averaged:
 
 ```python
 import numpy as np
+from molpy.compute import Acf, PowerSpectrum
 
 rng = np.random.default_rng(0)
-velocities = rng.standard_normal((512, 64, 3)) # (n_frames, n_atoms, 3)
-dt, dt_fs = 0.5, 0.5 # sampling interval
-from molpy.compute import PowerSpectrum, signal
+velocities = np.ascontiguousarray(rng.normal(0.0, 0.02, size=(1024, 32, 3)))
 
-# One scalar series per degree of freedom, averaged into one curve.
-dofs = velocities.reshape(velocities.shape[0], -1)
-vacf = np.mean(
- [
- signal.acf_fft(np.ascontiguousarray(dofs[:, k]), 256)
- for k in range(dofs.shape[1])
- ],
- axis=0,
-) # raw velocity ACF
-vdos = PowerSpectrum()(vacf, dt_fs=0.5) # -> {frequency (cm^-1), intensity}
+vacf = np.asarray(Acf().compute(velocities, max_lag=256).acf)
+vdos = PowerSpectrum()(vacf, dt_fs=0.5)
+
+print(sorted(vdos))
+# -> ['frequencies_cm1', 'intensities', 'n_frames', 'resolution']
+print(round(float(np.asarray(vdos["frequencies_cm1"]).max())))   # -> 33356
 ```
 
----
+33 356 cm⁻¹ is exactly $16678/0.5$ — the Nyquist limit, confirming the
+$\Delta t$ you passed is the one you meant. Read `resolution` as a **count** of
+lags, not a frequency; the real resolution is $1/(cT)$ as above.
 
-## 3. Infrared spectrum from the dipole flux
-
-Linear response relates the IR absorption to the Fourier transform of the
-**total-dipole** autocorrelation. In practice classical MD uses the
-**dipole flux** $\dot{\mathbf{M}(t)=\mathrm{d}\mathbf{M}/\mathrm{d}t$ (equivalent
-up to $\omega^2$ factors and more convenient with noisy $\mathbf{M}$):
+Infrared takes the same shape of input — an ACF and `dt_fs` — but the ACF must be
+built from the **dipole flux** rather than velocities:
 
 $$
-\boxed{\;
-I_\mathrm{IR}(\omega)
-\propto
-Q(\omega)\,
-\frac{\beta}{3c\,V}
+\boxed{\;I_\mathrm{IR}(\omega) \propto Q(\omega)\,\frac{\beta}{3cV}
 \int_{-\infty}^{\infty}
-\big\langle \dot{\mathbf{M}(0)\cdot\dot{\mathbf{M}(t)\big\rangle
-\,e^{-i\omega t}\,\mathrm{d}t
-\;}
+\big\langle \dot{\mathbf{M}}(0)\cdot\dot{\mathbf{M}}(t)\big\rangle
+\,e^{-i\omega t}\,\mathrm{d}t\;}
 $$
 
-Term by term:
+where $\mathbf{M} = \sum_i q_i\mathbf{r}_i$ for a fixed-charge force field, or
+comes from [Voronoi integration](voronoi.md) of the electron density for *ab
+initio* MD. Using the flux $\dot{\mathbf M}$ rather than $\mathbf M$ is
+equivalent up to factors of $\omega^2$ and much better behaved numerically.
 
-- $\dot{\mathbf{M}$ — time derivative of the cell (or molecular) total dipole.
-  For *ab initio* MD, per-molecule dipoles come from
-  [Voronoi integration](voronoi.md) of the electron density; for classical force
-  fields, $\mathbf{M}=\sum_i q_i\mathbf{r}_i$ with fixed partial charges.
-- $Q(\omega)$ — harmonic quantum correction (§1.1).
-- $\beta/(3cV)$ — thermal and geometric prefactors (implementation may absorb
-  constants into arbitrary intensity units).
-
-**Selection rule in disguise.** Modes that do not modulate $\mathbf{M}$ have
-vanishing dipole flux and are IR-silent — exactly as in harmonic normal-mode
-analysis, but here anharmonicity and finite temperature are built in.
+Building that ACF is your job, and it is the step the API cannot do for you,
+so here it is explicitly. From charges and unwrapped positions:
 
 ```python
-from molpy.compute import IRSpectrum, RamanSpectrum
+charges = rng.normal(0.0, 0.4, size=32)
+positions = np.cumsum(rng.normal(0.0, 0.01, size=(1024, 32, 3)), axis=0)
 
-# Build ACFs the same way as the VDOS curve — from dipole flux /
-# polarizability time series instead of velocities.
-dipole_flux_acf = acf_iso = acf_aniso = vacf
-
-ir = IRSpectrum()(dipole_flux_acf, dt_fs=0.5)
+dipole = np.einsum("i,tij->tj", charges, positions)       # M(t), shape (T, 3)
+flux = np.gradient(dipole, 0.5, axis=0)                   # dM/dt, dt_fs = 0.5
+print(dipole.shape, flux.shape)                           # -> (1024, 3) (1024, 3)
 ```
 
----
-
-## 4. Raman spectrum from the polarizability
-
-Raman scattering is driven by fluctuations of the polarizability tensor
-$\boldsymbol{\alpha}(t)$. Split into isotropic and anisotropic invariants:
-
-$$
-\alpha = \tfrac13\operatorname{tr}\boldsymbol{\alpha},
-\qquad
-\beta^2
-= \tfrac12\bigl[
-  (\alpha_{xx}-\alpha_{yy})^2 + (\alpha_{yy}-\alpha_{zz})^2
-  + (\alpha_{zz}-\alpha_{xx})^2
-  + 6(\alpha_{xy}^2+\alpha_{yz}^2+\alpha_{zx}^2)
-\bigr].
-$$
-
-The corresponding spectral densities are Fourier transforms of
-$\langle\alpha(0)\alpha(t)\rangle$ and $\langle\beta(0)\beta(t)\rangle$. The
-**scattering intensity** multiplies by a frequency/temperature prefactor that
-depends on the incident laser wavenumber $\tilde\nu_0$ and temperature $T$:
-
-$$
-I_\mathrm{Raman}(\tilde\nu)
-\propto
-\frac{(\tilde\nu_0-\tilde\nu)^4}{\tilde\nu\,(1-e^{-\beta h c\tilde\nu})}
-\times
-\bigl[
-  I_\mathrm{iso}(\tilde\nu) + \tfrac{7}{45}I_\mathrm{aniso}(\tilde\nu)
-\bigr]
-$$
-
-(exact prefactor grouping follows the chosen polarization geometry; MolPy’s
-`RamanSpectrum` applies the standard bulk-phase form when
-`incident_frequency_cm1` and `temperature_k` are set).
+`flux` is a single 3-vector per frame, so correlate it as one entity —
+`(T, 1, 3)` — rather than as 32 separate particles:
 
 ```python
-raman = RamanSpectrum(incident_frequency_cm1=20000.0, temperature_k=300.0)(
-    acf_iso, acf_aniso, dt_fs=0.5
-)
+from molpy.compute import IRSpectrum
+
+flux_acf = np.asarray(Acf().compute(
+    np.ascontiguousarray(flux[:, None, :]), max_lag=256
+).acf)
+ir = IRSpectrum()(flux_acf, dt_fs=0.5)
+print(sorted(ir))
+# -> ['frequencies_cm1', 'intensities', 'n_frames', 'resolution']
 ```
 
-Leave `incident_frequency_cm1=0` and `temperature_k=0` for the bare spectral
-density without the scattering prefactor.
+The positions here are a random walk, so this spectrum means nothing physically
+— but the *shape* of the pipeline is the part that is hard to guess, and it is
+the same for Raman with a polarizability series in place of the dipole.
 
----
-
-## 5. Chiral spectra: VCD, ROA and resonance Raman
-
-Chiral spectra come from **cross**-correlations of response tensors.
-
-### 5.1 Vibrational circular dichroism (VCD)
-
-VCD is the differential absorption of left- vs right-circularly polarized IR
-light. In the time-correlation picture it is the Fourier transform of the
-electric-dipole ⊗ magnetic-dipole cross correlation:
-
-$$
-I_\mathrm{VCD}(\omega)
-\propto
-\int_{-\infty}^{\infty}
-\big\langle
-  \dot{\boldsymbol{\mu}(0)\cdot\dot{\mathbf{m}(t)
-\big\rangle
-\,e^{-i\omega t}\,\mathrm{d}t,
-$$
-
-where $\boldsymbol{\mu}$ and $\mathbf{m}$ are electric and magnetic dipole
-moments (or their fluxes). The cross term changes sign under mirror reflection —
-hence the optical activity of enantiomers.
-
-### 5.2 Raman optical activity (ROA) and resonance Raman
-
-ROA uses isotropic/anisotropic invariants built from the electric-dipole /
-magnetic-dipole / electric-quadrupole polarizability tensors. Resonance Raman
-enhances modes coupled to an electronic excitation; MolPy’s
-`ResonanceRamanSpectrum` takes the same iso/aniso ACF pair with an incident
-frequency near resonance.
+Raman needs **two** correlation functions, because scattering separates into an
+isotropic part (from the trace of the polarizability tensor, which measures how
+much the molecule's overall polarizability breathes) and an anisotropic part
+(from what is left after removing that trace, which measures how much its
+*shape* changes). It therefore returns four spectra:
 
 ```python
-from molpy.compute import VcdSpectrum, RoaSpectrum, ResonanceRamanSpectrum
+from molpy.compute import RamanSpectrum
 
-electric_magnetic_acf = vacf
-
-vcd = VcdSpectrum()(electric_magnetic_acf, dt_fs=0.5)
-roa = RoaSpectrum(averaged=True)(acf_iso, acf_aniso, dt_fs=0.5)
-rr = ResonanceRamanSpectrum(incident_frequency_cm1=20000.0)(
-    acf_iso, acf_aniso, dt_fs=0.5
-)
+raman = RamanSpectrum()(vacf, vacf, dt_fs=0.5)   # (acf_iso, acf_aniso)
+print(sorted(raman))
+# -> ['anisotropic', 'frequencies_cm1', 'isotropic', 'n_frames',
+#     'parallel', 'perpendicular', 'resolution']
 ```
 
-These APIs implement bulk-phase chiral spectroscopy from MD trajectories (Brehm
-& Thomas, 2017).
+`parallel` and `perpendicular` are the two scattering polarizations an
+experiment measures. Their ratio $I_\perp/I_\parallel$ is the **depolarization
+ratio**, and it is bounded above by 3/4; a mode at exactly 3/4 is
+depolarized (non-totally-symmetric) and one well below is polarized. Computing
+it is a cheap check that the isotropic and anisotropic ACFs were not swapped.
 
----
+`VcdSpectrum` (electric ⊗ magnetic dipole cross-correlation) and `RoaSpectrum`
+follow the same patterns: VCD takes one ACF, ROA takes the isotropic and
+anisotropic pair. Both chiral spectra are **signed**, so peaks point up or down
+according to the handedness of the mode, and both need far longer trajectories
+than their parent spectra because the signal is orders of magnitude smaller.
 
-## 6. Pitfalls checklist
+!!! note "No IR or Raman figure yet — TODO"
+    Only the VDOS above is shown with real data, because it needs nothing but
+    velocities. An honest IR or Raman figure needs a molecular trajectory with
+    charges — or, for *ab initio* intensities, an electron density to partition
+    — and the reference system behind these pages is monatomic argon, whose
+    dipole is identically zero. Add these when a molecular trajectory exists
+    under `scripts/docs_data/`.
 
-1. **Sampling interval too coarse** → Nyquist
-   $\tilde\nu_\mathrm{max}\approx 16678/(\Delta t/\mathrm{fs})$ cm⁻¹ must exceed
-   the highest mode; sub-fs dumps for C–H stretches (~3000 cm⁻¹).
-2. **ACF too short** → resolution $\propto 1/T_\mathrm{ACF}$; window before FFT
-   to suppress truncation ringing.
-3. **Missing quantum correction** → classical intensities need $Q(\omega)$ for
-   quantitative comparison with experiment.
-4. **Wrong dynamical variable** → IR needs the dipole *flux*, not raw $\mathbf{M}$
-   without the derivative convention; VDOS needs velocities.
-5. **Unconverged molecular dipoles/polarizabilities** → verify
-   [Voronoi](voronoi.md) charges before trusting IR intensities.
-6. **COM / total-dipole drift** → produces a huge $\omega=0$ spike; remove bulk
-   translation and check neutrality.
-7. **Thermostat noise** → sample spectra from NVE (or weakly thermostatted)
-   production after equilibration.
+## When it goes wrong
 
----
+**Peaks appear at frequencies where the molecule has no modes.**
+Aliasing. Your $\Delta t$ puts real high-frequency modes above Nyquist and they
+fold back. Check $16678/(\Delta t/\text{fs})$ against your highest expected
+band before believing any peak.
 
-## 7. References
+**The spectrum is covered in regular ripples.**
+Spectral leakage: the ACF was truncated before it decayed. Apply a window with
+[`signal.apply_window`](signal.md) — at the cost of broader peaks.
 
-- D. A. McQuarrie, *Statistical Mechanics*, Harper & Row (1976) — time-correlation
-  functions and spectral densities.
-- R. G. Gordon, *Adv. Magn. Reson.* **3**, 1 (1968) — correlation-function view
-  of IR/Raman band shapes.
+**Everything is one broad hump.**
+Resolution. $1/(cT)$ is larger than the splittings you are trying to see;
+correlate to longer lags.
+
+**Intensities are far too small at high frequency.**
+The quantum correction $Q(\omega)$ has not been applied.
+
+**A huge spike at zero frequency.**
+Centre-of-mass drift, which is a non-decaying component in the correlation
+function. Remove net momentum before dumping.
+
+**The IR spectrum is empty.**
+Your system is neutral and non-polar, or you built $\mathbf{M}$ with unsigned
+charges so everything cancelled. Check $\sum_i q_i\mathbf{r}_i$ is not
+identically zero.
+
+**Peak positions are systematically high.**
+Classical MD on a harmonic surface is a known offender, but check the mundane
+causes first: constrained bonds (SHAKE/LINCS) remove modes entirely, and a
+thermostat that is too aggressive shifts and broadens everything.
+
+## Check yourself
+
+- Compute the VDOS first, whatever spectrum you actually want. If a band is
+  missing there, it is missing from the trajectory, not from the selection rule.
+- Confirm `frequencies_cm1.max()` equals $16678/(\Delta t/\text{fs})$.
+- Halve `dt_fs` and recompute. Peak *positions* must not move; if they do, you
+  were aliasing.
+- Integrate the VDOS and compare with `vacf[0]`. The transform conserves the
+  zero-lag value, so the integral is $\langle v^2\rangle$ — which grows with
+  temperature. If you want a temperature-independent check, normalize the ACF by
+  its own first element before transforming, and then the integral is fixed.
+
+## References
+
 - M. Thomas, M. Brehm, R. Fligg, P. Vöhringer, B. Kirchner, *Phys. Chem. Chem.
-  Phys.* **15**, 6608 (2013) — IR and Raman from AIMD via TCFs.
-- M. Brehm, M. Thomas, *J. Phys. Chem. Lett.* **8**, 3409 (2017) — VCD, ROA and
-  resonance Raman from MD.
-- M. Brehm, M. Thomas, S. Gehrke, B. Kirchner, *J. Chem. Phys.* **152**, 164105
-  (2020) — AIMD analysis feature set.
+  Phys.* **15**, 6608 (2013) — computing IR, Raman, VCD and ROA from MD
+  correlation functions; the reference this implementation follows.
+- R. Ramírez, T. López-Ciudad, P. Kumar P, D. Marx, *J. Chem. Phys.* **121**,
+  3973 (2004) — quantum correction factors and what they do to intensities.
+- D. A. McQuarrie, *Statistical Mechanics*, Harper & Row (1976), ch. 21 — the
+  correlation-function formulation of spectroscopy.
 
 ## See also
 
-- [Voronoi](voronoi.md) — molecular dipoles for IR intensities.
-- [VACF](vacf.md) — VACF theory and sampling.
-- [Van Hove & Reorientational Dynamics](van_hove.md) — lineshape-related dynamics.
-- [Dielectric](dielectric.md) — dipole-fluctuation route to
-  $\varepsilon^*(\omega)$.
-- [API reference: Compute](../api/compute.md).
+- [VACF](vacf.md) — the velocity correlation the VDOS transforms
+- [Signal](signal.md) — windows, the frequency grid, and `acf_fft`
+- [Dielectric](dielectric.md) — the same machinery at far lower frequency
+- [Voronoi](voronoi.md) — where *ab initio* dipoles come from
+- [API reference](../api/compute.md)
