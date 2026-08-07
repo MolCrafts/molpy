@@ -16,7 +16,7 @@ no Python kernel class; evaluation always goes through
 import molpy as mp
 from molpy.conformer import Conformer
 
-ff = mp.io.read_xml_forcefield("oplsaa.xml")
+ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml"))
 mol, _ = Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
 frame = mp.typifier.OPLSAATypifier().typify(mol).to_frame()
 

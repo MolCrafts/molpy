@@ -14,13 +14,12 @@ from that force field.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING
 
 from molpy.core.forcefield import AtomType
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
-
     from molpy.core.forcefield import ForceField
 
 #: Specificity of one matched pattern component. Only the ordering matters: a
@@ -44,10 +43,17 @@ class TypeClassIndex:
     (layer 0) when two parameter sets would otherwise tie.
     """
 
-    def __init__(self, forcefield: ForceField) -> None:
+    def __init__(
+        self,
+        forcefield: ForceField,
+        atom_types: Sequence[AtomType] | None = None,
+    ) -> None:
         type_to_class: dict[str, str] = {}
         class_to_layer: dict[str, int] = {}
-        for at in forcefield.get_types(AtomType):
+        # Callers that also need the AtomType list (e.g. ForceFieldParams)
+        # pass it so get_types(AtomType) runs once for the whole construction.
+        types = atom_types if atom_types is not None else forcefield.get_types(AtomType)
+        for at in types:
             at_type = at.params.kwargs.get("type_", "*")
             cls = at.params.kwargs.get("class_", "*")
             layer = int(at.params.kwargs.get("layer") or 0)

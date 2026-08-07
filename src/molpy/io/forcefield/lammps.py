@@ -39,13 +39,21 @@ class LammpsForceFieldFormatter(LammpsFieldFormatter, ForceFieldFormatter):
 class LAMMPSForceFieldWriter:
     """Write a :class:`~molpy.ForceField` to a LAMMPS ``*.ff`` include."""
 
-    def __init__(self, fpath: str | Path | TextIO, precision: int = 6):
+    def __init__(
+        self,
+        fpath: str | Path | TextIO,
+        precision: int = 6,
+        *,
+        units: str = "real",
+    ):
         """
         Args:
             fpath: Output path or file-like object.
             precision: Decimal places for floating-point coefficients.
+            units: LAMMPS ``units`` style for the file (``real``, ``metal``, ``lj``).
         """
         self.precision = precision
+        self.units = units
         self._fpath = fpath
 
     def write(
@@ -57,8 +65,9 @@ class LAMMPSForceFieldWriter:
         dihedral_types: set[str] | None = None,
         improper_types: set[str] | None = None,
         skip_pair_style: bool = False,
+        units: str | None = None,
     ) -> None:
-        """Write ``forcefield`` (molrs units) as a LAMMPS include.
+        """Write ``forcefield`` (molrs store units) as a LAMMPS include.
 
         Args:
             forcefield: Force field to write.
@@ -68,12 +77,14 @@ class LAMMPSForceFieldWriter:
             dihedral_types: Optional dihedral type-name whitelist.
             improper_types: Optional improper type-name whitelist.
             skip_pair_style: If True, omit the ``pair_style`` line.
+            units: Override constructor ``units`` for this write.
         """
         import molrs
 
         kwargs = dict(
             precision=self.precision,
             skip_pair_style=skip_pair_style,
+            units=units if units is not None else self.units,
             atom_types=atom_types,
             bond_types=bond_types,
             angle_types=angle_types,

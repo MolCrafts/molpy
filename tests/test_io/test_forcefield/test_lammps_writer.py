@@ -188,6 +188,31 @@ def test_lj_plus_coulomb_written_as_combined_style():
     assert "pair_coeff c3 c3 0.200000 3.400000" in content
 
 
+def test_writer_units_metal_converts_energy(tmp_path):
+    """``units=\"metal\"`` writes energies in eV via the molrs lj hub."""
+    import re
+
+    from molpy import AtomStyle, PairStyle
+
+    ff = mp.ForceField("metal_ff")
+    atoms = ff.def_style(AtomStyle(name="full"))
+    c3 = atoms.def_type("c3", mass=12.01)
+    pair = ff.def_style(PairStyle(name="lj/cut"))
+    pair.def_type(c3, c3, epsilon=0.1078, sigma=3.39771)  # kcal/mol store
+
+    out = tmp_path / "metal.ff"
+    write_lammps_forcefield(out, ff, units="metal")
+    content = out.read_text()
+    assert "units metal" in content
+    match = re.search(r"pair_coeff\s+c3\s+c3\s+([\d.eE+-]+)\s+([\d.eE+-]+)", content)
+    assert match, content
+    eps_ev = float(match.group(1))
+    sigma = float(match.group(2))
+    # 1 kcal/mol ≈ 0.043364 eV → 0.1078 kcal/mol ≈ 0.004675 eV
+    assert abs(eps_ev - 0.004675) < 5e-5, eps_ev
+    assert abs(sigma - 3.39771) < 1e-5  # Å unchanged real↔metal
+
+
 def test_bonded_coeffs_written_in_lammps_units(tmp_path):
     """Bond, angle and dihedral coefficients are emitted in LAMMPS units.
 

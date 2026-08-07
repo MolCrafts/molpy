@@ -1,47 +1,24 @@
 """
-MolPy IO Module - Unified interface for molecular file I/O.
+MolPy I/O — the **only** public file I/O surface (``mp.io.read_*`` / ``write_*``).
 
-This module provides a clean, organized interface for reading and writing
-various molecular file formats. It supports:
-- Data files (PDB, XYZ, LAMMPS, GROMACS, AMBER, etc.)
-- Force field files (LAMMPS, XML, AMBER prmtop, GROMACS top)
-- Trajectory files (LAMMPS dump, XYZ)
+There is no package-root ``mp.read_*`` / ``mp.write_*``, and no ``MolStore`` /
+Zarr layer. Kernels and formats that molrs owns are reached through this
+module (thin wrappers / readers that call molrs); callers never ``import molrs``.
 
-Design Principles:
------------------
-1. Reader/Writer Pattern: Each format has dedicated Reader and Writer classes
-2. Factory Functions: Convenient read_xxx/write_xxx functions for simple usage
-3. Lazy Imports: Dependencies loaded only when needed
-4. Unified Interface: All readers have read(), all writers have write()
+Supports:
+- Data files (PDB, XYZ, LAMMPS, GROMACS, AMBER, …)
+- Force field files (LAMMPS ``*.ff``, OpenMM/OPLS XML, AMBER prmtop, GROMACS top)
+- Trajectory files (LAMMPS dump, XYZ, DCD/TRR/XTC where available)
 
-Basic Usage:
------------
-    # Reading data files
-    from molpy.io import read_pdb, read_lammps_data
+Basic usage::
 
-    frame = read_pdb("structure.pdb")
-    result = read_lammps_data("data.lammps", atom_style="full")
-    frame = result.frame
-    forcefield = result.forcefield
+    import molpy as mp
+    from molpy.data import get_forcefield_path
 
-    # Writing data files
-    from molpy.io import write_pdb, write_lammps_data
-
-    write_pdb("output.pdb", frame)
-    write_lammps_data("output.data", frame, atom_style="full")
-
-    # Reading force fields
-    from molpy.io import read_xml_forcefield, read_lammps_forcefield
-
-    ff = read_xml_forcefield("oplsaa.xml")
-    ff = read_lammps_forcefield("forcefield.in")
-
-    # Reading trajectories
-    from molpy.io import read_lammps_trajectory, read_xyz_trajectory
-
-    traj = read_lammps_trajectory("dump.lammpstrj")
-    for frame in traj:
-        process(frame)
+    frame = mp.io.read_pdb("structure.pdb")
+    result = mp.io.read_lammps_data("data.lammps", atom_style="full")
+    ff = mp.io.read_xml_forcefield(get_forcefield_path("oplsaa.xml"))
+    traj = mp.io.read_lammps_trajectory("dump.lammpstrj")
 """
 
 from pathlib import Path
@@ -67,7 +44,7 @@ from .data.lammps_molecule import (
     LammpsMoleculeReader,
     LammpsMoleculeWriter,
 )
-from .data.mol2 import Mol2Reader
+from .data.mol2 import Mol2Reader, Mol2Writer
 from .data.smiles import SmilesReader
 from .data.pdb import PDBReader, PDBWriter
 from .data.top import TopReader
@@ -79,6 +56,8 @@ from .readers import (
     read_amber,
     read_amber_ac,
     read_amber_inpcrd,
+    read_chgcar,
+    read_cube,
     read_dcd_trajectory,
     read_gro,
     read_LAMMPS_log,
@@ -129,18 +108,23 @@ from .log.lammps import (
 from .writers import (
     write_gro,
     write_lammps_data,
+    write_lammps_data_coeffs,
     write_lammps_forcefield,
     write_lammps_molecule,
     write_bond_react_map,
     write_lammps_bond_react_system,
     write_lammps_system,
     write_lammps_trajectory,
+    write_mol2,
     write_pdb,
     write_top,
     write_trr,
     write_xsf,
     write_xtc,
+    write_xyz,
     write_xyz_trajectory,
+    write_dcd_trajectory,
+    write_cube,
 )
 
 # 6. Utility functions (shallowest level)
@@ -171,21 +155,28 @@ __all__ = [
     "read_dcd_trajectory",
     "read_trr_trajectory",
     "read_xtc_trajectory",
+    "read_cube",
+    "read_chgcar",
     # Factory functions - Writers
     "write_gro",
     "write_lammps_data",
+    "write_lammps_data_coeffs",
     "write_lammps_forcefield",
     "write_lammps_molecule",
     "write_bond_react_map",
     "write_lammps_bond_react_system",
     "write_lammps_system",
     "write_lammps_trajectory",
+    "write_mol2",
     "write_pdb",
     "write_top",
     "write_xsf",
+    "write_xyz",
     "write_xyz_trajectory",
     "write_trr",
     "write_xtc",
+    "write_dcd_trajectory",
+    "write_cube",
     # Utility functions
     "read_txt",
     # Data Readers
@@ -197,6 +188,7 @@ __all__ = [
     "LammpsDataResult",
     "LammpsMoleculeReader",
     "Mol2Reader",
+    "Mol2Writer",
     "SmilesReader",
     "PDBReader",
     "TopReader",

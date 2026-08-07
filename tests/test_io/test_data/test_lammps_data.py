@@ -18,9 +18,23 @@ from molpy.io.data.lammps import LammpsDataReader, LammpsDataWriter
 
 
 def _section_rows(text: str, heading: str) -> list[list[str]]:
-    """Split the whitespace-delimited rows of one named data-file section."""
+    """Split the whitespace-delimited rows of one named data-file section.
+
+    Accepts both bare headings (``Atoms``) and style-tagged ones
+    (``Atoms # full``) that molrs emits.
+    """
     lines = text.splitlines()
-    start = lines.index(heading) + 2  # heading + blank line
+    start = None
+    for i, line in enumerate(lines):
+        if (
+            line == heading
+            or line.startswith(heading + " ")
+            or line.startswith(heading + "\t")
+        ):
+            start = i + 2  # heading + blank line
+            break
+    if start is None:
+        raise ValueError(f"section {heading!r} not found")
     rows = []
     for line in lines[start:]:
         if not line.strip():
@@ -455,21 +469,16 @@ class TestLammpsDataWriter:
         frame["atoms"] = molrs.Block(atoms_data)
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
-        # ForceField is an explicit writer input, never Frame metadata.
-        forcefield = mp.ForceField()
-
         tmp_file = tmp_path / "test.data"
 
-        writer = LammpsDataWriter(tmp_file, atom_style="atomic", forcefield=forcefield)
+        # Structure-only writer; *Coeffs are a separate step (write_lammps_data_coeffs).
+        writer = LammpsDataWriter(tmp_file, atom_style="atomic")
         writer.write(frame)
 
         # Check file content
         with open(tmp_file) as f:
             content = f.read()
             assert "2 atoms" in content
-            # Note: Force field writing may not be implemented yet
-            # assert "Pair Coeffs" in content
-            # assert "Bond Coeffs" in content
 
 
 class TestErrorHandling:
@@ -603,19 +612,15 @@ class TestForceFieldIntegration:
         frame["atoms"] = molrs.Block(atoms_data)
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
-        # ForceField is an explicit writer input, never Frame metadata.
-        forcefield = mp.ForceField()
-
         tmp_file = tmp_path / "test.data"
 
-        writer = LammpsDataWriter(tmp_file, atom_style="atomic", forcefield=forcefield)
+        writer = LammpsDataWriter(tmp_file, atom_style="atomic")
         writer.write(frame)
 
-        # Read back and check force field
+        # Read back: structure-only file still yields an (empty) ForceField handle.
         reader = LammpsDataReader(tmp_file, atom_style="atomic")
         new_forcefield = reader.read().forcefield
         assert new_forcefield is not None
-        # Note: Force field parsing may not be fully implemented yet
 
 
 class TestExplicitTypeLabels:
@@ -813,6 +818,132 @@ class TestExplicitTypeLabels:
         assert atoms is not None
 
 
+def test_sorted_type_names_numeric_before_lexicographic():
+    """Digit type labels sort by integer value (2 before 10), not string order.
+
+    Lexicographic sort of ``\"1\",\"10\",\"2\"`` remapped Type Labels and
+    scrambled Pair Coeffs / Masses on data-file round-trips.
+    """
+    from molpy.io.data.lammps import _sorted_type_names
+
+    assert _sorted_type_names(["10", "2", "1", "14"]) == ["1", "2", "10", "14"]
+    assert _sorted_type_names({"c3", "h1", "oh"}) == ["c3", "h1", "oh"]
+
+
+def test_forcefield_map_type_stamps_type_id():
+    """ForceField.map_type writes type_id from type labels (identity for ints)."""
+    import numpy as np
+
+    ff = mp.ForceField("map")
+    frame = molrs.Frame()
+    frame["atoms"] = molrs.Block(
+        {
+            "type": np.array(["2", "10", "2"]),
+            "x": np.zeros(3),
+            "y": np.zeros(3),
+            "z": np.zeros(3),
+        }
+    )
+    out = ff.map_type(frame)
+    assert out is frame
+    assert list(frame["atoms"]["type_id"]) == [2, 10, 2]
+
+
+def test_forcefield_map_type_requires_type_or_type_id():
+    import numpy as np
+
+    ff = mp.ForceField("map")
+    frame = molrs.Frame()
+    frame["atoms"] = molrs.Block({"x": np.zeros(1), "y": np.zeros(1), "z": np.zeros(1)})
+    with pytest.raises(ValueError, match="neither 'type' nor 'type_id'"):
+        ff.map_type(frame)
+
+
+def test_write_lammps_data_requires_type_columns(tmp_path):
+    import numpy as np
+
+    frame = molrs.Frame()
+    frame["atoms"] = molrs.Block(
+        {"x": np.zeros(1), "y": np.zeros(1), "z": np.zeros(1), "mass": np.ones(1)}
+    )
+    frame.box = mp.Box([5.0, 5.0, 5.0])
+    with pytest.raises(ValueError, match="neither 'type' nor 'type_id'"):
+        LammpsDataWriter(tmp_path / "bad.data").write(frame)
+
+
+def test_write_lammps_data_coeffs_unknown_label_raises(tmp_path):
+    """Non-integer FF type names without Frame map fail-fast."""
+    import numpy as np
+    from molpy import AtomStyle, PairStyle
+    from molpy.io.data.lammps import write_lammps_data_coeffs
+
+    ff = mp.ForceField("lab")
+    atoms = ff.def_style(AtomStyle(name="full"))
+    c3 = atoms.def_type("c3", mass=12.0)
+    pair = ff.def_style(PairStyle(name="lj/cut"))
+    pair.def_type(c3, c3, epsilon=0.1, sigma=3.4)
+
+    frame = molrs.Frame()
+    frame["atoms"] = molrs.Block(
+        {
+            "type": np.array(["c3"]),
+            "type_id": np.array([1], dtype=np.uint32),
+            "x": np.zeros(1),
+            "y": np.zeros(1),
+            "z": np.zeros(1),
+            "mass": np.array([12.0]),
+        }
+    )
+    frame.box = mp.Box([5.0, 5.0, 5.0])
+    path = tmp_path / "lab.data"
+    LammpsDataWriter(path).write(frame)
+    # Frame map has "c3" → ok
+    write_lammps_data_coeffs(path, frame, ff)
+    assert "Pair Coeffs" in path.read_text()
+
+    # Wrong label only on FF (no frame entry for pair type name mismatch)
+    ff2 = mp.ForceField("bad")
+    atoms2 = ff2.def_style(AtomStyle(name="full"))
+    oh = atoms2.def_type("oh", mass=16.0)
+    pair2 = ff2.def_style(PairStyle(name="lj/cut"))
+    pair2.def_type(oh, oh, epsilon=0.2, sigma=3.0)
+    with pytest.raises(ValueError, match="cannot resolve LAMMPS type id|oh"):
+        write_lammps_data_coeffs(path, frame, ff2)
+
+
+def test_write_lammps_data_coeffs_metal_units(tmp_path):
+    import numpy as np
+    import re
+    from molpy import AtomStyle, PairStyle
+    from molpy.io.data.lammps import write_lammps_data_coeffs
+
+    ff = mp.ForceField("m")
+    atoms = ff.def_style(AtomStyle(name="full"))
+    t = atoms.def_type("1", mass=12.0)
+    pair = ff.def_style(PairStyle(name="lj/cut"))
+    pair.def_type(t, t, epsilon=0.1078, sigma=3.4)
+
+    frame = molrs.Frame()
+    frame["atoms"] = molrs.Block(
+        {
+            "type": np.array(["1"]),
+            "x": np.zeros(1),
+            "y": np.zeros(1),
+            "z": np.zeros(1),
+            "mass": np.array([12.0]),
+        }
+    )
+    frame.box = mp.Box([5.0, 5.0, 5.0])
+    path = tmp_path / "m.data"
+    LammpsDataWriter(path).write(frame)
+    write_lammps_data_coeffs(path, frame, ff, units="metal")
+    content = path.read_text()
+    m = re.search(r"Pair Coeffs\s+(\d+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)", content)
+    assert m, content
+    eps = float(m.group(2))
+    assert abs(eps - 0.004675) < 5e-5, eps
+
+
 class TestForceFieldCoeffs:
     """Coefficient parsing and explicit writer ownership round-trip."""
 
@@ -851,12 +982,11 @@ class TestForceFieldCoeffs:
         bond_in = grab(result.forcefield, mp.BondStyle, ["k", "r0"])
 
         out = tmp_path / "round_trip.data"
-        LammpsDataWriter(
-            out,
-            atom_style="full",
-            type_labels=result.type_labels,
-            forcefield=result.forcefield,
-        ).write(result.frame)
+        from molpy.io.data.lammps import write_lammps_data_coeffs
+
+        result.forcefield.map_type(result.frame)
+        LammpsDataWriter(out, atom_style="full").write(result.frame)
+        write_lammps_data_coeffs(out, result.frame, result.forcefield)
         ff2 = LammpsDataReader(out, atom_style="full").read().forcefield
 
         assert grab(ff2, mp.PairStyle, ["epsilon", "sigma"]) == pair_in

@@ -17,3 +17,10 @@ are the only place to re-emit `str(path)`.
 
 Exceptions: symbolic names that are *not* paths (e.g. conda env name
 `"AmberTools25"`) stay `str`. Path-like conda prefixes are stored as `Path`.
+
+## io-bond-react-emit-stay-molpy
+
+**bond_react** (`io/data/lammps_bond_react.py`) and **emit** (`io/emit/`) stay
+in **molpy** until their product design is fixed. Do **not** sink map
+serialization, REACTER packaging, or engine-input emission to molrs yet —
+format boundaries that *are* settled (data/FF/trajectory) continue molrs-first.

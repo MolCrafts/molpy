@@ -1,25 +1,14 @@
-"""
-Modern LAMMPS data file I/O using Block.from_csv.
+"""LAMMPS data file I/O (structure via molrs, coeffs via molrs.ff)."""
 
-This module provides a clean, imperative approach to reading and writing
-LAMMPS data files using the Block.from_csv functionality.
-"""
-
-import warnings
 from dataclasses import dataclass
-from datetime import datetime
-from io import StringIO
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
-from molrs import Block, MetaValue
+from molrs import Frame, MetaValue
 from molpy._frame_meta import update_frame_meta
-from molpy.core.box import Box
 from molpy.core.fields import CHARGE, MOL_ID, FieldFormatter
-from molpy.core.forcefield import AtomisticForcefield, ForceField
-from molrs import Frame
+from molpy.core.forcefield import ForceField
 
 from .base import DataReader, DataWriter
 
@@ -37,6 +26,31 @@ class LammpsFieldFormatter(FieldFormatter):
         "q": CHARGE,
         "mol": MOL_ID,
     }
+
+
+def _is_int_type_token(value: object) -> bool:
+    """True when ``value`` is an integer or a pure digit string (optional sign)."""
+    if isinstance(value, (int, np.integer)) and not isinstance(value, (bool, np.bool_)):
+        return True
+    s = str(value).strip()
+    if not s:
+        return False
+    if s[0] in "+-":
+        s = s[1:]
+    return s.isdigit()
+
+
+def _sorted_type_names(names: list[str] | set[str] | tuple[str, ...]) -> list[str]:
+    """Order type names for dense LAMMPS ids.
+
+    Pure-integer labels sort **numerically** (``2`` before ``10``). Mixed or
+    non-numeric labels keep lexicographic order. String sort of digit labels is
+    a classic Type Labels bug: id 2 maps to ``\"10\"`` and Pair Coeffs scramble.
+    """
+    items = [str(n) for n in names]
+    if items and all(_is_int_type_token(n) for n in items):
+        return sorted(items, key=lambda n: int(n))
+    return sorted(items)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,68 +71,80 @@ class LammpsDataReader(DataReader[LammpsDataResult]):
         self.atom_style = atom_style
 
     def read(self, frame: Frame | None = None) -> LammpsDataResult:
-        """Read a LAMMPS data file into explicit frame and format products."""
-        frame = frame or Frame()
+        """Read a LAMMPS data file into frame + forcefield products.
 
-        # Read and parse the file
-        lines = self._read_lines()
-        sections = self._extract_sections(lines)
+        Structure, Type Labels, header counts, and ``* Coeffs`` text are
+        produced by :func:`molrs.io.read_lammps_data` (single pass). Coeffs
+        become a :class:`~molpy.ForceField` via
+        :func:`molrs.ff.read_lammps_data_coeffs`. This class only adapts the
+        molpy surface (``type`` column, atom_style column drop, result bundle).
+        """
+        del frame  # molrs always returns a new Frame
+        if not self._path.exists():
+            raise FileNotFoundError(f"LAMMPS data file not found: {self._path}")
 
-        # Parse header and set up box
-        header_info = self._parse_header(sections.get("header", []))
-        frame.box = self._create_box(
-            header_info["box_bounds"], header_info.get("tilts")
-        )
+        import molrs.ff as mff
+        import molrs.io
+        from molpy._frame_meta import get_frame_meta
 
-        # Parse masses if present
-        masses = self._parse_masses(sections.get("Masses", []))
-
-        # Parse type labels
-        type_labels = self._parse_type_labels(sections)
-
-        # Parse force field parameters
-        forcefield = self._parse_force_field(sections)
-
-        # Parse atoms section
-        if "Atoms" in sections:
-            frame["atoms"] = self._parse_atoms_section(
-                sections["Atoms"], masses, type_labels.get("atom", {})
+        try:
+            frame = molrs.io.read_lammps_data(
+                str(self._path), atom_style=self.atom_style
             )
+        except FileNotFoundError:
+            raise
+        except OSError as exc:
+            msg = str(exc).lower()
+            if "no such file" in msg or "not found" in msg:
+                raise FileNotFoundError(str(exc)) from exc
+            raise ValueError(f"Failed to read LAMMPS data file: {exc}") from exc
 
-        # Build id to index mapping for connectivity
-        id_to_idx = {}
-        if "atoms" in frame:
-            for i, atom_id in enumerate(frame["atoms"]["id"]):
-                id_to_idx[int(atom_id)] = i
+        missing_axes = self._missing_box_axes(frame)
+        if missing_axes:
+            raise ValueError(f"missing box bounds for axis {missing_axes}")
 
-        # Parse connectivity sections
-        if "Bonds" in sections and header_info["counts"].get("bonds", 0) > 0:
-            frame["bonds"] = self._parse_connectivity_section(
-                sections["Bonds"], "bond", type_labels.get("bond", {}), id_to_idx
-            )
+        type_labels = self._type_labels_from_meta(frame)
+        self._adapt_frame(frame, type_labels)
 
-        if "Angles" in sections and header_info["counts"].get("angles", 0) > 0:
-            frame["angles"] = self._parse_connectivity_section(
-                sections["Angles"], "angle", type_labels.get("angle", {}), id_to_idx
-            )
+        coeffs_text = get_frame_meta(frame, "lammps_coeffs_text", None)
+        if coeffs_text:
+            try:
+                forcefield = mff.read_lammps_data_coeffs(
+                    str(coeffs_text),
+                    units="real",
+                    atom_labels=type_labels.get("atom"),
+                    bond_labels=type_labels.get("bond"),
+                    angle_labels=type_labels.get("angle"),
+                    dihedral_labels=type_labels.get("dihedral"),
+                    improper_labels=type_labels.get("improper"),
+                )
+            except Exception as e:
+                msg = str(e)
+                # Preserve historical error shape for bad *Coeffs lines.
+                if (
+                    "not a number" in msg
+                    or "not a float" in msg
+                    or "unexpected token" in msg
+                    or "pair_coeff" in msg
+                ):
+                    raise ValueError(f"malformed PairCoeffs: {e}") from e
+                raise ValueError(
+                    f"Failed to parse LAMMPS force-field coeffs: {e}"
+                ) from e
+        else:
+            forcefield = mff.ForceField("LAMMPS")
 
-        if "Dihedrals" in sections and header_info["counts"].get("dihedrals", 0) > 0:
-            frame["dihedrals"] = self._parse_connectivity_section(
-                sections["Dihedrals"],
-                "dihedral",
-                type_labels.get("dihedral", {}),
-                id_to_idx,
-            )
+        counts = self._counts_from_meta(frame)
+        for key, block in (
+            ("atoms", "atoms"),
+            ("bonds", "bonds"),
+            ("angles", "angles"),
+            ("dihedrals", "dihedrals"),
+            ("impropers", "impropers"),
+        ):
+            if block in frame:
+                counts.setdefault(key, int(frame[block].nrows))
 
-        if "Impropers" in sections and header_info["counts"].get("impropers", 0) > 0:
-            frame["impropers"] = self._parse_connectivity_section(
-                sections["Impropers"],
-                "improper",
-                type_labels.get("improper", {}),
-                id_to_idx,
-            )
-
-        # Store exact-dtype scalar provenance on the Frame.
         update_frame_meta(
             frame,
             {
@@ -128,468 +154,163 @@ class LammpsDataReader(DataReader[LammpsDataResult]):
             },
         )
 
-        # Translate format-specific field names to canonical names
-        self._formatter.canonicalize_frame(frame)
-
         return LammpsDataResult(
             frame=frame,
             forcefield=forcefield,
-            counts=dict(header_info["counts"]),
+            counts=counts,
             type_labels={
-                f"{key}_types": [labels[index] for index in sorted(labels)]
+                f"{key}_types": [labels[i] for i in sorted(labels)]
                 for key, labels in type_labels.items()
             },
         )
 
-    _formatter = LammpsFieldFormatter()
+    def _type_labels_from_meta(self, frame: Frame) -> dict[str, dict[int, str]]:
+        """Parse molrs ``*_type_labels`` meta (``id:label,...``) into maps."""
+        from molpy._frame_meta import get_frame_meta
 
-    def _read_lines(self) -> list[str]:
-        """Read file and return non-empty, non-comment lines."""
-        with open(self._path) as f:
-            return [
-                line.strip()
-                for line in f
-                if line.strip() and not line.strip().startswith("#")
-            ]
-
-    def _extract_sections(self, lines: list[str]) -> dict[str, list[str]]:
-        """Extract sections from LAMMPS data file."""
-        sections = {"header": []}
-        current_section = "header"
-
-        section_keywords = [
-            "atoms",
-            "masses",
-            "bonds",
-            "angles",
-            "dihedrals",
-            "impropers",
-            "bodies",
-            "velocities",
-            "ellipsoids",
-            "lines",
-            "triangles",
-            "atom type labels",
-            "bond type labels",
-            "angle type labels",
-            "dihedral type labels",
-            "improper type labels",
-            "pair coeffs",
-            "bond coeffs",
-            "angle coeffs",
-            "dihedral coeffs",
-            "improper coeffs",
-        ]
-
-        for line in lines:
-            line_lower = line.lower()
-
-            # Check if this line starts a new section
-            if any(line_lower.startswith(keyword) for keyword in section_keywords):
-                if "type labels" in line_lower:
-                    # Handle type labels sections
-                    section_name = line.replace("Type Labels", "TypeLabels").replace(
-                        " ", ""
-                    )
-                elif "coeffs" in line_lower:
-                    # Handle force field coefficients sections
-                    section_name = line.replace(" ", "")
-                else:
-                    # Handle regular sections
-                    section_name = line.split()[0].capitalize()
-                current_section = section_name
-                sections[current_section] = []
-            else:
-                # Add line to current section
-                if current_section not in sections:
-                    sections[current_section] = []
-                sections[current_section].append(line)
-
-        return sections
-
-    def _parse_header(self, header_lines: list[str]) -> dict[str, Any]:
-        """Parse header information."""
-        counts = {}
-        box_bounds: dict[str, tuple[float, float]] = {}
-        tilts: tuple[float, float, float] | None = None
-
-        for line in header_lines:
-            parts = line.split()
-            if len(parts) < 2:
+        out: dict[str, dict[int, str]] = {}
+        for kind, meta_key in (
+            ("atom", "atom_type_labels"),
+            ("bond", "bond_type_labels"),
+            ("angle", "angle_type_labels"),
+            ("dihedral", "dihedral_type_labels"),
+            ("improper", "improper_type_labels"),
+        ):
+            packed = get_frame_meta(frame, meta_key, None)
+            if not packed:
                 continue
-
-            line_lower = line.lower()
-            tokens_lower = [p.lower() for p in parts]
-
-            # Box-bound lines have float values; parse them before the int-count branch.
-            if "xlo" in tokens_lower and "xhi" in tokens_lower:
-                box_bounds["x"] = self._parse_box_bound(parts, line)
-                continue
-            if "ylo" in tokens_lower and "yhi" in tokens_lower:
-                box_bounds["y"] = self._parse_box_bound(parts, line)
-                continue
-            if "zlo" in tokens_lower and "zhi" in tokens_lower:
-                box_bounds["z"] = self._parse_box_bound(parts, line)
-                continue
-
-            # Triclinic tilt factors: "xy xz yz <value-x> <value-y> <value-z>"
-            # with values written first per LAMMPS convention.
-            if "xy" in tokens_lower and "xz" in tokens_lower and "yz" in tokens_lower:
+            id_to_label: dict[int, str] = {}
+            for item in str(packed).split(","):
+                item = item.strip()
+                if not item or ":" not in item:
+                    continue
+                sid, lab = item.split(":", 1)
                 try:
-                    tilts = (float(parts[0]), float(parts[1]), float(parts[2]))
-                except (ValueError, IndexError) as exc:
-                    raise ValueError(
-                        f"Failed to parse LAMMPS tilt factors line: {line!r}"
-                    ) from exc
-                continue
-
-            try:
-                count = int(parts[0])
-            except ValueError:
-                continue
-
-            if "atoms" in line_lower and not line_lower.startswith("atoms"):
-                counts["atoms"] = count
-            elif "bonds" in line_lower and not line_lower.startswith("bonds"):
-                counts["bonds"] = count
-            elif "angles" in line_lower and not line_lower.startswith("angles"):
-                counts["angles"] = count
-            elif "dihedrals" in line_lower and not line_lower.startswith("dihedrals"):
-                counts["dihedrals"] = count
-            elif "impropers" in line_lower and not line_lower.startswith("impropers"):
-                counts["impropers"] = count
-            elif "atom types" in line_lower:
-                counts["atom_types"] = count
-            elif "bond types" in line_lower:
-                counts["bond_types"] = count
-            elif "angle types" in line_lower:
-                counts["angle_types"] = count
-            elif "dihedral types" in line_lower:
-                counts["dihedral_types"] = count
-            elif "improper types" in line_lower:
-                counts["improper_types"] = count
-
-        return {
-            "counts": counts,
-            "box_bounds": box_bounds if box_bounds else None,
-            "tilts": tilts,
-        }
-
-    @staticmethod
-    def _parse_box_bound(parts: list[str], line: str) -> tuple[float, float]:
-        """Parse a `lo hi <axis>lo <axis>hi` line into a (lo, hi) tuple."""
-        try:
-            return (float(parts[0]), float(parts[1]))
-        except (ValueError, IndexError) as exc:
-            raise ValueError(
-                f"Failed to parse LAMMPS box bounds line: {line!r}"
-            ) from exc
-
-    def _create_box(
-        self,
-        box_bounds: dict[str, tuple[float, float]] | None,
-        tilts: tuple[float, float, float] | None = None,
-    ) -> Box:
-        """Create Box from parsed bounds. Raises if any axis is missing."""
-        required_axes = ("x", "y", "z")
-        missing = (
-            list(required_axes)
-            if not box_bounds
-            else [axis for axis in required_axes if axis not in box_bounds]
-        )
-        if missing:
-            raise ValueError(
-                f"LAMMPS data file {self._path} is missing box bounds for axis "
-                f"{missing}. Required header lines: 'xlo xhi', 'ylo yhi', 'zlo zhi'."
-            )
-
-        lengths = np.array(
-            [box_bounds[axis][1] - box_bounds[axis][0] for axis in required_axes]
-        )
-        origin = np.array([box_bounds[axis][0] for axis in required_axes])
-        if tilts is not None and any(t != 0.0 for t in tilts):
-            return Box.tric(lengths, tilts, origin=origin)
-        return Box(lengths, origin=origin)
-
-    def _parse_masses(self, mass_lines: list[str]) -> dict[str, float]:
-        """Parse mass section."""
-        masses = {}
-        for line in mass_lines:
-            parts = line.split()
-            if len(parts) >= 2:
-                try:
-                    type_str = parts[0]
-                    mass = float(parts[1])
-                    masses[type_str] = mass
+                    id_to_label[int(sid)] = lab
                 except ValueError:
                     continue
-        return masses
+            if id_to_label:
+                out[kind] = id_to_label
+        return out
 
-    def _parse_type_labels(
-        self, sections: dict[str, list[str]]
-    ) -> dict[str, dict[int, str]]:
-        """Parse all type labels sections."""
-        type_labels = {}
+    def _counts_from_meta(self, frame: Frame) -> dict[str, int]:
+        from molpy._frame_meta import get_frame_meta
 
-        label_sections = {
-            "atom": "AtomTypeLabels",
-            "bond": "BondTypeLabels",
-            "angle": "AngleTypeLabels",
-            "dihedral": "DihedralTypeLabels",
-            "improper": "ImproperTypeLabels",
-        }
-
-        for label_type, section_name in label_sections.items():
-            if section_name in sections:
-                id_to_label = {}
-                for line in sections[section_name]:
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        try:
-                            type_id = int(parts[0])
-                            label = parts[1]
-                            id_to_label[type_id] = label
-                        except ValueError:
-                            continue
-                type_labels[label_type] = id_to_label
-
-        return type_labels
-
-    def _parse_force_field(self, sections: dict[str, list[str]]) -> ForceField:
-        """Parse LAMMPS ``*Coeffs`` sections into a :class:`ForceField`.
-
-        Each coefficient line is keyed by its 1-indexed numeric type id and the
-        per-type parameters are stored on a :class:`Type` named ``"<cat>_<id>"``
-        — the exact shape :class:`LammpsDataWriter` reads back, so read→write
-        round-trips the parameters instead of silently dropping them.
-
-        Malformed (non-numeric / too-short) lines raise ``ValueError`` rather
-        than being swallowed; reading is total.
-        """
-        forcefield = AtomisticForcefield()
-
-        # (section, category, def_style, canonical param names). LAMMPS coeff
-        # arity is style-dependent and not declared in the data file, so the
-        # names are applied positionally to however many params each line
-        # carries (a 2-param harmonic improper and a 3-param cvff improper both
-        # parse). The leading column is always the integer type id.
-        # arity = number of atom-type endpoints molrs requires in the dash-form
-        # type name for each category. LAMMPS data coeff sections are keyed only
-        # by an integer type id (no atom-type names), so a synthetic dash name
-        # ``"<id>-<id>..."`` of the right arity is used; :class:`LammpsDataWriter`
-        # reads the id back via ``name.split("-")[0]``.
-        coeff_specs = [
-            (
-                "PairCoeffs",
-                "pair",
-                lambda: forcefield.def_pairstyle("lj/cut"),
-                ["epsilon", "sigma"],
-                1,
-            ),
-            (
-                "BondCoeffs",
-                "bond",
-                lambda: forcefield.def_bondstyle("harmonic"),
-                ["k", "r0"],
-                2,
-            ),
-            (
-                "AngleCoeffs",
-                "angle",
-                lambda: forcefield.def_anglestyle("harmonic"),
-                ["k", "theta0"],
-                3,
-            ),
-            (
-                "DihedralCoeffs",
-                "dihedral",
-                lambda: forcefield.def_dihedralstyle("harmonic"),
-                ["k", "d", "n"],
-                4,
-            ),
-            (
-                "ImproperCoeffs",
-                "improper",
-                lambda: forcefield.def_improperstyle("harmonic"),
-                ["k", "d", "n"],
-                4,
-            ),
-        ]
-
-        for section, category, make_style, param_names, arity in coeff_specs:
-            if section not in sections:
+        counts: dict[str, int] = {}
+        packed = get_frame_meta(frame, "lammps_counts", None)
+        if not packed:
+            return counts
+        for part in str(packed).split(","):
+            if "=" not in part:
                 continue
-            style = make_style()
-            for line in sections[section]:
-                if not line.strip():
-                    continue
-                parts = line.split()
-                try:
-                    type_id = int(parts[0])
-                    values = [float(x) for x in parts[1:]]
-                except (ValueError, IndexError) as e:
-                    raise ValueError(
-                        f"malformed {section} line {line!r}: expected an integer "
-                        f"type id followed by numeric parameters ({e})"
-                    ) from e
-                params = dict(zip(param_names, values))
-                type_name = "-".join([str(type_id)] * arity)
-                forcefield.def_type(category, style.name, type_name, params)
+            k, v = part.split("=", 1)
+            try:
+                counts[k.strip()] = int(v)
+            except ValueError:
+                continue
+        return counts
 
-        return forcefield
+    def _missing_box_axes(self, frame: Frame) -> list[str]:
+        """Axes absent from the data header (not merely zero-length)."""
+        from molpy._frame_meta import get_frame_meta
 
-    def _parse_atoms_section(
+        packed = get_frame_meta(frame, "lammps_box_axes", None)
+        if packed is None:
+            # Older molrs without the flag: treat missing box as all axes.
+            return [] if frame.box is not None else ["x", "y", "z"]
+        flags: dict[str, bool] = {}
+        for part in str(packed).split(","):
+            if "=" not in part:
+                continue
+            k, v = part.split("=", 1)
+            flags[k.strip()] = v.strip() in ("1", "true", "True")
+        return [ax for ax in ("x", "y", "z") if not flags.get(ax, False)]
+
+    def _adapt_frame(
         self,
-        atom_lines: list[str],
-        masses: dict[str, float],
-        type_labels: dict[int, str],
-    ) -> Block:
-        """Parse atoms section using Block.from_csv with space delimiter."""
-        if not atom_lines:
-            return Block()
+        frame: Frame,
+        type_labels: dict[str, dict[int, str]],
+    ) -> None:
+        """Post-process molrs Frame for molpy surface compatibility.
 
-        # Create space-separated string for Block.from_csv
-        csv_lines = []
+        - Expose ``type`` (string labels when a Type Labels section exists,
+          else numeric ``type_id``).
+        - Drop columns the requested ``atom_style`` does not carry (molrs
+          auto-detects style from the file and may keep extra fields).
+        """
+        style = self.atom_style.lower().split("/")[0]
+        drop_on_atoms: set[str] = set()
+        if style == "atomic":
+            drop_on_atoms.update({"mol_id", "charge"})
+        elif style == "charge":
+            drop_on_atoms.add("mol_id")
 
-        # Add header based on atom style
-        if self.atom_style == "full":
-            header = ["id", "mol", "type", "q", "x", "y", "z"]
-        elif self.atom_style == "charge":
-            header = ["id", "type", "q", "x", "y", "z"]
-        elif self.atom_style == "body":
-            header = ["id", "type", "bodyflag", "mass", "x", "y", "z"]
-        elif self.atom_style == "atomic":
-            header = ["id", "type", "x", "y", "z"]
-        else:
-            raise ValueError(
-                f"Unsupported LAMMPS atom_style {self.atom_style!r}. "
-                "Supported: 'full', 'charge', 'atomic', 'body'."
-            )
-
-        csv_lines.append(" ".join(header))
-
-        # Add data lines, truncating any trailing image flags (ix iy iz) or
-        # body-specific extras so columns line up with the header.
-        n_cols = len(header)
-        for line in atom_lines:
-            parts = line.split()
-            if len(parts) >= n_cols:
-                csv_lines.append(" ".join(parts[:n_cols]))
-
-        # Parse using Block.from_csv with space delimiter
-        csv_string = "\n".join(csv_lines)
-        block = Block.from_csv(
-            StringIO(csv_string), delimiter=" ", skipinitialspace=True
-        )
-
-        # Add mass information. atom_style="body" already carries per-atom
-        # mass in the atoms section; do not overwrite it from the (absent)
-        # Masses section. Other styles look mass up by atom type, falling
-        # back to 1.0 when the file has no Masses section.
-        if block.nrows > 0 and "mass" not in block:
-            mass_values = []
-            for type_str in block["type"]:
-                mass_values.append(masses.get(str(type_str), 1.0))
-            block["mass"] = np.array(mass_values)
-
-            # Convert numeric types back to string types using type labels
-            if type_labels:
-                converted_types = []
-                for type_id in block["type"]:
-                    try:
-                        type_id_int = int(type_id)
-                        converted_type = type_labels.get(type_id_int, str(type_id))
-                        converted_types.append(converted_type)
-                    except (ValueError, TypeError):
-                        converted_types.append(str(type_id))
-                block["type"] = np.array(converted_types)
-
-        return block
-
-    def _parse_connectivity_section(
-        self,
-        lines: list[str],
-        section_type: str,
-        type_labels: dict[int, str],
-        id_to_idx: dict[int, int],
-    ) -> Block:
-        """Parse connectivity sections (bonds, angles, dihedrals, impropers)."""
-        if not lines:
-            return Block()
-
-        # Define temporary headers for parsing (using atom1, atom2 etc. as placeholders)
-        headers = {
-            "bond": ["id", "type", "atom1", "atom2"],
-            "angle": ["id", "type", "atom1", "atom2", "atom3"],
-            "dihedral": ["id", "type", "atom1", "atom2", "atom3", "atom4"],
-            "improper": ["id", "type", "atom1", "atom2", "atom3", "atom4"],
+        label_keys = {
+            "atoms": "atom",
+            "bonds": "bond",
+            "angles": "angle",
+            "dihedrals": "dihedral",
+            "impropers": "improper",
         }
+        for block_name, label_key in label_keys.items():
+            if block_name not in frame:
+                continue
+            block = frame[block_name]
+            labels = type_labels.get(label_key, {})
+            if "type_id" in block:
+                type_ids = np.asarray(block["type_id"])
+                # Frame schema declares ``type`` as string (label-aware). Always
+                # materialise a unicode column — numeric ids become digit strings
+                # when no Type Labels section is present.
+                if labels:
+                    mapped = [labels.get(int(t), str(int(t))) for t in type_ids]
+                else:
+                    mapped = [str(int(t)) for t in type_ids]
+                block["type"] = np.asarray(mapped, dtype=str)
+            if block_name == "atoms" and drop_on_atoms:
+                for col in list(drop_on_atoms):
+                    if col in block:
+                        try:
+                            del block[col]
+                        except Exception:
+                            try:
+                                block.remove(col)  # type: ignore[attr-defined]
+                            except Exception:
+                                pass
 
-        header = headers[section_type]
-        csv_lines = [" ".join(header)]
-
-        # Add data lines directly
-        for line in lines:
-            parts = line.split()
-            if len(parts) >= len(header):
-                csv_lines.append(line)
-
-        # Parse using Block.from_csv
-        csv_string = "\n".join(csv_lines)
-        block = Block.from_csv(
-            StringIO(csv_string), delimiter=" ", skipinitialspace=True
-        )
-
-        # Map atom IDs to 0-based indices and rename columns
-        atom_key_map = {
-            "atom1": "atomi",
-            "atom2": "atomj",
-            "atom3": "atomk",
-            "atom4": "atoml",
-        }
-
-        for old_key, new_key in atom_key_map.items():
-            if old_key in block:
-                # Convert IDs to indices using the provided mapping
-                ids = block[old_key].astype(int)
-                indices = np.array([id_to_idx.get(id_val, -1) for id_val in ids])
-
-                # Check for unmapped IDs (on the signed array, -1 sentinel intact).
-                if np.any(indices == -1):
-                    unmapped = ids[indices == -1]
-                    import warnings
-
-                    warnings.warn(
-                        f"Found {len(unmapped)} atom IDs in {section_type} section "
-                        f"that could not be mapped to atom indices: {unmapped[:5]}..."
-                    )
-
-                # Store endpoints as uint32 — the canonical dtype molrs uses for
-                # relation endpoints (matching Atomistic.to_frame). A signed-int
-                # column is silently ignored by molrs.from_frame, which would drop
-                # every bond/angle/dihedral on the Frame->Atomistic round-trip.
-                block[new_key] = indices.astype(np.uint32)
-                del block[old_key]
-
-        return block
+    _formatter = LammpsFieldFormatter()
 
 
 class LammpsDataWriter(DataWriter):
-    """Modern LAMMPS data file writer using Block.to_csv approach.
+    """Structure-only LAMMPS data writer (thin molrs façade).
 
-    **Important Requirements:**
-    - Atoms in the frame must have an 'id' field. This field is required
-      to map atom indices to atom IDs for LAMMPS output.
-    - Connectivity data (bonds, angles, dihedrals) in the frame uses atom
-      indices (0-based from to_frame()). The writer automatically converts
-      these indices to atom IDs using the index->ID mapping from the atoms
-      'id' field.
+    Structure emission is :func:`molrs.io.write_lammps_data`. molrs resolves
+    atom ``id`` (1..N when absent), ``type`` / ``type_id`` numbering, Masses
+    (element-preferred), and ``* Type Labels`` from the Frame. This class only:
 
-    **Frame Structure:**
-    - Atoms: Must include 'id' field. Other required fields depend on atom_style.
-    - Bonds/Angles/Dihedrals: Use atom indices in 'atomi', 'atomj', 'atomk', 'atoml'
-      (from to_frame()). These are 0-based indices that will be converted to 1-based atom IDs.
+    1. Optionally seeds meta with constructor ``type_labels`` (unused-type
+       inventory) so molrs can merge them with labels present on the Frame.
+    2. Prepends a Drude ``fix drude`` comment when shells are detected.
+
+    Force-field ``* Coeffs`` are **not** written here — call
+    :func:`write_lammps_data_coeffs` as a separate step.
+
+    **Frame requirements:**
+    - Atoms must carry ``type`` and/or ``type_id`` (and connectivity blocks
+      that are present must too). Prefer
+      :meth:`~molrs.ff.forcefield.ForceField.map_type` first.
+    - Connectivity endpoints are 0-based row indices (as from
+      ``Atomistic.to_frame()``); molrs maps them to atom IDs.
     """
+
+    #: Constructor key → frame meta key for optional unused-type inventory.
+    _TYPE_LABEL_META = (
+        ("atom_types", "atom_type_labels"),
+        ("bond_types", "bond_type_labels"),
+        ("angle_types", "angle_type_labels"),
+        ("dihedral_types", "dihedral_type_labels"),
+        ("improper_types", "improper_type_labels"),
+    )
 
     def __init__(
         self,
@@ -597,210 +318,96 @@ class LammpsDataWriter(DataWriter):
         atom_style: str = "full",
         *,
         type_labels: dict[str, list[str]] | None = None,
-        forcefield: ForceField | None = None,
     ) -> None:
+        """Structure-only writer.
+
+        Args:
+            path: Output data file path.
+            atom_style: Accepted for API parity (layout from columns).
+            type_labels: Optional **extra** unused-type inventory only. Type
+                ids always come from the Frame (``type`` then ``type_id``).
+                Prefer :meth:`~molrs.ff.forcefield.ForceField.map_type` on the
+                Frame before write. Do **not** pass a ForceField here — use
+                :func:`write_lammps_data_coeffs` as a separate step.
+        """
         super().__init__(Path(path))
         self.atom_style = atom_style
         self.type_labels = {
             key: list(labels) for key, labels in (type_labels or {}).items()
         }
-        self.forcefield = forcefield
 
     _formatter = LammpsFieldFormatter()
 
     def write(self, frame: Frame) -> None:
-        """Write Frame to LAMMPS data file.
+        """Write Frame structure to a LAMMPS data file (via molrs).
 
-        Args:
-            frame: Frame containing atoms and optionally bonds/angles/dihedrals.
-                  Atoms must have 'id' field.
-
-        Raises:
-            ValueError: If atoms are missing 'id' field.
+        Frame must already carry ``type`` and/or ``type_id`` on atoms (and on
+        any connectivity blocks that are present). Force-field ``* Coeffs`` are
+        **not** written here — call :func:`write_lammps_data_coeffs` after.
         """
-        # The LAMMPS data file is positional (``atom-ID mol-ID type q x y z``),
-        # so the writer reads canonical columns (``charge``, ``mol_id``) straight
-        # into the right slots — no canonical→format rename, hence no frame copy.
+        import molrs.io
 
-        lines = []
+        if "atoms" not in frame or frame["atoms"].nrows == 0:
+            raise ValueError("Frame has no atoms to write")
 
-        # Header
-        lines.append(
-            f"# LAMMPS data file written by molpy on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        # CL&Pol Drude systems: emit the fix-drude flag string here, where the
-        # atom-type → ID ordering is known. Ready to paste into the input script.
+        work = frame
+        if self.type_labels:
+            work = frame.copy()
+            self._seed_type_label_meta(work)
+
+        try:
+            molrs.io.write_lammps_data(str(self._path), work)
+        except OSError as exc:
+            # molrs maps InvalidData to OSError; surface Frame-validation as
+            # ValueError so callers keep a Python-native error type.
+            msg = str(exc)
+            if "neither 'type' nor 'type_id'" in msg or "no atoms to write" in msg:
+                raise ValueError(msg) from exc
+            raise
+
         drude_flags = self._drude_flag_string(frame)
         if drude_flags:
-            lines.append(f"# CL&Pol Drude — paste into input script:")
-            lines.append(f"#   fix DRUDE all drude {drude_flags}")
-        lines.append("")
+            self._prepend_drude_comment(drude_flags)
 
-        # Count sections
-        counts = self._get_counts(frame)
-        self._write_counts(lines, counts)
-        lines.append("")
+    def _seed_type_label_meta(self, frame: Frame) -> None:
+        """Pack constructor ``type_labels`` into frame meta for molrs merge.
 
-        # Type counts
-        self._write_type_counts(lines, frame)
-        lines.append("")
-
-        # Box bounds
-        self._write_box_bounds(lines, frame)
-        lines.append("")
-
-        # Type labels sections (must come before Masses for LAMMPS)
-        self._write_type_labels_sections(lines, frame)
-
-        # Masses section
-        if "atoms" in frame:
-            self._write_masses_section(lines, frame)
-
-        # Force-field coefficients are an explicit format input, never Frame meta.
-        self._write_force_field_coeffs_sections(lines)
-
-        # Data sections
-        if "atoms" in frame:
-            self._write_atoms_section(lines, frame)
-
-        if "bonds" in frame and counts.get("bonds", 0) > 0:
-            self._write_connectivity_section(lines, frame, "bonds")
-
-        if "angles" in frame and counts.get("angles", 0) > 0:
-            self._write_connectivity_section(lines, frame, "angles")
-
-        if "dihedrals" in frame and counts.get("dihedrals", 0) > 0:
-            self._write_connectivity_section(lines, frame, "dihedrals")
-
-        if "impropers" in frame and counts.get("impropers", 0) > 0:
-            self._write_connectivity_section(lines, frame, "impropers")
-
-        # Write to file
-        with open(self._path, "w") as f:
-            f.write("\n".join(lines))
-
-    #: Connectivity blocks whose entries each carry a force-field type id.
-    _CONNECTIVITY = ("bonds", "angles", "dihedrals", "impropers")
-
-    def _get_counts(self, frame: Frame) -> dict[str, int]:
-        """Get section counts from frame.
-
-        A connectivity block that has entries but no ``type`` column is untyped
-        topology — a relation kind the force field never parameterized (e.g.
-        OPLS-AA defines no improper typifier). LAMMPS cannot represent untyped
-        connectivity, so such a block is omitted from the data file (and from the
-        header count, so the declared count matches the emitted section) with a
-        warning. A *present* ``type`` column holding bad values is a real error,
-        caught later in :meth:`_collect_actual_types`.
+        molrs unions these labels with string ``type`` columns on the Frame
+        and assigns dense 1-based ids after numeric-aware sort. Empty labels
+        raise — the inventory must be usable as Type Labels text.
         """
-        counts = {}
-        if "atoms" in frame:
-            counts["atoms"] = frame["atoms"].nrows
-        for name in self._CONNECTIVITY:
-            if name not in frame:
+        from molpy._frame_meta import update_frame_meta
+        from molrs import MetaValue
+
+        meta_update: dict[str, MetaValue] = {}
+        for type_key, meta_key in self._TYPE_LABEL_META:
+            labels = self.type_labels.get(type_key)
+            if not labels:
                 continue
-            block = frame[name]
-            if block.nrows > 0 and "type" not in block and "type_id" not in block:
-                warnings.warn(
-                    f"{name!r} block has {block.nrows} entries but no 'type' or "
-                    f"'type_id' column; these are untyped topology (a relation "
-                    f"kind the force field does not parameterize) and are omitted "
-                    f"from the LAMMPS data file.",
-                    stacklevel=2,
-                )
-                continue
-            counts[name] = block.nrows
-        return counts
-
-    def _collect_actual_types(self, frame: Frame) -> dict[str, set[str]]:
-        """Collect actual types used in frame blocks."""
-        actual_types = {
-            "atom_types": set(),
-            "bond_types": set(),
-            "angle_types": set(),
-            "dihedral_types": set(),
-            "improper_types": set(),
-        }
-
-        mapping = {
-            "atoms": "atom_types",
-            "bonds": "bond_types",
-            "angles": "angle_types",
-            "dihedrals": "dihedral_types",
-            "impropers": "improper_types",
-        }
-
-        for block_name, type_key in mapping.items():
-            if block_name in frame and frame[block_name].nrows > 0:
-                # Untyped connectivity (no 'type' column) is omitted from the
-                # data file — see _get_counts. Skip here so it contributes no
-                # type labels rather than crashing on the missing column.
-                if "type" not in frame[block_name]:
-                    continue
-                types = frame[block_name]["type"]
-                # Check for empty strings or None values - these are errors
-                for t in types:
-                    if t is None:
-                        raise ValueError(
-                            f"Found None type in {block_name} block. "
-                            f"All {block_name} must have valid type values."
-                        )
-                    if isinstance(t, str) and not t.strip():
-                        raise ValueError(
-                            f"Found empty string type in {block_name} block. "
-                            f"All {block_name} must have non-empty type values."
-                        )
-                # Convert to string set, handling both string and numeric types
-                unique_types = set(str(t) for t in np.unique(types))
-                actual_types[type_key] = unique_types
-
-        return actual_types
-
-    def _merge_type_labels(
-        self, actual_types: dict[str, set[str]]
-    ) -> dict[str, list[str]]:
-        """Merge explicit format labels with the types present in the Frame."""
-        merged: dict[str, list[str]] = {}
-        for key in (
-            "atom_types",
-            "bond_types",
-            "angle_types",
-            "dihedral_types",
-            "improper_types",
-        ):
-            explicit = self.type_labels.get(key, [])
-            for label in explicit:
+            for label in labels:
                 if not label or not str(label).strip():
-                    raise ValueError(f"Found empty explicit type label for {key}")
-            labels = set(explicit) | actual_types.get(key, set())
-            if labels:
-                merged[key] = sorted(labels)
-        return merged
+                    raise ValueError(f"Found empty explicit type label for {type_key}")
+            ordered = _sorted_type_names(labels)
+            packed = ",".join(f"{i}:{lab}" for i, lab in enumerate(ordered, 1))
+            meta_update[meta_key] = MetaValue("string", packed)
+        if meta_update:
+            update_frame_meta(frame, meta_update)
 
-    def _get_merged_type_labels(self, frame: Frame) -> dict[str, list[str]]:
-        """Get type labels from explicit format input and Frame blocks.
+    def _prepend_drude_comment(self, flags: str) -> None:
+        header = (
+            f"# CL&Pol Drude — paste into input script:\n"
+            f"#   fix DRUDE all drude {flags}\n"
+        )
+        path = Path(self._path)
+        path.write_text(header + path.read_text())
 
-        Returns:
-            Dict mapping type keys to sorted lists of type names
-        """
-        actual_types = self._collect_actual_types(frame)
-        label_types: dict[str, set[str]] = {}
-        type_key_mapping = {
-            "atoms": "atom_types",
-            "bonds": "bond_types",
-            "angles": "angle_types",
-            "dihedrals": "dihedral_types",
-            "impropers": "improper_types",
-        }
-        for block_name, type_key in type_key_mapping.items():
-            if block_name not in frame or frame[block_name].nrows == 0:
-                continue
-            if "type" not in frame[block_name]:
-                continue
-            types = frame[block_name]["type"]
-            if self._needs_type_labels(types) or type_key in self.type_labels:
-                label_types[type_key] = actual_types[type_key]
-        return self._merge_type_labels(label_types)
+    def _ordered_atom_type_names(self, frame: Frame) -> list[str]:
+        """Sorted atom type names matching molrs Type Labels order."""
+        names: set[str] = set()
+        if "atoms" in frame and frame["atoms"].nrows > 0 and "type" in frame["atoms"]:
+            names.update(str(t) for t in np.asarray(frame["atoms"]["type"]).flat)
+        names.update(str(t) for t in self.type_labels.get("atom_types", []))
+        return _sorted_type_names(names)
 
     def _drude_flag_string(self, frame: Frame) -> str | None:
         """Build the ``fix drude`` C/D/N flag string, or None if not Drude.
@@ -833,440 +440,85 @@ class LammpsDataWriter(DataWriter):
                 core = i if elements[i] != "D" else j
                 core_types.add(str(types[core]))
 
-        merged = self._get_merged_type_labels(frame)
-        ordered = merged.get("atom_types") or sorted(set(types.tolist()))
+        ordered = self._ordered_atom_type_names(frame)
+        if not ordered:
+            ordered = _sorted_type_names(set(types.tolist()))
         flags = [
             "D" if t in shell_types else "C" if t in core_types else "N"
             for t in ordered
         ]
         return " ".join(flags)
 
-    def _get_type_to_id_mapping(self, type_list: list[str] | None) -> dict[str, int]:
-        """Get mapping from type name to type ID (1-based).
 
-        Args:
-            type_list: Sorted list of type names, or None if types are numeric
+def _type_ids_from_frame(frame: Frame) -> dict[str, int]:
+    """Build ForceField type-name → id map from Frame ``type`` / ``type_id``."""
+    out: dict[str, int] = {}
+    for block_name in ("atoms", "bonds", "angles", "dihedrals", "impropers"):
+        if block_name not in frame:
+            continue
+        block = frame[block_name]
+        if block.nrows == 0:
+            continue
+        if "type" in block and "type_id" in block:
+            types = np.asarray(block["type"]).astype(str)
+            tids = np.asarray(block["type_id"]).astype(int)
+            for name, tid in zip(types, tids, strict=False):
+                out[str(name)] = int(tid)
+        elif "type" in block:
+            types = [str(t) for t in np.asarray(block["type"])]
+            if types and all(_is_int_type_token(t) for t in types):
+                for t in types:
+                    out[t] = int(t)
+            else:
+                ordered = _sorted_type_names(set(types))
+                for i, name in enumerate(ordered, 1):
+                    out[name] = i
+        elif "type_id" in block:
+            # Numeric-only body: id strings as names for integer FF types.
+            for tid in np.unique(np.asarray(block["type_id"]).astype(int)):
+                out[str(int(tid))] = int(tid)
+    return out
 
-        Returns:
-            Dict mapping type name to type ID (1-based)
-        """
-        if type_list is None or len(type_list) == 0:
-            return {}
-        return {type_name: type_idx + 1 for type_idx, type_name in enumerate(type_list)}
 
-    @staticmethod
-    def _atom_ids(atoms_data: Block) -> np.ndarray:
-        """Per-row LAMMPS atom IDs, numbering 1..N when the frame carries none.
+def write_lammps_data_coeffs(
+    path: str | Path,
+    frame: Frame,
+    forcefield: ForceField,
+    *,
+    units: str = "real",
+    precision: int = 6,
+) -> None:
+    """Insert ``* Coeffs`` into an existing LAMMPS data file.
 
-        An atom ID is an artifact of the *file*: it is what the Bonds/Angles/…
-        sections reference. A frame built from an :class:`~molpy.Atomistic` has
-        no ``id`` column because the graph identifies atoms by handle, so the
-        writer numbers the rows itself rather than demanding the caller invent
-        the column first. The frame is left untouched — the IDs belong to this
-        file, not to the caller's structure.
-        """
-        if "id" in atoms_data:
-            return np.asarray(atoms_data["id"])
-        return np.arange(1, atoms_data.nrows + 1, dtype=np.uint32)
+    Type ids are taken from the Frame (``type`` / ``type_id``), not from a
+    caller-supplied inventory. Coefficient numbers (form map + units) are
+    produced entirely by molrs.
 
-    def _row_type_ids(self, frame: Frame, section: str, type_key: str) -> np.ndarray:
-        """Per-row 1-based LAMMPS type IDs for ``frame[section]``.
+    Args:
+        path: Path to a data file already written by :class:`LammpsDataWriter`.
+        frame: Frame whose type columns define the id space (call
+            ``forcefield.map_type(frame)`` first when needed).
+        forcefield: Force field in molrs store units.
+        units: LAMMPS ``units`` style for numeric conversion (``real`` /
+            ``metal`` / ``lj``).
+        precision: Decimal places for floating coefficients.
+    """
+    import molrs.ff as mff
 
-        A LAMMPS section line carries a type *number*, never a label. Two
-        canonical columns can supply it: ``type`` holds string labels and
-        ``type_id`` already *is* the number.
-
-        Labels win when both are present. A data file declares its own type
-        numbering in the ``* Type Labels`` and coefficient sections this writer
-        emits, so the numbers in the body have to be that numbering — a
-        ``type_id`` assigned elsewhere would contradict it. ``type_id`` is used
-        verbatim only when there are no labels to number.
-        """
-        block = frame[section]
-        if "type" not in block:
-            return np.asarray(block["type_id"]).astype(int)
-
-        types = np.asarray(block["type"])
-        type_list = self._get_merged_type_labels(frame).get(type_key, [])
-        type_to_id = self._get_type_to_id_mapping(type_list)
-        if not type_list:
-            # No label inventory (numeric or unlabelled types): number the
-            # distinct values that are actually present.
-            type_to_id = self._get_type_to_id_mapping(
-                sorted(str(t) for t in np.unique(types))
-            )
-
-        unique = np.unique(types)
-        # A type absent from the inventory cannot be numbered by it; fall back to
-        # numbering the present values so the file stays internally consistent.
-        fallback = (
-            {str(t): idx + 1 for idx, t in enumerate(sorted(unique))}
-            if any(str(t) not in type_to_id for t in unique)
-            else {}
-        )
-        per_type = {
-            str(t): type_to_id.get(str(t), fallback.get(str(t), 1)) for t in unique
-        }
-        return np.array([per_type[str(t)] for t in types], dtype=int)
-
-    def _write_counts(self, lines: list[str], counts: dict[str, int]) -> None:
-        """Write count lines."""
-        if "atoms" in counts:
-            lines.append(f"{counts['atoms']} atoms")
-        if "bonds" in counts and counts["bonds"] > 0:
-            lines.append(f"{counts['bonds']} bonds")
-        if "angles" in counts and counts["angles"] > 0:
-            lines.append(f"{counts['angles']} angles")
-        if "dihedrals" in counts and counts["dihedrals"] > 0:
-            lines.append(f"{counts['dihedrals']} dihedrals")
-        if "impropers" in counts and counts["impropers"] > 0:
-            lines.append(f"{counts['impropers']} impropers")
-
-    def _write_type_counts(self, lines: list[str], frame: Frame) -> None:
-        """Write type counts derived directly from Frame blocks."""
-        merged = self._get_merged_type_labels(frame)
-        labels = {
-            "atoms": ("atom", "atom_types"),
-            "bonds": ("bond", "bond_types"),
-            "angles": ("angle", "angle_types"),
-            "dihedrals": ("dihedral", "dihedral_types"),
-            "impropers": ("improper", "improper_types"),
-        }
-        for block_name, (label, type_key) in labels.items():
-            if type_key in merged:
-                lines.append(f"{len(merged[type_key])} {label} types")
-                continue
-            if block_name not in frame:
-                continue
-            block = frame[block_name]
-            # Without a label inventory the count is however many distinct types
-            # the block itself carries, whether they are labels or bare IDs.
-            column = "type" if "type" in block else "type_id"
-            if column not in block:
-                continue
-            unique_types = np.unique(block[column])
-            if block_name == "atoms" or len(unique_types) > 0:
-                lines.append(f"{len(unique_types)} {label} types")
-
-    def _write_box_bounds(self, lines: list[str], frame: Frame) -> None:
-        """Write box bounds."""
-        if frame.box is not None:
-            box = frame.box
-            lines.append(
-                f"{box.origin[0]:.6f} {box.origin[0] + box.lengths[0]:.6f} xlo xhi"
-            )
-            lines.append(
-                f"{box.origin[1]:.6f} {box.origin[1] + box.lengths[1]:.6f} ylo yhi"
-            )
-            lines.append(
-                f"{box.origin[2]:.6f} {box.origin[2] + box.lengths[2]:.6f} zlo zhi"
-            )
-        else:
-            lines.append("0.0 10.0 xlo xhi")
-            lines.append("0.0 10.0 ylo yhi")
-            lines.append("0.0 10.0 zlo zhi")
-
-    def _write_masses_section(self, lines: list[str], frame: Frame) -> None:
-        """Write masses section.
-
-        Uses merged type labels to ensure type_id consistency.
-        Writes masses for all types in merged list. For types not in atoms,
-        uses default mass of 1.0.
-        """
-        lines.append("Masses")
-        lines.append("")
-
-        atoms_data = frame["atoms"]
-        type_ids = self._row_type_ids(frame, "atoms", "atom_types")
-        masses = self._row_masses(atoms_data)
-
-        # One line per type ID the file declares. A declared type carrying no
-        # atom (an unused label from the format-owned inventory) has no mass to
-        # read, so it gets the 1.0 placeholder.
-        declared = len(self._get_merged_type_labels(frame).get("atom_types", []))
-        n_types = max(declared, int(type_ids.max()) if len(type_ids) else 0)
-
-        first_mass: dict[int, float] = {}
-        for type_id, mass in zip(type_ids, masses, strict=True):
-            first_mass.setdefault(int(type_id), float(mass))
-
-        for type_id in range(1, n_types + 1):
-            lines.append(f"{type_id} {first_mass.get(type_id, 1.0):.6f}")
-
-        lines.append("")
-
-    @staticmethod
-    def _row_masses(atoms_data: Block) -> np.ndarray:
-        """Per-row atomic mass, preferring the element's periodic-table value.
-
-        The stored ``mass`` column is the fallback, not the first choice, so a
-        frame that only carries elements still writes real masses. A
-        non-physical element (a Drude shell ``"D"``) has no periodic-table entry
-        and keeps whatever mass the frame stored for it.
-        """
-        masses = (
-            np.asarray(atoms_data["mass"], dtype=float)
-            if "mass" in atoms_data
-            else np.ones(atoms_data.nrows, dtype=float)
-        )
-        if "element" not in atoms_data:
-            return masses
-
-        from molrs import Element
-
-        elements = np.asarray(atoms_data["element"]).astype(str)
-        masses = masses.copy()
-        for symbol in np.unique(elements):
-            try:
-                element_mass = Element(symbol).mass
-            except KeyError:
-                continue
-            masses[elements == symbol] = element_mass
-        return masses
-
-    def _write_type_labels_sections(self, lines: list[str], frame: Frame) -> None:
-        """Write type-label sections inferred from the Frame blocks."""
-        merged_types = self._get_merged_type_labels(frame)
-
-        # Write sections
-        section_configs = [
-            ("atom_types", "Atom Type Labels"),
-            ("bond_types", "Bond Type Labels"),
-            ("angle_types", "Angle Type Labels"),
-            ("dihedral_types", "Dihedral Type Labels"),
-            ("improper_types", "Improper Type Labels"),
-        ]
-
-        for type_key, section_name in section_configs:
-            if type_key in merged_types and merged_types[type_key]:
-                lines.append(section_name)
-                lines.append("")
-
-                type_list = merged_types[type_key]
-                # Validate: no empty strings should exist at this point
-                for type_label in type_list:
-                    if not type_label or not str(type_label).strip():
-                        raise ValueError(
-                            f"Found empty type label in {type_key}. "
-                            f"This should have been caught earlier. "
-                            f"All type labels must be non-empty strings."
-                        )
-                for type_id, type_label in enumerate(type_list, 1):
-                    lines.append(f"{type_id} {type_label}")
-
-                lines.append("")
-
-    def _needs_type_labels(self, types: np.ndarray) -> bool:
-        """Check if type labels section is needed."""
-        # Only write type labels if types are non-numeric (strings)
-        # Numeric types (integers) don't need labels
-        if len(types) == 0:
-            return False
-        # Check if any type is a string (not numeric)
-        return types.dtype.kind in ("U", "S", "O")  # Unicode, byte string, or object
-
-    def _write_force_field_coeffs_sections(self, lines: list[str]) -> None:
-        """Write coefficients from the writer's explicit ForceField input."""
-        if self.forcefield is None:
+    type_ids = _type_ids_from_frame(frame)
+    text = mff.write_lammps_data_coeffs(
+        forcefield,
+        precision=precision,
+        units=units,
+        type_ids=type_ids or None,
+    )
+    if not text.strip():
+        return
+    path = Path(path)
+    body = path.read_text()
+    insert = text if text.endswith("\n") else text + "\n"
+    for marker in ("\nAtoms #", "\nAtoms\n"):
+        if marker in body:
+            path.write_text(body.replace(marker, "\n" + insert + marker, 1))
             return
-
-        from molpy import (
-            AngleStyle,
-            BondStyle,
-            DihedralStyle,
-            ImproperStyle,
-            PairStyle,
-        )
-
-        configs = (
-            (PairStyle, "Pair Coeffs", ("epsilon", "sigma"), (0.0, 1.0)),
-            (BondStyle, "Bond Coeffs", ("k", "r0"), (0.0, 1.0)),
-            (AngleStyle, "Angle Coeffs", ("k", "theta0"), (0.0, 0.0)),
-            (DihedralStyle, "Dihedral Coeffs", ("k", "d", "n"), (0.0, 1, 1)),
-            (ImproperStyle, "Improper Coeffs", ("k", "d", "n"), (0.0, 1, 1)),
-        )
-        for style_cls, heading, keys, defaults in configs:
-            styles = self.forcefield.get_styles(style_cls)
-            if not styles:
-                continue
-            lines.extend((heading, ""))
-            for style in styles:
-                for type_obj in style.types:
-                    type_id = int(type_obj.name.split("-")[0])
-                    values = [
-                        type_obj.get(key, default)
-                        for key, default in zip(keys, defaults, strict=True)
-                    ]
-                    formatted = [
-                        f"{value:.6f}" if isinstance(value, float) else str(value)
-                        for value in values
-                    ]
-                    lines.append(f"{type_id} {' '.join(formatted)}")
-            lines.append("")
-
-    def _write_atoms_section(self, lines: list[str], frame: Frame) -> None:
-        """Write atoms section.
-
-        Uses merged type labels to ensure type_id consistency.
-        Requires that atoms have an 'id' field.
-
-        Args:
-            lines: List of lines to append to
-            frame: Frame containing atoms data
-
-        Raises:
-            ValueError: If atoms are missing 'id' field
-        """
-        lines.append("Atoms")
-        lines.append("")
-
-        atoms_data = frame["atoms"]
-
-        # Materialise every column ONCE (each ``atoms_data[col]`` view rebuilds
-        # the whole molrs column — indexing it per row is O(N^2), catastrophic
-        # for the string ``type`` column on a large packed system).
-        ids = self._atom_ids(atoms_data)
-        type_ids = self._row_type_ids(frame, "atoms", "atom_types")
-        xs = np.asarray(atoms_data["x"], dtype=float)
-        ys = np.asarray(atoms_data["y"], dtype=float)
-        zs = np.asarray(atoms_data["z"], dtype=float)
-        mol_ids = charges = None
-        if self.atom_style in ("full",):
-            mol_ids = np.asarray(atoms_data["mol_id"])
-        if self.atom_style in ("full", "charge"):
-            charges = np.asarray(atoms_data["charge"], dtype=float)
-
-        for idx in range(atoms_data.nrows):
-            atom_id = int(ids[idx])
-            atom_type = int(type_ids[idx])
-            x = xs[idx]
-            y = ys[idx]
-            z = zs[idx]
-
-            if self.atom_style == "full":
-                lines.append(
-                    f"{atom_id} {int(mol_ids[idx])} {atom_type} "
-                    f"{charges[idx]:.6f} {x:.6f} {y:.6f} {z:.6f}"
-                )
-            elif self.atom_style == "charge":
-                lines.append(
-                    f"{atom_id} {atom_type} {charges[idx]:.6f} {x:.6f} {y:.6f} {z:.6f}"
-                )
-            else:  # atomic
-                lines.append(f"{atom_id} {atom_type} {x:.6f} {y:.6f} {z:.6f}")
-
-        lines.append("")
-
-    def _write_connectivity_section(
-        self, lines: list[str], frame: Frame, section_name: str
-    ) -> None:
-        """Write connectivity section (bonds, angles, dihedrals, impropers).
-
-        Uses merged type labels to ensure type_id consistency.
-        Converts atom indices to atom IDs using the index->ID mapping from atoms.
-
-        Args:
-            lines: List of lines to append to
-            frame: Frame containing connectivity data
-            section_name: Name of the connectivity section (bonds, angles, etc.)
-
-        Raises:
-            ValueError: If atoms are missing 'id' field
-        """
-        lines.append(section_name.capitalize())
-        lines.append("")
-
-        atoms_data = frame["atoms"]
-
-        # Build index to ID mapping (0-based frame index -> LAMMPS atom ID).
-        # Materialise the id column once; per-row ``atoms_data["id"][idx]`` would
-        # rebuild the whole molrs column each iteration (O(N^2)).
-        atom_id_arr = self._atom_ids(atoms_data)
-        index_to_id = {i: int(v) for i, v in enumerate(atom_id_arr)}
-
-        # Map section name to type key
-        type_key_mapping = {
-            "bonds": "bond_types",
-            "angles": "angle_types",
-            "dihedrals": "dihedral_types",
-            "impropers": "improper_types",
-        }
-        type_key = type_key_mapping.get(section_name, "")
-
-        data = frame[section_name]
-
-        if "type" not in data and "type_id" not in data:
-            raise ValueError(
-                f"{section_name.capitalize()} data must have a 'type' or 'type_id' "
-                f"field. Available fields: {list(data.keys())}"
-            )
-
-        # Get number of items from the data block (not from type length)
-        n_items = data.nrows
-
-        # Validate that all required atom index fields exist
-        if section_name == "bonds":
-            if "atomi" not in data or "atomj" not in data:
-                raise ValueError(
-                    f"Bonds must have 'atomi' and 'atomj' fields (0-based atom indices)"
-                )
-        elif section_name == "angles":
-            if "atomi" not in data or "atomj" not in data or "atomk" not in data:
-                raise ValueError(
-                    f"Angles must have 'atomi', 'atomj', and 'atomk' fields (0-based atom indices)"
-                )
-        elif section_name in ["dihedrals", "impropers"]:
-            if (
-                "atomi" not in data
-                or "atomj" not in data
-                or "atomk" not in data
-                or "atoml" not in data
-            ):
-                raise ValueError(
-                    f"{section_name.capitalize()} must have 'atomi', 'atomj', 'atomk', and 'atoml' "
-                    f"fields (0-based atom indices)"
-                )
-
-        # Materialise every column ONCE — per-row ``data[col][idx]`` on a molrs
-        # Block rebuilds the whole column each iteration (O(N^2); the string
-        # ``type`` column made this the dominant writer cost).
-        type_ids = self._row_type_ids(frame, section_name, type_key)
-        if len(type_ids) != n_items:
-            raise ValueError(
-                f"{section_name.capitalize()} type field has {len(type_ids)} values, "
-                f"but expected {n_items} (based on atom index fields)"
-            )
-        ai = np.asarray(data["atomi"])
-        aj = np.asarray(data["atomj"])
-        ak = np.asarray(data["atomk"]) if "atomk" in data else None
-        al = np.asarray(data["atoml"]) if "atoml" in data else None
-        n_atoms = len(atom_id_arr)
-
-        def _id(atom_idx: int, pos: str) -> int:
-            if atom_idx not in index_to_id:
-                raise ValueError(
-                    f"{section_name.capitalize()} {idx + 1}: {pos} index "
-                    f"{atom_idx} is out of range. Valid indices: 0-{n_atoms - 1}"
-                )
-            return index_to_id[atom_idx]
-
-        for idx in range(n_items):
-            item_id = idx + 1
-            item_type = int(type_ids[idx])
-
-            if section_name == "bonds":
-                a1 = _id(int(ai[idx]), "atom_i")
-                a2 = _id(int(aj[idx]), "atom_j")
-                lines.append(f"{item_id} {item_type} {a1} {a2}")
-            elif section_name == "angles":
-                a1 = _id(int(ai[idx]), "atom_i")
-                a2 = _id(int(aj[idx]), "atom_j")
-                a3 = _id(int(ak[idx]), "atom_k")
-                lines.append(f"{item_id} {item_type} {a1} {a2} {a3}")
-            elif section_name in ["dihedrals", "impropers"]:
-                a1 = _id(int(ai[idx]), "atom_i")
-                a2 = _id(int(aj[idx]), "atom_j")
-                a3 = _id(int(ak[idx]), "atom_k")
-                a4 = _id(int(al[idx]), "atom_l")
-                lines.append(f"{item_id} {item_type} {a1} {a2} {a3} {a4}")
-        lines.append("")
+    path.write_text(body.rstrip() + "\n" + insert)

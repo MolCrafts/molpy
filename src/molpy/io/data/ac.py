@@ -1,13 +1,11 @@
-"""Antechamber (AC) file format reader.
-
-Reads Antechamber .ac files containing atom and bond information
-with force field types and charges.
-"""
+"""Antechamber (AC) file reader (molrs-backed)."""
 
 from pathlib import Path
 
 from molpy.core.fields import CHARGE, FieldFormatter
-from molrs import Element, Frame
+from molrs import Frame
+
+from .base import DataReader
 
 
 class AcFieldFormatter(FieldFormatter):
@@ -18,127 +16,26 @@ class AcFieldFormatter(FieldFormatter):
     }
 
 
-from .base import DataReader
-
-
 class AcReader(DataReader):
-    """
-    Reader for Antechamber .ac format files.
-
-    Parses ATOM and BOND sections from Antechamber output files,
-    extracting coordinates, charges, atom types, and connectivity.
-
-    Args:
-        file: Path to .ac file
-    """
+    """Reader for Antechamber .ac format files (via molrs)."""
 
     def __init__(self, file: str | Path):
         super().__init__(Path(file))
         self._file = Path(file)
 
-    def read(self, frame: Frame) -> Frame:
-        """
-        Read .ac file and populate Frame with atoms and bonds.
+    def read(self, frame: Frame | None = None) -> Frame:
+        """Read .ac file into a Frame."""
+        import molrs.io
 
-        Args:
-            frame: Frame to populate
-
-        Returns:
-            Frame with atoms and bonds data
-        """
-        with open(self._file) as f:
-            lines = [line.strip() for line in f if line.strip()]
-
-        self.atoms = []
-        self.bonds = []
-        self.atomtype_map = {}
-
-        for line in lines:
-            if line.startswith("ATOM"):
-                atom = self._parse_atom_section(line)
-                self.atoms.append(atom)
-            elif line.startswith("BOND"):
-                bond = self._parse_bond_section(line)
-                itom_type = self.atoms[bond["atomi"]]["type"]
-                jtom_type = self.atoms[bond["atomj"]]["type"]
-                bond["type"] = f"{itom_type}-{jtom_type}"
-                self.bonds.append(bond)
-
-        if self.atoms:
-            self.assign_atomic_numbers(self.atoms)
-            keys = self.atoms[0].keys()
-            frame["atoms"] = {k: [d[k] for d in self.atoms] for k in keys}
-
-        if self.bonds:
-            keys = self.bonds[0].keys()
-            frame["bonds"] = {k: [d[k] for d in self.bonds] for k in keys}
-
-        self._formatter.canonicalize_frame(frame)
-        return frame
+        del frame
+        if not self._file.is_file():
+            raise FileNotFoundError(self._file)
+        try:
+            loaded = molrs.io.read_ac(str(self._file))
+        except OSError as exc:
+            raise ValueError(f"Failed to read AC file: {exc}") from exc
+        # Canonicalize charge if present as q
+        self._formatter.canonicalize_frame(loaded)
+        return loaded
 
     _formatter = AcFieldFormatter()
-
-    def _parse_atom_section(self, line):
-        """Parse ATOM line from .ac file."""
-        # Example:
-        # ATOM      1  C   UNK     1       0.000   0.000   0.000 -0.094100        c3
-        tokens = line.split()
-        atom_id = int(tokens[1])
-        name = tokens[2]
-        resname = tokens[3]
-        res_id = int(tokens[4])
-        x, y, z = (float(token) for token in tokens[5:8])
-        charge = float(tokens[8])
-        atom_type = tokens[9]
-
-        return {
-            "id": atom_id,
-            "name": name,
-            "resName": resname,
-            "resSeq": res_id,
-            "x": x,
-            "y": y,
-            "z": z,
-            "q": charge,
-            "type": atom_type,
-        }
-
-    def _parse_bond_section(self, line) -> dict:
-        """Parse BOND line from .ac file."""
-        # Example:
-        # BOND    1    1    2    1      C   H1
-        tokens = line.split()
-        bond_id = int(tokens[1])
-        atom1 = int(tokens[2]) - 1
-        atom2 = int(tokens[3]) - 1
-        # bond_order = int(tokens[4])
-
-        return {
-            "id": bond_id,
-            "atomi": atom1,
-            "atomj": atom2,
-            # "type": bond_type
-        }
-
-    def assign_atomic_numbers(self, atoms):
-        """Assign atomic numbers by guessing from atom names/types."""
-        for atom in atoms:
-            for source in (atom["name"], atom["type"]):
-                try:
-                    atom["number"] = self._guess_atomic_number(source).number
-                    break
-                except KeyError:
-                    continue
-            else:
-                raise ValueError(
-                    f"Cannot infer an element from AC atom name {atom['name']!r} "
-                    f"or type {atom['type']!r}"
-                )
-
-    def _guess_atomic_number(self, name):
-        """Guess element from atom name string."""
-        name = "".join([c for c in name if c.isalpha()])
-        try:
-            return Element(name.capitalize())
-        except KeyError as exc:
-            raise KeyError(f"Unknown element identifier {name!r}") from exc

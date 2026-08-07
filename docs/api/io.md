@@ -51,7 +51,7 @@ frame = mp.io.read_pdb("molecule.pdb")
 mp.io.write_lammps_data("system.data", frame, atom_style="full")
 
 # Read force field (XML or LAMMPS *.ff)
-ff = mp.io.read_xml_forcefield("oplsaa.xml")
+ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml"))
 ff = mp.io.read_lammps_forcefield("system.ff")
 
 # Write LAMMPS *.ff (; optional type filter)

@@ -21,6 +21,7 @@ from molpy.core import fields
 from molpy.core.atomistic import Angle, Bond, Dihedral, Improper
 from molpy.core.forcefield import (
     AngleType,
+    AtomType,
     BondType,
     DihedralType,
     ImproperType,
@@ -140,17 +141,34 @@ class _PairMatcher:
 
     Unlike a bonded term, these are keyed by the type alone: no pattern, no
     direction, no specificity contest. A lookup, not a match.
+
+    molrs OPLS keeps charge/mass on the AtomType and LJ (ε/σ) on the PairType;
+    this matcher merges both so annotate produces a complete nonbonded view.
     """
 
-    def __init__(self, forcefield: ForceField, *, strict: bool) -> None:
+    # AtomType params that are nonbonded / identity metadata for the node.
+    _ATOM_KEYS = frozenset({"charge", "mass", "element"})
+
+    def __init__(
+        self,
+        forcefield: ForceField,
+        *,
+        strict: bool,
+        atom_types: Sequence[AtomType] | None = None,
+    ) -> None:
         self._strict = strict
         self._table = {
             pair_type.name: pair_type for pair_type in forcefield.get_types(PairType)
         }
+        # Real atom types only (skip class-wildcard placeholders type_="*").
+        types = atom_types if atom_types is not None else forcefield.get_types(AtomType)
+        self._atoms: dict[str, AtomType] = {
+            at.name: at for at in types if at.params.kwargs.get("type_") != "*"
+        }
 
     @property
     def parameterizes(self) -> bool:
-        return bool(self._table)
+        return bool(self._table) or bool(self._atoms)
 
     def annotate(self, node: Entity) -> Mapping[str, Annotation]:
         """The nonbonded parameters ``node`` should carry, or ``{}``.
@@ -165,18 +183,23 @@ class _PairMatcher:
                 raise ValueError(f"node must carry a type before pair typing: {node}")
             return {}
 
+        out: dict[str, Annotation] = {}
+        atom_type = self._atoms.get(str(node_type))
+        if atom_type is not None:
+            for key, value in atom_type.params.kwargs.items():
+                if key in self._ATOM_KEYS:
+                    out[key] = value
+
         pair_type = self._table.get(node_type)
         if pair_type is not None:
             # As for bonded terms: the type's own `id` is bookkeeping, not a
             # nonbonded parameter, and the node already has an identity.
-            return {
-                key: value
-                for key, value in pair_type.params.kwargs.items()
-                if key != fields.ID
-            }
-        if self._strict:
+            for key, value in pair_type.params.kwargs.items():
+                if key != fields.ID:
+                    out[key] = value
+        elif atom_type is None and self._strict:
             raise ValueError(f"No PairType found for node type: {node_type}")
-        return {}
+        return out
 
 
 class ForceFieldParams:
@@ -201,8 +224,10 @@ class ForceFieldParams:
     def __init__(self, forcefield: ForceField, *, strict: bool = True) -> None:
         self._ff = forcefield
         self._strict = strict
-        index = TypeClassIndex(forcefield)
-        self._pair = _PairMatcher(forcefield, strict=strict)
+        # Scan AtomTypes once; share with TypeClassIndex + _PairMatcher.
+        atom_types = list(forcefield.get_types(AtomType))
+        index = TypeClassIndex(forcefield, atom_types=atom_types)
+        self._pair = _PairMatcher(forcefield, atom_types=atom_types, strict=strict)
         self._terms = {
             link_cls: _TermMatcher(forcefield, ff_type, index, strict=strict)
             for link_cls, ff_type in _FF_TYPE_OF.items()

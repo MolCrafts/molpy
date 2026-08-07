@@ -20,7 +20,7 @@ mol = mp.io.read_smiles("CCO") # ethanol from SMILES (heavy atoms)
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
  mol
 ) # add hydrogens + 3D coordinates
-ff = mp.io.read_xml_forcefield("oplsaa.xml") # bundled OPLS-AA
+ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml")) # bundled OPLS-AA
 typed = mp.typifier.OPLSAATypifier().typify(mol) # assign force-field types
 
 frame = typed.to_frame() # simulation-ready columnar arrays
