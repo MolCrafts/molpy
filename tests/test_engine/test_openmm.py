@@ -199,8 +199,11 @@ class TestGenerateInputs:
         paths = engine.generate_inputs(
             simple_frame, empty_forcefield, nvt_config, tmp_path
         )
+        # Empty typeless FF: open element + close (not a self-closing tag).
         assert paths["forcefield"].read_text() == (
-            "<?xml version='1.0' encoding='utf-8'?>\n<ForceField name=\"test\" />"
+            "<?xml version='1.0' encoding='utf-8'?>\n"
+            '<ForceField name="test">\n'
+            "</ForceField>\n"
         )
 
     def test_script_file_created(
