@@ -1,8 +1,8 @@
-"""Amber prep file I/O helpers.
+"""Amber prep file I/O helpers (molrs-backed).
 
-Prep files (.prepi/.prep) define residue templates consumed by tleap/prepgen.
-These helpers are colocated with wrappers to keep Amber-specific workflow code
-out of the generic IO namespace.
+Prep files (``.prepi``/``.prep``) define residue templates for tleap/prepgen.
+Parse/serialize live in :mod:`molrs.io` (``read_prep`` / ``write_prep``); this
+module keeps the historical dataclass surface for AmberTools workflows.
 """
 
 from __future__ import annotations
@@ -45,91 +45,65 @@ class PrepResidue:
 
 
 def write_prep(residue: PrepResidue, output_file: str | Path) -> None:
-    """Write a residue to Amber prep file format."""
-    output_path = Path(output_file)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    """Write a residue to Amber prep file format (via molrs)."""
+    import molrs.io
 
-    lines = [
-        "    0    0    2",
-        f"{residue.name}",
-        "",
-        "CORRECT     OMIT DU   BEG",
-        "",
-    ]
-
-    for atom in residue.atoms:
-        lines.append(
-            f"{atom.index:5d} {atom.name:4s} {atom.atom_type:4s} "
-            f"{atom.tree_type:1s} {atom.na:5d} {atom.nb:5d} {atom.nc:5d} "
-            f"{atom.r:10.5f} {atom.theta:10.5f} {atom.phi:10.5f} "
-            f"{atom.charge:10.6f}"
-        )
-
-    lines.append("")
-    if residue.impropers:
-        lines.append("IMPROPER")
-        for improper in residue.impropers:
-            lines.append(" ".join(improper))
-        lines.append("")
-
-    lines.append("DONE")
-    lines.append("")
-    output_path.write_text("\n".join(lines))
+    payload = {
+        "name": residue.name,
+        "atoms": [
+            {
+                "index": a.index,
+                "name": a.name,
+                "atom_type": a.atom_type,
+                "tree_type": a.tree_type,
+                "na": a.na,
+                "nb": a.nb,
+                "nc": a.nc,
+                "r": a.r,
+                "theta": a.theta,
+                "phi": a.phi,
+                "charge": a.charge,
+                "element": a.element,
+            }
+            for a in residue.atoms
+        ],
+        "impropers": [list(imp) for imp in (residue.impropers or [])],
+    }
+    path = Path(output_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    molrs.io.write_prep(str(path), payload)
 
 
 def read_prep(input_file: str | Path) -> PrepResidue:
-    """Read an Amber prep file with the subset needed by MolPy workflow."""
-    input_path = Path(input_file)
-    lines = input_path.read_text().strip().split("\n")
+    """Read an Amber prep file (via molrs)."""
+    import molrs.io
 
-    idx = 0
-    while idx < len(lines) and not lines[idx].strip():
-        idx += 1
-    idx += 1
-
-    while idx < len(lines) and not lines[idx].strip():
-        idx += 1
-    residue_name = lines[idx].strip()
-    idx += 1
-
-    while idx < len(lines) and (
-        not lines[idx].strip() or "CORRECT" in lines[idx] or "OMIT" in lines[idx]
-    ):
-        idx += 1
-
-    atoms: list[PrepAtom] = []
-    while idx < len(lines):
-        line = lines[idx].strip()
-        if not line or line.startswith("IMPROPER") or line.startswith("DONE"):
-            break
-
-        parts = line.split()
-        if len(parts) >= 11:
-            atoms.append(
-                PrepAtom(
-                    index=int(parts[0]),
-                    name=parts[1],
-                    atom_type=parts[2],
-                    tree_type=parts[3],
-                    na=int(parts[4]),
-                    nb=int(parts[5]),
-                    nc=int(parts[6]),
-                    r=float(parts[7]),
-                    theta=float(parts[8]),
-                    phi=float(parts[9]),
-                    charge=float(parts[10]),
-                )
-            )
-        idx += 1
-
-    impropers: list[tuple[str, ...]] = []
-    if idx < len(lines) and "IMPROPER" in lines[idx]:
-        idx += 1
-        while idx < len(lines):
-            line = lines[idx].strip()
-            if not line or line.startswith("DONE"):
-                break
-            impropers.append(tuple(line.split()))
-            idx += 1
-
-    return PrepResidue(name=residue_name, atoms=atoms, impropers=impropers)
+    path = Path(input_file)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    raw = molrs.io.read_prep(str(path))
+    atoms = [
+        PrepAtom(
+            index=int(a["index"]),
+            name=str(a["name"]),
+            atom_type=str(a["atom_type"]),
+            tree_type=str(a.get("tree_type", "M")),
+            na=int(a.get("na", 0)),
+            nb=int(a.get("nb", 0)),
+            nc=int(a.get("nc", 0)),
+            r=float(a.get("r", 0.0)),
+            theta=float(a.get("theta", 0.0)),
+            phi=float(a.get("phi", 0.0)),
+            charge=float(a.get("charge", 0.0)),
+            element=str(a.get("element", "")),
+        )
+        for a in raw.get("atoms", [])
+    ]
+    impropers = [tuple(row) for row in raw.get("impropers", [])]
+    return PrepResidue(
+        name=str(raw["name"]),
+        atoms=atoms,
+        head_atom=raw.get("head_atom"),
+        tail_atom=raw.get("tail_atom"),
+        impropers=impropers,
+    )

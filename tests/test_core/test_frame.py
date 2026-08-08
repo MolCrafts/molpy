@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from molrs import Block, Frame, MetaValue
+from molrs.io import read_block_csv
 
 
 @pytest.fixture
@@ -36,7 +37,7 @@ class TestBlock:
             assert np.array_equal(blk[k], restored[k])
 
     def test_block_from_csv_file(self, tmp_path):
-        """Test Block.from_csv with file path."""
+        """Test read_block_csv with file path."""
         csv_content = """x,y,z,atom_type
 0.0,0.0,0.0,C
 1.0,1.0,1.0,O
@@ -45,12 +46,12 @@ class TestBlock:
         temp_file = tmp_path / "test.csv"
         temp_file.write_text(csv_content)
 
-        block = Block.from_csv(str(temp_file))
+        block = read_block_csv(str(temp_file))
 
         # Test basic structure
         assert set(block.keys()) == {"x", "y", "z", "atom_type"}
         assert block.nrows == 3
-        assert block.shape == (3, 4)
+        assert len(block) == 4
 
         # Test numeric columns
         assert np.array_equal(block["x"], np.array([0.0, 1.0, 2.0]))
@@ -61,19 +62,19 @@ class TestBlock:
         assert np.array_equal(block["atom_type"], np.array(["C", "O", "N"]))
 
     def test_block_from_csv_stringio(self):
-        """Test Block.from_csv with StringIO."""
+        """Test read_block_csv with StringIO."""
         csv_content = """name,age,height
 Alice,25,1.65
 Bob,30,1.80
 Charlie,35,1.75"""
 
         csv_io = StringIO(csv_content)
-        block = Block.from_csv(csv_io)
+        block = read_block_csv(csv_io)
 
         # Test basic structure
         assert set(block.keys()) == {"name", "age", "height"}
         assert block.nrows == 3
-        assert block.shape == (3, 3)
+        assert len(block) == 3
 
         # Test mixed data types
         assert np.array_equal(block["name"], np.array(["Alice", "Bob", "Charlie"]))
@@ -81,37 +82,37 @@ Charlie,35,1.75"""
         assert np.array_equal(block["height"], np.array([1.65, 1.80, 1.75]))
 
     def test_block_from_csv_delimiter(self):
-        """Test Block.from_csv with custom delimiter."""
+        """Test read_block_csv with custom delimiter."""
         csv_content = """x;y;z;atom_type
 0.0;0.0;0.0;C
 1.0;1.0;1.0;O"""
 
         csv_io = StringIO(csv_content)
-        block = Block.from_csv(csv_io, delimiter=";")
+        block = read_block_csv(csv_io, delimiter=";")
 
         assert set(block.keys()) == {"x", "y", "z", "atom_type"}
         assert block.nrows == 2
         assert np.array_equal(block["x"], np.array([0.0, 1.0]))
 
     def test_block_from_csv_empty_file(self):
-        """Test Block.from_csv with empty file."""
+        """Test read_block_csv with empty file."""
         csv_io = StringIO("")
         with pytest.raises(ValueError, match="empty"):
-            Block.from_csv(csv_io)
+            read_block_csv(csv_io)
 
     def test_block_from_csv_no_header(self):
-        """Test Block.from_csv with no header CSV."""
+        """Test read_block_csv with no header CSV."""
         csv_content = """0.0,0.0,0.0,C
 1.0,1.0,1.0,O
 2.0,2.0,2.0,N"""
 
         csv_io = StringIO(csv_content)
-        block = Block.from_csv(csv_io, header=["x", "y", "z", "atom_type"])
+        block = read_block_csv(csv_io, header=["x", "y", "z", "atom_type"])
 
         # Test basic structure
         assert set(block.keys()) == {"x", "y", "z", "atom_type"}
         assert block.nrows == 3
-        assert block.shape == (3, 4)
+        assert len(block) == 4
 
         # Test data
         assert np.array_equal(block["x"], np.array([0.0, 1.0, 2.0]))
@@ -120,7 +121,7 @@ Charlie,35,1.75"""
         assert np.array_equal(block["atom_type"], np.array(["C", "O", "N"]))
 
     def test_block_from_csv_no_header_file(self, tmp_path):
-        """Test Block.from_csv with no header CSV file."""
+        """Test read_block_csv with no header CSV file."""
         csv_content = """0.0,0.0,0.0
 1.0,1.0,1.0
 2.0,2.0,2.0"""
@@ -128,7 +129,7 @@ Charlie,35,1.75"""
         temp_file = tmp_path / "test_no_header.csv"
         temp_file.write_text(csv_content)
 
-        block = Block.from_csv(str(temp_file), header=["x", "y", "z"])
+        block = read_block_csv(str(temp_file), header=["x", "y", "z"])
 
         assert set(block.keys()) == {"x", "y", "z"}
         assert block.nrows == 3
@@ -137,30 +138,30 @@ Charlie,35,1.75"""
         assert np.array_equal(block["z"], np.array([0.0, 1.0, 2.0]))
 
     def test_block_from_csv_header_mismatch(self):
-        """Test Block.from_csv with header length mismatch."""
+        """Test read_block_csv with header length mismatch."""
         csv_content = """0.0,0.0,0.0
 1.0,1.0,1.0"""
 
         csv_io = StringIO(csv_content)
         # Header has more columns than data: molrs rejects the mismatch.
         with pytest.raises(ValueError, match="field"):
-            Block.from_csv(csv_io, header=["x", "y", "z", "extra"])
+            read_block_csv(csv_io, header=["x", "y", "z", "extra"])
 
         csv_io.seek(0)
         # Header has fewer columns than data
-        block = Block.from_csv(csv_io, header=["x", "y"])
+        block = read_block_csv(csv_io, header=["x", "y"])
         assert set(block.keys()) == {"x", "y"}
         assert block.nrows == 2
 
     def test_block_from_csv_type_inference(self):
-        """Test Block.from_csv with automatic type inference."""
+        """Test read_block_csv with automatic type inference."""
         csv_content = """id,name,age,height,active
 1,Alice,25,1.65,True
 2,Bob,30,1.80,False
 3,Charlie,35,1.75,True"""
 
         csv_io = StringIO(csv_content)
-        block = Block.from_csv(csv_io)
+        block = read_block_csv(csv_io)
 
         # Test type inference
         # `id` is UInt in the Frame vocabulary, so CSV parsing adopts the
@@ -180,13 +181,13 @@ Charlie,35,1.75"""
         assert np.array_equal(block["active"], np.array(["True", "False", "True"]))
 
     def test_block_from_csv_mixed_types_no_header(self):
-        """Test Block.from_csv with mixed types and no header."""
+        """Test read_block_csv with mixed types and no header."""
         csv_content = """1,Alice,25.5,True
 2,Bob,30.0,False
 3,Charlie,35.7,True"""
 
         csv_io = StringIO(csv_content)
-        block = Block.from_csv(csv_io, header=["id", "name", "score", "active"])
+        block = read_block_csv(csv_io, header=["id", "name", "score", "active"])
 
         # Test type inference
         # `id` is UInt in the Frame vocabulary, so CSV parsing adopts the

@@ -42,7 +42,7 @@ Loading the force field is a separate step from building the structure because t
 ```python
 # 2. Load force field and typify
 # "oplsaa.xml" is bundled with MolPy — no separate download needed
-ff = mp.io.read_xml_forcefield("oplsaa.xml")
+ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml"))
 typifier = OPLSAATypifier(strict=True)
 
 typed_mol = typifier.typify(mol)

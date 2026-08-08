@@ -17,14 +17,51 @@ from molrs import MetaValue
 import molpy as mp
 from molpy.io.data.lammps_molecule import LammpsMoleculeReader, LammpsMoleculeWriter
 
+# Inline TIP3P water molecule (LAMMPS JSON molecule schema). Used as input for
+# JSON-format reader tests — no external .json fixture file.
+WATER_TIP3P_JSON: dict = {
+    "application": "LAMMPS",
+    "format": "molecule",
+    "revision": 1,
+    "title": "Water molecule. TIP3P geometry",
+    "schema": "https://download.lammps.org/json/molecule-schema.json",
+    "units": "real",
+    "coords": {
+        "format": ["atom-id", "x", "y", "z"],
+        "data": [
+            [1, 0.0, -0.06556, 0.0],
+            [2, 0.75695, 0.52032, 0.0],
+            [3, -0.75695, 0.52032, 0.0],
+        ],
+    },
+    "types": {
+        "format": ["atom-id", "type"],
+        "data": [[1, "OW"], [2, "HO1"], [3, "HO1"]],
+    },
+    "charges": {
+        "format": ["atom-id", "charge"],
+        "data": [[1, -0.834], [2, 0.417], [3, 0.417]],
+    },
+    "bonds": {
+        "format": ["bond-type", "atom1", "atom2"],
+        "data": [["OW-HO1", 1, 2], ["OW-HO1", 1, 3]],
+    },
+    "angles": {
+        "format": ["angle-type", "atom1", "atom2", "atom3"],
+        "data": [["HO1-OW-HO1", 2, 1, 3]],
+    },
+}
+
 
 @pytest.fixture
-def test_files():
-    """Get paths to test files."""
+def test_files(tmp_path: Path):
+    """Paths to native fixtures plus an on-the-fly JSON water molecule."""
     test_dir = Path(__file__).parent / "test_files"
+    water_json = tmp_path / "water_tip3p.json"
+    water_json.write_text(json.dumps(WATER_TIP3P_JSON), encoding="utf-8")
     return {
         "water_native": test_dir / "water_tip3p.mol",
-        "water_json": test_dir / "water_tip3p.json",
+        "water_json": water_json,
         "ethane_native": test_dir / "ethane.mol",
     }
 

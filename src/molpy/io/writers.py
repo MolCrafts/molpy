@@ -25,55 +25,76 @@ def write_lammps_data(
     atom_style: str = "full",
     *,
     type_labels: dict[str, list[str]] | None = None,
-    forcefield: Any = None,
 ) -> None:
-    """
-    Write a Frame object to a LAMMPS data file.
+    """Write a Frame to a LAMMPS data file (structure only).
+
+    Structure / topology / Masses / type labels go through molrs after the
+    writer stamps ``type_id`` from Frame columns. Force-field ``* Coeffs`` are
+    a separate step — use :func:`write_lammps_data_coeffs`.
 
     Args:
-        file: Output file path
-        frame: Frame object to write
-        atom_style: LAMMPS atom style (default: 'full')
-        type_labels: Format-owned label inventory, including unused types.
-        forcefield: Optional ForceField whose coefficients belong in this data file.
+        file: Output file path.
+        frame: Frame with ``type`` and/or ``type_id`` on atoms (and connectivity).
+        atom_style: Accepted for API parity (style is inferred from columns).
+        type_labels: Optional **extra** unused-type inventory only.
     """
     from .data.lammps import LammpsDataWriter
 
-    writer = LammpsDataWriter(
+    del atom_style  # layout inferred by molrs from columns
+    LammpsDataWriter(
         Path(file),
-        atom_style=atom_style,
         type_labels=type_labels,
-        forcefield=forcefield,
-    )
-    writer.write(frame)
+    ).write(frame)
+
+
+def write_lammps_data_coeffs(
+    file: PathLike,
+    frame: Any,
+    forcefield: Any,
+    *,
+    units: str = "real",
+    precision: int = 6,
+) -> None:
+    """Insert ``* Coeffs`` into an existing LAMMPS data file.
+
+    Type ids come from the Frame; form map and units conversion live in molrs.
+    Typical composition::
+
+        ff.map_type(frame)
+        write_lammps_data(path, frame)
+        write_lammps_data_coeffs(path, frame, ff)
+    """
+    from .data.lammps import write_lammps_data_coeffs as _write
+
+    _write(Path(file), frame, forcefield, units=units, precision=precision)
 
 
 def write_pdb(file: PathLike, frame: Any) -> None:
-    """
-    Write a Frame object to a PDB file.
-
-    Args:
-        file: Output file path
-        frame: Frame object to write
-    """
+    """Write a Frame to a PDB file (molrs; canonical columns)."""
     from .data.pdb import PDBWriter
 
-    writer = PDBWriter(Path(file))
-    writer.write(frame)
+    PDBWriter(Path(file)).write(frame)
 
 
 def write_gro(file: PathLike, frame: Any) -> None:
-    """
-    Write a Frame object to a GROMACS GRO file.
+    """Write a Frame to a GROMACS GRO file (molrs)."""
+    import molrs.io
 
-    Args:
-        file: Output file path
-        frame: Frame object to write
-    """
-    from .data.gro import GroWriter
+    molrs.io.write_gro(str(file), frame)
 
-    writer = GroWriter(Path(file))
-    writer.write(frame)
+
+def write_xyz(file: PathLike, frame: Any) -> None:
+    """Write a Frame to an XYZ file (molrs)."""
+    import molrs.io
+
+    molrs.io.write_xyz(str(file), frame)
+
+
+def write_mol2(file: PathLike, frame: Any) -> None:
+    """Write a Frame to a Tripos MOL2 file (molrs)."""
+    from .data.mol2 import Mol2Writer
+
+    Mol2Writer(Path(file)).write(frame)
 
 
 def write_xsf(file: PathLike, frame: Any) -> None:
@@ -184,6 +205,8 @@ def write_lammps_forcefield(
     precision: int = 6,
     skip_pair_style: bool = False,
     frame: Any = None,
+    *,
+    units: str = "real",
 ) -> None:
     """
     Write a ForceField object to a LAMMPS force field file.
@@ -199,10 +222,12 @@ def write_lammps_forcefield(
             actually uses — so a force field carrying extra types (e.g. cap
             artifacts from region parameterisation) does not emit a coeff for a
             type absent from the data file's labelmap (which LAMMPS rejects).
+        units: LAMMPS ``units`` style for the written include (``real``,
+            ``metal``, or ``lj``). Conversion goes through molrs's lj hub.
     """
     from .forcefield.lammps import LAMMPSForceFieldWriter
 
-    writer = LAMMPSForceFieldWriter(Path(file), precision=precision)
+    writer = LAMMPSForceFieldWriter(Path(file), precision=precision, units=units)
     used = _frame_used_types(frame) if frame is not None else {}
     writer.write(forcefield, skip_pair_style=skip_pair_style, **used)
 
@@ -215,20 +240,21 @@ def write_lammps_forcefield(
 def write_lammps_trajectory(
     file: PathLike, frames: list, atom_style: str = "full"
 ) -> None:
-    """
-    Write frames to a LAMMPS trajectory file.
+    """Write frames to a LAMMPS dump trajectory (molrs).
+
+    Each frame must have ``box``. Optional ``frame.meta['timestep']`` is written
+    as ITEM: TIMESTEP.
 
     Args:
-        file: Output file path
-        frames: List of Frame objects to write
-        atom_style: LAMMPS atom style (default: 'full')
+        file: Output file path.
+        frames: Sequence of Frame objects.
+        atom_style: Accepted for API parity; ignored by molrs (columns from frame).
     """
     from .trajectory.lammps import LammpsTrajectoryWriter
 
     with LammpsTrajectoryWriter(Path(file), atom_style) as writer:
-        for i, frame in enumerate(frames):
-            timestep = getattr(frame, "step", i)
-            writer.write_frame(frame, timestep)
+        for frame in frames:
+            writer.write_frame(frame)
 
 
 def write_xyz_trajectory(file: PathLike, frames: list) -> None:
@@ -276,6 +302,25 @@ def write_xtc(file: PathLike, frames: list) -> None:
     import molrs.io
 
     molrs.io.write_xtc(str(file), list(frames))
+
+
+def write_dcd_trajectory(file: PathLike, frames: list) -> None:
+    """Write frames to a NAMD-compatible DCD trajectory (molrs).
+
+    Args:
+        file: Output ``.dcd`` path.
+        frames: Frames with equal atom counts; box presence must be consistent.
+    """
+    import molrs.io.raw as raw
+
+    raw.write_dcd(str(file), list(frames))
+
+
+def write_cube(file: PathLike, frame: Any) -> None:
+    """Write a frame grid block to a Gaussian Cube file (molrs)."""
+    import molrs.io
+
+    molrs.io.write_cube(str(file), frame)
 
 
 def write_lammps_system(

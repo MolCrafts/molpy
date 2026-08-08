@@ -213,6 +213,8 @@ class LammpsBondReactWriter:
             if a.get("react_id") and a.get("react_id") in pre_index
         ]
 
+        # Map format lives in molpy until fix bond/react + emit design settles
+        # (do not sink to molrs yet).
         map_path = Path(f"{self._base_path}.map")
         with map_path.open("w", encoding="utf-8") as f:
             f.write("# auto-generated map file for fix bond/react\n\n")

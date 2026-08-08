@@ -13,7 +13,7 @@ mol = mp.io.read_smiles("CCO")  # ethanol from SMILES (heavy atoms)
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
     mol
 )  # add hydrogens + 3D coordinates
-ff = mp.io.read_xml_forcefield("oplsaa.xml")  # bundled OPLS-AA
+ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml"))  # bundled OPLS-AA
 typed = mp.typifier.OPLSAATypifier().typify(mol)  # assign force-field types
 
 frame = typed.to_frame()  # columnar arrays
@@ -37,6 +37,7 @@ from pathlib import Path
 
 import numpy as np
 import molpy as mp
+from molpy.data import get_forcefield_path
 from molpy.io.forcefield import read_xml_forcefield
 from molpy.typifier import ForceFieldParams
 ```
@@ -87,7 +88,7 @@ Load the bundled `tip3p.xml` and spend its types on the template.
 > unknown.
 
 ```python
-ff = read_xml_forcefield("tip3p.xml")
+ff = read_xml_forcefield(get_forcefield_path("tip3p.xml"))
 
 for atom, atom_type in zip(water_template.atoms, ["tip3p-O", "tip3p-H", "tip3p-H"]):
     atom["type"] = atom_type

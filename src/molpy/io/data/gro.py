@@ -1,21 +1,23 @@
-"""GROMACS .gro file I/O — molrs (Rust) backend.
+"""GROMACS .gro file I/O — thin molrs wrappers.
 
-Reader/writer delegate to :mod:`molrs.io` (parsing + field canonicalization in
-Rust). :class:`GroFieldFormatter` is retained for the formatter hierarchy.
+Parse/serialize live in :mod:`molrs.io`. :class:`GroFieldFormatter` documents
+format-native names for the FieldFormatter hierarchy (no separate Python parser).
 """
+
+from __future__ import annotations
 
 from pathlib import Path
 
 import molrs.io
+from molrs import Frame
 
 from molpy.core.fields import RES_ID, RES_NAME, FieldFormatter
-from molrs import Frame
 
 from .base import DataReader, DataWriter
 
 
 class GroFieldFormatter(FieldFormatter):
-    """GROMACS .gro field name translation."""
+    """GROMACS .gro field name translation (documentation / hierarchy only)."""
 
     _field_formatters = {
         "res_number": RES_ID,
@@ -24,7 +26,7 @@ class GroFieldFormatter(FieldFormatter):
 
 
 class GroReader(DataReader):
-    """Read GRO files via the molrs Rust backend."""
+    """Read GRO via molrs (first frame if multi-frame)."""
 
     _formatter = GroFieldFormatter()
 
@@ -32,17 +34,15 @@ class GroReader(DataReader):
         super().__init__(Path(path), **kwargs)
 
     def read(self, frame: Frame | None = None) -> Frame:
-        frames = molrs.io.read_gro(self._path)
+        del frame
+        frames = molrs.io.read_gro(str(self._path))
         if not frames:
             raise OSError(f"no frames parsed from GRO file: {self._path}")
-        # Already a canonical rich Frame from molrs.io: coordinates in x/y/z,
-        # and no element information (a GRO file carries none), so no atomic
-        # number either.
         return frames[0]
 
 
 class GroWriter(DataWriter):
-    """Write GRO files via the molrs Rust backend."""
+    """Write GRO via molrs."""
 
     _formatter = GroFieldFormatter()
 
@@ -50,4 +50,4 @@ class GroWriter(DataWriter):
         super().__init__(Path(path), **kwargs)
 
     def write(self, frame: Frame) -> None:
-        molrs.io.write_gro(self._path, frame)
+        molrs.io.write_gro(str(self._path), frame)

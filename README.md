@@ -129,7 +129,7 @@ Parse a SMILES string, assign OPLS-AA types, and write LAMMPS input files:
 import molpy as mp
 
 mol   = mp.Atomistic.from_smiles("CCO")          # ethanol from SMILES
-ff    = mp.io.read_xml_forcefield("oplsaa.xml")  # bundled OPLS-AA
+ff    = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml"))  # bundled OPLS-AA
 typed = mp.typifier.OplsAtomisticTypifier(ff).typify(mol)
 
 mp.io.write_lammps_system("output/", typed.to_frame(), ff)

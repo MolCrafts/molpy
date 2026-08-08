@@ -79,36 +79,27 @@ class TestDataAccess:
 
 
 class TestForcefieldIntegration:
-    """Test integration with forcefield loader."""
+    """XML reader takes explicit paths only; data module resolves packaged files."""
 
-    def test_forcefield_loader_uses_data_module(self):
-        """Test that forcefield loader uses the data module."""
+    def test_resolve_requires_existing_path(self):
         from molpy.io.forcefield.xml import _resolve_forcefield_path
 
-        # Test with just filename
-        path = _resolve_forcefield_path("oplsaa.xml")
-        assert path.exists()
-        assert path.name == "oplsaa.xml"
-
-    def test_forcefield_loader_with_full_path(self):
-        """Test that forcefield loader works with full paths."""
-        from molpy.io.forcefield.xml import _resolve_forcefield_path
-
-        # Get the actual path
         data_path = get_path("forcefield/tip3p.xml")
         path = _resolve_forcefield_path(str(data_path))
         assert path.exists()
         assert path.name == "tip3p.xml"
 
-    def test_forcefield_loader_nonexistent(self):
-        """Test that forcefield loader raises FileNotFoundError for nonexistent files."""
+    def test_resolve_does_not_lookup_bare_builtin_names(self):
         from molpy.io.forcefield.xml import _resolve_forcefield_path
 
-        with pytest.raises(FileNotFoundError) as exc_info:
-            _resolve_forcefield_path("nonexistent.xml")
+        with pytest.raises(FileNotFoundError, match="not found"):
+            _resolve_forcefield_path("oplsaa.xml")
 
-        # Check that error message includes available forcefields
-        assert "Available built-in force fields" in str(exc_info.value)
+    def test_resolve_nonexistent_raises(self):
+        from molpy.io.forcefield.xml import _resolve_forcefield_path
+
+        with pytest.raises(FileNotFoundError):
+            _resolve_forcefield_path("nonexistent.xml")
 
 
 class TestDataModuleImport:

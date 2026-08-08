@@ -24,7 +24,7 @@ from molpy.conformer import Conformer
 from molpy.optimize import LBFGS, ForceFieldPotential
 
 mol, _ = Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
-forcefield = mp.io.read_xml_forcefield("oplsaa.xml")
+forcefield = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml"))
 frame = mp.typifier.OPLSAATypifier().typify(mol).to_frame()
 
 potential = ForceFieldPotential(forcefield) # wraps a ForceField

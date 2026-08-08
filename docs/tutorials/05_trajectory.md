@@ -33,7 +33,7 @@ print(traj[0]["atoms"]["x"])  # [0.]
 
 ## Iterables are materialized
 
-The constructor accepts any iterable, but materializes it immediately into the native container. Use `molrs.io.read_lammps_trajectory` or `molrs.io.read_xyz_trajectory` when data must remain lazy and seekable on disk.
+The constructor accepts any iterable, but materializes it immediately into the native container. Use `molpy.io.read_lammps_trajectory` or `molpy.io.read_xyz_trajectory` when data must remain lazy and seekable on disk.
 
 ```python
 def make_frames(n):

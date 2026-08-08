@@ -62,11 +62,11 @@ def _clp_molrs_typifier() -> OPLSAATypifier:
 
 @lru_cache(maxsize=1)
 def _load_clp_forcefield() -> ForceField:
-    """Parse ``oplsaa.xml`` + ``clp.xml`` once; the overlay is read-only after load."""
+    """Parse ``oplsaa.xml`` + ``clp.xml`` once via molrs (OPLS unit path + merge)."""
     from molpy.data.forcefield import get_forcefield_path
-    from molpy.io.forcefield.xml import read_oplsaa_forcefield, read_xml_forcefield
+    from molpy.io.forcefield.xml import read_xml_forcefield
 
-    ff = read_oplsaa_forcefield("oplsaa.xml")
+    ff = read_xml_forcefield(get_forcefield_path("oplsaa.xml"))
     return read_xml_forcefield(get_forcefield_path("clp.xml"), ff, layer=1)
 
 

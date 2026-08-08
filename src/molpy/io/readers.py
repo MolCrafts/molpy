@@ -66,21 +66,19 @@ def read_lammps_molecule(file: PathLike, frame: Any = None) -> Any:
 
 
 def read_pdb(file: PathLike, frame: Any = None) -> Any:
-    """
-    Read PDB file and return a Frame object.
+    """Read a PDB file (molrs); CONECT pairs are de-duplicated.
 
     Args:
-        file: Path to PDB file
-        frame: Optional existing Frame to populate
+        file: Path to PDB file.
+        frame: Accepted for API parity; ignored (molrs returns a new Frame).
 
     Returns:
-        Populated Frame object
+        :class:`~molpy.Frame` for the first MODEL.
     """
     from .data.pdb import PDBReader
 
-    frame = _ensure_frame(frame)
-    reader = PDBReader(Path(file))
-    return reader.read(frame)
+    del frame
+    return PDBReader(Path(file)).read()
 
 
 def read_amber_inpcrd(inpcrd: PathLike, frame: Any = None) -> Any:
@@ -138,21 +136,19 @@ def read_amber_frcmod(file: PathLike) -> dict[str, Any]:
 
 
 def read_mol2(file: PathLike, frame: Any = None) -> Any:
-    """
-    Read mol2 file and return a Frame object.
+    """Read a Tripos MOL2 file (molrs; first molecule).
 
     Args:
-        file: Path to mol2 file
-        frame: Optional existing Frame to populate
+        file: Path to a ``.mol2`` file.
+        frame: Accepted for API parity; ignored (molrs returns a new Frame).
 
     Returns:
-        Populated Frame object
+        Canonical :class:`~molpy.Frame`.
     """
     from .data.mol2 import Mol2Reader
 
-    frame = _ensure_frame(frame)
-    reader = Mol2Reader(Path(file))
-    return reader.read(frame)
+    del frame
+    return Mol2Reader(Path(file)).read()
 
 
 def read_xsf(file: PathLike, frame: Any = None) -> Any:
@@ -173,39 +169,35 @@ def read_xsf(file: PathLike, frame: Any = None) -> Any:
 
 
 def read_gro(file: PathLike, frame: Any = None) -> Any:
-    """
-    Read GROMACS gro file and return a Frame object.
+    """Read a GROMACS GRO file (molrs); returns the first frame.
 
     Args:
-        file: Path to gro file
-        frame: Optional existing Frame to populate
+        file: Path to ``.gro`` file.
+        frame: Accepted for API parity; ignored.
 
     Returns:
-        Populated Frame object
+        :class:`~molpy.Frame`.
     """
     from .data.gro import GroReader
 
-    frame = _ensure_frame(frame)
-    reader = GroReader(Path(file))
-    return reader.read(frame)
+    del frame
+    return GroReader(Path(file)).read()
 
 
 def read_xyz(file: PathLike, frame: Any = None) -> Any:
-    """
-    Read XYZ file and return a Frame object.
+    """Read an XYZ file (molrs) with molpy column normalization.
 
     Args:
-        file: Path to XYZ file
-        frame: Optional existing Frame to populate
+        file: Path to XYZ file.
+        frame: Accepted for API parity; ignored.
 
     Returns:
-        Populated Frame object
+        :class:`~molpy.Frame`.
     """
     from .data.xyz import XYZReader
 
-    frame = _ensure_frame(frame)
-    reader = XYZReader(Path(file))
-    return reader.read(frame)
+    del frame
+    return XYZReader(Path(file)).read()
 
 
 # =============================================================================
@@ -242,19 +234,8 @@ def read_lammps_forcefield(scripts: PathLike | list[PathLike]) -> Any:
     return molrs.ff.read_lammps_forcefield_str(text)
 
 
-def read_xml_forcefield(file: PathLike) -> Any:
-    """
-    Read XML force field file and return a ForceField object.
-
-    Args:
-        file: Path to XML force field file
-
-    Returns:
-        ForceField object
-    """
-    from .forcefield.xml import read_xml_forcefield as _read_xml
-
-    return _read_xml(file)
+# Identity re-export onto molpy.io only (no package-root mp.read_*).
+from .forcefield.xml import read_xml_forcefield as read_xml_forcefield  # noqa: E402
 
 
 def read_amber(
@@ -407,6 +388,20 @@ def read_xtc_trajectory(file: PathLike) -> Any:
     import molrs.io
 
     return molrs.io.read_xtc_trajectory(str(file))
+
+
+def read_cube(file: PathLike) -> Any:
+    """Read a Gaussian Cube file into a Frame with a grid block (molrs)."""
+    import molrs.io
+
+    return molrs.io.read_cube(str(file))
+
+
+def read_chgcar(file: PathLike) -> Any:
+    """Read a VASP CHGCAR into a Frame with a ``chgcar`` grid block (molrs)."""
+    import molrs.io
+
+    return molrs.io.read_chgcar(str(file))
 
 
 # =============================================================================

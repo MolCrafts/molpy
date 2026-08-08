@@ -1,47 +1,20 @@
 """LAMMPS log file parser.
 
-This module parses the standard LAMMPS run output structure documented in
-``Run_output.html``: thermo tables, loop timing, performance summaries,
-CPU/MPI timing, load-balance statistics, neighbor statistics, and warnings.
-Unrecognized lines are preserved so callers can still inspect information that
-does not yet have a structured representation.
+Parsing logic lives in ``molrs`` (Rust). This module is a thin public façade:
+it keeps the nested dataclass API used by callers and hydrates molrs payloads
+into those types (including a NumPy structured array for thermo columns).
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from molrs.io import read_lammps_log as _rs_read_lammps_log
 
 PathLike = str | Path
-
-_MEMORY_RE = re.compile(
-    r"^Per MPI rank memory allocation \(min/avg/max\) = "
-    r"(?P<minimum>\S+) \| (?P<average>\S+) \| (?P<maximum>\S+) (?P<units>\S+)"
-)
-_LOOP_TIME_RE = re.compile(
-    r"^Loop time of (?P<seconds>\S+) on (?P<procs>\d+) procs"
-    r"(?: for (?P<steps>\d+) steps with (?P<atoms>\d+) atoms)?"
-)
-_PERFORMANCE_RE = re.compile(
-    r"^Performance:\s+"
-    r"(?P<ns_per_day>\S+) ns/day,\s+"
-    r"(?P<hours_per_ns>\S+) hours/ns,\s+"
-    r"(?P<timesteps_per_second>\S+) timesteps/s"
-    r"(?:,\s+(?P<atom_steps_per_second>\S+) (?P<atom_steps_units>\S+))?"
-)
-_CPU_USE_RE = re.compile(
-    r"^(?P<percent>\S+)% CPU use with (?P<MPI_tasks>\d+) MPI tasks"
-    r"(?: x (?P<OMP_threads>\d+) OpenMP threads)?"
-)
-_LOAD_BALANCE_RE = re.compile(
-    r"^(?P<name>Nlocal|Nghost|Neighs):\s+"
-    r"(?P<average>\S+) ave (?P<maximum>\S+) max (?P<minimum>\S+) min"
-)
-_WARNING_RE = re.compile(r"^WARNING:\s*(?P<message>.*)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,8 +246,8 @@ class LAMMPSLog:
 
     def read(self) -> "LAMMPSLog":
         """Read and parse the log file. Returns ``self`` for chaining."""
-        text = self.path.read_text()
-        parsed = _parse_LAMMPS_log_text(self.path, text, self.style)
+        payload = _rs_read_lammps_log(str(self.path), self.style)
+        parsed = _hydrate_log(payload, path=self.path, style=self.style)
         self.version = parsed.version
         self.header = parsed.header
         self.runs = parsed.runs
@@ -308,391 +281,182 @@ def read_LAMMPS_log(file: PathLike) -> LAMMPSLog:
     return LAMMPSLog(file).read()
 
 
-def _parse_LAMMPS_log_text(path: Path, text: str, style: str) -> LAMMPSLog:
-    lines = text.splitlines()
-    run_ranges = _find_run_ranges(lines)
-    header_end = run_ranges[0][0] if run_ranges else len(lines)
-    total_wall_time = _parse_total_wall_time(lines)
-    if total_wall_time is not None and not run_ranges:
-        header_end = min(header_end, _total_wall_time_index(lines))
-
-    log = LAMMPSLog(path)
-    log.version = _first_line(text)
-    log.header = LAMMPSLogHeader(lines=tuple(lines[:header_end]))
-    log.runs = tuple(
-        _parse_run(index, lines[start:end], start, style)
-        for index, (start, end) in enumerate(run_ranges)
+def _hydrate_log(
+    payload: dict[str, Any],
+    *,
+    path: Path | None = None,
+    style: str | None = None,
+) -> LAMMPSLog:
+    """Build a :class:`LAMMPSLog` from a molrs nested-dict payload."""
+    log = LAMMPSLog(path if path is not None else payload.get("path", "<string>"))
+    log.style = style if style is not None else str(payload.get("style", "default"))
+    log.version = payload.get("version")
+    header = payload.get("header") or {}
+    log.header = LAMMPSLogHeader(lines=tuple(header.get("lines") or ()))
+    log.runs = tuple(_hydrate_run(run) for run in payload.get("runs") or ())
+    log.total_wall_time = payload.get("total_wall_time")
+    log.warnings = tuple(
+        _hydrate_warning(warning) for warning in payload.get("warnings") or ()
     )
-    log.total_wall_time = total_wall_time
-    log.warnings = tuple(_collect_warnings(lines, 0, None))
-    log.raw_text = text
+    log.raw_text = payload.get("raw_text") or ""
     return log
 
 
-def _find_run_ranges(lines: list[str]) -> list[tuple[int, int]]:
-    starts = [idx for idx, line in enumerate(lines) if _MEMORY_RE.match(line.strip())]
-    ranges: list[tuple[int, int]] = []
-    wall_idx = _total_wall_time_index(lines)
-    for idx, start in enumerate(starts):
-        next_start = starts[idx + 1] if idx + 1 < len(starts) else len(lines)
-        end = min(next_start, wall_idx) if wall_idx >= 0 else next_start
-        ranges.append((start, end))
-    return ranges
-
-
-def _parse_run(
-    index: int,
-    lines: list[str],
-    line_offset: int,
-    style: str,
-) -> LAMMPSRun:
-    consumed: set[int] = set()
-    memory = _parse_memory(lines, consumed)
-    loop_idx = _first_index(lines, lambda line: _LOOP_TIME_RE.match(line.strip()))
-    thermo = _parse_thermo(lines, consumed, loop_idx, style)
-    loop_time = _parse_loop_time(lines, consumed)
-    performance = _parse_performance(lines, consumed)
-    CPU_use = _parse_CPU_use(lines, consumed)
-    MPI_task_timing = _parse_timing_breakdown(
-        lines, consumed, "MPI task timing breakdown"
-    )
-    thread_timing = _parse_timing_breakdown(lines, consumed, "Thread timings breakdown")
-    if thread_timing is None:
-        thread_timing = _parse_timing_breakdown(lines, consumed, "Thread timing")
-    load_balance = tuple(_parse_load_balance(lines, consumed))
-    neighbor_statistics = _parse_neighbor_statistics(lines, consumed)
-    warnings = tuple(_collect_warnings(lines, line_offset, index))
-    for idx, line in enumerate(lines):
-        if _WARNING_RE.match(line.strip()):
-            consumed.add(idx)
-
-    setup_log = tuple(
-        line
-        for idx, line in enumerate(lines[: loop_idx if loop_idx >= 0 else 0])
-        if idx not in consumed and line.strip()
-    )
-    unparsed_log = tuple(
-        line
-        for idx, line in enumerate(lines)
-        if idx not in consumed and line.strip() and line not in setup_log
-    )
-
+def _hydrate_run(payload: dict[str, Any]) -> LAMMPSRun:
     return LAMMPSRun(
-        index=index,
-        setup_log=setup_log,
-        memory=memory,
-        thermo=thermo,
-        loop_time=loop_time,
-        performance=performance,
-        CPU_use=CPU_use,
-        MPI_task_timing=MPI_task_timing,
-        thread_timing=thread_timing,
-        load_balance=load_balance,
-        neighbor_statistics=neighbor_statistics,
-        warnings=warnings,
-        unparsed_log=unparsed_log,
-        raw_text="\n".join(lines),
+        index=int(payload.get("index", 0)),
+        setup_log=tuple(payload.get("setup_log") or ()),
+        memory=_hydrate_memory(payload.get("memory")),
+        thermo=_hydrate_thermo(payload.get("thermo")),
+        loop_time=_hydrate_loop_time(payload.get("loop_time")),
+        performance=_hydrate_performance(payload.get("performance")),
+        CPU_use=_hydrate_cpu_use(payload.get("CPU_use")),
+        MPI_task_timing=_hydrate_timing_breakdown(payload.get("MPI_task_timing")),
+        thread_timing=_hydrate_timing_breakdown(payload.get("thread_timing")),
+        load_balance=tuple(
+            _hydrate_load_balance(item) for item in payload.get("load_balance") or ()
+        ),
+        neighbor_statistics=_hydrate_neighbor_statistics(
+            payload.get("neighbor_statistics")
+        ),
+        warnings=tuple(
+            _hydrate_warning(warning) for warning in payload.get("warnings") or ()
+        ),
+        unparsed_log=tuple(payload.get("unparsed_log") or ()),
+        raw_text=payload.get("raw_text") or "",
     )
 
 
-def _parse_memory(lines: list[str], consumed: set[int]) -> LAMMPSMemoryUsage | None:
-    for idx, line in enumerate(lines):
-        match = _MEMORY_RE.match(line.strip())
-        if not match:
-            continue
-        consumed.add(idx)
-        return LAMMPSMemoryUsage(
-            minimum=float(match["minimum"]),
-            average=float(match["average"]),
-            maximum=float(match["maximum"]),
-            units=match["units"],
-            raw_line=line,
-        )
-    return None
-
-
-def _parse_thermo(
-    lines: list[str],
-    consumed: set[int],
-    loop_idx: int,
-    style: str,
-) -> LAMMPSThermo | None:
-    if style != "default" or loop_idx < 0:
+def _hydrate_memory(payload: dict[str, Any] | None) -> LAMMPSMemoryUsage | None:
+    if not payload:
         return None
+    return LAMMPSMemoryUsage(
+        minimum=float(payload["minimum"]),
+        average=float(payload["average"]),
+        maximum=float(payload["maximum"]),
+        units=str(payload["units"]),
+        raw_line=str(payload["raw_line"]),
+    )
 
-    start = _first_index(lines, lambda line: _MEMORY_RE.match(line.strip()))
-    if start < 0:
-        start = -1
-    body_indices = [idx for idx in range(start + 1, loop_idx) if lines[idx].strip()]
-    if len(body_indices) < 2:
+
+def _hydrate_thermo(payload: dict[str, Any] | None) -> LAMMPSThermo | None:
+    if not payload:
         return None
-
-    header_idx = body_indices[0]
-    columns = tuple(lines[header_idx].split())
-    data_indices: list[int] = []
-    for idx in body_indices[1:]:
-        parts = lines[idx].split()
-        if len(parts) != len(columns) or not all(_is_float(part) for part in parts):
-            break
-        data_indices.append(idx)
-
-    if not columns or not data_indices:
+    columns = tuple(payload.get("columns") or ())
+    rows = payload.get("rows") or []
+    if not columns or not rows:
         return None
-
     dtype = np.dtype({"names": columns, "formats": ["f8"] * len(columns)})
-    try:
-        data = np.loadtxt(
-            [lines[idx] for idx in data_indices],
-            dtype=dtype,
-            ndmin=1,
-        )
-    except ValueError:
+    data = np.array([tuple(row) for row in rows], dtype=dtype)
+    return LAMMPSThermo(
+        columns=columns,
+        data=data,
+        raw_lines=tuple(payload.get("raw_lines") or ()),
+    )
+
+
+def _hydrate_loop_time(payload: dict[str, Any] | None) -> LAMMPSLoopTime | None:
+    if not payload:
         return None
-
-    consumed.add(header_idx)
-    consumed.update(data_indices)
-    raw_lines = tuple(lines[idx] for idx in [header_idx, *data_indices])
-    return LAMMPSThermo(columns=columns, data=data, raw_lines=raw_lines)
-
-
-def _parse_loop_time(lines: list[str], consumed: set[int]) -> LAMMPSLoopTime | None:
-    for idx, line in enumerate(lines):
-        match = _LOOP_TIME_RE.match(line.strip())
-        if not match:
-            continue
-        consumed.add(idx)
-        return LAMMPSLoopTime(
-            seconds=float(match["seconds"]),
-            procs=int(match["procs"]),
-            steps=_int_or_none(match["steps"]),
-            atoms=_int_or_none(match["atoms"]),
-            raw_line=line,
-        )
-    return None
+    return LAMMPSLoopTime(
+        seconds=float(payload["seconds"]),
+        procs=int(payload["procs"]),
+        steps=_int_or_none(payload.get("steps")),
+        atoms=_int_or_none(payload.get("atoms")),
+        raw_line=str(payload["raw_line"]),
+    )
 
 
-def _parse_performance(
-    lines: list[str],
-    consumed: set[int],
-) -> LAMMPSPerformance | None:
-    for idx, line in enumerate(lines):
-        match = _PERFORMANCE_RE.match(line.strip())
-        if not match:
-            continue
-        consumed.add(idx)
-        return LAMMPSPerformance(
-            ns_per_day=float(match["ns_per_day"]),
-            hours_per_ns=float(match["hours_per_ns"]),
-            timesteps_per_second=float(match["timesteps_per_second"]),
-            atom_steps_per_second=_float_or_none(match["atom_steps_per_second"]),
-            atom_steps_units=match["atom_steps_units"],
-            raw_line=line,
-        )
-    return None
+def _hydrate_performance(payload: dict[str, Any] | None) -> LAMMPSPerformance | None:
+    if not payload:
+        return None
+    return LAMMPSPerformance(
+        ns_per_day=float(payload["ns_per_day"]),
+        hours_per_ns=float(payload["hours_per_ns"]),
+        timesteps_per_second=float(payload["timesteps_per_second"]),
+        atom_steps_per_second=_float_or_none(payload.get("atom_steps_per_second")),
+        atom_steps_units=payload.get("atom_steps_units"),
+        raw_line=str(payload["raw_line"]),
+    )
 
 
-def _parse_CPU_use(lines: list[str], consumed: set[int]) -> LAMMPSCPUUse | None:
-    for idx, line in enumerate(lines):
-        match = _CPU_USE_RE.match(line.strip())
-        if not match:
-            continue
-        consumed.add(idx)
-        return LAMMPSCPUUse(
-            percent=float(match["percent"]),
-            MPI_tasks=int(match["MPI_tasks"]),
-            OMP_threads=_int_or_none(match["OMP_threads"]),
-            raw_line=line,
-        )
-    return None
+def _hydrate_cpu_use(payload: dict[str, Any] | None) -> LAMMPSCPUUse | None:
+    if not payload:
+        return None
+    return LAMMPSCPUUse(
+        percent=float(payload["percent"]),
+        MPI_tasks=int(payload["MPI_tasks"]),
+        OMP_threads=_int_or_none(payload.get("OMP_threads")),
+        raw_line=str(payload["raw_line"]),
+    )
 
 
-def _parse_timing_breakdown(
-    lines: list[str],
-    consumed: set[int],
-    title_prefix: str,
+def _hydrate_timing_breakdown(
+    payload: dict[str, Any] | None,
 ) -> LAMMPSTimingBreakdown | None:
-    start = _first_index(lines, lambda line: line.strip().startswith(title_prefix))
-    if start < 0:
+    if not payload:
         return None
-
-    raw_indices = [start]
-    rows: list[LAMMPSTimingRow] = []
-    for idx in range(start + 1, len(lines)):
-        line = lines[idx]
-        stripped = line.strip()
-        if not stripped:
-            break
-        row = _parse_timing_row(line)
-        if row is not None:
-            rows.append(row)
-            raw_indices.append(idx)
-            continue
-        if "|" in line or set(stripped) <= {"-"} or stripped.startswith("Section"):
-            raw_indices.append(idx)
-            continue
-        if rows:
-            break
-
-    if not rows:
-        return None
-    consumed.update(raw_indices)
+    rows = tuple(
+        LAMMPSTimingRow(
+            section=str(row["section"]),
+            min_time=float(row["min_time"]),
+            avg_time=float(row["avg_time"]),
+            max_time=float(row["max_time"]),
+            percent_varavg=float(row["percent_varavg"]),
+            percent_total=float(row["percent_total"]),
+            raw_line=str(row["raw_line"]),
+        )
+        for row in payload.get("rows") or ()
+    )
     return LAMMPSTimingBreakdown(
-        title=lines[start].strip().rstrip(":"),
-        rows=tuple(rows),
-        raw_lines=tuple(lines[idx] for idx in raw_indices),
+        title=str(payload.get("title") or ""),
+        rows=rows,
+        raw_lines=tuple(payload.get("raw_lines") or ()),
     )
 
 
-def _parse_timing_row(line: str) -> LAMMPSTimingRow | None:
-    if "|" not in line:
-        return None
-    parts = [part.strip() for part in line.split("|")]
-    if len(parts) != 6 or not all(_is_float(part) for part in parts[1:]):
-        return None
-    return LAMMPSTimingRow(
-        section=parts[0],
-        min_time=float(parts[1]),
-        avg_time=float(parts[2]),
-        max_time=float(parts[3]),
-        percent_varavg=float(parts[4]),
-        percent_total=float(parts[5]),
-        raw_line=line,
+def _hydrate_load_balance(payload: dict[str, Any]) -> LAMMPSLoadBalance:
+    return LAMMPSLoadBalance(
+        name=str(payload["name"]),
+        average=float(payload["average"]),
+        maximum=float(payload["maximum"]),
+        minimum=float(payload["minimum"]),
+        histogram=tuple(int(v) for v in payload.get("histogram") or ()),
+        raw_lines=tuple(payload.get("raw_lines") or ()),
     )
 
 
-def _parse_load_balance(
-    lines: list[str],
-    consumed: set[int],
-) -> list[LAMMPSLoadBalance]:
-    entries: list[LAMMPSLoadBalance] = []
-    idx = 0
-    while idx < len(lines):
-        match = _LOAD_BALANCE_RE.match(lines[idx].strip())
-        if not match:
-            idx += 1
-            continue
-
-        raw_indices = [idx]
-        histogram: tuple[int, ...] = ()
-        next_idx = idx + 1
-        if next_idx < len(lines) and lines[next_idx].strip().startswith("Histogram:"):
-            histogram = tuple(int(value) for value in lines[next_idx].split()[1:])
-            raw_indices.append(next_idx)
-        consumed.update(raw_indices)
-        entries.append(
-            LAMMPSLoadBalance(
-                name=match["name"],
-                average=float(match["average"]),
-                maximum=float(match["maximum"]),
-                minimum=float(match["minimum"]),
-                histogram=histogram,
-                raw_lines=tuple(lines[line_idx] for line_idx in raw_indices),
-            )
-        )
-        idx = raw_indices[-1] + 1
-    return entries
-
-
-def _parse_neighbor_statistics(
-    lines: list[str],
-    consumed: set[int],
+def _hydrate_neighbor_statistics(
+    payload: dict[str, Any] | None,
 ) -> LAMMPSNeighborStatistics | None:
-    keys = {
-        "Total # of neighbors": ("total_neighbors", int),
-        "Ave neighs/atom": ("ave_neighs_per_atom", float),
-        "Ave special neighs/atom": ("ave_special_neighs_per_atom", float),
-        "Neighbor list builds": ("neighbor_list_builds", int),
-        "Dangerous builds": ("dangerous_builds", int),
-    }
-    values: dict[str, Any] = {
-        "total_neighbors": None,
-        "ave_neighs_per_atom": None,
-        "ave_special_neighs_per_atom": None,
-        "neighbor_list_builds": None,
-        "dangerous_builds": None,
-    }
-    raw_indices: list[int] = []
-    for idx, line in enumerate(lines):
-        if "=" not in line:
-            continue
-        key, raw_value = [part.strip() for part in line.split("=", 1)]
-        if key not in keys:
-            continue
-        field_name, converter = keys[key]
-        values[field_name] = (
-            converter(float(raw_value)) if converter is int else float(raw_value)
-        )
-        raw_indices.append(idx)
-
-    if not raw_indices:
+    if not payload:
         return None
-    consumed.update(raw_indices)
     return LAMMPSNeighborStatistics(
-        total_neighbors=values["total_neighbors"],
-        ave_neighs_per_atom=values["ave_neighs_per_atom"],
-        ave_special_neighs_per_atom=values["ave_special_neighs_per_atom"],
-        neighbor_list_builds=values["neighbor_list_builds"],
-        dangerous_builds=values["dangerous_builds"],
-        raw_lines=tuple(lines[idx] for idx in raw_indices),
+        total_neighbors=_int_or_none(payload.get("total_neighbors")),
+        ave_neighs_per_atom=_float_or_none(payload.get("ave_neighs_per_atom")),
+        ave_special_neighs_per_atom=_float_or_none(
+            payload.get("ave_special_neighs_per_atom")
+        ),
+        neighbor_list_builds=_int_or_none(payload.get("neighbor_list_builds")),
+        dangerous_builds=_int_or_none(payload.get("dangerous_builds")),
+        raw_lines=tuple(payload.get("raw_lines") or ()),
     )
 
 
-def _collect_warnings(
-    lines: list[str],
-    line_offset: int,
-    run_index: int | None,
-) -> list[LAMMPSWarning]:
-    warnings: list[LAMMPSWarning] = []
-    for idx, line in enumerate(lines):
-        match = _WARNING_RE.match(line.strip())
-        if match:
-            warnings.append(
-                LAMMPSWarning(
-                    message=match["message"],
-                    raw_line=line,
-                    line_number=line_offset + idx + 1,
-                    run_index=run_index,
-                )
-            )
-    return warnings
+def _hydrate_warning(payload: dict[str, Any]) -> LAMMPSWarning:
+    return LAMMPSWarning(
+        message=str(payload.get("message") or ""),
+        raw_line=str(payload.get("raw_line") or ""),
+        line_number=_int_or_none(payload.get("line_number")),
+        run_index=_int_or_none(payload.get("run_index")),
+    )
 
 
-def _parse_total_wall_time(lines: list[str]) -> str | None:
-    idx = _total_wall_time_index(lines)
-    if idx < 0:
-        return None
-    return lines[idx].split(":", 1)[1].strip() if ":" in lines[idx] else lines[idx]
-
-
-def _total_wall_time_index(lines: list[str]) -> int:
-    return _first_index(lines, lambda line: line.strip().startswith("Total wall time:"))
-
-
-def _first_index(lines: list[str], predicate) -> int:
-    for idx, line in enumerate(lines):
-        if predicate(line):
-            return idx
-    return -1
-
-
-def _first_line(text: str) -> str | None:
-    line = text.splitlines()[0] if text.splitlines() else None
-    return line
-
-
-def _is_float(value: str) -> bool:
-    try:
-        float(value)
-    except ValueError:
-        return False
-    return True
-
-
-def _float_or_none(value: str | None) -> float | None:
+def _float_or_none(value: Any) -> float | None:
     return float(value) if value is not None else None
 
 
-def _int_or_none(value: str | None) -> int | None:
+def _int_or_none(value: Any) -> int | None:
     return int(value) if value is not None else None
 
 
@@ -722,3 +486,21 @@ def _jsonify(value: Any) -> Any:
     if isinstance(value, np.generic):
         return value.item()
     return value
+
+
+__all__ = [
+    "LAMMPSCPUUse",
+    "LAMMPSLoadBalance",
+    "LAMMPSLog",
+    "LAMMPSLogHeader",
+    "LAMMPSLoopTime",
+    "LAMMPSMemoryUsage",
+    "LAMMPSNeighborStatistics",
+    "LAMMPSPerformance",
+    "LAMMPSRun",
+    "LAMMPSThermo",
+    "LAMMPSTimingBreakdown",
+    "LAMMPSTimingRow",
+    "LAMMPSWarning",
+    "read_LAMMPS_log",
+]

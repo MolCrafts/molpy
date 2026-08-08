@@ -380,6 +380,7 @@ from pathlib import Path
 
 import numpy as np
 import molpy as mp
+from molpy.data import get_forcefield_path
 from molpy.io import read_xml_forcefield, write_lammps_data, write_lammps_forcefield
 from molpy.typifier import ForceFieldParams
 
@@ -414,7 +415,7 @@ for iz in range(4):
 
 system.get_topo(gen_angle=True, gen_dihe=False)  # in place
 
-ff = read_xml_forcefield("tip3p.xml")
+ff = read_xml_forcefield(get_forcefield_path("tip3p.xml"))
 # Rigid TIP3P: the three sites are named by construction, so this spends types
 # rather than deciding them.
 for atom in system.atoms:

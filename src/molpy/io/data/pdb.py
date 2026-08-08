@@ -1,565 +1,99 @@
-import re
-from collections import defaultdict
+"""PDB file I/O — molrs-backed.
+
+Read: :func:`molrs.io.read_pdb` plus undirected CONECT de-duplication.
+Write: :func:`molrs.io.write_pdb` on **canonical** columns. Thin prep only:
+inject ``element`` from ``frame.meta['elements']`` when the column is absent.
+"""
+
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
+import molrs.io
 from molrs import Block, Frame
 
 from molpy._frame_meta import get_frame_meta
-from molpy.core import Box
 
 from .base import DataReader, DataWriter
 
-# ──────────────────────────────────────────────────────────────────────
-# helpers
-# ──────────────────────────────────────────────────────────────────────
-_ALNUM_RE = re.compile(r"([A-Za-z]+)")
 
-_TWO_CHR_ELEMENTS = {
-    "BR",
-    "CL",
-    "FE",
-    "MG",
-    "CA",
-    "ZN",
-    "NI",
-    "CU",
-    "NA",
-    "SI",
-    "CR",
-}
+def _dedup_conect_bonds(frame: Frame) -> Frame:
+    """Keep one undirected bond per CONECT pair (molrs emits both directions)."""
+    if "bonds" not in frame:
+        return frame
+    bonds = frame["bonds"]
+    if "atomi" not in bonds or "atomj" not in bonds:
+        return frame
+    atomi = np.asarray(bonds["atomi"])
+    atomj = np.asarray(bonds["atomj"])
+    seen: set[tuple[int, int]] = set()
+    keep: list[int] = []
+    for idx in range(len(atomi)):
+        a, b = int(atomi[idx]), int(atomj[idx])
+        canonical = (a, b) if a < b else (b, a)
+        if canonical not in seen:
+            seen.add(canonical)
+            keep.append(idx)
+    if len(keep) == len(atomi):
+        return frame
+    new_bonds = Block()
+    for col in bonds.keys():
+        new_bonds[col] = np.asarray(bonds[col])[keep]
+    frame["bonds"] = new_bonds
+    return frame
 
 
-# ──────────────────────────────────────────────────────────────────────
-# main reader
-# ──────────────────────────────────────────────────────────────────────
+def _ensure_element_column(frame: Frame) -> Frame:
+    """If atoms lack ``element``, build it from meta ``elements`` (space-separated)."""
+    atoms = frame["atoms"]
+    if "element" in atoms:
+        return frame
+    elements_str = get_frame_meta(frame, "elements")
+    if not isinstance(elements_str, str) or not elements_str.strip():
+        return frame
+    parts = elements_str.split()
+    n = atoms.nrows
+    if len(parts) < n:
+        parts = parts + ["X"] * (n - len(parts))
+    # Rebuild atoms block with element column (Block may not allow in-place add
+    # of new string cols in all builds — copy keys).
+    cols = {k: np.asarray(atoms[k]) for k in atoms.keys()}
+    cols["element"] = np.asarray(parts[:n], dtype="U8")
+    out = Frame()
+    out["atoms"] = Block(cols)
+    if frame.box is not None:
+        out.box = frame.box
+    out.meta = dict(frame.meta)
+    if "bonds" in frame:
+        out["bonds"] = frame["bonds"]
+    return out
+
+
 class PDBReader(DataReader):
-    """
-    Minimal-yet-robust PDB reader.
+    """Read a PDB via molrs (first MODEL; use :func:`read_pdb_trajectory` for all)."""
 
-    * ATOM / HETATM parsed per PDB v3.3 fixed columns
-    * CRYST1 -> frame.box
-    * CONECT -> bond list
-    """
+    def __init__(self, file: str | Path, **kwargs: object) -> None:
+        super().__init__(Path(file), **kwargs)
 
-    __slots__ = ()
-
-    # ------------------------------------------------------------------
-    def __init__(self, file: Path, **kwargs):
-        super().__init__(path=file, **kwargs)
-
-    # ------------------------------------------------------------------ private parsers
-    @staticmethod
-    def _parse_cryst1(line: str) -> np.ndarray | None:
-        try:
-            a, b, c = map(float, (line[6:15], line[15:24], line[24:33]))
-            alpha, beta, gamma = map(float, (line[33:40], line[40:47], line[47:54]))
-        except ValueError:
-            return None
-
-        # Orthorhombic shortcut
-        if all(abs(x - 90) < 1e-3 for x in (alpha, beta, gamma)):
-            return np.diag([a, b, c])
-
-        # Triclinic conversion
-        alpha_r, beta_r, gamma_r = np.deg2rad([alpha, beta, gamma])
-        cos_alpha, cos_beta, cos_gamma = np.cos([alpha_r, beta_r, gamma_r])
-        sin_gamma = np.sin(gamma_r)
-
-        v_x = [a, 0.0, 0.0]
-        v_y = [b * cos_gamma, b * sin_gamma, 0.0]
-        cx = c * cos_beta
-        cy = c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma
-        cz = np.sqrt(c**2 - cx**2 - cy**2)
-        v_z = [cx, cy, cz]
-
-        return np.array([v_x, v_y, v_z])
-
-    # ..................................................................
-    @staticmethod
-    def _parse_atom(line: str) -> tuple[dict[str, Any], np.ndarray]:
-        serial = int(line[6:11])
-        name = line[12:16].strip()
-        res_name = line[17:20].strip()
-        chain = line[21:22] or " "
-        res_seq = int(line[22:26])
-        xyz = np.array([float(line[30:38]), float(line[38:46]), float(line[46:54])])
-        occ_str = line[54:60].strip()
-        occ = float(occ_str) if occ_str else 1.0
-        bfac = float(line[60:66].strip() or 0.0)
-        elem = (line[76:78] or "").strip().upper()
-
-        if not elem:
-            m = _ALNUM_RE.match(name)
-            guess = m.group(1).upper() if m else ""
-            elem = guess[:2] if guess[:2] in _TWO_CHR_ELEMENTS else guess[:1]
-
-        return (
-            {
-                "id": serial,
-                "name": name,
-                "resName": res_name,
-                "chainID": chain,
-                "resSeq": res_seq,
-                "occupancy": occ,
-                "tempFactor": bfac,
-                "element": elem,
-            },
-            xyz,
-        )
-
-    # ..................................................................
-    @staticmethod
-    def _parse_conect(line: str) -> list[tuple[int, int]]:
-        center = int(line[6:11])
-        bonds = []
-        for offset in range(11, len(line), 5):
-            seg = line[offset : offset + 5].strip()
-            if seg:
-                partner = int(seg)
-                bonds.append(tuple(sorted((center, partner))))
-        return bonds
-
-    # ------------------------------------------------------------------ public read()
     def read(self, frame: Frame | None = None) -> Frame:
-        """Read a single PDB model via the molrs Rust backend.
-
-        Multi-MODEL / multi-frame PDBs are read one model at a time; use
-        :func:`molpy.io.read_pdb_trajectory` for all models.
-        """
-        import molrs.io
-
-        # molrs.io.read_pdb returns the canonical rich Frame directly.
-        molpy_frame = molrs.io.read_pdb(self._path)
-
-        # molrs preserves both directions of each CONECT record; molpy keeps a
-        # single bond per pair — deduplicate for parity.
-        bonds = molpy_frame["bonds"] if "bonds" in molpy_frame else None
-        if bonds is not None and "atomi" in bonds and "atomj" in bonds:
-            atomi = np.asarray(bonds["atomi"])
-            atomj = np.asarray(bonds["atomj"])
-            seen: set[tuple[int, int]] = set()
-            keep: list[int] = []
-            for idx in range(len(atomi)):
-                a, b = int(atomi[idx]), int(atomj[idx])
-                canonical = (a, b) if a < b else (b, a)
-                if canonical not in seen:
-                    seen.add(canonical)
-                    keep.append(idx)
-            if len(keep) < len(atomi):
-                new_bonds = Block()
-                for col in bonds.keys():
-                    new_bonds[col] = np.asarray(bonds[col])[keep]
-                molpy_frame["bonds"] = new_bonds
-
-        return molpy_frame
+        del frame
+        return _dedup_conect_bonds(molrs.io.read_pdb(str(self._path)))
 
 
 class PDBWriter(DataWriter):
-    """
-    Robust PDB file writer that creates properly formatted PDB files.
-
-    Features:
-    - Writes ATOM/HETATM records with proper formatting
-    - Handles missing fields with sensible defaults
-    - Writes CRYST1 records from box information
-    - Writes CONECT records for bonds
-    - Ensures PDB format compliance
-    """
-
-    def __init__(self, path: Path):
-        super().__init__(path=path)
-
-    def _format_atom_line_fast(
-        self,
-        serial: int,
-        atom_name: str,
-        res_name: str,
-        chain_id: str,
-        res_seq: int,
-        x: float,
-        y: float,
-        z: float,
-        occupancy: float,
-        temp_factor: float,
-        element: str,
-    ) -> str:
-        """Fast version of _format_atom_line that takes individual parameters."""
-        # Format according to PDB v3.3 specification
-        line = "ATOM  "  # Columns 1-6: Record name
-
-        # Columns 7-11: Serial number, right-justified
-        line += f"{serial:>5d}"
-
-        # Column 12: Space
-        line += " "
-
-        # Columns 13-16: Atom name
-        if len(atom_name) == 1:
-            line += f" {atom_name:<3s}"  # Space + 1 char + 2 spaces
-        elif len(atom_name) <= 4:
-            line += f"{atom_name:<4s}"  # Up to 4 characters
-        else:
-            line += f"{atom_name[:4]:<4s}"  # Truncate to 4 characters
-
-        # Column 17: Alternate location indicator (space)
-        line += " "
-
-        # Columns 18-20: Residue name, left-justified
-        line += f"{res_name[:3]:<3s}"
-
-        # Column 21: Space
-        line += " "
-
-        # Column 22: Chain identifier
-        line += f"{chain_id[0] if chain_id else ' ':1s}"
-
-        # Columns 23-26: Residue sequence number, right-justified
-        line += f"{res_seq:>4d}"
-
-        # Column 27: Insertion code (space)
-        line += " "
-
-        # Columns 28-30: Spaces
-        line += "   "
-
-        # Columns 31-38: X coordinate, right-justified, 8.3 format
-        line += f"{x:>8.3f}"
-
-        # Columns 39-46: Y coordinate, right-justified, 8.3 format
-        line += f"{y:>8.3f}"
-
-        # Columns 47-54: Z coordinate, right-justified, 8.3 format
-        line += f"{z:>8.3f}"
-
-        # Columns 55-60: Occupancy, right-justified, 6.2 format
-        line += f"{occupancy:>6.2f}"
-
-        # Columns 61-66: Temperature factor, right-justified, 6.2 format
-        line += f"{temp_factor:>6.2f}"
-
-        # Columns 67-76: Spaces
-        line += "          "
-
-        # Columns 77-78: Element symbol, right-justified
-        elem_str = str(element).upper()[:2] if element else "  "
-        line += f"{elem_str:>2s}"
-
-        # Columns 79-80: Charge (optional, use spaces if not provided)
-        line += "  "
-
-        # Ensure line is exactly 79 characters before adding newline
-        if len(line) < 79:
-            line = line.ljust(79)
-        elif len(line) > 79:
-            line = line[:79]
-
-        # End with newline (total 80 characters: 79 content + 1 newline)
-        line += "\n"
-        return line
-
-    def _format_atom_line(self, serial: int, atom_data: Block) -> str:
-        """Format a single ATOM/HETATM line according to PDB v3.3 specifications.
-
-        PDB Format v3.3 ATOM/HETATM Record:
-        COLUMNS        DATA TYPE    FIELD          DEFINITION
-        --------------------------------------------------------------------------------
-         1 -  6        Record name  "ATOM  " or "HETATM"
-         7 - 11        Integer      serial         Atom serial number.
-        13 - 16        Atom         name           Atom name.
-        17             Character    altLoc         Alternate location indicator.
-        18 - 20        Residue name resName        Residue name.
-        22             Character    chainID        Chain identifier.
-        23 - 26        Integer      resSeq         Residue sequence number.
-        27             AChar        iCode          Code for insertion of residues.
-        31 - 38        Real(8.3)    x              Orthogonal coordinates for X in Angstroms.
-        39 - 46        Real(8.3)    y              Orthogonal coordinates for Y in Angstroms.
-        47 - 54        Real(8.3)    z              Orthogonal coordinates for Z in Angstroms.
-        55 - 60        Real(6.2)    occupancy      Occupancy.
-        61 - 66        Real(6.2)    tempFactor     Temperature factor.
-        77 - 78        LString(2)   element        Element symbol, right-justified.
-        79 - 80        LString(2)   charge         Charge on the atom.
-        """
-
-        # Extract data with defaults
-        record_type = str(atom_data.get("record_type", "ATOM"))
-        atom_name = str(atom_data.get("name", "UNK"))
-        alt_loc = str(atom_data.get("altLoc", " "))
-        res_name = str(atom_data.get("resName", "UNK"))
-        chain_id = str(atom_data.get("chainID", " "))
-        res_seq = str(atom_data.get("resSeq", 1))
-        i_code = str(atom_data.get("iCode", " "))
-
-        # Coordinates - must use separate x, y, z fields
-        x = float(atom_data["x"])
-        y = float(atom_data["y"])
-        z = float(atom_data["z"])
-
-        # Optional fields
-        occupancy = float(atom_data.get("occupancy", 1.0))
-        temp_factor = float(atom_data.get("tempFactor", 0.0))
-        element = str(atom_data.get("element"))
-
-        # Format according to PDB v3.3 specification
-        # Columns 1-6: Record name, left-justified
-        line = f"{record_type:<6s}"
-
-        # Columns 7-11: Serial number, right-justified
-        line += f"{serial:>5d}"
-
-        # Column 12: Space
-        line += " "
-
-        # Columns 13-16: Atom name
-        # For atom names: if 1 character, start at column 14; if 2+ characters, start at column 13
-        atom_name = str(atom_name)
-        if len(atom_name) == 1:
-            line += f" {atom_name:<3s}"  # Space + 1 char + 2 spaces
-        elif len(atom_name) <= 4:
-            line += f"{atom_name:<4s}"  # Up to 4 characters
-        else:
-            line += f"{atom_name[:4]:<4s}"  # Truncate to 4 characters
-
-        # Column 17: Alternate location indicator
-        line += f"{alt_loc[0] if alt_loc else ' ':1s}"
-
-        # Columns 18-20: Residue name, left-justified
-        line += f"{res_name[:3]:<3s}"
-
-        # Column 21: Space
-        line += " "
-
-        # Column 22: Chain identifier
-        line += f"{chain_id[0] if chain_id else ' ':1s}"
-
-        # Columns 23-26: Residue sequence number, right-justified
-        line += f"{res_seq:>4s}"
-
-        # Column 27: Insertion code
-        line += f"{i_code[0] if i_code else ' ':1s}"
-
-        # Columns 28-30: Spaces
-        line += "   "
-
-        # Columns 31-38: X coordinate, right-justified, 8.3 format
-        line += f"{x:>8.3f}"
-
-        # Columns 39-46: Y coordinate, right-justified, 8.3 format
-        line += f"{y:>8.3f}"
-
-        # Columns 47-54: Z coordinate, right-justified, 8.3 format
-        line += f"{z:>8.3f}"
-
-        # Columns 55-60: Occupancy, right-justified, 6.2 format
-        line += f"{float(occupancy):>6.2f}"
-
-        # Columns 61-66: Temperature factor, right-justified, 6.2 format
-        line += f"{float(temp_factor):>6.2f}"
-
-        # Columns 67-76: Spaces (could contain segment identifier, but we'll use spaces)
-        line += "          "
-
-        # Columns 77-78: Element symbol, right-justified (2 characters)
-        if element:
-            elem_str = str(element)[:2].upper().strip()
-            line += f"{elem_str:>2s}"
-        else:
-            line += "  "
-
-        # Columns 79-80: Charge (optional, use spaces if not provided)
-        # Charge is typically not provided, so use spaces (2 characters)
-        line += "  "
-
-        # At this point, line should be exactly 79 characters
-        # Verify and fix if needed
-        if len(line) < 79:
-            line = line.ljust(79)
-        elif len(line) > 79:
-            line = line[:79]
-
-        # Add newline to make total 80 characters
-        line += "\n"
-        return line
-
-    def _format_cryst1_line(self, box) -> str:
-        """Format CRYST1 line from box information."""
-        if box is None:
-            return (
-                "CRYST1    1.000    1.000    1.000  90.00  90.00  90.00 P 1           1"
-            )
-
-        # Extract box parameters
-        matrix = box.matrix
-        a = float(matrix[0, 0])
-        b = float(matrix[1, 1])
-        c = float(matrix[2, 2])
-
-        # For now, assume orthogonal (90 degree angles)
-        alpha = beta = gamma = 90.0
-
-        return f"CRYST1{a:>9.3f}{b:>9.3f}{c:>9.3f}{alpha:>7.2f}{beta:>7.2f}{gamma:>7.2f} P 1           1"
-
-    def write(self, frame):
-        """Write frame to PDB file.
-
-        Required fields in frame["atoms"]:
-        - x, y, z: coordinates (float, required)
-        - id: atom ID (int, optional, defaults to index+1)
-
-        Optional fields in frame["atoms"]:
-        - name: atom name (str)
-        - resName: residue name (str)
-        - element: element symbol (str)
-        - resSeq: residue sequence number (int)
-        - chainID: chain identifier (str)
-        - occupancy: occupancy (float)
-        - tempFactor: temperature factor (float)
-
-        Optional typed metadata:
-        - elements: space-separated string of element symbols (one per atom)
-        - name: frame name (str)
-
-        The optional CRYST1 cell is read from ``frame.box``.
-
-        Raises:
-            ValueError: If required fields (x, y, z) are missing or contain None
-        """
-        # Extract elements from typed metadata if available.
-        elements_str = get_frame_meta(frame, "elements")
-        elements_list = elements_str.split() if isinstance(elements_str, str) else None
-
-        with open(self._path, "w") as f:
-            # Write header
-            frame_name = get_frame_meta(frame, "name", "MOL")
-            f.write(f"REMARK  {frame_name}\n")
-
-            # Write CRYST1 record if box exists
-            if frame.box is not None:
-                f.write(self._format_cryst1_line(frame.box) + "\n")
-            else:
-                f.write(self._format_cryst1_line(None) + "\n")
-
-            atoms = frame["atoms"]
-            n_atoms = atoms.nrows
-
-            # Validate required fields exist and are not None
-            required_fields = ["x", "y", "z"]
-            for field in required_fields:
-                if field not in atoms:
-                    raise ValueError(
-                        f"Required field '{field}' is missing in frame['atoms']"
-                    )
-                # No None-column check needed: the numpy-only Store rejects
-                # object / None columns at write time, so a present column is
-                # always a dense numpy array.
-
-            # Build index -> id mapping for bonds
-            index_to_id = {}
-            # PDB atom serials must be unique. Use the ``id`` field only when it
-            # already forms a valid, unique serial set; otherwise number atoms
-            # sequentially so merged/copied structures (which can repeat ids)
-            # still produce valid ATOM serials and CONECT records.
-            index_to_id = {i: i + 1 for i in range(n_atoms)}
-            if "id" in atoms:
-                ids = [atoms["id"][i] for i in range(n_atoms)]
-                if all(a is not None for a in ids):
-                    int_ids = [int(a) for a in ids]
-                    if len(set(int_ids)) == n_atoms:
-                        index_to_id = {i: int_ids[i] for i in range(n_atoms)}
-
-            for i in range(n_atoms):
-                # Extract required fields - raise error if None
-                x_val = atoms["x"][i]
-                y_val = atoms["y"][i]
-                z_val = atoms["z"][i]
-
-                if x_val is None or y_val is None or z_val is None:
-                    raise ValueError(
-                        f"Required coordinate fields contain None at index {i}: "
-                        f"x={x_val}, y={y_val}, z={z_val}"
-                    )
-
-                x = float(x_val)
-                y = float(y_val)
-                z = float(z_val)
-
-                # Extract optional fields with defaults
-                atom_id = index_to_id[i]
-
-                # Get element from metadata list or atom_data
-                element = None
-                if elements_list and i < len(elements_list):
-                    element = elements_list[i]
-                elif "element" in atoms and atoms["element"][i] is not None:
-                    element = str(atoms["element"][i])
-                else:
-                    element = "X"  # Default unknown element
-
-                # Get atom name (use element if not specified)
-                atom_name = None
-                if "name" in atoms and atoms["name"][i] is not None:
-                    atom_name = str(atoms["name"][i])
-                else:
-                    atom_name = element  # Use element as fallback
-
-                # Get residue name
-                res_name = "UNK"
-                if "resName" in atoms and atoms["resName"][i] is not None:
-                    res_name = str(atoms["resName"][i])
-
-                # Get residue sequence number
-                res_seq = 1
-                if "resSeq" in atoms and atoms["resSeq"][i] is not None:
-                    res_seq = int(atoms["resSeq"][i])
-
-                # Get chain ID
-                chain_id = " "
-                if "chainID" in atoms and atoms["chainID"][i] is not None:
-                    chain_id = str(atoms["chainID"][i])[:1]
-
-                # Get optional fields with defaults
-                occupancy = 1.0
-                if "occupancy" in atoms and atoms["occupancy"][i] is not None:
-                    occupancy = float(atoms["occupancy"][i])
-
-                temp_factor = 0.0
-                if "tempFactor" in atoms and atoms["tempFactor"][i] is not None:
-                    temp_factor = float(atoms["tempFactor"][i])
-
-                # Format and write atom line
-                line = self._format_atom_line_fast(
-                    serial=atom_id,
-                    atom_name=atom_name,
-                    res_name=res_name,
-                    chain_id=chain_id,
-                    res_seq=res_seq,
-                    x=x,
-                    y=y,
-                    z=z,
-                    occupancy=occupancy,
-                    temp_factor=temp_factor,
-                    element=element,
+    """Write a PDB via molrs (canonical columns)."""
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path=Path(path))
+
+    def write(self, frame: Frame) -> None:
+        atoms = frame["atoms"]
+        for field in ("x", "y", "z"):
+            if field not in atoms:
+                raise ValueError(
+                    f"Required field '{field}' is missing in frame['atoms']"
                 )
-                f.write(line)
-            f.write("\n")
-
-            # Write bonds as CONECT records
-            if "bonds" in frame:
-                bonds = frame["bonds"]
-                if "atomi" in bonds and "atomj" in bonds:
-                    connect = defaultdict(list)
-                    # atomi, atomj are stored as atom indices (0-based), use index_to_id
-                    for idx1, idx2 in zip(
-                        bonds["atomi"].tolist(), bonds["atomj"].tolist()
-                    ):
-                        id1 = index_to_id[int(idx1)]
-                        id2 = index_to_id[int(idx2)]
-                        connect[id1].append(id2)
-                        connect[id2].append(id1)
-                    for id1, id2s in sorted(connect.items()):
-                        js = [str(id2).rjust(5) for id2 in sorted(id2s)]
-                        f.write(f"CONECT{str(id1).rjust(5)}{''.join(js)}\n")
-            # Write END record
-            f.write("END\n")
+        prepared = _ensure_element_column(frame)
+        molrs.io.write_pdb(str(self._path), prepared)

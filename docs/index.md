@@ -149,7 +149,7 @@ SMARTS matching maps every atom, bond, angle, and dihedral to parameters you
 can inspect before anything is exported.
 
 ```python
-ff = mp.io.read_xml_forcefield("oplsaa.xml")  # bundled OPLS-AA
+ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml"))  # bundled OPLS-AA
 typed = mp.typifier.OPLSAATypifier().typify(mol)
 system = typed.to_frame()  # the numeric Frame
 system.box = mp.Box.cubic(30.0)
@@ -186,8 +186,8 @@ system = Molpack().with_seed(42).pack([target], max_loops=200)
 
 ### [Write files your engine runs](user-guide/11_io/)
 
-One call per file: LAMMPS data plus force-field coefficients. GROMACS, PDB,
-and Zarr (`MolStore`) writers share the same pattern.
+One call per file via ``mp.io``: LAMMPS data plus force-field coefficients.
+GROMACS and PDB writers share the same pattern.
 
 ```python
 import numpy as np
