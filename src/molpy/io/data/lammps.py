@@ -64,7 +64,7 @@ class LammpsDataResult:
 
 
 class LammpsDataReader(DataReader[LammpsDataResult]):
-    """Modern LAMMPS data file reader using Block.from_csv."""
+    """Reader for LAMMPS data files."""
 
     def __init__(self, path: str | Path, atom_style: str = "full") -> None:
         super().__init__(Path(path))
