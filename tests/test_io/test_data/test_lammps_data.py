@@ -1,8 +1,8 @@
 """
 Tests for LammpsDataReader and LammpsDataWriter classes.
 
-This module tests the modern LAMMPS data file I/O using Block.from_csv
-with space delimiter and mp.ForceField for force field parameters.
+Covers the space-delimited data file and the mp.ForceField parameters
+that come with it.
 """
 
 import os
