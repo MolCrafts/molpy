@@ -3,11 +3,11 @@
 Thin glue layers bridging molpy `Trajectory` to molrs computational
 kernels. The Python side does only data extraction (positions, charges)
 and vectorized NumPy assembly (dipole moment via `einsum`, minimum-image
-unwrap via `Box.diff_dr`); all spectral physics — ACF, windowing, FFT,
-prefactors — is performed in Rust by the raw computes
-(`molrs.DebyeRelaxation`, `molrs.GreenKuboConductivity`) and the ε(ω) Fits
-(`molrs.EinsteinHelfandSpectrum`, `molrs.GreenKuboSpectrum`), plus the raw
-`molrs.dielectric` observables and `molrs.signal`.
+unwrap); all correlators and spectral physics live in molrs:
+
+* raw Computes: ``DebyeRelaxation``, ``GreenKuboConductivity``, ``DipoleRateCross``
+* Fits: ``EinsteinHelfandSpectrum``, ``GreenKuboSpectrum``,
+  ``DipoleRateCrossSpectrum``, ``DipoleAutocorrelationSpectrum``
 """
 
 from __future__ import annotations
@@ -19,23 +19,20 @@ import numpy as np
 from molrs.compute.dielectric import Dielectric
 from molrs.compute.fitting import LinearFit as _MolrsLinearFit
 from molrs.compute.spectroscopy import (
+    DipoleAutocorrelationSpectrum as _MolrsDipoleAutocorrelationSpectrum,
+)
+from molrs.compute.spectroscopy import (
+    DipoleRateCrossSpectrum as _MolrsDipoleRateCrossSpectrum,
+)
+from molrs.compute.spectroscopy import (
     EinsteinHelfandSpectrum as _MolrsEinsteinHelfandSpectrum,
 )
 from molrs.compute.spectroscopy import GreenKuboSpectrum as _MolrsGreenKuboSpectrum
 from molrs.compute.transport import DebyeRelaxation as _MolrsDebyeRelaxation
+from molrs.compute.transport import DipoleRateCross as _MolrsDipoleRateCross
 from molrs.compute.transport import EinsteinConductivity as _MolrsEinsteinConductivity
 from molrs.compute.transport import GreenKuboConductivity as _MolrsGreenKuboConductivity
 from molrs.signal import acf_fft, apply_window, frequency_grid
-
-try:
-    from molrs.signal import xcorr_fft as _xcorr_fft
-except ImportError:  # older molrs without xcorr
-    _xcorr_fft = None
-
-# LAMMPS real-unit constants matching molrs::units::constants
-_KAPPA = 332.06371
-_K_B_REAL = 1.98720425864083e-3
-
 from ..core.box import Box
 from .base import Compute
 from .result import (
@@ -192,111 +189,33 @@ class SpectralAnalyzer(Compute):
         return SpectralResult(frequency=freq, spectrum=windowed)
 
 
-def _next_pow2(n: int) -> int:
-    return 1 << (int(n) - 1).bit_length()
+def _orth_mic_dr(dr: np.ndarray, lengths: np.ndarray) -> np.ndarray:
+    """MIC for orthogonal PBC: ``dr - L * rint(dr/L)``."""
+    return dr - lengths * np.rint(dr / lengths)
 
 
-def _window_1d(y: np.ndarray, window_type: str) -> np.ndarray:
-    y = np.asarray(y, dtype=np.float64).copy()
-    if window_type in ("none", "None", "identity", ""):
-        return y
-    return np.asarray(apply_window(y, window_type, 0), dtype=np.float64).reshape(-1)
-
-
-def _vector_acf_mean(series: np.ndarray, max_lag: int) -> np.ndarray:
-    """Unbiased mean of Cartesian ACFs via molrs.signal.acf_fft."""
-    x = np.asarray(series, dtype=np.float64)
-    x = x - x.mean(axis=0, keepdims=True)
-    n = x.shape[0]
-    max_lag = min(max_lag, n - 1)
-    acf = np.zeros(max_lag + 1, dtype=np.float64)
-    for d in range(3):
-        acf += np.asarray(acf_fft(np.ascontiguousarray(x[:, d]), max_lag), dtype=np.float64)
-    counts = n - np.arange(max_lag + 1, dtype=np.float64)
-    return acf / counts
-
-
-def _vector_xcorr_mean(a: np.ndarray, b: np.ndarray, max_lag: int) -> np.ndarray:
-    """Unbiased mean of Σ_α ⟨a_α(0) b_α(t)⟩ via molrs.signal.xcorr_fft."""
-    a = np.asarray(a, dtype=np.float64)
-    b = np.asarray(b, dtype=np.float64)
-    a = a - a.mean(axis=0, keepdims=True)
-    b = b - b.mean(axis=0, keepdims=True)
-    n = a.shape[0]
-    max_lag = min(max_lag, n - 1)
-    if _xcorr_fft is None:
-        raise RuntimeError(
-            "molrs.signal.xcorr_fft is required for route='eq28'; rebuild molrs"
-        )
-    corr = np.zeros(max_lag + 1, dtype=np.float64)
-    for d in range(3):
-        corr += np.asarray(
-            _xcorr_fft(
-                np.ascontiguousarray(a[:, d]),
-                np.ascontiguousarray(b[:, d]),
-                max_lag,
-            ),
-            dtype=np.float64,
-        )
-    counts = n - np.arange(max_lag + 1, dtype=np.float64)
-    return corr / counts
-
-
-def _eq28_spectrum(
-    c_mdot_m: np.ndarray,
-    dt: float,
-    volume: float,
-    temperature: float,
-    epsilon_inf: float,
-    window_type: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """ε(ω) from ⟨Ṁ·M⟩ correlator (real units). Returns (ω, ε', ε'')."""
-    y = _window_1d(c_mdot_m, window_type)
-    n_pad = _next_pow2(2 * len(y))
-    Y = np.fft.rfft(y, n=n_pad) * dt
-    omega = 2.0 * np.pi * np.fft.rfftfreq(n_pad, d=dt)
-    pref = (4.0 * np.pi * _KAPPA) / (3.0 * volume * _K_B_REAL * temperature)
-    eps_r = np.empty_like(omega)
-    eps_i = np.empty_like(omega)
-    for j, w in enumerate(omega):
-        if w == 0.0:
-            eps_r[j] = epsilon_inf
-            eps_i[j] = 0.0
-        else:
-            chi = pref * Y[j]
-            eps_r[j] = epsilon_inf + chi.real
-            eps_i[j] = -chi.imag
-    m = omega > 0
-    return omega[m], eps_r[m], eps_i[m]
-
-
-def _eq30_spectrum(
-    pacf: np.ndarray,
-    dt: float,
-    volume: float,
-    temperature: float,
-    epsilon_inf: float,
-    window_type: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """ε(ω) from PACF (notes Eq. 30). Returns (ω, ε', ε'')."""
-    y = _window_1d(pacf, window_type)
-    n_pad = _next_pow2(2 * len(y))
-    Y = np.fft.rfft(y, n=n_pad) * dt
-    omega = 2.0 * np.pi * np.fft.rfftfreq(n_pad, d=dt)
-    pref = (4.0 * np.pi * _KAPPA) / (3.0 * volume * _K_B_REAL * temperature)
-    c0 = float(pacf[0])
-    eps_r = np.empty_like(omega)
-    eps_i = np.empty_like(omega)
-    for j, w in enumerate(omega):
-        if w == 0.0:
-            eps_r[j] = epsilon_inf + pref * c0
-            eps_i[j] = 0.0
-        else:
-            chi = pref * (c0 - 1j * w * Y[j])
-            eps_r[j] = epsilon_inf + chi.real
-            eps_i[j] = -chi.imag
-    m = omega > 0
-    return omega[m], eps_r[m], eps_i[m]
+def _normalize_dielectric_routes(routes: list[str]) -> list[str]:
+    """Map legacy aliases to physical route names."""
+    alias = {
+        "eq28": "dipole-rate-cross",
+        "eq30": "dipole-autocorrelation",
+        "dipole-rate-cross": "dipole-rate-cross",
+        "dipole-autocorrelation": "dipole-autocorrelation",
+        "green-kubo": "green-kubo",
+        "einstein-helfand": "einstein-helfand",
+    }
+    out: list[str] = []
+    for r in routes:
+        key = r.strip().lower()
+        if key not in alias:
+            raise ValueError(
+                f"unknown dielectric route {r!r}; expected one of "
+                f"{sorted(set(alias.values()) | set(alias))}"
+            )
+        name = alias[key]
+        if name not in out:
+            out.append(name)
+    return out
 
 
 class DielectricSusceptibility(Compute):
@@ -310,13 +229,21 @@ class DielectricSusceptibility(Compute):
     Physics (molrs; LAMMPS *real* units on the kernels):
 
     * EH: ``DebyeRelaxation`` → ``EinsteinHelfandSpectrum``
-    * GK: ``compute_current_density(M)`` → ``GreenKuboConductivity`` →
-      ``GreenKuboSpectrum`` (P→CurrentACF / JACF on DRS slides)
-    * eq28: ``⟨Ṁ(0)·M(t)⟩`` cross-spectrum (notes Eq. 28)
-    * eq30: dipole PACF form (notes Eq. 30)
+    * GK: velocity current density when present, else FD ``Ṁ`` →
+      ``GreenKuboConductivity`` → ``GreenKuboSpectrum``
+    * ``dipole-rate-cross`` (alias ``eq28``): ``DipoleRateCross`` →
+      ``DipoleRateCrossSpectrum``
+    * ``dipole-autocorrelation`` (alias ``eq30``): ``DebyeRelaxation`` PACF →
+      ``DipoleAutocorrelationSpectrum`` (``C(0)−iωĈ``; auto plateau)
 
-    The static dielectric constant is computed once via Neumann's fluctuation
-    formula and attached to every route result.
+    Performance notes (stream path):
+
+    * Orthogonal NVT uses a pure-NumPy MIC (no per-frame Rust ``delta`` call).
+    * Per-frame buffers for ``(n_atoms, 3)`` are recycled (no ``column_stack``).
+    * Velocity columns are only read if a route needs current density
+      (``green-kubo``).
+    * Prefer :meth:`from_dipole_series` when ``M(t)`` / ``j(t)`` are already
+      cached — skips trajectory IO entirely.
 
     Args:
         dt: Frame spacing in **ps** (caller-supplied; not inferred from files).
@@ -327,9 +254,10 @@ class DielectricSusceptibility(Compute):
         window_type: ACF window for spectral fits — ``"hann"``,
             ``"blackman"``, ``"cosine_sq"``, or ``"none"`` (slides use none).
         routes: Subset of
-            ``["einstein-helfand", "green-kubo", "eq28", "eq30"]``.
-        volume: System volume in **Å³**. If ``None``, uses the first frame's
-            ``box.volume()`` (NVT/NVE assumption).
+            ``["einstein-helfand", "green-kubo", "dipole-rate-cross",
+            "dipole-autocorrelation"]`` (aliases ``eq28`` / ``eq30`` accepted).
+        volume: System volume in **Å³**. If ``None``, uses the mean frame
+            volume (NVT/NVE-friendly).
 
     Inputs:
         Each frame's ``atoms`` block must already carry canonical columns
@@ -365,79 +293,59 @@ class DielectricSusceptibility(Compute):
         self.max_correlation_time = max_correlation_time
         self.epsilon_inf = epsilon_inf
         self.window_type = window_type
-        self.routes = routes or ["einstein-helfand", "green-kubo"]
+        self.routes = _normalize_dielectric_routes(
+            routes or ["einstein-helfand", "green-kubo"]
+        )
         self._volume = volume
+        self.progress_every = int(config_kwargs.get("progress_every", 200_000))
 
-    def __call__(self, trajectory: Trajectory) -> DielectricSusceptibilityResult:
-        charges: np.ndarray | None = None
-        volume = self._volume
-        dipole_chunks: list[np.ndarray] = []
-        # Prefer charge-weighted velocities for the GK current when present
-        # (matches common DRS MD pipelines and literature cross-checks better
-        # than finite-difference Ṁ, which inflates χ'' via FD noise).
-        jden_chunks: list[np.ndarray] = []
-        use_velocity_current = False
-        prev_unwrapped: np.ndarray | None = None
-        prev_wrapped: np.ndarray | None = None
-        prev_box = None
-        box_cache: dict[bytes, Box] = {}
-        n_frames = 0
-        volume_sum = 0.0
+    def _need_velocity_current(self) -> bool:
+        return "green-kubo" in self.routes
 
-        for frame in trajectory:
-            if frame.box is None or frame.box.is_free:
-                raise ValueError("Trajectory frames must have a non-free Box")
-            atoms = frame["atoms"]
-            for col in ("x", "y", "z", "charge"):
-                if col not in atoms:
-                    raise ValueError(f"Missing column '{col}' in atoms block")
+    def from_dipole_series(
+        self,
+        dipole_moments: np.ndarray,
+        *,
+        volume: float,
+        current_density: np.ndarray | None = None,
+    ) -> DielectricSusceptibilityResult:
+        """Run spectral routes from precomputed ``M(t)`` (and optional ``j(t)``).
 
-            vol_f = float(frame.box.volume())
-            volume_sum += vol_f
-            if charges is None:
-                charges = np.asarray(atoms["charge"], dtype=np.float64)
-                use_velocity_current = all(c in atoms for c in ("vx", "vy", "vz"))
-            pos = np.column_stack(
-                [
-                    np.asarray(atoms["x"], dtype=np.float64),
-                    np.asarray(atoms["y"], dtype=np.float64),
-                    np.asarray(atoms["z"], dtype=np.float64),
-                ]
-            )
-            if prev_unwrapped is None:
-                unwrapped = pos
-            else:
-                key = np.asarray(prev_box.matrix).tobytes()
-                box = box_cache.get(key)
-                if box is None:
-                    box = Box.from_box(prev_box)
-                    box_cache[key] = box
-                unwrapped = prev_unwrapped + box.diff_dr(pos - prev_wrapped)
-            prev_unwrapped = unwrapped
-            prev_wrapped = pos
-            prev_box = frame.box
-            dipole_chunks.append(charges @ unwrapped)
-            if use_velocity_current:
-                vel = np.column_stack(
-                    [
-                        np.asarray(atoms["vx"], dtype=np.float64),
-                        np.asarray(atoms["vy"], dtype=np.float64),
-                        np.asarray(atoms["vz"], dtype=np.float64),
-                    ]
+        Use this when observables were reduced offline (or in a previous pass)
+        so TRR is not re-read. ``dipole_moments`` shape ``(n_frames, 3)`` in
+        e·Å; ``current_density`` shape ``(n_frames, 3)`` in e·Å⁻²·ps⁻¹ when
+        providing velocity-based JACF.
+        """
+        M = np.ascontiguousarray(dipole_moments, dtype=np.float64)
+        if M.ndim != 2 or M.shape[1] != 3:
+            raise ValueError(f"dipole_moments must be (n, 3), got {M.shape}")
+        jden = None
+        if current_density is not None:
+            jden = np.ascontiguousarray(current_density, dtype=np.float64)
+            if jden.shape != M.shape:
+                raise ValueError(
+                    f"current_density shape {jden.shape} != dipole {M.shape}"
                 )
-                # total current e·Å/ps → density e·Å⁻²·ps⁻¹ for GreenKuboSpectrum
-                jden_chunks.append((charges @ vel) / vol_f)
-            n_frames += 1
+        return self._spectra_from_series(
+            M,
+            jden,
+            float(volume),
+            use_velocity_current=jden is not None,
+            stream_meta={},
+        )
 
+    def _spectra_from_series(
+        self,
+        dipole_moments: np.ndarray,
+        jden_arr: np.ndarray | None,
+        volume: float,
+        *,
+        use_velocity_current: bool,
+        stream_meta: dict,
+    ) -> DielectricSusceptibilityResult:
+        n_frames = int(dipole_moments.shape[0])
         if n_frames < 2:
             raise ValueError(f"Need at least 2 frames, got {n_frames}")
-        assert charges is not None
-        if self._volume is not None:
-            volume = float(self._volume)
-        else:
-            volume = volume_sum / n_frames
-
-        dipole_moments = np.ascontiguousarray(np.vstack(dipole_chunks))
         max_lag = min(self.max_correlation_time, n_frames - 1)
 
         eps_stat = Dielectric.static_dielectric_constant(
@@ -446,14 +354,28 @@ class DielectricSusceptibility(Compute):
 
         results: dict[str, DielectricResult] = {}
         meta_extra: dict = {
-            "gk_current": "velocity" if use_velocity_current else "finite_difference_Mdot"
+            "gk_current": (
+                "velocity" if use_velocity_current else "finite_difference_Mdot"
+            ),
+            **stream_meta,
         }
+
+        # Shared PACF raw once if either EH or dipole-autocorrelation is requested.
+        need_pacf = ("einstein-helfand" in self.routes) or (
+            "dipole-autocorrelation" in self.routes
+        )
+        debye_raw = (
+            _MolrsDebyeRelaxation(volume, self.temperature, "tinfoil").compute(
+                dipole_moments, self.dt, max_lag
+            )
+            if need_pacf
+            else None
+        )
 
         for route in self.routes:
             if route == "einstein-helfand":
-                raw = _MolrsDebyeRelaxation(
-                    volume, self.temperature, "tinfoil"
-                ).compute(dipole_moments, self.dt, max_lag)
+                raw = debye_raw
+                assert raw is not None
                 spec = _MolrsEinsteinHelfandSpectrum(
                     self.dt,
                     volume,
@@ -472,8 +394,8 @@ class DielectricSusceptibility(Compute):
                 )
 
             if route == "green-kubo":
-                if use_velocity_current and jden_chunks:
-                    current_post = np.ascontiguousarray(np.vstack(jden_chunks))
+                if use_velocity_current and jden_arr is not None:
+                    current_post = jden_arr
                 else:
                     current_density = Dielectric.compute_current_density(
                         dipole_moments, self.dt, volume
@@ -499,45 +421,56 @@ class DielectricSusceptibility(Compute):
                     component="full",
                 )
 
-            if route == "eq28":
-                # ⟨Ṁ(0)·M(t)⟩; Mdot from central differences (ps⁻¹)
-                mdot = np.gradient(dipole_moments, self.dt, axis=0, edge_order=2)
-                c_cross = _vector_xcorr_mean(mdot, dipole_moments, max_lag)
-                omega, eps_r, eps_i = _eq28_spectrum(
-                    c_cross,
+            if route == "dipole-rate-cross":
+                # Raw C_ṀM (FD Ṁ + cartesian xcorr) + spectrum — both in molrs.
+                meta_extra["dipole_rate"] = "finite_difference"
+                raw = _MolrsDipoleRateCross().compute(
+                    dipole_moments, self.dt, max_lag
+                )
+                spec = _MolrsDipoleRateCrossSpectrum(
                     self.dt,
                     volume,
                     self.temperature,
                     self.epsilon_inf,
                     self.window_type,
-                )
+                ).fit(raw["cross"])
                 results["Eq28-full"] = DielectricResult(
-                    frequency=omega,
-                    epsilon_real=eps_r,
-                    epsilon_imag=eps_i,
+                    frequency=spec["frequencies"],
+                    epsilon_real=spec["eps_real"],
+                    epsilon_imag=spec["eps_imag"],
                     epsilon_static=eps_stat,
                     epsilon_inf=self.epsilon_inf,
-                    route="eq28",
+                    route="dipole-rate-cross",
                     component="full",
                 )
 
-            if route == "eq30":
-                pacf = _vector_acf_mean(dipole_moments, max_lag)
-                omega, eps_r, eps_i = _eq30_spectrum(
-                    pacf,
+            if route == "dipole-autocorrelation":
+                # Reuses debye_raw PACF; spectrum uses C(0)−iωĈ + auto plateau.
+                raw = debye_raw
+                assert raw is not None
+                pacf = raw["acf"]
+                c0 = float(pacf[0])
+                c_inf = float(pacf[-1])
+                ratio = c_inf / c0 if abs(c0) > 0.0 else 0.0
+                meta_extra["pacf_c0"] = c0
+                meta_extra["pacf_c_inf"] = c_inf
+                meta_extra["pacf_c_inf_over_c0"] = ratio
+                meta_extra["pacf_subtract_plateau"] = abs(ratio) > 0.1
+                spec = _MolrsDipoleAutocorrelationSpectrum(
                     self.dt,
                     volume,
                     self.temperature,
                     self.epsilon_inf,
                     self.window_type,
-                )
+                    None,  # auto plateau
+                ).fit(pacf)
                 results["Eq30-full"] = DielectricResult(
-                    frequency=omega,
-                    epsilon_real=eps_r,
-                    epsilon_imag=eps_i,
+                    frequency=spec["frequencies"],
+                    epsilon_real=spec["eps_real"],
+                    epsilon_imag=spec["eps_imag"],
                     epsilon_static=eps_stat,
                     epsilon_inf=self.epsilon_inf,
-                    route="eq30",
+                    route="dipole-autocorrelation",
                     component="full",
                 )
 
@@ -551,6 +484,190 @@ class DielectricSusceptibility(Compute):
                 "max_correlation_time": max_lag,
                 **meta_extra,
             },
+        )
+
+    def __call__(self, trajectory: Trajectory) -> DielectricSusceptibilityResult:
+        import time as _time
+
+        t_phase0 = _time.time()
+        n_known: int | None = None
+        n_attr = getattr(trajectory, "n_frames", None)
+        if n_attr is not None:
+            try:
+                n_known = int(n_attr() if callable(n_attr) else n_attr)
+            except Exception:
+                n_known = None
+        if n_known is not None:
+            print(
+                f"[DielectricSusceptibility] index/scan: n_frames={n_known} "
+                f"({_time.time() - t_phase0:.1f}s)",
+                flush=True,
+            )
+
+        want_j = self._need_velocity_current()
+        charges: np.ndarray | None = None
+        n_atoms = 0
+        # Recycled SoA → AoS buffers (avoid per-frame column_stack allocations).
+        pos = np.empty((0, 3), dtype=np.float64)
+        vel = np.empty((0, 3), dtype=np.float64)
+        # Recycled unwrap / wrap history (no pos.copy() per frame).
+        prev_unwrapped_buf = np.empty((0, 3), dtype=np.float64)
+        prev_wrapped_buf = np.empty((0, 3), dtype=np.float64)
+
+        cap = int(n_known) if (n_known is not None and n_known > 0) else 4096
+        dipole_moments = np.empty((cap, 3), dtype=np.float64)
+        jden = np.empty((cap, 3), dtype=np.float64) if want_j else None
+
+        use_velocity_current = False
+        prev_unwrapped: np.ndarray | None = None
+        prev_wrapped: np.ndarray | None = None
+        prev_box = None
+        box_obj: Box | None = None
+        orth_lengths: np.ndarray | None = None  # fast MIC path
+        n_frames = 0
+        volume_sum = 0.0
+        t_stream = _time.time()
+        prog = max(self.progress_every, 1)
+
+        def _ensure_cap(need: int) -> None:
+            nonlocal dipole_moments, jden, cap
+            if need <= cap:
+                return
+            new_cap = max(cap * 2, need)
+            d2 = np.empty((new_cap, 3), dtype=np.float64)
+            d2[:n_frames] = dipole_moments[:n_frames]
+            dipole_moments = d2
+            if jden is not None:
+                j2 = np.empty((new_cap, 3), dtype=np.float64)
+                j2[:n_frames] = jden[:n_frames]
+                jden = j2
+            cap = new_cap
+
+        for frame in trajectory:
+            if frame.box is None or frame.box.is_free:
+                raise ValueError("Trajectory frames must have a non-free Box")
+            atoms = frame["atoms"]
+
+            vol_f = float(frame.box.volume())
+            volume_sum += vol_f
+
+            if charges is None:
+                for col in ("x", "y", "z", "charge"):
+                    if col not in atoms:
+                        raise ValueError(f"Missing column '{col}' in atoms block")
+                charges = np.ascontiguousarray(atoms["charge"], dtype=np.float64)
+                n_atoms = int(charges.shape[0])
+                pos = np.empty((n_atoms, 3), dtype=np.float64)
+                prev_unwrapped_buf = np.empty((n_atoms, 3), dtype=np.float64)
+                prev_wrapped_buf = np.empty((n_atoms, 3), dtype=np.float64)
+                use_velocity_current = want_j and all(
+                    c in atoms for c in ("vx", "vy", "vz")
+                )
+                if use_velocity_current:
+                    vel = np.empty((n_atoms, 3), dtype=np.float64)
+                else:
+                    jden = None
+                box_obj = Box.from_box(frame.box)
+                # Orthogonal PBC → pure-NumPy MIC (avoids Rust call + zeros alloc/frame)
+                try:
+                    style = getattr(box_obj, "style", None)
+                    is_orth = style is Box.Style.ORTHOGONAL or style == "orthogonal"
+                except Exception:
+                    is_orth = False
+                if is_orth:
+                    orth_lengths = np.asarray(
+                        [box_obj.lx, box_obj.ly, box_obj.lz], dtype=np.float64
+                    )
+
+            # Fill recycled (n_atoms, 3) without column_stack
+            pos[:, 0] = np.asarray(atoms["x"], dtype=np.float64)
+            pos[:, 1] = np.asarray(atoms["y"], dtype=np.float64)
+            pos[:, 2] = np.asarray(atoms["z"], dtype=np.float64)
+
+            if prev_unwrapped is None:
+                # First frame: unwrapped = wrapped (copy into recycled buffer).
+                np.copyto(prev_unwrapped_buf, pos)
+                unwrapped = prev_unwrapped_buf
+            else:
+                if box_obj is None or abs(vol_f - float(prev_box.volume())) > 1e-9:
+                    box_obj = Box.from_box(prev_box)
+                    orth_lengths = None
+                    try:
+                        style = getattr(box_obj, "style", None)
+                        if style is Box.Style.ORTHOGONAL or style == "orthogonal":
+                            orth_lengths = np.asarray(
+                                [box_obj.lx, box_obj.ly, box_obj.lz], dtype=np.float64
+                            )
+                    except Exception:
+                        pass
+                # dr into a temporary view; update unwrapped in-place into buffer.
+                dr = pos - prev_wrapped_buf
+                if orth_lengths is not None:
+                    prev_unwrapped_buf += _orth_mic_dr(dr, orth_lengths)
+                else:
+                    prev_unwrapped_buf += box_obj.diff_dr(dr)
+                unwrapped = prev_unwrapped_buf
+
+            # Save wrapped positions for next MIC step (recycled, no pos.copy()).
+            np.copyto(prev_wrapped_buf, pos)
+            prev_unwrapped = prev_unwrapped_buf
+            prev_box = frame.box
+            _ensure_cap(n_frames + 1)
+            # M = q · R  (3-vector); BLAS gemv — stays in NumPy (already optimal).
+            dipole_moments[n_frames] = charges @ unwrapped
+
+            if use_velocity_current and jden is not None:
+                vel[:, 0] = np.asarray(atoms["vx"], dtype=np.float64)
+                vel[:, 1] = np.asarray(atoms["vy"], dtype=np.float64)
+                vel[:, 2] = np.asarray(atoms["vz"], dtype=np.float64)
+                jden[n_frames] = (charges @ vel) / vol_f
+
+            n_frames += 1
+            if n_frames % prog == 0:
+                elapsed = _time.time() - t_stream
+                rate = n_frames / max(elapsed, 1e-9)
+                if n_known:
+                    eta = (n_known - n_frames) / max(rate, 1e-9)
+                    print(
+                        f"[DielectricSusceptibility] stream {n_frames}/{n_known} "
+                        f"({100 * n_frames / n_known:.1f}%) {rate:.0f} fr/s "
+                        f"ETA {eta / 60:.1f} min",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"[DielectricSusceptibility] stream {n_frames} "
+                        f"{rate:.0f} fr/s",
+                        flush=True,
+                    )
+
+        if n_frames < 2:
+            raise ValueError(f"Need at least 2 frames, got {n_frames}")
+        if self._volume is not None:
+            volume = float(self._volume)
+        else:
+            volume = volume_sum / n_frames
+
+        dipole_moments = np.ascontiguousarray(dipole_moments[:n_frames])
+        jden_arr = (
+            np.ascontiguousarray(jden[:n_frames])
+            if (use_velocity_current and jden is not None)
+            else None
+        )
+
+        print(
+            f"[DielectricSusceptibility] stream done: n_frames={n_frames} "
+            f"in {(_time.time() - t_stream) / 60:.2f} min; "
+            f"gk_current={'velocity' if use_velocity_current else 'Mdot'}; "
+            f"mic={'orth-numpy' if orth_lengths is not None else 'box.diff_dr'}",
+            flush=True,
+        )
+        return self._spectra_from_series(
+            dipole_moments,
+            jden_arr,
+            volume,
+            use_velocity_current=use_velocity_current,
+            stream_meta={"mic_path": "orth-numpy" if orth_lengths is not None else "box.diff_dr"},
         )
 
 
