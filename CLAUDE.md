@@ -201,7 +201,7 @@ MolPy is a computational chemistry toolkit with explicit data flow and minimal m
 
 > **Hard runtime dependency**: `molcrafts-molrs` (Rust extension) is required,
 > pinned to the same **minor** line in `pyproject.toml`
-> (`>=0.12.0,<0.13`). Import-time `check_molrs_version` enforces major.minor
+> (`>=0.13.1,<0.14`). Import-time `check_molrs_version` enforces major.minor
 > only. Public molrs symbols are re-exported on the molpy facade
 > (`molpy.Frame is molrs.Frame`); application code imports `molpy`, not `molrs`.
 
@@ -232,7 +232,7 @@ from molpy import Block, Element, Frame  # same objects as molrs.*
 4. **Frame** (numerical container): Holds named Blocks + typed metadata + box
    - `frame["atoms"]`, `frame["bonds"]` → Block objects
    - `frame.box` → `mp.Box | None` (the only simulation-cell attribute; molpy `Box` subclasses molrs)
-   - `frame.meta` → `dict[str, mp.MetaValue]` with explicit dtype tags
+   - `frame.meta` → dict-like mapping; assign Python scalars (`frame.meta["timestep"] = 0`). `MetaValue` only when a specific store dtype is required.
    - `Block.rename(old, new)` for in-place column key rename
 
 ### Typical Workflow

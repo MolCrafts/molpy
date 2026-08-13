@@ -260,7 +260,7 @@ class ForceFieldParams:
         if node_types is not None:
             for node, out, decided in zip(nodes, node_out, node_types, strict=True):
                 out.update(decided)
-                node.update(**decided)
+                node.update(decided)
 
         if self._pair.parameterizes:
             for node, out in zip(nodes, node_out, strict=True):

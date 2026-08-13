@@ -222,7 +222,9 @@ class SoftPotential:
         try:
             box = self._bounding_box(coords)
             nlist = molrs.NeighborQuery(box, coords, self.rc).query(coords)
-            pairs = np.asarray(nlist.pairs(), dtype=int)
+            pairs = np.column_stack(
+                (nlist.query_point_indices(), nlist.point_indices())
+            ).astype(int)
         except Exception:
             # Degrade to bonds-only if a neighbor query cannot be built.
             return np.empty((0, 2), dtype=int)

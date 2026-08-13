@@ -9,7 +9,7 @@ Foundational data structures for molecular systems. All available via
 |--------|---------|---------------|------------|
 | `Atomistic` | Editable molecular graph (atoms + bonds) | Building, editing, reacting on chemistry | Array-backed analysis or export |
 | `Block` | Columnar table: column names → NumPy arrays | Tabular data, vectorized computation | Graph-level chemical editing |
-| `Frame` | Named Blocks + `box` + exact-dtype `MetaValue` entries | System snapshots, file I/O | Editing individual atoms |
+| `Frame` | Named Blocks + `box` + dict-like `meta` | System snapshots, file I/O | Editing individual atoms |
 | `Box` | Periodic simulation cell (3×3 matrix + PBC) | Wrapping, minimum-image distances | Non-periodic systems |
 | `Trajectory` | Ordered sequence of Frames (eager or lazy) | Time-series analysis, streaming I/O | Single-snapshot work |
 | `CoarseGrain` | CG molecular graph (beads + CG bonds) | Coarse-grained modelling; mirrors `Atomistic` | All-atom work (use `Atomistic`) |
@@ -17,7 +17,7 @@ Foundational data structures for molecular systems. All available via
 | `ForceField` | Force field container (styles → types → potentials) | Defining parameters before execution | Direct numerical computation |
 | `Entity` / `Link` | Base classes for graph nodes / edges (atoms are Entities, bonds are Links) | Custom graph element types | Everyday atom / bond editing |
 | `Region` | Geometric region (box, sphere, boolean combinations) | Spatial selection, packing constraints | Non-geometric masks (use a `Selector`) |
-| `UnitSystem` | LAMMPS-style unit-system registry (`real`, `metal`, …) | Unit conversions and custom presets | Unit-agnostic array math |
+| `UnitSystem` | Unit registry (`real`, `metal`, `openmm`, …) plus `k_B` | Unit conversions and custom presets | Unit-agnostic array math |
 
 ## Canonical examples
 
@@ -32,11 +32,10 @@ mol.def_bond(o, h)
 mol.get_topo(gen_angle=True) # write angles on mol; returns self
 # bulk reads: mol.atoms["x"] / mol.xyz — no full view materialization
 
-# Block + Frame: tabular snapshot. `meta` is explicitly typed, so a scalar
-# annotation goes in as a MetaValue rather than a bare Python object.
+# Block + Frame: tabular snapshot. `meta` is a dict of Python scalars.
 frame = mp.Frame(
  blocks={"atoms": {"element": ["O", "H"], "x": [0.0, 0.957]}},
- meta={"timestep": mp.MetaValue("i64", 0)},
+ meta={"timestep": 0},
 )
 
 # Box: periodic cell

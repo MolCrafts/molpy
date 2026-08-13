@@ -40,9 +40,8 @@ class TestRichFrameSurface:
                 "description": MetaValue("string", "water box"),
             }
         )
-        assert f.meta["timestep"].dtype == "i64"
-        assert f.meta["timestep"].value == 42
-        assert f.meta["description"].value == "water box"
+        assert f.meta["timestep"] == 42
+        assert f.meta["description"] == "water box"
 
     def test_typed_meta_survives_molrs_roundtrip(self, tmp_path):
         f = Frame(meta={"timestep": MetaValue("i64", 7)})
@@ -53,7 +52,7 @@ class TestRichFrameSurface:
         atoms["symbol"] = np.array(["He"])
         f["atoms"] = atoms
         molrs.io.write_xyz(str(tmp_path / "rt.xyz"), f)
-        assert f.meta["timestep"].value == 7
+        assert f.meta["timestep"] == 7
 
 
 class TestBoxEnrichmentSunkIntoMolrs:

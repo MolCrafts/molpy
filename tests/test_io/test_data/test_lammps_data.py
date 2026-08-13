@@ -101,8 +101,8 @@ class TestLammpsDataReader:
         assert len(np.unique(mol_ids)) <= 4  # max 4 different molecules
 
         # Scalar provenance is typed Frame meta; structured products are explicit.
-        assert frame.meta["format"].value == "lammps_data"
-        assert frame.meta["atom_style"].value == "full"
+        assert frame.meta["format"] == "lammps_data"
+        assert frame.meta["atom_style"] == "full"
         assert isinstance(result.forcefield, mp.ForceField)
 
     def test_whitespaces_file(self, test_files):

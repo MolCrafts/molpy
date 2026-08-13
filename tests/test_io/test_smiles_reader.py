@@ -38,6 +38,22 @@ def test_smiles_reader_read_as_atomistic() -> None:
     assert isinstance(mol2, Atomistic)
 
 
+def test_write_smarts_local_environment() -> None:
+    import molpy as mp
+    from molpy.core.atomistic import Atomistic
+
+    mol = mp.io.read_smiles("CCO")
+    assert isinstance(mol, Atomistic)
+    center = next(iter(mol.atoms))
+    pattern = mp.io.write_smarts(mol, center, reach=1, atomic_number=True)
+    assert isinstance(pattern, str) and pattern
+    assert "#" in pattern
+    from molpy import SmartsPattern
+
+    hits = SmartsPattern(pattern).find_matches(mol)
+    assert hits
+
+
 def test_smiles_reader_rejects_multi_component() -> None:
     from molpy.io.data.smiles import SmilesReader
 

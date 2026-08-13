@@ -33,7 +33,7 @@ class TestWriteLammpsTrajectory:
         tmp_file = tmp_path / "test.dump"
         writer = LammpsTrajectoryWriter(str(tmp_file))
         for frame in frames:
-            timestep = frame.meta["timestep"].value
+            timestep = frame.meta["timestep"]
             writer.write_frame(frame, timestep=timestep)
         writer.close()
 
@@ -44,7 +44,7 @@ class TestWriteLammpsTrajectory:
         for i, frame_read in enumerate(reader):
             if i >= len(frames):
                 break
-            assert frame_read.meta["timestep"].value == frames[i].meta["timestep"].value
+            assert frame_read.meta["timestep"] == frames[i].meta["timestep"]
             assert "atoms" in frame_read
             # Check that positions changed over time
             if i > 0:
@@ -101,7 +101,7 @@ class TestWriteLammpsTrajectory:
         frame_read = reader[0]
 
         # Verify timestep
-        assert frame_read.meta["timestep"].value == 1000
+        assert frame_read.meta["timestep"] == 1000
 
         # Verify atoms data exists
         assert "atoms" in frame_read
@@ -141,7 +141,7 @@ class TestTrajectoryIntegration:
         reader = read_lammps_trajectory(str(tmp_file))
         frame_read = reader[0]
 
-        assert frame_read.meta["timestep"].value == 0
+        assert frame_read.meta["timestep"] == 0
         assert "atoms" in frame_read
         assert frame_read.box is not None
 
@@ -172,7 +172,7 @@ class TestTrajectoryIntegration:
         frame_traj = reader[0]
 
         # Both should have same basic structure
-        assert frame_traj.meta["timestep"].value == 100
+        assert frame_traj.meta["timestep"] == 100
         assert "atoms" in frame_traj
         assert frame_traj.box is not None
         assert frame_original.box is not None

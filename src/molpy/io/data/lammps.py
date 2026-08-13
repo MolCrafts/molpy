@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from molrs import Frame, MetaValue
+from molrs import Frame
 from molpy._frame_meta import update_frame_meta
 from molpy.core.fields import CHARGE, MOL_ID, FieldFormatter
 from molpy.core.forcefield import ForceField
@@ -148,9 +148,9 @@ class LammpsDataReader(DataReader[LammpsDataResult]):
         update_frame_meta(
             frame,
             {
-                "format": MetaValue("string", "lammps_data"),
-                "atom_style": MetaValue("string", self.atom_style),
-                "source_file": MetaValue("string", str(self._path)),
+                "format": "lammps_data",
+                "atom_style": self.atom_style,
+                "source_file": str(self._path),
             },
         )
 
@@ -377,9 +377,8 @@ class LammpsDataWriter(DataWriter):
         raise — the inventory must be usable as Type Labels text.
         """
         from molpy._frame_meta import update_frame_meta
-        from molrs import MetaValue
 
-        meta_update: dict[str, MetaValue] = {}
+        meta_update: dict[str, str] = {}
         for type_key, meta_key in self._TYPE_LABEL_META:
             labels = self.type_labels.get(type_key)
             if not labels:
@@ -389,7 +388,7 @@ class LammpsDataWriter(DataWriter):
                     raise ValueError(f"Found empty explicit type label for {type_key}")
             ordered = _sorted_type_names(labels)
             packed = ",".join(f"{i}:{lab}" for i, lab in enumerate(ordered, 1))
-            meta_update[meta_key] = MetaValue("string", packed)
+            meta_update[meta_key] = packed
         if meta_update:
             update_frame_meta(frame, meta_update)
 

@@ -466,3 +466,66 @@ def read_smiles(smiles: str) -> Any:
             "adopt each, or pass one component at a time."
         )
     return Atomistic.adopt(ir.to_atomistic())
+
+
+def write_smarts(
+    mol: Any,
+    center: Any,
+    *,
+    reach: int = 1,
+    atomic_number: bool = True,
+    include_degree: bool = True,
+    include_h_count: bool = True,
+    include_charge: bool = True,
+    include_aromatic: bool = True,
+    include_ring_membership: bool = False,
+    include_ring_size: bool = False,
+    include_explicit_h_atoms: bool = False,
+    include_bond_orders: bool = True,
+    neighbor_style: str = "chain",
+    canonical_neighbor_order: bool = True,
+) -> str:
+    """Encode the local topology around ``center`` as a SMARTS string.
+
+    Thin wrap of ``molrs.io.write_smarts``. Science flags match the molrs
+    ``LocalSmartsOptions`` surface. This is an io entry — not a method on
+    :class:`~molpy.core.atomistic.Atomistic`.
+
+    Args:
+        mol: molpy :class:`~molpy.core.atomistic.Atomistic` (or molrs graph).
+        center: Atom view (``.handle``) or integer handle.
+        reach: Bond radius of the local ball (must be >= 1).
+        atomic_number: Use ``[#Z]`` rather than elemental symbols.
+        include_degree: Add Daylight ``D`` on the center.
+        include_h_count: Add ``H`` on the center.
+        include_charge: Add formal charge when nonzero.
+        include_aromatic: Mark aromatic atoms / bonds.
+        include_ring_membership: Add ring-count primitives.
+        include_ring_size: Add smallest-ring size.
+        include_explicit_h_atoms: Keep explicit hydrogens in the ball.
+        include_bond_orders: Emit ``=`` / ``#`` / ``:`` when not single.
+        neighbor_style: ``"chain"`` or ``"recursive"``.
+        canonical_neighbor_order: Sort neighbors by canonical atom order.
+
+    Returns:
+        A SMARTS string that matches ``center`` in ``mol``.
+    """
+    import molrs
+
+    handle = int(getattr(center, "handle", center))
+    return molrs.io.write_smarts(
+        mol,
+        handle,
+        reach=reach,
+        atomic_number=atomic_number,
+        include_degree=include_degree,
+        include_h_count=include_h_count,
+        include_charge=include_charge,
+        include_aromatic=include_aromatic,
+        include_ring_membership=include_ring_membership,
+        include_ring_size=include_ring_size,
+        include_explicit_h_atoms=include_explicit_h_atoms,
+        include_bond_orders=include_bond_orders,
+        neighbor_style=neighbor_style,
+        canonical_neighbor_order=canonical_neighbor_order,
+    )

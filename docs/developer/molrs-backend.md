@@ -91,13 +91,13 @@ from molpy.compute import NeighborList
 rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(500, 3))
 
-frame = molrs.Frame()
+frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = mp.Box.cubic(20.0)
 
 neighbors = NeighborList(cutoff=8.0)(frame)
 print(neighbors.n_pairs)  # number of pairs found
-print(neighbors.distances[:5])  # pair distances, borrowed from Rust
+print(np.sqrt(neighbors.dist_sq())[:5])  # pair distances (Å) from stored dist_sq
 ```
 
 A periodic box is required: calling `NeighborList` on a free box raises
