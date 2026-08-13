@@ -424,9 +424,7 @@ class DielectricSusceptibility(Compute):
             if route == "dipole-rate-cross":
                 # Raw C_ṀM (FD Ṁ + cartesian xcorr) + spectrum — both in molrs.
                 meta_extra["dipole_rate"] = "finite_difference"
-                raw = _MolrsDipoleRateCross().compute(
-                    dipole_moments, self.dt, max_lag
-                )
+                raw = _MolrsDipoleRateCross().compute(dipole_moments, self.dt, max_lag)
                 spec = _MolrsDipoleRateCrossSpectrum(
                     self.dt,
                     volume,
@@ -636,8 +634,7 @@ class DielectricSusceptibility(Compute):
                     )
                 else:
                     print(
-                        f"[DielectricSusceptibility] stream {n_frames} "
-                        f"{rate:.0f} fr/s",
+                        f"[DielectricSusceptibility] stream {n_frames} {rate:.0f} fr/s",
                         flush=True,
                     )
 
@@ -667,7 +664,9 @@ class DielectricSusceptibility(Compute):
             jden_arr,
             volume,
             use_velocity_current=use_velocity_current,
-            stream_meta={"mic_path": "orth-numpy" if orth_lengths is not None else "box.diff_dr"},
+            stream_meta={
+                "mic_path": "orth-numpy" if orth_lengths is not None else "box.diff_dr"
+            },
         )
 
 

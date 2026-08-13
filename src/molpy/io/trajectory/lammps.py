@@ -9,10 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from molrs import Frame, MetaValue
+from molrs import Frame
 import molrs.io.raw as _raw
-
-from molpy._frame_meta import get_frame_meta
 
 from .base import TrajectoryWriter
 
@@ -47,16 +45,9 @@ class LammpsTrajectoryWriter(TrajectoryWriter):
                 "LAMMPS trajectory write requires frame.box (molrs needs a simbox)"
             )
         if timestep is not None:
-            frame.meta = {
-                **dict(frame.meta),
-                "timestep": MetaValue("i64", int(timestep)),
-            }
+            frame.meta["timestep"] = int(timestep)
         elif "timestep" not in frame.meta:
-            step = get_frame_meta(frame, "timestep", len(self._frames))
-            frame.meta = {
-                **dict(frame.meta),
-                "timestep": MetaValue("i64", int(step)),
-            }
+            frame.meta["timestep"] = len(self._frames)
         self._frames.append(frame)
 
     def close(self) -> None:

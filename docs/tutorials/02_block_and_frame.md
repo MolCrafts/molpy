@@ -149,16 +149,16 @@ frame = mp.Frame({
  }),
 })
 frame.meta = {
- "timestep": mp.MetaValue("i64", 0),
- "description": mp.MetaValue("string", "water"),
+ "timestep": 0,
+ "description": "water",
 }
 ```
 
-Every metadata entry is an explicit `mp.MetaValue`. Its `dtype` is one of the native scalar or fixed-width vector types, and its Python payload is read through `.value`.
+`frame.meta` is a dict: get a Python scalar, set a Python scalar. Exact dtypes stay in the store; pass `mp.MetaValue` only when you need a specific one.
 
 ```python
-print(frame.meta["timestep"].dtype) # i64
-print(frame.meta["description"].value) # water
+print(frame.meta["timestep"]) # 0
+print(frame.meta["description"]) # water
 ```
 
 Accessing a block by name returns a `Block`. From there, all column operations work the same way.

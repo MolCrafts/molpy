@@ -90,9 +90,9 @@ class TestXYZReader:
 
         # Check exact-dtype metadata
         assert "ENERGY" in frame.meta
-        assert float(frame.meta["ENERGY"].value) == pytest.approx(-2069.84934116)
+        assert float(frame.meta["ENERGY"]) == pytest.approx(-2069.84934116)
         assert "Natoms" in frame.meta
-        assert str(frame.meta["Natoms"].value) == "192"
+        assert str(frame.meta["Natoms"]) == "192"
 
         # Check atomic numbers are present
         assert "atomic_number" in frame["atoms"]
@@ -236,8 +236,8 @@ class TestXYZReader:
         assert "NAME" in frame.meta
 
         # Metadata values should be strings or parsed values
-        assert isinstance(frame.meta["ENERGY"].value, (str, float))
-        assert isinstance(frame.meta["Natoms"].value, (str, int))
+        assert isinstance(frame.meta["ENERGY"], (str, float))
+        assert isinstance(frame.meta["Natoms"], (str, int))
 
     def test_empty_comment_line(self, xyz_test_dir, xyz_backend):
         """Test XYZ file with empty comment line."""

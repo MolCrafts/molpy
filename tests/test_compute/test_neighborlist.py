@@ -32,7 +32,7 @@ def test_basic_periodic():
     frame, _ = _make_random_frame()
     nlist = NeighborList(cutoff=2.0)(frame)
     assert nlist.n_pairs > 0
-    distances = np.asarray(nlist.distances)
+    distances = np.sqrt(nlist.dist_sq())
     assert (distances <= 2.0).all()
     assert (distances >= 0.0).all()
 
@@ -48,7 +48,7 @@ def test_parity_with_molrs_direct():
 
     assert via_molpy.n_pairs == via_molrs.n_pairs
     np.testing.assert_array_equal(
-        np.sort(via_molpy.distances), np.sort(via_molrs.distances)
+        np.sort(via_molpy.dist_sq()), np.sort(via_molrs.dist_sq())
     )
 
 
@@ -74,5 +74,5 @@ def test_distances_within_cutoff():
     frame, _ = _make_random_frame(n=500, seed=1)
     cutoff = 1.8
     nlist = NeighborList(cutoff=cutoff)(frame)
-    distances = np.asarray(nlist.distances)
+    distances = np.sqrt(nlist.dist_sq())
     assert (distances <= cutoff + 1e-10).all()

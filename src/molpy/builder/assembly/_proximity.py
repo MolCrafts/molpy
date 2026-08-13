@@ -162,15 +162,19 @@ class ProximitySelector(Selector):
         points_b = np.asarray(coords_b, dtype=float)
         box = self._bounding_box(np.vstack([points_a, points_b]))
         nlist = molrs.NeighborQuery(box, points_b, self._cutoff).query(points_a)
-        pairs = nlist.pairs()
-        distances = nlist.distances
+        query_i = nlist.query_point_indices()
+        point_j = nlist.point_indices()
+        dist_sq = nlist.dist_sq()
+        if dist_sq is None:
+            raise ValueError("Neighbors table has no dist_sq column")
+        distances = np.sqrt(dist_sq)
         return [
             Candidate(
-                occ_a[int(pairs[row, 0])],
-                occ_b[int(pairs[row, 1])],
+                occ_a[int(query_i[row])],
+                occ_b[int(point_j[row])],
                 float(distances[row]),
             )
-            for row in range(pairs.shape[0])
+            for row in range(nlist.n_pairs)
         ]
 
     def _bounding_box(self, points: np.ndarray) -> molrs.Box:

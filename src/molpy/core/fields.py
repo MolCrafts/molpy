@@ -19,8 +19,16 @@ from molrs.fields import FieldFormatter, __all__ as _MOLRS_FIELDS_ALL
 from molrs import keys as _keys
 
 # Canonical column names come from molrs — one table, projected. Re-exported
-# flat so `from molpy.core.fields import RES_ID` keeps resolving.
-globals().update({_n: getattr(_keys, _n) for _n in dir(_keys) if _n.isupper()})
+# as plain strings so annotation dicts unpack as ``update(**kwargs)`` and
+# ``d["type"]`` keeps working. ``molrs.keys.Key`` is still accepted as a
+# Block / Atom column address; it is not a valid Python keyword name.
+globals().update(
+    {
+        _n: getattr(getattr(_keys, _n), "key", getattr(_keys, _n))
+        for _n in dir(_keys)
+        if _n.isupper()
+    }
+)
 
 # ===================================================================
 #                    molpy-owned canonical fields

@@ -68,7 +68,7 @@ def test_prmtop_read_into_caller_frame(litfsi_prmtop):
 
 def test_prmtop_read_pointers(litfsi_prmtop):
     frame, _ = AmberPrmtopReader(litfsi_prmtop).read()
-    assert frame.meta["n_atoms"].value == 16
+    assert frame.meta["n_atoms"] == 16
     assert frame["atoms"].nrows == 16
     assert "n_bonds" in frame.meta
     assert "n_angles" in frame.meta
@@ -136,7 +136,7 @@ def test_prmtop_read_dihedrals(litfsi_prmtop):
     dihedrals = frame["dihedrals"]
     for col in ("atomi", "atomj", "atomk", "atoml", "type", "type_id", "id"):
         assert col in dihedrals
-    n = frame.meta["n_dihedrals"].value
+    n = frame.meta["n_dihedrals"]
     assert len(dihedrals["atomi"]) == n
     assert all(0 <= i < 16 for i in dihedrals["atomi"])
 
@@ -261,14 +261,14 @@ def test_prmtop_decode_bond_params_negative_raises():
 
 def test_bond_count_matches_pointers(litfsi_prmtop):
     frame, _ = AmberPrmtopReader(litfsi_prmtop).read()
-    assert frame.meta["n_bonds"].value == 14
+    assert frame.meta["n_bonds"] == 14
     assert len(frame["bonds"]["atomi"]) == 14
 
 
 def test_bond_atom_indices_zero_based(litfsi_prmtop):
     frame, _ = AmberPrmtopReader(litfsi_prmtop).read()
     bonds = frame["bonds"]
-    n_atoms = frame.meta["n_atoms"].value
+    n_atoms = frame.meta["n_atoms"]
     assert all(0 <= i < n_atoms for i in bonds["atomi"])
     assert all(0 <= j < n_atoms for j in bonds["atomj"])
 
@@ -311,7 +311,7 @@ def test_angle_equil_from_litfsi_tables(litfsi_prmtop):
 
 def test_angle_count_matches_pointers(litfsi_prmtop):
     frame, _ = AmberPrmtopReader(litfsi_prmtop).read()
-    assert frame.meta["n_angles"].value == 25
+    assert frame.meta["n_angles"] == 25
     assert len(frame["angles"]["atomi"]) == 25
 
 
@@ -351,13 +351,13 @@ def test_prmtop_decode_dihedral_periodicity_int():
 
 def test_dihedral_count_matches_pointers(litfsi_prmtop):
     frame, _ = AmberPrmtopReader(litfsi_prmtop).read()
-    assert frame.meta["n_dihedrals"].value == 27
+    assert frame.meta["n_dihedrals"] == 27
     assert len(frame["dihedrals"]["atomi"]) == 27
 
 
 def test_dihedral_indices_in_range(litfsi_prmtop):
     frame, _ = AmberPrmtopReader(litfsi_prmtop).read()
-    n_atoms = frame.meta["n_atoms"].value
+    n_atoms = frame.meta["n_atoms"]
     for key in ("atomi", "atomj", "atomk", "atoml"):
         assert all(0 <= v < n_atoms for v in frame["dihedrals"][key])
 
@@ -484,9 +484,7 @@ def test_angle_residue_intra_fsi(litfsi_prmtop):
 def test_title_preserved_in_typed_meta(litfsi_prmtop):
     frame, _ = AmberPrmtopReader(litfsi_prmtop).read()
     if "title" in frame.meta:
-        assert "TFSI" in str(frame.meta["title"].value) or str(
-            frame.meta["title"].value
-        )
+        assert "TFSI" in str(frame.meta["title"]) or str(frame.meta["title"])
 
 
 def test_missing_pointers_raises_valueerror(tmp_path):

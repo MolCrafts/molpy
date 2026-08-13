@@ -49,6 +49,7 @@ def test_all_lammps_presets_resolve_natively():
         "electron",
         "micro",
         "nano",
+        "openmm",
     }
     for name in UnitSystem.preset_names():
         system = UnitSystem.preset(name)
@@ -67,6 +68,26 @@ def test_preset_override_and_registration():
     assert UnitSystem.preset("test_native_md").base_units["length"] == UnitSystem().nm
     with pytest.raises(ValueError, match="already exists"):
         UnitSystem.register_preset("real", {"length": "angstrom"})
+
+
+def test_boltzmann_and_factor():
+    units = UnitSystem()
+    assert units.factor("k_B", "electron_volt / kelvin") == pytest.approx(
+        8.617333262e-5, rel=1e-12
+    )
+    assert units.factor("kilocalorie_per_mole", "kilojoule_per_mole") == pytest.approx(
+        4.184
+    )
+    assert units.factor(
+        "kilocalorie_per_mole / angstrom ** 2",
+        "kilojoule_per_mole / nanometer ** 2",
+    ) * 100.0 == pytest.approx(41840.0)
+
+
+def test_openmm_preset_is_kj_nm():
+    system = UnitSystem.preset("openmm")
+    assert system.base_units["energy"] == UnitSystem().kilojoule_per_mole
+    assert system.base_units["length"] == UnitSystem().nanometer
 
 
 def test_unknown_preset_fails_fast():

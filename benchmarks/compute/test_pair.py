@@ -18,7 +18,7 @@ pytestmark = pytest.mark.benchmark
 def test_neighborlist(benchmark, cmp_frame) -> None:
     nlist = benchmark(NeighborList(cutoff=3.0), cmp_frame)
     assert nlist.n_pairs > 0
-    assert (np.asarray(nlist.distances) <= 3.0 + 1e-9).all()
+    assert (np.sqrt(nlist.dist_sq()) <= 3.0 + 1e-9).all()
 
 
 def test_rdf(benchmark, cmp_frames_nlists) -> None:

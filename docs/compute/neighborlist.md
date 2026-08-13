@@ -143,17 +143,17 @@ Four atoms; the first three are mutually within 3 Å and the fourth is far away,
 so there are three pairs. Note that a pair is stored **once**, not twice:
 
 ```python
-print(nlist.pairs().tolist())               # -> [[0, 1], [0, 2], [1, 2]]
-print(np.round(nlist.distances, 3).tolist())  # -> [2.0, 2.0, 2.828]
+i = nlist.query_point_indices()
+j = nlist.point_indices()
+print(np.column_stack([i, j]).tolist())               # -> [[0, 1], [0, 2], [1, 2]]
+print(np.round(np.sqrt(nlist.dist_sq()), 3).tolist())  # -> [2.0, 2.0, 2.828]
 ```
 
-`pairs()` is a **method**, not an attribute — it materializes an `(n_pairs, 2)`
-array each time you call it. The same two columns are available without that
-copy as `query_point_indices` (column 0) and `point_indices` (column 1). Those
-names come from the general case of querying one set of points against a
-different set; the list built here is a *self*-query, where both sets are the
-atoms of this frame, so both arrays are simply atom indices. `dist_sq` gives
-squared distances if you want to skip the square root.
+Index columns are `query_point_indices()` (column 0) and `point_indices()`
+(column 1). Those names come from the general case of querying one set of
+points against a different set; the list built here is a *self*-query, where
+both sets are the atoms of this frame, so both arrays are simply atom indices.
+`dist_sq()` is squared Å² — take ``np.sqrt`` at the call site for a distance.
 
 Because each pair appears once, the mean number of neighbours per atom is
 `2 * n_pairs / n_atoms`. That identity is the quickest sanity check you can run:

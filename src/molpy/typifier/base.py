@@ -79,13 +79,13 @@ class Match:
         nodes = list(graph.nodes)
         self._require_covers("nodes", len(self.nodes), len(nodes))
         for node, annotation in zip(nodes, self.nodes, strict=False):
-            node.update(**annotation)
+            node.update(annotation)
 
         for link_cls, decided in self.links.items():
             links = list(graph.links.bucket(link_cls))
             self._require_covers(link_cls.__name__, len(decided), len(links))
             for link, annotation in zip(links, decided, strict=False):
-                link.update(**annotation)
+                link.update(annotation)
 
     @staticmethod
     def _require_covers(what: str, matched: int, target: int) -> None:

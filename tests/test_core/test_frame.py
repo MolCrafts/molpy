@@ -800,8 +800,8 @@ class TestFrame:
                 "version": MetaValue("string", "1.0"),
             },
         )
-        assert frame.meta["name"].value == "test_frame"
-        assert frame.meta["version"].value == "1.0"
+        assert frame.meta["name"] == "test_frame"
+        assert frame.meta["version"] == "1.0"
 
     def test_frame_init_rejects_untyped_metadata_kwargs(self):
         with pytest.raises(TypeError):

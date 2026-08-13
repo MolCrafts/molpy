@@ -223,9 +223,12 @@ class DistanceSelector(MaskPredicate):
         neighbors = NeighborQuery.free(positions, self.max_distance).query(
             self.center.reshape(1, 3)
         )
-        selected = neighbors.point_indices
+        selected = neighbors.point_indices()
         if self.min_distance is not None:
-            selected = selected[neighbors.distances >= self.min_distance]
+            dist_sq = neighbors.dist_sq()
+            if dist_sq is None:
+                raise ValueError("Neighbors table has no dist_sq column")
+            selected = selected[np.sqrt(dist_sq) >= self.min_distance]
         mask[selected] = True
         return mask
 

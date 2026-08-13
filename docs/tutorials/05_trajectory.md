@@ -22,7 +22,7 @@ frames = []
 for i in range(5):
     f = mp.Frame()
     f["atoms"] = mp.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
-    f.meta = {"time": mp.MetaValue("f64", i * 10.0)}
+    f.meta = {"time": i * 10.0}
     frames.append(f)
 
 traj = mp.Trajectory(frames)
@@ -40,7 +40,7 @@ def make_frames(n):
     for i in range(n):
         f = mp.Frame()
         f["atoms"] = mp.Block({"x": [float(i)], "y": [0.0], "z": [0.0]})
-        f.meta = {"time": mp.MetaValue("f64", i * 0.5)}
+        f.meta = {"time": i * 0.5}
         yield f
 
 
@@ -63,7 +63,7 @@ strided = traj[::2]
 print(len(strided))  # 3
 
 last = traj[-1]
-print(last.meta["time"].value)  # 40.0
+print(last.meta["time"])  # 40.0
 ```
 
 Slicing with a stride (`traj[::n]`) is a convenient way to downsample for quick inspection.

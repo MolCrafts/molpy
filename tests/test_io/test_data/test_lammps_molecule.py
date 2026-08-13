@@ -75,11 +75,11 @@ class TestLammpsMoleculeReader:
         frame = reader.read()
 
         # Check metadata
-        assert frame.meta["format"].value == "lammps_molecule"
-        assert frame.meta["source_format"].value == "native"
-        assert frame.meta["n_atoms"].value == 3
-        assert frame.meta["n_bonds"].value == 2
-        assert frame.meta["n_angles"].value == 1
+        assert frame.meta["format"] == "lammps_molecule"
+        assert frame.meta["source_format"] == "native"
+        assert frame.meta["n_atoms"] == 3
+        assert frame.meta["n_bonds"] == 2
+        assert frame.meta["n_angles"] == 1
 
         # Check atoms
         assert "atoms" in frame
@@ -134,11 +134,11 @@ class TestLammpsMoleculeReader:
         frame = reader.read()
 
         # Check metadata
-        assert frame.meta["format"].value == "lammps_molecule"
-        assert frame.meta["source_format"].value == "json"
-        assert frame.meta["title"].value == "Water molecule. TIP3P geometry"
-        assert frame.meta["units"].value == "real"
-        assert frame.meta["revision"].value == 1
+        assert frame.meta["format"] == "lammps_molecule"
+        assert frame.meta["source_format"] == "json"
+        assert frame.meta["title"] == "Water molecule. TIP3P geometry"
+        assert frame.meta["units"] == "real"
+        assert frame.meta["revision"] == 1
 
         # Check atoms
         assert "atoms" in frame
@@ -192,12 +192,12 @@ class TestLammpsMoleculeReader:
         frame = reader.read()
 
         # Check metadata
-        assert frame.meta["format"].value == "lammps_molecule"
-        assert frame.meta["source_format"].value == "native"
-        assert frame.meta["n_atoms"].value == 8
-        assert frame.meta["n_bonds"].value == 7
-        assert frame.meta["n_angles"].value == 12
-        assert frame.meta["n_dihedrals"].value == 9
+        assert frame.meta["format"] == "lammps_molecule"
+        assert frame.meta["source_format"] == "native"
+        assert frame.meta["n_atoms"] == 8
+        assert frame.meta["n_bonds"] == 7
+        assert frame.meta["n_angles"] == 12
+        assert frame.meta["n_dihedrals"] == 9
 
         # Check atoms
         assert "atoms" in frame
@@ -430,7 +430,7 @@ class TestIntegrationWithMolpyIO:
 
         assert "atoms" in frame
         assert frame["atoms"].nrows == 3
-        assert frame.meta["format"].value == "lammps_molecule"
+        assert frame.meta["format"] == "lammps_molecule"
 
     def test_write_lammps_molecule_function(self, test_files, tmp_path):
         """Test the high-level write_lammps_molecule function."""
@@ -458,4 +458,4 @@ class TestIntegrationWithMolpyIO:
         # Read back and verify
         frame2 = mp.io.read_lammps_molecule(tmp_file)
         assert frame2["atoms"].nrows == frame["atoms"].nrows
-        assert frame2.meta["source_format"].value == "json"
+        assert frame2.meta["source_format"] == "json"

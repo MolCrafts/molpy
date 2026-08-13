@@ -31,7 +31,7 @@ classifiers = [
 # No lark / zarr / RDKit / etc. as hard deps — those live in molrs or optional extras.
 dependencies = [
     "numpy>=2.0",
-    "molcrafts-molrs>=0.13.0,<0.14",
+    "molcrafts-molrs>=0.13.1,<0.14",
     "molcrafts-mollog>=1.0.0",
     "molcrafts-molcfg>=1.2.0",
 ]
@@ -174,7 +174,7 @@ commands = [
 package = "wheel"
 extras = ["dev"]
 base_python = ["python3"]
-pass_env = ["HOME", "PATH", "SSH_AUTH_SOCK", "TERM"]
+pass_env = ["HOME", "PATH", "SSH_AUTH_SOCK", "TERM", "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"]
 commands_pre = [
     [
         "{envpython}",

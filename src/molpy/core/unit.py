@@ -93,6 +93,18 @@ _LAMMPS_PRESETS: dict[str, dict[str, str]] = {
         "force": "attogram * nanometer / nanosecond ** 2",
         "density": "attogram / nanometer ** 3",
     },
+    "openmm": {
+        "mass": "gram_per_mole",
+        "length": "nanometer",
+        "time": "picosecond",
+        "energy": "kilojoule_per_mole",
+        "temperature": "kelvin",
+        "charge": "elementary_charge",
+        "pressure": "bar",
+        "velocity": "nanometer / picosecond",
+        "force": "kilojoule_per_mole / nanometer",
+        "density": "gram / centimeter ** 3",
+    },
 }
 
 
@@ -109,6 +121,14 @@ class UnitSystem(molrs.UnitRegistry):
 
     def __init__(self, *, base_units: Mapping[str, str] | None = None) -> None:
         super().__init__()
+        # CODATA 2018; SI dimension order is L, M, T, I, Θ, N, J.
+        self.define(
+            "boltzmann_constant",
+            1.380649e-23,
+            [2, 1, -2, 0, -1, 0, 0],
+            aliases=["k_B"],
+            symbol="k_B",
+        )
         self.base_units = {
             dimension: self.parse(expression)
             for dimension, expression in (base_units or {}).items()
@@ -169,3 +189,17 @@ class UnitSystem(molrs.UnitRegistry):
     def convert(self, quantity: molrs.Quantity, target: str | molrs.Unit):
         """Convert with this registry, including registry-local LJ units."""
         return quantity.to(self.parse(target) if isinstance(target, str) else target)
+
+    def factor(self, source: str | molrs.Unit, target: str | molrs.Unit) -> float:
+        """Magnitude of one ``source`` unit expressed in ``target`` units.
+
+        Args:
+            source: Unit string or parsed unit (e.g. ``"kilocalorie_per_mole"``).
+            target: Dimensionally compatible destination unit.
+
+        Returns:
+            Conversion factor so ``value_target = value_source * factor``.
+        """
+        src = self.parse(source) if isinstance(source, str) else source
+        dst = self.parse(target) if isinstance(target, str) else target
+        return float((1.0 * src).to(dst).magnitude)
