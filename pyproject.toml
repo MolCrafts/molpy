@@ -31,7 +31,7 @@ classifiers = [
 # No lark / zarr / RDKit / etc. as hard deps — those live in molrs or optional extras.
 dependencies = [
     "numpy>=2.0",
-    "molcrafts-molrs>=0.13.1,<0.14",
+    "molcrafts-molrs>=0.13.2,<0.14",
     "molcrafts-mollog>=1.0.0",
     "molcrafts-molcfg>=1.2.0",
 ]
