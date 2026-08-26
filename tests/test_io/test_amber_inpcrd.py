@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from molrs import Frame
+from molpy._frame_meta import get_frame_meta
 from molpy.io.data.amber import AmberInpcrdReader
 
 
@@ -36,7 +37,7 @@ def test_inpcrd_basic_coords_only(tmp_inpcrd_dir):
 
     assert "atoms" in frame
     assert frame["atoms"].nrows == 3
-    assert frame.meta["title"] == "Simple 3-atom system"
+    assert get_frame_meta(frame, "title") == "Simple 3-atom system"
 
     # Check coordinates
     np.testing.assert_array_almost_equal(
@@ -71,7 +72,7 @@ def test_inpcrd_with_time(tmp_inpcrd_dir):
     frame = reader.read()
 
     assert frame["atoms"].nrows == 2
-    assert frame.meta["timestep"] == 100
+    assert get_frame_meta(frame, "timestep") == 100
 
 
 def test_inpcrd_with_velocities(tmp_inpcrd_dir):
@@ -151,7 +152,7 @@ def test_inpcrd_with_velocities_and_box(tmp_inpcrd_dir):
     assert frame["atoms"].nrows == 2
     assert "vel" in frame["atoms"]
     assert frame.box is not None
-    assert frame.meta["timestep"] == 50
+    assert get_frame_meta(frame, "timestep") == 50
 
 
 def test_inpcrd_update_existing_frame(tmp_inpcrd_dir):

@@ -167,7 +167,7 @@ Charlie,35,1.75"""
         # `id` is UInt in the Frame vocabulary, so CSV parsing adopts the
         # declared dtype instead of inferring one from the digits. Inference
         # would type a canonical column by its data rather than its meaning.
-        assert block["id"].dtype == np.dtype("uint32")
+        assert block["id"].dtype == np.dtype("uint64")
         assert block["name"].dtype.kind == "U"  # Should be string
         assert block["age"].dtype == np.dtype("int32")  # Should be int
         assert block["height"].dtype == np.dtype("float64")  # Should be float
@@ -193,7 +193,7 @@ Charlie,35,1.75"""
         # `id` is UInt in the Frame vocabulary, so CSV parsing adopts the
         # declared dtype instead of inferring one from the digits. Inference
         # would type a canonical column by its data rather than its meaning.
-        assert block["id"].dtype == np.dtype("uint32")
+        assert block["id"].dtype == np.dtype("uint64")
         assert block["name"].dtype.kind == "U"  # Should be string
         assert block["score"].dtype == np.dtype("float64")  # Should be float
         assert block["active"].dtype.kind == "U"  # Should be string
@@ -800,8 +800,10 @@ class TestFrame:
                 "version": MetaValue("string", "1.0"),
             },
         )
-        assert frame.meta["name"] == "test_frame"
-        assert frame.meta["version"] == "1.0"
+        assert frame.meta["name"].dtype == "string"
+        assert frame.meta["name"].value == "test_frame"
+        assert frame.meta["version"].dtype == "string"
+        assert frame.meta["version"].value == "1.0"
 
     def test_frame_init_rejects_untyped_metadata_kwargs(self):
         with pytest.raises(TypeError):

@@ -5,9 +5,8 @@ kernels. The Python side does only data extraction (positions, charges)
 and vectorized NumPy assembly (dipole moment via `einsum`, minimum-image
 unwrap); all correlators and spectral physics live in molrs:
 
-* raw Computes: ``DebyeRelaxation``, ``GreenKuboConductivity``, ``DipoleRateCross``
-* Fits: ``EinsteinHelfandSpectrum``, ``GreenKuboSpectrum``,
-  ``DipoleRateCrossSpectrum``, ``DipoleAutocorrelationSpectrum``
+* raw Computes: ``DebyeRelaxation``, ``GreenKuboConductivity``
+* Fits: ``EinsteinHelfandSpectrum``, ``GreenKuboSpectrum``
 """
 
 from __future__ import annotations
@@ -19,17 +18,10 @@ import numpy as np
 from molrs.compute.dielectric import Dielectric
 from molrs.compute.fitting import LinearFit as _MolrsLinearFit
 from molrs.compute.spectroscopy import (
-    DipoleAutocorrelationSpectrum as _MolrsDipoleAutocorrelationSpectrum,
-)
-from molrs.compute.spectroscopy import (
-    DipoleRateCrossSpectrum as _MolrsDipoleRateCrossSpectrum,
-)
-from molrs.compute.spectroscopy import (
     EinsteinHelfandSpectrum as _MolrsEinsteinHelfandSpectrum,
 )
 from molrs.compute.spectroscopy import GreenKuboSpectrum as _MolrsGreenKuboSpectrum
 from molrs.compute.transport import DebyeRelaxation as _MolrsDebyeRelaxation
-from molrs.compute.transport import DipoleRateCross as _MolrsDipoleRateCross
 from molrs.compute.transport import EinsteinConductivity as _MolrsEinsteinConductivity
 from molrs.compute.transport import GreenKuboConductivity as _MolrsGreenKuboConductivity
 from molrs.signal import acf_fft, apply_window, frequency_grid
@@ -197,10 +189,6 @@ def _orth_mic_dr(dr: np.ndarray, lengths: np.ndarray) -> np.ndarray:
 def _normalize_dielectric_routes(routes: list[str]) -> list[str]:
     """Map legacy aliases to physical route names."""
     alias = {
-        "eq28": "dipole-rate-cross",
-        "eq30": "dipole-autocorrelation",
-        "dipole-rate-cross": "dipole-rate-cross",
-        "dipole-autocorrelation": "dipole-autocorrelation",
         "green-kubo": "green-kubo",
         "einstein-helfand": "einstein-helfand",
     }
@@ -231,10 +219,6 @@ class DielectricSusceptibility(Compute):
     * EH: ``DebyeRelaxation`` → ``EinsteinHelfandSpectrum``
     * GK: velocity current density when present, else FD ``Ṁ`` →
       ``GreenKuboConductivity`` → ``GreenKuboSpectrum``
-    * ``dipole-rate-cross`` (alias ``eq28``): ``DipoleRateCross`` →
-      ``DipoleRateCrossSpectrum``
-    * ``dipole-autocorrelation`` (alias ``eq30``): ``DebyeRelaxation`` PACF →
-      ``DipoleAutocorrelationSpectrum`` (``C(0)−iωĈ``; auto plateau)
 
     Performance notes (stream path):
 
@@ -253,9 +237,7 @@ class DielectricSusceptibility(Compute):
         epsilon_inf: High-frequency permittivity (1.0 for non-polarizable FFs).
         window_type: ACF window for spectral fits — ``"hann"``,
             ``"blackman"``, ``"cosine_sq"``, or ``"none"`` (slides use none).
-        routes: Subset of
-            ``["einstein-helfand", "green-kubo", "dipole-rate-cross",
-            "dipole-autocorrelation"]`` (aliases ``eq28`` / ``eq30`` accepted).
+        routes: Subset of ``["einstein-helfand", "green-kubo"]``.
         volume: System volume in **Å³**. If ``None``, uses the mean frame
             volume (NVT/NVE-friendly).
 
@@ -360,15 +342,11 @@ class DielectricSusceptibility(Compute):
             **stream_meta,
         }
 
-        # Shared PACF raw once if either EH or dipole-autocorrelation is requested.
-        need_pacf = ("einstein-helfand" in self.routes) or (
-            "dipole-autocorrelation" in self.routes
-        )
         debye_raw = (
             _MolrsDebyeRelaxation(volume, self.temperature, "tinfoil").compute(
                 dipole_moments, self.dt, max_lag
             )
-            if need_pacf
+            if "einstein-helfand" in self.routes
             else None
         )
 
@@ -418,57 +396,6 @@ class DielectricSusceptibility(Compute):
                     epsilon_static=eps_stat,
                     epsilon_inf=self.epsilon_inf,
                     route="green-kubo",
-                    component="full",
-                )
-
-            if route == "dipole-rate-cross":
-                # Raw C_ṀM (FD Ṁ + cartesian xcorr) + spectrum — both in molrs.
-                meta_extra["dipole_rate"] = "finite_difference"
-                raw = _MolrsDipoleRateCross().compute(dipole_moments, self.dt, max_lag)
-                spec = _MolrsDipoleRateCrossSpectrum(
-                    self.dt,
-                    volume,
-                    self.temperature,
-                    self.epsilon_inf,
-                    self.window_type,
-                ).fit(raw["cross"])
-                results["Eq28-full"] = DielectricResult(
-                    frequency=spec["frequencies"],
-                    epsilon_real=spec["eps_real"],
-                    epsilon_imag=spec["eps_imag"],
-                    epsilon_static=eps_stat,
-                    epsilon_inf=self.epsilon_inf,
-                    route="dipole-rate-cross",
-                    component="full",
-                )
-
-            if route == "dipole-autocorrelation":
-                # Reuses debye_raw PACF; spectrum uses C(0)−iωĈ + auto plateau.
-                raw = debye_raw
-                assert raw is not None
-                pacf = raw["acf"]
-                c0 = float(pacf[0])
-                c_inf = float(pacf[-1])
-                ratio = c_inf / c0 if abs(c0) > 0.0 else 0.0
-                meta_extra["pacf_c0"] = c0
-                meta_extra["pacf_c_inf"] = c_inf
-                meta_extra["pacf_c_inf_over_c0"] = ratio
-                meta_extra["pacf_subtract_plateau"] = abs(ratio) > 0.1
-                spec = _MolrsDipoleAutocorrelationSpectrum(
-                    self.dt,
-                    volume,
-                    self.temperature,
-                    self.epsilon_inf,
-                    self.window_type,
-                    None,  # auto plateau
-                ).fit(pacf)
-                results["Eq30-full"] = DielectricResult(
-                    frequency=spec["frequencies"],
-                    epsilon_real=spec["eps_real"],
-                    epsilon_imag=spec["eps_imag"],
-                    epsilon_static=eps_stat,
-                    epsilon_inf=self.epsilon_inf,
-                    route="dipole-autocorrelation",
                     component="full",
                 )
 

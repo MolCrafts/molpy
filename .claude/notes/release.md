@@ -13,3 +13,15 @@ Tracks molrs 0.13.1 (`>=0.13.1,<0.14`).
 - `Frame.meta` is dict-like (molrs `FrameMeta`): `frame.meta["timestep"] = 0`.
 - `mp.io.write_smarts(mol, atom)` — local environment SMARTS (molrs io).
 - `UnitSystem`: `k_B`, `openmm` preset, `factor(source, target)`.
+
+## v0.13.2 (2026-08-19)
+
+Tracks molrs 0.13.2 (`>=0.13.2,<0.14`).
+
+## v0.14.0 (untagged — wait for molrs v0.14.0 on PyPI before tagging)
+
+Tracks molrs 0.14.0 (`>=0.14.0,<0.15`).
+
+- Pin and runtime check on the 0.14 minor line.
+- Public record type is `molpy.Record` (molrs identity re-export; was `MolRec`).
+- Identity columns are `uint64` (`molrs.types.Idx`); numpy widths are preserved.

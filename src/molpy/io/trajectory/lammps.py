@@ -12,6 +12,8 @@ from typing import Any
 from molrs import Frame
 import molrs.io.raw as _raw
 
+from molpy._frame_meta import _unwrap_meta, update_frame_meta
+
 from .base import TrajectoryWriter
 
 
@@ -45,9 +47,9 @@ class LammpsTrajectoryWriter(TrajectoryWriter):
                 "LAMMPS trajectory write requires frame.box (molrs needs a simbox)"
             )
         if timestep is not None:
-            frame.meta["timestep"] = int(timestep)
+            update_frame_meta(frame, {"timestep": int(_unwrap_meta(timestep))})
         elif "timestep" not in frame.meta:
-            frame.meta["timestep"] = len(self._frames)
+            update_frame_meta(frame, {"timestep": len(self._frames)})
         self._frames.append(frame)
 
     def close(self) -> None:

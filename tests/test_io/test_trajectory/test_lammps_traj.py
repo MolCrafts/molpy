@@ -4,6 +4,7 @@ import molrs
 from molrs import MetaValue
 
 import molpy as mp
+from molpy._frame_meta import get_frame_meta
 from molpy.io import read_lammps_trajectory
 from molpy.io.trajectory.lammps import LammpsTrajectoryWriter
 
@@ -33,7 +34,7 @@ class TestWriteLammpsTrajectory:
         tmp_file = tmp_path / "test.dump"
         writer = LammpsTrajectoryWriter(str(tmp_file))
         for frame in frames:
-            timestep = frame.meta["timestep"]
+            timestep = get_frame_meta(frame, "timestep")
             writer.write_frame(frame, timestep=timestep)
         writer.close()
 
@@ -44,7 +45,9 @@ class TestWriteLammpsTrajectory:
         for i, frame_read in enumerate(reader):
             if i >= len(frames):
                 break
-            assert frame_read.meta["timestep"] == frames[i].meta["timestep"]
+            assert get_frame_meta(frame_read, "timestep") == get_frame_meta(
+                frames[i], "timestep"
+            )
             assert "atoms" in frame_read
             # Check that positions changed over time
             if i > 0:
@@ -101,7 +104,7 @@ class TestWriteLammpsTrajectory:
         frame_read = reader[0]
 
         # Verify timestep
-        assert frame_read.meta["timestep"] == 1000
+        assert get_frame_meta(frame_read, "timestep") == 1000
 
         # Verify atoms data exists
         assert "atoms" in frame_read
@@ -141,7 +144,7 @@ class TestTrajectoryIntegration:
         reader = read_lammps_trajectory(str(tmp_file))
         frame_read = reader[0]
 
-        assert frame_read.meta["timestep"] == 0
+        assert get_frame_meta(frame_read, "timestep") == 0
         assert "atoms" in frame_read
         assert frame_read.box is not None
 
@@ -172,7 +175,7 @@ class TestTrajectoryIntegration:
         frame_traj = reader[0]
 
         # Both should have same basic structure
-        assert frame_traj.meta["timestep"] == 100
+        assert get_frame_meta(frame_traj, "timestep") == 100
         assert "atoms" in frame_traj
         assert frame_traj.box is not None
         assert frame_original.box is not None

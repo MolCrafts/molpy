@@ -9,6 +9,7 @@ import molrs
 import numpy as np
 import pytest
 
+from molpy._frame_meta import get_frame_meta
 from molpy.core import Box
 from molrs import Element
 
@@ -90,9 +91,9 @@ class TestXYZReader:
 
         # Check exact-dtype metadata
         assert "ENERGY" in frame.meta
-        assert float(frame.meta["ENERGY"]) == pytest.approx(-2069.84934116)
+        assert float(get_frame_meta(frame, "ENERGY")) == pytest.approx(-2069.84934116)
         assert "Natoms" in frame.meta
-        assert str(frame.meta["Natoms"]) == "192"
+        assert str(get_frame_meta(frame, "Natoms")) == "192"
 
         # Check atomic numbers are present
         assert "atomic_number" in frame["atoms"]
@@ -235,9 +236,9 @@ class TestXYZReader:
         assert "Natoms" in frame.meta
         assert "NAME" in frame.meta
 
-        # Metadata values should be strings or parsed values
-        assert isinstance(frame.meta["ENERGY"], (str, float))
-        assert isinstance(frame.meta["Natoms"], (str, int))
+        # Metadata payloads should be strings or parsed values
+        assert isinstance(get_frame_meta(frame, "ENERGY"), (str, float))
+        assert isinstance(get_frame_meta(frame, "Natoms"), (str, int))
 
     def test_empty_comment_line(self, xyz_test_dir, xyz_backend):
         """Test XYZ file with empty comment line."""

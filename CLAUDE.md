@@ -201,7 +201,7 @@ MolPy is a computational chemistry toolkit with explicit data flow and minimal m
 
 > **Hard runtime dependency**: `molcrafts-molrs` (Rust extension) is required,
 > pinned to the same **minor** line in `pyproject.toml`
-> (`>=0.13.1,<0.14`). Import-time `check_molrs_version` enforces major.minor
+> (`>=0.14.0,<0.15`). Import-time `check_molrs_version` enforces major.minor
 > only. Public molrs symbols are re-exported on the molpy facade
 > (`molpy.Frame is molrs.Frame`); application code imports `molpy`, not `molrs`.
 
