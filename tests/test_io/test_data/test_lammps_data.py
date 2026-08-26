@@ -14,6 +14,7 @@ import pytest
 import molrs
 
 import molpy as mp
+from molpy._frame_meta import get_frame_meta
 from molpy.io.data.lammps import LammpsDataReader, LammpsDataWriter
 
 
@@ -101,8 +102,8 @@ class TestLammpsDataReader:
         assert len(np.unique(mol_ids)) <= 4  # max 4 different molecules
 
         # Scalar provenance is typed Frame meta; structured products are explicit.
-        assert frame.meta["format"] == "lammps_data"
-        assert frame.meta["atom_style"] == "full"
+        assert get_frame_meta(frame, "format") == "lammps_data"
+        assert get_frame_meta(frame, "atom_style") == "full"
         assert isinstance(result.forcefield, mp.ForceField)
 
     def test_whitespaces_file(self, test_files):
@@ -285,6 +286,50 @@ class TestLammpsDataReader:
         assert "x" in atoms and "y" in atoms and "z" in atoms
 
 
+class TestLammpsDataResultSurface:
+    """Factory default + Frame-like surface on ``LammpsDataResult``."""
+
+    @pytest.fixture
+    def full_data_path(self, tmp_path: Path) -> Path:
+        # 3 atoms, Masses, orthogonal 0–10 box; Atoms # full = id mol type q x y z.
+        data = (
+            "minimal full\n\n"
+            "3 atoms\n"
+            "1 atom types\n\n"
+            "0 10 xlo xhi\n"
+            "0 10 ylo yhi\n"
+            "0 10 zlo zhi\n\n"
+            "Masses\n\n"
+            "1 12.011\n\n"
+            "Atoms # full\n\n"
+            "1 1 1 0.0 0.0 0.0 0.0\n"
+            "2 1 1 0.0 1.5 0.0 0.0\n"
+            "3 1 1 0.0 3.0 0.0 0.0\n"
+        )
+        path = tmp_path / "full.data"
+        path.write_text(data)
+        return path
+
+    def test_factory_default_atom_style_reads_full_file(self, full_data_path: Path):
+        result = mp.io.read_lammps_data(full_data_path)
+        assert result.frame["atoms"].nrows == 3
+        assert isinstance(result.forcefield, mp.ForceField)
+
+    def test_result_exposes_frame_box(self, full_data_path: Path):
+        result = LammpsDataReader(full_data_path).read()
+        assert result.frame is not None
+        assert isinstance(result.forcefield, mp.ForceField)
+        assert result.box is not None
+        assert np.allclose(result.box.lengths, [10.0, 10.0, 10.0])
+
+    def test_result_is_subscriptable_as_frame(self, full_data_path: Path):
+        result = LammpsDataReader(full_data_path).read()
+        assert result.frame is not None
+        assert isinstance(result.forcefield, mp.ForceField)
+        assert "atoms" in result
+        assert result["atoms"].nrows == 3
+
+
 class TestLammpsDataWriter:
     """Test LammpsDataWriter."""
 
@@ -330,7 +375,7 @@ class TestLammpsDataWriter:
         """read_lammps_data -> Atomistic.from_frame must keep bonds/angles/dihedrals.
 
         Regression: the reader stored relation endpoints as a signed int, and
-        ``molrs.from_frame`` reads endpoints only as ``uint32`` — so it silently
+        ``molrs.from_frame`` reads endpoints only as ``uint64`` — so it silently
         dropped every bond on the Frame->Atomistic round-trip.
         """
         data = (
@@ -346,8 +391,8 @@ class TestLammpsDataWriter:
         path.write_text(data)
 
         frame = LammpsDataReader(path, atom_style="full").read().frame
-        # endpoints must be uint32 or molrs.from_frame ignores them
-        assert np.asarray(frame["bonds"]["atomi"]).dtype == np.uint32
+        # endpoints must be uint64 or molrs.from_frame ignores them
+        assert np.asarray(frame["bonds"]["atomi"]).dtype == np.uint64
         rebuilt = mp.Atomistic.from_frame(frame)
         assert sum(1 for _ in rebuilt.bonds) == 3
 

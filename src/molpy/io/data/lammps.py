@@ -55,12 +55,29 @@ def _sorted_type_names(names: list[str] | set[str] | tuple[str, ...]) -> list[st
 
 @dataclass(frozen=True, slots=True)
 class LammpsDataResult:
-    """Explicit products of parsing one LAMMPS data file."""
+    """Explicit products of parsing one LAMMPS data file.
+
+    Frame-like lookup (``result["atoms"]``, ``"atoms" in result``,
+    ``result.box``) delegates to :attr:`frame` so callers can treat the
+    result as the structure without dropping ``.frame`` / ``.forcefield``.
+    """
 
     frame: Frame
     forcefield: ForceField
     counts: dict[str, int]
     type_labels: dict[str, list[str]]
+
+    def __getitem__(self, key: str):
+        """Return ``self.frame[key]``."""
+        return object.__getattribute__(self, "frame")[key]
+
+    def __contains__(self, key: object) -> bool:
+        """Return whether ``key`` is a block on :attr:`frame`."""
+        return key in object.__getattribute__(self, "frame")
+
+    def __getattr__(self, name: str):
+        """Delegate unknown attributes (e.g. ``box``) to :attr:`frame`."""
+        return getattr(object.__getattribute__(self, "frame"), name)
 
 
 class LammpsDataReader(DataReader[LammpsDataResult]):

@@ -29,18 +29,23 @@ def _ensure_frame(frame):
 # =============================================================================
 
 
-def read_lammps_data(file: PathLike, atom_style: str, frame: Any = None) -> Any:
+def read_lammps_data(
+    file: PathLike, atom_style: str = "full", frame: Any = None
+) -> Any:
     """
     Read a LAMMPS data file and return its explicit parse products.
 
     Args:
         file: Path to LAMMPS data file
-        atom_style: LAMMPS atom style (e.g., 'full', 'atomic')
+        atom_style: LAMMPS atom style (e.g., 'full', 'atomic'). Defaults to
+            ``"full"``. molrs still auto-detects columns; this only controls
+            molpy column-drop adapt.
         frame: Optional existing Frame to populate
 
     Returns:
         ``LammpsDataResult`` with ``frame``, ``forcefield``, ``counts``, and
-        ``type_labels``. Callers must select the product they consume.
+        ``type_labels``. Structure lookup (``result["atoms"]``, ``result.box``)
+        delegates to ``.frame``; ``.forcefield`` stays an explicit product.
     """
     from .data.lammps import LammpsDataReader
 
