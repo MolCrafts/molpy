@@ -391,8 +391,9 @@ class TestLammpsDataWriter:
         path.write_text(data)
 
         frame = LammpsDataReader(path, atom_style="full").read().frame
-        # endpoints must be uint64 or molrs.from_frame ignores them
-        assert np.asarray(frame["bonds"]["atomi"]).dtype == np.uint64
+        # molrs 0.13 reads unsigned 32-bit endpoints; 0.14 uses uint64.
+        # Signed ints are the actual drop-bug (from_frame ignores them).
+        assert np.asarray(frame["bonds"]["atomi"]).dtype.kind == "u"
         rebuilt = mp.Atomistic.from_frame(frame)
         assert sum(1 for _ in rebuilt.bonds) == 3
 
