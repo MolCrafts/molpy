@@ -69,13 +69,27 @@ jobs:
           t = re.sub(r'^version\s*=\s*".*?"', f'version = "{dev}"', t, count=1, flags=re.M)
           p.write_text(t)
           PY
-          # Rename the PyPI distribution to the nightly project.
+          # Rename the PyPI distribution to the nightly project and bind the
+          # molrs pin to the matching nightly package (stable 0.14 is not on
+          # PyPI yet; `tool.uv.sources` is uv-only and would not help pip).
           python - <<'PY'
           import re, pathlib
           p = pathlib.Path("pyproject.toml")
           t = p.read_text()
           t = re.sub(r'^name\s*=\s*"molcrafts-molpy"',
                      'name = "molcrafts-molpy-nightly"', t, count=1, flags=re.M)
+          t = re.sub(
+              r'"molcrafts-molrs>=0\.14\.0,<0\.15"',
+              '"molcrafts-molrs-nightly>=0.14.0.dev0"',
+              t,
+              count=1,
+          )
+          t = re.sub(
+              r'\n# Until molcrafts-molrs 0\.14 is on PyPI[\s\S]*?rev = "dev" \}\n',
+              '\n',
+              t,
+              count=1,
+          )
           p.write_text(t)
           PY
 

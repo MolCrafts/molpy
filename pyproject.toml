@@ -151,6 +151,11 @@ filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 
+# Until molcrafts-molrs 0.14 is on PyPI, uv (CI + local) installs the 0.14
+# line from git. The published PyPI pin in [project] dependencies is unchanged.
+[tool.uv.sources]
+molcrafts-molrs = { git = "https://github.com/MolCrafts/molrs.git", subdirectory = "molrs-python", rev = "dev" }
+
 [tool.tox]
 requires = ["tox>=4.23"]
 env_list = ["lint", "py"]
