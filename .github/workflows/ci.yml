@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: "3.14"
       - uses: astral-sh/setup-uv@v9.0.0
-      - run: uv run --extra dev tox -e lint
+      - run: uv run --no-project --with 'tox>=4.23' --with ruff==0.16.1 --with ty==0.0.65 tox -e lint
 
   test:
     runs-on: ${{ matrix.os }}
