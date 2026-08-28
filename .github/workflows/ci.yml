@@ -40,4 +40,6 @@ jobs:
           mkdir -p "$dir"
           curl -fsSL https://github.com/molcrafts/tests-data/archive/refs/heads/master.tar.gz \
             | tar -xz -C "$dir" --strip-components=1 --exclude='*/con' --exclude='*/con/*'
-      - run: uv run --extra dev tox -e py
+      # tox's pip install does not honor [tool.uv.sources]; uv does, so the
+      # unpublished molrs 0.14 git pin actually resolves here.
+      - run: uv run --extra dev python -m pytest tests/ -n auto
