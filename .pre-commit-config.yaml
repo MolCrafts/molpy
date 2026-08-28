@@ -1,7 +1,9 @@
 # prek: pre-commit = lint; pre-push = molrs pin + tests
-# CI: lint job + 3 OS × 3.12–3.14 matrix (ci.yml)
+# CI: lint job + 3 OS × 3.12–3.14 matrix (ci.yml).
+# Tests MUST use `uv run pytest`, not tox: tox's pip ignores [tool.uv.sources].
 
 default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit, pre-push]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -36,9 +38,10 @@ repos:
         always_run: true
         stages: [pre-push]
 
-      - id: tox-py
-        name: tox -e py
-        entry: uv run --extra dev tox -e py
+      # Same command as ci.yml `test` — uv honors [tool.uv.sources], tox/pip does not.
+      - id: pytest
+        name: uv pytest (CI parity)
+        entry: uv run --extra dev python -m pytest tests/ -n auto
         language: system
         pass_filenames: false
         always_run: true
