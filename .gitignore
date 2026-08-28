@@ -13,6 +13,9 @@ a.out
 chemfile-testcases/
 examples/data/
 
+# Local MD driver scratch (Kokkos builds, slurm logs, npz traces)
+benchmarks/md/
+
 # C extensions
 *.so
 
