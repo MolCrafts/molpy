@@ -41,6 +41,21 @@ def _is_next_minor(lo: tuple[int, int], hi: tuple[int, int]) -> bool:
     return hi == (lo[0], lo[1] + 1) or hi == (lo[0] + 1, 0)
 
 
+def _has_uv_source_override(text: str) -> bool:
+    """True when [tool.uv.sources] redirects molcrafts-molrs off PyPI."""
+    in_sources = False
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if line.startswith("["):
+            in_sources = line.strip() == "[tool.uv.sources]"
+            continue
+        if in_sources and line.strip().startswith("molcrafts-molrs"):
+            return any(tok in line for tok in ("git", "path", "url"))
+    return False
+
+
 def _parse_pin(text: str) -> tuple[str, tuple[int, int] | None, str | None]:
     """Return (kind, minor|None, exact_version|None).
 
@@ -87,6 +102,17 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+
+    # Git/path override is how unpublished molrs 0.14 is resolved (CI + local
+    # `uv run`). Blocking the push for a missing PyPI release forces
+    # `--no-verify`, which also skips pytest. The PyPI pin still has to be
+    # well-formed; we just skip the network check.
+    if _has_uv_source_override(text):
+        print(
+            "ok: [tool.uv.sources] overrides molcrafts-molrs "
+            "(uv/CI git pin; PyPI publish not required to push)"
+        )
+        return 0
 
     try:
         if kind == "exact":
