@@ -41,7 +41,6 @@ dev = [
     "pytest>=6.0.0",
     "pytest-cov>=3.0.0",
     "pytest-mock>=3.10.0",
-    "pytest-benchmark>=5.0",
     "pytest-xdist>=3.0",
     "filelock>=3.0",
     "ruff==0.16.1",
@@ -149,11 +148,7 @@ output-format = "full"
 pythonpath = ["src"]
 filterwarnings = [
     "error",
-    "ignore:Benchmarks are automatically disabled because xdist plugin is active:pytest_benchmark.logger.PytestBenchmarkWarning",
     "ignore::pytest.PytestUnraisableExceptionWarning",
-]
-markers = [
-    "benchmark: pytest-benchmark suite under benchmarks/",
 ]
 
 [tool.tox]
