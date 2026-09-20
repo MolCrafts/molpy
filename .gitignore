@@ -6,7 +6,9 @@ __pycache__/
 # vscode
 .vscode/
 
-test.*
+# Scratch files at the top of the tree. Anchored: unanchored `test.*` also
+# matched committed fixtures at any depth, such as tests/tests-data/smi/test.smi.
+/test.*
 a.out
 chemfile-testcases/
 examples/data/
@@ -64,7 +66,8 @@ coverage.xml
 *.mo
 *.pot
 
-# Django stuff:
+# Django stuff (template boilerplate; this is not a Django project, but stray
+# run logs are still worth ignoring):
 *.log
 local_settings.py
 db.sqlite3
@@ -185,3 +188,10 @@ amber_work/
 
 # Snapshot inputs built by the CI publish job
 .ci-out/
+
+# tests/tests-data holds committed fixtures, never build output. The broad
+# patterns above hid two of them from git entirely — thermo_style_*.log to
+# `*.log` and test.smi to `test.*` — so they could only ever have been added
+# with `git add -f`. Re-include the whole directory rather than chasing each
+# extension, because the next fixture will have a different one.
+!tests/tests-data/**
