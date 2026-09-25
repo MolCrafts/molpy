@@ -12,7 +12,10 @@ keeps each subclass's registry isolated. The formatters for the formats the core
 parses (LAMMPS, GRO, MOL2, PDB, XYZ) are native and re-exported here; a format
 molpy parses itself declares its own subclass in its I/O module.
 
-molpy adds exactly two things: the assembly-owned field :data:`SITE`, and
+Every canonical name, including the assembly fields :data:`SITE` (reaction-site
+label) and :data:`Q0` (a leaving hydrogen's own charge from before
+``SiteMap`` folded it onto its site atom, in elementary charges), is defined by
+that native table; molpy only re-exports it. molpy adds exactly one thing:
 :class:`ForceFieldFormatter`, which extends the field mapping with a Style →
 serializer registry (until force-field I/O is sunk into the native I/O).
 """
@@ -64,6 +67,7 @@ QUATI = _keys.QUATI.key
 QUATJ = _keys.QUATJ.key
 QUATK = _keys.QUATK.key
 QUATW = _keys.QUATW.key
+Q0 = _keys.Q0.key
 RES_ID = _keys.RES_ID.key
 RES_NAME = _keys.RES_NAME.key
 TYPE = _keys.TYPE.key
@@ -82,18 +86,15 @@ QUAT = _keys.QUAT
 VELOCITIES = _keys.VELOCITIES
 
 # ===================================================================
-#                    molpy-owned canonical fields
+#          Assembly field (native key, documented here for readers)
 # ===================================================================
-# Assembly is a molpy concept, so its field lives here rather than in the molrs
-# vocabulary. It is a plain column name: `molrs.schema` owns canonical columns
-# and their dtypes, and a molpy-local column is just a key the vocabulary does
-# not constrain.
 
-#: Reaction-site label on an atom. Sparse: only the atoms a reaction may bind
-#: carry a name (``"a"``, ``"b"``, …); every other atom holds the empty string,
+#: Reaction-site label on an atom (native key, re-exported like the rest).
+#: Sparse: only the atoms a reaction may bind carry a name (``"a"``,
+#: ``"b"``, …); every other atom holds the empty string,
 #: which means *unmarked* and never matches a ``%site`` predicate. A missing
 #: ``site`` column is an error, not "no sites".
-SITE = "site"
+SITE = _keys.SITE.key
 
 # ===================================================================
 #                    ForceFieldFormatter
@@ -246,5 +247,6 @@ __all__ = [
     "PdbFieldFormatter",
     "XyzFieldFormatter",
     "ForceFieldFormatter",
+    "Q0",
     "SITE",
 ]

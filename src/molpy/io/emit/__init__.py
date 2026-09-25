@@ -5,14 +5,13 @@ not just a structure file. Given an ``Atomistic`` + ``ForceField`` the
 emitter writes the data file, the force-field file, and a starter run
 script into ``out_dir`` and returns the list of generated file paths.
 
-Registered emitters (lookup by name)::
+Built-in emitters live on the one registry, :data:`emitters`::
 
-    EMITTERS["lammps"]   ->  LammpsEmitter
-    EMITTERS["openmm"]   ->  OpenMMEmitter
-    EMITTERS["gromacs"]  ->  GromacsEmitter
-    EMITTERS["xml"]      ->  XMLEmitter
+    emitters.names()                          # ["gromacs", "lammps", "openmm", "xml"]
+    emitters.emit("lammps", atomistic, ff, out_dir, prefix="w")
+    emitters.register("mine", MyEmitter())    # add an engine
 
-``--emit all`` on the CLI loops :func:`emit` over ``EMITTERS``.
+``--emit all`` on the CLI loops ``emitters.emit`` over ``emitters.names()``.
 """
 
 from __future__ import annotations
@@ -41,27 +40,41 @@ class Emitter:
         raise NotImplementedError
 
 
-EMITTERS: dict[str, Emitter] = {}
+class EmitterRegistry:
+    """Named engine emitters — the one public way to emit an input set."""
+
+    def __init__(self) -> None:
+        self._emitters: dict[str, Emitter] = {}
+
+    def register(self, name: str, emitter: Emitter) -> None:
+        """Register ``emitter`` under ``name``, replacing any previous one."""
+        self._emitters[name] = emitter
+
+    def names(self) -> list[str]:
+        """Registered emitter names, sorted."""
+        return sorted(self._emitters)
+
+    def emit(
+        self,
+        name: str,
+        atomistic: Atomistic,
+        ff: ForceField,
+        out_dir: Path,
+        *,
+        prefix: str = "system",
+        **opts: Any,
+    ) -> list[Path]:
+        if name not in self._emitters:
+            raise KeyError(
+                f"Unknown emitter {name!r}. Registered: {sorted(self._emitters)}"
+            )
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return self._emitters[name].emit(atomistic, ff, out_dir, prefix=prefix, **opts)
 
 
-def register(name: str, emitter: Emitter) -> None:
-    EMITTERS[name] = emitter
-
-
-def emit(
-    name: str,
-    atomistic: Atomistic,
-    ff: ForceField,
-    out_dir: Path,
-    *,
-    prefix: str = "system",
-    **opts: Any,
-) -> list[Path]:
-    if name not in EMITTERS:
-        raise KeyError(f"Unknown emitter {name!r}. Registered: {sorted(EMITTERS)}")
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return EMITTERS[name].emit(atomistic, ff, out_dir, prefix=prefix, **opts)
+#: Built-in emitters, registered on import.
+emitters = EmitterRegistry()
 
 
 # Register built-in emitters on import
@@ -70,16 +83,15 @@ from .lammps import LammpsEmitter
 from .openmm import OpenMMEmitter
 from .xml import XMLEmitter
 
-register("lammps", LammpsEmitter())
-register("openmm", OpenMMEmitter())
-register("gromacs", GromacsEmitter())
-register("xml", XMLEmitter())
+emitters.register("lammps", LammpsEmitter())
+emitters.register("openmm", OpenMMEmitter())
+emitters.register("gromacs", GromacsEmitter())
+emitters.register("xml", XMLEmitter())
 
 __all__ = [
     "Emitter",
-    "EMITTERS",
-    "register",
-    "emit",
+    "EmitterRegistry",
+    "emitters",
     "LammpsEmitter",
     "OpenMMEmitter",
     "GromacsEmitter",

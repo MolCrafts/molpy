@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import molrs
 import pytest
 
 import molpy as mp
@@ -51,6 +52,44 @@ class AtomAndBondedTypifier(Typifier):
 class CarbonClassTypifier(Typifier):
     def match(self, graph) -> Match:
         return Match(nodes=tuple({fields.TYPE: "CT"} for _ in graph.atoms))
+
+
+class RecordingPlacer(molrs.Placer):
+    """Placer test double: takes its own constructor argument and records calls."""
+
+    def __init__(self, tag: str) -> None:
+        super().__init__()
+        self.tag = tag
+        self.calls: list[tuple[mp.Atomistic, list[tuple[int, int]]]] = []
+
+    def place(self, mol, bonds) -> None:
+        self.calls.append((mol, list(bonds)))
+
+
+class PlacementFailed(RuntimeError):
+    """Raised by :class:`RaisingPlacer`; distinct from anything molpy raises."""
+
+
+class RaisingPlacer(molrs.Placer):
+    """Placer test double that refuses every placement."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__()
+        self.reason = reason
+        self.error_type: type[Exception] = PlacementFailed
+
+    def place(self, mol, bonds) -> None:
+        raise PlacementFailed(self.reason)
+
+
+@pytest.fixture
+def recording_placer() -> RecordingPlacer:
+    return RecordingPlacer("recording")
+
+
+@pytest.fixture
+def raising_placer() -> RaisingPlacer:
+    return RaisingPlacer("cannot place")
 
 
 @pytest.fixture
@@ -170,7 +209,7 @@ def polymer_context_factory(builder_factory):
     def make(n: int = 4, label: str = "EO"):
         builder = builder_factory()
         topology = linear_topology([label] * n)
-        world = builder.library.expand(topology)
+        world = builder.library.expand(topology).world
         labels = builder._labels(world)
         context = MatchContext(
             world=world,

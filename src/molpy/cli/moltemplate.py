@@ -116,7 +116,7 @@ def register(sub: argparse._SubParsersAction) -> None:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    from molpy.io.emit import EMITTERS, emit
+    from molpy.io.emit import emitters
     from molpy.io.forcefield.moltemplate import read_moltemplate_system
 
     if not args.script.exists():
@@ -129,23 +129,24 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     engines = args.emit or ["lammps"]
     if "all" in engines:
-        for engine in EMITTERS:
+        for engine in emitters.names():
             _print_emit_result(
-                engine, emit(engine, atomistic, ff, out_dir, prefix=args.prefix)
+                engine,
+                emitters.emit(engine, atomistic, ff, out_dir, prefix=args.prefix),
             )
         return 0
 
-    unknown = [e for e in engines if e not in EMITTERS]
+    unknown = [e for e in engines if e not in emitters.names()]
     if unknown:
         print(
             f"molpy: error: unknown engine(s): {unknown}. "
-            f"Registered: {sorted(EMITTERS)}",
+            f"Registered: {emitters.names()}",
             file=sys.stderr,
         )
         return 2
 
     for engine in engines:
-        paths = emit(engine, atomistic, ff, out_dir, prefix=args.prefix)
+        paths = emitters.emit(engine, atomistic, ff, out_dir, prefix=args.prefix)
         _print_emit_result(engine, paths)
     return 0
 
@@ -193,10 +194,10 @@ def _cmd_convert(args: argparse.Namespace) -> int:
         return 1
     suffix = args.dst.suffix.lower()
     if suffix == ".py":
-        from molpy.parser.moltemplate import emit_python, parse_file
+        from molpy.parser.moltemplate import PythonScriptEmitter, parse_file
 
         doc = parse_file(args.src)
-        out = emit_python(doc, args.dst, base_dir=args.src.parent)
+        out = PythonScriptEmitter(base_dir=args.src.parent).emit(doc, args.dst)
         print(f"{args.src} -> {out}")
         return 0
     if suffix in (".xml", ".ffxml"):

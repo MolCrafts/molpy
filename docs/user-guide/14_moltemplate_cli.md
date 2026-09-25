@@ -72,7 +72,7 @@ Output format is inferred from the destination extension:
 | Extension | Output |
 |-----------|--------|
 | `.xml` | MolPy canonical XML force field (FF-only). |
-| `.py` | Self-contained MolPy Python script with `build_forcefield()`, one `build_<ClassName>()` per moltemplate class, and a top-level `build_system()`. The emitted script has no runtime dependency on the original `.lt` file — users can edit freely. |
+| `.py` | Self-contained MolPy Python script with `build_forcefield()`, one `build_<ClassName>()` per moltemplate class, and a top-level `build_system()`. These are functions *inside the generated script*, not MolPy API (the library's own entry point is `MolTemplateBuilder`, below). The emitted script has no runtime dependency on the original `.lt` file — users can edit freely. |
 
 ### `ltemplify` — `.lt` / `.data` → `.lt`
 
@@ -144,30 +144,48 @@ Everything the CLI does is available programmatically.
 
 ```python
 # docs: skip — needs offline water.lt; moltemplate unit-tested with fixtures
+from pathlib import Path
+
+from molpy.io.emit import emitters
 from molpy.io.forcefield.moltemplate import read_moltemplate_system
-from molpy.io.emit import EMITTERS, emit
 from molpy.parser.moltemplate import (
- emit_python, #.lt →.py
- ltemplify, # (atomistic, ff) →.lt string
- parse_file, #.lt → IR Document
- write_moltemplate, # (atomistic, ff) →.lt file
+    MolTemplateBuilder,  # IR Document -> ForceField + Atomistic
+    PythonScriptEmitter,  # IR Document -> .py script
+    ltemplify,  # (atomistic, ff) -> .lt string
+    parse_file,  # .lt -> IR Document
+    write_moltemplate,  # (atomistic, ff) -> .lt file
 )
 
 atomistic, ff = read_moltemplate_system("water.lt")
 
 # Single engine
-emit("lammps", atomistic, ff, "out/", prefix="w")
+emitters.emit("lammps", atomistic, ff, Path("out"), prefix="w")
 
-# All engines
-for engine in EMITTERS:
-    emit(engine, atomistic, ff, "out/", prefix="w")
+# All engines ("gromacs", "lammps", "openmm", "xml")
+for engine in emitters.names():
+    emitters.emit(engine, atomistic, ff, Path("out"), prefix="w")
 
-#.lt →.py
-emit_python(parse_file("water.lt"), "water.py")
+# Step by step: parse once, then build the force field and the system from it.
+# base_dir is the directory the document's `import` statements resolve against.
+doc = parse_file("water.lt")
+builder = MolTemplateBuilder(doc, base_dir=Path("."))
+ff = builder.build_forcefield()
+atomistic, ff = builder.build_system()  # typed against that same ff
 
-# ltemplify: back to a.lt template
+# .lt -> .py
+PythonScriptEmitter(base_dir=Path(".")).emit(doc, "water.py")
+
+# ltemplify: back to a .lt template
 write_moltemplate(atomistic, ff, "water_regen.lt", class_name="Water")
 ```
+
+`emitters` is the one registry of engine emitters: `emitters.names()` lists
+them, `emitters.emit(name, ...)` writes one engine's complete input set and
+returns the file paths, and `emitters.register(name, emitter)` adds your own
+`Emitter` subclass under a new name. `build_system(ff=None, *,
+auto_topology=True)` generates angles and dihedrals from the bonds when the
+source omits them; pass `auto_topology=False` to keep only the ones the `.lt`
+file declares.
 
 **Python hooks**: moltemplate's own `include "foo.py"` mechanism is not
 supported directly. Instead, use `molpy moltemplate convert foo.lt foo.py`

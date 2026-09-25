@@ -10,6 +10,7 @@ marker to be scrubbed afterwards.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from molpy.core import fields
@@ -17,7 +18,19 @@ from molpy.builder.assembly._topology import TopologySelector
 from molpy.core.atomistic import Atomistic
 
 if TYPE_CHECKING:
-    from molpy.builder.assembly._cgsmiles_ir import CGSmilesGraphIR
+    from molpy.builder.assembly._residue_ir import ResidueTopology
+
+
+@dataclass(frozen=True)
+class Expansion:
+    """One :meth:`MonomerLibrary.expand` result: pasted world + pairing rule.
+
+    The topology enters :meth:`~MonomerLibrary.expand` once and leaves as this
+    pair, so the same ``ResidueTopology`` is never handed to a second object.
+    """
+
+    world: Atomistic
+    pairing: TopologySelector
 
 
 class MonomerLibrary:
@@ -54,11 +67,21 @@ class MonomerLibrary:
         """Return an independent copy of the named template."""
         return self._templates[label].copy()
 
-    def expand(self, topology: CGSmilesGraphIR) -> Atomistic:
+    def expand(self, topology: ResidueTopology) -> Expansion:
         """Paste one copy of each topology node's template into a fresh world.
 
-        Each copy carries ``RES_ID`` (the node id) and ``RES_NAME`` (the monomer
-        label). No geometry, no reaction: ``O(sum of template sizes)``.
+        Each copy carries ``RES_ID`` — the node's 1-based position in
+        ``topology.nodes`` (not its ``ResidueNode.id``, which is a
+        process-wide counter) — and ``RES_NAME`` (the monomer label). No
+        geometry, no reaction: every copy keeps its template coordinates, and
+        the cost is ``O(sum of template sizes)``.
+
+        Args:
+            topology: Residue graph whose node labels are keys of this library.
+
+        Returns:
+            The pasted world together with the pairing rule derived from the
+            same topology, so the topology is not handed out a second time.
 
         Raises:
             ValueError: if the topology names a monomer the library lacks.
@@ -78,4 +101,4 @@ class MonomerLibrary:
                 atom[fields.RES_ID] = residue_of[node.id]
                 atom[fields.RES_NAME] = node.label
             world.merge(copy)
-        return world
+        return Expansion(world=world, pairing=TopologySelector(topology))

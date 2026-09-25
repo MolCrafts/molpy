@@ -23,7 +23,7 @@ def main() -> None:
     world = Replicas(chain).times(4, spacing=8.0)
     for i in range(2):
         a = agent.copy()
-        a.move([i * 3.0, 2.0, 0.0], entity_type=mp.Atom)
+        a.translate([i * 3.0, 2.0, 0.0])
         for atom in a.atoms:
             atom[fields.MOL_ID] = 100 + i
         world.merge(a)

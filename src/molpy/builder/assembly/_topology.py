@@ -16,7 +16,7 @@ from molpy.core import fields
 
 if TYPE_CHECKING:
     from molpy.builder.assembly._context import MatchContext
-    from molpy.builder.assembly._cgsmiles_ir import CGSmilesGraphIR
+    from molpy.builder.assembly._residue_ir import ResidueTopology
 
 
 class TopologySelector(Selector):
@@ -29,17 +29,23 @@ class TopologySelector(Selector):
     already connected. Nothing here knows which of those it is building.
     """
 
-    def __init__(self, topology: CGSmilesGraphIR) -> None:
+    def __init__(self, topology: ResidueTopology) -> None:
         self._topology = topology
 
     @staticmethod
-    def residue_ids(topology: CGSmilesGraphIR) -> dict[int, int]:
-        """Map each topology node onto a 1-based residue id, in notation order.
+    def residue_ids(topology: ResidueTopology) -> dict[int, int]:
+        """Map each topology node onto a 1-based residue id, in ``nodes`` order.
 
-        The parser's node ids are an internal counter and need not be contiguous;
+        ``ResidueNode.id`` is a process-wide counter and need not be contiguous;
         a residue id reaches a PDB or a prmtop, so it must be. Both the library
         that stamps ``RES_ID`` and the selector that reads it derive the numbering
         from the same topology, so they cannot disagree.
+
+        Args:
+            topology: The residue graph being assembled.
+
+        Returns:
+            ``{ResidueNode.id: residue id}``, residue ids ``1 .. len(nodes)``.
         """
         return {node.id: index for index, node in enumerate(topology.nodes, start=1)}
 

@@ -21,7 +21,8 @@ class AmberBuildResult:
         inpcrd_path: Path to the generated AMBER coordinate file.
         pdb_path: Path to the generated PDB file (optional).
         monomer_count: Total number of monomers in the polymer.
-        cgsmiles: The CGSmiles string used to build the polymer.
+        cgsmiles: The CGSmiles string passed to ``build()``, or ``None`` when
+            the polymer was built from a ``ResidueTopology``.
     """
 
     frame: Any  # Frame (avoid circular import)

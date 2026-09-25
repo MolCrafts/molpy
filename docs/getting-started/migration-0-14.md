@@ -83,10 +83,13 @@ Python `UFFTypifier`) do not exist. `typify()` returns a new graph.
   themselves, which keep their own verbs: `RadicalVoronoi().build(...)` and
   `VoronoiIntegration().integrate(...)`.
 - `Workflow` is removed: a DAG of analyses is a script, not a library object.
-- `ACFAnalyzer` and `SpectralAnalyzer` are removed; `IonicConductivity` and
-  `DielectricSusceptibility` stream frames and no longer print progress (the
-  `progress_every` key is gone).
-- `molpy.compute.spectra` classes are the native ones re-exported.
+- `ACFAnalyzer` and `SpectralAnalyzer` are removed; in 0.14,
+  `IonicConductivity` and `DielectricSusceptibility` stream frames and no
+  longer print progress (the `progress_every` key is gone). Both recipe classes
+  are **removed in 0.15** — see [Migrating to 0.15](migration-0-15.md).
+- The vibrational-spectrum classes (`IRSpectrum`, `RamanSpectrum`, …) are the
+  native ones re-exported. From 0.15 they are imported from `molpy.compute`
+  itself; there is no `molpy.compute.spectra` module.
 
 ## I/O
 
@@ -94,7 +97,8 @@ Python `UFFTypifier`) do not exist. `typify()` returns a new graph.
   `LammpsRun` per `run`, whose `thermo` is a `LammpsThermo` with
   `columns()`, `rows()`, `["Temp"]`, `"Step" in thermo`, `len(thermo)` and
   `to_dict()`. The molpy dataclasses are gone.
-- `emit_all(...)` is removed; loop over `emit(name, ...)`.
+- `emit_all(...)` is removed; loop over `emit(name, ...)`. (In 0.15 the free
+  `emit` became `emitters.emit`; see [Migrating to 0.15](migration-0-15.md).)
 - `XMLForceFieldReader` / `OPLSAAForceFieldReader` shells are removed; use
   `read_xml_forcefield` / `read_opls_xml`.
 - `from molpy.io import *` exports only names that exist.

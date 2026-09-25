@@ -61,7 +61,7 @@ it, analyze or minimize it, then read and write it across formats.
 | **`conformer`** | 3D coordinate generation (native ETKDG + MMFF cleanup) |
 | **`typifier`** | Atom typing — OPLS-AA, CL&P, MMFF, GAFF via AmberTools |
 | **`potential` · `optimize`** | Energy & force potentials with L-BFGS minimization |
-| **`compute`** | Analysis modules under `molpy.compute` — `rdf`/`msd`/`dielectric`/`spectra`/`order`/`voronoi`/… (native kernels) |
+| **`compute`** | Analysis under `molpy.compute` — `rdf`/`msd`/`pmsd`/`jacf`/`order`/`voronoi`/… modules, plus dielectric and vibrational-spectrum classes on the package itself (native kernels) |
 | **`io`** | Read/write — PDB, GRO, LAMMPS data, XYZ, force fields, trajectories, … |
 | **`engine`** | MD input generation & run management — LAMMPS, CP2K, OpenMM |
 | **`wrapper` · `adapter`** | External CLIs (Antechamber, tleap, …) and optional RDKit in-memory bridge |
@@ -77,9 +77,17 @@ pip install molcrafts-molpy
 ```
 
 Core dependencies: NumPy and
-[molrs](https://github.com/MolCrafts/molrs) (`molcrafts-molrs>=0.14.0,<0.15`)
+[molrs](https://github.com/MolCrafts/molrs) (`molcrafts-molrs>=0.15.0,<0.16`)
 plus the MolCrafts logging/config packages. Optional: RDKit (adapter example),
 AmberTools (GAFF charges).
+
+> **Until molrs 0.15.0 is published.** molpy 0.15 needs molrs 0.15, which is
+> not on PyPI yet, so `pip install` cannot resolve it. Install from source
+> instead: clone [molrs](https://github.com/MolCrafts/molrs) next to molpy (the
+> two checkouts side by side in one directory) and run `uv sync` in molpy (see
+> *Install from source (development)* below). `uv` builds molrs from the sibling checkout
+> named in `[tool.uv.sources]`; `pip` ignores that path source, so it does not
+> work for this step.
 
 > **Nightly builds.** Bleeding-edge snapshots are published to the separate
 > project `molcrafts-molpy-nightly` (versioned `X.Y.Z.devN`) on every push to
@@ -91,6 +99,7 @@ AmberTools (GAFF charges).
 <summary>Install from source (development)</summary>
 
 ```bash
+git clone https://github.com/MolCrafts/molrs.git   # sibling checkout, see below
 git clone https://github.com/MolCrafts/molpy.git
 cd molpy
 uv sync --extra dev

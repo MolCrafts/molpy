@@ -144,7 +144,7 @@ MolPy is a computational chemistry toolkit with explicit data flow and minimal m
 | `builder` | System assembly: `GraphAssembler`, polymers, crosslinking, AmberTools |
 | `conformer` | 3D generation (ETKDG + MMFF) |
 | `typifier` | Atom typing: OPLS-AA, CL&P, MMFF, GAFF (AmberTools) |
-| `compute` | Trajectory analysis: RDF, MSD, transport, dielectric, spectra, order, … |
+| `compute` | Trajectory analysis: RDF, MSD, transport, order, …; dielectric and spectroscopy classes on the package |
 | `engine` | MD abstractions: LAMMPS, CP2K, OpenMM |
 | `wrapper` | External CLIs: Antechamber, Prepgen, Parmchk2, TLeap |
 | `adapter` | Optional in-memory bridge: RDKit (worked example only) |
@@ -155,7 +155,7 @@ MolPy is a computational chemistry toolkit with explicit data flow and minimal m
 
 > **Hard runtime dependency**: `molcrafts-molrs` (Rust extension) is required,
 > pinned to the same **minor** line in `pyproject.toml`
-> (`>=0.14.0,<0.15`). Import-time `check_molrs_version` enforces major.minor
+> (`>=0.15.0,<0.16`, path source to the untagged sibling until PyPI has 0.15.0). Import-time `check_molrs_version` enforces major.minor
 > only. Public molrs symbols are re-exported on the molpy facade
 > (`molpy.Frame is molrs.Frame`); application code imports `molpy`, not `molrs`.
 >
@@ -254,7 +254,7 @@ Canonical field names and I/O boundary translation reach molpy through
 
 ```
 fields.CHARGE, fields.MOL_ID, …      — canonical column names, plain `str`
-    (native keys table, re-exported; `fields.SITE` is the molpy-owned one)
+    (native keys table, re-exported, including the assembly fields `SITE` and `Q0`)
 
 FieldFormatter                        — native; data field mapping: {format_key: canonical_key}
     ↓                                   canonicalize() / localize() on Block, *_frame() on Frame
@@ -287,20 +287,22 @@ class LammpsForceFieldFormatter(LammpsFieldFormatter, ForceFieldFormatter):
 ### Pattern: Mutation-Based Data Model + Explicit `.copy()`
 
 **Critical**: The core data-model API mutates in place. `Atomistic`/`Struct` methods
-`def_atom`, `def_bond`, `def_angle`, `def_dihedral`, `get_topo`, `move`, `rotate`,
-`scale`, and `merge` all modify the structure in place and return `self` (or the
-newly created entity) for method chaining. `.copy()` is the explicit opt-in for an
+`def_atom`, `def_bond`, `def_angle`, `def_dihedral`, `get_topo`, the native
+rigid-body verbs `translate`, `rotate` and `scale` (per-axis factors), and `merge`
+all modify the structure in place and return `self` (or the newly created entity)
+for method chaining. There is no `move`: the rigid-body verbs are the native
+methods, re-exported unchanged (operator ruling 2026-09-24). `.copy()` is the explicit opt-in for an
 independent deep copy.
 
 ```python
 # Building / transforming mutates in place and chains:
 struct.def_atom(element="C", xyz=[0, 0, 0])   # adds atom, returns the Atom
-struct.move([1, 0, 0], entity_type=Atom)      # mutates, returns self
+struct.translate([1, 0, 0])                   # mutates, returns self
 struct.merge(other)                            # transfers other's entities into self
 
 # When you need an independent object, copy explicitly:
 work = struct.copy()        # deep copy; entities/links remapped
-work.move([5, 0, 0], entity_type=Atom)   # struct is untouched
+work.translate([5, 0, 0])               # struct is untouched
 ```
 
 For *higher-level helper functions* (in `op`, `builder`, etc.), prefer
@@ -357,7 +359,7 @@ def test_def_atom_mutates_and_returns_entity():
     struct = Atomistic()
     atom = struct.def_atom(element="C", xyz=[0, 0, 0])
     assert atom in struct.atoms          # added in place
-    assert struct.move([1, 0, 0], entity_type=Atom) is struct  # returns self
+    assert struct.translate([1, 0, 0]) is struct  # returns self
 ```
 
 **`.copy()` isolation checks** (when a helper must not mutate caller input):
@@ -427,7 +429,7 @@ def test_adapter_fallback():
 
 ### `builder` module
 
-- Polymer builders: sequence generation, placement, crosslinking
+- Polymer builders: sequence generation, crosslinking; placement is the native `TracePlacer`, opt-in via `placer=`
 - AmberTools integration: prepare molecules, run Antechamber, tleap
 - Construction and transformation verbs: look them up in the family→verb table
   (`.claude/notes/architecture.md` § Design laws 4), which also records the declared

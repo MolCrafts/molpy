@@ -1,0 +1,17 @@
+# Seeded random mixture on a 3-cell grid: every choice has an atom at the
+# origin, so cell k holds an atom at x = 5k whichever class it drew.
+
+Dot {
+  write("Data Atoms") {
+    $atom:a $mol:. @atom:A 0.0 0.0 0.0 0.0
+  }
+}
+
+Pair {
+  write("Data Atoms") {
+    $atom:a $mol:. @atom:B 0.0 0.0 0.0 0.0
+    $atom:b $mol:. @atom:B 0.0 0.0 1.5 0.0
+  }
+}
+
+mix = new random([Dot, Pair], [2, 1], 7) [3].move(5.0, 0.0, 0.0)

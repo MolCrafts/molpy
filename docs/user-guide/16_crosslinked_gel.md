@@ -61,7 +61,7 @@ def build_peo_chain(amber: AmberTools, *, dp: int = 20) -> tuple[Atomistic, obje
     relaxed = amber.minimize(res, max_iter=400)  # sander, native minimizer
     for atom, p in zip(strand.atoms, relaxed["atoms"][["x", "y", "z"]]):
         atom["x"], atom["y"], atom["z"] = map(float, p)
-    strand.move(list(-strand.xyz.mean(0)), entity_type=mp.Atom)
+    strand.translate(list(-strand.xyz.mean(0)))  # centre the chain on the origin
     return strand, res.ff
 ```
 
@@ -91,7 +91,7 @@ The marker is matched by a `%LABEL` predicate in the reaction SMARTS (`%x` / `%h
 
 ## The chain is replicated onto a jittered grid
 
-`Replicas.grid` rigidly rotates and translates copies onto a lattice so neighbouring chains interpenetrate. Each copy gets a `mol_id`; the selector forbids same-component pairs while chains remain separate.
+`Replicas.grid` rigidly rotates and translates copies onto a lattice so neighbouring chains interpenetrate. Each copy gets a `mol_id` (1, 2, …) for output. With `exclude_same_molecule=True` the selector forbids pairs inside one bond-connected component — it reads bonds, not `mol_id` — so chains are only linked to each other while they remain separate.
 
 ```python
 from molpy.builder.assembly import Replicas

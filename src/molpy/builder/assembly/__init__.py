@@ -12,8 +12,8 @@ from ._context import MatchContext
 from molpy.builder._finalize import Finalization
 
 from ._finalize import AssemblyFinalizer
-from ._library import MonomerLibrary
-from ._placer import Placer, ResiduePlacer
+from ._library import Expansion, MonomerLibrary
+from molrs import LineOrienter, Orienter, Placer, TangOrienter, Trace, TracePlacer
 from ._polymer import PolymerBuilder
 from ._proximity import (
     Candidate,
@@ -29,9 +29,9 @@ from ._residue_graph import (
     ring_topology,
     star_topology,
 )
-from ._cgsmiles_ir import CGSmilesBondIR, CGSmilesGraphIR, CGSmilesNodeIR
+from ._residue_ir import ResidueBond, ResidueTopology, ResidueNode
 from ._selector import Binding, Selector
-from ._sites import SiteMap
+from molrs import SiteMap
 from ._topology import TopologySelector
 
 __all__ = [
@@ -39,14 +39,19 @@ __all__ = [
     "AssemblyFinalizer",
     "Candidate",
     "ExhaustiveSelector",
+    "Expansion",
     "ExplicitPairSelector",
     "GraphAssembler",
     "Finalization",
     "MatchContext",
     "MonomerLibrary",
+    "LineOrienter",
+    "Orienter",
     "Placer",
     "PolymerBuilder",
-    "ResiduePlacer",
+    "TangOrienter",
+    "Trace",
+    "TracePlacer",
     "ProximitySelector",
     "RandomSelector",
     "Replicas",
@@ -54,9 +59,9 @@ __all__ = [
     "SiteMap",
     "SpacingSelector",
     "TopologySelector",
-    "CGSmilesBondIR",
-    "CGSmilesGraphIR",
-    "CGSmilesNodeIR",
+    "ResidueBond",
+    "ResidueTopology",
+    "ResidueNode",
     "linear_topology",
     "ring_topology",
     "star_topology",

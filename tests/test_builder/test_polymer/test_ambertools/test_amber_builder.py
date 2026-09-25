@@ -114,6 +114,52 @@ class TestAmberPolymerBuilder:
         assert builder._build_sequence(graph) == "HM M M M TM"
 
 
+def _stub_result() -> AmberBuildResult:
+    return AmberBuildResult(
+        frame=MagicMock(),
+        forcefield=MagicMock(),
+        prmtop_path=Path("polymer.prmtop"),
+        inpcrd_path=Path("polymer.inpcrd"),
+        pdb_path=None,
+        monomer_count=3,
+        cgsmiles=None,
+    )
+
+
+class TestAmberPolymerBuilderTopologyInput:
+    """Build-input handling, with the AmberTools stages stubbed out.
+
+    The semantic cache key is computed inline in :meth:`AmberPolymerBuilder.build`;
+    the smallest observable seam is the number of entries the semantic cache
+    holds after building equal topologies.
+    """
+
+    def test_equal_topologies_share_one_semantic_cache_entry(self):
+        builder = AmberPolymerBuilder({"M": _monomer()}, CONDENSATION)
+        with (
+            patch.object(builder, "_prepare_monomers"),
+            patch.object(builder, "_build_with_tleap", return_value=_stub_result()),
+        ):
+            builder.build(linear_topology(["M"] * 3))
+            builder.build(linear_topology(["M"] * 3))
+        assert len(builder._semantic_cache) == 1
+
+    def test_cgsmiles_string_is_parsed_by_the_native_reader(self):
+        # ``{[#M][#M]|2}`` is a linear 3-mer in CGSmiles; a two-form regex
+        # recognises neither ``{[#X]|n}`` nor ``{[#A][#B]...}`` here.
+        builder = AmberPolymerBuilder({"M": _monomer()}, CONDENSATION)
+        with (
+            patch.object(builder, "_prepare_monomers"),
+            patch.object(
+                builder, "_build_with_tleap", return_value=_stub_result()
+            ) as tleap,
+        ):
+            builder.build("{[#M][#M]|2}")
+        graph = tleap.call_args.args[0]
+        assert [node.label for node in graph.nodes] == ["M", "M", "M"]
+        assert len(graph.bonds) == 2
+
+
 class TestPreparedMonomer:
     def test_records_each_generated_residue_variant(self):
         prepared = _PreparedMonomer(

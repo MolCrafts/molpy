@@ -2,8 +2,9 @@
 
 MolPy's analysis operators are thin Python shells over [molrs](https://github.com/MolCrafts/molrs),
 a Rust column store and compute kernel. molrs is a **required** runtime
-dependency — callers import `Frame` and `Block` directly from `molrs`; both are
-backed by a Rust `Store`, and the `compute` operators forward
+dependency — callers use `mp.Frame` and `mp.Block`, which are the molrs types
+re-exported unchanged (never `import molrs` in user code); both are backed by a
+Rust `Store`, and the `compute` operators forward
 straight into Rust. There is no pure-Python fallback and no opt-in flag.
 
 This page shows how that backend surfaces in everyday analysis: how the box

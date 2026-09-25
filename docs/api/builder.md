@@ -10,18 +10,26 @@ rule, so there is one kernel and one variation point.
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
 | `GraphAssembler` | The kernel: `apply(world, selector)` | Crosslinking an existing graph |
-| `PolymerBuilder` | Library + reaction; `.build(topology)` is the sole expand + apply path; `.build_*` only build that topology | Ruled polymer topologies |
+| `PolymerBuilder` | Library + reaction; `.build(topology)` is the sole expand + apply path; `.build_*` only build that topology. No placement unless you pass `placer=` | Ruled polymer topologies |
+| `ResidueTopology` | The residue graph `build` takes: `nodes` (residues) + `bonds` (which residues are joined) | Any architecture the shortcuts do not cover |
+| `ResidueNode` | One residue: `ResidueNode(label, *, id=...)`; `label` is a `MonomerLibrary` key, `id` is auto-assigned | Hand-built topologies |
+| `ResidueBond` | Undirected edge `ResidueBond(node_i, node_j)` between two nodes | Hand-built topologies |
+| `linear_topology` / `ring_topology` / `star_topology` | `linear_topology(labels)`, `ring_topology(label, n)`, `star_topology(core, arm, *, n_arms, arm_length, cap=None)` → `ResidueTopology` | Common architectures |
 | `Finalization` | `ATOMS`, `TOPOLOGY` (default), or `BONDED` | Choosing when topology is materialized |
 | `StructureFinalizer` | Run the shared topology/bonded tail later | Deferred MD export for large systems |
 | `AssemblyFinalizer` | Assembly finalizer with aromaticity perception | Molecular reaction products |
 | `SiteMap` | Mark `fields.SITE` (and optional leaving H + charge fold) | Naming reaction sites |
 | `Replicas` | Grid / linear copies of a strand with `mol_id` | Melt precursor before crosslinking |
 | `MonomerLibrary` | Validated repeat-unit templates; `.expand(topology)` | Naming your monomers |
-| `Selector` | The one variation point: which matched sites pair up | Writing your own pairing rule |
+| `Selector` | The one variation point: which matched sites pair up; implement `select(context)` | Writing your own pairing rule |
+| `MatchContext` | What a selector receives: `world`, `occurrences` (one list of `{map_number: atom handle}` per reactant), `map_a` / `map_b`, `comp_a` / `comp_b`, and `sites(component, map_number)` | Reading matches inside `select` |
 | `TopologySelector` | Pairs adjacent residues (used by `PolymerBuilder`) | Residue-edge pairing |
 | `ExhaustiveSelector` / `SpacingSelector` / `ExplicitPairSelector` | Deterministic crosslink rules | Reproducible networks |
 | `RandomSelector` | Random pairing to a target `conversion`, seeded | Flory–Stockmayer networks |
-| `ResiduePlacer` | Lays fresh template copies out in space | Building from templates |
+| `Placer` | Base class: subclass it and implement `place(mol, bonds)`, which moves whole fragments in place so every bond joining a fragment to its parent starts at bonding range, or raises without moving anything | Writing your own placement rule |
+| `TracePlacer` | Moves each residue rigidly next to its parent, one bonding range (summed covalent radii plus a buffer) away. Ring-closing bonds are formed but not placed | Giving freshly pasted templates a geometry |
+| `Trace` | A list of 3D points whose tangents give growth directions: `TracePlacer().with_trace(Trace(points))` lays a path or ring along it | Steering a chain along a curve |
+| `Orienter` / `LineOrienter` / `TangOrienter` | Facing rule for each placed residue: its site axis along the growth direction (`LineOrienter`) or perpendicular to it (`TangOrienter`); set with `TracePlacer().with_orienter(...)` | Choosing how residues face |
 | `SystemPlanner` / `PolydisperseChainGenerator` | Sample a polydisperse chain plan | Bulk / MW-distributed systems |
 | `AmberPolymerBuilder` | GAFF-parameterised build via AmberTools | AMBER/LAMMPS-bound workflows |
 | `CarbonTubeBuilder` | `CarbonTubeBuilder(n, m, ...)` → `.build()` graph + `.cell()` box | Zigzag, armchair, and chiral nanotubes |
@@ -31,15 +39,20 @@ rule, so there is one kernel and one variation point.
 ## Canonical example
 
 A repeat unit is an ordinary capped molecule with a few of its atoms named.
-There is no port system and no direction: the reaction SMARTS is the only place
-the chemistry lives, and `%a` / `%b` bind it to the atoms you marked.
+There is no port system: the reaction SMARTS is the only place the chemistry
+lives, and `%a` / `%b` bind it to the atoms you marked. `placer=TracePlacer()`
+gives the pasted copies a geometry; without it the copies stay stacked where
+the template put them. `Placer`, `TracePlacer`, `Trace` and the three
+orienters import from `molpy.builder` as well as `molpy.builder.assembly`; the
+residue-topology types, the topology constructors and `MatchContext` import
+from `molpy.builder.assembly`.
 
 ```python
 import molpy as mp
 from molpy.builder.assembly import (
     MonomerLibrary,
     PolymerBuilder,
-    ResiduePlacer,
+    TracePlacer,
     SiteMap,
 )
 from molpy.conformer import Conformer
@@ -51,7 +64,7 @@ eo, _ = Conformer(add_hydrogens=True, seed=42).generate(
 SiteMap(eo).label_elements("O", "a", "b")
 
 ether = mp.Reaction("[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]")
-builder = PolymerBuilder(MonomerLibrary({"EO": eo}), ether, placer=ResiduePlacer())
+builder = PolymerBuilder(MonomerLibrary({"EO": eo}), ether, placer=TracePlacer())
 chain = builder.build_linear("EO", 5)
 
 assert chain.__class__.__name__ == "Atomistic"
@@ -112,7 +125,7 @@ open ends, length selection, and deferred topology.
 
 ## Crosslinking is the same machine
 
-Strip the library and the notation away and you have the kernel itself, which is
+Strip the library and the residue topology away and you have the kernel itself, which is
 all crosslinking needs: a graph you already have, plus a rule for which sites
 pair up.
 

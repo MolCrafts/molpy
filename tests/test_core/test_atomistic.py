@@ -60,3 +60,31 @@ def test_cross_world_endpoints_are_rejected() -> None:
 
     with pytest.raises(ValueError, match="belong to this graph"):
         left.def_bond(a, b)
+
+
+class TestAtomisticSpatialVerbs:
+    """The rigid-body verbs are the native ``translate`` / ``rotate`` / ``scale``."""
+
+    def test_move_is_not_an_atomistic_verb(self) -> None:
+        assert not hasattr(Atomistic, "move")
+
+    def test_spatial_verbs_are_the_native_methods(self) -> None:
+        import molrs
+
+        for verb in ("translate", "rotate", "scale"):
+            assert getattr(Atomistic, verb) is getattr(molrs.Atomistic, verb), verb
+
+    def test_scale_takes_per_axis_factors_and_chains(self) -> None:
+        struct = Atomistic()
+        atom = struct.def_atom(element="C", x=1.0, y=1.0, z=1.0)
+
+        result = (
+            struct.translate([1.0, 0.0, 0.0])
+            .scale([2.0, 3.0, 4.0], [0.0, 0.0, 0.0])
+            .rotate([0.0, 0.0, 1.0], 0.0)
+        )
+
+        assert result is struct
+        assert (atom["x"], atom["y"], atom["z"]) == pytest.approx(
+            (4.0, 3.0, 4.0), abs=1e-12
+        )

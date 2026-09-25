@@ -1,8 +1,11 @@
 """Emit a self-contained MolPy Python script from a parsed moltemplate IR.
 
 The output script reconstructs the same ``Atomistic`` + ``ForceField`` that
-:func:`build_system` would produce, but through explicit MolPy API calls —
-no runtime dependency on the moltemplate parser. Each moltemplate class
+the moltemplate builder would produce, but through explicit MolPy API calls —
+no runtime dependency on the moltemplate parser. Instance and array transforms
+are applied through the IR's :class:`~molpy.parser.moltemplate.ir.Transform`
+(``apply`` / ``repeated``), the same methods the builder uses, so the two
+paths place copies identically. Each moltemplate class
 maps to a ``build_<ClassName>() -> Atomistic`` function so the emitted
 file remains hand-editable.
 
@@ -12,8 +15,8 @@ Usage (CLI)::
 
 Usage (Python)::
 
-    from molpy.parser.moltemplate import parse_file, emit_python
-    emit_python(parse_file("system.lt"), "system.py")
+    from molpy.parser.moltemplate import parse_file, PythonScriptEmitter
+    PythonScriptEmitter(base_dir=".").emit(parse_file("system.lt"), "system.py")
 """
 
 from __future__ import annotations
@@ -25,7 +28,9 @@ from typing import Iterable
 from .builder import (
     _compile_atom_type_replacements,
     _flatten,
+    _grid_size,
     _init_style_registry,
+    _is_exact_count_vector,
     _resolve_imports,
 )
 from .ir import (
@@ -39,33 +44,36 @@ from .ir import (
 )
 
 
-def emit_python(
-    doc: Document,
-    dest: str | Path,
-    *,
-    base_dir: Path | None = None,
-) -> Path:
-    """Emit a runnable MolPy Python script from ``doc``.
+class PythonScriptEmitter:
+    """Write a runnable MolPy Python script from a parsed moltemplate document.
 
     Args:
-        doc: Parsed moltemplate document (from :func:`parse_file`).
-        dest: Output ``.py`` path. Parent directories are created.
-        base_dir: Base directory used to resolve ``import`` statements.
-            Defaults to ``Path.cwd()``.
-
-    Returns:
-        The resolved absolute path written to.
+        base_dir: Directory that ``import`` statements in the document resolve
+            against, fixed at construction. Defaults to the current working
+            directory at construction time.
     """
-    _init_style_registry()
-    if base_dir is None:
-        base_dir = Path.cwd()
-    doc = _resolve_imports(doc, base_dir)
 
-    out = _emit_document(doc)
-    dest_path = Path(dest)
-    dest_path.parent.mkdir(parents=True, exist_ok=True)
-    dest_path.write_text(out, encoding="utf-8")
-    return dest_path.resolve()
+    def __init__(self, base_dir: str | Path | None = None) -> None:
+        self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd()
+
+    def emit(self, doc: Document, dest: str | Path) -> Path:
+        """Emit a runnable MolPy Python script from ``doc``.
+
+        Args:
+            doc: Parsed moltemplate document (from :func:`parse_file`).
+            dest: Output ``.py`` path. Parent directories are created.
+
+        Returns:
+            The resolved absolute path written to.
+        """
+        _init_style_registry()
+        doc = _resolve_imports(doc, self.base_dir)
+
+        out = _emit_document(doc)
+        dest_path = Path(dest)
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        dest_path.write_text(out, encoding="utf-8")
+        return dest_path.resolve()
 
 
 _HEADER = '''\
@@ -78,26 +86,14 @@ moltemplate syntax.
 
 from __future__ import annotations
 
-import math
 import random
 
 import molpy as mp
 from molpy.core.atomistic import Atomistic
+from molpy.parser.moltemplate import Transform
 from molpy.parser.moltemplate.builder import _STYLE_REGISTRY, _init_style_registry
 
 _init_style_registry()
-
-
-def _apply_transform(mol: Atomistic, op: str, args: list[float]) -> None:
-    """Apply one moltemplate transform to ``mol`` (shared by build helpers)."""
-    if op == "move" and len(args) == 3:
-        mol.move(list(args))
-    elif op == "rot" and len(args) >= 4:
-        angle = math.radians(args[0])
-        about = list(args[4:7]) if len(args) >= 7 else None
-        mol.rotate([args[1], args[2], args[3]], angle, about=about)
-    elif op == "scale" and len(args) == 1:
-        mol.scale(args[0])
 
 
 def _resolve_atom(atoms: dict, ref: str):
@@ -653,19 +649,13 @@ def _emit_system_builder(doc: Document, classes: dict[str, ClassDef]) -> str:
             "    from molpy.parser.moltemplate.builder import "
             "_apply_by_type_to_system as _apply_bt",
             "    if len(list(system.bonds)) > 0:",
-            "        try:",
-            "            _existing_angles = len(list(system.angles))",
-            "            _existing_dihe = len(list(system.dihedrals))",
-            "            system = system.get_topo(",
-            "                gen_angle=_existing_angles == 0,",
-            "                gen_dihe=_existing_dihe == 0,",
-            "            )",
-            "        except Exception:",
-            "            pass",
-            "    try:",
-            "        _apply_bt(system, ff)",
-            "    except Exception:",
-            "        pass",
+            "        _existing_angles = len(list(system.angles))",
+            "        _existing_dihe = len(list(system.dihedrals))",
+            "        system = system.get_topo(",
+            "            gen_angle=_existing_angles == 0,",
+            "            gen_dihe=_existing_dihe == 0,",
+            "        )",
+            "    _apply_bt(system, ff)",
             "    return system, ff",
         ]
     )
@@ -676,95 +666,91 @@ def _emit_concrete_new(stmt: NewStmt, classes: dict[str, ClassDef]) -> list[str]
     if stmt.class_name not in classes:
         return [f"    # skipped unknown class: {stmt.class_name!r}"]
     fn = _sanitize_ident("build_" + stmt.class_name)
-    count = max(stmt.count, 1)
-    grid = stmt.arrays
     lines: list[str] = [
         f"    # {stmt.instance_name} = new {stmt.class_name}  "
-        f"(count={count}, arrays={[d.count for d in grid]})",
+        f"(count={max(stmt.count, 1)}, arrays={[d.count for d in stmt.arrays]})",
     ]
-    if not grid:
-        for _ in range(count):
-            lines.append(f"    _m = {fn}()")
-            for t in stmt.transforms:
-                lines.append(f"    {_transform_call('_m', t)}")
-            lines.append("    system += _m")
-        return lines
+    lines.extend(_emit_grid_instances(stmt, [f"_m = {fn}()"]))
+    return lines
 
+
+def _emit_grid_instances(stmt: NewStmt, make_instance: list[str]) -> list[str]:
+    """Loop over the ``count`` x array grid of ``stmt`` and merge one ``_m`` per cell.
+
+    ``make_instance`` are the (unindented) lines that bind ``_m`` for a cell.
+    Loop order and transform order match the builder: the instance chain,
+    then each array dimension's ``Transform.repeated(k)`` (skipped at k = 0).
+    """
     indent = "    "
-    lines.append(f"{indent}for _rep in range({count}):")
+    lines: list[str] = [f"{indent}for _rep in range({max(stmt.count, 1)}):"]
     indent += "    "
-    dim_vars: list[tuple[str, Transform | None]] = []
-    for d, dim in enumerate(grid):
+    for d, dim in enumerate(stmt.arrays):
         lines.append(f"{indent}for _k{d} in range({dim.count}):")
         indent += "    "
-        dim_vars.append((f"_k{d}", dim.transform))
-    lines.append(f"{indent}_m = {fn}()")
+    lines.extend(f"{indent}{ln}" for ln in make_instance)
     for t in stmt.transforms:
         lines.append(f"{indent}{_transform_call('_m', t)}")
-    for var, tr in dim_vars:
-        if tr is None:
+    for d, dim in enumerate(stmt.arrays):
+        if dim.transform is None:
             continue
-        lines.append(_scaled_transform_line(tr, var, indent))
+        lines.append(f"{indent}if _k{d}:")
+        lines.append(
+            f"{indent}    {_transform_literal(dim.transform)}.repeated(_k{d}).apply(_m)"
+        )
     lines.append(f"{indent}system += _m")
     return lines
 
 
-def _scaled_transform_line(tr: Transform, var: str, indent: str) -> str:
-    if tr.op == "move" and len(tr.args) == 3:
-        coords = ", ".join(f"{var}*{a!r}" for a in tr.args)
-        return f"{indent}_m.move([{coords}])"
-    if tr.op == "rot" and len(tr.args) >= 4:
-        angle = f"math.radians({var}*{tr.args[0]!r})"
-        axis = f"[{tr.args[1]!r}, {tr.args[2]!r}, {tr.args[3]!r}]"
-        about = (
-            f", about=[{tr.args[4]!r}, {tr.args[5]!r}, {tr.args[6]!r}]"
-            if len(tr.args) >= 7
-            else ""
-        )
-        return f"{indent}_m.rotate({axis}, {angle}{about})"
-    if tr.op == "scale" and len(tr.args) == 1:
-        return f"{indent}_m.scale({var}*{tr.args[0]!r})"
-    return f"{indent}# unsupported scaled transform: {tr.op}({tr.args})"
-
-
 def _emit_random_new(stmt: NewStmt) -> list[str]:
-    grid = 1
-    for dim in stmt.arrays:
-        grid *= max(dim.count, 0)
-    if not stmt.arrays:
-        grid = 1
-    grid *= max(stmt.count, 1)
-    choices_parts: list[str] = []
-    for ch in stmt.random_choices:
-        fn = _sanitize_ident("build_" + ch.class_name)
-        trs = [(t.op, list(t.args)) for t in ch.transforms]
-        choices_parts.append(f"({fn!r}, {trs!r})")
-    weights = list(stmt.random_weights) or [1.0] * len(stmt.random_choices)
-    seed = stmt.random_seed
-    lines: list[str] = [
-        f"    # weighted random mixture for {stmt.instance_name}",
-        f"    _choices = [{', '.join(choices_parts)}]",
-        f"    _weights = {weights!r}",
-        f"    _prng = random.Random({seed!r}) if {seed!r} is not None else random.Random()",
-        f"    _n = {grid}",
-        "    _int_weights = all(float(w).is_integer() and w >= 0 for w in _weights)",
-        "    if _int_weights and sum(int(w) for w in _weights) == _n:",
-        "        _sel = []",
-        "        for _i, _w in enumerate(_weights): _sel.extend([_i] * int(_w))",
-        "        _prng.shuffle(_sel)",
-        "    else:",
-        "        _total = float(sum(_weights)) or 1.0",
-        "        _probs = [w/_total for w in _weights]",
-        "        _sel = _prng.choices(range(len(_choices)), weights=_probs, k=_n)",
-        "    for _idx in _sel:",
-        "        _builder_name, _choice_transforms = _choices[_idx]",
-        "        _m = globals()[_builder_name]()",
-        "        for _op, _args in _choice_transforms:",
-        "            _apply_transform(_m, _op, _args)",
+    """Emit ``new random(...)`` with the builder's selection policy and PRNG.
+
+    The draw policy (exact counts vs. normalised probabilities) is decided
+    here with the builder's own predicate; the script then draws with
+    ``random.Random(seed)`` exactly as the builder does.
+    """
+    choices = stmt.random_choices
+    grid_count = _grid_size(stmt.arrays) * max(stmt.count, 1)
+    weights = list(stmt.random_weights) or [1.0] * len(choices)
+    header = f"    # weighted random mixture for {stmt.instance_name}"
+    if not choices or grid_count == 0 or len(weights) != len(choices):
+        return [f"{header}: nothing to draw"]
+    choice_parts = [
+        f"({_sanitize_ident('build_' + ch.class_name)}, "
+        f"[{', '.join(_transform_literal(t) for t in ch.transforms)}])"
+        for ch in choices
     ]
-    for t in stmt.transforms:
-        lines.append(f"        {_transform_call('_m', t)}")
-    lines.append("        system += _m")
+    lines: list[str] = [
+        header,
+        f"    _choices = [{', '.join(choice_parts)}]",
+        f"    _prng = random.Random({stmt.random_seed!r})",
+    ]
+    if _is_exact_count_vector(weights, grid_count):
+        pool: list[int] = []
+        for idx, w in enumerate(weights):
+            pool.extend([idx] * int(w))
+        lines.append(f"    _sel = {pool!r}")
+        lines.append("    _prng.shuffle(_sel)")
+    else:
+        total = sum(weights)
+        if total <= 0:
+            return [f"{header}: nothing to draw"]
+        probs = [w / total for w in weights]
+        lines.append(
+            f"    _sel = _prng.choices(range({len(choices)}), "
+            f"weights={probs!r}, k={grid_count})"
+        )
+    lines.append("    _sel_iter = iter(_sel)")
+    lines.extend(
+        _emit_grid_instances(
+            stmt,
+            [
+                "_build_choice, _choice_transforms = _choices[next(_sel_iter)]",
+                "_m = _build_choice()",
+                "for _t in _choice_transforms:",
+                "    _t.apply(_m)",
+            ],
+        )
+    )
     return lines
 
 
@@ -773,21 +759,13 @@ def _emit_random_new(stmt: NewStmt) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _transform_literal(tr: Transform) -> str:
+    """Source text constructing ``tr`` in the generated script."""
+    return f"Transform({tr.op!r}, {list(tr.args)!r})"
+
+
 def _transform_call(target: str, tr: Transform) -> str:
-    if tr.op == "move" and len(tr.args) == 3:
-        return f"{target}.move([{tr.args[0]!r}, {tr.args[1]!r}, {tr.args[2]!r}])"
-    if tr.op == "rot" and len(tr.args) >= 4:
-        angle = f"math.radians({tr.args[0]!r})"
-        axis = f"[{tr.args[1]!r}, {tr.args[2]!r}, {tr.args[3]!r}]"
-        about = (
-            f", about=[{tr.args[4]!r}, {tr.args[5]!r}, {tr.args[6]!r}]"
-            if len(tr.args) >= 7
-            else ""
-        )
-        return f"{target}.rotate({axis}, {angle}{about})"
-    if tr.op == "scale" and len(tr.args) == 1:
-        return f"{target}.scale({tr.args[0]!r})"
-    return f"# unsupported transform: {tr.op}({tr.args})"
+    return f"{_transform_literal(tr)}.apply({target})"
 
 
 def _sanitize_ident(s: str) -> str:

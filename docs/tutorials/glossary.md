@@ -54,16 +54,16 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 ### Modules
 
 **Parser**
-: Converts string notations (SMILES, SMARTS, BigSMILES, CGSmiles) into MolPy structures. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
+: Converts SMILES and SMARTS strings, and moltemplate `.lt` files, into MolPy structures. BigSMILES and CGSmiles are not parsed. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
 
 **Reaction**
 : A reaction SMARTS. It matches the reactant patterns, forms and breaks bonds, and deletes the atoms that appear on the left and not on the right (the leaving groups). All the chemistry lives here. See [Assembly](../user-guide/02_assembly.md).
 
 **GraphAssembler**
-: Pastes molecules into one world, applies a `Reaction` wherever its `Selector` says, and repairs the force-field types near each new bond. `PolymerBuilder` is a `GraphAssembler` that also owns a monomer library and speaks CGSmiles.
+: Applies a `Reaction` to a world you already have, wherever its `Selector` says, and retypes the force-field types near each new bond. `PolymerBuilder` is a `GraphAssembler` that also owns a monomer library: `build` takes a `ResidueTopology` (a residue graph, usually from `linear_topology` / `ring_topology` / `star_topology`), pastes one template copy per residue, and bonds the adjacent ones. Placement is opt-in through `placer=TracePlacer()`.
 
 **Site**
-: A name (`fields.SITE`) on an atom that may react. Sites have no direction and no role — a linear chain, a branch point and a ring closure differ only in how many sites a monomer carries and how the topology pairs them.
+: A name (`fields.SITE`) on an atom that may react. A site is a plain label, not a port with a role — a linear chain, a branch point and a ring closure differ only in how many sites a monomer carries and how the topology pairs them.
 
 **Typifier**
 : Assigns force field types to atoms, bonds, angles, and dihedrals via SMARTS pattern matching. Subclasses: `OPLSAATypifier`, `MMFFTypifier`, `ClpTypifier`, `AmberToolsTypifier`, `SmartsTypifier`. (GAFF atom types are *not* a Typifier — they come from AmberTools/antechamber; see [AmberTools Integration](../user-guide/13_ambertools_integration.md).) See [Force Field Typification](../user-guide/06_typifier.md).

@@ -2,7 +2,7 @@
 
 **Script:** [`examples/topology/01_linear.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/01_linear.py)
 
-A path of identical residues is the simplest ruled topology. `build_linear` is a shortcut that formats CGSmiles and calls the sole entry `build`.
+A path of identical residues is the simplest ruled topology. `build_linear` is a shortcut that builds a linear residue topology and calls the sole entry `build`.
 
 ```python
 from eo_kit import eo_builder # examples/topology/

@@ -37,7 +37,7 @@ from molpy.typifier.affected_region import AffectedRegion
 from molpy.typifier.cache import RetypeCache
 
 if TYPE_CHECKING:
-    from molpy.builder.assembly._placer import Placer
+    from molrs import Placer
     from molpy.typifier.forcefield import ForceFieldParams
 
 #: Net charge drift that counts as zero (elementary charge).
@@ -49,7 +49,7 @@ class GraphAssembler:
 
     Use it directly to crosslink an existing graph; subclass it to add an input
     format, as :class:`~molpy.builder.assembly._polymer.PolymerBuilder` does for
-    CGSmiles + a monomer library.
+    a residue topology + a monomer library.
 
     A typifier must be accompanied by the ``reach`` it needs.  ``finalize`` is
     orthogonal: ``"atoms"`` stops after per-atom write-back, ``"topology"``
@@ -68,6 +68,42 @@ class GraphAssembler:
         finalize: Finalization | str = Finalization.TOPOLOGY,
         bonded: ForceFieldParams | None = None,
     ) -> None:
+        """Bind the reaction and the optional typing / placement / finalization.
+
+        Args:
+            reaction: The reaction SMARTS every binding executes, built once
+                with ``mp.Reaction(smirks)``. Its first forming bond decides
+                which two map numbers a binding joins.
+            typifier: Retypes the neighbourhood of each edit after the batch
+                runs. ``None`` is pure-topology assembly (a mode, not a
+                fallback): no atom is retyped.
+            reach: Neighbourhood radius, in bonds, that decides one atom's
+                type for ``typifier``; required exactly when ``typifier`` is
+                given. It sizes the affected region: atoms within
+                ``max(reach, 2)`` bonds of an edit are written back, inside an
+                extracted region of that radius plus ``reach``.
+            placer: Moves whole fragments before the reaction runs so each
+                forming bond starts at bonding range. ``None`` (default) means
+                no placement: coordinates are left exactly as ``world`` has
+                them. Pass one for freshly pasted templates; leave it out when
+                the coordinates are already meaningful (a packed melt).
+            label_field: Atom field holding the site labels that ``%label``
+                predicates in ``reaction`` match. An empty value means
+                unmarked.
+            finalize: ``Finalization`` (or its string value) for the tail:
+                ``"atoms"``, ``"topology"`` (default) or ``"bonded"``.
+            bonded: Force-field parameter assigner; required with, and only
+                allowed with, ``finalize="bonded"``.
+
+        Raises:
+            TypeError: if ``reaction`` is not a ``Reaction``, ``typifier`` is
+                not a ``Typifier``, ``typifier`` is given without ``reach``,
+                ``finalize`` is ``"bonded"`` without ``bonded``, or ``bonded``
+                is given with any other ``finalize``.
+            ValueError: if ``reach < 1``, ``finalize`` is not a
+                ``Finalization`` value, the reaction forms no bond, or a
+                forming-bond map number appears in no reactant pattern.
+        """
         if not isinstance(reaction, molrs.Reaction):
             raise TypeError(
                 "reaction must be a molpy.Reaction instance, not "
@@ -116,7 +152,28 @@ class GraphAssembler:
     def apply(self, world: Atomistic, selector: Selector) -> Atomistic:
         """Return a new graph with the selector's bindings reacted.
 
-        ``world`` is never mutated.
+        Order: copy ``world``; match the reaction's reactant patterns once;
+        let ``selector`` choose the bindings; place (only if a placer was
+        given); execute every binding as one batch; retype the region around
+        each edit (only if a typifier was given); run the finalization tail.
+
+        Args:
+            world: The graph to edit. Never mutated.
+            selector: Chooses which matched sites react.
+
+        Returns:
+            The edited copy. When ``selector`` yields nothing, an unchanged
+            copy of ``world`` (not finalized) and a ``UserWarning`` naming the
+            selector class and the number of matched sites.
+
+        Raises:
+            ValueError: if two bindings name the same atom; if the reaction
+                deletes charged atoms (net charge changed — fold each leaving
+                group's charge onto its site atom on the template first); or
+                if the placer
+                cannot place the fragments (nothing has moved then).
+            RuntimeError: if the reaction omits a forming-bond endpoint from
+                the atoms it reports as touched.
         """
         work = world.copy()
         labels = self._labels(work)

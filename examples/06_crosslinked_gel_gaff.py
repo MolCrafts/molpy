@@ -59,7 +59,7 @@ def main() -> None:
     for iy in range(GRID[0]):
         for iz in range(GRID[1]):
             copy = peo.copy()
-            copy.move([0.0, iy * GAP, iz * GAP], entity_type=mp.Atom)
+            copy.translate([0.0, iy * GAP, iz * GAP])
             for atom in copy.atoms:
                 atom["mol_id"] = mol
             system.merge(copy)

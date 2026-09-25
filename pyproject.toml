@@ -31,7 +31,7 @@ classifiers = [
 # No lark / zarr / RDKit / etc. as hard deps — those live in molrs or optional extras.
 dependencies = [
     "numpy>=2.0",
-    "molcrafts-molrs>=0.14.0,<0.15",
+    "molcrafts-molrs>=0.15.0,<0.16",
     "molcrafts-mollog>=1.0.0",
     "molcrafts-molcfg>=1.2.0",
 ]
@@ -144,13 +144,13 @@ filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 
-# No [tool.uv.sources] override: molcrafts-molrs 0.14.0 is on PyPI, so the pin in
-# [project] dependencies resolves everywhere, including a CI runner, which has no
-# sibling checkout to point at. Do not reintroduce a path or git source without
-# removing it again before the next release: it silently disables
-# .pre-commit/check_molrs_pin_on_pypi.py, and uv honours a path dependency's own
-# sources transitively, so a downstream that points at this directory inherits
-# them (that is how molhub once got a molrs without `molrs.io.mrec`).
+# Pre-0.15: molrs 0.15.0 is the untagged line in the sibling checkout, not a
+# PyPI release. The path override is how this pin resolves until that wheel
+# is published. Remove it in the same change that tags v0.15.0 — while it is
+# set, check_molrs_pin_on_pypi.py skips the network check, and a downstream
+# that points at this directory inherits the path.
+[tool.uv.sources]
+molcrafts-molrs = { path = "../molrs/molrs-python", editable = true }
 
 [tool.tox]
 requires = ["tox>=4.23"]

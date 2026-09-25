@@ -6,7 +6,7 @@ from pathlib import Path
 
 from molpy.core.atomistic import Atomistic
 from molpy.core.forcefield import ForceField
-from molpy.parser.moltemplate import build_forcefield, build_system, parse_file
+from molpy.parser.moltemplate import MolTemplateBuilder, parse_file
 
 
 def _resolve(file_path: str | Path) -> Path:
@@ -24,7 +24,7 @@ class MolTemplateReader:
                 f"MolTemplate file not found: {file_path} -> {resolved}"
             )
         doc = parse_file(resolved)
-        return build_forcefield(doc, base_dir=resolved.parent)
+        return MolTemplateBuilder(doc, base_dir=resolved.parent).build_forcefield()
 
     def read_molecule(self, file_path: str | Path) -> Atomistic:
         """Parse a .lt file and return the full assembled system."""
@@ -48,7 +48,7 @@ class MolTemplateReader:
                 f"MolTemplate file not found: {file_path} -> {resolved}"
             )
         doc = parse_file(resolved)
-        return build_system(doc, base_dir=resolved.parent)
+        return MolTemplateBuilder(doc, base_dir=resolved.parent).build_system()
 
 
 def read_moltemplate(file_path: str | Path) -> ForceField:

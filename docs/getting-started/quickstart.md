@@ -107,7 +107,10 @@ print(
 ### 3. Instantiate and transform a molecule
 
 A template is a reusable `Atomistic`; an instance is a copy you place in a
-larger system. Transforms are deterministic rigid-body operations:
+larger system. Transforms are deterministic rigid-body operations —
+`translate(delta)`, `rotate(axis, angle, about=None)` (angle in radians) and
+`scale([sx, sy, sz], about=None)` — that move the structure in place and return
+it, so they chain:
 
 ```python
 water_instance = water_template.copy()
@@ -115,7 +118,7 @@ water_instance = water_template.copy()
 water_instance.rotate(
     axis=[0.0, 0.0, 1.0], angle=float(np.pi / 2.0), about=[0.0, 0.0, 0.0]
 )
-water_instance.move(delta=[0.5, 0.0, 0.0])
+water_instance.translate([0.5, 0.0, 0.0])
 
 coords = np.array([[a["x"], a["y"], a["z"]] for a in water_instance.atoms], dtype=float)
 print("instance center (nm):", coords.mean(axis=0).tolist())
@@ -143,7 +146,7 @@ for iz in range(nz):
             mol.rotate(
                 axis=[0.0, 0.0, 1.0], angle=float(0.1 * idx), about=[0.0, 0.0, 0.0]
             )
-            mol.move(delta=[ix * spacing, iy * spacing, iz * spacing])
+            mol.translate([ix * spacing, iy * spacing, iz * spacing])
             for atom in mol.atoms:
                 atom["mol_id"] = mol_id
             water_box_atomistic.merge(mol)

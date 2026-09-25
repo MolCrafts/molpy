@@ -6,9 +6,10 @@ and the `optimizer` agent. Migrated from the former local `molpy-perf` skill and
 
 ## Hot paths (profile these first)
 
-- **Compute operators** (RDF, MSD, dielectric, …): called per-frame, must be fast.
+- **Compute operators** (RDF, MSD, order parameters, …): called per-frame, must be fast.
 - **Pairwise distance**: the most common inner loop across compute/ and builder/.
-- **Builder placement**: coordinate transforms in tight loops.
+- **Builder placement**: native (`TracePlacer`); on the molpy side, keep it to
+  one `place` call per assembly batch.
 - **Parser / SMARTS**: SMILES/SMARTS run in molrs — avoid re-compiling the same
   SMARTS pattern in a hot loop; reuse `SmartsPattern` instances.
 
@@ -68,9 +69,11 @@ kept so the reasoning is not lost.
   distances in one numpy broadcast (the O(sites_a × sites_b) *output* is the
   pairing itself); connected components come from one `topo_distances`
   traversal per component; chain-end degree from `incident_relations`.
-- `builder/assembly/_placer.py` — residues are row-index groups from the
-  `RES_ID` column; coordinates are read once (`xyz`) and written back through
-  the three write-through column views. No per-atom PyO3 calls.
+- Placement — the molpy `builder/assembly/_placer.py` is gone. Placement is
+  the native `TracePlacer` (with `Trace` / `LineOrienter` / `TangOrienter`),
+  re-exported by identity; `GraphAssembler.apply` makes one `place(world,
+  bonds)` call per batch, so there are no per-atom PyO3 calls on the molpy
+  side. Its performance is owned and measured in molrs.
 - `builder/assembly/_assembler.py` — `_total_charge` sums the charge column
   when every atom carries one; a partial column is summed entity-wise over its
   validity mask (unblocked by molrs `column()` raising on holes instead of
@@ -84,7 +87,9 @@ kept so the reasoning is not lost.
   `id`/`mp_id` reconciliation passes are gone (rdkit is optional; tests under
   `tests/test_adapter/test_rdkit.py` skip without it).
 - `typifier/clp.py` — `clp.xml` is parsed once, by the native typifier.
-- `pack/constraint.py` — box and sphere penalties are smooth squared
-  distances with analytic gradients, finite-difference tested.
-- `compute/dielectric.py` — no progress printing or phase timing in library
-  code.
+- `pack/constraint.py` — deleted with `molpy.pack` in 0.14; packing (and its
+  penalty kernels) is the external molpack package.
+- `compute/dielectric.py` — deleted in 0.15 together with the
+  `DielectricSusceptibility` / `IonicConductivity` recipe classes; the
+  dielectric primitives are native re-exports on `molpy.compute`, so there is
+  no molpy dielectric hot path left.

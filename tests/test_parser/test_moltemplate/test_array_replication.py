@@ -59,9 +59,9 @@ Butane {
 
 m = new Butane [3].move(0, 0, 1.0) [2].move(0, 1.0, 0) [2].move(1.0, 0, 0)
 """
-        from molpy.parser.moltemplate import build_system, parse_string
+        from molpy.parser.moltemplate import MolTemplateBuilder, parse_string
 
         doc = parse_string(src)
-        system, _ff = build_system(doc)
+        system, _ff = MolTemplateBuilder(doc).build_system()
         # 3 * 2 * 2 = 12 copies, each with 1 atom
         assert len(list(system.atoms)) == 12

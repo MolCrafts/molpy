@@ -1,8 +1,8 @@
 """Native MolTemplate (.lt) parser for MolPy."""
 
-from .builder import build_forcefield, build_system
+from .builder import MolTemplateBuilder
 from .lt_writer import ltemplify, write_moltemplate
-from .py_emitter import emit_python
+from .py_emitter import PythonScriptEmitter
 from .ir import (
     ArrayDim,
     ClassDef,
@@ -31,9 +31,8 @@ __all__ = [
     "MolTemplateParser",
     "parse_file",
     "parse_string",
-    "build_forcefield",
-    "build_system",
-    "emit_python",
+    "MolTemplateBuilder",
+    "PythonScriptEmitter",
     "ltemplify",
     "write_moltemplate",
 ]

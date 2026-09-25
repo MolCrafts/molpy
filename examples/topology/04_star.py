@@ -11,7 +11,7 @@ def main() -> None:
     builder = eo_builder(extra={"X3": trifunctional_core()})
     star = builder.build_star("X3", "EO", n_arms=3, arm_length=4)
     report("star-3x4", star)
-    print("  core=X3, arms=3 × EO4  (shortcut → branched CGSmiles → build)")
+    print("  core=X3, arms=3 × EO4  (shortcut → star residue topology → build)")
 
 
 if __name__ == "__main__":

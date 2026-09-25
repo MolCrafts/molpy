@@ -4,7 +4,7 @@ Polymer construction composes the real engine classes directly (there is
 no ``polymer()`` dispatcher): prepare monomers with
 ``SmilesIR`` / :func:`molpy.io.read_smiles`,
 mark the atoms that may react with ``fields.SITE``, then
-:meth:`PolymerBuilder.build` a CGSmiles string. Crosslinking is the same
+:meth:`PolymerBuilder.build` a residue topology. Crosslinking is the same
 kernel with a different :class:`Selector`. Polydisperse systems drive
 :class:`PolymerBuilder` from the distribution + :class:`SystemPlanner`
 primitives. See :mod:`molpy.builder.assembly` for the full recipe.
@@ -39,9 +39,13 @@ from .polymer import (
 )
 from .assembly import (
     AssemblyFinalizer,
+    LineOrienter,
+    Orienter,
     Placer,
     PolymerBuilder,
-    ResiduePlacer,
+    TangOrienter,
+    Trace,
+    TracePlacer,
     ExhaustiveSelector,
     ExplicitPairSelector,
     GraphAssembler,
@@ -105,7 +109,11 @@ __all__ = [
     "Finalization",
     "PolymerBuilder",
     "Placer",
-    "ResiduePlacer",
+    "TracePlacer",
+    "Trace",
+    "Orienter",
+    "LineOrienter",
+    "TangOrienter",
     "MonomerLibrary",
     "Selector",
     "TopologySelector",

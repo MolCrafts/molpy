@@ -8,12 +8,14 @@ consistent: one EO template, one ether reaction, one crosslink reaction.
 
 from __future__ import annotations
 
+import math
+
 import molpy as mp
 from molpy.builder.assembly import (
     MonomerLibrary,
     PolymerBuilder,
-    ResiduePlacer,
     SiteMap,
+    TracePlacer,
 )
 from molpy.conformer import Conformer
 from molpy.core import fields
@@ -31,9 +33,7 @@ XLINK2 = "[C;%y:1][H;%k].[C;%y:2][H;%k]>>[C:1][C:2]"
 
 def ethylene_glycol(*, seed: int = 42) -> mp.Atomistic:
     """Bifunctional EO: OCCO, hydroxyl O labelled a / b."""
-    eo, _ = Conformer(add_hydrogens=True, seed=seed).generate(
-        mp.io.read_smiles("OCCO")
-    )
+    eo, _ = Conformer(add_hydrogens=True, seed=seed).generate(mp.io.read_smiles("OCCO"))
     SiteMap(eo).label_elements("O", "a", "b")
     return eo
 
@@ -46,9 +46,7 @@ def monofunctional_cap(*, end: str = "b", seed: int = 7) -> mp.Atomistic:
     """
     if end not in ("a", "b"):
         raise ValueError("end must be 'a' or 'b'")
-    cap, _ = Conformer(add_hydrogens=True, seed=seed).generate(
-        mp.io.read_smiles("CO")
-    )
+    cap, _ = Conformer(add_hydrogens=True, seed=seed).generate(mp.io.read_smiles("CO"))
     SiteMap(cap).label_elements("O", end)
     return cap
 
@@ -99,7 +97,7 @@ def eo_builder(
     return PolymerBuilder(
         MonomerLibrary(library),
         mp.Reaction(ETHER),
-        placer=ResiduePlacer(),
+        placer=TracePlacer(),
     )
 
 
@@ -126,6 +124,20 @@ def report(name: str, polymer: mp.Atomistic) -> None:
     print(
         f"{name:16s}  residues={n_res:3d}  atoms={n_at:4d}  bonds={n_bd:4d}  ({shape})"
     )
+    # Forming bonds join two residues; placement must leave them in bonding range.
+    junctions = [
+        math.dist(
+            (i[fields.X], i[fields.Y], i[fields.Z]),
+            (j[fields.X], j[fields.Y], j[fields.Z]),
+        )
+        for i, j in (bond.endpoints for bond in polymer.bonds)
+        if i.get(fields.RES_ID) != j.get(fields.RES_ID)
+    ]
+    if junctions:
+        print(
+            f"{'':16s}  junctions={len(junctions):3d}  "
+            f"max length={max(junctions):.3f} A  mean={sum(junctions) / len(junctions):.3f} A"
+        )
 
 
 def mark_backbone_crosslink_sites(

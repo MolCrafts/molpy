@@ -20,7 +20,7 @@ b1 = cg.def_bead(type="P4", x=0.0, y=0.0, z=0.0)
 b2 = cg.def_bead(type="C1", x=4.7, y=0.0, z=0.0)
 cg.def_cgbond(b1, b2, k=120.0)
 
-cg.move([1, 0, 0])
+cg.translate([1, 0, 0])  # in place; returns cg, so calls chain
 print(b1["x"])  # -> 1.0
 ```
 
@@ -50,7 +50,7 @@ None of these layouts is "correct" or "preferred". The data structure simply rec
 
 ## One convention key gets first-class support
 
-There is one and only one convention key the core data structure recognises: `bead["atoms"]`. When present, it is interpreted as a tuple of `Atom` references that the bead represents. This convention exists for the same reason `entity["x/y/z"]` exists — to give the spatial mixin something to operate on. Where `move(delta)` requires `x/y/z`, the reverse-lookup method `beads_of(atom)` requires `atoms`.
+There is one and only one convention key the core data structure recognises: `bead["atoms"]`. When present, it is interpreted as a tuple of `Atom` references that the bead represents. This convention exists for the same reason `entity["x/y/z"]` exists — to give the spatial mixin something to operate on. Where `translate(delta)` requires `x/y/z`, the reverse-lookup method `beads_of(atom)` requires `atoms`.
 
 ```python
 ato = mp.Atomistic()
@@ -134,10 +134,10 @@ Because `CoarseGrain` mirrors `Atomistic`'s public surface, the spatial mixin an
 
 ```python
 cg2 = cg.copy()
-cg2.move([10, 0, 0])
+cg2.translate([10, 0, 0])
 combined = cg + cg2
 
-cg.replicate(4, transform=lambda copy, i: copy.move([i * 5, 0, 0]))
+cg.replicate(4, transform=lambda copy, i: copy.translate([i * 5, 0, 0]))
 ```
 
 You can select a subset of beads by predicate, rename bead types in bulk, or attach arbitrary metadata to the structure itself.

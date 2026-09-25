@@ -75,6 +75,33 @@ class TestPolymerBuilder:
         with pytest.raises(ValueError, match="n >= 1"):
             builder_factory().build_linear("EO", 0)
 
+    def test_build_rejects_a_notation_string_with_the_topology_constructors(
+        self, builder_factory
+    ):
+        with pytest.raises(TypeError) as excinfo:
+            builder_factory().build("{[#EO]|3}")  # type: ignore[arg-type]
+        message = str(excinfo.value)
+        for constructor in ("linear_topology", "ring_topology", "star_topology"):
+            assert constructor in message
+
+    def test_build_places_the_expanded_world_once(
+        self, builder_factory, recording_placer
+    ):
+        builder_factory(placer=recording_placer).build_linear("EO", 3)
+
+        assert len(recording_placer.calls) == 1
+        placed_world, formed = recording_placer.calls[0]
+        assert len({int(a[fields.RES_ID]) for a in placed_world.atoms}) == 3
+        assert len(formed) == 2
+        assert all(type(i) is int and type(j) is int for i, j in formed)
+
+    def test_placer_error_propagates_out_of_build(
+        self, builder_factory, raising_placer
+    ):
+        builder = builder_factory(placer=raising_placer)
+        with pytest.raises(raising_placer.error_type, match="cannot place"):
+            builder.build_linear("EO", 3)
+
 
 # ---------------------------------------------------------------------------
 # OPLS whole-graph oracle (graph-assembler-02 ac-016 / ac-018)

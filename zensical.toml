@@ -29,6 +29,7 @@ nav = [
       { "Quickstart" = "getting-started/quickstart.md" },
       { "Example Gallery" = "getting-started/examples.md" },
       { "FAQ" = "getting-started/faq.md" },
+      { "Migrating to 0.15" = "getting-started/migration-0-15.md" },
       { "Migrating to 0.14" = "getting-started/migration-0-14.md" },
     ] },
     { "The Data Model" = [

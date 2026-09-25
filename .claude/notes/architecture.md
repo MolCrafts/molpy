@@ -13,9 +13,9 @@ _Verified against the tree: 16 packages, 166 `.py` files under `src/molpy/`._
 
 - **core** — data-model foundation, imports nothing else from molpy. `Atomistic(molrs.Atomistic, _GraphViews)` (`core/atomistic.py:48`) and `CoarseGrain(molrs.CoarseGrain, _GraphViews)` (`core/cg.py:34`) *are* native worlds; the node/relation view types (`Atom`, `Bond`, `Angle`, `Dihedral`, `Improper`, `VirtualSite`, `DrudeParticle`, `MasslessSite`) come from `molrs.views` and are re-exported through `core.atomistic`. `core/entity.py` holds the view/intern layer (`Entity`, `Link`, `Entities`, `GraphViews`, `NodeRef`, `Refs`, `RelationRef`). Subclass-with-additions: `Box(molrs.Box)` (`core/box.py:13`), `Trajectory(molrs.Trajectory)` + split strategies (`core/trajectory.py:26`), `UnitSystem(molrs.UnitRegistry)` (`core/unit.py:111`), `Perceive(molrs.perceive.Perceive)` (`core/perceive.py:24`), regions layered on native `Cuboid`/`Sphere`/`Region` (`core/region.py`). Plus `core/selector.py` (`MaskPredicate` family), `core/fields.py` (canonical key **strings** + `FieldFormatter`/`ForceFieldFormatter`), `core/forcefield.py` (native `ForceField` model + molpy-declared `*Style` classes), `core/script.py`, `core/config.py`, `core/logger.py`, `core/ops/` (`scale_lj` + native ff helpers).
 - **adapter** — in-memory bridge only, never a subprocess. `Adapter(ABC, Generic[InternalT, ExternalT])` (`adapter/base.py:19`) and the single worked example `RDKitAdapter` (`adapter/rdkit.py`), guarded by `ModuleNotFoundError` so importing molpy never requires RDKit.
-- **builder** — system assembly. `assembly/` = one kernel (`GraphAssembler`) + one variation point (`Selector`), with `MonomerLibrary`, `PolymerBuilder`, `Placer`/`ResiduePlacer`, `Replicas`, `SiteMap`, `TopologySelector`, proximity/random selectors, CGSmiles IR types, `linear_topology`/`ring_topology`/`star_topology`. `polymer/` = sequences, chain-length distributions, `SystemPlanner`; `polymer/ambertools/` = `AmberPolymerBuilder`. Also `crystal.py` (`Lattice`, `Site`), `symmetry.py` (`SpaceGroup`, `parse_triplet`), `nanostructure/` (`GrapheneBuilder`, `CarbonTubeBuilder`), `virtualsite.py` (`VirtualSiteBuilder`/`DrudeBuilder`/`Tip4pBuilder`), `_finalize.py` (`Finalization`, `StructureFinalizer`), `ambertools.py` (`AmberTools`, `AmberResult`).
+- **builder** — system assembly. `assembly/` = one kernel (`GraphAssembler`) + one variation point (`Selector`), with `MonomerLibrary` (`expand` → `Expansion`), `PolymerBuilder` (no placement unless `placer=` is given), the native `Placer`/`TracePlacer`/`Trace`/`Orienter`/`LineOrienter`/`TangOrienter`/`SiteMap` re-exported, `Replicas`, `TopologySelector`, proximity/random selectors, ResidueTopology IR types, `linear_topology`/`ring_topology`/`star_topology`. `polymer/` = sequences, chain-length distributions, `SystemPlanner`; `polymer/ambertools/` = `AmberPolymerBuilder`. Also `crystal.py` (`Lattice`, `Site`), `symmetry.py` (`SpaceGroup`, `parse_triplet`), `nanostructure/` (`GrapheneBuilder`, `CarbonTubeBuilder`), `virtualsite.py` (`VirtualSiteBuilder`/`DrudeBuilder`/`Tip4pBuilder`), `_finalize.py` (`Finalization`, `StructureFinalizer`), `ambertools.py` (`AmberTools`, `AmberResult`).
 - **cli** — `molpy.cli:main` (`cli/_main.py`), one subcommand `molpy moltemplate` (`cli/moltemplate.py`); `python -m molpy` via `__main__.py`. Reaches io / parser through function-local imports only.
-- **compute** — trajectory and structure analysis. molpy-native numpy modules (`rdf`, `msd`, `onsager`, `jacf`, `persist`, `pmsd`, `pmft`, `dielectric`, `order`, `shape`, `cluster`, `decomposition`, `density`, `diffraction`, `environment`, `neighborlist`, `voronoi`, `signal`, `result`, …) alongside native re-exports. Entry verb is `compute()`; **`compute/base.py` no longer exists** and `Compute` is `molrs.compute.Compute` (identity, verified). No `Workflow`.
+- **compute** — trajectory and structure analysis. molpy-native numpy modules (`rdf`, `msd`, `onsager`, `jacf`, `persist`, `pmsd`, `pmft`, `order`, `shape`, `cluster`, `decomposition`, `density`, `diffraction`, `environment`, `neighborlist`, `voronoi`, `signal`, `result`, …) alongside native re-exports (the dielectric and spectroscopy classes are re-exported on the package itself; there is no `compute/dielectric.py` and no `spectra` module). Entry verb is `compute()`; **`compute/base.py` no longer exists** and `Compute` is `molrs.compute.Compute` (identity, verified). No `Workflow`.
 - **conformer** — single module. `Conformer(molrs.conformer.Conformer)` overriding `generate` to marshal/re-adopt `Atomistic`; `ConformerReport`/`ConformerStageReport` inherited verbatim, not re-declared.
 - **data** — bundled resources: `data/forcefield/{alpha.ff, clp.xml, oplsaa.xml, tip3p.xml}` plus path accessors. Pure leaf, imports nothing from molpy.
 - **engine** — MD deck generation and optional execution: `Engine` ABC (`engine/base.py:36`) with `LAMMPSEngine`, `CP2KEngine`, `OpenMMEngine` (+ `OpenMMSimulationConfig`).
@@ -35,10 +35,10 @@ _Verified against the tree: 16 packages, 166 `.py` files under `src/molpy/`._
   2. **Eager core re-exports**, every public `core/` symbol hangs on the package root (`mp.Atomistic`, never `mp.core.Atomistic`): graph/view types, `Box`, `Perceive`, `Bead`/`CGBond`/`CoarseGrain`, `Config`, entity layer, `fields`, the whole `ForceField`/`*Style`/`*Type` set, `FragmentScaling`, regions, `Script`/`ScriptLanguage`, selectors, trajectory + split strategies, `UnitSystem`, and `Conformer` (molpy subclass).
   3. **Handwritten identity re-exports of the native core** — `Frame`, `Block` (from `molrs.frame`), `Element`, `Graph`, `Reaction`, `NeighborList`/`NeighborQuery`/`Neighbors`/`VerletSkin`, `Cuboid`/`Parallelepiped`/`Sphere`, `MetaValue`, `FRAME_SCHEMA_VERSION`, `BlockDtypeError`, unit types, `SmilesIR`, `RingInfo`/`SmartsMatch`/`SmartsPattern`, `LBFGS`/`OptReport`, `Potentials` and the native typifier/charge-model classes, the `molrs.compute.*` result/fit/spectroscopy/transport/voronoi families, `keys`, `schema`, `signal`. Local alias `FrameCollection: TypeAlias = Sequence[Frame]` (declared explicitly so `ty` does not fall through the module `__getattr__`). Verified identities: `molpy.Frame is molrs.Frame`, `molpy.Block is molrs.Block`, `molpy.compute.Compute is molrs.compute.Compute`, `molpy.optimize.LBFGS is molrs.optimize.LBFGS`, `molpy.md.VelocityVerlet is molrs.md.VelocityVerlet`; `molpy.Box` is a *subclass*, not an identity.
   - `_LAZY_SUBMODULES` (PEP 562) is exactly **10 names**: `adapter`, `builder`, `compute`, `data`, `engine`, `io`, `md`, `optimize`, `parser`, `typifier`. `core` and `conformer` are imported eagerly; **`potential`, `wrapper`, `integrations`, `cli` are neither lazy nor in `__all__`** — `mp.potential` raises `AttributeError` until `import molpy.potential`.
-- **core** — its own `__all__` mirrors the root band plus `get_config`, `compute_k_ij`, `load_fragment_scaling_data`, `scale_lj` (which are *not* on the root facade). `core.fields.__all__` = `FieldFormatter`, `GroFieldFormatter`, `LammpsFieldFormatter`, `Mol2FieldFormatter`, `PdbFieldFormatter`, `XyzFieldFormatter`, `ForceFieldFormatter`, `SITE`; the canonical names (`CHARGE`, `MOL_ID`, `ELEMENT`, …) are module-level **plain strings** projected from `molrs.keys.*.key`.
-- **compute** — `Compute` (native), the `Result` family (`Result`, `TimeSeriesResult`, `PMSDResult`, `OnsagerResult`, `JACFResult`, `PersistResult`, `DielectricResult`, `DielectricSusceptibilityResult`, `ConductivityResult`, `DebyeSpectrumFit`), transport/dielectric (`EinsteinConductivity`, `Onsager`, `GreenKuboConductivity`, `Persist`, `Dielectric`, `DielectricSusceptibility`, `IonicConductivity`, `DebyeRelaxation`, `DebyeFit`), fits (`LinearFit`, `CumulativeTrapezoid`), structure/dynamics (`RDF`, `MSD`, `NeighborList`, `Cluster`, `ClusterCenters`, `ClusterProperties`, shape tensors, `Steinhardt`/`Hexatic`/`Nematic`/`SolidLiquid`, `LocalDensity`/`GaussianDensity`, `StaticStructureFactorDebye`, `BondOrder`, `PMFTXY`, `Pca`/`KMeans`/`DescriptorRow`), distributions, `SpatialDistribution`, `VanHove`, `LegendreReorientation`, `HBonds`/`HBondCriterion`, voronoi (`RadicalVoronoi`, `VoronoiCells`, `VoronoiIntegration`, `voronoi_domains`, `voronoi_voids`, `DensityGrid`, `MolecularMoments`), spectroscopy (`PowerSpectrum`, `IRSpectrum`, `RamanSpectrum`, `VcdSpectrum`, `RoaSpectrum`, `ResonanceRamanSpectrum`, `EinsteinHelfandSpectrum`, `GreenKuboSpectrum`) and the native helper functions `conductivity_sum_rule`, `kramers_kronig`, `polarizability_finite_field`, `route_agreement`, plus `signal`.
-- **io** — `read_*` / `write_*` free functions (amber, amber_ac, amber_inpcrd, gro, lammps_data, lammps_forcefield, lammps_molecule, lammps_trajectory, mol2, smiles, pdb, pdb_trajectory, top, xml_forcefield, xsf, xyz, xyz_trajectory, dcd/trr/xtc trajectories, cube, chgcar, `write_smarts`, `write_bond_react_map`, `write_lammps_bond_react_system`, `write_lammps_system`, `write_lammps_dump_local`, `write_lammps_data_coeffs`), reader/writer classes (`DataReader`/`DataWriter` + per-format, `ForceFieldReader`/`ForceFieldWriter` + `LAMMPSForceFieldWriter`, `AmberPrmtopReader`, `GromacsTopReader`, `MolTemplateReader`, trajectory writers, `ZipReader`, `BaseReader`/`BaseTrajectoryReader`), the native LAMMPS-log types + `read_lammps_log`/`parse_lammps_log_text`, `PathLike`, `read_txt = np.loadtxt`, and the `mrec` submodule (`read_frame`/`write_frame`/`read_system`/`write_system`/`read_trajectory`/`write_trajectory`/`read_meta`/`sections`/`TrajectoryReader`/`TrajectoryWriter`/`SequenceSchema`/`schema`). `io.forcefield` additionally exposes `XMLForceFieldWriter`, `GromacsForceFieldWriter`; `io.emit` exposes `Emitter`, `EMITTERS`, `register`, `emit`, and four per-engine emitters.
-- **builder** — `GraphAssembler`, `Selector` + `TopologySelector`/`ProximitySelector`/`ExhaustiveSelector`/`SpacingSelector`/`ExplicitPairSelector`/`RandomSelector`, `PolymerBuilder`, `MonomerLibrary`, `Placer`/`ResiduePlacer`, `AssemblyFinalizer`, `StructureFinalizer`, `Finalization`, `SiteMap`, `Replicas`, `Lattice`/`Site`/`SpaceGroup`, region re-exports (`BoxRegion`, `Cube`, `Region`, `SphereRegion`), `GrapheneBuilder`/`CarbonTubeBuilder`, `VirtualSiteBuilder`/`DrudeBuilder`/`Tip4pBuilder`/`load_polarizability`, polymer planning (`*SequenceGenerator`, `DPDistribution`, `MassDistribution`, `FlorySchulz`/`Poisson`/`SchulzZimm`/`Uniform` polydisperse, `Chain`, `SystemPlan`, `SystemPlanner`, `PolydisperseChainGenerator`), `AmberTools`/`AmberResult`, `AmberPolymerBuilder`. `builder.assembly` additionally exposes `Binding`, `Candidate`, `MatchContext`, the CGSmiles IR types and the three topology helpers.
+- **core** — its own `__all__` mirrors the root band plus `get_config`, `compute_k_ij`, `load_fragment_scaling_data`, `scale_lj` (which are *not* on the root facade). `core.fields.__all__` = `FieldFormatter`, `GroFieldFormatter`, `LammpsFieldFormatter`, `Mol2FieldFormatter`, `PdbFieldFormatter`, `XyzFieldFormatter`, `ForceFieldFormatter`, `Q0`, `SITE`; every canonical name (`CHARGE`, `MOL_ID`, `ELEMENT`, …, and since 0.15 also the assembly fields `SITE` and `Q0`) is a module-level **plain string** projected from `molrs.keys.*.key` — molpy declares no field of its own.
+- **compute** — `Compute` (native), the `Result` family (`Result`, `TimeSeriesResult`, `PMSDResult`, `OnsagerResult`, `JACFResult`, `PersistResult`, `DielectricResult`, `DebyeSpectrumFit`), transport/dielectric (`EinsteinConductivity`, `Onsager`, `GreenKuboConductivity`, `Persist`, `Dielectric`, `DebyeRelaxation`, `DebyeFit`; the recipe classes `DielectricSusceptibility` / `IonicConductivity` and their results were removed in 0.15), fits (`LinearFit`, `CumulativeTrapezoid`), structure/dynamics (`RDF`, `MSD`, `NeighborList`, `Cluster`, `ClusterCenters`, `ClusterProperties`, shape tensors, `Steinhardt`/`Hexatic`/`Nematic`/`SolidLiquid`, `LocalDensity`/`GaussianDensity`, `StaticStructureFactorDebye`, `BondOrder`, `PMFTXY`, `Pca`/`KMeans`/`DescriptorRow`), distributions, `SpatialDistribution`, `VanHove`, `LegendreReorientation`, `HBonds`/`HBondCriterion`, voronoi (`RadicalVoronoi`, `VoronoiCells`, `VoronoiIntegration`, `voronoi_domains`, `voronoi_voids`, `DensityGrid`, `MolecularMoments`), spectroscopy (`PowerSpectrum`, `IRSpectrum`, `RamanSpectrum`, `VcdSpectrum`, `RoaSpectrum`, `ResonanceRamanSpectrum`, `EinsteinHelfandSpectrum`, `GreenKuboSpectrum`) and the native helper functions `conductivity_sum_rule`, `kramers_kronig`, `polarizability_finite_field`, `route_agreement`, plus `signal`.
+- **io** — `read_*` / `write_*` free functions (amber, amber_ac, amber_inpcrd, gro, lammps_data, lammps_forcefield, lammps_molecule, lammps_trajectory, mol2, smiles, pdb, pdb_trajectory, top, xml_forcefield, xsf, xyz, xyz_trajectory, dcd/trr/xtc trajectories, cube, chgcar, `write_smarts`, `write_bond_react_map`, `write_lammps_bond_react_system`, `write_lammps_system`, `write_lammps_dump_local`, `write_lammps_data_coeffs`), reader/writer classes (`DataReader`/`DataWriter` + per-format, `ForceFieldReader`/`ForceFieldWriter` + `LAMMPSForceFieldWriter`, `AmberPrmtopReader`, `GromacsTopReader`, `MolTemplateReader`, trajectory writers, `ZipReader`, `BaseReader`/`BaseTrajectoryReader`), the native LAMMPS-log types + `read_lammps_log`/`parse_lammps_log_text`, `PathLike`, `read_txt = np.loadtxt`, and the `mrec` submodule (`read_frame`/`write_frame`/`read_system`/`write_system`/`read_trajectory`/`write_trajectory`/`read_meta`/`sections`/`TrajectoryReader`/`TrajectoryWriter`/`SequenceSchema`/`schema`). `io.forcefield` additionally exposes `XMLForceFieldWriter`, `GromacsForceFieldWriter`; `io.emit` exposes `Emitter`, `EmitterRegistry`, the registry instance `emitters` (`register` / `emit` / `names`), and four per-engine emitters — no `EMITTERS` dict, no free `emit` / `register`.
+- **builder** — `GraphAssembler`, `Selector` + `TopologySelector`/`ProximitySelector`/`ExhaustiveSelector`/`SpacingSelector`/`ExplicitPairSelector`/`RandomSelector`, `PolymerBuilder`, `MonomerLibrary`, the native `Placer`/`TracePlacer`/`Trace`/`Orienter`/`LineOrienter`/`TangOrienter`/`SiteMap` re-exported, `AssemblyFinalizer`, `StructureFinalizer`, `Finalization`, `Replicas`, `Lattice`/`Site`/`SpaceGroup`, region re-exports (`BoxRegion`, `Cube`, `Region`, `SphereRegion`), `GrapheneBuilder`/`CarbonTubeBuilder`, `VirtualSiteBuilder`/`DrudeBuilder`/`Tip4pBuilder`/`load_polarizability`, polymer planning (`*SequenceGenerator`, `DPDistribution`, `MassDistribution`, `FlorySchulz`/`Poisson`/`SchulzZimm`/`Uniform` polydisperse, `Chain`, `SystemPlan`, `SystemPlanner`, `PolydisperseChainGenerator`), `AmberTools`/`AmberResult`, `AmberPolymerBuilder`. `builder.assembly` additionally exposes `Binding`, `Candidate`, `Expansion`, `MatchContext`, the ResidueTopology IR types (`ResidueTopology`, `ResidueNode`, `ResidueBond`) and the three topology helpers.
 - **typifier** — `Typifier`, `Match`, `TypeScope`, `UnboundedPatternSet`, `LocalTypifier`, `SmartsTypifier`, `ClpTypifier`, `AmberToolsTypifier`, `OPLSAATypifier` (native), `MMFFTypifier` (alias of native `MMFF94Typifier`), `ForceFieldParams`.
 - **parser** — `SmilesIR`, `SmartsPattern`, `SmartsMatch` only.
 - **potential** — `angle`, `bond`, `dihedral`, `improper`, `pair` submodules, `Potentials`, and the flattened style classes (`BondHarmonicStyle`, `BondMorseStyle`, `BondClass2Style`; `AngleHarmonicStyle`, `AngleClass2*`; six dihedral styles; four improper styles; eight pair styles).
@@ -139,7 +139,8 @@ Six hard constraints. They hold repo-wide and outrank any spec's local convenien
 A field has exactly two legal sources: the native keys table, re-exported through
 `molpy.core.fields` as **plain string constants** (`fields.CHARGE == "charge"`),
 and the canonical fields molpy declares for itself in `molpy/core/fields.py`
-(today only `fields.SITE`).
+(today none: `SITE` and `Q0` moved into the native keys table in 0.15 and are
+re-exported like the rest).
 
 - Allowed: `atom[fields.CHARGE]`, `fields.SITE`
 - Forbidden: `atom.get("charge")`, string knobs such as `site_field: str = "site"`,
@@ -198,10 +199,10 @@ hand-written CHANGELOG).
 **Facade vs real class — do not read this backwards.** The test is not "does it
 call other classes internally", it is **does it own data? does it decide anything?**
 
-| | `crosslink_gel(struct, linker, ...)` | `PolymerBuilder(library, reaction).build(cgsmiles)` |
+| | `crosslink_gel(struct, linker, ...)` | `PolymerBuilder(library, reaction).build(topology)` |
 |---|---|---|
 | Owns data | none (every argument is an already-built object) | the monomer library |
-| Decides | nothing (calls things in order) | notation → world + pairing |
+| Decides | nothing (calls things in order) | residue topology → world + pairing |
 | Verdict | **facade, delete** | **real class, keep** |
 
 **"It can be merged in the implementation" does not mean "it must be split in the
@@ -232,17 +233,17 @@ molrs. molpy adopts molrs's verbs, never the reverse (sink direction).
 
 | Family | Input → output | Verb | Members | Status | Basis |
 |---|---|---|---|---|---|
-| Construction | recipe / IR / parameters → new structure | `build` | `PolymerBuilder.build(topology)` (`builder/assembly/_polymer.py:87`), `Lattice.build(region)` (`builder/crystal.py:210`), `GrapheneBuilder.build` (`nanostructure/graphene.py:56`), `CarbonTubeBuilder.build` (`nanostructure/carbon_tube.py:65`), `AmberPolymerBuilder.build` (`polymer/ambertools/amber_builder.py:166`) | settled | the `molrs:` side is already `build` (`molrs.builder.*`, `NeighborList.build`); molpy never rewrites a molrs verb (sink direction) |
+| Construction | recipe / IR / parameters → new structure | `build` | `PolymerBuilder.build(topology)` (`builder/assembly/_polymer.py:115`), `Lattice.build(region)` (`builder/crystal.py:210`), `GrapheneBuilder.build` (`nanostructure/graphene.py:69`), `CarbonTubeBuilder.build` (`nanostructure/carbon_tube.py:77`), `AmberPolymerBuilder.build` (`polymer/ambertools/amber_builder.py:173`) | settled | the `molrs:` side is already `build` (`molrs.builder.*`, `NeighborList.build`); molpy never rewrites a molrs verb (sink direction) |
 | Graph transformation | existing graph → rewritten graph | `apply` | `StructureFinalizer.apply` (`builder/_finalize.py:43`), `VirtualSiteBuilder.apply` (`builder/virtualsite.py:69`, covering `DrudeBuilder` / `Tip4pBuilder` — the suffix is not the test, see footnote 6), `GraphAssembler.apply`, `molrs:Reaction.apply` | settled (2026-09-20, sub-spec 04): GraphAssembler.apply | identical signature shape; `molrs:Reaction.apply` is a pre-existing member (descriptive) |
-| Analysis | frames / arrays → Result | `compute` | every analysis class under `molpy.compute` that implements `compute()` (inheriting no base class, satisfying the molrs Protocol structurally; for the count see footnote 5, do not hard-code it) + every `molrs:` kernel | settled (2026-09-20, sub-spec 02): the analysis entry verb molpy owns is `compute`; the residual debt `dielectric.py from_dipole_series` is in the debt list | `molrs:molrs.compute.protocol.Compute` recognises `compute` only; the `protocol.py` module docstring states outright that `__call__` / `dump()` are not part of the contract |
+| Analysis | frames / arrays → Result | `compute` | every analysis class under `molpy.compute` that implements `compute()` (inheriting no base class, satisfying the molrs Protocol structurally; for the count see footnote 5, do not hard-code it) + every `molrs:` kernel | settled (2026-09-20, sub-spec 02): the analysis entry verb molpy owns is `compute`; the former residual debt `dielectric.py from_dipole_series` is retired (module deleted, see the debt list) | `molrs:molrs.compute.protocol.Compute` recognises `compute` only; the `protocol.py` module docstring states outright that `__call__` / `dump()` are not part of the contract |
 | Packing | targets → Frame | `pack` | external `molpack` (`docs/api/pack.md`) | settled (2026-09-20, sub-spec 03): molpy.pack is deleted wholesale, packing belongs to molpack | zero consumers in molpy and every sibling repo; the docs point at molpack |
 | Typing | graph → typed graph | `typify` | `molrs:Typifier`; `typifier/base.py:99` is the reference pattern (inherit the molrs base, keep the verb, add one hook; `typify` at `:106`) | settled | owned by molrs (descriptive) |
 | 3D generation | graph → coordinates | `generate` | `Conformer.generate` (`conformer/__init__.py:42`) — **this one only**; other names sharing the stem are in footnote 1 | settled | owned by `molrs:molrs.conformer.Conformer` (descriptive) |
 | External process | files / system → files / trajectory | `run` | `Wrapper.run` (`wrapper/base.py:74`), `Engine.run` (`engine/base.py:212`), `molrs:LBFGS.run` | settled | "run a thing", not a data transformation; untouched |
-| Emission | Frame → engine input | `emit` | `Emitter.emit` (`io/emit/__init__.py:32`) and the per-format implementations (`io/emit/{lammps,gromacs,openmm,xml}.py`) | settled (the free-function form is in the debt list) | untouched |
+| Emission | Frame → engine input | `emit` | `Emitter.emit` (`io/emit/__init__.py:31`), `EmitterRegistry.emit` (`:57`, instance `emitters`), the per-format implementations (`io/emit/{lammps,gromacs,openmm,xml}.py`), `PythonScriptEmitter.emit` (`parser/moltemplate/py_emitter.py:59`) | settled (the free-function form is retired, see the debt list) | untouched |
 | Read / write | path ↔ object | `read` / `write` | `io` | settled | untouched |
 | Selection | context / struct → subset | `select` | entry verb `select`: `Selector.select` (`builder/assembly/_selector.py:35`), `VirtualSiteBuilder.select` (`builder/virtualsite.py:78`), `Atomistic.select` (`core/atomistic.py:270`) / `CoarseGrain.select` (`core/cg.py:189`) (the two on the core data model are descriptive only; their naming belongs to § Graph sink decisions and this table authorises no rename there); `MaskPredicate.mask(block) -> ndarray` (`core/selector.py:24`) is a **producer hook**, not a second entry verb | settled (the name collision is in the debt list) | untouched |
-| Placement | struct → in-place coordinates | `place` | `Placer.place` (`builder/assembly/_placer.py:46`), `ResiduePlacer.place` (`:75`); exported through `builder/assembly/__init__.py:16` and `builder/__init__.py:42,44` | settled | a domain verb, outside both families, see footnote 6 |
+| Placement | struct → in-place coordinates | `place` | **native**: `molrs.Placer.place` (base) / `molrs.TracePlacer.place` (fragments onto a `molrs.Trace`), with `molrs.Orienter`/`LineOrienter`/`TangOrienter` for facing. molpy re-exports them by identity through `builder/assembly/__init__.py:16` (and on to `molpy.builder`); there is no molpy implementation. `PolymerBuilder` / `GraphAssembler` default to `placer=None` = no placement | settled | a domain verb, outside both families, see footnote 6 |
 
 **`Compute` ownership ruling.** Two `Compute` concepts were alive in the repo at
 once — `molpy.compute.base.Compute` (`compute/base.py:18`, an ABC whose abstract
@@ -266,13 +267,13 @@ once sub-spec 02 landed that entry went from open to closed.
 
 **One verb per family, not one verb per class.** A class may carry one verb for
 **each** family it takes part in — `PolymerBuilder` has its own `build`
-(construction family, `_polymer.py:87`) and inherits `apply` from `GraphAssembler`
+(construction family, `_polymer.py:115`) and inherits `apply` from `GraphAssembler`
 (graph-transformation family). What is forbidden is two verbs **within one family**,
 not two verbs on one class.
 
 **`assemble → apply` ruling.** `GraphAssembler.assemble` became `apply`, not
-`build`: `PolymerBuilder(GraphAssembler)` (`_polymer.py:38`) already has
-`build(topology)` (`:87`, calling `self.apply` at `:94`), so hanging
+`build`: `PolymerBuilder(GraphAssembler)` (`_polymer.py:37`) already has
+`build(topology)` (`:115`, calling `self.apply` at `:148`), so hanging
 `build(world, selector)` on the parent would collide on signature (LSP; `ty`
 errors). And `assemble` eats an existing world and hands back a rewritten one —
 graph → graph, which is the `apply` family to begin with.
@@ -289,14 +290,14 @@ graph → graph, which is the `apply` family to begin with.
    ruling.)
 2. **Repo-wide `build_*` census.** One-line shortcuts sharing the stem, kept:
    `PolymerBuilder.build_sequence` / `build_linear` / `build_ring` / `build_star`
-   (`_polymer.py:96` / `:100` / `:110` / `:114`), `builder/ambertools.py:241
+   (`_polymer.py:150` / `:164` / `:181` / `:201`), `builder/ambertools.py:241
    build_polymer`, `builder/polymer/system.py:146 build_chain`. Template hooks,
-   kept: `build_sites` (see footnote 1). **Debt**:
-   `parser/moltemplate/builder.py:551 build_forcefield` and `:967 build_system` are
-   factories in free-function form, squarely against CLAUDE.md § Forbid ("Factory
-   functions as the primary constructor story") and law 4 ("a free function is not
-   a public surface") — see the debt list; a separate `/mol:refactor`, not part of
-   this chain.
+   kept: `build_sites` (see footnote 1). The former debt — module-level
+   `build_forcefield` / `build_system` factories in `parser/moltemplate/builder.py`
+   — is **retired (2026-09-23)**: they are now methods of `MolTemplateBuilder`
+   (`parser/moltemplate/builder.py:1068`; `build_forcefield` at `:1097`,
+   `build_system(ff=None, *, auto_topology=True)` at `:1146`), which owns the
+   import-resolved document and the one `ForceField`.
 3. `DistributionIR.build()` (`builder/polymer/distributions.py:28`) eats no data —
    it is a factory-style constructor, not a member of a transformation family;
    renaming or deleting it is another `/mol:refactor` (the maintainer's ruling on
@@ -333,13 +334,14 @@ graph → graph, which is the `apply` family to begin with.
    `CarbonTubeBuilder` (`carbon_tube.py:15`) belong to the **construction family**.
    A third kind is the **domain verb**, which is neither a construction entry nor a
    graph-transformation entry, is therefore unconstrained by this table, and keeps
-   its name: `MonomerLibrary.expand(topology)` (`builder/assembly/_library.py:57`),
-   `Replicas.grid` / `.times` (`builder/assembly/_replicas.py:40` / `:89`) and
-   `Placer.place` / `ResiduePlacer.place`. **The test** (not the example list): the
+   its name: `MonomerLibrary.expand(topology)` (`builder/assembly/_library.py:70`),
+   `Replicas.grid` / `.times` (`builder/assembly/_replicas.py:40` / `:104`) and
+   `Placer.place` / `TracePlacer.place`. **The test** (not the example list): the
    core data-model API of `Atomistic` / `CoarseGrain` / `Frame` — `def_*` / `del_*`
-   / `copy` / `merge` (`core/atomistic.py:462`) / `move` / `rotate` / `scale` /
-   `align` (`:534`) / `replicate` (`:559`) / `extract_subgraph` (`:377`) /
-   `to_frame` — is also "existing graph → rewritten graph", but these are the data
+   / `copy` / `merge` (`core/atomistic.py:463`) / the native rigid-body verbs
+   `translate` / `rotate` / `scale` (per-axis) / `replicate` (`:513`) /
+   `extract_subgraph` (`:378`) / `to_frame` — is also "existing graph → rewritten
+   graph", but these are the data
    model's own actions, governed by § Graph sink decisions (locked) and CLAUDE.md
    § What must never change casually, and they are **not** in the
    graph-transformation family. That family admits only "domain transformation
@@ -350,11 +352,12 @@ graph → graph, which is the `apply` family to begin with.
 
 | Debt | Location | Owner |
 |---|---|---|
-| Analysis-family residue: `DielectricSusceptibility.from_dipole_series(M, …)` is an instance method that returns a result — a second analysis entry on the same class (a misused `from_*` name) | `src/molpy/compute/dielectric.py` (`from_dipole_series`) | folded into the primitive by the `/mol:refactor` that deletes the two all-in-one recipe classes, **not this chain** |
-| `Selector` means two things: `core/selector.py:43 Selector = MaskPredicate` (a mask predicate) and `builder/assembly/_selector.py:26 class Selector(ABC)` (an assembly selector) are unrelated types | as listed | a separate `/mol:refactor`, **not this chain** |
-| The module-level free functions `emit(name, …)` (a registry dispatcher) and `emit_python` break law 4, "a free function is not a public surface" | `io/emit/__init__.py:51`, `parser/moltemplate/py_emitter.py:42` | a separate `/mol:refactor`, **not this chain** |
-| Free `build_*` factories (see footnote 2) | `parser/moltemplate/builder.py:551` / `:967` | a separate `/mol:refactor`, **not this chain** |
-| § 4's "signal that a boundary was cut wrong" still sounds at `_polymer.py:93-94`: `expand(topology)` followed by `TopologySelector(topology)`, the same data through two objects | `builder/assembly/_polymer.py:93-94` | a separate ruling (either `MonomerLibrary.expand` produces the pairing rule along with the expansion, or `TopologySelector` derives itself from the expanded world), **not this chain**; sub-spec 04 recorded it as found-not-fixed |
+| ~~`DielectricSusceptibility.from_dipole_series`~~ **retired 2026-09-23**: the two all-in-one recipe classes (`DielectricSusceptibility`, `IonicConductivity`) and their `DielectricSusceptibilityResult` / `ConductivityResult` are deleted, and so is the `compute/dielectric.py` module; `molpy.compute` itself re-exports the native primitives (`Dielectric`, `DebyeRelaxation`, `DebyeFit`, `EinsteinHelfandSpectrum`, `GreenKuboSpectrum`; `DielectricResult` stays) and callers compose raw Compute → Fit → SI scale. Units trap recorded in `docs/getting-started/migration-0-15.md`: `IonicConductivity` took `dt` in ps, the composed route is fs | — | done |
+| ~~`Selector` means two things~~ **retired 2026-09-23**: the unused alias `core/selector.py Selector = MaskPredicate` is deleted; `Selector` now names only the assembly selector (`builder/assembly/_selector.py`) | — | done |
+| ~~forwarding façade on nanostructure builders~~ **retired 2026-09-23**: `GrapheneBuilder` / `CarbonTubeBuilder` are real subclasses of `molrs.builder.*` (molrs `#[pyclass(subclass)]`); they add only kwargs validation + `StructureFinalizer` + `Atomistic`/`Box` conversion | `builder/nanostructure/` | done |
+| ~~`emit(name, …)` / `emit_python` free functions~~ **retired 2026-09-23**: `EmitterRegistry.emit` (instance `emitters`) and `PythonScriptEmitter.emit` own those verbs | — | done |
+| ~~Free `build_*` factories~~ **retired 2026-09-23**: `MolTemplateBuilder.build_forcefield` / `.build_system` replace the module-level factories | `parser/moltemplate/builder.py` | done |
+| ~~`expand(topology)` + `TopologySelector(topology)`~~ **retired 2026-09-23**: `MonomerLibrary.expand` returns `Expansion(world, pairing)`; the topology enters once and the pairing rule comes back with the world | `builder/assembly/_library.py` | done |
 
 This list is **bookkeeping and routing**, not a permit: every row either has a
 sub-spec carrying it or a named next `/mol:refactor` / `/mol:bootstrap` /
@@ -441,12 +444,16 @@ guess stays wrong all the way through, silently.
 > In one line: **guess a number, never an identity.** The test is "is there a
 > downstream process that will converge this guess away".
 
-So `placer.py:124`'s `left_anchor.get("symbol", "C")` is still a violation:
-`symbol` is an **identity**, and its absence is a `KeyError`. But the same `Placer`
-using the sum of covalent radii as its initial placement distance is **legal**,
-because the geometry optimisation right behind it pulls that back to equilibrium —
-provided the constant has a name, has a docstring, and a non-converging
-optimisation raises.
+Worked example (historical): the deleted molpy `placer.py` read
+`left_anchor.get("symbol", "C")`, which was a violation — `symbol` is an
+**identity**, and its absence is a `KeyError`. Placement is now native
+(`TracePlacer`, re-exported by identity): it raises when an endpoint lacks an
+element or a tabulated radius, and its bonding range (summed covalent radii plus a
+buffer) is the **legal** guess, because the geometry optimisation right behind it
+pulls that back to equilibrium — provided the constant has a name, has a
+docstring, and a non-converging optimisation raises. A ring-closing bond is
+formed but not placed at all; its length is converged the same way (or set by an
+explicit ring-shaped `Trace`).
 
 ### 6. molrs is an implementation detail — the user must never know it exists
 

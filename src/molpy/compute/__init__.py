@@ -17,16 +17,12 @@ Example::
 """
 
 from molrs.compute import Compute
-from .cluster import Cluster, ClusterCenters, ClusterProperties
-from .decomposition import DescriptorRow, KMeans, Pca
-from .dielectric import (
-    DielectricSusceptibility,
-    IonicConductivity,
-)
 from molrs.compute.dielectric import Dielectric
 from molrs.compute.fitting import CumulativeTrapezoid, LinearFit
 from molrs.compute.spectroscopy import EinsteinHelfandSpectrum, GreenKuboSpectrum
 from molrs.compute.transport import DebyeFit, DebyeRelaxation
+from .cluster import Cluster, ClusterCenters, ClusterProperties
+from .decomposition import DescriptorRow, KMeans, Pca
 from .density import GaussianDensity, LocalDensity
 from .diffraction import StaticStructureFactorDebye
 from .environment import BondOrder
@@ -40,10 +36,8 @@ from .persist import Persist
 from .pmsd import EinsteinConductivity
 from .rdf import RDF
 from .result import (
-    ConductivityResult,
     DebyeSpectrumFit,
     DielectricResult,
-    DielectricSusceptibilityResult,
     JACFResult,
     OnsagerResult,
     PersistResult,
@@ -112,16 +106,12 @@ __all__ = [
     "JACFResult",
     "PersistResult",
     "DielectricResult",
-    "DielectricSusceptibilityResult",
-    "ConductivityResult",
     "DebyeSpectrumFit",
     "EinsteinConductivity",
     "Onsager",
     "GreenKuboConductivity",
     "Persist",
     "Dielectric",
-    "DielectricSusceptibility",
-    "IonicConductivity",
     "DebyeRelaxation",
     "DebyeFit",
     "EinsteinHelfandSpectrum",

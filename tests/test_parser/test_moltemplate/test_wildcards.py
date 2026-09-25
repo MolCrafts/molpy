@@ -9,7 +9,7 @@ Covers:
 
 from __future__ import annotations
 
-from molpy.parser.moltemplate import build_system, parse_string
+from molpy.parser.moltemplate import MolTemplateBuilder, parse_string
 
 
 _SRC = """
@@ -48,7 +48,7 @@ m = new Water
 
 def _build():
     doc = parse_string(_SRC)
-    return build_system(doc)
+    return MolTemplateBuilder(doc).build_system()
 
 
 def test_replace_decorates_atom_types():

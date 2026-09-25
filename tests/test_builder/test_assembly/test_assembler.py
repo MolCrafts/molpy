@@ -155,3 +155,52 @@ class TestGraphAssembler:
     def test_a_typifier_needs_at_least_one_bond_of_reach(self, element_typifier):
         with pytest.raises(ValueError, match="reach must be >= 1"):
             GraphAssembler(mp.Reaction(NO_PLUS_O), typifier=element_typifier, reach=0)
+
+
+class TestGraphAssemblerPlacement:
+    """``apply`` hands the configured placer the world and the forming bonds."""
+
+    def test_place_is_called_once_with_the_world_and_formed_pairs(
+        self, no_cloud_factory, recording_placer
+    ):
+        world = no_cloud_factory(2)
+        nitrogens = [a.handle for a in world.atoms if a["element"] == "N"]
+        oxygens = [a.handle for a in world.atoms if a["element"] == "O"]
+
+        GraphAssembler(mp.Reaction(NO_PLUS_O), placer=recording_placer).apply(
+            world, ExhaustiveSelector(cutoff=1.2)
+        )
+
+        assert len(recording_placer.calls) == 1
+        placed_world, formed = recording_placer.calls[0]
+        assert isinstance(placed_world, mp.Atomistic)
+        assert placed_world is not world
+        assert sorted(a.handle for a in placed_world.atoms) == sorted(
+            a.handle for a in world.atoms
+        )
+        assert all(type(i) is int and type(j) is int for i, j in formed), formed
+        assert sorted(formed) == sorted(zip(nitrogens, oxygens, strict=True))
+
+    def test_placement_survives_into_the_result(self, no_cloud_factory):
+        class MarkingPlacer(molrs.Placer):
+            def __init__(self, x: float) -> None:
+                super().__init__()
+                self.x = x
+
+            def place(self, mol, bonds) -> None:
+                for parent, _child in bonds:
+                    mol.set(parent, "x", self.x)
+
+        result = GraphAssembler(
+            mp.Reaction(NO_PLUS_O), placer=MarkingPlacer(42.0)
+        ).apply(no_cloud_factory(1), ExhaustiveSelector(cutoff=1.2))
+
+        nitrogen = next(a for a in result.atoms if a["element"] == "N")
+        assert nitrogen["x"] == 42.0
+
+    def test_placer_error_propagates_out_of_apply(
+        self, no_cloud_factory, raising_placer
+    ):
+        assembler = GraphAssembler(mp.Reaction(NO_PLUS_O), placer=raising_placer)
+        with pytest.raises(raising_placer.error_type, match="cannot place"):
+            assembler.apply(no_cloud_factory(2), ExhaustiveSelector(cutoff=1.2))

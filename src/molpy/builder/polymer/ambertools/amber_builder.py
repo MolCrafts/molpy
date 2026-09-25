@@ -14,22 +14,29 @@ from pathlib import Path
 from typing import Literal
 
 import molrs
+from molrs.io import CGSmilesIR
 
-from molpy.builder.assembly import Finalization, PolymerBuilder
-from molpy.builder.assembly._topology import TopologySelector
+from molpy.builder.assembly import (
+    Finalization,
+    PolymerBuilder,
+    ResidueBond,
+    ResidueNode,
+    ResidueTopology,
+    TopologySelector,
+)
 from molpy.core import fields
 from molpy.core.atomistic import Atomistic
-from molpy.builder.assembly._cgsmiles_ir import CGSmilesGraphIR
-from molpy.builder.assembly._residue_graph import linear_topology
 
 from .types import AmberBuildResult
 
 type _VariantRecipe = tuple[str | None, str | None, tuple[str, ...]]
 type _ResidueRecipes = dict[str, dict[str, _VariantRecipe]]
+#: Topology content: node labels in order, bonds as node-position pairs.
+type _TopologyKey = tuple[tuple[str, ...], frozenset[frozenset[int]]]
 
 
 class AmberPolymerBuilder:
-    """Build polymers from CGSmiles notation using the AmberTools backend.
+    """Build polymers from a residue topology using the AmberTools backend.
 
     ========================= DESIGN CONTRACT — READ FIRST =========================
     This is the whole reason the class exists; do NOT "optimise" or "fix" around it.
@@ -66,7 +73,7 @@ class AmberPolymerBuilder:
     1. Prepare each monomer type (antechamber → parmchk2 → prepgen), disk-cached.
     2. Compile the MolPy ``fields.SITE`` + ``Reaction`` semantics once and
        translate the resulting residue edits into HEAD/CHAIN/TAIL variants.
-    3. Translate CGSmiles to a tleap ``sequence`` command.
+    3. Translate the residue sequence to a tleap ``sequence`` command.
     4. Run tleap to build the polymer; read back Frame + ForceField.
 
     Example:
@@ -102,7 +109,7 @@ class AmberPolymerBuilder:
         """Initialize the polymer builder.
 
         Args:
-            library: Mapping from CGSmiles labels to Atomistic monomer structures.
+            library: Mapping from residue labels to Atomistic monomer structures.
                 Reaction sites use the same ``fields.SITE`` annotations as
                 :class:`molpy.builder.assembly.PolymerBuilder`.
             reaction: The MolPy reaction that defines connection atoms and
@@ -116,7 +123,7 @@ class AmberPolymerBuilder:
             env_manager: ``"conda"``, ``"venv"``, ``"pip"``, or
                 ``"virtualenv"``.  Same contract as
                 :class:`~molpy.wrapper.EnvSpec`.
-            net_charges: Optional mapping from CGSmiles label to the formal net
+            net_charges: Optional mapping from residue label to the formal net
                 charge of that monomer/residue, passed to antechamber's AM1-BCC
                 step. Defaults to 0 for any label not present. Required for
                 charged residues (e.g. cationic / anionic monomers) so the
@@ -161,53 +168,76 @@ class AmberPolymerBuilder:
 
         # Internal state
         self._prepared_monomers: dict[str, _PreparedMonomer] = {}
-        self._semantic_cache: dict[str, _ResidueRecipes] = {}
+        self._semantic_cache: dict[_TopologyKey, _ResidueRecipes] = {}
 
-    def build(self, topology: CGSmilesGraphIR | str) -> AmberBuildResult:
+    def build(self, topology: ResidueTopology | str) -> AmberBuildResult:
         """Build a polymer from a residue topology.
 
+        Only one linear path of residues is supported (tleap ``sequence``).
+
         Args:
-            topology: :class:`CGSmilesGraphIR`, or a simple linear string
-                ``{[#LABEL]|n}`` / ``{[#A][#B]…}``.
+            topology: :class:`ResidueTopology`, or a base-level CGSmiles
+                string (``{[#EO]|10}``, ``{[#A][#B]|3}``) parsed by the
+                native :class:`CGSmilesIR`; bead names are library labels.
 
         Returns:
-            AmberBuildResult containing Frame, ForceField, and file paths.
+            AmberBuildResult containing Frame, ForceField, and file paths;
+            ``cgsmiles`` holds the input string, or ``None`` for a
+            :class:`ResidueTopology` input.
+
+        Raises:
+            TypeError: if ``topology`` is neither a :class:`ResidueTopology`
+                nor a string.
+            ValueError: if the CGSmiles string is malformed, carries fragment
+                tables or multiple-bond edges, or the topology is not one
+                linear path over library labels.
         """
-        graph = (
-            self._coerce_topology(topology)
-            if not isinstance(topology, CGSmilesGraphIR)
-            else topology
-        )
+        if isinstance(topology, ResidueTopology):
+            graph = topology
+            notation = None
+        elif isinstance(topology, str):
+            ir = CGSmilesIR(topology)
+            if ir.fragments:
+                raise ValueError(
+                    "AmberPolymerBuilder takes residue chemistry from its library; "
+                    "pass a base-level CGSmiles string without fragment tables, "
+                    f"got {topology!r}"
+                )
+            level = ir.levels[0]
+            nodes = [ResidueNode(node.name) for node in level.nodes]
+            bonds = []
+            for edge in level.edges:
+                if edge.multiplicity != 1:
+                    raise ValueError(
+                        f"CGSmiles edge {edge.i}-{edge.j} has multiplicity "
+                        f"{edge.multiplicity}; a residue adjacency is one bond"
+                    )
+                bonds.append(ResidueBond(node_i=nodes[edge.i], node_j=nodes[edge.j]))
+            graph = ResidueTopology(nodes=nodes, bonds=bonds)
+            notation = topology
+        else:
+            raise TypeError(
+                "AmberPolymerBuilder.build takes a ResidueTopology or a CGSmiles "
+                f"string, got {type(topology).__name__}"
+            )
         self._validate_graph(graph)
 
-        recipes = self._compile_semantics(str(topology), graph)
+        position = {node.id: index for index, node in enumerate(graph.nodes)}
+        key: _TopologyKey = (
+            tuple(node.label for node in graph.nodes),
+            frozenset(
+                frozenset((position[bond.node_i.id], position[bond.node_j.id]))
+                for bond in graph.bonds
+            ),
+        )
+        recipes = self._compile_semantics(key, graph)
 
         self._prepare_monomers(graph, recipes)
         result = self._build_with_tleap(graph, output_prefix="polymer")
-        result.cgsmiles = str(topology)
+        result.cgsmiles = notation
         return result
 
-    @staticmethod
-    def _coerce_topology(spec: str) -> CGSmilesGraphIR:
-        """Accept only the linear homopolymer / sequence forms used by helpers."""
-        import re
-
-        s = spec.strip()
-        m = re.fullmatch(r"\{\[#([A-Za-z0-9_]+)\]\|(\d+)\}", s)
-        if m:
-            return linear_topology([m.group(1)] * int(m.group(2)))
-        m = re.fullmatch(r"\{((?:\[#([A-Za-z0-9_]+)\])+)\}", s)
-        if m:
-            labels = re.findall(r"\[#([A-Za-z0-9_]+)\]", s)
-            if labels:
-                return linear_topology(labels)
-        raise ValueError(
-            "AmberPolymerBuilder does not parse free-form CGSmiles. "
-            "Pass a CGSmilesGraphIR from linear_topology / ring_topology / star_topology, "
-            f"or a simple linear string like '{{[#EO]|10}}'. Got: {spec!r}"
-        )
-
-    def _validate_graph(self, graph: CGSmilesGraphIR) -> None:
+    def _validate_graph(self, graph: ResidueTopology) -> None:
         """Validate topology graph against the monomer library."""
         if not graph.nodes:
             raise ValueError("topology graph is empty")
@@ -243,11 +273,16 @@ class AmberPolymerBuilder:
 
     def _compile_semantics(
         self,
-        cgsmiles: str,
-        graph: CGSmilesGraphIR,
+        key: _TopologyKey,
+        graph: ResidueTopology,
     ) -> _ResidueRecipes:
-        """Translate the standard MolPy reaction product into Amber variants."""
-        cached = self._semantic_cache.get(cgsmiles)
+        """Translate the standard MolPy reaction product into Amber variants.
+
+        Args:
+            key: Content key of ``graph``; equal topologies share one entry.
+            graph: The validated linear residue topology.
+        """
+        cached = self._semantic_cache.get(key)
         if cached is not None:
             return cached
 
@@ -328,12 +363,12 @@ class AmberPolymerBuilder:
                     raise ValueError(f"{label!r} {variant} variant has no HEAD atom")
                 if variant in {"head", "chain"} and tail_name is None:
                     raise ValueError(f"{label!r} {variant} variant has no TAIL atom")
-        self._semantic_cache[cgsmiles] = recipes
+        self._semantic_cache[key] = recipes
         return recipes
 
     def _prepare_monomers(
         self,
-        graph: CGSmilesGraphIR,
+        graph: ResidueTopology,
         recipes: _ResidueRecipes,
     ) -> None:
         """Prepare all monomer types used in the graph.
@@ -621,7 +656,7 @@ class AmberPolymerBuilder:
 
     def _build_with_tleap(
         self,
-        graph: CGSmilesGraphIR,
+        graph: ResidueTopology,
         output_prefix: str,
     ) -> AmberBuildResult:
         """Assemble the chain with tleap ``sequence`` from the per-monomer templates.
@@ -727,8 +762,8 @@ class AmberPolymerBuilder:
             cgsmiles=None,
         )
 
-    def _build_sequence(self, graph: CGSmilesGraphIR) -> str:
-        """Build tleap sequence from CGSmiles graph.
+    def _build_sequence(self, graph: ResidueTopology) -> str:
+        """Build tleap sequence from the residue topology.
 
         Variant assignment:
         - First residue → HEAD variant

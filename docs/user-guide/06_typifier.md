@@ -179,15 +179,16 @@ When a `molpy.Reaction` forms a new bond between two monomers, the atoms at the 
 
 Rather than re-typifying the entire chain after each coupling step, MolPy re-types only the neighbourhood the edit disturbed.
 
-How wide that neighbourhood is is not a knob on the typifier. `GraphAssembler` is told the `reach` its typifier needs — the number of bonds it must see around an atom before it can name that atom's type — and that single number fixes both radii of the operation. `AffectedRegion.around` extracts a ball of `2 x reach` bonds around each new bond, and only the inner `reach` shell is written back: those are the atoms whose environment actually changed. The outer shell exists solely to give them a correct environment to be typed against. Atoms beyond the inner shell were already right and are left alone.
+How wide that neighbourhood is is not a knob on the typifier. `GraphAssembler` is told the `reach` its typifier needs — the number of bonds it must see around an atom before it can name that atom's type — and that single number fixes both radii of the operation. `AffectedRegion.around` first sets the write-back radius `interior_reach = max(reach, AffectedRegion.TERM_REACH)`, with `TERM_REACH = 2` because a dihedral (a four-atom torsion term) containing the new bond reaches two bonds out on either side, and all four of its atoms need types. Every atom within `interior_reach` bonds of the atoms the edit touched is written back: those are the atoms whose environment may have changed. The ball extracted around them has radius `interior_reach + reach` (four bonds for the General AMBER Force Field, GAFF, at `reach = 2`), so that the outermost written-back atom still sees its whole `reach`-neighbourhood; the outer shell exists solely to give the interior a correct environment to be typed against. Atoms farther than `interior_reach` from the edit were already right and are left alone.
 
-The region completes its own cut valences before any typifier sees it, and that is not a convenience. Because the extracted ball is exactly `interior_reach + reach` wide, an interior atom's receptive field reaches precisely to the boundary atoms — and a raw cut leaves those with unfilled valences, which a SMARTS matcher reads as radicals. Measured on p-xylene at `reach = 2`, 12 of its 19 raw slices cannot be typed at all.
+The region fills its cut valences with hydrogens before any typifier sees it, and that is not a convenience. Because the extracted ball is exactly `interior_reach + reach` wide, an interior atom's receptive field reaches precisely to the boundary atoms — and a raw cut leaves those with unfilled valences, which a SMARTS matcher reads as radicals. Measured on p-xylene at `reach = 2`, the raw slices silently mistype 36 interior atoms without a single refusal. Small rings (up to eight atoms) that the radius would cut are extracted whole for the same reason: to a typifier, a cut ring is a different molecule.
 
 Identical junctions hash to the same key and are typed once, so the number of typing passes tracks the number of *distinct* chemical environments in the system rather than the number of bonds formed. Building a 1000-mer costs about as many typing passes as building a 10-mer.
 
 To enable this, pass the typifier to the builder at construction:
 
 ```text
+from molpy.builder.assembly import MonomerLibrary, PolymerBuilder, TracePlacer
 from molpy.typifier import AmberToolsTypifier
 
 builder = PolymerBuilder(
@@ -195,7 +196,7 @@ builder = PolymerBuilder(
  mp.Reaction(ETHER),
  typifier=AmberToolsTypifier(amber),
  reach=2, # GAFF: a 1-2 bond environment names an atom type
- placer=ResiduePlacer(),
+ placer=TracePlacer(), # lay the pasted copies out; omit to keep them stacked
 )
 chain = builder.build_linear("EO", 20)
 ```

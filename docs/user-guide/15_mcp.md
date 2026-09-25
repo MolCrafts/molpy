@@ -407,7 +407,7 @@ for iz in range(4):
     for iy in range(4):
         for ix in range(4):
             mol = water.copy()
-            mol.move(delta=[ix * 0.32, iy * 0.32, iz * 0.32])
+            mol.translate([ix * 0.32, iy * 0.32, iz * 0.32])
             for atom in mol.atoms:
                 atom["mol_id"] = mol_id
             system.merge(mol)
@@ -490,7 +490,7 @@ Returns MolPy's top-level packages and modules (excerpt):
 molpy.builder   Crystal and polymer builders (AmberTools integration, stochastic generation)
 molpy.io        I/O for AMBER, LAMMPS, PDB, GRO, MOL2, XYZ ...
 molpack         Packing (Molpack, Target, restraints)
-molpy.parser    Parsers for SMILES, BigSMILES, CGSmiles, GBigSMILES
+molpy.parser    SMILES / SMARTS (SmilesIR, SmartsPattern); moltemplate .lt reader
 molpy.wrapper   External tool wrappers (antechamber, parmchk2, prepgen, tleap)
 ```
 
@@ -508,7 +508,7 @@ FlorySchulzPolydisperse   Flory-Schulz (geometric) distribution
 PolydisperseChainGenerator  Middle layer: samples DP/mass, generates monomer sequences
 SystemPlanner             Top layer: accumulates chains until a target total mass is reached
 AmberPolymerBuilder       Polymer builder backed by the AmberTools pipeline
-PolymerBuilder            CGSmiles-based polymer builder with pluggable typifier
+PolymerBuilder            Residue-topology polymer builder with pluggable typifier and placer
 ```
 
 **Step 3 — read the Schulz–Zimm signature and docstring**
@@ -555,12 +555,15 @@ molmcp_describe_symbol("molpy.builder.polymer.ambertools.AmberPolymerBuilder")
 ```
 
 ```
-signature: (library: dict[str, Atomistic],
-            force_field: str = "gaff2",
+signature: (library: Mapping[str, Atomistic],
+            reaction: Reaction,
+            *,
+            force_field: Literal["gaff", "gaff2"] = "gaff2",
             charge_method: str = "bcc",
-            work_dir: Path = Path("amber_work"),
-            env: str = "AmberTools25",
-            env_manager: str = "conda")
+            work_dir: Path | str | None = None,
+            env: str | Path | None = None,
+            env_manager: str | None = None,
+            net_charges: Mapping[str, int] | None = None)
 ```
 
 ```
@@ -569,11 +572,15 @@ molmcp_describe_symbol("molpy.builder.polymer.ambertools.AmberPolymerBuilder.bui
 
 ```
 docstring:
-  Build a polymer from a CGSmiles string.
+  Build a polymer from a residue topology.
+
+  Only one linear path of residues is supported (tleap ``sequence``).
 
   Args:
-      cgsmiles: CGSmiles notation, e.g. "{[#MeH][#EO]|10[#MeT]}"
-                |N means N repeat units of the preceding monomer.
+      topology: ResidueTopology (e.g. linear_topology(["MeH", *["EO"] * 10, "MeT"])),
+                or a base-level CGSmiles string such as "{[#MeH][#EO]|10[#MeT]}",
+                where |N means N repeat units of the preceding monomer and
+                bead names are library labels.
 
   Returns:
       AmberBuildResult with .frame (Frame) and .forcefield (ForceField).

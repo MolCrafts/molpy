@@ -2,8 +2,8 @@
 
 Packing production boxes belongs to the external molpack package
 (``molcrafts-molpack``). This class only does what crosslinking demos need:
-copy one strand onto a grid, give each copy a ``mol_id``, and return one
-:class:`~molpy.core.atomistic.Atomistic` that a proximity selector can edit.
+copy one strand onto a grid, give each copy a 1-based ``mol_id``, and return
+one :class:`~molpy.core.atomistic.Atomistic` that a proximity selector can edit.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from molpy.core.atomistic import Atom, Atomistic
+from molpy.core.atomistic import Atomistic
 from molpy.core import fields
 
 if TYPE_CHECKING:
@@ -46,12 +46,27 @@ class Replicas:
         seed: int = 0,
         rotate: bool = True,
     ) -> Atomistic:
-        """Return ``n³`` copies on a cubic lattice with spacing in Å.
+        """Return ``n³`` copies on a cubic lattice.
 
-        Each copy gets ``mol_id`` ``0 .. n³-1`` so
-        ``exclude_same_molecule=True`` on a proximity selector forbids
-        intra-chain pairs. Optional rigid rotation and position jitter break
-        grid artifacts.
+        Each copy gets ``mol_id`` ``1 .. n³`` (``fields.MOL_ID`` is 1-based).
+        The ``mol_id`` labels molecules for output only: a proximity
+        selector's ``exclude_same_molecule=True`` decides "same molecule" from
+        bond connectivity, so it forbids intra-chain pairs because the copies
+        are not bonded to each other, not because of ``mol_id``. Optional rigid
+        rotation and position jitter break grid artifacts.
+
+        Args:
+            n: Copies per lattice edge; ``n³`` copies in total.
+            spacing: Lattice spacing (Å).
+            jitter: Half-width (Å) of the uniform random offset added to each
+                lattice origin along x, y and z; ``0.0`` disables it.
+            seed: Seed for the random rotations and jitter.
+            rotate: Before translating, rotate each copy by a uniformly random
+                angle in ``[0, 2π)`` rad about a random axis through the
+                origin (the axis direction is uniform on the sphere).
+
+        Returns:
+            One world holding every copy.
 
         Raises:
             ValueError: if ``n < 1`` or ``spacing <= 0``.
@@ -79,7 +94,7 @@ class Replicas:
                     origin = np.array([i, j, k], dtype=float) * spacing
                     if jitter:
                         origin = origin + rng.uniform(-jitter, jitter, 3)
-                    copy.move(list(origin), entity_type=Atom)
+                    copy.translate(list(origin))
                     for atom in copy.atoms:
                         atom[fields.MOL_ID] = mol_id
                     world.merge(copy)
@@ -90,13 +105,25 @@ class Replicas:
         """Return ``count`` copies along x with the given spacing (Å).
 
         Simpler than :meth:`grid` when you only need a few chains for a demo.
+        Copy ``k`` (0-based) is translated by ``k * spacing`` along x and gets
+        ``mol_id`` ``k + 1``.
+
+        Args:
+            count: Number of copies.
+            spacing: Distance (Å) between consecutive copies along x.
+
+        Returns:
+            One world holding every copy.
+
+        Raises:
+            ValueError: if ``count < 1``.
         """
         if count < 1:
             raise ValueError(f"count must be >= 1, got {count}")
         world = Atomistic()
         for index in range(count):
             copy = self._strand.copy()
-            copy.move([index * spacing, 0.0, 0.0], entity_type=Atom)
+            copy.translate([index * spacing, 0.0, 0.0])
             for atom in copy.atoms:
                 atom[fields.MOL_ID] = index + 1
             world.merge(copy)

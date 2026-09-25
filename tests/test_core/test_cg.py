@@ -164,30 +164,43 @@ class TestBeadsOf:
 
 
 class TestCoarseGrainSpatialOperations:
-    """Test spatial transformation operations."""
+    """The rigid-body verbs are the native ``translate`` / ``rotate`` / ``scale``."""
 
-    def test_move_translates_bead_xyz(self):
-        """move() translates all bead positions via the SpatialMixin."""
+    def test_move_is_not_a_coarsegrain_verb(self):
+        assert not hasattr(CoarseGrain, "move")
+
+    def test_spatial_verbs_are_the_native_methods(self):
+        import molrs
+
+        for verb in ("translate", "rotate", "scale"):
+            assert getattr(CoarseGrain, verb) is getattr(molrs.CoarseGrain, verb), verb
+
+    def test_translate_shifts_bead_xyz_and_returns_self(self):
         cg = CoarseGrain()
-        cg.def_bead(type="A", x=0, y=0, z=0)
-        cg.def_bead(type="B", x=1, y=0, z=0)
+        cg.def_bead(type="A", x=0.0, y=0.0, z=0.0)
+        cg.def_bead(type="B", x=1.0, y=0.0, z=0.0)
 
-        result = cg.move([5, 10, 15])
+        result = cg.translate([5.0, 10.0, 15.0])
 
-        assert result is cg  # Returns self for chaining
-        positions_x = cg.beads["x"]
-        assert np.allclose(positions_x, [5, 6])
+        assert result is cg
+        assert np.allclose(cg.beads["x"], [5.0, 6.0], rtol=0.0, atol=1e-12)
 
     def test_spatial_operations_chain(self):
-        """move/scale chain and return self."""
+        """translate / per-axis scale / translate chain on one object."""
         cg = CoarseGrain()
-        cg.def_bead(type="A", x=0, y=0, z=0)
+        cg.def_bead(type="A", x=0.0, y=0.0, z=0.0)
 
-        result = cg.move([1, 0, 0]).scale(2.0).move([0, 5, 0])
+        result = (
+            cg.translate([1.0, 0.0, 0.0])
+            .scale([2.0, 2.0, 2.0])
+            .translate([0.0, 5.0, 0.0])
+        )
 
         assert result is cg
         bead = list(cg.beads)[0]
-        assert bead.get("x") != 0 or bead.get("y") != 0
+        assert (bead["x"], bead["y"], bead["z"]) == pytest.approx(
+            (2.0, 5.0, 0.0), abs=1e-12
+        )
 
 
 class TestCoarseGrainSystemComposition:
@@ -227,7 +240,7 @@ class TestCoarseGrainSystemComposition:
         cg = CoarseGrain()
         cg.def_bead(type="A", x=0, y=0, z=0)
 
-        result = cg.replicate(5, lambda mol, i: mol.move([i * 5, 0, 0]))
+        result = cg.replicate(5, lambda mol, i: mol.translate([i * 5.0, 0.0, 0.0]))
 
         assert len(result.beads) == 5
         assert len(cg.beads) == 1  # Original unchanged
@@ -452,26 +465,24 @@ class TestCoarseGrainSelectErrors:
 
 
 class TestCoarseGrainSpatialChaining:
-    """rotate / align return self for chaining (parallel to Atomistic)."""
+    """rotate / scale return self for chaining (parallel to Atomistic)."""
 
     def test_rotate_returns_self(self):
         cg = CoarseGrain()
         cg.def_bead(type="A", x=1.0, y=0.0, z=0.0)
-        result = cg.rotate(axis=[0, 0, 1], angle=np.pi / 2)
+        result = cg.rotate([0.0, 0.0, 1.0], np.pi / 2)
         assert result is cg
 
     def test_scale_returns_self(self):
+        """scale takes the native per-axis factor list."""
         cg = CoarseGrain()
-        cg.def_bead(type="A", x=1.0, y=0.0, z=0.0)
-        result = cg.scale(2.0)
+        cg.def_bead(type="A", x=1.0, y=1.0, z=1.0)
+        result = cg.scale([2.0, 3.0, 4.0])
         assert result is cg
-
-    def test_align_returns_self(self):
-        cg = CoarseGrain()
-        a = cg.def_bead(type="A", x=0.0, y=0.0, z=0.0)
-        b = cg.def_bead(type="B", x=1.0, y=0.0, z=0.0)
-        result = cg.align(a, b, a_dir=[1, 0, 0], b_dir=[0, 1, 0])
-        assert result is cg
+        bead = list(cg.beads)[0]
+        assert (bead["x"], bead["y"], bead["z"]) == pytest.approx(
+            (2.0, 3.0, 4.0), abs=1e-12
+        )
 
 
 class TestCoarseGrainToFrame:

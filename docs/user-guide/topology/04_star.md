@@ -9,10 +9,12 @@ from eo_kit import eo_builder, trifunctional_core
 
 builder = eo_builder(extra={"X3": trifunctional_core()})
 star = builder.build_star("X3", "EO", n_arms=3, arm_length=4)
-# formats branched CGSmiles, then build(...)
+# builds a star residue topology, then build(...)
 ```
 
-Bifunctional monomers alone cannot branch: parentheses without extra sites collapse to a chain (by design).
+Bifunctional monomers alone cannot branch: a bifunctional core has no free site for a third arm, so `build_star("EO", "EO", n_arms=3, ...)` raises `ValueError` naming the residue edge it could not form.
+
+`placer=TracePlacer()` (set by `eo_builder`) grows each arm out of the core: every residue is moved rigidly next to the residue it hangs from, so all core–arm and arm–arm bonds start at bonding range.
 
 ```bash
 cd examples && python topology/04_star.py

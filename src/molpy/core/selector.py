@@ -40,9 +40,6 @@ class MaskPredicate(ABC):
     __ror__ = __or__
 
 
-Selector = MaskPredicate
-
-
 class AtomTypeSelector(MaskPredicate):
     """Select atoms by their type (integer or string)."""
 

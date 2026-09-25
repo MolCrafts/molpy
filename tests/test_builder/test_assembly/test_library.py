@@ -21,9 +21,11 @@ class TestMonomerLibrary:
 
     def test_expand_stamps_contiguous_residue_identity(self, eo_factory):
         topology = linear_topology(["EO"] * 3)
-        world = MonomerLibrary({"EO": eo_factory()}).expand(topology)
+        expansion = MonomerLibrary({"EO": eo_factory()}).expand(topology)
+        world = expansion.world
         assert sorted({int(atom[fields.RES_ID]) for atom in world.atoms}) == [1, 2, 3]
         assert {str(atom[fields.RES_NAME]) for atom in world.atoms} == {"EO"}
+        assert expansion.pairing is not None
 
     def test_unknown_topology_label_is_rejected(self, eo_factory):
         topology = linear_topology(["ZZ"] * 2)
@@ -41,5 +43,5 @@ class TestMonomerLibrary:
         template.atoms[0][fields.TYPE] = "caller-mutation"
         exposed.atoms[0][fields.TYPE] = "returned-copy-mutation"
         topology = linear_topology(["EO"])
-        expanded = library.expand(topology)
+        expanded = library.expand(topology).world
         assert [atom.get(fields.TYPE) for atom in expanded.atoms] == original_types

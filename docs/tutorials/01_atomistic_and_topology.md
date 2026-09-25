@@ -135,11 +135,11 @@ h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.0)
 water.def_bond(ow, h1)
 water.def_bond(ow, h2)
 
-two = water + water.copy().move([5.0, 0.0, 0.0])
+two = water + water.copy().translate([5.0, 0.0, 0.0])
 print(len(two.atoms), len(two.bonds))
 # -> 6 4
 
-box = water.replicate(4, lambda m, i: m.move([i * 4.0, 0.0, 0.0]))
+box = water.replicate(4, lambda m, i: m.translate([i * 4.0, 0.0, 0.0]))
 print(len(box.atoms))
 # -> 12
 ```

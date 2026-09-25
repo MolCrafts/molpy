@@ -23,7 +23,7 @@ import molrs
 
 from molrs.views import Bead, CGBond, _GraphViews
 
-from molpy.core.entity import Entities, Entity, Link, NotPublic
+from molpy.core.entity import Entities, Link, NotPublic
 
 if TYPE_CHECKING:
     from molrs import Frame
@@ -243,51 +243,6 @@ class CoarseGrain(molrs.CoarseGrain, _GraphViews):
         struct = CoarseGrain()
         molrs.CoarseGrain.adopt(struct, graph)
         return struct
-
-    # ---------- spatial ----------
-    def move(
-        self, delta: list[float], *, entity_type: type[Entity] = Bead
-    ) -> "CoarseGrain":
-        molrs.translate(self, [float(d) for d in delta])
-        return self
-
-    def rotate(
-        self,
-        axis: list[float],
-        angle: float,
-        about: list[float] | None = None,
-        *,
-        entity_type: type[Entity] = Bead,
-    ) -> "CoarseGrain":
-        o = [0.0, 0.0, 0.0] if about is None else list(about)
-        molrs.rotate(self, axis, float(angle), o)
-        return self
-
-    def scale(
-        self,
-        factor: float,
-        about: list[float] | None = None,
-        *,
-        entity_type: type[Entity] = Bead,
-    ) -> "CoarseGrain":
-        o = [0.0, 0.0, 0.0] if about is None else list(about)
-        molrs.scale(self, [factor, factor, factor], o)
-        return self
-
-    def align(
-        self,
-        a: Entity,
-        b: Entity,
-        *,
-        a_dir: list[float] | None = None,
-        b_dir: list[float] | None = None,
-        flip: bool = False,
-        entity_type: type[Entity] = Bead,
-    ) -> "CoarseGrain":
-        pa = [a["x"], a["y"], a["z"]]
-        pb = [b["x"], b["y"], b["z"]]
-        molrs.align_direction(self, pa, pb, a_dir, b_dir, flip)
-        return self
 
     # ---------- composition ----------
     def __iadd__(self, other: "CoarseGrain") -> "CoarseGrain":

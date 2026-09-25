@@ -44,11 +44,11 @@ docs/user-guide/topology/ examples/topology/
 Whatever architecture you want, MolPy asks for the same three answers.
 
 1. **Which atoms may react** — `fields.SITE` via `SiteMap`
-2. **What the reaction does** — `mp.Reaction(...)` (Daylight reaction SMARTS)
+2. **What the reaction does** — `mp.Reaction(...)`, written as a reaction SMARTS. SMARTS (SMILES arbitrary target specification) is the Daylight pattern language for describing a group of atoms and bonds — like a SMILES string, but each atom may be a query such as "an oxygen carrying site label `a`"; a *reaction* SMARTS writes the reactant patterns, `>>`, then the product (see [Reaction SMARTS](#reaction-smarts-one-screen) below)
 3. **Which sites pair** — a `Selector` (chosen for you by `build_*`, or passed to `apply`)
 
 **`PolymerBuilder.build(topology)` is the only expand + apply entry**, where
-`topology` is a `CGSmilesGraphIR`.
+`topology` is a `ResidueTopology`.
 `build_linear`, `build_sequence`, `build_ring`, and `build_star` only build that
 topology and call `build`.
 
@@ -133,7 +133,7 @@ Complex materials are **stacks** of these edits (build → mark → `Replicas` �
 
 ## Production GAFF gel
 
-Teaching scripts stay pure assembly. A parameterized offline gel (AmberTools + LAMMPS) is documented in [Building a Crosslinked Gel](../16_crosslinked_gel.md) and implemented under `polymer_builders/peo_gel/`.
+Teaching scripts stay pure assembly. A parameterized offline gel (AmberTools + LAMMPS) is documented in [Building a Crosslinked Gel](../16_crosslinked_gel.md).
 
 ## See also
 

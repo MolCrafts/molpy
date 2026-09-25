@@ -67,23 +67,26 @@ Readers call `canonicalize()` at exit (format → canonical); writers call `loca
 
 ## The mutation contract
 
-The core data-model API mutates in place and returns `self` (or the created entity) for chaining: `def_atom`, `def_bond`, `get_topo`, `move`, `rotate`, `merge` all modify the structure they are called on. `.copy()` is the explicit opt-in for an independent deep copy. Higher-level helpers in `builder` and `op` follow the opposite convention: they must not mutate caller-owned structures unexpectedly — copy first, or build and return a new structure.
+The core data-model API mutates in place and returns `self` (or the created entity) for chaining: `def_atom`, `def_bond`, `get_topo`, `translate`, `rotate`, `scale`, `merge` all modify the structure they are called on. `.copy()` is the explicit opt-in for an independent deep copy. Higher-level helpers in `builder` and `op` follow the opposite convention: they must not mutate caller-owned structures unexpectedly — copy first, or build and return a new structure.
 
 ## Performance model of the build loop
 
 Assembly is linear in chain length because the growing graph is never retyped per edit:
 
-- **Compile before execution** — the selector first yields the complete binding set. The
-  compiler overlays all planned forming bonds on the intact templates and materializes a
-  bounded product motif for every junction. Residue-backed motifs contain whole user-defined
-  monomers, so they do not need artificial graph completion.
-- **Rooted local cache** — an isomorphism key includes the product motif, its chemical scalar
-  labels and the touched root. Identical junctions are typified once, even across builds. A
-  cache value contains scalar per-atom annotations only (`type`, `charge`, pair parameters,
-  etc.); it never copies local angle/dihedral rows into the world.
-- **One batch edit** — `molrs.Reaction.apply_many` resolves every leaving group against the
-  intact graph, deletes their union with one relation-table scan, then executes every planned
-  transform. There is no “grow once, retype the accumulated polymer, repeat” loop.
+- **React first, retype after** — the selector yields the complete binding set, an optional
+  placer moves the fragments once, and the whole batch is executed before any typing. Only
+  then is an `AffectedRegion` cut around each edit: its write-back set is every atom within
+  `max(reach, AffectedRegion.TERM_REACH)` bonds of the atoms the edit touched
+  (`TERM_REACH = 2`, the reach of a dihedral across the new bond), inside an extracted ball
+  of that radius plus `reach`; small rings (≤ `MAX_RING_SIZE = 8` atoms) arrive whole.
+- **Structural cache** — a region's key is its isomorphism-invariant structural hash plus
+  its write-back set in canonical order. Identical junctions are typified once, even across
+  builds that reuse one assembler. A cache value contains scalar per-atom annotations only
+  (`type`, `charge`, pair parameters, etc.); it never copies local angle/dihedral rows into
+  the world.
+- **One batch edit** — `Reaction.apply_many_detailed` resolves every leaving group against
+  the intact graph, deletes their union with one relation-table scan, then executes every
+  planned transform. There is no “grow once, retype the accumulated polymer, repeat” loop.
 - **Explicit finalization** — `Finalization.ATOMS` stops after atom write-back;
   `Finalization.TOPOLOGY` generates angle/dihedral topology once (the default); and
   `Finalization.BONDED` additionally runs `ForceFieldParams` once over that topology. Large
@@ -93,7 +96,7 @@ Assembly is linear in chain length because the growing graph is never retyped pe
   that needs it, and `TopologySelector` indexes by residue instead.
 
 
-Nothing per-connection scales with chain length. The compile-first kernel performs
+Nothing per-connection scales with chain length. The react-first kernel performs
 bounded local work per binding, a single batch reaction, and at most one requested
 whole-graph finalization pass — not O(N²) structure copies for a DP=N chain.
 

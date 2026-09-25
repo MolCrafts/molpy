@@ -10,6 +10,7 @@ of each to make (:mod:`system`).
 
 from .distributions import (
     DPDistribution,
+    DistributionIR,
     FlorySchulzPolydisperse,
     MassDistribution,
     PoissonPolydisperse,
@@ -30,7 +31,6 @@ from .system import (
 )
 
 __all__ = [
-    # Placer
     # Sequence generators
     "AlternatingSequenceGenerator",
     "BlockSequenceGenerator",
@@ -38,6 +38,7 @@ __all__ = [
     "WeightedSequenceGenerator",
     # Distributions
     "DPDistribution",
+    "DistributionIR",
     "MassDistribution",
     "FlorySchulzPolydisperse",
     "PoissonPolydisperse",

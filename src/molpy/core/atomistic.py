@@ -27,7 +27,7 @@ from molrs.views import (
     _GraphViews,
 )
 
-from molpy.core.entity import Entities, Entity, Link, NotPublic
+from molpy.core.entity import Entities, Link, NotPublic
 from molpy.core import fields
 
 if TYPE_CHECKING:
@@ -499,53 +499,6 @@ class Atomistic(molrs.Atomistic, _GraphViews):
         ``Atomistic`` — the call site never needs a second ``adopt``.
         """
         return cls.adopt(molrs.Atomistic.from_frame(frame))
-
-    # ---------- spatial operations ----------
-    def move(
-        self, delta: list[float], *, entity_type: type[Entity] = Atom
-    ) -> "Atomistic":
-        # Delegate to the molrs Rust kernel (vectorized over the dense
-        # coordinate columns) instead of a per-atom Python loop.
-        molrs.translate(self, [float(d) for d in delta])
-        return self
-
-    def rotate(
-        self,
-        axis: list[float],
-        angle: float,
-        about: list[float] | None = None,
-        *,
-        entity_type: type[Entity] = Atom,
-    ) -> "Atomistic":
-        o = [0.0, 0.0, 0.0] if about is None else list(about)
-        molrs.rotate(self, axis, float(angle), o)
-        return self
-
-    def scale(
-        self,
-        factor: float,
-        about: list[float] | None = None,
-        *,
-        entity_type: type[Entity] = Atom,
-    ) -> "Atomistic":
-        o = [0.0, 0.0, 0.0] if about is None else list(about)
-        molrs.scale(self, [factor, factor, factor], o)
-        return self
-
-    def align(
-        self,
-        a: Atom,
-        b: Atom,
-        *,
-        a_dir: list[float] | None = None,
-        b_dir: list[float] | None = None,
-        flip: bool = False,
-        entity_type: type[Entity] = Atom,
-    ) -> "Atomistic":
-        pa = [a["x"], a["y"], a["z"]]
-        pb = [b["x"], b["y"], b["z"]]
-        molrs.align_direction(self, pa, pb, a_dir, b_dir, flip)
-        return self
 
     # ---------- composition ----------
     def __iadd__(self, other: "Atomistic") -> "Atomistic":

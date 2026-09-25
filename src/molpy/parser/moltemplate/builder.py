@@ -20,7 +20,7 @@ All other sections are preserved as raw text in ``ForceField.metadata[section]``
 from __future__ import annotations
 
 import math
-
+import random
 import re
 from pathlib import Path
 from typing import Any
@@ -548,63 +548,6 @@ def _init_style_registry() -> None:
     )
 
 
-def build_forcefield(doc: Document, *, base_dir: Path | None = None) -> ForceField:
-    """Build a ``ForceField`` from a parsed MolTemplate document.
-
-    Args:
-        doc: Parsed document (from :func:`parse_file` / :func:`parse_string`).
-        base_dir: Base directory for resolving ``import`` statements. Defaults
-            to the current working directory.
-
-    Returns:
-        Populated ``ForceField`` instance.
-    """
-    _init_style_registry()
-    if base_dir is None:
-        base_dir = Path.cwd()
-    doc = _resolve_imports(doc, base_dir)
-    flat = _flatten(doc)
-
-    ff = ForceField(name="moltemplate", units="real")
-    ff.metadata = {}  # type: ignore[attr-defined]
-    # Flat list of ReplaceStmt entries applied during system build so atom
-    # declarations get decorated types (oplsaa-style).
-    replace_map: dict[str, list[tuple[str, str]]] = {
-        "atom": [],
-        "bond": [],
-        "angle": [],
-        "dihedral": [],
-        "improper": [],
-    }
-
-    for stmt in flat:
-        if isinstance(stmt, ReplaceStmt):
-            for old_tok, new_tok in stmt.pairs:
-                kind = _token_kind(old_tok)
-                new_kind = _token_kind(new_tok)
-                if kind is None or new_kind is None or kind != new_kind:
-                    continue
-                replace_map[kind].append(
-                    (_strip_prefix(old_tok), _strip_prefix(new_tok))
-                )
-            continue
-        if isinstance(stmt, (WriteBlock, WriteOnceBlock)):
-            section = stmt.section
-            if section in ("Data Masses",):
-                _parse_data_masses(ff, stmt.body_lines)
-            elif section in ("Data Charges", "In Charges"):
-                _parse_data_charges(ff, stmt.body_lines)
-            elif section == "In Settings":
-                _parse_in_settings(ff, stmt.body_lines)
-            else:
-                # Preserve other sections verbatim for emitters to consume.
-                getattr(ff, "metadata", {}).setdefault(section, []).extend(
-                    stmt.body_lines
-                )
-    ff.metadata.setdefault("_replace_map", replace_map)
-    return ff
-
-
 _KIND_PREFIX_RE = re.compile(r"^@(atom|bond|angle|dihedral|improper|pair|mol):")
 
 
@@ -688,7 +631,7 @@ def _build_template(
                     atom_type_replacements=atom_type_replacements,
                 )
                 for t in s.transforms:
-                    _apply_transform(sub_tmpl, t)
+                    t.apply(sub_tmpl)
                 # Rename sub atoms as "inst/atom_id" and merge
                 for a in list(sub_tmpl.atoms):
                     base_name = a.get("name", "")
@@ -794,21 +737,6 @@ def _resolve_atom(atoms: dict[str, Atom], ref: str) -> Atom | None:
     return None
 
 
-def _apply_transform(mol: Atomistic, t: Transform) -> None:
-    import math
-
-    op = t.op
-    a = t.args
-    if op == "move" and len(a) == 3:
-        mol.move([a[0], a[1], a[2]])
-    elif op == "rot" and len(a) >= 4:
-        angle_deg, ax, ay, az = a[0], a[1], a[2], a[3]
-        about = list(a[4:7]) if len(a) >= 7 else None
-        mol.rotate([ax, ay, az], math.radians(angle_deg), about=about)
-    elif op == "scale" and len(a) == 1:
-        mol.scale(a[0])
-
-
 _BY_TYPE_SECTIONS = {
     "Data Bonds By Type": ("bond", 2),
     "Data Angles By Type": ("angle", 3),
@@ -902,6 +830,18 @@ def _apply_by_type_to_system(system: Atomistic, ff: ForceField) -> None:
         t = link.get("type")
         return not t
 
+    # Rule matching is pure in (kind, endpoint types): memoize it so a large
+    # system with a handful of distinct type tuples scans the rules once each.
+    memo: dict[tuple[str, tuple[str, ...]], str | None] = {}
+
+    def _match(
+        kind: str, atypes: list[str], rules: list[tuple[str, list[re.Pattern[str]]]]
+    ) -> str | None:
+        key = (kind, tuple(atypes))
+        if key not in memo:
+            memo[key] = _match_bytype(atypes, rules)
+        return memo[key]
+
     if bond_rules:
         for bond in system.bonds:
             if not _want(bond):
@@ -912,7 +852,7 @@ def _apply_by_type_to_system(system: Atomistic, ff: ForceField) -> None:
             ]
             if any(not a for a in atypes):
                 continue
-            m = _match_bytype(atypes, bond_rules)
+            m = _match("bond", atypes, bond_rules)
             if m is not None:
                 bond["type"] = m
 
@@ -927,7 +867,7 @@ def _apply_by_type_to_system(system: Atomistic, ff: ForceField) -> None:
             ]
             if any(not a for a in atypes):
                 continue
-            m = _match_bytype(atypes, angle_rules)
+            m = _match("angle", atypes, angle_rules)
             if m is not None:
                 angle["type"] = m
 
@@ -943,7 +883,7 @@ def _apply_by_type_to_system(system: Atomistic, ff: ForceField) -> None:
             ]
             if any(not a for a in atypes):
                 continue
-            m = _match_bytype(atypes, dihe_rules)
+            m = _match("dihedral", atypes, dihe_rules)
             if m is not None:
                 dihe["type"] = m
 
@@ -959,118 +899,9 @@ def _apply_by_type_to_system(system: Atomistic, ff: ForceField) -> None:
             ]
             if any(not a for a in atypes):
                 continue
-            m = _match_bytype(atypes, impr_rules)
+            m = _match("improper", atypes, impr_rules)
             if m is not None:
                 impr["type"] = m
-
-
-def build_system(
-    doc: Document,
-    ff: ForceField | None = None,
-    *,
-    base_dir: Path | None = None,
-    auto_topology: bool = True,
-) -> tuple[Atomistic, ForceField]:
-    """Build an ``Atomistic`` system + ``ForceField`` from a MolTemplate doc.
-
-    ``new`` statements are instantiated by deep-copying the declaring class's
-    template atoms/bonds/angles/dihedrals, applying the transform chain, and
-    merging into the resulting container Atomistic.
-
-    Args:
-        doc: Parsed MolTemplate document.
-        ff: Optional pre-built ForceField to populate further. If None a
-            new one is built from ``doc``.
-        base_dir: Base directory used to resolve ``import`` statements.
-        auto_topology: When True (default), angles and dihedrals missing
-            from the source are auto-generated from bond connectivity
-            after all ``new`` statements are expanded. This approximates
-            moltemplate's ``Angles By Type`` / ``Dihedrals By Type`` rules
-            for the common case where rules are purely connectivity based.
-            Set False to retain only explicitly declared angles/dihedrals.
-    """
-    _init_style_registry()
-    if base_dir is None:
-        base_dir = Path.cwd()
-    doc = _resolve_imports(doc, base_dir)
-
-    if ff is None:
-        ff = build_forcefield(doc, base_dir=base_dir)
-
-    # Collect class templates (resolving inheritance by merging statements)
-    class_map: dict[str, ClassDef] = {}
-
-    def collect(stmts):
-        for s in stmts:
-            if isinstance(s, ClassDef):
-                class_map[s.name] = s
-                collect(s.statements)
-
-    collect(doc.statements)
-
-    def class_body(name: str, stack=()) -> list:
-        if name in stack:
-            return []
-        cls = class_map.get(name)
-        if cls is None:
-            return []
-        body: list = []
-        for base in cls.bases:
-            body.extend(class_body(base, stack + (name,)))
-        body.extend(s for s in cls.statements if not isinstance(s, ClassDef))
-        return body
-
-    # Build the atom-type rename map (flat list of (regex, replacement)).
-    atom_type_replacements = _compile_atom_type_replacements(
-        getattr(ff, "metadata", {}).get("_replace_map", {}).get("atom", [])
-    )
-
-    system = Atomistic()
-    for stmt in doc.statements:
-        if isinstance(stmt, NewStmt):
-            if stmt.class_name == "random":
-                _expand_random_stmt(
-                    system,
-                    stmt,
-                    class_body=class_body,
-                    class_map=class_map,
-                    atom_type_replacements=atom_type_replacements,
-                )
-                continue
-            cls_stmts = class_body(stmt.class_name)
-            base_count = max(stmt.count, 1)
-            grid = _enumerate_array_positions(stmt.arrays)
-            for _ in range(base_count):
-                for offsets in grid:
-                    tmpl = _build_template(
-                        cls_stmts,
-                        class_map=class_map,
-                        class_body_fn=class_body,
-                        atom_type_replacements=atom_type_replacements,
-                    )
-                    for t in stmt.transforms:
-                        _apply_transform(tmpl, t)
-                    for offset in offsets:
-                        _apply_transform(tmpl, offset)
-                    system += tmpl
-
-    if auto_topology and len(list(system.bonds)) > 0:
-        # Use MolPy's existing topology generator to fill in missing
-        # angles/dihedrals based on bond connectivity. This approximates
-        # moltemplate's `Angles By Type` / `Dihedrals By Type` rules for
-        # connectivity-driven FFs. Type assignment remains best-effort.
-        existing_angles = len(list(system.angles))
-        existing_dihedrals = len(list(system.dihedrals))
-        system = system.get_topo(
-            gen_angle=existing_angles == 0,
-            gen_dihe=existing_dihedrals == 0,
-        )  # type: ignore[assignment]
-
-    # Apply Bonds/Angles/Dihedrals/Impropers By Type wildcard rules to fill
-    # in missing ``type`` attributes on connectivity links.
-    _apply_by_type_to_system(system, ff)
-
-    return system, ff
 
 
 def _apply_atom_replace(
@@ -1110,12 +941,13 @@ def _expand_random_stmt(
           normalised to probabilities and ``random.choices`` draws the
           grid-size sample with replacement.
 
-    When ``stmt.random_seed`` is set, the PRNG used here is an isolated
-    instance seeded accordingly — the global ``random`` module is left
-    untouched so other callers stay deterministic across builds.
-    """
-    import random as _rnd
+    The PRNG is an isolated ``random.Random(stmt.random_seed)`` (OS-seeded
+    when no seed is given) — the global ``random`` module is left untouched.
+    The generated script (``PythonScriptEmitter``) constructs the same PRNG,
+    so one seed draws the same selection on both paths.
 
+    Each chosen class template is built once and copied per grid cell.
+    """
     choices = stmt.random_choices
     if not choices:
         # Nothing to materialise — keep historical behaviour of silent no-op.
@@ -1129,7 +961,7 @@ def _expand_random_stmt(
     if len(weights) != len(choices):
         return  # malformed weights — fall back to no-op
 
-    prng = _rnd.Random(stmt.random_seed) if stmt.random_seed is not None else _rnd
+    prng = random.Random(stmt.random_seed)
 
     selections: list[int]
     if _is_exact_count_vector(weights, grid_count):
@@ -1148,26 +980,29 @@ def _expand_random_stmt(
     # _enumerate_array_positions enforces a 1-cell grid when no arrays given.
     assert len(offsets_grid) * max(stmt.count, 1) == grid_count
 
+    templates: dict[str, Atomistic] = {}
     sel_iter = iter(selections)
     for _ in range(max(stmt.count, 1)):
         for offsets in offsets_grid:
             idx = next(sel_iter)
             choice = choices[idx]
-            cls_stmts = class_body(choice.class_name)
-            if not cls_stmts:
-                continue
-            tmpl = _build_template(
-                cls_stmts,
-                class_map=class_map,
-                class_body_fn=class_body,
-                atom_type_replacements=atom_type_replacements,
-            )
+            if choice.class_name not in templates:
+                cls_stmts = class_body(choice.class_name)
+                if not cls_stmts:
+                    continue
+                templates[choice.class_name] = _build_template(
+                    cls_stmts,
+                    class_map=class_map,
+                    class_body_fn=class_body,
+                    atom_type_replacements=atom_type_replacements,
+                )
+            tmpl = templates[choice.class_name].copy()
             for t in choice.transforms:
-                _apply_transform(tmpl, t)
+                t.apply(tmpl)
             for t in stmt.transforms:
-                _apply_transform(tmpl, t)
+                t.apply(tmpl)
             for offset in offsets:
-                _apply_transform(tmpl, offset)
+                offset.apply(tmpl)
             system += tmpl
 
 
@@ -1209,9 +1044,11 @@ def _enumerate_array_positions(
 ) -> list[list[Transform]]:
     """Enumerate every grid cell as a list-of-transforms.
 
-    For ``[N1].move(dx1) [N2].move(dx2)`` returns N1 * N2 lists; cell
-    ``(k1, k2)`` is ``[Transform("move", k1*dx1), Transform("move", k2*dx2)]``.
-    If ``arrays`` is empty, returns a single empty list (one copy, no shift).
+    For ``[N1].op1(...) [N2].op2(...)`` returns N1 * N2 lists; cell
+    ``(k1, k2)`` is ``[op1.repeated(k1), op2.repeated(k2)]`` (see
+    :meth:`Transform.repeated`), with index ``0`` contributing nothing so copy
+    ``0`` is the untransformed template. If ``arrays`` is empty, returns a
+    single empty list (one copy, no shift).
     """
     if not arrays:
         return [[]]
@@ -1223,10 +1060,190 @@ def _enumerate_array_positions(
                 if dim.transform is None or k == 0:
                     new_cells.append(cell + [])
                 else:
-                    scaled = Transform(
-                        op=dim.transform.op,
-                        args=[a * k for a in dim.transform.args],
-                    )
-                    new_cells.append(cell + [scaled])
+                    new_cells.append(cell + [dim.transform.repeated(k)])
         cells = new_cells
     return cells
+
+
+class MolTemplateBuilder:
+    """Turn one parsed moltemplate document into MolPy domain objects.
+
+    The builder owns one import-resolved document and one ``ForceField``:
+    ``import`` statements are resolved against ``base_dir`` once, at
+    construction, and :meth:`build_forcefield` builds the force field once —
+    :meth:`build_system` types its system against that same object unless the
+    caller supplies another.
+
+    Example::
+
+        builder = MolTemplateBuilder(parse_file("system.lt"), base_dir=root)
+        ff = builder.build_forcefield()
+        system, same_ff = builder.build_system()  # same_ff is ff
+    """
+
+    def __init__(self, doc: Document, *, base_dir: Path | None = None) -> None:
+        """Bind ``doc`` and resolve its ``import`` statements.
+
+        Args:
+            doc: Parsed document (from :func:`parse_file` / :func:`parse_string`).
+            base_dir: Directory ``import`` paths are resolved against. Defaults
+                to the working directory at construction time.
+        """
+        _init_style_registry()
+        self._base_dir = Path.cwd() if base_dir is None else Path(base_dir)
+        self._doc = _resolve_imports(doc, self._base_dir)
+        self._ff: ForceField | None = None
+
+    def build_forcefield(self) -> ForceField:
+        """Return the document's ``ForceField``, building it on first call.
+
+        Returns:
+            The builder's force field; every call returns the same object.
+        """
+        if self._ff is not None:
+            return self._ff
+
+        ff = ForceField(name="moltemplate", units="real")
+        ff.metadata = {}  # type: ignore[attr-defined]
+        # Flat list of ReplaceStmt entries applied during system build so atom
+        # declarations get decorated types (oplsaa-style).
+        replace_map: dict[str, list[tuple[str, str]]] = {
+            "atom": [],
+            "bond": [],
+            "angle": [],
+            "dihedral": [],
+            "improper": [],
+        }
+
+        for stmt in _flatten(self._doc):
+            if isinstance(stmt, ReplaceStmt):
+                for old_tok, new_tok in stmt.pairs:
+                    kind = _token_kind(old_tok)
+                    new_kind = _token_kind(new_tok)
+                    if kind is None or new_kind is None or kind != new_kind:
+                        continue
+                    replace_map[kind].append(
+                        (_strip_prefix(old_tok), _strip_prefix(new_tok))
+                    )
+                continue
+            if isinstance(stmt, (WriteBlock, WriteOnceBlock)):
+                section = stmt.section
+                if section in ("Data Masses",):
+                    _parse_data_masses(ff, stmt.body_lines)
+                elif section in ("Data Charges", "In Charges"):
+                    _parse_data_charges(ff, stmt.body_lines)
+                elif section == "In Settings":
+                    _parse_in_settings(ff, stmt.body_lines)
+                else:
+                    # Preserve other sections verbatim for emitters to consume.
+                    getattr(ff, "metadata", {}).setdefault(section, []).extend(
+                        stmt.body_lines
+                    )
+        ff.metadata.setdefault("_replace_map", replace_map)
+        self._ff = ff
+        return ff
+
+    def build_system(
+        self,
+        ff: ForceField | None = None,
+        *,
+        auto_topology: bool = True,
+    ) -> tuple[Atomistic, ForceField]:
+        """Build the ``Atomistic`` system the document's ``new`` statements describe.
+
+        Each ``new`` statement builds its class template once, copies it per
+        instance, applies the instance transform chain and the array
+        transforms (copy ``k`` of ``[N].op(...)`` carries ``op`` applied ``k``
+        times), and merges the copy into the system.
+
+        Args:
+            ff: Force field the system is typed against — its ``replace`` map
+                renames atom types and its ``By Type`` sections type untyped
+                links. Defaults to :meth:`build_forcefield`.
+            auto_topology: When True (default), angles and dihedrals missing
+                from the source are generated from bond connectivity after all
+                ``new`` statements are expanded, approximating moltemplate's
+                ``Angles By Type`` / ``Dihedrals By Type`` rules for
+                connectivity-driven force fields. False keeps only the
+                explicitly declared angles/dihedrals.
+
+        Returns:
+            ``(system, ff)`` — ``ff`` is the argument when given, otherwise the
+            builder's own force field.
+        """
+        if ff is None:
+            ff = self.build_forcefield()
+
+        # Collect class templates (resolving inheritance by merging statements)
+        class_map: dict[str, ClassDef] = {}
+
+        def collect(stmts):
+            for s in stmts:
+                if isinstance(s, ClassDef):
+                    class_map[s.name] = s
+                    collect(s.statements)
+
+        collect(self._doc.statements)
+
+        def class_body(name: str, stack=()) -> list:
+            if name in stack:
+                return []
+            cls = class_map.get(name)
+            if cls is None:
+                return []
+            body: list = []
+            for base in cls.bases:
+                body.extend(class_body(base, stack + (name,)))
+            body.extend(s for s in cls.statements if not isinstance(s, ClassDef))
+            return body
+
+        # Build the atom-type rename map (flat list of (regex, replacement)).
+        atom_type_replacements = _compile_atom_type_replacements(
+            getattr(ff, "metadata", {}).get("_replace_map", {}).get("atom", [])
+        )
+
+        system = Atomistic()
+        for stmt in self._doc.statements:
+            if not isinstance(stmt, NewStmt):
+                continue
+            if stmt.class_name == "random":
+                _expand_random_stmt(
+                    system,
+                    stmt,
+                    class_body=class_body,
+                    class_map=class_map,
+                    atom_type_replacements=atom_type_replacements,
+                )
+                continue
+            template = _build_template(
+                class_body(stmt.class_name),
+                class_map=class_map,
+                class_body_fn=class_body,
+                atom_type_replacements=atom_type_replacements,
+            )
+            grid = _enumerate_array_positions(stmt.arrays)
+            for _ in range(max(stmt.count, 1)):
+                for offsets in grid:
+                    tmpl = template.copy()
+                    for t in stmt.transforms:
+                        t.apply(tmpl)
+                    for offset in offsets:
+                        offset.apply(tmpl)
+                    system += tmpl
+
+        if auto_topology and len(list(system.bonds)) > 0:
+            # Fill in missing angles/dihedrals from bond connectivity. This
+            # approximates moltemplate's `Angles By Type` / `Dihedrals By Type`
+            # rules for connectivity-driven FFs; type assignment is best-effort.
+            existing_angles = len(list(system.angles))
+            existing_dihedrals = len(list(system.dihedrals))
+            system = system.get_topo(
+                gen_angle=existing_angles == 0,
+                gen_dihe=existing_dihedrals == 0,
+            )  # type: ignore[assignment]
+
+        # Apply Bonds/Angles/Dihedrals/Impropers By Type wildcard rules to fill
+        # in missing ``type`` attributes on connectivity links.
+        _apply_by_type_to_system(system, ff)
+
+        return system, ff
