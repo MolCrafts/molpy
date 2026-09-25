@@ -2110,7 +2110,6 @@
   <Angle class1="CT" class2="CT" class3="I" angle="1.91986" k="577.392"/>
   <Angle class1="I" class2="CT" class3="I" angle="1.9495328" k="652.704"/>
   <Angle class1="HC" class2="CT" class3="I" angle="1.8779743" k="426.768"/>
-  <Angle class1="CA" class2="CA" class3="I" angle="2.0944" k="627.600"/>
   <Angle class1="Cl" class2="CM" class3="Cl" angle="1.989675" k="502.080"/>
   <Angle class1="O_2" class2="C" class3="OS" angle="2.153736" k="694.544"/>
   <Angle class1="NT" class2="CZ" class3="NZ" angle="3.141592" k="1255.200"/>
