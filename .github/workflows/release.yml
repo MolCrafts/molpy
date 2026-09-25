@@ -29,6 +29,18 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - uses: astral-sh/setup-uv@v9.0.0
+      - name: No uv source overrides
+        # A [tool.uv.sources] entry (e.g. a path to a sibling molrs checkout)
+        # makes the test job resolve something other than what the wheel will
+        # declare, and turns off check_molrs_pin_on_pypi.py. Never release with one.
+        shell: bash
+        run: |
+          python - <<'PY'
+          import sys, tomllib
+          sources = tomllib.load(open("pyproject.toml", "rb")).get("tool", {}).get("uv", {}).get("sources", {})
+          if sources:
+              sys.exit(f"::error::pyproject.toml still has [tool.uv.sources] {sorted(sources)}; remove it before tagging.")
+          PY
       - name: Unit tests
         run: uv run --extra dev python -m pytest tests/ -n auto
 

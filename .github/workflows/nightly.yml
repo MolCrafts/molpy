@@ -69,27 +69,25 @@ jobs:
           t = re.sub(r'^version\s*=\s*".*?"', f'version = "{dev}"', t, count=1, flags=re.M)
           p.write_text(t)
           PY
-          # Rename the PyPI distribution to the nightly project and bind the
-          # molrs pin to the matching nightly package (stable 0.14 is not on
-          # PyPI yet; `tool.uv.sources` is uv-only and would not help pip).
+          # Rename the PyPI distribution to the nightly project, bind the molrs
+          # pin (whatever major.minor it names) to the matching nightly package,
+          # and drop any [tool.uv.sources] table (uv-only; pip ignores it and a
+          # path source cannot resolve on a runner).
           python - <<'PY'
           import re, pathlib
           p = pathlib.Path("pyproject.toml")
           t = p.read_text()
           t = re.sub(r'^name\s*=\s*"molcrafts-molpy"',
                      'name = "molcrafts-molpy-nightly"', t, count=1, flags=re.M)
-          t = re.sub(
-              r'"molcrafts-molrs>=0\.14\.0,<0\.15"',
-              '"molcrafts-molrs-nightly>=0.14.0.dev0"',
+          t, n = re.subn(
+              r'"molcrafts-molrs>=(\d+)\.(\d+)\.\d+,<\d+\.\d+"',
+              r'"molcrafts-molrs-nightly>=\1.\2.0.dev0"',
               t,
               count=1,
           )
-          t = re.sub(
-              r'\n# Until molcrafts-molrs 0\.14 is on PyPI[\s\S]*?rev = "dev" \}\n',
-              '\n',
-              t,
-              count=1,
-          )
+          if n != 1:
+              raise SystemExit("molrs pin not found in pyproject.toml")
+          t = re.sub(r'\n\[tool\.uv\.sources\]\n(?:[^\[].*\n|\n)*', '\n', t, count=1)
           p.write_text(t)
           PY
 

@@ -32,8 +32,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - uses: astral-sh/setup-uv@v9.0.0
-      # tox's pip install does not honor [tool.uv.sources]; uv does, so the
-      # unpublished molrs 0.14 git pin actually resolves here.
+      # uv honours [tool.uv.sources]; tox's pip install does not. While
+      # pyproject.toml carries a path source to a sibling molrs checkout (only
+      # between a molrs tag and its PyPI release), this job cannot resolve on a
+      # runner; release.yml refuses to publish with any source override.
       - run: uv run --extra dev python -m pytest tests/ -n auto
 
   # Publishes this run's tests and coverage to the MolCrafts CI index, which
