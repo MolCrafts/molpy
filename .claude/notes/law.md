@@ -311,7 +311,8 @@ text.
                        first!"; pin `molcrafts-molrs>=0.15.0,<0.16`
                        introduced in 60a3455.
     Scope:             the molpy dev branch through the molrs-015-align
-                       spec chain.
+                       and trace-assembly spec chains (trace-assembly
+                       added by the operator, 2026-09-27).
     Removal condition: molrs v0.15.0 tagged and published; molpy is not
                        tagged or released before that.
     Owner:             operator.
