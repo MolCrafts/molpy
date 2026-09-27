@@ -298,6 +298,24 @@ Convenience is not sufficient justification. The exception is itself
 an architecture decision. An agent never grants one from the task
 text.
 
+## Recorded exceptions
+
+### molrs 0.15 co-development pin (2026-09-27)
+
+    Law violated:      16 (molpy-release-order) — "never bump the molrs pin
+                       to a minor that is not published".
+    Reason:            molpy is aligned with molrs 0.15 while that minor is
+                       developed; the alignment runs against the local
+                       editable molrs build.
+    Evidence:          operator, 2026-09-27: "use local editable version
+                       first!"; pin `molcrafts-molrs>=0.15.0,<0.16`
+                       introduced in 60a3455.
+    Scope:             the molpy dev branch through the molrs-015-align
+                       spec chain.
+    Removal condition: molrs v0.15.0 tagged and published; molpy is not
+                       tagged or released before that.
+    Owner:             operator.
+
 ---
 
 # VIII. Derived principles
