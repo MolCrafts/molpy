@@ -310,9 +310,11 @@ text.
     Evidence:          operator, 2026-09-27: "use local editable version
                        first!"; pin `molcrafts-molrs>=0.15.0,<0.16`
                        introduced in 60a3455.
-    Scope:             the molpy dev branch through the molrs-015-align
-                       and trace-assembly spec chains (trace-assembly
-                       added by the operator, 2026-09-27).
+    Scope:             the molpy development branch in use for this work
+                       (`ci/narrow-gitignore`, which carries the pin since
+                       60a3455) through the molrs-015-align and
+                       trace-assembly spec chains (trace-assembly added by
+                       the operator, 2026-09-27).
     Removal condition: molrs v0.15.0 tagged and published; molpy is not
                        tagged or released before that.
     Owner:             operator.
