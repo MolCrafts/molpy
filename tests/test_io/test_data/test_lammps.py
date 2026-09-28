@@ -1082,5 +1082,35 @@ class TestForceFieldCoeffs:
             "Pair Coeffs\n\n1 notanumber 3.5\n\n"
             "Atoms\n\n1 1 1 0.0 0.0 0.0 0.0\n2 1 1 0.0 0.5 0.0 0.0\n"
         )
+        result = LammpsDataReader(data, atom_style="full").read()
         with pytest.raises(ValueError, match="malformed PairCoeffs"):
-            LammpsDataReader(data, atom_style="full").read()
+            result.forcefield
+
+
+class TestLazyForceField:
+    """``* Coeffs`` become a ForceField on first ``.forcefield`` access only."""
+
+    @pytest.fixture
+    def cosine_file(self, lammps_dir: Path) -> Path:
+        return lammps_dir / "cosine_angle_coeffs.data"
+
+    def test_structure_read_survives_unparseable_coeffs(self, cosine_file):
+        result = mp.io.read_lammps_data(cosine_file, atom_style="angle")
+        assert result.frame["atoms"].nrows == 3
+
+    def test_unparseable_coeffs_raise_on_every_access(self, cosine_file):
+        result = mp.io.read_lammps_data(cosine_file, atom_style="angle")
+        for _ in range(2):  # a failure is not cached
+            with pytest.raises(ValueError, match="theta0"):
+                result.forcefield
+
+    def test_units_follow_frame_meta(self, lammps_dir):
+        result = LammpsDataReader(lammps_dir / "coeffs.lmp", atom_style="full").read()
+        result.frame.meta["lammps_units"] = "metal"
+        epsilon = {
+            t.name: t.get("epsilon")
+            for s in result.forcefield.get_styles(mp.PairStyle)
+            for t in s.get_types(mp.Type)
+        }
+        # metal epsilon is eV; 1 eV = 23.060548 kcal/mol.
+        assert epsilon["1"] == pytest.approx(0.1521 * 23.060548, rel=1e-5)

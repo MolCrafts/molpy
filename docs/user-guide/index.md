@@ -11,7 +11,6 @@ Several guides use polymers as the working example — a demonstration domain, n
 ## Chain & Network Construction
 
 - [Assembly](02_assembly.md) — one `GraphAssembler` grows chains, crosslinks melts, and closes rings; only the `Selector` that pairs the reaction sites differs
-- [Building a Crosslinked Gel](16_crosslinked_gel.md) — offline end-to-end workflow: GAFF chain → grid melt → crosslink → LAMMPS equilibration → network connectivity analysis
 - [Polydisperse Systems](05_polydisperse_systems.md) — molecular-weight distribution sampling, atomistic chain construction, and box packing
 
 ## Polymer Topologies

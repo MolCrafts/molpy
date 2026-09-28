@@ -2,19 +2,17 @@
 
 **Script:** [`examples/topology/01_linear.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/01_linear.py)
 
-A path of identical residues is the simplest ruled topology. `build_linear` is a shortcut that builds a linear residue topology and calls the sole entry `build`.
+A path of identical units is the simplest topology: `{[#EO]|10}` is ten `EO` sites, each bonded to the next.
 
 ```python
-from eo_kit import eo_builder # examples/topology/
-from molpy.builder.assembly import linear_topology
+import molpy as mp
+from eo_kit import library  # examples/topology/
 
-builder = eo_builder()
-chain = builder.build_linear("EO", 10)
-# identical to, because build_linear is exactly this pair of calls:
-chain = builder.build(linear_topology(["EO"] * 10))
+sites = mp.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
+chain = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
-**Check:** 10 residues (`fields.RES_ID` 1…10), acyclic; atom count matches a direct `build(linear_topology(["EO"] * 10))`.
+**Check:** 10 units (`frag_id` 0…9), 72 atoms (7 per unit plus the two end hydrogens), 71 bonds, 2 open ports at the ends.
 
 ```bash
 cd examples && python topology/01_linear.py
@@ -22,5 +20,5 @@ cd examples && python topology/01_linear.py
 
 ## See also
 
-- [Block / sequence](02_block.md) — non-identical labels on a path
+- [Block / sequence](02_block.md) — different units on a path
 - [Section index](index.md)

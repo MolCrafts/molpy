@@ -26,7 +26,7 @@ def _chain_frame(n: int = 6, t: int = 0):
     ]
     for i in range(n - 1):
         mol.def_bond(atoms[i], atoms[i + 1])
-    return mol.get_topo().to_frame()
+    return mol.to_frame()
 
 
 def test_frame_carries_bonds_block():

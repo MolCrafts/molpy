@@ -1,194 +1,46 @@
-"""Shared ethylene-glycol kit for every topology example.
+"""Shared ethylene-oxide kit for every topology example.
 
 Guide: docs/user-guide/topology/index.md
 
-All scripts under ``examples/topology/`` import from here so chemistry stays
-consistent: one EO template, one ether reaction, one crosslink reaction.
+Every unit is one CGsmiles fragment whose bonding descriptors are its ports:
+``<`` joins ``>``, and a label (``<g`` / ``>g``) joins only the same label.
+Every topology is a CGsmiles string too; ``to_coarsegrain()`` turns it into
+the site graph that ``mp.Assembler`` grows with ``mp.GrowthPlacer`` into an
+``mp.Atomistic``.
 """
 
 from __future__ import annotations
 
-import math
-
 import molpy as mp
-from molpy.builder.assembly import (
-    MonomerLibrary,
-    PolymerBuilder,
-    SiteMap,
-    TracePlacer,
-)
-from molpy.conformer import Conformer
-from molpy.core import fields
 
-# Main-chain growth (ether condensation).
-ETHER = "[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]"
-
-# Statistical C–C crosslink after SITE x / h are marked.
-XLINK = "[C;%x:1][H;%h].[C;%x:2][H;%h]>>[C:1][C:2]"
-
-# End-link / agent coupling can reuse ETHER when ends carry a/b hydroxyls.
-# Second-network crosslink uses a distinct site namespace.
-XLINK2 = "[C;%y:1][H;%k].[C;%y:2][H;%k]>>[C:1][C:2]"
+UNITS = {
+    "EO": "[<]OCC[>]",  # -O-CH2-CH2-
+    "PO": "[<]OC(C)C[>]",  # -O-CH(CH3)-CH2-
+    "CAPA": "C[>]",  # CH3- : starts a chain on its `<` end
+    "CAPB": "[<]OC",  # -O-CH3 : ends a chain on its `>` end
+    "X3": "C(C[>])(C[>])C[>]",  # three-arm core
+    "BR": "[<]OCC(C[>g])[>]",  # backbone unit with a labelled graft port
+    "GR": "[<g]OCC[>]",  # first graft unit
+}
 
 
-def ethylene_glycol(*, seed: int = 42) -> mp.Atomistic:
-    """Bifunctional EO: OCCO, hydroxyl O labelled a / b."""
-    eo, _ = Conformer(add_hydrogens=True, seed=seed).generate(mp.io.read_smiles("OCCO"))
-    SiteMap(eo).label_elements("O", "a", "b")
-    return eo
-
-
-def monofunctional_cap(*, end: str = "b", seed: int = 7) -> mp.Atomistic:
-    """Single-OH cap (methanol).
-
-    ``end="a"`` starts a path (first reactant); ``end="b"`` terminates it
-    (second reactant). Telechelics need one of each.
-    """
-    if end not in ("a", "b"):
-        raise ValueError("end must be 'a' or 'b'")
-    cap, _ = Conformer(add_hydrogens=True, seed=seed).generate(mp.io.read_smiles("CO"))
-    SiteMap(cap).label_elements("O", end)
-    return cap
-
-
-def trifunctional_core(*, seed: int = 1) -> mp.Atomistic:
-    """Star / branch core: glycerol OCC(O)CO, three O SITE a."""
-    core, _ = Conformer(add_hydrogens=True, seed=seed).generate(
-        mp.io.read_smiles("OCC(O)CO")
-    )
-    oxygens = [a for a in core.atoms if a.get(fields.ELEMENT) == "O"]
-    if len(oxygens) < 3:
-        raise RuntimeError("expected three oxygens on OCC(O)CO")
-    SiteMap(core).label_atoms(oxygens[:3], "a", "a", "a")
-    return core
-
-
-def tetrafunctional_agent(*, seed: int = 2) -> mp.Atomistic:
-    """Four-arm agent: pentaerythritol-like C(CO)4 motif via C(CO)(CO)(CO)CO."""
-    # 2,2-bis(hydroxymethyl)propane-1,3-diol ≈ four primary OH
-    agent, _ = Conformer(add_hydrogens=True, seed=seed).generate(
-        mp.io.read_smiles("C(CO)(CO)(CO)CO")
-    )
-    oxygens = [a for a in agent.atoms if a.get(fields.ELEMENT) == "O"]
-    if len(oxygens) < 4:
-        raise RuntimeError("expected four oxygens on C(CO)(CO)(CO)CO")
-    SiteMap(agent).label_atoms(oxygens[:4], "a", "a", "a", "a")
-    return agent
-
-
-def branch_unit(*, seed: int = 3) -> mp.Atomistic:
-    """Comb junction: three OH (two chain + one graft) as a,a,b."""
-    unit, _ = Conformer(add_hydrogens=True, seed=seed).generate(
-        mp.io.read_smiles("OCC(O)CO")
-    )
-    oxygens = [a for a in unit.atoms if a.get(fields.ELEMENT) == "O"]
-    SiteMap(unit).label_atoms(oxygens[:3], "a", "a", "b")
-    return unit
-
-
-def eo_builder(
-    *,
-    extra: dict[str, mp.Atomistic] | None = None,
-    seed: int = 42,
-) -> PolymerBuilder:
-    library: dict[str, mp.Atomistic] = {"EO": ethylene_glycol(seed=seed)}
-    if extra:
-        library.update(extra)
-    return PolymerBuilder(
-        MonomerLibrary(library),
-        mp.Reaction(ETHER),
-        placer=TracePlacer(),
-    )
-
-
-def full_library(*, seed: int = 42) -> dict[str, mp.Atomistic]:
-    """All named templates used across the topology suite."""
+def library(*, seed: int = 42) -> dict[str, mp.Atomistic]:
+    """Every unit of :data:`UNITS` as a 3D molecule with hydrogens and ports."""
+    conformer = mp.Conformer(seed=seed)
     return {
-        "EO": ethylene_glycol(seed=seed),
-        "CAPA": monofunctional_cap(end="a", seed=seed + 1),
-        "CAPB": monofunctional_cap(end="b", seed=seed + 2),
-        "X3": trifunctional_core(seed=seed + 3),
-        "X4": tetrafunctional_agent(seed=seed + 4),
-        "BR": branch_unit(seed=seed + 5),
+        name: conformer.generate(
+            mp.CGSmilesIR(f"{{[#{name}]}}.{{#{name}={body}}}").to_fragment()[name]
+        )[0]
+        for name, body in UNITS.items()
     }
 
 
-def report(name: str, polymer: mp.Atomistic) -> None:
-    n_at = polymer.n_atoms
-    n_bd = len(list(polymer.bonds))
-    res_ids = {
-        int(a[fields.RES_ID]) for a in polymer.atoms if a.get(fields.RES_ID) is not None
-    }
-    n_res = len(res_ids) if res_ids else 0
-    shape = "cyclic" if n_res and n_bd >= n_at else "acyclic"
+def report(name: str, world: mp.Atomistic) -> None:
+    """Atoms, bonds, units and the ports left open."""
+    atoms = world.to_frame()["atoms"]
+    n_units = len(set(atoms["frag_id"].tolist()))
+    n_bonds = world.to_frame()["bonds"].nrows
     print(
-        f"{name:16s}  residues={n_res:3d}  atoms={n_at:4d}  bonds={n_bd:4d}  ({shape})"
+        f"{name:14s} units={n_units:3d}  atoms={world.n_atoms:4d}  "
+        f"bonds={n_bonds:4d}  open ports={world.n_ports}"
     )
-    # Forming bonds join two residues; placement must leave them in bonding range.
-    junctions = [
-        math.dist(
-            (i[fields.X], i[fields.Y], i[fields.Z]),
-            (j[fields.X], j[fields.Y], j[fields.Z]),
-        )
-        for i, j in (bond.endpoints for bond in polymer.bonds)
-        if i.get(fields.RES_ID) != j.get(fields.RES_ID)
-    ]
-    if junctions:
-        print(
-            f"{'':16s}  junctions={len(junctions):3d}  "
-            f"max length={max(junctions):.3f} A  mean={sum(junctions) / len(junctions):.3f} A"
-        )
-
-
-def mark_backbone_crosslink_sites(
-    strand: mp.Atomistic,
-    *,
-    step: int = 2,
-    site: str = "x",
-    leaving: str = "h",
-) -> list:
-    carbons = [
-        a
-        for a in strand.atoms
-        if a.get(fields.ELEMENT) == "C"
-        and any(n.get(fields.ELEMENT) == "H" for n in strand.get_neighbors(a))
-    ]
-    return SiteMap(strand).every_nth(
-        carbons, step, site, leaving=leaving, fold_charge=True
-    )
-
-
-def mark_residue_crosslink_sites(
-    strand: mp.Atomistic,
-    res_names: set[str],
-    *,
-    site: str = "x",
-    leaving: str = "h",
-) -> list:
-    """Mark carbons only on residues whose RES_NAME is in ``res_names``."""
-    carbons = [
-        a
-        for a in strand.atoms
-        if str(a.get(fields.RES_NAME)) in res_names
-        and a.get(fields.ELEMENT) == "C"
-        and any(n.get(fields.ELEMENT) == "H" for n in strand.get_neighbors(a))
-    ]
-    return SiteMap(strand).every_nth(
-        carbons, 1, site, leaving=leaving, fold_charge=True
-    )
-
-
-def mark_end_hydroxyls(
-    strand: mp.Atomistic,
-    *,
-    site: str = "x",
-    leaving: str = "h",
-) -> list:
-    """Mark remaining hydroxyl O (still bonded to H) as crosslink sites."""
-    ends = [
-        a
-        for a in strand.atoms
-        if a.get(fields.ELEMENT) == "O"
-        and any(n.get(fields.ELEMENT) == "H" for n in strand.get_neighbors(a))
-    ]
-    return SiteMap(strand).every_nth(ends, 1, site, leaving=leaving, fold_charge=True)

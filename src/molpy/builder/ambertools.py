@@ -1,15 +1,13 @@
 """``AmberTools`` — one object for GAFF parameterisation via the Amber suite.
 
 A single facade owning force-field / charge-method config (and an optional
-named env for AmberTools binaries), with member functions for the three things
+named env for AmberTools binaries), with member functions for the two things
 every GAFF workflow needs:
 
 * :meth:`parameterize` — a small molecule (antechamber → parmchk2 → tleap).
 * :meth:`parameterize_ion` — a monatomic ion from literature Lennard-Jones
   parameters (no charge calc), with the ``addAtomTypes`` element mapping baked
   in so tleap never writes ``ATOMIC_NUMBER = -1``.
-* :meth:`build_polymer` — a chain via :class:`AmberPolymerBuilder` (cached, so a
-  whole config matrix reuses one monomer parameterisation).
 
 Every result is charge-neutralised to its integer target, so an assembled
 system is neutral by construction.
@@ -17,13 +15,10 @@ system is neutral by construction.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
-import hashlib
 from pathlib import Path
 from typing import Any
 
-import molrs
 import numpy as np
 
 from molpy.core.atomistic import Atomistic
@@ -75,7 +70,6 @@ class AmberTools:
         self.charge_method = charge_method
         self.work_dir = Path(work_dir).resolve()
         self.work_dir.mkdir(parents=True, exist_ok=True)
-        self._polymer_builders: dict[tuple[Any, ...], Any] = {}
 
     # -- small molecule ----------------------------------------------------
     def parameterize(
@@ -181,7 +175,7 @@ class AmberTools:
         if result.prmtop is None or result.inpcrd is None:
             raise ValueError(
                 "AmberTools.minimize needs a result carrying prmtop/inpcrd "
-                "(produced by parameterize / build_polymer)."
+                "(produced by parameterize)."
             )
         d = self.work_dir / name
         d.mkdir(parents=True, exist_ok=True)
@@ -236,97 +230,3 @@ class AmberTools:
         frame, ff = read_amber(d / f"{name}.prmtop", d / f"{name}.inpcrd")
         _neutralize(frame, float(charge))
         return AmberResult(frame, ff)
-
-    # -- polymer -----------------------------------------------------------
-    def build_polymer(
-        self,
-        cgsmiles: str,
-        *,
-        library: Mapping[str, Atomistic],
-        reaction: molrs.Reaction,
-        net_charges: Mapping[str, int] | None = None,
-    ) -> AmberResult:
-        """Assemble a chain from MolPy monomers + reaction semantics (cached)."""
-        from .polymer.ambertools import AmberPolymerBuilder
-
-        # Content-stable key (no id(...)): same chemistry → same work_dir digest
-        # across process restarts so monomer antechamber + chain tleap disk caches hit.
-        key = (
-            *self._polymer_builder_key(library, net_charges),
-            str(reaction),
-            self.force_field,
-            self.charge_method,
-        )
-        builder = self._polymer_builders.get(key)
-        if builder is None:
-            digest = hashlib.sha1(repr(key).encode("utf-8")).hexdigest()[:12]
-            builder = AmberPolymerBuilder(
-                library=library,
-                reaction=reaction,
-                force_field=self.force_field,  # type: ignore[arg-type]
-                charge_method=self.charge_method,
-                work_dir=self.work_dir / "polymer" / digest,
-                env=self.env,
-                env_manager=self.env_manager,
-                net_charges=net_charges,
-            )
-            self._polymer_builders[key] = builder
-        result = builder.build(cgsmiles)
-        # Default net 0 (neutral / zwitterionic recipes). With ``net_charges``,
-        # shift to the formal chain charge so ionic blocks stay consistent when
-        # free counter-ions are packed separately.
-        target = 0.0
-        if net_charges:
-            import re
-
-            labels = re.findall(r"\[#([A-Za-z0-9_]+)\]", str(cgsmiles))
-            # ``{[#X]|n}`` form: single label, multiplicity in the pipe clause.
-            if not labels:
-                m = re.search(r"\[#([A-Za-z0-9_]+)\]\|(\d+)", str(cgsmiles))
-                if m:
-                    labels = [m.group(1)] * int(m.group(2))
-            undeclared = sorted({lab for lab in labels if lab not in net_charges})
-            if undeclared:
-                raise KeyError(
-                    f"net_charges declares no charge for monomer(s) {undeclared}; "
-                    "declare every label (0 for a neutral one) or pass no net_charges"
-                )
-            target = float(sum(int(net_charges[lab]) for lab in labels))
-        _neutralize(result.frame, target)
-        return AmberResult(
-            result.frame,
-            result.forcefield,
-            prmtop=result.prmtop_path,
-            inpcrd=result.inpcrd_path,
-        )
-
-    @staticmethod
-    def _polymer_builder_key(
-        library: Mapping[str, Atomistic],
-        net_charges: Mapping[str, int] | None,
-    ) -> tuple[Any, ...]:
-        """Content-stable key so disk monomer caches survive process restarts.
-
-        Must **not** include ``id(struct)``: a fresh ``SmilesReader`` each run
-        yields a new object id and would re-hash the work_dir, forcing
-        antechamber again even when chemistry is identical.
-        """
-
-        def monomer_key(label: str, struct: Atomistic) -> tuple[Any, ...]:
-            try:
-                structural = int(struct.structural_hash())
-            except Exception:
-                structural = None
-            return (
-                label,
-                structural,
-                getattr(struct, "n_atoms", None),
-                len(getattr(struct, "bonds", ())),
-            )
-
-        return (
-            tuple(
-                monomer_key(label, struct) for label, struct in sorted(library.items())
-            ),
-            tuple(sorted((net_charges or {}).items())),
-        )

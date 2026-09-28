@@ -443,16 +443,14 @@ def read_smiles(smiles: str) -> Any:
     """
     import molrs
 
-    from molpy.core.atomistic import Atomistic
-
     ir = molrs.io.SmilesIR(smiles)
     if ir.n_components != 1:
         raise ValueError(
             f"read_smiles needs one component, {smiles!r} has "
-            f"{ir.n_components}. Use mp.SmilesIR(smiles).components() and "
-            "adopt each, or pass one component at a time."
+            f"{ir.n_components}. Use mp.SmilesIR(smiles).components(), "
+            "or pass one component at a time."
         )
-    return Atomistic.adopt(ir.to_atomistic())
+    return ir.to_atomistic()
 
 
 def write_smarts(

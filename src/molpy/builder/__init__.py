@@ -1,18 +1,16 @@
 """System assembly — start here.
 
-Polymer construction composes the real engine classes directly (there is
-no ``polymer()`` dispatcher): prepare monomers with
-``SmilesIR`` / :func:`molpy.io.read_smiles`,
-mark the atoms that may react with ``fields.SITE``, then
-:meth:`PolymerBuilder.build` a residue topology. Crosslinking is the same
-kernel with a different :class:`Selector`. Polydisperse systems drive
-:class:`PolymerBuilder` from the distribution + :class:`SystemPlanner`
-primitives. See :mod:`molpy.builder.assembly` for the full recipe.
+Polymer and backmap construction compose native primitives, re-exported on
+the ``molpy`` root: coarse-grain a structure into a site graph
+(:class:`molpy.SubgraphMatcher`, :class:`molpy.Coarsener`), then build one
+template copy per site with :class:`molpy.Assembler`
+(:class:`molpy.SitePlacer` + :class:`molpy.AxisOrienter`). Polydisperse
+systems plan chains with the distribution + :class:`SystemPlanner`
+primitives here.
 
 Crystal construction goes through :meth:`Lattice.build` with
-:class:`Lattice` / :class:`Site`. AmberTools-backed polymer builds use
-:class:`AmberPolymerBuilder`. Nanostructures expose direct ``build`` methods;
-their compile/cache details remain internal.
+:class:`Lattice` / :class:`Site`. Nanostructures expose direct ``build``
+methods; their compile/cache details remain internal.
 """
 
 from molpy.core.region import BoxRegion, Cube, Region, SphereRegion
@@ -37,28 +35,6 @@ from .polymer import (
     UniformPolydisperse,
     WeightedSequenceGenerator,
 )
-from .assembly import (
-    AssemblyFinalizer,
-    LineOrienter,
-    Orienter,
-    Placer,
-    PolymerBuilder,
-    TangOrienter,
-    Trace,
-    TracePlacer,
-    ExhaustiveSelector,
-    ExplicitPairSelector,
-    GraphAssembler,
-    MonomerLibrary,
-    ProximitySelector,
-    RandomSelector,
-    Replicas,
-    Selector,
-    SiteMap,
-    SpacingSelector,
-    TopologySelector,
-)
-from .polymer.ambertools import AmberPolymerBuilder
 from .virtualsite import (
     DrudeBuilder,
     Tip4pBuilder,
@@ -67,8 +43,7 @@ from .virtualsite import (
 )
 
 __all__ = [
-    # AmberTools builders
-    "AmberPolymerBuilder",
+    # AmberTools
     "AmberTools",
     "AmberResult",
     # Crystal builders
@@ -102,26 +77,7 @@ __all__ = [
     "DrudeBuilder",
     "Tip4pBuilder",
     "load_polarizability",
-    # Assembly: one kernel, one selector family
-    "GraphAssembler",
-    "AssemblyFinalizer",
+    # Finalization
     "StructureFinalizer",
     "Finalization",
-    "PolymerBuilder",
-    "Placer",
-    "TracePlacer",
-    "Trace",
-    "Orienter",
-    "LineOrienter",
-    "TangOrienter",
-    "MonomerLibrary",
-    "Selector",
-    "TopologySelector",
-    "ProximitySelector",
-    "ExhaustiveSelector",
-    "SpacingSelector",
-    "ExplicitPairSelector",
-    "RandomSelector",
-    "SiteMap",
-    "Replicas",
 ]

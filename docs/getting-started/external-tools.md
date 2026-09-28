@@ -59,7 +59,6 @@ result = amber.parameterize(mol, name="ligand", net_charge=0)
 End-to-end recipes that use this path:
 
 - [AmberTools electrolyte workflow](../user-guide/13_ambertools_integration.md)
-- [Building a Crosslinked Gel](../user-guide/16_crosslinked_gel.md) (GAFF chain segment)
 
 Unit tests never shell out to antechamber/tleap — wrappers are mocked under
 `tests/test_wrapper`. Offline recipes in the user guide mark those blocks with

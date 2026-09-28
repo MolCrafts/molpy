@@ -1,6 +1,6 @@
 """LAMMPS data file I/O (structure natively, coeffs natively.ff)."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -37,6 +37,34 @@ def _sorted_type_names(names: list[str] | set[str] | tuple[str, ...]) -> list[st
     return sorted(items)
 
 
+def _type_labels_from_meta(frame: Frame) -> dict[str, dict[int, str]]:
+    """Parse the native ``*_type_labels`` meta (``id:label,...``) into maps."""
+    out: dict[str, dict[int, str]] = {}
+    for kind, meta_key in (
+        ("atom", "atom_type_labels"),
+        ("bond", "bond_type_labels"),
+        ("angle", "angle_type_labels"),
+        ("dihedral", "dihedral_type_labels"),
+        ("improper", "improper_type_labels"),
+    ):
+        packed = frame.meta.get(meta_key)
+        if not packed:
+            continue
+        id_to_label: dict[int, str] = {}
+        for item in str(packed).split(","):
+            item = item.strip()
+            if not item or ":" not in item:
+                continue
+            sid, lab = item.split(":", 1)
+            try:
+                id_to_label[int(sid)] = lab
+            except ValueError:
+                continue
+        if id_to_label:
+            out[kind] = id_to_label
+    return out
+
+
 @dataclass(frozen=True, slots=True)
 class LammpsDataResult:
     """Explicit products of parsing one LAMMPS data file.
@@ -44,12 +72,74 @@ class LammpsDataResult:
     Frame-like lookup (``result["atoms"]``, ``"atoms" in result``,
     ``result.box``) delegates to :attr:`frame` so callers can treat the
     result as the structure without dropping ``.frame`` / ``.forcefield``.
+
+    The structure never depends on the ``* Coeffs`` sections: they are kept
+    as text in ``frame.meta["lammps_coeffs_text"]`` and become a
+    :class:`~molpy.ForceField` only when :attr:`forcefield` is first read.
     """
 
     frame: Frame
-    forcefield: ForceField
     counts: dict[str, int]
     type_labels: dict[str, list[str]]
+    _forcefield: ForceField | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
+    @property
+    def forcefield(self) -> ForceField:
+        """Force field parsed from the file's ``* Coeffs`` sections.
+
+        Parsed on first access from ``frame.meta["lammps_coeffs_text"]`` and
+        the file's Type Labels, then kept; later edits to ``frame.meta`` do
+        not re-parse. Coefficients are read in the LAMMPS ``units`` style
+        named by ``frame.meta["lammps_units"]`` (the ``units = <style>``
+        suffix of a ``write_data`` header); without that key the documented
+        default is ``"real"``. A file without ``* Coeffs`` yields an empty
+        ForceField.
+
+        Raises:
+            ValueError: The ``* Coeffs`` text cannot become a ForceField
+                (``"malformed PairCoeffs: ..."`` for unparseable numbers,
+                ``"Failed to parse LAMMPS force-field coeffs: ..."``
+                otherwise). Nothing is cached, so the next access re-raises.
+        """
+        cached = object.__getattribute__(self, "_forcefield")
+        if cached is not None:
+            return cached
+
+        import molrs.ff as mff
+
+        frame = object.__getattribute__(self, "frame")
+        coeffs_text = frame.meta.get("lammps_coeffs_text")
+        if not coeffs_text:
+            forcefield = mff.ForceField("LAMMPS")
+        else:
+            labels = _type_labels_from_meta(frame)
+            try:
+                forcefield = mff.read_lammps_data_coeffs(
+                    str(coeffs_text),
+                    units=str(frame.meta.get("lammps_units", "real")),
+                    atom_labels=labels.get("atom"),
+                    bond_labels=labels.get("bond"),
+                    angle_labels=labels.get("angle"),
+                    dihedral_labels=labels.get("dihedral"),
+                    improper_labels=labels.get("improper"),
+                )
+            except Exception as e:
+                msg = str(e)
+                # Preserve historical error shape for bad *Coeffs lines.
+                if (
+                    "not a number" in msg
+                    or "not a float" in msg
+                    or "unexpected token" in msg
+                    or "pair_coeff" in msg
+                ):
+                    raise ValueError(f"malformed PairCoeffs: {e}") from e
+                raise ValueError(
+                    f"Failed to parse LAMMPS force-field coeffs: {e}"
+                ) from e
+        object.__setattr__(self, "_forcefield", forcefield)
+        return forcefield
 
     def __getitem__(self, key: str):
         """Return ``self.frame[key]``."""
@@ -75,16 +165,17 @@ class LammpsDataReader(DataReader[LammpsDataResult]):
         """Read a LAMMPS data file into frame + forcefield products.
 
         Structure, Type Labels, header counts, and ``* Coeffs`` text are
-        produced by the native ``read_lammps_data`` (single pass). Coeffs
-        become a :class:`~molpy.ForceField` via
-        the native ``read_lammps_data_coeffs``. This class only adapts the
-        molpy surface (``type`` column, atom_style column drop, result bundle).
+        produced by the native ``read_lammps_data`` (single pass). The coeffs
+        text is not parsed here: :attr:`LammpsDataResult.forcefield` parses
+        it on first access, so a ``* Coeffs`` section the native
+        ``read_lammps_data_coeffs`` cannot handle never fails the structure
+        read. This class only adapts the molpy surface (``type`` column,
+        atom_style column drop, result bundle).
         """
         del frame  # molrs always returns a new Frame
         if not self._path.exists():
             raise FileNotFoundError(f"LAMMPS data file not found: {self._path}")
 
-        import molrs.ff as mff
         import molrs.io
 
         try:
@@ -103,36 +194,8 @@ class LammpsDataReader(DataReader[LammpsDataResult]):
         if missing_axes:
             raise ValueError(f"missing box bounds for axis {missing_axes}")
 
-        type_labels = self._type_labels_from_meta(frame)
+        type_labels = _type_labels_from_meta(frame)
         self._adapt_frame(frame, type_labels)
-
-        coeffs_text = frame.meta.get("lammps_coeffs_text")
-        if coeffs_text:
-            try:
-                forcefield = mff.read_lammps_data_coeffs(
-                    str(coeffs_text),
-                    units="real",
-                    atom_labels=type_labels.get("atom"),
-                    bond_labels=type_labels.get("bond"),
-                    angle_labels=type_labels.get("angle"),
-                    dihedral_labels=type_labels.get("dihedral"),
-                    improper_labels=type_labels.get("improper"),
-                )
-            except Exception as e:
-                msg = str(e)
-                # Preserve historical error shape for bad *Coeffs lines.
-                if (
-                    "not a number" in msg
-                    or "not a float" in msg
-                    or "unexpected token" in msg
-                    or "pair_coeff" in msg
-                ):
-                    raise ValueError(f"malformed PairCoeffs: {e}") from e
-                raise ValueError(
-                    f"Failed to parse LAMMPS force-field coeffs: {e}"
-                ) from e
-        else:
-            forcefield = mff.ForceField("LAMMPS")
 
         counts = self._counts_from_meta(frame)
         for key, block in (
@@ -155,40 +218,12 @@ class LammpsDataReader(DataReader[LammpsDataResult]):
 
         return LammpsDataResult(
             frame=frame,
-            forcefield=forcefield,
             counts=counts,
             type_labels={
                 f"{key}_types": [labels[i] for i in sorted(labels)]
                 for key, labels in type_labels.items()
             },
         )
-
-    def _type_labels_from_meta(self, frame: Frame) -> dict[str, dict[int, str]]:
-        """Parse the native ``*_type_labels`` meta (``id:label,...``) into maps."""
-        out: dict[str, dict[int, str]] = {}
-        for kind, meta_key in (
-            ("atom", "atom_type_labels"),
-            ("bond", "bond_type_labels"),
-            ("angle", "angle_type_labels"),
-            ("dihedral", "dihedral_type_labels"),
-            ("improper", "improper_type_labels"),
-        ):
-            packed = frame.meta.get(meta_key)
-            if not packed:
-                continue
-            id_to_label: dict[int, str] = {}
-            for item in str(packed).split(","):
-                item = item.strip()
-                if not item or ":" not in item:
-                    continue
-                sid, lab = item.split(":", 1)
-                try:
-                    id_to_label[int(sid)] = lab
-                except ValueError:
-                    continue
-            if id_to_label:
-                out[kind] = id_to_label
-        return out
 
     def _counts_from_meta(self, frame: Frame) -> dict[str, int]:
         counts: dict[str, int] = {}

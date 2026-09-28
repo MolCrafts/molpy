@@ -56,7 +56,6 @@ nav = [
     ] },
     { "Chain & Network Construction" = [
       { "Assembly" = "user-guide/02_assembly.md" },
-      { "Building a Crosslinked Gel" = "user-guide/16_crosslinked_gel.md" },
       { "Polydisperse Systems" = "user-guide/05_polydisperse_systems.md" },
     ] },
     { "Polymer Topologies" = [
@@ -67,11 +66,6 @@ nav = [
       { "Star" = "user-guide/topology/04_star.md" },
       { "Comb" = "user-guide/topology/05_comb.md" },
       { "Telechelic" = "user-guide/topology/06_telechelic.md" },
-      { "Exhaustive gel" = "user-guide/topology/07_gel_exhaustive.md" },
-      { "Random gel" = "user-guide/topology/08_gel_random.md" },
-      { "End-linked" = "user-guide/topology/09_end_linked.md" },
-      { "Dual network" = "user-guide/topology/10_dual_network.md" },
-      { "Prepolymer + agent" = "user-guide/topology/11_prepolymer_agent.md" },
     ] },
     { "Parameterization" = [
       { "Force Field Typification" = "user-guide/06_typifier.md" },

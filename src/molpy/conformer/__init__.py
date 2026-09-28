@@ -1,10 +1,8 @@
 """3D conformer generation for molpy molecules (native-backed).
 
-:class:`Conformer` subclasses the native ``Conformer`` and overrides
-:meth:`Conformer.generate` to marshal :class:`molpy.Atomistic` across the
-native boundary: it folds formal charges into the form the native pipeline expects, runs
-the inherited Rust generator, and re-adopts the result as a molpy graph-backed
-``Atomistic``. The heavy lifting — fragment / distance-geometry build, energy
+:class:`Conformer` subclasses the native ``Conformer``; :meth:`Conformer.generate`
+guards against an empty molecule and returns the native result directly
+(``molpy.Atomistic is molrs.Atomistic``). The heavy lifting — fragment / distance-geometry build, energy
 minimisation, rotor search, stereo guard — runs inside the native core.
 
 The report types are inherited verbatim from the native core (re-exported here, not
@@ -29,7 +27,7 @@ class Conformer(molrs.conformer.Conformer):
 
     Subclasses the native ``Conformer``; the constructor parameters
     (``speed``, ``add_hydrogens``, ``seed``) are inherited unchanged. Only the
-    molpy-side marshalling in :meth:`generate` is added.
+    empty-molecule guard in :meth:`generate` is added.
 
     Examples:
         >>> import molpy as mp
@@ -40,10 +38,10 @@ class Conformer(molrs.conformer.Conformer):
     """
 
     def generate(self, mol: Atomistic) -> tuple[Atomistic, ConformerReport]:
-        """Generate 3D coordinates, returning a fresh molpy ``Atomistic``.
+        """Generate 3D coordinates, returning a fresh ``Atomistic``.
 
-        ``mol`` is already a native graph (``Atomistic`` is-a ``Graph``), so
-        the inherited Rust generator embeds it directly — no translation. The core
+        ``mol`` is the native graph, so the inherited Rust generator embeds it
+        directly and its result is returned as is. The core
         reads the canonical integer ``"formal_charge"`` key for valence filling
         (``[N+]`` / ``[N-]`` hydrogen counts); the parsers emit that key, so a
         charged input must already carry it. The core clones the graph internally,
@@ -54,7 +52,7 @@ class Conformer(molrs.conformer.Conformer):
                 required; coordinates may be missing.
 
         Returns:
-            A tuple of the generated structure (a molpy ``Atomistic``) and the
+            A tuple of the generated structure (an ``Atomistic``) and the
             per-stage :class:`~molpy.conformer.ConformerReport`.
 
         Raises:
@@ -62,5 +60,4 @@ class Conformer(molrs.conformer.Conformer):
         """
         if mol.n_atoms == 0:
             raise ValueError("cannot generate 3D structure for empty molecule")
-        out_graph, report = super().generate(mol)
-        return Atomistic.adopt(out_graph), report
+        return super().generate(mol)

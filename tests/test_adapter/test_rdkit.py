@@ -58,7 +58,9 @@ class TestSyncToExternal:
         assert [a.GetSymbol() for a in mol.GetAtoms()] == ["C", "C", "O"]
         assert mol.GetNumBonds() == 2
         assert [a.GetIntProp(MP_ID) for a in mol.GetAtoms()] == m.column(MP_ID).tolist()
-        np.testing.assert_allclose(mol.GetConformer().GetPositions(), m.xyz)
+        np.testing.assert_allclose(
+            mol.GetConformer().GetPositions(), m.atoms["x", "y", "z"]
+        )
 
     def test_bond_classes_map_one_to_one(self):
         m = mp.Atomistic()
@@ -83,7 +85,7 @@ class TestSyncToInternal:
         adapter = RDKitAdapter(external=mol)
         adapter.sync_to_internal()
         m = adapter.internal
-        assert m.symbols == [a.GetSymbol() for a in mol.GetAtoms()]
+        assert list(m.atoms["element"]) == [a.GetSymbol() for a in mol.GetAtoms()]
         assert len(list(m.bonds)) == mol.GetNumBonds()
         assert m.column(MP_ID).tolist() == list(range(mol.GetNumAtoms()))
 
@@ -104,7 +106,7 @@ class TestSyncToInternal:
         assert len(set(tags)) == len(tags)
         assert [a.GetIntProp(MP_ID) for a in mol.GetAtoms()] == tags
         assert len(list(m.bonds)) == mol.GetNumBonds()
-        assert m.xyz.shape == (mol.GetNumAtoms(), 3)
+        assert m.atoms["x", "y", "z"].shape == (mol.GetNumAtoms(), 3)
 
     def test_known_atoms_are_updated_in_place(self):
         m = _ethanol_heavy()
@@ -115,7 +117,7 @@ class TestSyncToInternal:
         adapter.set_external(mol)
         adapter.sync_to_internal()
         assert len(m.entities()) == 3
-        assert m.xyz[0].tolist() == [9.0, 9.0, 9.0]
+        assert m.atoms["x", "y", "z"][0].tolist() == [9.0, 9.0, 9.0]
 
     def test_an_untagged_rdkit_atom_is_an_error(self):
         adapter = RDKitAdapter(
@@ -131,6 +133,6 @@ def test_generate_3d_returns_a_new_hydrogenated_structure_with_coordinates():
     out = adapter.generate_3d(optimize=False)
     assert out is not m
     assert len(out.entities()) == 9  # C2H5OH
-    assert out.xyz.shape == (9, 3)
-    assert np.isfinite(out.xyz).all()
+    assert out.atoms["x", "y", "z"].shape == (9, 3)
+    assert np.isfinite(out.atoms["x", "y", "z"]).all()
     assert len(m.entities()) == 3  # the adapter's own structure is untouched

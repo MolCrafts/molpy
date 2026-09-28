@@ -118,3 +118,19 @@ class TestBoxOps:
         npt.assert_allclose(transformed.matrix, np.diag([4.0, 3.0, 2.0]))
         npt.assert_allclose(transformed.origin, box.origin)
         npt.assert_array_equal(transformed.pbc, box.pbc)
+
+    def test_unwrap_accepts_int64_images(self):
+        box = Box.orth([10.0, 10.0, 10.0])
+        xyz = np.array([[1.0, 2.0, 3.0]])
+        image = np.array([[1, 0, -1]], dtype=np.int64)
+
+        # Hand-computed: xyz + image * L with L = 10 on every axis.
+        npt.assert_allclose(box.unwrap(xyz, image), [[11.0, 2.0, -7.0]], atol=1e-12)
+
+    def test_unwrap_rejects_image_outside_int32(self):
+        box = Box.orth([10.0, 10.0, 10.0])
+        xyz = np.array([[1.0, 2.0, 3.0]])
+        image = np.array([[2**31, 0, 0]], dtype=np.int64)
+
+        with pytest.raises(ValueError):
+            box.unwrap(xyz, image)

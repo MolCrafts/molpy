@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         engine,
         io,
         md,
+        op,
         optimize,
         parser,
         typifier,
@@ -43,6 +44,7 @@ _LAZY_SUBMODULES = frozenset(
         "engine",
         "io",
         "md",
+        "op",
         "optimize",
         "parser",
         "typifier",
@@ -76,7 +78,6 @@ from .core.atomistic import (
     VirtualSite,
 )
 from .core.box import Box
-from .core.perceive import Perceive
 from .core.cg import Bead, CGBond, CoarseGrain
 from .core.config import Config
 from .core.entity import (
@@ -90,46 +91,21 @@ from .core.entity import (
 )
 from .core import fields
 from .core.forcefield import (
-    AngleClass2BondAngleStyle,
-    AngleClass2BondBondStyle,
-    AngleClass2Style,
-    AngleHarmonicStyle,
     AngleStyle,
     AngleType,
-    AtomisticForcefield,
     AtomStyle,
     AtomType,
-    BondClass2Style,
-    BondHarmonicStyle,
-    BondMorseStyle,
     BondStyle,
     BondType,
-    DihedralCharmmStyle,
-    DihedralClass2Style,
-    DihedralFourierStyle,
-    DihedralMultiHarmonicStyle,
-    DihedralOPLSStyle,
-    DihedralPeriodicStyle,
     DihedralStyle,
     DihedralType,
     ForceField,
-    ImproperClass2Style,
-    ImproperCvffStyle,
-    ImproperHarmonicStyle,
-    ImproperPeriodicStyle,
     ImproperStyle,
     ImproperType,
-    PairBuckStyle,
-    PairCoulLongStyle,
-    PairCoulTTStyle,
-    PairLjCutCoulCutStyle,
-    PairLjCutCoulLongStyle,
-    PairLJClass2Style,
-    PairMorseStyle,
     PairStyle,
-    PairTholeStyle,
     PairType,
     Parameters,
+    PotentialCompiler,
     Style,
     Type,
 )
@@ -172,8 +148,11 @@ from .conformer import Conformer
 # =============================================================================
 # Only symbols not already bound above. ``molpy.X is molrs.X`` for each name
 # here. Packages that collide with molpy (io / compute / typifier) are omitted.
-# Subclasses with real molpy additions (Box, Atomistic, CoarseGrain, Trajectory,
-# Conformer, Region) come from core/ above, not from this block.
+# Subclasses with real molpy additions (Box, Trajectory, Conformer, UnitSystem)
+# come from the molpy modules above, not from this block. Atomistic,
+# CoarseGrain and Perceive are native identities. The base Region is molpy's
+# own predicate model; its concrete regions (BoxRegion, SphereRegion and the
+# combinators) subclass the native shapes.
 
 # Import Frame/Block from the pure-Python layer path so static analysis
 # (griffe/mkdocstrings) resolves ``molpy.Frame → molrs.frame.Frame`` without
@@ -197,16 +176,20 @@ from molrs import (
     Element,
     ExtractedSubgraph,
     FRAME_SCHEMA_VERSION,
+    FrameMeta,
     Graph,
+    MetaDocument,
     MetaValue,
     NeighborList,
     NeighborQuery,
     Neighbors,
     Parallelepiped,
+    Port,
     Quantity,
     Reaction,
     ScalarObservable,
     Sphere,
+    Trace,
     Unit,
     UnitPreset,
     UnitRegistry,
@@ -217,6 +200,7 @@ from molrs import (
     schema,
     signal,
 )
+from molrs.builder import Assembler, AxisOrienter, GrowthPlacer, SitePlacer
 from molrs.compute.density import (
     SpatialDistribution,
     SpatialDistributionResult,
@@ -291,15 +275,22 @@ from molrs.ff import (
 
 # I/O is **only** on ``molpy.io`` (``mp.io.read_*`` / ``write_*``). Never re-export
 # molrs.io / molrs.ff force-field file APIs / raw traj readers on the package root.
-from molrs.io import SmilesIR  # parser type, not a file I/O entry
+from molrs.io import (  # parser types and their error, not file I/O entries
+    CGSmilesIR,
+    SmilesError,
+    SmilesIR,
+)
 from molrs.optimize import (
     LBFGS,
     OptReport,
 )
 from molrs.perceive import (
+    Coarsener,
+    Perceive,
     RingInfo,
     SmartsMatch,
     SmartsPattern,
+    SubgraphMatcher,
 )
 
 __all__ = [
@@ -311,6 +302,7 @@ __all__ = [
     "engine",
     "io",
     "md",
+    "op",
     "optimize",
     "parser",
     "typifier",
@@ -340,44 +332,18 @@ __all__ = [
     "Refs",
     "RelationRef",
     "fields",
-    "AngleClass2BondAngleStyle",
-    "AngleClass2BondBondStyle",
-    "AngleClass2Style",
-    "AngleHarmonicStyle",
     "AngleStyle",
     "AngleType",
-    "AtomisticForcefield",
     "AtomStyle",
     "AtomType",
-    "BondClass2Style",
-    "BondHarmonicStyle",
-    "BondMorseStyle",
     "BondStyle",
     "BondType",
-    "DihedralCharmmStyle",
-    "DihedralClass2Style",
-    "DihedralFourierStyle",
-    "DihedralMultiHarmonicStyle",
-    "DihedralOPLSStyle",
-    "DihedralPeriodicStyle",
     "DihedralStyle",
     "DihedralType",
     "ForceField",
-    "ImproperClass2Style",
-    "ImproperCvffStyle",
-    "ImproperHarmonicStyle",
-    "ImproperPeriodicStyle",
     "ImproperStyle",
     "ImproperType",
-    "PairBuckStyle",
-    "PairCoulLongStyle",
-    "PairCoulTTStyle",
-    "PairLjCutCoulCutStyle",
-    "PairLjCutCoulLongStyle",
-    "PairLJClass2Style",
-    "PairMorseStyle",
     "PairStyle",
-    "PairTholeStyle",
     "PairType",
     "Parameters",
     "Style",
@@ -417,6 +383,8 @@ __all__ = [
     "FRAME_SCHEMA_VERSION",
     "Frame",
     "FrameCollection",
+    "FrameMeta",
+    "MetaDocument",
     "MetaValue",
     "Quantity",
     "Unit",
@@ -425,6 +393,9 @@ __all__ = [
     "ScalarObservable",
     "VectorObservable",
     "SmilesIR",
+    "CGSmilesIR",
+    "SmilesError",
+    "Port",
     "Cuboid",
     "Parallelepiped",
     "Sphere",
@@ -432,10 +403,17 @@ __all__ = [
     "ExtractedSubgraph",
     "Graph",
     "Perceive",
+    "Coarsener",
+    "Trace",
+    "Assembler",
+    "AxisOrienter",
+    "SitePlacer",
+    "GrowthPlacer",
     "Reaction",
     "RingInfo",
     "SmartsMatch",
     "SmartsPattern",
+    "SubgraphMatcher",
     "keys",
     "schema",
     "ConformerReport",
@@ -451,6 +429,7 @@ __all__ = [
     "LBFGS",
     "OptReport",
     "Potentials",
+    "PotentialCompiler",
     "AngleDistribution",
     "CombinedDistribution",
     "CombinedDistributionResult",

@@ -1,19 +1,18 @@
-# Block and sequence copolymers
+# Block / sequence copolymer
 
 **Script:** [`examples/topology/02_block.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/02_block.py)
 
-Architecture is the **label sequence**. Two library keys may share the same chemistry; only residue names differ.
+A sequence is a path whose sites name different units. `{[#EO]|6[#PO]|4}` is six `EO` then four `PO`; any order can be written out site by site.
 
 ```python
-from eo_kit import eo_builder, ethylene_glycol
+import molpy as mp
+from eo_kit import library
 
-a, b = ethylene_glycol(seed=42), ethylene_glycol(seed=43)
-builder = eo_builder(extra={"A": a, "B": b})
-block = builder.build_sequence(["A"] * 6 + ["B"] * 4)
-# → build_sequence(["A"] * 6 + ["B"] * 4) → residue sequence AAAAAABBBB
+sites = mp.CGSmilesIR("{[#EO]|6[#PO]|4}").to_coarsegrain()
+block = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
-Use `build_sequence` when a polydispersity planner has already emitted a list of monomer ids ([Polydisperse Systems](../05_polydisperse_systems.md)).
+**Check:** 10 units, 84 atoms, 2 open ports.
 
 ```bash
 cd examples && python topology/02_block.py

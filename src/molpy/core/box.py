@@ -513,9 +513,16 @@ class Box(molrs.Box):
         return molrs.Box.wrap(self, np.asarray(xyz))
 
     def unwrap(self, xyz: np.ndarray, image: np.ndarray) -> np.ndarray:
-        return molrs.Box.unwrap(
-            self, np.asarray(xyz), np.asarray(image, dtype=np.int64)
-        )
+        image = np.asarray(image)
+        # The native kernel takes int32 images; ``astype`` would wrap an
+        # out-of-range value silently, so reject it before the cast.
+        limits = np.iinfo(np.int32)
+        if image.size and (image.min() < limits.min or image.max() > limits.max):
+            raise ValueError(
+                f"image values must lie in the int32 range "
+                f"[{limits.min}, {limits.max}]; got [{image.min()}, {image.max()}]"
+            )
+        return molrs.Box.unwrap(self, np.asarray(xyz), image.astype(np.int32))
 
     def get_images(self, xyz: np.ndarray) -> np.ndarray:
         return molrs.Box.images(self, np.asarray(xyz))

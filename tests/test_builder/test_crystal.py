@@ -166,29 +166,29 @@ class TestBuildCrystalRepeats:
 
         assert isinstance(structure, Atomistic)
         assert len(list(structure.atoms)) == 8
-        assert all(s == "Cu" for s in structure.symbols)
+        assert all(s == "Cu" for s in structure.atoms["element"])
 
     def test_bcc_repeats(self):
         lat = Lattice.bcc(a=2.0, species="Fe")
         structure = lat.build(repeats=(2, 2, 2))
 
         assert len(list(structure.atoms)) == 16
-        assert all(s == "Fe" for s in structure.symbols)
+        assert all(s == "Fe" for s in structure.atoms["element"])
 
     def test_fcc_repeats(self):
         lat = Lattice.fcc(a=3.52, species="Ni")
         structure = lat.build(repeats=(2, 2, 2))
 
         assert len(list(structure.atoms)) == 32
-        assert all(s == "Ni" for s in structure.symbols)
+        assert all(s == "Ni" for s in structure.atoms["element"])
 
     def test_rocksalt_repeats(self):
         lat = Lattice.rocksalt(a=5.64, species_a="Na", species_b="Cl")
         structure = lat.build(repeats=(2, 2, 2))
 
         assert len(list(structure.atoms)) == 64
-        na = sum(1 for s in structure.symbols if s == "Na")
-        cl = sum(1 for s in structure.symbols if s == "Cl")
+        na = sum(1 for s in structure.atoms["element"] if s == "Na")
+        cl = sum(1 for s in structure.atoms["element"] if s == "Cl")
         assert na == 32
         assert cl == 32
 
@@ -217,7 +217,7 @@ class TestBuildCrystalRepeats:
         lat = Lattice.sc(a=2.0, species="Cu")
         structure = lat.build(repeats=(2, 2, 2))
 
-        positions = structure.xyz
+        positions = structure.atoms["x", "y", "z"]
         expected = np.array(
             [
                 [0, 0, 0],
@@ -261,7 +261,7 @@ class TestBuildCrystalRegion:
         )
 
         # Every atom must lie within the sphere.
-        positions = structure.xyz
+        positions = structure.atoms["x", "y", "z"]
         center = np.array([1.5, 1.5, 1.5])
         distances = np.linalg.norm(positions - center, axis=1)
         assert np.all(distances <= 1.5 + 1e-9)
@@ -274,7 +274,7 @@ class TestBuildCrystalRegion:
         # Intersection: atoms in both.
         structure = lat.build(cube & sphere, repeats=(4, 4, 4))
 
-        positions = structure.xyz
+        positions = structure.atoms["x", "y", "z"]
         center = np.array([1.5, 1.5, 1.5])
         in_sphere = np.linalg.norm(positions - center, axis=1) <= 1.5 + 1e-9
         in_box = np.all((positions >= 0) & (positions <= 3.0), axis=1)

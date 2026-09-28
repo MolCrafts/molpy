@@ -2,51 +2,13 @@
 
 Read/write of the AMBER/GAFF-style include is implemented in the native core
 (the native ``read_lammps_forcefield``, the native ``write_lammps_forcefield``).
-This module exposes the molpy entry points and parameter formatters for
-specialized pair styles (CL&Pol Thole / Tang−Toennies).
+This module exposes the molpy entry points.
 """
 
 from pathlib import Path
 from typing import TextIO
 
 from molpy.core.forcefield import ForceField
-from molpy.core.fields import ForceFieldFormatter, LammpsFieldFormatter
-from molpy.core.forcefield import PairCoulTTStyle, PairTholeStyle
-
-
-def _format_pair_thole(typ) -> list[float]:
-    """Thole pair coefficients: alpha, a_thole (LAMMPS ``pair_style thole``)."""
-    kwargs = typ.params.kwargs
-    return [kwargs.get("alpha", 0.0), kwargs.get("a_thole", 2.6)]
-
-
-def _format_pair_coul_tt(typ) -> list[float]:
-    """Tang−Toennies pair coefficients (LAMMPS ``pair_style coul/tt`` b, n, c).
-
-    The damping order is ``order`` internally: LAMMPS' positional ``n`` already
-    means a torsion multiplicity elsewhere (spec ff-params-01).
-    """
-    kwargs = typ.params.kwargs
-    return [kwargs.get("b", 4.5), kwargs.get("order", 4), kwargs.get("c", 1.0)]
-
-
-class LammpsForceFieldFormatter(ForceFieldFormatter):
-    """Parameter formatters for LAMMPS pair styles beyond the AMBER/GAFF set.
-
-    Carries the LAMMPS column map by value from the one home
-    (``LammpsFieldFormatter``, native) rather than by inheritance: the lint
-    environment does not install the native package, so a base list mixing a
-    native class with a molpy one is unorderable to ``ty``. The map is
-    incidental here anyway — a ``*.ff`` include carries parameters, not atom
-    columns; the registry below is what this class exists for.
-    """
-
-    _field_formatters = dict(LammpsFieldFormatter._field_formatters)
-
-    _param_formatters = {
-        PairTholeStyle: _format_pair_thole,
-        PairCoulTTStyle: _format_pair_coul_tt,
-    }
 
 
 class LAMMPSForceFieldWriter:

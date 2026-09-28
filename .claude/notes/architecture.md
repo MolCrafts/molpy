@@ -108,7 +108,7 @@ ALLOWED (→ = may be imported by):
   wrapper/, adapter/ → builder, engine
   conformer/         → builder, typifier
   data/              → everything (packaged files + get_forcefield_path)
-  md/ optimize/ potential/ → application code only (pure molrs re-exports)
+  md/ op/ optimize/  → application code only (pure molrs re-exports)
   integrations/ cli/ → application code only (they import io / parser)
 ```
 

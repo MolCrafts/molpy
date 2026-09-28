@@ -30,7 +30,7 @@ class TestCarbonTubeBuilder:
         expected_radius = (
             sqrt(3.0) * bond_length * sqrt(n * n + n * m + m * m) / (2.0 * pi)
         )
-        radii = np.linalg.norm(tube.xyz[:, :2], axis=1)
+        radii = np.linalg.norm(tube.atoms["x", "y", "z"][:, :2], axis=1)
         assert radii == pytest.approx(expected_radius)
 
     def test_nonperiodic_tube_leaves_open_graph_ends(self):
@@ -47,7 +47,7 @@ class TestCarbonTubeBuilder:
     def test_periodic_cell_closes_only_the_axis(self):
         builder = CarbonTubeBuilder(5, 5, cells=2, periodic=True)
         box = builder.cell(vacuum=4.0)
-        radius = np.linalg.norm(builder.build().xyz[0, :2])
+        radius = np.linalg.norm(builder.build().atoms["x", "y", "z"][0, :2])
         assert np.array_equal(box.pbc, [False, False, True])
         assert box.lx == pytest.approx(2.0 * radius + 8.0)
         assert box.ly == pytest.approx(box.lx)

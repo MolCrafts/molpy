@@ -1,9 +1,7 @@
 """Polymer sub-primitives: sequences, chain-length distributions, system plans.
 
-Chain assembly itself lives in :mod:`molpy.builder.assembly`
-(:class:`~molpy.builder.assembly.PolymerBuilder` +
-:class:`~molpy.builder.assembly.MonomerLibrary`). What remains here is what a
-polymer needs *besides* the assembler: how to pick the next monomer label
+Chain assembly itself is :class:`molpy.Assembler` over a site graph. What
+remains here is what a polymer needs *besides* the assembler: how to pick the next monomer label
 (:mod:`sequences`), how long the chains are (:mod:`distributions`), and how many
 of each to make (:mod:`system`).
 """

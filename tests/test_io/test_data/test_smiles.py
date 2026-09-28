@@ -55,3 +55,14 @@ def test_smiles_reader_rejects_multi_component() -> None:
 
     with pytest.raises(ValueError, match="single-component"):
         SmilesReader("CCO.O").read()
+
+
+def test_smiles_reader_brace_notation_points_to_cgsmilesir() -> None:
+    """Brace notation is refused with a pointer to the CGsmiles parser type."""
+    from molpy.io.data.smiles import SmilesReader
+
+    with pytest.raises(ValueError) as excinfo:
+        SmilesReader("{[#EO]|3}").read()
+    message = str(excinfo.value)
+    assert "mp.CGSmilesIR(" in message
+    assert ".to_coarsegrain()" in message

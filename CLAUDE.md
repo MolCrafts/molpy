@@ -429,7 +429,7 @@ def test_adapter_fallback():
 
 ### `builder` module
 
-- Polymer builders: sequence generation, crosslinking; placement is the native `TracePlacer`, opt-in via `placer=`
+- Polymer planning: sequences, chain-length distributions, system plans. Chains, branches and rings are built by the native `mp.Assembler` from a CGsmiles site graph (`mp.GrowthPlacer`), or from a coarsened CG model (`mp.SitePlacer` + `mp.AxisOrienter`); the old reaction/selector assembly stack is gone
 - AmberTools integration: prepare molecules, run Antechamber, tleap
 - Construction and transformation verbs: look them up in the family→verb table
   (`.claude/notes/architecture.md` § Design laws 4), which also records the declared

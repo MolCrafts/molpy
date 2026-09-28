@@ -251,7 +251,11 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
         cols = atomistic.columns()
         if not any(k in cols for k in (fields.X, fields.Y, fields.Z)):
             return None
-        return atomistic.xyz
+        # ``column`` raises on a hole; ``atoms["x", "y", "z"]`` would yield None.
+        return np.stack(
+            [np.asarray(atomistic.column(k)) for k in (fields.X, fields.Y, fields.Z)],
+            axis=1,
+        )
 
     # ------------------------------------------------------------------
     #  Mol -> Atomistic

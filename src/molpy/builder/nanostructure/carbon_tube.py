@@ -14,7 +14,6 @@ import molrs
 from molpy.builder._finalize import Finalization, StructureFinalizer
 from molpy.core.atomistic import Atomistic
 from molpy.core.box import Box
-from molpy.typifier.forcefield import ForceFieldParams
 
 
 class CarbonTubeBuilder(molrs.builder.CarbonTubeBuilder):
@@ -82,7 +81,6 @@ class CarbonTubeBuilder(molrs.builder.CarbonTubeBuilder):
         atom_type: str | None = None,
         charge: float = 0.0,
         finalize: Finalization | str = Finalization.ATOMS,
-        bonded: ForceFieldParams | None = None,
     ) -> Atomistic:
         """Build a fresh molecular graph, optionally finalizing topology."""
         if atom_type is not None and (not isinstance(atom_type, str) or not atom_type):
@@ -93,7 +91,7 @@ class CarbonTubeBuilder(molrs.builder.CarbonTubeBuilder):
 
         frame = super().build(atom_type=atom_type, charge=charge)
         graph = Atomistic.from_frame(frame)
-        return StructureFinalizer(Finalization(finalize), bonded).apply(graph)
+        return StructureFinalizer(Finalization(finalize)).apply(graph)
 
     def cell(self, *, vacuum: float = 10.0) -> Box:
         """Return the native-generated simulation cell as a MolPy box."""

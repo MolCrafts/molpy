@@ -1,38 +1,24 @@
-"""Force-field typification: ``MolGraph -> MolGraph``.
+"""Force-field typification: the native typifiers.
 
-A typifier completes the graph's truncated valences, matches it, and writes the
-annotations back. Only the *match* differs between them, so
-:meth:`~molpy.typifier.base.Typifier.typify` is written once and
-:meth:`~molpy.typifier.base.Typifier.match` is the single abstract method.
+Each name here is an identity re-export of :mod:`molrs.ff.typifier`
+(``mp.typifier.ElementTypifier is molrs.ff.typifier.ElementTypifier``).
+``MMFFTypifier`` is the molpy public name for
+:class:`molrs.ff.typifier.MMFF94Typifier`.
 
-Typifiers are named after the force field or the tool that decides the types.
-:class:`~molpy.typifier.forcefield.ForceFieldParams` is **not** one: it spends a
-node type rather than deciding it, and is the second half of every force-field
-typifier.
+The molpy typifier modules in this package (``base``, ``clp``, ``smarts``,
+``ambertools``, ``scope``, ``forcefield``, ``region``, ``affected_region``,
+``cache``, ``_matching``) are not imported here: they target retired molrs
+APIs and await deletion or porting (bounded debt, ``.claude/notes/notes.md``).
 """
 
-from molrs.ff.typifier import MMFF94Typifier as MMFFTypifier, OPLSAATypifier
-
-from .ambertools import AmberToolsTypifier
-from .base import Match, Typifier
-from .clp import ClpTypifier
-from .forcefield import ForceFieldParams
-from .scope import TypeScope, UnboundedPatternSet
-from .smarts import LocalTypifier, SmartsTypifier
+from molrs.ff.typifier import (
+    ElementTypifier,
+    MMFF94Typifier as MMFFTypifier,
+    OPLSAATypifier,
+)
 
 __all__ = [
-    # the contract
-    "Typifier",
-    "Match",
-    "TypeScope",
-    "UnboundedPatternSet",
-    "LocalTypifier",
-    # typifiers, named after their force field or tool (plus SmartsTypifier base)
-    "SmartsTypifier",
-    "ClpTypifier",
-    "AmberToolsTypifier",
-    "OPLSAATypifier",
+    "ElementTypifier",
     "MMFFTypifier",
-    # the component every force-field typifier ends with
-    "ForceFieldParams",
+    "OPLSAATypifier",
 ]
