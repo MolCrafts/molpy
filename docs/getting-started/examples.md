@@ -20,12 +20,14 @@ mol = mp.io.read_smiles("CCO") # ethanol from SMILES (heavy atoms)
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
  mol
 ) # add hydrogens + 3D coordinates
-ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml")) # bundled OPLS-AA
-typed = mp.typifier.OPLSAATypifier().typify(mol) # assign force-field types
+typifier = mp.typifier.OPLSAATypifier() # embedded OPLS-AA table
+typed = typifier.typify(mol) # assign force-field types
+ff = typifier.forcefield() # the parameters it assigned
 
 frame = typed.to_frame() # simulation-ready columnar arrays
-# mp.io.write_lammps_system("output/", frame, ff) writes system.data + system.ff
-# (set frame.box and a per-atom mol_id first — see the Quickstart).
+# mp.io.write_lammps_data(...) + mp.io.write_lammps_forcefield(path, ff, frame)
+# write system.data + system.ff (set frame.box and a per-atom mol_id first —
+# see the Quickstart).
 ```
 
 See also: [Parsing Chemistry](../user-guide/01_parsing_chemistry.md) ·
@@ -40,7 +42,7 @@ Build one molecule, then fill a cube with clash-free copies through
 ```python
 # docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
 import molpy as mp
-from molpack import InsideBoxRestraint, Molpack, Target
+from molpack import GenCanPack, Target
 
 water = mp.Atomistic(name="water")
 o = water.def_atom(element="O", x=0.000, y=0.000, z=0.000)
@@ -52,9 +54,9 @@ water.def_bond(o, h2)
 target = (
  Target(water.to_frame(), count=500)
 .with_name("water")
-.with_restraint(InsideBoxRestraint([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
+.with_restraint(mp.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
 )
-packed = Molpack().with_seed(42).pack([target], max_loops=200)
+packed = GenCanPack().with_seed(42).run([target], max_loops=200).frame
 # → one packed Frame (1500 atoms)
 ```
 
@@ -84,27 +86,32 @@ water4p = Tip4pBuilder(d_om=0.1546).apply(
 
 See also: [Polarizable & Virtual-Site Models](../user-guide/10_polarizable.md).
 
-## Polymer topologies — one monomer, eleven architectures
+## Polymer topologies — one monomer, six architectures
 
-Guides and scripts share names under parallel trees:
+Guides and scripts share names under parallel trees. Every unit is a CGsmiles
+fragment whose bonding descriptors are its ports, every topology is a CGsmiles
+string, and `mp.Assembler` with `mp.GrowthPlacer` grows it into an
+`mp.Atomistic`.
 
 | Docs | Examples |
 |------|----------|
 | [`user-guide/topology/`](../user-guide/topology/index.md) | `examples/topology/` |
-| `01_linear.md` … `11_prepolymer_agent.md` | `01_linear.py` … `11_prepolymer_agent.py` |
+| `01_linear.md` … `06_telechelic.md` | `01_linear.py` … `06_telechelic.py` |
 
 ```bash
 cd examples
 python topology/01_linear.py
 ```
 
-Minimal linear chain (`build_linear` ≡ `build(linear_topology(["EO"] * 10))`):
+Minimal linear chain, ten EO units:
 
 ```python
 # run from examples/topology/ or put that dir on PYTHONPATH
-from eo_kit import eo_builder
+import molpy as mp
+from eo_kit import library
 
-chain = eo_builder().build_linear("EO", 10)
+sites = mp.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
+chain = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
 See also: [Polymer Topologies](../user-guide/topology/index.md) ·
@@ -131,6 +138,7 @@ Sample a reproducible chain population from a molecular-weight distribution.
 
 ```python
 import numpy as np
+import molpy as mp
 from molpy.builder.polymer import (
  PolydisperseChainGenerator,
  SchulzZimmPolydisperse,
@@ -150,8 +158,12 @@ planner = SystemPlanner(
 plan = planner.plan_system(np.random.default_rng(42))
 print(f"Planned {len(plan.chains)} chains") # reproducible chain population
 
-# Each planned chain is a residue sequence; hand it to a builder to get a graph.
-lengths = [len(c.monomers) for c in plan.chains[:3]]
+# Each planned chain is a unit sequence; written as CGsmiles it is a site graph.
+from eo_kit import library  # examples/topology/
+
+first = plan.chains[0]
+sites = mp.CGSmilesIR("{" + "".join(f"[#{m}]" for m in first.monomers) + "}").to_coarsegrain()
+chain = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
 See also: [Polydisperse Systems](../user-guide/05_polydisperse_systems.md) ·
@@ -159,33 +171,46 @@ See also: [Polydisperse Systems](../user-guide/05_polydisperse_systems.md) ·
 
 ## AmberTools pipeline — GAFF2 parameters
 
-Run a monomer through antechamber, parmchk2, and tleap to produce an AMBER
-topology with GAFF2 parameters and partial charges.
+Type each PEO monomer once with antechamber, assemble a capped chain from the
+typed monomers, then finish it with tleap to get GAFF2 parameters and partial
+charges. tleap never re-assigns types or charges, so each monomer is a complete
+molecule whose leaving groups mimic its chain neighbours: the EO unit is
+CH3–O–CH2–CH2–O–CH3 (its O is typed ether `os`), not the H-capped `[<]OCC[>]`
+(ethanol, whose O antechamber types hydroxyl `oh`).
 
 !!! note "Requires AmberTools"
     This workflow shells out to `antechamber`, `parmchk2`, and `tleap`. Install
     AmberTools and activate its environment first.
 
 ```python
-# docs: skip — AmberPolymerBuilder shells out; builder unit-tested with mocks
+# docs: skip — needs AmberTools
 import molpy as mp
-from molpy.builder import AmberPolymerBuilder
-from molpy.builder.assembly import SiteMap
-from molpy.conformer import Conformer
 
-eo, _ = Conformer(add_hydrogens=True, seed=42).generate(
- mp.io.read_smiles("OCCO")
-)
-SiteMap(eo).label_elements("O", "a", "b")
+conformer = mp.Conformer(seed=42)
+# name: (complete molecule, ports as (anchor, leaving handle, kind) SMILES indices)
+recipes = {
+    "CAPA": ("COC", [(0, 1, ">")]),  # keeps CH3; O–CH3 leaves
+    "EO": ("COCCOC", [(1, 0, "<"), (3, 4, ">")]),  # keeps O–CH2–CH2; CH3 and O–CH3 leave
+    "CAPB": ("COC", [(1, 2, "<")]),  # keeps O–CH3; CH3 leaves
+}
+units = {}
+for name, (smiles, ports) in recipes.items():
+    unit = conformer.generate(mp.io.read_smiles(smiles))[0]  # hydrogens appended after the SMILES atoms
+    atoms = list(unit.atoms)
+    for anchor, leaving, kind in ports:
+        unit.def_port(atoms[anchor], atoms[leaving], kind)
+    units[name] = unit
 
-builder = AmberPolymerBuilder(
- library={"EO": eo},
- reaction=mp.Reaction("[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]"),
- force_field="gaff2",
- charge_method="bcc", # runs antechamber + parmchk2 + prepgen + tleap
-)
-result = builder.build("{[#EO]|20}")
-# result.frame, result.forcefield, and the Amber intermediates under work_dir
+ante = mp.typifier.AntechamberTypifier(atom_type="gaff2", charge_method="bcc")
+lib = {name: ante.typify(unit) for name, unit in units.items()}  # antechamber + parmchk2 + tleap, once per monomer
+
+sites = mp.CGSmilesIR("{[#CAPA][#EO]|10[#CAPB]}").to_coarsegrain()
+chain = mp.Assembler(lib, mp.GrowthPlacer()).assemble(sites, mp.Atomistic)  # types and charges travel with the templates
+
+leap = mp.typifier.TLeapTypifier(leaprc="gaff2", forcefield=ante.forcefield())
+peo = leap.typify(chain)  # tleap only: junction terms from leaprc.gaff2; types and charges unchanged
+ff = leap.forcefield()  # units real, AMBER 1-4 scaling declared
 ```
 
-See also: [AmberTools Integration](../user-guide/13_ambertools_integration.md).
+See also: [AmberTools Integration](../user-guide/13_ambertools_integration.md) ·
+[Assembly](../user-guide/02_assembly.md).

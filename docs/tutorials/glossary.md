@@ -7,20 +7,20 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 **Atomistic**
 : An editable molecular graph where atoms are nodes and bonds are edges. Use it when the structure is still under construction — adding atoms, removing leaving groups, querying neighbors. See [Atomistic and Topology](01_atomistic_and_topology.md).
 
-**Entity**
-: Base class for atoms and beads. Dictionary-like: read and write properties with bracket notation. Uses identity-based hashing (`id(self)`), not value-based equality.
+**NodeRef**
+: A live handle onto one graph node (`mp.NodeRef`); `Atom` and `Bead` are node views. Dictionary-like: read and write properties with bracket notation. Hashing is by identity, not by value.
 
 **Atom**
-: An `Entity` subclass representing one atom. Carries arbitrary key-value properties (`element`, `charge`, `type`, etc.).
+: A node view representing one atom. Carries arbitrary key-value properties (`element`, `charge`, `type`, etc.).
 
 **Bead**
-: An `Entity` subclass representing one coarse-grained site.
+: A node view representing one coarse-grained site.
 
-**Link**
-: Base class for topology connections. Holds an ordered tuple of `Entity` endpoints. Subclasses: `Bond`, `Angle`, `Dihedral`, `Improper`.
+**RelationRef**
+: A live handle onto one topology connection (`mp.RelationRef`). Holds an ordered tuple of node endpoints. Relation views: `Bond`, `Angle`, `Dihedral`, `Improper`.
 
-**Struct**
-: Base class that aggregates entities and links into a container. Subclasses: `Atomistic`, `CoarseGrain`.
+**Graph**
+: Native base class (`mp.Graph`) holding nodes, relations and ports. `Atomistic` and `CoarseGrain` derive from it; molpy re-exports all three by identity.
 
 **Topology**
 : Bonded terms derived from an `Atomistic`'s bond graph by the Rust kernels. `get_topo()` perceives angles/dihedrals **in place** and returns the same `Atomistic` (use `.copy().get_topo(...)` when you need an independent graph); `get_topo_neighbors()` / `get_topo_distances()` answer k-hop graph queries. There is no standalone topology class. See [Atomistic and Topology](01_atomistic_and_topology.md).
@@ -53,20 +53,29 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 
 ### Modules
 
-**Parser**
-: Converts SMILES and SMARTS strings, and moltemplate `.lt` files, into MolPy structures. BigSMILES and CGSmiles are not parsed. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
+**Parsing**
+: `mp.SmilesIR` and `mp.SmartsPattern` convert SMILES and SMARTS strings into MolPy structures; `CGSmilesIR` parses CGsmiles into ported units and site graphs. BigSMILES is not parsed. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
 
 **Reaction**
-: A reaction SMARTS. It matches the reactant patterns, forms and breaks bonds, and deletes the atoms that appear on the left and not on the right (the leaving groups). All the chemistry lives here. See [Assembly](../user-guide/02_assembly.md).
+: A reaction SMARTS. It matches the reactant patterns, forms and breaks bonds, and deletes the atoms that appear on the left and not on the right (the leaving groups). See [Parser](../api/parser.md).
 
-**GraphAssembler**
-: Applies a `Reaction` to a world you already have, wherever its `Selector` says, and retypes the force-field types near each new bond. `PolymerBuilder` is a `GraphAssembler` that also owns a monomer library: `build` takes a `ResidueTopology` (a residue graph, usually from `linear_topology` / `ring_topology` / `star_topology`), pastes one template copy per residue, and bonds the adjacent ones. Placement is opt-in through `placer=TracePlacer()`.
+**Assembler**
+: `mp.Assembler(library, placer, orienter=None)` builds one world from a site graph: one copy of `library[bead_type]` per site, each site bond joining one accepting port of each end. Every atom gets `frag_id` (its site's ordinal) and `mol_id` (its connected component, from 1). See [Assembly](../user-guide/02_assembly.md).
 
-**Site**
-: A name (`fields.SITE`) on an atom that may react. A site is a plain label, not a port with a role — a linear chain, a branch point and a ring closure differ only in how many sites a monomer carries and how the topology pairs them.
+**Port**
+: A place where a unit may bond: an *(anchor, handle)* pair, where the handle is a real atom bonded to the anchor (usually the capping hydrogen) that leaves when the bond forms. Its kind decides its partner — `<` joins `>`, `$` joins `$`, `!` joins `!` — and a label and bond order must match. In CGsmiles, ports are the bonding descriptors (`[<]OCC[>]`).
+
+**Site graph**
+: The topology of an assembly: an `mp.CoarseGrain` whose beads name library units (`bead_type`) and whose bonds say which units join. It comes from CGsmiles notation (`CGSmilesIR(...).to_coarsegrain()`) or from coarsening a CG model (`Coarsener`), in which case each site also has a position and an axis.
+
+**Placer**
+: The assembler's rule for each copy's pose. `GrowthPlacer` grows each molecule onto its parents' ports and needs no coordinates; `SitePlacer` puts each copy's centre of mass on its site.
+
+**Orienter**
+: The optional rule that turns each copy before it is placed. `AxisOrienter` aligns a unit with its site's axis and bonds; it needs site positions.
 
 **Typifier**
-: Assigns force field types to atoms, bonds, angles, and dihedrals via SMARTS pattern matching. Subclasses: `OPLSAATypifier`, `MMFFTypifier`, `ClpTypifier`, `AmberToolsTypifier`, `SmartsTypifier`. (GAFF atom types are *not* a Typifier — they come from AmberTools/antechamber; see [AmberTools Integration](../user-guide/13_ambertools_integration.md).) See [Force Field Typification](../user-guide/06_typifier.md).
+: Assigns force field types to atoms, bonds, angles, and dihedrals: implements `match`, and the base's `typify` returns a typed copy while `forcefield()` accumulates the assigned types. Native: `OPLSAATypifier`, `MMFF94Typifier`, `MMFF94STypifier`, `ElementTypifier`. GAFF / GAFF2 through AmberTools: `AntechamberTypifier`, `TLeapTypifier` (see [AmberTools Integration](../user-guide/13_ambertools_integration.md)). See [Force Field Typification](../user-guide/06_typifier.md).
 
 **Selector**
 : A composable predicate that filters atoms in a `Block` by element, type, coordinate range, or distance. Combinable with `&`, `|`, `~`. See [Selector](06_selector.md).
@@ -83,7 +92,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : Integer atom indices used in `Frame` and `Block` (the data-interchange layer). Always 0-based. Never store object references.
 
 **itom / jtom / ktom / ltom**
-: Atom object references used in `Entity`-level topology (Bond, Angle, Dihedral). Never store integers. See [Naming Conventions](naming-conventions.md).
+: Atom object references used in graph-level topology (Bond, Angle, Dihedral). Never store integers. See [Naming Conventions](naming-conventions.md).
 
 ### Compute terminology
 

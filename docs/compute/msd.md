@@ -191,7 +191,7 @@ size, not by the physics. That is why production diffusion work dumps unwrapped
 paths up front.
 
 If you only have wrapped columns plus image flags (`ix iy iz`), recover the
-continuous path **before** analysis with `Box.unwrap` (and `Box.get_images` when
+continuous path **before** analysis with `Box.unwrap` (and `Box.images` when
 you need images from a single configuration). If you have neither unwrapped
 coordinates nor image flags, re-dump the run — reconstructing images by
 detecting jumps larger than $L/2$ between frames fails for anything that moves

@@ -8,17 +8,18 @@ template copy per site with :class:`molpy.Assembler`
 systems plan chains with the distribution + :class:`SystemPlanner`
 primitives here.
 
+A built molecule goes to a packer through :class:`PackingTemplate`: its
+frame plus the indices of its hydrogens.
+
 Crystal construction goes through :meth:`Lattice.build` with
 :class:`Lattice` / :class:`Site`. Nanostructures expose direct ``build``
 methods; their compile/cache details remain internal.
 """
 
-from molpy.core.region import BoxRegion, Cube, Region, SphereRegion
-
 from ._finalize import Finalization, StructureFinalizer
-from .ambertools import AmberResult, AmberTools
 from .crystal import Lattice, Site, SpaceGroup
 from .nanostructure import CarbonTubeBuilder, GrapheneBuilder
+from .packing import PackingTemplate
 from .polymer import (
     AlternatingSequenceGenerator,
     BlockSequenceGenerator,
@@ -43,17 +44,10 @@ from .virtualsite import (
 )
 
 __all__ = [
-    # AmberTools
-    "AmberTools",
-    "AmberResult",
     # Crystal builders
-    "BoxRegion",
-    "Cube",
     "Lattice",
-    "Region",
     "Site",
     "SpaceGroup",
-    "SphereRegion",
     # Nanostructure builders
     "CarbonTubeBuilder",
     "GrapheneBuilder",
@@ -77,6 +71,8 @@ __all__ = [
     "DrudeBuilder",
     "Tip4pBuilder",
     "load_polarizability",
+    # Packing input
+    "PackingTemplate",
     # Finalization
     "StructureFinalizer",
     "Finalization",

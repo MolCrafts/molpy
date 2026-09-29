@@ -5,8 +5,8 @@ guards against an empty molecule and returns the native result directly
 (``molpy.Atomistic is molrs.Atomistic``). The heavy lifting — fragment / distance-geometry build, energy
 minimisation, rotor search, stereo guard — runs inside the native core.
 
-The report types are inherited verbatim from the native core (re-exported here, not
-re-declared). The optional RDKit backend (:mod:`molpy.adapter.rdkit`) remains
+The report types are the native ones, re-exported once at the package root
+(``mp.ConformerReport``). The optional RDKit backend (:mod:`molpy.adapter.rdkit`) remains
 available as a separate external adapter.
 """
 
@@ -14,12 +14,10 @@ from __future__ import annotations
 
 import molrs
 
-# molpy inherits the molrs report types directly; it does not re-declare them.
-from molrs.conformer import ConformerReport, ConformerStageReport
+from molrs import Atomistic
+from molrs.conformer import ConformerReport
 
-from molpy.core.atomistic import Atomistic
-
-__all__ = ["Conformer", "ConformerReport", "ConformerStageReport"]
+__all__ = ["Conformer"]
 
 
 class Conformer(molrs.conformer.Conformer):
@@ -53,7 +51,7 @@ class Conformer(molrs.conformer.Conformer):
 
         Returns:
             A tuple of the generated structure (an ``Atomistic``) and the
-            per-stage :class:`~molpy.conformer.ConformerReport`.
+            per-stage :class:`~molpy.ConformerReport`.
 
         Raises:
             ValueError: If ``mol`` has no atoms.

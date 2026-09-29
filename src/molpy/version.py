@@ -79,16 +79,6 @@ def check_molrs_version() -> str:
     )
 
 
-def __str__() -> str:
-    """String representation of version."""
-    return version
-
-
-def __repr__() -> str:
-    """Detailed string representation of version."""
-    return f"MolPy version {version} (released {release_date})"
-
-
 # Export version attributes
 __all__ = [
     "version",

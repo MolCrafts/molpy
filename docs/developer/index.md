@@ -34,7 +34,7 @@ Ordered from plug-in interfaces (implement a subclass, register a handler) to co
 - [Adding a Compute Operation](extending-compute.md) — the `Compute` protocol for reusable analysis operations
 - [Adding an I/O Format](extending-io.md) — reader and writer base classes and the `FieldFormatter` canonicalization interface
 - [Adding a Wrapper or Adapter](extending-integration.md) — subprocess wrapper conventions and in-memory adapter patterns
-- [Extending Typifiers](extending-typifiers.md) — graph-in, graph-out typifier contracts, `typify_*` naming, matcher boundaries, and the CL&P overlay plan
+- [Extending Typifiers](extending-typifiers.md) — the `match` → `Match` contract, matcher boundaries, and where a typifier lives (native vs. tool-driven)
 - [Extending the Data Model](extending-core.md) — new `Entity` and `Link` subtypes, custom `Struct` subclasses, and identity-hashing invariants
 - [Extending the Force Field](extending-forcefield.md) — molrs kernels, named `Style` classes, and export formatter registration
 
@@ -42,4 +42,3 @@ Ordered from plug-in interfaces (implement a subclass, register a handler) to co
 
 - Bug reports and feature requests: <https://github.com/MolCrafts/molpy/issues>
 - Design discussions: <https://github.com/MolCrafts/molpy/discussions>
-- Agent-assisted development: the [MCP Suite](../user-guide/15_mcp.md) exposes MolPy's symbol index to LLM agents

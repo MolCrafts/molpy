@@ -2,7 +2,7 @@
 
 import numpy as np
 
-import molrs
+import molpy as mp
 
 from molpy.core.fields import CHARGE, FieldFormatter
 
@@ -13,7 +13,7 @@ class _AcLike(FieldFormatter):
 
 class TestFieldFormatter:
     def test_canonicalize_and_localize_rename_in_place_and_invert(self):
-        block = molrs.Block()
+        block = mp.Block()
         block["q"] = np.array([0.1, -0.1])
         block["x"] = np.array([0.0, 1.0])
         _AcLike().canonicalize(block)
@@ -22,7 +22,7 @@ class TestFieldFormatter:
         assert sorted(block.keys()) == ["q", "x"]
 
     def test_canonicalize_frame_walks_every_block(self):
-        frame = molrs.Frame()
+        frame = mp.Frame()
         frame["atoms"] = {"q": np.array([0.5]), "x": np.array([0.0])}
         assert _AcLike().canonicalize_frame(frame) is frame
         assert "charge" in frame["atoms"] and "q" not in frame["atoms"]
@@ -32,7 +32,7 @@ class TestFieldFormatter:
             _field_formatters = {}
 
         _Fmt.register_field("qq", CHARGE)
-        block = molrs.Block()
+        block = mp.Block()
         block["qq"] = np.array([1.0])
         _Fmt().canonicalize(block)
         assert "charge" in block

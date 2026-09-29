@@ -25,12 +25,8 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from molpy.core.atomistic import Atom, Atomistic
+    from molrs import Atom, Atomistic
     from molrs import Frame
-
-#: Total charge must be conserved by a reaction template to within this
-#: tolerance (elementary charge); a larger drift means an inconsistent template.
-CHARGE_CONSERVATION_TOL: float = 1e-6
 
 # Maps the metadata label key used by the LAMMPS data writer to the
 # corresponding frame section name.
@@ -57,8 +53,8 @@ class BondReactTemplate:
         edge_atoms: Boundary atoms bonded to topology outside the template
             (LAMMPS ``EdgeIDs``).
         deleted_atoms: Atoms the reaction removes (LAMMPS ``DeleteIDs``).
-        pre_react_id_to_atom: ``react_id`` → atom in ``pre``.
-        post_react_id_to_atom: ``react_id`` → atom in ``post``.
+
+    Atoms of ``pre`` and ``post`` are paired by their ``react_id`` prop.
     """
 
     pre: Atomistic
@@ -66,8 +62,6 @@ class BondReactTemplate:
     initiator_atoms: list[Atom]
     edge_atoms: list[Atom]
     deleted_atoms: list[Atom]
-    pre_react_id_to_atom: dict
-    post_react_id_to_atom: dict
 
     def assign_atom_ids(self) -> None:
         """Assign deterministic 1-based ``id`` values to the pre/post atoms.

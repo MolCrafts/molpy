@@ -128,7 +128,7 @@ import numpy as np
 import molpy as mp
 from molpy.compute import (
     CenterOfMass, Cluster, ClusterCenters, GyrationTensor,
-    InertiaTensor, NeighborList, RadiusOfGyration,
+    InertiaTensor, RadiusOfGyration,
 )
 
 rng = np.random.default_rng(0)
@@ -138,12 +138,14 @@ chain = np.cumsum(steps, axis=0) + 100.0
 
 frame = mp.Frame()
 frame["atoms"] = {"x": chain[:, 0], "y": chain[:, 1], "z": chain[:, 2]}
-frame.box = mp.Box.cubic(200.0)
+frame.box = mp.Box.cube(200.0)
 ```
 
 ```python
 masses = np.full(n_beads, 12.011)
-nlist = NeighborList(cutoff=2.5).compute(frame)
+nl = mp.NeighborList(2.5)
+nl.build(frame.coords, frame.box)
+nlist = nl.neighbors()
 clusters = Cluster(min_cluster_size=5).compute([frame], [nlist])
 centers = ClusterCenters().compute([frame], clusters)
 com = CenterOfMass(masses).compute([frame], clusters)
@@ -183,16 +185,16 @@ from raw coordinates about a centre, so half the molecule appears a box-length
 away. This is the single most common failure on this page.
 
 Fix: pick one atom of the cluster as a seed and re-express every other atom as
-the nearest periodic image of that seed — `Box.diff_dr` applies the minimum-image
+the nearest periodic image of that seed — `Box.delta` applies the minimum-image
 convention (including non-cubic cells):
 
 ```python
-box = mp.Box.cubic(20.0)
+box = mp.Box.cube(20.0)
 split = np.array(
     [[0.5, 10.0, 10.0], [1.0, 10.0, 10.0], [19.5, 10.0, 10.0], [19.0, 10.0, 10.0]]
 )
 seed = split[0]
-joined = seed + box.diff_dr(split - seed)
+joined = seed + box.delta(np.tile(seed, (len(split), 1)), split, minimum_image=True)
 print(round(float(np.ptp(split[:, 0])), 2))   # -> 19.0  (PBC-split)
 print(round(float(np.ptp(joined[:, 0])), 2))  # -> 2.0   (one molecule again)
 ```

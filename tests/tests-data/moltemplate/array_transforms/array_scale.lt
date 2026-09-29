@@ -1,9 +1,0 @@
-# One-atom class replicated by an array .scale: copy k is (1,2,3) * 3^k.
-
-Dot {
-  write("Data Atoms") {
-    $atom:a $mol:. @atom:A 0.0 1.0 2.0 3.0
-  }
-}
-
-m = new Dot [3].scale(3.0)

@@ -14,9 +14,9 @@ Examples:
     INFO
     >>>
     >>> # Update config globally
-    >>> Config.update(log_level="DEBUG", n_threads=4)
-    >>> print(config.n_threads)
-    4
+    >>> Config.update(log_level="DEBUG")
+    >>> print(config.log_level)
+    DEBUG
     >>>
     >>> # Temporary override
     >>> with Config.temporary(log_level="WARNING"):
@@ -39,7 +39,6 @@ from molcfg import Config as _MolcfgConfig
 # Default configuration values. ``reset()`` restores exactly these keys.
 _DEFAULTS: dict[str, Any] = {
     "log_level": "INFO",
-    "n_threads": 1,
 }
 
 
@@ -47,14 +46,12 @@ class Config(_MolcfgConfig):
     """
     Global configuration for MolPy, backed by :class:`molcfg.Config`.
 
-    Thread-safe singleton storing global settings such as the logging level
-    and parallelization parameters. Use the class methods to access and modify
+    Thread-safe singleton storing global settings such as the logging level. Use the class methods to access and modify
     the shared instance; values are read through attribute access
     (``config.log_level``) or dotted-path access (``config["log_level"]``).
 
     Attributes:
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
-        n_threads: Number of threads for parallel computations.
     """
 
     _instance: Config | None = None
@@ -85,7 +82,7 @@ class Config(_MolcfgConfig):
         :meth:`update`.
 
         Args:
-            **kwargs: Configuration fields to update (log_level, n_threads, ...).
+            **kwargs: Configuration fields to update (log_level, ...).
         """
         inst = cls.instance()
         with cls._lock:
@@ -139,15 +136,3 @@ class Config(_MolcfgConfig):
 
 config = Config.instance()
 """Global config instance. Use this for read access."""
-
-
-def get_config() -> Config:
-    """
-    Get the global configuration instance.
-
-    Convenience function equivalent to :meth:`Config.instance`.
-
-    Returns:
-        The singleton Config instance.
-    """
-    return config

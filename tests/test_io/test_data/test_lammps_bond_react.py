@@ -1,21 +1,12 @@
 """Tests for LAMMPS fix bond/react serialization (semantic, not byte-golden).
 
-Two layers cover :mod:`molpy.io.data.lammps_bond_react`:
+``TestWriteBondReactMap`` unit-tests ``write_bond_react_map``: header counts,
+section order, 1-based IDs, and a ValueError on a pre/post atom-set mismatch.
 
-1. ``test_system_writer_produces_consistent_system`` — drives the public
-   :func:`molpy.io.write_lammps_bond_react_system` end to end and asserts the
-   *behavior* of the output: the expected file set, a 1-based bijection in the
-   ``.map`` equivalences, exactly two initiators, and unified numeric type IDs
-   in the pre/post ``.mol`` templates. It deliberately does not byte-compare —
-   exact formatting (timestamps, force-field coeff order) is incidental and not
-   what this module owns.
-2. ``TestWriteBondReactMap`` — unit tests for ``write_bond_react_map``: header
-   counts, section order, 1-based IDs, and a ValueError on a pre/post atom-set
-   mismatch.
-
-The system builder couples two propane fragments (three carbons so the radius-2
-template has genuine edge atoms) with :class:`BondReactReacter` and derives all
-topology type names from endpoint atom types.
+The template couples two propanes (three carbons, so the radius-2 environment
+has genuine edge atoms): ``pre`` is the committed ``mol2/bond_react_pre.mol2``,
+``post`` the same atoms after the edit, and every topology type name is derived
+from endpoint atom types.
 """
 
 from __future__ import annotations
@@ -24,77 +15,25 @@ from pathlib import Path
 
 import pytest
 
-
-from molpy.core.atomistic import Atomistic
-from molpy.core.entity import Link
-from molpy.io.data.lammps_bond_react import BondReactTemplate
-from molpy.typifier.affected_region import AffectedRegion
+import molpy as mp
+from molpy import Atomistic
+from molpy import RelationRef
+from molpy.io import BondReactTemplate
 
 
 # ===================================================================
-# Deterministic system builder (helpers, not tests)
+# Deterministic reaction builder (helpers, not tests)
 # ===================================================================
 
-
-def _propane_fragment(
-    x0: float, port_label: str, port_on_first_carbon: bool
-) -> Atomistic:
-    """Build a propane fragment with fixed insertion order and geometry.
-
-    Three carbons (instead of ethane's two) put the far methyl hydrogens
-    outside the radius-2 reaction subgraph, so the generated template has
-    nonzero EdgeIDs — exercising the edge-atom branch of the map writer.
-    """
-    struct = Atomistic()
-    ca = struct.def_atom(
-        element="C", type="c3", x=x0, y=0.0, z=0.0, charge=0.0, mol_id=1
-    )
-    cb = struct.def_atom(
-        element="C", type="c3", x=x0 + 1.54, y=0.0, z=0.0, charge=0.0, mol_id=1
-    )
-    cc = struct.def_atom(
-        element="C", type="c3", x=x0 + 3.08, y=0.0, z=0.0, charge=0.0, mol_id=1
-    )
-    ha1 = struct.def_atom(
-        element="H", type="hc", x=x0 - 0.5, y=0.9, z=0.0, charge=0.0, mol_id=1
-    )
-    ha2 = struct.def_atom(
-        element="H", type="hc", x=x0 - 0.5, y=-0.45, z=0.78, charge=0.0, mol_id=1
-    )
-    ha3 = struct.def_atom(
-        element="H", type="hc", x=x0 - 0.5, y=-0.45, z=-0.78, charge=0.0, mol_id=1
-    )
-    hb1 = struct.def_atom(
-        element="H", type="hc", x=x0 + 1.54, y=0.9, z=0.45, charge=0.0, mol_id=1
-    )
-    hb2 = struct.def_atom(
-        element="H", type="hc", x=x0 + 1.54, y=0.9, z=-0.45, charge=0.0, mol_id=1
-    )
-    hc1 = struct.def_atom(
-        element="H", type="hc", x=x0 + 3.58, y=0.9, z=0.0, charge=0.0, mol_id=1
-    )
-    hc2 = struct.def_atom(
-        element="H", type="hc", x=x0 + 3.58, y=-0.45, z=0.78, charge=0.0, mol_id=1
-    )
-    hc3 = struct.def_atom(
-        element="H", type="hc", x=x0 + 3.58, y=-0.45, z=-0.78, charge=0.0, mol_id=1
-    )
-    struct.def_bond(ca, cb)
-    struct.def_bond(cb, cc)
-    struct.def_bond(ca, ha1)
-    struct.def_bond(ca, ha2)
-    struct.def_bond(ca, ha3)
-    struct.def_bond(cb, hb1)
-    struct.def_bond(cb, hb2)
-    struct.def_bond(cc, hc1)
-    struct.def_bond(cc, hc2)
-    struct.def_bond(cc, hc3)
-    port_atom = ca if port_on_first_carbon else cc
-    port_atom["port"] = port_label
-    return struct
+# Rows (``react_id``) of ``mol2/bond_react_pre.mol2``: the radius-2 environment
+# of a C-C coupling between two propanes. Rows 1-8 are the left propane (its
+# terminal carbon 3 reacts), rows 9-16 the right one (its first carbon 9 reacts).
+INITIATORS = (3, 9)
+LEAVING = (6, 12)  # one hydrogen on each initiator
+EDGES = (1, 11)  # carbons whose remaining hydrogens lie outside the template
 
 
-def _canonical_link_type(link: Link) -> str:
+def _canonical_link_type(link: RelationRef) -> str:
     """Orientation-independent topology type name from endpoint atom types."""
     names = tuple(str(ep["type"]) for ep in link.endpoints)
     return "-".join(min(names, names[::-1]))
@@ -110,57 +49,28 @@ def _assign_link_types(struct: Atomistic) -> None:
         link["type"] = _canonical_link_type(link)
 
 
-def _strip_port_markers(struct: Atomistic) -> None:
-    """Drop sparse 'port' keys so to_frame() columns stay dense and stable."""
-    for atom in struct.atoms:
-        atom.data.pop("port", None)
-
-
-def _port_atom(struct: Atomistic, label: str):
-    return next(a for a in struct.atoms if a.get("port") == label)
-
-
-def _one_hydrogen(struct: Atomistic, anchor):
-    """The lowest-handle hydrogen bonded to ``anchor`` — deterministic."""
-    neighbours = [n for n in struct.get_neighbors(anchor) if n.get("element") == "H"]
-    return min(neighbours, key=lambda a: a.handle)
-
-
-def _build_reaction() -> tuple[BondReactTemplate, Atomistic]:
-    """Deterministic C-C coupling, built as data rather than run by an engine.
+def _build_reaction(test_data_dir: Path) -> BondReactTemplate:
+    """Deterministic C-C coupling template, built as data rather than run by an engine.
 
     A bond/react template *is* a description of an edit: the radius-2 environment
-    before it, the same atoms after it, and which of them are initiators, edges
-    and deletions. Nothing here needs a reaction engine — the old
-    ``BondReactReacter`` only existed to produce this object.
+    before it (the committed ``pre`` fixture), the same atoms after it, and which
+    of them are initiators, edges and deletions.
     """
-    world = _propane_fragment(0.0, ">", port_on_first_carbon=False)
-    world.merge(_propane_fragment(6.0, "<", port_on_first_carbon=True))
-    for react_id, atom in enumerate(world.atoms, start=1):
-        atom["react_id"] = react_id
-
-    anchor_l = _port_atom(world, ">")
-    anchor_r = _port_atom(world, "<")
-    leaving = [_one_hydrogen(world, anchor_l), _one_hydrogen(world, anchor_r)]
-
-    # radius-2 local environment: the far methyl hydrogens fall outside, so the
-    # template has genuine EdgeIDs.
-    pre = AffectedRegion._from(
-        world, [anchor_l, anchor_r], extract_radius=2, interior_reach=2
-    )
+    frame = mp.io.read_mol2(test_data_dir / "mol2" / "bond_react_pre.mol2")
+    frame["atoms"]["react_id"] = frame["atoms"]["id"]
+    pre = Atomistic.from_frame(frame)
+    pre.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)
     by_react_id = {a["react_id"]: a for a in pre.atoms}
 
     # the same atoms, after the edit: drop the two C-H bonds, add the C-C bond
     post = pre.copy()
     post_by_react_id = {a["react_id"]: a for a in post.atoms}
-    for hydrogen in leaving:
-        target = post_by_react_id[hydrogen["react_id"]]
+    for react_id in LEAVING:
+        target = post_by_react_id[react_id]
         for bond in list(post.bonds):
             if target in bond.endpoints:
-                post.del_bond(bond)
-    post.def_bond(
-        post_by_react_id[anchor_l["react_id"]], post_by_react_id[anchor_r["react_id"]]
-    )
+                post.remove_bond(bond.handle)
+    post.def_bond(*(post_by_react_id[react_id] for react_id in INITIATORS))
     # clear_existing: `post` inherited `pre`'s angles/dihedrals, including the ones
     # running through the hydrogens the reaction deletes. LAMMPS would then try to
     # build an angle on a deleted atom ("Angle atoms 2 3 9 missing").
@@ -169,42 +79,13 @@ def _build_reaction() -> tuple[BondReactTemplate, Atomistic]:
     template = BondReactTemplate(
         pre=pre,
         post=post,
-        initiator_atoms=[
-            by_react_id[anchor_l["react_id"]],
-            by_react_id[anchor_r["react_id"]],
-        ],
-        edge_atoms=list(pre.boundary),
-        deleted_atoms=[by_react_id[h["react_id"]] for h in leaving],
-        pre_react_id_to_atom=by_react_id,
-        post_react_id_to_atom=post_by_react_id,
+        initiator_atoms=[by_react_id[react_id] for react_id in INITIATORS],
+        edge_atoms=[by_react_id[react_id] for react_id in EDGES],
+        deleted_atoms=[by_react_id[react_id] for react_id in LEAVING],
     )
-
-    # the reacted whole system, for the .data file
-    product = world.copy()
-    product_by_react_id = {a["react_id"]: a for a in product.atoms}
-    for hydrogen in leaving:
-        product.del_atom(product_by_react_id[hydrogen["react_id"]])
-    product.def_bond(
-        product_by_react_id[anchor_l["react_id"]],
-        product_by_react_id[anchor_r["react_id"]],
-    )
-    product.generate_topology(gen_angle=True, gen_dihedral=True)
-
-    for struct in (template.pre, template.post, product):
-        _strip_port_markers(struct)
+    for struct in (template.pre, template.post):
         _assign_link_types(struct)
-    return template, product
-
-
-# ===================================================================
-# System-writer integration test (semantic, not byte-for-byte)
-# ===================================================================
-
-
-# ===================================================================
-# Unit tests for the FUTURE molpy.io.data.lammps_bond_react module
-# (RED until the refactor lands — imports are inside each test)
-# ===================================================================
+    return template
 
 
 def _parse_equivalences(content: str) -> list[tuple[int, int]]:
@@ -220,17 +101,19 @@ def _parse_equivalences(content: str) -> list[tuple[int, int]]:
 class TestWriteBondReactMap:
     """Unit tests for write_bond_react_map (module does not exist yet → RED)."""
 
-    def _write_map(self, tmp_path: Path) -> tuple[str, BondReactTemplate]:
+    def _write_map(
+        self, tmp_path: Path, test_data_dir: Path
+    ) -> tuple[str, BondReactTemplate]:
         from molpy.io import write_bond_react_map
 
-        template, _ = _build_reaction()
+        template = _build_reaction(test_data_dir)
         write_bond_react_map(template, tmp_path / "rxn1")
         content = (tmp_path / "rxn1.map").read_text(encoding="utf-8")
         return content, template
 
-    def test_map_header_counts(self, tmp_path: Path) -> None:
+    def test_map_header_counts(self, tmp_path: Path, TEST_DATA_DIR: Path) -> None:
         """Header lines carry the equivalence/edge/delete counts of the template."""
-        content, template = self._write_map(tmp_path)
+        content, template = self._write_map(tmp_path, TEST_DATA_DIR)
 
         pre_rids = {a["react_id"] for a in template.pre.atoms}
         initiator_rids = {a.get("react_id") for a in template.initiator_atoms}
@@ -252,9 +135,11 @@ class TestWriteBondReactMap:
         assert f"{n_edge} edgeIDs" in lines
         assert f"{n_delete} deleteIDs" in lines
 
-    def test_map_sections_present_in_order(self, tmp_path: Path) -> None:
+    def test_map_sections_present_in_order(
+        self, tmp_path: Path, TEST_DATA_DIR: Path
+    ) -> None:
         """InitiatorIDs, EdgeIDs, DeleteIDs, Equivalences appear in that order."""
-        content, _ = self._write_map(tmp_path)
+        content, _ = self._write_map(tmp_path, TEST_DATA_DIR)
         positions = [
             content.index("InitiatorIDs"),
             content.index("EdgeIDs"),
@@ -263,9 +148,9 @@ class TestWriteBondReactMap:
         ]
         assert positions == sorted(positions)
 
-    def test_map_ids_are_1based(self, tmp_path: Path) -> None:
+    def test_map_ids_are_1based(self, tmp_path: Path, TEST_DATA_DIR: Path) -> None:
         """Equivalence IDs are >= 1 and pre-side IDs cover 1..n_atoms exactly."""
-        content, template = self._write_map(tmp_path)
+        content, template = self._write_map(tmp_path, TEST_DATA_DIR)
         pairs = _parse_equivalences(content)
         n_atoms = len(list(template.pre.atoms))
 
@@ -282,7 +167,7 @@ class TestWriteBondReactMap:
         pre.def_bond(a1, a2, type="c3-c3")
 
         post = Atomistic()
-        b1 = post.def_atom(element="C", type="c3", react_id=1)
+        post.def_atom(element="C", type="c3", react_id=1)
 
         template = BondReactTemplate(
             pre=pre,
@@ -290,8 +175,6 @@ class TestWriteBondReactMap:
             initiator_atoms=[a1, a2],
             edge_atoms=[],
             deleted_atoms=[],
-            pre_react_id_to_atom={1: a1, 2: a2},
-            post_react_id_to_atom={1: b1},
         )
         with pytest.raises(ValueError):
             write_bond_react_map(template, tmp_path / "bad")

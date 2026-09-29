@@ -12,20 +12,20 @@ the forces drop below a tolerance.
 
 **`LBFGS` moves atoms downhill on a set of potentials until the maximum force
 falls under `fmax`.** The minimizer is the native limited-memory quasi-Newton
-implementation, re-exported as `molpy.LBFGS` / `molpy.optimize.LBFGS`; it
-drives the `Potentials` a force field compiles for your frame.
+implementation, re-exported as `molpy.LBFGS`; it
+drives the `Potentials` that `PotentialCompiler` compiles from a force field for your frame.
 
 ## Minimizing a structure
 
 ```python
 import molpy as mp
-from molpy.conformer import Conformer
 
-mol, _ = Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
-forcefield = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml"))
-frame = mp.typifier.OPLSAATypifier().typify(mol).to_frame()
+mol, _ = mp.Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
+typifier = mp.typifier.OPLSAATypifier()
+frame = typifier.typify(mol).to_frame()
+forcefield = typifier.forcefield()  # OPLS-AA parameters of the types just assigned
 
-potentials = forcefield.to_potentials(frame)  # bonded + pair terms for this frame
+potentials = mp.PotentialCompiler(forcefield).compile(frame)  # bonded + pair terms
 opt = mp.LBFGS(potentials, fmax=0.05, max_steps=200)
 frame, report = opt.run(frame)  # a new frame with the relaxed coordinates
 
@@ -65,9 +65,9 @@ the structure.
  lengths in Å. A threshold that is too tight for a coarse force field never
  converges; too loose leaves residual strain.
 - The potentials are compiled for one topology. Relaxing a frame whose bonds
- or types changed needs `to_potentials` again.
+ or types changed needs `PotentialCompiler(forcefield).compile(frame)` again.
 - Optimization needs a *typified* frame with a force field — run a typifier
- first, otherwise `to_potentials` has nothing to compile.
+ first, otherwise `compile` has no types to look up.
 
 ## See also
 

@@ -1,136 +1,47 @@
+"""molpy.Box — the constructor and ``Style`` molpy adds over the native box."""
+
 import numpy as np
 import numpy.testing as npt
 import pytest
 
-from molpy import Box
+import molpy as mp
 
 
-class TestBoxConstruction:
-    def test_matrix_construction(self):
-        matrix = np.diag([1, 2, 3])
-        box = Box(matrix)
-        assert box.style == Box.Style.ORTHOGONAL
-        npt.assert_allclose(box.lx, 1)
-        npt.assert_allclose(box.ly, 2)
-        npt.assert_allclose(box.lz, 3)
-
-    def test_cubic_and_orth(self):
-        b1 = Box.cubic(5.0)
-        assert b1.style == Box.Style.ORTHOGONAL
-        assert b1.lx == b1.ly == b1.lz == 5.0
-        b2 = Box.orth([2, 3, 4])
-        npt.assert_allclose(b2.diag, [2, 3, 4])
-
-    def test_triclinic_basic(self):
-        lengths = [2, 3, 4]
-        tilts = [0.5, 1.0, 1.5]
-        box = Box.tric(lengths, tilts)
-        assert box.style == Box.Style.TRICLINIC
-
-    def test_from_bounds_no_padding(self):
-        points = np.array([[0.0, 0.0, 0.0], [2.0, 3.0, 4.0], [1.0, -1.0, 2.0]])
-        box = Box.from_bounds(points)
-        assert box.style == Box.Style.ORTHOGONAL
-        npt.assert_allclose(box.origin, [0.0, -1.0, 0.0])
-        npt.assert_allclose(box.diag, [2.0, 4.0, 4.0])
-        assert not box.periodic
-
-    def test_from_bounds_scalar_padding(self):
-        points = np.array([[0.0, 0.0, 0.0], [1.0, 2.0, 3.0]])
-        box = Box.from_bounds(points, padding=1.5)
-        npt.assert_allclose(box.origin, [-1.5, -1.5, -1.5])
-        npt.assert_allclose(box.diag, [4.0, 5.0, 6.0])
-
-    def test_from_bounds_per_axis_padding_and_pbc(self):
-        points = np.array([[0.0, 0.0, 0.0], [10.0, 10.0, 10.0]])
-        box = Box.from_bounds(points, padding=[1.0, 2.0, 3.0], pbc=[True, True, False])
-        npt.assert_allclose(box.diag, [12.0, 14.0, 16.0])
-        npt.assert_allclose(box.origin, [-1.0, -2.0, -3.0])
-        npt.assert_array_equal(box.pbc, [True, True, False])
-
-    def test_from_bounds_rejects_bad_shape(self):
-
-        with pytest.raises(ValueError):
-            Box.from_bounds(np.zeros((0, 3)))
-        with pytest.raises(ValueError):
-            Box.from_bounds(np.zeros((4, 2)))
+def test_diagonal_is_promoted_to_a_matrix():
+    box = mp.Box([1.0, 2.0, 3.0])
+    npt.assert_allclose(box.h, np.diag([1.0, 2.0, 3.0]))
+    assert box.style == mp.Box.Style.ORTHOGONAL
+    npt.assert_array_equal(box.pbc, [True, True, True])
 
 
-class TestBoxProperties:
-    def test_lengths_and_tilts(self):
-        box = Box.tric([2, 4, 5], [1, 0, 0])
-        npt.assert_allclose(box.lx, 2)
-        npt.assert_allclose(box.ly, 4)
-        npt.assert_allclose(box.lz, 5)
-        npt.assert_allclose(box.diag_inv, [0.5, 0.25, 0.2])
-        # tilts come back exactly as constructed (xy=1, xz=0, yz=0)
-        npt.assert_allclose(box.tilts, [1, 0, 0])
-        # Box is immutable post-molrs-inheritance — construct a new Box to change xy.
-        rebuilt = Box.tric([2, 4, 5], [2, 0, 0])
-        npt.assert_allclose(rebuilt.xy, 2)
-
-    def test_bounds_and_volume(self):
-        box = Box.orth([2, 3, 4])
-        bounds = box.bounds
-        expected = np.array([[0, 0, 0], [2, 3, 4]])
-        npt.assert_allclose(bounds, expected)
-        assert abs(float(box.volume) - 24.0) < 1e-10
-
-    def test_periodic_flags(self):
-        box = Box.orth([1, 2, 3])
-        assert box.periodic
-        # Box is immutable; build new boxes for non-default PBC.
-        non_x = Box.orth([1, 2, 3], pbc=[False, True, True])
-        assert not non_x.periodic
-        assert not non_x.periodic_x
-        assert non_x.periodic_y
-        assert non_x.periodic_z
-        all_on = Box.orth([1, 2, 3], pbc=[True, True, True])
-        assert all_on.periodic
+def test_full_matrix_keeps_its_tilts():
+    matrix = np.array([[2.0, 1.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]])
+    box = mp.Box(matrix)
+    assert box.style == mp.Box.Style.TRICLINIC
+    npt.assert_allclose(box.tilts, [1.0, 0.0, 0.0])
 
 
-class TestBoxOps:
-    def test_mul_and_repr(self):
-        box = Box.tric([2, 3, 4], [1, 0.5, 0.1])
-        box2 = box * 2
-        npt.assert_allclose(box2.lx, 4)
-        npt.assert_allclose(box2.ly, 6)
-        npt.assert_allclose(box2.lz, 8)
-        assert "Box" in repr(box)
+@pytest.mark.parametrize("matrix", [None, np.zeros((3, 3))])
+def test_no_cell_is_a_free_box(matrix):
+    box = mp.Box(matrix)
+    assert box.is_free
+    assert box.style == mp.Box.Style.FREE
+    assert not box.cell_defined
+    npt.assert_array_equal(box.pbc, [False, False, False])
 
-    def test_native_batched_distances_and_displacements(self):
-        box = Box.cubic(10.0)
-        left = np.array([[0.0, 0.0, 0.0], [9.0, 0.0, 0.0]])
-        right = np.array([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
 
-        npt.assert_allclose(box.diff(left, right), [[-1.0, 0.0, 0.0], [-2.0, 0.0, 0.0]])
-        npt.assert_allclose(box.dist(left, right), [1.0, 2.0])
-        npt.assert_allclose(
-            box.diff_all(left, right[:1]),
-            [[[-1.0, 0.0, 0.0]], [[-2.0, 0.0, 0.0]]],
-        )
-        npt.assert_allclose(box.dist_all(left, right[:1]), [[1.0], [2.0]])
+def test_origin_and_pbc_pass_through():
+    box = mp.Box([2.0, 3.0, 4.0], pbc=[True, False, True], origin=[1.0, 2.0, 3.0])
+    npt.assert_array_equal(box.pbc, [True, False, True])
+    npt.assert_allclose(box.origin, [1.0, 2.0, 3.0])
 
-    def test_native_transform_preserves_metadata(self):
-        box = Box.orth([2.0, 3.0, 4.0], pbc=[True, False, True], origin=[1, 2, 3])
-        transformed = box.transform(np.diag([2.0, 1.0, 0.5]))
 
-        npt.assert_allclose(transformed.matrix, np.diag([4.0, 3.0, 2.0]))
-        npt.assert_allclose(transformed.origin, box.origin)
-        npt.assert_array_equal(transformed.pbc, box.pbc)
+def test_bad_shape_raises():
+    with pytest.raises(ValueError, match="matrix"):
+        mp.Box(np.zeros((2, 2)))
 
-    def test_unwrap_accepts_int64_images(self):
-        box = Box.orth([10.0, 10.0, 10.0])
-        xyz = np.array([[1.0, 2.0, 3.0]])
-        image = np.array([[1, 0, -1]], dtype=np.int64)
 
-        # Hand-computed: xyz + image * L with L = 10 on every axis.
-        npt.assert_allclose(box.unwrap(xyz, image), [[11.0, 2.0, -7.0]], atol=1e-12)
-
-    def test_unwrap_rejects_image_outside_int32(self):
-        box = Box.orth([10.0, 10.0, 10.0])
-        xyz = np.array([[1.0, 2.0, 3.0]])
-        image = np.array([[2**31, 0, 0]], dtype=np.int64)
-
-        with pytest.raises(ValueError):
-            box.unwrap(xyz, image)
+def test_is_a_native_box():
+    box = mp.Box([10.0, 10.0, 10.0])
+    wrapped = box.wrap(np.array([[12.0, -1.0, 5.0]]))
+    npt.assert_allclose(wrapped, [[2.0, 9.0, 5.0]])

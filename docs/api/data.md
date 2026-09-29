@@ -1,10 +1,14 @@
 # Data
 
 Locators for the data files bundled with MolPy — built-in force fields
-(`oplsaa.xml`, `clp.xml`, `tip3p.xml`, `alpha.ff`, …) and other packaged
-assets. These helpers return filesystem paths you can hand to a reader; they do
-not parse anything themselves. Available via `import molpy as mp`
+(`tip3p.xml`, `clp.xml`, `alpha.ff`) and other packaged assets. These helpers
+return filesystem paths you can hand to a reader; they do not parse anything
+themselves. Available via `import molpy as mp`
 (`mp.data.get_forcefield_path`).
+
+OPLS-AA is not a bundled file: it ships with molrs and comes from
+`mp.typifier.OPLSAATypifier()` — `.library()` returns every OPLS-AA type,
+`.forcefield()` only the types assigned by the last `.typify(...)`.
 
 ## Quick reference
 
@@ -19,7 +23,9 @@ not parse anything themselves. Available via `import molpy as mp`
 ```python
 import molpy as mp
 
-ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml"))
+ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("tip3p.xml"))
+
+opls = mp.typifier.OPLSAATypifier().library() # all OPLS-AA types, from molrs
 ```
 
 ---

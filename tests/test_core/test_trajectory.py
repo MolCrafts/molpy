@@ -3,8 +3,9 @@
 import numpy as np
 import pytest
 
-from molrs import Frame, MetaValue
-from molpy.core.trajectory import (
+from molpy import (
+    Frame,
+    MetaValue,
     CustomStrategy,
     FrameIntervalStrategy,
     SplitStrategy,
@@ -44,7 +45,7 @@ class TestTrajectory:
     def test_init_with_topology(self, frames):
         topology = object()
         traj = Trajectory(frames, topology)
-        assert traj._topology is topology
+        assert traj.topology is topology
         assert traj.topology is topology
 
     def test_iteration(self, frames):
@@ -65,13 +66,13 @@ class TestTrajectory:
         sub_traj = traj[2:5]
 
         assert isinstance(sub_traj, Trajectory)
-        assert sub_traj._topology is traj._topology
+        assert sub_traj.topology is traj.topology
         assert len(sub_traj) == 3
 
     def test_getitem_slice_preserves_topology(self, frames):
         topology = object()
         traj = Trajectory(frames, topology)
-        assert traj[2:5]._topology is topology
+        assert traj[2:5].topology is topology
 
     def test_getitem_invalid_type_raises(self, frames):
         traj = Trajectory(frames)
@@ -97,7 +98,7 @@ class TestTrajectory:
     def test_map_preserves_topology(self, frames):
         topology = object()
         traj = Trajectory(frames, topology)
-        assert traj.map(lambda f: f)._topology is topology
+        assert traj.map(lambda f: f).topology is topology
 
     def test_repr(self, frames):
         traj = Trajectory(frames)
@@ -175,23 +176,18 @@ class TestTrajectorySplitter:
         assert len(segments) == 4  # [0:3], [3:6], [6:9], [9:10]
         assert all(isinstance(seg, Trajectory) for seg in segments)
 
-    def test_split_frames_convenience(self, frames):
-        traj = Trajectory(frames)
-        segments = TrajectorySplitter(traj).split_frames(4)
-        assert len(segments) == 3  # [0:4], [4:8], [8:10]
-
-    def test_split_time_convenience(self, frames):
+    def test_time_split_segments_keep_their_times(self, frames):
         times = np.array([i * 0.5 for i in range(10)])
         traj = Trajectory(frames, time=times)
-        segments = TrajectorySplitter(traj).split_time(1.0)
-        assert len(segments) >= 1
-        assert all(isinstance(seg, Trajectory) for seg in segments)
+        segments = TrajectorySplitter(traj).split(TimeIntervalStrategy(1.0))
+        assert [len(seg) for seg in segments] == [2, 2, 2, 2, 2]
+        np.testing.assert_allclose(segments[1].time, [1.0, 1.5])
 
     def test_split_preserves_topology(self, frames):
         topology = object()
         traj = Trajectory(frames, topology)
-        segments = TrajectorySplitter(traj).split_frames(3)
-        assert all(seg._topology is topology for seg in segments)
+        segments = TrajectorySplitter(traj).split(FrameIntervalStrategy(3))
+        assert all(seg.topology is topology for seg in segments)
 
 
 class TestErrorHandling:

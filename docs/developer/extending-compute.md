@@ -52,15 +52,14 @@ dispatch in a loop.
     forwarded to `super().__init__(**config)` and read back by a `dump()`
     method. The base class, the `**config` catch-all, and `dump()` are all
     gone. Name the method `compute`, store your own attributes, and do not call
-    `super().__init__`. See the
-    [0.14 migration notes](../getting-started/migration-0-14.md#compute).
+    `super().__init__`.
 
 ## Which shape to use
 
 | Need | Shape | Example |
 |------|-------|---------|
-| Frame-oriented analysis (molrs kernel behind a thin shell) | plain class with `compute(...)` | `MSD`, `RDF` |
-| Array-oriented transport / dielectric | re-export the molrs type | `EinsteinConductivity`, `Onsager` |
+| Analysis with a molrs kernel | re-export the molrs class by identity | `MSD`, `RDF`, `EinsteinConductivity`, `Onsager` |
+| Analysis molpy owns (no kernel in molrs) | plain class with `compute(...)` | the `CollectiveDipole` example below |
 | Pure array math with no owner | module-level function | `signal.acf_fft` |
 
 A molrs class that already carries its own verb keeps it — `RadicalVoronoi`

@@ -65,11 +65,13 @@ print(bond.itom["name"], bond.jtom["name"], bond.get("order"))
 ## Connectivity lives in the molecule, not in the atom
 
 An atom does not store its own neighbour list. The container owns connectivity,
-so graph operations stay explicit and consistent.
+so graph operations stay explicit and consistent. `topo_distances` walks the
+bond graph from one atom handle and returns `(handle, hops)` pairs; the
+neighbours are the atoms one bond away.
 
 ```python
-neighbors = mol.get_neighbors(c2)
-print([n["name"] for n in neighbors])
+neighbors = [h for h, d in mol.topo_distances(c2.handle, max_hops=1) if d == 1]
+print(sorted(mol.get(h, "name") for h in neighbors))
 # -> ['C1', 'O1']
 ```
 
@@ -78,7 +80,7 @@ Removing an atom removes incident bonds with it — you never keep a dangling ed
 ```python
 print(f"Before: {len(mol.atoms)} atoms, {len(mol.bonds)} bonds")
 # -> Before: 4 atoms, 3 bonds
-mol.remove_entity(h_o)
+mol.del_atom(h_o)
 print(f"After:  {len(mol.atoms)} atoms, {len(mol.bonds)} bonds")
 # -> After:  3 atoms, 2 bonds
 ```
@@ -88,10 +90,10 @@ print(f"After:  {len(mol.atoms)} atoms, {len(mol.bonds)} bonds")
 Engines need angles and dihedrals as well as bonds. Maintaining those lists by
 hand is brittle: every bond edit would require a matching update.
 
-MolPy treats bonded topology as **derived from the bond graph**. `get_topo`
-reads the current bonds and writes perceived angles and dihedrals into the same
-`Atomistic` (in place; returns `self` for chaining). If the bond graph changes
-later, call `get_topo` again.
+MolPy treats bonded topology as **derived from the bond graph**.
+`generate_topology` reads the current bonds and writes perceived angles and
+dihedrals into the same `Atomistic` (in place; it returns the counts added, not
+the molecule). If the bond graph changes later, call `generate_topology` again.
 
 ```python
 propane = mp.Atomistic(name="propane")
@@ -103,7 +105,7 @@ propane.def_bond(cb, cc)
 
 print(len(propane.angles), len(propane.dihedrals))
 # -> 0 0
-propane.get_topo(gen_angle=True, gen_dihe=True)
+propane.generate_topology(gen_angle=True, gen_dihedral=True)
 print(len(propane.angles), len(propane.dihedrals))
 # -> 1 0
 
@@ -116,16 +118,19 @@ Graph-distance queries (neighbours within $n$ bonds, BFS distances) run on the
 same structure once connectivity is defined:
 
 ```python
-print([a["name"] for a in propane.get_topo_neighbors(cb, radius=1)])
+within_one = propane.topo_distances(cb.handle, max_hops=1)
+print(sorted(propane.get(h, "name") for h, _ in within_one))
 # -> ['C1', 'C2', 'C3']
-dists = propane.get_topo_distances(ca)
-print({a["name"]: d for a, d in dists.items()})
+dists = propane.topo_distances(ca.handle)
+print({propane.get(h, "name"): d for h, d in dists})
 # -> {'C1': 0, 'C2': 1, 'C3': 2}
 ```
 
 ## Composition and copies
 
-Independent clones use `copy()`. Merges use `+`; many copies use `replicate`.
+Independent clones use `copy()`. `merge` adds another graph into this one in
+place (it returns the old-to-new handle map); many copies are repeated merges of
+translated copies.
 
 ```python
 water = mp.Atomistic(name="water")
@@ -135,18 +140,21 @@ h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.0)
 water.def_bond(ow, h1)
 water.def_bond(ow, h2)
 
-two = water + water.copy().translate([5.0, 0.0, 0.0])
+two = water.copy()
+two.merge(water.copy().translate([5.0, 0.0, 0.0]))
 print(len(two.atoms), len(two.bonds))
 # -> 6 4
 
-box = water.replicate(4, lambda m, i: m.translate([i * 4.0, 0.0, 0.0]))
-print(len(box.atoms))
+row = mp.Atomistic(name="row")
+for i in range(4):
+    row.merge(water.copy().translate([i * 4.0, 0.0, 0.0]))
+print(len(row.atoms))
 # -> 12
 ```
 
 !!! note "Bulk numeric access"
     When you need every $x$ coordinate as an array — not each atom as a Python
-    object — use `mol.atoms["x"]`, `mol.xyz`, or `mol.column("x")`. Prefer
+    object — use `mol.atoms["x"]`, `mol.atoms["x", "y", "z"]`, or `mol.column("x")`. Prefer
     `list(mol.atoms)` only when you need identity-stable objects for editing or
     graph algorithms.
 
@@ -162,9 +170,9 @@ simulation, move to arrays: [Block and Frame](02_block_and_frame.md).
 
 1. Why can two atoms with identical element and coordinates still be different
    atoms in MolPy?
-2. After `remove_entity` on a terminal hydrogen, how many bonds should remain on
+2. After `del_atom` on a terminal hydrogen, how many bonds should remain on
    the heavy-atom skeleton of the ethanol example above?
-3. If you add a bond after `get_topo`, are the angle lists automatically up to
+3. If you add a bond after `generate_topology`, are the angle lists automatically up to
    date? What do you call?
 
 ## See also

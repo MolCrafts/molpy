@@ -2,25 +2,25 @@
 
 import pytest
 
-from molpy import Atomistic, AtomisticForcefield
-from molpy.core.forcefield import PairType
+from molpy import Atomistic, ForceField, FragmentScaling, PairType
 from molpy.core.ops import (
-    FragmentScaling,
     compute_k_ij,
-    load_fragment_scaling_data,
+    fragment_scaling_data,
     scale_lj,
 )
 
 
 def _ff():
     """A tiny FF with one cross (CR-B) and one intra (CR-CR) pair type."""
-    ff = AtomisticForcefield()
-    astyle = ff.def_atomstyle("full")
-    cr = astyle.def_type("CR", type_="CR", class_="CR")
-    b = astyle.def_type("B", type_="B", class_="B")
-    ps = ff.def_pairstyle("lj/cut")
-    ps.def_type(cr, b, epsilon=1.0, sigma=3.5)  # inter-fragment -> scaled
-    ps.def_type(cr, cr, epsilon=2.0, sigma=3.6)  # intra -> NOT scaled
+    ff = ForceField()
+    atoms = ff.def_style("atom", "full")
+    cr = atoms.def_type("CR")
+    b = atoms.def_type("B")
+    pairs = ff.def_style("pair", "lj/cut")
+    # inter-fragment -> scaled
+    pairs.def_type("CR-B", cr, b, epsilon=1.0, sigma=3.5)
+    # intra -> NOT scaled
+    pairs.def_type("CR-CR", cr, cr, epsilon=2.0, sigma=3.6)
     return ff
 
 
@@ -45,14 +45,6 @@ DATA = {
     "c2c1im": FragmentScaling("c2c1im", 1.0, 1.1558, 12.383),
     "bf4": FragmentScaling("bf4", -1.0, 0.0, 3.078),
 }
-
-
-# --- ac-001 -------------------------------------------------------------------
-def test_importable():
-    assert all(
-        callable(x) or x
-        for x in (scale_lj, compute_k_ij, load_fragment_scaling_data, FragmentScaling)
-    )
 
 
 # --- ac-005: closed form ------------------------------------------------------
@@ -123,7 +115,7 @@ def test_missing_fragment_data_raises():
 
 # --- ac-008: data file --------------------------------------------------------
 def test_fragment_data_file_loads():
-    table = load_fragment_scaling_data()
+    table = fragment_scaling_data()
     for name in ("c2c1im", "bf4", "pf6", "ntf2", "dca"):
         assert name in table
     bf4 = table["bf4"]

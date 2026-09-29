@@ -6,8 +6,6 @@ import numpy as np
 import pytest
 from numpy.typing import ArrayLike
 
-import molrs
-
 import molpy as mp
 
 
@@ -15,22 +13,34 @@ import molpy as mp
 def random_periodic_frame():
     """Factory: ``n`` uniformly random points in a cubic periodic box."""
 
-    def build(n: int = 200, box_len: float = 12.0, seed: int = 0) -> molrs.Frame:
+    def build(n: int = 200, box_len: float = 12.0, seed: int = 0) -> mp.Frame:
         rng = np.random.default_rng(seed)
         xyz = rng.uniform(0.0, box_len, size=(n, 3))
-        frame = molrs.Frame()
+        frame = mp.Frame()
         frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-        frame.box = mp.Box.cubic(box_len)
+        frame.box = mp.Box.cube(box_len)
         return frame
 
     return build
 
 
 @pytest.fixture
+def self_neighbors():
+    """Factory: the half-shell neighbour table of a frame within ``cutoff``."""
+
+    def search(frame: mp.Frame, cutoff: float) -> mp.Neighbors:
+        nl = mp.NeighborList(cutoff)
+        nl.build(frame.coords, frame.box)
+        return nl.neighbors()
+
+    return search
+
+
+@pytest.fixture
 def frame_coords_snapshot():
     """Factory: an owned (n, 3) copy of a frame's coordinates."""
 
-    def snapshot(frame: molrs.Frame) -> np.ndarray:
+    def snapshot(frame: mp.Frame) -> np.ndarray:
         block = frame["atoms"]
         return np.column_stack([block["x"], block["y"], block["z"]]).copy()
 
@@ -48,7 +58,7 @@ def orientations_frame():
     their per-particle axis ``normalize(pos[head] - pos[tail])`` from this block.
     """
 
-    def attach(frame: molrs.Frame, heads: ArrayLike, tails: ArrayLike) -> molrs.Frame:
+    def attach(frame: mp.Frame, heads: ArrayLike, tails: ArrayLike) -> mp.Frame:
         frame["orientations"] = {
             "atomi": np.asarray(heads, dtype=np.uint32),
             "atomj": np.asarray(tails, dtype=np.uint32),
@@ -67,17 +77,15 @@ def axis_frame(orientations_frame):
     along ``+z`` (a near-perfectly aligned nematic ensemble).
     """
 
-    def build(
-        n_particles: int = 8, box_len: float = 10.0, seed: int = 0
-    ) -> molrs.Frame:
+    def build(n_particles: int = 8, box_len: float = 10.0, seed: int = 0) -> mp.Frame:
         rng = np.random.default_rng(seed)
         n = 2 * n_particles
         xyz = rng.uniform(0.0, box_len, size=(n, 3))
         for k in range(n_particles):
             xyz[2 * k + 1] = xyz[2 * k] + np.array([0.0, 0.0, 1.0])
-        frame = molrs.Frame()
+        frame = mp.Frame()
         frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-        frame.box = mp.Box.cubic(box_len)
+        frame.box = mp.Box.cube(box_len)
         heads = [2 * k + 1 for k in range(n_particles)]
         tails = [2 * k for k in range(n_particles)]
         orientations_frame(frame, heads=heads, tails=tails)

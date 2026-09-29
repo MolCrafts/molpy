@@ -54,9 +54,6 @@ doc = [
 ]
 all = ["molcrafts-molpy[dev,doc]"]
 
-[project.scripts]
-molpy = "molpy.cli:main"
-
 # Formats molpy owns, published for any molcrafts viewer to read. Declaring
 # them here rather than importing a host keeps the arrow one-way: molpy says
 # what it can parse, and a platform picks it up at install time.

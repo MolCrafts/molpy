@@ -79,7 +79,7 @@ n_atoms, box_length = 400, 20.0
 xyz = np.ascontiguousarray(rng.uniform(0.0, box_length, size=(n_atoms, 3)))
 radii = np.zeros(n_atoms)                       # equal radii -> plain Voronoi
 
-cells = RadicalVoronoi().build(xyz, radii, mp.Box.cubic(box_length))
+cells = RadicalVoronoi().build(xyz, radii, mp.Box.cube(box_length))
 volumes = np.asarray(cells.volumes)
 
 print(volumes.shape)                                    # -> (400,)
@@ -97,7 +97,7 @@ construction:
 
 ```python
 mixed = rng.uniform(0.5, 1.5, n_atoms)
-cells_mixed = RadicalVoronoi().build(xyz, mixed, mp.Box.cubic(box_length))
+cells_mixed = RadicalVoronoi().build(xyz, mixed, mp.Box.cube(box_length))
 big = np.asarray(cells_mixed.volumes)
 print(float(np.corrcoef(mixed, big)[0, 1]) > 0.3)       # -> True
 ```

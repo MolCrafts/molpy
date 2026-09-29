@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 from .base import Engine
 
 if TYPE_CHECKING:
-    from molpy.core.forcefield import ForceField
+    from molrs.ff import ForceField
     from molrs import Frame
 
 # Common LAMMPS binary names, tried in order when no executable is given.
@@ -334,8 +334,9 @@ class LAMMPSEngine(Engine):
         splices the relaxed coordinates onto a copy of *frame*.
         """
         from molpy.core.script import Script
-        from molpy.io.data.lammps import LammpsDataReader, LammpsDataWriter
-        from molpy.io.writers import write_lammps_forcefield
+        from molrs.ff import write_lammps_forcefield
+
+        from molpy.io.data.lammps import read_lammps_data, write_lammps_data
 
         if frame.box is None:
             raise ValueError(
@@ -356,13 +357,17 @@ class LAMMPSEngine(Engine):
             "relaxed.data",
         )
 
-        LammpsDataWriter(run_dir / data_name, atom_style=atom_style).write(frame)
-        # Whitelist coeffs to the frame's used types: the data file's labelmap is
-        # built from `frame`, so a coeff for a type the frame lacks (e.g. an `oh`
-        # cap artifact left in a merged ff) would reference a missing labelmap
-        # entry and LAMMPS would abort.
+        write_lammps_data(run_dir / data_name, frame)
+        # The settings carry the coefficients of the labels `frame` uses, the
+        # same labels the data file declares. They are included after
+        # read_data, where LAMMPS rejects `units`; the script sets it above.
         write_lammps_forcefield(
-            run_dir / settings_name, ff, skip_pair_style=True, frame=frame
+            run_dir / settings_name,
+            ff,
+            frame,
+            skip_pair_style=True,
+            skip_units=True,
+            units=units,
         )
 
         text = _RELAX_TEMPLATE.format(
@@ -390,7 +395,7 @@ class LAMMPSEngine(Engine):
                 f"LAMMPS finished but did not write {out_path}; "
                 f"inspect {run_dir / 'log.lammps'}."
             )
-        relaxed = LammpsDataReader(out_path, atom_style=atom_style).read().frame
+        relaxed = read_lammps_data(out_path, atom_style=atom_style).frame
         return _splice_coords(frame, relaxed)
 
 
@@ -422,18 +427,13 @@ def _style_lines(ff: ForceField) -> list[str]:
     The pair style is supplied separately by the caller (it is overridden for
     minimisation), so it is intentionally absent here.
     """
-    from molpy.io.emit.lammps import _collect_style_names
+    from molpy.io.emit.lammps import _style_name
 
     lines: list[str] = []
-    for kind, command in (
-        ("bond", "bond_style"),
-        ("angle", "angle_style"),
-        ("dihedral", "dihedral_style"),
-        ("improper", "improper_style"),
-    ):
-        names = _collect_style_names(ff, kind)
-        if names:
-            lines.append(f"{command} {names[0]}")
+    for kind in ("bond", "angle", "dihedral", "improper"):
+        name = _style_name(ff, kind)
+        if name is not None:
+            lines.append(f"{kind}_style {name}")
     return lines
 
 
@@ -445,29 +445,24 @@ def _splice_coords(original: Frame, relaxed: Frame) -> Frame:
     other columns, topology blocks, and the box come from *original*; neither
     input is mutated.
     """
-    import molrs
     import numpy as np
 
-    rid = np.asarray(relaxed["atoms"].view("id"))
-    rx = np.asarray(relaxed["atoms"].view("x"))
-    ry = np.asarray(relaxed["atoms"].view("y"))
-    rz = np.asarray(relaxed["atoms"].view("z"))
+    relaxed_atoms = relaxed["atoms"]
+    rid = relaxed_atoms["id"]
 
-    data = original.to_dict()
-    atoms = data["blocks"]["atoms"]
-    n = len(atoms["x"])
-    if len(rx) != n:
+    new = original.copy()
+    atoms = new["atoms"]
+    n = atoms.nrows
+    if relaxed_atoms.nrows != n:
         raise RuntimeError(
-            f"atom count changed during relaxation: {n} in, {len(rx)} out."
+            f"atom count changed during relaxation: {n} in, {relaxed_atoms.nrows} out."
         )
 
     if "id" in atoms:
         row_of = {int(i): k for k, i in enumerate(rid)}
-        sel = [row_of[int(i)] for i in np.asarray(atoms["id"])]
+        sel = np.array([row_of[int(i)] for i in atoms["id"]], dtype=np.intp)
     else:
-        sel = list(np.argsort(rid, kind="stable"))
+        sel = np.argsort(rid, kind="stable")
 
-    atoms["x"], atoms["y"], atoms["z"] = rx[sel], ry[sel], rz[sel]
-    new = molrs.Frame(data["blocks"], meta=data["meta"])
-    new.box = original.box
+    atoms["x", "y", "z"] = relaxed_atoms["x", "y", "z"][sel]
     return new

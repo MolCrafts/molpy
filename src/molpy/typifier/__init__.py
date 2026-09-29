@@ -1,24 +1,34 @@
-"""Force-field typification: the native typifiers.
+"""Force-field typification.
 
-Each name here is an identity re-export of :mod:`molrs.ff.typifier`
-(``mp.typifier.ElementTypifier is molrs.ff.typifier.ElementTypifier``).
-``MMFFTypifier`` is the molpy public name for
-:class:`molrs.ff.typifier.MMFF94Typifier`.
+The native typifiers are identity re-exports of :mod:`molrs.ff.typifier`
+(``mp.typifier.OPLSAATypifier is molrs.ff.typifier.OPLSAATypifier``), listed one
+by one. ``Typifier`` is the base every typifier extends: a subclass implements
+``match`` and the base owns ``typify`` and the accumulated ``forcefield()``.
 
-The molpy typifier modules in this package (``base``, ``clp``, ``smarts``,
-``ambertools``, ``scope``, ``forcefield``, ``region``, ``affected_region``,
-``cache``, ``_matching``) are not imported here: they target retired molrs
-APIs and await deletion or porting (bounded debt, ``.claude/notes/notes.md``).
+:class:`AntechamberTypifier` and :class:`TLeapTypifier` type through the
+AmberTools executables (:mod:`molpy.wrapper`).
 """
 
 from molrs.ff.typifier import (
+    AtdTypifier,
     ElementTypifier,
-    MMFF94Typifier as MMFFTypifier,
+    Match,
+    MMFF94STypifier,
+    MMFF94Typifier,
     OPLSAATypifier,
+    Typifier,
 )
 
+from .ambertools import AntechamberTypifier, TLeapTypifier
+
 __all__ = [
+    "AntechamberTypifier",
+    "AtdTypifier",
     "ElementTypifier",
-    "MMFFTypifier",
+    "MMFF94STypifier",
+    "MMFF94Typifier",
+    "Match",
     "OPLSAATypifier",
+    "TLeapTypifier",
+    "Typifier",
 ]

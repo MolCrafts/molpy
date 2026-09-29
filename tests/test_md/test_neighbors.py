@@ -14,7 +14,7 @@ def test_md_neighborlist_is_the_core_engine():
 
 def test_pair_inside_cutoff_is_half_shell():
     nl = NeighborList(2.5)
-    nl.build(np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]), Box.cubic(20.0))
+    nl.build(np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]), Box.cube(20.0))
     neigh = nl.neighbors()
     assert neigh.n_pairs == 1
     pairs = set(zip(neigh.query_point_indices(), neigh.point_indices(), strict=True))
@@ -23,7 +23,7 @@ def test_pair_inside_cutoff_is_half_shell():
 
 def test_pair_outside_cutoff_is_absent():
     nl = NeighborList(1.0)
-    nl.build(np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]), Box.cubic(20.0))
+    nl.build(np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]), Box.cube(20.0))
     assert nl.neighbors().n_pairs == 0
 
 
@@ -41,7 +41,7 @@ def test_lj_flags_bake_the_kernel():
 def test_lj_consumes_neighbors_table():
     pos = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     nl = NeighborList(2.5)
-    nl.build(pos, Box.cubic(20.0))
+    nl.build(pos, Box.cube(20.0))
     lj = LJCut(1.0, 1.0, 2.5, shifted=True)
     energy, forces = lj.eval_table(2, nl.neighbors())
     assert forces.shape == (2, 3)
@@ -59,7 +59,7 @@ def test_lj_consumes_neighbors_table():
 
 def test_update_reindexes_moved_points():
     nl = NeighborList(2.5)
-    box = Box.cubic(20.0)
+    box = Box.cube(20.0)
     nl.build(np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]), box)
     assert nl.neighbors().n_pairs == 1
     nl.update(np.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]]))

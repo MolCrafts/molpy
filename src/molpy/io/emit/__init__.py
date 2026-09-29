@@ -3,15 +3,15 @@
 Each emitter produces a **complete input set** for its target MD engine —
 not just a structure file. Given an ``Atomistic`` + ``ForceField`` the
 emitter writes the data file, the force-field file, and a starter run
-script into ``out_dir`` and returns the list of generated file paths.
+script into ``out_dir`` and returns the list of generated file paths. OpenMM
+inputs come from :meth:`molpy.engine.OpenMMEngine.generate_inputs`.
 
 Built-in emitters live on the one registry, :data:`emitters`::
 
-    emitters.names()                          # ["gromacs", "lammps", "openmm", "xml"]
+    emitters.names()                          # ["gromacs", "lammps"]
     emitters.emit("lammps", atomistic, ff, out_dir, prefix="w")
     emitters.register("mine", MyEmitter())    # add an engine
 
-``--emit all`` on the CLI loops ``emitters.emit`` over ``emitters.names()``.
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from molpy.core.atomistic import Atomistic
-from molpy.core.forcefield import ForceField
+from molrs import Atomistic
+from molrs.ff import ForceField
 
 
 class Emitter:
@@ -80,20 +80,14 @@ emitters = EmitterRegistry()
 # Register built-in emitters on import
 from .gromacs import GromacsEmitter
 from .lammps import LammpsEmitter
-from .openmm import OpenMMEmitter
-from .xml import XMLEmitter
 
 emitters.register("lammps", LammpsEmitter())
-emitters.register("openmm", OpenMMEmitter())
 emitters.register("gromacs", GromacsEmitter())
-emitters.register("xml", XMLEmitter())
 
 __all__ = [
     "Emitter",
     "EmitterRegistry",
     "emitters",
     "LammpsEmitter",
-    "OpenMMEmitter",
     "GromacsEmitter",
-    "XMLEmitter",
 ]

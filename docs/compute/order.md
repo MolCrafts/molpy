@@ -142,7 +142,7 @@ order to label individual atoms.
 ```python
 import numpy as np
 import molpy as mp
-from molpy.compute import NeighborList, Steinhardt
+from molpy.compute import Steinhardt
 
 a = 5.26
 basis = np.array([[0, 0, 0], [0.5, 0.5, 0], [0.5, 0, 0.5], [0, 0.5, 0.5]])
@@ -152,14 +152,16 @@ xyz = np.array(
 )
 crystal = mp.Frame()
 crystal["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-crystal.box = mp.Box.cubic(5 * a)
+crystal.box = mp.Box.cube(5 * a)
 ```
 
 The result is a list with one **dict** per frame, holding the degrees you asked
 for and a `(n_degrees, n_atoms)` array of per-atom values:
 
 ```python
-nlist = NeighborList(cutoff=4.5).compute(crystal)
+nl = mp.NeighborList(4.5)
+nl.build(crystal.coords, crystal.box)
+nlist = nl.neighbors()
 result, = Steinhardt(l=[4, 6]).compute([crystal], [nlist])
 
 print(sorted(result))                        # -> ['l', 'ql']
@@ -226,7 +228,7 @@ isotropic /= np.linalg.norm(isotropic, axis=1, keepdims=True)
 pos = np.concatenate([centres + 0.5 * isotropic, centres - 0.5 * isotropic])
 frame = mp.Frame()
 frame["atoms"] = {"x": pos[:, 0], "y": pos[:, 1], "z": pos[:, 2]}
-frame.box = mp.Box.cubic(30.0)
+frame.box = mp.Box.cube(30.0)
 frame["orientations"] = {
     "atomi": np.arange(n_rods),
     "atomj": np.arange(n_rods, 2 * n_rods),

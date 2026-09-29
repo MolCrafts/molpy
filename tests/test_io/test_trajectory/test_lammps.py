@@ -1,11 +1,12 @@
 import numpy as np
 
-import molrs
-from molrs import MetaValue
-
 import molpy as mp
-from molpy.io import read_lammps_trajectory, write_lammps_dump_local
-from molpy.io.trajectory.lammps import LammpsDumpLocalWriter, LammpsTrajectoryWriter
+from molpy import MetaValue
+from molpy.io import (
+    read_lammps_trajectory,
+    write_lammps_dump_local,
+    write_lammps_trajectory,
+)
 
 
 class TestWriteLammpsTrajectory:
@@ -14,7 +15,7 @@ class TestWriteLammpsTrajectory:
         # Create test frames
         frames = []
         for i in range(3):
-            frame = molrs.Frame()
+            frame = mp.Frame()
 
             # Create atoms data using Block structure
             atoms_data = {
@@ -31,13 +32,9 @@ class TestWriteLammpsTrajectory:
 
         # Write trajectory
         tmp_file = tmp_path / "test.dump"
-        writer = LammpsTrajectoryWriter(str(tmp_file))
-        for frame in frames:
-            timestep = frame.meta["timestep"]
-            writer.write_frame(frame, timestep=timestep)
-        writer.close()
+        write_lammps_trajectory(tmp_file, frames)
 
-        # Read back via the molrs-backed reader and verify
+        # Read back via the native reader and verify
         reader = read_lammps_trajectory(str(tmp_file))
 
         # Check that we can read the frames back
@@ -53,28 +50,10 @@ class TestWriteLammpsTrajectory:
                 x_vals_prev = frames[0]["atoms"]["x"]
                 assert not np.allclose(x_vals, x_vals_prev)
 
-    def test_write_with_context_manager(self, tmp_path):
-        """Test writing trajectory using context manager."""
-        frame = molrs.Frame()
-        atoms_data = {
-            "id": [0, 1],
-            "type_id": [1, 1],
-            "x": [0.0, 1.0],
-            "y": [0.0, 0.0],
-            "z": [0.0, 0.0],
-        }
-        frame["atoms"] = atoms_data
-        frame.meta = {"timestep": MetaValue("i64", 0)}
-        frame.box = mp.Box(np.eye(3) * 5.0)
-
-        tmp_file = tmp_path / "test.dump"
-        with LammpsTrajectoryWriter(str(tmp_file)) as writer:
-            writer.write_frame(frame)
-
     def test_trajectory_roundtrip(self, tmp_path):
         """Test writing and reading back maintains data integrity."""
         # Create a more complex frame
-        frame = molrs.Frame()
+        frame = mp.Frame()
 
         atoms_data = {
             "id": [0, 1, 2, 3],
@@ -92,11 +71,9 @@ class TestWriteLammpsTrajectory:
 
         tmp_file = tmp_path / "test.dump"
         # Write
-        writer = LammpsTrajectoryWriter(str(tmp_file))
-        writer.write_frame(frame)
-        writer.close()
+        write_lammps_trajectory(tmp_file, [frame])
 
-        # Read back via the molrs-backed reader
+        # Read back via the native reader
         reader = read_lammps_trajectory(str(tmp_file))
         frame_read = reader[0]
 
@@ -110,14 +87,14 @@ class TestWriteLammpsTrajectory:
 
         # Verify box
         assert frame_read.box is not None
-        assert np.allclose(frame_read.box.matrix.diagonal(), [5.0, 5.0, 5.0])
+        assert np.allclose(frame_read.box.h.diagonal(), [5.0, 5.0, 5.0])
 
 
 class TestTrajectoryIntegration:
     def test_data_to_trajectory_conversion(self, tmp_path):
         """Test converting data format to trajectory format."""
         # Create a frame in data format
-        frame = molrs.Frame()
+        frame = mp.Frame()
 
         atoms_data = {
             "id": [0, 1, 2],
@@ -133,9 +110,7 @@ class TestTrajectoryIntegration:
 
         # Write as trajectory
         tmp_file = tmp_path / "test.dump"
-        writer = LammpsTrajectoryWriter(str(tmp_file))
-        writer.write_frame(frame)
-        writer.close()
+        write_lammps_trajectory(tmp_file, [frame])
 
         # Read back as trajectory
         reader = read_lammps_trajectory(str(tmp_file))
@@ -149,7 +124,7 @@ class TestTrajectoryIntegration:
         """Test that data and trajectory formats are consistent."""
         # This test ensures that a frame written in one format
         # can be meaningfully compared with the other format
-        frame_original = molrs.Frame()
+        frame_original = mp.Frame()
 
         atoms_data = {
             "id": [0, 1],
@@ -164,9 +139,7 @@ class TestTrajectoryIntegration:
 
         # Write as trajectory and read back
         tmp_file = tmp_path / "test.dump"
-        writer = LammpsTrajectoryWriter(str(tmp_file))
-        writer.write_frame(frame_original)
-        writer.close()
+        write_lammps_trajectory(tmp_file, [frame_original])
 
         reader = read_lammps_trajectory(str(tmp_file))
         frame_traj = reader[0]
@@ -179,40 +152,22 @@ class TestTrajectoryIntegration:
 
 class TestWriteLammpsDumpLocal:
     def test_write_bonds_roundtrip(self, tmp_path):
-        atoms = molrs.Block()
+        atoms = mp.Block()
         atoms["id"] = np.array([1, 2, 3], dtype=np.uint64)
         atoms["x"] = np.array([0.0, 1.0, 2.0])
         atoms["y"] = np.zeros(3)
         atoms["z"] = np.zeros(3)
-        bonds = molrs.Block()
+        bonds = mp.Block()
         bonds["atomi"] = np.array([0, 1], dtype=np.uint64)
         bonds["atomj"] = np.array([1, 2], dtype=np.uint64)
-        frame = molrs.Frame()
+        frame = mp.Frame()
         frame["atoms"] = atoms
         frame["bonds"] = bonds
-        frame.box = molrs.Box.cube(10.0)
+        frame.box = mp.Box.cube(10.0)
         path = tmp_path / "bonds.dump.local"
         write_lammps_dump_local(path, [frame])
         text = path.read_text()
         assert "ITEM: NUMBER OF ENTRIES" in text
         assert "batom1 batom2" in text
-        loaded = molrs.io.raw.read_lammps_traj(str(path))
-        assert loaded[0]["entries"].nrows == 2
-
-    def test_writer_class_matches_factory(self, tmp_path):
-        frame = molrs.Frame()
-        frame["atoms"] = {
-            "id": np.array([1, 2], dtype=np.uint64),
-            "x": np.array([0.0, 1.0]),
-            "y": np.zeros(2),
-            "z": np.zeros(2),
-        }
-        frame["bonds"] = {
-            "atomi": np.array([0], dtype=np.uint64),
-            "atomj": np.array([1], dtype=np.uint64),
-        }
-        frame.box = molrs.Box.cube(8.0)
-        path = tmp_path / "one.dump.local"
-        with LammpsDumpLocalWriter(path) as writer:
-            writer.write_frame(frame)
-        assert "ITEM: NUMBER OF ENTRIES" in path.read_text()
+        lines = text.splitlines()
+        assert lines[lines.index("ITEM: NUMBER OF ENTRIES") + 1].strip() == "2"

@@ -12,8 +12,7 @@ from math import isfinite
 import molrs
 
 from molpy.builder._finalize import Finalization, StructureFinalizer
-from molpy.core.atomistic import Atomistic
-from molpy.core.box import Box
+from molrs import Atomistic
 
 
 class GrapheneBuilder(molrs.builder.GrapheneBuilder):
@@ -82,12 +81,3 @@ class GrapheneBuilder(molrs.builder.GrapheneBuilder):
         frame = super().build(atom_type=atom_type, charge=charge)
         graph = Atomistic.from_frame(frame)
         return StructureFinalizer(Finalization(finalize)).apply(graph)
-
-    def cell(self, *, vacuum: float | None = None) -> Box:
-        """Return the native-generated simulation cell as a MolPy box."""
-        if vacuum is None:
-            return Box.from_box(super().cell())
-        vacuum = float(vacuum)
-        if not isfinite(vacuum) or vacuum < 0.0:
-            raise ValueError("vacuum must be finite and non-negative")
-        return Box.from_box(super().cell(vacuum=vacuum))

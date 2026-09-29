@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
-from pathlib import Path
 from typing import Any, overload
 
 import molrs
@@ -78,37 +77,6 @@ class Trajectory(molrs.Trajectory):
         """The topology object associated with this trajectory (or None)."""
         return self._topology
 
-    @classmethod
-    def read(cls, path: str | Path) -> "Trajectory":
-        """Refuse store I/O; use :mod:`molpy.io.mrec`.
-
-        Args:
-            path: Ignored. Present so the call matches a former store door.
-
-        Raises:
-            TypeError: Always. Scientific-record I/O lives on
-                :mod:`molpy.io.mrec`.
-        """
-        raise TypeError(
-            f"{cls.__qualname__}.read({path!r}) is not a store door; "
-            "use molpy.io.mrec.read_trajectory or molpy.io.mrec.TrajectoryReader"
-        )
-
-    def write(self, path: str | Path) -> None:
-        """Refuse store I/O; use :mod:`molpy.io.mrec`.
-
-        Args:
-            path: Ignored. Present so the call matches a former store door.
-
-        Raises:
-            TypeError: Always. Scientific-record I/O lives on
-                :mod:`molpy.io.mrec`.
-        """
-        raise TypeError(
-            f"{type(self).__qualname__}.write({path!r}) is not a store door; "
-            "use molpy.io.mrec.write_trajectory"
-        )
-
     @overload
     def __getitem__(self, key: int) -> Frame: ...
 
@@ -122,16 +90,20 @@ class Trajectory(molrs.Trajectory):
             key: Integer index or slice.
 
         Returns:
-            A rich :class:`Frame` for an integer key (the native container stores
-            bare core frames; this upgrades each one back to the rich Python
-            layer on read), or a new :class:`Trajectory` (sharing this
-            trajectory's topology) for a slice.
+            The :class:`Frame` for an integer key, or a new :class:`Trajectory`
+            (sharing this trajectory's topology, with its ``step`` / ``time``
+            labels sliced alike) for a slice.
         """
         if isinstance(key, slice):
-            return type(self)(self.frames[key], self._topology)
+            return type(self)(
+                self.frames[key],
+                self._topology,
+                step=None if self.step is None else self.step[key],
+                time=None if self.time is None else self.time[key],
+            )
         if key < 0:
             key += len(self)
-        return Frame(super().__getitem__(key))
+        return super().__getitem__(key)
 
     def map(self, func: Callable[[Frame], Frame]) -> "Trajectory":
         """Apply ``func`` to every frame, returning a new trajectory.
@@ -141,9 +113,15 @@ class Trajectory(molrs.Trajectory):
 
         Returns:
             A new :class:`Trajectory` of the mapped frames, sharing this
-            trajectory's topology. The original is not modified.
+            trajectory's topology and ``step`` / ``time`` labels. The original
+            is not modified.
         """
-        return type(self)([func(frame) for frame in self], self._topology)
+        return type(self)(
+            [func(frame) for frame in self],
+            self._topology,
+            step=self.step,
+            time=self.time,
+        )
 
     def __repr__(self) -> str:
         topo = "present" if self._topology is not None else "None"
@@ -281,11 +259,3 @@ class TrajectorySplitter:
             segments.append(self.trajectory[start:end])
 
         return segments
-
-    def split_frames(self, interval: int) -> list[Trajectory]:
-        """Split every ``interval`` frames (convenience for FrameIntervalStrategy)."""
-        return self.split(FrameIntervalStrategy(interval))
-
-    def split_time(self, interval: float) -> list[Trajectory]:
-        """Split every ``interval`` time units (convenience for TimeIntervalStrategy)."""
-        return self.split(TimeIntervalStrategy(interval))

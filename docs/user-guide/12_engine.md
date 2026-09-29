@@ -40,7 +40,7 @@ rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(200, 3))
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(20.0)
+frame.box = mp.Box.cube(20.0)
 ```
 
 ```python
@@ -68,7 +68,7 @@ script.save("./submit/input.lmp")
 # -> ./submit/input.lmp written
 ```
 
-The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_system` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
+The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_data` and `mp.io.write_lammps_forcefield` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
 
 `Script.from_path` is the mirror image — load an existing file, modify it programmatically, and save it back or pass it to `run()`.
 
@@ -80,7 +80,7 @@ script = Script.from_path("./submit/input.lmp")
 
 OpenMM's workflow is more tightly integrated because the three required files are interdependent: the Python driver script embeds the filenames of the PDB and XML force field. Rather than assembling these by hand, `OpenMMEngine.generate_inputs()` accepts MolPy's own data objects and writes all three files consistently.
 
-The configuration is a Pydantic model — `OpenMMSimulationConfig` — whose fields document their units explicitly. It round-trips through JSON, which makes it easy to store alongside the generated files for reproducibility.
+The configuration is a dataclass — `OpenMMSimulationConfig` — whose fields document their units explicitly. It round-trips through JSON, which makes it easy to store alongside the generated files for reproducibility.
 
 ```python
 from pathlib import Path

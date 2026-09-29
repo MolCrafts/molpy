@@ -5,9 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-
-from molpy.core.atomistic import Atomistic
-from molrs.perceive import Perceive
+from molrs import Atomistic
 
 
 class Finalization(StrEnum):
@@ -27,7 +25,6 @@ class StructureFinalizer:
     """
 
     stage: Finalization = Finalization.TOPOLOGY
-    perceive_aromaticity: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "stage", Finalization(self.stage))
@@ -43,6 +40,4 @@ class StructureFinalizer:
             gen_dihedral=True,
             clear_existing=True,
         )
-        if self.perceive_aromaticity:
-            graph = Perceive().find_aromaticity(graph)
         return graph

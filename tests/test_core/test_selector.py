@@ -1,8 +1,7 @@
 import numpy as np
 import pytest
 
-from molrs import Block
-from molpy.core.selector import AtomIndexSelector, AtomTypeSelector
+from molpy import AtomIndexSelector, AtomTypeSelector, Block
 
 
 class TestMaskPredicate:

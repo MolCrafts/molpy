@@ -9,16 +9,19 @@ Two layers, two rules — do not mix them up.
 
 ### Core data model (`Atomistic`, `Frame`, …) — mutate in place
 
-`def_atom`, `def_bond`, `get_topo`, `move`, `rotate`, `merge`, and friends
-modify the receiver and return `self` (or the created entity) for chaining.
+`def_atom`, `def_bond`, `generate_topology`, `translate`, `rotate`, `merge`,
+and friends modify the receiver. Transforms return `self` for chaining,
+factories return the created entity, and `generate_topology` / `merge` return
+what they added (counts, handle map) — not `self`, so do not chain them.
 `.copy()` is the **explicit** opt-in for an independent deep copy.
 
 ```python
 import molpy as mp
 
 mol = mp.io.read_smiles("CCO")
-mol.get_topo(gen_angle=True, gen_dihe=True)   # writes angles/dihedrals on mol
-work = mol.copy().get_topo(gen_angle=True)    # independent graph + topology
+mol.generate_topology(gen_angle=True, gen_dihedral=True)  # writes angles/dihedrals on mol
+work = mol.copy()                                         # independent graph
+work.generate_topology(gen_angle=True, clear_existing=True)  # mol is untouched
 ```
 
 ### Higher-level helpers (`builder`, `typifier`, `op`, …) — do not surprise the caller

@@ -132,16 +132,18 @@ rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(400, 3))
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(20.0)
+frame.box = mp.Box.cube(20.0)
 ```
 
 `LocalDensity` takes frames and neighbor lists, and returns **one
 `(num_neighbors, density)` pair per frame** — two arrays of length $N$:
 
 ```python
-from molpy.compute import NeighborList, LocalDensity
+from molpy.compute import LocalDensity
 
-nlist = NeighborList(cutoff=5.0).compute(frame)
+nl = mp.NeighborList(5.0)
+nl.build(frame.coords, frame.box)
+nlist = nl.neighbors()
 (counts, density), = LocalDensity(r_max=5.0).compute([frame], [nlist])
 
 print(counts.shape, density.shape)          # -> (400,) (400,)

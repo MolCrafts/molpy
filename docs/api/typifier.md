@@ -4,38 +4,44 @@ Graph typification and force-field parameter assignment.
 
 ## The contract
 
-A typifier is `MolGraph -> MolGraph`: it takes a molecular graph and returns a
-new one whose elements carry force-field types and parameters. Every typifier
-runs the same flow — copy, match, write the annotations back — so `typify()` is
-written once, on the base class, and `match()` is the single abstract step.
+A typifier is `Atomistic -> Atomistic`: it takes a molecular graph and returns a
+typed copy whose atoms and links carry force-field types and parameters. Every
+typifier runs the same flow — copy, match, write the annotations back and define
+the types — so `typify()` is written once, on the base class, and `match()` is
+the single step a typifier implements.
 
 ```text
-class Typifier[G: MolGraph](ABC):
-    def typify(self, graph: G) -> G           # concrete: copy, match, write back
-    def match(self, graph: G) -> Match        # abstract: the only thing that differs
+class Typifier:
+    def typify(self, mol) -> Atomistic       # final: copy, match, write back
+    def match(self, graph) -> Match          # the only thing that differs
+    def library(self) -> ForceField          # optional: what the output declares
+    def forcefield(self) -> ForceField       # the union of every type typify assigned
 ```
 
-The pipeline is generic over the graph. An `Atomistic` and a `CoarseGrain` are
-both native graph leaves, and a concrete typifier specialises `G` to the one it
-understands. Nothing in the contract mentions bonds, angles or dihedrals: that
-decomposition belongs to a force field, not to typification.
+`typify` is final — a subclass that defines it raises `TypeError` at class
+creation — and it is the only writer of `forcefield()`.
 
 **Typifiers are named after the force field or the tool that decides the types.**
-There is no "typifier" that merely spends a type it was given — that is a
-component, `ForceFieldParams`.
 
 ## Quick reference
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `Typifier` | The contract: one abstract `match` | Writing your own |
+| `Typifier` | The contract: implement `match` (and optionally `library`) | Writing your own |
+| `Match` | What `match` returns: node and link annotations, styles, pair rows | Writing your own |
 | `OPLSAATypifier` | Full OPLS-AA typing pipeline (native) | OPLS-AA all-atom force fields |
-| `MMFFTypifier` | Full MMFF94 typing pipeline (native) | MMFF all-atom force fields |
-| `ClpTypifier` | CL&P ionic-liquid overlay: native SMARTS types + MolPy parameters | Ionic-liquid force fields |
-| `AmberToolsTypifier` | GAFF atom types via antechamber; accumulates the force field it discovers | GAFF / AmberTools |
-| `ForceFieldParams` | **Not a typifier.** Annotates pair and bonded terms from node types | A graph whose types are already known |
+| `MMFF94Typifier` / `MMFF94STypifier` | Full MMFF94 / MMFF94s typing pipeline (native) | MMFF all-atom force fields |
+| `ElementTypifier` | `type` labels from element symbols; defines no force field | Writers that need labels on an untyped molecule |
+| `AntechamberTypifier` | antechamber → parmchk2 → tleap for one complete molecule | GAFF / GAFF2 small molecules and monomers |
+| `TLeapTypifier` | tleap alone over a graph that already carries AMBER types and charges | GAFF / GAFF2 chains assembled from typed monomers |
 
-UFF typing exists in the native core (Rust / WASM) but has no Python binding
+The native typifiers are identity re-exports of `molrs.ff.typifier`. The
+AmberTools typifiers shell out through `molpy.wrapper`; see
+[Optional external tools](../getting-started/external-tools.md#ambertools-gaff-parameters).
+tleap never changes types or charges; choose the complete monomer so its
+leaving groups mimic the chain neighbour.
+
+UFF typing exists in the native core (Rust) but has no Python binding
 yet; MolPy re-exports it once one is published.
 
 ## Canonical example
@@ -50,63 +56,79 @@ mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
 
 typifier = OPLSAATypifier(strict=True)
 typed_mol = typifier.typify(mol)  # returns a new Atomistic
+ff = typifier.forcefield()  # the parameters of the types just assigned
 frame = typed_mol.to_frame()
 ```
 
 ## Key behavior
 
 - `typify()` returns a **new** graph — the original is not modified
-- A typifier never asks whether its graph is a *fragment*. Truncation is a fact
-  about provenance, not something readable off a graph's valences: a radical is a
-  perfectly good molecule. The party that cut the graph completes it — see
-  `RegionTypes.of`, which caps every region it types because every region is a cut
+- `forcefield()` is the union of what every `typify` call assigned, as an
+  independent copy; a definition that contradicts one already held raises
 - A term the force field does not parameterise is left **undecided**, never
   stamped with `None`
 - SMARTS matching is native; MolPy carries no matcher of its own
 
 ## Writing a typifier
 
-Implement `match` and stop. It returns the annotations each node and each link
-should receive, positional against `graph.nodes` and `graph.links.bucket(cls)`.
+Implement `match` and stop. It returns a `Match`: one annotation mapping per
+node, positional against `graph.atoms`, and per link class one mapping per row,
+positional against `graph.links.exact_bucket(cls)`. A type annotation is
+`(style, name, endpoints, params)`: it stamps `name` and every param, and
+defines the type `name` on `endpoints` (atom-type names, empty for an atom
+type). The name is never parsed — the endpoints are required. `styles` declares
+each style used; `pairs` adds `(style, name, endpoints, params)` pair rows.
 
 ```python
-from molpy.typifier import ForceFieldParams, Match, Typifier
+class TIP3PTypifier(mp.typifier.Typifier):
+    """TIP3P water: OW / HW atoms and one OW-HW bond type."""
 
+    SITES = {"O": ("OW", 15.999, -0.834), "H": ("HW", 1.008, 0.417)}
 
-class MyTypifier(Typifier[mp.Atomistic]):
-    def __init__(self, forcefield):
-        self._params = ForceFieldParams(forcefield)
+    def library(self):
+        return mp.ForceField("tip3p", units="real")  # the output declares real units
 
     def match(self, graph):
-        node_types = [{"type": decide(atom)} for atom in graph.atoms]
-        return self._params.match(graph, node_types)
-```
+        nodes = []
+        for atom in graph.atoms:
+            name, mass, charge = self.SITES[atom["element"]]
+            nodes.append({"type": ("full", name, (), {"mass": mass}), "charge": charge})
+        bonds = [
+            {"type": ("harmonic", "OW-HW", ["OW", "HW"], {"k": 450.0, "r0": 0.9572})}
+            for _ in graph.links.exact_bucket(mp.Bond)
+        ]
+        return mp.typifier.Match(
+            nodes,
+            {mp.Bond: bonds},
+            styles=[("atom", "full", {}), ("bond", "harmonic", {}), ("pair", "lj/cut", {})],
+            pairs=[
+                ("lj/cut", "OW", ["OW"], {"epsilon": 0.1521, "sigma": 3.1507}),
+                ("lj/cut", "HW", ["HW"], {"epsilon": 0.0, "sigma": 0.0}),
+            ],
+        )
 
-`ForceFieldParams` is the tail every force-field typifier ends with. It is also
-the one place in MolPy that knows a `Bond` is parameterised by a `BondType` —
-arity cannot decide that, since a dihedral and an improper both span four atoms.
+
+tip3p = TIP3PTypifier()
+water = tip3p.typify(mp.io.read_smiles("[H]O[H]"))
+assert [bond["type"] for bond in water.bonds] == ["OW-HW", "OW-HW"]
+assert tip3p.forcefield().get_style("bond", "harmonic").get_type_by_name("OW-HW")["k"] == 450.0
+```
 
 ## Related
 
 - [Guide: Force Field Typification](../user-guide/06_typifier.md)
+- [Guide: AmberTools Integration](../user-guide/13_ambertools_integration.md)
 - [Concepts: Force Field](../tutorials/04_force_field.md)
+- [Extending Typifiers](../developer/extending-typifiers.md)
 
 ---
 
 ## Full API
 
-### Contract
+### Typifiers
 
-::: molpy.typifier.base
+::: molpy.typifier
 
-### Force-field parameters
-
-::: molpy.typifier.forcefield
-
-### CL&P Typifier
-
-::: molpy.typifier.clp
-
-### AmberTools Typifier
+### AmberTools typifiers
 
 ::: molpy.typifier.ambertools

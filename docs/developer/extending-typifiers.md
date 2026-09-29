@@ -1,34 +1,83 @@
 # Extending Typifiers
 
-Typifiers operate on molecular graphs. The core contract is:
+Typifiers operate on molecular graphs. The core contract is the molrs base
+`mp.typifier.Typifier`:
 
 ```python
-def typify(mol: T) -> T: ...
+import molpy as mp
+
+
+class MyTypifier(mp.typifier.Typifier):
+    def match(self, graph: mp.Atomistic) -> mp.typifier.Match: ...
 ```
 
-`T` must be a graph type, normally `molrs.Atomistic` for all-atom force fields
-or a coarse-grained graph type for united-atom and coarse-grained force fields.
-The returned object must be the same concrete graph type as the input. A
-typifier must not return a `Frame`; call `.to_frame()` after typification when a
-writer or potential compiler needs columnar data.
+`typify(mol)` belongs to the base and is final: it copies `mol`, calls `match`
+on the copy, writes the returned `Match` onto the copy and defines its types in
+the output force field, `forcefield()`. The returned object is a typed
+`Atomistic`; the input is never touched. A typifier must not return a `Frame`;
+call `.to_frame()` after typification when a writer or potential compiler needs
+columnar data.
 
 ## Required API Shape
 
-Use typifier verbs consistently:
+- Implement `match(graph) -> Match` and, optionally, `library()`. Defining
+  `typify` on a subclass raises `TypeError` at class creation.
+- `library()` returns the force field the typifier matches against. The output
+  starts as its empty likeness — its name, declared units and special_bonds —
+  so declare them there (the AmberTools typifiers declare `real` units and the
+  AMBER 1-4 scaling this way).
+- `match` may write intermediate results (generated angles and dihedrals,
+  perceived bond types) onto the graph it is given: `typify` always hands it a
+  private copy.
+- Do not add `from_forcefield(ff)`. A typifier constructor loads or builds its
+  own parameter tables and keeps what it needs internally.
+- `forcefield()` is the union of what `typify` assigned. Do not add a second
+  way to build it.
 
-- `typify(mol)` runs the complete pipeline for that force field.
-- Stepwise helpers, when they are public, must be named `typify_*`:
-  `typify_atoms`, `typify_bond`, `typify_angle`, `typify_dihedral`,
-  `typify_improper`.
-- Do not expose `assign_*`, `classify_*`, `typify_frame`, or `typify_full`.
-- Do not add `from_forcefield(ff)`. A typifier constructor should load or build
-  its own parameter tables and keep the force-field object it needs internally.
+The match must cover every topology class the force field supports. For OPLS-AA
+that means atoms, bonds, angles, and dihedrals; for MMFF it also includes
+out-of-plane impropers. If a force field has no improper table, do not
+synthesize one just to satisfy a generic abstraction.
 
-The complete pipeline must cover every topology class the force field supports.
-For OPLS-AA that currently means atoms, bonds, angles, and dihedrals. For MMFF it
-also includes MMFF out-of-plane impropers and stretch-bend parameters. If a
-force field has no improper table, do not synthesize one just to satisfy a
-generic abstraction.
+## The Match
+
+`Match(nodes, links, styles=..., pairs=...)`:
+
+- `nodes`: one mapping of `key -> annotation` per atom, positional against
+  `graph.atoms`.
+- `links`: relation class (`mp.Bond`, `mp.Angle`, `mp.Dihedral`, `mp.Improper`)
+  to one mapping per row, positional against `graph.links.exact_bucket(cls)`.
+- `styles`: `(category, style, params)` to declare.
+- `pairs`: `(style, name, endpoints, params)` pair rows.
+
+An annotation is a plain value (stamped, defines nothing) or a type
+`(style, name, endpoints, params)`, which stamps `name` and every param and
+defines the type on `endpoints` — atom-type names, empty for an atom type.
+Names are opaque: endpoints are always given, never parsed out of a name.
+
+```python
+class ElementBondTypifier(mp.typifier.Typifier):
+    """Atom types from elements; one harmonic bond type per element pair."""
+
+    def match(self, graph):
+        nodes = [
+            {"type": ("full", atom["element"], (), {"mass": atom["mass"]})}
+            for atom in graph.atoms
+        ]
+        bonds = []
+        for bond in graph.links.exact_bucket(mp.Bond):
+            ends = sorted(atom["element"] for atom in bond.endpoints)
+            bonds.append({"type": ("harmonic", "-".join(ends), ends, {"k": 300.0, "r0": 1.5})})
+        return mp.typifier.Match(
+            nodes, {mp.Bond: bonds}, styles=[("atom", "full", {}), ("bond", "harmonic", {})]
+        )
+
+
+typifier = ElementBondTypifier()
+typed = typifier.typify(mp.io.read_smiles("CCO"))
+assert sorted({bond["type"] for bond in typed.bonds}) == ["C-C", "C-O"]
+assert {t.name for t in typifier.forcefield().get_style("bond", "harmonic").types} == {"C-C", "C-O"}
+```
 
 ## Matcher Boundary
 
@@ -36,8 +85,6 @@ The matcher is an implementation detail of a typifier, not the typifier itself.
 Use molrs SMARTS matching directly:
 
 ```python
-import molpy as mp
-
 mol = mp.io.read_smiles("CCO")
 pattern = mp.SmartsPattern("[C:1][O:2]")
 matches = pattern.find_matches(mol)
@@ -45,80 +92,36 @@ matches = pattern.find_matches(mol)
 
 Matches are bindings: atom ids plus optional mapping labels. They are not
 graphs and not frames. Do not use a Python igraph matcher or
-MolPy-side layered matcher classes; OPLS-AA and MMFF matching now live in molrs.
+MolPy-side layered matcher classes; OPLS-AA and MMFF matching live in molrs.
 
-## CL&P as a MolPy-Side Extension
+## Where a Typifier Lives
 
-CL&P stays in MolPy until its coverage and tests are complete. Treat it as an
-overlay typifier, not as a subclass of `OPLSAATypifier`.
+Force-field typifiers that decide types by SMARTS rules (OPLS-AA, MMFF94) are
+native: they live in molrs and `mp.typifier` re-exports them one by one. A new
+rule-based force field belongs there too.
 
-The current shell only loads the force field:
+A MolPy-side typifier is one that drives an external tool, as
+`AntechamberTypifier` and `TLeapTypifier` in `molpy/typifier/ambertools.py`
+do: `match` writes the graph for the tool, runs it through a `molpy.wrapper`
+wrapper, reads the result back and returns it as a `Match`. Keep the rules
+explicit:
 
-```python
-from molpy.typifier import ClpTypifier
-
-# load_forcefield() is the overlay only; constructing ClpTypifier() also builds
-# ForceFieldParams indexes over full OPLS-AA (expensive — unit tests cache it).
-ff = ClpTypifier.load_forcefield()
-```
-
-The eventual implementation should follow this shape:
-
-```python
-from __future__ import annotations
-
-import molpy as mp
-
-
-class ClpTypifier:
-    def __init__(self, *, strict: bool = True) -> None:
-        self.strict = strict
-        self.ff = self.load_forcefield()
-        self._tables = self._build_tables(self.ff)
-
-    def typify(self, mol: molrs.Atomistic) -> molrs.Atomistic:
-        if not isinstance(mol, molrs.Atomistic):
-            raise TypeError("CL&P typifier expects molrs.Atomistic")
-
-        typed = self.typify_atoms(mol)
-        typed = self.typify_bonds(typed)
-        typed = self.typify_angles(typed)
-        typed = self.typify_dihedrals(typed)
-        return typed
-
-    def typify_atoms(self, mol: molrs.Atomistic) -> molrs.Atomistic:
-        # Use molrs.perceive.SmartsPattern and CL&P-specific priority rules.
-        raise NotImplementedError
-
-    def typify_bonds(self, mol: molrs.Atomistic) -> molrs.Atomistic:
-        raise NotImplementedError
-
-    def typify_angles(self, mol: molrs.Atomistic) -> molrs.Atomistic:
-        raise NotImplementedError
-
-    def typify_dihedrals(self, mol: molrs.Atomistic) -> molrs.Atomistic:
-        raise NotImplementedError
-```
-
-Keep the overlay rules explicit:
-
-- Load canonical OPLS-AA data first, then CL&P XML at a higher layer.
-- CL&P-specific SMARTS and priority rules belong in CL&P metadata, not in
-  generic OPLS-AA code.
-- Use molrs match bindings to choose atoms; use graph setters to write `type`,
-  `class`, `charge`, and bonded parameters.
-- Return a new `Atomistic` at every step. Do not mutate caller-owned input.
+- Keep atom order: the tool's row *i* is graph atom *i*, and bonded terms are
+  matched by their endpoint rows — raise when the two disagree.
+- Raise when the tool is missing, fails, or leaves its output unwritten, with
+  the tool's stderr in the message.
+- Declare units and scaling in `library()`, not by patching the output.
 
 ## Tests
 
 New typifiers need focused tests at three levels:
 
-- Atom coverage: expected `type`, `class`, and charge on representative real
-  molecules.
-- Topology coverage: expected bond, angle, dihedral, and improper counts plus
+- Atom coverage: expected `type` and charge on representative real molecules.
+- Topology coverage: expected bond, angle, dihedral, and improper types plus
   parameter columns after `typify()`.
-- Build parity: `typifier.build(mol)` must consume the same topology as
-  `typifier.typify(mol).to_frame()`.
+- Force-field coverage: `forcefield()` holds exactly the types `typify`
+  assigned, with their parameters.
 
-For CL&P, start with one imidazolium cation and one anion fixture, then add the
-full ionic-liquid set only after the small fixtures are stable.
+A typifier that shells out never runs the tool in unit tests: patch
+`subprocess.run` so each call copies a committed output fixture into place, as
+`tests/test_typifier/test_ambertools.py` does.

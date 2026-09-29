@@ -2,8 +2,8 @@ import numpy as np
 import molrs
 import pytest
 
-from molrs import Block
-from molpy.core.region import (
+from molpy import (
+    Block,
     AndRegion,
     BoxRegion,
     Cube,
@@ -355,7 +355,7 @@ class TestRegionWithBlock:
         """Masking a block that carries no x/y/z names the column it wanted."""
         block = Block({"type_id": np.array([1, 2])})
 
-        with pytest.raises(KeyError, match=r"'x' not found"):
+        with pytest.raises(KeyError, match=r'no column "x"'):
             BoxRegion(np.array([2.0, 2.0, 2.0])).mask(block)
 
     def test_region_as_selection(self):

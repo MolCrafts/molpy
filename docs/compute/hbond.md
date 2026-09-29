@@ -71,7 +71,7 @@ xyz = np.array([
 
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(30.0)
+frame.box = mp.Box.cube(30.0)
 
 result = HBonds(donors=np.array([[0, 1]]), acceptors=np.array([2])).compute([frame])
 print(list(result.counts))            # -> [1]

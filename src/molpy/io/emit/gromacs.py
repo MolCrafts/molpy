@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from molpy.core.atomistic import Atomistic
-from molpy.core.forcefield import ForceField
+from molrs import Atomistic
+from molrs.ff import ForceField, write_gromacs_top_ff
+from molrs.io import write_gro
 
 
 class GromacsEmitter:
@@ -37,11 +38,8 @@ class GromacsEmitter:
         em_path = out_dir / "em.mdp"
         nvt_path = out_dir / "nvt.mdp"
 
-        from molpy.io.data.gro import GroWriter
-        from molpy.io.forcefield.top import GromacsForceFieldWriter
-
-        GroWriter(gro_path).write(atomistic.to_frame())
-        GromacsForceFieldWriter(top_path).write(ff)
+        write_gro(gro_path, atomistic.to_frame())
+        write_gromacs_top_ff(top_path, ff)
 
         em_path.write_text(_EM_MDP)
         nvt_path.write_text(_NVT_MDP.format(temperature=temperature_K))

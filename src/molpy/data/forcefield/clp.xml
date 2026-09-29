@@ -1,8 +1,8 @@
 <ForceField>
   <!-- CL&P ionic-liquid force field (subset: 1,3-dialkylimidazolium + BF4/PF6/NTf2/dca).
        Source: paduagroup/clandp il.ff (Canongia Lopes & Padua, JPCB 108 (2004) 2038,
-       DOI 10.1021/jp0362133). Units match oplsaa.xml (sigma nm, epsilon kJ/mol);
-       read via OPLSAAForceFieldReader. SMARTS def patterns authored for molpy. -->
+       DOI 10.1021/jp0362133). OpenMM/OPLS XML units (sigma nm, epsilon kJ/mol),
+       layered over the molrs OPLS-AA library. SMARTS def patterns authored for molpy. -->
  <AtomTypes>
   <Type name="CR" class="CR" element="C" mass="12.01100" def="[C;r5]([N;r5])[N;r5]" desc="imidazolium ring C between the two N" doi="10.1021/jp0362133"/>
   <Type name="CW" class="CW" element="C" mass="12.01100" def="[C;r5]([N;r5])[C;r5]" desc="imidazolium ring back C (C4/C5)" doi="10.1021/jp0362133"/>

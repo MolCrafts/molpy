@@ -18,10 +18,9 @@ the input graph is never mutated (the input is not mutated).
 
 ```python
 import molpy as mp
-from molpy.conformer import Conformer
 
 mol = mp.io.read_smiles("CCO") # ethanol graph (heavy atoms only)
-mol_3d, report = Conformer(seed=42).generate(mol)
+mol_3d, report = mp.Conformer(seed=42).generate(mol)
 
 print(mol_3d.n_atoms) # 9 — heavy atoms + added hydrogens
 print(report.final_energy) # energy of the returned structure

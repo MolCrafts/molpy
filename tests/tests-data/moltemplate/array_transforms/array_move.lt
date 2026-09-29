@@ -1,9 +1,0 @@
-# One-atom class replicated by an array .move: copy k sits at (1,0,0) + k*(2,0.5,0).
-
-Dot {
-  write("Data Atoms") {
-    $atom:a $mol:. @atom:A 0.0 1.0 0.0 0.0
-  }
-}
-
-m = new Dot [3].move(2.0, 0.5, 0.0)

@@ -1,5 +1,5 @@
 """
-Tests for LammpsDataReader and LammpsDataWriter classes.
+Tests for ``mp.io.read_lammps_data`` and ``mp.io.write_lammps_data``.
 
 Covers the space-delimited data file and the mp.ForceField parameters
 that come with it.
@@ -12,10 +12,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import molrs
 
 import molpy as mp
-from molpy.io.data.lammps import LammpsDataReader, LammpsDataWriter
 
 
 def _section_rows(text: str, heading: str) -> list[list[str]]:
@@ -49,14 +47,13 @@ def lammps_dir(TEST_DATA_DIR: Path) -> Path:
     return TEST_DATA_DIR / "lammps-data"
 
 
-class TestLammpsDataReader:
-    """Test LammpsDataReader with real test cases."""
+class TestReadLammpsData:
+    """``read_lammps_data`` on real data files."""
 
     def test_molid_file(self, lammps_dir):
         """Test reading molid.lmp - file with molecular IDs and full style."""
 
-        reader = LammpsDataReader(lammps_dir / "molid.lmp", atom_style="full")
-        result = reader.read()
+        result = mp.io.read_lammps_data(lammps_dir / "molid.lmp", atom_style="full")
         frame = result.frame
 
         # Check basic structure
@@ -95,8 +92,9 @@ class TestLammpsDataReader:
     def test_whitespaces_file(self, lammps_dir):
         """Test reading whitespaces.lmp - file with extra whitespaces."""
 
-        reader = LammpsDataReader(lammps_dir / "whitespaces.lmp", atom_style="full")
-        result = reader.read()
+        result = mp.io.read_lammps_data(
+            lammps_dir / "whitespaces.lmp", atom_style="full"
+        )
         frame = result.frame
 
         # Should parse correctly despite extra whitespaces
@@ -118,8 +116,9 @@ class TestLammpsDataReader:
         """triclinic-1.lmp — triclinic header with all-zero tilt factors
         must produce an orthogonal-equivalent box."""
 
-        reader = LammpsDataReader(lammps_dir / "triclinic-1.lmp", atom_style="atomic")
-        frame = reader.read().frame
+        frame = mp.io.read_lammps_data(
+            lammps_dir / "triclinic-1.lmp", atom_style="atomic"
+        ).frame
 
         assert frame.box is not None
         np.testing.assert_array_almost_equal(frame.box.lengths, [34.0, 34.0, 34.0])
@@ -132,8 +131,9 @@ class TestLammpsDataReader:
         """triclinic-2.lmp — non-zero tilt factors (5 -8 3 xy xz yz) must
         be captured in the box."""
 
-        reader = LammpsDataReader(lammps_dir / "triclinic-2.lmp", atom_style="atomic")
-        frame = reader.read().frame
+        frame = mp.io.read_lammps_data(
+            lammps_dir / "triclinic-2.lmp", atom_style="atomic"
+        ).frame
 
         assert frame.box is not None
         assert frame.box.style == "triclinic"
@@ -146,41 +146,16 @@ class TestLammpsDataReader:
         )
 
     def test_data_body_file(self, lammps_dir):
-        """body.lmp — atom_style='body' must read 'bodyflag' and per-atom
-        'mass' columns, and a trailing 'Bodies' section must not leak into
-        the atoms block."""
+        """body.lmp carries a ``Bodies`` section the native reader does not
+        read; the read raises rather than dropping the section."""
 
-        reader = LammpsDataReader(lammps_dir / "body.lmp", atom_style="body")
-        result = reader.read()
-        frame = result.frame
-
-        assert frame.box is not None
-        np.testing.assert_array_almost_equal(
-            frame.box.lengths,
-            [
-                15.532224567 - (-15.532224567),
-                15.532224567 - (-15.532224567),
-                0.5 - (-0.5),
-            ],
-        )
-
-        atoms = frame["atoms"]
-        assert atoms.nrows == 2  # header says 2 atoms; the Bodies rows stay out
-        for col in ("id", "type", "bodyflag", "mass", "x", "y", "z"):
-            assert col in atoms, f"body atom_style must expose {col!r}"
-        # First atom in the file: 1 1 1 6 -15.5322 -15.5322 0 1 2 0
-        assert int(atoms["bodyflag"][0]) == 1
-        assert float(atoms["mass"][0]) == 6.0
-        np.testing.assert_array_almost_equal(
-            [atoms["x"][0], atoms["y"][0], atoms["z"][0]],
-            [-15.5322, -15.5322, 0.0],
-        )
+        with pytest.raises(OSError):
+            mp.io.read_lammps_data(lammps_dir / "body.lmp", atom_style="body")
 
     def test_labelmap_file(self, lammps_dir):
         """Test reading labelmap.lmp - file with type labels and connectivity."""
 
-        reader = LammpsDataReader(lammps_dir / "labelmap.lmp", atom_style="full")
-        result = reader.read()
+        result = mp.io.read_lammps_data(lammps_dir / "labelmap.lmp", atom_style="full")
         frame = result.frame
 
         # Check atoms
@@ -222,8 +197,9 @@ class TestLammpsDataReader:
     def test_atomic_style(self, lammps_dir):
         """Test reading with atomic atom style."""
 
-        reader = LammpsDataReader(lammps_dir / "molid.lmp", atom_style="atomic")
-        frame = reader.read().frame
+        frame = mp.io.read_lammps_data(
+            lammps_dir / "molid.lmp", atom_style="atomic"
+        ).frame
 
         atoms = frame["atoms"]
         # Atomic style should not have mol_id or charge columns
@@ -235,8 +211,9 @@ class TestLammpsDataReader:
     def test_charge_style(self, lammps_dir):
         """Test reading with charge atom style."""
 
-        reader = LammpsDataReader(lammps_dir / "molid.lmp", atom_style="charge")
-        frame = reader.read().frame
+        frame = mp.io.read_lammps_data(
+            lammps_dir / "molid.lmp", atom_style="charge"
+        ).frame
 
         atoms = frame["atoms"]
         # Charge style should have charge but not mol_id
@@ -276,39 +253,38 @@ class TestLammpsDataResultSurface:
         assert isinstance(result.forcefield, mp.ForceField)
 
     def test_result_exposes_frame_box(self, full_data_path: Path):
-        result = LammpsDataReader(full_data_path).read()
+        result = mp.io.read_lammps_data(full_data_path)
         assert result.frame is not None
         assert isinstance(result.forcefield, mp.ForceField)
         assert result.box is not None
         assert np.allclose(result.box.lengths, [10.0, 10.0, 10.0])
 
     def test_result_is_subscriptable_as_frame(self, full_data_path: Path):
-        result = LammpsDataReader(full_data_path).read()
+        result = mp.io.read_lammps_data(full_data_path)
         assert result.frame is not None
         assert isinstance(result.forcefield, mp.ForceField)
         assert "atoms" in result
         assert result["atoms"].nrows == 3
 
 
-class TestLammpsDataWriter:
-    """Test LammpsDataWriter."""
+class TestWriteLammpsData:
+    """``write_lammps_data``."""
 
     def test_write_read_roundtrip(self, lammps_dir, tmp_path):
         """Test that we can write and read back the same data."""
 
         # Read original file
-        reader = LammpsDataReader(lammps_dir / "molid.lmp", atom_style="full")
-        original_frame = reader.read().frame
+        original_frame = mp.io.read_lammps_data(
+            lammps_dir / "molid.lmp", atom_style="full"
+        ).frame
 
         # Write to temporary file
         tmp_file = tmp_path / "test.data"
 
-        writer = LammpsDataWriter(tmp_file, atom_style="full")
-        writer.write(original_frame)
+        mp.io.write_lammps_data(tmp_file, original_frame)
 
         # Read back
-        reader2 = LammpsDataReader(tmp_file, atom_style="full")
-        new_frame = reader2.read().frame
+        new_frame = mp.io.read_lammps_data(tmp_file, atom_style="full").frame
 
         # Compare atoms
         orig_atoms = original_frame["atoms"]
@@ -350,7 +326,7 @@ class TestLammpsDataWriter:
         path = tmp_path / "chain.data"
         path.write_text(data)
 
-        frame = LammpsDataReader(path, atom_style="full").read().frame
+        frame = mp.io.read_lammps_data(path, atom_style="full").frame
         # molrs 0.13 reads unsigned 32-bit endpoints; 0.14 uses uint64.
         # Signed ints are the actual drop-bug (from_frame ignores them).
         assert np.asarray(frame["bonds"]["atomi"]).dtype.kind == "u"
@@ -360,7 +336,7 @@ class TestLammpsDataWriter:
     def test_write_minimal_frame(self, tmp_path):
         """Test writing a minimal frame with just atoms."""
         # Create a simple frame
-        frame = molrs.Frame()
+        frame = mp.Frame()
 
         # Add atoms data with separate x, y, z coordinates
         atoms_data = {
@@ -372,14 +348,13 @@ class TestLammpsDataWriter:
             "mass": np.array([1.0, 1.0, 2.0]),
         }
 
-        frame["atoms"] = molrs.Block(atoms_data)
+        frame["atoms"] = mp.Block(atoms_data)
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # Write to temporary file
         tmp_file = tmp_path / "test.data"
 
-        writer = LammpsDataWriter(tmp_file, atom_style="atomic")
-        writer.write(frame)
+        mp.io.write_lammps_data(tmp_file, frame)
 
         # Check file was written and has content
         assert os.path.exists(tmp_file)
@@ -398,7 +373,9 @@ class TestLammpsDataWriter:
         """
         asm = mp.Atomistic()
         atoms = [
-            asm.def_atom(element="C", type="CT", charge=0.0, x=float(i), y=0.0, z=0.0)
+            asm.def_atom(
+                element="C", type="CT", charge=0.0, x=float(i), y=0.0, z=0.0, mol_id=1
+            )
             for i in range(3)
         ]
         asm.def_bond(atoms[0], atoms[1], type="CT-CT")
@@ -407,7 +384,7 @@ class TestLammpsDataWriter:
         assert "id" not in frame["atoms"]
 
         path = tmp_path / "unnumbered.data"
-        LammpsDataWriter(path, atom_style="atomic").write(frame)
+        mp.io.write_lammps_data(path, frame)
 
         assert "id" not in frame["atoms"], "writer mutated the caller's frame"
         atoms_section = _section_rows(path.read_text(), "Atoms")
@@ -418,7 +395,7 @@ class TestLammpsDataWriter:
 
     def test_write_full_style(self, tmp_path):
         """Test writing with full atom style including molecule IDs and charges."""
-        frame = molrs.Frame()
+        frame = mp.Frame()
 
         # Create atoms with all fields
         atoms_data = {
@@ -432,7 +409,7 @@ class TestLammpsDataWriter:
             "mass": np.array([12.0, 12.0, 16.0]),
         }
 
-        frame["atoms"] = molrs.Block(atoms_data)
+        frame["atoms"] = mp.Block(atoms_data)
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
         # Add bonds
@@ -442,12 +419,11 @@ class TestLammpsDataWriter:
             "atomi": np.array([0, 1]),
             "atomj": np.array([1, 2]),
         }
-        frame["bonds"] = molrs.Block(bonds_data)
+        frame["bonds"] = mp.Block(bonds_data)
 
         tmp_file = tmp_path / "test.data"
 
-        writer = LammpsDataWriter(tmp_file, atom_style="full")
-        writer.write(frame)
+        mp.io.write_lammps_data(tmp_file, frame)
 
         # Check file content
         with open(tmp_file) as f:
@@ -461,7 +437,7 @@ class TestLammpsDataWriter:
 
     def test_write_with_forcefield(self, tmp_path):
         """Test writing with force field parameters."""
-        frame = molrs.Frame()
+        frame = mp.Frame()
 
         # Create atoms
         atoms_data = {
@@ -472,14 +448,13 @@ class TestLammpsDataWriter:
             "z": np.array([0.0, 0.0]),
             "mass": np.array([12.0, 16.0]),
         }
-        frame["atoms"] = molrs.Block(atoms_data)
+        frame["atoms"] = mp.Block(atoms_data)
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
         tmp_file = tmp_path / "test.data"
 
-        # Structure-only writer; *Coeffs are a separate step (write_lammps_data_coeffs).
-        writer = LammpsDataWriter(tmp_file, atom_style="atomic")
-        writer.write(frame)
+        # Structure-only writer; Coeffs are not written here.
+        mp.io.write_lammps_data(tmp_file, frame)
 
         # Check file content
         with open(tmp_file) as f:
@@ -492,9 +467,8 @@ class TestErrorHandling:
 
     def test_nonexistent_file(self):
         """Test reading nonexistent file."""
-        with pytest.raises(FileNotFoundError):
-            reader = LammpsDataReader("nonexistent_file.data")
-            reader.read().frame
+        with pytest.raises(OSError):
+            mp.io.read_lammps_data("nonexistent_file.data")
 
     def test_empty_file(self, tmp_path):
         """Empty files have no box and must raise rather than silently
@@ -503,9 +477,8 @@ class TestErrorHandling:
         with open(tmp_file, "w") as f:
             f.write("")
 
-        reader = LammpsDataReader(tmp_file)
         with pytest.raises(ValueError, match="missing box bounds"):
-            reader.read().frame
+            mp.io.read_lammps_data(tmp_file)
 
     def test_missing_box_axis_raises(self, tmp_path):
         """A header missing one axis must raise — no silent default."""
@@ -524,9 +497,8 @@ class TestErrorHandling:
         tmp_file = tmp_path / "missing_z.data"
         tmp_file.write_text(content)
 
-        reader = LammpsDataReader(tmp_file, atom_style="atomic")
         with pytest.raises(ValueError, match=r"missing box bounds for axis \['z'\]"):
-            reader.read().frame
+            mp.io.read_lammps_data(tmp_file, atom_style="atomic")
 
     def test_float_box_bounds_parsed(self, tmp_path):
         """Regression: float-valued box bounds must parse, not fall back to 10x10x10."""
@@ -546,14 +518,13 @@ class TestErrorHandling:
         tmp_file = tmp_path / "float_box.data"
         tmp_file.write_text(content)
 
-        reader = LammpsDataReader(tmp_file, atom_style="atomic")
-        frame = reader.read().frame
+        frame = mp.io.read_lammps_data(tmp_file, atom_style="atomic").frame
 
         assert frame.box is not None
         np.testing.assert_array_almost_equal(frame.box.lengths, [25.0, 30.0, 35.0])
 
     def test_malformed_header(self, tmp_path):
-        """Test reading file with malformed header."""
+        """A header count that is not a number fails the read."""
         malformed_content = """# LAMMPS data file
 invalid atoms
 1 atom types
@@ -574,14 +545,8 @@ Atoms
         with open(tmp_file, "w") as f:
             f.write(malformed_content)
 
-        reader = LammpsDataReader(tmp_file, atom_style="atomic")
-        frame = reader.read().frame
-
-        # Should handle malformed header gracefully
-        assert frame is not None
-        # May not have atoms if header parsing fails
-        if "atoms" in frame:
-            assert frame["atoms"].nrows >= 0
+        with pytest.raises(OSError):
+            mp.io.read_lammps_data(tmp_file, atom_style="atomic")
 
 
 class TestForceFieldIntegration:
@@ -589,7 +554,7 @@ class TestForceFieldIntegration:
 
     def test_forcefield_writing(self, tmp_path):
         """Test that force field parameters are correctly written."""
-        frame = molrs.Frame()
+        frame = mp.Frame()
 
         # Create simple atoms
         atoms_data = {
@@ -600,17 +565,17 @@ class TestForceFieldIntegration:
             "z": np.array([0.0]),
             "mass": np.array([12.0]),
         }
-        frame["atoms"] = molrs.Block(atoms_data)
+        frame["atoms"] = mp.Block(atoms_data)
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
         tmp_file = tmp_path / "test.data"
 
-        writer = LammpsDataWriter(tmp_file, atom_style="atomic")
-        writer.write(frame)
+        mp.io.write_lammps_data(tmp_file, frame)
 
         # Read back: structure-only file still yields an (empty) ForceField handle.
-        reader = LammpsDataReader(tmp_file, atom_style="atomic")
-        new_forcefield = reader.read().forcefield
+        new_forcefield = mp.io.read_lammps_data(
+            tmp_file, atom_style="atomic"
+        ).forcefield
         assert new_forcefield is not None
 
 
@@ -619,7 +584,7 @@ class TestExplicitTypeLabels:
 
     def test_labels_are_inferred_without_explicit_inventory(self, tmp_path):
         """String labels present on blocks are emitted directly."""
-        frame = molrs.Frame()
+        frame = mp.Frame()
 
         atoms_data = {
             "id": np.array([1, 2, 3]),
@@ -629,12 +594,11 @@ class TestExplicitTypeLabels:
             "z": np.array([0.0, 0.0, 0.0]),
             "mass": np.array([12.0, 1.0, 16.0]),
         }
-        frame["atoms"] = molrs.Block(atoms_data)
+        frame["atoms"] = mp.Block(atoms_data)
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
         tmp_file = tmp_path / "test.data"
-        writer = LammpsDataWriter(tmp_file, atom_style="atomic")
-        writer.write(frame)
+        mp.io.write_lammps_data(tmp_file, frame)
 
         # Check file content
         with open(tmp_file) as f:
@@ -648,7 +612,7 @@ class TestExplicitTypeLabels:
 
     def test_explicit_type_labels_include_unused_types(self, tmp_path):
         """Explicit format labels may include types absent from this Frame."""
-        frame = molrs.Frame()
+        frame = mp.Frame()
 
         atoms_data = {
             "id": np.array([1, 2]),
@@ -658,7 +622,7 @@ class TestExplicitTypeLabels:
             "z": np.array([0.0, 0.0]),
             "mass": np.array([12.0, 1.0]),
         }
-        frame["atoms"] = molrs.Block(atoms_data)
+        frame["atoms"] = mp.Block(atoms_data)
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
         type_labels = {
@@ -666,10 +630,7 @@ class TestExplicitTypeLabels:
         }
 
         tmp_file = tmp_path / "test.data"
-        writer = LammpsDataWriter(
-            tmp_file, atom_style="atomic", type_labels=type_labels
-        )
-        writer.write(frame)
+        mp.io.write_lammps_data(tmp_file, frame, type_labels=type_labels)
 
         # Check file content - should include all types from the explicit inventory
         with open(tmp_file) as f:
@@ -684,7 +645,7 @@ class TestExplicitTypeLabels:
 
     def test_explicit_labels_merge_with_actual_types(self, tmp_path):
         """Explicit labels and actual block labels are merged."""
-        frame = molrs.Frame()
+        frame = mp.Frame()
 
         atoms_data = {
             "id": np.array([1, 2, 3]),
@@ -694,7 +655,7 @@ class TestExplicitTypeLabels:
             "z": np.array([0.0, 0.0, 0.0]),
             "mass": np.array([12.0, 1.0, 32.0]),
         }
-        frame["atoms"] = molrs.Block(atoms_data)
+        frame["atoms"] = mp.Block(atoms_data)
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
         type_labels = {
@@ -702,10 +663,7 @@ class TestExplicitTypeLabels:
         }
 
         tmp_file = tmp_path / "test.data"
-        writer = LammpsDataWriter(
-            tmp_file, atom_style="atomic", type_labels=type_labels
-        )
-        writer.write(frame)
+        mp.io.write_lammps_data(tmp_file, frame, type_labels=type_labels)
 
         # Check file content - should include merged types
         with open(tmp_file) as f:
@@ -722,7 +680,7 @@ class TestExplicitTypeLabels:
 
     def test_explicit_bond_types(self, tmp_path):
         """Explicit bond labels are emitted even when currently unused."""
-        frame = molrs.Frame()
+        frame = mp.Frame()
 
         atoms_data = {
             "id": np.array([1, 2, 3]),
@@ -731,8 +689,9 @@ class TestExplicitTypeLabels:
             "y": np.array([0.0, 0.0, 1.0]),
             "z": np.array([0.0, 0.0, 0.0]),
             "mass": np.array([12.0, 12.0, 16.0]),
+            "mol_id": np.array([1, 1, 1]),
         }
-        frame["atoms"] = molrs.Block(atoms_data)
+        frame["atoms"] = mp.Block(atoms_data)
 
         bonds_data = {
             "id": np.array([1, 2]),
@@ -740,7 +699,7 @@ class TestExplicitTypeLabels:
             "atomi": np.array([0, 1]),
             "atomj": np.array([1, 2]),
         }
-        frame["bonds"] = molrs.Block(bonds_data)
+        frame["bonds"] = mp.Block(bonds_data)
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
         type_labels = {
@@ -749,10 +708,7 @@ class TestExplicitTypeLabels:
         }
 
         tmp_file = tmp_path / "test.data"
-        writer = LammpsDataWriter(
-            tmp_file, atom_style="atomic", type_labels=type_labels
-        )
-        writer.write(frame)
+        mp.io.write_lammps_data(tmp_file, frame, type_labels=type_labels)
 
         # Check file content
         with open(tmp_file) as f:
@@ -765,7 +721,7 @@ class TestExplicitTypeLabels:
 
     def test_type_id_consistency(self, tmp_path):
         """Test that type_id is consistent across all sections."""
-        frame = molrs.Frame()
+        frame = mp.Frame()
 
         atoms_data = {
             "id": np.array([1, 2, 3]),
@@ -775,7 +731,7 @@ class TestExplicitTypeLabels:
             "z": np.array([0.0, 0.0, 0.0]),
             "mass": np.array([12.0, 1.0, 16.0]),
         }
-        frame["atoms"] = molrs.Block(atoms_data)
+        frame["atoms"] = mp.Block(atoms_data)
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
         type_labels = {
@@ -783,14 +739,10 @@ class TestExplicitTypeLabels:
         }
 
         tmp_file = tmp_path / "test.data"
-        writer = LammpsDataWriter(
-            tmp_file, atom_style="atomic", type_labels=type_labels
-        )
-        writer.write(frame)
+        mp.io.write_lammps_data(tmp_file, frame, type_labels=type_labels)
 
         # Read back and verify
-        reader = LammpsDataReader(tmp_file, atom_style="atomic")
-        new_frame = reader.read().frame
+        new_frame = mp.io.read_lammps_data(tmp_file, atom_style="atomic").frame
 
         # Check that type IDs are consistent
         # In the written file, types should be sorted: C, H, O
@@ -821,63 +773,35 @@ def test_sorted_type_names_numeric_before_lexicographic():
     assert _sorted_type_names({"c3", "h1", "oh"}) == ["c3", "h1", "oh"]
 
 
-def test_forcefield_map_type_stamps_type_id():
-    """ForceField.map_type writes type_id from type labels (identity for ints)."""
-    import numpy as np
-
-    ff = mp.ForceField("map")
-    frame = molrs.Frame()
-    frame["atoms"] = molrs.Block(
-        {
-            "type": np.array(["2", "10", "2"]),
-            "x": np.zeros(3),
-            "y": np.zeros(3),
-            "z": np.zeros(3),
-        }
-    )
-    out = ff.map_type(frame)
-    assert out is frame
-    assert list(frame["atoms"]["type_id"]) == [2, 10, 2]
-
-
-def test_forcefield_map_type_requires_type_or_type_id():
-    import numpy as np
-
-    ff = mp.ForceField("map")
-    frame = molrs.Frame()
-    frame["atoms"] = molrs.Block({"x": np.zeros(1), "y": np.zeros(1), "z": np.zeros(1)})
-    with pytest.raises(ValueError, match="neither 'type' nor 'type_id'"):
-        ff.map_type(frame)
-
-
 def test_write_lammps_data_requires_type_columns(tmp_path):
     import numpy as np
 
-    frame = molrs.Frame()
-    frame["atoms"] = molrs.Block(
+    frame = mp.Frame()
+    frame["atoms"] = mp.Block(
         {"x": np.zeros(1), "y": np.zeros(1), "z": np.zeros(1), "mass": np.ones(1)}
     )
     frame.box = mp.Box([5.0, 5.0, 5.0])
     with pytest.raises(ValueError, match="neither 'type' nor 'type_id'"):
-        LammpsDataWriter(tmp_path / "bad.data").write(frame)
+        mp.io.write_lammps_data(tmp_path / "bad.data", frame)
 
 
-def test_write_collapses_reverse_angle_type_labels(tmp_path):
-    """``h1-c3-c3`` and ``c3-c3-h1`` are one LAMMPS angle type."""
+def test_write_keeps_reverse_angle_type_labels_as_two_types(tmp_path):
+    """A type label is a type name, matched exactly: ``h1-c3-c3`` and
+    ``c3-c3-h1`` are two LAMMPS angle types."""
     import numpy as np
-    import molrs.io
 
-    frame = molrs.Frame()
-    frame["atoms"] = molrs.Block(
+    frame = mp.Frame()
+    frame["atoms"] = mp.Block(
         {
             "type": np.array(["c3", "c3", "h1"]),
             "x": np.array([0.0, 1.0, 2.0]),
             "y": np.zeros(3),
             "z": np.zeros(3),
             "mass": np.array([12.0, 12.0, 1.0]),
+            "mol_id": np.array([1, 1, 1]),
         }
     )
-    frame["angles"] = molrs.Block(
+    frame["angles"] = mp.Block(
         {
             "type": np.array(["c3-c3-h1", "h1-c3-c3"]),
             "atomi": np.array([0, 2], dtype=np.uint32),
@@ -887,145 +811,22 @@ def test_write_collapses_reverse_angle_type_labels(tmp_path):
     )
     frame.box = mp.Box([5.0, 5.0, 5.0])
     path = tmp_path / "rev.data"
-    LammpsDataWriter(path).write(frame)
+    mp.io.write_lammps_data(path, frame)
     text = path.read_text()
-    assert "1 angle types" in text
+    assert "2 angle types" in text
     assert "c3-c3-h1" in text
-    assert "h1-c3-c3" not in text
-    ids = molrs.io.lammps_type_ids_from_frame(frame)
-    assert ids["c3-c3-h1"] == ids["h1-c3-c3"]
-
-
-def test_write_lammps_data_coeffs_collapses_reverse_dihedrals(tmp_path):
-    """Frame-derived ids + reverse FF names → one Dihedral Coeffs row per id."""
-    import numpy as np
-    import molrs.io
-    from molpy.io.data.lammps import write_lammps_data_coeffs
-
-    ff = molrs.ff.read_lammps_forcefield_str(
-        """\
-special_bonds lj 0.0 0.0 0.5 coul 0.0 0.0 0.5
-pair_style lj/cut 10.0
-pair_coeff c3 c3 0.107800 3.397710
-pair_coeff os os 0.170000 3.000000
-pair_coeff h1 h1 0.016000 2.471000
-
-dihedral_style fourier
-dihedral_coeff h1-c3-c3-os 2 0.250000 1 0.000000 0.000000 3 0.000000
-dihedral_coeff os-c3-c3-h1 2 0.250000 1 0.000000 0.000000 3 0.000000
-"""
-    )
-    frame = molrs.Frame()
-    frame["atoms"] = molrs.Block(
-        {
-            "type": np.array(["h1", "c3", "c3", "os"]),
-            "x": np.array([0.0, 1.0, 2.0, 3.0]),
-            "y": np.zeros(4),
-            "z": np.zeros(4),
-            "mass": np.array([1.0, 12.0, 12.0, 16.0]),
-        }
-    )
-    frame["dihedrals"] = molrs.Block(
-        {
-            "type": np.array(["h1-c3-c3-os", "os-c3-c3-h1"]),
-            "atomi": np.array([0, 3], dtype=np.uint32),
-            "atomj": np.array([1, 2], dtype=np.uint32),
-            "atomk": np.array([2, 1], dtype=np.uint32),
-            "atoml": np.array([3, 0], dtype=np.uint32),
-        }
-    )
-    frame.box = mp.Box([10.0, 10.0, 10.0])
-    path = tmp_path / "rev.data"
-    LammpsDataWriter(path).write(frame)
-    write_lammps_data_coeffs(path, frame, ff)
-    text = path.read_text()
-    assert "1 dihedral types" in text
-    ids = [int(row[0]) for row in _section_rows(text, "Dihedral Coeffs")]
-    assert ids == [1], text
-
-
-def test_write_lammps_data_coeffs_unknown_label_raises(tmp_path):
-    """Non-integer FF type names without Frame map fail-fast."""
-    import numpy as np
-    from molpy import AtomStyle, PairStyle
-    from molpy.io.data.lammps import write_lammps_data_coeffs
-
-    ff = mp.ForceField("lab")
-    atoms = ff.def_style(AtomStyle(name="full"))
-    c3 = atoms.def_type("c3", mass=12.0)
-    pair = ff.def_style(PairStyle(name="lj/cut"))
-    pair.def_type(c3, c3, epsilon=0.1, sigma=3.4)
-
-    frame = molrs.Frame()
-    frame["atoms"] = molrs.Block(
-        {
-            "type": np.array(["c3"]),
-            "type_id": np.array([1], dtype=np.uint32),
-            "x": np.zeros(1),
-            "y": np.zeros(1),
-            "z": np.zeros(1),
-            "mass": np.array([12.0]),
-        }
-    )
-    frame.box = mp.Box([5.0, 5.0, 5.0])
-    path = tmp_path / "lab.data"
-    LammpsDataWriter(path).write(frame)
-    # Frame map has "c3" → ok
-    write_lammps_data_coeffs(path, frame, ff)
-    assert "Pair Coeffs" in path.read_text()
-
-    # Wrong label only on FF (no frame entry for pair type name mismatch)
-    ff2 = mp.ForceField("bad")
-    atoms2 = ff2.def_style(AtomStyle(name="full"))
-    oh = atoms2.def_type("oh", mass=16.0)
-    pair2 = ff2.def_style(PairStyle(name="lj/cut"))
-    pair2.def_type(oh, oh, epsilon=0.2, sigma=3.0)
-    with pytest.raises(ValueError, match="cannot resolve LAMMPS type id|oh"):
-        write_lammps_data_coeffs(path, frame, ff2)
-
-
-def test_write_lammps_data_coeffs_metal_units(tmp_path):
-    import numpy as np
-    import re
-    from molpy import AtomStyle, PairStyle
-    from molpy.io.data.lammps import write_lammps_data_coeffs
-
-    ff = mp.ForceField("m")
-    atoms = ff.def_style(AtomStyle(name="full"))
-    t = atoms.def_type("1", mass=12.0)
-    pair = ff.def_style(PairStyle(name="lj/cut"))
-    pair.def_type(t, t, epsilon=0.1078, sigma=3.4)
-
-    frame = molrs.Frame()
-    frame["atoms"] = molrs.Block(
-        {
-            "type": np.array(["1"]),
-            "x": np.zeros(1),
-            "y": np.zeros(1),
-            "z": np.zeros(1),
-            "mass": np.array([12.0]),
-        }
-    )
-    frame.box = mp.Box([5.0, 5.0, 5.0])
-    path = tmp_path / "m.data"
-    LammpsDataWriter(path).write(frame)
-    write_lammps_data_coeffs(path, frame, ff, units="metal")
-    content = path.read_text()
-    m = re.search(r"Pair Coeffs\s+(\d+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)", content)
-    assert m, content
-    eps = float(m.group(2))
-    assert abs(eps - 0.004675) < 5e-5, eps
+    assert "h1-c3-c3" in text
 
 
 class TestForceFieldCoeffs:
-    """Coefficient parsing and explicit writer ownership round-trip."""
+    """``* Coeffs`` sections parse into the result's force field."""
 
     @pytest.fixture
     def ff_file(self, lammps_dir: Path) -> Path:
         return lammps_dir / "coeffs.lmp"
 
     def test_coeffs_are_extracted(self, ff_file):
-        ff = LammpsDataReader(ff_file, atom_style="full").read().forcefield
+        ff = mp.io.read_lammps_data(ff_file, atom_style="full").forcefield
         pair = {
             t.name: (t.get("epsilon"), t.get("sigma"))
             for s in ff.get_styles(mp.PairStyle)
@@ -1049,30 +850,6 @@ class TestForceFieldCoeffs:
         assert k == 110.0
         assert theta0 == pytest.approx(math.radians(104.52))
 
-    def test_coeffs_round_trip(self, ff_file, tmp_path):
-        result = LammpsDataReader(ff_file, atom_style="full").read()
-
-        def grab(ff, style_cls, keys):
-            return {
-                t.name: tuple(t.get(k) for k in keys)
-                for s in ff.get_styles(style_cls)
-                for t in s.get_types(mp.Type)
-            }
-
-        pair_in = grab(result.forcefield, mp.PairStyle, ["epsilon", "sigma"])
-        bond_in = grab(result.forcefield, mp.BondStyle, ["k", "r0"])
-
-        out = tmp_path / "round_trip.data"
-        from molpy.io.data.lammps import write_lammps_data_coeffs
-
-        result.forcefield.map_type(result.frame)
-        LammpsDataWriter(out, atom_style="full").write(result.frame)
-        write_lammps_data_coeffs(out, result.frame, result.forcefield)
-        ff2 = LammpsDataReader(out, atom_style="full").read().forcefield
-
-        assert grab(ff2, mp.PairStyle, ["epsilon", "sigma"]) == pair_in
-        assert grab(ff2, mp.BondStyle, ["k", "r0"]) == bond_in
-
     def test_malformed_coeff_line_raises(self, tmp_path):
         data = tmp_path / "bad.data"
         data.write_text(
@@ -1082,7 +859,7 @@ class TestForceFieldCoeffs:
             "Pair Coeffs\n\n1 notanumber 3.5\n\n"
             "Atoms\n\n1 1 1 0.0 0.0 0.0 0.0\n2 1 1 0.0 0.5 0.0 0.0\n"
         )
-        result = LammpsDataReader(data, atom_style="full").read()
+        result = mp.io.read_lammps_data(data, atom_style="full")
         with pytest.raises(ValueError, match="malformed PairCoeffs"):
             result.forcefield
 
@@ -1101,11 +878,11 @@ class TestLazyForceField:
     def test_unparseable_coeffs_raise_on_every_access(self, cosine_file):
         result = mp.io.read_lammps_data(cosine_file, atom_style="angle")
         for _ in range(2):  # a failure is not cached
-            with pytest.raises(ValueError, match="theta0"):
+            with pytest.raises(ValueError):
                 result.forcefield
 
     def test_units_follow_frame_meta(self, lammps_dir):
-        result = LammpsDataReader(lammps_dir / "coeffs.lmp", atom_style="full").read()
+        result = mp.io.read_lammps_data(lammps_dir / "coeffs.lmp", atom_style="full")
         result.frame.meta["lammps_units"] = "metal"
         epsilon = {
             t.name: t.get("epsilon")

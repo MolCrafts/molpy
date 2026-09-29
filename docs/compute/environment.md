@@ -69,7 +69,7 @@ a body-fixed frame to see anything; that is [Spatial](spatial.md) and
 ```python
 import numpy as np
 import molpy as mp
-from molpy.compute import BondOrder, NeighborList
+from molpy.compute import BondOrder
 
 a = 5.26
 basis = np.array([[0, 0, 0], [0.5, 0.5, 0], [0.5, 0, 0.5], [0, 0.5, 0.5]])
@@ -79,7 +79,7 @@ xyz = np.array(
 )
 crystal = mp.Frame()
 crystal["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-crystal.box = mp.Box.cubic(4 * a)
+crystal.box = mp.Box.cube(4 * a)
 ```
 
 The result is, per frame, a 4-tuple of `(counts, density, theta_edges,
@@ -87,7 +87,9 @@ phi_edges)`. The two grids are `(n_theta, n_phi)`; the two edge arrays are one
 longer than their axis, as histogram edges always are:
 
 ```python
-nlist = NeighborList(cutoff=4.5).compute(crystal)
+nl = mp.NeighborList(4.5)
+nl.build(crystal.coords, crystal.box)
+nlist = nl.neighbors()
 counts, density, theta_edges, phi_edges = BondOrder(n_theta=36, n_phi=72).compute(
     [crystal], [nlist]
 )[0]

@@ -1,428 +1,136 @@
-"""
-Data file reader factory functions.
+"""The ``mp.io`` readers molpy owns.
 
-This module provides convenient factory functions for creating various data file readers.
-All functions return Frame objects by populating an optional frame parameter.
+Every other reader on :mod:`molpy.io` is the native one, re-exported by
+identity. The functions here add something the native reader does not do:
+merge coordinates into an existing frame, pair a prmtop with its inpcrd,
+canonicalize a format molpy names itself, join split XYZ property columns,
+or refuse a multi-component SMILES string.
 """
+
+from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+
+import numpy as np
+
+import molrs.ff
+import molrs.io
+from molrs import Atomistic, Element, Frame
+
+from molpy.core.fields import ATOMIC_NUMBER, CHARGE, FieldFormatter
 
 PathLike = str | Path
 
 
-# Lazy import to avoid loading all dependencies
-def _ensure_frame(frame):
-    """Ensure a Frame object exists."""
-    if frame is None:
-        from molrs import Frame
+class _AcFieldFormatter(FieldFormatter):
+    """Antechamber ``.ac`` column names → canonical names."""
 
-        return Frame()
+    _field_formatters = {"q": CHARGE}
+
+
+_AC_FORMATTER = _AcFieldFormatter()
+
+
+def read_amber_ac(file: PathLike) -> Frame:
+    """Read an Antechamber ``.ac`` file, with ``q`` renamed to ``charge``."""
+    frame = molrs.io.read_ac(file)
+    _AC_FORMATTER.canonicalize_frame(frame)
     return frame
 
 
-# =============================================================================
-# Data File Readers
-# =============================================================================
-
-
-def read_lammps_data(
-    file: PathLike, atom_style: str = "full", frame: Any = None
-) -> Any:
-    """
-    Read a LAMMPS data file and return its explicit parse products.
+def read_amber_inpcrd(file: PathLike, frame: Frame | None = None) -> Frame:
+    """Read an AMBER ASCII ``*.inpcrd`` / restart file.
 
     Args:
-        file: Path to LAMMPS data file
-        atom_style: LAMMPS atom style (e.g., 'full', 'atomic'). Defaults to
-            ``"full"``. the native core still auto-detects columns; this only controls
-            molpy column-drop adapt.
-        frame: Optional existing Frame to populate
+        file: Path to the inpcrd file.
+        frame: Optional frame whose ``atoms`` block receives the coordinates
+            (and velocities, if present) in place; its other columns, and its
+            meta keys the file does not set, are kept. Without a frame, or a
+            frame with no ``atoms`` block, the native frame is returned.
 
     Returns:
-        ``LammpsDataResult`` with ``frame``, ``forcefield``, ``counts``, and
-        ``type_labels``. Structure lookup (``result["atoms"]``, ``result.box``)
-        delegates to ``.frame``; ``.forcefield`` stays an explicit product.
+        The frame holding the coordinates.
+
+    Raises:
+        ValueError: If ``frame`` has a different atom count than the file.
     """
-    from .data.lammps import LammpsDataReader
+    loaded = molrs.io.read_amber_inpcrd(file)
+    if frame is None or "atoms" not in frame:
+        return loaded
 
-    reader = LammpsDataReader(Path(file), atom_style)
-    return reader.read(frame=frame)
-
-
-def read_lammps_molecule(file: PathLike, frame: Any = None) -> Any:
-    """
-    Read LAMMPS molecule file and return a Frame object.
-
-    Args:
-        file: Path to LAMMPS molecule file
-        frame: Optional existing Frame to populate
-
-    Returns:
-        Populated Frame object
-    """
-    from .data.lammps_molecule import LammpsMoleculeReader
-
-    reader = LammpsMoleculeReader(Path(file))
-    return reader.read(frame=frame)
-
-
-def read_pdb(file: PathLike, frame: Any = None) -> Any:
-    """Read a PDB file (native); CONECT pairs are de-duplicated.
-
-    Args:
-        file: Path to PDB file.
-        frame: Accepted for API parity; ignored (the native core returns a new Frame).
-
-    Returns:
-        :class:`~molpy.Frame` for the first MODEL.
-    """
-    from .data.pdb import PDBReader
-
-    del frame
-    return PDBReader(Path(file)).read()
-
-
-def read_amber_inpcrd(inpcrd: PathLike, frame: Any = None) -> Any:
-    """
-    Read AMBER inpcrd file and return a Frame object.
-
-    Args:
-        inpcrd: Path to AMBER inpcrd file
-        frame: Optional existing Frame to populate
-
-    Returns:
-        Populated Frame object
-    """
-    from .data.amber import AmberInpcrdReader
-
-    frame = _ensure_frame(frame)
-    reader = AmberInpcrdReader(Path(inpcrd))
-    return reader.read(frame)
-
-
-def read_amber_ac(file: PathLike, frame: Any = None) -> Any:
-    """
-    Read AC file and return a Frame object.
-
-    Args:
-        file: Path to AC file
-        frame: Optional existing Frame to populate
-
-    Returns:
-        Populated Frame object
-    """
-    from .data.ac import AcReader
-
-    frame = _ensure_frame(frame)
-    reader = AcReader(Path(file))
-    return reader.read(frame)
-
-
-def read_amber_frcmod(file: PathLike) -> dict[str, Any]:
-    """
-    Read an AMBER FRCMOD file.
-
-    FRCMOD files contain additional force field parameters generated by parmchk2.
-
-    Args:
-        file: Path to FRCMOD file
-
-    Returns:
-        Dictionary with sections: 'remark', 'mass', 'bond', 'angle', 'dihe',
-        'improper', 'nonbon', and 'raw_text'.
-    """
-    from .forcefield.frcmod import read_frcmod
-
-    return read_frcmod(file)
-
-
-def read_mol2(file: PathLike, frame: Any = None) -> Any:
-    """Read a Tripos MOL2 file (native; first molecule).
-
-    Args:
-        file: Path to a ``.mol2`` file.
-        frame: Accepted for API parity; ignored (the native core returns a new Frame).
-
-    Returns:
-        Canonical :class:`~molpy.Frame`.
-    """
-    from .data.mol2 import Mol2Reader
-
-    del frame
-    return Mol2Reader(Path(file)).read()
-
-
-def read_xsf(file: PathLike, frame: Any = None) -> Any:
-    """
-    Read XSF file and return a Frame object.
-
-    Args:
-        file: Path to XSF file
-        frame: Optional existing Frame to populate
-
-    Returns:
-        Populated Frame object
-    """
-    from .data.xsf import XsfReader
-
-    reader = XsfReader(Path(file))
-    return reader.read(frame)
-
-
-def read_gro(file: PathLike, frame: Any = None) -> Any:
-    """Read a GROMACS GRO file (native); returns the first frame.
-
-    Args:
-        file: Path to ``.gro`` file.
-        frame: Accepted for API parity; ignored.
-
-    Returns:
-        :class:`~molpy.Frame`.
-    """
-    from .data.gro import GroReader
-
-    del frame
-    return GroReader(Path(file)).read()
-
-
-def read_xyz(file: PathLike, frame: Any = None) -> Any:
-    """Read an XYZ file (native) with molpy column normalization.
-
-    Args:
-        file: Path to XYZ file.
-        frame: Accepted for API parity; ignored.
-
-    Returns:
-        :class:`~molpy.Frame`.
-    """
-    from .data.xyz import XYZReader
-
-    del frame
-    return XYZReader(Path(file)).read()
-
-
-# =============================================================================
-# Force Field Readers
-# =============================================================================
-
-
-def read_lammps_forcefield(scripts: PathLike | list[PathLike]) -> Any:
-    """
-    Read a LAMMPS force-field include (``*.ff``) into a ForceField.
-
-    Delegates to the native reader (``read_lammps_forcefield``),
-    which parses the include directly into a ``ForceField`` in the native store units
-    (Å, kcal/mol, radians, e): LAMMPS harmonic ``K`` → the native ``k = 2K``, angle
-    and dihedral-phase values are converted degrees → radians, and
-    ``dihedral_style fourier``
-    maps to the native ``periodic`` kernel. AMBER 1-4 scaling is recorded on the
-    force field's special bonds. Per-atom charge and mass live in the LAMMPS
-    *data* file, not this include, so they are not read here.
-
-    Args:
-        scripts: Path (or list of paths) to LAMMPS force-field include(s). A
-            list is concatenated and parsed as a single document.
-
-    Returns:
-        ``molpy.ForceField`` (which is ``ForceField``).
-    """
-    import molrs
-
-    paths = scripts if isinstance(scripts, list) else [scripts]
-    if len(paths) == 1:
-        return molrs.ff.read_lammps_forcefield(str(paths[0]))
-    text = "\n".join(Path(p).read_text() for p in paths)
-    return molrs.ff.read_lammps_forcefield_str(text)
-
-
-# Identity re-export onto molpy.io only (no package-root mp.read_*).
-from .forcefield.xml import read_xml_forcefield as read_xml_forcefield
+    atoms = frame["atoms"]
+    src = loaded["atoms"]
+    if atoms.nrows != src.nrows:
+        raise ValueError(
+            f"atoms block has {atoms.nrows} rows, but inpcrd has {src.nrows}"
+        )
+    for column in ("x", "y", "z", "vel"):
+        if column in src:
+            atoms[column] = src[column]
+    frame.box = loaded.box
+    frame.meta = {**frame.meta, **loaded.meta}
+    return frame
 
 
 def read_amber(
-    prmtop: PathLike, inpcrd: PathLike | None = None, frame: Any = None
-) -> Any:
-    """
-    Read AMBER prmtop and optional inpcrd files.
+    prmtop: PathLike, inpcrd: PathLike | None = None
+) -> tuple[Frame, molrs.ff.ForceField]:
+    """Read an AMBER prmtop (structure and force field), and optionally its inpcrd.
 
     Args:
-        prmtop: Path to AMBER prmtop file
-        inpcrd: Optional path to AMBER inpcrd file
-        frame: Optional existing Frame to populate
+        prmtop: Path to a ``.prmtop`` / ``.parm7`` file.
+        inpcrd: Optional coordinate file merged into the structure frame.
 
     Returns:
-        Tuple of (Frame, ForceField)
+        ``(frame, forcefield)``.
     """
-    from .forcefield.amber import AmberPrmtopReader
-
-    frame = _ensure_frame(frame)
-    prmtop_path = Path(prmtop)
-    reader = AmberPrmtopReader(prmtop_path)
-    frame, ff = reader.read(frame)
-
+    frame = molrs.io.read_amber_prmtop(prmtop)
+    forcefield = molrs.ff.read_amber_prmtop_ff(prmtop)
     if inpcrd is not None:
-        from .data.amber import AmberInpcrdReader
-
-        inpcrd_reader = AmberInpcrdReader(Path(inpcrd))
-        frame = inpcrd_reader.read(frame)
-
-    return frame, ff
+        frame = read_amber_inpcrd(inpcrd, frame)
+    return frame, forcefield
 
 
-def read_top(file: PathLike, forcefield: Any = None) -> Any:
+def read_xyz(file: PathLike) -> Frame:
+    """Read an XYZ file with molpy's column conventions.
+
+    On top of the native reader: an ``n``-wide property the native reader
+    splits into ``base_1`` … ``base_n`` is joined back into one ``(N, n)``
+    column ``base``, ``species`` becomes ``element`` when there is none, and
+    ``atomic_number`` is filled from ``element`` when missing.
     """
-    Read GROMACS topology file and return a ForceField object.
-
-    Args:
-        file: Path to GROMACS .top file
-        forcefield: Optional existing ForceField to populate
-
-    Returns:
-        Populated ForceField object
-    """
-    from molpy.core.forcefield import ForceField
-
-    from .forcefield.top import GromacsTopReader
-
-    if forcefield is None:
-        forcefield = ForceField()
-
-    reader = GromacsTopReader(Path(file))
-    return reader.read(forcefield)
-
-
-# =============================================================================
-# Trajectory Readers
-# =============================================================================
-
-
-def read_lammps_trajectory(traj: PathLike) -> Any:
-    """
-    Read LAMMPS trajectory file and return a trajectory reader.
-
-    Backed by the native Rust lazy reader.
-
-    Args:
-        traj: Path to LAMMPS trajectory file
-    Returns:
-        the native ``TrajectoryReader`` object
-    """
-    import molrs.io
-
-    return molrs.io.read_lammps_trajectory(str(traj))
+    frame = molrs.io.read_xyz(file)
+    for block_name in list(frame.keys()):
+        block = frame[block_name]
+        keys = set(block.keys())
+        for key in sorted(keys):
+            if not key.endswith("_1"):
+                continue
+            base = key[:-2]
+            parts = [key]
+            while f"{base}_{len(parts) + 1}" in keys:
+                parts.append(f"{base}_{len(parts) + 1}")
+            if len(parts) > 1:
+                block[base] = np.column_stack([np.asarray(block[k]) for k in parts])
+                for k in parts:
+                    del block[k]
+        if "species" in block and "element" not in block:
+            block["element"] = np.asarray(block["species"])
+        if "element" in block and ATOMIC_NUMBER not in block:
+            block[ATOMIC_NUMBER] = np.array(
+                [Element.get_atomic_number(str(s)) for s in block["element"]],
+                dtype=np.int64,
+            )
+    return frame
 
 
-def read_xyz_trajectory(file: PathLike) -> Any:
-    """
-    Read XYZ trajectory file and return a trajectory reader.
-
-    Backed by the native Rust lazy reader.
-
-    Args:
-        file: Path to XYZ trajectory file
-
-    Returns:
-        the native ``TrajectoryReader`` object
-    """
-    import molrs.io
-
-    return molrs.io.read_xyz_trajectory(str(file))
-
-
-def read_pdb_trajectory(file: PathLike) -> list:
-    """Read every model of a (multi-frame) PDB file as a list of Frames.
-
-    Each ``MODEL``/``END``-delimited block becomes one Frame. A single-model PDB
-    yields a one-element list. Backed by the native Rust reader.
-    """
-    import molrs.io
-
-    # molrs.io.read_pdb_trajectory already returns canonical rich Frames.
-    return list(molrs.io.read_pdb_trajectory(str(file)))
-
-
-def read_dcd_trajectory(file: PathLike) -> Any:
-    """Read a DCD trajectory and return a lazy trajectory reader.
-
-    Backed by the native Rust lazy reader (O(1) random access by frame index).
-
-    Args:
-        file: Path to a ``.dcd`` file.
-
-    Returns:
-        the native ``TrajectoryReader`` object.
-    """
-    import molrs.io
-
-    return molrs.io.read_dcd_trajectory(str(file))
-
-
-def read_trr_trajectory(file: PathLike) -> Any:
-    """Read a GROMACS TRR trajectory and return a lazy trajectory reader.
-
-    Backed by the native Rust lazy reader (single/double precision, coordinates
-    plus velocities/forces when present; O(1) random access).
-
-    Args:
-        file: Path to a ``.trr`` file.
-
-    Returns:
-        the native ``TrajectoryReader`` object.
-    """
-    import molrs.io
-
-    return molrs.io.read_trr_trajectory(str(file))
-
-
-def read_xtc_trajectory(file: PathLike) -> Any:
-    """Read a GROMACS XTC (compressed) trajectory and return a lazy reader.
-
-    Backed by the native Rust lazy reader (lossy compression; accepts classic
-    1995 and 2023 magic; O(1) random access after a one-time index scan).
-
-    Args:
-        file: Path to a ``.xtc`` file.
-
-    Returns:
-        the native ``TrajectoryReader`` object.
-    """
-    import molrs.io
-
-    return molrs.io.read_xtc_trajectory(str(file))
-
-
-def read_cube(file: PathLike) -> Any:
-    """Read a Gaussian Cube file into a Frame with a grid block (native)."""
-    import molrs.io
-
-    return molrs.io.read_cube(str(file))
-
-
-def read_chgcar(file: PathLike) -> Any:
-    """Read a VASP CHGCAR into a Frame with a ``chgcar`` grid block (native)."""
-    import molrs.io
-
-    return molrs.io.read_chgcar(str(file))
-
-
-# =============================================================================
-# Log Readers
-# =============================================================================
-
-
-def read_smiles(smiles: str) -> Any:
+def read_smiles(smiles: str) -> Atomistic:
     """Parse a single-component SMILES string into an :class:`Atomistic`.
 
     Connectivity only: hydrogens implicit in the SMILES are **not** added, and
     no coordinates are generated. Filling open valences is a separate
     perception step (``mp.Perceive().find_hydrogens(mol)``), and 3D embedding a
-    separate conformer step — :class:`~molpy.io.SmilesReader` composes all
-    three when you want the finished molecule.
-
-    This is an **io** entry point, not a constructor on the graph. A SMILES
-    string is a file format, and the layering runs io → core: a core type that
-    could parse one would make the graph depend on the parser.
+    separate conformer step.
 
     Args:
         smiles: A SMILES string naming exactly one connected molecule.
@@ -441,8 +149,6 @@ def read_smiles(smiles: str) -> Any:
         >>> len(list(mp.io.read_smiles("CCO").atoms))
         3
     """
-    import molrs
-
     ir = molrs.io.SmilesIR(smiles)
     if ir.n_components != 1:
         raise ValueError(
@@ -451,66 +157,3 @@ def read_smiles(smiles: str) -> Any:
             "or pass one component at a time."
         )
     return ir.to_atomistic()
-
-
-def write_smarts(
-    mol: Any,
-    center: Any,
-    *,
-    reach: int = 1,
-    atomic_number: bool = True,
-    include_degree: bool = True,
-    include_h_count: bool = True,
-    include_charge: bool = True,
-    include_aromatic: bool = True,
-    include_ring_membership: bool = False,
-    include_ring_size: bool = False,
-    include_explicit_h_atoms: bool = False,
-    include_bond_orders: bool = True,
-    neighbor_style: str = "chain",
-    canonical_neighbor_order: bool = True,
-) -> str:
-    """Encode the local topology around ``center`` as a SMARTS string.
-
-    Thin wrap of ``write_smarts``. Science flags match the native
-    ``LocalSmartsOptions`` surface. This is an io entry — not a method on
-    :class:`~molpy.core.atomistic.Atomistic`.
-
-    Args:
-        mol: molpy :class:`~molpy.core.atomistic.Atomistic` (or a native graph).
-        center: Atom view (``.handle``) or integer handle.
-        reach: Bond radius of the local ball (must be >= 1).
-        atomic_number: Use ``[#Z]`` rather than elemental symbols.
-        include_degree: Add Daylight ``D`` on the center.
-        include_h_count: Add ``H`` on the center.
-        include_charge: Add formal charge when nonzero.
-        include_aromatic: Mark aromatic atoms / bonds.
-        include_ring_membership: Add ring-count primitives.
-        include_ring_size: Add smallest-ring size.
-        include_explicit_h_atoms: Keep explicit hydrogens in the ball.
-        include_bond_orders: Emit ``=`` / ``#`` / ``:`` when not single.
-        neighbor_style: ``"chain"`` or ``"recursive"``.
-        canonical_neighbor_order: Sort neighbors by canonical atom order.
-
-    Returns:
-        A SMARTS string that matches ``center`` in ``mol``.
-    """
-    import molrs
-
-    handle = int(getattr(center, "handle", center))
-    return molrs.io.write_smarts(
-        mol,
-        handle,
-        reach=reach,
-        atomic_number=atomic_number,
-        include_degree=include_degree,
-        include_h_count=include_h_count,
-        include_charge=include_charge,
-        include_aromatic=include_aromatic,
-        include_ring_membership=include_ring_membership,
-        include_ring_size=include_ring_size,
-        include_explicit_h_atoms=include_explicit_h_atoms,
-        include_bond_orders=include_bond_orders,
-        neighbor_style=neighbor_style,
-        canonical_neighbor_order=canonical_neighbor_order,
-    )

@@ -29,8 +29,6 @@ nav = [
       { "Quickstart" = "getting-started/quickstart.md" },
       { "Example Gallery" = "getting-started/examples.md" },
       { "FAQ" = "getting-started/faq.md" },
-      { "Migrating to 0.15" = "getting-started/migration-0-15.md" },
-      { "Migrating to 0.14" = "getting-started/migration-0-14.md" },
     ] },
     { "The Data Model" = [
       { "Atomistic and Topology" = "tutorials/01_atomistic_and_topology.md" },
@@ -83,8 +81,6 @@ nav = [
     ] },
     { "Tools & Ecosystem" = [
       { "AmberTools Integration" = "user-guide/13_ambertools_integration.md" },
-      { "Moltemplate CLI" = "user-guide/14_moltemplate_cli.md" },
-      { "MCP Suite" = "user-guide/15_mcp.md" },
     ] },
   ] },
 
@@ -257,7 +253,7 @@ custom_fences = [
 default_handler = "python"
 
 [project.plugins.mkdocstrings.handlers.python]
-# Load molrs when resolving ``molpy.Frame → molrs.frame.Frame`` re-exports.
+# Load molrs when resolving ``molpy.Frame → molrs.Frame`` re-exports.
 load_external_modules = true
 
 [project.plugins.mkdocstrings.handlers.python.options]

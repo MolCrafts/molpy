@@ -23,15 +23,9 @@ class _RecordingEmitter(Emitter):
 
 
 class TestModuleSurface:
-    def test_there_is_no_module_level_emitter_dict(self):
-        assert not hasattr(emit, "EMITTERS")
-
-    def test_there_is_no_free_register_function(self):
-        assert not hasattr(emit, "register")
-
     def test_built_in_emitters_live_on_the_one_registry(self):
         assert isinstance(emit.emitters, EmitterRegistry)
-        assert emit.emitters.names() == ["gromacs", "lammps", "openmm", "xml"]
+        assert emit.emitters.names() == ["gromacs", "lammps"]
 
 
 class TestEmitterRegistry:

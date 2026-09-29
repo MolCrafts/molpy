@@ -1,7 +1,6 @@
 import pytest
 
 import molpy
-import molrs
 from molpy import UnitSystem
 
 
@@ -17,7 +16,7 @@ REQUIRED_DIMS = {
 
 
 def test_unit_system_is_native_registry_sugar():
-    assert issubclass(UnitSystem, molrs.UnitRegistry)
+    assert issubclass(UnitSystem, molpy.UnitRegistry)
     assert molpy.UnitSystem is UnitSystem
     assert not hasattr(UnitSystem(), "_inner")
 
@@ -25,7 +24,7 @@ def test_unit_system_is_native_registry_sugar():
 def test_native_quantity_and_conversion_contract():
     units = UnitSystem()
     quantity = 1.5 * units.angstrom
-    assert isinstance(quantity, molrs.Quantity)
+    assert isinstance(quantity, molpy.Quantity)
     assert quantity.magnitude == pytest.approx(1.5)
     assert quantity.to("nanometer").magnitude == pytest.approx(0.15)
     assert (1.0 * units.kilocalorie_per_mole).to("eV").magnitude == pytest.approx(
@@ -35,7 +34,7 @@ def test_native_quantity_and_conversion_contract():
 
 def test_constructor_records_native_base_units():
     units = UnitSystem(base_units={"length": "nm", "time": "ps"})
-    assert isinstance(units.base_units["length"], molrs.Unit)
+    assert isinstance(units.base_units["length"], molpy.Unit)
     assert units.base_units["length"] == units.nanometer
     assert units.base_units["time"] == units.picosecond
 
@@ -54,7 +53,7 @@ def test_all_lammps_presets_resolve_natively():
     for name in UnitSystem.preset_names():
         system = UnitSystem.preset(name)
         assert not (REQUIRED_DIMS - set(system.base_units))
-        assert all(isinstance(unit, molrs.Unit) for unit in system.base_units.values())
+        assert all(isinstance(unit, molpy.Unit) for unit in system.base_units.values())
 
 
 def test_preset_override_and_registration():
@@ -123,13 +122,13 @@ def test_lj_scales_are_native_units(argon):
 
 def test_lj_rejects_wrong_dimensions_and_nonpositive_scales():
     units = UnitSystem()
-    with pytest.raises(molrs.UnitsError, match="dimension mismatch"):
+    with pytest.raises(molpy.UnitsError, match="dimension mismatch"):
         UnitSystem.lj(
             mass=1.0 * units.second,
             sigma=1.0 * units.angstrom,
             epsilon=1.0 * units.eV,
         )
-    with pytest.raises(molrs.UnitsError, match="finite and positive"):
+    with pytest.raises(molpy.UnitsError, match="finite and positive"):
         UnitSystem.lj(
             mass=1.0 * units.amu,
             sigma=0.0 * units.angstrom,

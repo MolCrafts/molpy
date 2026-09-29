@@ -1,385 +1,61 @@
-"""
-Data file writer factory functions.
+"""The ``mp.io`` writers molpy owns.
 
-This module provides convenient factory functions for creating various data file writers.
-All functions write Frame or ForceField objects to files.
+Every other writer on :mod:`molpy.io` is the native one, re-exported by
+identity. The functions here add something the native writer does not do:
+fill a PDB ``element`` column from frame meta, or write the whole file set of a
+LAMMPS ``fix bond/react`` system.
 """
 
+from __future__ import annotations
+
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from .data.lammps_bond_react import BondReactTemplate
+import numpy as np
+
+import molrs.io
+from molrs import Block, Frame
+from molrs.ff import ForceField, write_lammps_forcefield
+
+from .data.lammps import write_lammps_data
+from .data.lammps_bond_react import (
+    TYPE_LABEL_SECTIONS,
+    BondReactTemplate,
+    LammpsBondReactWriter,
+)
 
 PathLike = str | Path
 
 
-# =============================================================================
-# Data File Writers
-# =============================================================================
+def write_pdb(file: PathLike, frame: Frame) -> None:
+    """Write a frame to a PDB file (canonical columns).
 
+    When the atoms carry no ``element`` column, one is built from the
+    space-separated ``frame.meta["elements"]`` (padded with ``X``).
 
-def write_lammps_data(
-    file: PathLike,
-    frame: Any,
-    atom_style: str = "full",
-    *,
-    type_labels: dict[str, list[str]] | None = None,
-) -> None:
-    """Write a Frame to a LAMMPS data file (structure only).
-
-    Structure / topology / Masses / type labels go through the native core after the
-    writer stamps ``type_id`` from Frame columns. Force-field ``* Coeffs`` are
-    a separate step — use :func:`write_lammps_data_coeffs`.
-
-    Args:
-        file: Output file path.
-        frame: Frame with ``type`` and/or ``type_id`` on atoms (and connectivity).
-        atom_style: Accepted for API parity (style is inferred from columns).
-        type_labels: Optional **extra** unused-type inventory only.
+    Raises:
+        ValueError: If ``frame["atoms"]`` lacks ``x``, ``y`` or ``z``.
     """
-    from .data.lammps import LammpsDataWriter
-
-    del atom_style  # layout inferred by molrs from columns
-    LammpsDataWriter(
-        Path(file),
-        type_labels=type_labels,
-    ).write(frame)
-
-
-def write_lammps_data_coeffs(
-    file: PathLike,
-    frame: Any,
-    forcefield: Any,
-    *,
-    units: str = "real",
-    precision: int = 6,
-) -> None:
-    """Insert ``* Coeffs`` into an existing LAMMPS data file.
-
-    Type ids come from the Frame; form map and units conversion live in the native core.
-    Typical composition::
-
-        ff.map_type(frame)
-        write_lammps_data(path, frame)
-        write_lammps_data_coeffs(path, frame, ff)
-    """
-    from .data.lammps import write_lammps_data_coeffs as _write
-
-    _write(Path(file), frame, forcefield, units=units, precision=precision)
-
-
-def write_pdb(file: PathLike, frame: Any) -> None:
-    """Write a Frame to a PDB file (native; canonical columns)."""
-    from .data.pdb import PDBWriter
-
-    PDBWriter(Path(file)).write(frame)
-
-
-def write_gro(file: PathLike, frame: Any) -> None:
-    """Write a Frame to a GROMACS GRO file (native)."""
-    import molrs.io
-
-    molrs.io.write_gro(str(file), frame)
-
-
-def write_xyz(file: PathLike, frame: Any) -> None:
-    """Write a Frame to an XYZ file (native)."""
-    import molrs.io
-
-    molrs.io.write_xyz(str(file), frame)
-
-
-def write_mol2(file: PathLike, frame: Any) -> None:
-    """Write a Frame to a Tripos MOL2 file (native)."""
-    from .data.mol2 import Mol2Writer
-
-    Mol2Writer(Path(file)).write(frame)
-
-
-def write_xsf(file: PathLike, frame: Any) -> None:
-    """
-    Write a Frame object to an XSF file.
-
-    Args:
-        file: Output file path
-        frame: Frame object to write
-    """
-    from .data.xsf import XsfWriter
-
-    writer = XsfWriter(Path(file))
-    writer.write(frame)
-
-
-def write_amber_frcmod(
-    file: PathLike,
-    *,
-    remark: str = "",
-    mass: str = "",
-    bond: str = "",
-    angle: str = "",
-    dihe: str = "",
-    improper: str = "",
-    nonbon: str = "",
-) -> None:
-    """
-    Write an AMBER FRCMOD file.
-
-    FRCMOD files contain additional force field parameters. This function
-    creates a properly formatted file with the provided sections.
-
-    Args:
-        file: Output file path
-        remark: Optional comment/remark line
-        mass: MASS section content
-        bond: BOND section content
-        angle: ANGLE section content
-        dihe: DIHEDRAL section content
-        improper: IMPROPER section content
-        nonbon: NONBON section content
-    """
-    from .forcefield.frcmod import write_frcmod
-
-    write_frcmod(
-        file,
-        remark=remark,
-        mass=mass,
-        bond=bond,
-        angle=angle,
-        dihe=dihe,
-        improper=improper,
-        nonbon=nonbon,
-    )
-
-
-def write_lammps_molecule(
-    file: PathLike, frame: Any, format_type: str = "native"
-) -> None:
-    """
-    Write a Frame object to a LAMMPS molecule file.
-
-    Args:
-        file: Output file path
-        frame: Frame object to write
-        format_type: Format type (default: 'native')
-    """
-    from .data.lammps_molecule import LammpsMoleculeWriter
-
-    writer = LammpsMoleculeWriter(Path(file), format_type)
-    writer.write(frame)
-
-
-# =============================================================================
-# Force Field Writers
-# =============================================================================
-
-
-def _frame_used_types(frame: Any) -> dict[str, set | None]:
-    """Per-section set of the type names a frame actually uses (``None`` if the
-    section/column is absent), for whitelisting FF output to the labelmap.
-
-    A LAMMPS data file's type labels come from the frame's used types, so any
-    coeff the FF writer emits for a type *not* in this set references a labelmap
-    entry that does not exist and LAMMPS rejects it. Both the system writer and
-    the engine writer filter against this so their coeffs match the data file.
-    """
-    sections = {
-        "atom_types": "atoms",
-        "bond_types": "bonds",
-        "angle_types": "angles",
-        "dihedral_types": "dihedrals",
-        "improper_types": "impropers",
-    }
-    used: dict[str, set | None] = {}
-    for key, section in sections.items():
-        if section in frame and "type" in frame[section]:
-            used[key] = set(frame[section]["type"])
-        else:
-            used[key] = None
-    return used
-
-
-def write_lammps_forcefield(
-    file: PathLike,
-    forcefield: Any,
-    precision: int = 6,
-    skip_pair_style: bool = False,
-    skip_units: bool = False,
-    frame: Any = None,
-    *,
-    units: str = "real",
-) -> None:
-    """
-    Write a ForceField object to a LAMMPS force field file.
-
-    Args:
-        file: Output file path
-        forcefield: ForceField object to write
-        precision: Number of decimal places for floating point values
-        skip_pair_style: If True, omit ``pair_style`` and ``special_bonds`` so the calling
-            LAMMPS input script can set them independently (e.g. to switch between
-            ``lj/cut/coul/cut`` for minimisation and ``lj/cut/coul/long`` for MD).
-        skip_units: If True, omit the ``units`` line so the include can follow
-            ``units`` already set in the input script.
-        frame: When given, restrict emitted coeffs to the types the frame
-            actually uses — so a force field carrying extra types (e.g. cap
-            artifacts from region parameterisation) does not emit a coeff for a
-            type absent from the data file's labelmap (which LAMMPS rejects).
-        units: LAMMPS ``units`` style for the written include (``real``,
-            ``metal``, or ``lj``). Conversion goes through the native core's lj hub.
-    """
-    from .forcefield.lammps import LAMMPSForceFieldWriter
-
-    writer = LAMMPSForceFieldWriter(Path(file), precision=precision, units=units)
-    used = _frame_used_types(frame) if frame is not None else {}
-    writer.write(
-        forcefield, skip_pair_style=skip_pair_style, skip_units=skip_units, **used
-    )
-
-
-# =============================================================================
-# Trajectory Writers
-# =============================================================================
-
-
-def write_lammps_trajectory(
-    file: PathLike, frames: list, atom_style: str = "full"
-) -> None:
-    """Write frames to a LAMMPS dump trajectory (native).
-
-    Each frame must have ``box``. Optional ``frame.meta['timestep']`` is written
-    as ITEM: TIMESTEP.
-
-    Args:
-        file: Output file path.
-        frames: Sequence of Frame objects.
-        atom_style: Accepted for API parity; ignored by the native core (columns from frame).
-    """
-    from .trajectory.lammps import LammpsTrajectoryWriter
-
-    with LammpsTrajectoryWriter(Path(file), atom_style) as writer:
-        for frame in frames:
-            writer.write_frame(frame)
-
-
-def write_lammps_dump_local(file: PathLike, frames: list) -> None:
-    """Write LAMMPS dump local (OVITO Load trajectory bonds) natively.
-
-    Same door as the native ``write_lammps_dump_local``.
-    """
-    from .trajectory.lammps import LammpsDumpLocalWriter
-
-    with LammpsDumpLocalWriter(Path(file)) as writer:
-        for frame in frames:
-            writer.write_frame(frame)
-
-
-def write_xyz_trajectory(file: PathLike, frames: list) -> None:
-    """
-    Write frames to an XYZ trajectory file.
-
-    Args:
-        file: Output file path
-        frames: List of Frame objects to write
-    """
-    from .trajectory.xyz import XYZTrajectoryWriter
-
-    with XYZTrajectoryWriter(file) as writer:
-        for frame in frames:
-            writer.write_frame(frame)
-
-
-def write_trr(file: PathLike, frames: list) -> None:
-    """Write frames to a GROMACS TRR trajectory (single precision).
-
-    Thin delegation to the native writer. Each frame needs ``x``/``y``/
-    ``z`` (nm); optional ``vx``/``vy``/``vz`` and ``fx``/``fy``/``fz`` are
-    written when present.
-
-    Args:
-        file: Output file path.
-        frames: List of Frame objects to write.
-    """
-    import molrs.io
-
-    molrs.io.write_trr(str(file), list(frames))
-
-
-def write_xtc(file: PathLike, frames: list) -> None:
-    """Write frames to a GROMACS XTC (compressed) trajectory.
-
-    Thin delegation to the native writer. Each frame needs ``x``/``y``/
-    ``z`` (nm); quantization precision comes from ``frame.meta['precision']``
-    when present, else 1000 (0.001 nm).
-
-    Args:
-        file: Output file path.
-        frames: List of Frame objects to write.
-    """
-    import molrs.io
-
-    molrs.io.write_xtc(str(file), list(frames))
-
-
-def write_dcd_trajectory(file: PathLike, frames: list) -> None:
-    """Write frames to a NAMD-compatible DCD trajectory (native).
-
-    Args:
-        file: Output ``.dcd`` path.
-        frames: Frames with equal atom counts; box presence must be consistent.
-    """
-    import molrs.io
-
-    molrs.io.write_dcd(str(file), list(frames))
-
-
-def write_cube(file: PathLike, frame: Any) -> None:
-    """Write a frame grid block to a Gaussian Cube file (native)."""
-    import molrs.io
-
-    molrs.io.write_cube(str(file), frame)
-
-
-def write_lammps_system(
-    workdir: PathLike, frame: Any, forcefield: Any
-) -> dict[str, Path]:
-    """
-    Write a complete LAMMPS system (data + forcefield) to a directory.
-
-    Args:
-        workdir: Output directory path
-        frame: Frame object containing structure
-        forcefield: ForceField object containing parameters
-
-    Returns:
-        Dict with keys ``"data"`` and ``"ff"`` pointing to the written files.
-    """
-    workdir_path = Path(workdir)
-    if not workdir_path.exists():
-        workdir_path.mkdir(parents=True, exist_ok=True)
-
-    # Fixed "system" stem inside the directory, so filenames are predictable
-    # (write_lammps_system("out") -> out/system.data + out/system.ff).
-    file_stem = workdir_path / "system"
-    data_path = file_stem.with_suffix(".data")
-    write_lammps_data(data_path, frame)
-
-    # Write forcefield, whitelisted to the types the frame's labelmap actually uses.
-    from .forcefield.lammps import LAMMPSForceFieldWriter
-
-    ff_path = file_stem.with_suffix(".ff")
-    writer = LAMMPSForceFieldWriter(ff_path)
-    writer.write(forcefield, **_frame_used_types(frame))
-
-    return {"data": data_path, "ff": ff_path}
+    atoms = frame["atoms"]
+    for field in ("x", "y", "z"):
+        if field not in atoms:
+            raise ValueError(f"Required field '{field}' is missing in frame['atoms']")
+    elements = frame.meta.get("elements")
+    if "element" not in atoms and isinstance(elements, str) and elements.strip():
+        n = atoms.nrows
+        parts = (elements.split() + ["X"] * n)[:n]
+        frame = frame.copy()
+        columns = {k: np.asarray(atoms[k]) for k in atoms.keys()}
+        columns["element"] = np.asarray(parts, dtype="U8")
+        frame["atoms"] = Block(columns)
+    molrs.io.write_pdb(file, frame)
 
 
 def write_lammps_bond_react_system(
     workdir: PathLike,
-    frame: Any,
-    forcefield: Any,
-    templates: "dict[str, BondReactTemplate] | Sequence[BondReactTemplate]",
+    frame: Frame,
+    forcefield: ForceField,
+    templates: dict[str, BondReactTemplate] | Sequence[BondReactTemplate],
 ) -> None:
     """Write a complete LAMMPS fix bond/react system.
 
@@ -391,14 +67,29 @@ def write_lammps_bond_react_system(
     - ``{name}.map`` — atom equivalence maps
 
     Type numbering is unified across the system and all templates so
-    that ``fix bond/react`` can match atom types correctly.
+    that ``fix bond/react`` can match atom types correctly. The data file's
+    labelmap declares that unified inventory, so ``{stem}.ff`` carries a
+    coefficient for every declared label, including labels only a template
+    uses.
+
+    Declared debt (law 5, hide decisions): the native
+    ``write_lammps_forcefield`` selects coefficients from a frame's type
+    labels only, so this writer passes it a synthetic *label frame* — one
+    block per category holding only a ``type`` column with the unified
+    labels. Its correctness depends on the native writer reading nothing
+    but those ``type`` columns. Removal: a native ``write_lammps_forcefield``
+    over an explicit label inventory (native-core ask), after which this
+    writer passes the inventory instead of a frame.
 
     Args:
         workdir: Output directory (created if missing).
         frame: Packed system Frame.
-        forcefield: ForceField object.
+        forcefield: Force field holding every unified label.
         templates: Either a ``{name: BondReactTemplate}`` dict, or a
             sequence of templates (named ``rxn1``, ``rxn2``, …).
+
+    Raises:
+        ValueError: A unified label has no type in ``forcefield``.
 
     Example::
 
@@ -407,8 +98,6 @@ def write_lammps_bond_react_system(
             templates={"rxn1": template},
         )
     """
-    from .data.lammps_bond_react import LammpsBondReactWriter
-
     workdir_path = Path(workdir)
     workdir_path.mkdir(parents=True, exist_ok=True)
 
@@ -420,7 +109,7 @@ def write_lammps_bond_react_system(
     )
 
     # -- Collect template frames --
-    tpl_frames: list[tuple[str, BondReactTemplate, Any, Any]] = []
+    tpl_frames: list[tuple[str, BondReactTemplate, Frame, Frame]] = []
     for name, tpl in by_name.items():
         # Assign 1-based atom IDs before converting to frames
         tpl.assign_atom_ids()
@@ -437,16 +126,12 @@ def write_lammps_bond_react_system(
     file_stem = workdir_path / workdir_path.stem
     write_lammps_data(file_stem.with_suffix(".data"), frame, type_labels=unified)
 
-    from .forcefield.lammps import LAMMPSForceFieldWriter
-
-    LAMMPSForceFieldWriter(file_stem.with_suffix(".ff")).write(
-        forcefield,
-        atom_types=set(unified["atom_types"]) or None,
-        bond_types=set(unified["bond_types"]) or None,
-        angle_types=set(unified["angle_types"]) or None,
-        dihedral_types=set(unified["dihedral_types"]) or None,
-        improper_types=set(unified["improper_types"]) or None,
-    )
+    # Label frame: the unified inventory as ``type`` columns (declared debt above).
+    label_frame = Frame()
+    for label_key, section in TYPE_LABEL_SECTIONS.items():
+        if unified[label_key]:
+            label_frame[section] = {"type": np.asarray(unified[label_key], dtype=str)}
+    write_lammps_forcefield(file_stem.with_suffix(".ff"), forcefield, label_frame)
 
     # -- Write template files --
     for name, tpl, pre_frame, post_frame in tpl_frames:
@@ -457,31 +142,14 @@ def write_lammps_bond_react_system(
                 tpl_frame, type_maps, template_name=name
             )
 
-        write_lammps_molecule(workdir_path / f"{name}_pre.mol", pre_frame)
-        write_lammps_molecule(workdir_path / f"{name}_post.mol", post_frame)
+        molrs.io.write_lammps_molecule(workdir_path / f"{name}_pre.mol", pre_frame)
+        molrs.io.write_lammps_molecule(workdir_path / f"{name}_post.mol", post_frame)
         LammpsBondReactWriter(workdir_path / name).write_map(tpl)
 
 
-def write_bond_react_map(template: Any, base_path: PathLike) -> None:
+def write_bond_react_map(template: BondReactTemplate, base_path: PathLike) -> None:
     """Write the ``.map`` file for a LAMMPS ``fix bond/react`` template.
 
-    Thin factory over :class:`~molpy.io.data.lammps_bond_react.LammpsBondReactWriter`,
-    matching the ``write_*`` convention the rest of this module uses.
+    Writes ``{base_path}.map``.
     """
-    from .data.lammps_bond_react import LammpsBondReactWriter
-
     LammpsBondReactWriter(base_path).write_map(template)
-
-
-def write_top(file: PathLike, frame: Any) -> None:
-    """
-    Write a Frame object to a GROMACS topology file.
-
-    Args:
-        file: Output file path
-        frame: Frame object to write
-    """
-    from .data.top import TopWriter
-
-    writer = TopWriter(Path(file))
-    writer.write(frame)

@@ -1,4 +1,4 @@
-"""Unit tests for :mod:`molpy.io.mrec` scientific-record I/O."""
+"""Unit tests for ``*.mrec`` scientific-record I/O on :mod:`molpy.io`."""
 
 from __future__ import annotations
 
@@ -7,19 +7,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import molpy as mp
 from molpy import Block, Frame, Trajectory
-from molpy.io.mrec import (
-    TrajectoryReader,
-    read_frame,
-    read_meta,
-    read_system,
-    read_trajectory,
-    schema,
-    sections,
-    write_frame,
-    write_system,
-    write_trajectory,
-)
 
 
 _N_ATOMS = 3
@@ -55,42 +44,44 @@ def _assert_coords(frame: Frame) -> None:
 class TestTrajectoryReader:
     def test_read_frame(self, tmp_path: Path) -> None:
         path = tmp_path / "traj.mrec"
-        write_trajectory(path, Trajectory([_coords_frame()]))
-        reader = TrajectoryReader(path)
+        mp.io.write_mrec_trajectory(path, Trajectory([_coords_frame()]))
+        reader = mp.io.mrec.TrajectoryReader(path)
         _assert_coords(reader.read_frame(0))
 
 
-class TestWriteFrame:
+class TestWriteMrec:
     def test_round_trips_coordinates(self, tmp_path: Path) -> None:
         path = tmp_path / "snapshot.mrec"
-        write_frame(path, _coords_frame())
-        _assert_coords(read_frame(path))
-        assert sections(path) == frozenset({"meta", "frame"})
-        meta = read_meta(path)
-        schema.validate_meta(meta)
-        assert meta["molrec_version"] == schema.MOLREC_VERSION
+        mp.io.write_mrec(path, _coords_frame())
+        _assert_coords(mp.io.read_mrec(path))
+        assert mp.io.mrec_sections(path) == frozenset({"meta", "frame"})
+        meta = mp.io.read_mrec_meta(path)
+        mp.io.mrec.schema.validate_meta(meta)
+        assert meta["molrec_version"] == mp.io.mrec.schema.MOLREC_VERSION
         assert "format_name" not in meta
 
 
-class TestWriteSystem:
+class TestWriteMrecSystem:
     def test_round_trips_coordinates(self, tmp_path: Path) -> None:
         path = tmp_path / "system.mrec"
-        write_system(path, _coords_frame())
-        _assert_coords(read_system(path))
-        assert "frame" not in sections(path)
+        mp.io.write_mrec_system(path, _coords_frame())
+        _assert_coords(mp.io.read_mrec_system(path))
+        assert "frame" not in mp.io.mrec_sections(path)
 
 
-class TestWriteTrajectory:
+class TestWriteMrecTrajectory:
     def test_round_trips_coordinates(self, tmp_path: Path) -> None:
         path = tmp_path / "traj.mrec"
-        write_trajectory(path, Trajectory([_coords_frame()]))
-        loaded = read_trajectory(path)
+        mp.io.write_mrec_trajectory(path, Trajectory([_coords_frame()]))
+        loaded = mp.io.read_mrec_trajectory(path)
         assert len(loaded) == 1
         _assert_coords(loaded[0])
 
 
 class TestSchema:
     def test_sole_version_key_is_molrec_version(self) -> None:
-        assert schema.MOLREC_VERSION == 1
+        assert mp.io.mrec.schema.MOLREC_VERSION == 1
         with pytest.raises(Exception, match="molrec_version"):
-            schema.validate_meta({"record_schema_version": 1, "format_name": "mrec"})
+            mp.io.mrec.schema.validate_meta(
+                {"record_schema_version": 1, "format_name": "mrec"}
+            )

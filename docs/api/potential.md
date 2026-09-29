@@ -4,49 +4,44 @@ Numerical potential energy functions for bonds, angles, dihedrals, and pairs.
 
 ## Quick reference
 
-The numerical kernels live in the high-performance backend; `molpy.potential` exposes
-the thin `Style` classes that name them plus the `Potentials` evaluator.
+The numerical kernels live in the native core. A force field names them
+through its styles (`ff.def_style(kind, name)`); `PotentialCompiler` binds them
+to a typed `Frame` as a `Potentials` evaluator. There is no Python-side
+potential class per style.
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `BondHarmonicStyle` | Harmonic bond style: E = k(r - r₀)² | Standard bonded interactions |
-| `AngleHarmonicStyle` | Harmonic angle style: E = k(θ - θ₀)² | Standard angle terms |
-| `LJ126Style` | Lennard-Jones 12-6 pair style | Standard nonbonded interactions |
-| `ImproperHarmonicStyle` | Harmonic improper style (plus Cvff / Class2 / Periodic variants) | Out-of-plane / improper terms |
-| `Potentials` | Deferred evaluator over a typed `Frame` | Energy / force computation |
+| `mp.ForceField` | Styles and types by category; `def_style(kind, name)` | Declaring parameters |
+| `mp.BondStyle` / `mp.AngleStyle` / `mp.DihedralStyle` / `mp.ImproperStyle` / `mp.PairStyle` | One kernel name per style, `def_type(...)` for its parameters | Bonded and nonbonded terms |
+| `mp.PotentialCompiler` | `PotentialCompiler(ff).compile(frame)` → `Potentials` | Binding a force field to a typed frame |
+| `mp.Potentials` | `calc_energy(frame)` / `calc_forces(frame)` | Energy / force computation |
 
 ## Canonical example
 
-Define styles and types on a `ForceField`, then evaluate against a typed `Frame`
-via `ff.to_potentials()`. There is no per-style `to_potential()` and no
-parameter-array lookup; the math runs in the high-performance backend.
+Define styles and types on a `ForceField`, then compile it against a typed
+`Frame` with `mp.PotentialCompiler(ff).compile(frame)`. There is no
+per-style `to_potential()`, no `ff.to_potentials()`, and no parameter-array
+lookup; the math runs in the high-performance backend.
 
 ```python
 import molpy as mp
-import numpy as np
 
 ff = mp.ForceField(name="demo", units="real")
-astyle = ff.def_atomstyle("full")
-ct = astyle.def_type("CT", mass=12.011, charge=-0.18, element="C")
-hc = astyle.def_type("HC", mass=1.008, charge=0.06, element="H")
+atom_style = ff.def_style("atom", "full")
+ct = atom_style.def_type("CT", mass=12.011, charge=-0.18, element="C")
+hc = atom_style.def_type("HC", mass=1.008, charge=0.06, element="H")
+# a type is given its name, then its endpoints; param name is "k", not "k0"
+ff.def_style("bond", "harmonic").def_type("CT-HC", ct, hc, k=340.0, r0=1.09)
 
-bond_style = ff.def_bondstyle("harmonic")
-bond_style.def_type(ct, hc, k=340.0, r0=1.09) # param name is "k", not "k0"
+# A typed frame: an atoms block + a bonds block carrying a "type" column.
+frame = mp.Frame(
+    blocks={
+        "atoms": {"x": [0.0, 1.2], "y": [0.0, 0.0], "z": [0.0, 0.0], "type": ["CT", "HC"]},
+        "bonds": {"atomi": [0], "atomj": [1], "type": ["CT-HC"]},
+    }
+)
 
-# Build a typed frame (atoms block + bonds block carrying a "type" column).
-frame = mp.Frame()
-atoms = mp.Block()
-atoms.insert("x", np.array([0.0, 1.2]))
-atoms.insert("y", np.array([0.0, 0.0]))
-atoms.insert("z", np.array([0.0, 0.0]))
-frame["atoms"] = atoms
-bonds = mp.Block()
-bonds.insert("atomi", np.array([0], dtype=np.uint32))
-bonds.insert("atomj", np.array([1], dtype=np.uint32))
-bonds.insert("type", np.array(["CT-HC"], dtype=str))
-frame["bonds"] = bonds
-
-pots = ff.to_potentials()
+pots = mp.PotentialCompiler(ff).compile(frame)
 energy = pots.calc_energy(frame)
 forces = pots.calc_forces(frame)
 ```
@@ -59,22 +54,6 @@ forces = pots.calc_forces(frame)
 
 ## Full API
 
-### Bond
+::: molpy.PotentialCompiler
 
-::: molpy.potential.bond
-
-### Angle
-
-::: molpy.potential.angle
-
-### Dihedral
-
-::: molpy.potential.dihedral
-
-### Improper
-
-::: molpy.potential.improper
-
-### Pair
-
-::: molpy.potential.pair
+::: molpy.Potentials

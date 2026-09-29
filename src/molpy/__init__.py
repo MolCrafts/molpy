@@ -1,10 +1,37 @@
 """MolPy — Composable molecular modeling in Python.
 
-Core data structures (``Atom``, ``ForceField``, ``Frame``, …) are imported
-eagerly and exposed at the package root — users write ``import molpy as mp``
-then ``mp.Frame`` (never ``molpy.core.Frame`` or the engine's ``Frame``). Heavier
-subpackages (``io``, ``engine``, ``parser``, …) load lazily on first attribute
-access (PEP 562).
+Users write ``import molpy as mp`` and reach every public name through ``mp``
+(``mp.Frame``, ``mp.Atomistic``, ``mp.io.read_pdb``). Each name has exactly one
+public path; there is no ``molpy.core.X`` spelling of a root name.
+
+Two layers own the names, and molpy says which on purpose:
+
+**Re-exported from the native core (molrs).** Identity re-exports —
+``mp.Atomistic is molrs.Atomistic`` — listed one by one at the bottom of this
+module: the molecular graphs (``Atomistic``, ``CoarseGrain`` and their views
+``Atom``/``Bond``/…/``Bead``/``CGBond``, ``NodeRef``/``RelationRef``/``Refs``,
+``Port``, ``Graph``, ``Topology``, ``Trace``), tabular data (``Frame``,
+``Block``, ``FrameMeta``, …), the force-field model (``ForceField``, the
+``Style``/``Type`` trees, ``PotentialCompiler``, ``Potentials``), chemistry
+notation and perception (``SmilesIR``, ``CGSmilesIR``, ``SmartsPattern``,
+``Perceive``, ``RingInfo``, ``Reaction``, ``Coarsener``, ``SubgraphMatcher``),
+site-graph assembly (``Assembler``, ``GrowthPlacer``, ``SitePlacer``,
+``AxisOrienter``), geometric shapes (``Cuboid``, ``Sphere``,
+``Parallelepiped``, ``HalfSpace``), units (``Unit``, ``Quantity``, ``UnitRegistry``, …),
+neighbour search, charge models, ``LBFGS``/``OptReport`` and the conformer
+reports. The namespaces ``mp.md`` and ``mp.op`` are native modules too.
+
+**molpy's own.** Defined in molpy (subclasses marked *sub*): ``Box`` (sub),
+``Trajectory`` (sub) and the ``TrajectorySplitter`` strategies, ``Region``
+with ``BoxRegion``/``SphereRegion``/``Cube``/``AndRegion``/``OrRegion``/
+``NotRegion`` (sub), the selectors, ``UnitSystem`` (sub), ``Conformer`` (sub),
+``Config``, ``Script``, ``fields`` and ``FrameCollection``; plus the
+subpackages ``io``, ``builder``, ``compute``, ``typifier``, ``engine``,
+``adapter`` and ``data`` (and ``molpy.wrapper``, imported explicitly), which mix molpy code with native names
+exported there and nowhere else (``mp.compute.RDF``,
+``mp.typifier.OPLSAATypifier``).
+
+Subpackages load lazily on first attribute access (PEP 562).
 """
 
 # Import version first: version.py runs the molcrafts-molrs compatibility check
@@ -26,8 +53,6 @@ if TYPE_CHECKING:
         io,
         md,
         op,
-        optimize,
-        parser,
         typifier,
     )
 
@@ -45,8 +70,6 @@ _LAZY_SUBMODULES = frozenset(
         "io",
         "md",
         "op",
-        "optimize",
-        "parser",
         "typifier",
     }
 )
@@ -63,55 +86,12 @@ def __dir__() -> list[str]:
 
 
 # =============================================================================
-# core/ — every public core symbol is a top-level export (not molpy.core.Foo)
+# molpy's own types
 # =============================================================================
 
-from .core.atomistic import (
-    Angle,
-    Atom,
-    Atomistic,
-    Bond,
-    Dihedral,
-    DrudeParticle,
-    Improper,
-    MasslessSite,
-    VirtualSite,
-)
-from .core.box import Box
-from .core.cg import Bead, CGBond, CoarseGrain
-from .core.config import Config
-from .core.entity import (
-    Entities,
-    Entity,
-    GraphViews,
-    Link,
-    NodeRef,
-    Refs,
-    RelationRef,
-)
 from .core import fields
-from .core.forcefield import (
-    AngleStyle,
-    AngleType,
-    AtomStyle,
-    AtomType,
-    BondStyle,
-    BondType,
-    DihedralStyle,
-    DihedralType,
-    ForceField,
-    ImproperStyle,
-    ImproperType,
-    PairStyle,
-    PairType,
-    Parameters,
-    PotentialCompiler,
-    Style,
-    Type,
-)
-from .core.ops import (
-    FragmentScaling,
-)
+from .core.box import Box
+from .core.config import Config
 from .core.region import (
     AndRegion,
     BoxRegion,
@@ -139,56 +119,51 @@ from .core.trajectory import (
     TrajectorySplitter,
 )
 from .core.unit import UnitSystem
-
-# Conformer: molpy subclass with Atomistic marshalling (not bare molrs.conformer.Conformer)
 from .conformer import Conformer
 
 # =============================================================================
-# molrs facade — handwritten identity re-exports (users never import molrs)
+# Re-exported from the native core — identity, ``molpy.X is molrs.X``
 # =============================================================================
-# Only symbols not already bound above. ``molpy.X is molrs.X`` for each name
-# here. Packages that collide with molpy (io / compute / typifier) are omitted.
-# Subclasses with real molpy additions (Box, Trajectory, Conformer, UnitSystem)
-# come from the molpy modules above, not from this block. Atomistic,
-# CoarseGrain and Perceive are native identities. The base Region is molpy's
-# own predicate model; its concrete regions (BoxRegion, SphereRegion and the
-# combinators) subclass the native shapes.
-
-# Import Frame/Block from the pure-Python layer path so static analysis
-# (griffe/mkdocstrings) resolves ``molpy.Frame → molrs.frame.Frame`` without
-# going through the top-level ``molrs.Frame`` re-export alias chain.
-from molrs.frame import Block, Frame
-
-# One record of trajectory-like data: an ordered sequence of frames sharing one
-# identity (a single geometry is a length-1 collection; a scan or relaxation is
-# longer). Downstream consumers (molnex, molhub) import this alias from here.
-from collections.abc import Sequence as _Sequence
-from typing import TypeAlias as _TypeAlias
-
-# Explicit TypeAlias: with the module-level lazy ``__getattr__`` present, a
-# bare implicit alias falls through to it in some checkers (ty resolved the
-# name as ModuleType); the declared spelling pins it as a type alias.
-FrameCollection: _TypeAlias = _Sequence[Frame]
+# Each name below has this one public path. Names that belong to a molpy
+# subpackage namespace (analyses on ``mp.compute``, typifiers on
+# ``mp.typifier``, file I/O on ``mp.io``) are exported there, not here.
 
 from molrs import (
+    Angle,
+    Atom,
+    Atomistic,
+    Bead,
+    Block,
     BlockDtypeError,
+    Bond,
+    CGBond,
+    CoarseGrain,
     Cuboid,
+    Dihedral,
+    DrudeParticle,
     Element,
     ExtractedSubgraph,
-    FRAME_SCHEMA_VERSION,
+    Frame,
     FrameMeta,
     Graph,
+    HalfSpace,
+    Improper,
+    MasslessSite,
     MetaDocument,
     MetaValue,
     NeighborList,
     NeighborQuery,
     Neighbors,
+    NodeRef,
     Parallelepiped,
     Port,
     Quantity,
     Reaction,
+    Refs,
+    RelationRef,
     ScalarObservable,
     Sphere,
+    Topology,
     Trace,
     Unit,
     UnitPreset,
@@ -196,94 +171,39 @@ from molrs import (
     UnitsError,
     VectorObservable,
     VerletSkin,
+    VirtualSite,
     keys,
     schema,
-    signal,
 )
 from molrs.builder import Assembler, AxisOrienter, GrowthPlacer, SitePlacer
-from molrs.compute.density import (
-    SpatialDistribution,
-    SpatialDistributionResult,
-)
-from molrs.compute.distribution import (
-    AngleDistribution,
-    CombinedDistribution,
-    CombinedDistributionResult,
-    DihedralDistribution,
-    DistanceDistribution,
-    DistributionResult,
-)
-from molrs.compute.dynamics import (
-    VanHove,
-    VanHoveResult,
-)
-from molrs.compute.fitting import (
-    CumulativeTrapezoid,
-    LinearFit,
-    Plateau,
-)
-from molrs.compute.hbond import (
-    HBondCriterion,
-    HBonds,
-    HBondsResult,
-)
-from molrs.compute.order import (
-    LegendreReorientation,
-    LegendreReorientationResult,
-)
-from molrs.compute.spectroscopy import (
-    EinsteinHelfandSpectrum,
-    GreenKuboSpectrum,
-    IRSpectrum,
-    PowerSpectrum,
-    RamanSpectrum,
-    ResonanceRamanSpectrum,
-    RoaSpectrum,
-    VcdSpectrum,
-)
-from molrs.compute.transport import (
-    DebyeFit,
-    DebyeRelaxation,
-    EinsteinConductivity,
-    EinsteinDiffusion,
-    GreenKuboConductivity,
-    GreenKuboDiffusion,
-    VACF,
-)
-from molrs.compute.voronoi import (
-    DensityGrid,
-    MolecularMoments,
-    RadicalVoronoi,
-    VoronoiCells,
-    VoronoiIntegration,
-)
-from molrs.conformer import (
-    ConformerReport,
-    ConformerStageReport,
-)
+from molrs.conformer import ConformerReport, ConformerStageReport
 from molrs.ff import (
-    AtdTypifier,
+    AngleStyle,
+    AngleType,
+    AtomStyle,
+    AtomType,
     BccModel,
+    BondStyle,
+    BondType,
+    DihedralStyle,
+    DihedralType,
+    ForceField,
+    FragmentScaling,
     GasteigerModel,
-    MMFF94STypifier,
-    MMFF94Typifier,
+    ImproperStyle,
+    ImproperType,
     MullikenModel,
-    OPLSAATypifier,
+    PairStyle,
+    PairType,
+    PotentialCompiler,
     Potentials,
-    Typifier,
+    Style,
+    Type,
 )
 
-# I/O is **only** on ``molpy.io`` (``mp.io.read_*`` / ``write_*``). Never re-export
-# molrs.io / molrs.ff force-field file APIs / raw traj readers on the package root.
-from molrs.io import (  # parser types and their error, not file I/O entries
-    CGSmilesIR,
-    SmilesError,
-    SmilesIR,
-)
-from molrs.optimize import (
-    LBFGS,
-    OptReport,
-)
+# Parser types and their error, not file I/O entries (those are on ``mp.io``).
+from molrs.io import CGSmilesIR, SmilesError, SmilesIR
+from molrs.optimize import LBFGS, OptReport
 from molrs.perceive import (
     Coarsener,
     Perceive,
@@ -292,6 +212,18 @@ from molrs.perceive import (
     SmartsPattern,
     SubgraphMatcher,
 )
+
+# One record of trajectory-like data (molpy's alias): an ordered sequence of
+# frames sharing one identity (a single geometry is a length-1 collection; a
+# scan or relaxation is longer). Downstream consumers (molnex, molhub) import
+# this alias from here.
+from collections.abc import Sequence as _Sequence
+from typing import TypeAlias as _TypeAlias
+
+# Explicit TypeAlias: with the module-level lazy ``__getattr__`` present, a
+# bare implicit alias falls through to it in some checkers (ty resolved the
+# name as ModuleType); the declared spelling pins it as a type alias.
+FrameCollection: _TypeAlias = _Sequence[Frame]
 
 __all__ = [
     # Lazy subpackages
@@ -303,170 +235,120 @@ __all__ = [
     "io",
     "md",
     "op",
-    "optimize",
-    "parser",
     "typifier",
     # Version
     "version",
     "release_date",
-    # --- core/ (top-level) ---
-    "Angle",
-    "Atom",
-    "Atomistic",
-    "Bond",
-    "Dihedral",
-    "DrudeParticle",
-    "Improper",
-    "MasslessSite",
-    "VirtualSite",
-    "Box",
-    "Bead",
-    "CGBond",
-    "CoarseGrain",
-    "Config",
-    "Entities",
-    "Entity",
-    "GraphViews",
-    "Link",
-    "NodeRef",
-    "Refs",
-    "RelationRef",
-    "fields",
-    "AngleStyle",
-    "AngleType",
-    "AtomStyle",
-    "AtomType",
-    "BondStyle",
-    "BondType",
-    "DihedralStyle",
-    "DihedralType",
-    "ForceField",
-    "ImproperStyle",
-    "ImproperType",
-    "PairStyle",
-    "PairType",
-    "Parameters",
-    "Style",
-    "Type",
-    "FragmentScaling",
+    # --- molpy's own ---
     "AndRegion",
+    "AtomIndexSelector",
+    "AtomTypeSelector",
+    "Box",
     "BoxRegion",
+    "Config",
+    "Conformer",
+    "CoordinateRangeSelector",
     "Cube",
+    "CustomStrategy",
+    "DistanceSelector",
+    "ElementSelector",
+    "FrameCollection",
+    "FrameIntervalStrategy",
+    "MaskPredicate",
     "NotRegion",
     "OrRegion",
     "Region",
-    "SphereRegion",
     "Script",
     "ScriptLanguage",
-    "AtomIndexSelector",
-    "AtomTypeSelector",
-    "CoordinateRangeSelector",
-    "DistanceSelector",
-    "ElementSelector",
-    "MaskPredicate",
-    "CustomStrategy",
-    "FrameIntervalStrategy",
+    "SphereRegion",
     "SplitStrategy",
     "TimeIntervalStrategy",
     "Trajectory",
     "TrajectorySplitter",
     "UnitSystem",
-    "Conformer",
-    # --- molrs identity re-exports ---
+    "fields",
+    # --- re-exported from the native core ---
+    "Angle",
+    "AngleStyle",
+    "AngleType",
+    "Assembler",
+    "Atom",
+    "AtomStyle",
+    "AtomType",
+    "Atomistic",
+    "AxisOrienter",
+    "BccModel",
+    "Bead",
+    "Block",
     "BlockDtypeError",
-    "UnitsError",
+    "Bond",
+    "BondStyle",
+    "BondType",
+    "CGBond",
+    "CGSmilesIR",
+    "Coarsener",
+    "CoarseGrain",
+    "ConformerReport",
+    "ConformerStageReport",
+    "Cuboid",
+    "Dihedral",
+    "DihedralStyle",
+    "DihedralType",
+    "DrudeParticle",
+    "Element",
+    "ExtractedSubgraph",
+    "ForceField",
+    "FragmentScaling",
+    "Frame",
+    "FrameMeta",
+    "GasteigerModel",
+    "Graph",
+    "GrowthPlacer",
+    "HalfSpace",
+    "Improper",
+    "ImproperStyle",
+    "ImproperType",
+    "LBFGS",
+    "MasslessSite",
+    "MetaDocument",
+    "MetaValue",
+    "MullikenModel",
     "NeighborList",
     "NeighborQuery",
     "Neighbors",
-    "VerletSkin",
-    "Block",
-    "FRAME_SCHEMA_VERSION",
-    "Frame",
-    "FrameCollection",
-    "FrameMeta",
-    "MetaDocument",
-    "MetaValue",
+    "NodeRef",
+    "OptReport",
+    "PairStyle",
+    "PairType",
+    "Parallelepiped",
+    "Perceive",
+    "Port",
+    "PotentialCompiler",
+    "Potentials",
     "Quantity",
+    "Reaction",
+    "Refs",
+    "RelationRef",
+    "RingInfo",
+    "ScalarObservable",
+    "SitePlacer",
+    "SmartsMatch",
+    "SmartsPattern",
+    "SmilesError",
+    "SmilesIR",
+    "Sphere",
+    "Style",
+    "SubgraphMatcher",
+    "Topology",
+    "Trace",
+    "Type",
     "Unit",
     "UnitPreset",
     "UnitRegistry",
-    "ScalarObservable",
+    "UnitsError",
     "VectorObservable",
-    "SmilesIR",
-    "CGSmilesIR",
-    "SmilesError",
-    "Port",
-    "Cuboid",
-    "Parallelepiped",
-    "Sphere",
-    "Element",
-    "ExtractedSubgraph",
-    "Graph",
-    "Perceive",
-    "Coarsener",
-    "Trace",
-    "Assembler",
-    "AxisOrienter",
-    "SitePlacer",
-    "GrowthPlacer",
-    "Reaction",
-    "RingInfo",
-    "SmartsMatch",
-    "SmartsPattern",
-    "SubgraphMatcher",
+    "VerletSkin",
+    "VirtualSite",
     "keys",
     "schema",
-    "ConformerReport",
-    "ConformerStageReport",
-    "AtdTypifier",
-    "BccModel",
-    "GasteigerModel",
-    "MMFF94STypifier",
-    "MMFF94Typifier",
-    "MullikenModel",
-    "OPLSAATypifier",
-    "Typifier",
-    "LBFGS",
-    "OptReport",
-    "Potentials",
-    "PotentialCompiler",
-    "AngleDistribution",
-    "CombinedDistribution",
-    "CombinedDistributionResult",
-    "DebyeFit",
-    "DebyeRelaxation",
-    "DensityGrid",
-    "DihedralDistribution",
-    "DistanceDistribution",
-    "DistributionResult",
-    "EinsteinConductivity",
-    "EinsteinDiffusion",
-    "EinsteinHelfandSpectrum",
-    "GreenKuboConductivity",
-    "GreenKuboDiffusion",
-    "GreenKuboSpectrum",
-    "HBondCriterion",
-    "HBonds",
-    "HBondsResult",
-    "IRSpectrum",
-    "LegendreReorientation",
-    "LegendreReorientationResult",
-    "LinearFit",
-    "MolecularMoments",
-    "Plateau",
-    "PowerSpectrum",
-    "RadicalVoronoi",
-    "RamanSpectrum",
-    "ResonanceRamanSpectrum",
-    "RoaSpectrum",
-    "CumulativeTrapezoid",
-    "SpatialDistribution",
-    "SpatialDistributionResult",
-    "VACF",
-    "VanHove",
-    "VanHoveResult",
-    "VcdSpectrum",
-    "VoronoiCells",
-    "VoronoiIntegration",
-    "signal",
 ]
