@@ -17,18 +17,18 @@ build. Examples below are frozen illustrations — full API lives in the
 
 | Symbol | Package | Preferred for |
 |--------|---------|---------------|
-| `Molpack` | `molpack` | Multi-component packing session |
+| `GenCanPack` | `molpack` | Rigid-body packing of several species |
 | `Target` | `molpack` | One species + count + restraints |
-| `InsideBoxRestraint` | `molpack` | Axis-aligned box confinement |
-| `InsideSphereRestraint` | `molpack` | Droplet / cluster geometries |
-| `PackResult` | `molpack` | Diagnostics from `pack_with_report` |
+| `Cuboid` / `Sphere` / `HalfSpace` | `molpy` (molrs regions) | Restraints: box, droplet, slab; combine with `&`, `\|`, `~` |
+| `State` | `molpack` | `run` result: `.frame`, `.converged`, `.fdist`, … |
+| `PackingTemplate` | `molpy.builder` | A built molecule's `.frame` plus the `.hydrogens` indices into it, for `Target(...).with_hydrogens(...)` / `.with_atom_radius(...)` |
 
 ## Canonical example
 
 ```python
 # docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
 import molpy as mp
-from molpack import InsideBoxRestraint, Molpack, Target
+from molpack import GenCanPack, Target
 
 water = mp.Atomistic(name="water")
 o = water.def_atom(element="O", x=0.0, y=0.0, z=0.0)
@@ -38,12 +38,26 @@ water.def_bond(o, water.def_atom(element="H", x=-0.239, y=0.927, z=0.0))
 ion = mp.Atomistic(name="sodium")
 ion.def_atom(element="Na", x=0.0, y=0.0, z=0.0, charge=1.0)
 
-box = InsideBoxRestraint([0.0, 0.0, 0.0], [30.0, 30.0, 30.0])
+box = mp.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0])
 targets = [
  Target(water.to_frame(), count=100).with_name("water").with_restraint(box),
  Target(ion.to_frame(), count=10).with_name("na").with_restraint(box),
 ]
-packed = Molpack().with_seed(42).pack(targets, max_loops=200)
+packed = GenCanPack().with_seed(42).run(targets, max_loops=200).frame
+```
+
+A built polymer goes in through `mp.builder.PackingTemplate`, so the atom
+indices a `Target` takes are read off the same frame it packs:
+
+```python
+# docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
+template = mp.builder.PackingTemplate(chain)  # chain: an assembled mp.Atomistic
+target = (
+    Target(template.frame, count=10)
+    .with_restraint(box)
+    .with_hydrogens(template.hydrogens)
+    .with_atom_radius(template.hydrogens, 0.2)
+)
 ```
 
 ## Related

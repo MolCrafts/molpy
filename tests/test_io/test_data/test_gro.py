@@ -12,8 +12,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import molrs
-
 import molpy as mp
 
 
@@ -22,11 +20,11 @@ def gro_dir(TEST_DATA_DIR: Path) -> Path:
     return TEST_DATA_DIR / "gro"
 
 
-def _read(path: Path) -> molrs.Frame:
-    return mp.io.read_gro(path, frame=molrs.Frame())
+def _read(path: Path) -> mp.Frame:
+    return mp.io.read_gro(path)
 
 
-class TestGroReader:
+class TestReadGro:
     def test_records_are_split_into_canonical_columns(self, gro_dir):
         atoms = _read(gro_dir / "two_waters.gro")["atoms"]
         assert atoms.nrows == 6
@@ -57,14 +55,14 @@ class TestGroReader:
 
     def test_three_number_box_line_is_orthogonal(self, gro_dir):
         box = _read(gro_dir / "two_waters.gro").box
-        np.testing.assert_allclose(box.matrix, np.diag([20.0, 30.0, 40.0]))
+        np.testing.assert_allclose(box.h, np.diag([20.0, 30.0, 40.0]))
 
     def test_nine_number_box_line_fills_the_off_diagonals(self, gro_dir):
         # v1(x) v2(y) v3(z) v1(y) v1(z) v2(x) v2(z) v3(x) v3(y); lattice
         # vectors are the columns of the matrix, in Å.
         box = _read(gro_dir / "triclinic.gro").box
         expected = [[20.0, 5.0, 6.0], [0.0, 30.0, 7.0], [0.0, 0.0, 40.0]]
-        np.testing.assert_allclose(box.matrix, expected)
+        np.testing.assert_allclose(box.h, expected)
 
     def test_only_the_first_frame_of_a_multi_frame_file_is_returned(
         self, gro_dir, tmp_path
@@ -102,9 +100,9 @@ class TestGroReader:
             _read(tmp_path / "nonexistent.gro")
 
 
-class TestGroWriter:
-    def _water(self) -> molrs.Frame:
-        frame = molrs.Frame()
+class TestWriteGro:
+    def _water(self) -> mp.Frame:
+        frame = mp.Frame()
         frame["atoms"] = {
             "res_id": [1, 1, 1],
             "res_name": ["WAT", "WAT", "WAT"],
@@ -118,7 +116,7 @@ class TestGroWriter:
 
     def test_record_layout(self, tmp_path):
         path = tmp_path / "out.gro"
-        mp.io.data.GroWriter(str(path)).write(self._water())
+        mp.io.write_gro(path, self._water())
         lines = path.read_text().splitlines()
         assert len(lines) == 6
         assert lines[1].strip() == "3"
@@ -128,7 +126,7 @@ class TestGroWriter:
 
     def test_box_is_written_in_nm(self, tmp_path):
         path = tmp_path / "out.gro"
-        mp.io.data.GroWriter(str(path)).write(self._water())
+        mp.io.write_gro(path, self._water())
         assert path.read_text().splitlines()[-1].split() == [
             "2.00000",
             "3.00000",
@@ -137,7 +135,7 @@ class TestGroWriter:
 
     def test_round_trip_preserves_coordinates_and_names(self, tmp_path):
         path = tmp_path / "rt.gro"
-        mp.io.data.GroWriter(str(path)).write(self._water())
+        mp.io.write_gro(path, self._water())
         back = _read(path)["atoms"]
         np.testing.assert_allclose(
             back["x", "y", "z"], self._water()["atoms"]["x", "y", "z"], atol=5e-3

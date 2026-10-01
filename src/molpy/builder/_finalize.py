@@ -1,14 +1,11 @@
-"""Shared optional topology and bonded-parameter finalization."""
+"""Shared optional topology finalization."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
 
-
-from molpy.core.atomistic import Atomistic
-from molpy.core.perceive import Perceive
-from molpy.typifier.forcefield import ForceFieldParams
+from molrs import Atomistic
 
 
 class Finalization(StrEnum):
@@ -16,35 +13,26 @@ class Finalization(StrEnum):
 
     ATOMS = "atoms"
     TOPOLOGY = "topology"
-    BONDED = "bonded"
 
 
 @dataclass(frozen=True)
 class StructureFinalizer:
-    """Apply the common topology/bonded tail after structure construction.
+    """Apply the common topology tail after structure construction.
 
     Builders should create atoms and bonds first, then delegate here exactly
-    once.  ``ATOMS`` deliberately removes any inherited partial angles and
-    dihedrals; ``TOPOLOGY`` regenerates the complete graph topology; and
-    ``BONDED`` additionally resolves force-field types and parameters.
+    once. ``ATOMS`` deliberately removes any inherited partial angles and
+    dihedrals; ``TOPOLOGY`` regenerates the complete graph topology.
     """
 
     stage: Finalization = Finalization.TOPOLOGY
-    bonded: ForceFieldParams | None = None
-    perceive_aromaticity: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "stage", Finalization(self.stage))
-        if self.stage is Finalization.BONDED and self.bonded is None:
-            raise TypeError("Finalization.BONDED requires bonded=ForceFieldParams(...)")
-        if self.stage is not Finalization.BONDED and self.bonded is not None:
-            raise TypeError("bonded= is only meaningful with Finalization.BONDED")
 
     def apply(self, graph: Atomistic) -> Atomistic:
-        """Finalize ``graph`` and return it (or the parameterized copy)."""
+        """Finalize ``graph`` and return it."""
         if self.stage is Finalization.ATOMS:
-            graph.del_angle(*tuple(graph.angles))
-            graph.del_dihedral(*tuple(graph.dihedrals))
+            graph.remove_link(*graph.angles, *graph.dihedrals)
             return graph
 
         graph.generate_topology(
@@ -52,9 +40,4 @@ class StructureFinalizer:
             gen_dihedral=True,
             clear_existing=True,
         )
-        if self.perceive_aromaticity:
-            graph = Perceive().find_aromaticity(graph)
-        if self.stage is Finalization.BONDED:
-            assert self.bonded is not None
-            return self.bonded.assign(graph)
         return graph

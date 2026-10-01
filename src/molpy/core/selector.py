@@ -40,9 +40,6 @@ class MaskPredicate(ABC):
     __ror__ = __or__
 
 
-Selector = MaskPredicate
-
-
 class AtomTypeSelector(MaskPredicate):
     """Select atoms by their type (integer or string)."""
 
@@ -58,7 +55,8 @@ class AtomTypeSelector(MaskPredicate):
         self.field = field
 
     def mask(self, block: "Block") -> np.ndarray:
-        assert self.field in block, f"Field '{self.field}' not found in block"
+        if self.field not in block:
+            raise KeyError(f"Field '{self.field}' not found in block")
         return block[self.field] == self.atom_type
 
 

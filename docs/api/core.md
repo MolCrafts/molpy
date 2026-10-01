@@ -13,15 +13,16 @@ Foundational data structures for molecular systems. All available via
 | `Box` | Periodic simulation cell (3×3 matrix + PBC) | Wrapping, minimum-image distances | Non-periodic systems |
 | `Trajectory` | Ordered sequence of Frames (eager or lazy) | Time-series analysis, streaming I/O | Single-snapshot work |
 | `CoarseGrain` | CG molecular graph (beads + CG bonds) | Coarse-grained modelling; mirrors `Atomistic` | All-atom work (use `Atomistic`) |
-| `Config` | Thread-safe global configuration singleton | Logging level, thread count settings | Per-run overrides (use `Config.temporary`) |
+| `Config` | Thread-safe global configuration singleton | Logging level | Per-run overrides (use `Config.temporary`) |
 | `ForceField` | Force field container (styles → types → potentials) | Defining parameters before execution | Direct numerical computation |
-| `Entity` / `Link` | Base classes for graph nodes / edges (atoms are Entities, bonds are Links) | Custom graph element types | Everyday atom / bond editing |
+| `NodeRef` / `RelationRef` / `Refs` | Live handles onto graph nodes / relations and collections of them (an `Atom` is a node view, a `Bond` a relation view) | Code generic over node / relation kinds | Everyday atom / bond editing |
 | `Region` | Geometric region (box, sphere, boolean combinations) | Spatial selection, packing constraints | Non-geometric masks (use a `Selector`) |
 | `UnitSystem` | Unit registry (`real`, `metal`, `openmm`, …) plus `k_B` | Unit conversions and custom presets | Unit-agnostic array math |
 
 ## Canonical examples
 
 ```python
+import numpy as np
 import molpy as mp
 
 # Atomistic: editable molecular graph (core APIs mutate in place)
@@ -29,7 +30,7 @@ mol = mp.Atomistic(name="water")
 o = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
 h = mol.def_atom(element="H", x=0.957, y=0.0, z=0.0)
 mol.def_bond(o, h)
-mol.get_topo(gen_angle=True) # write angles on mol; returns self
+mol.generate_topology(gen_angle=True) # writes angles on mol; returns counts added
 # bulk reads: mol.atoms["x"] / mol.xyz — no full view materialization
 
 # Block + Frame: tabular snapshot. `meta` is a dict of Python scalars.
@@ -39,14 +40,15 @@ frame = mp.Frame(
 )
 
 # Box: periodic cell
-box = mp.Box.cubic(20.0)
-wrapped = box.wrap([[21.0, 0.0, 0.0]])
-d = box.dist([[0.0, 0.0, 0.0]], [[19.5, 0.0, 0.0]]) # minimum-image distance
+box = mp.Box.cube(20.0)
+wrapped = box.wrap(np.array([[21.0, 0.0, 0.0]]))
+d = box.distances(np.array([[0.0, 0.0, 0.0]]), np.array([[19.5, 0.0, 0.0]])) # minimum-image distance
 
 # ForceField: parameter data
 ff = mp.ForceField(name="demo", units="real")
-style = ff.def_atomstyle("full")
-ct = style.def_type("CT", mass=12.011)
+style = ff.def_style("atom", "full")
+ct = style.def_type("CT", mass=12.011) # returns the AtomType handle
+cc = ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=536.0, r0=1.529)
 ```
 
 ## Related
@@ -62,7 +64,7 @@ ct = style.def_type("CT", mass=12.011)
 
 ### Atomistic
 
-::: molpy.core.atomistic
+::: molpy.Atomistic
 
 ### Box
 
@@ -70,12 +72,17 @@ ct = style.def_type("CT", mass=12.011)
 
 ### Forcefield
 
-::: molpy.core.forcefield
+::: molpy.ForceField
+
+::: molpy.Style
+
+::: molpy.Type
+
+::: molpy.PotentialCompiler
 
 ### Frame and Block
 
-Top-level exports — user code: `import molpy as mp` then `mp.Frame` / `mp.Block`.
-Autodoc uses the package name so mkdocstrings can resolve the re-exports:
+Re-exported from the native core — `mp.Frame is molrs.Frame`:
 
 ::: molpy.Frame
 
@@ -87,7 +94,7 @@ Autodoc uses the package name so mkdocstrings can resolve the re-exports:
 
 ### Coarse-Grain
 
-::: molpy.core.cg
+::: molpy.CoarseGrain
 
 ### Config
 
@@ -97,9 +104,13 @@ Autodoc uses the package name so mkdocstrings can resolve the re-exports:
 
 ::: molpy.core.script
 
-### Entity and Link
+### Node and relation handles
 
-::: molpy.core.entity
+::: molpy.NodeRef
+
+::: molpy.RelationRef
+
+::: molpy.Refs
 
 ### Selector
 

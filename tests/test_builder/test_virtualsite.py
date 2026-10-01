@@ -1,99 +1,32 @@
-"""VirtualSiteBuilder / DrudeBuilder / Tip4pBuilder — no per-test CL&P rebuild.
+"""VirtualSiteBuilder / DrudeBuilder / Tip4pBuilder.
 
-Drude tests need a CL&P-typed cation; that graph is typified **once** at module
-import via the shared production-cached ``ClpTypifier``. Tip4p uses plain water.
+Drude tests read a hand-typed CL&P [C4C1im]+ (``mol2/c4c1im_clp_typed.mol2``);
+Tip4p uses plain water.
 """
 
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pytest
 
-from molpy import Atomistic
+import molpy as mp
 from molpy.builder import DrudeBuilder, Tip4pBuilder, VirtualSiteBuilder
 from molpy.builder.virtualsite import FOUR_PI_EPS0, K_DRUDE, load_polarizability
 from molpy.data import get_forcefield_path
-from molpy.typifier import ClpTypifier
-
-# ---------------------------------------------------------------------------
-# one typed cation for the whole module
-# ---------------------------------------------------------------------------
 
 
-def _c4c1im_graph() -> Atomistic:
-    el = [
-        "N",
-        "C",
-        "N",
-        "C",
-        "C",
-        "C",
-        "H",
-        "C",
-        "H",
-        "H",
-        "H",
-        "H",
-        "H",
-        "C",
-        "H",
-        "H",
-        "C",
-        "H",
-        "H",
-        "C",
-        "H",
-        "H",
-        "H",
-        "H",
-        "H",
-    ]
-    edges = [
-        (0, 1),
-        (1, 2),
-        (2, 3),
-        (3, 4),
-        (4, 0),
-        (0, 5),
-        (1, 6),
-        (2, 7),
-        (3, 8),
-        (4, 9),
-        (5, 10),
-        (5, 11),
-        (5, 12),
-        (7, 13),
-        (7, 14),
-        (7, 15),
-        (13, 16),
-        (13, 17),
-        (13, 18),
-        (16, 19),
-        (16, 20),
-        (16, 21),
-        (19, 22),
-        (19, 23),
-        (19, 24),
-    ]
-    asm = Atomistic()
-    atoms = [asm.def_atom(element=e) for e in el]
-    for i, j in edges:
-        asm.def_bond(atoms[i], atoms[j])
-    return asm
-
-
-# Typed once. ``ClpTypifier`` construction is production-cached; ``.typify`` is cheap.
-_TYPED_CATION = ClpTypifier(strict=False).typify(_c4c1im_graph())
-
-
-def _typed_cation() -> Atomistic:
-    """Return a copy so a test can never poison the shared graph."""
-    return _TYPED_CATION.copy()
+@pytest.fixture
+def cation(TEST_DATA_DIR: Path) -> mp.Atomistic:
+    """[C4C1im]+ with CL&P types and charges; the fixture names atoms by element."""
+    frame = mp.io.read_mol2(TEST_DATA_DIR / "mol2" / "c4c1im_clp_typed.mol2")
+    frame["atoms"]["element"] = frame["atoms"]["name"]
+    return mp.Atomistic.from_frame(frame)
 
 
 def _water(charge_o: float = -0.8, charge_h: float = 0.4):
-    asm = Atomistic()
+    asm = mp.Atomistic()
     o = asm.def_atom(element="O", charge=charge_o, x=0.0, y=0.0, z=0.0)
     h1 = asm.def_atom(element="H", charge=charge_h, x=0.757, y=0.586, z=0.0)
     h2 = asm.def_atom(element="H", charge=charge_h, x=-0.757, y=0.586, z=0.0)
@@ -138,8 +71,8 @@ def test_alpha_ff_resolves_and_loads():
     assert table["HC"]["k_D"] == 0.0
 
 
-def test_drude_shell_is_typed_from_core():
-    out = DrudeBuilder().apply(_typed_cation())
+def test_drude_shell_is_typed_from_core(cation):
+    out = DrudeBuilder().apply(cation)
     shells = _drudes(out)
     assert shells
     assert all(s.get("type") and s.get("type").startswith("D") for s in shells)
@@ -150,13 +83,13 @@ def test_drude_shell_is_typed_from_core():
         assert shell.get("type") == "D" + core.get("type")
 
 
-def test_drude_shell_prefix_is_configurable():
-    out = DrudeBuilder(drude_prefix="DP_").apply(_typed_cation())
+def test_drude_shell_prefix_is_configurable(cation):
+    out = DrudeBuilder(drude_prefix="DP_").apply(cation)
     assert all(s.get("type").startswith("DP_") for s in _drudes(out))
 
 
-def test_drude_apply_does_not_mutate_input():
-    struct = _typed_cation()
+def test_drude_apply_does_not_mutate_input(cation):
+    struct = cation
     n_before = len(list(struct.atoms))
     q_before = sum(a.get("charge") for a in struct.atoms)
     out = DrudeBuilder().apply(struct)
@@ -165,8 +98,8 @@ def test_drude_apply_does_not_mutate_input():
     assert sum(a.get("charge") for a in struct.atoms) == q_before
 
 
-def test_drude_count_matches_heavy_atoms_no_hydrogen():
-    struct = _typed_cation()
+def test_drude_count_matches_heavy_atoms_no_hydrogen(cation):
+    struct = cation
     out = DrudeBuilder().apply(struct)
     heavy = [a for a in struct.atoms if a.get("element") != "H"]
     assert len(_drudes(out)) == len(heavy)
@@ -175,9 +108,9 @@ def test_drude_count_matches_heavy_atoms_no_hydrogen():
             assert a.get("vsite") is None
 
 
-def test_drude_spring_force_constant():
+def test_drude_spring_force_constant(cation):
     """alpha.ff is kJ/mol; molrs stores kcal/mol (÷4.184)."""
-    out = DrudeBuilder().apply(_typed_cation())
+    out = DrudeBuilder().apply(cation)
     springs = _drude_bonds(out)
     assert len(springs) == len(_drudes(out))
     assert K_DRUDE == 4184.0
@@ -185,8 +118,8 @@ def test_drude_spring_force_constant():
     assert all(b.get("r0") == 0.0 for b in springs)
 
 
-def test_alpha_recovered_from_drude_params():
-    out = DrudeBuilder().apply(_typed_cation())
+def test_alpha_recovered_from_drude_params(cation):
+    out = DrudeBuilder().apply(cation)
     table = load_polarizability()
     for shell in _drudes(out):
         q_d, k_d, alpha = shell.get("charge"), shell.get("k_D"), shell.get("alpha")
@@ -195,8 +128,8 @@ def test_alpha_recovered_from_drude_params():
     assert table["CR"]["alpha"] == 1.122
 
 
-def test_cation_charge_conserved():
-    out = DrudeBuilder().apply(_typed_cation())
+def test_cation_charge_conserved(cation):
+    out = DrudeBuilder().apply(cation)
     total = sum(a.get("charge") for a in out.atoms)
     assert math.isclose(total, 1.0, abs_tol=1e-9)
 

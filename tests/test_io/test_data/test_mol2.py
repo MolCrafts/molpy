@@ -2,8 +2,7 @@
 
 The reader maps the ATOM and BOND sections onto canonical atom / bond blocks
 (0-based bond indices, ``res_id`` / ``res_name`` from the substructure
-columns) and the molpy boundary maps molrs errors onto ``FileNotFoundError``
-and ``ValueError``. Fixtures live in ``tests-data/mol2``: ethane (charges,
+columns) and reports an unreadable file as ``OSError``. Fixtures live in ``tests-data/mol2``: ethane (charges,
 seven single bonds), li (no charges, empty BOND section), naphthalene (two
 fused aromatic rings) and bond_orders (a double, an amide and a single bond).
 """
@@ -13,10 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import molrs
-
 import molpy as mp
-from molpy.io.data.mol2 import Mol2Reader
 
 
 @pytest.fixture
@@ -24,11 +20,11 @@ def mol2_dir(TEST_DATA_DIR: Path) -> Path:
     return TEST_DATA_DIR / "mol2"
 
 
-def _read(path: Path) -> molrs.Frame:
-    return mp.io.read_mol2(path, molrs.Frame())
+def _read(path: Path) -> mp.Frame:
+    return mp.io.read_mol2(path)
 
 
-class TestMol2Reader:
+class TestReadMol2:
     def test_atom_section_maps_to_canonical_columns(self, mol2_dir):
         atoms = _read(mol2_dir / "ethane.mol2")["atoms"]
         assert atoms.nrows == 8
@@ -68,20 +64,20 @@ class TestMol2Reader:
         assert "bonds" not in frame
         assert frame.meta["title"] == "RES"
 
-    def test_missing_file_raises_file_not_found(self, tmp_path):
-        with pytest.raises(FileNotFoundError):
-            Mol2Reader(tmp_path / "missing.mol2").read()
+    def test_missing_file_raises(self, tmp_path):
+        with pytest.raises(OSError):
+            _read(tmp_path / "missing.mol2")
 
-    def test_malformed_coordinate_raises_value_error(self, mol2_dir, tmp_path):
+    def test_malformed_coordinate_raises(self, mol2_dir, tmp_path):
         bad = tmp_path / "bad.mol2"
         bad.write_text(
             (mol2_dir / "ethane.mol2").read_text().replace("3.1080", "three")
         )
-        with pytest.raises(ValueError, match="MOL2"):
+        with pytest.raises(OSError):
             _read(bad)
 
 
-class TestMol2Writer:
+class TestWriteMol2:
     def test_round_trip_preserves_atoms_bonds_and_charges(self, mol2_dir, tmp_path):
         frame = _read(mol2_dir / "ethane.mol2")
         out = tmp_path / "out.mol2"

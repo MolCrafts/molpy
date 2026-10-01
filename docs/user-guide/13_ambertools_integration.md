@@ -1,10 +1,12 @@
 # PEO-LiTFSI with AmberTools
 
-Parameterize the ions with antechamber, grow PEO chains with tleap, and assemble a PEO-LiTFSI electrolyte at target density — a complete AmberTools workflow driven from MolPy.
+Type TFSI and the PEO monomers with antechamber, assemble PEO chains from the typed monomers and finish them with tleap, and pack a PEO-LiTFSI electrolyte at target density — a complete AmberTools workflow driven from MolPy.
 
 !!! warning "External dependencies"
-    This guide requires **AmberTools** (via conda), **RDKit**, and
-    **molcrafts-molpack**. Without AmberTools, no code on this page will run.
+    This guide requires **AmberTools** (via conda) and
+    **molcrafts-molpack**. Only the inputs (TFSI, Li⁺ and the PEO monomers)
+    run without them; every block marked `# docs: skip` needs AmberTools or
+    molpack.
 
 ??? note "Setting up AmberTools"
     Install AmberTools in a dedicated conda environment:
@@ -17,77 +19,45 @@ Parameterize the ions with antechamber, grow PEO chains with tleap, and assemble
     which tleap # should print a path
     ```
 
-    MolPy's wrapper classes activate the conda environment automatically when running commands, so you do not need to keep it active in your shell. The `env="AmberTools25"` parameter in the code below tells the wrapper which environment to activate.
+    MolPy's AmberTools typifiers activate the conda environment automatically when running commands, so you do not need to keep it active in your shell. The `env="AmberTools25"` parameter in the code below tells them which environment to activate.
 
     If you use a different environment name, replace `"AmberTools25"` throughout this guide.
 
 ## Workflow overview
 
-The workflow begins with parameterization of TFSI, the anion, using the standard Amber small-molecule sequence of antechamber, parmchk2, and tleap. Li⁺ is treated separately: its nonbonded parameters are taken from Åqvist (1990) and written to an frcmod file. With both ions parameterized, PEO chains are built using `AmberPolymerBuilder`, which wraps prepgen and tleap internally. The resulting component force fields are then merged, molpack places the molecules at the target density, and the final system is exported to LAMMPS.
+Two typifiers in `mp.typifier` drive AmberTools. `AntechamberTypifier` types a complete molecule from scratch: antechamber (GAFF2 types, BCC charges) → parmchk2 (missing parameters) → tleap. `TLeapTypifier` runs tleap alone on a graph whose atoms already carry AMBER types and charges. TFSI and each PEO monomer go through antechamber once; the chain is assembled from the typed monomers, so its types and charges travel with the templates, and tleap adds the junction terms. tleap never re-assigns types or charges, so each monomer is a complete molecule whose leaving groups mimic the neighbours its atoms have in the chain. Li⁺ gets a force field you define. The three force fields are merged, molpack places the molecules at the target density, and the system is exported to LAMMPS.
 
-## Antechamber assigns GAFF types and BCC charges to TFSI
+## Antechamber assigns GAFF2 types and BCC charges to TFSI
 
-The Amber workflow for small molecules is: antechamber (assign types + charges) → parmchk2 (missing parameters) → tleap (topology + coordinates).
+The net charge antechamber is given comes from the atoms' formal charges — here the `[N-]` of the SMILES. Antechamber needs 3D coordinates, so the anion is embedded first.
 
 ```python
 from pathlib import Path
 import molpy as mp
-from molpy.conformer import Conformer
-from molpy.io.writers import write_pdb
-from molpy.wrapper import AntechamberWrapper, Parmchk2Wrapper, TLeapWrapper
 
-output_dir = Path("07_output")
-ions_dir = output_dir / "ions"
-ions_dir.mkdir(parents=True, exist_ok=True)
+output_dir = Path("13_output")
+output_dir.mkdir(exist_ok=True)
 
-# Create TFSI from SMILES and generate 3D coordinates
 tfsi = mp.io.read_smiles("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F")
-tfsi = Conformer(add_hydrogens=False, seed=42).generate(tfsi)[0]
-
-# Write PDB for antechamber input
-write_pdb(ions_dir / "tfsi.pdb", tfsi.to_frame())
+tfsi = mp.Conformer(add_hydrogens=False, seed=42).generate(tfsi)[0]
 ```
 
 ```python
-# docs: skip — AmberTools offline electrolyte workflow; not unit-tested
-conda_env = "AmberTools25"
-
-# Step 1: antechamber — assign GAFF types and BCC charges
-ac = AntechamberWrapper(
- name="antechamber", workdir=ions_dir, env=conda_env, env_manager="conda"
+# docs: skip — needs AmberTools
+tfsi_ante = mp.typifier.AntechamberTypifier(
+    atom_type="gaff2",
+    charge_method="bcc",
+    work_dir=output_dir / "tfsi",
+    env="AmberTools25",
+    env_manager="conda",
 )
-ac.atomtype_assign(
- input_file=(ions_dir / "tfsi.pdb").absolute(),
- output_file=(ions_dir / "tfsi.mol2").absolute(),
- input_format="pdb",
- output_format="mol2",
- charge_method="bcc",
- atom_type="gaff2",
- net_charge=-1,
-)
-
-# Step 2: parmchk2 — generate missing parameters
-parmchk2 = Parmchk2Wrapper(
- name="parmchk2", workdir=ions_dir, env=conda_env, env_manager="conda"
-)
-parmchk2.run(args=["-i", "tfsi.mol2", "-o", "tfsi.frcmod", "-f", "mol2", "-s", "gaff2"])
-
-# Step 3: tleap — generate prmtop and inpcrd
-leap_script = """source leaprc.gaff2
-TFSI = loadmol2 tfsi.mol2
-loadamberparams tfsi.frcmod
-saveamberparm TFSI tfsi.prmtop tfsi.inpcrd
-quit
-"""
-(ions_dir / "tfsi_leap.in").write_text(leap_script)
-
-tleap = TLeapWrapper(name="tleap", workdir=ions_dir, env=conda_env, env_manager="conda")
-tleap.run(args=["-f", "tfsi_leap.in"])
+tfsi = tfsi_ante.typify(tfsi)  # a typed copy: GAFF2 types, BCC charges, bonded terms
+tfsi_ff = tfsi_ante.forcefield()  # the parameters of the types just assigned
 ```
 
-## Li⁺ needs no charge calculation — literature parameters go directly into an frcmod file
+## Li⁺ needs no charge calculation — you define its force field
 
-Li⁺ has no bonded terms and no partial charges to compute, so antechamber is not needed. Instead, write the nonbond parameters from Åqvist (1990) directly into an frcmod file and create the prmtop with tleap.
+Li⁺ has no bonded terms and no partial charges to compute, so antechamber is not needed. Build the atom with its type and charge, and define the force field it uses.
 
 **Li⁺ nonbond parameters** — Åqvist (1990), J. Phys. Chem. 94, 8021–8024, DOI: 10.1021/j100384a009.
 These were fitted to hydration free energies and are the standard choice for polymer electrolyte simulations with GAFF.
@@ -98,174 +68,163 @@ These were fitted to hydration free energies and are the standard choice for pol
 | ε | 0.0183 kcal/mol |
 
 ```python
-# docs: skip — AmberTools offline electrolyte workflow; not unit-tested
-from molpy.io import read_amber
+li = mp.Atomistic()
+li.def_atom(element="Li", type="Li+", charge=1.0, mass=6.94, x=0.0, y=0.0, z=0.0)
 
-li_dir = output_dir / "li"
-li_dir.mkdir(parents=True, exist_ok=True)
-
-# Write Åqvist (1990) frcmod — NONBON uses Rmin/2 and epsilon
-li_frcmod = """Li+ Aqvist 1990 parameters
-MASS
-LI 6.941 0.0000000
-
-BOND
-
-ANGLE
-
-DIHE
-
-IMPROPER
-
-NONBON
- LI 1.137 0.0183
-
-"""
-(li_dir / "li.frcmod").write_text(li_frcmod)
-
-# Minimal mol2 for a single Li+ atom (net charge = +1)
-li_mol2 = """@<TRIPOS>MOLECULE
-LIT
- 1 0 0 0 0
-SMALL
-USER_CHARGES
-
-@<TRIPOS>ATOM
- 1 LI 0.0000 0.0000 0.0000 LI 1 LIT 1.000000
-@<TRIPOS>BOND
-"""
-(li_dir / "li.mol2").write_text(li_mol2)
-
-# tleap: generate prmtop for Li+
-li_leap = """source leaprc.gaff2
-loadamberparams li.frcmod
-LIT = loadmol2 li.mol2
-saveamberparm LIT li.prmtop li.inpcrd
-quit
-"""
-(li_dir / "li_leap.in").write_text(li_leap)
-
-tleap_li = TLeapWrapper(
- name="tleap", workdir=li_dir, env=conda_env, env_manager="conda"
-)
-tleap_li.run(args=["-f", "li_leap.in"])
-
-li_frame, li_ff = read_amber(li_dir / "li.prmtop", li_dir / "li.inpcrd")
-print(
- f"Li+: {li_frame['atoms'].nrows} atom, charge={li_frame['atoms']['charge'][0]:.1f}"
-)
+li_ff = mp.ForceField("li", units="real")
+li_type = li_ff.def_style("atom", "full").def_type("Li+", mass=6.94, charge=1.0)
+# sigma = 2 * Rmin/2 / 2^(1/6)
+li_ff.def_style("pair", "lj/cut").def_type("Li+", li_type, epsilon=0.0183, sigma=2.0259)
 ```
 
-## MolPy chemistry defines the Amber residue variants
+## Each PEO monomer is typed once
 
-AmberTools does not have its own port or leaving-group semantics. Mark the
-monomer with `fields.SITE` and define the same `Reaction` used by
-`PolymerBuilder`; the Amber backend first compiles that molecular product, then
-translates its connection atoms and deleted atoms into prepgen HEAD, CHAIN, and
-TAIL inputs.
+AmberTools has no notion of ports or residue joins, so the chain is built by
+MolPy; the topology `{[#CAPA][#EO]|10[#CAPB]}` is a methyl cap, ten
+ethylene-oxide units and a methoxy cap. See
+[Polymer Topologies](topology/index.md) for other architectures.
+
+tleap joins units but never re-assigns atom types or charges: every atom of the
+chain keeps the GAFF2 type and charge antechamber gave it in its monomer. So
+each monomer must already put every atom that stays in the chain into its
+in-chain environment — the leaving group of each port (the atoms removed on
+linking) mimics the neighbour its anchor will have in the chain. An H-capped EO
+unit, `[<]OCC[>]`, is ethanol to antechamber: its O is typed hydroxyl `oh` with
+alcohol charges. The EO unit is instead CH3–O–CH2–CH2–O–CH3: the O-side port's
+leaving group is the terminal CH3 and the C-side port's is the terminal O–CH3,
+so the kept O is typed ether `os` and its charges are ether-like. The caps are
+dimethyl ether on the same rule. This is how AMBER polymer residues are cut: the
+junction atoms keep their types.
+
+A CGsmiles bonding descriptor always becomes a capping hydrogen, so these units
+are embedded from SMILES and their ports set with `def_port(anchor, leaving,
+kind)`: the leaving handle may be any atom bonded to the anchor, and its whole
+branch leaves. The conformer keeps the SMILES atom order and appends the
+hydrogens, so the indices below are SMILES positions.
 
 ```python
-from molpy.builder.assembly import SiteMap
-from molpy.conformer import Conformer
+conformer = mp.Conformer(seed=42)
+# name: (complete molecule, ports as (anchor, leaving handle, kind) SMILES indices)
+recipes = {
+    "CAPA": ("COC", [(0, 1, ">")]),  # keeps CH3; O–CH3 leaves
+    "EO": ("COCCOC", [(1, 0, "<"), (3, 4, ">")]),  # keeps O–CH2–CH2; CH3 and O–CH3 leave
+    "CAPB": ("COC", [(1, 2, "<")]),  # keeps O–CH3; CH3 leaves
+}
+units = {}
+for name, (smiles, ports) in recipes.items():
+    unit = conformer.generate(mp.io.read_smiles(smiles))[0]
+    atoms = list(unit.atoms)
+    for anchor, leaving, kind in ports:
+        unit.def_port(atoms[anchor], atoms[leaving], kind)
+    units[name] = unit
+print({name: unit.n_atoms for name, unit in units.items()})  # leaving groups included
 
-eo, _ = Conformer(add_hydrogens=True, seed=42).generate(mp.io.read_smiles("COC"))
-SiteMap(eo).label_elements("C", "a", "b")
-
-STITCH = mp.Reaction("[C;%a:1][H].[C;%b:2][H]>>[C:1][C:2]")
-library = {"EO": eo}
+sites = mp.CGSmilesIR("{[#CAPA][#EO]|10[#CAPB]}").to_coarsegrain()
+draft = mp.Assembler(units, mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+print(draft.n_atoms)  # 79: CH3-(OCH2CH2)10-OCH3, no leaving group left in the chain
 ```
 
-## AmberPolymerBuilder runs the full Amber pipeline internally
-
-`AmberPolymerBuilder` wraps the monomer library, connector rules, and Amber tool chain (prepgen + tleap) into one builder that produces fully parameterized chains. Each unique chain length writes its Amber intermediate files into its own subdirectory under `work_dir` to prevent file conflicts.
+Every unit is a complete molecule — each port's leaving group is made of real
+atoms — so antechamber types it like any small molecule. The typed copy keeps
+its ports.
 
 ```python
-# docs: skip — AmberTools offline electrolyte workflow; not unit-tested
-from molpy.builder.polymer.ambertools import AmberPolymerBuilder
-
-polymer_dir = output_dir / "polymer"
-polymer_dir.mkdir(exist_ok=True)
-
-builder = AmberPolymerBuilder(
- library=library,
- reaction=STITCH,
- force_field="gaff2",
- charge_method="bcc",
- env="AmberTools25",
- env_manager="conda",
- work_dir=polymer_dir,
+# docs: skip — needs AmberTools
+ante = mp.typifier.AntechamberTypifier(
+    atom_type="gaff2",
+    charge_method="bcc",
+    work_dir=output_dir / "units",
+    env="AmberTools25",
+    env_manager="conda",
 )
-
-result = builder.build("{[#EO]|10}")
+lib = {name: ante.typify(unit) for name, unit in units.items()}
 ```
 
-`AmberPolymerBuilder.build()` internally runs antechamber, parmchk2, prepgen, and tleap. The result carries the polymer Frame, ForceField, and paths to the intermediate Amber files.
+## tleap finishes the assembled chain
+
+`mp.Assembler` joins one port of each neighbour per bond. Types and charges
+travel with the templates; each join removes the two leaving groups and folds
+their charge onto the anchors, so the chain's net charge is the sum of its
+monomers'. The growth placer can leave overlaps, so the chain is re-embedded
+before packing; the types and charges are kept.
+
+`TLeapTypifier` writes the monomers' parameters as a frcmod, runs tleap only,
+and takes the junction terms from `leaprc.gaff2`. It never runs antechamber or
+parmchk2, and leaves the types and charges unchanged — which is why the
+monomers' leaving groups had to mimic the chain.
 
 ```python
-# docs: skip — AmberTools offline electrolyte workflow; not unit-tested
-peo_frame = result.frame
-peo_ff = result.forcefield
-print(f"PEO 10-mer: {peo_frame['atoms'].nrows} atoms")
+# docs: skip — needs AmberTools
+chain = mp.Assembler(lib, mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+chain = conformer.generate(chain)[0]  # re-embed: the growth placer can leave overlaps
+
+leap = mp.typifier.TLeapTypifier(
+    leaprc="gaff2",
+    forcefield=ante.forcefield(),
+    work_dir=output_dir / "polymer",
+    env="AmberTools25",
+    env_manager="conda",
+)
+peo = leap.typify(chain)
+peo_ff = leap.forcefield()  # units real, AMBER 1-4 scaling declared
+print(f"PEO 10-mer: {peo.n_atoms} atoms")  # CH3-(OCH2CH2)10-OCH3, 79 atoms
 ```
 
 ## Merging three force fields before packing prevents type conflicts
 
 Merging is done before packing rather than after because packing operates on
 coordinates only — it has no awareness of force field types. If two components
-share an atom type name with different parameters, a post-packing merge would
-silently overwrite one of them. Merging first makes any type name collision an
-error before coordinates are generated.
+share a type name with different parameters, `merge` raises, so a collision is
+an error before coordinates are generated.
 
 ```python
-# docs: skip — AmberTools offline electrolyte workflow; packing via molpack
-import numpy as np
-from molpy.io import read_amber
-from molpack import InsideBoxRestraint, Molpack, Target
+# docs: skip — needs AmberTools and molpack
+from molpack import GenCanPack, Target
 
-# Read TFSI from Amber files generated in Stage 1
-tfsi_frame, tfsi_ff = read_amber(
- ions_dir / "tfsi.prmtop",
- ions_dir / "tfsi.inpcrd",
-)
+ff = peo_ff.merge(tfsi_ff).merge(li_ff)
 
-# Merge all three force fields: PEO + TFSI + Li+
-combined_ff = peo_ff.merge(tfsi_ff).merge(li_ff)
-
-# Pack system with molpack
 box_size = 60.0
-box = InsideBoxRestraint([0.0, 0.0, 0.0], [box_size] * 3)
+box = mp.Cuboid([0.0, 0.0, 0.0], [box_size] * 3)
 targets = [
- Target(peo_frame, count=3).with_name("peo").with_restraint(box),
- Target(li_frame, count=10).with_name("li").with_restraint(box),
- Target(tfsi_frame, count=10).with_name("tfsi").with_restraint(box),
+    Target(peo.to_frame(), count=3).with_restraint(box),
+    Target(li.to_frame(), count=10).with_restraint(box),
+    Target(tfsi.to_frame(), count=10).with_restraint(box),
 ]
-system = Molpack().with_seed(12345).pack(targets, max_loops=200)
-system.box = mp.Box.cubic(box_size)
+system = GenCanPack().with_seed(12345).run(targets, max_loops=200).frame
+system.box = mp.Box.cube(box_size)
 ```
 
 ## Exporting skips pair_style because long-range electrostatics need it in the script
 
 ```python
-# docs: skip — AmberTools offline electrolyte workflow; not unit-tested
-from molpy.io.writers import write_lammps_data, write_lammps_forcefield
-
+# docs: skip — needs AmberTools and molpack
 lammps_dir = output_dir / "lammps"
 lammps_dir.mkdir(exist_ok=True)
-write_lammps_data(lammps_dir / "system.data", system, atom_style="full")
-write_lammps_forcefield(lammps_dir / "system.ff", combined_ff, skip_pair_style=True)
+
+# full atom style needs mol_id: one per connected molecule
+system["atoms"]["mol_id"] = mp.Topology.from_frame(system).connected_components() + 1
+mp.io.write_lammps_data(lammps_dir / "system.data", system)
+mp.io.write_lammps_forcefield(lammps_dir / "system.ff", ff, system, skip_pair_style=True)
 ```
 
-`skip_pair_style=True` omits the `pair_style` line from the force-field file. This is required when using kspace (long-range electrostatics), because the `pair_style` must be set by the simulation input script rather than the force-field file.
+`skip_pair_style=True` omits the `pair_style` and `special_bonds` lines from the force-field file. This is required when using kspace (long-range electrostatics), because the `pair_style` — and its cutoff — must be set by the simulation input script rather than the force-field file.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---------|-------|
-| Antechamber fails | Verify PDB has correct atom names and no duplicate IDs |
-| TFSI charge wrong | Use `charge_method="bcc"` and verify `-nc -1` |
-| tleap fails for Li⁺ | Confirm the mol2 atom type (`LI`) matches the frcmod NONBON entry |
-| Polymer build fails | Check port markers in monomer SMILES |
-| Force field merge conflict | Inspect atom type names for collisions between PEO and TFSI |
+| Antechamber fails | The molecule has 3D coordinates (embed it first) and every port's leaving group is present |
+| Chain O typed `oh`, or alcohol-like charges | A port leaves a hydrogen where the chain has a heavy neighbour; make each leaving group mimic that neighbour (CH3 for a backbone C, O–CH3 for a backbone O) |
+| TFSI charge wrong | The formal charges sum to the net charge (`[N-]` gives −1); use `charge_method="bcc"` |
+| `ValueError: formal charges sum to …` | A charged atom lacks its `formal_charge`, or the sum is not an integer |
+| tleap fails on the chain | A junction term missing from `leaprc.gaff2`; the error carries tleap's stderr |
+| `ValueError: tleap changed atom …` | The chain's types or charges differ from what tleap read back; retype the monomers |
+| Polymer assembly fails | Check each unit's ports (`<` joins `>`, each leaving handle bonded to its anchor) and that every topology name is in the library |
+| Force field merge conflict | Inspect type names for collisions between PEO, TFSI and Li⁺ |
 | Packing fails | Increase box size or reduce molecule count |
+
+The raw subprocess wrappers (`AntechamberWrapper`, `Parmchk2Wrapper`,
+`TLeapWrapper`, …) stay in `molpy.wrapper` for scripts that drive the
+executables directly.
 
 See also: [Force Field Typification](06_typifier.md), [Wrapper and Adapter](../tutorials/07_wrapper_and_adapter.md).

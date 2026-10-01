@@ -7,21 +7,17 @@ the top-level facade carries core types and the ``read_*`` / ``write_*`` family,
 nothing else.
 """
 
-from molrs.ff import extract_coords, fragment_scaling_data, intramolecular_pairs
-
-from .scale_lj import (
-    FragmentScaling,
+from molrs.ff import (
     compute_k_ij,
-    load_fragment_scaling_data,
-    scale_lj,
+    fragment_scaling_data,
+    intramolecular_pairs,
 )
 
+from .scale_lj import scale_lj
+
 __all__ = [
-    "FragmentScaling",
     "compute_k_ij",
-    "extract_coords",
     "fragment_scaling_data",
     "intramolecular_pairs",
-    "load_fragment_scaling_data",
     "scale_lj",
 ]

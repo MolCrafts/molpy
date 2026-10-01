@@ -1,19 +1,17 @@
-"""Linear homopolymer: build_linear / linear_topology.
+"""Linear homopolymer: ten EO units grown along a chain.
 
 Guide: docs/user-guide/topology/01_linear.md
 Run:   python topology/01_linear.py
 """
 
-from eo_kit import eo_builder, report
-from molpy.builder.assembly import linear_topology
+import molpy as mp
+from eo_kit import library, report
 
 
 def main() -> None:
-    builder = eo_builder()
-    chain = builder.build_linear("EO", 10)
+    sites = mp.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
+    chain = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
     report("linear-10", chain)
-    same = builder.build(linear_topology(["EO"] * 10))
-    print(f"  build_linear ≡ build(topology): {chain.n_atoms == same.n_atoms}")
 
 
 if __name__ == "__main__":

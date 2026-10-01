@@ -29,7 +29,6 @@ nav = [
       { "Quickstart" = "getting-started/quickstart.md" },
       { "Example Gallery" = "getting-started/examples.md" },
       { "FAQ" = "getting-started/faq.md" },
-      { "Migrating to 0.14" = "getting-started/migration-0-14.md" },
     ] },
     { "The Data Model" = [
       { "Atomistic and Topology" = "tutorials/01_atomistic_and_topology.md" },
@@ -55,7 +54,6 @@ nav = [
     ] },
     { "Chain & Network Construction" = [
       { "Assembly" = "user-guide/02_assembly.md" },
-      { "Building a Crosslinked Gel" = "user-guide/16_crosslinked_gel.md" },
       { "Polydisperse Systems" = "user-guide/05_polydisperse_systems.md" },
     ] },
     { "Polymer Topologies" = [
@@ -66,11 +64,6 @@ nav = [
       { "Star" = "user-guide/topology/04_star.md" },
       { "Comb" = "user-guide/topology/05_comb.md" },
       { "Telechelic" = "user-guide/topology/06_telechelic.md" },
-      { "Exhaustive gel" = "user-guide/topology/07_gel_exhaustive.md" },
-      { "Random gel" = "user-guide/topology/08_gel_random.md" },
-      { "End-linked" = "user-guide/topology/09_end_linked.md" },
-      { "Dual network" = "user-guide/topology/10_dual_network.md" },
-      { "Prepolymer + agent" = "user-guide/topology/11_prepolymer_agent.md" },
     ] },
     { "Parameterization" = [
       { "Force Field Typification" = "user-guide/06_typifier.md" },
@@ -88,8 +81,6 @@ nav = [
     ] },
     { "Tools & Ecosystem" = [
       { "AmberTools Integration" = "user-guide/13_ambertools_integration.md" },
-      { "Moltemplate CLI" = "user-guide/14_moltemplate_cli.md" },
-      { "MCP Suite" = "user-guide/15_mcp.md" },
     ] },
   ] },
 
@@ -262,7 +253,7 @@ custom_fences = [
 default_handler = "python"
 
 [project.plugins.mkdocstrings.handlers.python]
-# Load molrs when resolving ``molpy.Frame → molrs.frame.Frame`` re-exports.
+# Load molrs when resolving ``molpy.Frame → molrs.Frame`` re-exports.
 load_external_modules = true
 
 [project.plugins.mkdocstrings.handlers.python.options]

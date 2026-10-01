@@ -101,35 +101,19 @@ b.rename("q", "charge")
 print(list(b.keys())) # ['x', 'charge']
 ```
 
-## Copy semantics matter
+## Copy semantics
 
-`Block.copy()` is shallow: the mapping is copied, but the underlying NumPy arrays are shared. In-place mutation of an array affects both the original and the copy.
-
-```python
-shallow = atoms.copy()
-shallow["x"][0] = 999.0
-print(atoms["x"][0]) # 999.0 — original changed too!
-```
-
-If you need full independence, copy the arrays explicitly. The safest pattern is to copy each column you intend to modify:
+`Block.copy()` is a deep copy: every column gets its own buffer. Writing into
+the copy never reaches the original.
 
 ```python
-# Rebuild clean data for the rest of the page
-atoms = mp.Block({
- "element": ["O", "H", "H"],
- "x": [0.000, 0.957, -0.239],
- "y": [0.000, 0.000, 0.927],
- "z": [0.000, 0.000, 0.000],
-})
-
-deep = atoms.copy()
-deep["x"] = deep["x"].copy()
-deep["x"][0] = 999.0
+independent = atoms.copy()
+independent["x"][0] = 999.0
 print(atoms["x"][0]) # 0.0 — original unchanged
 ```
 
 !!! tip "Avoiding mutation"
-    The idiomatic MolPy pattern is to avoid in-place array mutation entirely. Instead of modifying a column, assign a new array: `block["x"] = block["x"] + 1.0`. This always produces an independent copy and is consistent with MolPy's immutable-data philosophy.
+    The idiomatic MolPy pattern is to avoid in-place array mutation entirely. Instead of modifying a column, assign a new array: `block["x"] = block["x"] + 1.0`. This always produces an independent column and is consistent with MolPy's immutable-data philosophy.
 
 ## Frame: a named collection of Blocks
 
@@ -161,7 +145,8 @@ print(frame.meta["timestep"]) # 0
 print(frame.meta["description"]) # water
 ```
 
-Accessing a block by name returns a `Block`. From there, all column operations work the same way.
+Accessing a block by name returns a `Block` — a handle on the stored table, so
+every column operation works the same way and a write lands in the frame.
 
 ```python
 atoms = frame["atoms"]
@@ -172,7 +157,7 @@ You can add, replace, or delete blocks at any time.
 
 ```python
 frame["tags"] = {"label": ["oxygen", "hydrogen", "hydrogen"]}
-print(type(frame["tags"])) # <class 'mp.Block'>
+print(type(frame["tags"]) is mp.Block) # True
 
 del frame["tags"]
 print("tags" in frame) # False
@@ -183,7 +168,7 @@ print("tags" in frame) # False
 A periodic simulation cell is attached directly to `frame.box`, not stored in metadata. This ensures `Frame.copy()` preserves the box and I/O round-trips work correctly.
 
 ```python
-frame.box = mp.Box.cubic(20.0)
+frame.box = mp.Box.cube(20.0)
 print(frame.box.lengths) # [20. 20. 20.]
 
 # copy() preserves box
@@ -193,16 +178,18 @@ print(frame2.box.lengths) # [20. 20. 20.]
 
 `frame.box` is `None` when no box has been assigned (e.g., for isolated molecules).
 
-## Serialization round-trips through dictionaries
+## Round-trips through plain dictionaries
 
-`Block.from_dict` rebuilds a table from `to_dict()`. A Frame payload is the constructor arguments: `blocks` and `meta`.
+`dict(block)` is its columns, and `mp.Block(mapping)` builds a table back. A
+frame's parts are exactly its constructor arguments: the blocks, `meta`, and
+`box`. (Frames and blocks also pickle, masks and metadata dtypes included.)
 
 ```python
-payload = frame.to_dict()
-print(sorted(payload.keys())) # ['blocks', 'meta']
+columns = {name: dict(frame[name]) for name in frame.keys()}
+print(sorted(columns)) # ['atoms', 'bonds']
 
-restored = mp.Frame(payload["blocks"], meta=payload["meta"])
-print(sorted(restored.to_dict()["blocks"].keys())) # ['atoms', 'bonds']
+restored = mp.Frame(columns, meta=dict(frame.meta), box=frame.box)
+print(sorted(restored.keys())) # ['atoms', 'bonds']
 ```
 
 ## When Block and Frame are the right choice

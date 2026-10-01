@@ -30,7 +30,7 @@ class TestCarbonTubeBuilder:
         expected_radius = (
             sqrt(3.0) * bond_length * sqrt(n * n + n * m + m * m) / (2.0 * pi)
         )
-        radii = np.linalg.norm(tube.xyz[:, :2], axis=1)
+        radii = np.linalg.norm(tube.atoms["x", "y", "z"][:, :2], axis=1)
         assert radii == pytest.approx(expected_radius)
 
     def test_nonperiodic_tube_leaves_open_graph_ends(self):
@@ -47,10 +47,10 @@ class TestCarbonTubeBuilder:
     def test_periodic_cell_closes_only_the_axis(self):
         builder = CarbonTubeBuilder(5, 5, cells=2, periodic=True)
         box = builder.cell(vacuum=4.0)
-        radius = np.linalg.norm(builder.build().xyz[0, :2])
+        radius = np.linalg.norm(builder.build().atoms["x", "y", "z"][0, :2])
         assert np.array_equal(box.pbc, [False, False, True])
-        assert box.lx == pytest.approx(2.0 * radius + 8.0)
-        assert box.ly == pytest.approx(box.lx)
+        assert box.lengths[0] == pytest.approx(2.0 * radius + 8.0)
+        assert box.lengths[1] == pytest.approx(box.lengths[0])
 
     def test_the_cell_is_never_written_onto_the_graph(self):
         """A graph is topology and chemistry; the cell lives on ``frame.box``."""
@@ -58,11 +58,11 @@ class TestCarbonTubeBuilder:
         assert "box" not in builder.build().props
 
     def test_length_rounds_up_to_complete_axial_units(self):
-        unit = CarbonTubeBuilder(6, 0, cells=1).cell().lz
+        unit = CarbonTubeBuilder(6, 0, cells=1).cell().lengths[2]
         requested = 2.2 * unit
         tube = CarbonTubeBuilder(6, 0, length=requested)
-        assert tube.cell().lz >= requested
-        assert tube.cell().lz < requested + unit
+        assert tube.cell().lengths[2] >= requested
+        assert tube.cell().lengths[2] < requested + unit
 
     def test_per_atom_annotations_are_written_without_bonded_typing(self):
         tube = CarbonTubeBuilder(6, 0).build(atom_type="CA", charge=-0.125)

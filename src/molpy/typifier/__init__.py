@@ -1,38 +1,34 @@
-"""Force-field typification: ``MolGraph -> MolGraph``.
+"""Force-field typification.
 
-A typifier completes the graph's truncated valences, matches it, and writes the
-annotations back. Only the *match* differs between them, so
-:meth:`~molpy.typifier.base.Typifier.typify` is written once and
-:meth:`~molpy.typifier.base.Typifier.match` is the single abstract method.
+The native typifiers are identity re-exports of :mod:`molrs.ff.typifier`
+(``mp.typifier.OPLSAATypifier is molrs.ff.typifier.OPLSAATypifier``), listed one
+by one. ``Typifier`` is the base every typifier extends: a subclass implements
+``match`` and the base owns ``typify`` and the accumulated ``forcefield()``.
 
-Typifiers are named after the force field or the tool that decides the types.
-:class:`~molpy.typifier.forcefield.ForceFieldParams` is **not** one: it spends a
-node type rather than deciding it, and is the second half of every force-field
-typifier.
+:class:`AntechamberTypifier` and :class:`TLeapTypifier` type through the
+AmberTools executables (:mod:`molpy.wrapper`).
 """
 
-from molrs.ff.typifier import MMFF94Typifier as MMFFTypifier, OPLSAATypifier
+from molrs.ff.typifier import (
+    AtdTypifier,
+    ElementTypifier,
+    Match,
+    MMFF94STypifier,
+    MMFF94Typifier,
+    OPLSAATypifier,
+    Typifier,
+)
 
-from .ambertools import AmberToolsTypifier
-from .base import Match, Typifier
-from .clp import ClpTypifier
-from .forcefield import ForceFieldParams
-from .scope import TypeScope, UnboundedPatternSet
-from .smarts import LocalTypifier, SmartsTypifier
+from .ambertools import AntechamberTypifier, TLeapTypifier
 
 __all__ = [
-    # the contract
-    "Typifier",
+    "AntechamberTypifier",
+    "AtdTypifier",
+    "ElementTypifier",
+    "MMFF94STypifier",
+    "MMFF94Typifier",
     "Match",
-    "TypeScope",
-    "UnboundedPatternSet",
-    "LocalTypifier",
-    # typifiers, named after their force field or tool (plus SmartsTypifier base)
-    "SmartsTypifier",
-    "ClpTypifier",
-    "AmberToolsTypifier",
     "OPLSAATypifier",
-    "MMFFTypifier",
-    # the component every force-field typifier ends with
-    "ForceFieldParams",
+    "TLeapTypifier",
+    "Typifier",
 ]

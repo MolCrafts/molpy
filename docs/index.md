@@ -115,10 +115,9 @@ molecule or a polymer chain.
 
 ```python
 import molpy as mp
-from molpy.conformer import Conformer
 
 mol = mp.io.read_smiles("CCO")  # one molecule from SMILES
-mol, report = Conformer(seed=42).generate(mol)  # hydrogens + 3D coordinates
+mol, report = mp.Conformer(seed=42).generate(mol)  # hydrogens + 3D coordinates
 ```
 
 </article>
@@ -133,8 +132,9 @@ Merge structures, form and break bonds, drop leaving groups, then re-derive
 angles and dihedrals across the new junction.
 
 ```python
-dimer = mol.copy().merge(mol.copy())  # combine two copies
-dimer.get_topo(gen_angle=True, gen_dihe=True)  # derive angles/dihedrals in place
+dimer = mol.copy()
+dimer.merge(mol.copy())  # combine two copies, in place
+dimer.generate_topology(gen_angle=True, gen_dihedral=True)  # derive angles/dihedrals in place
 ```
 
 </article>
@@ -149,10 +149,11 @@ SMARTS matching maps every atom, bond, angle, and dihedral to parameters you
 can inspect before anything is exported.
 
 ```python
-ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml"))  # bundled OPLS-AA
-typed = mp.typifier.OPLSAATypifier().typify(mol)
+typifier = mp.typifier.OPLSAATypifier()  # carries the OPLS-AA library
+typed = typifier.typify(mol)
+ff = typifier.forcefield()  # the parameters of the types just assigned
 system = typed.to_frame()  # the numeric Frame
-system.box = mp.Box.cubic(30.0)
+system.box = mp.Box.cube(30.0)
 ```
 
 </article>
@@ -169,13 +170,10 @@ library, no external binary (`pip install molcrafts-molpack`).
 
 ```python
 # docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
-from molpack import InsideBoxRestraint, Molpack, Target
+from molpack import GenCanPack, Target
 
-target = (
-    Target(system, count=500)
-    .with_restraint(InsideBoxRestraint([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
-)
-system = Molpack().with_seed(42).pack([target], max_loops=200)
+target = Target(system, count=500).with_restraint(mp.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
+system = GenCanPack().with_seed(42).run([target], max_loops=200).frame
 ```
 
 </article>
@@ -190,12 +188,13 @@ One call per file via ``mp.io``: LAMMPS data plus force-field coefficients.
 GROMACS and PDB writers share the same pattern.
 
 ```python
-import numpy as np
-
-atoms = system["atoms"]
-atoms["mol_id"] = np.ones(atoms.nrows, dtype=np.uint32)  # full atom style needs mol_id
-mp.io.write_lammps_data("system.data", system, atom_style="full")
-mp.io.write_lammps_forcefield("system.ff", ff)
+# full atom style needs mol_id: one per connected molecule
+system["atoms"]["mol_id"] = mp.Topology.from_frame(system).connected_components() + 1
+# the pair cutoff is a run setting: you declare it, molpy never invents one
+ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
+ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
+mp.io.write_lammps_data("system.data", system)
+mp.io.write_lammps_forcefield("system.ff", ff, system)  # the coefficients system uses
 ```
 
 </article>
@@ -210,10 +209,12 @@ Feed the same Frame into the compute layer — neighbor search and $g(r)$ in two
 calls, with many more analyses behind them.
 
 ```python
-from molpy.compute import NeighborList, RDF
+from molpy.compute import RDF
 
-system.box = mp.Box.cubic(30.0)
-neighbors = NeighborList(cutoff=8.0).compute(system)
+system.box = mp.Box.cube(30.0)
+nl = mp.NeighborList(8.0)
+nl.build(system.coords, system.box)
+neighbors = nl.neighbors()
 result = RDF(n_bins=50, r_max=8.0).compute([system], [neighbors])  # g(r) over the box
 ```
 
@@ -247,11 +248,6 @@ package.
 <span class="molcrafts-feature-matrix__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
 <dt><a href="developer/molrs-backend/">A high-performance kernel underneath</a></dt>
 <dd>Storage and compute live in the high-performance backend. Python sees zero-copy NumPy views on the public facade.</dd>
-</div>
-<div>
-<span class="molcrafts-feature-matrix__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></span>
-<dt><a href="user-guide/15_mcp/">Built for LLM agents</a></dt>
-<dd>The molmcp suite exposes symbols and docs over MCP so an agent can call the real API instead of guessing from training data.</dd>
 </div>
 <div>
 <span class="molcrafts-feature-matrix__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg></span>
@@ -368,8 +364,8 @@ beyond the default install; every seam is visible in the API.
 <dd>Ready-to-run input decks generated from MolPy data objects.</dd>
 </div>
 <div>
-<dt><a href="developer/molrs-backend/">Native backend · MCP</a></dt>
-<dd>High-performance column store and compute underneath; MCP exposes symbols and docs to agents.</dd>
+<dt><a href="developer/molrs-backend/">Native backend</a></dt>
+<dd>High-performance column store and compute underneath.</dd>
 </div>
 </dl>
 

@@ -5,8 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from molpy.core.atomistic import Atomistic
-from molpy.core.forcefield import ForceField
+from molrs import Atomistic
+from molrs.ff import ForceField, write_lammps_forcefield
+
+from molpy.io.data.lammps import write_lammps_data
 
 
 class LammpsEmitter:
@@ -38,16 +40,8 @@ class LammpsEmitter:
         init_path = out_dir / f"{prefix}.in.init"
         run_path = out_dir / f"{prefix}.in"
 
-        from molpy.io.data.lammps import LammpsDataWriter
-        from molpy.io.forcefield.lammps import LAMMPSForceFieldWriter
-
-        # 1) data file
-        LammpsDataWriter(data_path, atom_style=atom_style).write(atomistic.to_frame())
-
-        # 2) in.settings from FF
-        LAMMPSForceFieldWriter(settings_path).write(ff)
-
-        # 3) in.init
+        # in.init lines first: an unsupported (hybrid) style fails before any
+        # file is written.
         init_lines = [
             f"# MolPy-generated LAMMPS init for {prefix}",
             f"units {units}",
@@ -55,16 +49,19 @@ class LammpsEmitter:
             "boundary p p p",
         ]
         # pair_style / bond_style / angle_style / ... derived from ff
-        for kind, cmd in [
-            ("bond", "bond_style"),
-            ("angle", "angle_style"),
-            ("dihedral", "dihedral_style"),
-            ("improper", "improper_style"),
-            ("pair", "pair_style"),
-        ]:
-            style_names = _collect_style_names(ff, kind)
-            if style_names:
-                init_lines.append(f"{cmd} {style_names[0]}")
+        for kind in ("bond", "angle", "dihedral", "improper", "pair"):
+            style_name = _style_name(ff, kind)
+            if style_name is not None:
+                init_lines.append(f"{kind}_style {style_name}")
+
+        # 1) data file and 2) in.settings, both keyed by the same frame's labels.
+        # The settings are included after read_data, where LAMMPS rejects a
+        # ``units`` command; in.init owns it, the coefficients follow it.
+        frame = atomistic.to_frame()
+        write_lammps_data(data_path, frame)
+        write_lammps_forcefield(settings_path, ff, frame, skip_units=True, units=units)
+
+        # 3) in.init
         init_path.write_text("\n".join(init_lines) + "\n")
 
         # 4) starter run script
@@ -102,28 +99,19 @@ unfix           1
 """
 
 
-def _collect_style_names(ff: ForceField, kind_prefix: str) -> list[str]:
-    """Return the style.name of every style whose class name starts with the kind.
+def _style_name(ff: ForceField, category: str) -> str | None:
+    """The one style ``ff`` defines in ``category`` (``"bond"``, ``"pair"``, …).
 
-    Uses a duck-typed class-name match to avoid importing the Style base classes
-    here (keeps emit/ free of heavy imports).
+    Returns ``None`` when the category has no style. One ``*_style`` line is
+    written per category; hybrid styles are not supported.
+
+    Raises:
+        ValueError: ``ff`` defines more than one style in ``category``.
     """
-    from molpy.core.forcefield import (
-        AngleStyle,
-        BondStyle,
-        DihedralStyle,
-        ImproperStyle,
-        PairStyle,
-    )
-
-    mapping = {
-        "bond": BondStyle,
-        "angle": AngleStyle,
-        "dihedral": DihedralStyle,
-        "improper": ImproperStyle,
-        "pair": PairStyle,
-    }
-    cls = mapping.get(kind_prefix)
-    if cls is None:
-        return []
-    return [s.name for s in ff.get_styles(cls)]
+    names = [style.name for style in ff.get_styles(category)]
+    if len(names) > 1:
+        raise ValueError(
+            f"one {category}_style line is written and hybrid styles are not "
+            f"supported; the force field defines {category} styles {names}"
+        )
+    return names[0] if names else None

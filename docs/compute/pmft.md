@@ -83,7 +83,7 @@ rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(400, 3))
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(20.0)
+frame.box = mp.Box.cube(20.0)
 ```
 
 Pick the neighbour cutoff from the *corner* of the map, not its edge. A
@@ -91,12 +91,12 @@ $\pm 6$ Å window reaches $6\sqrt{2} = 8.49$ Å at its corners, so anything
 shorter leaves those corners permanently unvisited:
 
 ```python
-from molpy.compute import NeighborList, PMFTXY
+from molpy.compute import PMFTXY
 
 analyzer = PMFTXY(x_max=6.0, y_max=6.0, n_x=40, n_y=40)
-(counts, density, pmf), = analyzer.compute(
-    [frame], [NeighborList(cutoff=8.5).compute(frame)]
-)
+nl = mp.NeighborList(8.5)
+nl.build(frame.coords, frame.box)
+(counts, density, pmf), = analyzer.compute([frame], [nl.neighbors()])
 
 print(counts.shape, pmf.shape)          # -> (40, 40) (40, 40)
 print(int(counts.sum()))                # -> 39708
@@ -117,7 +117,9 @@ Shorten the cutoff below the corner distance and they appear, in exactly the
 places geometry predicts:
 
 ```python
-short = NeighborList(cutoff=8.0).compute(frame)
+nl = mp.NeighborList(8.0)
+nl.build(frame.coords, frame.box)
+short = nl.neighbors()
 (_, _, clipped), = analyzer.compute([frame], [short])
 print(int((~np.isfinite(clipped)).sum()))   # -> 8
 ```
@@ -135,7 +137,9 @@ counts per bin.
 the end:
 
 ```python
-nlist = NeighborList(cutoff=8.5).compute(frame)
+nl = mp.NeighborList(8.5)
+nl.build(frame.coords, frame.box)
+nlist = nl.neighbors()
 per_frame = analyzer.compute([frame, frame], [nlist, nlist])
 total = np.sum([raw for raw, _, _ in per_frame], axis=0)
 
@@ -183,7 +187,7 @@ axis = np.stack([np.cos(angle), np.sin(angle), np.zeros(n_rods)], axis=1)
 xyz = np.concatenate([centres + 0.5 * axis, centres - 0.5 * axis])
 rods = mp.Frame()
 rods["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-rods.box = mp.Box.cubic(20.0)
+rods.box = mp.Box.cube(20.0)
 ```
 
 Atoms `0 … 199` are the heads and `200 … 399` the matching tails. Now give
@@ -194,9 +198,9 @@ head = np.concatenate([np.arange(n_rods), np.arange(n_rods)])
 tail = np.concatenate([np.arange(n_rods, 2 * n_rods), np.arange(n_rods, 2 * n_rods)])
 rods["orientations"] = {"atomi": head, "atomj": tail}
 
-(body_counts, _, _), = analyzer.compute(
-    [rods], [NeighborList(cutoff=8.5).compute(rods)]
-)
+nl = mp.NeighborList(8.5)
+nl.build(rods.coords, rods.box)
+(body_counts, _, _), = analyzer.compute([rods], [nl.neighbors()])
 print(rods["orientations"].nrows, rods["atoms"].nrows)   # -> 400 400
 ```
 
@@ -211,10 +215,10 @@ neighbour has been rotated into its reference rod's frame before binning:
 ```python
 plain = mp.Frame()
 plain["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-plain.box = mp.Box.cubic(20.0)
-(lab_counts, _, _), = analyzer.compute(
-    [plain], [NeighborList(cutoff=8.5).compute(plain)]
-)
+plain.box = mp.Box.cube(20.0)
+nl = mp.NeighborList(8.5)
+nl.build(plain.coords, plain.box)
+(lab_counts, _, _), = analyzer.compute([plain], [nl.neighbors()])
 
 print(np.allclose(body_counts, lab_counts))   # -> False
 ```

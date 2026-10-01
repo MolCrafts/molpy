@@ -7,8 +7,10 @@ planner primitives do the sampling; you compose them directly (no wrapper):
     distribution + sequence generator -> PolydisperseChainGenerator
     -> SystemPlanner.plan_system() -> a list of Chain (dp, monomers, mass)
 
-Each ``Chain`` carries its monomer sequence, which is a monomer sequence; use linear_topology + build string for
-``PolymerBuilder.build`` (see topology/01_linear.py).
+Each ``Chain`` carries its monomer sequence. Written as a CGsmiles string
+(``{[#Sty][#MA]...}``), ``mp.CGSmilesIR(...).to_coarsegrain()`` turns it into a
+site graph that ``mp.Assembler(library, mp.GrowthPlacer())`` grows into one
+chain (see topology/02_block.py).
 
 Guide: docs/user-guide/05_polydisperse_systems.md
 Run:   python 05_polydisperse.py
@@ -48,10 +50,10 @@ def main() -> None:
     print(f"sampled {len(plan.chains)} chains for target mass {plan.target_mass:.0f}")
     print(f"  Mn={Mn:.0f}  Mw={Mw:.0f}  PDI={Mw / Mn:.3f}")
 
-    # Each Chain is (dp, monomer sequence, mass); the sequence is a monomer sequence; use linear_topology + build
-    # string, so `builder.build("{" + labels + "}")` turns it into an Atomistic.
+    # Each Chain is (dp, monomer sequence, mass). Its CGsmiles string is the
+    # topology `mp.CGSmilesIR(...).to_coarsegrain()` reads (see topology/).
     first = plan.chains[0]
-    labels = " ".join(f"[#{m}]" for m in first.monomers[:8])
+    labels = "".join(f"[#{m}]" for m in first.monomers[:8])
     print(f"  first chain: dp={first.dp}, cgsmiles[:8]=" + "{" + labels + " ...}")
 
 

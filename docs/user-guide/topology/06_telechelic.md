@@ -1,19 +1,18 @@
-# Telechelic oligomer
+# Telechelic chain
 
 **Script:** [`examples/topology/06_telechelic.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/06_telechelic.py)
 
-Head and tail caps must carry **complementary** single sites so both path ends can form ether bonds with `EO`.
+End groups are one-port units at the ends of a path: `CAPA` (`C[>]`) joins the first `EO`'s `<`, and `CAPB` (`[<]OC`) joins the last `EO`'s `>`.
 
 ```python
-from eo_kit import eo_builder, full_library
+import molpy as mp
+from eo_kit import library
 
-lib = full_library()
-builder = eo_builder(extra={"CAPA": lib["CAPA"], "CAPB": lib["CAPB"]})
-tele = builder.build_sequence(["CAPA"] + ["EO"] * 6 + ["CAPB"])
-# CAPA = SITE a only · CAPB = SITE b only
+sites = mp.CGSmilesIR("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
+tele = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
-A single monofunctional label on both ends cannot pair: the second edge would see two `b` sites and no free `a`.
+**Check:** 8 units, 51 atoms, no open port.
 
 ```bash
 cd examples && python topology/06_telechelic.py
@@ -21,5 +20,4 @@ cd examples && python topology/06_telechelic.py
 
 ## See also
 
-- [End-linked network](09_end_linked.md) — mark only CAP residues for crosslinking
-- [Section index](index.md)
+- [Linear](01_linear.md) · [Section index](index.md)

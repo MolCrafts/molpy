@@ -188,12 +188,12 @@ class MrecReader:
         source: str = "",
         request: ReadRequest | None = None,
     ) -> Iterator[dict[str, Any]]:
-        from molpy.io import mrec
+        from molpy.io import read_mrec_trajectory
 
         stride = _stride_of(request)
         limit = _limit_of(request)
         skip = _since_of(request)
-        trajectory = mrec.read_trajectory(path)
+        trajectory = read_mrec_trajectory(path)
 
         series: dict[str, Any] = {}
         for name in ("step", "time"):

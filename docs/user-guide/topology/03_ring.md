@@ -2,17 +2,19 @@
 
 **Script:** [`examples/topology/03_ring.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/03_ring.py)
 
-Ring digits in CGSmiles add one more residue edge. Bifunctional glycol is enough — the closing bond reuses free ends.
+A ring bond closes the path: `{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}` bonds the last unit back to the first.
 
 ```python
-from eo_kit import eo_builder # examples/topology/
-from molpy.builder.assembly import ring_topology
+import molpy as mp
+from eo_kit import library
 
-ring = eo_builder().build_ring("EO", 6)
-# → build(ring_topology(["EO"] * 6))
+sites = mp.CGSmilesIR("{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}").to_coarsegrain()
+ring = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
-**Check:** for this condensation product, bond count equals atom count (one cycle).
+The growth placer lays the ring out as an open chain, so the closing bond starts at whatever distance its two ends grew apart; minimise before use.
+
+**Check:** 6 units, 42 atoms, 42 bonds (one ring), no open port.
 
 ```bash
 cd examples && python topology/03_ring.py
@@ -20,4 +22,4 @@ cd examples && python topology/03_ring.py
 
 ## See also
 
-- [Linear](01_linear.md) · [Section index](index.md)
+- [Star](04_star.md) · [Section index](index.md)

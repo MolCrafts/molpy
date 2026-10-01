@@ -56,12 +56,12 @@ it, analyze or minimize it, then read and write it across formats.
 | Module | Capability |
 |---|---|
 | **`core`** | Explicit data model — editable `Atomistic` topology graph, `Frame`/`Block` columnar arrays, `ForceField`, `Box` |
-| **`parser`** | SMILES / SMARTS (`SmilesIR`, `SmartsPattern`); moltemplate `.lt` reader |
-| **`builder`** | System assembly — polymers, crosslinking, polydispersity, virtual sites, AmberTools facade |
+| **`parser`** | SMILES / SMARTS (`SmilesIR`, `SmartsPattern`) |
+| **`builder`** | System assembly — polymer planning and polydispersity, nanostructures, crystals, virtual sites; site-graph assembly (`mp.Assembler`) is native, on the molpy root |
 | **`conformer`** | 3D coordinate generation (native ETKDG + MMFF cleanup) |
-| **`typifier`** | Atom typing — OPLS-AA, CL&P, MMFF, GAFF via AmberTools |
+| **`typifier`** | Force-field typing — OPLS-AA and MMFF94 (native), GAFF / GAFF2 via AmberTools |
 | **`potential` · `optimize`** | Energy & force potentials with L-BFGS minimization |
-| **`compute`** | Analysis modules under `molpy.compute` — `rdf`/`msd`/`dielectric`/`spectra`/`order`/`voronoi`/… (native kernels) |
+| **`compute`** | Analysis under `molpy.compute` — `rdf`/`msd`/`pmsd`/`jacf`/`order`/`voronoi`/… modules, plus dielectric and vibrational-spectrum classes on the package itself (native kernels) |
 | **`io`** | Read/write — PDB, GRO, LAMMPS data, XYZ, force fields, trajectories, … |
 | **`engine`** | MD input generation & run management — LAMMPS, CP2K, OpenMM |
 | **`wrapper` · `adapter`** | External CLIs (Antechamber, tleap, …) and optional RDKit in-memory bridge |
@@ -77,9 +77,17 @@ pip install molcrafts-molpy
 ```
 
 Core dependencies: NumPy and
-[molrs](https://github.com/MolCrafts/molrs) (`molcrafts-molrs>=0.14.0,<0.15`)
+[molrs](https://github.com/MolCrafts/molrs) (`molcrafts-molrs>=0.15.0,<0.16`)
 plus the MolCrafts logging/config packages. Optional: RDKit (adapter example),
 AmberTools (GAFF charges).
+
+> **Until molrs 0.15.0 is published.** molpy 0.15 needs molrs 0.15, which is
+> not on PyPI yet, so `pip install` cannot resolve it. Install from source
+> instead: clone [molrs](https://github.com/MolCrafts/molrs) next to molpy (the
+> two checkouts side by side in one directory) and run `uv sync` in molpy (see
+> *Install from source (development)* below). `uv` builds molrs from the sibling checkout
+> named in `[tool.uv.sources]`; `pip` ignores that path source, so it does not
+> work for this step.
 
 > **Nightly builds.** Bleeding-edge snapshots are published to the separate
 > project `molcrafts-molpy-nightly` (versioned `X.Y.Z.devN`) on every push to
@@ -91,6 +99,7 @@ AmberTools (GAFF charges).
 <summary>Install from source (development)</summary>
 
 ```bash
+git clone https://github.com/MolCrafts/molrs.git   # sibling checkout, see below
 git clone https://github.com/MolCrafts/molpy.git
 cd molpy
 uv sync --extra dev
@@ -121,16 +130,26 @@ Parse a SMILES string, assign OPLS-AA types, and write LAMMPS input files:
 ```python
 import molpy as mp
 
+from pathlib import Path
+
 mol       = mp.SmilesIR("CCO").to_atomistic()     # ethanol from SMILES
-mol3d, _  = mp.Conformer(seed=42).generate(mol)   # 3D coordinates
+mol3d, _  = mp.Conformer(seed=42).generate(mol)   # hydrogens + 3D coordinates
 
-typifier  = mp.typifier.OPLSAATypifier(           # bundled OPLS-AA
-    mp.data.get_forcefield_path("oplsaa.xml")
-)
+typifier  = mp.typifier.OPLSAATypifier()          # carries the OPLS-AA library
 typed     = typifier.typify(mol3d)
+ff        = typifier.forcefield()                 # parameters of the assigned types
 
-mp.io.write_lammps_system("output/", typed.to_frame(), typifier.forcefield())
-# → output/system.data  output/system.ff
+system    = typed.to_frame()
+system.box = mp.Box.cube(30.0)
+system["atoms"]["mol_id"] = mp.Topology.from_frame(system).connected_components() + 1
+
+# the pair cutoff is a run setting: you declare it, molpy never invents one
+ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
+ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
+
+out = Path("output"); out.mkdir(exist_ok=True)
+mp.io.write_lammps_data(out / "system.data", system)
+mp.io.write_lammps_forcefield(out / "system.ff", ff, system)
 ```
 
 More workflows — packed solvent boxes, virtual-site models, polymer chains and

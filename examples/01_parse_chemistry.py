@@ -1,8 +1,9 @@
 """Chemistry notation via molrs (SMILES / SMARTS).
 
 Lark-based BigSMILES / CGSmiles / G-BigSMILES parsers have been removed from
-molpy. Polymer residue topologies are built with
-``molpy.builder.assembly`` helpers (``linear_topology``, ``PolymerBuilder``).
+molpy. A polymer topology is a CGsmiles string: ``mp.CGSmilesIR(...)
+.to_coarsegrain()`` gives the site graph that ``mp.Assembler`` grows (see
+``topology/``).
 """
 
 import molpy as mp

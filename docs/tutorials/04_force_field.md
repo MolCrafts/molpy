@@ -34,10 +34,10 @@ ForceField
 │   ├── BondType "CT-HC"  (k=340.0, r0=1.09)
 │   └── BondType "CT-CT"  (k=268.0, r0=1.529)
 ├── AngleStyle "harmonic"
-│   └── AngleType "HC-CT-HC"  (k=33.0, theta0=107.8)
+│   └── AngleType "HC-CT-HC"  (k=33.0, theta0=1.8815 rad)
 ├── DihedralStyle "opls"
-│   └── DihedralType "HC-CT-CT-HC"  (K1=0.0, K2=0.0, K3=0.3, K4=0.0)
-└── PairStyle "lj126/cut"
+│   └── DihedralType "HC-CT-CT-HC"  (k1=0.0, k2=0.0, k3=0.3, k4=0.0)
+└── PairStyle "lj/cut"
     ├── PairType "CT"  (epsilon=0.066, sigma=3.50)
     └── PairType "HC"  (epsilon=0.030, sigma=2.50)
 ```
@@ -51,38 +51,53 @@ The progression is always: define styles → fill in types → evaluate as poten
 
 Start by creating a `ForceField` and defining atom types. Atom types form the foundation — every bonded or nonbonded interaction references them.
 
+`ff.def_style(category, name)` defines a style and returns its handle; the
+handle's `def_type` defines one type and returns that type's handle.
+Parameters are keywords: numbers go to the numeric parameters, strings
+(`element`, …) to the string ones.
+
 ```python
+import math
+
 import molpy as mp
 
 ff = mp.ForceField(name="tutorial", units="real")
 
 # "full" corresponds to LAMMPS atom_style full (charge + molecule ID per atom)
-atom_style = ff.def_atomstyle("full")
+atom_style = ff.def_style("atom", "full")
 ct = atom_style.def_type("CT", mass=12.011, charge=-0.18, element="C")
-hc = atom_style.def_type("HC", mass=1.008,  charge=0.06,  element="H")
+hc = atom_style.def_type("HC", mass=1.008, charge=0.06, element="H")
 oh = atom_style.def_type("OH", mass=15.999, charge=-0.68, element="O")
 ```
 
-Bond, angle, dihedral, and pair styles follow the same pattern: create the style, then add types with explicit parameter names.
+Bond, angle, dihedral, and pair styles follow the same pattern, with one
+addition: a type between atoms is given its **endpoints** — the atom-type
+handles it connects — right after its name. The name is just a name: building
+it from the endpoints (`"CT-HC"`) is a convention, and it is the label a typed
+`Frame` uses, but molpy never reads endpoints out of it. Parameters are in the
+store units: angles in radians, and harmonic constants in the `½k` convention.
 
 ```python
-bond_style = ff.def_bondstyle("harmonic")
-bond_style.def_type(ct, hc, k=340.0, r0=1.09)
-bond_style.def_type(ct, ct, k=268.0, r0=1.529)
-bond_style.def_type(ct, oh, k=320.0, r0=1.41)
+bond_style = ff.def_style("bond", "harmonic")
+bond_style.def_type("CT-HC", ct, hc, k=340.0, r0=1.09)
+bond_style.def_type("CT-CT", ct, ct, k=268.0, r0=1.529)
+bond_style.def_type("CT-OH", ct, oh, k=320.0, r0=1.41)
 
-angle_style = ff.def_anglestyle("harmonic")
-angle_style.def_type(hc, ct, hc, k=33.0, theta0=107.8)
+angle_style = ff.def_style("angle", "harmonic")
+angle_style.def_type("HC-CT-HC", hc, ct, hc, k=33.0, theta0=math.radians(107.8))
 
-dihedral_style = ff.def_dihedralstyle("opls")
-dihedral_style.def_type(hc, ct, ct, hc, K1=0.0, K2=0.0, K3=0.3, K4=0.0)
+dihedral_style = ff.def_style("dihedral", "opls")
+dihedral_style.def_type("HC-CT-CT-HC", hc, ct, ct, hc, k1=0.0, k2=0.0, k3=0.3, k4=0.0)
 
-# "lj126/cut" = 12-6 Lennard-Jones with cutoff (LAMMPS: lj/cut)
-pair_style = ff.def_pairstyle("lj126/cut")
-pair_style.def_type(ct, epsilon=0.066, sigma=3.50)
-pair_style.def_type(hc, epsilon=0.030, sigma=2.50)
-pair_style.def_type(oh, epsilon=0.170, sigma=3.12)
+# 12-6 Lennard-Jones (LAMMPS: lj/cut); one self pair per atom type
+pair_style = ff.def_style("pair", "lj/cut")
+pair_style.def_type("CT", ct, epsilon=0.066, sigma=3.50)
+pair_style.def_type("HC", hc, epsilon=0.030, sigma=2.50)
+pair_style.def_type("OH", oh, epsilon=0.170, sigma=3.12)
 ```
+
+`pair_style.def_type(name, itom)` with no second atom type is the self pair of
+`itom`; `pair_style.def_type(name, itom, jtom)` is an explicit cross pair.
 
 At this point the force field is a complete data structure. No numerical kernel has been created yet. Everything is still readable and editable.
 
@@ -104,13 +119,13 @@ print(f"CT-OH: k={bt['k']}, r0={bt['r0']}")
 A full listing of all styles and types gives a global snapshot of the model state.
 
 ```python
-from molpy.core.forcefield import Style, Type
+from molpy import Style, Type
 
 for style in ff.get_styles(Style):
     types = style.get_types(Type)
     print(f"style={style.name!r}  [{len(types)} types]")
     for t in types:
-        params = {k: v for k, v in t.params.kwargs.items()}
+        params = dict(t.params)
         print(f"  {t.name}: {params}")
 ```
 
@@ -125,37 +140,29 @@ print(f"CT-CT k={ct_ct['k']}")
 
 ## Evaluating as Potentials
 
-Evaluation is the first strict integrity test of the model. `ff.to_potentials()`
-returns a *deferred* `Potentials` — it carries no frame yet (`len() == 0`, not
-iterable). To compute numbers you pass a typed `Frame`: an `atoms` block with
-coordinates plus a bonded block (`bonds`, `angles`, …) carrying a `type` column.
-The numerical kernels run in the native Rust core.
+Evaluation is the first strict integrity test of the model.
+`mp.PotentialCompiler(ff)` compiles the force field against a typed `Frame`:
+an `atoms` block with coordinates and a `type` column, plus bonded blocks
+(`bonds`, `angles`, …) whose `type` column names force-field types. The
+numerical kernels run in the native Rust core.
 
 ```python
-import numpy as np
-
 # A minimal frame: two atoms 1.2 Å apart joined by one CT-HC bond.
-frame = mp.Frame()
-atoms = mp.Block()
-atoms.insert("x", np.array([0.0, 1.2]))
-atoms.insert("y", np.array([0.0, 0.0]))
-atoms.insert("z", np.array([0.0, 0.0]))
-frame["atoms"] = atoms
+frame = mp.Frame(
+    blocks={
+        "atoms": {"x": [0.0, 1.2], "y": [0.0, 0.0], "z": [0.0, 0.0], "type": ["CT", "HC"]},
+        "bonds": {"atomi": [0], "atomj": [1], "type": ["CT-HC"]},
+    }
+)
 
-bonds = mp.Block()
-bonds.insert("atomi", np.array([0], dtype=np.uint32))
-bonds.insert("atomj", np.array([1], dtype=np.uint32))
-bonds.insert("type", np.array(["CT-HC"], dtype=str))
-frame["bonds"] = bonds
-
-pots = ff.to_potentials()
+pots = mp.PotentialCompiler(ff).compile(frame)
 energy = pots.calc_energy(frame)
 forces = pots.calc_forces(frame)
 print(f"energy = {energy}")
 print(f"forces =\n{forces}")
 ```
 
-If a referenced type is missing or a required parameter is absent, evaluation
+If a referenced type is missing or a required parameter is absent, compilation
 raises here rather than producing a plausible-but-wrong number.
 
 
@@ -163,32 +170,31 @@ raises here rather than producing a plausible-but-wrong number.
 
 Once the model is internally consistent, serialization becomes an interface problem rather than a modeling problem. The same force field can be rendered into different engine formats without redefining the physics.
 
-### LAMMPS
-
-```python
-import io
-from molpy.io.forcefield import LAMMPSForceFieldWriter
-
-buf = io.StringIO()
-writer = LAMMPSForceFieldWriter(buf, precision=4)
-writer.write(ff)
-print(buf.getvalue())
-```
-
 ### GROMACS
 
 ```python
-from molpy.io.forcefield.top import GromacsForceFieldWriter
-
-GromacsForceFieldWriter("system.itp", precision=4).write(ff)
+mp.io.write_gromacs_forcefield("system.itp", ff, precision=4)
 ```
 
 ### XML
 
 ```python
-from molpy.io.forcefield import XMLForceFieldWriter
+mp.io.write_xml_forcefield("system.xml", ff, precision=6)
+```
 
-XMLForceFieldWriter("system.xml", precision=6).write(ff)
+### LAMMPS
+
+A LAMMPS include holds the coefficients a system uses, so the writer takes the
+typed frame as well: every type label of the frame is looked up in the force
+field by its exact name, and types no label uses are not written. Its
+`pair_style` line needs a cutoff, and a cutoff is a run setting, not a force
+field parameter — so you declare it on the pair style yourself; molpy never
+invents one. (GROMACS keeps its cutoffs in the `.mdp`, so the GROMACS writer
+does not write a style-level cutoff.)
+
+```python
+ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
+print(mp.io.write_lammps_forcefield_str(ff, frame, precision=4))
 ```
 
 

@@ -24,9 +24,8 @@ Every builder follows the same four-step pipeline and exposes one entry point,
 ```python
 import molpy as mp
 from molpy.builder.virtualsite import DrudeBuilder, load_polarizability
-from molpy.conformer import Conformer
 
-struct, _ = Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
+struct, _ = mp.Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
 builder = DrudeBuilder(polarizability=load_polarizability(), drude_prefix="D")
 
 new_struct = builder.apply(struct) # struct: Atomistic -> Atomistic (a copy)
@@ -62,7 +61,7 @@ protocol, a different rule:
 ```python
 from molpy.builder.virtualsite import Tip4pBuilder
 
-water, _ = Conformer(add_hydrogens=True, seed=1).generate(mp.io.read_smiles("O"))
+water, _ = mp.Conformer(add_hydrogens=True, seed=1).generate(mp.io.read_smiles("O"))
 # The M-site carries the oxygen's charge, so the input must already have one.
 for atom in water.atoms:
  atom["charge"] = -0.834 if atom["element"] == "O" else 0.417

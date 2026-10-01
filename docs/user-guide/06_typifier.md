@@ -26,7 +26,7 @@ from molpy.typifier import OPLSAATypifier
 # 1. Build the structure
 mol = mp.io.read_smiles("CCO")
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
-mol.get_topo(gen_angle=True, gen_dihe=True) # angles/dihedrals in place
+mol.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)  # angles/dihedrals in place
 
 print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")
 print(f"angles: {len(mol.angles)}, dihedrals: {len(mol.dihedrals)}")
@@ -37,39 +37,14 @@ atoms: 9, bonds: 8
 angles: 13, dihedrals: 12
 ```
 
-Loading the force field is a separate step from building the structure because the force field is an independent object — it can be shared across multiple molecules, swapped for a different variant, or inspected before any typification takes place. Once the force field is in hand, the typifier is constructed with it and `typify` is called on the molecule.
+The OPLS-AA parameters live in the native core, so there is no force-field file to load: `OPLSAATypifier` carries the whole OPLS-AA library (`typifier.library()`). `typify` assigns the types, and `typifier.forcefield()` then returns exactly the parameters of the types it assigned — the force field of this system, ready to export or compile.
 
 ```python
-# 2. Load force field and typify
-# "oplsaa.xml" is bundled with MolPy — no separate download needed
-ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml"))
+# 2. Typify; the typifier owns the OPLS-AA library
 typifier = OPLSAATypifier(strict=True)
 
 typed_mol = typifier.typify(mol)
-```
-
-```text
-2026-06-30 21:11:37,176 - molpy.io.forcefield.xml - INFO - Using built-in force field: /Users/roykid/work/molcrafts/molpy/src/molpy/data/forcefield/oplsaa.xml
-```
-
-```text
-2026-06-30 21:11:37,181 - molpy.io.forcefield.xml - INFO - Parsing force field: OPLS-AA v0.1.0
-
-2026-06-30 21:11:37,181 - molpy.io.forcefield.xml - INFO - Combining rule: geometric
-
-2026-06-30 21:11:37,187 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types
-
-2026-06-30 21:11:37,188 - molpy.io.forcefield.xml - INFO - Parsed 307 bond types (OPLS-AA with unit conversion)
-
-2026-06-30 21:11:37,190 - molpy.io.forcefield.xml - INFO - Parsed 964 angle types (OPLS-AA with unit conversion)
-
-2026-06-30 21:11:37,192 - molpy.io.forcefield._rb_opls - WARNING - RB coefficients do not lie on the ideal 4-term OPLS manifold (C0+C1+C2+C3+C4 = 10.041600, expected ≈ 0). Conversion will preserve forces and relative energies exactly, but will introduce a constant energy offset of ΔE = 10.041600 kJ/mol. This does not affect MD simulations.
-
-2026-06-30 21:11:37,195 - molpy.io.forcefield.xml - INFO - Parsed 1089 dihedral types (OPLS-AA with unit conversion)
-
-2026-06-30 21:11:37,197 - molpy.io.forcefield.xml - INFO - Parsed 825 nonbonded parameters (OPLS-AA with unit conversion)
-
-2026-06-30 21:11:37,197 - molpy.io.forcefield.xml - INFO - Parsed 825 atom types (by type)
+ff = typifier.forcefield()  # the parameters of the assigned types
 ```
 
 `typify` modifies the structure in-place and returns it — atoms in the returned object carry a `type` key and associated parameters.
@@ -148,21 +123,23 @@ for angle in typed_mol.angles[:3]:
 A typed structure is ready for simulation export. Convert to a `Frame`, attach a box, and write to LAMMPS or GROMACS format.
 
 ```python
-import numpy as np
 from pathlib import Path
 
 frame = typed_mol.to_frame()
-frame.box = mp.Box.cubic(30.0)
+frame.box = mp.Box.cube(30.0)
 
-# mol_id is not set by typifier — add it for LAMMPS full atom style
-atoms = frame["atoms"]
-if "mol_id" not in atoms:
- atoms["mol_id"] = np.ones(atoms.nrows, dtype=int)
+# LAMMPS molecular styles need a molecule ID per atom: one per bonded component
+frame["atoms"]["mol_id"] = mp.Topology.from_frame(frame).connected_components() + 1
 
 outdir = Path("06_output")
 outdir.mkdir(exist_ok=True)
 
-mp.io.write_lammps_system(outdir / "ethanol", frame, ff)
+# the pair cutoff is a run setting: you declare it, molpy never invents one
+ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
+ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
+
+mp.io.write_lammps_data(outdir / "ethanol.data", frame)
+mp.io.write_lammps_forcefield(outdir / "ethanol.ff", ff, frame)
 
 print(f"exported to {outdir}")
 ```
@@ -171,36 +148,34 @@ print(f"exported to {outdir}")
 exported to 06_output
 ```
 
-The `write_lammps_system` convenience function automatically filters the force field to only include types present in the frame, and translates canonical field names (`charge`, `mol_id`) to LAMMPS-specific names (`q`, `mol`) via the formatter system.
+The structure and the coefficients are two files and two calls. `write_lammps_forcefield` looks up every type label the frame uses and writes only those coefficients. OPLS-AA defines no cutoff — a cutoff belongs to the run, not to the force field — so it is declared on the two pair styles before writing. The data writer refuses a bonded frame without `mol_id`: which atoms form a molecule is your decision, and the bond graph's connected components are the usual answer.
 
-## Incremental re-typification at polymer junctions
+## Typing an assembled polymer
 
-When a `molpy.Reaction` forms a new bond between two monomers, the atoms at the junction change their chemical environment. The old atom types, bond types, angle types, and dihedral types at the junction become invalid.
+`mp.Assembler` joins units along a site graph (see [Assembly](02_assembly.md)) and assigns no types. The chain it returns is an ordinary `mp.Atomistic`, so it is typed like any other structure: one `typify` call on the finished molecule. Here the chain is a methyl-capped poly(ethylene oxide) hexamer whose caps close both ends, so no port is left open.
 
-Rather than re-typifying the entire chain after each coupling step, MolPy re-types only the neighbourhood the edit disturbed.
+```python
+units = {"CAPA": "C[>]", "EO": "[<]OCC[>]", "CAPB": "[<]OC"}
+conformer = mp.Conformer(seed=42)
+library = {
+    name: conformer.generate(
+        mp.SmilesIR.from_fragment(body).to_template()
+    )[0]
+    for name, body in units.items()
+}
 
-How wide that neighbourhood is is not a knob on the typifier. `GraphAssembler` is told the `reach` its typifier needs — the number of bonds it must see around an atom before it can name that atom's type — and that single number fixes both radii of the operation. `AffectedRegion.around` extracts a ball of `2 x reach` bonds around each new bond, and only the inner `reach` shell is written back: those are the atoms whose environment actually changed. The outer shell exists solely to give them a correct environment to be typed against. Atoms beyond the inner shell were already right and are left alone.
+sites = mp.CGSmilesIR("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
+chain = mp.Assembler(library, mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
 
-The region completes its own cut valences before any typifier sees it, and that is not a convenience. Because the extracted ball is exactly `interior_reach + reach` wide, an interior atom's receptive field reaches precisely to the boundary atoms — and a raw cut leaves those with unfilled valences, which a SMARTS matcher reads as radicals. Measured on p-xylene at `reach = 2`, 12 of its 19 raw slices cannot be typed at all.
-
-Identical junctions hash to the same key and are typed once, so the number of typing passes tracks the number of *distinct* chemical environments in the system rather than the number of bonds formed. Building a 1000-mer costs about as many typing passes as building a 10-mer.
-
-To enable this, pass the typifier to the builder at construction:
-
-```text
-from molpy.typifier import AmberToolsTypifier
-
-builder = PolymerBuilder(
- MonomerLibrary({"EO": eo}),
- mp.Reaction(ETHER),
- typifier=AmberToolsTypifier(amber),
- reach=2, # GAFF: a 1-2 bond environment names an atom type
- placer=ResiduePlacer(),
-)
-chain = builder.build_linear("EO", 20)
+typed_chain = OPLSAATypifier(strict=True).typify(chain)
+print(f"atoms: {typed_chain.n_atoms}, open ports: {typed_chain.n_ports}")
+print("atom types:", sorted({atom.get("type") for atom in typed_chain.atoms}))
 ```
 
-Omit the typifier and assembly assigns no types at all; typify the finished chain instead. That gives the same answer, at a cost proportional to the whole chain rather than to its junctions.
+```text
+atoms: 51, open ports: 0
+atom types: ['opls_180', 'opls_181', 'opls_182', 'opls_185']
+```
 
 ## When standard force fields are not enough
 
@@ -211,4 +186,4 @@ Standard OPLS-AA covers common organic functional groups. Specialized molecules 
 
 The typifier itself is agnostic to the force field content. It only needs SMARTS patterns and type definitions in the XML. If those are present, it will match them.
 
-See also: [Force Field](../tutorials/04_force_field.md), [Stepwise Polymer Construction](02_assembly.md).
+See also: [Force Field](../tutorials/04_force_field.md), [Assembly](02_assembly.md).

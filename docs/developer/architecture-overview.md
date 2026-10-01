@@ -9,14 +9,14 @@ Each package has one clear responsibility with minimal coupling to its siblings:
 | Package | Purpose |
 |---------|---------|
 | `core` | Graph refs/worlds, `Frame`, `Block`, `Box`, units, force-field surfaces |
-| `parser` | SMILES / SMARTS (`SmilesIR`, `SmartsPattern`); moltemplate `.lt` |
-| `builder` | System assembly: `GraphAssembler`, polymers, crosslinking, virtual sites, AmberTools |
+| `parser` | SMILES / SMARTS (`SmilesIR`, `SmartsPattern`) |
+| `builder` | Polymer planning (sequences, chain-length distributions), nanostructures, crystals, virtual sites, topology finalization; site-graph assembly (`Assembler`, placers, `AxisOrienter`) is native and re-exported on the molpy root |
 | `conformer` | 3D conformer generation |
-| `typifier` | Graph typification: OPLS-AA / MMFF re-exports, CL&P overlays, AmberTools GAFF |
+| `typifier` | Graph typification: the molrs `Typifier` base and native typifiers (OPLS-AA, MMFF94, element) re-exported; `AntechamberTypifier` / `TLeapTypifier` for GAFF through AmberTools |
 | `io` | File I/O: molecular data, trajectories, force-field formats |
 | `compute` | Analysis operators — flat modules under `src/molpy/compute/` (`rdf`, `msd`, `dielectric`, `spectra`, …; molrs kernels) |
 | `engine` | MD abstractions: LAMMPS, CP2K, OpenMM input generation and execution |
-| `wrapper` | Subprocess boundaries to external CLI tools (antechamber, parmchk2, prepgen, tleap) |
+| `wrapper` | Subprocess boundaries to external CLI tools (antechamber, parmchk2, prepgen, tleap, sander) |
 | `adapter` | Optional in-memory bridge (RDKit worked example) |
 | `data` | Bundled package data: force-field XML files, parameter tables |
 
@@ -67,35 +67,22 @@ Readers call `canonicalize()` at exit (format → canonical); writers call `loca
 
 ## The mutation contract
 
-The core data-model API mutates in place and returns `self` (or the created entity) for chaining: `def_atom`, `def_bond`, `get_topo`, `move`, `rotate`, `merge` all modify the structure they are called on. `.copy()` is the explicit opt-in for an independent deep copy. Higher-level helpers in `builder` and `op` follow the opposite convention: they must not mutate caller-owned structures unexpectedly — copy first, or build and return a new structure.
+The core data-model API mutates in place and returns `self` (or the created entity) for chaining: `def_atom`, `def_bond`, `get_topo`, `translate`, `rotate`, `scale`, `merge` all modify the structure they are called on. `.copy()` is the explicit opt-in for an independent deep copy. Higher-level helpers in `builder` and `op` follow the opposite convention: they must not mutate caller-owned structures unexpectedly — copy first, or build and return a new structure.
 
-## Performance model of the build loop
+## Performance model of assembly
 
-Assembly is linear in chain length because the growing graph is never retyped per edit:
+Assembly is one native call and never types anything:
 
-- **Compile before execution** — the selector first yields the complete binding set. The
-  compiler overlays all planned forming bonds on the intact templates and materializes a
-  bounded product motif for every junction. Residue-backed motifs contain whole user-defined
-  monomers, so they do not need artificial graph completion.
-- **Rooted local cache** — an isomorphism key includes the product motif, its chemical scalar
-  labels and the touched root. Identical junctions are typified once, even across builds. A
-  cache value contains scalar per-atom annotations only (`type`, `charge`, pair parameters,
-  etc.); it never copies local angle/dihedral rows into the world.
-- **One batch edit** — `molrs.Reaction.apply_many` resolves every leaving group against the
-  intact graph, deletes their union with one relation-table scan, then executes every planned
-  transform. There is no “grow once, retype the accumulated polymer, repeat” loop.
-- **Explicit finalization** — `Finalization.ATOMS` stops after atom write-back;
-  `Finalization.TOPOLOGY` generates angle/dihedral topology once (the default); and
-  `Finalization.BONDED` additionally runs `ForceFieldParams` once over that topology. Large
-  systems can remain atoms-only until an MD writer needs topology.
-- **Matching once** — the kernel matches the reaction's patterns in O(N) and hands the
-  occurrences to the `Selector`; pairing (the only O(sites^2) step) belongs to the selector
-  that needs it, and `TopologySelector` indexes by residue instead.
-
-
-Nothing per-connection scales with chain length. The compile-first kernel performs
-bounded local work per binding, a single batch reaction, and at most one requested
-whole-graph finalization pass — not O(N²) structure copies for a DP=N chain.
+- **Native build** — `Assembler.assemble` runs in molrs and releases the GIL. It copies
+  one template per site, poses each copy once (placer, then optional orienter), and links
+  every site bond through its two ports. There is no per-bond Python loop and no
+  reaction matching: which ports join is decided from the site graph, not searched for
+  in the growing world.
+- **No retyping during the build** — the world comes back with atoms, bonds and ports
+  only. Typing is a separate, whole-graph step the caller runs once afterwards.
+- **Explicit finalization** — angles and dihedrals are generated once, when needed, by
+  `StructureFinalizer(Finalization.TOPOLOGY)`; `Finalization.ATOMS` keeps a large
+  system atoms-only until an MD writer needs topology.
 
 ## Where extension happens
 

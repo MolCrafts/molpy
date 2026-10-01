@@ -7,27 +7,25 @@ are covered here and in ``test_base.py`` (with mocked ``subprocess``).
 
 from __future__ import annotations
 
-import molrs
 import numpy as np
 import pytest
 
 import molpy.engine as molpy_engine
-from molpy.core.forcefield import AtomStyle, BondStyle, ForceField, PairStyle
+import molpy as mp
+from molpy import ForceField
 from molpy.engine import LAMMPSEngine
 
 _R0 = 1.5  # harmonic bond equilibrium length (Å)
 
 
-def _dimer_system(separation: float = 2.2) -> tuple[molrs.Frame, ForceField]:
+def _dimer_system(separation: float = 2.2) -> tuple[mp.Frame, ForceField]:
     """A neutral C-C dimer (harmonic bond k=300, r0=1.5) and its force field."""
     ff = ForceField("dimer")
-    carbon = ff.def_style(AtomStyle(name="full")).def_type("C", mass=12.011)
-    ff.def_style(BondStyle(name="harmonic")).def_type(carbon, carbon, k=300.0, r0=_R0)
-    ff.def_style(PairStyle(name="lj/cut/coul/cut")).def_type(
-        carbon, carbon, epsilon=0.05, sigma=3.4
-    )
+    c = ff.def_style("atom", "full").def_type("C", mass=12.011)
+    ff.def_style("bond", "harmonic").def_type("C-C", c, c, k=300.0, r0=_R0)
+    ff.def_style("pair", "lj/cut/coul/cut").def_type("C", c, epsilon=0.05, sigma=3.4)
 
-    frame = molrs.Frame(
+    frame = mp.Frame(
         {
             "atoms": {
                 "x": np.array([0.0, separation]),
@@ -45,7 +43,7 @@ def _dimer_system(separation: float = 2.2) -> tuple[molrs.Frame, ForceField]:
             },
         }
     )
-    frame.box = molrs.Box.cube(30.0)
+    frame.box = mp.Box.cube(30.0)
     return frame, ff
 
 

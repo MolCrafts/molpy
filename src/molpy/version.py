@@ -10,8 +10,8 @@ It is called once on ``import molpy`` so a stale major/minor pin surfaces
 immediately.
 """
 
-version = "0.14.0"
-release_date = "2026-08-26"
+version = "0.15.0"
+release_date = "untagged"
 
 
 def _minor_tuple(ver: str) -> tuple[int, int]:
@@ -77,16 +77,6 @@ def check_molrs_version() -> str:
         f"(`pip install 'molcrafts-molrs>={major}.{minor}.0,<{major}.{minor + 1}'`) "
         "or rebuild the editable molrs (`maturin develop` in molrs-python)."
     )
-
-
-def __str__() -> str:
-    """String representation of version."""
-    return version
-
-
-def __repr__() -> str:
-    """Detailed string representation of version."""
-    return f"MolPy version {version} (released {release_date})"
 
 
 # Export version attributes

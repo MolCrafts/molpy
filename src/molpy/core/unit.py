@@ -9,90 +9,22 @@ import molrs
 __all__ = ["UnitSystem"]
 
 
-_LAMMPS_PRESETS: dict[str, dict[str, str]] = {
-    "real": {
-        "mass": "gram_per_mole",
-        "length": "angstrom",
-        "time": "femtosecond",
-        "energy": "kilocalorie_per_mole",
-        "temperature": "kelvin",
-        "charge": "elementary_charge",
-        "pressure": "atmosphere",
-        "velocity": "angstrom / femtosecond",
-        "force": "kilocalorie_per_mole / angstrom",
-        "density": "gram / centimeter ** 3",
-    },
-    "metal": {
-        "mass": "gram_per_mole",
-        "length": "angstrom",
-        "time": "picosecond",
-        "energy": "electron_volt",
-        "temperature": "kelvin",
-        "charge": "elementary_charge",
-        "pressure": "bar",
-        "velocity": "angstrom / picosecond",
-        "force": "electron_volt / angstrom",
-        "density": "gram / centimeter ** 3",
-    },
-    "si": {
-        "mass": "kilogram",
-        "length": "meter",
-        "time": "second",
-        "energy": "joule",
-        "temperature": "kelvin",
-        "charge": "coulomb",
-        "pressure": "pascal",
-        "velocity": "meter / second",
-        "force": "newton",
-        "density": "kilogram / meter ** 3",
-    },
-    "cgs": {
-        "mass": "gram",
-        "length": "centimeter",
-        "time": "second",
-        "energy": "erg",
-        "temperature": "kelvin",
-        "charge": "statcoulomb",
-        "pressure": "dyne / centimeter ** 2",
-        "velocity": "centimeter / second",
-        "force": "dyne",
-        "density": "gram / centimeter ** 3",
-    },
-    "electron": {
-        "mass": "amu",
-        "length": "bohr",
-        "time": "femtosecond",
-        "energy": "hartree",
-        "temperature": "kelvin",
-        "charge": "elementary_charge",
-        "pressure": "pascal",
-        "velocity": "bohr / femtosecond",
-        "force": "hartree / bohr",
-    },
-    "micro": {
-        "mass": "picogram",
-        "length": "micrometer",
-        "time": "microsecond",
-        "energy": "picogram * micrometer ** 2 / microsecond ** 2",
-        "temperature": "kelvin",
-        "charge": "picocoulomb",
-        "pressure": "picogram / (micrometer * microsecond ** 2)",
-        "velocity": "micrometer / microsecond",
-        "force": "picogram * micrometer / microsecond ** 2",
-        "density": "picogram / micrometer ** 3",
-    },
-    "nano": {
-        "mass": "attogram",
-        "length": "nanometer",
-        "time": "nanosecond",
-        "energy": "attogram * nanometer ** 2 / nanosecond ** 2",
-        "temperature": "kelvin",
-        "charge": "elementary_charge",
-        "pressure": "attogram / (nanometer * nanosecond ** 2)",
-        "velocity": "nanometer / nanosecond",
-        "force": "attogram * nanometer / nanosecond ** 2",
-        "density": "attogram / nanometer ** 3",
-    },
+# The LAMMPS unit styles are the native ``UnitPreset``'s; molpy reads their base
+# units from it and owns only the presets the native core does not define.
+_NATIVE_PRESETS = ("real", "metal", "si", "cgs", "electron", "micro", "nano")
+_DIMENSIONS = (
+    "mass",
+    "length",
+    "time",
+    "energy",
+    "temperature",
+    "charge",
+    "pressure",
+    "velocity",
+    "force",
+    "density",
+)
+_EXTRA_PRESETS: dict[str, dict[str, str]] = {
     "openmm": {
         "mass": "gram_per_mole",
         "length": "nanometer",
@@ -137,18 +69,21 @@ class UnitSystem(molrs.UnitRegistry):
     @classmethod
     def preset(cls, name: str, **overrides: str) -> Self:
         """Create a unit system from a LAMMPS unit-style preset."""
-        try:
-            preset = _LAMMPS_PRESETS[name]
-        except KeyError as exc:
+        if name in _EXTRA_PRESETS:
+            preset = _EXTRA_PRESETS[name]
+        elif name in _NATIVE_PRESETS:
+            native = molrs.UnitPreset(name)
+            preset = {dim: getattr(native, dim)() for dim in _DIMENSIONS}
+        else:
             raise ValueError(
-                f"unknown preset {name!r}; available: {sorted(_LAMMPS_PRESETS)}"
-            ) from exc
+                f"unknown preset {name!r}; available: {sorted(cls.preset_names())}"
+            )
         return cls(base_units={**preset, **overrides})
 
     @classmethod
     def preset_names(cls) -> tuple[str, ...]:
         """Return registered preset names."""
-        return tuple(_LAMMPS_PRESETS)
+        return (*_NATIVE_PRESETS, *_EXTRA_PRESETS)
 
     @classmethod
     def register_preset(
@@ -161,11 +96,11 @@ class UnitSystem(molrs.UnitRegistry):
         """Register a custom base-unit mapping."""
         if not isinstance(base_units, dict) or not base_units:
             raise TypeError("base_units must be a non-empty dict[str, str]")
-        if name in _LAMMPS_PRESETS and not overwrite:
+        if name in cls.preset_names() and not overwrite:
             raise ValueError(
                 f"preset {name!r} already exists; pass overwrite=True to replace it"
             )
-        _LAMMPS_PRESETS[name] = dict(base_units)
+        _EXTRA_PRESETS[name] = dict(base_units)
 
     @classmethod
     def lj(

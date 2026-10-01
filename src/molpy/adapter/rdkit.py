@@ -1,6 +1,6 @@
 """RDKit adapter for MolPy.
 
-Bidirectional synchronisation between an :class:`~molpy.core.atomistic.Atomistic`
+Bidirectional synchronisation between an :class:`~molpy.Atomistic`
 and an :class:`rdkit.Chem.Mol`. RDKit is an optional dependency.
 
 The two representations are joined by one integer tag, :data:`MP_ID`, stored
@@ -22,7 +22,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 from molpy.core import fields
-from molpy.core.atomistic import Atomistic
+from molrs import Atomistic
 
 from .base import Adapter
 
@@ -110,7 +110,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
     ) -> Atomistic:
         """Add hydrogens, embed 3D coordinates, and optimize geometry via RDKit.
 
-        Returns a new :class:`~molpy.core.atomistic.Atomistic` with coordinates;
+        Returns a new :class:`~molpy.Atomistic` with coordinates;
         this adapter is not mutated. For molpy's native (native) embedder, use
         :class:`molpy.conformer.Conformer` instead.
         """
@@ -251,7 +251,11 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
         cols = atomistic.columns()
         if not any(k in cols for k in (fields.X, fields.Y, fields.Z)):
             return None
-        return atomistic.xyz
+        # ``column`` raises on a hole; ``atoms["x", "y", "z"]`` would yield None.
+        return np.stack(
+            [np.asarray(atomistic.column(k)) for k in (fields.X, fields.Y, fields.Z)],
+            axis=1,
+        )
 
     # ------------------------------------------------------------------
     #  Mol -> Atomistic
@@ -317,7 +321,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
         by_tag = dict(
             zip(
                 (int(t) for t in atomistic.column(MP_ID)),
-                atomistic.entities(),
+                atomistic.atoms,
                 strict=True,
             )
         )
@@ -330,26 +334,24 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
         for idx, rd_atom in enumerate(mol.GetAtoms()):
             tag = self._tag_of(rd_atom)
             position = positions[idx] if positions is not None else None
-            handle = by_tag.get(tag) if tag >= 0 else None
-            if handle is None:
+            atom = by_tag.get(tag) if tag >= 0 else None
+            if atom is None:
                 if tag < 0:
                     tag = next_tag
                     next_tag += 1
                     rd_atom.SetIntProp(MP_ID, tag)
                 atom = atomistic.def_atom(**self._atom_props(rd_atom, tag, position))
-                by_tag[tag] = atom.handle
+                by_tag[tag] = atom
                 atom_of_rd.append(atom)
                 continue
 
-            atomistic.set(handle, fields.ELEMENT, rd_atom.GetSymbol())
+            atom[fields.ELEMENT] = rd_atom.GetSymbol()
             charge = rd_atom.GetFormalCharge()
-            if charge != 0 or atomistic.get(handle, FORMAL_CHARGE) is not None:
-                atomistic.set(handle, FORMAL_CHARGE, charge)
+            if charge != 0 or FORMAL_CHARGE in atom:
+                atom[FORMAL_CHARGE] = charge
             if position is not None:
-                atomistic.set(handle, fields.X, float(position[0]))
-                atomistic.set(handle, fields.Y, float(position[1]))
-                atomistic.set(handle, fields.Z, float(position[2]))
-            atom_of_rd.append(atomistic._intern_node(handle))
+                atom[fields.X, fields.Y, fields.Z] = (float(v) for v in position)
+            atom_of_rd.append(atom)
 
         if update_topology:
             existing = list(atomistic.bonds)

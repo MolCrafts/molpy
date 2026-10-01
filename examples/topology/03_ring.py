@@ -1,20 +1,20 @@
-"""T4 — Macrocycle: build_ring → closed residue cycle.
+"""Macrocycle: six EO units closed into a ring.
 
 Guide: docs/user-guide/topology/03_ring.md
 Run:   python topology/03_ring.py
+
+The growth placer lays the ring out as an open chain; the closing bond joins
+its two ends at whatever distance they grew to, and a minimisation closes it.
 """
 
-from eo_kit import eo_builder, report
+import molpy as mp
+from eo_kit import library, report
 
 
 def main() -> None:
-    builder = eo_builder()
-    ring = builder.build_ring("EO", 6)
+    sites = mp.CGSmilesIR("{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}").to_coarsegrain()
+    ring = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
     report("ring-6", ring)
-    # cyclic: as many bonds as atoms for this simple condensation product
-    print(
-        f"  cyclic bond/atom check: {len(list(ring.bonds))} bonds / {ring.n_atoms} atoms"
-    )
 
 
 if __name__ == "__main__":

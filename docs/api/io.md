@@ -1,6 +1,8 @@
 # I/O
 
 File readers and writers for molecular data, force fields, and trajectories.
+Every name is a function on `mp.io`; most are the native core's own readers and
+writers, re-exported by identity.
 
 ## Quick reference
 
@@ -10,37 +12,55 @@ File readers and writers for molecular data, force fields, and trajectories.
 |----------|--------|-----------|
 | `read_pdb` / `write_pdb` | PDB | read/write |
 | `read_lammps_data` / `write_lammps_data` | LAMMPS data | read/write |
+| `read_lammps_molecule` / `write_lammps_molecule` | LAMMPS molecule template | read/write |
 | `read_gro` / `write_gro` | GROMACS GRO | read/write |
-| `read_mol2` | MOL2 | read |
-| `read_xyz` | XYZ | read |
-| `XsfReader` / `XsfWriter` | XSF (crystallographic) | read/write |
+| `read_top` / `write_top` | GROMACS topology (structure) | read/write |
+| `read_mol2` / `write_mol2` | MOL2 | read/write |
+| `read_xyz` / `write_xyz` | XYZ | read/write |
+| `read_xsf` / `write_xsf` | XSF (crystallographic) | read/write |
+| `read_cube` / `write_cube` | Gaussian Cube | read/write |
+| `read_chgcar` | VASP CHGCAR | read |
 | `read_amber_inpcrd` | AMBER inpcrd | read |
+| `read_amber_ac` | Antechamber AC | read |
+| `read_smiles` / `write_smarts` | SMILES / local SMARTS | read / write |
 
 ### Force fields
 
 | Function | Format | Direction |
 |----------|--------|-----------|
-| `read_xml_forcefield` | OpenMM/OPLS XML | read |
-| `XMLForceFieldWriter` | OpenMM/OPLS XML | write |
-| `read_lammps_forcefield` | LAMMPS `*.ff` include | read |
-| `write_lammps_forcefield` / `LAMMPSForceFieldWriter` | LAMMPS `*.ff` include | write (engine units → LAMMPS `real`) |
-| `GromacsForceFieldWriter` | GROMACS.itp | write |
-| `read_amber` | AMBER prmtop + inpcrd | read |
+| `read_xml_forcefield` / `write_xml_forcefield` | OpenMM/OPLS XML | read/write |
+| `read_lammps_forcefield` / `write_lammps_forcefield` | LAMMPS `*.ff` include | read/write (engine units ↔ LAMMPS `real`) |
+| `read_lammps_data_coeffs` / `write_lammps_data_coeffs` | LAMMPS data `* Coeffs` | read/write |
+| `read_gromacs_forcefield` / `write_gromacs_forcefield` | GROMACS `.top` / `.itp` directives | read/write |
+| `read_amber` | AMBER prmtop (+ inpcrd) | read |
 
 ### Trajectories
 
 | Function | Format | Direction |
 |----------|--------|-----------|
-| `read_lammps_trajectory` | LAMMPS dump | read (lazy) |
-| `read_xyz_trajectory` | XYZ trajectory | read (lazy) |
+| `read_lammps_trajectory` / `write_lammps_trajectory` | LAMMPS dump | read (lazy) / write |
+| `write_lammps_dump_local` | LAMMPS dump local (bonds) | write |
+| `read_xyz_trajectory` / `write_xyz_trajectory` | XYZ trajectory | read (lazy) / write |
+| `read_pdb_trajectory` / `write_pdb_trajectory` | Multi-MODEL PDB | read (list) / write |
+| `read_gro_trajectory` / `write_gro_trajectory` | Multi-frame GRO | read (list) / write |
+| `read_dcd_trajectory` / `write_dcd_trajectory` | DCD | read (lazy) / write |
+| `read_trr_trajectory` / `write_trr_trajectory` | GROMACS TRR | read (lazy) / write |
+| `read_xtc_trajectory` / `write_xtc_trajectory` | GROMACS XTC | read (lazy) / write |
+| `read_mrec_trajectory` / `write_mrec_trajectory` | mrec store | read / write (whole trajectory) |
 | `mrec.TrajectoryReader` | mrec store | read (lazy cursor) |
 | `mrec.TrajectoryWriter` | mrec store | write (append-first) |
+
+Names pair: `read_X` / `write_X` for one frame, `read_X_trajectory` /
+`write_X_trajectory` for a sequence. One-frame mrec stores use `read_mrec` /
+`write_mrec` (snapshot) and `read_mrec_system` / `write_mrec_system`
+(topology); `read_mrec_meta(path)` reads a store's identity document and
+`mrec_sections(path)` lists what a store holds.
 
 ### Logs
 
 | Function | Format | Direction |
 |----------|--------|-----------|
-| `read_lammps_log` | LAMMPS log | read |
+| `read_lammps_log` / `parse_lammps_log_text` | LAMMPS log | read |
 
 ## Canonical examples
 
@@ -50,29 +70,24 @@ import molpy as mp
 
 # Read/write structure
 frame = mp.io.read_pdb("molecule.pdb")
-mp.io.write_lammps_data("system.data", frame, atom_style="full")
+mp.io.write_lammps_data("system.data", frame)
 
 # Read force field (XML or LAMMPS *.ff)
-ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("oplsaa.xml"))
+ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("tip3p.xml"))
 ff = mp.io.read_lammps_forcefield("system.ff")
 
-# Write LAMMPS *.ff (; optional type filter)
-mp.io.write_lammps_forcefield("system.ff", ff)
-from molpy.io.forcefield import LAMMPSForceFieldWriter
-LAMMPSForceFieldWriter("system.ff").write(ff, atom_types={"CT", "HC"})
+# Write the LAMMPS coefficients the frame's type labels use
+mp.io.write_lammps_forcefield("system.ff", ff, frame)
 
 # Read trajectory (lazy)
 traj = mp.io.read_lammps_trajectory("dump.lammpstrj")
 for frame in traj:
- process(frame)
+    process(frame)
 
 # Read LAMMPS run output
 log = mp.io.read_lammps_log("log.lammps")
 thermo = log.runs[0].thermo
 print(thermo.columns)
-
-# Write full LAMMPS system (data + ff)
-mp.io.write_lammps_system("output_dir", frame, ff)
 ```
 
 ## Related
@@ -84,81 +99,19 @@ mp.io.write_lammps_system("output_dir", frame, ff)
 
 ## Full API
 
-### Factory Functions
+### Readers molpy owns
 
 ::: molpy.io.readers
- options:
- members: true
- filters:
- - "!^Base"
+
+### Writers molpy owns
 
 ::: molpy.io.writers
- options:
- members: true
 
-### ForceField Modules
+### LAMMPS data files
 
-#### Base
-::: molpy.io.forcefield.base
-
-#### LAMMPS
-::: molpy.io.forcefield.lammps
-
-#### XML
-::: molpy.io.forcefield.xml
-
-#### GROMACS Topology
-::: molpy.io.forcefield.top
-
-#### AMBER
-::: molpy.io.forcefield.amber
-
-### Data Modules
-
-#### LAMMPS
 ::: molpy.io.data.lammps
-::: molpy.io.data.lammps_molecule
 ::: molpy.io.data.lammps_bond_react
 
-#### PDB
-::: molpy.io.data.pdb
+### mrec (scientific record stores)
 
-#### GRO
-::: molpy.io.data.gro
-
-#### Mol2
-::: molpy.io.data.mol2
-
-#### Amber
-::: molpy.io.data.amber
-
-#### AC
-::: molpy.io.data.ac
-
-#### Top
-::: molpy.io.data.top
-
-#### XYZ
-::: molpy.io.data.xyz
-
-#### XSF
-::: molpy.io.data.xsf
-
-### Trajectory Modules
-
-#### Base
-::: molpy.io.trajectory.base
-
-#### LAMMPS
-::: molpy.io.trajectory.lammps
-
-#### XYZ
-::: molpy.io.trajectory.xyz
-
-#### mrec (scientific record stores)
 ::: molpy.io.mrec
-
-### Log Modules
-
-#### LAMMPS
-::: molpy.io.log

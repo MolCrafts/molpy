@@ -53,7 +53,7 @@ Subclass `Adapter[InternalT, ExternalT]` from `molpy.adapter.base`. Implement `_
 
 ```python
 from molpy.adapter.base import Adapter
-from molpy.core.atomistic import Atomistic
+from molpy import Atomistic
 
 class AseAdapter(Adapter[Atomistic, "ase.Atoms"]):
     """Sync between MolPy Atomistic and ASE Atoms."""

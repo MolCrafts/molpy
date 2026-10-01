@@ -2,12 +2,32 @@
 
 Trajectory and structure analyses. Import with `from molpy.compute import...`.
 
-Numerical kernels live in the high-performance backend. The public types are identity-style for a stable Python import path — there is no second science
-implementation in molpy. Compose **raw Computes** with **Fits** (and an optional
-SI scale) the same way the Rust API does.
+Numerical kernels live in the native backend, and there is no second science
+implementation in molpy. Every public name on `molpy.compute` is the backend
+class or function re-exported by identity
+(`molpy.compute.RDF is molrs.compute.density.RDF`); molpy adds no wrapper.
+Pair-based analyses take neighbour tables built with the core
+`mp.NeighborList` (`nl.build(frame.coords, frame.box)`, then
+`nl.neighbors()`).
+
+Compose **raw Computes** with **Fits** (and an optional SI scale) yourself. The
+all-in-one recipe classes (`IonicConductivity`, `DielectricSusceptibility`, and
+their `ConductivityResult` / `DielectricSusceptibilityResult`) that used to wrap
+that pipeline in one call were removed in 0.15 — they buried the fit window and
+the unit conversion in a library default. Compose `EinsteinConductivity` →
+`LinearFit` → your own prefactor, as the [PMSD](../compute/pmsd.md) and
+[Dielectric](../compute/dielectric.md) pages show.
+
+!!! warning "Time unit when migrating from `IonicConductivity`"
+    `IonicConductivity` took its frame spacing `dt` in **picoseconds**. The
+    composed route works in **femtoseconds**: pass `dt` in fs to
+    `EinsteinConductivity().compute(...)`, and the S/m prefactor on the
+    [PMSD](../compute/pmsd.md) page ($3.0988\times10^{9}$) assumes a slope in
+    $e^2\,\text{Å}^2\,\text{fs}^{-1}$. Reusing an old picosecond `dt` makes the
+    lag axis 1000× too short and the conductivity 1000× too large..
 
 Like freud’s [API modules](https://freud.readthedocs.io/en/stable/), each
-`molpy.compute` module has its own page under [Compute](../compute/index.md)
+analysis family has its own page under [Compute](../compute/index.md)
 with an overview table and full signatures. This page is the **index** plus the
 shared contract / result types.
 
@@ -23,51 +43,44 @@ shared contract / result types.
 |-------|------|----------|
 | Raw Compute | Correlation / MSD / ACF curve only | `EinsteinConductivity`, `GreenKuboConductivity`, `DebyeRelaxation`, `MSD` |
 | Fit | Integrate or slope-fit the curve | `CumulativeTrapezoid`, `LinearFit`, `DebyeFit`, `EinsteinHelfandSpectrum`, `GreenKuboSpectrum` |
-| Scale | MD → SI prefactor in your script | $1/(6 V k_B T)$, $1/(3 V k_B T)$, $1/d$ |
-
-Two all-in-one recipe classes do exist today — `IonicConductivity` and
-`DielectricSusceptibility`, both in `molpy.compute.dielectric` — and both
-**violate** the three-layer rule above: a single call unwraps the trajectory,
-collects the dipole series, runs the raw Compute, fits the slope *and* applies
-the SI prefactor, so the fit window and the unit conversion that decide the
-published number are buried in a library default instead of being visible in
-your script. They are routed to a `/mol:refactor` that will split them into
-primitives and delete the façade. **Do not use them in new code**: compose
-`EinsteinConductivity` → `LinearFit` → your own prefactor, as the
-[PMSD](../compute/pmsd.md) and [Dielectric](../compute/dielectric.md) pages
-show.
+| Scale | MD → SI prefactor in your script | $1/(6 V k_B T)$ (Einstein conductivity), $1/(3 V k_B T)$ (Green–Kubo conductivity), $1/(2d)$ (self-diffusion from an MSD slope in $d$ dimensions, so $1/6$ in 3D) |
 
 Self-diffusion uses `MSD` (Einstein) and `Acf` / `signal.acf_fft` (Green–Kubo);
 see the [MSD](../compute/msd.md) and [VACF](../compute/vacf.md) guides.
 
-## Module index
+## Family index
 
-| Module | Primary exports | Guide |
+| Family | Exports on `molpy.compute` | Guide |
 |--------|-----------------|-------|
-| `neighborlist` | `NeighborList` | [NeighborList](../compute/neighborlist.md) |
-| `rdf` | `RDF` | [RDF](../compute/rdf.md) |
-| `density` | `LocalDensity`, `GaussianDensity` | [Density](../compute/density.md) |
-| `diffraction` | `StaticStructureFactorDebye` | [Diffraction](../compute/diffraction.md) |
-| `pmft` | `PMFTXY` | [PMFT](../compute/pmft.md) |
-| `distribution` | distance / angle / dihedral / combined DF | [Distribution](../compute/distribution.md) |
-| `spatial` | `SpatialDistribution` | [Spatial](../compute/spatial.md) |
-| `order` | Steinhardt family | [Order](../compute/order.md) |
-| `environment` | `BondOrder` | [Environment](../compute/environment.md) |
-| `shape` | COM, gyration, inertia, $R_g$ | [Shape](../compute/shape.md) |
-| `cluster` | `Cluster`, `ClusterCenters`, `ClusterProperties` | [Cluster](../compute/cluster.md) |
-| `decomposition` | `DescriptorRow`, `Pca`, `KMeans` | [Decomposition](../compute/decomposition.md) |
-| `hbond` | `HBonds`, `HBondCriterion` | [HBond](../compute/hbond.md) |
-| `voronoi` | radical Voronoi tessellation | [Voronoi](../compute/voronoi.md) |
-| `msd` | `MSD` | [MSD](../compute/msd.md) |
-| `pmsd` | `EinsteinConductivity` | [PMSD](../compute/pmsd.md) |
-| `jacf` | `GreenKuboConductivity` | [JACF](../compute/jacf.md) |
-| `onsager` | `Onsager` | [Onsager](../compute/onsager.md) |
-| `persist` | `Persist` | [Persist](../compute/persist.md) |
-| `van_hove` | `VanHove` | [Van Hove](../compute/van_hove.md) |
-| `reorientation` | `LegendreReorientation` | [Reorientation](../compute/reorientation.md) |
-| `dielectric` | dielectric raw/fit helpers | [Dielectric](../compute/dielectric.md) |
-| `spectra` | VDOS / IR / Raman / VCD / ROA | [Spectra](../compute/spectra.md) |
+| neighbour search | `mp.NeighborList`, `mp.Neighbors` (core, not on `molpy.compute`) | [NeighborList](../compute/neighborlist.md) |
+| rdf | `RDF` | [RDF](../compute/rdf.md) |
+| density | `LocalDensity`, `GaussianDensity` | [Density](../compute/density.md) |
+| diffraction | `StaticStructureFactorDebye` | [Diffraction](../compute/diffraction.md) |
+| pmft | `PMFTXY` | [PMFT](../compute/pmft.md) |
+| distribution | distance / angle / dihedral / combined DF | [Distribution](../compute/distribution.md) |
+| spatial | `SpatialDistribution` | [Spatial](../compute/spatial.md) |
+| order | Steinhardt family | [Order](../compute/order.md) |
+| environment | `BondOrder` | [Environment](../compute/environment.md) |
+| shape | COM, gyration, inertia, $R_g$ | [Shape](../compute/shape.md) |
+| cluster | `Cluster`, `ClusterCenters`, `ClusterProperties` | [Cluster](../compute/cluster.md) |
+| decomposition | `DescriptorRow`, `Pca2`, `KMeans` | [Decomposition](../compute/decomposition.md) |
+| hbond | `HBonds`, `HBondCriterion` | [HBond](../compute/hbond.md) |
+| voronoi | radical Voronoi tessellation | [Voronoi](../compute/voronoi.md) |
+| msd | `MSD` | [MSD](../compute/msd.md) |
+| pmsd | `EinsteinConductivity` | [PMSD](../compute/pmsd.md) |
+| jacf | `GreenKuboConductivity` | [JACF](../compute/jacf.md) |
+| onsager | `Onsager` | [Onsager](../compute/onsager.md) |
+| persist | `Persist` | [Persist](../compute/persist.md) |
+| van hove | `VanHove` | [Van Hove](../compute/van_hove.md) |
+| reorientation | `LegendreReorientation` | [Reorientation](../compute/reorientation.md) |
 | `signal` | `acf_fft`, windows, frequency grid | [Signal](../compute/signal.md) |
+
+Two more families:
+
+| Family | Exports on `molpy.compute` | Guide |
+|--------|----------------------------|-------|
+| Dielectric response | `Dielectric`, `DebyeRelaxation`, `DebyeFit`, `EinsteinHelfandSpectrum`, `GreenKuboSpectrum` | [Dielectric](../compute/dielectric.md) |
+| Vibrational spectra | `PowerSpectrum` (VDOS), `IRSpectrum`, `RamanSpectrum`, `ResonanceRamanSpectrum`, `VcdSpectrum`, `RoaSpectrum` | [Spectra](../compute/spectra.md) |
 
 ---
 
@@ -83,7 +96,3 @@ Writing one is covered in
 [Adding a Compute Operation](../developer/extending-compute.md).
 
 ::: molpy.compute.Compute
-
-### Result types
-
-::: molpy.compute.result

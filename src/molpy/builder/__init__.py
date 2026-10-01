@@ -1,26 +1,25 @@
 """System assembly — start here.
 
-Polymer construction composes the real engine classes directly (there is
-no ``polymer()`` dispatcher): prepare monomers with
-``SmilesIR`` / :func:`molpy.io.read_smiles`,
-mark the atoms that may react with ``fields.SITE``, then
-:meth:`PolymerBuilder.build` a CGSmiles string. Crosslinking is the same
-kernel with a different :class:`Selector`. Polydisperse systems drive
-:class:`PolymerBuilder` from the distribution + :class:`SystemPlanner`
-primitives. See :mod:`molpy.builder.assembly` for the full recipe.
+Polymer and backmap construction compose native primitives, re-exported on
+the ``molpy`` root: coarse-grain a structure into a site graph
+(:class:`molpy.SubgraphMatcher`, :class:`molpy.Coarsener`), then build one
+template copy per site with :class:`molpy.Assembler`
+(:class:`molpy.SitePlacer` + :class:`molpy.AxisOrienter`). Polydisperse
+systems plan chains with the distribution + :class:`SystemPlanner`
+primitives here.
+
+A built molecule goes to a packer through :class:`PackingTemplate`: its
+frame plus the indices of its hydrogens.
 
 Crystal construction goes through :meth:`Lattice.build` with
-:class:`Lattice` / :class:`Site`. AmberTools-backed polymer builds use
-:class:`AmberPolymerBuilder`. Nanostructures expose direct ``build`` methods;
-their compile/cache details remain internal.
+:class:`Lattice` / :class:`Site`. Nanostructures expose direct ``build``
+methods; their compile/cache details remain internal.
 """
 
-from molpy.core.region import BoxRegion, Cube, Region, SphereRegion
-
 from ._finalize import Finalization, StructureFinalizer
-from .ambertools import AmberResult, AmberTools
 from .crystal import Lattice, Site, SpaceGroup
 from .nanostructure import CarbonTubeBuilder, GrapheneBuilder
+from .packing import PackingTemplate
 from .polymer import (
     AlternatingSequenceGenerator,
     BlockSequenceGenerator,
@@ -37,24 +36,6 @@ from .polymer import (
     UniformPolydisperse,
     WeightedSequenceGenerator,
 )
-from .assembly import (
-    AssemblyFinalizer,
-    Placer,
-    PolymerBuilder,
-    ResiduePlacer,
-    ExhaustiveSelector,
-    ExplicitPairSelector,
-    GraphAssembler,
-    MonomerLibrary,
-    ProximitySelector,
-    RandomSelector,
-    Replicas,
-    Selector,
-    SiteMap,
-    SpacingSelector,
-    TopologySelector,
-)
-from .polymer.ambertools import AmberPolymerBuilder
 from .virtualsite import (
     DrudeBuilder,
     Tip4pBuilder,
@@ -63,18 +44,10 @@ from .virtualsite import (
 )
 
 __all__ = [
-    # AmberTools builders
-    "AmberPolymerBuilder",
-    "AmberTools",
-    "AmberResult",
     # Crystal builders
-    "BoxRegion",
-    "Cube",
     "Lattice",
-    "Region",
     "Site",
     "SpaceGroup",
-    "SphereRegion",
     # Nanostructure builders
     "CarbonTubeBuilder",
     "GrapheneBuilder",
@@ -98,22 +71,9 @@ __all__ = [
     "DrudeBuilder",
     "Tip4pBuilder",
     "load_polarizability",
-    # Assembly: one kernel, one selector family
-    "GraphAssembler",
-    "AssemblyFinalizer",
+    # Packing input
+    "PackingTemplate",
+    # Finalization
     "StructureFinalizer",
     "Finalization",
-    "PolymerBuilder",
-    "Placer",
-    "ResiduePlacer",
-    "MonomerLibrary",
-    "Selector",
-    "TopologySelector",
-    "ProximitySelector",
-    "ExhaustiveSelector",
-    "SpacingSelector",
-    "ExplicitPairSelector",
-    "RandomSelector",
-    "SiteMap",
-    "Replicas",
 ]

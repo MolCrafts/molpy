@@ -1,352 +1,209 @@
 # Assembly
 
-Growing a polymer from a monomer, crosslinking a relaxed melt into a network, and closing
-a chain into a macrocycle are three different jobs. You reach for them at different points
-in a study, and they answer different questions. What they have in common is not the job —
-it is what MolPy needs you to say in order to do it.
+Assembly builds a molecule, or a whole system, by joining copies of small units along a
+**site graph**: one site per unit, one bond per join. The same call grows a chain from a
+CGsmiles string and backmaps a coarse-grained (CG) model onto all-atom detail; only where
+the sites come from, and how each copy is posed, differ.
 
-## Different jobs, the same three inputs
+Three things go in:
 
-Whatever you are building, MolPy asks for the same three things.
+1. **Units** — molecules that carry **ports**, the places where they may bond.
+2. **A topology** — an `mp.CoarseGrain` whose beads name units and whose bonds say which units join.
+3. **A placer** (and optionally an **orienter**) — the rule that gives each copy its pose.
 
-**Which atoms are allowed to react.** You mark them on the molecule, by name.
+`mp.Assembler` puts them together. The per-architecture walk-through (linear, block, ring,
+star, comb, telechelic) is the [Polymer Topologies](topology/index.md) section; this page
+explains the pieces.
 
-**What the reaction does.** You write it once, as a reaction SMARTS.
+## Units carry ports
 
-**Which marked sites actually pair up.** A chain pairs each monomer with the next. A
-crosslinker pairs sites that happen to be close in space. A macrocycle pairs the two ends
-of something already connected.
-
-Only the third input differs between the three jobs, and MolPy makes that literal: one
-assembler does the work, and you hand it a **selector** that answers only that question.
-`TopologySelector` pairs by chain adjacency. `RandomSelector` pairs within a distance cutoff.
-You can write one that pairs whatever you like. Everything downstream of that choice — compiling
-the possible local products, editing the graph once, and optionally finalizing topology — is one
-code path you never touch.
-
-## Assembly is compile, execute, finalize
-
-**An assembler selects every reaction first, compiles its local product against intact
-monomer templates, executes the full reaction batch, and only then performs the requested
-whole-system finalization.**
-
-This order is the performance contract. The thousandth bond is never followed by a retype of
-the thousand-monomer graph. Before any real edit, MolPy overlays all planned forming bonds,
-extracts bounded motifs around them, and runs the typifier only for distinct rooted motifs.
-For a `PolymerBuilder`, each motif expands to complete user-defined residues: a dimer or short
-oligomer stays a chemically complete molecule, so no artificial completion of a cut monomer is
-needed. A generic atom-level `GraphAssembler` cut is completed only at the outer context shell.
-
-The cached result contains scalar per-atom information only — atom type, charge, class, and pair
-parameters. It deliberately contains no bond, angle, dihedral, or improper rows. After the real
-`Reaction.apply_many` batch has formed every bond, those per-atom values are replayed by stable
-atom handle. Overlapping motifs must agree; disagreement means the declared `reach` was too
-small and raises instead of making write order decide the answer.
-
-Topology is a separate tail:
-
-- `Finalization.ATOMS` leaves bonds and per-atom force-field data only.
-- `Finalization.TOPOLOGY` (the default) generates complete angles and dihedrals once.
-- `Finalization.BONDED` additionally assigns their force-field types through
-  `ForceFieldParams`.
-
-This lets a very large system defer topology until its MD writer actually needs explicit bonded
-rows, without creating a second aggregation algorithm.
-
-## What an assembler is not
-
-It is **not a reaction engine**. It never parses SMARTS, never matches a pattern, never
-rewrites a bond. A `Reaction` does all of that. An assembler decides *which* sites react;
-the reaction decides *what happens* when they do.
-
-It is **not a port system**. There is no `<` and `>`, no head and tail, no connector object
-deciding that a hydroxyl may meet a carboxyl. Sites are unordered and undirected, and the
-reaction SMARTS is the only place chemistry is written down.
-
-It is **not a typifier**. Every accepted implementation inherits the common `Typifier` base
-base; the assembler only compiles the bounded graph on which it is invoked.
-
-## A repeat unit is a molecule with a few marked atoms
-
-There is no `RepeatUnit` class, no `Junction`, no `Port`. A repeat unit is an ordinary
-molecule with a few of its atoms named. You mark the ones that may react and leave every
-other atom alone.
-
-An ethylene-oxide repeat unit is a real, capped molecule: ethylene glycol. Its two hydroxyl
-oxygens are the sites; the hydroxyl hydrogens are the caps the reaction will remove.
+A port is a pair *(anchor, handle)*: the anchor is the atom that forms the new bond, the
+handle is a real atom bonded to it that leaves when the bond forms — usually the hydrogen
+that caps the open valence. The simplest way to write a unit is a CGsmiles fragment whose
+bonding descriptors are its ports; `mp.Conformer` then adds hydrogens and 3D coordinates,
+and the result is an ordinary `mp.Atomistic` that still carries its ports.
 
 ```python
 import molpy as mp
-from molpy.core import fields
 
-eo = mp.io.read_smiles("OCCO")  # ethylene glycol
-eo.atoms[0][fields.SITE] = "a"  # one hydroxyl oxygen
-eo.atoms[3][fields.SITE] = "b"  # the other
+conformer = mp.Conformer(seed=42)
+
+
+def unit(body: str) -> mp.Atomistic:
+    """One CGsmiles fragment body as a 3D molecule with hydrogens and ports."""
+    return conformer.generate(mp.SmilesIR.from_fragment(body).to_template())[0]
+
+
+eo = unit("[<]OCC[>]")  # -O-CH2-CH2-
+print(eo.n_atoms, eo.n_ports)  # 9 2
+for port in eo.ports:
+    print(port.anchor["element"], port.handle_atom["element"], port["port_kind"])
+# O H <
+# C H >
 ```
 
-Nothing here says "head" or "tail", and `a` and `b` carry no direction — they are labels the
-reaction can refer to. A linear chain is a world whose bonds happen to form a path. A
-four-arm crosslinker is a molecule with four marked atoms. A macrocycle is one more bond
-between two atoms already connected. The same `eo` above serves all three, unchanged.
+`SmilesIR.from_fragment(body).to_template()` returns the fragment body as a ported
+`mp.Atomistic`; `CGSmilesIR(s).templates()` returns a dict from fragment name to one
+such template for every fragment a CGsmiles string defines. Whether two ports may join is decided by their kind, label and order:
 
-## Charge is frozen on the template, so conservation is free
+| Port | Joins |
+|------|-------|
+| `<` | a `>` |
+| `>` | a `<` |
+| `$` | a `$` |
+| `!` | a `!` |
 
-AM1-BCC charges come from a self-consistent solve over an entire molecule. There is no such
-thing as the charge of a fragment, so there is no honest way to compute the charge of a new
-junction by looking at the atoms around it. This is not a limitation of MolPy; it is what
-"non-local" means.
+A label restricts a port further: `[>g]` joins only `[<g]`, which is how a comb keeps its
+grafts off the backbone. The bond orders must agree as well. When a bond forms, both
+handles are removed and their partial charges fold onto the anchors, so the net charge of
+the product is the sum of the units' charges. A molecule you already have gets ports with
+`def_port(anchor, handle_atom, kind, label="", order=1)`.
 
-The way out is to never compute charge during assembly. Solve it once on the capped repeat
-unit, where the molecule is small and closed-shell and `sqm` is meaningful. Then fold each
-cap's charge onto the site atom it capped. After the fold, every cap carries exactly zero.
+## Topologies are site graphs
 
-Watch what the reaction then does: it deletes atoms whose charge is zero. **Net charge is
-conserved because nothing charged was removed** — not because a correction term redistributed
-the loss afterwards. Conservation stops being a heuristic and becomes an accounting identity.
+A topology is an `mp.CoarseGrain`. Each bead's `bead_type` names a unit of the library, and
+each bond between two beads is one join. You rarely build it by hand; it comes either from
+CGsmiles notation or from coarsening an existing CG model.
 
-MolPy will not paper over a template you forgot to freeze. If the reaction is about to delete
-a charged atom, `apply` raises and says so:
+From notation, the site graph has no coordinates:
+
+- linear: `{[#EO]|10}`
+- block: `{[#EO]|6[#PO]|4}`
+- ring: `{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}`
+- star: `{[#X3]([#EO][#EO])([#EO][#EO])[#EO][#EO]}`
+- capped: `{[#CAPA][#EO]|6[#CAPB]}`
+
+`|n` repeats a unit along a path; a unit that carries a branch must be written out. Several
+molecules go in one site graph by merging: `sites.merge(other_sites)`.
+
+From a CG model, the sites come from groups of beads (see
+[Backmapping a CG model](#backmapping-a-cg-model) below). Each site then has a position
+(the group's centre of mass) and an axis.
+
+## Building from a topology
+
+With a topology from notation there are no coordinates to honour, so `mp.GrowthPlacer`
+grows each molecule breadth-first: the first copy keeps its conformer pose, and every later
+copy is turned and moved so that the anchor of its port lands on its parent's leaving
+handle, pointing back along that bond.
 
 ```python
-import pytest
-from molpy.builder.assembly import (
-    MonomerLibrary,
-    PolymerBuilder,
-    ResiduePlacer,
-    SiteMap,
-    linear_topology,
-)
-from molpy.conformer import Conformer
-
-# A template with hydrogens and charges, but never frozen:
-eo, _ = Conformer(add_hydrogens=True, seed=42).generate(
-    mp.io.read_smiles("OCCO")
-)
-SiteMap(eo).label_elements("O", "a", "b")
-for atom in eo.atoms:
-    atom[fields.CHARGE] = -0.3 if atom.get("element") == "H" else 0.2
-
-ether = mp.Reaction("[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]")
-builder = PolymerBuilder(MonomerLibrary({"EO": eo}), ether, placer=ResiduePlacer())
-
-# Unfrozen templates lose the charge carried by the atoms the reaction deletes:
-with pytest.raises(ValueError, match="net charge"):
-    builder.build(linear_topology(["EO"] * 3))
-# ValueError: assembly changed the net charge by +0.8 e: the reaction deleted atoms
-# that carry charge. Freeze the monomer templates first so each cap's charge folds
-# onto its site atom.
+sites = mp.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
+chain = mp.Assembler({"EO": eo}, mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+print(chain.n_atoms, chain.n_ports)  # 72 2
 ```
 
-This is also why AMBER prep files freeze per-residue charges. Same physics, arrived at
-independently.
+Ten units of seven atoms, plus the two hydrogens left on the chain-end ports. Bond lengths
+between units, ring closures and overlaps are not adjusted; they are left to relaxation.
 
-## You may guess a number, never an identity
+## Backmapping a CG model
 
-Assembly needs a length for the bond it is about to form, before any force field has been
-consulted about that bond. So it guesses: the sum of the two atoms' covalent radii.
+When the sites come from a CG simulation, the copies must sit where the beads were. Match
+the bead pattern of one repeat unit with `mp.SubgraphMatcher`, turn each match into a site
+with `mp.Coarsener`, and assemble with `mp.SitePlacer` (each copy's centre of mass on its
+site) and `mp.AxisOrienter` (each copy turned to its site's axis and bonds).
 
-The guess is legitimate, for a narrow reason. Bond length is a **continuous** quantity, there
-is genuinely no prior to look up, and a geometry optimisation downstream pulls it to the right
-value. If that optimisation fails to converge you get an error, not a quietly strained
-structure.
-
-Compare an atom's element. If MolPy did not know it and assumed carbon, nothing downstream
-would ever notice. Bond lengths get relaxed; identities do not. So a missing element raises,
-a missing atom type raises, and an unknown bond length gets a named constant and a comment
-naming the optimiser that converges it.
-
-**Guess the value, never the identity.** The test is whether some later step converges the
-guess away.
-
-## Identical junctions are typed once
-
-Every EO–EO junction along a thousand-monomer chain has the same local chemistry. The compiler
-builds these planned product motifs before the polymer exists and keys each by structure,
-chemical scalar labels, and the touched root. The second junction hits the cache. So does the
-eight-hundredth, and so does the first junction of the next chain. The number of typing passes
-tracks the number of *distinct* chemical environments, not the number of bonds formed.
-
-The cache lives on the assembler, not on the call. Reuse one assembler across a hundred chains
-and the EO–EO junction is typed exactly once for the whole melt.
-
-## Growing a chain
-
-A `PolymerBuilder` owns a monomer library and speaks CGSmiles. Hand it a notation string and it
-stamps out one copy of each repeat unit, bonds the adjacent ones, and hands back the polymer.
-Each pasted copy gets a residue id and name — a repeat unit *is* a residue, and that identity
-survives all the way into a PDB or a prmtop.
-
-`reach` is part of the compilation boundary, not a property guessed by the assembler. GAFF
-atom types are set by a one-to-two-bond environment, hence `reach=2`. The compiler uses one
-additional shell of that width as context and writes only the inner atoms back.
+The toy model below is a five-unit PMMA chain with two beads per repeat unit: a backbone
+bead of type `"1"` and an ester side bead of type `"2"`.
 
 ```python
-# docs: skip — AmberToolsTypifier shells out; typifier unit-tested with stubs
-import molpy as mp
-from molpy.builder import MonomerLibrary, PolymerBuilder, ResiduePlacer
-from molpy.builder.ambertools import AmberTools
-from molpy.typifier import AmberToolsTypifier
+cg = mp.CoarseGrain()
+previous = None
+for i in range(5):
+    side = (-1) ** i
+    backbone = cg.def_bead(bead_type="1", mass=41.0, x=2.5 * i, y=0.4 * side, z=0.0)
+    ester = cg.def_bead(bead_type="2", mass=59.0, x=2.5 * i, y=3.0 * side, z=0.0)
+    cg.def_cgbond(backbone, ester)
+    if previous is not None:
+        cg.def_cgbond(previous, backbone)
+    previous = backbone
 
-ether = mp.Reaction("[O;%a:1][H].[C:2][O;%b][H]>>[O:1][C:2]")
-gaff = AmberToolsTypifier(AmberTools())
-eo = gaff.typify(eo)  # initial types for atoms unaffected by any junction
+groups = mp.SubgraphMatcher(mp.CGSmilesIR("{[#1][#2]}").to_coarsegrain()).find(cg)
+sites = mp.Coarsener(cg).coarsen(groups, ["MMA"] * len(groups))
 
-builder = PolymerBuilder(
-    MonomerLibrary({"EO": eo}),
-    ether,
-    typifier=gaff,
-    reach=2,
-    finalize="atoms",  # defer full topology for this very large chain
+mma = unit("[<]CC([>])(C)C(=O)OC")
+pmma = mp.Assembler({"MMA": mma}, mp.SitePlacer(), mp.AxisOrienter()).assemble(
+    sites, mp.Atomistic
 )
-chain = builder.build_linear("EO", 1000)
-# -> bonds + cached junction atom types/charges; no angle/dihedral table yet
+print(pmma.n_atoms, pmma.n_ports)  # 77 2
 ```
 
-When explicit bonded rows are needed, finalize once:
+Each site sits at its group's mass-weighted centre, and its axis runs from the group's first
+bead to that centre — here from the backbone bead toward the ester. For a chain unit (a
+two-port template with `<` / `>` ports) `AxisOrienter` aligns the template's
+backbone-to-centre direction with that axis and its two joining atoms with the site's bond
+line; for a branch unit it fits the port directions to the bond directions. Coarsening uses
+positions as stored, with no periodic imaging, so unwrap a periodic CG frame first.
+
+A realistic model has several species: collect the groups of every pattern (one repeat-unit
+pattern, one per solvent or ion) into one `coarsen` call with one name per group. A template
+without ports is fine for a site with no bonds, such as a solvent molecule or an ion.
+
+## How ports are assigned
+
+You never pick ports. For every bond of the site graph the assembler chooses one port on
+each end that accepts the other, walking each molecule breadth-first and giving every bond of
+a site a distinct port. Labels are the tool for steering the choice: a port labelled `g`
+can only meet another `g`. If no assignment exists the build is refused before anything is
+returned, and the error names the site:
+
+```text
+site 0 ('X2') has no port for every bond: 3 bonds but the template has 2 ports
+```
+
+Ports that no bond uses stay on the result, handle atoms included. A linear chain therefore
+keeps a hydrogen and an open port at each end; cap them with end-group units (the
+[telechelic](topology/06_telechelic.md) page) when the ends should be something else.
+
+## Ids on the result
+
+Every atom of the world gets two integer ids:
+
+- `frag_id` — the ordinal of the site it came from (0, 1, 2, … in site order);
+- `mol_id` — its connected component, counted from 1.
 
 ```python
-from molpy.builder import Finalization, StructureFinalizer
-from molpy.builder.assembly import MonomerLibrary, PolymerBuilder, ResiduePlacer
-
-# Any atoms-only graph takes the same tail — nothing here is GAFF-specific:
-neutral, _ = Conformer(add_hydrogens=True, seed=42).generate(
-    mp.io.read_smiles("OCCO")
-)
-SiteMap(neutral).label_elements("O", "a", "b")
-chain = PolymerBuilder(
-    MonomerLibrary({"EO": neutral}), ether, placer=ResiduePlacer(), finalize="atoms"
-).build_linear("EO", 5)
-assert not list(chain.angles)
-
-chain = StructureFinalizer(Finalization.TOPOLOGY).apply(chain)
-assert list(chain.angles)
+sites = mp.CGSmilesIR("{[#EO]|3}").to_coarsegrain()
+sites.merge(mp.CGSmilesIR("{[#EO]|4}").to_coarsegrain())
+two = mp.Assembler({"EO": eo}, mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+atoms = two.to_frame()["atoms"]
+print(sorted(set(atoms["frag_id"].tolist())))  # [0, 1, 2, 3, 4, 5, 6]
+print(sorted(set(atoms["mol_id"].tolist())))  # [1, 2]
 ```
 
-The reaction reads: an `a`-site oxygen bearing a hydrogen, plus a `b`-site oxygen bearing a
-hydrogen on some carbon, become an ether bridge. Atoms on the left that do not reappear on the
-right are the leaving groups. Nothing in the builder knows the word "dehydration"; the SMARTS
-says it, and the `%a` and `%b` predicates bind it to the atoms you marked.
+## Choosing the output class
 
-## Crosslinking is the same machine
+`assemble(sites, cls)` builds the world as the class you name: `mp.Atomistic` for atomistic
+units, `mp.CoarseGrain` when the units are themselves CG templates (every node carries a
+`bead_type`), and `mp.Graph` when `cls` is omitted. Pass the class you intend to use next; the
+typifiers, writers and minimisers take an `mp.Atomistic`.
 
-A `PolymerBuilder` *is* an assembler — it adds a library and a notation to one. Strip those two
-away and you have the assembler itself, which is all crosslinking needs: a graph you already
-have, and a rule for which sites pair up.
+## Polydisperse systems
 
-```python
-# docs: skip — needs AmberToolsTypifier (gaff) from offline block above
-from molpy.builder import GraphAssembler, RandomSelector, Replicas
+`SystemPlanner` and its distributions (see [Polydisperse Systems](05_polydisperse_systems.md))
+still plan the chains. Each planned chain's monomer sequence becomes a CGsmiles path,
+`"{" + "".join(f"[#{m}]" for m in chain.monomers) + "}"`, which one reusable assembler builds.
 
-melt = Replicas(chain).grid(3, spacing=9.5, jitter=1.0, seed=7)
+## Relax before use
 
-gel = GraphAssembler(ether, typifier=gaff, reach=2).apply(
-    melt, RandomSelector(conversion=0.8, cutoff=6.0, seed=1)
-)
-```
+Neither placer asks a force field anything. Growth leaves inter-unit bonds at whatever length
+the parent's leaving bond had, and ring closures at whatever distance the open path grew;
+backmapping leaves each copy rigid in its conformer shape. Type the world and minimise it
+before a simulation — see [Geometry Optimization](08_geometry_optimization.md) — and expect
+a short equilibration to finish the job for a dense backmapped system.
 
-`RandomSelector` shuffles the site pairs lying within 6 Å of each other and consumes them until
-80 % of sites have reacted. It supplies a pairing rule and nothing else — the graph edit, the
-retyping, and the cache are the same code that built the chain.
+## Not available yet: crosslinking and gels
 
-No `placer` is passed here, because the melt's coordinates are already meaningful and must not
-be disturbed. `PolymerBuilder` places by default, because fresh template copies land on top of
-one another. That is a decision about *your input*, not about which class you reached for,
-which is why it is an argument.
-
-## An end-to-end network
-
-Build chains, pack them, crosslink, then relax — the crosslinks are the bonds whose lengths
-were guessed.
-
-```python
-# docs: skip — full gel workflow (molpack + write_lammps); pack unit-tested elsewhere
-import molpy as mp
-from molpack import InsideBoxRestraint, Molpack, Target
-
-# `neutral` above, not the deliberately-unfrozen `eo` — that one exists to
-# demonstrate the net-charge guard, and would trip it here.
-builder = PolymerBuilder(
-    MonomerLibrary({"EO": neutral}), ether, typifier=gaff, reach=2
-)
-chains = [builder.build_linear("EO", 50).to_frame() for _ in range(100)]
-box = InsideBoxRestraint([0.0, 0.0, 0.0], [80.0, 80.0, 80.0])
-targets = [Target(c, count=1).with_restraint(box) for c in chains]
-melt = Molpack().with_seed(1).pack(targets, max_loops=200)
-
-gel = GraphAssembler(ether, typifier=gaff, reach=2).apply(
-    melt, RandomSelector(conversion=0.8, cutoff=6.0, seed=1)
-)
-
-frame = gel.to_frame()
-opt = mp.LBFGS(gaff.forcefield.to_potentials(frame), fmax=0.05, max_steps=200)
-frame, report = opt.run(frame)
-mp.io.write_lammps_system("gel", frame, gaff.forcefield)
-```
-
-One `builder` builds all hundred chains, so the EO–EO junction is typed once for the entire
-melt — even if the chains had different lengths, because the cache keys on local structure, not
-on topology. The crosslink junctions are typed once per distinct environment. Neither count
-grows with the number of chains, which is the only reason a hundred fifty-mers is a tractable
-amount of typing.
-
-The `LBFGS` line is where the guessed bond lengths go away. It is not optional polish: the
-crosslinks were formed at covalent-radius separation, and nothing before this line has asked
-the force field what that distance should be.
-
-## When an assembler refuses
-
-Three refusals, all of them loud, all of them before the real product graph is returned.
-
-Hand it a typifier without `reach` and construction fails: a bounded compiler cannot infer a
-black box's receptive field. If a typifier uses genuinely non-local information such as
-unbounded ring membership, it is not valid for local compilation; run it later as an explicit
-whole-graph operation instead.
-
-Hand it two reaction sites that share an atom and `apply` raises, rather than applying one
-edit on top of handles the other already invalidated.
-
-Hand it a repeat unit whose caps still carry charge — you forgot to `freeze` — and it raises
-rather than silently leaking net charge into your system.
-
-If `select` finds nothing to react, that is not an error. A cutoff can be too tight, or a
-target conversion already met. You get a warning naming the candidate count and the cutoff,
-and your world comes back untouched.
-
-## Writing your own pairing rule
-
-You never subclass the assembler. You write a `Selector`, which answers the third question from
-the top of this page and nothing else. It receives the world and the sites the reaction matched,
-grouped by reactant, and yields the pairs it wants bonded.
-
-```python
-from molpy.builder import Selector
-from molpy.core.atomistic import Atomistic
-
-
-class NearestNeighborSelector(Selector):
-    def select(self, world: Atomistic, occurrences: list[list[dict[int, int]]]):
-        a_sites, b_sites = occurrences
-        for occ_a in a_sites:
-            occ_b = self._nearest(world, occ_a, b_sites)
-            yield {**occ_a, **occ_b}  # {map_number: atom handle}
-```
-
-The matching has already happened — the assembler does it once, in linear time — so a selector
-never scans the system. It only decides. Product-motif compilation, atom write-back, the cache,
-the charge check, and the non-overlapping guarantee all come for free, because none of them
-depend on how you chose the pairs.
-
-That is what it means for the three jobs on this page to be one algorithm: the part you might
-want to change is the only part you can.
+Statistical crosslinking of a melt — gels, end-linked networks, dual networks, curing with
+an agent — needs sites to be joined by proximity, and that is not yet a site-graph primitive.
+MolPy does not currently build such networks. Every architecture whose connectivity you can
+write down as a site graph (chains, blocks, rings, stars, combs, capped chains, backmapped
+CG models) is covered.
 
 ## See also
 
-- **[Polymer Topologies](topology/index.md)** — the same machine as a full section:
-  linear, block, ring, star, comb, telechelic, gels, end-linked, dual network, agent
-  (each page ↔ `examples/topology/<name>.py`).
-- **Force Field Typification** — which typifiers can be used during assembly, and how to
-  declare `reach` for a black-box one.
-- **Geometry Optimization** — the step that converges the guessed bond lengths.
-- **Building a Crosslinked Gel** — the workflow above, with packing and equilibration.
-- `molpy.Reaction` — reaction SMARTS semantics, leaving groups, and `%label` predicates.
-</content>
+- [Polymer Topologies](topology/index.md) — one page and one runnable script per architecture
+- [3D Conformer Generation](07_conformers.md) — how the units get their coordinates
+- [Geometry Optimization](08_geometry_optimization.md) — relaxing the assembled world
+- [Packing Systems](09_packing.md) — filling a cell with assembled molecules
+- [Builder API](../api/builder.md) — the assembly symbols in one table

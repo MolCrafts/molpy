@@ -3,33 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import molrs
 
 if TYPE_CHECKING:
-    from molpy.core.atomistic import Atom
-    from molpy.core.forcefield import ForceField
-
-FragmentScaling = molrs.ff.FragmentScaling
-compute_k_ij = molrs.ff.compute_k_ij
-
-
-def load_fragment_scaling_data(
-    path: str | Path | None = None,
-) -> dict[str, FragmentScaling]:
-    """Return the native core's compiled CL&Pol fragment table.
-
-    The table is compiled in, not parsed at runtime; pass explicit
-    ``FragmentScaling`` objects to :func:`scale_lj` for custom data.
-    """
-    if path is not None:
-        raise ValueError(
-            "the CL&Pol table is compiled in, not read from a file; pass "
-            "frag_data explicitly for custom data"
-        )
-    return molrs.ff.fragment_scaling_data()
+    from molrs import Atom
+    from molrs.ff import ForceField, FragmentScaling
 
 
 def scale_lj(
@@ -58,9 +38,4 @@ def scale_lj(
     return molrs.ff.scale_lj(ff, payload, frag_data, scale_sigma)
 
 
-__all__ = [
-    "FragmentScaling",
-    "compute_k_ij",
-    "load_fragment_scaling_data",
-    "scale_lj",
-]
+__all__ = ["scale_lj"]

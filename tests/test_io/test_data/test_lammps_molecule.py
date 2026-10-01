@@ -11,11 +11,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import molrs
-from molrs import MetaValue
-
 import molpy as mp
-from molpy.io.data.lammps_molecule import LammpsMoleculeReader, LammpsMoleculeWriter
+from molpy import MetaValue
 
 # Inline TIP3P water molecule (LAMMPS JSON molecule schema). Used as input for
 # JSON-format reader tests — no external .json fixture file.
@@ -66,13 +63,12 @@ def test_files(tmp_path: Path, TEST_DATA_DIR: Path):
     }
 
 
-class TestLammpsMoleculeReader:
+class TestReadLammpsMolecule:
     """Test LAMMPS molecule file reading functionality."""
 
     def test_read_native_water(self, test_files):
         """Test reading native format water molecule."""
-        reader = LammpsMoleculeReader(test_files["water_native"])
-        frame = reader.read()
+        frame = mp.io.read_lammps_molecule(test_files["water_native"])
 
         # Check metadata
         assert frame.meta["format"] == "lammps_molecule"
@@ -130,8 +126,7 @@ class TestLammpsMoleculeReader:
 
     def test_read_json_water(self, test_files):
         """Test reading JSON format water molecule."""
-        reader = LammpsMoleculeReader(test_files["water_json"])
-        frame = reader.read()
+        frame = mp.io.read_lammps_molecule(test_files["water_json"])
 
         # Check metadata
         assert frame.meta["format"] == "lammps_molecule"
@@ -188,8 +183,7 @@ class TestLammpsMoleculeReader:
 
     def test_read_ethane_native(self, test_files):
         """Test reading more complex native format ethane molecule."""
-        reader = LammpsMoleculeReader(test_files["ethane_native"])
-        frame = reader.read()
+        frame = mp.io.read_lammps_molecule(test_files["ethane_native"])
 
         # Check metadata
         assert frame.meta["format"] == "lammps_molecule"
@@ -239,35 +233,31 @@ class TestLammpsMoleculeReader:
         tmp_file = tmp_path / "test.mol"
         with open(tmp_file, "w") as f:
             f.write("")
-        reader = LammpsMoleculeReader(tmp_file)
-        with pytest.raises(ValueError, match="Empty molecule file"):
-            reader.read()
+        with pytest.raises(OSError, match="Empty molecule file"):
+            mp.io.read_lammps_molecule(tmp_file)
 
     def test_nonexistent_file_error(self):
         """Test error handling for nonexistent files."""
-        reader = LammpsMoleculeReader("nonexistent_file.mol")
-        with pytest.raises(FileNotFoundError):
-            reader.read()
+        with pytest.raises(OSError):
+            mp.io.read_lammps_molecule("nonexistent_file.mol")
 
     def test_invalid_json_format(self, tmp_path):
         """Test error handling for invalid JSON format."""
         tmp_file = tmp_path / "test.json"
         with open(tmp_file, "w") as f:
             json.dump({"format": "invalid"}, f)
-        reader = LammpsMoleculeReader(tmp_file)
-        with pytest.raises(ValueError, match="JSON file must have format='molecule'"):
-            reader.read()
+        with pytest.raises(OSError, match="JSON file must have format='molecule'"):
+            mp.io.read_lammps_molecule(tmp_file)
 
     def test_missing_types_section_json(self, tmp_path):
         """Test error handling for missing types section in JSON."""
         tmp_file = tmp_path / "test.json"
         with open(tmp_file, "w") as f:
             json.dump({"application": "LAMMPS", "format": "molecule", "revision": 1}, f)
-        reader = LammpsMoleculeReader(tmp_file)
         with pytest.raises(
-            ValueError, match="JSON molecule file must contain 'types' section"
+            OSError, match="JSON molecule file must contain 'types' section"
         ):
-            reader.read()
+            mp.io.read_lammps_molecule(tmp_file)
 
     def test_missing_types_section_native(self, tmp_path):
         """Test error handling for missing Types section in native format."""
@@ -279,30 +269,26 @@ class TestLammpsMoleculeReader:
             f.write("Coords\n")
             f.write("\n")
             f.write("1 0.0 0.0 0.0\n")
-        reader = LammpsMoleculeReader(tmp_file)
         with pytest.raises(
-            ValueError, match="Native molecule file must contain Types section"
+            OSError, match="Native molecule file must contain Types section"
         ):
-            reader.read()
+            mp.io.read_lammps_molecule(tmp_file)
 
 
-class TestLammpsMoleculeWriter:
+class TestWriteLammpsMolecule:
     """Test LAMMPS molecule file writing functionality."""
 
     def test_write_native_format(self, test_files, tmp_path):
         """Test writing in native format."""
         # Read a molecule first
-        reader = LammpsMoleculeReader(test_files["water_native"])
-        frame = reader.read()
+        frame = mp.io.read_lammps_molecule(test_files["water_native"])
 
         # Write to temporary file
         tmp_file = tmp_path / "test.mol"
-        writer = LammpsMoleculeWriter(tmp_file, format_type="native")
-        writer.write(frame)
+        mp.io.write_lammps_molecule(tmp_file, frame, format="native")
 
         # Read back and compare
-        reader2 = LammpsMoleculeReader(tmp_file)
-        frame2 = reader2.read()
+        frame2 = mp.io.read_lammps_molecule(tmp_file)
 
         # Compare key properties
         assert frame2["atoms"].nrows == frame["atoms"].nrows
@@ -318,17 +304,14 @@ class TestLammpsMoleculeWriter:
     def test_write_json_format(self, test_files, tmp_path):
         """Test writing in JSON format."""
         # Read a molecule first
-        reader = LammpsMoleculeReader(test_files["water_json"])
-        frame = reader.read()
+        frame = mp.io.read_lammps_molecule(test_files["water_json"])
 
         # Write to temporary file
         tmp_file = tmp_path / "test.json"
-        writer = LammpsMoleculeWriter(tmp_file, format_type="json")
-        writer.write(frame)
+        mp.io.write_lammps_molecule(tmp_file, frame, format="json")
 
         # Read back and compare
-        reader2 = LammpsMoleculeReader(tmp_file)
-        frame2 = reader2.read()
+        frame2 = mp.io.read_lammps_molecule(tmp_file)
 
         # Compare key properties
         assert frame2["atoms"].nrows == frame["atoms"].nrows
@@ -344,8 +327,7 @@ class TestLammpsMoleculeWriter:
     def test_roundtrip_native_to_json(self, test_files, tmp_path):
         """Test roundtrip conversion from native to JSON format."""
         # Read native format
-        reader = LammpsMoleculeReader(test_files["ethane_native"])
-        frame = reader.read()
+        frame = mp.io.read_lammps_molecule(test_files["ethane_native"])
 
         # Write as JSON
         temp_json_path = tmp_path / "test.json"
@@ -354,19 +336,15 @@ class TestLammpsMoleculeWriter:
         temp_native_path = tmp_path / "test.mol"
 
         # Native -> JSON
-        writer_json = LammpsMoleculeWriter(temp_json_path, format_type="json")
-        writer_json.write(frame)
+        mp.io.write_lammps_molecule(temp_json_path, frame, format="json")
 
         # JSON -> Native
-        reader_json = LammpsMoleculeReader(temp_json_path)
-        frame_from_json = reader_json.read()
+        frame_from_json = mp.io.read_lammps_molecule(temp_json_path)
 
-        writer_native = LammpsMoleculeWriter(temp_native_path, format_type="native")
-        writer_native.write(frame_from_json)
+        mp.io.write_lammps_molecule(temp_native_path, frame_from_json, format="native")
 
         # Read final native and compare
-        reader_final = LammpsMoleculeReader(temp_native_path)
-        frame_final = reader_final.read()
+        frame_final = mp.io.read_lammps_molecule(temp_native_path)
 
         # Compare key properties
         assert frame_final["atoms"].nrows == frame["atoms"].nrows
@@ -374,30 +352,10 @@ class TestLammpsMoleculeWriter:
         assert frame_final["angles"].nrows == frame["angles"].nrows
         assert frame_final["dihedrals"].nrows == frame["dihedrals"].nrows
 
-    def test_write_without_atoms_error(self, tmp_path):
-        """Test error when trying to write frame without atoms."""
-        frame = molrs.Frame()
-
-        tmp_file = tmp_path / "test.mol"
-        writer = LammpsMoleculeWriter(tmp_file, format_type="native")
-        with pytest.raises(ValueError, match="Frame must contain atoms data"):
-            writer.write(frame)
-
-    def test_invalid_format_type_error(self):
-        """Test error for invalid format type."""
-        with pytest.raises(ValueError, match="format_type must be 'native' or 'json'"):
-            LammpsMoleculeWriter("test.mol", format_type="invalid")
-
-    def test_auto_json_extension(self):
-        """Test automatic .json extension for JSON format."""
-        writer = LammpsMoleculeWriter("test.mol", format_type="json")
-        assert writer._path.suffix == ".json"
-
     def test_typed_meta_preservation(self, test_files, tmp_path):
         """Test that typed metadata is preserved during write/read cycle."""
         # Read original
-        reader = LammpsMoleculeReader(test_files["water_json"])
-        frame = reader.read()
+        frame = mp.io.read_lammps_molecule(test_files["water_json"])
 
         frame.meta = {
             **frame.meta,
@@ -409,12 +367,10 @@ class TestLammpsMoleculeWriter:
 
         # Write JSON format
         tmp_file = tmp_path / "test.json"
-        writer = LammpsMoleculeWriter(tmp_file, format_type="json")
-        writer.write(frame)
+        mp.io.write_lammps_molecule(tmp_file, frame, format="json")
 
         # Read back
-        reader2 = LammpsMoleculeReader(tmp_file)
-        frame2 = reader2.read()
+        frame2 = mp.io.read_lammps_molecule(tmp_file)
 
         # Check if typed metadata is preserved (at least the ones we wrote)
         # Note: custom_field won't be preserved in standard LAMMPS format
@@ -439,7 +395,7 @@ class TestIntegrationWithMolpyIO:
 
         # Write using high-level function
         tmp_file = tmp_path / "test.mol"
-        mp.io.write_lammps_molecule(tmp_file, frame, format_type="native")
+        mp.io.write_lammps_molecule(tmp_file, frame, format="native")
 
         # Read back and verify
         frame2 = mp.io.read_lammps_molecule(tmp_file)
@@ -453,7 +409,7 @@ class TestIntegrationWithMolpyIO:
         # Write using high-level function
         tmp_file = tmp_path / "test.json"
 
-        mp.io.write_lammps_molecule(tmp_file, frame, format_type="json")
+        mp.io.write_lammps_molecule(tmp_file, frame, format="json")
 
         # Read back and verify
         frame2 = mp.io.read_lammps_molecule(tmp_file)

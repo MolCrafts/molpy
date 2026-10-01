@@ -1,6 +1,6 @@
 """Virtual-site augmentation transforms.
 
-A :class:`VirtualSiteBuilder` decorates an existing :class:`~molpy.core.Atomistic`
+A :class:`VirtualSiteBuilder` decorates an existing :class:`~molpy.Atomistic`
 with auxiliary particles placed by a rule — Drude shells, TIP4P M-sites, lone
 pairs, etc. This is the general pattern (one base class); CL&Pol's polarizer is
 just the :class:`DrudeBuilder` instance.
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from molpy.core import fields
-from molpy.core.atomistic import Atom, Atomistic, DrudeParticle, MasslessSite
+from molrs import Atom, Atomistic, DrudeParticle, MasslessSite
 
 # 4*pi*eps0 in e^2 / (kJ/mol * A), per paduagroup/clandpol polarizer.
 FOUR_PI_EPS0 = 0.0007197587
@@ -151,9 +151,9 @@ class DrudeBuilder(VirtualSiteBuilder):
     ) -> None:
         (shell,) = sites
         q_d = shell.get("charge")
-        host.data[fields.CHARGE] = host[fields.CHARGE] - q_d
+        host[fields.CHARGE] = host[fields.CHARGE] - q_d
         if host.get("mass") is not None:
-            host.data[fields.MASS] = host[fields.MASS] - shell[fields.MASS]
+            host[fields.MASS] = host[fields.MASS] - shell[fields.MASS]
         # Spring constant is the host type's k_D (data-driven, from alpha.ff). The
         # spring carries its own bond type so the augmented structure is fully
         # typed (every core–shell spring shares the one ``DRUDE`` bond type).
@@ -225,4 +225,4 @@ class Tip4pBuilder(VirtualSiteBuilder):
         self, struct: Atomistic, host: Atom, sites: Sequence[Atom]
     ) -> None:
         (msite,) = sites
-        host.data["charge"] = 0.0
+        host["charge"] = 0.0

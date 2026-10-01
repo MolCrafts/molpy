@@ -103,7 +103,7 @@ def main() -> int:
         )
         return 1
 
-    # Git/path override is how unpublished molrs 0.14 is resolved (CI + local
+    # Git/path override is how unpublished molrs (pre-0.15) is resolved (CI + local
     # `uv run`). Blocking the push for a missing PyPI release forces
     # `--no-verify`, which also skips pytest. The PyPI pin still has to be
     # well-formed; we just skip the network check.

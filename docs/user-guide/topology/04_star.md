@@ -2,17 +2,20 @@
 
 **Script:** [`examples/topology/04_star.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/04_star.py)
 
-A star needs a **multifunctional core** (enough `fields.SITE` atoms for the arm count). Arms are ordinary bifunctional `EO`.
+A star needs a **multifunctional core**: `X3` carries three `>` ports, one per arm. Arms are ordinary `EO` paths written as branches.
 
 ```python
-from eo_kit import eo_builder, trifunctional_core
+import molpy as mp
+from eo_kit import library
 
-builder = eo_builder(extra={"X3": trifunctional_core()})
-star = builder.build_star("X3", "EO", n_arms=3, arm_length=4)
-# formats branched CGSmiles, then build(...)
+arm = "[#EO][#EO][#EO]"
+sites = mp.CGSmilesIR(f"{{[#X3]({arm})({arm}){arm}}}").to_coarsegrain()
+star = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
-Bifunctional monomers alone cannot branch: parentheses without extra sites collapse to a chain (by design).
+A core with fewer ports than arms is refused, naming the core site.
+
+**Check:** 10 units, 77 atoms, 3 open ports at the arm ends.
 
 ```bash
 cd examples && python topology/04_star.py

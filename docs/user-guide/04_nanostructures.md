@@ -37,7 +37,7 @@ periodic = builder.build()
 box = builder.cell(vacuum=12.0)
 
 assert box.pbc.tolist() == [False, False, True]
-assert all(len(periodic.get_neighbors(atom)) == 3 for atom in periodic.atoms)
+assert all(len(periodic.incident_relations(atom.handle, "bonds")) == 3 for atom in periodic.atoms)
 ```
 
 The two are separate products because a molecular graph is topology and

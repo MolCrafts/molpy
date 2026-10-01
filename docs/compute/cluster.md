@@ -93,7 +93,7 @@ not a smaller cutoff on a homogeneous one.
 ```python
 import numpy as np
 import molpy as mp
-from molpy.compute import NeighborList, Cluster
+from molpy.compute import Cluster
 
 rng = np.random.default_rng(0)
 # Three well-separated blobs of 40 points each.
@@ -102,9 +102,11 @@ xyz = np.concatenate([c + rng.normal(0.0, 0.8, size=(40, 3)) for c in centres])
 
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(40.0)
+frame.box = mp.Box.cube(40.0)
 
-nlist = NeighborList(cutoff=2.0).compute(frame)
+nl = mp.NeighborList(2.0)
+nl.build(frame.coords, frame.box)
+nlist = nl.neighbors()
 result, = Cluster(min_cluster_size=5).compute([frame], [nlist])
 print(result.num_clusters)                      # -> 3
 print(sorted(np.asarray(result.cluster_sizes).tolist()))    # -> [40, 40, 40]

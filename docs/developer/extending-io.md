@@ -1,95 +1,47 @@
 # Adding an I/O Format
 
-This page shows how to add readers and writers for new file formats and force field backends.
+`mp.io` has one door per format and direction: `read_X` / `write_X` for one
+frame, `read_X_trajectory` / `write_X_trajectory` for a sequence. There are no
+reader or writer classes to subclass. Parsing and serialization belong in the
+native core (molrs); molpy re-exports the native door by identity, and writes a
+function of its own only when it adds behaviour the native door lacks.
 
-## Data file readers and writers
+## A new format goes into molrs
 
-Subclass `DataReader` or `DataWriter` from `molpy.io.data.base`.
-
-### Reader
-
-```python
-from pathlib import Path
-from molpy import Frame, Block
-from molpy.io.data.base import DataReader
-
-from molpy.core.fields import FieldFormatter, CHARGE
-
-
-class MyFieldFormatter(FieldFormatter):
-    """Field name translation for .myformat."""
-
-    _field_formatters = {
-        "q": CHARGE,  # .myformat uses "q" for charge
-    }
-
-
-class MyFormatReader(DataReader):
-    """Read .myformat files into a Frame."""
-
-    _formatter = MyFieldFormatter()
-
-    def __init__(self, file: Path, **kwargs):
-        super().__init__(path=file, **kwargs)
-
-    def read(self, frame: Frame | None = None) -> Frame:
-        if frame is None:
-            frame = Frame()
-
-        # Parse the file (self._path is set by FileBase)
-        with open(self._path) as f:
-            lines = f.readlines()
-
-        # Populate blocks using format-native field names
-        frame["atoms"] = Block(
-            {
-                "element": [...],
-                "x": [...],
-                "y": [...],
-                "z": [...],
-            }
-        )
-
-        # Translate format-specific field names to canonical names
-        self._formatter.canonicalize_frame(frame)
-        return frame
-```
-
-### Writer
+Add the parser and writer to molrs, bind them in molrs-python, and re-export the
+bound functions from `molpy/io/__init__.py` by identity:
 
 ```python
-from molpy.io.data.base import DataWriter
+import molrs
+import molpy as mp
 
-
-class MyFormatWriter(DataWriter):
-    """Write a Frame to .myformat."""
-
-    _formatter = MyFieldFormatter()
-
-    def __init__(self, file: Path, **kwargs):
-        super().__init__(path=file, **kwargs)
-
-    def write(self, frame: Frame) -> None:
-        # Translate canonical names to format-specific (on a copy)
-        frame = self._formatter.localize_frame(frame)
-
-        atoms = frame["atoms"]
-        with open(self._path, "w") as f:
-            for i in range(atoms.nrows):
-                f.write(f"{atoms['element'][i]} {atoms['x'][i]} ...\n")
+assert mp.io.read_gro is molrs.io.read_gro
+assert mp.io.write_lammps_forcefield is molrs.ff.write_lammps_forcefield
 ```
 
-### Register in factory functions
+No molpy wrapper coerces paths, re-raises native errors under another type or
+buffers frames for the native writer: the native doors accept `str` and
+`os.PathLike`, take any sequence of frames and report an unreadable file as
+`OSError`.
 
-Add your reader/writer to `molpy/io/readers.py` and `molpy/io/writers.py` so they are accessible via `mp.io.read_myformat()` and `mp.io.write_myformat()`.
+## When molpy adds behaviour
 
+A molpy function is justified by behaviour, not by spelling. The current ones
+live in `molpy/io/readers.py`, `molpy/io/writers.py` and
+`molpy/io/data/lammps.py`: merging inpcrd coordinates into an existing frame,
+dropping the duplicated CONECT bonds of a PDB, joining split XYZ property
+columns, the `LammpsDataResult` bundle and the `fix drude` header of a LAMMPS
+data file. Such a function calls the native door and post-processes its frame.
 
 ## Canonical field names
 
-The internal data model uses canonical field names defined in `molpy.core.fields`. When your format uses different column names, define a `FieldFormatter` subclass with a `_field_formatters` mapping:
+The internal data model uses canonical field names defined in
+`molpy.core.fields`. The native readers already translate the formats they
+parse. A format whose column names molpy translates itself declares a
+`FieldFormatter` subclass with a `_field_formatters` mapping:
 
 ```python
-from molpy.core.fields import FieldFormatter, CHARGE, MOL_ID
+from molpy.core.fields import CHARGE, MOL_ID, FieldFormatter
 
 
 class MyFieldFormatter(FieldFormatter):
@@ -99,81 +51,49 @@ class MyFieldFormatter(FieldFormatter):
     }
 ```
 
-Key canonical fields: `charge` (not `q`), `mol_id` (not `mol`), `id`, `type`, `mass`, `element`, `x`/`y`/`z`.
+Key canonical fields: `charge` (not `q`), `mol_id` (not `mol`), `id`, `type`,
+`mass`, `element`, `x`/`y`/`z`.
 
-If your format's field names already match the canonical names (e.g., MOL2 uses `charge`), no formatter is needed.
+## Force field readers and writers live in molrs
 
-
-## Force field writers with the formatter hierarchy
-
-The force field export system uses a **two-level formatter hierarchy** defined in `molpy.core.fields`:
-
-```
-FieldFormatter                         — data field mapping: {format_key: canonical_key}
-    ↓
-ForceFieldFormatter(FieldFormatter)    — inherits field mapping + {StyleType: Callable}
-```
-
-Each format's `ForceFieldFormatter` subclass inherits the data field mapping from its `FieldFormatter` and adds parameter formatters for Style/Type serialization.
-
-### Adding a param formatter for a custom Style
+Every force-field reader and writer — LAMMPS `*.ff` includes and data-file
+`* Coeffs`, GROMACS directives, OpenMM XML — is a native molrs function that
+`mp.io` re-exports by identity (`read_xml_forcefield` / `write_xml_forcefield`,
+`read_gromacs_forcefield` / `write_gromacs_forcefield`, the LAMMPS family). The
+LAMMPS writers take the system as well: the coefficients written are selected by
+the frame's type labels, each matched to a type name exactly. The pair cutoff is
+a run setting the caller declares on the pair styles; no reader or writer
+invents one.
 
 ```python
-from molpy.io.forcefield.lammps import LammpsForceFieldFormatter
+import molpy as mp
 
-
-def _format_morse_bond(typ) -> list[float]:
-    return [typ.params.kwargs["D"], typ.params.kwargs["alpha"], typ.params.kwargs["r0"]]
-
-
-from molpy import BondMorseStyle
-
-LammpsForceFieldFormatter.register_param_formatter(BondMorseStyle, _format_morse_bond)
+ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("tip3p.xml"))
+water = mp.Frame(
+    blocks={
+        "atoms": {
+            "type": ["tip3p-O", "tip3p-H", "tip3p-H"],
+            "x": [0.0, 0.9572, -0.24],
+            "y": [0.0, 0.0, 0.927],
+            "z": [0.0, 0.0, 0.0],
+        },
+        "bonds": {"atomi": [0, 0], "atomj": [1, 2], "type": ["tip3p-O::tip3p-H"] * 2},
+    }
+)
+ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
+ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
+text = mp.io.write_lammps_forcefield_str(ff, water, precision=4)
+assert "bond_coeff" in text
 ```
 
-Registrations are **isolated per subclass** — adding a formatter to one writer does not affect another. This isolation is enforced by `__init_subclass__` copying the registry.
-
-
-## Trajectory readers and writers
-
-`BaseTrajectoryReader` is storage-agnostic: it is a lazy `Iterable[Frame]` derived
-entirely from two members you implement — `n_frames` and `read_frame(index)`.
-Iteration, slicing, `read_frames` / `read_range` / `read_all` and `__len__` all
-come for free, and how you find frame `i` (byte offsets, an mmap, a network
-range request) is yours to choose:
-
-```python
-from molpy.io.trajectory.base import BaseTrajectoryReader
-from molpy import Frame
-
-
-class MyTrajectoryReader(BaseTrajectoryReader):
-    def __init__(self, fpath):
-        super().__init__(fpath)
-        self._offsets = []  # built once, however your format allows
-
-    @property
-    def n_frames(self) -> int:
-        return len(self._offsets)
-
-    def read_frame(self, index: int) -> Frame:
-        # negative indices are the subclass's to normalize
-        offset = self._offsets[index]
-        return Frame()
-```
-
-Subclass `TrajectoryWriter` and implement `write_frame()` for writing.
-
+To make an existing writer emit a new **style**, add that style's arm to the
+molrs writer; see
+[Extending the Force Field](extending-forcefield.md#step-3-add-the-writer-arms-in-molrs).
 
 ## Checklist
 
-- [ ] Subclass `DataReader`/`DataWriter` or `BaseTrajectoryReader`/`TrajectoryWriter`
-- [ ] A trajectory reader implements exactly `n_frames` and `read_frame(index)`
-- [ ] Define `FieldFormatter` subclass if format uses non-canonical field names
-- [ ] Reader calls `_formatter.canonicalize_frame(frame)` before returning
-- [ ] Writer calls `_formatter.localize_frame(frame)` at entry (operates on copy)
+- [ ] Parser and writer added to molrs and bound in molrs-python
+- [ ] `read_X` / `write_X` (and `_trajectory`) re-exported by identity from `molpy/io/__init__.py`
+- [ ] A molpy function only where it adds behaviour, calling the native door
 - [ ] Box stored on `frame.box`; exact-dtype metadata stored on `frame.meta`
-- [ ] Add factory function in `readers.py` / `writers.py`
-- [ ] Register param formatters on `ForceFieldFormatter` subclass if adding a custom Style
-- [ ] Write round-trip tests (`write → read → compare`) in `tests/test_io/`
-- [ ] Round-trip verifies canonical field names (`charge`, `mol_id`, not `q`, `mol`)
+- [ ] Round-trip tests (`write → read → compare`) of molpy-owned behaviour in `tests/test_io/`

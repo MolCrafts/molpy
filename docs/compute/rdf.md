@@ -186,16 +186,18 @@ xyz = np.array(
 )
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(4 * a)
+frame.box = mp.Box.cube(4 * a)
 ```
 
 That is a perfect FCC crystal, which makes a good first test: you know the
 answer in advance. Now histogram it.
 
 ```python
-from molpy.compute import NeighborList, RDF
+from molpy.compute import RDF
 
-nlist = NeighborList(cutoff=8.0).compute(frame)
+nl = mp.NeighborList(8.0)
+nl.build(frame.coords, frame.box)
+nlist = nl.neighbors()
 result = RDF(n_bins=160, r_max=8.0).compute([frame], [nlist])
 
 r, g = result.bin_centers, result.rdf
@@ -213,7 +215,11 @@ trajectory is the same call with longer lists:
 
 ```python
 frames = [frame, frame]                        # in practice, your trajectory
-nlists = [NeighborList(cutoff=8.0).compute(f) for f in frames]
+nl = mp.NeighborList(8.0)
+nlists = []
+for f in frames:
+    nl.build(f.coords, f.box)
+    nlists.append(nl.neighbors())
 averaged = RDF(n_bins=160, r_max=8.0).compute(frames, nlists)
 print(averaged.n_frames)                       # -> 2
 ```

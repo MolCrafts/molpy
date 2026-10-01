@@ -22,7 +22,7 @@ import numpy as np
 import molrs
 from numpy.typing import ArrayLike
 
-from molpy.core.atomistic import Atomistic
+from molrs import Atomistic
 from molpy.core.box import Box
 from molpy.core.region import Region
 from molpy.builder.symmetry import SpaceGroup
@@ -109,12 +109,14 @@ class Lattice:
 
         This is the simulation cell for a structure tiled with the same
         ``repeats``; ask the lattice for it rather than the built structure,
-        which carries topology and chemistry but no cell of its own.
+        which carries topology and chemistry but no cell of its own. The box
+        matrix holds the lattice vectors as columns, so it is the transpose of
+        the row-vector :attr:`cell`.
         """
         nx, ny, nz = (int(r) for r in repeats)
         if nx <= 0 or ny <= 0 or nz <= 0:
             raise ValueError(f"repeats must be positive, got {repeats}")
-        return Box(matrix=self.cell * np.array([nx, ny, nz], dtype=float)[:, None])
+        return Box((self.cell * np.array([nx, ny, nz], dtype=float)[:, None]).T)
 
     @classmethod
     def sc(cls, a: float, species: str) -> Lattice:

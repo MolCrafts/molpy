@@ -22,15 +22,17 @@ Every analysis follows the same three beats: **configure an object, call
 ```python
 import numpy as np
 import molpy as mp
-from molpy.compute import NeighborList, RDF
+from molpy.compute import RDF
 
 rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(200, 3))
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(20.0)
+frame.box = mp.Box.cube(20.0)
 
-nlist = NeighborList(cutoff=10.0).compute(frame)   # configure, then .compute(...)
+nl = mp.NeighborList(10.0)
+nl.build(frame.coords, frame.box)
+nlist = nl.neighbors()
 result = RDF(n_bins=100, r_max=10.0).compute([frame], [nlist])
 print(result.rdf.shape, result.bin_centers.shape)  # -> (100,) (100,)
 ```
@@ -149,12 +151,16 @@ For a LAMMPS dump of unwrapped coordinates:
 ```python
 # docs: skip — needs a trajectory file of your own
 from molpy.io import read_lammps_trajectory
-from molpy.compute import NeighborList, RDF
+from molpy.compute import RDF
 
 reader = read_lammps_trajectory("run.lammpstrj")
 frames = reader.read_all()   # list[Frame]; frame.box from BOX BOUNDS
 
-nlists = [NeighborList(cutoff=8.0).compute(f) for f in frames]
+nl = mp.NeighborList(8.0)
+nlists = []
+for f in frames:
+    nl.build(f.coords, f.box)
+    nlists.append(nl.neighbors())
 gr = RDF(n_bins=160, r_max=8.0).compute(frames, nlists)
 ```
 
@@ -181,7 +187,7 @@ mixture = mp.Frame()
 mixture["atoms"] = {
     "x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2], "type_id": kinds
 }
-mixture.box = mp.Box.cubic(20.0)
+mixture.box = mp.Box.cube(20.0)
 
 selected = mixture["atoms"]["type_id"] == 1
 subset = mp.Frame()
@@ -219,7 +225,7 @@ The pages are grouped the way the questions group, not the way the classes do.
 | What does the local environment look like? | [Environment](environment.md) | `BondOrder` |
 | How big and how anisotropic is a molecule? | [Shape](shape.md) | `RadiusOfGyration`, `GyrationTensor`, `InertiaTensor` |
 | What is connected to what? | [Cluster](cluster.md) | `Cluster`, `ClusterProperties` |
-| What are the dominant collective coordinates? | [Decomposition](decomposition.md) | `Pca`, `KMeans` |
+| What are the dominant collective coordinates? | [Decomposition](decomposition.md) | `Pca2`, `KMeans` |
 | Which atoms are hydrogen-bonded? | [HBond](hbond.md) | `HBonds`, `HBondCriterion` |
 | How much space does each atom own? | [Voronoi](voronoi.md) | `RadicalVoronoi`, `VoronoiIntegration` |
 

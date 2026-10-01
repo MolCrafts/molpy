@@ -1,106 +1,44 @@
-"""
-MolPy I/O — the **only** public file I/O surface (``mp.io.read_*`` / ``write_*``).
+"""MolPy I/O — the **only** public file I/O surface (``mp.io.read_*`` / ``write_*``).
 
-There is no package-root ``mp.read_*`` / ``mp.write_*``, and no ``MolStore`` /
-Zarr layer. Kernels and formats the native core owns are reached through this module
-(thin wrappers / readers that call into it); callers never import the core
-extension themselves.
+There is no package-root ``mp.read_*`` / ``mp.write_*``. Each name here has one
+home: most are the native readers and writers, re-exported by identity
+(``mp.io.read_gro is molrs.io.read_gro``); the rest are molpy's own, in
+:mod:`molpy.io.readers`, :mod:`molpy.io.writers` and
+:mod:`molpy.io.data.lammps`, where molpy adds behaviour the native door lacks.
 
 Supports:
-- Data files (PDB, XYZ, LAMMPS, GROMACS, AMBER, …)
+- Data files (PDB, XYZ, LAMMPS, GROMACS, AMBER, MOL2, XSF, Cube, CHGCAR, …)
 - Force field files (LAMMPS ``*.ff``, OpenMM/OPLS XML, AMBER prmtop, GROMACS top)
-- Trajectory files (LAMMPS dump, XYZ, DCD/TRR/XTC where available)
+- Trajectory files (LAMMPS dump, XYZ, PDB, GRO, DCD/TRR/XTC)
+- LAMMPS logs
+- Scientific records (``*.mrec`` stores)
+
+Names come in pairs, as in the native core: a format ``X`` holding one frame is
+read by ``read_X`` and written by ``write_X``; a sequence of frames by
+``read_X_trajectory`` / ``write_X_trajectory``.
 
 Basic usage::
 
     import molpy as mp
-    from molpy.data import get_forcefield_path
 
     frame = mp.io.read_pdb("structure.pdb")
     result = mp.io.read_lammps_data("data.lammps", atom_style="full")
-    ff = mp.io.read_xml_forcefield(get_forcefield_path("oplsaa.xml"))
+    ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("tip3p.xml"))
     traj = mp.io.read_lammps_trajectory("dump.lammpstrj")
 """
 
-from pathlib import Path
-
-import numpy as np
-
-# Type aliases
-PathLike = str | Path
-
-# =============================================================================
-# Import order: Deepest to shallowest to avoid circular dependencies
-# =============================================================================
-
-# 2. Data Readers and Writers
-from .data.ac import AcReader
-from .data.amber import AmberInpcrdReader
-
-# 1. Deepest level: Base classes
-from .data.base import DataReader, DataWriter
-from .data.gro import GroReader, GroWriter
-from .data.lammps import LammpsDataReader, LammpsDataResult, LammpsDataWriter
-from .data.lammps_molecule import (
-    LammpsMoleculeReader,
-    LammpsMoleculeWriter,
-)
-from .data.mol2 import Mol2Reader, Mol2Writer
-from .data.smiles import SmilesReader
-from .data.pdb import PDBReader, PDBWriter
-from .data.top import TopReader
-from .data.xsf import XsfReader, XsfWriter
-from .data.xyz import XYZReader
-
-# ForceField Readers and Writers
-from .forcefield.amber import AmberPrmtopReader
-from .forcefield.base import ForceFieldReader, ForceFieldWriter
-from .forcefield.lammps import LAMMPSForceFieldWriter
-from .forcefield.moltemplate import MolTemplateReader
-from .forcefield.top import GromacsTopReader
-from .utils import ZipReader
-
-# 5. Factory functions (use the classes above)
-from .readers import (
-    read_amber,
-    read_amber_ac,
-    read_amber_inpcrd,
-    read_chgcar,
-    read_cube,
-    read_dcd_trajectory,
-    read_gro,
-    read_lammps_data,
+from molrs.ff import (
+    read_forcefield_xml as read_xml_forcefield,
+    read_gromacs_top_ff as read_gromacs_forcefield,
+    read_lammps_data_coeffs,
     read_lammps_forcefield,
-    read_lammps_molecule,
-    read_lammps_trajectory,
-    read_mol2,
-    read_smiles,
-    write_smarts,
-    read_pdb,
-    read_pdb_trajectory,
-    read_top,
-    read_trr_trajectory,
-    read_xml_forcefield,
-    read_xsf,
-    read_xtc_trajectory,
-    read_xyz,
-    read_xyz_trajectory,
+    write_forcefield_xml as write_xml_forcefield,
+    write_gromacs_top_ff as write_gromacs_forcefield,
+    write_lammps_data_coeffs,
+    write_lammps_forcefield,
+    write_lammps_forcefield_str,
 )
-from .base import BaseReader
-from .trajectory.base import (
-    BaseTrajectoryReader,
-    TrajectoryWriter,
-)
-
-# 3. Trajectory Readers and Writers
-from .trajectory.lammps import (
-    LammpsDumpLocalWriter,
-    LammpsTrajectoryWriter,
-)
-from .trajectory.xyz import XYZTrajectoryWriter
-
-# 4. Log Readers
-from .log import (
+from molrs.io import (
     LammpsCpuUse,
     LammpsLoadBalance,
     LammpsLog,
@@ -114,131 +52,69 @@ from .log import (
     LammpsTimingBreakdown,
     LammpsTimingRow,
     LammpsWarning,
+    mrec_sections,
     parse_lammps_log_text,
+    read_chgcar,
+    read_cube,
+    read_dcd_trajectory,
+    read_gro,
+    read_gro_trajectory,
     read_lammps_log,
-)
-from .writers import (
+    read_lammps_molecule,
+    read_lammps_trajectory,
+    read_mol2,
+    read_mrec,
+    read_mrec_meta,
+    read_mrec_system,
+    read_mrec_trajectory,
+    read_pdb,
+    read_pdb_trajectory,
+    read_top,
+    read_trr_trajectory,
+    read_xsf,
+    read_xtc_trajectory,
+    read_xyz_trajectory,
+    write_cube,
+    write_dcd_trajectory,
     write_gro,
-    write_lammps_data,
-    write_lammps_data_coeffs,
-    write_lammps_forcefield,
-    write_lammps_molecule,
-    write_bond_react_map,
-    write_lammps_bond_react_system,
-    write_lammps_system,
-    write_lammps_trajectory,
+    write_gro_trajectory,
     write_lammps_dump_local,
+    write_lammps_molecule,
+    write_lammps_trajectory,
     write_mol2,
-    write_pdb,
+    write_mrec,
+    write_mrec_system,
+    write_mrec_trajectory,
+    write_pdb_trajectory,
+    write_smarts,
     write_top,
-    write_trr,
+    write_trr_trajectory,
     write_xsf,
-    write_xtc,
+    write_xtc_trajectory,
     write_xyz,
     write_xyz_trajectory,
-    write_dcd_trajectory,
-    write_cube,
 )
 
-# 6. Utility functions (shallowest level)
-read_txt = np.loadtxt
-
-# 7. Scientific-record I/O (submodule; names stay off this package root)
 from . import mrec
+from .data.lammps import LammpsDataResult, read_lammps_data, write_lammps_data
+from .data.lammps_bond_react import BondReactTemplate
+from .readers import (
+    read_amber,
+    read_amber_ac,
+    read_amber_inpcrd,
+    read_smiles,
+    read_xyz,
+)
+from .writers import (
+    write_bond_react_map,
+    write_lammps_bond_react_system,
+    write_pdb,
+)
 
 __all__ = [
-    # Core types
-    "PathLike",
-    "mrec",
-    # Factory functions - Readers
-    "read_amber",
-    "read_amber_ac",
-    "read_amber_inpcrd",
-    "read_gro",
-    "read_lammps_log",
-    "parse_lammps_log_text",
-    "read_lammps_data",
-    "read_lammps_forcefield",
-    "read_lammps_molecule",
-    "read_lammps_trajectory",
-    "read_mol2",
-    "read_smiles",
-    "write_smarts",
-    "read_pdb",
-    "read_pdb_trajectory",
-    "read_top",
-    "read_xml_forcefield",
-    "read_xsf",
-    "read_xyz",
-    "read_xyz_trajectory",
-    "read_dcd_trajectory",
-    "read_trr_trajectory",
-    "read_xtc_trajectory",
-    "read_cube",
-    "read_chgcar",
-    # Factory functions - Writers
-    "write_gro",
-    "write_lammps_data",
-    "write_lammps_data_coeffs",
-    "write_lammps_forcefield",
-    "write_lammps_molecule",
-    "write_bond_react_map",
-    "write_lammps_bond_react_system",
-    "write_lammps_system",
-    "write_lammps_trajectory",
-    "write_lammps_dump_local",
-    "write_mol2",
-    "write_pdb",
-    "write_top",
-    "write_xsf",
-    "write_xyz",
-    "write_xyz_trajectory",
-    "write_trr",
-    "write_xtc",
-    "write_dcd_trajectory",
-    "write_cube",
-    # Utility functions
-    "read_txt",
-    # Data Readers
-    "DataReader",
-    "AcReader",
-    "AmberInpcrdReader",
-    "GroReader",
-    "LammpsDataReader",
-    "LammpsDataResult",
-    "LammpsMoleculeReader",
-    "Mol2Reader",
-    "Mol2Writer",
-    "SmilesReader",
-    "PDBReader",
-    "TopReader",
-    "XsfReader",
-    "XYZReader",
-    # Data Writers
-    "DataWriter",
-    "GroWriter",
-    "LammpsDataWriter",
-    "LammpsMoleculeWriter",
-    "PDBWriter",
-    "XsfWriter",
-    # ForceField Readers
-    "ForceFieldReader",
-    "AmberPrmtopReader",
-    "GromacsTopReader",
-    "MolTemplateReader",
-    # ForceField Writers
-    "ForceFieldWriter",
-    "LAMMPSForceFieldWriter",
-    # Trajectory Readers
-    "BaseReader",
-    "BaseTrajectoryReader",
-    # Trajectory Writers
-    "TrajectoryWriter",
-    "LammpsDumpLocalWriter",
-    "LammpsTrajectoryWriter",
-    "XYZTrajectoryWriter",
-    # Log Readers
+    "BondReactTemplate",
     "LammpsCpuUse",
+    "LammpsDataResult",
     "LammpsLoadBalance",
     "LammpsLog",
     "LammpsLogHeader",
@@ -251,6 +127,65 @@ __all__ = [
     "LammpsTimingBreakdown",
     "LammpsTimingRow",
     "LammpsWarning",
-    # Utility Classes
-    "ZipReader",
+    "mrec",
+    "mrec_sections",
+    "parse_lammps_log_text",
+    "read_amber",
+    "read_amber_ac",
+    "read_amber_inpcrd",
+    "read_chgcar",
+    "read_cube",
+    "read_dcd_trajectory",
+    "read_gro",
+    "read_gro_trajectory",
+    "read_gromacs_forcefield",
+    "read_lammps_data",
+    "read_lammps_data_coeffs",
+    "read_lammps_forcefield",
+    "read_lammps_log",
+    "read_lammps_molecule",
+    "read_lammps_trajectory",
+    "read_mol2",
+    "read_mrec",
+    "read_mrec_meta",
+    "read_mrec_system",
+    "read_mrec_trajectory",
+    "read_pdb",
+    "read_pdb_trajectory",
+    "read_smiles",
+    "read_top",
+    "read_trr_trajectory",
+    "read_xml_forcefield",
+    "read_xsf",
+    "read_xtc_trajectory",
+    "read_xyz",
+    "read_xyz_trajectory",
+    "write_bond_react_map",
+    "write_cube",
+    "write_dcd_trajectory",
+    "write_gro",
+    "write_gro_trajectory",
+    "write_gromacs_forcefield",
+    "write_lammps_bond_react_system",
+    "write_lammps_data",
+    "write_lammps_data_coeffs",
+    "write_lammps_dump_local",
+    "write_lammps_forcefield",
+    "write_lammps_forcefield_str",
+    "write_lammps_molecule",
+    "write_lammps_trajectory",
+    "write_mol2",
+    "write_mrec",
+    "write_mrec_system",
+    "write_mrec_trajectory",
+    "write_pdb",
+    "write_pdb_trajectory",
+    "write_smarts",
+    "write_top",
+    "write_trr_trajectory",
+    "write_xml_forcefield",
+    "write_xsf",
+    "write_xtc_trajectory",
+    "write_xyz",
+    "write_xyz_trajectory",
 ]

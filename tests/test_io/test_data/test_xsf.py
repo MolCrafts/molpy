@@ -1,9 +1,7 @@
-"""Core XSF format tests - simplified version with only essential functionality."""
+"""XSF (XCrySDen) read and write."""
 
 import numpy as np
 import pytest
-
-import molrs
 
 import molpy as mp
 
@@ -35,7 +33,7 @@ class TestXSFCore:
 
         # Check box
         assert frame.box.style == mp.Box.Style.ORTHOGONAL
-        np.testing.assert_array_almost_equal(frame.box.matrix, np.diag([3.0, 3.0, 3.0]))
+        np.testing.assert_array_almost_equal(frame.box.h, np.diag([3.0, 3.0, 3.0]))
 
     def test_read_molecule_structure(self, tmp_path):
         """Test reading a molecule structure (non-periodic)."""
@@ -56,8 +54,8 @@ class TestXSFCore:
     def test_write_crystal_structure(self, tmp_path):
         """Test writing a crystal structure."""
         # Create test system
-        frame = molrs.Frame()
-        frame["atoms"] = molrs.Block(
+        frame = mp.Frame()
+        frame["atoms"] = mp.Block(
             {
                 "atomic_number": np.array([1, 8]),
                 "element": np.array(["H", "O"]),
@@ -83,15 +81,13 @@ class TestXSFCore:
 
         # Check box
         assert frame2.box.style == mp.Box.Style.ORTHOGONAL
-        np.testing.assert_array_almost_equal(
-            frame2.box.matrix, np.diag([3.0, 3.0, 3.0])
-        )
+        np.testing.assert_array_almost_equal(frame2.box.h, np.diag([3.0, 3.0, 3.0]))
 
     def test_write_molecule_structure(self, tmp_path):
         """Test writing a molecule structure."""
         # Create test system
-        frame = molrs.Frame()
-        frame["atoms"] = molrs.Block(
+        frame = mp.Frame()
+        frame["atoms"] = mp.Block(
             {
                 "atomic_number": np.array([1, 1]),
                 "element": np.array(["H", "H"]),
@@ -122,8 +118,8 @@ class TestXSFCore:
     def test_roundtrip_consistency(self, tmp_path):
         """Test that write->read maintains data consistency."""
         # Original system
-        frame = molrs.Frame()
-        frame["atoms"] = molrs.Block(
+        frame = mp.Frame()
+        frame["atoms"] = mp.Block(
             {
                 "atomic_number": np.array([6, 1, 1, 1, 1]),
                 "element": np.array(["C", "H", "H", "H", "H"]),
@@ -153,19 +149,19 @@ class TestXSFCore:
             [frame2["atoms"]["x"], frame2["atoms"]["y"], frame2["atoms"]["z"]]
         )
         np.testing.assert_array_almost_equal(coords1, coords2)
-        np.testing.assert_array_almost_equal(frame.box.matrix, frame2.box.matrix)
+        np.testing.assert_array_almost_equal(frame.box.h, frame2.box.h)
 
     def test_error_handling(self, tmp_path):
         """Test basic error handling."""
         # Test reading non-existent file
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(OSError):
             mp.io.read_xsf("nonexistent.xsf")
 
         # Test reading empty file
         tmp_file = tmp_path / "empty.xsf"
         tmp_file.write_text("")  # Empty file
 
-        with pytest.raises(ValueError, match="Empty XSF file"):
+        with pytest.raises(OSError, match="Empty XSF file"):
             mp.io.read_xsf(tmp_file)
 
         # Test malformed PRIMCOORD section
@@ -174,9 +170,5 @@ class TestXSFCore:
             "MOLECULE\nPRIMCOORD\ninvalid_number 1\n"  # Invalid atom count
         )
 
-        with pytest.raises(ValueError):
+        with pytest.raises(OSError):
             mp.io.read_xsf(tmp_file2)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

@@ -2,35 +2,18 @@
 
 **Script:** [`examples/topology/05_comb.py`](https://github.com/MolCrafts/molpy/blob/master/examples/topology/05_comb.py)
 
-Combs use multifunctional backbone units (`BR` in the kit) and **hand-written** CGSmiles through the sole entry `build` — irregular graphs that the `build_*` shortcuts do not cover.
+A comb is a backbone whose branch points carry grafts. `BR` has the backbone ports `<` and `>` plus a graft port labelled `g`; the graft starts with `GR`, whose `<` carries the same label, so a graft can only join a graft port.
 
 ```python
-from eo_kit import branch_unit, eo_builder # examples/topology/
-from molpy.builder.assembly import (
- CGSmilesBondIR,
- CGSmilesGraphIR,
- CGSmilesNodeIR,
-)
+import molpy as mp
+from eo_kit import library
 
-# backbone EO–BR–EO–BR–EO with a one-unit graft on each BR
-eo1, br1, g1 = (CGSmilesNodeIR(label=x) for x in ("EO", "BR", "EO"))
-eo2, br2, g2 = (CGSmilesNodeIR(label=x) for x in ("EO", "BR", "EO"))
-eo3 = CGSmilesNodeIR(label="EO")
-topology = CGSmilesGraphIR(
- nodes=[eo1, br1, g1, eo2, br2, g2, eo3],
- bonds=[
- CGSmilesBondIR(node_i=eo1, node_j=br1),
- CGSmilesBondIR(node_i=br1, node_j=g1),
- CGSmilesBondIR(node_i=br1, node_j=eo2),
- CGSmilesBondIR(node_i=eo2, node_j=br2),
- CGSmilesBondIR(node_i=br2, node_j=g2),
- CGSmilesBondIR(node_i=br2, node_j=eo3),
- ],
-)
-
-builder = eo_builder(extra={"BR": branch_unit()})
-comb = builder.build(topology)
+graft = "[#GR][#EO]"
+sites = mp.CGSmilesIR(f"{{[#EO][#BR]({graft})[#EO][#BR]({graft})[#EO]}}").to_coarsegrain()
+comb = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
+
+**Check:** 9 units, 71 atoms, 4 open ports (two backbone ends, two graft ends).
 
 ```bash
 cd examples && python topology/05_comb.py

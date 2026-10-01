@@ -2,7 +2,7 @@
 
 Generates OpenMM input files (PDB + XML force field + Python simulation
 script) from :class:`~molpy.Frame` and
-:class:`~molpy.core.forcefield.ForceField` objects.  OpenMM itself is **not**
+:class:`~molpy.ForceField` objects.  OpenMM itself is **not**
 required for input generation; it is only needed for
 :meth:`~OpenMMEngine.serialize_system`.
 
@@ -40,7 +40,7 @@ from .base import Engine
 if TYPE_CHECKING:
     from molrs import Frame
 
-    from molpy.core.forcefield import ForceField
+    from molrs.ff import ForceField
 
 PathLike = str | Path
 
@@ -168,7 +168,7 @@ class OpenMMEngine(Engine):
     """OpenMM molecular dynamics engine.
 
     Generates a complete set of OpenMM input files from MolPy
-    :class:`~molpy.Frame` and :class:`~molpy.core.forcefield.ForceField`
+    :class:`~molpy.Frame` and :class:`~molpy.ForceField`
     objects.  OpenMM itself is **not** required for input generation; it is
     only needed for :meth:`serialize_system`.
 
@@ -317,7 +317,7 @@ class OpenMMEngine(Engine):
 
         Args:
             frame: :class:`~molpy.Frame` with atom positions.
-            forcefield: MolPy :class:`~molpy.core.forcefield.ForceField`
+            forcefield: MolPy :class:`~molpy.ForceField`
                 containing interaction parameters.
             config: Simulation parameters.
             output_dir: Directory where files are written (created if absent).
@@ -336,11 +336,12 @@ class OpenMMEngine(Engine):
         ff_path = out / ff_filename
         script_path = out / script_filename
 
-        from molpy.io.data.pdb import PDBWriter
-        from molpy.io.forcefield.xml import XMLForceFieldWriter
+        from molrs.ff import write_forcefield_xml
 
-        PDBWriter(pdb_path).write(frame)
-        XMLForceFieldWriter(ff_path).write(forcefield)
+        from molpy.io.writers import write_pdb
+
+        write_pdb(pdb_path, frame)
+        write_forcefield_xml(ff_path, forcefield)
 
         script_text = self._render_simulation_script(
             config, pdb_filename=pdb_filename, ff_filename=ff_filename
@@ -371,7 +372,7 @@ class OpenMMEngine(Engine):
 
         Args:
             frame: :class:`~molpy.Frame` with atom positions.
-            forcefield: MolPy :class:`~molpy.core.forcefield.ForceField`.
+            forcefield: MolPy :class:`~molpy.ForceField`.
             config: Simulation parameters.
             output_dir: Output directory.
             pdb_filename: PDB coordinate file name.

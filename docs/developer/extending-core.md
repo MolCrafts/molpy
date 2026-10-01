@@ -11,10 +11,10 @@ objects are live views over stable handles in those worlds.
 
 ## What can be extended in Python
 
-Python subclasses may add stateless conveniences around an existing native
-kind: constructor aliases, selection helpers, callbacks, display methods, and
-format-specific serialization. They must not create a second property store,
-endpoint list, or handle registry.
+Nothing is subclassed: `Atomistic`, `CoarseGrain` and every view class
+(`Atom`, `Bond`, `Bead`, …) are the one native class of their concept. Build
+conveniences as functions or objects that take a graph and use its public API;
+never a second property store, endpoint list, or handle registry.
 
 Use a graph factory to create data:
 
@@ -42,13 +42,13 @@ requires, in order:
 
 1. Define its storage and relation arity in molrs.
 2. Teach native copy/merge/extract/topology and Frame projection about it.
-3. Expose a handle view and graph factory in `molrs.views`.
+3. Expose a native view class and graph factory in molrs.
 4. Re-export that same object from `molpy.core`; add only Python syntax sugar.
 5. Update relevant readers/writers and add Rust, binding, and molpy integration tests.
 
 If the concept is only an annotation, prefer a typed field on an existing node
-or relation. For example, assembly sites use `fields.SITE`; they do not require
-a new node class.
+or relation. For example, the assembler records which site an atom came from in
+`frag_id`; it does not require a new node class.
 
 ## Checklist
 
@@ -56,5 +56,5 @@ a new node class.
 - [ ] Handles remain stable across live views and writes update the world.
 - [ ] Native copy/merge/extract and Frame round trips cover the new kind.
 - [ ] PyO3 exports and type stubs are updated before molpy uses the API.
-- [ ] MolPy re-exports the native type or adds a true native subclass only.
+- [ ] MolPy re-exports the native type.
 - [ ] Rust, molrs-python, and molpy integration tests all pass.

@@ -1,6 +1,7 @@
 import pytest
 
-from molpy.core.config import Config, config, get_config
+from molpy import Config
+from molpy.core.config import config
 
 
 @pytest.fixture(autouse=True)
@@ -14,10 +15,8 @@ def _reset_config():
 class TestConfigDefaults:
     def test_default_values(self):
         assert config.log_level == "INFO"
-        assert config.n_threads == 1
 
-    def test_get_config_returns_singleton(self):
-        assert get_config() is config
+    def test_instance_is_the_module_singleton(self):
         assert Config.instance() is config
 
     def test_is_molcfg_config(self):
@@ -26,7 +25,7 @@ class TestConfigDefaults:
         assert isinstance(config, MolcfgConfig)
 
     def test_to_dict(self):
-        assert config.to_dict() == {"log_level": "INFO", "n_threads": 1}
+        assert config.to_dict() == {"log_level": "INFO"}
 
     def test_dotted_path_access(self):
         assert config["log_level"] == "INFO"
@@ -34,31 +33,28 @@ class TestConfigDefaults:
 
 class TestConfigUpdate:
     def test_update_changes_values(self):
-        Config.update(log_level="DEBUG", n_threads=8)
+        Config.update(log_level="DEBUG")
         assert config.log_level == "DEBUG"
-        assert config.n_threads == 8
 
     def test_update_visible_through_module_reference(self):
         # The module-level `config` reference reflects updates in place — no
         # stale copy after Config.update().
-        Config.update(n_threads=16)
-        assert get_config().n_threads == 16
-        assert config.n_threads == 16
+        Config.update(log_level="ERROR")
+        assert config.log_level == "ERROR"
 
 
 class TestConfigReset:
     def test_reset_restores_defaults(self):
-        Config.update(log_level="ERROR", n_threads=4)
+        Config.update(log_level="ERROR")
         Config.reset()
         assert config.log_level == "INFO"
-        assert config.n_threads == 1
 
     def test_reset_removes_runtime_keys(self):
         Config.update(extra_key="value")
         assert config.get("extra_key") == "value"
         Config.reset()
         assert config.get("extra_key") is None
-        assert set(config.keys()) == {"log_level", "n_threads"}
+        assert set(config.keys()) == {"log_level"}
 
 
 class TestConfigTemporary:

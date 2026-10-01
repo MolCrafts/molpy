@@ -5,8 +5,7 @@ from textwrap import dedent
 import numpy as np
 import pytest
 
-from molrs import Frame
-from molpy.io.data.amber import AmberInpcrdReader
+import molpy as mp
 
 
 @pytest.fixture
@@ -31,8 +30,7 @@ def test_inpcrd_basic_coords_only(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content)
 
-    reader = AmberInpcrdReader(inpcrd_file)
-    frame = reader.read()
+    frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
     assert "atoms" in frame
     assert frame["atoms"].nrows == 3
@@ -67,8 +65,7 @@ def test_inpcrd_with_time(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content)
 
-    reader = AmberInpcrdReader(inpcrd_file)
-    frame = reader.read()
+    frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
     assert frame["atoms"].nrows == 2
     assert frame.meta["timestep"] == 100
@@ -94,8 +91,7 @@ def test_inpcrd_with_velocities(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content)
 
-    reader = AmberInpcrdReader(inpcrd_file)
-    frame = reader.read()
+    frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
     assert frame["atoms"].nrows == 2
     assert "vel" in frame["atoms"]
@@ -120,13 +116,12 @@ def test_inpcrd_with_box(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content)
 
-    reader = AmberInpcrdReader(inpcrd_file)
-    frame = reader.read()
+    frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
     assert frame.box is not None
     # Box should use first 3 values as diagonal
     expected_box = np.diag([10.0, 20.0, 30.0])
-    np.testing.assert_array_almost_equal(frame.box.matrix, expected_box)
+    np.testing.assert_array_almost_equal(frame.box.h, expected_box)
 
 
 def test_inpcrd_with_velocities_and_box(tmp_inpcrd_dir):
@@ -145,8 +140,7 @@ def test_inpcrd_with_velocities_and_box(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content)
 
-    reader = AmberInpcrdReader(inpcrd_file)
-    frame = reader.read()
+    frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
     assert frame["atoms"].nrows == 2
     assert "vel" in frame["atoms"]
@@ -169,7 +163,7 @@ def test_inpcrd_update_existing_frame(tmp_inpcrd_dir):
     inpcrd_file.write_text(content)
 
     # Create pre-existing frame with atoms
-    existing_frame = Frame()
+    existing_frame = mp.Frame()
     existing_frame["atoms"] = {
         "id": np.array([1, 2]),
         "name": np.array(["CA", "CB"]),
@@ -178,8 +172,7 @@ def test_inpcrd_update_existing_frame(tmp_inpcrd_dir):
         "z": np.array([0.0, 0.0]),
     }
 
-    reader = AmberInpcrdReader(inpcrd_file)
-    frame = reader.read(existing_frame)
+    frame = mp.io.read_amber_inpcrd(inpcrd_file, existing_frame)
 
     # Should update coordinates but preserve name
     assert frame["atoms"]["name"][0] == "CA"
@@ -196,9 +189,8 @@ def test_inpcrd_too_short_file(tmp_inpcrd_dir):
     content = "Only title\n"
     inpcrd_file.write_text(content)
 
-    reader = AmberInpcrdReader(inpcrd_file)
-    with pytest.raises(ValueError, match="too short"):
-        reader.read()
+    with pytest.raises(OSError, match="too short"):
+        mp.io.read_amber_inpcrd(inpcrd_file)
 
 
 def test_inpcrd_insufficient_coords(tmp_inpcrd_dir):
@@ -217,9 +209,8 @@ def test_inpcrd_insufficient_coords(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content)
 
-    reader = AmberInpcrdReader(inpcrd_file)
-    with pytest.raises(ValueError, match="Not enough lines"):
-        reader.read()
+    with pytest.raises(OSError, match="Not enough lines"):
+        mp.io.read_amber_inpcrd(inpcrd_file)
 
 
 def test_inpcrd_atom_count_mismatch(tmp_inpcrd_dir):
@@ -239,7 +230,7 @@ def test_inpcrd_atom_count_mismatch(tmp_inpcrd_dir):
     inpcrd_file.write_text(content)
 
     # Create frame with wrong number of atoms
-    existing_frame = Frame()
+    existing_frame = mp.Frame()
     existing_frame["atoms"] = {
         "id": np.array([1, 2]),  # Only 2 atoms
         "x": np.zeros(2),
@@ -247,9 +238,8 @@ def test_inpcrd_atom_count_mismatch(tmp_inpcrd_dir):
         "z": np.zeros(2),
     }
 
-    reader = AmberInpcrdReader(inpcrd_file)
     with pytest.raises(ValueError, match="atoms block has 2.*but inpcrd has 3"):
-        reader.read(existing_frame)
+        mp.io.read_amber_inpcrd(inpcrd_file, existing_frame)
 
 
 def test_inpcrd_large_system(tmp_inpcrd_dir):
@@ -272,8 +262,7 @@ def test_inpcrd_large_system(tmp_inpcrd_dir):
 
     inpcrd_file.write_text("\n".join(lines))
 
-    reader = AmberInpcrdReader(inpcrd_file)
-    frame = reader.read()
+    frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
     assert frame["atoms"].nrows == 10
     # Check first and last atoms
@@ -299,8 +288,7 @@ def test_inpcrd_fixed_width_no_whitespace(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content)
 
-    reader = AmberInpcrdReader(inpcrd_file)
-    frame = reader.read()
+    frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
     assert frame["atoms"].nrows == 2
     np.testing.assert_allclose(frame["atoms"]["x"], [50.5413286, -44.5678901])

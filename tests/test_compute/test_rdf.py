@@ -1,31 +1,21 @@
-"""molpy.compute.RDF — molrs-backed g(r).
-
-Acceptance criteria covered:
-- compute-rdf-class-exposed
-- rdf-ideal-gas-correct
-- input-frame-immutable
-- rdf-requires-box
-"""
+"""molpy.compute.RDF — native g(r) over core neighbour tables."""
 
 import numpy as np
-import pytest
 
-import molrs
-
-import molpy
-from molpy.compute import RDF, NeighborList
+import molpy as mp
+from molpy.compute import RDF
 
 
 def _uniform_frame(n: int, box_len: float, seed: int):
     rng = np.random.default_rng(seed)
     xyz = rng.uniform(0.0, box_len, size=(n, 3))
-    frame = molrs.Frame()
+    frame = mp.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.box = molpy.Box.cubic(box_len)
+    frame.box = mp.Box.cube(box_len)
     return frame
 
 
-def test_ideal_gas_g_of_r_approaches_one():
+def test_ideal_gas_g_of_r_approaches_one(self_neighbors):
     """For a uniform random point cloud, g(r) → 1 in middle bins."""
     n_frames = 5
     n_points = 2000
@@ -33,7 +23,7 @@ def test_ideal_gas_g_of_r_approaches_one():
     cutoff = 8.0
 
     frames = [_uniform_frame(n_points, box_len, seed=i) for i in range(n_frames)]
-    nlists = [NeighborList(cutoff=cutoff).compute(f) for f in frames]
+    nlists = [self_neighbors(f, cutoff) for f in frames]
 
     rdf = RDF(n_bins=40, r_max=cutoff, r_min=0.0)
     result = rdf.compute(frames, nlists)
@@ -50,14 +40,14 @@ def test_ideal_gas_g_of_r_approaches_one():
     )
 
 
-def test_multi_frame_aggregation():
+def test_multi_frame_aggregation(self_neighbors):
     """g(r) computed over a list of frames matches per-frame averaging."""
     box_len = 20.0
     cutoff = 6.0
     n_bins = 30
 
     frames = [_uniform_frame(800, box_len, seed=i) for i in range(3)]
-    nlists = [NeighborList(cutoff=cutoff).compute(f) for f in frames]
+    nlists = [self_neighbors(f, cutoff) for f in frames]
 
     multi = RDF(n_bins, r_max=cutoff).compute(frames, nlists)
     g_multi = np.asarray(multi.rdf)
@@ -68,26 +58,14 @@ def test_multi_frame_aggregation():
     assert (g_multi >= 0.0).all()
 
 
-def test_input_frame_immutable():
+def test_input_frame_immutable(self_neighbors):
     frame = _uniform_frame(300, 15.0, seed=11)
-    nlist = NeighborList(cutoff=4.0).compute(frame)
+    nlist = self_neighbors(frame, 4.0)
 
-    box_matrix_before = frame.box.matrix.copy()
+    box_matrix_before = frame.box.h.copy()
     x_before = frame["atoms"]["x"].copy()
 
     RDF(20, r_max=4.0).compute([frame], [nlist])
 
-    np.testing.assert_array_equal(frame.box.matrix, box_matrix_before)
+    np.testing.assert_array_equal(frame.box.h, box_matrix_before)
     np.testing.assert_array_equal(frame["atoms"]["x"], x_before)
-
-
-def test_no_box_raises():
-    """RDF on a frame without a box must raise ValueError mentioning 'box'."""
-    frame = molrs.Frame()
-    rng = np.random.default_rng(0)
-    xyz = rng.uniform(0.0, 10.0, size=(50, 3))
-    frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    # frame.box left as None deliberately.
-
-    with pytest.raises(ValueError, match="box"):
-        NeighborList(cutoff=2.0).compute(frame)

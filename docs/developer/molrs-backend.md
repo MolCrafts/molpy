@@ -1,10 +1,11 @@
 # molrs Backend
 
-MolPy's analysis operators are thin Python shells over [molrs](https://github.com/MolCrafts/molrs),
-a Rust column store and compute kernel. molrs is a **required** runtime
-dependency — callers import `Frame` and `Block` directly from `molrs`; both are
-backed by a Rust `Store`, and the `compute` operators forward
-straight into Rust. There is no pure-Python fallback and no opt-in flag.
+MolPy's analysis operators are the analyses of [molrs](https://github.com/MolCrafts/molrs),
+a Rust column store and compute kernel, re-exported by identity. molrs is a
+**required** runtime dependency — callers use `mp.Frame` and `mp.Block`, which
+are the molrs types re-exported unchanged (never `import molrs` in user code);
+both are backed by a Rust `Store`, and every class on `mp.compute` is the molrs
+class itself. There is no pure-Python fallback and no opt-in flag.
 
 This page shows how that backend surfaces in everyday analysis: how the box
 type is shared with molrs, how to build neighbor lists and radial distribution
@@ -46,7 +47,7 @@ def _frame(step: int) -> mp.Frame:
     xyz = rng.uniform(0.0, 20.0, size=(200, 3)) + 0.1 * step
     frame = mp.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.box = mp.Box.cubic(20.0)
+    frame.box = mp.Box.cube(20.0)
     return frame
 
 
@@ -68,40 +69,42 @@ unchanged — there is no `.to_molrs()` bridge and no coordinate translation:
 import molrs
 import molpy as mp
 
-box = mp.Box.cubic(10.0)
+box = mp.Box.cube(10.0)
 assert isinstance(box, molrs.Box)  # it *is* a molrs box
 ```
 
 Likewise `frame.box` is accepted directly by Rust-side calls such as
-`molrs.NeighborQuery`. The enriched molpy methods (`Style`, `cubic`,
-`from_lengths_angles`, `diff_dr`, …) remain available on top of the inherited
-Rust core.
+`mp.NeighborList.build`. molpy adds only a constructor that also accepts no
+matrix (a free box) or a `(3,)` diagonal, and the `Box.Style` enumeration; the
+geometry (`wrap`, `unwrap`, `delta`, `distances`, `to_frac`, …) and the
+factories (`Box.cube`, `Box.ortho`, `Box.from_bounds`) are the native box's.
 
 ## Neighbor lists come from the linked-cell kernel
 
-`NeighborList` searches for all pairs within a cutoff using molrs's
-linked-cell algorithm (O(N) in the number of atoms). It returns the molrs
-`NeighborList` result object directly — molpy does not re-wrap it:
+`mp.NeighborList` (the molrs class) searches for all pairs within a cutoff
+using a linked-cell algorithm (O(N) in the number of atoms). `build` indexes
+the coordinates and `neighbors()` returns the pair table, a `mp.Neighbors`:
 
 ```python
 import numpy as np
 import molpy as mp
-from molpy.compute import NeighborList
 
 rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(500, 3))
 
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(20.0)
+frame.box = mp.Box.cube(20.0)
 
-neighbors = NeighborList(cutoff=8.0).compute(frame)
+nl = mp.NeighborList(8.0)
+nl.build(frame.coords, frame.box)
+neighbors = nl.neighbors()
 print(neighbors.n_pairs)  # number of pairs found
 print(np.sqrt(neighbors.dist_sq())[:5])  # pair distances (Å) from stored dist_sq
 ```
 
-A periodic box is required: calling `NeighborList` on a free box raises
-`ValueError`, because there is no minimum-image convention to apply.
+`build` needs a box: a frame without one (`frame.box is None`) raises
+`TypeError`. A free box (no periodic axis) searches without minimum images.
 
 ## The RDF reuses the neighbor list it is given
 
@@ -128,11 +131,9 @@ Multiple frames are averaged when you pass lists:
 
 ## The wider analysis catalog is exposed as molpy operators
 
-A range of standard trajectory analyses already live in molrs. MolPy exposes
-each under a `compute(...)` method that forwards its arguments and returns the
-molrs result type unchanged. Most of these shells add nothing of their own and
-are pending a refactor into identity re-exports of the molrs classes, so read
-the table as a catalogue of molrs analyses rather than of molpy types:
+A range of standard trajectory analyses live in molrs. `mp.compute`
+re-exports each class by identity, so the table is a catalogue of molrs
+analyses, each with a `compute(...)` method:
 
 | Operator | What it computes |
 |----------|------------------|
@@ -140,14 +141,14 @@ the table as a catalogue of molrs analyses rather than of molpy types:
 | `Cluster`, `ClusterCenters`, `ClusterProperties` | connected-component clustering, centroids, and per-cluster size/mass/gyration |
 | `CenterOfMass` | mass-weighted centroid |
 | `GyrationTensor`, `RadiusOfGyration`, `InertiaTensor` | shape descriptors |
-| `Pca`, `KMeans` | dimensionality reduction and partitioning |
+| `Pca2`, `KMeans` | two-component PCA and k-means partitioning |
 | `Steinhardt`, `Hexatic`, `SolidLiquid`, `Nematic` | bond-orientational order, hexatic order, solid-liquid classification, nematic Q-tensor |
 | `LocalDensity`, `GaussianDensity` | per-particle local density and Gaussian-smeared density grid |
 | `StaticStructureFactorDebye` | static structure factor S(k) via the Debye equation |
 | `BondOrder` | neighbor bond-direction diagram on a (θ, φ) grid |
 | `PMFTXY` | 2-D potential of mean force and torque |
 
-They follow the same call convention as `NeighborList` / `RDF`. The
+They follow the same call convention as `RDF`. The
 neighbor-based operators take `(frames, nlists)`; a few take other inputs
 (`GaussianDensity` and `StaticStructureFactorDebye` take just `frames`,
 `Nematic` reads per-particle directors from the frame's `orientations` topology
@@ -176,9 +177,8 @@ sk = StaticStructureFactorDebye(np.linspace(0.5, 6.0, 32)).compute([frame])  # S
 ## One coordinate copy, and only one
 
 The boundary between molpy and molrs is deliberately copy-free. Coordinates
-cross it exactly once, inside `frame["atoms"][["x", "y", "z"]]`, where three
-separate columns are stacked into a single contiguous `(N, 3)` array via
-`numpy.column_stack`. That reshape is unavoidable as long as coordinates are
+cross it exactly once, in `frame.coords`, where three separate columns are
+stacked into a single contiguous `(N, 3)` array. That reshape is unavoidable as long as coordinates are
 stored as separate `x`/`y`/`z` columns. Everything downstream — pair indices,
 distances, histogram bins — is a borrowed read-only view into Rust-owned
 buffers, so the operators never defensively `.copy()` their inputs and never
@@ -187,14 +187,13 @@ mutate the frame you pass in.
 ## 3D structures are generated through molrs embed
 
 Generating coordinates from a connectivity-only graph also runs on molrs.
-`molpy.conformer.Conformer` wraps the molrs distance-geometry + minimization
+`molpy.Conformer` wraps the molrs distance-geometry + minimization
 pipeline (ETKDGv3 → torsion refinement → MMFF94 cleanup):
 
 ```python
-from molpy.conformer import Conformer
 
 mol = mp.io.read_smiles("CCO")  # ethanol, heavy-atom graph
-mol_3d, report = Conformer(add_hydrogens=True, seed=42).generate(mol)
+mol_3d, report = mp.Conformer(add_hydrogens=True, seed=42).generate(mol)
 ```
 
 `generate` returns the new structure and a report of what each stage did; the

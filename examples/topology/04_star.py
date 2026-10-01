@@ -1,17 +1,18 @@
-"""T6 — Star: multifunctional core + arms via build_star.
+"""Star: a three-arm core with three EO arms of three units.
 
 Guide: docs/user-guide/topology/04_star.md
 Run:   python topology/04_star.py
 """
 
-from eo_kit import eo_builder, report, trifunctional_core
+import molpy as mp
+from eo_kit import library, report
 
 
 def main() -> None:
-    builder = eo_builder(extra={"X3": trifunctional_core()})
-    star = builder.build_star("X3", "EO", n_arms=3, arm_length=4)
-    report("star-3x4", star)
-    print("  core=X3, arms=3 × EO4  (shortcut → branched CGSmiles → build)")
+    arm = "[#EO][#EO][#EO]"
+    sites = mp.CGSmilesIR(f"{{[#X3]({arm})({arm}){arm}}}").to_coarsegrain()
+    star = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+    report("star-3x3", star)
 
 
 if __name__ == "__main__":

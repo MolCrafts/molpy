@@ -26,7 +26,8 @@ def _chain_frame(n: int = 6):
     ]
     for i in range(n - 1):
         mol.def_bond(atoms[i], atoms[i + 1])
-    return mol.get_topo(gen_angle=True, gen_dihe=True).to_frame()
+    mol.generate_topology(gen_angle=True, gen_dihedral=True)
+    return mol.to_frame()
 
 
 def test_frame_carries_core_topology_blocks():

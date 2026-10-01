@@ -123,7 +123,7 @@ xyz = np.array(
 )
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cubic(4 * a)
+frame.box = mp.Box.cube(4 * a)
 ```
 
 The compute takes the $k$ grid up front and returns, **per frame**, a tuple of

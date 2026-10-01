@@ -6,21 +6,19 @@ Several guides use polymers as the working example — a demonstration domain, n
 
 ## Foundations
 
-- [Parsing Chemistry](01_parsing_chemistry.md) — conversion of SMILES, SMARTS, BigSMILES, and CGSmiles strings into `Atomistic` structures
+- [Parsing Chemistry](01_parsing_chemistry.md) — conversion of SMILES and SMARTS strings into `Atomistic` structures (BigSMILES is no longer parsed; CGsmiles is covered in Assembly)
 
 ## Chain & Network Construction
 
-- [Assembly](02_assembly.md) — one `GraphAssembler` grows chains, crosslinks melts, and closes rings; only the `Selector` that pairs the reaction sites differs
-- [Building a Crosslinked Gel](16_crosslinked_gel.md) — offline end-to-end workflow: GAFF chain → grid melt → crosslink → LAMMPS equilibration → network connectivity analysis
+- [Assembly](02_assembly.md) — units with ports joined along a site graph by `Assembler`: grown from a CGsmiles topology, or backmapped onto a coarse-grained model
 - [Polydisperse Systems](05_polydisperse_systems.md) — molecular-weight distribution sampling, atomistic chain construction, and box packing
 
 ## Polymer Topologies
 
-From one ethylene-glycol kit to every architecture the assembly stack supports. Each page pairs with `examples/topology/<same-name>.py`.
+From one ethylene-oxide kit to every architecture the site-graph assembler supports. Each page pairs with `examples/topology/<same-name>.py`.
 
-- [**Section home**](topology/index.md) — three decisions, SMARTS, kit, ruled vs statistical
+- [**Section home**](topology/index.md) — units, topology, assembly; port rules; the kit
 - [Linear](topology/01_linear.md) · [Block](topology/02_block.md) · [Ring](topology/03_ring.md) · [Star](topology/04_star.md) · [Comb](topology/05_comb.md) · [Telechelic](topology/06_telechelic.md)
-- [Exhaustive gel](topology/07_gel_exhaustive.md) · [Random gel](topology/08_gel_random.md) · [End-linked](topology/09_end_linked.md) · [Dual network](topology/10_dual_network.md) · [Prepolymer + agent](topology/11_prepolymer_agent.md)
 
 ## Parameterization
 
@@ -42,5 +40,3 @@ From one ethylene-glycol kit to every architecture the assembly stack supports. 
 ## Tools & Ecosystem
 
 - [AmberTools Integration](13_ambertools_integration.md) — a complete electrolyte preparation workflow driving antechamber, parmchk2, and tleap
-- [Moltemplate CLI](14_moltemplate_cli.md) — converting moltemplate `.lt` files to MolPy systems and back
-- [MCP Suite](15_mcp.md) — exposing MolPy symbols and docs to Model Context Protocol agents

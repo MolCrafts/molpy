@@ -1,22 +1,15 @@
-"""XYZ trajectory writer: the atom-count line must be the number of atoms.
-
-Regression guard for a bug where ``write_frame`` wrote ``len(atoms)`` — the
-number of *columns* in the atoms Block (a MutableMapping) — instead of the
-number of *rows* (atoms). For a frame with element/x/y/z that printed ``4``
-regardless of the real atom count, producing malformed (unreadable) XYZ.
-"""
+"""``mp.io.write_xyz_trajectory``: one count line per frame, readable back."""
 
 from __future__ import annotations
 
 import numpy as np
 
-import molrs
-
+import molpy as mp
 from molpy.io import read_xyz_trajectory, write_xyz_trajectory
 
 
-def _frame(n: int) -> molrs.Frame:
-    frame = molrs.Frame()
+def _frame(n: int) -> mp.Frame:
+    frame = mp.Frame()
     frame["atoms"] = {
         "element": np.array(["C"] * n),
         "x": np.arange(n, dtype=float),
