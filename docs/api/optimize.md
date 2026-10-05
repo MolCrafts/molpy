@@ -12,7 +12,7 @@ Geometry optimization with the native L-BFGS minimizer.
 Both are native types re-exported at the package root (`mp.LBFGS`,
 `mp.OptReport`; there is no `molpy.optimize` module); see the
 [user guide](../user-guide/08_geometry_optimization.md) for the composition
-(typify → `to_potentials` → `run`).
+(typify → `PotentialCompiler(ff).compile(frame)` → `run`).
 
 ## Related
 

@@ -54,7 +54,12 @@ Names pair: `read_X` / `write_X` for one frame, `read_X_trajectory` /
 `write_X_trajectory` for a sequence. One-frame mrec stores use `read_mrec` /
 `write_mrec` (snapshot) and `read_mrec_system` / `write_mrec_system`
 (topology); `read_mrec_meta(path)` reads a store's identity document and
-`mrec_sections(path)` lists what a store holds.
+`mrec_sections(path)` lists what a store holds. A force field rides in the
+`forcefield` section: `write_mrec(..., forcefield=ff)` /
+`write_mrec_system(..., forcefield=ff)` or `write_mrec_forcefield(path, ff)`
+write it, `read_mrec_forcefield(path)` returns a `mrec.ForceFieldSection` (or
+`None`), and `ForceField.from_section(section)` turns it back into a force
+field.
 
 ### Logs
 
