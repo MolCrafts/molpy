@@ -9,7 +9,7 @@ a subclass maps ``{format_key: canonical_key}`` in ``_field_formatters`` and
 applies it with ``canonicalize``/``localize`` (per Block) or the ``*_frame``
 variants; ``register_field`` adds a mapping at runtime and ``__init_subclass__``
 keeps each subclass's registry isolated. The formatters for the formats the core
-parses (LAMMPS, GRO, MOL2, PDB, XYZ) are native and re-exported here; a format
+parses (LAMMPS, MOL2, PDB, XYZ) are native and re-exported here; a format
 molpy parses itself declares its own subclass in its I/O module.
 
 Both the canonical names and the ``FieldFormatter`` family are native
@@ -21,7 +21,6 @@ from __future__ import annotations
 from molrs import keys as _keys
 from molrs.fields import (
     FieldFormatter,
-    GroFieldFormatter,
     LammpsFieldFormatter,
     Mol2FieldFormatter,
     PdbFieldFormatter,
@@ -79,7 +78,6 @@ VELOCITIES = _keys.VELOCITIES
 
 __all__ = [
     "FieldFormatter",
-    "GroFieldFormatter",
     "LammpsFieldFormatter",
     "Mol2FieldFormatter",
     "PdbFieldFormatter",
