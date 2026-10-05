@@ -39,20 +39,26 @@ this step needs the Rust toolchain — install it via
 in its `rust-toolchain.toml`, so no manual component setup is required inside
 the checkout.
 
+Clone molrs next to molpy and point uv at it with a local path source, added
+to molpy's `pyproject.toml`:
+
+```toml
+[tool.uv.sources]
+molcrafts-molrs = { path = "../molrs/molrs-python", editable = true }
+```
+
 ```bash
-# in a sibling checkout next to molpy
-git clone https://github.com/MolCrafts/molrs.git
-cd molrs
-pip install maturin
-# back in molpy: [tool.uv.sources] already names ../molrs/molrs-python
-cd ../molpy
+git clone https://github.com/MolCrafts/molrs.git   # beside molpy/
+cd molpy
 uv sync --extra dev --reinstall-package molcrafts-molrs
 uv run python -c "import molpy as mp; print(mp.version, mp.Frame(), mp.Element('C').symbol)"
 ```
 
 Re-run that `uv sync … --reinstall-package molcrafts-molrs` after any change
-to the molrs Rust source to recompile
-the extension. See the
+to the molrs Rust source to recompile the extension. The path source is a
+local convenience: do not commit it outside a molrs co-development branch, and
+never release with it — `release.yml` refuses a tag while `pyproject.toml`
+carries any `[tool.uv.sources]` entry (see [Release Process](release-process.md)). See the
 [molrs build-from-source guide](https://docs.molcrafts.org/molrs/getting-started/installation/)
 for the native-crate and WASM build targets.
 
