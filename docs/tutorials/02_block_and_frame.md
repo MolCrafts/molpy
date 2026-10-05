@@ -66,10 +66,10 @@ Slicing, boolean masks, and fancy indexing all produce a new `Block`. The origin
 ```python
 hydrogens = atoms[atoms["element"] == "H"]
 print(hydrogens.nrows) # 2
-print(hydrogens["x"]) # [0.957, -0.239]
+print(hydrogens["x"]) # [ 0.957 -0.239]
 
 first_two = atoms[0:2]
-print(first_two["element"]) # ['O', 'H']
+print(first_two["element"]) # ['O' 'H']
 ```
 
 If you need a single scalar value, index the column first, then the row.
@@ -93,12 +93,12 @@ print(list(atoms_with_r.keys())) # ['element', 'x', 'y', 'z']
 
 ## Renaming columns
 
-`Block.rename()` changes a column key in place. This is used internally by the I/O formatter system to translate between format-specific and canonical field names.
+`Block.rename()` changes a column key in place and keeps the column where it was. `FieldFormatter` uses it to translate between format-specific and canonical field names at an I/O boundary.
 
 ```python
 b = mp.Block({"q": [0.1, -0.2], "x": [1.0, 2.0]})
 b.rename("q", "charge")
-print(list(b.keys())) # ['x', 'charge']
+print(list(b.keys())) # ['charge', 'x'] — the renamed column keeps its place
 ```
 
 ## Copy semantics
@@ -161,7 +161,7 @@ every column operation works the same way and a write lands in the frame.
 
 ```python
 atoms = frame["atoms"]
-print(atoms["x"]) # [0.000, 0.957, -0.239]
+print(atoms["x"]) # [ 0.     0.957 -0.239]
 ```
 
 You can add, replace, or delete blocks at any time.

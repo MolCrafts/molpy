@@ -32,6 +32,7 @@ creation — and it is the only writer of `forcefield()`.
 | `OPLSAATypifier` | Full OPLS-AA typing pipeline (native) | OPLS-AA all-atom force fields |
 | `MMFF94Typifier` / `MMFF94STypifier` | Full MMFF94 / MMFF94s typing pipeline (native) | MMFF all-atom force fields |
 | `ElementTypifier` | `type` labels from element symbols; defines no force field | Writers that need labels on an untyped molecule |
+| `AtdTypifier` | `AtdTypifier(parameter_set="gaff2")`: antechamber's atom-type tables (`gaff`, `gaff2`, `amber`, `bcc`, …) evaluated natively — atom types only, no charges or parameters | GAFF / GAFF2 or BCC atom types without running antechamber |
 | `AntechamberTypifier` | antechamber → parmchk2 → tleap for one complete molecule | GAFF / GAFF2 small molecules and monomers |
 | `TLeapTypifier` | tleap alone over a graph that already carries AMBER types and charges | GAFF / GAFF2 chains assembled from typed monomers |
 
@@ -50,7 +51,7 @@ yet; MolPy re-exports it once one is published.
 import molpy as mp
 from molpy.typifier import OPLSAATypifier
 
-mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
+mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(
     mp.io.read_smiles("CCO")
 )
 

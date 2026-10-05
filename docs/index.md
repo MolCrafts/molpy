@@ -57,11 +57,11 @@ shuttling everything through disk.
 <div class="molpy-system-flow">
 <div>
 <span>01 · Parse / build</span>
-<a href="user-guide/01_parsing_chemistry/"><strong>SMILES, BigSMILES, or a file → an editable graph</strong></a>
+<a href="user-guide/01_parsing_chemistry/"><strong>SMILES, CGsmiles, or a file → an editable graph</strong></a>
 </div>
 <div>
 <span>02 · Edit</span>
-<a href="user-guide/02_assembly/"><strong>React, crosslink, and assemble on the graph</strong></a>
+<a href="user-guide/02_assembly/"><strong>Join units along a site graph, react, and edit</strong></a>
 </div>
 <div>
 <span>03 · Typify</span>
@@ -73,7 +73,7 @@ shuttling everything through disk.
 </div>
 <div>
 <span>05 · Export</span>
-<a href="user-guide/11_io/"><strong>LAMMPS, GROMACS, PDB, Zarr, and more</strong></a>
+<a href="user-guide/11_io/"><strong>LAMMPS, GROMACS, PDB, <code>*.mrec</code>, and more</strong></a>
 </div>
 <div>
 <span>06 · Analyze</span>
@@ -97,8 +97,8 @@ copy-paste recipes.
 ## Each stage is a few lines of Python
 
 The cards below follow the same six stages. Polymers show up often because
-crosslinking and polydispersity stress the editing machinery — not because
-MolPy is limited to polymers.
+assembly and polydispersity stress the editing machinery — not because MolPy is
+limited to polymers.
 
 </div>
 
@@ -110,8 +110,8 @@ MolPy is limited to polymers.
 
 ### [Describe chemistry as text](user-guide/01_parsing_chemistry/)
 
-One line of SMILES or BigSMILES becomes an editable structure — a single
-molecule or a polymer chain.
+One line of SMILES becomes an editable structure; one line of CGsmiles
+describes the units of a polymer and how they join.
 
 ```python
 import molpy as mp
@@ -185,7 +185,7 @@ system = GenCanPack().with_seed(42).run([target], max_loops=200).frame
 ### [Write files your engine runs](user-guide/11_io/)
 
 One call per file via ``mp.io``: LAMMPS data plus force-field coefficients.
-GROMACS and PDB writers share the same pattern.
+GROMACS, PDB and the ``*.mrec`` record store share the same pattern.
 
 ```python
 # full atom style needs mol_id: one per connected molecule
@@ -256,8 +256,8 @@ package.
 </div>
 <div>
 <span class="molcrafts-feature-matrix__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg></span>
-<dt><a href="developer/extending-compute/">Registries, not hardcoded lists</a></dt>
-<dd>Register a compute operator, I/O format, force-field style, or typifier from outside the core without patching the package itself.</dd>
+<dt><a href="developer/extending-compute/">Contracts, not base classes</a></dt>
+<dd>Write a compute operator or a typifier as a plain class against a documented contract, from outside the package, without patching it.</dd>
 </div>
 <div>
 <span class="molcrafts-feature-matrix__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></svg></span>

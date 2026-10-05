@@ -50,19 +50,20 @@ writes it or an agent calls it.
 
 ## Capabilities
 
-Each row is one `src/molpy/` module — parse or build a structure, edit and type
-it, analyze or minimize it, then read and write it across formats.
+Every name is reached through `import molpy as mp`. The graph, table and
+force-field types and the notation parsers are the native core's (molrs),
+re-exported on the molpy root; each row below that names a subpackage is one
+`src/molpy/` package.
 
-| Module | Capability |
+| Where | Capability |
 |---|---|
-| **`core`** | Explicit data model — editable `Atomistic` topology graph, `Frame`/`Block` columnar arrays, `ForceField`, `Box` |
-| **`parser`** | SMILES / SMARTS (`SmilesIR`, `SmartsPattern`) |
-| **`builder`** | System assembly — polymer planning and polydispersity, nanostructures, crystals, virtual sites; site-graph assembly (`mp.Assembler`) is native, on the molpy root |
+| **`mp.*`** (native) | Explicit data model — editable `Atomistic` / `CoarseGrain` graphs, `Frame` / `Block` columnar arrays, `ForceField`; SMILES / SMARTS / CGsmiles (`SmilesIR`, `SmartsPattern`, `CGSmilesIR`); site-graph assembly (`Assembler`); `PotentialCompiler` and the `LBFGS` minimizer |
+| **`core`** | molpy's own pieces of the model — `Box`, `Trajectory`, regions, selectors, `UnitSystem`, `Script` |
+| **`builder`** | Polymer planning and polydispersity, nanostructures, crystals, virtual sites, packing templates |
 | **`conformer`** | 3D coordinate generation (native ETKDG + MMFF cleanup) |
-| **`typifier`** | Force-field typing — OPLS-AA and MMFF94 (native), GAFF / GAFF2 via AmberTools |
-| **`potential` · `optimize`** | Energy & force potentials with L-BFGS minimization |
-| **`compute`** | Analysis under `molpy.compute` — `rdf`/`msd`/`pmsd`/`jacf`/`order`/`voronoi`/… modules, plus dielectric and vibrational-spectrum classes on the package itself (native kernels) |
-| **`io`** | Read/write — PDB, GRO, LAMMPS data, XYZ, force fields, trajectories, … |
+| **`typifier`** | Force-field typing — OPLS-AA, MMFF94 and antechamber's atom-type tables (native), GAFF / GAFF2 parameters via AmberTools |
+| **`compute`** | Analysis — RDF, MSD, conductivity, order parameters, Voronoi, dielectric and vibrational spectra, … (native kernels) |
+| **`io`** | Read/write — PDB, GRO, LAMMPS data, XYZ, force fields, trajectories, `*.mrec` records, … |
 | **`engine`** | MD input generation & run management — LAMMPS, CP2K, OpenMM |
 | **`wrapper` · `adapter`** | External CLIs (Antechamber, tleap, …) and optional RDKit in-memory bridge |
 
@@ -152,8 +153,8 @@ mp.io.write_lammps_data(out / "system.data", system)
 mp.io.write_lammps_forcefield(out / "system.ff", ff, system)
 ```
 
-More workflows — packed solvent boxes, virtual-site models, polymer chains and
-networks (the stress test for MolPy's editing machinery), AmberTools
+More workflows — packed solvent boxes, virtual-site models, polymer
+architectures (the stress test for MolPy's editing machinery), AmberTools
 parameterization — are in the
 **[Example Gallery](https://docs.molcrafts.org/molpy/getting-started/examples/)**
 and the task-oriented [Guides](https://docs.molcrafts.org/molpy/user-guide/).
@@ -164,6 +165,7 @@ Full documentation, including executable notebooks:
 **[docs.molcrafts.org/molpy](https://docs.molcrafts.org/molpy/)**
 
 - [Getting Started](https://docs.molcrafts.org/molpy/getting-started/) — install and first example
+- [What's New in 0.15](https://docs.molcrafts.org/molpy/getting-started/whats-new/) — release highlights and upgrading from 0.14
 - [Example Gallery](https://docs.molcrafts.org/molpy/getting-started/examples/) — short copy-paste workflows
 - [Guides](https://docs.molcrafts.org/molpy/user-guide/) — task-oriented notebooks
 - [Concepts](https://docs.molcrafts.org/molpy/tutorials/) — data model deep dives

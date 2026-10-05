@@ -24,7 +24,7 @@ the unit conversion in a library default. Compose `EinsteinConductivity` →
     `EinsteinConductivity().compute(...)`, and the S/m prefactor on the
     [PMSD](../compute/pmsd.md) page ($3.0988\times10^{9}$) assumes a slope in
     $e^2\,\text{Å}^2\,\text{fs}^{-1}$. Reusing an old picosecond `dt` makes the
-    lag axis 1000× too short and the conductivity 1000× too large..
+    lag axis 1000× too short and the conductivity 1000× too large.
 
 Like freud’s [API modules](https://freud.readthedocs.io/en/stable/), each
 analysis family has its own page under [Compute](../compute/index.md)

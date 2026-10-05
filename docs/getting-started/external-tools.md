@@ -13,7 +13,7 @@ This page is the only place those integrations are documented as prerequisites.
 | Task | Use |
 |------|-----|
 | Parse SMILES / SMARTS | `mp.SmilesIR`, `mp.SmartsPattern` |
-| 3D coordinates | `molpy.conformer.Conformer` |
+| 3D coordinates | `mp.Conformer` |
 | Polymer assembly | `mp.Assembler` on a CGsmiles site graph (native); see [Polymer Topologies](../user-guide/topology/index.md) |
 | Pack a box | [molpack](https://docs.molcrafts.org/molpack/) (`molcrafts-molpack`, installed separately) |
 | OPLS-AA / MMFF94 typing | `molpy.typifier` |
@@ -49,7 +49,7 @@ Pass the env into the typifier when you construct it:
 # docs: skip — needs AmberTools; typifiers unit-tested with the executables faked
 import molpy as mp
 
-mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
+mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(
     mp.io.read_smiles("CCO")
 )  # antechamber needs 3D coordinates
 ante = mp.typifier.AntechamberTypifier(

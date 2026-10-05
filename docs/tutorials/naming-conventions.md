@@ -66,11 +66,11 @@ Floats are always `float64`: a float32 array is widened when it is inserted.
 The identifier and index columns (`id`, `mol_id`, `atomic_number`, `res_id`,
 `type_id`, `atomi` … `atoml`) are stored `uint64`; a narrower unsigned array is
 widened on insert, and a `*.mrec` store holding them at another width is refused
-on read. `molrs.schema.column(key)` is the authoritative table.
+on read. `mp.schema.column(key)` is the authoritative table.
 
 Format-specific aliases such as LAMMPS `q` and `mol` exist only at the I/O boundary. Readers canonicalize them to `charge` and `mol_id`; writers localize them back when required by the target format.
 
-**Units.** `mass` is in amu and `charge` in elementary-charge units, but coordinates (`x/y/z`) and velocities (`vx/vy/vz`) carry *no intrinsic unit* — MolPy stores raw numbers. The length convention is fixed by the force field you apply (its `units=` setting, e.g. LAMMPS `real` ⇒ Å) and by the file format you read from or export to. Keep your input coordinates consistent with that convention (e.g. TIP3P's `tip3p.xml` uses nm).
+**Units.** `mass` is in amu and `charge` in elementary-charge units, but coordinates (`x/y/z`) and velocities (`vx/vy/vz`) carry *no intrinsic unit* — MolPy stores raw numbers. The length convention is fixed by the force field you apply (its `units=` setting, e.g. LAMMPS `real` ⇒ Å) and by the file format you read from or export to. Keep your input coordinates consistent with that convention. Readers convert to the store units on the way in: the bundled `tip3p.xml` is written in nm and kJ/mol, and `read_xml_forcefield` hands back Å and kcal/mol.
 
 #### Bond Topology (`bonds`)
 
@@ -134,7 +134,7 @@ Field names within a namespace use lowercase with underscore separators for mult
 
 ### Entity-Level Topology: Object References
 
-At the Entity level, MolPy's topology objects (Bond, Angle, Dihedral, Improper) operate directly on Atom instances. These objects are used during molecular construction, editing, and chemical reasoning. For entity-level topology, MolPy uses the field names `itom`, `jtom`, `ktom`, and `ltom`, which correspond to the Frame-level `atomi`, `atomj`, `atomk`, and `atoml` but store object references instead of integer indices. For example:
+At the Entity level, MolPy's topology objects (Bond, Angle, Dihedral, Improper) refer directly to Atom views. These objects are used during molecular construction, editing, and chemical reasoning. Every relation lists its atoms in order as `endpoints`, which corresponds to the Frame-level `atomi`, `atomj`, `atomk`, `atoml` but holds atom views instead of integer indices; a bond also names its two atoms `itom` and `jtom`. For example:
 
 ```python
 mol = mp.Atomistic()
@@ -143,15 +143,16 @@ atom2 = mol.def_atom(element="H", x=1.1, y=0.0, z=0.0)
 bond = mol.def_bond(atom1, atom2)
 print(bond.itom) # Atom object
 print(bond.jtom) # Atom object
+print(bond.endpoints) # (Atom, Atom)
 ```
 
-In this context, `itom` and `jtom` are explicit references to Atom objects, not indices. The naming is intentionally short because these fields are accessed frequently during structure manipulation, and the `tom` suffix signals that the value is an object rather than a numeric identifier. A corresponding strict rule applies: `itom`, `jtom`, `ktom`, and `ltom` must always store Atom references and must never store integers.
+In this context, `itom`, `jtom` and `endpoints` are Atom views, not indices. The naming is intentionally short because these fields are accessed frequently during structure manipulation, and the `tom` suffix signals that the value is an object rather than a numeric identifier. An angle, dihedral or improper has no `itom` … `ltom`: read its atoms from `endpoints` (`angle.endpoints[1]` is the centre atom).
 
-This parallel naming scheme ensures that the semantic role of each atom (first, second, center, etc.) remains consistent across both representations, while the naming itself (`atomi` versus `itom`) makes the representation explicit at every use site.
+This parallel naming scheme ensures that the semantic role of each atom (first, second, center, etc.) remains consistent across both representations — position *k* of `endpoints` is the column `atomi`, `atomj`, … of the same rank — while the naming itself (`atomi` versus `itom`) makes the representation explicit at every use site.
 
 ### Why the convention exists
 
-The namespace and naming convention addresses two complementary problems: data organization and type safety. At the organization level, namespaces eliminate ambiguity about where a field belongs and what category of data it represents. Without explicit namespaces, field names must encode their semantic category through prefixes or suffixes, leading to inconsistent conventions such as `atom_z` versus `z_atom` versus `atomic_number` versus `element`. Namespaces make the category explicit and separate it from the field identity, so atomic numbers are always accessed as `frame["atoms"]["number"]` regardless of context.
+The namespace and naming convention addresses two complementary problems: data organization and type safety. At the organization level, namespaces eliminate ambiguity about where a field belongs and what category of data it represents. Without explicit namespaces, field names must encode their semantic category through prefixes or suffixes, leading to inconsistent conventions such as `atom_z` versus `z_atom` versus `atomic_number` versus `element`. Namespaces make the category explicit and separate it from the field identity, so atomic numbers are always accessed as `frame["atoms"]["atomic_number"]` regardless of context.
 
 At the type safety level, MolPy deliberately avoids using the same field name for both indices and references. While names such as `atom_i` or `atom1` are common in other libraries, they tend to blur the distinction between "position in a table" and "object in memory". By using `atomi` and `atomj` at the Frame level and `itom` and `jtom` at the Entity level, the code makes this distinction visible at the point of use and enforceable through type checking or runtime validation.
 
@@ -161,7 +162,7 @@ At the same time, the Entity-level design supports the fluent and expressive API
 
 ### How to convert between representations
 
-MolPy provides explicit conversion paths between these two representations. When converting from Entity to Frame (for example, via `Atomistic.to_frame()`), each `itom`, `jtom`, and so on is replaced by the corresponding atom index, and the results are stored in namespace-organized Blocks. The resulting frame uses `atomi`, `atomj`, and so on exclusively within their respective namespace blocks. Conceptually, this works as:
+MolPy provides explicit conversion paths between these two representations. When converting from Entity to Frame (for example, via `Atomistic.to_frame()`), each endpoint is replaced by the corresponding atom index, and the results are stored in namespace-organized Blocks. The resulting frame uses `atomi`, `atomj`, and so on exclusively within their respective namespace blocks. Conceptually, this works as:
 
 ```python
 # Entity to Frame conversion for bonds
@@ -194,4 +195,4 @@ These conversions must be explicit and localized at the boundary between Frame a
 
 ### For contributors
 
-When extending MolPy, treat this scheme as a hard invariant: Frame/Block topology always uses `atomi/atomj/atomk/atoml` (indices); Entity topology always uses `itom/jtom/ktom/ltom` (object references); convert explicitly at the boundary, never mix the two inside one object. The rationale (type-safety, serialization to JSON/Arrow/HDF5, and cross-language backends) is covered in the [Developer Guide](../developer/index.md).
+When extending MolPy, treat this scheme as a hard invariant: Frame/Block topology always uses `atomi/atomj/atomk/atoml` (indices); Entity topology always uses `endpoints` (and a bond's `itom` / `jtom`), which are atom views; convert explicitly at the boundary, never mix the two inside one object. The rationale (type-safety, serialization to JSON/Arrow/HDF5, and cross-language backends) is covered in the [Developer Guide](../developer/index.md).

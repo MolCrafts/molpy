@@ -1,7 +1,7 @@
 # Testing
 
 MolPy uses pytest. Tests live under `tests/`, mirroring the package structure
-(`src/molpy/io/data/gro.py` → `tests/test_io/test_data/test_gro.py`) with no
+(`src/molpy/io/data/lammps.py` → `tests/test_io/test_data/test_lammps.py`) with no
 `__init__.py` files (`--import-mode=importlib`). Fixture files are small,
 committed under `tests/tests-data/<format>/`, and reached through the
 `TEST_DATA_DIR` fixture; nothing is downloaded.
@@ -11,7 +11,7 @@ committed under `tests/tests-data/<format>/`, and reached through the
 
 ```bash
 uv run --extra dev python -m pytest tests/ -n auto                         # the CI command
-uv run --extra dev python -m pytest tests/test_io/test_data/test_gro.py    # one file
+uv run --extra dev python -m pytest tests/test_io/test_data/test_lammps.py # one file
 uv run --extra dev python -m pytest tests/ -k "lammps"                     # keyword filter
 ```
 

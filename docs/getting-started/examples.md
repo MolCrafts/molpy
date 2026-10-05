@@ -17,7 +17,7 @@ Parse a SMILES string, add hydrogens and coordinates, and assign OPLS-AA types.
 import molpy as mp
 
 mol = mp.io.read_smiles("CCO") # ethanol from SMILES (heavy atoms)
-mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
+mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(
  mol
 ) # add hydrogens + 3D coordinates
 typifier = mp.typifier.OPLSAATypifier() # embedded OPLS-AA table
@@ -81,7 +81,7 @@ water.def_bond(o, h2)
 # The M-site carries the oxygen's charge, so the input must already have one.
 water4p = Tip4pBuilder(d_om=0.1546).apply(
  water
-) # d_om: O–M distance in nm; input unchanged
+) # d_om: O–M distance in Å (TIP4P/2005); input unchanged
 ```
 
 See also: [Polarizable & Virtual-Site Models](../user-guide/10_polarizable.md).

@@ -22,7 +22,7 @@ one public path — there is no `molpy.core.Atomistic`, `molpy.parser` or
 | Store tabular molecular data | `Block`, `Frame` | [Core](core.md) |
 | Define a periodic simulation cell | `Box` | [Core](core.md) |
 | Represent a time-ordered frame sequence | `Trajectory` | [Core](core.md) |
-| Perceive angles/dihedrals in place; k-hop bond-graph queries | `get_topo`, `get_topo_neighbors`, `get_topo_distances` | [Core](core.md) |
+| Perceive angles/dihedrals in place; bond-graph distances; molecule ids of a frame | `generate_topology`, `topo_distances`, `Topology.from_frame` | [Core](core.md) |
 | Define and query force field parameters | `ForceField`, `Style`, `Type` | [Core](core.md) |
 | Parse SMILES / SMARTS | `mp.io.read_smiles`, `SmilesIR`, `SmartsPattern` | [Parser](parser.md) |
 | Perceive hydrogens / aromaticity / rings | `Perceive`, `RingInfo` | [Core](core.md) |
@@ -31,9 +31,10 @@ one public path — there is no `molpy.core.Atomistic`, `molpy.parser` or
 | Assemble units along a site graph (chains, rings, stars, combs, backmapping) | `Assembler`, `GrowthPlacer`, `SitePlacer`, `AxisOrienter`, `CGSmilesIR` | [Builder](builder.md) |
 | Pack molecules into a simulation box | `molpack.GenCanPack`, `Target`, molrs regions as restraints | [Pack](pack.md) |
 | Generate 3D conformers from a molecular graph | `Conformer` | [Conformer](conformer.md) |
-| Assign force field types (OPLS-AA, MMFF94, GAFF via AmberTools) | `OPLSAATypifier`, `MMFF94Typifier`, `AntechamberTypifier`, `TLeapTypifier` | [Typifier](typifier.md) |
-| Evaluate bond, angle, and pair potentials | `BondHarmonicStyle`, `LJ126Style`, `Potentials` | [Potential](potential.md) |
+| Assign force field types (OPLS-AA, MMFF94, GAFF via AmberTools) | `OPLSAATypifier`, `MMFF94Typifier`, `AtdTypifier`, `AntechamberTypifier`, `TLeapTypifier` | [Typifier](typifier.md) |
+| Evaluate bond, angle, and pair potentials | `PotentialCompiler`, `Potentials` | [Potential](potential.md) |
 | Read and write molecular files (PDB, LAMMPS, GRO, …) | `read_pdb`, `write_lammps_data`, `read_xml_forcefield` | [I/O](io.md) |
+| Store a frame, trajectory or force field as a `*.mrec` record | `write_mrec`, `read_mrec_trajectory`, `read_mrec_forcefield` | [I/O](io.md) |
 | Bridge to a third-party library (in-memory) | `Adapter`, `RDKitAdapter` (optional example) | [Adapter](adapter.md) |
 | Invoke external CLI tools (antechamber, tleap) | `Wrapper`, `AntechamberWrapper` | [Wrapper](wrapper.md) |
 | Plan polydisperse polymer systems | `SystemPlanner`, `PolydisperseChainGenerator`, `SchulzZimmPolydisperse` | [Builder](builder.md) |

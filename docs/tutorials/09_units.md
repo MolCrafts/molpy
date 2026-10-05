@@ -20,10 +20,10 @@ guess: the force field and the unit system you choose fix the interpretation.
 Named presets mirror common LAMMPS `units` lines:
 
 ```python
-from molpy.core.unit import UnitSystem
+from molpy import UnitSystem
 
 print(UnitSystem.preset_names())
-# ('real', 'metal', 'si', 'cgs', 'electron', 'micro', 'nano')
+# ('real', 'metal', 'si', 'cgs', 'electron', 'micro', 'nano', 'openmm')
 
 u = UnitSystem.preset("real") # LAMMPS 'real': Å, fs, kcal/mol, amu, e
 length = 3.0 * u.angstrom
@@ -37,6 +37,7 @@ print(length.to(u.nanometer)) # 0.3 nanometer
 | `si` / `cgs` | SI / CGS base units. |
 | `electron` | atomic (Hartree) units. |
 | `micro` / `nano` | micro- and nano-scale presets. |
+| `openmm` | nm, ps, kJ/mol, amu, e — OpenMM's native units (not a LAMMPS `units` style). |
 
 ## Defining your own preset
 
