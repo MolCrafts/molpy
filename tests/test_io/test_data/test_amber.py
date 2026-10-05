@@ -172,10 +172,19 @@ def test_inpcrd_update_existing_frame(tmp_inpcrd_dir):
         "z": np.array([0.0, 0.0]),
     }
 
+    existing_frame.meta["source"] = "mine"
+
     frame = mp.io.read_amber_inpcrd(inpcrd_file, existing_frame)
 
     # Should update coordinates but preserve name
     assert frame["atoms"]["name"][0] == "CA"
+    # Meta merges: own keys stay, the file's keys keep their stored dtype tags.
+    assert frame.meta["source"] == "mine"
+    loaded = mp.io.read_amber_inpcrd(inpcrd_file)
+    assert len(loaded.meta) > 0
+    for key in loaded.meta:
+        assert frame.meta[key] == loaded.meta[key]
+        assert frame.meta.dtype(key) == loaded.meta.dtype(key)
     np.testing.assert_array_almost_equal(frame["atoms"]["x"], [9.0, 6.0])
     np.testing.assert_array_almost_equal(frame["atoms"]["y"], [8.0, 5.0])
     np.testing.assert_array_almost_equal(frame["atoms"]["z"], [7.0, 4.0])

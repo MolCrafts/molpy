@@ -192,7 +192,8 @@ paths up front.
 
 If you only have wrapped columns plus image flags (`ix iy iz`), recover the
 continuous path **before** analysis with `Box.unwrap` (and `Box.images` when
-you need images from a single configuration). If you have neither unwrapped
+you need images from a single configuration). Image flags are `int32`; cast
+another integer array with `.astype(np.int32)` first. If you have neither unwrapped
 coordinates nor image flags, re-dump the run — reconstructing images by
 detecting jumps larger than $L/2$ between frames fails for anything that moves
 that far in one dump interval.

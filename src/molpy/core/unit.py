@@ -114,10 +114,10 @@ class UnitSystem(molrs.UnitRegistry):
         system = cls()
         system.define_lj_units(mass, sigma, epsilon)
         system.base_units = {
-            "length": system.lj_sigma,
-            "energy": system.lj_epsilon,
-            "time": system.lj_tau,
-            "temperature": system.lj_epsilon_over_kB,
+            "length": system.parse("lj_sigma"),
+            "energy": system.parse("lj_epsilon"),
+            "time": system.parse("lj_tau"),
+            "temperature": system.parse("lj_epsilon_over_kB"),
         }
         return system
 

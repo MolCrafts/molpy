@@ -138,11 +138,22 @@ frame.meta = {
 }
 ```
 
-`frame.meta` is a dict: get a Python scalar, set a Python scalar. Exact dtypes stay in the store; pass `mp.MetaValue` only when you need a specific one.
+`frame.meta` is a live mapping in insertion order: get a Python scalar, set a Python scalar. Exact dtypes stay in the store — `frame.meta.dtype(key)` reports one, `frame.meta.typed()` hands out every value as an `mp.MetaValue` — and you pass `mp.MetaValue` only when you need a specific one.
 
 ```python
 print(frame.meta["timestep"]) # 0
 print(frame.meta["description"]) # water
+print(frame.meta.dtype("timestep")) # i64
+```
+
+What comes back is frozen: a vector or a JSON array is a `tuple`, and a JSON object is a read-only `MetaDocument`. To change a nested value, copy, edit and store it back:
+
+```python
+frame.meta["run"] = {"step": 0, "ensemble": "nvt"}
+run = frame.meta["run"].copy() # a plain dict
+run["step"] = 3
+frame.meta["run"] = run
+print(frame.meta["run"]["step"]) # 3
 ```
 
 Accessing a block by name returns a `Block` — a handle on the stored table, so
