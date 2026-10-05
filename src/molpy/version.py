@@ -11,7 +11,7 @@ immediately.
 """
 
 version = "0.15.0"
-release_date = "untagged"
+release_date = "2026-10-05"
 
 
 def _minor_tuple(ver: str) -> tuple[int, int]:

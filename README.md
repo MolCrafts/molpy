@@ -82,14 +82,6 @@ Core dependencies: NumPy and
 plus the MolCrafts logging/config packages. Optional: RDKit (adapter example),
 AmberTools (GAFF charges).
 
-> **Until molrs 0.15.0 is published.** molpy 0.15 needs molrs 0.15, which is
-> not on PyPI yet, so `pip install` cannot resolve it. Install from source
-> instead: clone [molrs](https://github.com/MolCrafts/molrs) next to molpy (the
-> two checkouts side by side in one directory) and run `uv sync` in molpy (see
-> *Install from source (development)* below). `uv` builds molrs from the sibling checkout
-> named in `[tool.uv.sources]`; `pip` ignores that path source, so it does not
-> work for this step.
-
 > **Nightly builds.** Bleeding-edge snapshots are published to the separate
 > project `molcrafts-molpy-nightly` (versioned `X.Y.Z.devN`) on every push to
 > the `nightly` branch. Install with `pip install --pre molcrafts-molpy-nightly`.
@@ -100,7 +92,6 @@ AmberTools (GAFF charges).
 <summary>Install from source (development)</summary>
 
 ```bash
-git clone https://github.com/MolCrafts/molrs.git   # sibling checkout, see below
 git clone https://github.com/MolCrafts/molpy.git
 cd molpy
 uv sync --extra dev
@@ -110,14 +101,9 @@ uv run --no-project --with 'tox>=4.23' --with ruff==0.16.1 --with ty==0.0.65 tox
 uv run --extra dev python -m pytest tests/ -n auto
 ```
 
-`[tool.uv.sources]` points `molcrafts-molrs` at the sibling checkout
-`../molrs/molrs-python`, so `uv sync` builds the Rust core with your toolchain
-([`rustup`](https://rustup.rs/)). After editing molrs, rebuild what uv
-installed:
-
-```bash
-uv sync --extra dev --reinstall-package molcrafts-molrs
-```
+`uv sync` installs `molcrafts-molrs` from PyPI within the pinned minor line.
+To develop against a local molrs checkout instead, see
+[Building molrs from source](https://docs.molcrafts.org/molpy/developer/development-setup/#building-molrs-from-source).
 
 See [docs/developer/development-setup](https://docs.molcrafts.org/molpy/developer/development-setup/)
 for the full workflow.
