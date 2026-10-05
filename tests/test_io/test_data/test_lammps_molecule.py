@@ -132,7 +132,8 @@ class TestReadLammpsMolecule:
         assert frame.meta["format"] == "lammps_molecule"
         assert frame.meta["source_format"] == "json"
         assert frame.meta["title"] == "Water molecule. TIP3P geometry"
-        assert frame.meta["units"] == "real"
+        # 0.15: frame meta ``units`` is the units object, not a bare string.
+        assert frame.meta["units"]["preset"] == "real"
         assert frame.meta["revision"] == 1
 
         # Check atoms
