@@ -4,7 +4,8 @@ dynamic = ["version"]
 description = "Modern Python framework for molecular simulation and analysis"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "BSD-3-Clause" }
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 authors = [{ name = "Roy Kid", email = "lijichen365@gmail.com" }]
 maintainers = [{ name = "Roy Kid", email = "lijichen365@gmail.com" }]
 keywords = [
@@ -17,7 +18,6 @@ keywords = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -69,7 +69,7 @@ Repository = "https://github.com/MolCrafts/molpy.git"
 Issues = "https://github.com/MolCrafts/molpy/issues"
 
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
