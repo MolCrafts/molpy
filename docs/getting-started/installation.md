@@ -1,6 +1,6 @@
 # Installation
 
-MolPy requires Python 3.14+. Install it with pip:
+MolPy requires Python 3.12 or newer. Install it with pip:
 
 ```bash
 pip install molcrafts-molpy
@@ -51,5 +51,6 @@ print("Released on:", mp.release_date)
 
 ## Next steps
 
+- Upgrading from 0.14? Read [What's New in 0.15](whats-new.md) first.
 - Continue with the [Quickstart](quickstart.md) to build, type, and export your first system.
 - Then: the [data-model tutorials](../tutorials/index.md), or [Guides](../user-guide/index.md) for task-oriented recipes.

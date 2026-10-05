@@ -66,11 +66,11 @@ water, _ = mp.Conformer(add_hydrogens=True, seed=1).generate(mp.io.read_smiles("
 for atom in water.atoms:
  atom["charge"] = -0.834 if atom["element"] == "O" else 0.417
 
-tip4p = Tip4pBuilder(d_om=0.1546) # O–M distance in nm
+tip4p = Tip4pBuilder(d_om=0.1546) # O–M distance in Å
 water4p = tip4p.apply(water)
 ```
 
-`d_om` is the oxygen-to-M-site distance; the default matches the TIP4P geometry.
+`d_om` is the oxygen-to-M-site distance in Å; the default, 0.1546 Å, is the TIP4P/2005 geometry.
 
 ## Writing your own
 

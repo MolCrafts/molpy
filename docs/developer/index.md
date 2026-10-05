@@ -24,7 +24,7 @@ Day-to-day development practices:
 
 The design context that the extension recipes assume:
 
-- [Architecture Overview](architecture-overview.md) — module responsibilities, the graph and tabular layers, the formatter hierarchy, the mutation contract, and the build-loop performance model
+- [Architecture Overview](architecture-overview.md) — module responsibilities, the graph and tabular layers, field-name translation, the mutation contract, and the performance model of assembly
 - [molrs Backend](molrs-backend.md) — how the Rust column store and compute kernels surface in Python: boxes, neighbor lists, RDF, and the analysis catalog
 
 ## Extending MolPy
@@ -32,11 +32,11 @@ The design context that the extension recipes assume:
 Ordered from plug-in interfaces (implement a subclass, register a handler) to core internals (discuss in a GitHub issue before implementation):
 
 - [Adding a Compute Operation](extending-compute.md) — the `Compute` protocol for reusable analysis operations
-- [Adding an I/O Format](extending-io.md) — reader and writer base classes and the `FieldFormatter` canonicalization interface
+- [Adding an I/O Format](extending-io.md) — native `read_X` / `write_X` doors re-exported on `mp.io`, and when molpy adds a function of its own
 - [Adding a Wrapper or Adapter](extending-integration.md) — subprocess wrapper conventions and in-memory adapter patterns
 - [Extending Typifiers](extending-typifiers.md) — the `match` → `Match` contract, matcher boundaries, and where a typifier lives (native vs. tool-driven)
-- [Extending the Data Model](extending-core.md) — new `Entity` and `Link` subtypes, custom `Struct` subclasses, and identity-hashing invariants
-- [Extending the Force Field](extending-forcefield.md) — molrs kernels, named `Style` classes, and export formatter registration
+- [Extending the Data Model](extending-core.md) — why a new node or relation kind is a molrs change, and what Python may add on top
+- [Extending the Force Field](extending-forcefield.md) — molrs kernels, styles by name, and the writer arms that export them
 
 ## Issue Tracking and Discussion
 

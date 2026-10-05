@@ -4,7 +4,7 @@ After following this page you will have a working local environment with editabl
 
 ## Prerequisites
 
-You need Python 3.14+, Git, and pip. Everything else is installed by the setup script below.
+You need Python 3.12 or newer, Git, and [uv](https://docs.astral.sh/uv/). Everything else is installed by the commands below.
 
 
 ## Quick setup

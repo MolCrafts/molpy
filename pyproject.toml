@@ -64,7 +64,7 @@ mlp_jsonl = "molpy.integrations.metric_readers:MlpJsonlReader"
 
 [project.urls]
 Homepage = "https://github.com/MolCrafts/molpy"
-Documentation = "https://molpy.molcrafts.org"
+Documentation = "https://docs.molcrafts.org/molpy/"
 Repository = "https://github.com/MolCrafts/molpy.git"
 Issues = "https://github.com/MolCrafts/molpy/issues"
 

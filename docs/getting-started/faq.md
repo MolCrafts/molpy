@@ -19,9 +19,9 @@ on three principles:
 2. **Force fields as data.** Parameters live in a queryable structure separate
  from the chemistry, so you can inspect and validate a model *before* an
  expensive simulation, not after it fails.
-3. **Explicit editing.** Building, packing, polymerization, and reaction-based
- transformations are programmatic operations with no hidden state between
- them.
+3. **Explicit editing.** Building, assembly along a site graph, and
+ reaction-based transformations are programmatic operations with no hidden
+ state between them.
 
 MolPy does not replace specialized packages — it is the preparation layer that
 keeps them composable. The comparisons below draw the boundaries precisely.
@@ -37,7 +37,7 @@ it is in MolPy.
 
 * **Data model**: MolPy structures coordinates, topology, and periodic boxes; ASE focuses on atom lists plus calculator objects.
 * **Force fields**: ASE provides calculators, not force-field management; MolPy provides typifiers, bonded terms, and parameter containers.
-* **Editing and building**: MolPy's polymer construction, packing, and reactions rely on generative topology; ASE treats bonding as descriptive.
+* **Editing and building**: MolPy's polymer assembly and reactions rely on generative topology; ASE treats bonding as descriptive.
 
 The two are complementary: systems built in MolPy can be exported to engines
 managed by ASE.
@@ -71,7 +71,7 @@ generation, substructure search. MolPy interoperates with it (see the
 
 * **Simulation-centric structures**: periodic boxes, bonded MD topology, multiphase assemblies.
 * **System-level operations**: polymers, packing, and reactions are outside RDKit's scope.
-* **Interoperability**: RDKit molecules convert to and from MolPy objects.
+* **Interoperability**: RDKit molecules convert to and from MolPy objects through the optional `RDKitAdapter`.
 
 RDKit manages chemical graphs; MolPy manages molecular *systems* headed for
 simulation.
@@ -93,7 +93,7 @@ MDTraj territory.
 | Polymer builder | no | yes | no | no | no | **yes** |
 | Reaction transforms / topology editing | no | partial | no | SMIRKS-style | no | **yes** |
 | Force-field typing | no | via Foyer | yes | MMFF/UFF | no | **yes** |
-| System packing / assembly | limited | yes | no | no | no | **yes** |
+| System packing / assembly | limited | yes | no | no | no | **yes** (packing via [molpack](https://docs.molcrafts.org/molpack/)) |
 | Trajectory analysis | basic | no | no | no | yes | broad, Rust-backed |
 | Periodic system representation | limited | partial | yes | no | analysis-oriented | **yes** |
 
@@ -104,6 +104,6 @@ right tool for every task:
 
 * **Multi-terabyte trajectory post-processing** — use MDAnalysis or MDTraj; MolPy's compute layer targets per-system analysis, not massive campaign pipelines.
 * **Quantum chemistry** — use PySCF, ASE with a QM calculator, or Gaussian/ORCA. MolPy does no electronic structure.
-* **Pure cheminformatics** — use RDKit directly. MolPy delegates substructure search and conformer generation to it via the adapter layer.
+* **Pure cheminformatics** — use RDKit directly. MolPy's SMILES / SMARTS parsing, substructure matching and conformer generation are native and aimed at building simulation systems, not at descriptor or fingerprint work; reach RDKit's own algorithms through the [adapter layer](../api/adapter.md).
 * **High-throughput screening** — MolPy builds individual systems with full control; screening thousands of candidates belongs in workflow engines and CADD stacks.
 * **Running simulation campaigns** — MolPy generates inputs and can launch engines, but execution management belongs to the engines themselves and tools like Signac or AiiDA.

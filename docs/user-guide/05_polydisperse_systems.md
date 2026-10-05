@@ -321,10 +321,10 @@ Writing the data file is only half the story. To actually run the simulation, LA
 
 **A `Script` is an editable, ordered list of lines** that can be built programmatically and saved to disk without executing anything. This separation matters: you can inspect, modify, and version-control the script before committing to a run. When you are ready, `engine.run()` writes the script to the working directory and launches `lmp -in input.lmp -log log.lammps -screen none`.
 
-The code below builds a minimal OPLS-AA equilibration protocol for the packed system. The force field styles must match those written by `write_lammps_forcefield`—`harmonic` bonds and angles, `opls` dihedrals, `lj/cut/coul/long` non-bonds—because LAMMPS validates style consistency when it reads the data file.
+The code below builds a minimal equilibration protocol for the packed system. It reads the `system.data` and `system.ff` written above. The include already declares every style, the mixing rule (geometric, as OPLS-AA defines it) and `special_bonds`, so the script does not repeat them: a `pair_style` of another kind issued after the include would discard the pair coefficients it just set. For long-range electrostatics, write the include with `write_lammps_forcefield(..., skip_pair_style=True)` and declare `pair_style`, `pair_modify` and `special_bonds` in the script before `include`, as the [AmberTools guide](13_ambertools_integration.md) does.
 
 ```
-from molpy.core.script import Script
+from molpy import Script
 from molpy.engine import LAMMPSEngine
 
 # Build the LAMMPS input script line-by-line.
@@ -337,17 +337,9 @@ lmp_script = Script.from_text(
  units real
  atom_style full
 
- read_data lammps.data
- include lammps.ff
-
- pair_style lj/cut/coul/long 12.0
- pair_modify mix arithmetic tail yes
- kspace_style pppm 1e-4
-
- bond_style harmonic
- angle_style harmonic
- dihedral_style opls
- improper_style cvff
+ read_data system.data
+ # every style, the mixing rule, special_bonds and the coefficients
+ include system.ff
 
  # Energy minimisation before dynamics
  minimize 1.0e-4 1.0e-6 10000 100000
@@ -362,16 +354,16 @@ lmp_script = Script.from_text(
  """,
 )
 
-# Save the script alongside the data files without launching LAMMPS.
+# Save the script next to the data files without launching LAMMPS.
 # check_executable=False lets the call succeed in notebooks where lmp
 # may not be on PATH.
 engine = LAMMPSEngine("lmp", check_executable=False)
-script_path = lmp_script.save("05_output/lammps/input.lmp")
+script_path = lmp_script.save("05_output/input.lmp")
 print("Input script written to:", script_path)
 print(lmp_script.preview(max_lines=12))
 
 # To run the simulation, replace the two lines above with:
-# result = engine.run(lmp_script, workdir="05_output/lammps")
+# result = engine.run(lmp_script, workdir="05_output")
 # print("Exit code:", result.returncode)
 ```
 

@@ -5,7 +5,7 @@
 Typification is the bridge between chemistry and parameters: SMARTS patterns from the force field decide which type every atom, bond, angle, and dihedral gets.
 
 !!! note "Prerequisites"
-    This guide requires RDKit for 3D coordinate generation. Typification itself does not require RDKit.
+    Nothing beyond MolPy itself: the 3D coordinates come from the native `mp.Conformer`, and the OPLS-AA rules and parameters ship with the native core.
 
 ## The problem typification solves
 
@@ -25,7 +25,7 @@ from molpy.typifier import OPLSAATypifier
 
 # 1. Build the structure
 mol = mp.io.read_smiles("CCO")
-mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
+mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(mol)
 mol.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)  # angles/dihedrals in place
 
 print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")
@@ -47,7 +47,7 @@ typed_mol = typifier.typify(mol)
 ff = typifier.forcefield()  # the parameters of the assigned types
 ```
 
-`typify` modifies the structure in-place and returns it — atoms in the returned object carry a `type` key and associated parameters.
+`typify` returns a typed **copy** and leaves `mol` untouched — atoms in the returned object carry a `type` key and their charge, and its bonds, angles and dihedrals carry their types.
 
 ```python
 # 3. Inspect results
@@ -72,7 +72,7 @@ for atom in typed_mol.atoms:
 
 ## How atom typing works
 
-The typifier reads SMARTS patterns from the force field XML. Each pattern defines one atom type — for example, `[CX4;H3]` matches an sp3 carbon with three hydrogens (a methyl carbon). The typifier walks through all atoms, matches each one against the pattern library, and assigns the best-matching type.
+The typifier matches the SMARTS patterns of its force-field library (the embedded OPLS-AA table, or the XML file passed as `OPLSAATypifier(source=...)`). Each pattern defines one atom type — for example, `[CX4;H3]` matches an sp3 carbon with three hydrogens (a methyl carbon). The typifier walks through all atoms, matches each one against the pattern library, and assigns the best-matching type.
 
 When multiple patterns match, priority and override rules in the force field resolve the conflict. This layered matching handles complex cases like aromatic vs. aliphatic nitrogen without manual intervention.
 
@@ -82,13 +82,13 @@ With atom types in place, the typifier has everything it needs to derive bonded 
 
 ## How bonded typing works
 
-Once atom types are assigned, bonded interactions follow mechanically. A bond between atom types `CT` and `OH` maps to bond type `CT-OH`. The same logic extends to angles (three-type sequences) and dihedrals (four-type sequences). Wildcard types (`*`) in the force field act as fallbacks when no specific match exists. MolPy does not define a specific electrostatics model. Partial charges are either taken from predefined force fields (e.g., OPLS-style parameters) or assigned externally using established workflows. MolPy focuses on storing and propagating charge information once defined, rather than performing charge derivation.
+Once atom types are assigned, bonded interactions follow mechanically. A bond between atom types `CT` and `OH` maps to bond type `CT-OH`. The same logic extends to angles (three-type sequences) and dihedrals (four-type sequences). Wildcard types (`*`) in the force field act as fallbacks when no specific match exists. Partial charges come with the atom types of the force field (OPLS-AA here), from a native charge model (`mp.GasteigerModel`, `mp.BccModel`, `mp.MullikenModel`), or from AmberTools (see [AmberTools Integration](13_ambertools_integration.md)).
 
 ## Strict vs. non-strict mode
 
-In strict mode (`strict=True`), any untyped atom raises an error immediately. This is the right default during development — it catches missing force field parameters before they become silent errors in production.
+An atom no rule matches always raises `ValueError` — there is no partial atom typing. `strict` governs the bonded terms: with `strict=True` (the default) a bond, angle or dihedral whose atom types have no parameters in the force field raises an error. This is the right default during development — it catches missing force field parameters before they become silent errors in production.
 
-In non-strict mode (`strict=False`), untyped atoms are silently skipped. Use this when you know some atoms will not match — for example, when using a general-purpose force field on a molecule with exotic functional groups.
+With `strict=False` such bonded terms are left unparameterised (no `type`) instead. Use this when you know some terms will not match and you will supply their parameters yourself.
 
 ## Every atom, bond, angle, and dihedral carries its assigned type
 
@@ -181,9 +181,9 @@ atom types: ['opls_180', 'opls_181', 'opls_182', 'opls_185']
 
 Standard OPLS-AA covers common organic functional groups. Specialized molecules — ionic liquids (TFSI), metal complexes, reactive intermediates — often need custom force field parameters. In those cases:
 
-1. Use a specialized force field XML that includes the required SMARTS patterns and types
+1. Use a specialized OPLS-style force field XML that includes the required SMARTS patterns and types (`OPLSAATypifier(source="custom.xml")`)
 2. Or drop to the [Force Field](../tutorials/04_force_field.md) layer and define types manually
 
-The typifier itself is agnostic to the force field content. It only needs SMARTS patterns and type definitions in the XML. If those are present, it will match them.
+The typifier itself is agnostic to the force field content. It only needs SMARTS patterns and type definitions in the XML. If those are present, it will match them. For GAFF / GAFF2 there is the native `mp.typifier.AtdTypifier` (atom types only) and the AmberTools route.
 
 See also: [Force Field](../tutorials/04_force_field.md), [Assembly](02_assembly.md).

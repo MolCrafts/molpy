@@ -26,6 +26,20 @@ line when co-released. Patch may drift.
 **Order:** ship molrs first (`master` + tag `vX.Y.Z` + publish), then land molpy
 APIs that need the new surface. Editable local molrs does not count as a release.
 There is no hand-written `CHANGELOG.md` — history is git tags / GitHub Releases.
+A minor release also updates the user-facing
+[What's New](../getting-started/whats-new.md) page.
+
+### Developing against an unpublished molrs minor
+
+While the matching molrs line is on molrs `master` but not yet on PyPI,
+`pyproject.toml` may carry a `[tool.uv.sources]` path override
+(`molcrafts-molrs = { path = "../molrs/molrs-python" }`) and CI checks molrs out
+beside molpy to build it. The release commit removes both, once molrs is
+published: `release.yml` refuses to tag while any `[tool.uv.sources]` entry is
+present, and the `molrs-pin-on-pypi` hook only checks PyPI once it is gone.
+`uv.lock` is not committed, so there is no lock file to regenerate; resolve
+once from PyPI to confirm the pin (`uv lock --refresh`, then the test command
+below).
 
 
 ## Pre-release checks
@@ -34,8 +48,8 @@ Run all three validation steps locally before creating the release branch.
 
 ```bash
 uv run --extra dev python -m pytest tests/ -n auto   # tests pass
-zensical build                         # docs build
-python -m build && twine check dist/*  # package is valid
+uv run --extra doc zensical build --clean            # docs build
+python -m build && twine check dist/*                # package is valid
 ```
 
 
