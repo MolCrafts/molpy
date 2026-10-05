@@ -68,7 +68,8 @@ def read_amber_inpcrd(file: PathLike, frame: Frame | None = None) -> Frame:
         if column in src:
             atoms[column] = src[column]
     frame.box = loaded.box
-    frame.meta = {**frame.meta, **loaded.meta}
+    # Typed values keep the file's dtype tags (a plain write re-infers them).
+    frame.meta.update(loaded.meta.typed())
     return frame
 
 
@@ -119,7 +120,7 @@ def read_xyz(file: PathLike) -> Frame:
         if "element" in block and ATOMIC_NUMBER not in block:
             block[ATOMIC_NUMBER] = np.array(
                 [Element.get_atomic_number(str(s)) for s in block["element"]],
-                dtype=np.int64,
+                dtype=np.uint64,
             )
     return frame
 

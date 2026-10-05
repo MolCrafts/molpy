@@ -40,21 +40,33 @@ The `atoms` namespace contains per-atom properties, including atomic numbers, po
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | int array | Atom IDs (1-indexed, optional) |
-| `mol_id` | int array | Molecule IDs (1-indexed, optional) |
-| `atomic_number` | int array | Atomic numbers (optional) |
+| `id` | uint64 array | Atom IDs (1-indexed, optional) |
+| `mol_id` | uint64 array | Molecule IDs (1-indexed, optional) |
+| `atomic_number` | uint64 array | Atomic numbers (optional) |
 | `element` | string array | Element symbols (optional) |
-| `type` | int or string array | Atom types (optional) |
-| `mass` | float array | Atomic masses in amu (optional) |
-| `charge` | float array | Partial charges in elementary charge units (optional) |
-| `x` | float array (N) | Atomic x-coordinates |
-| `y` | float array (N) | Atomic y-coordinates |
-| `z` | float array (N) | Atomic z-coordinates |
-| `vx` | float array (N) | Atomic x-velocities (optional) |
-| `vy` | float array (N) | Atomic y-velocities (optional) |
-| `vz` | float array (N) | Atomic z-velocities (optional) |
-| `res_id` | int array | Residue IDs (optional) |
+| `type` | string array | Atom type labels (optional) |
+| `type_id` | uint64 array | Numeric atom type ids, e.g. LAMMPS (optional) |
+| `mass` | float64 array | Atomic masses in amu (optional) |
+| `charge` | float64 array | Partial charges in elementary charge units (optional) |
+| `formal_charge` | int64 array | Integer formal charges (optional) |
+| `x` | float64 array (N) | Atomic x-coordinates |
+| `y` | float64 array (N) | Atomic y-coordinates |
+| `z` | float64 array (N) | Atomic z-coordinates |
+| `vx` / `vy` / `vz` | float64 array (N) | Velocities (optional) |
+| `fx` / `fy` / `fz` | float64 array (N) | Forces (optional) |
+| `ix` / `iy` / `iz` | int32 array (N) | Periodic image flags (optional) |
+| `name` | string array | Atom names, e.g. PDB/GRO (optional) |
+| `res_id` | uint64 array | Residue IDs (optional) |
 | `res_name` | string array | Residue names (optional) |
+| `chain` | string array | Chain identifiers (optional) |
+| `altloc` / `icode` | string array | PDB/mmCIF alternate location and insertion code (optional) |
+| `occupancy` / `b_factor` | float64 array | PDB/mmCIF occupancy and B-factor (optional) |
+
+Floats are always `float64`: a float32 array is widened when it is inserted.
+The identifier and index columns (`id`, `mol_id`, `atomic_number`, `res_id`,
+`type_id`, `atomi` … `atoml`) are stored `uint64`; a narrower unsigned array is
+widened on insert, and a `*.mrec` store holding them at another width is refused
+on read. `molrs.schema.column(key)` is the authoritative table.
 
 Format-specific aliases such as LAMMPS `q` and `mol` exist only at the I/O boundary. Readers canonicalize them to `charge` and `mol_id`; writers localize them back when required by the target format.
 
@@ -66,9 +78,9 @@ The `bonds` namespace stores bond connectivity using separate index arrays for s
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `atomi` | int array | Bond source atom indices |
-| `atomj` | int array | Bond target atom indices |
-| `type` | string or int array | Bond types (optional) |
+| `atomi` | uint64 array | Bond source atom indices |
+| `atomj` | uint64 array | Bond target atom indices |
+| `type` | string array | Bond type labels (optional) |
 
 #### Angle Topology (`angles`)
 
@@ -76,10 +88,10 @@ The `angles` namespace represents three-body interactions. Atom indices are stor
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `atomi` | int array | First atom index |
-| `atomj` | int array | Center atom index |
-| `atomk` | int array | Third atom index |
-| `type` | string or int array | Angle types (optional) |
+| `atomi` | uint64 array | First atom index |
+| `atomj` | uint64 array | Center atom index |
+| `atomk` | uint64 array | Third atom index |
+| `type` | string array | Angle type labels (optional) |
 
 #### Dihedral Topology (`dihedrals`)
 
@@ -87,11 +99,11 @@ The `dihedrals` namespace represents four-body torsional interactions. Atom indi
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `atomi` | int array | First atom index |
-| `atomj` | int array | Second atom index |
-| `atomk` | int array | Third atom index |
-| `atoml` | int array | Fourth atom index |
-| `type` | string or int array | Dihedral types (optional) |
+| `atomi` | uint64 array | First atom index |
+| `atomj` | uint64 array | Second atom index |
+| `atomk` | uint64 array | Third atom index |
+| `atoml` | uint64 array | Fourth atom index |
+| `type` | string array | Dihedral type labels (optional) |
 
 #### Improper Topology (`impropers`)
 
@@ -99,11 +111,20 @@ The `impropers` namespace represents improper dihedral interactions, typically u
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `atomi` | int array | First atom index |
-| `atomj` | int array | Second atom index |
-| `atomk` | int array | Third atom index |
-| `atoml` | int array | Fourth atom index |
-| `type` | string or int array | Improper types (optional) |
+| `atomi` | uint64 array | First atom index |
+| `atomj` | uint64 array | Second atom index |
+| `atomk` | uint64 array | Third atom index |
+| `atoml` | uint64 array | Fourth atom index |
+| `type` | string array | Improper type labels (optional) |
+
+#### Other relation blocks
+
+The vocabulary also names `constraints` (`atomi`, `atomj`, optional `r0`),
+`drudes` (`atomi` the core, `atomj` its Drude particle), `virtual_sites`
+(`atomi` the site, built from `atomj` … `atoml`; trailing endpoints may be
+null) and, on a coarse-grained frame, `members` (`ibead` → `atoms`, and `atom`
+into the all-atom block its declared target names). Their endpoint columns are
+`uint64` row indices like the bonded blocks above.
 
 ### Namespace Naming Conventions
 

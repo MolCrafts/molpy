@@ -75,7 +75,9 @@ addition: a type between atoms is given its **endpoints** — the atom-type
 handles it connects — right after its name. The name is just a name: building
 it from the endpoints (`"CT-HC"`) is a convention, and it is the label a typed
 `Frame` uses, but molpy never reads endpoints out of it. Parameters are in the
-store units: angles in radians, and harmonic constants in the `½k` convention.
+store units: angles in radians, and harmonic bond and angle constants in the
+`½k` convention (`E = ½k(r − r₀)²`). A harmonic improper is `E = k(χ − χ₀)²`,
+the LAMMPS form, so its `k` is the LAMMPS `K` as written.
 
 ```python
 bond_style = ff.def_style("bond", "harmonic")
