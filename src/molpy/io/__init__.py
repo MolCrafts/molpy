@@ -11,7 +11,7 @@ Supports:
 - Force field files (LAMMPS ``*.ff``, OpenMM/OPLS XML, AMBER prmtop, GROMACS top)
 - Trajectory files (LAMMPS dump, XYZ, PDB, GRO, DCD/TRR/XTC)
 - LAMMPS logs
-- Scientific records (``*.mrec`` stores)
+- Scientific records (``*.mrec`` stores), force-field section included
 
 Names come in pairs, as in the native core: a format ``X`` holding one frame is
 read by ``read_X`` and written by ``write_X``; a sequence of frames by
@@ -64,6 +64,7 @@ from molrs.io import (
     read_lammps_trajectory,
     read_mol2,
     read_mrec,
+    read_mrec_forcefield,
     read_mrec_meta,
     read_mrec_system,
     read_mrec_trajectory,
@@ -83,6 +84,7 @@ from molrs.io import (
     write_lammps_trajectory,
     write_mol2,
     write_mrec,
+    write_mrec_forcefield,
     write_mrec_system,
     write_mrec_trajectory,
     write_pdb_trajectory,
@@ -147,6 +149,7 @@ __all__ = [
     "read_lammps_trajectory",
     "read_mol2",
     "read_mrec",
+    "read_mrec_forcefield",
     "read_mrec_meta",
     "read_mrec_system",
     "read_mrec_trajectory",
@@ -176,6 +179,7 @@ __all__ = [
     "write_lammps_trajectory",
     "write_mol2",
     "write_mrec",
+    "write_mrec_forcefield",
     "write_mrec_system",
     "write_mrec_trajectory",
     "write_pdb",
