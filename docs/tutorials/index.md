@@ -12,6 +12,7 @@ concrete task (build, typify, pack, export), go to
 2. **[Quickstart](../getting-started/quickstart.md)** — the whole pipeline in six lines, then a TIP3P water box built with full control. *~10 min*
 3. **[Example Gallery](../getting-started/examples.md)** — copy-paste workflows: small molecules, packed boxes, polymers, virtual sites.
 4. **[FAQ](../getting-started/faq.md)** — why MolPy exists, how it relates to RDKit / ASE / mBuild, and when another tool is the better choice.
+5. **[What's New in 0.15](../getting-started/whats-new.md)** — what changed in this release, and how to upgrade from 0.14.
 
 If MolPy is installed, this runs as-is — no optional dependencies, not even RDKit:
 
@@ -56,34 +57,28 @@ The typical flow:
 The diagram below illustrates the standard data flow through a MolPy pipeline. Each node represents a core data structure; each edge represents an explicit transformation.
 
 ```text
- ┌─────────────────────────┐
- SMILES / file │ Atomistic │
- ────parser────> │ (editable molecular │
- │ graph: atoms + bonds) │
- └───────────┬─────────────┘
- │
- typifier + ForceField
- │
- ┌───────────▼─────────────┐
- │ Typed Atomistic │
- │ (atoms carry type, │
- │ charge, ff parameters) │
- └───────────┬─────────────┘
- │
-.to_frame()
- │
- ┌───────────▼─────────────┐
- │ Frame │
- │ (Block tables + │
- │ Box + metadata) │
- └───────────┬─────────────┘
- │
- io.write_*
- │
- ┌───────────▼─────────────┐
- │ LAMMPS / GROMACS / │
- │ PDB / HDF5 files │
- └─────────────────────────┘
+SMILES / CGsmiles / file
+        │  mp.io.read_* · mp.SmilesIR · mp.CGSmilesIR
+        ▼
+┌───────────────────────────┐
+│ Atomistic                 │  editable molecular graph:
+│ atoms + bonds (+ ports)   │  atoms, bonds, angles, dihedrals
+└─────────────┬─────────────┘
+              │  typifier.typify(mol)  → typed copy
+              │  typifier.forcefield() → ForceField
+              ▼
+┌───────────────────────────┐
+│ typed Atomistic           │  atoms and links carry
+│                           │  type labels and charges
+└─────────────┬─────────────┘
+              │  .to_frame()
+              ▼
+┌───────────────────────────┐
+│ Frame                     │  Block tables + box + meta
+└─────────────┬─────────────┘
+              │  mp.io.write_*
+              ▼
+LAMMPS / GROMACS / PDB / *.mrec files
 ```
 
 **`Atomistic`** is the primary editing surface. Atom addition and removal, bond formation, reaction execution, and structure assembly all operate on this representation.
@@ -94,14 +89,14 @@ The diagram below illustrates the standard data flow through a MolPy pipeline. E
 
 **`Box`** specifies the periodic simulation cell and attaches to a `Frame` as a first-class attribute, not as metadata.
 
-**`Trajectory`** is a time-ordered sequence of `Frame` objects providing lazy access patterns for large datasets.
+**`Trajectory`** is an in-memory, time-ordered sequence of `Frame` objects. Lazy, seekable access to a file on disk is the job of the `mp.io` trajectory readers.
 
 ### Chapter map
 
 | Layer | What it is | In depth |
 |-------|-----------|----------|
 | **Nodes & relations** — `Atom`, `Bond`, `Angle`, `Dihedral` | Identity-first graph model for building and editing | [Atomistic and Topology](01_atomistic_and_topology.md) |
-| **Topology** | Angles/dihedrals *derived* from the bond graph and written in place by `get_topo()`; k-hop queries via `get_topo_neighbors()` / `get_topo_distances()` — no standalone topology class | [Atomistic and Topology](01_atomistic_and_topology.md) |
+| **Topology** | Angles/dihedrals *derived* from the bond graph and written in place by `generate_topology()`; bond-graph distances via `topo_distances()`; molecule ids of a `Frame` via `mp.Topology.from_frame(frame).connected_components()` | [Atomistic and Topology](01_atomistic_and_topology.md) |
 | **Block & Frame** | Columnar tables (`atoms`, `bonds`, …) plus box and metadata — the exchange object that writers and compute operate on | [Block and Frame](02_block_and_frame.md) |
 | **Box** | Simulation cell + periodic boundaries (wrapping, minimum-image distances) | [Box and Periodicity](03_box_and_periodicity.md) |
 | **ForceField & Typifier** | A parameter catalog (styles + type tables) and the rule engine that assigns types onto a structure | [Force Field](04_force_field.md) |

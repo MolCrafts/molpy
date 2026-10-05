@@ -4,7 +4,8 @@ dynamic = ["version"]
 description = "Modern Python framework for molecular simulation and analysis"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "BSD-3-Clause" }
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 authors = [{ name = "Roy Kid", email = "lijichen365@gmail.com" }]
 maintainers = [{ name = "Roy Kid", email = "lijichen365@gmail.com" }]
 keywords = [
@@ -17,7 +18,6 @@ keywords = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -64,12 +64,12 @@ mlp_jsonl = "molpy.integrations.metric_readers:MlpJsonlReader"
 
 [project.urls]
 Homepage = "https://github.com/MolCrafts/molpy"
-Documentation = "https://molpy.molcrafts.org"
+Documentation = "https://docs.molcrafts.org/molpy/"
 Repository = "https://github.com/MolCrafts/molpy.git"
 Issues = "https://github.com/MolCrafts/molpy/issues"
 
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -141,13 +141,13 @@ filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 
-# Pre-0.15: molrs 0.15.0 is the untagged line in the sibling checkout, not a
-# PyPI release. The path override is how this pin resolves until that wheel
-# is published. Remove it in the same change that tags v0.15.0 — while it is
-# set, check_molrs_pin_on_pypi.py skips the network check, and a downstream
-# that points at this directory inherits the path.
-[tool.uv.sources]
-molcrafts-molrs = { path = "../molrs/molrs-python", editable = true }
+# No [tool.uv.sources] override: molcrafts-molrs 0.15 is on PyPI, so the pin in
+# [project] dependencies resolves everywhere, including a CI runner, which has no
+# sibling checkout to point at. Do not reintroduce a path or git source without
+# removing it again before the next release: it silently disables
+# .pre-commit/check_molrs_pin_on_pypi.py, and uv honours a path dependency's own
+# sources transitively, so a downstream that points at this directory inherits
+# them (that is how molhub once got a molrs without `molrs.io.mrec`).
 
 [tool.tox]
 requires = ["tox>=4.23"]

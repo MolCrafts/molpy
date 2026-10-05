@@ -10,7 +10,7 @@ export — so you see every boundary you will later automate.
 import molpy as mp
 
 mol = mp.io.read_smiles("CCO")  # ethanol from SMILES (heavy atoms)
-mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
+mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(
     mol
 )  # add hydrogens + 3D coordinates
 typifier = mp.typifier.OPLSAATypifier()  # carries the OPLS-AA library

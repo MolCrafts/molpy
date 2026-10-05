@@ -12,7 +12,7 @@ force-field evaluation, export to a simulation engine — needs real coordinates
 
 **`Conformer` embeds a graph into 3D using the native generator and returns a
 fresh `Atomistic` plus a per-stage report.** Hydrogens are added as needed and
-the input graph is never mutated (the input is not mutated).
+the input graph is never mutated.
 
 ## Generating a conformer
 
@@ -32,13 +32,13 @@ you can generate several independent conformers from the same graph.
 
 ## Constructor parameters
 
-`Conformer` subclasses `the conformer engine`; the constructor parameters are
-inherited unchanged:
+`Conformer` subclasses the native conformer generator; the constructor
+parameters are inherited unchanged, `Conformer(speed="medium", add_hydrogens=True, seed=None)`:
 
 | Parameter | Meaning |
 |---|---|
 | `speed` | Speed/quality trade-off for the embedding + refinement passes. Faster settings do fewer refinement steps. |
-| `Perceive.find_hydrogens` | Whether to fill valences with explicit hydrogens before embedding. Leave on unless your graph already carries all H. |
+| `add_hydrogens` | Whether to fill valences with explicit hydrogens before embedding (the same perception as `mp.Perceive().find_hydrogens`). Leave on unless your graph already carries all H. |
 | `seed` | RNG seed for the stochastic embedding. **Set it for reproducible geometries** — omitting it gives a different conformer each run. |
 
 Charged atoms must already carry the canonical integer `"formal_charge"` key

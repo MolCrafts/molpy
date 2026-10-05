@@ -60,7 +60,7 @@ below, the native path is the supported one and needs no third-party install:
 | GAFF types | [AmberTools wrapper](wrapper.md) — antechamber delegation |
 
 ```python
-mol_3d, report = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
+mol_3d, report = mp.Conformer(add_hydrogens=True, seed=42).generate(mol)
 ```
 
 ## Key behavior

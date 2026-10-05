@@ -46,17 +46,16 @@ frame.box = mp.Box.cube(20.0)
 ```python
 import molpy as mp
 from molpy.engine import LAMMPSEngine
-from molpy.core.script import Script
+from molpy import Script
 
 lammps_input = """\
 units           real
 atom_style      full
 read_data       system.data
-include         system.ff
+include         system.ff   # styles, mixing, special_bonds, coefficients
 
-pair_style      lj/cut/coul/long 12.0
-kspace_style    pppm 1.0e-4
-
+timestep        1.0
+fix             integrate all nve
 thermo          1000
 run             500000
 """
@@ -68,7 +67,7 @@ script.save("./submit/input.lmp")
 # -> ./submit/input.lmp written
 ```
 
-The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_data` and `mp.io.write_lammps_forcefield` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
+The include written by `mp.io.write_lammps_forcefield` already declares every style, so the script does not repeat them; a different `pair_style` issued after it would discard its pair coefficients (for long-range electrostatics, write the include with `skip_pair_style=True` and declare the pair style in the script before `include`). The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_data` and `mp.io.write_lammps_forcefield` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
 
 `Script.from_path` is the mirror image — load an existing file, modify it programmatically, and save it back or pass it to `run()`.
 
@@ -242,4 +241,4 @@ class GromacsEngine(Engine):
 
 - [I/O Subsystem](11_io.md) — writing LAMMPS data files, force field coefficient files, PDB and GRO files; the engine assumes these files exist before it runs.
 - [PEO–LiTFSI Electrolyte via AmberTools](13_ambertools_integration.md) — an end-to-end workflow that writes AMBER input files and invokes external tools, illustrating the same generate-then-run pattern applied to a different toolchain.
-- API Reference: `molpy.engine`, `molpy.core.script.Script`.
+- API Reference: `molpy.engine`, `mp.Script`.

@@ -23,7 +23,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : Native base class (`mp.Graph`) holding nodes, relations and ports. `Atomistic` and `CoarseGrain` derive from it; molpy re-exports all three by identity.
 
 **Topology**
-: Bonded terms derived from an `Atomistic`'s bond graph by the Rust kernels. `get_topo()` perceives angles/dihedrals **in place** and returns the same `Atomistic` (use `.copy().get_topo(...)` when you need an independent graph); `get_topo_neighbors()` / `get_topo_distances()` answer k-hop graph queries. There is no standalone topology class. See [Atomistic and Topology](01_atomistic_and_topology.md).
+: Bonded terms derived from an `Atomistic`'s bond graph by the native kernels. `generate_topology(gen_angle=..., gen_dihedral=...)` perceives angles and dihedrals **in place** and returns the counts it added (use `.copy()` first when you need an independent graph); `topo_distances(handle, max_hops=...)` answers bond-graph distance queries. On the tabular side, `mp.Topology.from_frame(frame)` reads a `Frame`'s bonds, for example `connected_components()` to number its molecules. See [Atomistic and Topology](01_atomistic_and_topology.md).
 
 **Block**
 : A columnar table mapping string keys to NumPy arrays. All columns share the same row count. Used inside `Frame` to store atoms, bonds, angles, etc. See [Block and Frame](02_block_and_frame.md).
@@ -43,10 +43,10 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : A container that holds all styles, types, and parameters for a molecular system. Created manually or loaded from XML/LAMMPS/AMBER files.
 
 **Style**
-: An interaction family within a force field — for example, "harmonic" bonds or "lj126/cut" pairs. Defines which parameters are expected. Subclasses: `BondStyle`, `AngleStyle`, `DihedralStyle`, `PairStyle`.
+: An interaction family within a force field — for example, `harmonic` bonds or `lj/cut` pairs — defined with `ff.def_style(category, name)`. Subclasses: `AtomStyle`, `BondStyle`, `AngleStyle`, `DihedralStyle`, `ImproperStyle`, `PairStyle`.
 
 **Type**
-: One concrete parameter record within a style. For example, a bond type "CT-OH" with `k=320.0` and `r0=1.41`. Subclasses: `AtomType`, `BondType`, `AngleType`, `DihedralType`, `PairType`.
+: One concrete parameter record within a style, defined with `style.def_type(name, *endpoints, **params)`. For example, a bond type `CT-OH` between the atom types `CT` and `OH` with `k=320.0` and `r0=1.41`. Subclasses: `AtomType`, `BondType`, `AngleType`, `DihedralType`, `ImproperType`, `PairType`.
 
 **Potential**
 : The numerical realization of a force field's styles and types, ready for energy/force computation. Produced by `mp.PotentialCompiler(ff).compile(frame)` (or `.defer()` for a `Potentials` bound later) and evaluated against a typed `Frame` via `pots.calc_energy(frame)` / `pots.calc_forces(frame)`; the kernels run in the high-performance backend. See [Force Field](04_force_field.md).
@@ -91,8 +91,8 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 **atomi / atomj / atomk / atoml**
 : Integer atom indices used in `Frame` and `Block` (the data-interchange layer). Always 0-based. Never store object references.
 
-**itom / jtom / ktom / ltom**
-: Atom object references used in graph-level topology (Bond, Angle, Dihedral). Never store integers. See [Naming Conventions](naming-conventions.md).
+**itom / jtom, endpoints**
+: Atom views on graph-level topology: `bond.itom` / `bond.jtom` are a bond's two atoms, and every relation (`Bond`, `Angle`, `Dihedral`, `Improper`) lists its atoms in order as `.endpoints`. They are views, never integers. See [Naming Conventions](naming-conventions.md).
 
 ### Compute terminology
 

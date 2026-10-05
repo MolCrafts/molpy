@@ -35,19 +35,18 @@ data file. Such a function calls the native door and post-processes its frame.
 
 ## Canonical field names
 
-The internal data model uses canonical field names defined in
-`molpy.core.fields`. The native readers already translate the formats they
+The internal data model uses canonical field names, listed on `mp.fields`. The native readers already translate the formats they
 parse. A format whose column names molpy translates itself declares a
 `FieldFormatter` subclass with a `_field_formatters` mapping:
 
 ```python
-from molpy.core.fields import CHARGE, MOL_ID, FieldFormatter
+from molpy import fields
 
 
-class MyFieldFormatter(FieldFormatter):
+class MyFieldFormatter(fields.FieldFormatter):
     _field_formatters = {
-        "q": CHARGE,  # format "q" → canonical "charge"
-        "mol": MOL_ID,  # format "mol" → canonical "mol_id"
+        "q": fields.CHARGE,  # format "q" → canonical "charge"
+        "mol": fields.MOL_ID,  # format "mol" → canonical "mol_id"
     }
 ```
 

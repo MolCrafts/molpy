@@ -13,7 +13,8 @@ MD / simulation engine abstractions for LAMMPS, CP2K, and OpenMM.
 
 ## Related
 
-- [Guide: Assembly](../user-guide/02_assembly.md) (building the network the script runs)
+- [Guide: Simulation Engines](../user-guide/12_engine.md)
+- [Guide: File I/O](../user-guide/11_io.md) (the data and force-field files the script reads)
 
 ---
 

@@ -16,7 +16,7 @@ The simplest filters match one column: element symbols, type labels, and so on.
 
 ```python
 import molpy as mp
-from molpy.core.selector import (
+from molpy import (
  ElementSelector,
  AtomTypeSelector,
  CoordinateRangeSelector,

@@ -17,7 +17,7 @@ Foundational data structures for molecular systems. All available via
 | `ForceField` | Force field container (styles → types → potentials) | Defining parameters before execution | Direct numerical computation |
 | `NodeRef` / `RelationRef` / `Refs` | Live handles onto graph nodes / relations and collections of them (an `Atom` is a node view, a `Bond` a relation view) | Code generic over node / relation kinds | Everyday atom / bond editing |
 | `Region` | Geometric region (box, sphere, boolean combinations) | Spatial selection, packing constraints | Non-geometric masks (use a `Selector`) |
-| `UnitSystem` | Unit registry (`real`, `metal`, `openmm`, …) plus `k_B` | Unit conversions and custom presets | Unit-agnostic array math |
+| `UnitSystem` | Unit registry with named presets (`real`, `metal`, `openmm`, …) and reduced LJ units | Unit conversions and custom presets | Unit-agnostic array math |
 
 ## Canonical examples
 

@@ -26,7 +26,7 @@ for an assembled chain come from the AmberTools typifiers — see
 | `CarbonTubeBuilder` | `CarbonTubeBuilder(n, m, ...)` → `.build()` graph + `.cell()` box | Zigzag, armchair, and chiral nanotubes |
 | `GrapheneBuilder` | `GrapheneBuilder(nx, ny, ...)` → `.build()` graph + `.cell()` box | Rectangular graphene honeycomb sheet |
 | `Lattice` / `Site` / `SpaceGroup` | Bravais lattice with basis sites (fractional coordinates) and symmetry operators | Crystals |
-| `Region` / `BoxRegion` / `SphereRegion` / `Cube` | Geometric regions with `mask(Block)` | Selecting a volume |
+| `mp.Region` / `mp.BoxRegion` / `mp.SphereRegion` / `mp.Cube` | Geometric regions with `mask(Block)`, on the molpy root | Selecting a volume |
 | `DrudeBuilder` / `Tip4pBuilder` / `VirtualSiteBuilder` / `load_polarizability` | Virtual-site augmentation | Polarizable / 4-site models |
 
 The crystal `Site` is a lattice basis site; it is unrelated to the sites of an

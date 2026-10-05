@@ -31,7 +31,7 @@ they may go) and returns a single packed, topology-complete `Frame`.
 import molpy as mp
 from molpack import GenCanPack, Target
 
-water, _ = mp.conformer.Conformer(seed=1).generate(mp.io.read_smiles("O"))
+water, _ = mp.Conformer(seed=1).generate(mp.io.read_smiles("O"))
 water_frame = water.to_frame() # one molecule, as a Frame
 
 water = (

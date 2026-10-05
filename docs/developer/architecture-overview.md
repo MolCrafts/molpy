@@ -8,19 +8,18 @@ Each package has one clear responsibility with minimal coupling to its siblings:
 
 | Package | Purpose |
 |---------|---------|
-| `core` | Graph refs/worlds, `Frame`, `Block`, `Box`, units, force-field surfaces |
-| `parser` | SMILES / SMARTS (`SmilesIR`, `SmartsPattern`) |
+| `core` | molpy's own data-model pieces: `Box`, `Trajectory`, `Region`s, selectors, `UnitSystem`, `Config`, `Script`, `fields` — all reached from the molpy root, never as `molpy.core.X` |
 | `builder` | Polymer planning (sequences, chain-length distributions), nanostructures, crystals, virtual sites, topology finalization; site-graph assembly (`Assembler`, placers, `AxisOrienter`) is native and re-exported on the molpy root |
 | `conformer` | 3D conformer generation |
 | `typifier` | Graph typification: the molrs `Typifier` base and native typifiers (OPLS-AA, MMFF94, element) re-exported; `AntechamberTypifier` / `TLeapTypifier` for GAFF through AmberTools |
 | `io` | File I/O: molecular data, trajectories, force-field formats |
-| `compute` | Analysis operators — flat modules under `src/molpy/compute/` (`rdf`, `msd`, `dielectric`, `spectra`, …; molrs kernels) |
+| `compute` | Analysis operators — the molrs analyses (`RDF`, `MSD`, dielectric and spectral classes, `signal`, …) re-exported by identity on `molpy.compute` |
 | `engine` | MD abstractions: LAMMPS, CP2K, OpenMM input generation and execution |
 | `wrapper` | Subprocess boundaries to external CLI tools (antechamber, parmchk2, prepgen, tleap, sander) |
 | `adapter` | Optional in-memory bridge (RDKit worked example) |
 | `data` | Bundled package data: force-field XML files, parameter tables |
 
-`core` depends on nothing above it; everything else builds on `core`. `compute`, `io`, and `engine` operate on the tabular layer (`Frame`/`Block`); `parser`, `builder`, and `typifier` operate on the graph layer (`Atomistic`). `wrapper` and `adapter` sit at the outer edge and never leak external types into `core`.
+`core` depends on nothing above it; everything else builds on `core`. `compute`, `io`, and `engine` operate on the tabular layer (`Frame`/`Block`); `builder` and `typifier` operate on the graph layer (`Atomistic`). The graph and tabular types themselves (`Atomistic`, `Frame`, `Block`, `ForceField`, the notation types `SmilesIR` / `CGSmilesIR` / `SmartsPattern`, …) are molrs types re-exported on the molpy root. `wrapper` and `adapter` sit at the outer edge and never leak external types into `core`.
 
 ## The graph layer: live handle views over molrs
 
@@ -49,7 +48,7 @@ The graph → arrays conversion is explicit: `Atomistic.to_frame()` delegates to
 
 ## Force field: parameters apart, kernels in Rust
 
-`ForceField` is an independent, queryable data structure — parameters are neither embedded in atoms nor derived implicitly. The model has three layers: **Style** (functional form), **Type** (parameter set for a type key), and **Potential** (evaluatable kernel). All energy/force kernels live in molrs (`molrs-ff`); the Python side exposes thin named `Style` subclasses and evaluation always goes through `ff.to_potentials()`. Adding a functional form therefore means a Rust kernel plus a Python style name plus export formatters — the exact recipe is in [Extending the Force Field](extending-forcefield.md).
+`ForceField` is an independent, queryable data structure — parameters are neither embedded in atoms nor derived implicitly. The model has three layers: **Style** (functional form), **Type** (parameter set for a type key), and **Potential** (evaluatable kernel). All energy/force kernels live in molrs; a style is named by `ff.def_style(category, name)` with nothing to subclass, and evaluation always goes through `PotentialCompiler(ff).compile(frame)`. Adding a functional form therefore means a molrs kernel plus the molrs writer arms that serialize it — the exact recipe is in [Extending the Force Field](extending-forcefield.md).
 
 ## Boundary translation: the formatter hierarchy
 
@@ -63,11 +62,11 @@ FieldFormatter                         — data field mapping: {format_key: cano
 ForceFieldFormatter(FieldFormatter)    — adds param formatters: {StyleType: Callable}
 ```
 
-Readers call `canonicalize()` at exit (format → canonical); writers call `localize_frame()` at entry (canonical → format, on a copy). Per-format subclasses live in their own I/O module, and `__init_subclass__` isolates the registries per subclass. The full canonical-name catalog is in the [Naming Conventions](../tutorials/naming-conventions.md) appendix; the extension recipe is in [Adding an I/O Format](extending-io.md).
+The native readers and writers translate the formats they parse themselves; `FieldFormatter` (native, re-exported on `mp.fields`) is for a format molpy translates on its own: `canonicalize()` on the way in (format → canonical), `localize_frame()` on the way out (canonical → format, on a copy), with `__init_subclass__` isolating each subclass's registry. The full canonical-name catalog is in the [Naming Conventions](../tutorials/naming-conventions.md) appendix; the extension recipe is in [Adding an I/O Format](extending-io.md).
 
 ## The mutation contract
 
-The core data-model API mutates in place and returns `self` (or the created entity) for chaining: `def_atom`, `def_bond`, `get_topo`, `translate`, `rotate`, `scale`, `merge` all modify the structure they are called on. `.copy()` is the explicit opt-in for an independent deep copy. Higher-level helpers in `builder` and `op` follow the opposite convention: they must not mutate caller-owned structures unexpectedly — copy first, or build and return a new structure.
+The core data-model API mutates in place: `def_atom`, `def_bond`, `generate_topology`, `translate`, `rotate`, `scale`, `merge` all modify the structure they are called on. The rigid-body transforms return `self` for chaining, factories return the created entity, and `generate_topology` / `merge` return what they added. `.copy()` is the explicit opt-in for an independent deep copy. Higher-level helpers in `builder` and `op` follow the opposite convention: they must not mutate caller-owned structures unexpectedly — copy first, or build and return a new structure.
 
 ## Performance model of assembly
 
