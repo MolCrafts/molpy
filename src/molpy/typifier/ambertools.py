@@ -15,8 +15,7 @@ molrs base owns ``typify`` and the accumulated ``forcefield()``.
 
 from __future__ import annotations
 
-import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -34,7 +33,7 @@ from molpy.wrapper import (
     EnvSpec,
     Parmchk2Wrapper,
     TLeapWrapper,
-    Wrapper,
+    run_step,
 )
 
 # The per-atom formal charge the SMILES reader writes (only on charged bracket
@@ -212,29 +211,6 @@ def _write_mol2(graph: Atomistic, path: Path) -> None:
     write_mol2(path, frame)
 
 
-def _run(
-    tool: Wrapper,
-    output: Path,
-    call: Callable[[], subprocess.CompletedProcess[str]],
-) -> None:
-    """Run one AmberTools step and require its output file.
-
-    Raises:
-        RuntimeError: The executable is missing, exits non-zero, or leaves
-            ``output`` unwritten; the message carries the tool's stderr.
-    """
-    if not tool.is_available():
-        raise RuntimeError(
-            f"{tool.exe} is not available: not on PATH or in env {tool.env!r}"
-        )
-    result = call()
-    if result.returncode != 0 or not output.is_file():
-        raise RuntimeError(
-            f"{tool.exe} failed (exit {result.returncode}, {output.name} "
-            f"{'written' if output.is_file() else 'missing'}):\n{result.stderr}"
-        )
-
-
 class AntechamberTypifier(_AmberLibrary):
     """GAFF / GAFF2 atom types, charges and parameters for a complete molecule.
 
@@ -303,7 +279,7 @@ class AntechamberTypifier(_AmberLibrary):
             env=self.env,
             env_manager=self.env_manager,
         )
-        _run(
+        run_step(
             ante,
             typed,
             lambda: ante.atomtype_assign(
@@ -322,7 +298,7 @@ class AntechamberTypifier(_AmberLibrary):
             env=self.env,
             env_manager=self.env_manager,
         )
-        _run(
+        run_step(
             parmchk2,
             frcmod,
             lambda: parmchk2.generate_parameters(
@@ -342,7 +318,7 @@ class AntechamberTypifier(_AmberLibrary):
             f"saveamberparm {_UNIT} {prmtop} {inpcrd}\n"
             "quit\n"
         )
-        _run(leap, prmtop, lambda: leap.run_from_script(script))
+        run_step(leap, prmtop, lambda: leap.run_from_script(script))
 
         result = _Prmtop(prmtop)
         return result.match(graph, result.frame["atoms"][fields.CHARGE])
@@ -426,7 +402,7 @@ class TLeapTypifier(_AmberLibrary):
             env=self.env,
             env_manager=self.env_manager,
         )
-        _run(leap, prmtop, lambda: leap.run_from_script(script))
+        run_step(leap, prmtop, lambda: leap.run_from_script(script))
 
         result = _Prmtop(prmtop)
         atoms = result.frame["atoms"]
