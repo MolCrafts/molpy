@@ -155,6 +155,10 @@ docs/**
 # molplot browser bundle: staged from monorepo molplot/core/dist (or npm) by
 # molcrafts-zensical-theme at zensical build — do not commit.
 docs/assets/molplot/
+# molvis viewer bundles: staged the same way by molcrafts-zensical-theme at
+# zensical build — do not commit.
+docs/assets/molvis-sketch-viewer/
+docs/assets/molvis-stage-viewer/
 # molplot fence $file data (JSON/CSV/YAML under docs/data/)
 !docs/data/
 !docs/data/**/

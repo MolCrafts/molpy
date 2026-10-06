@@ -6,10 +6,10 @@ plugin. The notebooks under ``docs/user-guide/`` are therefore pre-rendered to
 Markdown by this script and the resulting ``.md`` pages are committed alongside
 the ``.ipynb`` sources (the notebooks remain the editable source of truth).
 
-Each notebook is executed so its output cells are captured. The notebooks listed
-in :data:`NEEDS_LAMMPS` run a LAMMPS simulation and are executed only when the
-``lmp_serial`` executable is available, otherwise they fall back to render-only
-(code and prose, no output). Any image outputs are inlined as base64 data URIs so
+Every notebook is executed so its output cells are captured; a cell that raises
+fails the render, so a page never ships with stale or missing outputs. The
+environment needs what the notebooks import (``05_polydisperse_systems`` packs
+with ``molcrafts-molpack``). Any image outputs are inlined as base64 data URIs so
 each ``.md`` is self-contained, which keeps the repository's ``docs/`` policy of
 tracking only ``.md`` / ``.ipynb`` files intact (no stray PNGs).
 
@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import base64
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -33,14 +32,7 @@ from pathlib import Path
 
 USER_GUIDE = Path(__file__).resolve().parent.parent / "docs" / "user-guide"
 
-# Notebooks that run a LAMMPS simulation (via molpy.engine.LAMMPSEngine). They are
-# executed only when the `lmp_serial` executable is available; otherwise they fall
-# back to render-only (code and prose, no output) so the docs can still be
-# regenerated on a machine without LAMMPS installed.
-NEEDS_LAMMPS = {"04_crosslinking", "05_polydisperse_systems"}
-LAMMPS_EXECUTABLE = "lmp_serial"
-
-# Per-cell execution timeout in seconds (some cells run packmol/LAMMPS).
+# Per-cell execution timeout in seconds (some cells pack a box).
 CELL_TIMEOUT = 900
 
 # Matches Markdown image references that point at an extracted ``*_files`` asset.
@@ -131,12 +123,6 @@ def _fence_stream_outputs(markdown: str) -> str:
 def render(notebook: Path) -> None:
     """Render a single notebook to ``docs/user-guide/<stem>.md``."""
     stem = notebook.stem
-    execute = True
-    if stem in NEEDS_LAMMPS and shutil.which(LAMMPS_EXECUTABLE) is None:
-        execute = False
-        print(
-            f"warning: {LAMMPS_EXECUTABLE} not found; rendering {stem} without execution"
-        )
     with tempfile.TemporaryDirectory() as tmp:
         cmd = [
             sys.executable,
@@ -148,10 +134,10 @@ def render(notebook: Path) -> None:
             stem,
             "--output-dir",
             tmp,
+            "--execute",
+            f"--ExecutePreprocessor.timeout={CELL_TIMEOUT}",
+            str(notebook),
         ]
-        if execute:
-            cmd += ["--execute", f"--ExecutePreprocessor.timeout={CELL_TIMEOUT}"]
-        cmd.append(str(notebook))
         # Run with the notebook's directory as CWD so relative inputs (oplsaa.xml)
         # and example output dirs resolve exactly as they did under mkdocs-jupyter.
         subprocess.run(cmd, check=True, cwd=USER_GUIDE)
@@ -160,7 +146,7 @@ def render(notebook: Path) -> None:
         rendered = _rewrite_notebook_links(rendered)
         rendered = _fence_stream_outputs(rendered)
     (USER_GUIDE / f"{stem}.md").write_text(rendered, encoding="utf-8")
-    print(f"rendered {stem}.md (execute={execute})")
+    print(f"rendered {stem}.md")
 
 
 def main(argv: list[str]) -> int:

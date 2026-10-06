@@ -31,6 +31,7 @@ intermediate representation, `SmartsPattern` gives you a compiled query,
 specified molecule. It parses the string and returns an `Atomistic` containing
 atoms and bonds.
 
+
 ```python
 import molpy as mp
 
@@ -46,10 +47,12 @@ atoms: 6, bonds: 5
 ['C', 'C', 'O', 'O', 'C', 'C']
 ```
 
+
 **Hydrogens are not added.** A SMILES string states connectivity; filling
 open valences is a separate perception step, so `read_smiles` gives you exactly
 the heavy-atom skeleton the string names. Ask for the hydrogens when you want
 them:
+
 
 ```python
 skeleton = mp.io.read_smiles("CCO")
@@ -66,10 +69,12 @@ filled: 9 atoms
 the input is untouched: 3
 ```
 
+
 A `.`-separated SMILES names a *set* of molecules, not a molecule — ion
 pairs and solvent mixtures use this. `read_smiles` refuses it rather than
 silently returning a disconnected graph; `SmilesIR.components()` takes it
 apart.
+
 
 ```python
 try:
@@ -86,11 +91,13 @@ refused: read_smiles needs one component, '[Li+].[F-]' has 2. Use mp.io.SmilesIR
 components: 2 -> [1, 1]
 ```
 
+
 ### Aromaticity comes from the notation, and perception can revise it
 
 Aromatic atoms are lowercase in SMILES, and the parser records that as
 `is_aromatic` on each atom. Ring-closure digits must match: the first
 occurrence opens the ring, the second closes it.
+
 
 ```python
 benzene = mp.io.read_smiles("c1ccccc1")
@@ -101,9 +108,11 @@ print([atom.get("is_aromatic") for atom in benzene.atoms])
 [1, 1, 1, 1, 1, 1]
 ```
 
+
 `Perceive().find_aromaticity()` **re-derives** the flag from the ring and its
 bonds rather than trusting the notation, so a Kekulé structure written with
 explicit double bonds comes out aromatic too:
+
 
 ```python
 kekule = mp.io.read_smiles("C1=CC=CC=C1")
@@ -118,6 +127,7 @@ as written:   [None, None, None, None, None, None]
 re-perceived: [1, 1, 1, 1, 1, 1]
 ```
 
+
 ## SMARTS: pattern matching, not structure building
 
 SMARTS shares SMILES syntax on the surface, but its semantics are entirely
@@ -125,6 +135,7 @@ different. Where SMILES encodes one concrete molecule, SMARTS encodes a query:
 `[C;X4][O;H1]` means "an sp3 carbon bonded to a hydroxyl oxygen" and matches
 *any* molecule containing that environment. A `SmartsPattern` has no atoms to
 read — it has matches to find.
+
 
 ```python
 query = mp.SmartsPattern("[C;X4][O;H1]")
@@ -142,6 +153,7 @@ matches ethanol: True
  matched atom handles: [4294967298, 4294967299]
 ```
 
+
 Note the pattern is matched against the **hydrogen-filled** structure:
 `X4` counts connections and `H1` counts hydrogens, so both are answered wrong on
 a bare skeleton. Perceive the hydrogens first, query after.
@@ -155,6 +167,7 @@ environments to force-field types. See *Typifier* in this guide.
 workflows. `SmilesIR` is the step in between, for when you want to know what the
 string said before committing to a graph — how many molecules it names, and
 whether to take them together or separately.
+
 
 ```python
 ir = mp.io.SmilesIR("CCO.O")
@@ -175,6 +188,7 @@ to_atomistic(): one graph of 4 atoms
 components(): 2 graphs of [3, 1] atoms
 ```
 
+
 ## CGsmiles describes units and how they join
 
 CGsmiles writes a molecule at more than one resolution. The first block is a
@@ -189,6 +203,7 @@ bonds. `to_coarsegrain()` returns the bead graph, one site per unit, which is
 the topology [Assembly](02_assembly.md) grows. `to_atomistic()` expands the
 whole string into one heavy-atom graph, turning every paired descriptor into a
 bond.
+
 
 ```python
 ir = mp.io.CGSmilesIR("{[#EO]|3}.{#EO=[<]OCC[>]}")
@@ -214,6 +229,7 @@ EO template: 5 atoms, 2 ports
 site graph: ['EO', 'EO', 'EO'], 2 bonds
 to_atomistic(): 9 heavy atoms, 8 bonds
 ```
+
 
 ## Choosing the right entry point
 

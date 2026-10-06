@@ -201,10 +201,12 @@ lammps_dir.mkdir(exist_ok=True)
 # full atom style needs mol_id: one per connected molecule
 system["atoms"]["mol_id"] = mp.Topology.from_frame(system).connected_components() + 1
 mp.io.write_lammps_data(lammps_dir / "system.data", system)
-mp.ff.forcefield.write_lammps_forcefield(lammps_dir / "system.ff", ff, system, skip_pair_style=True)
+mp.ff.forcefield.write_lammps_forcefield(
+    lammps_dir / "system.ff", ff, system, skip_pair_style=True, skip_units=True
+)
 ```
 
-`skip_pair_style=True` omits the `pair_style` and `special_bonds` lines from the force-field file. This is required when using kspace (long-range electrostatics), because the `pair_style` — and its cutoff — must be set by the simulation input script rather than the force-field file.
+`skip_pair_style=True` omits the `pair_style` line from the force-field file. This is required when using kspace (long-range electrostatics), because the `pair_style` — and its cutoff — must be set by the simulation input script rather than the force-field file. The file keeps the force field's `special_bonds` (AMBER's 1-4 weights) and `pair_modify mix`, which need a pair style, so the input reads it after its `pair_style`. `skip_units=True` leaves out the `units` line: the input states `units` before `read_data`, and LAMMPS refuses a second one once the box exists.
 
 ## Troubleshooting
 

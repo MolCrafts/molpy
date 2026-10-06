@@ -19,6 +19,7 @@ MolPy's `OPLSAATypifier` handles the full assignment in one call: atom types fir
 
 The workflow is always the same: build the structure, load a force field, create a typifier, call `typify`.
 
+
 ```python
 import molpy as mp
 from molpy.ff.typifier import OPLSAATypifier
@@ -26,7 +27,7 @@ from molpy.ff.typifier import OPLSAATypifier
 # 1. Build the structure
 mol = mp.io.read_smiles("CCO")
 mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(mol)
-mol.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)  # angles/dihedrals in place
+mol.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)  # in place
 
 print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")
 print(f"angles: {len(mol.angles)}, dihedrals: {len(mol.dihedrals)}")
@@ -37,7 +38,9 @@ atoms: 9, bonds: 8
 angles: 13, dihedrals: 12
 ```
 
+
 The OPLS-AA parameters live in the native core, so there is no force-field file to load: `OPLSAATypifier` carries the whole OPLS-AA library (`typifier.library()`). `typify` assigns the types, and `typifier.forcefield()` then returns exactly the parameters of the types it assigned — the force field of this system, ready to export or compile.
+
 
 ```python
 # 2. Typify; the typifier owns the OPLS-AA library
@@ -49,6 +52,7 @@ ff = typifier.forcefield()  # the parameters of the assigned types
 
 `typify` returns a typed **copy** and leaves `mol` untouched — atoms in the returned object carry a `type` key and their charge, and its bonds, angles and dihedrals carry their types.
 
+
 ```python
 # 3. Inspect results
 for atom in typed_mol.atoms:
@@ -59,16 +63,17 @@ for atom in typed_mol.atoms:
 ```
 
 ```text
- C -> opls_135 q=-0.1800
- C -> opls_157 q=+0.1450
- O -> opls_154 q=-0.6830
- H -> opls_140 q=+0.0600
- H -> opls_140 q=+0.0600
- H -> opls_140 q=+0.0600
- H -> opls_140 q=+0.0600
- H -> opls_140 q=+0.0600
- H -> opls_155 q=+0.4180
+ C  -> opls_135        q=-0.1800
+ C  -> opls_157        q=+0.1450
+ O  -> opls_154        q=-0.6830
+ H  -> opls_140        q=+0.0600
+ H  -> opls_140        q=+0.0600
+ H  -> opls_140        q=+0.0600
+ H  -> opls_140        q=+0.0600
+ H  -> opls_140        q=+0.0600
+ H  -> opls_155        q=+0.4180
 ```
+
 
 ## How atom typing works
 
@@ -94,6 +99,7 @@ With `strict=False` such bonded terms are left unparameterised (no `type`) inste
 
 After typification, you can iterate over bonds, angles, and dihedrals to see their assigned types.
 
+
 ```python
 # Bond types
 for bond in typed_mol.bonds[:3]:
@@ -118,9 +124,11 @@ for angle in typed_mol.angles[:3]:
  opls_157-opls_135-opls_140 -> CT-CT-HC
 ```
 
+
 ## A typed structure is ready for simulation export
 
 A typed structure is ready for simulation export. Convert to a `Frame`, attach a box, and write to LAMMPS or GROMACS format.
+
 
 ```python
 from pathlib import Path
@@ -148,11 +156,13 @@ print(f"exported to {outdir}")
 exported to 06_output
 ```
 
+
 The structure and the coefficients are two files and two calls. `write_lammps_forcefield` looks up every type label the frame uses and writes only those coefficients. OPLS-AA defines no cutoff — a cutoff belongs to the run, not to the force field — so it is declared on the two pair styles before writing. The data writer refuses a bonded frame without `mol_id`: which atoms form a molecule is your decision, and the bond graph's connected components are the usual answer.
 
 ## Typing an assembled polymer
 
 `mp.builder.Assembler` joins units along a site graph (see [Assembly](02_assembly.md)) and assigns no types. The chain it returns is an ordinary `mp.Atomistic`, so it is typed like any other structure: one `typify` call on the finished molecule. Here the chain is a methyl-capped poly(ethylene oxide) hexamer whose caps close both ends, so no port is left open.
+
 
 ```python
 units = {"CAPA": "C[>]", "EO": "[<]OCC[>]", "CAPB": "[<]OC"}
@@ -176,6 +186,7 @@ print("atom types:", sorted({atom.get("type") for atom in typed_chain.atoms}))
 atoms: 51, open ports: 0
 atom types: ['opls_180', 'opls_181', 'opls_182', 'opls_185']
 ```
+
 
 ## When standard force fields are not enough
 
