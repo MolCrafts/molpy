@@ -11,6 +11,7 @@ Subprocess wrappers for external command-line tools.
 | `Parmchk2Wrapper` | AMBER parmchk2 (missing parameter generation) | Force field completion |
 | `TLeapWrapper` | AMBER tleap (topology building) | System assembly |
 | `PrepgenWrapper` | AMBER prepgen (residue template generation) | Polymer residues |
+| `run_step` | `run_step(tool, output, call)`: run one step, require the file it must write; raises `RuntimeError` with the tool's output | Chaining tools in a pipeline |
 
 ## Canonical example
 

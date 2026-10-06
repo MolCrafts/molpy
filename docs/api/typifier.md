@@ -34,13 +34,17 @@ creation — and it is the only writer of `forcefield()`.
 | `ElementTypifier` | `type` labels from element symbols; defines no force field | Writers that need labels on an untyped molecule |
 | `AtdTypifier` | `AtdTypifier(parameter_set="gaff2")`: antechamber's atom-type tables (`gaff`, `gaff2`, `amber`, `bcc`, …) evaluated natively — atom types only, no charges or parameters | GAFF / GAFF2 or BCC atom types without running antechamber |
 | `AntechamberTypifier` | antechamber → parmchk2 → tleap for one complete molecule | GAFF / GAFF2 small molecules and monomers |
-| `TLeapTypifier` | tleap alone over a graph that already carries AMBER types and charges | GAFF / GAFF2 chains assembled from typed monomers |
+| `TLeapTypifier` | tleap alone over a finished graph that already carries AMBER types and charges (a graph with ports is refused) | Re-parameterising a typed molecule |
 
 The native typifiers are identity re-exports of `molrs.ff.typifier`. The
 AmberTools typifiers shell out through `molpy.wrapper`; see
 [Optional external tools](../getting-started/external-tools.md#ambertools-gaff-parameters).
-tleap never changes types or charges; choose the complete monomer so its
-leaving groups mimic the chain neighbour.
+A GAFF polymer is not typed by joining typed monomers (each join folds the
+leaving group's charge onto its anchor): build it with
+`mp.builder.polymer.AmberPolymerBuilder`, which cuts one antechamber-typed
+oligomer with prepgen and joins the residues with tleap — see
+[Builder](builder.md) and the
+[AmberTools guide](../user-guide/13_ambertools_integration.md).
 
 UFF typing exists in the native core (Rust) but has no Python binding
 yet; MolPy re-exports it once one is published.
