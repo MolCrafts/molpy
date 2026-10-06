@@ -56,10 +56,28 @@ def die(msg: str) -> None:
     raise SystemExit(1)
 
 
+def _clean_env() -> dict[str, str]:
+    """os.environ without the repository variables git exports to a hook.
+
+    A git hook runs with GIT_DIR, GIT_INDEX_FILE, ... pointing at the hooked
+    repository. Left in place, every git call below -- and every git a build
+    tool spawns (uv fetching a git dependency) -- would act on that
+    repository instead of the partner checkout in its working directory.
+    """
+    names = subprocess.run(
+        ["git", "rev-parse", "--local-env-vars"], capture_output=True, text=True, check=True
+    ).stdout.split()
+    return {k: v for k, v in os.environ.items() if k not in names}
+
+
+ENV = _clean_env()
+
+
 def git(*args: str, cwd: Path | None = None, quiet: bool = False) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", *args],
         cwd=cwd,
+        env=ENV,
         text=True,
         stdout=subprocess.PIPE if quiet else None,
         stderr=subprocess.PIPE if quiet else None,
@@ -270,7 +288,7 @@ def run(cmd: list[str]) -> int:
                 fetch(name, repo, ref, root / name.lower())
             sync(root / me)
             print(f"partners: running in {root / me}: {' '.join(cmd)}", file=sys.stderr)
-            env_out = dict(os.environ, PARTNERS_SOURCE=str(ROOT))
+            env_out = dict(ENV, PARTNERS_SOURCE=str(ROOT))
             return subprocess.run(cmd, cwd=root / me, env=env_out).returncode
     finally:
         if not cache:
