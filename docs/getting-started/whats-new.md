@@ -61,6 +61,34 @@ and parameters natively to a molecule `AtdTypifier` has typed, without
 AmberTools; `ForceField.materialize_params` writes a typed frame's parameters as
 columns.
 
+### Force fields price as molrs 0.16 prices them
+
+Everything molpy compiles, types and writes goes through molrs, so molrs
+0.16's force-field changes reach molpy unchanged
+([molrs migration guide](https://docs.molcrafts.org/molrs/migration/)):
+
+- **Force-field IR, LAMMPS standard.** A harmonic `k` is LAMMPS's `K` (no
+  ½) and every equilibrium angle and phase is in degrees. A force field read
+  from a file or typed by a typifier prices as before; one built by hand
+  with `def_type` needs `k / 2` and degrees. A 0.15 `.mrec` record is
+  converted on read.
+- **Pair cutoffs.** `mp.PotentialCompiler(ff).compile(frame)` prices a
+  `pairs` row only inside its style's `cutoff`, as LAMMPS does (0.15 priced
+  every listed pair). A style that states no `cutoff` is untruncated, as
+  before.
+- **`coul/long/pme` reads the frame's box**, as LAMMPS's kspace does; a frame
+  without a periodic box is refused by name.
+- **GAFF atom types follow antechamber's bond orders.** `AtdTypifier`
+  perceives the bond orders from the connectivity as `antechamber` does
+  (`bond_orders="perceive"`, the default), so a Kekulé structure types as
+  antechamber types it; `bond_orders="input"` keeps the graph's orders.
+  Types that depend on the Kekulé structure, ring classes or colouring can
+  change, and with them GAFF parameters and AM1-BCC / Gasteiger charges.
+- **Typed refusals.** Every refusal of the force-field IR is a subclass of
+  `mp.potential.IrError` (a `ValueError`): `MissingParam`, `BadValue`,
+  `NoMixing`, `NoEngineForm`, … from `molrs.ff.ir`. `except ValueError`
+  still catches them.
+
 ### Upgrading from 0.15
 
 | 0.15 | 0.16 |
@@ -70,6 +98,8 @@ columns.
 | a new style: a molrs kernel, writer arms, a rebuilt wheel | `class MyStyle(mp.potential.StyleSpec)` |
 | `molpy.engine.lammps._style_lines`, `molpy.io.emit.lammps._style_name` | gone: the styles are in molrs's include |
 | emitted `.in.init`: `boundary p p p`; `.in`: `neighbor 2.0 bin` | `.in.init`: `boundary s s s`, `neighbor 2.0 nsq` |
+| harmonic `k` with a ½ (`def_type(..., k=2K)`), angles in radians | LAMMPS's `K`, degrees |
+| `AtdTypifier` types the graph's bond orders | antechamber's perceived orders; `bond_orders="input"` for the old behaviour |
 
 ## 0.15
 
