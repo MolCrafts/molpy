@@ -3,7 +3,7 @@
 import numpy as np
 
 from molpy import Box, NeighborList
-from molpy.md import LJCut
+from molpy.potential import LJCut
 
 
 def test_md_neighborlist_is_the_core_engine():
