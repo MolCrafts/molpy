@@ -5,9 +5,11 @@ Two :class:`molrs.ff.typifier.Typifier` subclasses drive the
 
 * :class:`AntechamberTypifier` types a complete molecule from scratch:
   antechamber (atom types and charges) → parmchk2 (missing parameters) → tleap.
-* :class:`TLeapTypifier` parameterises a graph whose atoms already carry AMBER
-  types and charges (e.g. a chain assembled from antechamber-typed templates)
-  with tleap alone, so a chain never pays for an antechamber / parmchk2 run.
+* :class:`TLeapTypifier` parameterises a finished graph whose atoms already
+  carry AMBER types and charges, with tleap alone. A graph that still has
+  ports is refused. A polymer is built with
+  :class:`molpy.builder.polymer.AmberPolymerBuilder`: antechamber, parmchk2
+  and prepgen on one oligomer, then tleap ``sequence``.
 
 Both return the prmtop's assignment as a :class:`~molrs.ff.typifier.Match`; the
 molrs base owns ``typify`` and the accumulated ``forcefield()``.
@@ -15,8 +17,7 @@ molrs base owns ``typify`` and the accumulated ``forcefield()``.
 
 from __future__ import annotations
 
-import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -34,7 +35,7 @@ from molpy.wrapper import (
     EnvSpec,
     Parmchk2Wrapper,
     TLeapWrapper,
-    Wrapper,
+    run_step,
 )
 
 # The per-atom formal charge the SMILES reader writes (only on charged bracket
@@ -195,6 +196,32 @@ class _AmberLibrary(Typifier):
         return ff
 
 
+class _PrmtopAssignment(_AmberLibrary):
+    """Assign a tleap prmtop to the graph it was written for.
+
+    No program runs: ``match`` regenerates the graph's terms to the prmtop's
+    set and stamps the prmtop's types and charges on it, exactly as the
+    typifiers below do after tleap. The output force field is the typifiers'
+    likeness (AMBER units and 1-4 scaling, types without the prmtop's row
+    ids), so it merges with theirs.
+
+    Args:
+        prmtop: The prmtop; its atom *i* is graph atom *i*.
+    """
+
+    def __init__(self, prmtop: Path) -> None:
+        super().__init__()
+        self._prmtop = _Prmtop(prmtop)
+
+    def match(self, graph: Atomistic) -> Match:
+        """The prmtop's types, charges and terms for ``graph``.
+
+        Raises:
+            ValueError: The graph and the prmtop disagree on an atom or term.
+        """
+        return self._prmtop.match(graph, self._prmtop.frame["atoms"][fields.CHARGE])
+
+
 def _write_mol2(graph: Atomistic, path: Path) -> None:
     """Write ``graph`` as the mol2 an AmberTools program reads.
 
@@ -212,29 +239,6 @@ def _write_mol2(graph: Atomistic, path: Path) -> None:
     write_mol2(path, frame)
 
 
-def _run(
-    tool: Wrapper,
-    output: Path,
-    call: Callable[[], subprocess.CompletedProcess[str]],
-) -> None:
-    """Run one AmberTools step and require its output file.
-
-    Raises:
-        RuntimeError: The executable is missing, exits non-zero, or leaves
-            ``output`` unwritten; the message carries the tool's stderr.
-    """
-    if not tool.is_available():
-        raise RuntimeError(
-            f"{tool.exe} is not available: not on PATH or in env {tool.env!r}"
-        )
-    result = call()
-    if result.returncode != 0 or not output.is_file():
-        raise RuntimeError(
-            f"{tool.exe} failed (exit {result.returncode}, {output.name} "
-            f"{'written' if output.is_file() else 'missing'}):\n{result.stderr}"
-        )
-
-
 class AntechamberTypifier(_AmberLibrary):
     """GAFF / GAFF2 atom types, charges and parameters for a complete molecule.
 
@@ -243,12 +247,10 @@ class AntechamberTypifier(_AmberLibrary):
     directory under ``work_dir``, and assigns the prmtop's types, charges and
     bonded terms. Ports are allowed; their leaving groups are real atoms.
 
-    tleap never changes types or charges downstream, so a chain's atoms keep
-    what antechamber gave them in their monomer. Choose the complete monomer so
-    each port's leaving group mimics the neighbour its anchor has in the chain:
-    the PEO unit is CH3–O–CH2–CH2–O–CH3 with the terminal CH3 and O–CH3 as
-    leaving groups (its O typed ether ``os``), not H-capped HO–CH2–CH3 (whose O
-    antechamber types hydroxyl ``oh`` with alcohol charges).
+    A polymer chain is not typed here: joining typed monomers folds each
+    leaving group's charge onto its anchor. Build it with
+    :class:`molpy.builder.polymer.AmberPolymerBuilder`, which cuts one
+    antechamber-typed oligomer with prepgen and sequences it with tleap.
 
     Args:
         atom_type: The antechamber atom-type set, also the parmchk2 ``-s`` set
@@ -280,13 +282,11 @@ class AntechamberTypifier(_AmberLibrary):
         """Type ``graph`` with antechamber and assign tleap's prmtop.
 
         Raises:
-            ValueError: The formal charges do not sum to an integer, or the
-                prmtop disagrees with the graph.
+            ValueError: The prmtop disagrees with the graph.
             RuntimeError: An AmberTools step failed.
         """
-        net = sum(atom.get(_FORMAL_CHARGE) or 0.0 for atom in graph.atoms)
-        if net != round(net):
-            raise ValueError(f"formal charges sum to {net}, not an integer")
+        # The frame schema declares formal_charge an integer, so the sum is one.
+        net = sum(int(atom.get(_FORMAL_CHARGE) or 0) for atom in graph.atoms)
         directory = self.work_dir / f"{graph.structural_hash():016x}"
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -303,7 +303,7 @@ class AntechamberTypifier(_AmberLibrary):
             env=self.env,
             env_manager=self.env_manager,
         )
-        _run(
+        run_step(
             ante,
             typed,
             lambda: ante.atomtype_assign(
@@ -313,7 +313,7 @@ class AntechamberTypifier(_AmberLibrary):
                 output_format="mol2",
                 charge_method=self.charge_method,
                 atom_type=self.atom_type,
-                net_charge=int(round(net)),
+                net_charge=net,
             ),
         )
         parmchk2 = Parmchk2Wrapper(
@@ -322,7 +322,7 @@ class AntechamberTypifier(_AmberLibrary):
             env=self.env,
             env_manager=self.env_manager,
         )
-        _run(
+        run_step(
             parmchk2,
             frcmod,
             lambda: parmchk2.generate_parameters(
@@ -342,7 +342,7 @@ class AntechamberTypifier(_AmberLibrary):
             f"saveamberparm {_UNIT} {prmtop} {inpcrd}\n"
             "quit\n"
         )
-        _run(leap, prmtop, lambda: leap.run_from_script(script))
+        run_step(leap, prmtop, lambda: leap.run_from_script(script))
 
         result = _Prmtop(prmtop)
         return result.match(graph, result.frame["atoms"][fields.CHARGE])
@@ -351,15 +351,15 @@ class AntechamberTypifier(_AmberLibrary):
 class TLeapTypifier(_AmberLibrary):
     """Parameterise an already typed graph with tleap alone.
 
-    The graph's atoms must carry AMBER atom types and charges (e.g. a chain
-    assembled from :class:`AntechamberTypifier`-typed templates). ``match``
+    The graph's atoms must carry AMBER atom types and charges. ``match``
     writes them as mol2, writes ``forcefield`` (the templates' parameters) as a
     frcmod, runs tleap and assigns the prmtop's bonded terms, so junction terms
     come from the leaprc. It never runs antechamber or parmchk2. Types and
-    charges are left as they are; tleap changing one raises. Every atom thus
-    keeps its monomer's type and charge, so the monomers must be chosen with
-    leaving groups that mimic the chain neighbour (see
-    :class:`AntechamberTypifier`).
+    charges are left as they are; tleap changing one raises. A graph that
+    still has ports is refused: joining those ports would fold the
+    leaving-group charge onto the anchors. A polymer chain is built with
+    :class:`molpy.builder.polymer.AmberPolymerBuilder`, whose prepgen step
+    spreads that charge instead.
 
     Args:
         leaprc: The leaprc tleap sources (``source leaprc.<leaprc>``).
@@ -395,6 +395,13 @@ class TLeapTypifier(_AmberLibrary):
                 the prmtop disagrees with the graph.
             RuntimeError: tleap failed.
         """
+        if graph.n_ports:
+            raise ValueError(
+                "TLeapTypifier parameterises a finished molecule; "
+                f"this graph still has {graph.n_ports} ports. "
+                "Cut the chain with AmberPolymerBuilder (prepgen), "
+                "which is what spreads the omitted charge."
+            )
         types = [atom.get(fields.TYPE) for atom in graph.atoms]
         charges = [atom.get(fields.CHARGE) for atom in graph.atoms]
         for index, (name, charge) in enumerate(zip(types, charges, strict=True)):
@@ -426,7 +433,7 @@ class TLeapTypifier(_AmberLibrary):
             env=self.env,
             env_manager=self.env_manager,
         )
-        _run(leap, prmtop, lambda: leap.run_from_script(script))
+        run_step(leap, prmtop, lambda: leap.run_from_script(script))
 
         result = _Prmtop(prmtop)
         atoms = result.frame["atoms"]

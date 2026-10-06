@@ -9,7 +9,7 @@ Environment isolation (``env`` / ``env_manager``) is owned by
 wrapper and any facade that shells out through one.
 """
 
-from .base import Wrapper
+from .base import Wrapper, run_step
 from .env import EnvSpec
 from .antechamber import AntechamberWrapper
 from .prepgen import Parmchk2Wrapper, PrepgenWrapper, write_prepgen_control_file
@@ -24,5 +24,6 @@ __all__ = [
     "PrepgenWrapper",
     "SanderWrapper",
     "TLeapWrapper",
+    "run_step",
     "write_prepgen_control_file",
 ]

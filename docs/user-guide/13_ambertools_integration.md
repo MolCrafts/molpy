@@ -1,12 +1,12 @@
 # PEO-LiTFSI with AmberTools
 
-Type TFSI and the PEO monomers with antechamber, assemble PEO chains from the typed monomers and finish them with tleap, and pack a PEO-LiTFSI electrolyte at target density — a complete AmberTools workflow driven from MolPy.
+Type TFSI with antechamber, build GAFF PEO chains from one antechamber-typed oligomer cut by prepgen and sequenced by tleap, and pack a PEO-LiTFSI electrolyte at target density — a complete AmberTools workflow driven from MolPy.
 
 !!! warning "External dependencies"
     This guide requires **AmberTools** (via conda) and
-    **molcrafts-molpack**. Only the inputs (TFSI, Li⁺ and the PEO monomers)
-    run without them; every block marked `# docs: skip` needs AmberTools or
-    molpack.
+    **molcrafts-molpack**. Only the inputs (TFSI, Li⁺, the PEO oligomer and
+    its cuts) run without them; every block marked `# docs: skip` needs
+    AmberTools or molpack.
 
 ??? note "Setting up AmberTools"
     Install AmberTools in a dedicated conda environment:
@@ -19,13 +19,13 @@ Type TFSI and the PEO monomers with antechamber, assemble PEO chains from the ty
     which tleap # should print a path
     ```
 
-    MolPy's AmberTools typifiers activate the conda environment automatically when running commands, so you do not need to keep it active in your shell. The `env="AmberTools25"` parameter in the code below tells them which environment to activate.
+    MolPy's AmberTools typifiers and `AmberPolymerBuilder` activate the conda environment automatically when running commands, so you do not need to keep it active in your shell. The `env="AmberTools25"` parameter in the code below tells them which environment to activate.
 
     If you use a different environment name, replace `"AmberTools25"` throughout this guide.
 
 ## Workflow overview
 
-Two typifiers in `mp.typifier` drive AmberTools. `AntechamberTypifier` types a complete molecule from scratch: antechamber (GAFF2 types, BCC charges) → parmchk2 (missing parameters) → tleap. `TLeapTypifier` runs tleap alone on a graph whose atoms already carry AMBER types and charges. TFSI and each PEO monomer go through antechamber once; the chain is assembled from the typed monomers, so its types and charges travel with the templates, and tleap adds the junction terms. tleap never re-assigns types or charges, so each monomer is a complete molecule whose leaving groups mimic the neighbours its atoms have in the chain. Li⁺ gets a force field you define. The three force fields are merged, molpack places the molecules at the target density, and the system is exported to LAMMPS.
+`AntechamberTypifier` types a complete molecule: antechamber (GAFF types, BCC charges) → parmchk2 → tleap. A polymer is not that molecule. You build one oligomer in which the head, chain and tail monomers are already bonded, and you say how prepgen cuts it (`AmberCut`: the atoms each residue omits, and the atom across each junction). `AmberPolymerBuilder` then runs antechamber and parmchk2 on that oligomer, prepgen for each cut, and tleap `sequence`. `TLeapTypifier` is only for a finished molecule that already carries types and charges; a graph that still has ports is refused. Li⁺ gets a force field you define. The three force fields are merged, molpack places the molecules at the target density, and the system is exported to LAMMPS.
 
 ## Antechamber assigns GAFF2 types and BCC charges to TFSI
 
@@ -77,98 +77,95 @@ li_type = li_ff.def_style("atom", "full").def_type("Li+", mass=6.94, charge=1.0)
 li_ff.def_style("pair", "lj/cut").def_type("Li+", li_type, epsilon=0.0183, sigma=2.0259)
 ```
 
-## Each PEO monomer is typed once
+## The chain is a tleap sequence, cut by prepgen
 
-AmberTools has no notion of ports or residue joins, so the chain is built by
-MolPy; the topology `{[#CAPA][#EO]|10[#CAPB]}` is a methyl cap, ten
-ethylene-oxide units and a methoxy cap. See
-[Polymer Topologies](topology/index.md) for other architectures.
+`Assembler` folds the whole leaving-group charge onto the anchor, so an
+ether oxygen of about −0.42 e becomes about −0.20 e. A GAFF chain is built
+the way AMBER residues are made instead: antechamber types one oligomer in
+which the head, chain and tail monomers are already bonded, so every atom
+it types sees its chain neighbours. prepgen cuts that oligomer into a head,
+a chain and a tail residue (`AmberCut`: the atoms each residue omits, and
+the atom across each junction), spreading the omitted charge over the atoms
+it keeps; the builder does not edit the prepi afterwards. tleap `sequence`
+joins the residues.
 
-tleap joins units but never re-assigns atom types or charges: every atom of the
-chain keeps the GAFF2 type and charge antechamber gave it in its monomer. So
-each monomer must already put every atom that stays in the chain into its
-in-chain environment — the leaving group of each port (the atoms removed on
-linking) mimics the neighbour its anchor will have in the chain. An H-capped EO
-unit, `[<]OCC[>]`, is ethanol to antechamber: its O is typed hydroxyl `oh` with
-alcohol charges. The EO unit is instead CH3–O–CH2–CH2–O–CH3: the O-side port's
-leaving group is the terminal CH3 and the C-side port's is the terminal O–CH3,
-so the kept O is typed ether `os` and its charges are ether-like. The caps are
-dimethyl ether on the same rule. This is how AMBER polymer residues are cut: the
-junction atoms keep their types.
-
-A CGsmiles bonding descriptor always becomes a capping hydrogen, so these units
-are embedded from SMILES and their ports set with `def_port(anchor, leaving,
-kind)`: the leaving handle may be any atom bonded to the anchor, and its whole
-branch leaves. The conformer keeps the SMILES atom order and appends the
-hydrogens, so the indices below are SMILES positions.
+`AmberPieces` writes the oligomer from three SMILES — head, repeat and tail,
+each in backbone order — and the three cuts with it: each residue keeps its
+own monomer and omits the other two.
 
 ```python
-conformer = mp.Conformer(seed=42)
-# name: (complete molecule, ports as (anchor, leaving handle, kind) SMILES indices)
-recipes = {
-    "CAPA": ("COC", [(0, 1, ">")]),  # keeps CH3; O–CH3 leaves
-    "EO": ("COCCOC", [(1, 0, "<"), (3, 4, ">")]),  # keeps O–CH2–CH2; CH3 and O–CH3 leave
-    "CAPB": ("COC", [(1, 2, "<")]),  # keeps O–CH3; CH3 leaves
-}
-units = {}
-for name, (smiles, ports) in recipes.items():
-    unit = conformer.generate(mp.io.read_smiles(smiles))[0]
-    atoms = list(unit.atoms)
-    for anchor, leaving, kind in ports:
-        unit.def_port(atoms[anchor], atoms[leaving], kind)
-    units[name] = unit
-print({name: unit.n_atoms for name, unit in units.items()})  # leaving groups included
-
-sites = mp.CGSmilesIR("{[#CAPA][#EO]|10[#CAPB]}").to_coarsegrain()
-draft = mp.Assembler(units, mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
-print(draft.n_atoms)  # 79: CH3-(OCH2CH2)10-OCH3, no leaving group left in the chain
+pieces = mp.builder.polymer.AmberPieces(head="COCC", repeat="OCC", tail="OCCOC")
+oligomer, peo_cuts = pieces.oligomer(seed=42)  # CH3O(CH2CH2O)3CH3, embedded
+print(oligomer.n_atoms)  # 30
+print(peo_cuts["chain"].head, peo_cuts["chain"].tail)  # O2 C5
+print(len(peo_cuts["chain"].omit))  # 23: the head and tail monomers
 ```
 
-Every unit is a complete molecule — each port's leaving group is made of real
-atoms — so antechamber types it like any small molecule. The typed copy keeps
-its ports.
+`{[#PEO]|10}` is ten residues: the head cut, eight chain cuts and the tail
+cut, CH3–(OCH2CH2)10–OCH3. See [Polymer Topologies](topology/index.md) for
+other architectures. The site graph is only that sequence; it must be one
+linear path.
+
+```python
+sites = mp.CGSmilesIR("{[#PEO]|10}").to_coarsegrain()
+```
 
 ```python
 # docs: skip — needs AmberTools
-ante = mp.typifier.AntechamberTypifier(
-    atom_type="gaff2",
+built = mp.builder.polymer.AmberPolymerBuilder(
+    {"PEO": oligomer},
+    {"PEO": peo_cuts},
+    force_field="gaff2",
     charge_method="bcc",
-    work_dir=output_dir / "units",
+    work_dir=output_dir / "peo",
     env="AmberTools25",
     env_manager="conda",
-)
-lib = {name: ante.typify(unit) for name, unit in units.items()}
+).assemble(sites)
+peo = built.chain  # typed graph: tleap's coordinates, types, charges and terms
+peo_ff = built.forcefield  # units real, AMBER 1-4 scaling declared
+print(f"PEO 10-mer: {peo.n_atoms} atoms")  # 79
 ```
 
-## tleap finishes the assembled chain
+antechamber and parmchk2 run on the oligomer, once, under
+`work_dir/monomers/<label>/`. They are not run on the assembled chain.
+Junction terms come from `leaprc.gaff2`. PEO and TFSI use the same
+GAFF generation, so their shared types (`c3`, `os`, …) agree when the force
+fields are merged. A later `assemble` reuses what is
+in `work_dir`: antechamber reruns only when the oligomer or the charge
+settings change, prepgen when a cut changes, and tleap when the sequence or
+a file it loads changes.
 
-`mp.Assembler` joins one port of each neighbour per bond. Types and charges
-travel with the templates; each join removes the two leaving groups and folds
-their charge onto the anchors, so the chain's net charge is the sum of its
-monomers'. The growth placer can leave overlaps, so the chain is re-embedded
-before packing; the types and charges are kept.
+### Cutting an oligomer you built yourself
 
-`TLeapTypifier` writes the monomers' parameters as a frcmod, runs tleap only,
-and takes the junction terms from `leaprc.gaff2`. It never runs antechamber or
-parmchk2, and leaves the types and charges unchanged — which is why the
-monomers' leaving groups had to mimic the chain.
+For an oligomer you prepared elsewhere, write the cuts by atom name; they
+are the prepgen control files. GroPoB's ethyl PEO oligomer `PEO.ac` keeps
+every monomer between two dummy methyls: the chain residue omits both, the
+head residue only the tail methyl (`C7`, `H15`, `H16`, `H17`), the tail
+residue only the head methyl (`C3`, `H6`, `H7`, `H8`). `C1` and `C6` are the
+connection atoms. `pre_head` / `post_tail` name the atom across a junction;
+its GAFF type, read from antechamber's ac file, becomes `PRE_HEAD_TYPE` /
+`POST_TAIL_TYPE`. `pre_head_type` / `post_tail_type` write a type directly.
 
 ```python
-# docs: skip — needs AmberTools
-chain = mp.Assembler(lib, mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
-chain = conformer.generate(chain)[0]  # re-embed: the growth placer can leave overlaps
-
-leap = mp.typifier.TLeapTypifier(
-    leaprc="gaff2",
-    forcefield=ante.forcefield(),
-    work_dir=output_dir / "polymer",
-    env="AmberTools25",
-    env_manager="conda",
-)
-peo = leap.typify(chain)
-peo_ff = leap.forcefield()  # units real, AMBER 1-4 scaling declared
-print(f"PEO 10-mer: {peo.n_atoms} atoms")  # CH3-(OCH2CH2)10-OCH3, 79 atoms
+AmberCut = mp.builder.polymer.AmberCut
+head_methyl = ("C3", "H6", "H7", "H8")
+tail_methyl = ("C7", "H15", "H16", "H17")
+gropob_cuts = {
+    "head": AmberCut(tail="C6", post_tail="C7", omit=tail_methyl),
+    "chain": AmberCut(
+        head="C1",
+        tail="C6",
+        pre_head="C3",
+        post_tail="C7",
+        omit=head_methyl + tail_methyl,
+    ),
+    "tail": AmberCut(head="C1", pre_head="C3", omit=head_methyl),
+}
 ```
+
+An ac, mol2 and frcmod you put in `work_dir/monomers/<label>/` yourself (as
+`<label>.ac`, `<label>.mol2` and `<label>.frcmod`) are used as they are:
+only prepgen and tleap run.
 
 ## Merging three force fields before packing prevents type conflicts
 
@@ -213,13 +210,14 @@ mp.io.write_lammps_forcefield(lammps_dir / "system.ff", ff, system, skip_pair_st
 
 | Symptom | Check |
 |---------|-------|
-| Antechamber fails | The molecule has 3D coordinates (embed it first) and every port's leaving group is present |
-| Chain O typed `oh`, or alcohol-like charges | A port leaves a hydrogen where the chain has a heavy neighbour; make each leaving group mimic that neighbour (CH3 for a backbone C, O–CH3 for a backbone O) |
+| Antechamber fails | The oligomer has 3D coordinates (embed it first) |
+| `ValueError: … cut names [...]` | An atom name in a cut is not on the oligomer; `AmberPieces` names atoms element + count (`C1`, `O2`, …) |
+| Chain O near −0.20 e, or typed `oh` | The chain was joined with `Assembler` (the leaving-group charge was folded onto the anchor). Build the oligomer with the monomers already bonded and cut it with prepgen |
 | TFSI charge wrong | The formal charges sum to the net charge (`[N-]` gives −1); use `charge_method="bcc"` |
-| `ValueError: formal charges sum to …` | A charged atom lacks its `formal_charge`, or the sum is not an integer |
-| tleap fails on the chain | A junction term missing from `leaprc.gaff2`; the error carries tleap's stderr |
-| `ValueError: tleap changed atom …` | The chain's types or charges differ from what tleap read back; retype the monomers |
-| Polymer assembly fails | Check each unit's ports (`<` joins `>`, each leaving handle bonded to its anchor) and that every topology name is in the library |
+| tleap fails on the chain | A junction term missing from the leaprc (`leaprc.gaff2` here); the error carries tleap's output. The connection atoms are the ones in the oligomer you cut |
+| `ValueError: … still has N ports` | `TLeapTypifier` was given a template. A polymer goes through `AmberPolymerBuilder` |
+| Polymer assembly fails | The site graph is one path of at least two sites, and every bead type has an oligomer and a cut for the residue that site uses |
+| `ValueError: … both make tleap residue …` | Residue names are the first characters of the bead type (`HPE`, `PEO`, `TPE` for `PEO`); give the bead types distinct prefixes |
 | Force field merge conflict | Inspect type names for collisions between PEO, TFSI and Li⁺ |
 | Packing fails | Increase box size or reduce molecule count |
 

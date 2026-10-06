@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import subprocess
 from abc import ABC
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -118,3 +119,37 @@ class Wrapper(ABC):
             f"<{self.__class__.__name__}(name='{self.name}', "
             f"exe='{self.exe}', workdir={workdir_str}{env_bits})>"
         )
+
+
+def run_step(
+    tool: Wrapper,
+    output: Path,
+    call: Callable[[], subprocess.CompletedProcess[str]],
+) -> subprocess.CompletedProcess[str]:
+    """Run one tool step and require the file it must write.
+
+    Args:
+        tool: The wrapper ``call`` runs; checked for its executable first.
+        output: The file the step must leave behind.
+        call: Runs the step (typically a bound wrapper method in a lambda).
+
+    Returns:
+        The completed process.
+
+    Raises:
+        RuntimeError: The executable is missing, exits non-zero, or leaves
+            ``output`` unwritten. The message carries the tool's stderr, or
+            its stdout when stderr is empty (tleap and prepgen report there).
+    """
+    if not tool.is_available():
+        raise RuntimeError(
+            f"{tool.exe} is not available: not on PATH or in env {tool.env!r}"
+        )
+    result = call()
+    if result.returncode != 0 or not output.is_file():
+        raise RuntimeError(
+            f"{tool.exe} failed (exit {result.returncode}, {output.name} "
+            f"{'written' if output.is_file() else 'missing'}):\n"
+            f"{result.stderr or result.stdout}"
+        )
+    return result
