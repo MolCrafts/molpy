@@ -36,6 +36,7 @@ or `git push --no-verify`, and never merge a red pull request.**
   - the pre-commit hooks again on `--all-files`;
   - `scripts/partners.py check` — no `[tool.uv.sources]` path entry (a CI
     runner has no sibling checkout to point at; release.yml refuses one);
+  - `uv lock --check` (ci.yml `lint`) when pyproject.toml or uv.lock changed;
   - the molrs pin resolves to a published PyPI release;
   - the docs build, as Cloudflare Pages builds it (`.[doc]` in a fresh env,
     then `zensical build --clean --strict` in a clean copy of the tree), when

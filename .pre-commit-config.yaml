@@ -62,6 +62,15 @@ repos:
         always_run: true
         stages: [pre-push]
 
+      # ci.yml lint: uv.lock is committed and current (every `uv run` is --locked).
+      - id: uv-lock
+        name: uv.lock is current (ci.yml lint)
+        entry: uv lock --check
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock)$
+        stages: [pre-push]
+
       - id: molrs-pin-on-pypi
         name: molrs pin on PyPI
         entry: python3 .pre-commit/check_molrs_pin_on_pypi.py
