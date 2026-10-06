@@ -24,15 +24,16 @@ Workflow guides and the [Quickstart](quickstart.md) assume only this path.
 
 ## AmberTools (GAFF parameters)
 
-Kept for GAFF types and charges. Each monomer is typed once as a complete
-molecule; a polymer is assembled by MolPy from the typed monomers and finished
-by tleap. tleap never changes types or charges, so choose each monomer so its
-leaving groups mimic the chain neighbour:
+Kept for GAFF types and charges. A small molecule is typed as a complete
+molecule. A polymer is one oligomer (head, chain and tail monomers already
+bonded) typed once by antechamber, cut into residues by prepgen and joined by
+tleap `sequence`:
 
 | Surface | Role |
 |---------|------|
 | `molpy.typifier.AntechamberTypifier` | antechamber (types + charges) → parmchk2 → tleap for one complete molecule; net charge from the atoms' formal charges |
-| `molpy.typifier.TLeapTypifier` | tleap only, for a graph whose atoms already carry AMBER types and charges (an assembled chain); junction terms from the leaprc |
+| `molpy.typifier.TLeapTypifier` | tleap only, for a finished graph whose atoms already carry AMBER types and charges; a graph with ports is refused |
+| `molpy.builder.polymer.AmberPolymerBuilder` | antechamber + parmchk2 on an oligomer, prepgen per residue (`AmberCut`), tleap `sequence` over a linear site graph; `AmberPieces` writes the oligomer and cuts from three SMILES |
 | `molpy.wrapper` (`AntechamberWrapper`, `Parmchk2Wrapper`, `PrepgenWrapper`, `TLeapWrapper`, `SanderWrapper`) | Thin subprocess wrappers |
 
 Install AmberTools in its own conda env (example):

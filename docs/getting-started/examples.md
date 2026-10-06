@@ -171,45 +171,29 @@ See also: [Polydisperse Systems](../user-guide/05_polydisperse_systems.md) ·
 
 ## AmberTools pipeline — GAFF2 parameters
 
-Type each PEO monomer once with antechamber, assemble a capped chain from the
-typed monomers, then finish it with tleap to get GAFF2 parameters and partial
-charges. tleap never re-assigns types or charges, so each monomer is a complete
-molecule whose leaving groups mimic its chain neighbours: the EO unit is
-CH3–O–CH2–CH2–O–CH3 (its O is typed ether `os`), not the H-capped `[<]OCC[>]`
-(ethanol, whose O antechamber types hydroxyl `oh`).
+Build a GAFF2 PEO chain the way AMBER residues are made: antechamber types
+one oligomer whose head, chain and tail monomers are already bonded, prepgen
+cuts it into three residues (spreading the omitted atoms' charge over the
+atoms each keeps), and tleap `sequence` joins them. `AmberPieces` writes the
+oligomer and its cuts from three SMILES; the site graph is the sequence.
 
 !!! note "Requires AmberTools"
-    This workflow shells out to `antechamber`, `parmchk2`, and `tleap`. Install
-    AmberTools and activate its environment first.
+    This workflow shells out to `antechamber`, `parmchk2`, `prepgen` and
+    `tleap`. Install AmberTools and activate its environment first.
 
 ```python
 # docs: skip — needs AmberTools
 import molpy as mp
 
-conformer = mp.Conformer(seed=42)
-# name: (complete molecule, ports as (anchor, leaving handle, kind) SMILES indices)
-recipes = {
-    "CAPA": ("COC", [(0, 1, ">")]),  # keeps CH3; O–CH3 leaves
-    "EO": ("COCCOC", [(1, 0, "<"), (3, 4, ">")]),  # keeps O–CH2–CH2; CH3 and O–CH3 leave
-    "CAPB": ("COC", [(1, 2, "<")]),  # keeps O–CH3; CH3 leaves
-}
-units = {}
-for name, (smiles, ports) in recipes.items():
-    unit = conformer.generate(mp.io.read_smiles(smiles))[0]  # hydrogens appended after the SMILES atoms
-    atoms = list(unit.atoms)
-    for anchor, leaving, kind in ports:
-        unit.def_port(atoms[anchor], atoms[leaving], kind)
-    units[name] = unit
+pieces = mp.builder.polymer.AmberPieces(head="COCC", repeat="OCC", tail="OCCOC")
+oligomer, cuts = pieces.oligomer(seed=42)  # CH3O(CH2CH2O)3CH3 and its head/chain/tail cuts
 
-ante = mp.typifier.AntechamberTypifier(atom_type="gaff2", charge_method="bcc")
-lib = {name: ante.typify(unit) for name, unit in units.items()}  # antechamber + parmchk2 + tleap, once per monomer
-
-sites = mp.CGSmilesIR("{[#CAPA][#EO]|10[#CAPB]}").to_coarsegrain()
-chain = mp.Assembler(lib, mp.GrowthPlacer()).assemble(sites, mp.Atomistic)  # types and charges travel with the templates
-
-leap = mp.typifier.TLeapTypifier(leaprc="gaff2", forcefield=ante.forcefield())
-peo = leap.typify(chain)  # tleap only: junction terms from leaprc.gaff2; types and charges unchanged
-ff = leap.forcefield()  # units real, AMBER 1-4 scaling declared
+sites = mp.CGSmilesIR("{[#PEO]|10}").to_coarsegrain()  # head, 8 x chain, tail
+built = mp.builder.polymer.AmberPolymerBuilder(
+    {"PEO": oligomer}, {"PEO": cuts}, force_field="gaff2"
+).assemble(sites)
+peo = built.chain  # CH3-(OCH2CH2)10-OCH3: typed graph, 79 atoms
+ff = built.forcefield  # units real, AMBER 1-4 scaling declared
 ```
 
 See also: [AmberTools Integration](../user-guide/13_ambertools_integration.md) ·

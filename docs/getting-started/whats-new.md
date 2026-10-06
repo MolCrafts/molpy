@@ -10,6 +10,38 @@ has exactly one home.
 This page lists what you will notice. If you are upgrading a 0.14 script, read
 [Upgrading from 0.14](#upgrading-from-014) at the end.
 
+## 0.15.1
+
+Still on molrs 0.15 (`molcrafts-molrs>=0.15.0,<0.16`).
+
+### GAFF polymers: `AmberPolymerBuilder`
+
+A GAFF chain is now built the way AMBER residues are made, instead of being
+joined from typed monomers. `mp.Assembler` folds each leaving group's charge
+onto its anchor, which moves a PEO ether oxygen from about −0.42 e to about
+−0.20 e; the 0.15.0 route of typing monomers with `AntechamberTypifier` and
+finishing the assembled chain with `TLeapTypifier` inherits that.
+
+- `mp.builder.polymer.AmberPolymerBuilder(library, cuts).assemble(sites)` runs
+  antechamber and parmchk2 once on an oligomer whose head, chain and tail
+  monomers are already bonded, prepgen once per residue it cuts from it, and
+  tleap `sequence` over a linear site graph (`{[#PEO]|10}`). It returns an
+  `AmberBuildResult`: the typed `chain`, its `forcefield` (merges with the
+  typifiers' force fields) and the prmtop / inpcrd paths. Reruns reuse
+  `work_dir` and redo only the steps whose inputs changed.
+- `AmberCut` is one prepgen control file: the atoms a residue omits (their
+  charge is spread over the rest), its connection atoms, and the atom (or
+  GAFF type) across each junction.
+- `AmberPieces(head, repeat, tail).oligomer()` writes the oligomer and its
+  three cuts from three SMILES.
+- `TLeapTypifier` now refuses a graph that still has ports.
+- antechamber reads the oligomer as mol2 (bonds given, not perceived).
+- `molpy.wrapper.run_step` runs one tool and requires the file it must write;
+  a failure message carries the tool's stdout when its stderr is empty (tleap
+  and prepgen report there).
+
+See [AmberTools Integration](../user-guide/13_ambertools_integration.md).
+
 ## Highlights
 
 ### Record files: `*.mrec`
@@ -163,8 +195,9 @@ coarse-grained model onto all-atom units with `mp.SubgraphMatcher`,
 - `mp.typifier.AtdTypifier(parameter_set="gaff2")` evaluates antechamber's
   atom-type tables natively (atom types only).
 - `AntechamberTypifier` types one complete molecule through antechamber,
-  parmchk2 and tleap; `TLeapTypifier` finishes a chain assembled from typed
-  monomers. See [AmberTools Integration](../user-guide/13_ambertools_integration.md).
+  parmchk2 and tleap; `TLeapTypifier` runs tleap alone over a molecule that
+  already carries AMBER types and charges. GAFF polymers: see
+  [0.15.1](#0151).
 
 ### Smaller things
 
@@ -234,10 +267,10 @@ old path.
 **Building.** The 0.14 polymer stack is replaced by site-graph assembly:
 `PolymerBuilder`, `GraphAssembler`, `MonomerLibrary`, `ResiduePlacer`, `Placer`,
 `SiteMap`, `Replicas`, the reaction-selector family (`TopologySelector`,
-`ProximitySelector`, `RandomSelector`, …), `AssemblyFinalizer` and
+`ProximitySelector`, `RandomSelector`, …), `AssemblyFinalizer` and the 0.14
 `AmberPolymerBuilder` are gone. Write the units and the topology in CGsmiles and
-build with `mp.Assembler`; for GAFF chains, type the monomers with
-`AntechamberTypifier` and finish the chain with `TLeapTypifier`. Crosslinked
+build with `mp.Assembler`; for GAFF chains, use the new `AmberPolymerBuilder`
+([0.15.1](#0151)), which takes an oligomer and prepgen cuts. Crosslinked
 networks and gels (joining sites by proximity) are not available in 0.15.
 
 **Typing.**

@@ -3,9 +3,9 @@
 System construction. Assembly joins copies of ported units along a site graph
 through `mp.Assembler`, re-exported on the molpy root with its placers and
 orienter; `molpy.builder` keeps the polymer planning layer, the nanostructure
-and crystal builders, virtual sites and the topology finalizer. GAFF parameters
-for an assembled chain come from the AmberTools typifiers — see
-[Typifier](typifier.md).
+and crystal builders, virtual sites, the topology finalizer and the AmberTools
+polymer builder, which makes a GAFF chain without the assembler: prepgen cuts
+one antechamber-typed oligomer and tleap `sequence` joins the residues.
 
 ## Quick reference
 
@@ -28,6 +28,9 @@ for an assembled chain come from the AmberTools typifiers — see
 | `Lattice` / `Site` / `SpaceGroup` | Bravais lattice with basis sites (fractional coordinates) and symmetry operators | Crystals |
 | `mp.Region` / `mp.BoxRegion` / `mp.SphereRegion` / `mp.Cube` | Geometric regions with `mask(Block)`, on the molpy root | Selecting a volume |
 | `DrudeBuilder` / `Tip4pBuilder` / `VirtualSiteBuilder` / `load_polarizability` | Virtual-site augmentation | Polarizable / 4-site models |
+| `AmberPolymerBuilder` | `AmberPolymerBuilder(library, cuts, force_field="gaff").assemble(sites)` → `AmberBuildResult` (`chain`, `forcefield`, prmtop / inpcrd paths): antechamber + parmchk2 on each oligomer, prepgen per residue, tleap `sequence` over a linear site graph; needs AmberTools | GAFF / GAFF2 polymer chains |
+| `AmberCut` | One prepgen residue: `omit`, `head` / `tail` connection atoms, `pre_head` / `post_tail` (or `*_type`), `charge` | Cutting an oligomer you built |
+| `AmberPieces` | `AmberPieces(head, repeat, tail).oligomer()` → the embedded oligomer and its head / chain / tail cuts, from three SMILES | Writing the oligomer and cuts from SMILES |
 
 The crystal `Site` is a lattice basis site; it is unrelated to the sites of an
 assembly site graph.
