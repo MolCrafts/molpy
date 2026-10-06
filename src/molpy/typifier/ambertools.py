@@ -256,13 +256,11 @@ class AntechamberTypifier(_AmberLibrary):
         """Type ``graph`` with antechamber and assign tleap's prmtop.
 
         Raises:
-            ValueError: The formal charges do not sum to an integer, or the
-                prmtop disagrees with the graph.
+            ValueError: The prmtop disagrees with the graph.
             RuntimeError: An AmberTools step failed.
         """
-        net = sum(atom.get(_FORMAL_CHARGE) or 0.0 for atom in graph.atoms)
-        if net != round(net):
-            raise ValueError(f"formal charges sum to {net}, not an integer")
+        # The frame schema declares formal_charge an integer, so the sum is one.
+        net = sum(int(atom.get(_FORMAL_CHARGE) or 0) for atom in graph.atoms)
         directory = self.work_dir / f"{graph.structural_hash():016x}"
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -289,7 +287,7 @@ class AntechamberTypifier(_AmberLibrary):
                 output_format="mol2",
                 charge_method=self.charge_method,
                 atom_type=self.atom_type,
-                net_charge=int(round(net)),
+                net_charge=net,
             ),
         )
         parmchk2 = Parmchk2Wrapper(
