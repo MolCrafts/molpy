@@ -1,20 +1,30 @@
 # Potential
 
-Numerical potential energy functions for bonds, angles, dihedrals, and pairs.
+Numerical potential energy functions for bonds, angles, dihedrals, and pairs,
+and the force-field IR they are declared in.
 
 ## Quick reference
 
 The numerical kernels live in the native core. A force field names them
 through its styles (`ff.def_style(kind, name)`); `PotentialCompiler` binds them
 to a typed `Frame` as a `Potentials` evaluator. There is no Python-side
-potential class per style.
+potential class per style. `mp.potential` re-exports, by identity, molrs's
+`molrs.ff.potential` (`Potential`, `kernel`, `LJCut`) and the essentials of the
+force-field IR `molrs.ff.ir` (`StyleSpec`, `Param`, `register_style`,
+`register_category`, `styles`, `IrError`, …): a new style or category is
+registered from Python with nothing rebuilt — see
+[Extending the Force Field](../developer/extending-forcefield.md).
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
 | `mp.ForceField` | Styles and types by category; `def_style(kind, name)` | Declaring parameters |
 | `mp.BondStyle` / `mp.AngleStyle` / `mp.DihedralStyle` / `mp.ImproperStyle` / `mp.PairStyle` | One kernel name per style, `def_type(...)` for its parameters | Bonded and nonbonded terms |
 | `mp.PotentialCompiler` | `PotentialCompiler(ff).compile(frame)` → `Potentials` | Binding a force field to a typed frame |
-| `mp.Potentials` | `calc_energy(frame)` / `calc_forces(frame)` | Energy / force computation |
+| `mp.Potentials` | `calc_energy(frame)` / `calc_forces(frame)`; `push` moves more members in | Energy / force computation |
+| `mp.potential.kernel` | `kernel(category, style, atoms, **params)` → `Potentials`: any registered style over explicit instances | Assembling terms by hand |
+| `mp.potential.LJCut` | The one-type `lj/cut` kernel an MD integrator feeds from a neighbour list | `mp.md` integrators |
+| `mp.potential.Potential` | The protocol: `calc_energy_forces(pos) -> (energy, forces)` | Custom (NN / external) forces in MD |
+| `mp.potential.StyleSpec`, `Param`, `register_style`, `register_category` | Declare a style (expression or Python kernel) or a category | Extending the force field |
 
 ## Canonical example
 
@@ -57,3 +67,5 @@ forces = pots.calc_forces(frame)
 ::: molpy.PotentialCompiler
 
 ::: molpy.Potentials
+
+::: molpy.potential

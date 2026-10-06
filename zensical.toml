@@ -29,7 +29,7 @@ nav = [
       { "Quickstart" = "getting-started/quickstart.md" },
       { "Example Gallery" = "getting-started/examples.md" },
       { "FAQ" = "getting-started/faq.md" },
-      { "What's New in 0.15" = "getting-started/whats-new.md" },
+      { "What's New" = "getting-started/whats-new.md" },
     ] },
     { "The Data Model" = [
       { "Atomistic and Topology" = "tutorials/01_atomistic_and_topology.md" },

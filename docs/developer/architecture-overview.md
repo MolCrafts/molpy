@@ -48,7 +48,7 @@ The graph → arrays conversion is explicit: `Atomistic.to_frame()` delegates to
 
 ## Force field: parameters apart, kernels in Rust
 
-`ForceField` is an independent, queryable data structure — parameters are neither embedded in atoms nor derived implicitly. The model has three layers: **Style** (functional form), **Type** (parameter set for a type key), and **Potential** (evaluatable kernel). All energy/force kernels live in molrs; a style is named by `ff.def_style(category, name)` with nothing to subclass, and evaluation always goes through `PotentialCompiler(ff).compile(frame)`. Adding a functional form therefore means a molrs kernel plus the molrs writer arms that serialize it — the exact recipe is in [Extending the Force Field](extending-forcefield.md).
+`ForceField` is an independent, queryable data structure — parameters are neither embedded in atoms nor derived implicitly. The model has three layers: **Style** (functional form), **Type** (parameter set for a type key), and **Potential** (evaluatable kernel). All energy/force kernels live in molrs; a style is named by `ff.def_style(category, name)`, and evaluation always goes through `PotentialCompiler(ff).compile(frame)`. The force-field IR is a protocol, so adding a functional form is a registration from Python (`mp.potential.StyleSpec`, an expression or a Python kernel), with nothing rebuilt — the recipe is in [Extending the Force Field](extending-forcefield.md).
 
 ## Boundary translation: the formatter hierarchy
 
@@ -92,4 +92,4 @@ Assembly is one native call and never types anything:
 | an external tool integration | plug-in interface | [Adding a Wrapper or Adapter](extending-integration.md) |
 | an entity/link/struct type | core internals — open an issue first | [Extending the Data Model](extending-core.md) |
 | a graph typifier / force-field overlay | typifier internals — open an issue first | [Extending Typifiers](extending-typifiers.md) |
-| an interaction style / kernel | core internals — open an issue first | [Extending the Force Field](extending-forcefield.md) |
+| an interaction style / category | plug-in interface (`mp.potential.StyleSpec`) | [Extending the Force Field](extending-forcefield.md) |

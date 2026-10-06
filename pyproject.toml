@@ -31,7 +31,7 @@ classifiers = [
 # No lark / zarr / RDKit / etc. as hard deps — those live in molrs or optional extras.
 dependencies = [
     "numpy>=2.0",
-    "molcrafts-molrs>=0.15.0,<0.16",
+    "molcrafts-molrs>=0.16.0,<0.17",
     "molcrafts-mollog>=1.0.0",
     "molcrafts-molcfg>=1.2.0",
 ]
@@ -141,9 +141,11 @@ filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 
-# No [tool.uv.sources] override: molcrafts-molrs 0.15 is on PyPI, so the pin in
-# [project] dependencies resolves everywhere, including a CI runner, which has no
-# sibling checkout to point at. Do not reintroduce a path or git source without
+# No [tool.uv.sources] override: the pin in [project] dependencies resolves from
+# PyPI everywhere, including a CI runner, which has no sibling checkout to point
+# at. molcrafts-molrs 0.16 must be published before this pin is pushed (the
+# pre-push molrs-pin-on-pypi hook checks); until then test against a locally
+# built molrs 0.16 wheel installed into the environment. Do not reintroduce a path or git source without
 # removing it again before the next release: it silently disables
 # .pre-commit/check_molrs_pin_on_pypi.py, and uv honours a path dependency's own
 # sources transitively, so a downstream that points at this directory inherits

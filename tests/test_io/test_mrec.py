@@ -125,7 +125,7 @@ class TestForceFieldSection:
 
 class TestSchema:
     def test_molrec_version_is_checked_only_when_present(self) -> None:
-        assert mp.io.mrec.schema.MOLREC_VERSION == 1
+        assert mp.io.mrec.schema.MOLREC_VERSION == 2
         # Absent: no version check (molrec contract; 0.14 refused this).
         mp.io.mrec.schema.validate_meta(
             {"record_schema_version": 1, "format_name": "mrec"}

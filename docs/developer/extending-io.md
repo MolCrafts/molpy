@@ -85,9 +85,8 @@ text = mp.io.write_lammps_forcefield_str(ff, water, precision=4)
 assert "bond_coeff" in text
 ```
 
-To make an existing writer emit a new **style**, add that style's arm to the
-molrs writer; see
-[Extending the Force Field](extending-forcefield.md#step-3-add-the-writer-arms-in-molrs).
+A new **style** is exported by what molrs's writers make of its registration;
+see [Extending the Force Field](extending-forcefield.md#engines).
 
 ## Checklist
 

@@ -78,7 +78,7 @@ pip install molcrafts-molpy
 ```
 
 Core dependencies: NumPy and
-[molrs](https://github.com/MolCrafts/molrs) (`molcrafts-molrs>=0.15.0,<0.16`)
+[molrs](https://github.com/MolCrafts/molrs) (`molcrafts-molrs>=0.16.0,<0.17`)
 plus the MolCrafts logging/config packages. Optional: RDKit (adapter example),
 AmberTools (GAFF charges).
 
@@ -151,7 +151,7 @@ Full documentation, including executable notebooks:
 **[docs.molcrafts.org/molpy](https://docs.molcrafts.org/molpy/)**
 
 - [Getting Started](https://docs.molcrafts.org/molpy/getting-started/) — install and first example
-- [What's New in 0.15](https://docs.molcrafts.org/molpy/getting-started/whats-new/) — release highlights and upgrading from 0.14
+- [What's New](https://docs.molcrafts.org/molpy/getting-started/whats-new/) — release highlights and upgrading
 - [Example Gallery](https://docs.molcrafts.org/molpy/getting-started/examples/) — short copy-paste workflows
 - [Guides](https://docs.molcrafts.org/molpy/user-guide/) — task-oriented notebooks
 - [Concepts](https://docs.molcrafts.org/molpy/tutorials/) — data model deep dives

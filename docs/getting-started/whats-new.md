@@ -1,4 +1,65 @@
-# What's New in 0.15
+# What's New
+
+## 0.16 (unreleased)
+
+MolPy 0.16 pairs with **molrs 0.16** (`molcrafts-molrs>=0.16.0,<0.17`). molrs
+0.16 makes the force-field IR a *protocol*: a style or a category of the right
+form extends it from Python, with nothing rebuilt, and is typed, priced, saved
+and read back like a built-in.
+
+### Your own styles: `mp.potential`
+
+`molpy.potential` is back, as identity re-exports of molrs:
+`StyleSpec`, `Param`, `register_style`, `register_category`, `styles`,
+`categories`, `evaluate`, `unregister` and `IrError` from `molrs.ff.ir`, and
+`Potential`, `kernel` and `LJCut` from `molrs.ff.potential`.
+
+```python
+class Fene(mp.potential.StyleSpec):  # LAMMPS bond_style fene
+    category, name = "bond", "fene"
+    params = {"k": "E/L^2", "r0": "L", "epsilon": "E", "sigma": "L"}
+    expression = ("-0.5*k*r0^2*log(1-(r/r0)^2)"
+                  "+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
+```
+
+A typifier's `Match` types terms with it (`links={mp.Bond: rows}`),
+`mp.PotentialCompiler` prices it, and `mp.io.write_mrec` stores its expression,
+so a process that never registered it reads the record and prices it the same.
+[Extending the Force Field](../developer/extending-forcefield.md) is now "no
+rebuild": the whole recipe in under 30 lines.
+
+`mp.potential.kernel(category, style, atoms, **params)` builds the kernel of
+any registered style over explicit instances (one parameter row per term, angle
+values in degrees) as a `Potentials`, which `Potentials.push` moves into a
+larger one.
+
+### LAMMPS styles come from molrs
+
+`mp.io.emit` (the `lammps` emitter) and `LAMMPSEngine.minimize` / `.md` no
+longer write `*_style` lines of their own for four fixed categories. Every
+style line and coefficient is molrs's LAMMPS include
+(`mp.io.write_lammps_forcefield`), read after `read_data`, so whatever molrs
+writes reaches LAMMPS: a category spanning two styles as `hybrid` (it was
+refused), and `angle charmm` with its Urey-Bradley term. The emitter's
+`.in.init` now holds `units`, `atom_style` and `boundary` only.
+
+### `GaffTypifier`
+
+`mp.typifier.GaffTypifier(parameter_set=...)` assigns GAFF / GAFF2 bonded terms
+and parameters natively to a molecule `AtdTypifier` has typed, without
+AmberTools; `ForceField.materialize_params` writes a typed frame's parameters as
+columns.
+
+### Upgrading from 0.15
+
+| 0.15 | 0.16 |
+|------|------|
+| `from molpy.md import LJCut` | `from molpy.potential import LJCut` |
+| `molpy.md.Potential` | `molpy.potential.Potential` |
+| a new style: a molrs kernel, writer arms, a rebuilt wheel | `class MyStyle(mp.potential.StyleSpec)` |
+| `molpy.engine.lammps._style_lines`, `molpy.io.emit.lammps._style_name` | gone: the styles are in molrs's include |
+
+## 0.15
 
 MolPy 0.15 pairs with **molrs 0.15** (`molcrafts-molrs>=0.15.0,<0.16`). Most of
 what changed for a molpy user comes from that release: the graph, table and

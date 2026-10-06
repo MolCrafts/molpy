@@ -374,7 +374,6 @@ class LAMMPSEngine(Engine):
             units=units,
             atom_style=atom_style,
             pair_style=pair_style,
-            styles="\n".join(_style_lines(ff)),
             data=data_name,
             settings=settings_name,
             thermo=int(thermo),
@@ -399,16 +398,16 @@ class LAMMPSEngine(Engine):
         return _splice_coords(frame, relaxed)
 
 
-# Standard scaffold around a minimise / MD command block.  Styles are emitted
-# before ``read_data`` (required for reading topology sections); the settings
-# file (included after) supplies the matching coefficients.
+# Standard scaffold around a minimise / MD command block. The settings file,
+# included after ``read_data``, is molrs's LAMMPS force-field include: every
+# ``*_style`` line of the force field (any category, hybrid included) with its
+# coefficients. Only ``pair_style`` is the caller's, set here.
 _RELAX_TEMPLATE = """\
 # molpy-generated LAMMPS relaxation script
 units {units}
 atom_style {atom_style}
 boundary p p p
 pair_style {pair_style}
-{styles}
 read_data {data}
 include {settings}
 neighbor 2.0 bin
@@ -418,23 +417,6 @@ thermo_style custom step temp pe ke etotal press
 {body}
 write_data {out} nocoeff
 """
-
-
-def _style_lines(ff: ForceField) -> list[str]:
-    """Return ``bond_style``/``angle_style``/... lines derived from *ff*.
-
-    Emitted before ``read_data`` so LAMMPS can allocate the topology arrays.
-    The pair style is supplied separately by the caller (it is overridden for
-    minimisation), so it is intentionally absent here.
-    """
-    from molpy.io.emit.lammps import _style_name
-
-    lines: list[str] = []
-    for kind in ("bond", "angle", "dihedral", "improper"):
-        name = _style_name(ff, kind)
-        if name is not None:
-            lines.append(f"{kind}_style {name}")
-    return lines
 
 
 def _splice_coords(original: Frame, relaxed: Frame) -> Frame:

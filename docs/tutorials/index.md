@@ -12,7 +12,7 @@ concrete task (build, typify, pack, export), go to
 2. **[Quickstart](../getting-started/quickstart.md)** — the whole pipeline in six lines, then a TIP3P water box built with full control. *~10 min*
 3. **[Example Gallery](../getting-started/examples.md)** — copy-paste workflows: small molecules, packed boxes, polymers, virtual sites.
 4. **[FAQ](../getting-started/faq.md)** — why MolPy exists, how it relates to RDKit / ASE / mBuild, and when another tool is the better choice.
-5. **[What's New in 0.15](../getting-started/whats-new.md)** — what changed in this release, and how to upgrade from 0.14.
+5. **[What's New](../getting-started/whats-new.md)** — what changed in each release, and how to upgrade.
 
 If MolPy is installed, this runs as-is — no optional dependencies, not even RDKit:
 

@@ -5,7 +5,6 @@ Covers the space-delimited data file and the mp.ForceField parameters
 that come with it.
 """
 
-import math
 import os
 from pathlib import Path
 
@@ -843,12 +842,10 @@ class TestForceFieldCoeffs:
             for t in s.get_types(mp.Type)
         }
         assert pair == {"1": (0.1521, 3.1507), "2": (0.046, 0.4)}
-        # LAMMPS harmonic K (E = K x^2) is stored as molpy k = 2K
-        # (E = k x^2 / 2); angles are radians internally.
-        assert list(bond.values()) == [(900.0, 0.9572)]
-        ((k, theta0),) = angle.values()
-        assert k == 110.0
-        assert theta0 == pytest.approx(math.radians(104.52))
+        # The force-field IR adopts the LAMMPS standard: K is stored as
+        # written (E = K x^2) and theta0 stays in degrees.
+        assert list(bond.values()) == [(450.0, 0.9572)]
+        assert list(angle.values()) == [(55.0, 104.52)]
 
     def test_malformed_coeff_line_raises(self, tmp_path):
         data = tmp_path / "bad.data"
@@ -884,10 +881,11 @@ class TestLazyForceField:
     def test_units_follow_frame_meta(self, lammps_dir):
         result = mp.io.read_lammps_data(lammps_dir / "coeffs.lmp", atom_style="full")
         result.frame.meta["lammps_units"] = "metal"
+        assert result.forcefield.units == "metal"
         epsilon = {
             t.name: t.get("epsilon")
             for s in result.forcefield.get_styles(mp.PairStyle)
             for t in s.get_types(mp.Type)
         }
-        # metal epsilon is eV; 1 eV = 23.060548 kcal/mol.
-        assert epsilon["1"] == pytest.approx(0.1521 * 23.060548, rel=1e-5)
+        # A metal file is a metal force field: epsilon stays in eV, as written.
+        assert epsilon["1"] == 0.1521

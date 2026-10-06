@@ -34,7 +34,7 @@ ForceField
 │   ├── BondType "CT-HC"  (k=340.0, r0=1.09)
 │   └── BondType "CT-CT"  (k=268.0, r0=1.529)
 ├── AngleStyle "harmonic"
-│   └── AngleType "HC-CT-HC"  (k=33.0, theta0=1.8815 rad)
+│   └── AngleType "HC-CT-HC"  (k=33.0, theta0=107.8°)
 ├── DihedralStyle "opls"
 │   └── DihedralType "HC-CT-CT-HC"  (k1=0.0, k2=0.0, k3=0.3, k4=0.0)
 └── PairStyle "lj/cut"
@@ -57,8 +57,6 @@ Parameters are keywords: numbers go to the numeric parameters, strings
 (`element`, …) to the string ones.
 
 ```python
-import math
-
 import molpy as mp
 
 ff = mp.ForceField(name="tutorial", units="real")
@@ -74,10 +72,11 @@ Bond, angle, dihedral, and pair styles follow the same pattern, with one
 addition: a type between atoms is given its **endpoints** — the atom-type
 handles it connects — right after its name. The name is just a name: building
 it from the endpoints (`"CT-HC"`) is a convention, and it is the label a typed
-`Frame` uses, but molpy never reads endpoints out of it. Parameters are in the
-store units: angles in radians, and harmonic bond and angle constants in the
-`½k` convention (`E = ½k(r − r₀)²`). A harmonic improper is `E = k(χ − χ₀)²`,
-the LAMMPS form, so its `k` is the LAMMPS `K` as written.
+`Frame` uses, but molpy never reads endpoints out of it. Parameters are as the
+force-field IR stores them, and the IR adopts the LAMMPS standard: each style's
+energy, factors and parameter units are its LAMMPS style's, so a harmonic bond
+is `E = k(r − r₀)²` (no ½, `k` is LAMMPS's `K`) and every angle-valued
+parameter is in degrees.
 
 ```python
 bond_style = ff.def_style("bond", "harmonic")
@@ -86,7 +85,7 @@ bond_style.def_type("CT-CT", ct, ct, k=268.0, r0=1.529)
 bond_style.def_type("CT-OH", ct, oh, k=320.0, r0=1.41)
 
 angle_style = ff.def_style("angle", "harmonic")
-angle_style.def_type("HC-CT-HC", hc, ct, hc, k=33.0, theta0=math.radians(107.8))
+angle_style.def_type("HC-CT-HC", hc, ct, hc, k=33.0, theta0=107.8)
 
 dihedral_style = ff.def_style("dihedral", "opls")
 dihedral_style.def_type("HC-CT-CT-HC", hc, ct, ct, hc, k1=0.0, k2=0.0, k3=0.3, k4=0.0)
@@ -202,7 +201,7 @@ print(mp.io.write_lammps_forcefield_str(ff, frame, precision=4))
 
 ## When to move beyond built-in styles
 
-Real projects eventually need interaction forms not covered by built-in styles — Morse bonds, Buckingham pairs, custom torsion profiles. The numerical kernel for a new form is added in the native Rust core; on the Python side you expose a thin named `Style` and register parameter formatters for each export backend.
+Real projects eventually need interaction forms not covered by built-in styles — a FENE spring, a custom torsion profile, a cross term of three atoms. The force-field IR is a protocol: declare the new style in Python (`class Fene(mp.potential.StyleSpec)`, with its ordered parameters and its energy as an expression or a Python kernel), and it is typed, compiled and saved like a built-in, with nothing rebuilt.
 
 See [Extending Force Field](../developer/extending-forcefield.md) for the full extension recipe.
 

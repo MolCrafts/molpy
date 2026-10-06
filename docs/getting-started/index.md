@@ -8,4 +8,4 @@ model — in one place.
 - [Quickstart](quickstart.md)
 - [Example Gallery](examples.md)
 - [FAQ](faq.md)
-- [What's New in 0.15](whats-new.md)
+- [What's New](whats-new.md)

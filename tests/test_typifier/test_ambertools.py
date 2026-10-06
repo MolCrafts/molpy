@@ -143,13 +143,13 @@ class TestAntechamberTypifier:
 
         bond = _link(typed, typed.bonds, (0, 1))
         assert bond["type"] == "c3-f"
-        assert bond["k"] == pytest.approx(713.8)
+        assert bond["k"] == pytest.approx(356.9)  # RK, E = k (r - r0)^2
         assert bond["r0"] == pytest.approx(1.3497)
         assert _link(typed, typed.bonds, (7, 8))["type"] == "ne-sy"
 
         angle = _link(typed, typed.links.exact_bucket(Angle), (4, 7, 8))
         assert angle["type"] == "s6-ne-sy"
-        assert angle["k"] == pytest.approx(131.8)
+        assert angle["k"] == pytest.approx(65.9)  # TK
         assert len(list(typed.links.exact_bucket(Angle))) == 25
 
         dihedral = _link(typed, typed.links.exact_bucket(Dihedral), (4, 7, 8, 11))
@@ -169,7 +169,7 @@ class TestAntechamberTypifier:
         (atom_style,) = ff.get_styles("atom")
         assert {t.name for t in atom_style.types} == set(TYPES)
         bond = ff.get_style("bond", "harmonic").get_type_by_name("c3-f")
-        assert bond["k"] == pytest.approx(713.8)
+        assert bond["k"] == pytest.approx(356.9)
         pair = ff.get_style("pair", "lj/cut").get_type_by_name("f")
         assert pair["sigma"] == pytest.approx(3.118145514)
 
@@ -204,7 +204,7 @@ class TestTLeapTypifier:
         atoms = ff.def_style("atom", "full")
         c3 = atoms.def_type("c3", mass=12.01)
         f = atoms.def_type("f", mass=19.0)
-        ff.def_style("bond", "harmonic").def_type("c3-f", c3, f, k=713.8, r0=1.3497)
+        ff.def_style("bond", "harmonic").def_type("c3-f", c3, f, k=356.9, r0=1.3497)
 
         leap = mp.typifier.TLeapTypifier(forcefield=ff, work_dir=tmp_path)
         leap.typify(_typed_litfsi())
@@ -214,7 +214,7 @@ class TestTLeapTypifier:
         frcmod = Path(lines[1].removeprefix("loadamberparams "))
         rows = [line.split() for line in frcmod.read_text().splitlines()]
         assert ["c3", "12.010000"] in rows  # MASS
-        assert ["c3-f", "356.900000", "1.349700"] in rows  # BOND, RK = k / 2
+        assert ["c3-f", "356.900000", "1.349700"] in rows  # BOND, RK = k
         assert lines[2].startswith("MOL = loadmol2 ")
         assert set(tools.calls) == {"tleap"}
 

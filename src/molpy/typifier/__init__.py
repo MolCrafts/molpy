@@ -12,6 +12,7 @@ AmberTools executables (:mod:`molpy.wrapper`).
 from molrs.ff.typifier import (
     AtdTypifier,
     ElementTypifier,
+    GaffTypifier,
     Match,
     MMFF94STypifier,
     MMFF94Typifier,
@@ -25,6 +26,7 @@ __all__ = [
     "AntechamberTypifier",
     "AtdTypifier",
     "ElementTypifier",
+    "GaffTypifier",
     "MMFF94STypifier",
     "MMFF94Typifier",
     "Match",

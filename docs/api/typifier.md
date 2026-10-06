@@ -33,6 +33,7 @@ creation — and it is the only writer of `forcefield()`.
 | `MMFF94Typifier` / `MMFF94STypifier` | Full MMFF94 / MMFF94s typing pipeline (native) | MMFF all-atom force fields |
 | `ElementTypifier` | `type` labels from element symbols; defines no force field | Writers that need labels on an untyped molecule |
 | `AtdTypifier` | `AtdTypifier(parameter_set="gaff2")`: antechamber's atom-type tables (`gaff`, `gaff2`, `amber`, `bcc`, …) evaluated natively — atom types only, no charges or parameters | GAFF / GAFF2 or BCC atom types without running antechamber |
+| `GaffTypifier` | `GaffTypifier(parameter_set="gaff2")`: GAFF / GAFF2 bonded terms and parameters, natively, for atoms `AtdTypifier` already typed (exact `gaff.dat` rows, wildcards, or `parmchk2`-style estimates marked `estimated`) | GAFF / GAFF2 parameters without AmberTools |
 | `AntechamberTypifier` | antechamber → parmchk2 → tleap for one complete molecule | GAFF / GAFF2 small molecules and monomers |
 | `TLeapTypifier` | tleap alone over a finished graph that already carries AMBER types and charges (a graph with ports is refused) | Re-parameterising a typed molecule |
 
