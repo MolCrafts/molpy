@@ -1,9 +1,19 @@
-# prek: pre-commit = lint; pre-push = molrs pin + tests
-# CI: lint job + 3 OS × 3.12–3.14 matrix (ci.yml).
+# prek / pre-commit: `prek install` (installs both hook types).
+# CI parity: every job in .github/workflows/ci.yml has a hook here running the
+# same command; Cloudflare Pages' docs build has one too.
+#
+#   pre-commit  file hygiene + `tox -e lint` (ruff + ty). Cheap: runs in place.
+#   pre-push    the hygiene hooks again on --all-files, the partner/path-source
+#               check, the molrs pin on PyPI, the docs build, and the unit
+#               suite (`uv run --locked`, Python 3.12, as ci.yml `test`).
+#
 # Tests MUST use `uv run pytest`, not tox: tox's pip ignores [tool.uv.sources].
+# The suite is the one heavy hook; scripts/hook-run.sh hands it to
+# $MOLCRAFTS_HOOK_RUNNER (a compute node on the MolCrafts cluster) when set and
+# runs it in place otherwise. See "Hooks" in CONTRIBUTING.md. Never --no-verify.
 
 default_install_hook_types: [pre-commit, pre-push]
-default_stages: [pre-commit, pre-push]
+default_stages: [pre-commit]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -33,7 +43,33 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-        stages: [pre-commit]
+
+      # A commit checks its staged files only. Re-run the commit-time hooks
+      # above over the whole tree, so an untouched file cannot carry a defect.
+      - id: all-files
+        name: commit hooks on --all-files
+        entry: uvx pre-commit run --all-files --hook-stage pre-commit --show-diff-on-failure
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: partners
+        name: no path source CI cannot resolve
+        entry: python3 scripts/partners.py check
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      # ci.yml lint: uv.lock is committed and current (every `uv run` is --locked).
+      - id: uv-lock
+        name: uv.lock is current (ci.yml lint)
+        entry: uv lock --check
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock)$
+        stages: [pre-push]
 
       - id: molrs-pin-on-pypi
         name: molrs pin on PyPI
@@ -43,10 +79,26 @@ repos:
         always_run: true
         stages: [pre-push]
 
-      # Same command as ci.yml `test` — uv honors [tool.uv.sources], tox/pip does not.
+      # Cloudflare Pages: `pip install ".[doc]"` in a clean checkout, then
+      # zensical. Built in a copy of the tree (scripts/partners.py run), so the
+      # theme's staged assets never land in this checkout; --strict fails on
+      # any warning, an unresolved mkdocstrings reference included.
+      - id: docs
+        name: docs build (ci.yml docs, Cloudflare Pages)
+        entry: >-
+          python3 scripts/partners.py run --
+          uv run --isolated --no-project --python 3.12 --with .[doc]
+          zensical build --clean --strict
+        language: system
+        pass_filenames: false
+        files: ^(docs/|zensical\.toml|src/|pyproject\.toml)
+        stages: [pre-push]
+
+      # Same command as ci.yml `test` (uv honors [tool.uv.sources], tox/pip
+      # does not), on CI's floor Python.
       - id: pytest
         name: uv pytest (CI parity)
-        entry: uv run --extra dev python -m pytest tests/ -n auto
+        entry: scripts/hook-run.sh uv run --locked --python 3.12 --extra dev python -m pytest tests/ -n auto
         language: system
         pass_filenames: false
         always_run: true

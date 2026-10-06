@@ -14,9 +14,9 @@ Clone the repository, create a virtualenv, install in editable mode with dev dep
 ```bash
 git clone https://github.com/MolCrafts/molpy.git
 cd molpy
-uv sync --extra dev
+uv sync --locked --extra dev
 pre-commit install --hook-type pre-commit --hook-type pre-push
-uv run --extra dev python -m pytest tests/ -n auto
+uv run --locked --extra dev python -m pytest tests/ -n auto
 ```
 
 If all tests pass, the environment is ready.
@@ -95,8 +95,8 @@ mocks and script literals. Doc blocks that would shell out declare
 ruff format --check src tests             # check formatting
 ruff format src tests                     # auto-format
 ruff check src                            # lint source tree
-uv run --extra dev python -m pytest tests/ -n auto   # the CI test command
-pre-commit run --all-files                # all pre-commit hooks
+uv run --locked --extra dev python -m pytest tests/ -n auto   # the CI test command
+pre-commit run --all-files                # all pre-commit hooks (see CONTRIBUTING.md "Hooks")
 zensical build                            # build static doc site into site/
 ```
 
