@@ -42,6 +42,9 @@ built-in. `mp.ff.ir` is `molrs.ff.ir`: `StyleSpec`, `Param`,
 `unregister`, `IrError` and its subclasses.
 
 ```python
+import molpy as mp
+
+
 class Fene(mp.ff.ir.StyleSpec):  # LAMMPS bond_style fene
     category, name = "bond", "fene"
     params = {"k": "E/L^2", "r0": "L", "epsilon": "E", "sigma": "L"}
@@ -70,8 +73,8 @@ molrs now, and `mp.io` re-exports it:
   `atom_style` fixes the `Atoms` layout as LAMMPS's does (a layout the style
   does not have is an error, not a column drop). The `* Coeffs` sections stay
   text in `frame.meta["lammps_coeffs_text"]`, and
-  `mp.ff.forcefield.read_lammps_data_coeffs(text, units=..., atom_labels=...)`
-  makes them a force field; the header counts and Type Labels are
+  `mp.ff.forcefield.read_lammps_data_coeffs(frame)` makes them a force field,
+  each row named by the file's Type Labels; the header counts and Type Labels are
   `frame.meta["lammps_counts"]` and `frame.meta["<kind>_type_labels"]`.
 - `mp.io.write_lammps_data(path, frame, type_labels={"atoms": [...]})`
   declares labels no row uses; a Drude system gets a `fix drude` flags
@@ -192,7 +195,7 @@ path.
 | `mp.io.read_lammps_forcefield`, `write_lammps_forcefield`, `write_lammps_forcefield_str`, `read_lammps_data_coeffs`, `write_lammps_data_coeffs` | `mp.ff.forcefield.<same name>` |
 | `mp.io.read_top(path)`, `mp.io.write_top(path, frame)` | `mp.ff.forcefield.read_gromacs_system(path)` → `(ForceField, Frame)`, `write_gromacs_system(path, ff, frame)` (0-based) |
 | `mp.io.read_amber_ac` | `mp.io.read_ac` (emits `charge`) |
-| `mp.io.read_lammps_data(path, atom_style="full")` → `LammpsDataResult` (`.frame`, `.forcefield`, `.counts`, `.type_labels`) | `mp.io.read_lammps_data(path, atom_style=None)` → `Frame`; force field: `mp.ff.forcefield.read_lammps_data_coeffs(frame.meta["lammps_coeffs_text"], units=..., atom_labels=...)`; counts / labels: `frame.meta["lammps_counts"]`, `frame.meta["<kind>_type_labels"]` |
+| `mp.io.read_lammps_data(path, atom_style="full")` → `LammpsDataResult` (`.frame`, `.forcefield`, `.counts`, `.type_labels`) | `mp.io.read_lammps_data(path, atom_style=None)` → `Frame`; force field: `mp.ff.forcefield.read_lammps_data_coeffs(frame)`; counts / labels: `frame.meta["lammps_counts"]`, `frame.meta["<kind>_type_labels"]` |
 | `mp.io.LammpsDataResult` | removed |
 | a missing box axis raised `ValueError`; `frame.meta["format" / "atom_style" / "source_file"]` | recorded in `frame.meta["lammps_box_axes"]`; not set |
 | `mp.io.write_lammps_data(..., type_labels={"atom_types": [...]})` | `type_labels={"atoms": [...]}` (block names) |
@@ -337,6 +340,7 @@ labels. 0.15 brings it to the molrec contract:
   by another molrec producer without it opens.
 
 ```python
+# docs: skip — the 0.15 API, as released
 import molpy as mp
 
 frame = mp.Frame(
@@ -373,6 +377,7 @@ as an `mp.MetaValue`. What comes back is frozen — a JSON object is a read-only
 store:
 
 ```python
+# docs: skip — the 0.15 API, as released
 frame.meta["run"] = {"step": 0, "ensemble": "nvt"}
 run = frame.meta["run"].copy()  # a plain dict
 run["step"] = 3
@@ -414,6 +419,7 @@ The frame schema follows the molrec conventions
   raises on a conflicting definition instead of keeping the first.
 
 ```python
+# docs: skip — the 0.15 API, as released
 ff.def_style("bond", "harmonic").def_type("OW-HW", ow, hw, k=450.0, r0=0.9572)
 
 typed = mp.Frame(

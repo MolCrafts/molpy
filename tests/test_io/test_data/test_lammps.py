@@ -4,7 +4,8 @@
 The reader returns the structure as a ``Frame`` (typed blocks carry
 ``type_id`` and the string ``type``) and keeps any ``* Coeffs`` sections as
 text in ``frame.meta["lammps_coeffs_text"]``; the force field is
-``mp.ff.forcefield.read_lammps_data_coeffs`` of that text.
+``mp.ff.forcefield.read_lammps_data_coeffs(frame)``, which names the rows by
+the file's Type Labels.
 """
 
 import os
@@ -15,19 +16,6 @@ import pytest
 
 
 import molpy as mp
-
-_KINDS = ("atom", "bond", "angle", "dihedral", "improper")
-
-
-def _forcefield(frame: mp.Frame, units: str = "real") -> mp.ff.forcefield.ForceField:
-    """The force field of a data file's ``* Coeffs``, keyed by its Type Labels."""
-    labels = {}
-    for kind in _KINDS:
-        packed = str(frame.meta.get(f"{kind}_type_labels") or "")
-        pairs = (item.split(":", 1) for item in packed.split(",") if ":" in item)
-        labels[f"{kind}_labels"] = {int(i): label for i, label in pairs} or None
-    text = str(frame.meta.get("lammps_coeffs_text") or "")
-    return mp.ff.forcefield.read_lammps_data_coeffs(text, units=units, **labels)
 
 
 def _section_rows(text: str, heading: str) -> list[list[str]]:
@@ -98,7 +86,9 @@ class TestReadLammpsData:
         mol_ids = atoms["mol_id"]
         assert len(np.unique(mol_ids)) <= 4  # max 4 different molecules
 
-        assert isinstance(_forcefield(result), mp.ff.forcefield.ForceField)
+        # No `* Coeffs` sections: the file carries no force field.
+        with pytest.raises(ValueError, match="Coeffs"):
+            mp.ff.forcefield.read_lammps_data_coeffs(result)
 
     def test_whitespaces_file(self, lammps_dir):
         """Test reading whitespaces.lmp - file with extra whitespaces."""
@@ -200,8 +190,9 @@ class TestReadLammpsData:
         dihedrals = frame["dihedrals"]
         assert dihedrals.nrows == 27
 
-        # Check force field
-        assert isinstance(_forcefield(result), mp.ff.forcefield.ForceField)
+        # No `* Coeffs` sections: the file carries no force field.
+        with pytest.raises(ValueError, match="Coeffs"):
+            mp.ff.forcefield.read_lammps_data_coeffs(result)
 
     @staticmethod
     def _styled(tmp_path: Path, style: str, row: str) -> Path:
@@ -823,7 +814,8 @@ class TestForceFieldCoeffs:
         return lammps_dir / "coeffs.lmp"
 
     def test_coeffs_are_extracted(self, ff_file):
-        ff = _forcefield(mp.io.read_lammps_data(ff_file, atom_style="full"))
+        frame = mp.io.read_lammps_data(ff_file, atom_style="full")
+        ff = mp.ff.forcefield.read_lammps_data_coeffs(frame)
         pair = {
             t.name: (t.get("epsilon"), t.get("sigma"))
             for s in ff.get_styles(mp.ff.forcefield.PairStyle)
@@ -856,7 +848,7 @@ class TestForceFieldCoeffs:
         )
         frame = mp.io.read_lammps_data(data, atom_style="full")
         with pytest.raises(ValueError):
-            _forcefield(frame)
+            mp.ff.forcefield.read_lammps_data_coeffs(frame)
 
 
 class TestCoeffsAreText:
@@ -874,11 +866,11 @@ class TestCoeffsAreText:
     def test_unparseable_coeffs_raise_when_read(self, cosine_file):
         frame = mp.io.read_lammps_data(cosine_file, atom_style="angle")
         with pytest.raises(ValueError):
-            _forcefield(frame)
+            mp.ff.forcefield.read_lammps_data_coeffs(frame)
 
     def test_units_are_the_callers(self, lammps_dir):
         frame = mp.io.read_lammps_data(lammps_dir / "coeffs.lmp", atom_style="full")
-        ff = _forcefield(frame, units="metal")
+        ff = mp.ff.forcefield.read_lammps_data_coeffs(frame, units="metal")
         assert ff.units == "metal"
         epsilon = {
             t.name: t.get("epsilon")
