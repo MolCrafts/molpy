@@ -155,6 +155,9 @@ docs/**
 # molplot browser bundle: staged from monorepo molplot/core/dist (or npm) by
 # molcrafts-zensical-theme at zensical build — do not commit.
 docs/assets/molplot/
+# molvis viewer bundles, staged the same way by the theme at build time.
+docs/assets/molvis-sketch-viewer/
+docs/assets/molvis-stage-viewer/
 # molplot fence $file data (JSON/CSV/YAML under docs/data/)
 !docs/data/
 !docs/data/**/
@@ -169,9 +172,6 @@ notebooks/
 # User-guide example output directories
 *_output/
 .claude/worktrees/
-
-# Lock file not version-controlled (avoid manifest/lock drift)
-uv.lock
 
 # model-viewer library is loaded from jsdelivr CDN, not vendored (exceeds 1MB hook limit)
 docs/assets/vendor/model-viewer.min.js
