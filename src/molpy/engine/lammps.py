@@ -361,6 +361,9 @@ class LAMMPSEngine(Engine):
         # The settings carry the coefficients of the labels `frame` uses, the
         # same labels the data file declares. They are included after
         # read_data, where LAMMPS rejects `units`; the script sets it above.
+        # skip_pair_style drops the pair_style line only (the script's): the
+        # force field's special_bonds and pair_modify mix stay, read after
+        # the script's pair_style.
         write_lammps_forcefield(
             run_dir / settings_name,
             ff,
@@ -401,7 +404,8 @@ class LAMMPSEngine(Engine):
 # Standard scaffold around a minimise / MD command block. The settings file,
 # included after ``read_data``, is molrs's LAMMPS force-field include: every
 # ``*_style`` line of the force field (any category, hybrid included) with its
-# coefficients. Only ``pair_style`` is the caller's, set here.
+# coefficients, ``special_bonds`` and ``pair_modify``. Only the ``pair_style``
+# line is the caller's, set here.
 _RELAX_TEMPLATE = """\
 # molpy-generated LAMMPS relaxation script
 units {units}

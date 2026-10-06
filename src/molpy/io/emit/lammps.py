@@ -20,8 +20,15 @@ class LammpsEmitter:
         ``*_style`` line of every category the system uses (built-in or a
         registered force-field IR style; ``hybrid`` when a category spans
         several styles), its coefficients, ``special_bonds``.
-      * ``system.in.init``     -- units/atom_style/boundary.
+      * ``system.in.init``     -- units/atom_style/boundary/neighbor.
       * ``system.in``          -- starter run script.
+
+    An :class:`~molrs.Atomistic` carries no box, so the deck is a
+    non-periodic one: molrs's data writer puts the atoms inside the bounds of
+    their coordinates widened by 1 length unit on every side, and the init
+    reads it with ``boundary s s s``, which shrink-wraps that box to the atoms,
+    and ``neighbor 2.0 nsq``: binning needs a box wider than the pair cutoff,
+    which a shrink-wrapped molecule is not.
 
     The styles and coefficients come from one place, molrs's LAMMPS writer
     (:func:`molpy.io.write_lammps_forcefield`); molpy does not name styles
@@ -52,7 +59,8 @@ class LammpsEmitter:
             f"# MolPy-generated LAMMPS init for {prefix}",
             f"units {units}",
             "atom_style " + atom_style,
-            "boundary p p p",
+            "boundary s s s",
+            "neighbor 2.0 nsq",
         ]
 
         # 1) in.settings first, so a style molrs cannot write fails before any
@@ -86,7 +94,6 @@ include {init}
 read_data {data}
 include {settings}
 
-neighbor        2.0 bin
 neigh_modify    every 1 delay 0 check yes
 
 # Minimise

@@ -96,6 +96,24 @@ class TestLammpsEmitter:
         (coeff,) = [line for line in settings if line.startswith("angle_coeff")]
         assert [float(v) for v in coeff.split()[2:]] == [55.0, 104.52, 20.0, 1.5139]
 
+    def test_a_boxless_system_is_shrink_wrapped_around_its_atoms(
+        self, tmp_path, water, water_ff
+    ):
+        """An Atomistic has no box: ``boundary s s s`` with an all-pairs
+        neighbor search, and a data-file box enclosing every atom with a margin
+        of 1 length unit, never a ``0 1`` placeholder."""
+        assert water.to_frame().box is None
+        LammpsEmitter().emit(water, water_ff, tmp_path, prefix="w")
+        init = (tmp_path / "w.in.init").read_text().splitlines()
+        assert "boundary s s s" in init and "neighbor 2.0 nsq" in init
+        data = (tmp_path / "w.data").read_text().splitlines()
+        atoms = water.to_frame()["atoms"]
+        for axis in ("x", "y", "z"):
+            (bounds,) = [line for line in data if line.endswith(f"{axis}lo {axis}hi")]
+            lo, hi = (float(v) for v in bounds.split()[:2])
+            assert lo == pytest.approx(min(atoms[axis]) - 1.0)
+            assert hi == pytest.approx(max(atoms[axis]) + 1.0)
+
     def test_settings_leave_units_to_init(self, tmp_path, water, water_ff):
         # The settings are included after read_data, where LAMMPS rejects `units`.
         LammpsEmitter().emit(water, water_ff, tmp_path, prefix="w", units="real")
@@ -122,14 +140,8 @@ def test_lammps_prices_the_emitted_bonded_terms_as_molrs_does(
     energies are molrs's, so the styles read after ``read_data`` are in force."""
     _with_urey_bradley(water, water_ff)
     water_ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
+    # The water carries no box: the deck as emitted, shrink-wrapped.
     LammpsEmitter().emit(water, water_ff, tmp_path, prefix="w", units="real")
-    # The water carries no box: its data file is rewritten inside one.
-    boxed = water.to_frame()
-    boxed.box = mp.Box.cube(30.0)
-    atoms = boxed["atoms"]
-    for axis in ("x", "y", "z"):
-        atoms[axis] = atoms[axis] + 15.0
-    mp.io.write_lammps_data(tmp_path / "w.data", boxed)
     deck = (
         "include w.in.init\nread_data w.data\ninclude w.in.settings\n"
         "thermo_style custom step ebond eangle\n"

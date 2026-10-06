@@ -41,7 +41,18 @@ style line and coefficient is molrs's LAMMPS include
 (`mp.io.write_lammps_forcefield`), read after `read_data`, so whatever molrs
 writes reaches LAMMPS: a category spanning two styles as `hybrid` (it was
 refused), and `angle charmm` with its Urey-Bradley term. The emitter's
-`.in.init` now holds `units`, `atom_style` and `boundary` only.
+`.in.init` now holds `units`, `atom_style`, `boundary` and `neighbor` only.
+
+The relaxation's include keeps the force field's `special_bonds` and
+`pair_modify mix` (molrs's `skip_pair_style` now drops the `pair_style` line
+only); 0.15 dropped both, so a `minimize` / `md` ran with LAMMPS's 1-4 weights
+(`0 0 0`) and its `geometric` mixing.
+
+An `Atomistic` carries no box, so the emitted deck is non-periodic:
+`boundary s s s` with `neighbor 2.0 nsq`, and a data file whose box encloses
+the atoms with a margin of 1 length unit (molrs's data writer, for any frame
+without a box). 0.15 wrote `boundary p p p` around a `0 1` placeholder box,
+into which LAMMPS wrapped the atoms.
 
 ### `GaffTypifier`
 
@@ -58,6 +69,7 @@ columns.
 | `molpy.md.Potential` | `molpy.potential.Potential` |
 | a new style: a molrs kernel, writer arms, a rebuilt wheel | `class MyStyle(mp.potential.StyleSpec)` |
 | `molpy.engine.lammps._style_lines`, `molpy.io.emit.lammps._style_name` | gone: the styles are in molrs's include |
+| emitted `.in.init`: `boundary p p p`; `.in`: `neighbor 2.0 bin` | `.in.init`: `boundary s s s`, `neighbor 2.0 nsq` |
 
 ## 0.15
 
